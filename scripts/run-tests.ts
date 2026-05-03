@@ -53,6 +53,7 @@ const TEST_FILES = [
     "tests/strategies-lib/prepared-execution-parity.spec.ts",
     "tests/strategies-lib/retained-strategy-registration.spec.ts",
     "tests/strategies-lib/strategy-normalization-parity.spec.ts",
+    "tests/new-strategy-lib-smoke.spec.ts",
     "tests/strategy-manifest-sync.spec.ts",
     "tests/strategy-registry-loading.spec.ts",
     "tests/strategy-library-admin-plugin.spec.ts",

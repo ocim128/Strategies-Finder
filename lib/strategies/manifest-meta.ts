@@ -2183,4 +2183,876 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         walkForwardParams: ["lookback"],
     },
     },
+    {
+        key: "accumulation_distribution_router",
+        name: "Accumulation Distribution Router",
+        description: "Routes positive CMF accumulation to median alignment and weaker distribution context to value-boundary reversion.",
+        defaultParams: {
+        cmf_lookback: 63,
+        regime_threshold: 0.1,
+    } as Record<string, number>,
+        paramLabels: {
+        cmf_lookback: "CMF Lookback",
+        regime_threshold: "Regime Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["cmf_lookback", "regime_threshold"],
+    },
+    },
+    {
+        key: "compression_expansion_router",
+        name: "Compression Expansion Router",
+        description: "Routes compressed volatility to boundary fades and expanded volatility to rolling-median breakouts using ATR-normalized context.",
+        defaultParams: {
+        compression_lookback: 55,
+        expansion_threshold: 1.5,
+    } as Record<string, number>,
+        paramLabels: {
+        compression_lookback: "Compression Lookback",
+        expansion_threshold: "Expansion Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["compression_lookback", "expansion_threshold"],
+    },
+    },
+    {
+        key: "displacement_velocity_quorum",
+        name: "Displacement Velocity Quorum",
+        description: "Requires quorum between gap displacement, close velocity, and median acceptance for multi-day settlement entries.",
+        defaultParams: {
+        velocity_lookback: 10,
+        quorum_threshold: 2,
+    } as Record<string, number>,
+        paramLabels: {
+        velocity_lookback: "Velocity Lookback",
+        quorum_threshold: "Quorum Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["velocity_lookback", "quorum_threshold"],
+    },
+    },
+    {
+        key: "efficiency_regime_router",
+        name: "Efficiency Regime Router",
+        description: "Routes high-efficiency regimes to rolling-median alignment and low-efficiency regimes to trailing-range boundary reversion.",
+        defaultParams: {
+        efficiency_lookback: 55,
+        regime_threshold: 0.65,
+    } as Record<string, number>,
+        paramLabels: {
+        efficiency_lookback: "Efficiency Lookback",
+        regime_threshold: "Regime Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["efficiency_lookback", "regime_threshold"],
+    },
+    },
+    {
+        key: "entropy_acceleration_quorum",
+        name: "Entropy Acceleration Quorum",
+        description: "Requires agreement between entropy decline and negative entropy acceleration before entering low-entropy directional closes.",
+        defaultParams: {
+        entropy_lookback: 55,
+        quorum_threshold: 2,
+    } as Record<string, number>,
+        paramLabels: {
+        entropy_lookback: "Entropy Lookback",
+        quorum_threshold: "Quorum Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["entropy_lookback", "quorum_threshold"],
+    },
+    },
+    {
+        key: "multi_horizon_disagreement",
+        name: "Multi Horizon Disagreement Resolution",
+        description: "Uses short-versus-long rolling-median disagreement and enters toward the longer-horizon bias when the close resolves across the short median.",
+        defaultParams: {
+        short_window: 20,
+        long_window: 126,
+    } as Record<string, number>,
+        paramLabels: {
+        short_window: "Short Window",
+        long_window: "Long Window",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["short_window", "long_window"],
+    },
+    },
+    {
+        key: "participation_streak_regime",
+        name: "Participation Streak Regime",
+        description: "Routes persistent close-to-median participation streaks to momentum alignment and quiet streak regimes to close-distribution reversion.",
+        defaultParams: {
+        streak_lookback: 20,
+        regime_threshold: 3,
+    } as Record<string, number>,
+        paramLabels: {
+        streak_lookback: "Streak Lookback",
+        regime_threshold: "Regime Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["streak_lookback", "regime_threshold"],
+    },
+    },
+    {
+        key: "skew_kurtosis_quorum_alignment",
+        name: "Skew Kurtosis Quorum Alignment",
+        description: "Requires quorum across skew direction, relative kurtosis stability, and percentile rank before taking completed-bar directional distribution signals.",
+        defaultParams: {
+        lookback: 63,
+        quorum_threshold: 2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        quorum_threshold: "Quorum Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "quorum_threshold"],
+    },
+    },
+    {
+        key: "trailing_boundary_composite",
+        name: "Trailing Boundary Composite",
+        description: "Combines trailing range-position acceptance and expanding boundary momentum into independent completed-bar boundary signals.",
+        defaultParams: {
+        boundary_lookback: 126,
+        extreme_threshold: 0.85,
+    } as Record<string, number>,
+        paramLabels: {
+        boundary_lookback: "Boundary Lookback",
+        extreme_threshold: "Extreme Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["boundary_lookback", "extreme_threshold"],
+    },
+    },
+    {
+        key: "volume_profile_poc_migration",
+        name: "Volume Profile POC Migration",
+        description: "Combines rolling profile point-of-control migration with close acceptance and above-average volume to identify value-area displacement.",
+        defaultParams: {
+        profile_lookback: 20,
+        migration_threshold: 0.015,
+    } as Record<string, number>,
+        paramLabels: {
+        profile_lookback: "Profile Lookback",
+        migration_threshold: "Migration Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["profile_lookback", "migration_threshold"],
+    },
+    },
+    {
+        key: "body_proportion_regime_router",
+        name: "Body Proportion Regime Router",
+        description: "Routes strong body-proportion bars to median-following entries and weak body bars to midpoint gravity fades.",
+        defaultParams: {
+        body_lookback: 55,
+        strong_threshold: 0.6,
+    } as Record<string, number>,
+        paramLabels: {
+        body_lookback: "Body Lookback",
+        strong_threshold: "Strong Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["body_lookback", "strong_threshold"],
+    },
+    },
+    {
+        key: "close_location_persistence_streak",
+        name: "Close Location Persistence Streak",
+        description: "Signals when the close location inside each daily range persists above or below the bar centerline for consecutive sessions.",
+        defaultParams: {
+        streak_threshold: 4,
+    } as Record<string, number>,
+        paramLabels: {
+        streak_threshold: "Streak Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["streak_threshold"],
+    },
+    },
+    {
+        key: "entropy_kurtosis_composite",
+        name: "Entropy Kurtosis Composite",
+        description: "OR-combines falling return entropy and rising excess kurtosis when either distribution transition agrees with the rolling median.",
+        defaultParams: {
+        lookback: 55,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "initiative_pressure_regime",
+        name: "Initiative Pressure Regime",
+        description: "Routes high signed initiative pressure to median-following trades and low-pressure bars to trailing-range reversion.",
+        defaultParams: {
+        pressure_lookback: 20,
+        high_threshold: 0.6,
+    } as Record<string, number>,
+        paramLabels: {
+        pressure_lookback: "Pressure Lookback",
+        high_threshold: "High Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["pressure_lookback", "high_threshold"],
+    },
+    },
+    {
+        key: "midpoint_gravity_quorum",
+        name: "Midpoint Gravity Quorum",
+        description: "Requires agreement between midpoint-distance reversion and close velocity before trading back toward the rolling midpoint.",
+        defaultParams: {
+        lookback: 63,
+        quorum_threshold: 2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        quorum_threshold: "Quorum Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "quorum_threshold"],
+    },
+    },
+    {
+        key: "percentile_momentum_or_reversion",
+        name: "Percentile Momentum Or Reversion",
+        description: "Combines short-horizon percentile momentum with long-horizon percentile pullback and bounce branches.",
+        defaultParams: {
+        short_window: 20,
+        long_window: 126,
+    } as Record<string, number>,
+        paramLabels: {
+        short_window: "Short Window",
+        long_window: "Long Window",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["short_window", "long_window"],
+    },
+    },
+    {
+        key: "range_expansion_acceptance",
+        name: "Range Expansion Acceptance",
+        description: "Chases daily range expansion only when the completed close accepts a new trailing high or low territory.",
+        defaultParams: {
+        expansion_lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        expansion_lookback: "Expansion Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["expansion_lookback"],
+    },
+    },
+    {
+        key: "roc_skewness_quorum",
+        name: "ROC Skewness Quorum",
+        description: "Requires quorum across close ROC, rolling close skewness, and Chaikin money flow participation before entering.",
+        defaultParams: {
+        lookback: 63,
+        quorum_threshold: 2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        quorum_threshold: "Quorum Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "quorum_threshold"],
+    },
+    },
+    {
+        key: "true_range_skew_acceptance",
+        name: "True Range Skew Acceptance",
+        description: "Trades true-range skew only when the current expanded bar also closes with directional acceptance.",
+        defaultParams: {
+        lookback: 10,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "value_area_volume_composite",
+        name: "Value Area Volume Composite",
+        description: "OR-combines signed-volume value-area migration and volume-confirmed POC acceptance from the rolling profile.",
+        defaultParams: {
+        profile_window: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        profile_window: "Profile Window",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["profile_window"],
+    },
+    },
+    {
+        key: "adx_persistence_vote_quorum",
+        name: "ADX Persistence Vote Quorum",
+        description: "Combines ADX trend-strength thresholding with a persistent DI alignment streak before taking directional entries.",
+        defaultParams: {
+        lookback: 14,
+        min_days: 3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        min_days: "Minimum Days",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "min_days"],
+    },
+    },
+    {
+        key: "body_relative_distribution_router",
+        name: "Body Relative Distribution Router",
+        description: "Routes large-body candle regimes to Bollinger momentum breaks and wick-heavy regimes to Bollinger boundary reversion.",
+        defaultParams: {
+        lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "cmf_mfi_conviction_quorum",
+        name: "CMF MFI Conviction Quorum",
+        description: "Requires Chaikin money flow and money flow index to agree with price relative to its rolling median.",
+        defaultParams: {
+        lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "dual_horizon_median_quorum",
+        name: "Dual Horizon Median Quorum",
+        description: "Requires price to agree with both intermediate and long-horizon rolling medians before taking directional entries.",
+        defaultParams: {
+        fast_lookback: 21,
+        slow_lookback: 126,
+    } as Record<string, number>,
+        paramLabels: {
+        fast_lookback: "Fast Lookback",
+        slow_lookback: "Slow Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["fast_lookback", "slow_lookback"],
+    },
+    },
+    {
+        key: "high_efficiency_streak_alignment",
+        name: "High Efficiency Streak Alignment",
+        description: "Requires a high efficiency ratio plus a minimum directional close streak before entering persistent moves.",
+        defaultParams: {
+        lookback: 20,
+        min_streak: 3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        min_streak: "Minimum Streak",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "min_streak"],
+    },
+    },
+    {
+        key: "initiative_pressure_median_anchor",
+        name: "Initiative Pressure Median Anchor",
+        description: "Requires signed initiative pressure to agree with the completed close's side of a rolling median.",
+        defaultParams: {
+        lookback: 20,
+        pressure_min: 0.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        pressure_min: "Pressure Minimum",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "pressure_min"],
+    },
+    },
+    {
+        key: "poc_displacement_trend_anchor",
+        name: "POC Displacement Trend Anchor",
+        description: "Aligns the completed close with the rolling point of control and only enters when the POC itself is migrating in that direction.",
+        defaultParams: {
+        lookback: 63,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "rsi_stoch_extreme_or",
+        name: "RSI-Stoch Extreme OR",
+        description: "Accepts either RSI momentum or Stochastic range-position momentum when price is on the correct side of a stable median anchor.",
+        defaultParams: {
+        lookback: 14,
+        rsi_threshold: 60,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        rsi_threshold: "RSI Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "rsi_threshold"],
+    },
+    },
+    {
+        key: "typical_weighting_consensus_quorum",
+        name: "Typical Weighting Consensus Quorum",
+        description: "Requires typical price and weighted close price to agree relative to their own rolling medians.",
+        defaultParams: {
+        lookback: 55,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "volatility_regime_expansion_router",
+        name: "Volatility Regime Expansion Router",
+        description: "Routes low ATR-percentile compression to Donchian breakouts and higher-volatility regimes to median reversion crosses.",
+        defaultParams: {
+        lookback: 55,
+        atr_threshold: 0.3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        atr_threshold: "ATR Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "atr_threshold"],
+    },
+    },
+    {
+        key: "autocorrelation_persistence_router",
+        name: "Autocorrelation Persistence Router",
+        description: "Routes positive return autocorrelation to EMA-aligned persistence and non-persistent regimes to close z-score reversion.",
+        defaultParams: {
+        lookback: 40,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "cumulative_gap_settlement_anchor",
+        name: "Cumulative Gap Settlement Anchor",
+        description: "Tracks rolling net gap displacement and only enters when settlement agrees with the same rolling median side.",
+        defaultParams: {
+        lookback: 63,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "dual_efficiency_momentum_quorum",
+        name: "Dual Efficiency Momentum Quorum",
+        description: "Requires fast and slow efficiency ratios to clear the same threshold before following median-relative trend direction.",
+        defaultParams: {
+        fast_lookback: 20,
+        slow_lookback: 63,
+        er_threshold: 0.5,
+    } as Record<string, number>,
+        paramLabels: {
+        fast_lookback: "Fast Lookback",
+        slow_lookback: "Slow Lookback",
+        er_threshold: "ER Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["fast_lookback", "slow_lookback", "er_threshold"],
+    },
+    },
+    {
+        key: "entropy_compressed_roc_alignment",
+        name: "Entropy Compressed ROC Alignment",
+        description: "Aligns with typical-price ROC only when normalized return entropy is low enough to indicate ordered movement.",
+        defaultParams: {
+        lookback: 20,
+        entropy_max: 0.4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        entropy_max: "Entropy Max",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "entropy_max"],
+    },
+    },
+    {
+        key: "initiative_gated_vwap_alignment",
+        name: "Initiative Gated VWAP Alignment",
+        description: "Uses signed initiative pressure to confirm active participation before taking close alignment with anchored VWAP.",
+        defaultParams: {
+        lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "kurtosis_stability_median_alignment",
+        name: "Kurtosis Stability Median Alignment",
+        description: "Limits median-aligned trend entries to lower excess-kurtosis regimes where tail risk is not dominating the move.",
+        defaultParams: {
+        lookback: 126,
+        kurtosis_max: 3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        kurtosis_max: "Kurtosis Max",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "kurtosis_max"],
+    },
+    },
+    {
+        key: "mfi_adx_strength_quorum",
+        name: "MFI-ADX Strength Quorum",
+        description: "Requires MFI momentum and ADX/DI trend intensity to agree relative to a rolling median.",
+        defaultParams: {
+        lookback: 14,
+        adx_min: 25,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        adx_min: "ADX Minimum",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "adx_min"],
+    },
+    },
+    {
+        key: "rsi_roc_extreme_quorum",
+        name: "RSI-ROC Extreme Quorum",
+        description: "Requires RSI and ROC percentile ranks to agree at long-horizon extremes before signaling.",
+        defaultParams: {
+        lookback: 20,
+        percentile_lookback: 200,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        percentile_lookback: "Percentile Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "percentile_lookback"],
+    },
+    },
+    {
+        key: "skewness_biased_donchian_router",
+        name: "Skewness Biased Donchian Router",
+        description: "Routes positive return skew to Donchian breakout logic and negative skew to midpoint-biased defensive alignment.",
+        defaultParams: {
+        horizon: 55,
+    } as Record<string, number>,
+        paramLabels: {
+        horizon: "Horizon",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["horizon"],
+    },
+    },
+    {
+        key: "volume_acceptance_composite_or",
+        name: "Volume Acceptance Composite OR",
+        description: "Signals either persistent directional close acceptance or a volume z-score surge with matching daily close direction.",
+        defaultParams: {
+        lookback: 21,
+        z_threshold: 2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        z_threshold: "Z Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "z_threshold"],
+    },
+    },
+    {
+        key: "atr_normalized_displacement",
+        name: "ATR Normalized Displacement",
+        description: "Signals multi-bar close displacement only when the move is large enough relative to contemporaneous ATR.",
+        defaultParams: {
+        displacement_bars: 5,
+        threshold: 1.5,
+    } as Record<string, number>,
+        paramLabels: {
+        displacement_bars: "Displacement Bars",
+        threshold: "Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["displacement_bars", "threshold"],
+    },
+    },
+    {
+        key: "close_acceptance_momentum",
+        name: "Close Acceptance Momentum",
+        description: "Uses momentum in close acceptance as the participation trigger while price remains aligned with its rolling median.",
+        defaultParams: {
+        lookback: 63,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "distribution_shape_router",
+        name: "Distribution Shape Router",
+        description: "Routes symmetric high-kurtosis regimes to median alignment and asymmetric skew regimes to value-area extreme acceptance.",
+        defaultParams: {
+        lookback: 63,
+        skew_threshold: 0.3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        skew_threshold: "Skew Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "skew_threshold"],
+    },
+    },
+    {
+        key: "donchian_keltner_squeeze",
+        name: "Donchian Keltner Squeeze",
+        description: "Signals Donchian boundary breaks that remain contained inside Keltner extremes for cleaner expansion entries.",
+        defaultParams: {
+        donchian_period: 20,
+        keltner_period: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        donchian_period: "Donchian Period",
+        keltner_period: "Keltner Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["donchian_period", "keltner_period"],
+    },
+    },
+    {
+        key: "efficiency_momentum_quorum",
+        name: "Efficiency Momentum Quorum",
+        description: "Requires quorum between rising path efficiency and median-aligned ROC momentum before entering daily trends.",
+        defaultParams: {
+        lookback: 55,
+        quorum_threshold: 2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        quorum_threshold: "Quorum Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "quorum_threshold"],
+    },
+    },
+    {
+        key: "gap_settlement_quorum",
+        name: "Gap Settlement Quorum",
+        description: "Requires quorum across gap size, prior close-location context, and participation for daily gap settlement entries.",
+        defaultParams: {
+        gap_threshold: 0.005,
+        quorum_threshold: 2,
+    } as Record<string, number>,
+        paramLabels: {
+        gap_threshold: "Gap Threshold",
+        quorum_threshold: "Quorum Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["gap_threshold", "quorum_threshold"],
+    },
+    },
+    {
+        key: "participation_entropy_router",
+        name: "Participation Entropy Router",
+        description: "Routes low normalized entropy to CMF-confirmed median alignment and high entropy to median reversion from stretched closes.",
+        defaultParams: {
+        entropy_lookback: 55,
+        threshold: 0.5,
+    } as Record<string, number>,
+        paramLabels: {
+        entropy_lookback: "Entropy Lookback",
+        threshold: "Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["entropy_lookback", "threshold"],
+    },
+    },
+    {
+        key: "rolling_zscore_boundary_reversion",
+        name: "Rolling Zscore Boundary Reversion",
+        description: "Fades large rolling close z-score deviations only when price is also stretched to the edge of its trailing daily range.",
+        defaultParams: {
+        zscore_threshold: 2,
+        lookback: 63,
+    } as Record<string, number>,
+        paramLabels: {
+        zscore_threshold: "Z-Score Threshold",
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["zscore_threshold", "lookback"],
+    },
+    },
+    {
+        key: "skewness_acceleration_composite",
+        name: "Skewness Acceleration Composite",
+        description: "Signals either a zero-line skewness shift or skewness acceleration when price agrees with its rolling median.",
+        defaultParams: {
+        lookback: 63,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+    },
+    {
+        key: "volume_roc_regime_router",
+        name: "Volume ROC Regime Router",
+        description: "Routes rising volume to median trend alignment and falling volume to value-boundary reversion.",
+        defaultParams: {
+        volume_lookback: 20,
+        regime_threshold: 0,
+    } as Record<string, number>,
+        paramLabels: {
+        volume_lookback: "Volume Lookback",
+        regime_threshold: "Regime Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["volume_lookback", "regime_threshold"],
+    },
+    },
 ];

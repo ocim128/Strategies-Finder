@@ -128,6 +128,56 @@ import { volatility_regime_median_alignment } from "./lib/volatility_regime_medi
 import { volume_autocorrelation_participation_gate } from "./lib/volume_autocorrelation_participation_gate__20260429T162454Z";
 import { volume_blowoff_reversion } from "./lib/volume_blowoff_reversion__20260429T162454Z";
 import { weighted_close_median_alignment } from "./lib/weighted_close_median_alignment__20260429T162454Z";
+import { accumulation_distribution_router } from "./lib/accumulation_distribution_router";
+import { compression_expansion_router } from "./lib/compression_expansion_router";
+import { displacement_velocity_quorum } from "./lib/displacement_velocity_quorum";
+import { efficiency_regime_router } from "./lib/efficiency_regime_router";
+import { entropy_acceleration_quorum } from "./lib/entropy_acceleration_quorum";
+import { multi_horizon_disagreement } from "./lib/multi_horizon_disagreement";
+import { participation_streak_regime } from "./lib/participation_streak_regime";
+import { skew_kurtosis_quorum_alignment } from "./lib/skew_kurtosis_quorum_alignment";
+import { trailing_boundary_composite } from "./lib/trailing_boundary_composite";
+import { volume_profile_poc_migration } from "./lib/volume_profile_poc_migration";
+import { body_proportion_regime_router } from "./lib/body_proportion_regime_router";
+import { close_location_persistence_streak } from "./lib/close_location_persistence_streak";
+import { entropy_kurtosis_composite } from "./lib/entropy_kurtosis_composite";
+import { initiative_pressure_regime } from "./lib/initiative_pressure_regime";
+import { midpoint_gravity_quorum } from "./lib/midpoint_gravity_quorum";
+import { percentile_momentum_or_reversion } from "./lib/percentile_momentum_or_reversion";
+import { range_expansion_acceptance } from "./lib/range_expansion_acceptance";
+import { roc_skewness_quorum } from "./lib/roc_skewness_quorum";
+import { true_range_skew_acceptance } from "./lib/true_range_skew_acceptance";
+import { value_area_volume_composite } from "./lib/value_area_volume_composite";
+import { adx_persistence_vote_quorum } from "./lib/adx_persistence_vote_quorum";
+import { body_relative_distribution_router } from "./lib/body_relative_distribution_router";
+import { cmf_mfi_conviction_quorum } from "./lib/cmf_mfi_conviction_quorum";
+import { dual_horizon_median_quorum } from "./lib/dual_horizon_median_quorum";
+import { high_efficiency_streak_alignment } from "./lib/high_efficiency_streak_alignment";
+import { initiative_pressure_median_anchor } from "./lib/initiative_pressure_median_anchor";
+import { poc_displacement_trend_anchor } from "./lib/poc_displacement_trend_anchor";
+import { rsi_stoch_extreme_or } from "./lib/rsi_stoch_extreme_or";
+import { typical_weighting_consensus_quorum } from "./lib/typical_weighting_consensus_quorum";
+import { volatility_regime_expansion_router } from "./lib/volatility_regime_expansion_router";
+import { autocorrelation_persistence_router } from "./lib/autocorrelation_persistence_router";
+import { cumulative_gap_settlement_anchor } from "./lib/cumulative_gap_settlement_anchor";
+import { dual_efficiency_momentum_quorum } from "./lib/dual_efficiency_momentum_quorum";
+import { entropy_compressed_roc_alignment } from "./lib/entropy_compressed_roc_alignment";
+import { initiative_gated_vwap_alignment } from "./lib/initiative_gated_vwap_alignment";
+import { kurtosis_stability_median_alignment } from "./lib/kurtosis_stability_median_alignment";
+import { mfi_adx_strength_quorum } from "./lib/mfi_adx_strength_quorum";
+import { rsi_roc_extreme_quorum } from "./lib/rsi_roc_extreme_quorum";
+import { skewness_biased_donchian_router } from "./lib/skewness_biased_donchian_router";
+import { volume_acceptance_composite_or } from "./lib/volume_acceptance_composite_or";
+import { atr_normalized_displacement } from "./lib/atr_normalized_displacement";
+import { close_acceptance_momentum } from "./lib/close_acceptance_momentum";
+import { distribution_shape_router } from "./lib/distribution_shape_router";
+import { donchian_keltner_squeeze } from "./lib/donchian_keltner_squeeze";
+import { efficiency_momentum_quorum } from "./lib/efficiency_momentum_quorum";
+import { gap_settlement_quorum } from "./lib/gap_settlement_quorum";
+import { participation_entropy_router } from "./lib/participation_entropy_router";
+import { rolling_zscore_boundary_reversion } from "./lib/rolling_zscore_boundary_reversion";
+import { skewness_acceleration_composite } from "./lib/skewness_acceleration_composite";
+import { volume_roc_regime_router } from "./lib/volume_roc_regime_router";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -261,6 +311,56 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "volume_autocorrelation_participation_gate", strategy: volume_autocorrelation_participation_gate },
     { key: "volume_blowoff_reversion", strategy: volume_blowoff_reversion },
     { key: "weighted_close_median_alignment", strategy: weighted_close_median_alignment },
+    { key: "accumulation_distribution_router", strategy: accumulation_distribution_router },
+    { key: "compression_expansion_router", strategy: compression_expansion_router },
+    { key: "displacement_velocity_quorum", strategy: displacement_velocity_quorum },
+    { key: "efficiency_regime_router", strategy: efficiency_regime_router },
+    { key: "entropy_acceleration_quorum", strategy: entropy_acceleration_quorum },
+    { key: "multi_horizon_disagreement", strategy: multi_horizon_disagreement },
+    { key: "participation_streak_regime", strategy: participation_streak_regime },
+    { key: "skew_kurtosis_quorum_alignment", strategy: skew_kurtosis_quorum_alignment },
+    { key: "trailing_boundary_composite", strategy: trailing_boundary_composite },
+    { key: "volume_profile_poc_migration", strategy: volume_profile_poc_migration },
+    { key: "body_proportion_regime_router", strategy: body_proportion_regime_router },
+    { key: "close_location_persistence_streak", strategy: close_location_persistence_streak },
+    { key: "entropy_kurtosis_composite", strategy: entropy_kurtosis_composite },
+    { key: "initiative_pressure_regime", strategy: initiative_pressure_regime },
+    { key: "midpoint_gravity_quorum", strategy: midpoint_gravity_quorum },
+    { key: "percentile_momentum_or_reversion", strategy: percentile_momentum_or_reversion },
+    { key: "range_expansion_acceptance", strategy: range_expansion_acceptance },
+    { key: "roc_skewness_quorum", strategy: roc_skewness_quorum },
+    { key: "true_range_skew_acceptance", strategy: true_range_skew_acceptance },
+    { key: "value_area_volume_composite", strategy: value_area_volume_composite },
+    { key: "adx_persistence_vote_quorum", strategy: adx_persistence_vote_quorum },
+    { key: "body_relative_distribution_router", strategy: body_relative_distribution_router },
+    { key: "cmf_mfi_conviction_quorum", strategy: cmf_mfi_conviction_quorum },
+    { key: "dual_horizon_median_quorum", strategy: dual_horizon_median_quorum },
+    { key: "high_efficiency_streak_alignment", strategy: high_efficiency_streak_alignment },
+    { key: "initiative_pressure_median_anchor", strategy: initiative_pressure_median_anchor },
+    { key: "poc_displacement_trend_anchor", strategy: poc_displacement_trend_anchor },
+    { key: "rsi_stoch_extreme_or", strategy: rsi_stoch_extreme_or },
+    { key: "typical_weighting_consensus_quorum", strategy: typical_weighting_consensus_quorum },
+    { key: "volatility_regime_expansion_router", strategy: volatility_regime_expansion_router },
+    { key: "autocorrelation_persistence_router", strategy: autocorrelation_persistence_router },
+    { key: "cumulative_gap_settlement_anchor", strategy: cumulative_gap_settlement_anchor },
+    { key: "dual_efficiency_momentum_quorum", strategy: dual_efficiency_momentum_quorum },
+    { key: "entropy_compressed_roc_alignment", strategy: entropy_compressed_roc_alignment },
+    { key: "initiative_gated_vwap_alignment", strategy: initiative_gated_vwap_alignment },
+    { key: "kurtosis_stability_median_alignment", strategy: kurtosis_stability_median_alignment },
+    { key: "mfi_adx_strength_quorum", strategy: mfi_adx_strength_quorum },
+    { key: "rsi_roc_extreme_quorum", strategy: rsi_roc_extreme_quorum },
+    { key: "skewness_biased_donchian_router", strategy: skewness_biased_donchian_router },
+    { key: "volume_acceptance_composite_or", strategy: volume_acceptance_composite_or },
+    { key: "atr_normalized_displacement", strategy: atr_normalized_displacement },
+    { key: "close_acceptance_momentum", strategy: close_acceptance_momentum },
+    { key: "distribution_shape_router", strategy: distribution_shape_router },
+    { key: "donchian_keltner_squeeze", strategy: donchian_keltner_squeeze },
+    { key: "efficiency_momentum_quorum", strategy: efficiency_momentum_quorum },
+    { key: "gap_settlement_quorum", strategy: gap_settlement_quorum },
+    { key: "participation_entropy_router", strategy: participation_entropy_router },
+    { key: "rolling_zscore_boundary_reversion", strategy: rolling_zscore_boundary_reversion },
+    { key: "skewness_acceleration_composite", strategy: skewness_acceleration_composite },
+    { key: "volume_roc_regime_router", strategy: volume_roc_regime_router },
 ];
 
 export function createStrategiesRecordFromManifest(
