@@ -60,6 +60,8 @@ import { buildFinderResult, runStrategyBacktest } from "./finder-runner-shared";
 
 export { resolveFinderCandidateBacktestSettings, shouldUseRustCachedMode } from "./finder-runner-core";
 
+const RUST_NATIVE_FINDER_ENDPOINT_ENABLED = false;
+
 let dataManagerModulePromise: Promise<typeof import("../data-manager")> | null = null;
 
 async function getDataManager() {
@@ -701,6 +703,11 @@ type RustBatchDispatchArgs = {
     onInconsistentResult?: (run: PreparedRun) => void;
 };
 
+type RustBatchDispatchStats = {
+    rustCompletedRuns: number;
+    fallbackRuns: number;
+};
+
 /**
  * Shared helper to generate signals for a job.
  * Extracted to eliminate duplication between TS and Rust branches.
@@ -775,7 +782,7 @@ function runBacktestAndInsert(
     }
 }
 
-async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promise<void> {
+async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promise<RustBatchDispatchStats> {
     const {
         batchRuns,
         closedData,
@@ -789,8 +796,16 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
         onUnknownRunId,
         onInconsistentResult,
     } = args;
+    const stats: RustBatchDispatchStats = {
+        rustCompletedRuns: 0,
+        fallbackRuns: 0,
+    };
+    const runFallback = (run: PreparedRun): void => {
+        stats.fallbackRuns++;
+        runBacktestFallback(run);
+    };
     if (batchRuns.length === 0) {
-        return;
+        return stats;
     }
 
     const batchItems = batchRuns.map((run) => ({
@@ -833,7 +848,7 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
 
         if (batchResult && batchResult.results.length > 0) {
             const runById = new Map(batchRuns.map((run) => [run.id, run]));
-            const completedRunIds = new Set<string>();
+            const handledRunIds = new Set<string>();
 
             for (const batchEntry of batchResult.results) {
                 const run = runById.get(batchEntry.id);
@@ -841,10 +856,11 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
                     onUnknownRunId?.(batchEntry.id);
                     continue;
                 }
+                handledRunIds.add(run.id);
 
                 if (!isBacktestResultConsistent(batchEntry.result)) {
                     onInconsistentResult?.(run);
-                    runBacktestFallback(run);
+                    runFallback(run);
                     continue;
                 }
 
@@ -856,24 +872,24 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
                     result: batchEntry.result,
                 });
                 timing.resultInsertion += performance.now() - tInsertStart;
-                completedRunIds.add(run.id);
+                stats.rustCompletedRuns++;
             }
 
-            if (completedRunIds.size < batchRuns.length) {
+            if (handledRunIds.size < batchRuns.length) {
                 for (const run of batchRuns) {
-                    if (!completedRunIds.has(run.id)) {
-                        runBacktestFallback(run);
+                    if (!handledRunIds.has(run.id)) {
+                        runFallback(run);
                     }
                 }
             }
         } else {
             for (const run of batchRuns) {
-                runBacktestFallback(run);
+                runFallback(run);
             }
         }
     } catch (_error) {
         for (const run of batchRuns) {
-            runBacktestFallback(run);
+            runFallback(run);
         }
     } finally {
         timing.rustBatchRequest += performance.now() - tRustStart;
@@ -882,6 +898,7 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
         }
         batchRuns.length = 0;
     }
+    return stats;
 }
 
 async function resolveFinderEngineDecision(args: {
@@ -904,6 +921,7 @@ async function resolveFinderEngineDecision(args: {
                 ? (input.requiresTsEngine ? "current sizing or realism settings require TypeScript" : "engine preference is TypeScript")
                 : "Rust health check failed";
     const canTryNativeFinder =
+        RUST_NATIVE_FINDER_ENDPOINT_ENABLED &&
         !comboActive &&
         input.options.mode === "random" &&
         !input.options.multiTimeframeEnabled &&
@@ -1062,6 +1080,12 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
     let endpointAdjustedCount = 0;
     let lastResultsUpdateAt = 0;
     const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
+    let rustCompletedRuns = 0;
+    let rustFallbackRuns = 0;
+    const recordRustDispatchStats = (stats: RustBatchDispatchStats): void => {
+        rustCompletedRuns += stats.rustCompletedRuns;
+        rustFallbackRuns += stats.fallbackRuns;
+    };
 
     const comboActive = !!input.comboPrimarySignals;
     let { useRustForFinder, canTryNativeFinder, cacheId, cacheRequested } =
@@ -1131,6 +1155,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         engineMode: string,
         benchmarkMeta?: RandomBenchmarkMeta
     ): Promise<FinderRunOutput> => {
+        const reportedEngineMode = engineMode.startsWith("rust") && rustFallbackRuns > 0
+            ? (rustCompletedRuns > 0 ? `${engineMode}_mixed_fallback` : "typescript_fallback")
+            : engineMode;
         const fastTop = ranker.toSortedArray(input.options.topN);
         let trimmed = fastTop;
         const shouldReconcileTopResults = usingCompactBacktest || useRustForFinder;
@@ -1158,6 +1185,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         if (endpointAdjustedCount > 0) {
             statusParts.push(`${endpointAdjustedCount} endpoint-adjusted`);
         }
+        if (rustFallbackRuns > 0) {
+            statusParts.push(rustCompletedRuns > 0 ? `${rustFallbackRuns} TS fallbacks` : "Rust unavailable, TS fallback");
+        }
         statusParts.push(`${trimmed.length} shown`);
         if (flags.isVeryLargeDataset) {
             statusParts.push("(memory-efficient mode)");
@@ -1168,8 +1198,10 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         debugLogger.event('finder.timing_breakdown', {
             datasetSize: flags.dataSize,
             totalRuns,
-            engineMode,
+            engineMode: reportedEngineMode,
             batchCount,
+            rustCompletedRuns,
+            rustFallbackRuns,
             durations: {
                 signalGeneration: timing.signalGeneration,
                 rustBatchRequest: timing.rustBatchRequest,
@@ -1184,7 +1216,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             const seconds = Math.max(0.001, timing.total / 1000);
             randomBenchmark = {
                 pipeline: benchmarkMeta.pipeline,
-                engineMode,
+                engineMode: reportedEngineMode,
                 totalRuns,
                 processedRuns: processedRunCount,
                 prescreenRuns: benchmarkMeta.prescreenRuns,
@@ -1201,6 +1233,8 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 symbol: input.symbol,
                 interval: input.interval,
                 ...randomBenchmark,
+                rustCompletedRuns,
+                rustFallbackRuns,
                 durations: {
                     signalGeneration: timing.signalGeneration,
                     rustBatchRequest: timing.rustBatchRequest,
@@ -1479,7 +1513,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             }
             timing.signalGeneration += performance.now() - tSignalStart;
 
-            await dispatchRustBatchWithFallback({
+            recordRustDispatchStats(await dispatchRustBatchWithFallback({
                 batchRuns,
                 closedData,
                 cacheId,
@@ -1489,7 +1523,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 insertResult,
                 runBacktestFallback,
                 timing,
-            });
+            }));
 
             processedCount += batchJobs.length;
             const isFinalBatch = batchIndex + 1 === totalFunnelBatches;
@@ -1639,7 +1673,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             continue;
         }
 
-        await dispatchRustBatchWithFallback({
+        recordRustDispatchStats(await dispatchRustBatchWithFallback({
             batchRuns,
             closedData,
             cacheId,
@@ -1655,7 +1689,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             onInconsistentResult: (run) => {
                 debugLogger.warn(`[Finder] Rust batch result inconsistent for ${run.job.key}, using TypeScript fallback.`);
             },
-        });
+        }));
 
         processedCount += batchJobs.length;
         if (shouldUpdateUi(processedCount === totalRuns)) {

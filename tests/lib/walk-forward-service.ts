@@ -73,6 +73,8 @@ type PreviousBacktestSnapshot = {
     source: string | null;
 };
 
+const RUST_WALK_FORWARD_ENDPOINT_ENABLED = false;
+
 // ============================================================================
 // Walk-Forward Service
 // ============================================================================
@@ -457,7 +459,7 @@ class WalkForwardService {
 
             // Try Rust walk-forward first when compatible, then fallback to TypeScript.
             // Cross-symbol strategies require TypeScript engine (Rust has no cross-symbol support).
-            if (!useFixedParam && shouldUseRustEngine() && !crossSymbolCtx) {
+            if (!useFixedParam && shouldUseRustEngine() && !crossSymbolCtx && RUST_WALK_FORWARD_ENDPOINT_ENABLED) {
                 const requiresTsEngine = backtestService.requiresTypescriptEngine(backtestSettings) || isSmartTradeSizingMode(capitalSettings.sizingMode);
                 if (!requiresTsEngine && await rustEngine.checkHealth()) {
                     const rustConfig = this.toRustWalkForwardConfig(baseConfig);
@@ -775,11 +777,13 @@ class WalkForwardService {
         const result = value as Partial<WalkForwardResult>;
         return (
             typeof result.totalWindows === 'number' &&
+            result.totalWindows > 0 &&
             typeof result.robustnessScore === 'number' &&
             typeof result.walkForwardEfficiency === 'number' &&
             typeof result.parameterStability === 'number' &&
             typeof result.optimizationTimeMs === 'number' &&
             Array.isArray(result.windows) &&
+            result.windows.length > 0 &&
             typeof result.combinedOOSTrades === 'object' &&
             result.combinedOOSTrades !== null
         );
