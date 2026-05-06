@@ -10,13 +10,18 @@ assert.ok(defaultStrategyEntry, "Expected at least one non-cross-symbol strategy
 const defaultStrategyKey = defaultStrategyEntry!.key;
 const defaultStrategyParams = { ...defaultStrategyEntry!.strategy.defaultParams };
 
+function pseudoNoise(index: number, salt = 0): number {
+    const raw = Math.sin((index + 1) * 12.9898 + salt * 78.233) * 43758.5453;
+    return raw - Math.floor(raw);
+}
+
 const sampleCandles: OHLCVData[] = Array.from({ length: 500 }, (_, i) => ({
     time: (1700000000 + i * 300) as Time, // 5m candles
     open: 100 + Math.sin(i * 0.1) * 5,
     high: 105 + Math.sin(i * 0.1) * 5,
     low: 95 + Math.sin(i * 0.1) * 5,
-    close: 100 + Math.sin(i * 0.1) * 5 + (Math.random() - 0.5),
-    volume: 1000 + Math.random() * 500,
+    close: 100 + Math.sin(i * 0.1) * 5 + (pseudoNoise(i) - 0.5),
+    volume: 1000 + pseudoNoise(i, 1) * 500,
 }));
 
 const defaultSettings: BacktestSettings = {
@@ -166,8 +171,8 @@ describe("backtest executor", () => {
             open: 100 + Math.sin(i * 0.05) * 3,
             high: 103 + Math.sin(i * 0.05) * 3,
             low: 97 + Math.sin(i * 0.05) * 3,
-            close: 100 + Math.sin(i * 0.05) * 3 + (Math.random() - 0.5) * 0.5,
-            volume: 500 + Math.random() * 200,
+            close: 100 + Math.sin(i * 0.05) * 3 + (pseudoNoise(i, 2) - 0.5) * 0.5,
+            volume: 500 + pseudoNoise(i, 3) * 200,
         }));
 
         const result = await executeBacktest({
@@ -194,8 +199,8 @@ describe("backtest executor", () => {
             open: 100 + i * 0.1,
             high: 102 + i * 0.1,
             low: 98 + i * 0.1,
-            close: 100 + i * 0.1 + (Math.random() - 0.5),
-            volume: 2000 + Math.random() * 1000,
+            close: 100 + i * 0.1 + (pseudoNoise(i, 4) - 0.5),
+            volume: 2000 + pseudoNoise(i, 5) * 1000,
         }));
 
         const result = await executeBacktest({

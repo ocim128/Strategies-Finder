@@ -1,11 +1,13 @@
 /**
- * Standalone signal merge utility — extracted from BacktestService for reuse
+ * Standalone signal merge utility extracted from BacktestService for reuse
  * by both the Strategy Combiner backtest and the Combo Finder.
  */
-import { timeKey } from "./strategies/backtest/backtest-utils";
+import type { Time } from "lightweight-charts";
+import { compareTime, timeKey } from "./strategies/backtest/backtest-utils";
+import { parseTimeToUnixSeconds } from "./time-normalization";
 
 type MergeableSignal = {
-    time: any;
+    time: Time;
     type: 'buy' | 'sell';
     price: number;
     triggerPrice?: number;
@@ -13,6 +15,15 @@ type MergeableSignal = {
     barIndex?: number;
     sizeFraction?: number;
 };
+
+function compareMergeableSignalTime(left: Time, right: Time): number {
+    const leftSeconds = parseTimeToUnixSeconds(left);
+    const rightSeconds = parseTimeToUnixSeconds(right);
+    if (leftSeconds !== null && rightSeconds !== null) {
+        return leftSeconds - rightSeconds;
+    }
+    return compareTime(left, right);
+}
 
 /**
  * Merge signals from two strategy runs.
@@ -48,7 +59,7 @@ export function mergeStrategySignals(
         return merged;
     }
 
-    // OR: union — primary wins on conflicts
+    // OR: union - primary wins on conflicts
     const primaryMap = new Map<string, MergeableSignal>();
     for (const signal of primarySignals) {
         primaryMap.set(timeKey(signal.time), signal);
@@ -63,11 +74,7 @@ export function mergeStrategySignals(
     }
 
     // Sort by time
-    merged.sort((a, b) => {
-        const ta = typeof a.time === 'number' ? a.time : Number(a.time);
-        const tb = typeof b.time === 'number' ? b.time : Number(b.time);
-        return ta - tb;
-    });
+    merged.sort((a, b) => compareMergeableSignalTime(a.time, b.time));
 
     return merged;
 }

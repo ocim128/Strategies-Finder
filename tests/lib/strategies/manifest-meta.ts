@@ -33,7 +33,7 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
     {
         key: "adx_skewness_drift",
         name: "ADX Skewness Drift",
-        description: "Resolves the primary limitation of ADX—its lack of directionality—by overlaying rolling structural skewness. Defines trading regimes using raw unipolar trend momentum validated by an asymmetrically biased return distribution.",
+        description: "Resolves the primary limitation of ADX - its lack of directionality - by overlaying rolling structural skewness. Defines trading regimes using raw unipolar trend momentum validated by an asymmetrically biased return distribution.",
         defaultParams: {
         adxPeriod: 14,
         adxThresh: 25,

@@ -66,6 +66,7 @@ import {
 } from "./backtest-endpoint-facade";
 import { addStrategyIndicators as renderStrategyIndicators } from "./backtest-chart-renderer";
 import { parseTimeToUnixSeconds } from "./time-normalization";
+import { filterSignalsByBlockRange as filterSignalsBySelectedBlockRange } from "./signal-block-filter";
 import { findContainingEvent } from "./polymarket-1m-5m-bridge";
 import { markAppTiming, getMark } from "./app-timing";
 import {
@@ -581,14 +582,7 @@ export class BacktestService {
     }
 
     private filterSignalsByBlockRange<T extends { time: Signal['time'] }>(signals: T[]): T[] {
-        const block = state.blockRange;
-        if (!block || block.from === block.to) {
-            return signals;
-        }
-        return signals.filter(signal => {
-            const t = typeof signal.time === 'number' ? signal.time : Number(signal.time);
-            return t >= block.from && t <= block.to;
-        });
+        return filterSignalsBySelectedBlockRange(signals, state.blockRange);
     }
 
     private finalizeBacktestResult(

@@ -1,5 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import type { OHLCVData, StrategyParams } from '../../lib/strategies';
 import { strategyManifest } from '../../lib/strategies/manifest';
 
@@ -61,5 +63,14 @@ describe('strategy normalization parity', () => {
 
             expect(rawSignals, `${key} execute() should normalize params internally`).to.deep.equal(normalizedSignals);
         }
+    });
+
+    it('keeps built-in strategy execution free of ambient randomness', () => {
+        const strategyDir = path.join(process.cwd(), 'lib', 'strategies', 'lib');
+        const offenders = readdirSync(strategyDir)
+            .filter((name) => name.endsWith('.ts'))
+            .filter((name) => /\bMath\.random\s*\(/.test(readFileSync(path.join(strategyDir, name), 'utf8')));
+
+        expect(offenders).to.deep.equal([]);
     });
 });

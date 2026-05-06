@@ -13,7 +13,7 @@ function normalizeAdxSkewnessDriftParams(params: StrategyParams): StrategyParams
 
 export const adx_skewness_drift: Strategy = {
     name: "ADX Skewness Drift",
-    description: "Resolves the primary limitation of ADX—its lack of directionality—by overlaying rolling structural skewness. Defines trading regimes using raw unipolar trend momentum validated by an asymmetrically biased return distribution.",
+    description: "Resolves the primary limitation of ADX - its lack of directionality - by overlaying rolling structural skewness. Defines trading regimes using raw unipolar trend momentum validated by an asymmetrically biased return distribution.",
     defaultParams: {
         adxPeriod: 14,
         adxThresh: 25,
@@ -24,20 +24,24 @@ export const adx_skewness_drift: Strategy = {
         skewThreshold: "Asymmetry Boundary" },
     normalizeParams: normalizeAdxSkewnessDriftParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
+        const normalizedParams = normalizeAdxSkewnessDriftParams(params);
+        const adxPeriod = normalizedParams.adxPeriod as number;
+        const adxThresh = normalizedParams.adxThresh as number;
+        const skewThreshold = normalizedParams.skewThreshold as number;
         const cleanData = ensureCleanData(data);
-        if (cleanData.length < (params.adxPeriod as number) * 2) return [];
+        if (cleanData.length < adxPeriod * 2) return [];
 
         const adx = calculateADX(
             cleanData.map(d => d.high),
             cleanData.map(d => d.low),
             cleanData.map(d => d.close),
-            params.adxPeriod as number
+            adxPeriod
         );
 
         const returnSeries = extractBarMetricSeries(cleanData, "closeReturn");
-        // Remove strictly zero return samples that destroy skewness tracking over weekends/crypto pegs
-        const mappedReturns = returnSeries.map(r => r === 0 ? 0.0000001 * (Math.random() - 0.5) : r);
-        const skewness = buildRollingSkewness(mappedReturns, Math.max(20, params.adxPeriod as number));
+        // Keep zero-return samples from collapsing skewness while preserving deterministic execution.
+        const mappedReturns = returnSeries.map((r, index) => r === 0 ? (index % 2 === 0 ? -0.00000005 : 0.00000005) : r);
+        const skewness = buildRollingSkewness(mappedReturns, Math.max(20, adxPeriod));
 
         return createSignalLoop(cleanData, [], (i) => {
             if (adx[i] === null || skewness[i] === null) return null;
@@ -45,13 +49,13 @@ export const adx_skewness_drift: Strategy = {
             const currentAdx = adx[i]!;
             const currentSkew = skewness[i]!;
             
-            const isTrending = currentAdx > (params.adxThresh as number);
+            const isTrending = currentAdx > adxThresh;
             
-            if (isTrending && currentSkew > (params.skewThreshold as number)) {
-                return createBuySignal(cleanData, i, `ADX Trending > ${params.adxThresh} & positive skew`);
+            if (isTrending && currentSkew > skewThreshold) {
+                return createBuySignal(cleanData, i, `ADX Trending > ${adxThresh} & positive skew`);
             }
-            if (isTrending && currentSkew < -(params.skewThreshold as number)) {
-                return createSellSignal(cleanData, i, `ADX Trending > ${params.adxThresh} & negative skew`);
+            if (isTrending && currentSkew < -skewThreshold) {
+                return createSellSignal(cleanData, i, `ADX Trending > ${adxThresh} & negative skew`);
             }
             return null;
         });

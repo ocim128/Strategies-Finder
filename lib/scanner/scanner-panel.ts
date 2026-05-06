@@ -9,6 +9,7 @@ import { alertService, buildAlertStreamId } from '../alert-service';
 import { uiManager } from '../ui-manager';
 import type { ScanResult, ScanProgress, StrategyConfigEntry } from '../types/scanner';
 import { isWorkerSupportedStrategyKey } from '../alert-subscription-utils';
+import { escapeHtml } from '../html-escape';
 
 // ============================================================================
 // Scanner Panel Class
@@ -247,13 +248,22 @@ export class ScannerPanel {
         const savedConfigs = settingsManager.loadAllStrategyConfigs();
 
         if (savedConfigs.length === 0) {
-            select.innerHTML = '<option value="" disabled>No saved configurations</option>';
+            const option = document.createElement('option');
+            option.value = '';
+            option.disabled = true;
+            option.textContent = 'No saved configurations';
+            select.replaceChildren(option);
             return;
         }
 
-        select.innerHTML = savedConfigs
-            .map((config) => `<option value="${config.name}" data-strategy-key="${config.strategyKey}">${config.name}</option>`)
-            .join('');
+        const options = savedConfigs.map((config) => {
+            const option = document.createElement('option');
+            option.value = config.name;
+            option.dataset.strategyKey = config.strategyKey;
+            option.textContent = config.name;
+            return option;
+        });
+        select.replaceChildren(...options);
 
         // Pre-select first config
         if (savedConfigs.length > 0) {
@@ -436,6 +446,11 @@ export class ScannerPanel {
                 const pnl = this.calculateUnrealizedPnL(r);
                 const pnlClass = pnl >= 0 ? 'scanner-panel__cell-pnl--profit' : 'scanner-panel__cell-pnl--loss';
                 const pnlSign = pnl >= 0 ? '+' : '';
+                const displayName = escapeHtml(r.displayName);
+                const strategyName = escapeHtml(r.strategy.replace(/_/g, ' '));
+                const symbolAttr = escapeHtml(r.symbol);
+                const strategyKeyAttr = escapeHtml(r.strategyKey);
+                const configNameAttr = escapeHtml(encodeURIComponent(r.strategy));
 
                 // Format target price with appropriate styling
                 let targetHtml = '<span class="scanner-panel__cell-target--none">-</span>';
@@ -450,18 +465,18 @@ export class ScannerPanel {
                 }
 
                 return `
-                <tr class="scanner-panel__result-row" data-symbol="${r.symbol}">
-                    <td class="scanner-panel__cell-pair">${r.displayName}</td>
+                <tr class="scanner-panel__result-row" data-symbol="${symbolAttr}">
+                    <td class="scanner-panel__cell-pair">${displayName}</td>
                     <td class="scanner-panel__cell-dir scanner-panel__cell-dir--${r.direction}">
                         ${r.direction.toUpperCase()}
                     </td>
-                    <td class="scanner-panel__cell-strategy">${r.strategy.replace(/_/g, ' ')}</td>
+                    <td class="scanner-panel__cell-strategy">${strategyName}</td>
                     <td class="scanner-panel__cell-price">${r.signal.price.toFixed(4)}</td>
                     <td class="scanner-panel__cell-price">${r.currentPrice.toFixed(4)}</td>
                     <td class="scanner-panel__cell-target">${targetHtml}</td>
                     <td class="scanner-panel__cell-pnl ${pnlClass}">${pnlSign}${pnl.toFixed(2)}%</td>
                     <td class="scanner-panel__cell-age">${r.signalAge} bar${r.signalAge !== 1 ? 's' : ''}</td>
-                    <td class="scanner-panel__cell-alert"><button class="scanner-panel__alert-btn" data-symbol="${r.symbol}" data-strategy-key="${r.strategyKey}" data-config-name="${encodeURIComponent(r.strategy)}" title="Subscribe to alerts">Alert</button></td>
+                    <td class="scanner-panel__cell-alert"><button class="scanner-panel__alert-btn" data-symbol="${symbolAttr}" data-strategy-key="${strategyKeyAttr}" data-config-name="${configNameAttr}" title="Subscribe to alerts">Alert</button></td>
                 </tr>
             `;
             })

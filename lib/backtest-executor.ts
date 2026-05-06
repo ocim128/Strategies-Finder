@@ -51,6 +51,7 @@ import {
     calculateSharpeRatioFromReturns,
 } from "./strategies/performance-metrics";
 import { parseTimeToUnixSeconds } from "./time-normalization";
+import { filterSignalsByBlockRange as filterSignalsBySelectedBlockRange } from "./signal-block-filter";
 import { timeKey } from "./strategies/backtest/backtest-utils";
 import {
     registerBacktestEdgeAnalysisInput,
@@ -481,13 +482,7 @@ function filterSignalsByBlockRange<T extends { time: Signal["time"] }>(
     signals: T[],
     blockRange: { from: number; to: number } | null
 ): T[] {
-    if (!blockRange || blockRange.from === blockRange.to) {
-        return signals;
-    }
-    return signals.filter((signal) => {
-        const time = parseTimeToUnixSeconds(signal.time);
-        return time !== null && time >= blockRange.from && time <= blockRange.to;
-    });
+    return filterSignalsBySelectedBlockRange(signals, blockRange);
 }
 
 function hasGlobalStrategyTimeframeWrapper(strategy: Strategy): boolean {

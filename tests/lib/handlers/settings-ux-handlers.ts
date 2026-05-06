@@ -135,19 +135,17 @@ function initTooltips(): void {
         tipTrigger.setAttribute('tabindex', '0');
         tipTrigger.setAttribute('role', 'button');
         tipTrigger.setAttribute('aria-label', text);
-        tipTrigger.innerHTML = `â“˜<span class="info-tip-content">${escapeHTML(text)}</span>`;
+        tipTrigger.textContent = 'i';
+        const tipContent = document.createElement('span');
+        tipContent.className = 'info-tip-content';
+        tipContent.textContent = text;
+        tipTrigger.appendChild(tipContent);
 
         if (!label.classList.contains('param-label-with-tip')) {
             label.classList.add('param-label-with-tip');
         }
         label.appendChild(tipTrigger);
     });
-}
-
-function escapeHTML(str: string): string {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
 }
 
 function syncRegistryMarkup(): void {

@@ -20,6 +20,7 @@ import { toHeikinAshi } from "./heikin-ashi-utils";
 import { formatJakartaTickMark, formatJakartaTime } from "./timezone-utils";
 import { formatDisplayPrice } from "./price-format";
 import { bindChartRuntime, setIndicators, setMarkersPlugin } from "./state-actions";
+import { createChartManagerDom } from "./chart-manager-dom";
 
 import { Trade, OHLCVData } from "./strategies/index";
 import { getTimeIndex, timeKey } from "./strategies/backtest/backtest-utils";
@@ -82,8 +83,9 @@ export class ChartManager {
     );
 
     public initCharts() {
-        this.mainChartContainer = document.getElementById('main-chart');
-        this.equityChartContainer = document.getElementById('equity-chart');
+        const dom = createChartManagerDom();
+        this.mainChartContainer = dom.mainChartContainer;
+        this.equityChartContainer = dom.equityChartContainer;
         const container = this.mainChartContainer;
         const equityContainer = this.equityChartContainer;
         if (!container || !equityContainer) {

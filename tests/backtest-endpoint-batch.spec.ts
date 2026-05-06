@@ -10,13 +10,18 @@ assert.ok(defaultStrategyEntry, "Expected at least one non-cross-symbol strategy
 const defaultStrategyKey = defaultStrategyEntry!.key;
 const defaultStrategyParams = { ...defaultStrategyEntry!.strategy.defaultParams };
 
+function pseudoNoise(index: number, salt = 0): number {
+    const raw = Math.sin((index + 1) * 12.9898 + salt * 78.233) * 43758.5453;
+    return raw - Math.floor(raw);
+}
+
 const sampleCandles: OHLCVData[] = Array.from({ length: 500 }, (_, i) => ({
     time: (1700000000 + i * 300) as import("lightweight-charts").Time,
     open: 100 + Math.sin(i * 0.1) * 5,
     high: 105 + Math.sin(i * 0.1) * 5,
     low: 95 + Math.sin(i * 0.1) * 5,
-    close: 100 + Math.sin(i * 0.1) * 5 + (Math.random() - 0.5),
-    volume: 1000 + Math.random() * 500,
+    close: 100 + Math.sin(i * 0.1) * 5 + (pseudoNoise(i) - 0.5),
+    volume: 1000 + pseudoNoise(i, 1) * 500,
 }));
 
 const defaultSettings: BacktestSettings = {
