@@ -47,6 +47,13 @@ import type {
 import { isSmartTradeSizingMode } from "./types/backtest";
 import { isSignalExitSameEventMode } from "./polymarket-exit-mode";
 import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
+import {
+	clampPolymarketPostSignalLimitEntryPriceCents,
+	clampPolymarketPostSignalLimitExitPriceCents,
+	clampPolymarketPostSignalLimitOffsetCents,
+	resolvePolymarketPostSignalLimitEntryMode,
+	resolvePolymarketPostSignalLimitExitMode,
+} from "./polymarket-post-signal-limit-entry";
 import { finderSortRequiresTradeTimingQuality } from "./trade-timing-quality";
 
 type FinderPersistedUiState = {
@@ -1054,7 +1061,7 @@ export class FinderManager {
 		return true;
 	}
 
-	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'polymarketExitMode' | 'executionModel'>): FinderOptions {
+	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'polymarketExitMode' | 'executionModel' | 'polymarketPostSignalLimitEntryEnabled' | 'polymarketPostSignalLimitEntryMode' | 'polymarketPostSignalLimitEntryPriceCents' | 'polymarketPostSignalLimitEntryOffsetCents' | 'polymarketPostSignalLimitExitEnabled' | 'polymarketPostSignalLimitExitMode' | 'polymarketPostSignalLimitExitPriceCents' | 'polymarketPostSignalLimitExitOffsetCents'>): FinderOptions {
 		const dom = this.getDom();
 		const scope = this.isUniverseScope() ? 'symbol_universe' : 'current_chart';
 		const useAdvancedSort = dom.finderAdvancedToggle.checked;
@@ -1115,6 +1122,14 @@ export class FinderManager {
 			polymarketLockOffset,
 			polymarketAfterTakeProfitOnly,
 			polymarketExitMode: effectiveExitMode,
+			polymarketPostSignalLimitEntryEnabled: backtestSettings.polymarketPostSignalLimitEntryEnabled,
+			polymarketPostSignalLimitEntryMode: backtestSettings.polymarketPostSignalLimitEntryMode,
+			polymarketPostSignalLimitEntryPriceCents: backtestSettings.polymarketPostSignalLimitEntryPriceCents,
+			polymarketPostSignalLimitEntryOffsetCents: backtestSettings.polymarketPostSignalLimitEntryOffsetCents,
+			polymarketPostSignalLimitExitEnabled: backtestSettings.polymarketPostSignalLimitExitEnabled,
+			polymarketPostSignalLimitExitMode: backtestSettings.polymarketPostSignalLimitExitMode,
+			polymarketPostSignalLimitExitPriceCents: backtestSettings.polymarketPostSignalLimitExitPriceCents,
+			polymarketPostSignalLimitExitOffsetCents: backtestSettings.polymarketPostSignalLimitExitOffsetCents,
 		});
 
 		options.scope = scope;
@@ -1372,9 +1387,38 @@ export class FinderManager {
 			: settingsManager.getBacktestSettings();
 		const mergedSettings = mergeFinderRiskParamsIntoBacktestSettings(baseSettings, params, this.lastFinderOptions ?? undefined);
 		const effectiveMode = this.lastFinderOptions?.polymarketExitMode ?? 'resolve_hold';
+		const applyPolymarketLimitEntrySettings = (): boolean => {
+			if (!polymarketEval?.limitEntryEnabled) {
+				return false;
+			}
+			mergedSettings.polymarketPostSignalLimitEntryEnabled = true;
+			mergedSettings.polymarketPostSignalLimitEntryMode = resolvePolymarketPostSignalLimitEntryMode(
+				polymarketEval.limitEntryMode
+			);
+			mergedSettings.polymarketPostSignalLimitEntryPriceCents = clampPolymarketPostSignalLimitEntryPriceCents(
+				polymarketEval.limitEntryPriceCents ?? mergedSettings.polymarketPostSignalLimitEntryPriceCents
+			);
+			mergedSettings.polymarketPostSignalLimitEntryOffsetCents = clampPolymarketPostSignalLimitOffsetCents(
+				polymarketEval.limitEntryOffsetCents ?? mergedSettings.polymarketPostSignalLimitEntryOffsetCents
+			);
+			mergedSettings.polymarketPostSignalLimitExitEnabled = polymarketEval.limitExitEnabled === true;
+			mergedSettings.polymarketPostSignalLimitExitMode = resolvePolymarketPostSignalLimitExitMode(
+				polymarketEval.limitExitMode
+			);
+			mergedSettings.polymarketPostSignalLimitExitPriceCents = clampPolymarketPostSignalLimitExitPriceCents(
+				polymarketEval.limitExitPriceCents ?? mergedSettings.polymarketPostSignalLimitExitPriceCents
+			);
+			mergedSettings.polymarketPostSignalLimitExitOffsetCents = clampPolymarketPostSignalLimitOffsetCents(
+				polymarketEval.limitExitOffsetCents ?? mergedSettings.polymarketPostSignalLimitExitOffsetCents
+			);
+			return true;
+		};
 		if (isSignalExitSameEventMode(effectiveMode)) {
 			mergedSettings.polymarketAnnotationEnabled = true;
 			mergedSettings.polymarketExitMode = 'signal_exit_same_event';
+			applyPolymarketLimitEntrySettings();
+		} else if (applyPolymarketLimitEntrySettings()) {
+			mergedSettings.polymarketAnnotationEnabled = true;
 		} else if (Number.isFinite(params.polymarketEntryOffset)) {
 			mergedSettings.polymarketEntryOffset = Math.max(0, Math.min(4, Math.round(Number(params.polymarketEntryOffset))));
 			if (polymarketEval) {

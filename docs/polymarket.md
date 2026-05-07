@@ -30,6 +30,7 @@ If you want to score a strategy against resolved Polymarket crypto events:
 - choose `Polymarket Exit Mode`:
   - `resolve_hold` scores at final event resolution
   - `signal_exit_same_event` is `1m` + `next_open` only and uses locally cached Polymarket price points for same-session entry and exit pricing on the selected native outcome session
+- optional for native `5m` outcome sessions: enable `Post-Signal Limit Entry` to require the selected YES/NO side to trade at or below the configured limit price after the chart entry signal and before the event's final minute
 
 If you want to manually paper-trade the latest still-open backtest trade:
 
@@ -82,10 +83,12 @@ Important behavior:
 - `polymarketOutcomeInterval` selects which native outcome session rows to load; default is `5m`
 - native `15m` and `1h` runs match each trade to the containing Polymarket session event
 - `signal_exit_same_event` also uses local SQLite price points for intra-event pricing
+- post-signal limit entry is an optional `5m` outcome-session overlay that uses local SQLite price points to decide whether a chart trade would have filled at a fixed limit price or a signal-quote offset before scoring it
 - `lib/polymarket-outcome-evaluator.ts` remains the headless resolve-hold helper when the caller only supplies outcome rows
 - stores the resolved target on `BacktestResult.polymarketTradeSummary.outcomeSymbol` so later UI reloads do not drift
 - stores the applied evaluation mode on `BacktestResult.polymarketTradeSummary.evaluationMode`
 - stores the applied native session on `BacktestResult.polymarketTradeSummary.outcomeInterval`
+- stores post-signal limit-entry attempts, fills, misses, duplicate attempts, fill rate, wait time, average entry improvement, and optional target-exit counts when the overlay is enabled
 
 Core files:
 
@@ -213,6 +216,41 @@ PnL semantics:
   - expectancy
   - profit factor
 
+### Post-signal limit entry
+
+This is an optional entry-fill overlay, not a third exit mode.
+
+Effective gating:
+
+- annotation must be enabled
+- `Polymarket Outcome Session` must be `5m`
+- the overlay is available in both `resolve_hold` and `signal_exit_same_event`
+- fixed entry limit price is stored as cents and normalized to `1..99`; default is `50`
+- entry offset is stored as cents and normalized to `0..99`; default is `20`
+
+Behavior:
+
+- long chart trades attempt to buy YES; short chart trades attempt to buy NO
+- the attempt starts at the chart trade entry timestamp
+- fixed-price entry mode fills when the side price is at or below `polymarketPostSignalLimitEntryPriceCents` before `event_end_ts - 60`
+- signal-offset entry mode computes the limit from the first available event-side quote after chart entry minus `polymarketPostSignalLimitEntryOffsetCents`; for example, a 60c first YES quote with offset `20` becomes a 40c entry limit
+- if the contract touches only during the final minute, the attempt is reported as `last_minute_only` and is not scored
+- if `signal_exit_same_event` has a same-event chart signal exit before the limit touch, the attempt is reported as `invalid_window` and is not scored
+- the first chart attempt claims the event even when it misses; later chart trades in the same event are reported as duplicates
+- filled attempts use the resolved limit price as `marketEntryPrice`, not the first observed quote
+- missed attempts stay visible in Trades, Quick View, and Polymarket diagnostics, but they do not count as scored Polymarket trades
+- when `no_price` is absent from price points, NO can be derived as `1 - yes_price`; explicit `no_price` wins when present
+
+Optional target exit:
+
+- target exit is scoped to post-signal limit-entry fills
+- fixed target mode exits when the filled side reaches `polymarketPostSignalLimitExitPriceCents`
+- entry-offset target mode exits when the filled entry price plus `polymarketPostSignalLimitExitOffsetCents` is reached; for example, a 60c filled entry with offset `20` targets 80c
+- if the computed target is `>= 100c`, the target is marked `unreachable` and the trade falls back to the active exit model
+- in `resolve_hold`, a target touch exits before final resolution; if target never fills, the trade holds to resolution
+- in `signal_exit_same_event`, target exit and chart signal exit race by timestamp; the first fill executes, and no later exit is applied
+- target-exited trades use realized `marketPnl = marketExitPrice - marketEntryPrice` in payout diagnostics and Finder ranking
+
 ## Supported Outcome Targets
 
 The repo-level Polymarket crypto outcome target symbols are fixed:
@@ -234,22 +272,23 @@ If you add another target, update:
 
 ## Support Matrix
 
-| Surface | `resolve_hold` | `signal_exit_same_event` | Important notes |
-| --- | --- | --- | --- |
-| Direct Polymarket charting | not applicable | not applicable | provider path only |
-| Manual backtest annotation | native `5m` / `15m` / `1h`, plus existing `1m` / `15m` / `1h` / `4h` bridge paths where applicable | `1m` + `next_open` on the selected native outcome session | same chart backtest, Polymarket post-pass |
-| Headless `evaluatePolymarketOutcomes(...)` | resolve-hold only | not supported | caller supplies outcome rows only; no price-point input surface |
-| Finder Polymarket mode | `1m`, `5m`, `15m`, `1h`, `4h` | `1m` + `next_open` only | `grid` and `random` only; no combo; no multi-timeframe |
-| Hunt | same as Finder | same as Finder | preserves `polymarketExitMode` in profiles |
-| Quick View / Trades / Polymarket diagnostics reload | can reuse stored summary broadly; native `15m` / `1h` show summary and payout cards | `1m` only when price points are available or can be ensured | active consumers, not passive renderers |
-| Endpoint Preview / Copy / HTTP execution | `resolve_hold` only | not supported | `polymarketExitMode` is stripped |
-| Strategy Ensemble Polymarket | `resolve_hold` only | not supported | explicit fence in the ensemble path |
-| Bridge export | separate contract | separate contract | ignores `polymarketExitMode`; still chart-symbol `5m` entry-signal export |
+| Surface | `resolve_hold` | `signal_exit_same_event` | Post-signal limit entry | Important notes |
+| --- | --- | --- | --- | --- |
+| Direct Polymarket charting | not applicable | not applicable | not applicable | provider path only |
+| Manual backtest annotation | native `5m` / `15m` / `1h`, plus existing `1m` / `15m` / `1h` / `4h` bridge paths where applicable | `1m` + `next_open` on the selected native outcome session | `5m` outcome session only | same chart backtest, Polymarket post-pass |
+| Headless `evaluatePolymarketOutcomes(...)` | resolve-hold only | not supported | not supported | caller supplies outcome rows only; no price-point input surface |
+| Finder Polymarket mode | `1m`, `5m`, `15m`, `1h`, `4h` | `1m` + `next_open` only | `5m` outcome session only | `grid` and `random` only; no combo; no multi-timeframe |
+| Hunt | same as Finder | same as Finder | same as Finder | preserves Polymarket mode settings in profiles |
+| Quick View / Trades / Polymarket diagnostics reload | can reuse stored summary broadly; native `15m` / `1h` show summary and payout cards | `1m` only when price points are available or can be ensured | reloads price points for `5m` limit attempts | active consumers, not passive renderers |
+| Endpoint Preview / Copy / HTTP execution | `resolve_hold` only | not supported | not supported | exit mode and limit-entry settings are stripped |
+| Strategy Ensemble Polymarket | `resolve_hold` only | not supported | not supported | explicit fence in the ensemble path |
+| Bridge export | separate contract | separate contract | separate contract | ignores scoring-mode settings; still chart-symbol `5m` entry-signal export |
 
 Two important nuances:
 
 - `signal_exit_same_event` is intentionally narrower than general Polymarket scoring.
 - endpoint and ensemble surfaces still expose Polymarket annotation, but only in `resolve_hold`.
+- post-signal limit entry is intentionally limited to the native `5m` outcome session because it depends on intra-event price-point replay.
 
 ## Outcome And Price Data Model
 
@@ -273,7 +312,7 @@ Each `PolymarketOutcomeRow` contains:
   - `+4m`
 - `resolved_outcome_up`
 
-Signal-exit mode adds a second local data surface:
+Signal-exit mode and post-signal limit entry add a second local data surface:
 
 - SQLite table: `polymarket_price_points`
 - browser API: `loadPolymarketPricePoints(...)`
@@ -304,7 +343,7 @@ Important behavior:
 
 - price points are event-keyed, not treated as one continuous market series
 - `ensurePricePointsForOutcomes(...)` loads existing local rows by event start, treats a session as covered only when local quotes reach near `event_end_ts`, then fetches missing event histories and stores the missing rows locally
-- first-run `1m` signal-exit backtests or Finder runs may trigger on-demand price-point ingestion
+- first-run signal-exit or post-signal limit-entry backtests or Finder runs may trigger on-demand price-point ingestion
 - there is no separate manual sync command required for price points
 - outcome rows still require the normal `poly:sync-outcomes` flow
 
@@ -366,6 +405,7 @@ Current behavior:
 - supports cross-symbol outcome scoring through `backtestSettings.polymarketOutcomeSymbol`
 - reuses normal strategy execution and backtest machinery
 - applies signal-exit evaluation through the shared evaluator, not a Finder-only pricing path
+- applies post-signal limit entry through the same shared annotation/evaluator paths used by manual backtests
 
 Signal-exit restrictions:
 
@@ -393,6 +433,7 @@ Important signal-exit differences versus the old `1m` bridge mode:
 Native-session resolve-hold note:
 
 - Finder also does not fan out offset variants when `polymarketOutcomeInterval` is `15m` or `1h`
+- Finder also does not fan out offset variants when post-signal limit entry is enabled
 - native-session resolve-hold ranks the actual selected session annotations and payout metrics
 
 Hunt behavior:
@@ -411,6 +452,14 @@ User-facing controls live in the Backtest Realism section:
 - `polymarketEntrySelectionMode`
 - `polymarketEntryOffset`
 - `polymarketExitMode`
+- `polymarketPostSignalLimitEntryEnabled`
+- `polymarketPostSignalLimitEntryMode`
+- `polymarketPostSignalLimitEntryPriceCents`
+- `polymarketPostSignalLimitEntryOffsetCents`
+- `polymarketPostSignalLimitExitEnabled`
+- `polymarketPostSignalLimitExitMode`
+- `polymarketPostSignalLimitExitPriceCents`
+- `polymarketPostSignalLimitExitOffsetCents`
 
 Current UI rules:
 
@@ -419,6 +468,13 @@ Current UI rules:
 - `polymarketExitMode` shows when annotation is enabled
 - `polymarketEntrySelectionMode` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, and the selected exit mode is not `signal_exit_same_event`
 - `polymarketEntryOffset` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, the selected exit mode is not `signal_exit_same_event`, and entry selection is `fixed_offset`
+- `polymarketPostSignalLimitEntryEnabled` only shows when annotation is enabled and native outcome session is `5m`
+- post-signal entry mode and exit toggle only show when post-signal limit entry is enabled
+- fixed entry price only shows when entry mode is `fixed_price`
+- entry offset only shows when entry mode is `signal_offset`
+- target exit mode only shows when post-signal target exit is enabled
+- fixed target price only shows when target exit mode is `fixed_price`
+- target offset only shows when target exit mode is `entry_offset`
 - Finder and Hunt rank-mode dropdowns disable unsupported rank modes when signal-exit mode is selected
 
 Persistence and compatibility:
@@ -432,6 +488,14 @@ Persistence and compatibility:
 - `polymarketEntrySelectionMode` defaults to `fixed_offset`
 - invalid persisted values normalize back to `fixed_offset`
 - `polymarketEntryOffset` stays persisted for backward compatibility even when ignored by signal-exit mode
+- `polymarketPostSignalLimitEntryEnabled` defaults to `false`
+- `polymarketPostSignalLimitEntryMode` defaults to `fixed_price`
+- `polymarketPostSignalLimitEntryPriceCents` defaults to `50` and clamps to `1..99`
+- `polymarketPostSignalLimitEntryOffsetCents` defaults to `20` and clamps to `0..99`
+- `polymarketPostSignalLimitExitEnabled` defaults to `false`
+- `polymarketPostSignalLimitExitMode` defaults to `entry_offset`
+- `polymarketPostSignalLimitExitPriceCents` defaults to `80` and clamps to `1..99`
+- `polymarketPostSignalLimitExitOffsetCents` defaults to `20` and clamps to `0..99`
 - Polymarket settings are Rust-unsupported
 - `signal_exit_same_event` requires the TypeScript engine
 
@@ -451,6 +515,7 @@ Endpoint behavior:
 
 - endpoint Preview / Copy auto-enable Polymarket annotation for supported runs
 - endpoint request building strips `polymarketExitMode`
+- endpoint request building strips post-signal limit-entry and target-exit settings
 - endpoint execution therefore stays on `resolve_hold`
 
 Relevant files:
@@ -509,6 +574,7 @@ If you touch Polymarket code, first decide which contract you are editing:
 - outcome-symbol resolution
 - `resolve_hold` scoring semantics
 - `signal_exit_same_event` pricing semantics
+- post-signal limit-entry fill semantics
 - local price-point storage or ingestion
 - Finder or Hunt Polymarket ranking
 - diagnostics rendering
@@ -544,6 +610,20 @@ Recheck together:
 - `lib/polymarket-panel-service.ts`
 - `lib/polymarket-diagnostics-utils.ts`
 
+### If you change post-signal limit-entry semantics
+
+Recheck together:
+
+- `lib/polymarket-post-signal-limit-entry.ts`
+- `lib/polymarket-price-points.ts`
+- `lib/polymarket-trade-annotations.ts`
+- `lib/polymarket-signal-exit-evaluator.ts`
+- `lib/backtest-service.ts`
+- `lib/finder/finder-runner-polymarket.ts`
+- `lib/quick-view/quick-view-service.ts`
+- `lib/renderers/tradesRenderer.ts`
+- `lib/polymarket-panel-service.ts`
+
 ### If you change local price-point storage or ingestion
 
 Keep aligned:
@@ -570,6 +650,10 @@ npm run typecheck
 ```
 
 Focused Polymarket tests:
+
+```bash
+..\..\..\node_modules\.bin\esno tests\polymarket-post-signal-limit-entry.spec.ts
+```
 
 ```bash
 ..\..\..\node_modules\.bin\esno tests\polymarket-signal-exit.spec.ts

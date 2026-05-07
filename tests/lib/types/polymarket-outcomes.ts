@@ -2,6 +2,20 @@ import type { CapitalSettings } from "./backtest";
 import type { BacktestSettings } from "./strategies";
 import type { PolymarketEntrySelectionMode } from "../polymarket-entry-selection-mode";
 import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
+import type {
+    PolymarketLimitEntryPriceMode,
+    PolymarketLimitExitPriceMode,
+    PolymarketLimitExitStatus,
+} from "../polymarket-post-signal-limit-entry";
+
+export type PolymarketMarketEntrySource = "quote" | "limit";
+export type PolymarketMarketEntryStatus =
+    | "filled"
+    | "not_touched"
+    | "last_minute_only"
+    | "missing_price_points"
+    | "invalid_window"
+    | "duplicate";
 
 export interface PolymarketOutcomeRow {
     series_id: string;
@@ -51,6 +65,11 @@ export interface TradePolymarketOutcome {
     marketNoPrice?: number | null;
     /** Entry probability paid for this trade (YES for longs, NO for shorts). */
     marketEntryPrice?: number | null;
+    marketEntrySource?: PolymarketMarketEntrySource;
+    marketEntryStatus?: PolymarketMarketEntryStatus;
+    marketEntryFillTs?: number | null;
+    marketEntryLimitPrice?: number | null;
+    marketEntryImprovement?: number | null;
     /** Entry offset minute within the selected Polymarket event session. */
     entryOffset?: number;
     /** Which evaluation mode produced this outcome annotation */
@@ -61,8 +80,10 @@ export interface TradePolymarketOutcome {
     marketExitPrice?: number | null;
     /** Exit timestamp for the Polymarket leg */
     marketExitTs?: number | null;
-    /** How the Polymarket leg exited: signal (same-event), resolution (final outcome), duplicate (same-event already scored), filtered (excluded by resolve-hold minute selection), no_event (no matching Polymarket event), or missing (price data unavailable) */
-    marketExitSource?: "signal" | "resolution" | "duplicate" | "filtered" | "no_event" | "missing";
+    /** How the Polymarket leg exited: target (limit target), signal (same-event), resolution (final outcome), duplicate (same-event already scored), filtered (excluded by resolve-hold minute selection), no_event (no matching Polymarket event), or missing (price data unavailable) */
+    marketExitSource?: "target" | "signal" | "resolution" | "duplicate" | "filtered" | "no_event" | "missing";
+    marketExitTargetPrice?: number | null;
+    marketExitStatus?: PolymarketLimitExitStatus;
     /** PnL for the Polymarket leg: marketExitPrice - marketEntryPrice */
     marketPnl?: number | null;
 }
@@ -95,6 +116,7 @@ export interface BacktestPolymarketTradeSummary {
     losingTrades?: number;
     neutralTrades?: number;
     signalExitedTrades?: number;
+    targetExitedTrades?: number;
     resolvedTrades?: number;
     missingPriceTrades?: number;
     netPnl?: number;
@@ -104,6 +126,27 @@ export interface BacktestPolymarketTradeSummary {
     expectancy?: number;
     avgEntryPrice?: number;
     avgExitPrice?: number;
+    limitEntryEnabled?: boolean;
+    limitEntryMode?: PolymarketLimitEntryPriceMode;
+    limitEntryPriceCents?: number;
+    limitEntryOffsetCents?: number;
+    limitEntryAttempts?: number;
+    limitEntryFilledTrades?: number;
+    limitEntryMissedTrades?: number;
+    limitEntryNotTouchedTrades?: number;
+    limitEntryLastMinuteOnlyTrades?: number;
+    limitEntryMissingPriceTrades?: number;
+    limitEntryInvalidWindowTrades?: number;
+    limitEntryFillRate?: number;
+    avgLimitEntryWaitSec?: number;
+    avgLimitEntryImprovement?: number;
+    limitExitEnabled?: boolean;
+    limitExitMode?: PolymarketLimitExitPriceMode;
+    limitExitPriceCents?: number;
+    limitExitOffsetCents?: number;
+    limitExitFilledTrades?: number;
+    limitExitFallbackTrades?: number;
+    limitExitUnreachableTrades?: number;
 }
 
 export interface PolymarketEvalResult {
@@ -139,8 +182,30 @@ export interface PolymarketEvalResult {
     duplicateTradesIgnored?: number;
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
     signalExitedTrades?: number;
+    targetExitedTrades?: number;
     resolvedTrades?: number;
     missingPriceTrades?: number;
+    limitEntryEnabled?: boolean;
+    limitEntryMode?: PolymarketLimitEntryPriceMode;
+    limitEntryPriceCents?: number;
+    limitEntryOffsetCents?: number;
+    limitEntryAttempts?: number;
+    limitEntryFilledTrades?: number;
+    limitEntryMissedTrades?: number;
+    limitEntryNotTouchedTrades?: number;
+    limitEntryLastMinuteOnlyTrades?: number;
+    limitEntryMissingPriceTrades?: number;
+    limitEntryInvalidWindowTrades?: number;
+    limitEntryFillRate?: number;
+    avgLimitEntryWaitSec?: number;
+    avgLimitEntryImprovement?: number;
+    limitExitEnabled?: boolean;
+    limitExitMode?: PolymarketLimitExitPriceMode;
+    limitExitPriceCents?: number;
+    limitExitOffsetCents?: number;
+    limitExitFilledTrades?: number;
+    limitExitFallbackTrades?: number;
+    limitExitUnreachableTrades?: number;
     netPnl?: number;
     avgExitPrice?: number;
     rows: PolymarketEvalRow[];

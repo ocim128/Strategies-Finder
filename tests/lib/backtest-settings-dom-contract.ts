@@ -23,6 +23,13 @@ import {
 } from "./settings-model";
 import { resolvePolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
+import {
+    clampPolymarketPostSignalLimitEntryPriceCents,
+    clampPolymarketPostSignalLimitExitPriceCents,
+    clampPolymarketPostSignalLimitOffsetCents,
+    resolvePolymarketPostSignalLimitEntryMode,
+    resolvePolymarketPostSignalLimitExitMode,
+} from "./polymarket-post-signal-limit-entry";
 import { RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS } from "./rust-settings-sanitizer";
 import { resolveTakeProfitMode } from "./take-profit-settings";
 import type { BacktestSettings } from "./types/strategies";
@@ -35,6 +42,11 @@ export type BacktestDomSettingParser =
     | "polymarketOutcomeInterval"
     | "polymarketEntrySelectionMode"
     | "polymarketExitMode"
+    | "polymarketLimitEntryPriceCents"
+    | "polymarketLimitExitPriceCents"
+    | "polymarketLimitOffsetCents"
+    | "polymarketLimitEntryMode"
+    | "polymarketLimitExitMode"
     | "riskMode"
     | "takeProfitMode"
     | "tradeFilterMode"
@@ -322,6 +334,14 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("polymarketEntrySelectionMode", { rustSupport: "unsupported", parser: "polymarketEntrySelectionMode" }),
     createField("polymarketEntryOffset", { rustSupport: "unsupported" }),
     createField("polymarketExitMode", { rustSupport: "unsupported", parser: "polymarketExitMode" }),
+    createField("polymarketPostSignalLimitEntryEnabled", { rustSupport: "unsupported" }),
+    createField("polymarketPostSignalLimitEntryMode", { rustSupport: "unsupported", parser: "polymarketLimitEntryMode" }),
+    createField("polymarketPostSignalLimitEntryPriceCents", { rustSupport: "unsupported", parser: "polymarketLimitEntryPriceCents" }),
+    createField("polymarketPostSignalLimitEntryOffsetCents", { rustSupport: "unsupported", parser: "polymarketLimitOffsetCents" }),
+    createField("polymarketPostSignalLimitExitEnabled", { rustSupport: "unsupported" }),
+    createField("polymarketPostSignalLimitExitMode", { rustSupport: "unsupported", parser: "polymarketLimitExitMode" }),
+    createField("polymarketPostSignalLimitExitPriceCents", { rustSupport: "unsupported", parser: "polymarketLimitExitPriceCents" }),
+    createField("polymarketPostSignalLimitExitOffsetCents", { rustSupport: "unsupported", parser: "polymarketLimitOffsetCents" }),
     createField("crossSymbolSecondary", {
         parser: "string",
         rustSupport: "unsupported",
@@ -380,6 +400,16 @@ export function coerceBacktestDomSettingValue(
             return typeof value === "string" && value.trim().toLowerCase() === "signal_exit_same_event"
                 ? "signal_exit_same_event"
                 : "resolve_hold";
+        case "polymarketLimitEntryPriceCents":
+            return clampPolymarketPostSignalLimitEntryPriceCents(value);
+        case "polymarketLimitExitPriceCents":
+            return clampPolymarketPostSignalLimitExitPriceCents(value);
+        case "polymarketLimitOffsetCents":
+            return clampPolymarketPostSignalLimitOffsetCents(value);
+        case "polymarketLimitEntryMode":
+            return resolvePolymarketPostSignalLimitEntryMode(value);
+        case "polymarketLimitExitMode":
+            return resolvePolymarketPostSignalLimitExitMode(value);
         case "kellyFraction":
             return resolveKellyFraction(value);
         case "volScalingMethod":

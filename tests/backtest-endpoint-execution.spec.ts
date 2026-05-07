@@ -31,6 +31,14 @@ function buildSnapshot(): UiBacktestEndpointSnapshot {
             allowSameBarExit: true,
             slippageBps: 0,
             marketMode: "all",
+            polymarketPostSignalLimitEntryEnabled: true,
+            polymarketPostSignalLimitEntryMode: "signal_offset",
+            polymarketPostSignalLimitEntryPriceCents: 45,
+            polymarketPostSignalLimitEntryOffsetCents: 20,
+            polymarketPostSignalLimitExitEnabled: true,
+            polymarketPostSignalLimitExitMode: "entry_offset",
+            polymarketPostSignalLimitExitPriceCents: 80,
+            polymarketPostSignalLimitExitOffsetCents: 20,
         },
         capitalSettings: {
             ...BACKTEST_ENDPOINT_CAPITAL_SETTINGS,
@@ -65,6 +73,14 @@ describe("backtest endpoint execution helpers", () => {
         assert.ok(!("snapshotRsiMin" in request.backtestSettings));
         assert.ok(!("snapshotRsiMax" in request.backtestSettings));
         assert.ok(!("polymarketExitMode" in request.backtestSettings));
+        assert.ok(!("polymarketPostSignalLimitEntryEnabled" in request.backtestSettings));
+        assert.ok(!("polymarketPostSignalLimitEntryMode" in request.backtestSettings));
+        assert.ok(!("polymarketPostSignalLimitEntryPriceCents" in request.backtestSettings));
+        assert.ok(!("polymarketPostSignalLimitEntryOffsetCents" in request.backtestSettings));
+        assert.ok(!("polymarketPostSignalLimitExitEnabled" in request.backtestSettings));
+        assert.ok(!("polymarketPostSignalLimitExitMode" in request.backtestSettings));
+        assert.ok(!("polymarketPostSignalLimitExitPriceCents" in request.backtestSettings));
+        assert.ok(!("polymarketPostSignalLimitExitOffsetCents" in request.backtestSettings));
         assert.strictEqual(request.primarySymbol, snapshot.symbol);
     });
 

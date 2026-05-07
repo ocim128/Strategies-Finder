@@ -159,6 +159,18 @@ export class PolymarketOutcomeLoader {
             executionModel: this.deps.readCurrentExecutionModel(),
             polymarketAnnotationEnabled: true,
         });
+        const limitEntry = outcomeInterval === "5m" && existingSummary?.limitEntryEnabled === true
+            ? {
+                enabled: true,
+                priceMode: existingSummary.limitEntryMode,
+                priceCents: existingSummary.limitEntryPriceCents ?? 50,
+                offsetCents: existingSummary.limitEntryOffsetCents,
+                exitEnabled: existingSummary.limitExitEnabled === true,
+                exitMode: existingSummary.limitExitMode,
+                exitPriceCents: existingSummary.limitExitPriceCents,
+                exitOffsetCents: existingSummary.limitExitOffsetCents,
+            }
+            : undefined;
 
         if (isSignalExitSameEventMode(effectiveExitMode) && resultContext.interval === "1m") {
             const targetTimes = result.trades
@@ -189,11 +201,12 @@ export class PolymarketOutcomeLoader {
                         trades: result.trades,
                         outcomes,
                         pricePoints,
+                        limitEntry,
                     });
                     const exitResultMap = new Map(exitResults.map((r) => [r.trade, r]));
                     const annotatedTrades = result.trades.map((trade) => {
                         const exitResult = exitResultMap.get(trade);
-                        if (!exitResult || exitResult.exitSource === "missing") return { ...trade, polymarketOutcome: null };
+                        if (!exitResult) return { ...trade, polymarketOutcome: null };
                         return { ...trade, polymarketOutcome: buildTradeAnnotationFromSignalExitResult(exitResult) };
                     });
                     return {
@@ -212,6 +225,7 @@ export class PolymarketOutcomeLoader {
                             profitableTrades: exitSummary.profitableTrades,
                             losingTrades: exitSummary.losingTrades,
                             neutralTrades: exitSummary.neutralTrades,
+                            targetExitedTrades: exitSummary.targetExitedTrades,
                             signalExitedTrades: exitSummary.signalExitedTrades,
                             resolvedTrades: exitSummary.resolvedTrades,
                             missingPriceTrades: exitSummary.missingPriceTrades,
@@ -222,6 +236,27 @@ export class PolymarketOutcomeLoader {
                             expectancy: exitSummary.expectancy,
                             avgEntryPrice: exitSummary.avgEntryPrice,
                             avgExitPrice: exitSummary.avgExitPrice,
+                            limitEntryEnabled: exitSummary.limitEntryEnabled,
+                            limitEntryMode: exitSummary.limitEntryMode,
+                            limitEntryPriceCents: exitSummary.limitEntryPriceCents,
+                            limitEntryOffsetCents: exitSummary.limitEntryOffsetCents,
+                            limitEntryAttempts: exitSummary.limitEntryAttempts,
+                            limitEntryFilledTrades: exitSummary.limitEntryFilledTrades,
+                            limitEntryMissedTrades: exitSummary.limitEntryMissedTrades,
+                            limitEntryNotTouchedTrades: exitSummary.limitEntryNotTouchedTrades,
+                            limitEntryLastMinuteOnlyTrades: exitSummary.limitEntryLastMinuteOnlyTrades,
+                            limitEntryMissingPriceTrades: exitSummary.limitEntryMissingPriceTrades,
+                            limitEntryInvalidWindowTrades: exitSummary.limitEntryInvalidWindowTrades,
+                            limitEntryFillRate: exitSummary.limitEntryFillRate,
+                            avgLimitEntryWaitSec: exitSummary.avgLimitEntryWaitSec,
+                            avgLimitEntryImprovement: exitSummary.avgLimitEntryImprovement,
+                            limitExitEnabled: exitSummary.limitExitEnabled,
+                            limitExitMode: exitSummary.limitExitMode,
+                            limitExitPriceCents: exitSummary.limitExitPriceCents,
+                            limitExitOffsetCents: exitSummary.limitExitOffsetCents,
+                            limitExitFilledTrades: exitSummary.limitExitFilledTrades,
+                            limitExitFallbackTrades: exitSummary.limitExitFallbackTrades,
+                            limitExitUnreachableTrades: exitSummary.limitExitUnreachableTrades,
                         },
                     };
                 } catch (error) {
@@ -238,13 +273,33 @@ export class PolymarketOutcomeLoader {
         const selectedOffset = resultContext.interval === "1m" && outcomeInterval === "5m" && !isActualPolymarketEntryMinuteMode(entrySelectionMode)
             ? this.resolveSelectedPolymarketEntryOffset(result)
             : undefined;
+        let limitEntryPricePoints: Awaited<ReturnType<typeof ensurePricePointsForOutcomes>> | undefined;
+        if (limitEntry) {
+            const targetTimes = result.trades
+                .map((trade) => parseTimeToUnixSeconds(trade.entryTime))
+                .filter((value): value is number => value !== null);
+            if (targetTimes.length > 0) {
+                try {
+                    limitEntryPricePoints = await ensurePricePointsForOutcomes(outcomes, seriesId, {
+                        startTs: Math.min(...targetTimes) - 300,
+                        endTs: Math.max(...targetTimes) + 300,
+                    });
+                } catch {
+                    limitEntryPricePoints = [];
+                }
+            }
+        }
         const annotatedTrades = annotateTradesWithPolymarketOutcomesForRun(
             result.trades,
             outcomes,
             resultContext.interval,
             selectedOffset,
             entrySelectionMode ?? "fixed_offset",
-            { outcomeInterval }
+            {
+                outcomeInterval,
+                pricePoints: limitEntryPricePoints,
+                limitEntry,
+            }
         );
         const summary = summarizePolymarketTradesForRun({
             trades: annotatedTrades,
@@ -254,6 +309,7 @@ export class PolymarketOutcomeLoader {
             entrySelectionMode,
             timingProfile: existingSummary?.timingProfile,
             outcomeInterval,
+            limitEntry,
         });
         const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
 
@@ -275,6 +331,28 @@ export class PolymarketOutcomeLoader {
                 entryOffset: existingSummary?.entryOffset ?? summary.entryOffset,
                 timingProfile: existingSummary?.timingProfile ?? summary.timingProfile,
                 evaluationMode: "resolve_hold",
+                targetExitedTrades: existingSummary?.targetExitedTrades ?? summary.targetExitedTrades,
+                limitEntryEnabled: existingSummary?.limitEntryEnabled ?? summary.limitEntryEnabled,
+                limitEntryMode: existingSummary?.limitEntryMode ?? summary.limitEntryMode,
+                limitEntryPriceCents: existingSummary?.limitEntryPriceCents ?? summary.limitEntryPriceCents,
+                limitEntryOffsetCents: existingSummary?.limitEntryOffsetCents ?? summary.limitEntryOffsetCents,
+                limitEntryAttempts: existingSummary?.limitEntryAttempts ?? summary.limitEntryAttempts,
+                limitEntryFilledTrades: existingSummary?.limitEntryFilledTrades ?? summary.limitEntryFilledTrades,
+                limitEntryMissedTrades: existingSummary?.limitEntryMissedTrades ?? summary.limitEntryMissedTrades,
+                limitEntryNotTouchedTrades: existingSummary?.limitEntryNotTouchedTrades ?? summary.limitEntryNotTouchedTrades,
+                limitEntryLastMinuteOnlyTrades: existingSummary?.limitEntryLastMinuteOnlyTrades ?? summary.limitEntryLastMinuteOnlyTrades,
+                limitEntryMissingPriceTrades: existingSummary?.limitEntryMissingPriceTrades ?? summary.limitEntryMissingPriceTrades,
+                limitEntryInvalidWindowTrades: existingSummary?.limitEntryInvalidWindowTrades ?? summary.limitEntryInvalidWindowTrades,
+                limitEntryFillRate: existingSummary?.limitEntryFillRate ?? summary.limitEntryFillRate,
+                avgLimitEntryWaitSec: existingSummary?.avgLimitEntryWaitSec ?? summary.avgLimitEntryWaitSec,
+                avgLimitEntryImprovement: existingSummary?.avgLimitEntryImprovement ?? summary.avgLimitEntryImprovement,
+                limitExitEnabled: existingSummary?.limitExitEnabled ?? summary.limitExitEnabled,
+                limitExitMode: existingSummary?.limitExitMode ?? summary.limitExitMode,
+                limitExitPriceCents: existingSummary?.limitExitPriceCents ?? summary.limitExitPriceCents,
+                limitExitOffsetCents: existingSummary?.limitExitOffsetCents ?? summary.limitExitOffsetCents,
+                limitExitFilledTrades: existingSummary?.limitExitFilledTrades ?? summary.limitExitFilledTrades,
+                limitExitFallbackTrades: existingSummary?.limitExitFallbackTrades ?? summary.limitExitFallbackTrades,
+                limitExitUnreachableTrades: existingSummary?.limitExitUnreachableTrades ?? summary.limitExitUnreachableTrades,
             },
         };
     }
@@ -355,6 +433,14 @@ export class PolymarketOutcomeLoader {
             outcomeInterval,
             entrySelectionMode,
             selectedOffset,
+            result.polymarketTradeSummary?.limitEntryEnabled ? "limit" : "quote",
+            result.polymarketTradeSummary?.limitEntryMode ?? "fixed_price",
+            result.polymarketTradeSummary?.limitEntryPriceCents ?? "na",
+            result.polymarketTradeSummary?.limitEntryOffsetCents ?? "na",
+            result.polymarketTradeSummary?.limitExitEnabled ? "exit" : "hold",
+            result.polymarketTradeSummary?.limitExitMode ?? "entry_offset",
+            result.polymarketTradeSummary?.limitExitPriceCents ?? "na",
+            result.polymarketTradeSummary?.limitExitOffsetCents ?? "na",
             result.trades.length,
             parseTimeToUnixSeconds(firstTrade?.entryTime) ?? "na",
             parseTimeToUnixSeconds(lastTrade?.entryTime) ?? "na",

@@ -276,6 +276,26 @@ describe("Quick View Polymarket streak summary", () => {
         expect(summary?.edgeVsBreakEven).to.equal(0);
     });
 
+    it("uses realized target-exit market pnl in payout summaries", () => {
+        const summary = summarizePolymarketPayoutDiagnostics([
+            makeTrade(1, false, {
+                polymarketOutcome: {
+                    ...makeTrade(1, false).polymarketOutcome!,
+                    marketEntryPrice: 0.6,
+                    marketExitPrice: 0.8,
+                    marketExitSource: "target",
+                    marketPnl: 0.2,
+                    isProfitable: true,
+                },
+            }),
+        ]);
+
+        expect(summary).to.not.equal(null);
+        expect(summary?.winRate).to.equal(1);
+        expect(summary?.expectancy).to.be.closeTo(0.2, 1e-12);
+        expect(summary?.profitFactor).to.equal(Infinity);
+    });
+
     it("keeps unpriced scored trades out of payout maths but reports the exclusion", () => {
         const summary = summarizePolymarketPayoutDiagnostics([
             makeTrade(1, true, {
@@ -804,6 +824,72 @@ describe("Quick View Polymarket streak summary", () => {
         expect(html).to.contain("-60.0c | 1t");
         expect(html).to.contain("Entry Win % | After Signal");
         expect(html).to.contain("100.0% | 1t");
+    });
+
+    it("renders post-signal limit-entry diagnostics", () => {
+        const html = (quickViewManager as any).buildPolymarketSection({
+            trades: [
+                makeTrade(1, true, {
+                    polymarketOutcome: {
+                        ...makeTrade(1, true).polymarketOutcome!,
+                        marketEntrySource: "limit",
+                        marketEntryStatus: "filled",
+                        marketEntryPrice: 0.5,
+                        marketEntryLimitPrice: 0.5,
+                    },
+                }),
+                makeTrade(2, true, {
+                    polymarketOutcome: {
+                        ...makeTrade(2, true).polymarketOutcome!,
+                        isWin: null,
+                        marketEntrySource: "limit",
+                        marketEntryStatus: "not_touched",
+                        marketEntryPrice: null,
+                        marketEntryLimitPrice: 0.5,
+                    },
+                }),
+            ],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 2,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            polymarketTradeSummary: {
+                seriesId: "btc-5m",
+                outcomeRowsLoaded: 2,
+                scoredTrades: 1,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 1,
+                limitEntryEnabled: true,
+                limitEntryPriceCents: 50,
+                limitEntryAttempts: 2,
+                limitEntryFilledTrades: 1,
+                limitEntryMissedTrades: 1,
+                limitEntryNotTouchedTrades: 1,
+                limitEntryLastMinuteOnlyTrades: 1,
+                limitEntryMissingPriceTrades: 1,
+                limitEntryFillRate: 0.5,
+            },
+        } satisfies BacktestResult);
+
+        expect(html).to.contain("Limit Attempts");
+        expect(html).to.contain("Limit Filled");
+        expect(html).to.contain("Limit Missed");
+        expect(html).to.contain("Limit Fill Rate");
+        expect(html).to.contain("50.0%");
+        expect(html).to.contain("Not Touched");
+        expect(html).to.contain("Last-Min Only");
+        expect(html).to.contain("Missing Limit Price");
     });
 
     it("renders signal-exit same-event summaries from stored polymarket pricing", () => {

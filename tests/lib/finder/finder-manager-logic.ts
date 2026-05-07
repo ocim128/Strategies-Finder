@@ -29,6 +29,14 @@ export interface FinderOptionsInput {
     polymarketLockOffset: boolean;
     polymarketAfterTakeProfitOnly: boolean;
     polymarketExitMode: PolymarketExitMode;
+    polymarketPostSignalLimitEntryEnabled?: boolean;
+    polymarketPostSignalLimitEntryMode?: "fixed_price" | "signal_offset";
+    polymarketPostSignalLimitEntryPriceCents?: number;
+    polymarketPostSignalLimitEntryOffsetCents?: number;
+    polymarketPostSignalLimitExitEnabled?: boolean;
+    polymarketPostSignalLimitExitMode?: "fixed_price" | "entry_offset";
+    polymarketPostSignalLimitExitPriceCents?: number;
+    polymarketPostSignalLimitExitOffsetCents?: number;
 }
 
 export interface FinderUniverseOptionsInput {
@@ -128,5 +136,13 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
         polymarketLockOffset: input.polymarketScoringEnabled && input.polymarketLockOffset,
         polymarketAfterTakeProfitOnly: input.polymarketScoringEnabled && input.polymarketAfterTakeProfitOnly,
         polymarketExitMode: input.polymarketExitMode,
+        polymarketPostSignalLimitEntryEnabled: input.polymarketScoringEnabled && input.polymarketPostSignalLimitEntryEnabled === true,
+        polymarketPostSignalLimitEntryMode: input.polymarketPostSignalLimitEntryMode,
+        polymarketPostSignalLimitEntryPriceCents: input.polymarketPostSignalLimitEntryPriceCents,
+        polymarketPostSignalLimitEntryOffsetCents: input.polymarketPostSignalLimitEntryOffsetCents,
+        polymarketPostSignalLimitExitEnabled: input.polymarketScoringEnabled && input.polymarketPostSignalLimitExitEnabled === true,
+        polymarketPostSignalLimitExitMode: input.polymarketPostSignalLimitExitMode,
+        polymarketPostSignalLimitExitPriceCents: input.polymarketPostSignalLimitExitPriceCents,
+        polymarketPostSignalLimitExitOffsetCents: input.polymarketPostSignalLimitExitOffsetCents,
     };
 }

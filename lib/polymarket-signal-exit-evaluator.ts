@@ -7,8 +7,21 @@ import {
     indexPricePointsByEvent,
     type EventPriceIndex,
 } from "./polymarket-price-points";
+import {
+    clampPolymarketPostSignalLimitEntryPriceCents,
+    clampPolymarketPostSignalLimitExitPriceCents,
+    clampPolymarketPostSignalLimitOffsetCents,
+    findPostSignalLimitEntryFill,
+    findPostSignalLimitExitFill,
+    resolvePolymarketLimitExitTargetPrice,
+    resolvePolymarketPostSignalLimitEntryMode,
+    resolvePolymarketPostSignalLimitExitMode,
+    type PolymarketPostSignalLimitEntrySettings,
+} from "./polymarket-post-signal-limit-entry";
 import type { Trade } from "./types/strategies";
 import type {
+    PolymarketMarketEntrySource,
+    PolymarketMarketEntryStatus,
     PolymarketOutcomeRow,
     TradePolymarketOutcome,
 } from "./types/polymarket-outcomes";
@@ -19,16 +32,26 @@ export interface SignalExitEvalInput {
     pricePoints?: readonly PolymarketPricePoint[];
     priceIndex?: EventPriceIndex;
     outcomeByEntryTs?: ReadonlyMap<number, PolymarketOutcomeRow | null>;
+    limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }
 
 export interface SignalExitTradeResult {
     trade: Trade;
     outcome: PolymarketOutcomeRow | null;
     side: "yes" | "no" | null;
+    entrySource?: PolymarketMarketEntrySource;
+    entryStatus?: PolymarketMarketEntryStatus;
+    entryMode?: PolymarketPostSignalLimitEntrySettings["priceMode"];
+    entryOffsetCents?: number;
     entryPrice: number | null;
+    entryFillTs?: number | null;
+    entryLimitPrice?: number | null;
+    entryImprovement?: number | null;
     exitPrice: number | null;
     exitTs: number | null;
-    exitSource: "signal" | "resolution" | "missing" | "duplicate" | "no_event";
+    exitSource: "target" | "signal" | "resolution" | "missing" | "duplicate" | "no_event";
+    exitTargetPrice?: number | null;
+    exitStatus?: "filled" | "not_touched" | "missing_price_points" | "unreachable";
     pnl: number | null;
     isProfitable: boolean | null;
     actualOutcomeUp: 0 | 1 | null;
@@ -44,6 +67,7 @@ export interface SignalExitSummary {
     profitableTrades: number;
     losingTrades: number;
     neutralTrades: number;
+    targetExitedTrades: number;
     signalExitedTrades: number;
     resolvedTrades: number;
     netPnl: number;
@@ -54,6 +78,27 @@ export interface SignalExitSummary {
     avgEntryPrice: number;
     avgExitPrice: number;
     totalPnl: number;
+    limitEntryEnabled?: boolean;
+    limitEntryMode?: PolymarketPostSignalLimitEntrySettings["priceMode"];
+    limitEntryPriceCents?: number;
+    limitEntryOffsetCents?: number;
+    limitEntryAttempts?: number;
+    limitEntryFilledTrades?: number;
+    limitEntryMissedTrades?: number;
+    limitEntryNotTouchedTrades?: number;
+    limitEntryLastMinuteOnlyTrades?: number;
+    limitEntryMissingPriceTrades?: number;
+    limitEntryInvalidWindowTrades?: number;
+    limitEntryFillRate?: number;
+    avgLimitEntryWaitSec?: number;
+    avgLimitEntryImprovement?: number;
+    limitExitEnabled?: boolean;
+    limitExitMode?: PolymarketPostSignalLimitEntrySettings["exitMode"];
+    limitExitPriceCents?: number;
+    limitExitOffsetCents?: number;
+    limitExitFilledTrades?: number;
+    limitExitFallbackTrades?: number;
+    limitExitUnreachableTrades?: number;
 }
 
 export function indexSignalExitOutcomesByEntryTs(
@@ -94,6 +139,14 @@ export function evaluateSignalExitTrades(
     const results: SignalExitTradeResult[] = [];
 
     const seenEvents = new Set<number>();
+    const limitPriceByEventStart = new Map<number, number>();
+    const limitEntryEnabled = input.limitEntry?.enabled === true;
+    const limitEntryPriceCents = clampPolymarketPostSignalLimitEntryPriceCents(input.limitEntry?.priceCents);
+    const fixedLimitPrice = limitEntryPriceCents / 100;
+    const limitEntryMode = resolvePolymarketPostSignalLimitEntryMode(input.limitEntry?.priceMode);
+    const limitEntryOffsetCents = clampPolymarketPostSignalLimitOffsetCents(input.limitEntry?.offsetCents);
+    const limitEntryOffsetPrice = limitEntryOffsetCents / 100;
+    const limitExitEnabled = limitEntryEnabled && input.limitEntry?.exitEnabled === true;
 
     for (const trade of trades) {
         const entryTs = parseTimeToUnixSeconds(trade.entryTime);
@@ -107,6 +160,9 @@ export function evaluateSignalExitTrades(
                 trade,
                 outcome: null,
                 side: null,
+                entrySource: limitEntryEnabled ? "limit" : "quote",
+                entryMode: limitEntryEnabled ? limitEntryMode : undefined,
+                entryOffsetCents: limitEntryEnabled ? limitEntryOffsetCents : undefined,
                 entryPrice: null,
                 exitPrice: null,
                 exitTs: null,
@@ -124,7 +180,14 @@ export function evaluateSignalExitTrades(
                 trade,
                 outcome,
                 side: trade.type === "long" ? "yes" : "no",
+                entrySource: limitEntryEnabled ? "limit" : "quote",
+                entryStatus: limitEntryEnabled ? "duplicate" : undefined,
+                entryMode: limitEntryEnabled ? limitEntryMode : undefined,
+                entryOffsetCents: limitEntryEnabled ? limitEntryOffsetCents : undefined,
                 entryPrice: null,
+                entryFillTs: null,
+                entryLimitPrice: limitEntryEnabled ? limitPriceByEventStart.get(outcome.event_start_ts) ?? fixedLimitPrice : null,
+                entryImprovement: null,
                 exitPrice: null,
                 exitTs: null,
                 exitSource: "duplicate",
@@ -142,31 +205,96 @@ export function evaluateSignalExitTrades(
 
         const eventPoints = priceIndex.pointsByEventStart.get(outcome.event_start_ts) ?? [];
 
-        const entryFill = findEntryFill(eventPoints, entryTs, side);
-        if (!entryFill) {
-            results.push({
-                trade,
-                outcome,
+        const exitTsRaw = trade.exitReason === "signal"
+            ? parseTimeToUnixSeconds(trade.exitTime)
+            : null;
+        const signalExitTs = exitTsRaw !== null && exitTsRaw < outcome.event_end_ts
+            ? exitTsRaw
+            : null;
+        let entryPrice: number | null = null;
+        let entryFillTs: number | null = null;
+        let entryImprovement: number | null = null;
+
+        if (limitEntryEnabled) {
+            const limitEntryFill = findPostSignalLimitEntryFill(eventPoints, {
                 side,
-                entryPrice: null,
-                exitPrice: null,
-                exitTs: null,
-                exitSource: "missing",
-                pnl: null,
-                isProfitable: null,
-                actualOutcomeUp: outcome.resolved_outcome_up,
-                isWin,
+                startTs: entryTs,
+                eventEndTs: outcome.event_end_ts,
+                limitPrice: fixedLimitPrice,
+                priceMode: limitEntryMode,
+                offsetPrice: limitEntryOffsetPrice,
+                latestAllowedTs: signalExitTs,
             });
-            continue;
+            const resolvedLimitPrice = limitEntryFill.limitPrice ?? fixedLimitPrice;
+            limitPriceByEventStart.set(outcome.event_start_ts, resolvedLimitPrice);
+            if (limitEntryFill.status !== "filled") {
+                results.push({
+                    trade,
+                    outcome,
+                    side,
+                    entrySource: "limit",
+                    entryStatus: limitEntryFill.status,
+                    entryMode: limitEntryMode,
+                    entryOffsetCents: limitEntryOffsetCents,
+                    entryPrice: null,
+                    entryFillTs: null,
+                    entryLimitPrice: resolvedLimitPrice,
+                    entryImprovement: null,
+                    exitPrice: null,
+                    exitTs: null,
+                    exitSource: "missing",
+                    pnl: null,
+                    isProfitable: null,
+                    actualOutcomeUp: outcome.resolved_outcome_up,
+                    isWin,
+                });
+                continue;
+            }
+            entryPrice = limitEntryFill.fillPrice;
+            entryFillTs = limitEntryFill.fillTs;
+            entryImprovement = limitEntryFill.entryImprovement;
+        } else {
+            const quoteEntryFill = findEntryFill(eventPoints, entryTs, side);
+            if (!quoteEntryFill) {
+                results.push({
+                    trade,
+                    outcome,
+                    side,
+                    entrySource: "quote",
+                    entryPrice: null,
+                    exitPrice: null,
+                    exitTs: null,
+                    exitSource: "missing",
+                    pnl: null,
+                    isProfitable: null,
+                    actualOutcomeUp: outcome.resolved_outcome_up,
+                    isWin,
+                });
+                continue;
+            }
+            entryPrice = quoteEntryFill.price;
+            entryFillTs = quoteEntryFill.ts;
         }
 
         let exitPrice: number | null = null;
         let exitTs: number | null = null;
-        let exitSource: "signal" | "resolution" | "missing" = "resolution";
+        let exitSource: "target" | "signal" | "resolution" | "missing" = "resolution";
+        let exitTargetPrice: number | null = null;
+        let exitStatus: SignalExitTradeResult["exitStatus"];
         let signalExitAttempted = false;
+        const targetExit = limitExitEnabled && entryPrice !== null && entryFillTs !== null
+            ? (() => {
+                exitTargetPrice = resolvePolymarketLimitExitTargetPrice(entryPrice, input.limitEntry!);
+                return findPostSignalLimitExitFill(eventPoints, {
+                    side,
+                    startTs: entryFillTs,
+                    eventEndTs: outcome.event_end_ts,
+                    targetPrice: exitTargetPrice,
+                });
+            })()
+            : null;
 
         if (trade.exitReason === "signal") {
-            const exitTsRaw = parseTimeToUnixSeconds(trade.exitTime);
             if (exitTsRaw !== null && exitTsRaw < outcome.event_end_ts) {
                 signalExitAttempted = true;
                 const exitFill = findSignalExitFill(eventPoints, exitTsRaw, side);
@@ -175,12 +303,24 @@ export function evaluateSignalExitTrades(
                 // the chart exit. Treat that as a flat same-event exit instead
                 // of dropping the first trade and letting a later trade claim
                 // the event.
-                if (exitFill && exitFill.ts >= entryFill.ts) {
-                    exitPrice = exitFill.price;
+                const targetFillsFirst = targetExit?.status === "filled"
+                    && targetExit.fillTs !== null
+                    && targetExit.fillTs <= exitTsRaw;
+                if (targetFillsFirst) {
+                    exitPrice = targetExit.fillPrice;
+                    exitTs = targetExit.fillTs;
+                    exitSource = "target";
+                    exitStatus = targetExit.status;
+                } else if (exitFill && entryFillTs !== null && exitFill.ts >= entryFillTs) {
+                    exitPrice = exitFill.ts === entryFillTs && entryPrice !== null
+                        ? entryPrice
+                        : exitFill.price;
                     exitTs = exitFill.ts;
                     exitSource = "signal";
+                    exitStatus = targetExit?.status;
                 } else {
                     exitSource = "missing";
+                    exitStatus = targetExit?.status;
                 }
             }
         }
@@ -190,10 +330,19 @@ export function evaluateSignalExitTrades(
                 trade,
                 outcome,
                 side,
-                entryPrice: entryFill.price,
+                entrySource: limitEntryEnabled ? "limit" : "quote",
+                entryStatus: limitEntryEnabled ? "filled" : undefined,
+                entryMode: limitEntryEnabled ? limitEntryMode : undefined,
+                entryOffsetCents: limitEntryEnabled ? limitEntryOffsetCents : undefined,
+                entryPrice,
+                entryFillTs,
+                entryLimitPrice: limitEntryEnabled ? entryPrice : null,
+                entryImprovement: limitEntryEnabled ? entryImprovement : null,
                 exitPrice: null,
                 exitTs: null,
                 exitSource: "missing",
+                exitTargetPrice,
+                exitStatus,
                 pnl: null,
                 isProfitable: null,
                 actualOutcomeUp: outcome.resolved_outcome_up,
@@ -202,17 +351,27 @@ export function evaluateSignalExitTrades(
             continue;
         }
 
-        if (exitSource !== "signal") {
-            if (outcome.resolved_outcome_up === 1) {
-                exitPrice = side === "yes" ? 1 : 0;
-            } else {
-                exitPrice = side === "yes" ? 0 : 1;
-            }
-            exitTs = outcome.event_end_ts;
-            exitSource = "resolution";
+        if (exitSource !== "target" && !signalExitAttempted && targetExit?.status === "filled") {
+            exitPrice = targetExit.fillPrice;
+            exitTs = targetExit.fillTs;
+            exitSource = "target";
+            exitStatus = targetExit.status;
         }
 
-        const pnl = exitPrice !== null ? exitPrice - entryFill.price : null;
+        if (exitSource !== "signal") {
+            if (exitSource !== "target") {
+                if (outcome.resolved_outcome_up === 1) {
+                    exitPrice = side === "yes" ? 1 : 0;
+                } else {
+                    exitPrice = side === "yes" ? 0 : 1;
+                }
+                exitTs = outcome.event_end_ts;
+                exitSource = "resolution";
+                exitStatus = targetExit?.status;
+            }
+        }
+
+        const pnl = exitPrice !== null && entryPrice !== null ? exitPrice - entryPrice : null;
         const isProfitable = pnl === null
             ? null
             : pnl > 0
@@ -221,17 +380,26 @@ export function evaluateSignalExitTrades(
                     ? false
                     : null;
 
-        // Missing-price attempts do not consume the event; the first scorable
-        // trade in the event wins and later scored attempts become duplicates.
+        // Missing-price and unfilled limit attempts do not consume the event;
+        // the first scored trade claims it.
         seenEvents.add(outcome.event_start_ts);
         results.push({
             trade,
             outcome,
             side,
-            entryPrice: entryFill.price,
+            entrySource: limitEntryEnabled ? "limit" : "quote",
+            entryStatus: limitEntryEnabled ? "filled" : undefined,
+            entryMode: limitEntryEnabled ? limitEntryMode : undefined,
+            entryOffsetCents: limitEntryEnabled ? limitEntryOffsetCents : undefined,
+            entryPrice,
+            entryFillTs,
+            entryLimitPrice: limitEntryEnabled ? entryPrice : null,
+            entryImprovement: limitEntryEnabled ? entryImprovement : null,
             exitPrice,
             exitTs,
             exitSource,
+            exitTargetPrice,
+            exitStatus,
             pnl,
             isProfitable,
             actualOutcomeUp: outcome.resolved_outcome_up,
@@ -239,11 +407,14 @@ export function evaluateSignalExitTrades(
         });
     }
 
-    const summary = buildSignalExitSummary(results);
+    const summary = buildSignalExitSummary(results, input.limitEntry);
     return { results, summary };
 }
 
-function buildSignalExitSummary(results: readonly SignalExitTradeResult[]): SignalExitSummary {
+function buildSignalExitSummary(
+    results: readonly SignalExitTradeResult[],
+    settings?: PolymarketPostSignalLimitEntrySettings
+): SignalExitSummary {
     let scoredTrades = 0;
     let missingPriceTrades = 0;
     let missingOutcomeTrades = 0;
@@ -251,6 +422,7 @@ function buildSignalExitSummary(results: readonly SignalExitTradeResult[]): Sign
     let profitableTrades = 0;
     let losingTrades = 0;
     let neutralTrades = 0;
+    let targetExitedTrades = 0;
     let signalExitedTrades = 0;
     let resolvedTrades = 0;
     let netPnl = 0;
@@ -259,10 +431,59 @@ function buildSignalExitSummary(results: readonly SignalExitTradeResult[]): Sign
     let totalEntryPrice = 0;
     let totalExitPrice = 0;
     let pricedCount = 0;
+    let limitEntryAttempts = 0;
+    let limitEntryFilledTrades = 0;
+    let limitEntryNotTouchedTrades = 0;
+    let limitEntryLastMinuteOnlyTrades = 0;
+    let limitEntryMissingPriceTrades = 0;
+    let limitEntryInvalidWindowTrades = 0;
+    let totalLimitEntryWaitSec = 0;
+    let totalLimitEntryImprovement = 0;
+    let limitEntryWaitCount = 0;
+    let limitEntryImprovementCount = 0;
+    let limitExitFilledTrades = 0;
+    let limitExitFallbackTrades = 0;
+    let limitExitUnreachableTrades = 0;
+    const limitEntryEnabled = results.some((r) => r.entrySource === "limit");
+    const limitEntryPriceCents = results
+        .map((r) => r.entryLimitPrice)
+        .find((value): value is number => typeof value === "number" && Number.isFinite(value));
+    const limitExitEnabled = limitEntryEnabled && settings?.exitEnabled === true;
 
     for (const r of results) {
+        if (r.entrySource === "limit" && r.entryStatus && r.entryStatus !== "duplicate") {
+            limitEntryAttempts++;
+            if (r.entryStatus === "filled") {
+                limitEntryFilledTrades++;
+                const entryTs = parseTimeToUnixSeconds(r.trade.entryTime);
+                if (entryTs !== null && typeof r.entryFillTs === "number" && Number.isFinite(r.entryFillTs)) {
+                    totalLimitEntryWaitSec += Math.max(0, r.entryFillTs - entryTs);
+                    limitEntryWaitCount++;
+                }
+                if (typeof r.entryImprovement === "number" && Number.isFinite(r.entryImprovement)) {
+                    totalLimitEntryImprovement += r.entryImprovement;
+                    limitEntryImprovementCount++;
+                }
+            } else if (r.entryStatus === "not_touched") {
+                limitEntryNotTouchedTrades++;
+            } else if (r.entryStatus === "last_minute_only") {
+                limitEntryLastMinuteOnlyTrades++;
+            } else if (r.entryStatus === "missing_price_points") {
+                limitEntryMissingPriceTrades++;
+            } else if (r.entryStatus === "invalid_window") {
+                limitEntryInvalidWindowTrades++;
+            }
+        }
+
         if (r.exitSource === "missing") {
-            missingPriceTrades++;
+            if (
+                r.entrySource !== "limit"
+                || r.entryStatus === "filled"
+                || r.entryStatus === "missing_price_points"
+                || !r.entryStatus
+            ) {
+                missingPriceTrades++;
+            }
             continue;
         }
         if (r.exitSource === "duplicate") {
@@ -276,8 +497,20 @@ function buildSignalExitSummary(results: readonly SignalExitTradeResult[]): Sign
 
         scoredTrades++;
 
-        if (r.exitSource === "signal") signalExitedTrades++;
+        if (r.exitSource === "target") targetExitedTrades++;
+        else if (r.exitSource === "signal") signalExitedTrades++;
         else resolvedTrades++;
+
+        if (limitExitEnabled && r.entrySource === "limit" && r.entryStatus === "filled") {
+            if (r.exitSource === "target") {
+                limitExitFilledTrades++;
+            } else {
+                limitExitFallbackTrades++;
+                if (r.exitStatus === "unreachable") {
+                    limitExitUnreachableTrades++;
+                }
+            }
+        }
 
         if (r.pnl !== null) {
             pricedCount++;
@@ -296,15 +529,19 @@ function buildSignalExitSummary(results: readonly SignalExitTradeResult[]): Sign
         }
     }
 
+    const limitEntryMissedTrades = Math.max(0, limitEntryAttempts - limitEntryFilledTrades);
+    const limitEntryMissesWithoutMissingPrices = Math.max(0, limitEntryMissedTrades - limitEntryMissingPriceTrades);
+
     return {
         scoredTrades,
         missingPriceTrades,
         missingOutcomeTrades,
         duplicateTradesIgnored,
-        unscoredTrades: missingPriceTrades + missingOutcomeTrades + duplicateTradesIgnored,
+        unscoredTrades: missingPriceTrades + missingOutcomeTrades + duplicateTradesIgnored + limitEntryMissesWithoutMissingPrices,
         profitableTrades,
         losingTrades,
         neutralTrades,
+        targetExitedTrades,
         signalExitedTrades,
         resolvedTrades,
         netPnl,
@@ -315,6 +552,31 @@ function buildSignalExitSummary(results: readonly SignalExitTradeResult[]): Sign
         avgEntryPrice: pricedCount > 0 ? totalEntryPrice / pricedCount : 0,
         avgExitPrice: pricedCount > 0 ? totalExitPrice / pricedCount : 0,
         totalPnl: netPnl,
+        limitEntryEnabled: limitEntryEnabled || undefined,
+        limitEntryMode: limitEntryEnabled ? resolvePolymarketPostSignalLimitEntryMode(settings?.priceMode) : undefined,
+        limitEntryPriceCents: limitEntryEnabled && resolvePolymarketPostSignalLimitEntryMode(settings?.priceMode) === "fixed_price"
+            ? clampPolymarketPostSignalLimitEntryPriceCents(settings?.priceCents)
+            : limitEntryEnabled && typeof limitEntryPriceCents === "number"
+                ? Math.round(limitEntryPriceCents * 100)
+                : undefined,
+        limitEntryOffsetCents: limitEntryEnabled ? clampPolymarketPostSignalLimitOffsetCents(settings?.offsetCents) : undefined,
+        limitEntryAttempts: limitEntryEnabled ? limitEntryAttempts : undefined,
+        limitEntryFilledTrades: limitEntryEnabled ? limitEntryFilledTrades : undefined,
+        limitEntryMissedTrades: limitEntryEnabled ? limitEntryMissedTrades : undefined,
+        limitEntryNotTouchedTrades: limitEntryEnabled ? limitEntryNotTouchedTrades : undefined,
+        limitEntryLastMinuteOnlyTrades: limitEntryEnabled ? limitEntryLastMinuteOnlyTrades : undefined,
+        limitEntryMissingPriceTrades: limitEntryEnabled ? limitEntryMissingPriceTrades : undefined,
+        limitEntryInvalidWindowTrades: limitEntryEnabled ? limitEntryInvalidWindowTrades : undefined,
+        limitEntryFillRate: limitEntryEnabled && limitEntryAttempts > 0 ? limitEntryFilledTrades / limitEntryAttempts : undefined,
+        avgLimitEntryWaitSec: limitEntryEnabled && limitEntryWaitCount > 0 ? totalLimitEntryWaitSec / limitEntryWaitCount : undefined,
+        avgLimitEntryImprovement: limitEntryEnabled && limitEntryImprovementCount > 0 ? totalLimitEntryImprovement / limitEntryImprovementCount : undefined,
+        limitExitEnabled: limitExitEnabled || undefined,
+        limitExitMode: limitExitEnabled ? resolvePolymarketPostSignalLimitExitMode(settings?.exitMode) : undefined,
+        limitExitPriceCents: limitExitEnabled ? clampPolymarketPostSignalLimitExitPriceCents(settings?.exitPriceCents) : undefined,
+        limitExitOffsetCents: limitExitEnabled ? clampPolymarketPostSignalLimitOffsetCents(settings?.exitOffsetCents) : undefined,
+        limitExitFilledTrades: limitExitEnabled ? limitExitFilledTrades : undefined,
+        limitExitFallbackTrades: limitExitEnabled ? limitExitFallbackTrades : undefined,
+        limitExitUnreachableTrades: limitExitEnabled ? limitExitUnreachableTrades : undefined,
     };
 }
 
@@ -322,6 +584,31 @@ export function buildTradeAnnotationFromSignalExitResult(
     result: SignalExitTradeResult
 ): TradePolymarketOutcome | null {
     if (result.exitSource === "missing") {
+        if (result.entrySource === "limit" && result.outcome && result.entryStatus && result.entryStatus !== "filled") {
+            return {
+                eventStartTs: result.outcome.event_start_ts,
+                eventEndTs: result.outcome.event_end_ts,
+                eventSlug: result.outcome.event_slug,
+                marketSlug: result.outcome.market_slug || result.outcome.event_slug,
+                prediction: result.side as "yes" | "no",
+                actualOutcomeUp: result.outcome.resolved_outcome_up,
+                isWin: null,
+                evaluationMode: "signal_exit_same_event",
+                isProfitable: null,
+                marketEntrySource: "limit",
+                marketEntryStatus: result.entryStatus,
+                marketEntryFillTs: null,
+                marketEntryLimitPrice: result.entryLimitPrice ?? null,
+                marketEntryImprovement: null,
+                marketEntryPrice: null,
+                marketExitPrice: null,
+                marketExitTs: null,
+                marketExitSource: "missing",
+                marketExitTargetPrice: result.exitTargetPrice,
+                marketExitStatus: result.exitStatus,
+                marketPnl: null,
+            };
+        }
         return null;
     }
 
@@ -336,10 +623,17 @@ export function buildTradeAnnotationFromSignalExitResult(
             isWin: null,
             evaluationMode: "signal_exit_same_event",
             isProfitable: null,
+            marketEntrySource: result.entrySource,
+            marketEntryStatus: result.entryStatus,
+            marketEntryFillTs: result.entryFillTs,
+            marketEntryLimitPrice: result.entryLimitPrice,
+            marketEntryImprovement: result.entryImprovement,
             marketEntryPrice: null,
             marketExitPrice: null,
             marketExitTs: null,
-            marketExitSource: "no_event" as any,
+            marketExitSource: "no_event",
+            marketExitTargetPrice: result.exitTargetPrice,
+            marketExitStatus: result.exitStatus,
             marketPnl: null,
         };
     }
@@ -355,10 +649,17 @@ export function buildTradeAnnotationFromSignalExitResult(
             isWin: null,
             evaluationMode: "signal_exit_same_event",
             isProfitable: null,
+            marketEntrySource: result.entrySource,
+            marketEntryStatus: result.entryStatus,
+            marketEntryFillTs: result.entryFillTs,
+            marketEntryLimitPrice: result.entryLimitPrice,
+            marketEntryImprovement: result.entryImprovement,
             marketEntryPrice: null,
             marketExitPrice: null,
             marketExitTs: null,
-            marketExitSource: "duplicate" as any,
+            marketExitSource: "duplicate",
+            marketExitTargetPrice: result.exitTargetPrice,
+            marketExitStatus: result.exitStatus,
             marketPnl: null,
         };
     }
@@ -373,10 +674,17 @@ export function buildTradeAnnotationFromSignalExitResult(
         isWin: result.isWin,
         evaluationMode: "signal_exit_same_event",
         isProfitable: result.isProfitable,
+        marketEntrySource: result.entrySource,
+        marketEntryStatus: result.entryStatus,
+        marketEntryFillTs: result.entryFillTs,
+        marketEntryLimitPrice: result.entryLimitPrice,
+        marketEntryImprovement: result.entryImprovement,
         marketEntryPrice: result.entryPrice,
         marketExitPrice: result.exitPrice,
         marketExitTs: result.exitTs,
         marketExitSource: result.exitSource as TradePolymarketOutcome["marketExitSource"],
+        marketExitTargetPrice: result.exitTargetPrice,
+        marketExitStatus: result.exitStatus,
         marketPnl: result.pnl,
     };
 }

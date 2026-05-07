@@ -12,6 +12,13 @@ import { setVisible } from "../dom-utils";
 import { mergeFinderRiskParamsIntoBacktestSettings } from "../finder/finder-runner-core";
 import { getFinderMetricValue } from "../finder/finder-engine";
 import { paramManager } from "../param-manager";
+import {
+    clampPolymarketPostSignalLimitEntryPriceCents,
+    clampPolymarketPostSignalLimitExitPriceCents,
+    clampPolymarketPostSignalLimitOffsetCents,
+    resolvePolymarketPostSignalLimitEntryMode,
+    resolvePolymarketPostSignalLimitExitMode,
+} from "../polymarket-post-signal-limit-entry";
 import { settingsManager, sortStrategyConfigsNewestFirst } from "../settings-manager";
 import { clearBacktestResults, setBlockRange, setCurrentStrategyKey } from "../state-actions";
 import { state } from "../state";
@@ -1200,9 +1207,41 @@ class HuntService {
             this.runOutput?.finderOptions
         );
         const effectiveExitMode = this.runOutput?.finderOptions?.polymarketExitMode ?? "resolve_hold";
+        const applyLimitEntryEvalSettings = (): void => {
+            const evalSummary = tagged.result.polymarketEval;
+            if (!evalSummary?.limitEntryEnabled) {
+                return;
+            }
+            mergedBacktestSettings.polymarketPostSignalLimitEntryEnabled = true;
+            mergedBacktestSettings.polymarketPostSignalLimitEntryMode = resolvePolymarketPostSignalLimitEntryMode(
+                evalSummary.limitEntryMode
+            );
+            mergedBacktestSettings.polymarketPostSignalLimitEntryPriceCents = clampPolymarketPostSignalLimitEntryPriceCents(
+                evalSummary.limitEntryPriceCents ?? mergedBacktestSettings.polymarketPostSignalLimitEntryPriceCents
+            );
+            mergedBacktestSettings.polymarketPostSignalLimitEntryOffsetCents = clampPolymarketPostSignalLimitOffsetCents(
+                evalSummary.limitEntryOffsetCents ?? mergedBacktestSettings.polymarketPostSignalLimitEntryOffsetCents
+            );
+            mergedBacktestSettings.polymarketPostSignalLimitExitEnabled = evalSummary.limitExitEnabled === true;
+            mergedBacktestSettings.polymarketPostSignalLimitExitMode = resolvePolymarketPostSignalLimitExitMode(
+                evalSummary.limitExitMode
+            );
+            mergedBacktestSettings.polymarketPostSignalLimitExitPriceCents = clampPolymarketPostSignalLimitExitPriceCents(
+                evalSummary.limitExitPriceCents ?? mergedBacktestSettings.polymarketPostSignalLimitExitPriceCents
+            );
+            mergedBacktestSettings.polymarketPostSignalLimitExitOffsetCents = clampPolymarketPostSignalLimitOffsetCents(
+                evalSummary.limitExitOffsetCents ?? mergedBacktestSettings.polymarketPostSignalLimitExitOffsetCents
+            );
+        };
         if (effectiveExitMode === "signal_exit_same_event") {
             mergedBacktestSettings.polymarketAnnotationEnabled = true;
             mergedBacktestSettings.polymarketExitMode = "signal_exit_same_event";
+            if (tagged.result.polymarketEval?.limitEntryEnabled) {
+                applyLimitEntryEvalSettings();
+            }
+        } else if (tagged.result.polymarketEval?.limitEntryEnabled) {
+            mergedBacktestSettings.polymarketAnnotationEnabled = true;
+            applyLimitEntryEvalSettings();
         } else if (Number.isFinite(tagged.result.params.polymarketEntryOffset)) {
             mergedBacktestSettings.polymarketEntryOffset = Math.max(
                 0,

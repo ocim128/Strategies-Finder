@@ -91,6 +91,7 @@ const TEST_FILES = [
     "tests/polymarket-sync-utils.spec.ts",
     "tests/polymarket-outcome-evaluator.spec.ts",
     "tests/polymarket-fill-analysis.spec.ts",
+    "tests/polymarket-post-signal-limit-entry.spec.ts",
     "tests/polymarket-native-session-intervals.spec.ts",
     "tests/polymarket-price-points-ingest.spec.ts",
     "tests/finder-polymarket.spec.ts",

@@ -341,6 +341,22 @@ export interface BacktestSettings {
     polymarketEntryOffset?: number;
     /** Polymarket exit evaluation mode: resolve_hold scores at final binary outcome, signal_exit_same_event exits on chart sell signal inside the mapped native outcome session */
     polymarketExitMode?: "resolve_hold" | "signal_exit_same_event";
+    /** Enable post-chart-entry Polymarket limit-entry fill simulation for supported annotated runs. */
+    polymarketPostSignalLimitEntryEnabled?: boolean;
+    /** Limit-entry pricing mode: fixed cents or first quote minus offset. */
+    polymarketPostSignalLimitEntryMode?: "fixed_price" | "signal_offset";
+    /** Limit-entry side price in cents, clamped to 1..99. */
+    polymarketPostSignalLimitEntryPriceCents?: number;
+    /** Limit-entry discount from the first side quote, in cents. */
+    polymarketPostSignalLimitEntryOffsetCents?: number;
+    /** Enable optional Polymarket target exit after a limit entry fills. */
+    polymarketPostSignalLimitExitEnabled?: boolean;
+    /** Target-exit pricing mode: fixed cents or filled entry plus offset. */
+    polymarketPostSignalLimitExitMode?: "fixed_price" | "entry_offset";
+    /** Fixed target-exit side price in cents, clamped to 1..99. */
+    polymarketPostSignalLimitExitPriceCents?: number;
+    /** Target-exit offset above the filled entry price, in cents. */
+    polymarketPostSignalLimitExitOffsetCents?: number;
     /** Resolved secondary symbol for cross-symbol strategies. */
     crossSymbolSecondary?: string;
 }

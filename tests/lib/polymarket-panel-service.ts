@@ -205,7 +205,11 @@ class PolymarketPanelService {
         }
 
         dom.polymarketDiagnosticsContent.innerHTML = [
-            payoutSummary ? this.buildPayoutSummarySection(payoutSummary, result.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event") : "",
+            payoutSummary ? this.buildPayoutSummarySection(
+                payoutSummary,
+                result.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event"
+                    || result.polymarketTradeSummary?.limitExitEnabled === true
+            ) : "",
             summary ? this.buildPolymarketSummarySection(summary) : "",
             ...sections.map((section) => this.buildDiagnosticBucketSection(section)),
         ].filter(Boolean).join("");
@@ -232,24 +236,51 @@ class PolymarketPanelService {
         bestTimingProfile?: NonNullable<NonNullable<BacktestResult["polymarketTradeSummary"]>["timingProfile"]>[number] | null;
         evaluationMode?: "resolve_hold" | "signal_exit_same_event";
         missingPriceTrades?: number;
+        targetExitedTrades?: number;
         signalExitedTrades?: number;
         resolvedTrades?: number;
+        limitEntryEnabled?: boolean;
+        limitEntryMode?: NonNullable<BacktestResult["polymarketTradeSummary"]>["limitEntryMode"];
+        limitEntryPriceCents?: number;
+        limitEntryOffsetCents?: number;
+        limitEntryAttempts?: number;
+        limitEntryFilledTrades?: number;
+        limitEntryMissedTrades?: number;
+        limitEntryNotTouchedTrades?: number;
+        limitEntryLastMinuteOnlyTrades?: number;
+        limitEntryMissingPriceTrades?: number;
+        limitEntryFillRate?: number;
+        avgLimitEntryWaitSec?: number;
+        avgLimitEntryImprovement?: number;
+        limitExitEnabled?: boolean;
+        limitExitMode?: NonNullable<BacktestResult["polymarketTradeSummary"]>["limitExitMode"];
+        limitExitPriceCents?: number;
+        limitExitOffsetCents?: number;
+        limitExitFilledTrades?: number;
+        limitExitFallbackTrades?: number;
+        limitExitUnreachableTrades?: number;
     } | null {
         const summary = result.polymarketTradeSummary;
         const isSignalExit = summary?.evaluationMode === "signal_exit_same_event";
+        const usesRealizedPnl = isSignalExit || summary?.limitExitEnabled === true;
+        const hasLimitEntrySummary = summary?.limitEntryEnabled === true
+            && (summary.limitEntryAttempts ?? 0) > 0;
 
-        const wins = isSignalExit
+        const wins = usesRealizedPnl
             ? (summary?.profitableTrades ?? result.trades.filter((t) => t.polymarketOutcome?.isProfitable === true).length)
             : result.trades.filter((trade) => trade.polymarketOutcome?.isWin === true).length;
-        const losses = isSignalExit
+        const losses = usesRealizedPnl
             ? (summary?.losingTrades ?? result.trades.filter((t) => t.polymarketOutcome?.isProfitable === false).length)
             : result.trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
-        const neutralTrades = isSignalExit
+        const neutralTrades = usesRealizedPnl
             ? (summary?.neutralTrades ?? Math.max(0, (summary?.scoredTrades ?? wins + losses) - wins - losses))
             : 0;
-        const scoredTrades = isSignalExit ? (summary?.scoredTrades ?? wins + losses + neutralTrades) : wins + losses;
+        const scoredTrades = usesRealizedPnl ? (summary?.scoredTrades ?? wins + losses + neutralTrades) : wins + losses;
 
         if (!summary && scoredTrades === 0) {
+            return null;
+        }
+        if (summary && scoredTrades === 0 && !hasLimitEntrySummary) {
             return null;
         }
 
@@ -286,15 +317,36 @@ class PolymarketPanelService {
             coverage,
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
             outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
-            baselineDelta: isSignalExit ? 0 : (scoredTrades > 0 ? wins / scoredTrades : 0) - baselineWinRate,
+            baselineDelta: usesRealizedPnl ? 0 : (scoredTrades > 0 ? wins / scoredTrades : 0) - baselineWinRate,
             entrySelectionMode: summary?.entrySelectionMode,
             entryOffset: summary?.entryOffset,
             outcomeInterval: summary?.outcomeInterval,
             bestTimingProfile,
             evaluationMode: isSignalExit ? "signal_exit_same_event" : undefined,
             missingPriceTrades: isSignalExit ? (summary?.missingPriceTrades ?? 0) : undefined,
+            targetExitedTrades: summary?.targetExitedTrades,
             signalExitedTrades: isSignalExit ? (summary?.signalExitedTrades ?? 0) : undefined,
             resolvedTrades: isSignalExit ? (summary?.resolvedTrades ?? 0) : undefined,
+            limitEntryEnabled: summary?.limitEntryEnabled,
+            limitEntryMode: summary?.limitEntryMode,
+            limitEntryPriceCents: summary?.limitEntryPriceCents,
+            limitEntryOffsetCents: summary?.limitEntryOffsetCents,
+            limitEntryAttempts: summary?.limitEntryAttempts,
+            limitEntryFilledTrades: summary?.limitEntryFilledTrades,
+            limitEntryMissedTrades: summary?.limitEntryMissedTrades,
+            limitEntryNotTouchedTrades: summary?.limitEntryNotTouchedTrades,
+            limitEntryLastMinuteOnlyTrades: summary?.limitEntryLastMinuteOnlyTrades,
+            limitEntryMissingPriceTrades: summary?.limitEntryMissingPriceTrades,
+            limitEntryFillRate: summary?.limitEntryFillRate,
+            avgLimitEntryWaitSec: summary?.avgLimitEntryWaitSec,
+            avgLimitEntryImprovement: summary?.avgLimitEntryImprovement,
+            limitExitEnabled: summary?.limitExitEnabled,
+            limitExitMode: summary?.limitExitMode,
+            limitExitPriceCents: summary?.limitExitPriceCents,
+            limitExitOffsetCents: summary?.limitExitOffsetCents,
+            limitExitFilledTrades: summary?.limitExitFilledTrades,
+            limitExitFallbackTrades: summary?.limitExitFallbackTrades,
+            limitExitUnreachableTrades: summary?.limitExitUnreachableTrades,
         };
     }
 
@@ -323,6 +375,7 @@ class PolymarketPanelService {
 
     private buildPolymarketSummarySection(summary: NonNullable<ReturnType<PolymarketPanelService["getPolymarketSummary"]>>): string {
         const isSignalExit = summary.evaluationMode === "signal_exit_same_event";
+        const usesRealizedPnl = isSignalExit || summary.limitExitEnabled === true;
         const usesActualEntryMinute = isActualPolymarketEntryMinuteMode(summary.entrySelectionMode);
         const outcomeInterval = resolvePolymarketOutcomeInterval(summary.outcomeInterval);
         const usesNativeLongSession = outcomeInterval !== "5m";
@@ -336,9 +389,9 @@ class PolymarketPanelService {
             : usesActualEntryMinute
                 ? "Auto (actual trade minute)"
                 : (!usesNativeLongSession && typeof summary.entryOffset === "number" ? `Minute ${summary.entryOffset}` : `Native ${outcomeInterval} scoring`);
-        const winCountLabel = isSignalExit ? "Profitable Trades" : "Poly Wins";
-        const lossCountLabel = isSignalExit ? "Losing Trades" : "Poly Losses";
-        const profitabilityTone = isSignalExit && summary.wins === 0 && summary.losses === 0
+        const winCountLabel = usesRealizedPnl ? "Profitable Trades" : "Poly Wins";
+        const lossCountLabel = usesRealizedPnl ? "Losing Trades" : "Poly Losses";
+        const profitabilityTone = usesRealizedPnl && summary.wins === 0 && summary.losses === 0
             ? 0
             : summary.winRate - 0.5;
         const timingContext = summary.bestTimingProfile
@@ -350,13 +403,29 @@ class PolymarketPanelService {
                     : (usesNativeLongSession ? `Full ${outcomeInterval} session timing diagnostics are available below.` : "Full timing profile is available in 1m bridge runs.");
 
         const signalExitCards = isSignalExit ? `
+                    ${(summary.targetExitedTrades ?? 0) > 0 ? this.renderStatCard("Target Exited", String(summary.targetExitedTrades)) : ""}
                     ${this.renderStatCard("Signal Exited", String(summary.signalExitedTrades ?? 0))}
                     ${this.renderStatCard("Resolved (Held)", String(summary.resolvedTrades ?? 0))}
                     ${summary.neutralTrades > 0 ? this.renderStatCard("Neutral Trades", String(summary.neutralTrades)) : ""}
                     ${summary.missingPriceTrades && summary.missingPriceTrades > 0 ? this.renderStatCard("Missing Price Trades", String(summary.missingPriceTrades)) : ""}
         ` : '';
 
-        const baselineCard = isSignalExit ? '' : `
+        const limitEntryCards = summary.limitEntryEnabled ? `
+                    ${this.renderStatCard("Limit Attempts", String(summary.limitEntryAttempts ?? 0))}
+                    ${this.renderStatCard("Limit Filled", String(summary.limitEntryFilledTrades ?? 0))}
+                    ${this.renderStatCard("Limit Missed", String(summary.limitEntryMissedTrades ?? 0))}
+                    ${this.renderStatCard("Limit Fill Rate", formatPercent(summary.limitEntryFillRate ?? 0))}
+                    ${(summary.limitEntryNotTouchedTrades ?? 0) > 0 ? this.renderStatCard("Not Touched", String(summary.limitEntryNotTouchedTrades)) : ""}
+                    ${(summary.limitEntryLastMinuteOnlyTrades ?? 0) > 0 ? this.renderStatCard("Last-Min Only", String(summary.limitEntryLastMinuteOnlyTrades)) : ""}
+                    ${(summary.limitEntryMissingPriceTrades ?? 0) > 0 ? this.renderStatCard("Missing Limit Price", String(summary.limitEntryMissingPriceTrades)) : ""}
+                    ${typeof summary.avgLimitEntryWaitSec === "number" ? this.renderStatCard("Avg Limit Wait", `${summary.avgLimitEntryWaitSec.toFixed(0)}s`) : ""}
+                    ${typeof summary.avgLimitEntryImprovement === "number" ? this.renderStatCard("Avg Entry Improvement", formatProbability(summary.avgLimitEntryImprovement)) : ""}
+                    ${summary.limitExitEnabled ? this.renderStatCard("Target Filled", String(summary.limitExitFilledTrades ?? 0)) : ""}
+                    ${summary.limitExitEnabled ? this.renderStatCard("Target Fallback", String(summary.limitExitFallbackTrades ?? 0)) : ""}
+                    ${summary.limitExitEnabled && (summary.limitExitUnreachableTrades ?? 0) > 0 ? this.renderStatCard("Target Unreachable", String(summary.limitExitUnreachableTrades)) : ""}
+        ` : '';
+
+        const baselineCard = usesRealizedPnl ? '' : `
                     ${this.renderStatCard("Baseline Delta", `${summary.baselineDelta >= 0 ? "+" : ""}${(summary.baselineDelta * 100).toFixed(1)}pp`, summary.baselineDelta)}
         `;
 
@@ -366,12 +435,13 @@ class PolymarketPanelService {
                 <div class="entry-stats-hint polymarket-diagnostics__hint">${timingContext}</div>
                 <div class="stats-grid polymarket-panel__stats">
                     ${this.renderStatCard(runModeLabel, runModeValue)}
-                    ${this.renderStatCard(isSignalExit ? "Poly Profitable %" : "Poly Win Rate", formatPercent(summary.winRate), profitabilityTone)}
+                    ${this.renderStatCard(usesRealizedPnl ? "Poly Profitable %" : "Poly Win Rate", formatPercent(summary.winRate), profitabilityTone)}
                     ${this.renderStatCard("Scored Trade Share", formatPercent(summary.coverage))}
                     ${this.renderStatCard(winCountLabel, String(summary.wins), summary.wins > 0 ? 1 : 0)}
                     ${this.renderStatCard(lossCountLabel, String(summary.losses), summary.losses > 0 ? -1 : 0)}
                     ${baselineCard}
                     ${signalExitCards}
+                    ${limitEntryCards}
                     ${this.renderStatCard("Scored Trades", String(summary.scoredTrades))}
                     ${this.renderStatCard("Unscored Trades", String(summary.unscoredTrades))}
                     ${summary.duplicateTradesIgnored && summary.duplicateTradesIgnored > 0 ? this.renderStatCard("Duplicate Trades Ignored", String(summary.duplicateTradesIgnored)) : ""}

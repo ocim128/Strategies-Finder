@@ -26,11 +26,36 @@ export function indexPricePointsByEvent(
     return { pointsByEventStart };
 }
 
+function clampProbability(value: number | null | undefined): number | null {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+        return null;
+    }
+    if (value <= 0) return 0;
+    if (value >= 1) return 1;
+    return value;
+}
+
+export function getPolymarketSidePrice(
+    point: PolymarketPricePoint,
+    side: "yes" | "no"
+): number | null {
+    const yesPrice = clampProbability(point.yes_price);
+    if (side === "yes") {
+        return yesPrice;
+    }
+
+    const noPrice = clampProbability(point.no_price);
+    if (noPrice !== null) {
+        return noPrice;
+    }
+    return yesPrice === null ? null : clampProbability(1 - yesPrice);
+}
+
 function getSidePrice(
     point: PolymarketPricePoint,
     side: "yes" | "no"
 ): number | null | undefined {
-    return side === "yes" ? point.yes_price : point.no_price;
+    return getPolymarketSidePrice(point, side);
 }
 
 function lowerBoundByTimestamp(

@@ -15,6 +15,21 @@ import {
 } from "./settings-parse-utils";
 import { resolvePolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
+import {
+    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_ENABLED,
+    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_MODE,
+    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_PRICE_CENTS,
+    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_OFFSET_CENTS,
+    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_ENABLED,
+    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_MODE,
+    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_PRICE_CENTS,
+    DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_OFFSET_CENTS,
+    clampPolymarketPostSignalLimitEntryPriceCents,
+    clampPolymarketPostSignalLimitExitPriceCents,
+    clampPolymarketPostSignalLimitOffsetCents,
+    resolvePolymarketPostSignalLimitEntryMode,
+    resolvePolymarketPostSignalLimitExitMode,
+} from "./polymarket-post-signal-limit-entry";
 import { ADAPTIVE_TAKE_PROFIT_DEFAULTS, resolveTakeProfitMode } from "./take-profit-settings";
 
 export const CAPITAL_DEFAULTS = Object.freeze({
@@ -80,6 +95,14 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     polymarketEntrySelectionMode: "fixed_offset" as const,
     polymarketEntryOffset: 0,
     polymarketExitMode: "resolve_hold" as const,
+    polymarketPostSignalLimitEntryEnabled: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_ENABLED,
+    polymarketPostSignalLimitEntryMode: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_MODE,
+    polymarketPostSignalLimitEntryPriceCents: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_PRICE_CENTS,
+    polymarketPostSignalLimitEntryOffsetCents: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_OFFSET_CENTS,
+    polymarketPostSignalLimitExitEnabled: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_ENABLED,
+    polymarketPostSignalLimitExitMode: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_MODE,
+    polymarketPostSignalLimitExitPriceCents: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_PRICE_CENTS,
+    polymarketPostSignalLimitExitOffsetCents: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_OFFSET_CENTS,
     crossSymbolSecondary: "",
 });
 
@@ -363,6 +386,14 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "polymarketEntrySelectionMode",
     "polymarketEntryOffset",
     "polymarketExitMode",
+    "polymarketPostSignalLimitEntryEnabled",
+    "polymarketPostSignalLimitEntryMode",
+    "polymarketPostSignalLimitEntryPriceCents",
+    "polymarketPostSignalLimitEntryOffsetCents",
+    "polymarketPostSignalLimitExitEnabled",
+    "polymarketPostSignalLimitExitMode",
+    "polymarketPostSignalLimitExitPriceCents",
+    "polymarketPostSignalLimitExitOffsetCents",
     "crossSymbolSecondary",
 ]);
 
@@ -519,6 +550,34 @@ export function resolveBacktestSettingsFromRaw(
             coerced.polymarketOutcomeSymbol = coerced.polymarketOutcomeSymbol.trim().toUpperCase();
         }
         coerced.polymarketOutcomeInterval = resolvePolymarketOutcomeInterval(coerced.polymarketOutcomeInterval);
+        coerced.polymarketPostSignalLimitEntryEnabled = readBoolean(
+            raw,
+            "polymarketPostSignalLimitEntryEnabled",
+            EFFECTIVE_BACKTEST_DEFAULTS.polymarketPostSignalLimitEntryEnabled
+        );
+        coerced.polymarketPostSignalLimitEntryPriceCents = clampPolymarketPostSignalLimitEntryPriceCents(
+            raw["polymarketPostSignalLimitEntryPriceCents"]
+        );
+        coerced.polymarketPostSignalLimitEntryMode = resolvePolymarketPostSignalLimitEntryMode(
+            raw["polymarketPostSignalLimitEntryMode"]
+        );
+        coerced.polymarketPostSignalLimitEntryOffsetCents = clampPolymarketPostSignalLimitOffsetCents(
+            raw["polymarketPostSignalLimitEntryOffsetCents"]
+        );
+        coerced.polymarketPostSignalLimitExitEnabled = readBoolean(
+            raw,
+            "polymarketPostSignalLimitExitEnabled",
+            EFFECTIVE_BACKTEST_DEFAULTS.polymarketPostSignalLimitExitEnabled
+        );
+        coerced.polymarketPostSignalLimitExitMode = resolvePolymarketPostSignalLimitExitMode(
+            raw["polymarketPostSignalLimitExitMode"]
+        );
+        coerced.polymarketPostSignalLimitExitPriceCents = clampPolymarketPostSignalLimitExitPriceCents(
+            raw["polymarketPostSignalLimitExitPriceCents"]
+        );
+        coerced.polymarketPostSignalLimitExitOffsetCents = clampPolymarketPostSignalLimitOffsetCents(
+            raw["polymarketPostSignalLimitExitOffsetCents"]
+        );
         return coerced;
     }
 
@@ -604,6 +663,34 @@ export function resolveBacktestSettingsFromRaw(
             && raw["polymarketExitMode"].trim().toLowerCase() === "signal_exit_same_event"
             ? "signal_exit_same_event"
             : EFFECTIVE_BACKTEST_DEFAULTS.polymarketExitMode,
+        polymarketPostSignalLimitEntryEnabled: readBoolean(
+            raw,
+            "polymarketPostSignalLimitEntryEnabled",
+            EFFECTIVE_BACKTEST_DEFAULTS.polymarketPostSignalLimitEntryEnabled
+        ),
+        polymarketPostSignalLimitEntryPriceCents: clampPolymarketPostSignalLimitEntryPriceCents(
+            raw["polymarketPostSignalLimitEntryPriceCents"]
+        ),
+        polymarketPostSignalLimitEntryMode: resolvePolymarketPostSignalLimitEntryMode(
+            raw["polymarketPostSignalLimitEntryMode"]
+        ),
+        polymarketPostSignalLimitEntryOffsetCents: clampPolymarketPostSignalLimitOffsetCents(
+            raw["polymarketPostSignalLimitEntryOffsetCents"]
+        ),
+        polymarketPostSignalLimitExitEnabled: readBoolean(
+            raw,
+            "polymarketPostSignalLimitExitEnabled",
+            EFFECTIVE_BACKTEST_DEFAULTS.polymarketPostSignalLimitExitEnabled
+        ),
+        polymarketPostSignalLimitExitMode: resolvePolymarketPostSignalLimitExitMode(
+            raw["polymarketPostSignalLimitExitMode"]
+        ),
+        polymarketPostSignalLimitExitPriceCents: clampPolymarketPostSignalLimitExitPriceCents(
+            raw["polymarketPostSignalLimitExitPriceCents"]
+        ),
+        polymarketPostSignalLimitExitOffsetCents: clampPolymarketPostSignalLimitOffsetCents(
+            raw["polymarketPostSignalLimitExitOffsetCents"]
+        ),
         crossSymbolSecondary: readString(raw, "crossSymbolSecondary", EFFECTIVE_BACKTEST_DEFAULTS.crossSymbolSecondary),
     };
 

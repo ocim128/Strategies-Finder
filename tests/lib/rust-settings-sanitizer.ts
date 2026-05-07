@@ -86,6 +86,14 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "polymarketOutcomeInterval",
     "polymarketEntrySelectionMode",
     "polymarketExitMode",
+    "polymarketPostSignalLimitEntryEnabled",
+    "polymarketPostSignalLimitEntryMode",
+    "polymarketPostSignalLimitEntryPriceCents",
+    "polymarketPostSignalLimitEntryOffsetCents",
+    "polymarketPostSignalLimitExitEnabled",
+    "polymarketPostSignalLimitExitMode",
+    "polymarketPostSignalLimitExitPriceCents",
+    "polymarketPostSignalLimitExitOffsetCents",
     "crossSymbolSecondary",
 ] as const;
 

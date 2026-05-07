@@ -152,6 +152,78 @@
                     <div class="param-hint">Signal Exit mode uses chart strategy timing for entry/exit inside the same 5m Polymarket event. Requires 1m chart, native 5m session, and next_open execution.</div>
                 </div>
             </div>
+            <div class="param-row" id="polymarketPostSignalLimitEntryEnabledRow" style="display: none;">
+                <div class="param-group">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Post-Signal Limit Entry</label>
+                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle post-signal Polymarket limit entry">
+                            <input type="checkbox" id="polymarketPostSignalLimitEntryEnabled">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div class="param-hint">Requires local Polymarket price points. Missed limit entries are skipped from Polymarket performance.</div>
+                </div>
+            </div>
+            <div class="param-row" id="polymarketPostSignalLimitEntryPriceCentsRow" style="display: none;">
+                <div class="param-group">
+                    <label class="param-label">Limit Entry Price</label>
+                    <input type="number" class="param-input" id="polymarketPostSignalLimitEntryPriceCents" value="50" min="1" max="99" step="1">
+                    <div class="param-hint">Side price in cents. Long trades buy YES; short trades buy NO.</div>
+                </div>
+            </div>
+            <div class="param-row" id="polymarketPostSignalLimitEntryModeRow" style="display: none;">
+                <div class="param-group">
+                    <label class="param-label">Limit Entry Mode</label>
+                    <select class="param-input" id="polymarketPostSignalLimitEntryMode">
+                        <option value="fixed_price" selected>Fixed Price</option>
+                        <option value="signal_offset">Signal Price - Offset</option>
+                    </select>
+                    <div class="param-hint">Signal-offset mode uses the first local side quote after chart entry, then subtracts the offset.</div>
+                </div>
+            </div>
+            <div class="param-row" id="polymarketPostSignalLimitEntryOffsetCentsRow" style="display: none;">
+                <div class="param-group">
+                    <label class="param-label">Limit Entry Offset</label>
+                    <input type="number" class="param-input" id="polymarketPostSignalLimitEntryOffsetCents" value="20" min="0" max="99" step="1">
+                    <div class="param-hint">Cents below the first local side quote. Example: 60c signal quote with 20c offset attempts 40c.</div>
+                </div>
+            </div>
+            <div class="param-row" id="polymarketPostSignalLimitExitEnabledRow" style="display: none;">
+                <div class="param-group">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Limit Exit Target</label>
+                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle post-signal Polymarket limit exit target">
+                            <input type="checkbox" id="polymarketPostSignalLimitExitEnabled">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div class="param-hint">Optional target exit after a limit entry fills. If untouched, the active Polymarket exit mode still applies.</div>
+                </div>
+            </div>
+            <div class="param-row" id="polymarketPostSignalLimitExitModeRow" style="display: none;">
+                <div class="param-group">
+                    <label class="param-label">Limit Exit Mode</label>
+                    <select class="param-input" id="polymarketPostSignalLimitExitMode">
+                        <option value="entry_offset" selected>Entry Price + Offset</option>
+                        <option value="fixed_price">Fixed Price</option>
+                    </select>
+                    <div class="param-hint">Signal-exit mode uses whichever comes first: target exit or chart signal exit.</div>
+                </div>
+            </div>
+            <div class="param-row" id="polymarketPostSignalLimitExitPriceCentsRow" style="display: none;">
+                <div class="param-group">
+                    <label class="param-label">Limit Exit Price</label>
+                    <input type="number" class="param-input" id="polymarketPostSignalLimitExitPriceCents" value="80" min="1" max="99" step="1">
+                    <div class="param-hint">Fixed target side price in cents.</div>
+                </div>
+            </div>
+            <div class="param-row" id="polymarketPostSignalLimitExitOffsetCentsRow" style="display: none;">
+                <div class="param-group">
+                    <label class="param-label">Limit Exit Offset</label>
+                    <input type="number" class="param-input" id="polymarketPostSignalLimitExitOffsetCents" value="20" min="0" max="99" step="1">
+                    <div class="param-hint">Cents above the filled entry price. Targets at 100c or higher fall back to the active exit mode.</div>
+                </div>
+            </div>
             <div class="param-hint">Realism settings use the TypeScript engine (Rust skipped for accuracy).</div>
 
             <!-- Cross-Symbol Secondary -->

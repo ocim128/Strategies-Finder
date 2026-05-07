@@ -452,6 +452,82 @@ console.log("\n=== evaluateSignalExitTrades: same entry quote can also serve as 
     eq(summary.neutralTrades, 1, "flat same-quote exit is neutral");
 }
 
+console.log("\n=== evaluateSignalExitTrades: zero-offset limit entry can reuse the signal-exit quote ===");
+
+{
+    const trade = makeTrade({
+        entryTime: 1015 as any,
+        exitTime: 1050 as any,
+        exitReason: "signal",
+    });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300, resolved_outcome_up: 1 });
+    const pricePoints = [
+        makePricePoint({ ts: 1050, yes_price: 0.55, no_price: 0.45 }),
+    ];
+
+    const { results, summary } = evaluateSignalExitTrades({
+        trades: [trade],
+        outcomes: [outcome],
+        pricePoints,
+        limitEntry: {
+            enabled: true,
+            priceMode: "signal_offset",
+            offsetCents: 0,
+            priceCents: 50,
+        },
+    });
+
+    const r = results[0]!;
+    eq(r.entrySource, "limit", "entry source is limit");
+    eq(r.entryStatus, "filled", "zero-offset limit entry fills at the signal-exit quote");
+    eq(r.entryFillTs, 1050, "limit entry uses the exact signal-exit timestamp");
+    approx(r.entryPrice!, 0.55, 0.001, "entry price uses the first available quote");
+    eq(r.exitSource, "signal", "signal exit still wins at the same timestamp");
+    approx(r.exitPrice!, 0.55, 0.001, "exit reuses the same quote");
+    eq(r.pnl, 0, "same-timestamp limit entry and signal exit is flat");
+    eq(summary.scoredTrades, 1, "trade is scored");
+    eq(summary.limitEntryFilledTrades, 1, "limit entry fill counted");
+    eq(summary.limitEntryMissedTrades, 0, "zero-offset exact timestamp is not missed");
+    eq(summary.neutralTrades, 1, "flat same-timestamp trade is neutral");
+}
+
+console.log("\n=== evaluateSignalExitTrades: fixed limit entry is flat when filled on the signal-exit quote ===");
+
+{
+    const trade = makeTrade({
+        entryTime: 1015 as any,
+        exitTime: 1050 as any,
+        exitReason: "signal",
+    });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300, resolved_outcome_up: 1 });
+    const pricePoints = [
+        makePricePoint({ ts: 1020, yes_price: 0.70, no_price: 0.30 }),
+        makePricePoint({ ts: 1050, yes_price: 0.55, no_price: 0.45 }),
+    ];
+
+    const { results, summary } = evaluateSignalExitTrades({
+        trades: [trade],
+        outcomes: [outcome],
+        pricePoints,
+        limitEntry: {
+            enabled: true,
+            priceMode: "fixed_price",
+            priceCents: 60,
+        },
+    });
+
+    const r = results[0]!;
+    eq(r.entryStatus, "filled", "fixed limit fills on the signal-exit quote");
+    eq(r.entryFillTs, 1050, "entry fill uses the exact signal-exit timestamp");
+    approx(r.entryPrice!, 0.60, 0.001, "entry remains the fixed limit price");
+    eq(r.exitSource, "signal", "same quote is still treated as a signal exit");
+    approx(r.exitPrice!, 0.60, 0.001, "same-timestamp signal exit is flat to the limit fill");
+    eq(r.pnl, 0, "same-timestamp fixed limit fill and signal exit is flat");
+    eq(summary.scoredTrades, 1, "trade is scored");
+    eq(summary.neutralTrades, 1, "flat same-timestamp fixed limit trade is neutral");
+    eq(summary.losingTrades, 0, "same-timestamp fixed limit fill is not an instant loss");
+}
+
 console.log("\n=== evaluateSignalExitTrades: entry quote after the chart exit stays missing ===");
 
 {
@@ -556,6 +632,206 @@ console.log("\n=== evaluateSignalExitTrades: missing first trade does not block 
     eq(summary.signalExitedTrades, 1, "later trade counted as signal-exited");
     eq(summary.scoredTrades, 1, "later trade is scored");
     eq(summary.duplicateTradesIgnored, 0, "later scored trade is not forced into duplicate");
+}
+
+console.log("\n=== evaluateSignalExitTrades: post-signal limit entry fills at the configured price ===");
+
+{
+    const trade = makeTrade({
+        id: 20,
+        type: "long",
+        entryTime: 1010 as any,
+        exitTime: 1080 as any,
+        exitReason: "signal",
+    });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300, resolved_outcome_up: 1 });
+    const pricePoints = [
+        makePricePoint({ ts: 1010, yes_price: 0.60, no_price: 0.40 }),
+        makePricePoint({ ts: 1030, yes_price: 0.50, no_price: 0.50 }),
+        makePricePoint({ ts: 1080, yes_price: 0.62, no_price: 0.38 }),
+    ];
+
+    const { results, summary } = evaluateSignalExitTrades({
+        trades: [trade],
+        outcomes: [outcome],
+        pricePoints,
+        limitEntry: { enabled: true, priceCents: 50 },
+    });
+
+    const r = results[0]!;
+    eq(r.entrySource, "limit", "entry source is limit");
+    eq(r.entryStatus, "filled", "limit entry filled");
+    eq(r.entryFillTs, 1030, "limit fill timestamp is retained");
+    approx(r.entryPrice!, 0.50, 0.001, "entry price is configured limit");
+    approx(r.exitPrice!, 0.62, 0.001, "signal exit uses existing quote logic");
+    approx(r.pnl!, 0.12, 0.001, "pnl uses limit entry price");
+    eq(summary.scoredTrades, 1, "filled limit entry is scored");
+    eq(summary.limitEntryAttempts, 1, "one limit attempt");
+    eq(summary.limitEntryFilledTrades, 1, "one limit fill");
+    eq(summary.missingPriceTrades, 0, "filled limit entry is not missing price");
+    approx(summary.avgLimitEntryImprovement!, 0.10, 0.001, "entry improvement uses first available side price");
+}
+
+console.log("\n=== evaluateSignalExitTrades: target exit can beat chart signal exit ===");
+
+{
+    const trade = makeTrade({
+        id: 23,
+        type: "long",
+        entryTime: 1010 as any,
+        exitTime: 1080 as any,
+        exitReason: "signal",
+    });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300, resolved_outcome_up: 0 });
+    const pricePoints = [
+        makePricePoint({ ts: 1010, yes_price: 0.60, no_price: 0.40 }),
+        makePricePoint({ ts: 1040, yes_price: 0.82, no_price: 0.18 }),
+        makePricePoint({ ts: 1080, yes_price: 0.70, no_price: 0.30 }),
+    ];
+
+    const { results, summary } = evaluateSignalExitTrades({
+        trades: [trade],
+        outcomes: [outcome],
+        pricePoints,
+        limitEntry: {
+            enabled: true,
+            priceCents: 60,
+            exitEnabled: true,
+            exitMode: "entry_offset",
+            exitOffsetCents: 20,
+        },
+    });
+
+    const r = results[0]!;
+    eq(r.exitSource, "target", "target exit fills before chart signal");
+    approx(r.exitTargetPrice!, 0.80, 0.001, "target is entry + 20c");
+    approx(r.exitPrice!, 0.80, 0.001, "exit price is target limit");
+    approx(r.pnl!, 0.20, 0.001, "target pnl is realized before resolution");
+    eq(summary.targetExitedTrades, 1, "target exit counted");
+    eq(summary.signalExitedTrades, 0, "chart signal did not execute after target");
+    eq(summary.limitExitFilledTrades, 1, "limit exit fill counted");
+}
+
+console.log("\n=== evaluateSignalExitTrades: chart signal can beat target exit ===");
+
+{
+    const trade = makeTrade({
+        id: 24,
+        type: "long",
+        entryTime: 1010 as any,
+        exitTime: 1030 as any,
+        exitReason: "signal",
+    });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300, resolved_outcome_up: 1 });
+    const pricePoints = [
+        makePricePoint({ ts: 1010, yes_price: 0.60, no_price: 0.40 }),
+        makePricePoint({ ts: 1030, yes_price: 0.65, no_price: 0.35 }),
+        makePricePoint({ ts: 1060, yes_price: 0.82, no_price: 0.18 }),
+    ];
+
+    const { results, summary } = evaluateSignalExitTrades({
+        trades: [trade],
+        outcomes: [outcome],
+        pricePoints,
+        limitEntry: {
+            enabled: true,
+            priceCents: 60,
+            exitEnabled: true,
+            exitMode: "entry_offset",
+            exitOffsetCents: 20,
+        },
+    });
+
+    const r = results[0]!;
+    eq(r.exitSource, "signal", "chart signal exits before later target touch");
+    approx(r.exitTargetPrice!, 0.80, 0.001, "target was still tracked");
+    approx(r.exitPrice!, 0.65, 0.001, "signal exit price wins the race");
+    eq(summary.signalExitedTrades, 1, "signal exit counted");
+    eq(summary.targetExitedTrades, 0, "target exit not counted");
+    eq(summary.limitExitFallbackTrades, 1, "unfilled target falls back to signal");
+}
+
+console.log("\n=== evaluateSignalExitTrades: unreachable target falls back to resolution ===");
+
+{
+    const trade = makeTrade({
+        id: 25,
+        type: "long",
+        entryTime: 1010 as any,
+        exitReason: "time_stop",
+    });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300, resolved_outcome_up: 1 });
+    const pricePoints = [
+        makePricePoint({ ts: 1010, yes_price: 0.80, no_price: 0.20 }),
+        makePricePoint({ ts: 1040, yes_price: 0.90, no_price: 0.10 }),
+    ];
+
+    const { results, summary } = evaluateSignalExitTrades({
+        trades: [trade],
+        outcomes: [outcome],
+        pricePoints,
+        limitEntry: {
+            enabled: true,
+            priceCents: 80,
+            exitEnabled: true,
+            exitMode: "entry_offset",
+            exitOffsetCents: 20,
+        },
+    });
+
+    const r = results[0]!;
+    eq(r.exitSource, "resolution", "unreachable target falls back to resolve hold");
+    eq(r.exitTargetPrice, null, "target at or above $1 is represented as null");
+    eq(r.exitStatus, "unreachable", "unreachable status retained");
+    approx(r.exitPrice!, 1, 0.001, "resolved YES win exits at $1");
+    eq(summary.limitExitUnreachableTrades, 1, "unreachable target counted");
+    eq(summary.limitExitFallbackTrades, 1, "resolution fallback counted");
+}
+
+console.log("\n=== evaluateSignalExitTrades: missed limit attempt does not block a later same-event fill ===");
+
+{
+    const t1 = makeTrade({
+        id: 21,
+        type: "long",
+        entryTime: 1010 as any,
+        exitTime: 1060 as any,
+        exitReason: "signal",
+    });
+    const t2 = makeTrade({
+        id: 22,
+        type: "long",
+        entryTime: 1090 as any,
+        exitTime: 1120 as any,
+        exitReason: "signal",
+    });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300, resolved_outcome_up: 1 });
+    const pricePoints = [
+        makePricePoint({ ts: 1010, yes_price: 0.70, no_price: 0.30 }),
+        makePricePoint({ ts: 1090, yes_price: 0.49, no_price: 0.51 }),
+        makePricePoint({ ts: 1120, yes_price: 0.60, no_price: 0.40 }),
+    ];
+
+    const { results, summary } = evaluateSignalExitTrades({
+        trades: [t1, t2],
+        outcomes: [outcome],
+        pricePoints,
+        limitEntry: { enabled: true, priceCents: 50 },
+    });
+
+    eq(results.length, 2, "two results emitted");
+    eq(results[0]!.entryStatus, "invalid_window", "first limit touch after signal exit is invalid");
+    eq(results[0]!.exitSource, "missing", "invalid limit attempt is unscored");
+    eq(results[1]!.entryStatus, "filled", "later same-event trade can still fill");
+    eq(results[1]!.exitSource, "signal", "later filled trade exits by its own signal");
+    approx(results[1]!.pnl!, 0.10, 0.001, "later filled trade keeps its realized signal-exit pnl");
+    eq(summary.limitEntryAttempts, 2, "both limit attempts count");
+    eq(summary.limitEntryFilledTrades, 1, "later limit fill counted");
+    eq(summary.limitEntryMissedTrades, 1, "missed attempt counted");
+    eq(summary.limitEntryInvalidWindowTrades, 1, "invalid-window attempt counted");
+    eq(summary.duplicateTradesIgnored, 0, "unfilled attempt does not force a duplicate");
+    eq(summary.scoredTrades, 1, "later filled trade is scored");
+    eq(summary.missingPriceTrades, 0, "invalid limit window is not generic missing price");
 }
 
 console.log("\n=== evaluateSignalExitTrades: zero pnl is neutral, not profitable ===");

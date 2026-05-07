@@ -140,10 +140,11 @@ function getPolymarketTradePayout(trade: Trade): number | null {
     const pm = trade.polymarketOutcome;
     if (!pm) return null;
 
+    if (typeof pm.marketPnl === "number" && Number.isFinite(pm.marketPnl)) {
+        return pm.marketPnl;
+    }
+
     if (pm.evaluationMode === "signal_exit_same_event") {
-        if (typeof pm.marketPnl === "number" && Number.isFinite(pm.marketPnl)) {
-            return pm.marketPnl;
-        }
         if (
             typeof pm.marketExitPrice === "number" && Number.isFinite(pm.marketExitPrice)
             && typeof pm.marketEntryPrice === "number" && Number.isFinite(pm.marketEntryPrice)

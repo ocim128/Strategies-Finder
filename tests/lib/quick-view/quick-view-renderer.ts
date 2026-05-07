@@ -196,6 +196,7 @@ export function renderEmptyTradesHtml(): string {
 export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary): string {
   if (!summary) return '';
   const isSignalExit = summary.evaluationMode === "signal_exit_same_event";
+  const usesRealizedPnl = isSignalExit || summary.limitExitEnabled === true;
   const usesActualEntryMinute = summary.entrySelectionMode === "actual_entry_minute";
   const outcomeInterval = summary.outcomeInterval ?? "5m";
   const usesNativeLongSession = outcomeInterval !== "5m";
@@ -206,31 +207,31 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
       : (!usesNativeLongSession && typeof summary.entryOffset === 'number'
           ? `Selected Offset: Minute ${summary.entryOffset}`
           : `Run Mode: Native ${outcomeInterval} scoring`);
-  const winCountLabel = isSignalExit ? "Profitable Trades" : "Poly Wins";
-  const lossCountLabel = isSignalExit ? "Losing Trades" : "Poly Losses";
-  const streakWinLabel = isSignalExit ? "Max Profit Streak" : "Max Win Streak";
-  const streakLossLabel = isSignalExit ? "Max Loss Streak" : "Max Loss Streak";
-  const recentFormLabel = isSignalExit ? "Last 50 P/L/F" : "Last 50 W/L";
+  const winCountLabel = usesRealizedPnl ? "Profitable Trades" : "Poly Wins";
+  const lossCountLabel = usesRealizedPnl ? "Losing Trades" : "Poly Losses";
+  const streakWinLabel = usesRealizedPnl ? "Max Profit Streak" : "Max Win Streak";
+  const streakLossLabel = usesRealizedPnl ? "Max Loss Streak" : "Max Loss Streak";
+  const recentFormLabel = usesRealizedPnl ? "Last 50 P/L/F" : "Last 50 W/L";
   const recentFormValue = summary.recentFormTrades === 0
     ? "n/a"
-    : isSignalExit
+    : usesRealizedPnl
       ? `${summary.recentFormWins} profit - ${summary.recentFormLosses} loss${summary.recentFormFlats > 0 ? ` - ${summary.recentFormFlats} flat` : ""}`
       : `${summary.recentFormWins} win - ${summary.recentFormLosses} lose`;
   const recentFormToneClass = summary.recentFormTrades === 0
     ? ""
-    : isSignalExit && summary.recentFormWins === 0 && summary.recentFormLosses === 0
+    : usesRealizedPnl && summary.recentFormWins === 0 && summary.recentFormLosses === 0
       ? ""
       : summary.recentFormWinRate >= 0.5
         ? "positive"
         : "negative";
-  const profitabilityToneClass = isSignalExit && summary.wins === 0 && summary.losses === 0
+  const profitabilityToneClass = usesRealizedPnl && summary.wins === 0 && summary.losses === 0
     ? ""
     : summary.winRate >= 0.5
       ? "positive"
       : "negative";
-  const afterMaxHoldLabel = isSignalExit ? "Entry Profit % | After Max Hold" : "Entry Win % | After Max Hold";
-  const afterTakeProfitLabel = isSignalExit ? "Entry Profit % | After TP" : "Entry Win % | After TP";
-  const afterSignalLabel = isSignalExit ? "Entry Profit % | After Signal" : "Entry Win % | After Signal";
+  const afterMaxHoldLabel = usesRealizedPnl ? "Entry Profit % | After Max Hold" : "Entry Win % | After Max Hold";
+  const afterTakeProfitLabel = usesRealizedPnl ? "Entry Profit % | After TP" : "Entry Win % | After TP";
+  const afterSignalLabel = usesRealizedPnl ? "Entry Profit % | After Signal" : "Entry Win % | After Signal";
   const timingProfileSection = !usesNativeLongSession && summary.timingProfile && summary.timingProfile.length > 0
     ? buildPolymarketTimingProfileSectionHtml(summary)
     : '';
@@ -242,6 +243,12 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
   `;
 
   const signalExitCards = isSignalExit ? `
+          ${(summary.targetExitedTrades ?? 0) > 0 ? `
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Target Exited</div>
+              <div class="qv-stat-value">${summary.targetExitedTrades}</div>
+          </div>
+          ` : ""}
           <div class="qv-stat-card">
               <div class="qv-stat-label">Signal Exited</div>
               <div class="qv-stat-value">${summary.signalExitedTrades ?? 0}</div>
@@ -264,7 +271,60 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
           ` : ""}
   ` : '';
 
-  const baselineCard = isSignalExit ? '' : `
+  const limitEntryCards = summary.limitEntryEnabled ? `
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Limit Attempts</div>
+              <div class="qv-stat-value">${summary.limitEntryAttempts ?? 0}</div>
+          </div>
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Limit Filled</div>
+              <div class="qv-stat-value">${summary.limitEntryFilledTrades ?? 0}</div>
+          </div>
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Limit Missed</div>
+              <div class="qv-stat-value">${summary.limitEntryMissedTrades ?? 0}</div>
+          </div>
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Limit Fill Rate</div>
+              <div class="qv-stat-value">${((summary.limitEntryFillRate ?? 0) * 100).toFixed(1)}%</div>
+          </div>
+          ${(summary.limitEntryNotTouchedTrades ?? 0) > 0 ? `
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Not Touched</div>
+              <div class="qv-stat-value">${summary.limitEntryNotTouchedTrades}</div>
+          </div>
+          ` : ""}
+          ${(summary.limitEntryLastMinuteOnlyTrades ?? 0) > 0 ? `
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Last-Min Only</div>
+              <div class="qv-stat-value">${summary.limitEntryLastMinuteOnlyTrades}</div>
+          </div>
+          ` : ""}
+          ${(summary.limitEntryMissingPriceTrades ?? 0) > 0 ? `
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Missing Limit Price</div>
+              <div class="qv-stat-value">${summary.limitEntryMissingPriceTrades}</div>
+          </div>
+          ` : ""}
+          ${summary.limitExitEnabled ? `
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Target Filled</div>
+              <div class="qv-stat-value">${summary.limitExitFilledTrades ?? 0}</div>
+          </div>
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Target Fallback</div>
+              <div class="qv-stat-value">${summary.limitExitFallbackTrades ?? 0}</div>
+          </div>
+          ${(summary.limitExitUnreachableTrades ?? 0) > 0 ? `
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Target Unreachable</div>
+              <div class="qv-stat-value">${summary.limitExitUnreachableTrades}</div>
+          </div>
+          ` : ""}
+          ` : ""}
+  ` : '';
+
+  const baselineCard = usesRealizedPnl ? '' : `
           <div class="qv-stat-card">
               <div class="qv-stat-label">Baseline Delta</div>
               <div class="qv-stat-value ${summary.baselineDelta >= 0 ? 'positive' : 'negative'}">
@@ -281,7 +341,7 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
               <div class="qv-stat-value">${summary.bestTimingProfile ? `Best Minute ${summary.bestTimingProfile.entryOffset} (${(summary.bestTimingProfile.winRate * 100).toFixed(1)}%)` : (usesActualEntryMinute ? 'See Polymarket tab for auto-mode diagnostics' : 'See Polymarket tab for full diagnostics')}</div>
           </div>
           <div class="qv-stat-card">
-              <div class="qv-stat-label">${isSignalExit ? 'Poly Profitable' : 'Poly Win Rate'}</div>
+              <div class="qv-stat-label">${usesRealizedPnl ? 'Poly Profitable' : 'Poly Win Rate'}</div>
               <div class="qv-stat-value ${profitabilityToneClass}">
                   ${(summary.winRate * 100).toFixed(1)}%
               </div>
@@ -328,6 +388,7 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
           </div>
           ${baselineCard}
           ${signalExitCards}
+          ${limitEntryCards}
           <div class="qv-stat-card">
               <div class="qv-stat-label">${streakWinLabel}</div>
               <div class="qv-stat-value positive">${summary.longestWinStreak}</div>

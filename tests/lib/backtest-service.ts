@@ -659,8 +659,8 @@ export class BacktestService {
                             relevantOutcomeByStart.size > 0 ? [...relevantOutcomeByStart.values()] : outcomes,
                             seriesId,
                             {
-                            startTs,
-                            endTs,
+                                startTs,
+                                endTs,
                             }
                         );
                     } catch {
@@ -677,7 +677,21 @@ export class BacktestService {
                 outcomeSymbol: settings.polymarketOutcomeSymbol,
                 outcomeInterval,
                 polymarketExitMode: effectiveExitMode,
-            }, settings.polymarketEntryOffset, pricePoints, settings.polymarketEntrySelectionMode);
+            }, {
+                selectedOffset: settings.polymarketEntryOffset,
+                pricePoints,
+                entrySelectionMode: settings.polymarketEntrySelectionMode,
+                limitEntry: {
+                    enabled: settings.polymarketPostSignalLimitEntryEnabled === true,
+                    priceMode: settings.polymarketPostSignalLimitEntryMode,
+                    priceCents: settings.polymarketPostSignalLimitEntryPriceCents ?? 50,
+                    offsetCents: settings.polymarketPostSignalLimitEntryOffsetCents,
+                    exitEnabled: settings.polymarketPostSignalLimitExitEnabled === true,
+                    exitMode: settings.polymarketPostSignalLimitExitMode,
+                    exitPriceCents: settings.polymarketPostSignalLimitExitPriceCents,
+                    exitOffsetCents: settings.polymarketPostSignalLimitExitOffsetCents,
+                },
+            });
         } catch (error) {
             debugLogger.error("backtest.polymarket_annotation_failed", {
                 symbol: state.currentSymbol,

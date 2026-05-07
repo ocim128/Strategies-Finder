@@ -133,6 +133,16 @@ export class FinderUI {
                 metrics.appendChild(this.createMetricChip(`Coverage ${(poly.coverage * 100).toFixed(1)}%`));
                 metrics.appendChild(this.createMetricChip(`Wins ${poly.wins}`));
                 metrics.appendChild(this.createMetricChip(`Scored ${poly.scoredPredictions}`));
+                if (poly.limitEntryEnabled) {
+                    metrics.appendChild(this.createMetricChip(`Filled ${poly.limitEntryFilledTrades ?? 0}/${poly.limitEntryAttempts ?? 0}`));
+                    metrics.appendChild(this.createMetricChip(`Missed ${poly.limitEntryMissedTrades ?? 0}`));
+                    if (typeof poly.limitEntryFillRate === "number") {
+                        metrics.appendChild(this.createMetricChip(`Fill ${(poly.limitEntryFillRate * 100).toFixed(1)}%`));
+                    }
+                    if (poly.limitExitEnabled) {
+                        metrics.appendChild(this.createMetricChip(`Exit ${poly.limitExitFilledTrades ?? 0}`));
+                    }
+                }
                 if (poly.predictionsTaken !== poly.scoredPredictions) {
                     metrics.appendChild(this.createMetricChip(`Taken ${poly.predictionsTaken}`));
                 }

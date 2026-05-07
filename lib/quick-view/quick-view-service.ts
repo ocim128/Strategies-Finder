@@ -85,8 +85,29 @@ export type QuickViewPolymarketSummary = {
     bestTimingProfile?: import("../types/polymarket-outcomes").BacktestPolymarketTimingProfileEntry | null;
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
     missingPriceTrades?: number;
+    targetExitedTrades?: number;
     signalExitedTrades?: number;
     resolvedTrades?: number;
+    limitEntryEnabled?: boolean;
+    limitEntryMode?: import("../polymarket-post-signal-limit-entry").PolymarketLimitEntryPriceMode;
+    limitEntryPriceCents?: number;
+    limitEntryOffsetCents?: number;
+    limitEntryAttempts?: number;
+    limitEntryFilledTrades?: number;
+    limitEntryMissedTrades?: number;
+    limitEntryNotTouchedTrades?: number;
+    limitEntryLastMinuteOnlyTrades?: number;
+    limitEntryMissingPriceTrades?: number;
+    limitEntryFillRate?: number;
+    avgLimitEntryWaitSec?: number;
+    avgLimitEntryImprovement?: number;
+    limitExitEnabled?: boolean;
+    limitExitMode?: import("../polymarket-post-signal-limit-entry").PolymarketLimitExitPriceMode;
+    limitExitPriceCents?: number;
+    limitExitOffsetCents?: number;
+    limitExitFilledTrades?: number;
+    limitExitFallbackTrades?: number;
+    limitExitUnreachableTrades?: number;
 };
 
 export type QuickViewPolymarketPayoutSummary = {
@@ -339,10 +360,11 @@ function getPolymarketTradePayout(trade: Trade): number | null {
         return null;
     }
 
+    if (typeof outcome.marketPnl === "number" && Number.isFinite(outcome.marketPnl)) {
+        return outcome.marketPnl;
+    }
+
     if (outcome.evaluationMode === "signal_exit_same_event") {
-        if (typeof outcome.marketPnl === "number" && Number.isFinite(outcome.marketPnl)) {
-            return outcome.marketPnl;
-        }
         if (
             typeof outcome.marketExitPrice === "number" && Number.isFinite(outcome.marketExitPrice)
             && typeof outcome.marketEntryPrice === "number" && Number.isFinite(outcome.marketEntryPrice)
@@ -633,6 +655,7 @@ class QuickViewManager {
             outcomeInterval?: PolymarketOutcomeInterval;
             missingOutcomeTrades?: number;
             unscoredTrades?: number;
+            summary?: ReturnType<typeof summarizePolymarketTradesForRun>;
         } = {}
     ): BacktestResult {
         const totalTrades = result.totalTrades > 0 ? result.totalTrades : trades.length;
@@ -661,6 +684,7 @@ class QuickViewManager {
                 profitableTrades: existingSummary?.profitableTrades,
                 losingTrades: existingSummary?.losingTrades,
                 neutralTrades: existingSummary?.neutralTrades,
+                targetExitedTrades: existingSummary?.targetExitedTrades ?? options.summary?.targetExitedTrades,
                 signalExitedTrades: existingSummary?.signalExitedTrades,
                 resolvedTrades: existingSummary?.resolvedTrades,
                 missingPriceTrades: existingSummary?.missingPriceTrades,
@@ -671,6 +695,27 @@ class QuickViewManager {
                 expectancy: existingSummary?.expectancy,
                 avgEntryPrice: existingSummary?.avgEntryPrice,
                 avgExitPrice: existingSummary?.avgExitPrice,
+                limitEntryEnabled: existingSummary?.limitEntryEnabled ?? options.summary?.limitEntryEnabled,
+                limitEntryMode: existingSummary?.limitEntryMode ?? options.summary?.limitEntryMode,
+                limitEntryPriceCents: existingSummary?.limitEntryPriceCents ?? options.summary?.limitEntryPriceCents,
+                limitEntryOffsetCents: existingSummary?.limitEntryOffsetCents ?? options.summary?.limitEntryOffsetCents,
+                limitEntryAttempts: existingSummary?.limitEntryAttempts ?? options.summary?.limitEntryAttempts,
+                limitEntryFilledTrades: existingSummary?.limitEntryFilledTrades ?? options.summary?.limitEntryFilledTrades,
+                limitEntryMissedTrades: existingSummary?.limitEntryMissedTrades ?? options.summary?.limitEntryMissedTrades,
+                limitEntryNotTouchedTrades: existingSummary?.limitEntryNotTouchedTrades ?? options.summary?.limitEntryNotTouchedTrades,
+                limitEntryLastMinuteOnlyTrades: existingSummary?.limitEntryLastMinuteOnlyTrades ?? options.summary?.limitEntryLastMinuteOnlyTrades,
+                limitEntryMissingPriceTrades: existingSummary?.limitEntryMissingPriceTrades ?? options.summary?.limitEntryMissingPriceTrades,
+                limitEntryInvalidWindowTrades: existingSummary?.limitEntryInvalidWindowTrades ?? options.summary?.limitEntryInvalidWindowTrades,
+                limitEntryFillRate: existingSummary?.limitEntryFillRate ?? options.summary?.limitEntryFillRate,
+                avgLimitEntryWaitSec: existingSummary?.avgLimitEntryWaitSec ?? options.summary?.avgLimitEntryWaitSec,
+                avgLimitEntryImprovement: existingSummary?.avgLimitEntryImprovement ?? options.summary?.avgLimitEntryImprovement,
+                limitExitEnabled: existingSummary?.limitExitEnabled ?? options.summary?.limitExitEnabled,
+                limitExitMode: existingSummary?.limitExitMode ?? options.summary?.limitExitMode,
+                limitExitPriceCents: existingSummary?.limitExitPriceCents ?? options.summary?.limitExitPriceCents,
+                limitExitOffsetCents: existingSummary?.limitExitOffsetCents ?? options.summary?.limitExitOffsetCents,
+                limitExitFilledTrades: existingSummary?.limitExitFilledTrades ?? options.summary?.limitExitFilledTrades,
+                limitExitFallbackTrades: existingSummary?.limitExitFallbackTrades ?? options.summary?.limitExitFallbackTrades,
+                limitExitUnreachableTrades: existingSummary?.limitExitUnreachableTrades ?? options.summary?.limitExitUnreachableTrades,
             },
         };
     }
@@ -797,6 +842,34 @@ class QuickViewManager {
             executionModel: this.readCurrentExecutionModel(),
             polymarketAnnotationEnabled: true,
         });
+        const currentPolymarketSettings = resolvePolymarketDomSettings();
+        const existingLimitSummary = result.polymarketTradeSummary?.limitEntryEnabled === true
+            ? result.polymarketTradeSummary
+            : null;
+        const limitEntry = outcomeInterval === "5m"
+            && (
+                existingLimitSummary
+                || (!result.polymarketTradeSummary && currentPolymarketSettings.postSignalLimitEntryEnabled)
+            )
+            ? {
+                enabled: true,
+                priceMode: existingLimitSummary?.limitEntryMode
+                    ?? currentPolymarketSettings.postSignalLimitEntryMode,
+                priceCents: existingLimitSummary?.limitEntryPriceCents
+                    ?? currentPolymarketSettings.postSignalLimitEntryPriceCents,
+                offsetCents: existingLimitSummary?.limitEntryOffsetCents
+                    ?? currentPolymarketSettings.postSignalLimitEntryOffsetCents,
+                exitEnabled: existingLimitSummary
+                    ? existingLimitSummary.limitExitEnabled === true
+                    : currentPolymarketSettings.postSignalLimitExitEnabled,
+                exitMode: existingLimitSummary?.limitExitMode
+                    ?? currentPolymarketSettings.postSignalLimitExitMode,
+                exitPriceCents: existingLimitSummary?.limitExitPriceCents
+                    ?? currentPolymarketSettings.postSignalLimitExitPriceCents,
+                exitOffsetCents: existingLimitSummary?.limitExitOffsetCents
+                    ?? currentPolymarketSettings.postSignalLimitExitOffsetCents,
+            }
+            : undefined;
 
         if (isSignalExitSameEventMode(effectiveExitMode) && resultContext.interval === "1m") {
             try {
@@ -821,11 +894,12 @@ class QuickViewManager {
                     trades: result.trades,
                     outcomes,
                     pricePoints,
+                    limitEntry,
                 });
                 const exitResultByTrade = new Map(exitResults.map((exitResult) => [exitResult.trade, exitResult]));
                 const annotatedTrades = result.trades.map((trade) => {
                     const exitResult = exitResultByTrade.get(trade);
-                    if (!exitResult || exitResult.exitSource === "missing") return { ...trade, polymarketOutcome: null };
+                    if (!exitResult) return { ...trade, polymarketOutcome: null };
                     return { ...trade, polymarketOutcome: buildTradeAnnotationFromSignalExitResult(exitResult) };
                 });
 
@@ -845,6 +919,7 @@ class QuickViewManager {
                         profitableTrades: exitSummary.profitableTrades,
                         losingTrades: exitSummary.losingTrades,
                         neutralTrades: exitSummary.neutralTrades,
+                        targetExitedTrades: exitSummary.targetExitedTrades,
                         signalExitedTrades: exitSummary.signalExitedTrades,
                         resolvedTrades: exitSummary.resolvedTrades,
                         missingPriceTrades: exitSummary.missingPriceTrades,
@@ -855,6 +930,27 @@ class QuickViewManager {
                         expectancy: exitSummary.expectancy,
                         avgEntryPrice: exitSummary.avgEntryPrice,
                         avgExitPrice: exitSummary.avgExitPrice,
+                        limitEntryEnabled: exitSummary.limitEntryEnabled,
+                        limitEntryMode: exitSummary.limitEntryMode,
+                        limitEntryPriceCents: exitSummary.limitEntryPriceCents,
+                        limitEntryOffsetCents: exitSummary.limitEntryOffsetCents,
+                        limitEntryAttempts: exitSummary.limitEntryAttempts,
+                        limitEntryFilledTrades: exitSummary.limitEntryFilledTrades,
+                        limitEntryMissedTrades: exitSummary.limitEntryMissedTrades,
+                        limitEntryNotTouchedTrades: exitSummary.limitEntryNotTouchedTrades,
+                        limitEntryLastMinuteOnlyTrades: exitSummary.limitEntryLastMinuteOnlyTrades,
+                        limitEntryMissingPriceTrades: exitSummary.limitEntryMissingPriceTrades,
+                        limitEntryInvalidWindowTrades: exitSummary.limitEntryInvalidWindowTrades,
+                        limitEntryFillRate: exitSummary.limitEntryFillRate,
+                        avgLimitEntryWaitSec: exitSummary.avgLimitEntryWaitSec,
+                        avgLimitEntryImprovement: exitSummary.avgLimitEntryImprovement,
+                        limitExitEnabled: exitSummary.limitExitEnabled,
+                        limitExitMode: exitSummary.limitExitMode,
+                        limitExitPriceCents: exitSummary.limitExitPriceCents,
+                        limitExitOffsetCents: exitSummary.limitExitOffsetCents,
+                        limitExitFilledTrades: exitSummary.limitExitFilledTrades,
+                        limitExitFallbackTrades: exitSummary.limitExitFallbackTrades,
+                        limitExitUnreachableTrades: exitSummary.limitExitUnreachableTrades,
                     },
                 };
             } catch (error) {
@@ -872,6 +968,17 @@ class QuickViewManager {
             && outcomeInterval === "5m"
             ? this.resolveSelectedPolymarketEntryOffset(result)
             : undefined;
+        let limitEntryPricePoints: Awaited<ReturnType<typeof ensurePricePointsForOutcomes>> | undefined;
+        if (limitEntry) {
+            try {
+                limitEntryPricePoints = await ensurePricePointsForOutcomes(outcomes, seriesId, {
+                    startTs: startTs - 300,
+                    endTs: endTs + 300,
+                });
+            } catch {
+                limitEntryPricePoints = [];
+            }
+        }
         const trades = hasOutcomes
             ? result.trades
             : annotateTradesWithPolymarketOutcomesForRun(
@@ -880,7 +987,11 @@ class QuickViewManager {
                 resultContext.interval,
                 selectedOffset,
                 entrySelectionMode ?? "fixed_offset",
-                { outcomeInterval }
+                {
+                    outcomeInterval,
+                    pricePoints: limitEntryPricePoints,
+                    limitEntry,
+                }
             );
         const summary = summarizePolymarketTradesForRun({
             trades,
@@ -889,6 +1000,7 @@ class QuickViewManager {
             selectedOffset,
             entrySelectionMode,
             outcomeInterval,
+            limitEntry,
         });
 
         return this.withPolymarketTradeSummary(result, trades, seriesId, {
@@ -899,6 +1011,7 @@ class QuickViewManager {
             outcomeInterval,
             missingOutcomeTrades: summary.missingOutcomeTrades,
             unscoredTrades: summary.unscoredTrades,
+            summary,
         });
     }
 
@@ -1122,21 +1235,23 @@ class QuickViewManager {
 
     private getPolymarketSummary(result: BacktestResult): QuickViewPolymarketSummary | null {
         const summary = result.polymarketTradeSummary;
-        const isSignalExit = summary?.evaluationMode === "signal_exit_same_event"
-            && (summary.scoredTrades ?? 0) > 0;
+        const isSignalExit = summary?.evaluationMode === "signal_exit_same_event";
+        const usesRealizedPnl = isSignalExit || summary?.limitExitEnabled === true;
+        const hasLimitEntrySummary = summary?.limitEntryEnabled === true
+            && (summary.limitEntryAttempts ?? 0) > 0;
 
-        const wins = isSignalExit
+        const wins = usesRealizedPnl
             ? (summary?.profitableTrades ?? result.trades.filter((t) => t.polymarketOutcome?.isProfitable === true).length)
             : result.trades.filter((trade) => trade.polymarketOutcome?.isWin === true).length;
-        const losses = isSignalExit
+        const losses = usesRealizedPnl
             ? (summary?.losingTrades ?? result.trades.filter((t) => t.polymarketOutcome?.isProfitable === false).length)
             : result.trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
-        const neutralTrades = isSignalExit
+        const neutralTrades = usesRealizedPnl
             ? (summary?.neutralTrades ?? result.trades.filter((trade) => getPolymarketTradeOutcomeState(trade) === "neutral").length)
             : 0;
-        const scoredTrades = isSignalExit ? (summary?.scoredTrades ?? wins + losses + neutralTrades) : wins + losses;
+        const scoredTrades = usesRealizedPnl ? (summary?.scoredTrades ?? wins + losses + neutralTrades) : wins + losses;
 
-        if (scoredTrades === 0) return null;
+        if (scoredTrades === 0 && !hasLimitEntrySummary) return null;
 
         const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
         const missingTrades = summary?.missingOutcomeTrades ?? Math.max(0, totalTrades - scoredTrades);
@@ -1171,8 +1286,8 @@ class QuickViewManager {
             avgLoss: payoutSummary?.avgLoss ?? null,
             avgEntryPrice: payoutSummary?.avgEntryPrice ?? null,
             outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
-            bestBaselineWinRate,
-            baselineDelta: isSignalExit ? 0 : (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
+            bestBaselineWinRate: usesRealizedPnl ? 0 : bestBaselineWinRate,
+            baselineDelta: usesRealizedPnl ? 0 : (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
             longestWinStreak: streakSummary.longestWinStreak,
             longestLossStreak: streakSummary.longestLossStreak,
             recentFormTrades: recentFormSummary.recentFormTrades,
@@ -1187,8 +1302,29 @@ class QuickViewManager {
             timingProfile, bestTimingProfile,
             evaluationMode: isSignalExit ? "signal_exit_same_event" : undefined,
             missingPriceTrades: isSignalExit ? (summary?.missingPriceTrades ?? 0) : undefined,
+            targetExitedTrades: summary?.targetExitedTrades,
             signalExitedTrades: isSignalExit ? (summary?.signalExitedTrades ?? 0) : undefined,
             resolvedTrades: isSignalExit ? (summary?.resolvedTrades ?? 0) : undefined,
+            limitEntryEnabled: summary?.limitEntryEnabled,
+            limitEntryMode: summary?.limitEntryMode,
+            limitEntryPriceCents: summary?.limitEntryPriceCents,
+            limitEntryOffsetCents: summary?.limitEntryOffsetCents,
+            limitEntryAttempts: summary?.limitEntryAttempts,
+            limitEntryFilledTrades: summary?.limitEntryFilledTrades,
+            limitEntryMissedTrades: summary?.limitEntryMissedTrades,
+            limitEntryNotTouchedTrades: summary?.limitEntryNotTouchedTrades,
+            limitEntryLastMinuteOnlyTrades: summary?.limitEntryLastMinuteOnlyTrades,
+            limitEntryMissingPriceTrades: summary?.limitEntryMissingPriceTrades,
+            limitEntryFillRate: summary?.limitEntryFillRate,
+            avgLimitEntryWaitSec: summary?.avgLimitEntryWaitSec,
+            avgLimitEntryImprovement: summary?.avgLimitEntryImprovement,
+            limitExitEnabled: summary?.limitExitEnabled,
+            limitExitMode: summary?.limitExitMode,
+            limitExitPriceCents: summary?.limitExitPriceCents,
+            limitExitOffsetCents: summary?.limitExitOffsetCents,
+            limitExitFilledTrades: summary?.limitExitFilledTrades,
+            limitExitFallbackTrades: summary?.limitExitFallbackTrades,
+            limitExitUnreachableTrades: summary?.limitExitUnreachableTrades,
         };
     }
 

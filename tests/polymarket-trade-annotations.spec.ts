@@ -861,6 +861,364 @@ describe("Polymarket backtest trade annotations", () => {
         expect(html).to.include("take profit");
     });
 
+    it("scores only filled post-signal limit entries and keeps missed attempts in diagnostics", async () => {
+        const bars = makeBars(4);
+        const firstEventTs = Number(bars[1]!.time);
+        const secondEventTs = Number(bars[2]!.time);
+        const outcomes = [
+            {
+                series_id: "10684",
+                event_slug: "btc-limit-1",
+                market_slug: "btc-limit-1",
+                interval: "5m",
+                event_start_ts: firstEventTs,
+                event_end_ts: firstEventTs + 300,
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                yes_open_price: 0.7,
+                yes_entry_minute_1_price: 0.7,
+                yes_entry_minute_2_price: 0.7,
+                yes_entry_minute_3_price: 0.7,
+                yes_entry_minute_4_price: 0.7,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+            {
+                series_id: "10684",
+                event_slug: "btc-limit-2",
+                market_slug: "btc-limit-2",
+                interval: "5m",
+                event_start_ts: secondEventTs,
+                event_end_ts: secondEventTs + 300,
+                yes_token_id: "yes-2",
+                no_token_id: "no-2",
+                yes_open_price: 0.7,
+                yes_entry_minute_1_price: 0.7,
+                yes_entry_minute_2_price: 0.7,
+                yes_entry_minute_3_price: 0.7,
+                yes_entry_minute_4_price: 0.7,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ];
+
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+                return new Response(JSON.stringify({ ok: true, rows: outcomes }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-price-points") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: [
+                        {
+                            series_id: "10684",
+                            event_start_ts: firstEventTs,
+                            event_end_ts: firstEventTs + 300,
+                            market_slug: "btc-limit-1",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
+                            ts: firstEventTs + 60,
+                            yes_price: 0.49,
+                            no_price: 0.51,
+                            updated_at: 1,
+                        },
+                        {
+                            series_id: "10684",
+                            event_start_ts: secondEventTs,
+                            event_end_ts: secondEventTs + 300,
+                            market_slug: "btc-limit-2",
+                            yes_token_id: "yes-2",
+                            no_token_id: "no-2",
+                            ts: secondEventTs + 60,
+                            yes_price: 0.7,
+                            no_price: 0.3,
+                            updated_at: 1,
+                        },
+                    ],
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/ensure-polymarket-price-points") {
+                throw new Error("stored price points should cover both limit-entry events");
+            }
+
+            throw new Error(`Unexpected fetch: ${url.pathname}`);
+        }) as typeof fetch;
+
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([
+                makeTrade(1, "long", firstEventTs, 10),
+                makeTrade(2, "long", secondEventTs, 10),
+            ]),
+            {
+                symbol: "BTCUSDT",
+                interval: "5m",
+                executionModel: "next_open",
+                chartData: bars,
+            },
+            {
+                limitEntry: {
+                    enabled: true,
+                    priceCents: 50,
+                },
+            }
+        );
+
+        expect(result.polymarketTradeSummary?.limitEntryAttempts).to.equal(2);
+        expect(result.polymarketTradeSummary?.limitEntryFilledTrades).to.equal(1);
+        expect(result.polymarketTradeSummary?.limitEntryMissedTrades).to.equal(1);
+        expect(result.polymarketTradeSummary?.scoredTrades).to.equal(1);
+        expect(result.trades[0]?.polymarketOutcome?.marketEntryStatus).to.equal("filled");
+        expect(result.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.5);
+        expect(result.trades[1]?.polymarketOutcome?.marketEntryStatus).to.equal("not_touched");
+        expect(result.trades[1]?.polymarketOutcome?.isWin).to.equal(null);
+        expect(result.trades[1]?.polymarketOutcome?.marketPnl).to.equal(null);
+    });
+
+    it("exits post-signal limit entries at an entry-offset target before resolution", async () => {
+        const bars = makeBars(4);
+        const eventTs = Number(bars[1]!.time);
+        const outcomes = [{
+            series_id: "10684",
+            event_slug: "btc-target",
+            market_slug: "btc-target",
+            interval: "5m",
+            event_start_ts: eventTs,
+            event_end_ts: eventTs + 300,
+            yes_token_id: "yes-1",
+            no_token_id: "no-1",
+            yes_open_price: 0.6,
+            yes_entry_minute_1_price: 0.6,
+            yes_entry_minute_2_price: 0.8,
+            yes_entry_minute_3_price: 0.8,
+            yes_entry_minute_4_price: 0.8,
+            resolved_outcome_up: 0,
+            resolution_source: "test",
+            updated_at: 1,
+        }];
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+                return new Response(JSON.stringify({ ok: true, rows: outcomes }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-price-points") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: [
+                        {
+                            series_id: "10684",
+                            event_start_ts: eventTs,
+                            event_end_ts: eventTs + 300,
+                            market_slug: "btc-target",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
+                            ts: eventTs + 10,
+                            yes_price: 0.60,
+                            no_price: 0.40,
+                            updated_at: 1,
+                        },
+                        {
+                            series_id: "10684",
+                            event_start_ts: eventTs,
+                            event_end_ts: eventTs + 300,
+                            market_slug: "btc-target",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
+                            ts: eventTs + 40,
+                            yes_price: 0.82,
+                            no_price: 0.18,
+                            updated_at: 1,
+                        },
+                    ],
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/ensure-polymarket-price-points") {
+                throw new Error("stored price points should cover the target-exit event");
+            }
+
+            throw new Error(`Unexpected fetch: ${url.pathname}`);
+        }) as typeof fetch;
+
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([makeTrade(1, "long", eventTs, -10)]),
+            {
+                symbol: "BTCUSDT",
+                interval: "5m",
+                executionModel: "next_open",
+                chartData: bars,
+            },
+            {
+                limitEntry: {
+                    enabled: true,
+                    priceCents: 60,
+                    exitEnabled: true,
+                    exitMode: "entry_offset",
+                    exitOffsetCents: 20,
+                },
+            }
+        );
+
+        const outcome = result.trades[0]?.polymarketOutcome;
+        expect(outcome?.marketExitSource).to.equal("target");
+        expect(outcome?.marketExitPrice).to.equal(0.8);
+        expect(outcome?.marketPnl).to.be.closeTo(0.2, 1e-12);
+        expect(outcome?.isWin).to.equal(false);
+        expect(outcome?.isProfitable).to.equal(true);
+        expect(result.polymarketTradeSummary?.targetExitedTrades).to.equal(1);
+        expect(result.polymarketTradeSummary?.limitExitFilledTrades).to.equal(1);
+    });
+
+    it("falls back to resolve-hold when an entry-offset target is unreachable", async () => {
+        const bars = makeBars(4);
+        const eventTs = Number(bars[1]!.time);
+        const outcomes = [{
+            series_id: "10684",
+            event_slug: "btc-unreachable",
+            market_slug: "btc-unreachable",
+            interval: "5m",
+            event_start_ts: eventTs,
+            event_end_ts: eventTs + 300,
+            yes_token_id: "yes-1",
+            no_token_id: "no-1",
+            yes_open_price: 0.8,
+            yes_entry_minute_1_price: 0.8,
+            yes_entry_minute_2_price: 0.9,
+            yes_entry_minute_3_price: 0.9,
+            yes_entry_minute_4_price: 0.9,
+            resolved_outcome_up: 1,
+            resolution_source: "test",
+            updated_at: 1,
+        }];
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+                return new Response(JSON.stringify({ ok: true, rows: outcomes }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-price-points") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: [
+                        {
+                            series_id: "10684",
+                            event_start_ts: eventTs,
+                            event_end_ts: eventTs + 300,
+                            market_slug: "btc-unreachable",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
+                            ts: eventTs + 10,
+                            yes_price: 0.80,
+                            no_price: 0.20,
+                            updated_at: 1,
+                        },
+                    ],
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/ensure-polymarket-price-points") {
+                throw new Error("stored price points should cover the unreachable-target event");
+            }
+
+            throw new Error(`Unexpected fetch: ${url.pathname}`);
+        }) as typeof fetch;
+
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([makeTrade(1, "long", eventTs, 10)]),
+            {
+                symbol: "BTCUSDT",
+                interval: "5m",
+                executionModel: "next_open",
+                chartData: bars,
+            },
+            {
+                limitEntry: {
+                    enabled: true,
+                    priceCents: 80,
+                    exitEnabled: true,
+                    exitMode: "entry_offset",
+                    exitOffsetCents: 20,
+                },
+            }
+        );
+
+        const outcome = result.trades[0]?.polymarketOutcome;
+        expect(outcome?.marketExitSource).to.equal("resolution");
+        expect(outcome?.marketExitStatus).to.equal("unreachable");
+        expect(outcome?.marketExitTargetPrice).to.equal(null);
+        expect(outcome?.marketExitPrice).to.equal(1);
+        expect(result.polymarketTradeSummary?.limitExitFallbackTrades).to.equal(1);
+        expect(result.polymarketTradeSummary?.limitExitUnreachableTrades).to.equal(1);
+    });
+
     it("loads stored price points by event key so same-event exit quotes are not missed", async () => {
         globalThis.fetch = (async (input) => {
             const url = new URL(

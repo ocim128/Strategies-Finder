@@ -12,6 +12,15 @@ import { ADVANCED_SIZING_DEFAULTS, coerceAdvancedSizingFieldValue } from "./adva
 import { coerceAdaptiveTakeProfitFieldValue, resolveTakeProfitMode } from "./take-profit-settings";
 import type { PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 import type { PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
+import {
+    clampPolymarketPostSignalLimitEntryPriceCents,
+    clampPolymarketPostSignalLimitExitPriceCents,
+    clampPolymarketPostSignalLimitOffsetCents,
+    resolvePolymarketPostSignalLimitEntryMode,
+    resolvePolymarketPostSignalLimitExitMode,
+    type PolymarketLimitEntryPriceMode,
+    type PolymarketLimitExitPriceMode,
+} from "./polymarket-post-signal-limit-entry";
 
 import type { BacktestSettings, ExecutionModel, MarketMode, PercentageTakeProfitMode, TradeDirection, TradeFilterMode } from "./types/strategies";
 import { isTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from "./types/backtest";
@@ -121,6 +130,14 @@ export interface BacktestSettingsData {
     polymarketEntrySelectionMode: PolymarketEntrySelectionMode;
     polymarketEntryOffset: number;
     polymarketExitMode: "resolve_hold" | "signal_exit_same_event";
+    polymarketPostSignalLimitEntryEnabled: boolean;
+    polymarketPostSignalLimitEntryMode: PolymarketLimitEntryPriceMode;
+    polymarketPostSignalLimitEntryPriceCents: number;
+    polymarketPostSignalLimitEntryOffsetCents: number;
+    polymarketPostSignalLimitExitEnabled: boolean;
+    polymarketPostSignalLimitExitMode: PolymarketLimitExitPriceMode;
+    polymarketPostSignalLimitExitPriceCents: number;
+    polymarketPostSignalLimitExitOffsetCents: number;
     /** Resolved secondary symbol for cross-symbol strategies. Empty string means use strategy default. */
     crossSymbolSecondary: string;
 }
@@ -384,6 +401,24 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
     normalized.entrySettingsToggle = source.entrySettingsToggle === undefined
         ? undefined
         : readBoolean(source.entrySettingsToggle, false);
+    normalized.polymarketPostSignalLimitEntryPriceCents = clampPolymarketPostSignalLimitEntryPriceCents(
+        source.polymarketPostSignalLimitEntryPriceCents
+    );
+    normalized.polymarketPostSignalLimitEntryMode = resolvePolymarketPostSignalLimitEntryMode(
+        source.polymarketPostSignalLimitEntryMode
+    );
+    normalized.polymarketPostSignalLimitEntryOffsetCents = clampPolymarketPostSignalLimitOffsetCents(
+        source.polymarketPostSignalLimitEntryOffsetCents
+    );
+    normalized.polymarketPostSignalLimitExitMode = resolvePolymarketPostSignalLimitExitMode(
+        source.polymarketPostSignalLimitExitMode
+    );
+    normalized.polymarketPostSignalLimitExitPriceCents = clampPolymarketPostSignalLimitExitPriceCents(
+        source.polymarketPostSignalLimitExitPriceCents
+    );
+    normalized.polymarketPostSignalLimitExitOffsetCents = clampPolymarketPostSignalLimitOffsetCents(
+        source.polymarketPostSignalLimitExitOffsetCents
+    );
 
     // Cross-symbol
     normalized.crossSymbolSecondary = typeof source.crossSymbolSecondary === 'string'

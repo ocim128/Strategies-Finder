@@ -22,6 +22,10 @@ import {
     getPolymarketEntrySelectionModeSelect,
     getPolymarketOutcomeIntervalSelect,
     getPolymarketExitModeSelect,
+    getPolymarketPostSignalLimitEntryToggle,
+    getPolymarketPostSignalLimitEntryModeSelect,
+    getPolymarketPostSignalLimitExitToggle,
+    getPolymarketPostSignalLimitExitModeSelect,
     getPolymarketSettingsRows,
     getFinderPolymarketRankModeSelect,
     getChartModeToggle,
@@ -30,11 +34,30 @@ import {
 import type { Time } from "lightweight-charts";
 
 function updatePolymarketEntryOffsetVisibility(interval: string = state.currentInterval): void {
-    const { outcomeIntervalRow, entrySelectionModeRow, offsetRow, exitModeRow, outcomeSymbolRow } = getPolymarketSettingsRows();
+    const {
+        outcomeIntervalRow,
+        entrySelectionModeRow,
+        offsetRow,
+        exitModeRow,
+        postSignalLimitEntryEnabledRow,
+        postSignalLimitEntryModeRow,
+        postSignalLimitEntryPriceCentsRow,
+        postSignalLimitEntryOffsetCentsRow,
+        postSignalLimitExitEnabledRow,
+        postSignalLimitExitModeRow,
+        postSignalLimitExitPriceCentsRow,
+        postSignalLimitExitOffsetCentsRow,
+        outcomeSymbolRow,
+    } = getPolymarketSettingsRows();
     const annotationToggle = getPolymarketAnnotationToggle();
     const annotationEnabled = annotationToggle?.checked ?? false;
     const polymarketSettings = resolvePolymarketDomSettings();
     const isNative5mSession = polymarketSettings.outcomeInterval === '5m';
+    const supportsLimitEntry = annotationEnabled && isNative5mSession;
+    const limitEntryEnabled = supportsLimitEntry && polymarketSettings.postSignalLimitEntryEnabled;
+    const usesSignalOffsetEntry = polymarketSettings.postSignalLimitEntryMode === 'signal_offset';
+    const limitExitEnabled = limitEntryEnabled && polymarketSettings.postSignalLimitExitEnabled;
+    const usesFixedLimitExit = polymarketSettings.postSignalLimitExitMode === 'fixed_price';
     const supportsSignalExit = interval === '1m';
     const isSignalExit = supportsSignalExit && polymarketSettings.exitMode === 'signal_exit_same_event';
     const usesActualEntryMinute = polymarketSettings.entrySelectionMode === 'actual_entry_minute';
@@ -53,6 +76,30 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
     }
     if (exitModeRow) {
         exitModeRow.style.display = annotationEnabled ? 'block' : 'none';
+    }
+    if (postSignalLimitEntryEnabledRow) {
+        postSignalLimitEntryEnabledRow.style.display = supportsLimitEntry ? 'block' : 'none';
+    }
+    if (postSignalLimitEntryModeRow) {
+        postSignalLimitEntryModeRow.style.display = limitEntryEnabled ? 'block' : 'none';
+    }
+    if (postSignalLimitEntryPriceCentsRow) {
+        postSignalLimitEntryPriceCentsRow.style.display = limitEntryEnabled && !usesSignalOffsetEntry ? 'block' : 'none';
+    }
+    if (postSignalLimitEntryOffsetCentsRow) {
+        postSignalLimitEntryOffsetCentsRow.style.display = limitEntryEnabled && usesSignalOffsetEntry ? 'block' : 'none';
+    }
+    if (postSignalLimitExitEnabledRow) {
+        postSignalLimitExitEnabledRow.style.display = limitEntryEnabled ? 'block' : 'none';
+    }
+    if (postSignalLimitExitModeRow) {
+        postSignalLimitExitModeRow.style.display = limitExitEnabled ? 'block' : 'none';
+    }
+    if (postSignalLimitExitPriceCentsRow) {
+        postSignalLimitExitPriceCentsRow.style.display = limitExitEnabled && usesFixedLimitExit ? 'block' : 'none';
+    }
+    if (postSignalLimitExitOffsetCentsRow) {
+        postSignalLimitExitOffsetCentsRow.style.display = limitExitEnabled && !usesFixedLimitExit ? 'block' : 'none';
     }
     if (outcomeSymbolRow) {
         outcomeSymbolRow.style.display = annotationEnabled ? 'block' : 'none';
@@ -120,6 +167,31 @@ export function setupStateSubscriptions() {
         polymarketOutcomeIntervalSelect.addEventListener('change', () => {
             updatePolymarketEntryOffsetVisibility();
             updateFinderRankModeOptions();
+        });
+    }
+
+    const polymarketPostSignalLimitEntryToggle = getPolymarketPostSignalLimitEntryToggle();
+    if (polymarketPostSignalLimitEntryToggle) {
+        polymarketPostSignalLimitEntryToggle.addEventListener('change', () => {
+            updatePolymarketEntryOffsetVisibility();
+        });
+    }
+    const polymarketPostSignalLimitEntryModeSelect = getPolymarketPostSignalLimitEntryModeSelect();
+    if (polymarketPostSignalLimitEntryModeSelect) {
+        polymarketPostSignalLimitEntryModeSelect.addEventListener('change', () => {
+            updatePolymarketEntryOffsetVisibility();
+        });
+    }
+    const polymarketPostSignalLimitExitToggle = getPolymarketPostSignalLimitExitToggle();
+    if (polymarketPostSignalLimitExitToggle) {
+        polymarketPostSignalLimitExitToggle.addEventListener('change', () => {
+            updatePolymarketEntryOffsetVisibility();
+        });
+    }
+    const polymarketPostSignalLimitExitModeSelect = getPolymarketPostSignalLimitExitModeSelect();
+    if (polymarketPostSignalLimitExitModeSelect) {
+        polymarketPostSignalLimitExitModeSelect.addEventListener('change', () => {
+            updatePolymarketEntryOffsetVisibility();
         });
     }
 

@@ -491,6 +491,42 @@ describe('Finder Polymarket runner', () => {
         expect(output.results[0]?.polymarketEval?.scoredPredictions).to.equal(2);
     });
 
+    it('applies the minimum scored threshold to filled post-signal limit entries', async () => {
+        const bars = makeBars(5);
+        const rows = [
+            makeOutcomeRow(Number(bars[1].time), 1),
+            makeOutcomeRow(Number(bars[2].time), 1),
+            makeOutcomeRow(Number(bars[3].time), 1),
+        ];
+        const pricePoints = rows.flatMap((row, index) => [
+            makePricePoint(row, row.event_start_ts + 60, index === 0 ? 0.70 : 0.49),
+        ]);
+        installOutcomeAndPricePointFetch(rows, pricePoints);
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(
+                bars,
+                [{ variant: 1 }, { variant: 5 }],
+                {
+                    polymarketMinScoredPredictions: 1,
+                    polymarketPostSignalLimitEntryEnabled: true,
+                    polymarketPostSignalLimitEntryPriceCents: 50,
+                }
+            ),
+            callbacks
+        );
+
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]?.params.variant).to.equal(5);
+        expect(output.results[0]?.polymarketEval?.limitEntryEnabled).to.equal(true);
+        expect(output.results[0]?.polymarketEval?.scoredPredictions).to.equal(
+            output.results[0]?.polymarketEval?.limitEntryFilledTrades
+        );
+        expect(output.results[0]?.polymarketEval?.limitEntryFilledTrades ?? 0).to.be.greaterThan(0);
+        expect(output.results[0]?.polymarketEval?.limitEntryMissedTrades ?? 0).to.be.greaterThan(0);
+    });
+
     it('skips strategy candidates that throw during signal generation instead of aborting the whole run', async () => {
         const bars = makeBars(4);
         installOutcomeFetch([
