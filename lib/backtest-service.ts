@@ -47,9 +47,7 @@ import {
 } from "./backtest-run-presenter";
 import { commitBacktestResult } from "./state-actions";
 import { annotateBacktestResultWithPolymarketOutcomes } from "./polymarket-trade-annotations";
-import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "./polymarket-exit-mode";
-import type { PolymarketPricePoint } from "./local-sqlite-polymarket-api";
-import { ensurePricePointsForOutcomes } from "./polymarket-price-points-ingest";
+import { resolveEffectivePolymarketExitMode } from "./polymarket-exit-mode";
 import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import { executeBacktest, executeBacktestFromSignals } from "./backtest-executor";
 import {
@@ -65,9 +63,7 @@ import {
     buildLatestUiBacktestEndpointCopyBundle as buildEndpointBundle,
 } from "./backtest-endpoint-facade";
 import { addStrategyIndicators as renderStrategyIndicators } from "./backtest-chart-renderer";
-import { parseTimeToUnixSeconds } from "./time-normalization";
 import { filterSignalsByBlockRange as filterSignalsBySelectedBlockRange } from "./signal-block-filter";
-import { findContainingEvent } from "./polymarket-1m-5m-bridge";
 import { markAppTiming, getMark } from "./app-timing";
 import {
     registerBacktestEdgeAnalysisInput,
@@ -619,56 +615,6 @@ export class BacktestService {
                 polymarketAnnotationEnabled: settings.polymarketAnnotationEnabled,
             });
 
-            let pricePoints: PolymarketPricePoint[] | undefined;
-            if (isSignalExitSameEventMode(effectiveExitMode) && state.currentInterval === "1m") {
-                const { getEffectivePolymarketSeriesId, resolvePolymarketOutcomeSymbol, loadPolymarketOutcomesForTimeRange } = await import("./polymarket-btc5m");
-                const outcomeSymbol = resolvePolymarketOutcomeSymbol(state.currentSymbol, settings.polymarketOutcomeSymbol);
-                const seriesId = getEffectivePolymarketSeriesId(state.currentSymbol, outcomeInterval, outcomeSymbol);
-                if (seriesId) {
-                    try {
-                        const targetTimes = result.trades
-                            .map((trade) => parseTimeToUnixSeconds(trade.entryTime))
-                            .filter((v): v is number => v !== null);
-                        const firstChartTs = parseTimeToUnixSeconds(chartData[0]?.time);
-                        const lastChartTs = parseTimeToUnixSeconds(chartData[chartData.length - 1]?.time);
-                        const startTs = targetTimes.length > 0
-                            ? Math.min(...targetTimes) - 300
-                            : (firstChartTs !== null ? firstChartTs - 300 : undefined);
-                        const endTs = targetTimes.length > 0
-                            ? Math.max(...targetTimes) + 300
-                            : (lastChartTs !== null ? lastChartTs + 300 : undefined);
-
-                        const outcomes = await loadPolymarketOutcomesForTimeRange(
-                            state.currentSymbol,
-                            startTs ?? 0,
-                            endTs ?? Math.floor(Date.now() / 1000),
-                            outcomeSymbol,
-                            outcomeInterval
-                        );
-                        const relevantOutcomeByStart = new Map<number, (typeof outcomes)[number]>();
-                        for (const trade of result.trades) {
-                            const entryTs = parseTimeToUnixSeconds(trade.entryTime);
-                            if (entryTs === null) continue;
-                            const outcome = findContainingEvent(entryTs, outcomes);
-                            if (outcome) {
-                                relevantOutcomeByStart.set(outcome.event_start_ts, outcome);
-                            }
-                        }
-
-                        pricePoints = await ensurePricePointsForOutcomes(
-                            relevantOutcomeByStart.size > 0 ? [...relevantOutcomeByStart.values()] : outcomes,
-                            seriesId,
-                            {
-                                startTs,
-                                endTs,
-                            }
-                        );
-                    } catch {
-                        pricePoints = [];
-                    }
-                }
-            }
-
             return await annotateBacktestResultWithPolymarketOutcomes(result, {
                 symbol: state.currentSymbol,
                 interval: state.currentInterval,
@@ -679,7 +625,6 @@ export class BacktestService {
                 polymarketExitMode: effectiveExitMode,
             }, {
                 selectedOffset: settings.polymarketEntryOffset,
-                pricePoints,
                 entrySelectionMode: settings.polymarketEntrySelectionMode,
                 limitEntry: {
                     enabled: settings.polymarketPostSignalLimitEntryEnabled === true,

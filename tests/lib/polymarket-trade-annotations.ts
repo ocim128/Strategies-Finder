@@ -356,6 +356,23 @@ function buildPricePointsByEventStart(
     return byEventStart;
 }
 
+function selectPricePointOutcomesForTrades(
+    trades: readonly Trade[],
+    outcomes: readonly PolymarketOutcomeRow[]
+): PolymarketOutcomeRow[] {
+    const byEventStart = new Map<number, PolymarketOutcomeRow>();
+    for (const trade of trades) {
+        const entryTs = parseTimeToUnixSeconds(trade.entryTime);
+        if (entryTs === null) continue;
+
+        const outcome = findContainingEvent(entryTs, outcomes);
+        if (outcome) {
+            byEventStart.set(outcome.event_start_ts, outcome);
+        }
+    }
+    return Array.from(byEventStart.values());
+}
+
 function findFirstPricePointAtOrAfterEntry(
     outcome: PolymarketOutcomeRow,
     entryTs: number,
@@ -1429,20 +1446,25 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
         executionModel: context.executionModel,
         polymarketAnnotationEnabled: true,
     });
+    const needsSignalExitPricePoints = isSignalExitSameEventMode(effectiveExitMode) && is1mRun;
+    const needsPricePoints = needsSignalExitPricePoints || isNativeOutcomeSession || Boolean(limitEntry);
 
     let resolvedPricePoints = pricePoints;
-    if ((isNativeOutcomeSession || limitEntry) && !resolvedPricePoints) {
+    if (needsPricePoints && !resolvedPricePoints) {
+        const pricePointOutcomes = selectPricePointOutcomesForTrades(result.trades, outcomes);
         try {
-            resolvedPricePoints = await ensurePricePointsForOutcomes(outcomes, seriesId, {
-                startTs,
-                endTs,
-            });
+            resolvedPricePoints = pricePointOutcomes.length > 0
+                ? await ensurePricePointsForOutcomes(pricePointOutcomes, seriesId, {
+                    startTs,
+                    endTs,
+                })
+                : [];
         } catch {
             resolvedPricePoints = [];
         }
     }
 
-    if (isSignalExitSameEventMode(effectiveExitMode) && is1mRun && resolvedPricePoints) {
+    if (needsSignalExitPricePoints && resolvedPricePoints) {
         const { results: exitResults, summary: exitSummary } = evaluateSignalExitTrades({
             trades: result.trades,
             outcomes,

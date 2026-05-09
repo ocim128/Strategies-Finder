@@ -102,7 +102,7 @@ export const DEFAULT_HUNT_RUN_SETTINGS: Readonly<HuntRunSettings> = Object.freez
     selectedStrategyKeys: [],
     polymarketScoringEnabled: false,
     polymarketRankMode: "balanced",
-    polymarketMinScoredPredictions: 0,
+    polymarketMinScoredPredictions: 100,
     polymarketLockOffset: false,
     polymarketAfterTakeProfitOnly: false,
     polymarketExitMode: "resolve_hold" as PolymarketExitMode,

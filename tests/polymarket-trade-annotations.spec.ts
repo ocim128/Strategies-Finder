@@ -625,6 +625,146 @@ describe("Polymarket backtest trade annotations", () => {
         expect(html).to.include("YES 52.0c->52.0c (+0.0c)");
     });
 
+    it("ensures price points for signal-exit annotation when the caller does not pre-supply them", async () => {
+        const bars = makeMinuteBars(12);
+        const eventStartTs = 1_700_000_300;
+        const entryTs = eventStartTs + 60;
+        let ensureCalled = false;
+        let ensuredEventStarts: number[] = [];
+        const outcomes = [
+            {
+                series_id: "10684",
+                event_slug: "btc-signal-ensure",
+                market_slug: "btc-signal-ensure",
+                interval: "5m",
+                event_start_ts: eventStartTs,
+                event_end_ts: eventStartTs + 300,
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.52,
+                yes_entry_minute_2_price: 0.54,
+                yes_entry_minute_3_price: 0.56,
+                yes_entry_minute_4_price: 0.58,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+            {
+                series_id: "10684",
+                event_slug: "btc-signal-unused",
+                market_slug: "btc-signal-unused",
+                interval: "5m",
+                event_start_ts: eventStartTs + 300,
+                event_end_ts: eventStartTs + 600,
+                yes_token_id: "yes-unused",
+                no_token_id: "no-unused",
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.51,
+                yes_entry_minute_2_price: 0.52,
+                yes_entry_minute_3_price: 0.53,
+                yes_entry_minute_4_price: 0.54,
+                resolved_outcome_up: 0,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ];
+        const pricePoints = [
+            {
+                series_id: "10684",
+                event_start_ts: eventStartTs,
+                event_end_ts: eventStartTs + 300,
+                market_slug: "btc-signal-ensure",
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                ts: entryTs,
+                yes_price: 0.52,
+                no_price: 0.48,
+                updated_at: 1,
+            },
+            {
+                series_id: "10684",
+                event_start_ts: eventStartTs,
+                event_end_ts: eventStartTs + 300,
+                market_slug: "btc-signal-ensure",
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                ts: entryTs + 120,
+                yes_price: 0.62,
+                no_price: 0.38,
+                updated_at: 1,
+            },
+        ];
+
+        globalThis.fetch = (async (input, init) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+                return new Response(JSON.stringify({ ok: true, rows: outcomes }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-price-points") {
+                return new Response(JSON.stringify({ ok: true, rows: [] }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/ensure-polymarket-price-points") {
+                ensureCalled = true;
+                const payload = JSON.parse(String(init?.body ?? "{}")) as { outcomes?: Array<{ event_start_ts?: number }> };
+                ensuredEventStarts = (payload.outcomes ?? []).map((row) => Number(row.event_start_ts));
+                return new Response(JSON.stringify({ ok: true, rows: pricePoints, upserted: 2, fetchedEvents: 1 }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            throw new Error(`Unexpected fetch: ${url.pathname}`);
+        }) as typeof fetch;
+
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([
+                {
+                    ...makeTrade(1, "long", entryTs, 10),
+                    exitTime: entryTs + 120,
+                    exitReason: "signal",
+                },
+            ]),
+            {
+                symbol: "BTCUSDT",
+                interval: "1m",
+                executionModel: "next_open",
+                chartData: bars,
+                polymarketExitMode: "signal_exit_same_event",
+            }
+        );
+
+        expect(ensureCalled).to.equal(true);
+        expect(ensuredEventStarts).to.deep.equal([eventStartTs]);
+        expect(result.polymarketTradeSummary?.evaluationMode).to.equal("signal_exit_same_event");
+        expect(result.polymarketTradeSummary?.scoredTrades).to.equal(1);
+        expect(result.trades[0]?.polymarketOutcome?.marketExitSource).to.equal("signal");
+        expect(result.trades[0]?.polymarketOutcome?.marketPnl).to.be.closeTo(0.10, 1e-12);
+    });
+
     it("keeps true missing same-event exit quotes unscored instead of rendering a fake resolution badge", async () => {
         const bars = makeMinuteBars(12);
         const eventStartTs = 1_700_000_300;

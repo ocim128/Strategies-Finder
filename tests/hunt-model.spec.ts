@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
+    DEFAULT_HUNT_RUN_SETTINGS,
     HUNT_MAX_TRADES_UNBOUNDED,
     buildStableParamKey,
     getMarketSelectionAutoReloadSuppressCount,
@@ -60,6 +61,7 @@ describe("Hunt model", () => {
         expect(settings.maxTrades).to.equal(HUNT_MAX_TRADES_UNBOUNDED);
         expect(settings.selectedStrategyKeys).to.deep.equal(["mean_rev", "trend"]);
         expect(settings.polymarketRankMode).to.equal("profitFactorTrades");
+        expect(settings.polymarketMinScoredPredictions).to.equal(DEFAULT_HUNT_RUN_SETTINGS.polymarketMinScoredPredictions);
 
         const normalized = stableNormalizeParams({
             threshold: 1.234567891,
