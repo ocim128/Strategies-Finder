@@ -4,7 +4,12 @@ import { debounce } from "../debounce";
 import { MAX_MOCK_BARS, MIN_MOCK_BARS } from "../dataProviders/mock";
 import { dataManager } from "../data-manager";
 import { assetSearchService, type Asset } from "../asset-search-service";
-import { getLocalSp500Assets } from "../local-sp500-catalog";
+import {
+    encodeLocalDailyAssetSelection,
+    getLocalDailyAssets,
+    parseLocalDailyAssetSelection,
+    type LocalDailyAsset,
+} from "../local-daily-datasets";
 import { uiManager } from "../ui-manager";
 import {
     getBinanceMarketTypeForProvider,
@@ -39,25 +44,29 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
 
     let isSearchInitialized = false;
     let selectedIndex = -1;
-    const localSp500Symbols = new Set<string>();
+    const localDailyAssetBySelection = new Map<string, LocalDailyAsset>();
+    const localDailySelectionBySymbol = new Map<string, string>();
     const getActiveBinanceMarketType = (): BinanceMarketType => state.binanceMarketType;
     const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-    const syncLocalSp500Picker = () => {
+    const syncLocalDailyPicker = () => {
         if (!localSp500Select) return;
         const currentSymbol = state.currentSymbol.trim().toUpperCase();
-        if (localSp500Symbols.has(currentSymbol)) {
-            localSp500Select.value = currentSymbol;
+        const selection = localDailySelectionBySymbol.get(currentSymbol);
+        if (selection) {
+            localSp500Select.value = selection;
             return;
         }
         localSp500Select.value = '';
     };
 
-    const applyLocalSp500Symbol = (symbol: string) => {
-        const normalizedSymbol = symbol.trim().toUpperCase();
-        if (!normalizedSymbol) return;
+    const applyLocalDailySelection = (selectionValue: string) => {
+        const parsed = parseLocalDailyAssetSelection(selectionValue);
+        if (!parsed) return;
 
-        dataManager.setProviderOverride(normalizedSymbol, 'bybit-tradfi');
+        const asset = localDailyAssetBySelection.get(selectionValue);
+        const normalizedSymbol = parsed.symbol;
+        dataManager.setProviderOverride(normalizedSymbol, asset?.provider ?? 'local-daily');
         symbolDropdown.classList.remove('active');
 
         const symbolChanged = normalizedSymbol !== state.currentSymbol;
@@ -73,27 +82,32 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
             uiManager.updateSymbolDataSource(
                 'Loading',
                 'loading',
-                'Reloading local seed data and refreshing the latest Bybit candle.'
+                'Reloading local daily seed data.'
             );
             void dataManager.loadData(normalizedSymbol, '1d');
         }
 
-        debugLogger.event('ui.symbol.local_sp500_select', { symbol: normalizedSymbol, interval: '1d' });
+        debugLogger.event('ui.symbol.local_daily_select', {
+            symbol: normalizedSymbol,
+            dataset: parsed.dataset,
+            interval: '1d',
+        });
     };
 
-    const initializeLocalSp500Picker = async () => {
+    const initializeLocalDailyPicker = async () => {
         if (!localSp500Select) return;
 
         localSp500Select.disabled = true;
         localSp500Select.innerHTML = '<option value="">Loading local tickers...</option>';
 
         try {
-            const assets = await getLocalSp500Assets();
-            localSp500Symbols.clear();
+            const assets = await getLocalDailyAssets();
+            localDailyAssetBySelection.clear();
+            localDailySelectionBySymbol.clear();
             localSp500Select.innerHTML = '';
 
             if (assets.length === 0) {
-                localSp500Select.innerHTML = '<option value="">Local S&P500 catalog not found</option>';
+                localSp500Select.innerHTML = '<option value="">Local seed catalogs not found</option>';
                 localSp500Select.disabled = true;
                 return;
             }
@@ -103,16 +117,30 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
             placeholder.textContent = 'Pick local 1D seed...';
             localSp500Select.appendChild(placeholder);
 
+            const groups = new Map<string, HTMLOptGroupElement>();
             assets.forEach((asset) => {
-                localSp500Symbols.add(asset.symbol);
+                const selection = encodeLocalDailyAssetSelection(asset);
+                localDailyAssetBySelection.set(selection, asset);
+                if (!localDailySelectionBySymbol.has(asset.symbol)) {
+                    localDailySelectionBySymbol.set(asset.symbol, selection);
+                }
+
+                let group = groups.get(asset.dataset);
+                if (!group) {
+                    group = document.createElement('optgroup');
+                    group.label = asset.datasetLabel;
+                    groups.set(asset.dataset, group);
+                    localSp500Select.appendChild(group);
+                }
+
                 const option = document.createElement('option');
-                option.value = asset.symbol;
+                option.value = selection;
                 option.textContent = `${asset.symbol} - ${asset.name}`;
-                localSp500Select.appendChild(option);
+                group.appendChild(option);
             });
 
             localSp500Select.disabled = false;
-            syncLocalSp500Picker();
+            syncLocalDailyPicker();
         } catch {
             localSp500Select.innerHTML = '<option value="">Failed to load local tickers</option>';
             localSp500Select.disabled = true;
@@ -121,12 +149,12 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
 
     if (localSp500Select) {
         localSp500Select.addEventListener('change', () => {
-            const selectedSymbol = localSp500Select.value.trim();
-            if (!selectedSymbol) return;
-            applyLocalSp500Symbol(selectedSymbol);
+            const selectionValue = localSp500Select.value.trim();
+            if (!selectionValue) return;
+            applyLocalDailySelection(selectionValue);
         });
 
-        void initializeLocalSp500Picker();
+        void initializeLocalDailyPicker();
     }
 
     if (mockModelSelect) {
@@ -230,6 +258,9 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
         if (provider && provider !== 'mock') {
             dataManager.setProviderOverride(symbol, provider);
         }
+        if (provider === 'local-daily' && state.currentInterval !== '1d') {
+            setCurrentInterval('1d');
+        }
 
         document.querySelectorAll('.symbol-search-item, .dropdown-item').forEach(i => i.classList.remove('active'));
         const selectedItem = document.querySelector(`[data-symbol="${symbol}"]`);
@@ -245,8 +276,8 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
         if (symbol !== state.currentSymbol) {
             debugLogger.event('ui.symbol.select', { symbol, displayName, provider });
             setCurrentSymbol(symbol);
-        } else if (provider === 'bybit-tradfi' && state.currentInterval === '1d') {
-            syncLocalSp500Picker();
+        } else if ((provider === 'bybit-tradfi' || provider === 'local-daily') && state.currentInterval === '1d') {
+            syncLocalDailyPicker();
         }
     };
 
@@ -420,7 +451,7 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
 
     if (localSp500Select) {
         state.subscribe('currentSymbol', () => {
-            syncLocalSp500Picker();
+            syncLocalDailyPicker();
         });
     }
 

@@ -4,7 +4,6 @@ import {
     getBinanceMarketLabel,
     getBinanceMarketTypeForProvider,
     isBinanceDataProvider,
-    type BinanceDataProvider,
 } from "../binance-market";
 import { debugLogger } from "../debug-logger";
 import {
@@ -156,6 +155,10 @@ export class DataFetcher {
             }
         }
 
+        if (provider === 'local-daily') {
+            return { data: [], source: 'local' };
+        }
+
         if (isBinanceDataProvider(provider)) {
             const result = await this.fetchBinanceDataHybridWithMeta(symbol, interval, signal, {
                 maxBars,
@@ -207,6 +210,10 @@ export class DataFetcher {
         const localNonBinance = !isBinanceDataProvider(provider)
             ? await this.loadNonBinanceLocalData(symbol, interval, limit, options?.signal)
             : null;
+
+        if (provider === 'local-daily') {
+            return localNonBinance ? trimToLastCandles(localNonBinance.candles, limit) : [];
+        }
 
         if (isBinanceDataProvider(provider)) {
             return fetchBinanceDataWithLimit(symbol, interval, limit, {
@@ -429,6 +436,10 @@ export class DataFetcher {
             return this.fetchBybitTradFiChartData(chain, symbol, interval, signal);
         }
 
+        if (chain.provider === 'local-daily') {
+            return this.fetchLocalDailyChartData(chain, symbol, interval);
+        }
+
         if (chain.provider === 'polymarket') {
             return this.fetchPolymarketChartData(chain, symbol, interval, signal);
         }
@@ -440,6 +451,27 @@ export class DataFetcher {
             'Primary data source was unavailable, so fallback data is being used.'
         );
         return sliceCandlesToLookback(fallback, chain.lookbackBars);
+    }
+
+    private fetchLocalDailyChartData(
+        chain: ProviderFallbackChain,
+        symbol: string,
+        interval: string
+    ): OHLCVData[] {
+        const { lookbackBars, localNonBinance } = chain;
+        if (localNonBinance && localNonBinance.candles.length > 0) {
+            const localSourceMeta = this.describeLocalSource(localNonBinance.source);
+            this.reporter.updateSymbolDataSource?.(localSourceMeta.label, 'seed', localSourceMeta.title);
+            return sliceCandlesToLookback(localNonBinance.candles, lookbackBars);
+        }
+
+        this.reporter.showToast?.(`No local daily seed data found for ${symbol} ${interval}.`, 'error');
+        this.reporter.updateSymbolDataSource?.(
+            'Local seed unavailable',
+            'warning',
+            'No bundled local daily seed data was found for this symbol and interval.'
+        );
+        return [];
     }
 
     private async fetchMockChartData(
@@ -593,7 +625,7 @@ export class DataFetcher {
     }
 
     private async fetchLimitedNonBinanceNetworkData(
-        provider: Exclude<DataProvider, BinanceDataProvider>,
+        provider: 'bybit-tradfi' | 'polymarket',
         symbol: string,
         interval: string,
         limit: number,

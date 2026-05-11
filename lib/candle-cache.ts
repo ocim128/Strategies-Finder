@@ -3,6 +3,7 @@ import type { OHLCVData } from "./types/index";
 import { normalizeTradFiDailyCandles } from "./data/data-interval-utils";
 import { debugLogger } from "./debug-logger";
 import { parseTimeToUnixSeconds } from "./time-normalization";
+import { LOCAL_DAILY_DATASETS, type LocalDailyDatasetConfig } from "./local-daily-datasets";
 
 const DB_NAME = 'strategies-finder-candles';
 const STORE_NAME = 'series';
@@ -34,10 +35,8 @@ export type CachedCandles = {
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 const missingSeedFiles = new Set<string>();
-const missingSp500CsvFiles = new Set<string>();
-const sp500CsvCache = new Map<string, OHLCVData[]>();
-const SP500_INDIVIDUAL_ANALYSIS_BASE_PATH =
-    '/price-data/sp500_comprehensive_dataset/sp500_comprehensive/individual_analysis';
+const missingLocalDailyCsvFiles = new Set<string>();
+const localDailyCsvCache = new Map<string, OHLCVData[]>();
 
 function toCacheKey(symbol: string, interval: string): string {
     return `${symbol.trim().toUpperCase()}::${interval.trim().toLowerCase()}`;
@@ -179,7 +178,7 @@ function parseCsvLine(line: string): string[] {
     return values;
 }
 
-function normalizeSp500Date(raw: string): string {
+function normalizeCsvDate(raw: string): string {
     const trimmed = raw.trim();
     if (!trimmed) return trimmed;
     if (trimmed.includes('T')) return trimmed;
@@ -213,7 +212,7 @@ function extractCandlesFromCsvPayload(payload: string): OHLCVData[] {
         const columns = parseCsvLine(lines[i]);
         if (columns.length <= closeIdx) continue;
 
-        const time = parseTimeToUnixSeconds(normalizeSp500Date(columns[dateIdx] ?? ''));
+        const time = parseTimeToUnixSeconds(normalizeCsvDate(columns[dateIdx] ?? ''));
         const open = Number(columns[openIdx]);
         const high = Number(columns[highIdx]);
         const low = Number(columns[lowIdx]);
@@ -228,7 +227,7 @@ function extractCandlesFromCsvPayload(payload: string): OHLCVData[] {
     return sortAndDedupeCandles(candles);
 }
 
-function buildSp500SymbolCandidates(symbol: string): string[] {
+function buildLocalDailySymbolCandidates(symbol: string): string[] {
     const normalized = symbol.trim().toUpperCase().replace(/\s+/g, '').replace(/\//g, '');
     if (!normalized) return [];
 
@@ -257,7 +256,8 @@ function buildSp500SymbolCandidates(symbol: string): string[] {
     return Array.from(candidates);
 }
 
-async function loadSp500IndividualAnalysisCandles(
+async function loadLocalDailyDatasetCandles(
+    dataset: LocalDailyDatasetConfig,
     symbol: string,
     interval: string,
     signal?: AbortSignal
@@ -265,16 +265,17 @@ async function loadSp500IndividualAnalysisCandles(
     const baseInterval = interval.trim().toLowerCase().split('@')[0];
     if (baseInterval !== '1d') return null;
 
-    const candidates = buildSp500SymbolCandidates(symbol);
+    const candidates = buildLocalDailySymbolCandidates(symbol);
     for (const candidate of candidates) {
-        if (sp500CsvCache.has(candidate)) {
-            return sp500CsvCache.get(candidate)!;
+        const cacheKey = `${dataset.key}:${candidate}`;
+        if (localDailyCsvCache.has(cacheKey)) {
+            return localDailyCsvCache.get(cacheKey)!;
         }
-        if (missingSp500CsvFiles.has(candidate)) {
+        if (missingLocalDailyCsvFiles.has(cacheKey)) {
             continue;
         }
 
-        const filePath = `${SP500_INDIVIDUAL_ANALYSIS_BASE_PATH}/${encodeURIComponent(candidate)}.csv`;
+        const filePath = `${dataset.candlesBasePath}/${encodeURIComponent(candidate)}.csv`;
         try {
             const response = await fetch(filePath, {
                 signal,
@@ -282,7 +283,7 @@ async function loadSp500IndividualAnalysisCandles(
             });
 
             if (response.status === 404) {
-                missingSp500CsvFiles.add(candidate);
+                missingLocalDailyCsvFiles.add(cacheKey);
                 continue;
             }
             if (!response.ok) {
@@ -292,17 +293,31 @@ async function loadSp500IndividualAnalysisCandles(
             const payload = await response.text();
             const candles = normalizeTradFiDailyCandles(extractCandlesFromCsvPayload(payload), baseInterval);
             if (candles.length === 0) {
-                missingSp500CsvFiles.add(candidate);
+                missingLocalDailyCsvFiles.add(cacheKey);
                 continue;
             }
 
-            sp500CsvCache.set(candidate, candles);
+            localDailyCsvCache.set(cacheKey, candles);
             return candles;
         } catch {
             return null;
         }
     }
 
+    return null;
+}
+
+async function loadLocalDailyCandles(
+    symbol: string,
+    interval: string,
+    signal?: AbortSignal
+): Promise<OHLCVData[] | null> {
+    for (const dataset of LOCAL_DAILY_DATASETS) {
+        const candles = await loadLocalDailyDatasetCandles(dataset, symbol, interval, signal);
+        if (candles && candles.length > 0) {
+            return candles;
+        }
+    }
     return null;
 }
 
@@ -503,9 +518,9 @@ export async function loadSeedCandlesFromPriceData(
         // Keep fallback path below.
     }
 
-    const sp500Candles = await loadSp500IndividualAnalysisCandles(normalizedSymbol, normalizedInterval, signal);
-    if (sp500Candles && sp500Candles.length > 0) {
-        return sp500Candles;
+    const localDailyCandles = await loadLocalDailyCandles(normalizedSymbol, normalizedInterval, signal);
+    if (localDailyCandles && localDailyCandles.length > 0) {
+        return localDailyCandles;
     }
 
     if (markMissing) {

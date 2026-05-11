@@ -69,6 +69,16 @@ function toBoolean(value: unknown): boolean | null {
 
 function inferRiskToggle(settings: Record<string, unknown>): boolean {
     const riskMode = typeof settings.riskMode === 'string' ? settings.riskMode : 'simple';
+    const usesHistoricalLevels = (
+        toBoolean(settings.historicalLevelTakeProfitEnabled) === true
+        || toBoolean(settings.historicalLevelTakeProfitToggle) === true
+        || toBoolean(settings.historicalLevelStopLossEnabled) === true
+        || toBoolean(settings.historicalLevelStopLossToggle) === true
+    ) && toFiniteNumber(settings.historicalLevelLookbackBars) > 0;
+    if (usesHistoricalLevels) {
+        return true;
+    }
+
     if (riskMode === 'percentage') {
         return (toBoolean(settings.stopLossEnabled) === true)
             || (toBoolean(settings.takeProfitEnabled) === true)

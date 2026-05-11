@@ -26,6 +26,9 @@ export interface NormalizedSettings {
     takeProfitAdaptiveIcScale: number;
     stopLossEnabled: boolean;
     takeProfitEnabled: boolean;
+    historicalLevelTakeProfitEnabled: boolean;
+    historicalLevelStopLossEnabled: boolean;
+    historicalLevelLookbackBars: number;
     riskMaxHoldBars: number;
     riskMaxHoldEnabled: boolean;
     riskWinStreakStopLossEnabled: boolean;

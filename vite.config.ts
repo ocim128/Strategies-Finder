@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { IncomingMessage } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
@@ -10,6 +10,7 @@ const BYBIT_TRADFI_KLINE_URL = 'https://www.bybit.com/x-api/fapi/copymt5/kline';
 const POLYMARKET_GAMMA_EVENT_SLUG_URL = 'https://gamma-api.polymarket.com/events/slug';
 const POLYMARKET_CLOB_HISTORY_URL = 'https://clob.polymarket.com/prices-history';
 const SQLITE_DB_PATH = resolve(process.cwd(), 'price-data', 'market-data.sqlite');
+const INDONESIAN_STOCK_PRICE_DATA_DIR = resolve(process.cwd(), 'price-data', 'indonesian-stock');
 const SQLITE_MAX_BODY_BYTES = 80 * 1024 * 1024;
 const WATCH_STRATEGIES = process.env.WATCH_STRATEGIES === '1';
 const WATCH_IGNORED_GLOBS = [
@@ -460,6 +461,19 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
     return (parsed && typeof parsed === 'object') ? parsed as Record<string, unknown> : {};
 }
 
+function readIndonesianStockCatalog(): Array<{ symbol: string; name: string }> {
+    return readdirSync(INDONESIAN_STOCK_PRICE_DATA_DIR, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.csv'))
+        .map((entry) => {
+            const symbol = entry.name.slice(0, -4).trim().toUpperCase();
+            return symbol !== 'CATALOG' && /^[A-Z0-9._-]+$/.test(symbol)
+                ? { symbol, name: symbol }
+                : null;
+        })
+        .filter((entry): entry is { symbol: string; name: string } => entry !== null)
+        .sort((a, b) => a.symbol.localeCompare(b.symbol));
+}
+
 function tradFiKlineProxyPlugin(): Plugin {
     return {
         name: 'tradfi-kline-proxy',
@@ -579,6 +593,40 @@ function polymarketProxyPlugin(): Plugin {
 
     return {
         name: 'polymarket-proxy',
+        configureServer(server) {
+            register(server.middlewares);
+        },
+        configurePreviewServer(server) {
+            register(server.middlewares);
+        },
+    };
+}
+
+function localPriceDataCatalogPlugin(): Plugin {
+    const register = (middlewares: any) => {
+        middlewares.use('/api/local-price-data/indonesian-stock/catalog', async (req: any, res: any) => {
+            if (req.method !== 'GET') {
+                sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+                return;
+            }
+
+            try {
+                const assets = readIndonesianStockCatalog();
+                sendJson(res, 200, {
+                    ok: true,
+                    dataset: 'indonesian-stock',
+                    count: assets.length,
+                    assets,
+                });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                sendJson(res, 500, { ok: false, error: message });
+            }
+        });
+    };
+
+    return {
+        name: 'local-price-data-catalog',
         configureServer(server) {
             register(server.middlewares);
         },
@@ -1128,6 +1176,7 @@ export default defineConfig({
     plugins: [
         tradFiKlineProxyPlugin(),
         polymarketProxyPlugin(),
+        localPriceDataCatalogPlugin(),
         localSqlitePlugin(),
         strategyLibraryAdminPlugin(),
         backtestEndpointPlugin(),

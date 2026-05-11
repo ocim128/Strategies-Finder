@@ -56,6 +56,7 @@ export class DataProviderRouter {
         if (provider === 'binance-futures') return 'Binance Futures';
         if (provider === 'bybit-tradfi') return 'Bybit TradFi';
         if (provider === 'polymarket') return 'Polymarket';
+        if (provider === 'local-daily') return 'Local Daily';
         return 'Binance Spot';
     }
 }

@@ -41,6 +41,7 @@ import { huntService } from "./hunt/hunt-service";
 import { strategyLibraryAdminService } from "./strategy-library-admin-service";
 import { quickViewManager } from "./quick-view";
 import { setBinanceMarketType, setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
+import { getLocalDailyAsset } from "./local-daily-datasets";
 import {
     runBootstrapFeatureStage,
     type AppBootstrapFeature,
@@ -78,6 +79,13 @@ async function restoreSavedSettings(context: AppBootstrapContext): Promise<void>
         }
 
         settingsManager.applySettings(savedSettings);
+
+        if (savedSettings.currentSymbol) {
+            const localDailyAsset = await getLocalDailyAsset(savedSettings.currentSymbol);
+            if (localDailyAsset) {
+                dataManager.setProviderOverride(localDailyAsset.symbol, localDailyAsset.provider);
+            }
+        }
 
         if (savedSettings.currentSymbol && savedSettings.currentSymbol !== state.currentSymbol) {
             setCurrentSymbol(savedSettings.currentSymbol);

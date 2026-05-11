@@ -564,6 +564,8 @@ class SettingsManager {
             'strategyTimeframeMinutes',
             'stopLossToggle',
             'takeProfitToggle',
+            'historicalLevelTakeProfitToggle',
+            'historicalLevelStopLossToggle',
             'riskMaxHoldToggle',
             'riskWinStreakStopLossToggle'
         ];

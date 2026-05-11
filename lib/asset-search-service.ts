@@ -7,7 +7,12 @@ import type { BinanceMarketType } from './binance-market';
 import { getBinanceProviderForMarketType } from './binance-market';
 import { binanceSearchService, BinanceSymbol } from './binance-search-service';
 import { tradfiSearchService, type TradFiSymbol } from './tradfi-search-service';
-import { getLocalSp500Assets, searchLocalSp500Assets } from './local-sp500-catalog';
+import {
+    getLocalDailyAsset,
+    getLocalDailyAssets,
+    searchLocalDailyAssets,
+    type LocalDailyAsset,
+} from './local-daily-datasets';
 import {
     formatPolymarketDisplayName,
     parsePolymarketEventInput,
@@ -15,7 +20,7 @@ import {
 import { debugLogger } from './debug-logger';
 
 export type AssetType = 'crypto' | 'stock' | 'forex' | 'commodity';
-export type AssetProvider = 'binance' | 'binance-futures' | 'bybit-tradfi' | 'polymarket' | 'mock';
+export type AssetProvider = 'binance' | 'binance-futures' | 'bybit-tradfi' | 'polymarket' | 'local-daily' | 'mock';
 
 export interface Asset {
     symbol: string;          // e.g., "AAPL", "ETHUSDT", "EURUSD"
@@ -30,12 +35,12 @@ export interface Asset {
 const POPULAR_ASSETS: Asset[] = [];
 
 class AssetSearchService {
-    private mapLocalSp500Asset(asset: { symbol: string; name: string }): Asset {
+    private mapLocalDailyAsset(asset: LocalDailyAsset): Asset {
         return {
             symbol: asset.symbol,
-            displayName: asset.name,
+            displayName: `${asset.name} (${asset.datasetLabel})`,
             type: 'stock',
-            provider: 'bybit-tradfi',
+            provider: asset.provider,
         };
     }
 
@@ -83,10 +88,10 @@ class AssetSearchService {
         if (!query.trim()) {
             const popular = this.getPopularAssets(limit, binanceMarketType);
             try {
-                const localSp500 = await searchLocalSp500Assets('', limit);
+                const localAssets = await searchLocalDailyAssets('', limit);
                 const merged = this.dedupeAssets([
                     ...popular,
-                    ...localSp500.map(asset => this.mapLocalSp500Asset(asset)),
+                    ...localAssets.map(asset => this.mapLocalDailyAsset(asset)),
                 ]);
                 return merged.slice(0, limit);
             } catch {
@@ -109,12 +114,12 @@ class AssetSearchService {
             debugLogger.warn('asset_search.bybit_tradfi_failed', { error: error instanceof Error ? error.message : String(error) });
         }
 
-        // Search local S&P500 dataset symbols
+        // Search local daily seed dataset symbols
         try {
-            const localSp500 = await searchLocalSp500Assets(query, Math.floor(limit / 2) + 10);
-            results.push(...localSp500.map(asset => this.mapLocalSp500Asset(asset)));
+            const localAssets = await searchLocalDailyAssets(query, Math.floor(limit / 2) + 10);
+            results.push(...localAssets.map(asset => this.mapLocalDailyAsset(asset)));
         } catch (error) {
-            debugLogger.warn('asset_search.local_sp500_failed', { error: error instanceof Error ? error.message : String(error) });
+            debugLogger.warn('asset_search.local_daily_failed', { error: error instanceof Error ? error.message : String(error) });
         }
 
         // Search Binance (crypto)
@@ -166,6 +171,7 @@ class AssetSearchService {
             // Prioritize stocks and popular assets
             if (asset.type === 'stock') score += 5;
             if (asset.provider === 'bybit-tradfi') score += 8;
+            if (asset.provider === 'local-daily') score += 8;
             if (asset.provider === 'polymarket') score += 20;
             if (asset.type === 'crypto' && asset.quoteAsset === 'USDT') score += 3;
 
@@ -220,9 +226,9 @@ class AssetSearchService {
         }
 
         try {
-            const localSp500 = await getLocalSp500Assets();
             const normalized = symbol.trim().toUpperCase();
-            if (localSp500.some(asset => asset.symbol.toUpperCase() === normalized)) {
+            const localAssets = await getLocalDailyAssets();
+            if (localAssets.some(asset => asset.symbol.toUpperCase() === normalized)) {
                 return true;
             }
         } catch {
@@ -260,10 +266,9 @@ class AssetSearchService {
 
         try {
             const normalized = symbol.trim().toUpperCase();
-            const localSp500 = await getLocalSp500Assets();
-            const localAsset = localSp500.find(asset => asset.symbol.toUpperCase() === normalized);
+            const localAsset = await getLocalDailyAsset(normalized);
             if (localAsset) {
-                return this.mapLocalSp500Asset(localAsset);
+                return this.mapLocalDailyAsset(localAsset);
             }
         } catch {
             // Continue

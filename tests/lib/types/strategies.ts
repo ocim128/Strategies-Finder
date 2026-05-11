@@ -269,6 +269,12 @@ export interface BacktestSettings {
     takeProfitAdaptiveIcScale?: number;
     stopLossEnabled?: boolean;
     takeProfitEnabled?: boolean;
+    /** Enable TP at the nearest qualified historical level on the profit side. */
+    historicalLevelTakeProfitEnabled?: boolean;
+    /** Enable protective exit beyond the nearest qualified historical level on the risk side. */
+    historicalLevelStopLossEnabled?: boolean;
+    /** Historical support/resistance lookback used for level-based TP/SL targets. */
+    historicalLevelLookbackBars?: number;
     /** Hard cap on bars held when risk management is active */
     riskMaxHoldBars?: number;
     /** Enable max hold bars cap */

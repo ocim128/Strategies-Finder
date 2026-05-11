@@ -5,6 +5,7 @@ import {
     normalizeBacktestSettings,
     timeKey,
 } from "./strategies/backtest/backtest-utils";
+import { resolveHistoricalLevelTargets } from "./strategies/backtest/historical-levels";
 import type { BacktestSettings, OHLCVData, Time } from "./types/strategies";
 
 export interface EntryRiskTargets {
@@ -110,6 +111,37 @@ export function resolveEntryRiskTargets(params: ResolveEntryRiskTargetsParams): 
                 }
             }
         }
+    }
+
+    if (
+        (config.historicalLevelTakeProfitEnabled || config.historicalLevelStopLossEnabled) &&
+        config.historicalLevelLookbackBars > 0
+    ) {
+        const resolvedEntryBarIndex = resolveEntryBarIndex(candles, entryTime, entryBarIndex);
+        if (resolvedEntryBarIndex === null) {
+            return {
+                stopLossPrice,
+                takeProfitPrice,
+                stopLossPercent: toTargetPercent(entryPrice, stopLossPrice),
+                takeProfitPercent: toTargetPercent(entryPrice, takeProfitPrice),
+            };
+        }
+        const highs = candles.map((candle) => candle.high);
+        const lows = candles.map((candle) => candle.low);
+        const closes = candles.map((candle) => candle.close);
+        const atr = calculateATR(highs, lows, closes, config.atrPeriod);
+        const historicalTargets = resolveHistoricalLevelTargets({
+            data: candles,
+            entryBarIndex: resolvedEntryBarIndex,
+            entryPrice,
+            direction,
+            config,
+            atrArray: atr,
+            baseStopLossPrice: stopLossPrice,
+            baseTakeProfitPrice: takeProfitPrice,
+        });
+        stopLossPrice = historicalTargets.stopLossPrice;
+        takeProfitPrice = historicalTargets.takeProfitPrice;
     }
 
     return {

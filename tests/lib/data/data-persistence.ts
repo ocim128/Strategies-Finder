@@ -38,7 +38,7 @@ export class DataPersistence {
 
     private normalizeProviderCandles(candles: OHLCVData[], interval: string, provider: DataProvider): OHLCVData[] {
         const normalized = this.normalizeExternalCandles(candles);
-        return provider === 'bybit-tradfi'
+        return provider === 'bybit-tradfi' || provider === 'local-daily'
             ? normalizeTradFiDailyCandles(normalized, interval)
             : normalized;
     }

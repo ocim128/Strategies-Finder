@@ -240,6 +240,19 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         parser: "boolean",
         legacyAliases: ["takeProfitEnabled"],
     }),
+    createField("historicalLevelTakeProfitToggle", {
+        settingKey: "historicalLevelTakeProfitEnabled",
+        parser: "boolean",
+        legacyAliases: ["historicalLevelTakeProfitEnabled"],
+        rustSupport: "unsupported",
+    }),
+    createField("historicalLevelStopLossToggle", {
+        settingKey: "historicalLevelStopLossEnabled",
+        parser: "boolean",
+        legacyAliases: ["historicalLevelStopLossEnabled"],
+        rustSupport: "unsupported",
+    }),
+    createField("historicalLevelLookbackBars", { rustSupport: "unsupported" }),
     createField("riskMaxHoldBars", { rustSupport: "unsupported" }),
     createField("riskMaxHoldToggle", {
         settingKey: "riskMaxHoldEnabled",

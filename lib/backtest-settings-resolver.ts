@@ -63,6 +63,9 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     takeProfitAdaptiveIcScale: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveIcScale,
     stopLossEnabled: true,
     takeProfitEnabled: true,
+    historicalLevelTakeProfitEnabled: false,
+    historicalLevelStopLossEnabled: false,
+    historicalLevelLookbackBars: 120,
     riskMaxHoldBars: 10,
     riskMaxHoldEnabled: false,
     riskWinStreakStopLossEnabled: false,
@@ -110,6 +113,7 @@ type ResolverGuardName =
     | "useAtrRisk"
     | "usePercentRisk"
     | "useAdvancedRisk"
+    | "useRiskManagement"
     | "useRiskMaxHold"
     | "tradeFilterEnabled";
 
@@ -135,6 +139,7 @@ type NumericResolverKey =
     | "takeProfitAdaptiveGridSteps"
     | "takeProfitAdaptiveRegimeBlend"
     | "takeProfitAdaptiveIcScale"
+    | "historicalLevelLookbackBars"
     | "riskMaxHoldBars"
     | "riskWinStreakStopLossAfterWins"
     | "riskWinStreakStopLossPercent"
@@ -156,6 +161,8 @@ type NumericResolverKey =
 type BooleanResolverKey =
     | "stopLossEnabled"
     | "takeProfitEnabled"
+    | "historicalLevelTakeProfitEnabled"
+    | "historicalLevelStopLossEnabled"
     | "riskMaxHoldEnabled"
     | "riskWinStreakStopLossEnabled"
     | "invertSignals"
@@ -232,6 +239,12 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
         guard: "usePercentRisk",
         resolve: (raw) => Math.max(0, Math.min(2, readDefaultedNumber(raw, "takeProfitAdaptiveIcScale"))),
     },
+    {
+        key: "historicalLevelLookbackBars",
+        guard: "useRiskManagement",
+        disabledValue: 0,
+        resolve: (raw) => Math.max(0, Math.round(readDefaultedNumber(raw, "historicalLevelLookbackBars"))),
+    },
     { key: "riskMaxHoldBars", guard: "useRiskMaxHold", disabledValue: 0 },
     {
         key: "riskWinStreakStopLossAfterWins",
@@ -278,6 +291,18 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
 const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
     { key: "stopLossEnabled", keys: ["stopLossEnabled", "stopLossToggle"], guard: "usePercentRisk", disabledValue: false },
     { key: "takeProfitEnabled", keys: ["takeProfitEnabled", "takeProfitToggle"], guard: "usePercentRisk", disabledValue: false },
+    {
+        key: "historicalLevelTakeProfitEnabled",
+        keys: ["historicalLevelTakeProfitEnabled", "historicalLevelTakeProfitToggle"],
+        guard: "useRiskManagement",
+        disabledValue: false,
+    },
+    {
+        key: "historicalLevelStopLossEnabled",
+        keys: ["historicalLevelStopLossEnabled", "historicalLevelStopLossToggle"],
+        guard: "useRiskManagement",
+        disabledValue: false,
+    },
     { key: "riskMaxHoldEnabled", keys: ["riskMaxHoldEnabled", "riskMaxHoldToggle"], guard: "useRiskMaxHold", disabledValue: false },
     {
         key: "riskWinStreakStopLossEnabled",
@@ -354,6 +379,9 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "takeProfitAdaptiveIcScale",
     "stopLossToggle",
     "takeProfitToggle",
+    "historicalLevelTakeProfitToggle",
+    "historicalLevelStopLossToggle",
+    "historicalLevelLookbackBars",
     "riskMaxHoldBars",
     "riskMaxHoldToggle",
     "riskWinStreakStopLossToggle",
@@ -628,6 +656,7 @@ export function resolveBacktestSettingsFromRaw(
         useAtrRisk,
         usePercentRisk,
         useAdvancedRisk,
+        useRiskManagement: riskEnabled,
         useRiskMaxHold,
         tradeFilterEnabled,
     };

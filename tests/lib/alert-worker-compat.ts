@@ -10,6 +10,8 @@ function labelForProvider(provider: AssetProvider): string {
             return "Bybit TradFi";
         case "polymarket":
             return "Polymarket";
+        case "local-daily":
+            return "Local Daily";
         case "mock":
             return "Mock";
         default:

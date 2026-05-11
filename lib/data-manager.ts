@@ -235,6 +235,10 @@ export class DataManager {
             debugLogger.info('data.stream.skip_polymarket', { symbol, interval });
             return;
         }
+        if (provider === 'local-daily') {
+            debugLogger.info('data.stream.skip_local_daily', { symbol, interval });
+            return;
+        }
         if (isBinanceDataProvider(provider) && !isBinanceInterval(interval)) {
             debugLogger.info('data.stream.skip_interval', { symbol, interval, provider });
             return;

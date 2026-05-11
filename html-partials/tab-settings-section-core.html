@@ -209,6 +209,35 @@
                         <div class="param-hint">Force-close open trades after N bars regardless of PnL.</div>
                     </div>
                 </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Historical TP</label>
+                            <label class="section-toggle" style="transform: scale(0.8);"
+                                aria-label="Toggle historical-level take profit">
+                                <input type="checkbox" id="historicalLevelTakeProfitToggle">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">Long exits before resistance; short exits before support.</div>
+                    </div>
+                    <div class="param-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Historical Exit</label>
+                            <label class="section-toggle" style="transform: scale(0.8);"
+                                aria-label="Toggle historical-level protective exit">
+                                <input type="checkbox" id="historicalLevelStopLossToggle">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">Long exits after support breaks; short exits after resistance breaks.</div>
+                    </div>
+                    <div class="param-group">
+                        <label class="param-label">Historical Lookback (bars)</label>
+                        <input type="number" class="param-input" id="historicalLevelLookbackBars" value="120" min="5" step="1">
+                        <div class="param-hint">Uses confirmed past swing zones only.</div>
+                    </div>
+                </div>
                 <div class="risk-percentage is-hidden" id="riskPercentage">
                     <div class="param-row">
                         <div class="param-group">
