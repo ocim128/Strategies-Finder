@@ -5,8 +5,10 @@ import {
     getImportStorageIntervals,
     getStorageInterval,
     isIntervalAlignedTime,
+    normalizeTradFiDailyCandles,
+    normalizeTradFiDailySessionTime,
     sliceCandlesToLookback,
-} from "./lib/data/data-interval-utils";
+} from "../lib/data/data-interval-utils";
 
 describe("Data interval utils", () => {
     it("normalizes 2h storage keys to the single supported interval", () => {
@@ -30,5 +32,23 @@ describe("Data interval utils", () => {
 
         expect(sliceCandlesToLookback(candles, 2).map((candle) => candle.close)).to.deep.equal([2, 3]);
         expect(estimateBybitSeedOverlayBars("1m", candles, 1720)).to.equal(20);
+    });
+
+    it("canonicalizes local TradFi daily seed and Bybit overlay timestamps to one session key", () => {
+        const seedTime = Date.parse("2026-02-20T00:00:00-05:00") / 1000;
+        const bybitOverlayTime = Date.parse("2026-02-19T22:00:00Z") / 1000;
+        const sessionTime = Date.parse("2026-02-20T00:00:00Z") / 1000;
+
+        expect(normalizeTradFiDailySessionTime(seedTime)).to.equal(sessionTime);
+        expect(normalizeTradFiDailySessionTime(bybitOverlayTime)).to.equal(sessionTime);
+
+        const normalized = normalizeTradFiDailyCandles([
+            { time: seedTime, open: 100, high: 110, low: 90, close: 105, volume: 1000 },
+            { time: bybitOverlayTime, open: 101, high: 111, low: 91, close: 106, volume: 0 },
+        ], "1d");
+
+        expect(normalized).to.have.length(1);
+        expect(Number(normalized[0].time)).to.equal(sessionTime);
+        expect(normalized[0].close).to.equal(106);
     });
 });

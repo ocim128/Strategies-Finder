@@ -42,8 +42,15 @@ function writeStrategyFile(
     return filePath;
 }
 
+const generatedStrategyArtifacts = [
+    "manifest.ts",
+    "manifest-meta.ts",
+    "manifest-loaders.ts",
+    "manifest-keys.ts",
+] as const;
+
 describe("Strategy library admin plugin", () => {
-    it("archives a built-in strategy file, deletes it, and resyncs the manifest", () => {
+    it("archives a built-in strategy file, deletes it, and resyncs all generated manifest artifacts", () => {
         const repoRoot = createTempRepo();
         try {
             const alphaPath = writeStrategyFile(repoRoot, "alpha_strategy.ts", "alpha_strategy");
@@ -62,9 +69,11 @@ describe("Strategy library admin plugin", () => {
             expect(readFileSync(path.join(repoRoot, result.backupRelativePath), "utf8")).to.equal(originalAlpha);
             expect(result.manifestStrategyCount).to.equal(1);
 
-            const manifestSource = readFileSync(path.join(repoRoot, "lib", "strategies", "manifest.ts"), "utf8");
-            expect(manifestSource.includes('key: "alpha_strategy"')).to.equal(false);
-            expect(manifestSource.includes('key: "beta_strategy"')).to.equal(true);
+            for (const artifact of generatedStrategyArtifacts) {
+                const source = readFileSync(path.join(repoRoot, "lib", "strategies", artifact), "utf8");
+                expect(source.includes("alpha_strategy"), `${artifact} should drop alpha_strategy`).to.equal(false);
+                expect(source.includes("beta_strategy"), `${artifact} should keep beta_strategy`).to.equal(true);
+            }
         } finally {
             rmSync(repoRoot, { recursive: true, force: true });
         }

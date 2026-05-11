@@ -16,6 +16,7 @@ import {
     DATA_CHART_TOTAL_LIMIT,
 } from "./constants";
 import {
+    normalizeTradFiDailyCandles,
     takeLastCandles as trimToLastCandles,
 } from "./data-interval-utils";
 
@@ -35,9 +36,17 @@ export class DataPersistence {
         return mergeCandles([], candles);
     }
 
+    private normalizeProviderCandles(candles: OHLCVData[], interval: string, provider: DataProvider): OHLCVData[] {
+        const normalized = this.normalizeExternalCandles(candles);
+        return provider === 'bybit-tradfi'
+            ? normalizeTradFiDailyCandles(normalized, interval)
+            : normalized;
+    }
+
     async loadNonBinanceLocalData(deps: {
         symbol: string;
         interval: string;
+        provider: DataProvider;
         maxBars: number;
         storageInterval: string;
         storageSymbol: string;
@@ -49,6 +58,7 @@ export class DataPersistence {
         const {
             symbol,
             interval,
+            provider,
             maxBars,
             storageInterval,
             storageSymbol,
@@ -63,7 +73,7 @@ export class DataPersistence {
 
         if (importedCandles && importedCandles.length > 0) {
             candidates.push({
-                candles: trimToLastCandles(this.normalizeExternalCandles(importedCandles), normalizedLimit),
+                candles: trimToLastCandles(this.normalizeProviderCandles(importedCandles, interval, provider), normalizedLimit),
                 source: 'imported',
             });
         }
@@ -71,7 +81,7 @@ export class DataPersistence {
         const sqliteRaw = await loadSqliteCandles(storageSymbol, storageInterval, normalizedLimit);
         if (sqliteRaw && sqliteRaw.candles.length > 0) {
             candidates.push({
-                candles: trimToLastCandles(this.normalizeExternalCandles(sqliteRaw.candles), normalizedLimit),
+                candles: trimToLastCandles(this.normalizeProviderCandles(sqliteRaw.candles, interval, provider), normalizedLimit),
                 source: 'sqlite',
             });
         }
@@ -79,7 +89,7 @@ export class DataPersistence {
         const cached = await loadCachedCandles(storageSymbol, storageInterval);
         if (cached && cached.candles.length > 0) {
             candidates.push({
-                candles: trimToLastCandles(this.normalizeExternalCandles(cached.candles), normalizedLimit),
+                candles: trimToLastCandles(this.normalizeProviderCandles(cached.candles, interval, provider), normalizedLimit),
                 source: 'cache',
             });
         }
@@ -87,7 +97,7 @@ export class DataPersistence {
         const seedData = await loadSeedCandlesFromPriceData(symbol, interval, signal);
         if (seedData && seedData.length > 0) {
             candidates.push({
-                candles: trimToLastCandles(this.normalizeExternalCandles(seedData), normalizedLimit),
+                candles: trimToLastCandles(this.normalizeProviderCandles(seedData, interval, provider), normalizedLimit),
                 source: 'seed',
             });
         }
@@ -132,6 +142,7 @@ export class DataPersistence {
         const {
             storageInterval,
             providerLabel,
+            provider,
             source,
             candles,
             storageSymbol,
@@ -140,7 +151,7 @@ export class DataPersistence {
         } = deps;
 
         if (candles.length === 0) return;
-        const normalized = this.normalizeExternalCandles(candles);
+        const normalized = this.normalizeProviderCandles(candles, storageInterval, provider);
         await this.persistLocalCandles({
             symbol: storageSymbol,
             storageInterval,

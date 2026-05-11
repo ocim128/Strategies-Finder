@@ -102,13 +102,14 @@
         <div class="finder-strategy-actions" role="group" aria-label="Universe helpers">
             <button class="btn btn-secondary btn-compact" id="finderUniverseUseCurrent" type="button">Use Current</button>
             <button class="btn btn-secondary btn-compact" id="finderUniverseUseCurrentMajors" type="button">Current + Majors</button>
+            <button class="btn btn-secondary btn-compact" id="finderUniverseUseLocalSp500" type="button">Local S&amp;P</button>
             <button class="btn btn-secondary btn-compact" id="finderUniverseClear" type="button">Clear</button>
         </div>
         <div class="param-group" style="margin-top: 12px;">
             <label class="param-label" for="finderUniverseSymbols">Symbols</label>
-            <textarea class="param-input" id="finderUniverseSymbols" rows="6" placeholder="BTCUSDT&#10;ETHUSDT&#10;SOLUSDT"></textarea>
+            <textarea class="param-input" id="finderUniverseSymbols" rows="6" placeholder="AAPL&#10;MSFT&#10;NVDA&#10;BTCUSDT"></textarea>
         </div>
-        <div class="param-hint">One symbol per line or comma-separated. Universe mode reuses the current interval and current backtest settings for every symbol.</div>
+        <div class="param-hint">One symbol per line or comma-separated. Universe mode reuses the current interval and settings. Local S&amp;P symbols use Bybit TradFi, with the Local 1D seed on 1d.</div>
         <div class="finder-strategy-summary" id="finderUniverseSummary">0 symbols</div>
         <div class="param-row" style="margin-top: 12px;">
             <div class="param-group">

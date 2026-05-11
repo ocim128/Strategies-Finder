@@ -1,15 +1,10 @@
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const scriptsDir = path.dirname(currentFilePath);
 const repoRoot = path.resolve(scriptsDir, "..");
-const strategyLibDir = path.join(repoRoot, "lib", "strategies", "lib");
-const manifestPath = path.join(repoRoot, "lib", "strategies", "manifest.ts");
-const manifestMetaPath = path.join(repoRoot, "lib", "strategies", "manifest-meta.ts");
-const manifestLoadersPath = path.join(repoRoot, "lib", "strategies", "manifest-loaders.ts");
-const manifestKeysPath = path.join(repoRoot, "lib", "strategies", "manifest-keys.ts");
 
 const STRATEGY_EXPORT_PATTERN = /export\s+const\s+([a-zA-Z][a-zA-Z0-9_]*)\s*:\s*Strategy\s*=/g;
 const MANIFEST_KEY_PATTERN = /key:\s*"([^"]+)"/g;
@@ -21,12 +16,45 @@ export interface StrategyModuleDefinition {
     importPath: string;
 }
 
+interface StrategyManifestPaths {
+    strategyLibDir: string;
+    manifestPath: string;
+    manifestMetaPath: string;
+    manifestLoadersPath: string;
+    manifestKeysPath: string;
+}
+
+interface StrategyManifestGenerationOptions {
+    repoRoot?: string;
+}
+
+function getStrategyManifestPaths(root: string = repoRoot): StrategyManifestPaths {
+    const resolvedRoot = path.resolve(root);
+    return {
+        strategyLibDir: path.join(resolvedRoot, "lib", "strategies", "lib"),
+        manifestPath: path.join(resolvedRoot, "lib", "strategies", "manifest.ts"),
+        manifestMetaPath: path.join(resolvedRoot, "lib", "strategies", "manifest-meta.ts"),
+        manifestLoadersPath: path.join(resolvedRoot, "lib", "strategies", "manifest-loaders.ts"),
+        manifestKeysPath: path.join(resolvedRoot, "lib", "strategies", "manifest-keys.ts"),
+    };
+}
+
+const defaultPaths = getStrategyManifestPaths();
+const manifestPath = defaultPaths.manifestPath;
+const manifestMetaPath = defaultPaths.manifestMetaPath;
+const manifestLoadersPath = defaultPaths.manifestLoadersPath;
+const manifestKeysPath = defaultPaths.manifestKeysPath;
+
 function normalizeLineEndings(value: string): string {
     return value.replace(/\r\n/g, "\n");
 }
 
-function readCurrentManifestOrder(): string[] {
-    const source = normalizeLineEndings(readFileSync(manifestPath, "utf8"));
+function readCurrentManifestOrder(currentManifestPath: string): string[] {
+    if (!existsSync(currentManifestPath)) {
+        return [];
+    }
+
+    const source = normalizeLineEndings(readFileSync(currentManifestPath, "utf8"));
     const keys: string[] = [];
     let match: RegExpExecArray | null;
 
@@ -49,16 +77,19 @@ function extractStrategyExportName(source: string, fileName: string): string | n
     return matches[0][1];
 }
 
-export function collectStrategyModuleDefinitions(): StrategyModuleDefinition[] {
-    const existingOrder = readCurrentManifestOrder();
+export function collectStrategyModuleDefinitions(
+    options: StrategyManifestGenerationOptions = {}
+): StrategyModuleDefinition[] {
+    const paths = getStrategyManifestPaths(options.repoRoot);
+    const existingOrder = readCurrentManifestOrder(paths.manifestPath);
     const existingRank = new Map(existingOrder.map((key, index) => [key, index]));
-    const strategyFiles = readdirSync(strategyLibDir)
+    const strategyFiles = readdirSync(paths.strategyLibDir)
         .filter((fileName) => fileName.endsWith(".ts"))
         .sort((left, right) => left.localeCompare(right));
 
     const definitions: StrategyModuleDefinition[] = [];
     for (const fileName of strategyFiles) {
-        const source = readFileSync(path.join(strategyLibDir, fileName), "utf8");
+        const source = readFileSync(path.join(paths.strategyLibDir, fileName), "utf8");
         const exportName = extractStrategyExportName(source, fileName);
         if (!exportName) {
             continue;
@@ -96,12 +127,14 @@ export function collectStrategyModuleDefinitions(): StrategyModuleDefinition[] {
 }
 
 export function generateStrategyManifestSource(
-    definitions: readonly StrategyModuleDefinition[] = collectStrategyModuleDefinitions()
+    definitions?: readonly StrategyModuleDefinition[],
+    options: StrategyManifestGenerationOptions = {}
 ): string {
-    const importLines = definitions.map(
+    const resolvedDefinitions = definitions ?? collectStrategyModuleDefinitions(options);
+    const importLines = resolvedDefinitions.map(
         (definition) => `import { ${definition.exportName} } from "${definition.importPath}";`
     );
-    const entryLines = definitions.map(
+    const entryLines = resolvedDefinitions.map(
         (definition) => `    { key: "${definition.key}", strategy: ${definition.exportName} },`
     );
 
@@ -251,19 +284,23 @@ function extractStrategyMeta(source: string, key: string): StrategyMetaEntry {
 }
 
 function collectStrategyMeta(
-    definitions: readonly StrategyModuleDefinition[]
+    definitions: readonly StrategyModuleDefinition[],
+    options: StrategyManifestGenerationOptions = {}
 ): StrategyMetaEntry[] {
+    const paths = getStrategyManifestPaths(options.repoRoot);
     return definitions.map((def) => {
         const fileName = def.importPath.replace("./lib/", "") + ".ts";
-        const source = readFileSync(path.join(strategyLibDir, fileName), "utf8");
+        const source = readFileSync(path.join(paths.strategyLibDir, fileName), "utf8");
         return extractStrategyMeta(source, def.key);
     });
 }
 
 export function generateStrategyMetaSource(
-    definitions: readonly StrategyModuleDefinition[] = collectStrategyModuleDefinitions()
+    definitions?: readonly StrategyModuleDefinition[],
+    options: StrategyManifestGenerationOptions = {}
 ): string {
-    const metaEntries = collectStrategyMeta(definitions);
+    const resolvedDefinitions = definitions ?? collectStrategyModuleDefinitions(options);
+    const metaEntries = collectStrategyMeta(resolvedDefinitions, options);
     const entryLines = metaEntries.map(
         (entry) => [
             "    {",
@@ -304,9 +341,11 @@ export function generateStrategyMetaSource(
 }
 
 export function generateStrategyLoadersSource(
-    definitions: readonly StrategyModuleDefinition[] = collectStrategyModuleDefinitions()
+    definitions?: readonly StrategyModuleDefinition[],
+    options: StrategyManifestGenerationOptions = {}
 ): string {
-    const loaderLines = definitions.map(
+    const resolvedDefinitions = definitions ?? collectStrategyModuleDefinitions(options);
+    const loaderLines = resolvedDefinitions.map(
         (def) =>
             `    "${def.key}": () => import("${def.importPath}").then(m => m.${def.exportName}),`
     );
@@ -325,9 +364,11 @@ export function generateStrategyLoadersSource(
 }
 
 export function generateStrategyKeysSource(
-    definitions: readonly StrategyModuleDefinition[] = collectStrategyModuleDefinitions()
+    definitions?: readonly StrategyModuleDefinition[],
+    options: StrategyManifestGenerationOptions = {}
 ): string {
-    const keyLines = definitions.map(
+    const resolvedDefinitions = definitions ?? collectStrategyModuleDefinitions(options);
+    const keyLines = resolvedDefinitions.map(
         (def) => `    "${def.key}",`
     );
 
@@ -354,14 +395,22 @@ export function getStrategyKeysPath(): string {
     return manifestKeysPath;
 }
 
-export function syncStrategyManifest(): { path: string; count: number } {
-    const definitions = collectStrategyModuleDefinitions();
-    writeFileSync(manifestPath, generateStrategyManifestSource(definitions), "utf8");
-    writeFileSync(manifestMetaPath, generateStrategyMetaSource(definitions), "utf8");
-    writeFileSync(manifestLoadersPath, generateStrategyLoadersSource(definitions), "utf8");
-    writeFileSync(manifestKeysPath, generateStrategyKeysSource(definitions), "utf8");
+export function syncStrategyManifest(
+    options: StrategyManifestGenerationOptions = {}
+): { path: string; count: number } {
+    const paths = getStrategyManifestPaths(options.repoRoot);
+    const definitions = collectStrategyModuleDefinitions(options);
+    mkdirSync(path.dirname(paths.manifestPath), { recursive: true });
+    writeFileSync(paths.manifestPath, generateStrategyManifestSource(definitions, options), "utf8");
+    writeFileSync(paths.manifestMetaPath, generateStrategyMetaSource(definitions, options), "utf8");
+    writeFileSync(paths.manifestLoadersPath, generateStrategyLoadersSource(definitions, options), "utf8");
+    writeFileSync(paths.manifestKeysPath, generateStrategyKeysSource(definitions, options), "utf8");
     return {
-        path: manifestPath,
+        path: paths.manifestPath,
         count: definitions.length,
     };
+}
+
+export function syncStrategyManifestForRepo(repoRoot: string): { path: string; count: number } {
+    return syncStrategyManifest({ repoRoot });
 }

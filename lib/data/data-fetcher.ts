@@ -82,12 +82,13 @@ export class DataFetcher {
         const provider = this.providerRouter.getProvider(symbol);
         const cacheKey = this.buildCacheKey(symbol, resolveStorageInterval(interval), provider);
         const lookbackBars = this.getChartLookbackBars();
+        const shouldRefreshHotCache = provider === 'bybit-tradfi' && resolveStorageInterval(interval) === '1d';
 
         const imported = this.getImportedDataByKey().get(cacheKey);
         if (imported) return sliceCandlesToLookback(imported, lookbackBars);
 
         const cached = this.cache.get(cacheKey);
-        if (cached) return sliceCandlesToLookback(cached.candles, lookbackBars);
+        if (cached && !shouldRefreshHotCache) return sliceCandlesToLookback(cached.candles, lookbackBars);
 
         const chain = await this.resolveProviderFallbackChain(symbol, interval, signal);
         return this.fetchDataFromProviderChain(chain, symbol, interval, signal);
@@ -494,11 +495,11 @@ export class DataFetcher {
                 resampleOptions
             );
             if (seededWithLatest.liveRefreshed) {
-                void this.persistNonBinanceData(
+                void this.persistBybitTradFiDailyOverlay(
                     symbol,
                     interval,
-                    'bybit-tradfi',
                     seededWithLatest.candles,
+                    seededWithLatest.refreshedCandles,
                     `local-${localNonBinance.source}-overlay`
                 );
                 this.reporter.updateSymbolDataSource?.(
@@ -656,6 +657,7 @@ export class DataFetcher {
         return this.persistence.loadNonBinanceLocalData({
             symbol,
             interval,
+            provider,
             maxBars,
             storageInterval,
             storageSymbol,
@@ -691,6 +693,30 @@ export class DataFetcher {
         });
     }
 
+    private async persistBybitTradFiDailyOverlay(
+        symbol: string,
+        interval: string,
+        candles: OHLCVData[],
+        refreshedCandles: OHLCVData[],
+        source: string
+    ): Promise<void> {
+        if (candles.length === 0) return;
+        const provider: DataProvider = 'bybit-tradfi';
+        const storageInterval = resolveStorageInterval(interval);
+        const storageSymbol = this.providerRouter.getStorageSymbol(symbol, provider);
+        const cacheKey = this.buildCacheKey(symbol, storageInterval, provider);
+        await this.persistLocalCandles({
+            symbol: storageSymbol,
+            storageInterval,
+            cacheCandles: candles,
+            sqliteCandles: refreshedCandles.length > 0 ? refreshedCandles : undefined,
+            providerLabel: this.providerRouter.getProviderStorageLabel(provider),
+            sourceTrait: source,
+            cacheKey,
+            updateSyncTime: true,
+        });
+    }
+
     private async persistLocalCandles(args: {
         symbol: string;
         storageInterval: string;
@@ -723,7 +749,7 @@ export class DataFetcher {
         seedData: OHLCVData[],
         signal?: AbortSignal,
         options?: ResampleOptions
-    ): Promise<{ candles: OHLCVData[]; liveRefreshed: boolean }> {
+    ): Promise<{ candles: OHLCVData[]; liveRefreshed: boolean; refreshedCandles: OHLCVData[] }> {
         try {
             const overlayBars = this.getBybitSeedOverlayBars(interval, seedData);
             const recent = await fetchBybitTradFiDataWithLimit(symbol, interval, overlayBars, {
@@ -731,12 +757,13 @@ export class DataFetcher {
                 ...(options ?? {}),
             });
             if (recent.length === 0) {
-                return { candles: seedData, liveRefreshed: false };
+                return { candles: seedData, liveRefreshed: false, refreshedCandles: [] };
             }
             const merged = mergeCandles(seedData, recent);
             return {
                 candles: merged,
                 liveRefreshed: true,
+                refreshedCandles: recent,
             };
         } catch (error) {
             debugLogger.warn('data.bybit_tradfi.seed_overlay_failed', {
@@ -744,7 +771,7 @@ export class DataFetcher {
                 interval,
                 error: String(error),
             });
-            return { candles: seedData, liveRefreshed: false };
+            return { candles: seedData, liveRefreshed: false, refreshedCandles: [] };
         }
     }
 

@@ -2,7 +2,10 @@ import type { IncomingMessage } from "node:http";
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Plugin, ViteDevServer } from "vite";
-import { generateStrategyManifestSource, type StrategyModuleDefinition } from "../scripts/strategy-manifest-generator";
+import {
+    syncStrategyManifestForRepo as syncGeneratedStrategyManifestForRepo,
+    type StrategyModuleDefinition,
+} from "../scripts/strategy-manifest-generator";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 import { sendJson } from "./http-response-utils";
 
@@ -162,14 +165,7 @@ export function collectStrategyModuleDefinitionsForRepo(repoRoot: string): Strat
 }
 
 export function syncStrategyManifestForRepo(repoRoot: string): { path: string; count: number } {
-    const paths = getStrategyLibraryPaths(repoRoot);
-    const definitions = collectStrategyModuleDefinitionsForRepo(repoRoot);
-    mkdirSync(path.dirname(paths.manifestPath), { recursive: true });
-    writeFileSync(paths.manifestPath, generateStrategyManifestSource(definitions), "utf8");
-    return {
-        path: paths.manifestPath,
-        count: definitions.length,
-    };
+    return syncGeneratedStrategyManifestForRepo(repoRoot);
 }
 
 function formatBackupTimestamp(date: Date): string {

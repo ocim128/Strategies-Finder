@@ -1,5 +1,6 @@
 import type { Time } from "lightweight-charts";
 import type { OHLCVData } from "./types/index";
+import { normalizeTradFiDailyCandles } from "./data/data-interval-utils";
 import { debugLogger } from "./debug-logger";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 
@@ -289,7 +290,7 @@ async function loadSp500IndividualAnalysisCandles(
             }
 
             const payload = await response.text();
-            const candles = extractCandlesFromCsvPayload(payload);
+            const candles = normalizeTradFiDailyCandles(extractCandlesFromCsvPayload(payload), baseInterval);
             if (candles.length === 0) {
                 missingSp500CsvFiles.add(candidate);
                 continue;

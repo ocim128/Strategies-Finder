@@ -9,6 +9,7 @@ import { dataManager } from "./data-manager";
 import { settingsManager } from "./settings-manager";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
 import { MAJOR_SYMBOLS } from "./portfolioLab/portfolio-lab-types";
+import { getLocalSp500Assets } from "./local-sp500-catalog";
 
 import { FINDER_SORT_OPTIONS, METRIC_FULL_LABELS, UNIVERSE_METRIC_FULL_LABELS } from "./finder/constants";
 import { runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
@@ -180,6 +181,7 @@ export class FinderManager {
 	private readonly paramSpace = new FinderParamSpace();
 	private readonly taskYielder = createTaskYielder();
 	private dom: FinderManagerDom | null = null;
+	private localSp500SymbolSetPromise: Promise<Set<string>> | null = null;
 
 	private getDom(): FinderManagerDom {
 		return this.dom ??= createFinderManagerDom();
@@ -233,6 +235,65 @@ export class FinderManager {
 		const dom = this.getDom();
 		const symbols = this.parseUniverseSymbols(dom.finderUniverseSymbols.value);
 		dom.finderUniverseSummary.textContent = `${symbols.length} symbol${symbols.length === 1 ? "" : "s"}`;
+	}
+
+	private getLocalSp500SymbolSet(): Promise<Set<string>> {
+		if (!this.localSp500SymbolSetPromise) {
+			this.localSp500SymbolSetPromise = getLocalSp500Assets().then((assets) =>
+				new Set(assets.map((asset) => asset.symbol.trim().toUpperCase()).filter(Boolean))
+			);
+		}
+		return this.localSp500SymbolSetPromise;
+	}
+
+	private async prepareUniverseSymbolProvider(symbol: string): Promise<void> {
+		const normalizedSymbol = symbol.trim().toUpperCase();
+		if (!normalizedSymbol) return;
+
+		const localSp500Symbols = await this.getLocalSp500SymbolSet();
+		if (localSp500Symbols.has(normalizedSymbol)) {
+			dataManager.setProviderOverride(normalizedSymbol, "bybit-tradfi");
+		}
+	}
+
+	private async loadUniverseDataset(symbol: string, interval: string, signal?: AbortSignal) {
+		await this.prepareUniverseSymbolProvider(symbol);
+		return dataManager.fetchDataDetached(symbol, interval, signal);
+	}
+
+	private async populateUniverseWithLocalSp500(): Promise<void> {
+		const dom = this.getDom();
+		dom.finderUniverseUseLocalSp500.disabled = true;
+
+		try {
+			const assets = await getLocalSp500Assets();
+			const symbols = assets
+				.map((asset) => asset.symbol.trim().toUpperCase())
+				.filter(Boolean);
+
+			if (symbols.length === 0) {
+				this.setStatus("Local S&P symbol catalog is unavailable.");
+				uiManager.showToast("Local S&P symbol catalog is unavailable.", "warning");
+				return;
+			}
+
+			for (const symbol of symbols) {
+				dataManager.setProviderOverride(symbol, "bybit-tradfi");
+			}
+			dom.finderUniverseSymbols.value = symbols.join("\n");
+			this.uiState.universeSymbolsText = dom.finderUniverseSymbols.value;
+			this.updateUniverseSummary();
+			this.saveUiState();
+			this.setStatus(`Loaded ${symbols.length} Local S&P symbols for Symbol Universe mode.`);
+		} catch (error) {
+			debugLogger.error("finder.local_sp500_universe_load_failed", {
+				error: error instanceof Error ? error.message : String(error),
+			});
+			this.setStatus("Unable to load local S&P symbol catalog.");
+			uiManager.showToast("Unable to load local S&P symbol catalog.", "error");
+		} finally {
+			dom.finderUniverseUseLocalSp500.disabled = false;
+		}
 	}
 
 	private applyPersistedUiStateToDom(): void {
@@ -438,6 +499,10 @@ export class FinderManager {
 			this.uiState.universeSymbolsText = dom.finderUniverseSymbols.value;
 			this.updateUniverseSummary();
 			this.saveUiState();
+		});
+
+		dom.finderUniverseUseLocalSp500.addEventListener("click", () => {
+			void this.populateUniverseWithLocalSp500();
 		});
 
 		dom.finderUniverseClear.addEventListener("click", () => {
@@ -1003,7 +1068,7 @@ export class FinderManager {
 					settings,
 					capitalSettings,
 					selectedStrategy,
-					loadDataset: (symbol, interval, signal) => dataManager.fetchDataDetached(symbol, interval, signal),
+					loadDataset: (symbol, interval, signal) => this.loadUniverseDataset(symbol, interval, signal),
 					generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),
 				},
 				{
