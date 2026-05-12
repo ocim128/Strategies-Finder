@@ -1,4 +1,4 @@
-import { StrategyParams } from "./strategies/index";
+import { StrategyParams, type OHLCVData } from "./strategies/index";
 import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtest-service";
@@ -12,7 +12,7 @@ import { MAJOR_SYMBOLS } from "./portfolioLab/portfolio-lab-types";
 import { getLocalDailyAssets, type LocalDailyAsset } from "./local-daily-datasets";
 
 import { FINDER_SORT_OPTIONS, METRIC_FULL_LABELS, UNIVERSE_METRIC_FULL_LABELS } from "./finder/constants";
-import { runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
+import { buildFinderEvaluationData, runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
 import { runFinderUniverseExecution } from "./finder/finder-runner-universe";
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderUI } from "./finder/finder-ui";
@@ -173,6 +173,7 @@ export class FinderManager {
 	private latestResults: FinderLatestResults = { scope: "current_chart", results: [] };
 	private lastFinderRunBacktestSettings: ReturnType<typeof settingsManager.getBacktestSettings> | null = null;
 	private lastFinderOptions: FinderOptions | null = null;
+	private lastFinderEvaluationData: { interval: string; data: OHLCVData[] } | null = null;
 	private strategyToggles: Map<string, HTMLInputElement> = new Map();
 	private strategyItems: Map<string, HTMLDivElement> = new Map();
 	private strategyOrder: string[] = [];
@@ -933,6 +934,7 @@ export class FinderManager {
 		const startTime = performance.now();
 		this.lastFinderRunBacktestSettings = null;
 		this.lastFinderOptions = null;
+		this.lastFinderEvaluationData = null;
 
 		const settingsSnapshot = this.cloneBacktestSettings(settingsManager.getBacktestSettings());
 		this.lastFinderRunBacktestSettings = this.cloneBacktestSettings(settingsSnapshot);
@@ -1019,11 +1021,16 @@ export class FinderManager {
 		const settings = backtestService.getBacktestSettings();
 		const requiresTsEngine = backtestService.requiresTypescriptEngine(settings) || isSmartTradeSizingMode(capitalSettings.sizingMode);
 
-		const ohlcvData = sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
+		const blockSlicedData = sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
+		const ohlcvData = buildFinderEvaluationData(blockSlicedData, state.currentInterval, settings);
 		if (ohlcvData.length === 0) {
 			this.setStatus('No candles available for finder run.');
 			return false;
 		}
+		this.lastFinderEvaluationData = {
+			interval: state.currentInterval,
+			data: this.cloneOhlcvData(ohlcvData),
+		};
 
 		const output = await runFinderExecution(
 			{
@@ -1426,7 +1433,13 @@ export class FinderManager {
 		}
 
 		try {
-			await backtestService.runCurrentBacktest();
+			const snapshot = isPolymarketResult
+				&& this.lastFinderEvaluationData?.interval === state.currentInterval
+				? this.cloneOhlcvData(this.lastFinderEvaluationData.data)
+				: null;
+			await backtestService.runCurrentBacktest(snapshot
+				? { dataOverride: snapshot, reason: 'finder_apply_snapshot' }
+				: undefined);
 			if (isPolymarketResult && result.polymarketEval) {
 				uiManager.showToast(
 					`Applied Polymarket params: ${(result.polymarketEval.winRate * 100).toFixed(1)}% Finder win rate, ${result.polymarketEval.scoredPredictions} scored predictions. Backtest trades refreshed below.`,
@@ -1527,6 +1540,10 @@ export class FinderManager {
 
 	private cloneBacktestSettings<T>(settings: T): T {
 		return JSON.parse(JSON.stringify(settings)) as T;
+	}
+
+	private cloneOhlcvData(data: OHLCVData[]): OHLCVData[] {
+		return data.map((candle) => ({ ...candle }));
 	}
 
 	public getLatestResults(): FinderLatestResults {

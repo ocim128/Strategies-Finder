@@ -65,6 +65,16 @@ function getPolymarketProfitFactor(evalResult: PolymarketEvalResult): number {
     return normalizeProfitFactorForSort(computeProfitFactor(grossProfit, grossLoss));
 }
 
+function normalizePolymarketSizedNetForSort(value: number | undefined): number {
+    if (value === undefined || value === null || Number.isNaN(value)) {
+        return -Number.MAX_VALUE;
+    }
+    if (!Number.isFinite(value)) {
+        return value > 0 ? Number.MAX_VALUE : -Number.MAX_VALUE;
+    }
+    return value;
+}
+
 function computePolymarketProfitFactorBalance(evalResult: PolymarketEvalResult): number {
     const pricedPredictions = Math.max(
         0,
@@ -113,6 +123,8 @@ export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): 
                 return getPolymarketProfitFactor(item.polymarketEval);
             case "polyProfitFactorBalance":
                 return computePolymarketProfitFactorBalance(item.polymarketEval);
+            case "polySizedNet":
+                return normalizePolymarketSizedNetForSort(item.polymarketEval.sizedNetProfit);
         }
     }
     const result = getFinderSelectionResult(item);
@@ -153,6 +165,7 @@ export function getFinderMetricValue(item: FinderResult, metric: FinderMetric): 
         case "polyExpectancyBalance":
         case "polyProfitFactor":
         case "polyProfitFactorBalance":
+        case "polySizedNet":
             return 0; // No polymarketEval present
         default:
             return 0;

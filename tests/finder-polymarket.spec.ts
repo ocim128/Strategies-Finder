@@ -591,6 +591,60 @@ describe('Finder Polymarket runner', () => {
         expect(output.results[0]?.polymarketEval?.wins).to.equal(2);
     });
 
+    it('supports sized-net polymarket ranking when alternative sizing is active', async () => {
+        const bars = makeBars(5);
+        installOutcomeFetch([
+            makeOutcomeRow(Number(bars[1].time), 1, '10684', { yes_open_price: 0.5 }),
+            makeOutcomeRow(Number(bars[2].time), 0, '10684', { yes_open_price: 0.5 }),
+            makeOutcomeRow(Number(bars[3].time), 1, '10684', { yes_open_price: 0.5 }),
+        ]);
+
+        const input = makeInput(
+            bars,
+            [{ variant: 1 }, { variant: 5 }],
+            {
+                sortPriority: ['polySizedNet', 'polyPredictions', 'polyWinRate'],
+                polymarketRankMode: 'sizedNet',
+            }
+        );
+        input.capitalSettings = {
+            ...capitalSettings,
+            sizingMode: 'anti_martingale',
+            advancedSizing: {
+                martingaleMultiplier: 2,
+            },
+        };
+
+        const { callbacks } = makeCallbacks();
+        const output = await runPolymarketFinder(input, callbacks);
+
+        expect(output.results).to.have.length(2);
+        expect(output.results[0]?.params.variant).to.equal(5);
+        expect(output.results[0]?.polymarketEval?.sizedNetProfit).to.be.greaterThan(
+            output.results[1]?.polymarketEval?.sizedNetProfit ?? 0
+        );
+        expect(output.results[0]?.polymarketEval?.sizedTrades).to.be.greaterThan(1);
+    });
+
+    it('rejects sized-net ranking when alternative sizing is not active', async () => {
+        const bars = makeBars(4);
+        const { callbacks, statuses } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(
+                bars,
+                [{ variant: 1 }],
+                {
+                    sortPriority: ['polySizedNet', 'polyPredictions', 'polyWinRate'],
+                    polymarketRankMode: 'sizedNet',
+                }
+            ),
+            callbacks
+        );
+
+        expect(output.results).to.deep.equal([]);
+        expect(statuses.at(-1)).to.equal('Sized Net rank mode requires Alternative Sizing mode other than fixed or percent.');
+    });
+
     it('supports expectancy-based polymarket ranking', async () => {
         const bars = makeBars(4);
         installOutcomeFetch([

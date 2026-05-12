@@ -36,6 +36,7 @@ export const SIGNAL_EXIT_SUPPORTED_RANK_MODES = new Set([
     "expectancyTrades",
     "profitFactor",
     "profitFactorTrades",
+    "sizedNet",
 ] as const);
 
 export type SignalExitSupportedRankMode = typeof SIGNAL_EXIT_SUPPORTED_RANK_MODES extends Set<infer T>

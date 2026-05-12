@@ -3,7 +3,7 @@ import type { PolymarketEvalResult } from "../types/polymarket-outcomes";
 import type { PolymarketExitMode } from "../polymarket-exit-mode";
 
 export type FinderMode = 'default' | 'grid' | 'random' | 'genetic';
-export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'volume' | 'expectancy' | 'expectancyTrades' | 'profitFactor' | 'profitFactorTrades';
+export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'volume' | 'expectancy' | 'expectancyTrades' | 'profitFactor' | 'profitFactorTrades' | 'sizedNet';
 export type FinderScope = 'current_chart' | 'symbol_universe';
 export type FinderMetric =
     | 'netProfit'
@@ -26,7 +26,8 @@ export type FinderMetric =
     | 'polyExpectancy'
     | 'polyExpectancyBalance'
     | 'polyProfitFactor'
-    | 'polyProfitFactorBalance';
+    | 'polyProfitFactorBalance'
+    | 'polySizedNet';
 export type FinderUniverseMetric =
     | 'profitableActiveRatio'
     | 'activeSymbols'

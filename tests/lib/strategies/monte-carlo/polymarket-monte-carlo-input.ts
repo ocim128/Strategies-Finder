@@ -1,7 +1,7 @@
 import type { BacktestResult, Trade } from "../../types/strategies";
-import type { TradePolymarketOutcome } from "../../types/polymarket-outcomes";
 import type { PolymarketExitMode } from "../../polymarket-exit-mode";
 import type { MonteCarloCoverageSummary, PolymarketMonteCarloInput, PolymarketMonteCarloTradeInput } from "./types";
+import { derivePolymarketSharePnl } from "../../polymarket-payout";
 
 function hasTradeLevelPolymarketAnnotations(trades: readonly Trade[]): boolean {
     return trades.some((trade) => "polymarketOutcome" in trade);
@@ -27,34 +27,7 @@ export function resolvePolymarketMonteCarloEvaluationMode(
     return "resolve_hold";
 }
 
-export function derivePolymarketSharePnl(outcome: TradePolymarketOutcome | null | undefined): number | null {
-    if (!outcome) {
-        return null;
-    }
-
-    if (typeof outcome.marketPnl === "number" && Number.isFinite(outcome.marketPnl)) {
-        return outcome.marketPnl;
-    }
-
-    if (
-        typeof outcome.marketEntryPrice === "number"
-        && Number.isFinite(outcome.marketEntryPrice)
-        && typeof outcome.marketExitPrice === "number"
-        && Number.isFinite(outcome.marketExitPrice)
-    ) {
-        return outcome.marketExitPrice - outcome.marketEntryPrice;
-    }
-
-    if (
-        typeof outcome.marketEntryPrice === "number"
-        && Number.isFinite(outcome.marketEntryPrice)
-        && typeof outcome.isWin === "boolean"
-    ) {
-        return outcome.isWin ? (1 - outcome.marketEntryPrice) : -outcome.marketEntryPrice;
-    }
-
-    return null;
-}
+export { derivePolymarketSharePnl };
 
 function buildCoverageSummary(args: {
     usableTrades: number;

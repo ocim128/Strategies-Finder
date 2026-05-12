@@ -323,6 +323,7 @@ export function normalizeStoredHuntRunSettings(raw: unknown): HuntRunSettings {
         || polymarketRankMode === "expectancyTrades"
         || polymarketRankMode === "profitFactor"
         || polymarketRankMode === "profitFactorTrades"
+        || polymarketRankMode === "sizedNet"
         || polymarketRankMode === "volume"
             ? polymarketRankMode
             : DEFAULT_HUNT_RUN_SETTINGS.polymarketRankMode;

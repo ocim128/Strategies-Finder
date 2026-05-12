@@ -28,7 +28,8 @@ export function createEndpointCopySnapshot(
     engineUsed: 'rust' | 'typescript',
     nowSec: number,
     blockRange: { from: number; to: number } | null,
-    annotatePolymarket: boolean
+    annotatePolymarket: boolean,
+    datasetForFingerprint: OHLCVData[] = state.ohlcvData
 ): UiBacktestEndpointSnapshot {
     return {
         symbol: state.currentSymbol,
@@ -44,7 +45,7 @@ export function createEndpointCopySnapshot(
         blockRange: blockRange ? { ...blockRange } : null,
         annotatePolymarket,
         engineUsed,
-        datasetFingerprint: computeBacktestEndpointDatasetFingerprint(state.ohlcvData),
+        datasetFingerprint: computeBacktestEndpointDatasetFingerprint(datasetForFingerprint),
     };
 }
 

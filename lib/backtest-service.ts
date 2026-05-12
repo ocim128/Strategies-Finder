@@ -47,11 +47,13 @@ import {
 } from "./backtest-run-presenter";
 import { commitBacktestResult } from "./state-actions";
 import { annotateBacktestResultWithPolymarketOutcomes } from "./polymarket-trade-annotations";
+import { applyPolymarketAlternativeSizing } from "./polymarket-alternative-sizing";
 import { resolveEffectivePolymarketExitMode } from "./polymarket-exit-mode";
 import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import { executeBacktest, executeBacktestFromSignals } from "./backtest-executor";
 import {
     getCapitalSettings as readCapitalSettings,
+    getAlternativeSizingEnabled as readAlternativeSizingEnabled,
     getBacktestSettings as readBacktestSettings,
     resolveSubscriptionCapitalSettings as resolveSubCapitalSettings,
 } from "./backtest-settings-reader";
@@ -80,6 +82,11 @@ type CurrentBacktestExecution = {
     };
 };
 
+type RunCurrentBacktestOptions = {
+    dataOverride?: OHLCVData[];
+    reason?: string;
+};
+
 export class BacktestService {
     private warnedStrictEngine = false;
     private timingBreakdownSampleCount = 0;
@@ -98,9 +105,9 @@ export class BacktestService {
         return runId === this.interactiveRunSequence;
     }
 
-    public async runCurrentBacktest() {
+    public async runCurrentBacktest(options: RunCurrentBacktestOptions = {}) {
         const runId = this.beginInteractiveRun();
-        const activePreviewRerun = state.currentBacktestResultSource === 'ensemble_preview'
+        const activePreviewRerun = !options.dataOverride && state.currentBacktestResultSource === 'ensemble_preview'
             ? getActiveBacktestRerunContext()
             : null;
         if (activePreviewRerun?.source === 'ensemble_preview') {
@@ -132,7 +139,9 @@ export class BacktestService {
 
             const params = paramManager.getValues(strategy);
             const capitalSettings = this.getCapitalSettings();
+            const alternativeSizingEnabled = this.getAlternativeSizingEnabled();
             const settings = this.getBacktestSettings();
+            const sourceData = options.dataOverride ?? state.ohlcvData;
             const requiresTsEngine = this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode);
             await updateDomBacktestRunProgress(runUi, '40%', 'Generating signals...', 100);
 
@@ -142,15 +151,29 @@ export class BacktestService {
                 params,
                 settings,
                 capitalSettings,
-                requiresTsEngine
+                requiresTsEngine,
+                sourceData
             );
 
             // Only annotate Polymarket outcomes when explicitly enabled
             const annotatePolymarket = settings.polymarketAnnotationEnabled ?? false;
             if (annotatePolymarket) {
-                const annotatedResult = await this.annotatePolymarketResult(result, settings, state.ohlcvData);
-                transferBacktestEdgeAnalysisInput(result, annotatedResult);
-                result = annotatedResult;
+                const annotatedResult = await this.annotatePolymarketResult(result, settings, sourceData);
+                const sizedResult = applyPolymarketAlternativeSizing({
+                    result: annotatedResult,
+                    chartData: this.selectClosedCandleData(
+                        sourceData,
+                        state.currentInterval,
+                        settings,
+                        requestContext.nowSec,
+                        requestContext.blockRange
+                    ),
+                    backtestSettings: settings,
+                    capitalSettings,
+                    alternativeSizingEnabled,
+                });
+                transferBacktestEdgeAnalysisInput(result, sizedResult);
+                result = sizedResult;
             }
 
             if (!this.isLatestInteractiveRun(runId)) {
@@ -163,7 +186,7 @@ export class BacktestService {
             }
 
             commitBacktestResult(result, 'backtest', {
-                reason: 'manual_backtest',
+                reason: options.reason ?? 'manual_backtest',
                 endpointCopySnapshot: this.createEndpointCopySnapshot(
                     params,
                     settings,
@@ -171,9 +194,10 @@ export class BacktestService {
                     engineUsed,
                     requestContext.nowSec,
                     requestContext.blockRange,
-                    annotatePolymarket
+                    annotatePolymarket,
+                    sourceData
                 ),
-                endpointCopyCandles: state.ohlcvData,
+                endpointCopyCandles: sourceData,
             });
 
             await updateDomBacktestRunProgress(runUi, '100%', 'Complete!');
@@ -256,11 +280,12 @@ export class BacktestService {
         params: StrategyParams,
         settings: BacktestSettings,
         capitalSettings: CapitalSettings,
-        requiresTsEngine: boolean
+        requiresTsEngine: boolean,
+        ohlcvData: OHLCVData[] = state.ohlcvData
     ): Promise<CurrentBacktestExecution> {
         await updateDomBacktestRunProgress(runUi, '60%', 'Running backtest...', 100);
         const singleRun = await this.runBacktestForData(
-            state.ohlcvData,
+            ohlcvData,
             state.currentInterval,
             strategy,
             params,
@@ -650,26 +675,32 @@ export class BacktestService {
     private selectClosedCandleData(
         ohlcvData: OHLCVData[],
         interval: string,
-        settings: BacktestSettings
+        settings: BacktestSettings,
+        nowSec = Math.floor(Date.now() / 1000),
+        blockRange = state.blockRange
     ): OHLCVData[] {
         const executionAware = selectExecutionAwareClosedCandles(
             ohlcvData,
             interval,
             settings,
             {
-                nowSec: Math.floor(Date.now() / 1000),
+                nowSec,
                 minClosedCandles: 1,
                 fallbackToTrimmedClosed: true,
             }
         );
         if (executionAware) {
-            return sliceOhlcvByBlock(executionAware, state.blockRange);
+            return sliceOhlcvByBlock(executionAware, blockRange);
         }
-        return sliceOhlcvByBlock(ohlcvData, state.blockRange);
+        return sliceOhlcvByBlock(ohlcvData, blockRange);
     }
 
     public getCapitalSettings(): CapitalSettings {
         return readCapitalSettings();
+    }
+
+    private getAlternativeSizingEnabled(): boolean {
+        return readAlternativeSizingEnabled();
     }
 
     public getBacktestSettings(): BacktestSettings {
@@ -822,9 +853,10 @@ export class BacktestService {
         engineUsed: 'rust' | 'typescript',
         nowSec: number,
         blockRange: { from: number; to: number } | null,
-        annotatePolymarket: boolean
+        annotatePolymarket: boolean,
+        datasetForFingerprint?: OHLCVData[]
     ) {
-        return createEndpointCopySnapshot(strategyParams, backtestSettings, capitalSettings, engineUsed, nowSec, blockRange, annotatePolymarket);
+        return createEndpointCopySnapshot(strategyParams, backtestSettings, capitalSettings, engineUsed, nowSec, blockRange, annotatePolymarket, datasetForFingerprint);
     }
 }
 

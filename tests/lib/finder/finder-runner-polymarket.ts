@@ -34,8 +34,15 @@ import {
     summarizePolymarketTradesForRun,
     type PolymarketTradeEvaluationContext,
 } from "../polymarket-trade-annotations";
-import { mapTradesToEvents as mapTradesToLegacyEvents, type MappedPolymarketTrade as LegacyMappedPolymarketTrade } from "../polymarket-1m-5m-bridge";
 import {
+    deduplicateByEvent as deduplicateLegacyMappedTradesByEvent,
+    filterByEntryOffset as filterLegacyMappedTradesByEntryOffset,
+    mapTradesToEvents as mapTradesToLegacyEvents,
+    type MappedPolymarketTrade as LegacyMappedPolymarketTrade,
+} from "../polymarket-1m-5m-bridge";
+import {
+    deduplicateBySuperEvent,
+    filterByEntryOffset as filterSuperMappedTradesByEntryOffset,
     mapTradesToSuperEvents,
     getIntervalConfig,
     type MappedPolymarketTrade,
@@ -55,10 +62,14 @@ import {
     type FinderPreparedDataCache,
 } from "./finder-runner-core";
 import type { FinderRunInput, FinderRunCallbacks, FinderRunOutput } from "./finder-runner";
-import type { StrategyExecutionContext } from "../types/strategies";
+import type { BacktestResult, BacktestSettings, OHLCVData, StrategyExecutionContext, Trade } from "../types/strategies";
 import { resolveCrossSymbolExecution, isCrossSymbolStrategy } from "../cross-symbol-runtime";
 import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode, SIGNAL_EXIT_SUPPORTED_RANK_MODES } from "../polymarket-exit-mode";
-import { evaluateSignalExitTrades, indexSignalExitOutcomesByEntryTs } from "../polymarket-signal-exit-evaluator";
+import {
+    buildTradeAnnotationFromSignalExitResult,
+    evaluateSignalExitTrades,
+    indexSignalExitOutcomesByEntryTs,
+} from "../polymarket-signal-exit-evaluator";
 import type { PolymarketPricePoint } from "../local-sqlite-polymarket-api";
 import { ensurePricePointsForOutcomes } from "../polymarket-price-points-ingest";
 import { indexPricePointsByEvent, type EventPriceIndex } from "../polymarket-price-points";
@@ -76,7 +87,16 @@ import {
     getPolymarketOutcomeIntervalDurationSec,
     resolvePolymarketOutcomeInterval,
 } from "../polymarket-outcome-interval";
-import type { Trade } from "../types/strategies";
+import { applyPolymarketAlternativeSizing } from "../polymarket-alternative-sizing";
+import type { CapitalSettings } from "../types/backtest";
+import type { BacktestPolymarketTradeSummary, PolymarketEvalResult, TradePolymarketOutcome } from "../types/polymarket-outcomes";
+
+type FinderPolymarketEvaluation = {
+    offset?: number;
+    evalResult: PolymarketEvalResult;
+    annotatedTrades?: readonly Trade[];
+    buildAnnotatedTrades?: () => Trade[];
+};
 
 function getProfitFactorFromTotals(grossProfit: number, grossLoss: number): number {
     if (!Number.isFinite(grossProfit) || grossProfit <= 0) {
@@ -86,6 +106,128 @@ function getProfitFactorFromTotals(grossProfit: number, grossLoss: number): numb
         return Infinity;
     }
     return grossProfit / grossLoss;
+}
+
+function isAlternativeSizingMode(capitalSettings: CapitalSettings): boolean {
+    return capitalSettings.sizingMode !== "fixed" && capitalSettings.sizingMode !== "percent";
+}
+
+function buildMappedTradeOutcome(args: {
+    trade: Trade;
+    outcome: import("../types/polymarket-outcomes").PolymarketOutcomeRow;
+    entryOffset?: number;
+    marketPriceOffset?: number;
+    eventStartTs?: number;
+    eventEndTs?: number;
+}): TradePolymarketOutcome {
+    const { trade, outcome, entryOffset } = args;
+    const prediction = trade.type === "long" ? "yes" : "no";
+    const isWin = prediction === "yes"
+        ? outcome.resolved_outcome_up === 1
+        : outcome.resolved_outcome_up === 0;
+
+    return {
+        eventStartTs: args.eventStartTs ?? outcome.event_start_ts,
+        eventEndTs: args.eventEndTs ?? outcome.event_end_ts,
+        eventSlug: outcome.event_slug,
+        marketSlug: outcome.market_slug || outcome.event_slug,
+        prediction,
+        actualOutcomeUp: outcome.resolved_outcome_up,
+        isWin,
+        marketEntryPrice: getTradeMarketEntryPrice(outcome, prediction, args.marketPriceOffset ?? entryOffset),
+        entryOffset,
+        evaluationMode: "resolve_hold",
+    };
+}
+
+function buildLegacyBridgeSizedTrades(
+    mappedTrades: readonly LegacyMappedPolymarketTrade[],
+    selectedOffset: number
+): Trade[] {
+    return deduplicateLegacyMappedTradesByEvent(
+        filterLegacyMappedTradesByEntryOffset(mappedTrades, selectedOffset)
+    ).map((mapped) => ({
+        ...mapped.trade,
+        polymarketOutcome: buildMappedTradeOutcome({
+            trade: mapped.trade,
+            outcome: mapped.outcome,
+            entryOffset: mapped.entryOffset,
+        }),
+    }));
+}
+
+function buildMultiIntervalSizedTrades(
+    mappedTrades: readonly MappedPolymarketTrade[],
+    selectedOffset: number
+): Trade[] {
+    return deduplicateBySuperEvent(
+        filterSuperMappedTradesByEntryOffset(mappedTrades, selectedOffset)
+    ).map((mapped) => ({
+        ...mapped.trade,
+        polymarketOutcome: buildMappedTradeOutcome({
+            trade: mapped.trade,
+            outcome: mapped.baseOutcome,
+            eventStartTs: mapped.superEventStartTs,
+            eventEndTs: mapped.superEventEndTs,
+            entryOffset: mapped.entryOffset,
+            marketPriceOffset: 0,
+        }),
+    }));
+}
+
+function buildSignalExitSizedTrades(
+    results: ReturnType<typeof evaluateSignalExitTrades>["results"]
+): Trade[] {
+    return results.map((result) => ({
+        ...result.trade,
+        polymarketOutcome: buildTradeAnnotationFromSignalExitResult(result),
+    }));
+}
+
+function applySizedNetToEvalResult(args: {
+    enabled: boolean;
+    evalResult: PolymarketEvalResult;
+    baseResult: BacktestResult;
+    annotatedTrades?: readonly Trade[];
+    chartData: OHLCVData[];
+    backtestSettings: BacktestSettings;
+    capitalSettings: CapitalSettings;
+    summary?: Partial<BacktestPolymarketTradeSummary>;
+}): PolymarketEvalResult {
+    if (!args.enabled || !args.annotatedTrades || args.annotatedTrades.length === 0) {
+        return args.evalResult;
+    }
+
+    const sizedResult = applyPolymarketAlternativeSizing({
+        result: {
+            ...args.baseResult,
+            trades: [...args.annotatedTrades],
+            polymarketTradeSummary: {
+                seriesId: args.summary?.seriesId ?? "",
+                outcomeRowsLoaded: args.summary?.outcomeRowsLoaded ?? 0,
+                scoredTrades: args.evalResult.scoredPredictions,
+                missingOutcomeTrades: args.evalResult.missingOutcomeRows,
+                ...args.summary,
+            },
+        },
+        chartData: args.chartData,
+        backtestSettings: args.backtestSettings,
+        capitalSettings: args.capitalSettings,
+        alternativeSizingEnabled: true,
+    });
+    const sizedSummary = sizedResult.polymarketTradeSummary;
+    if (!sizedSummary || typeof sizedSummary.sizedNetProfit !== "number") {
+        return args.evalResult;
+    }
+
+    return {
+        ...args.evalResult,
+        sizedNetProfit: sizedSummary.sizedNetProfit,
+        sizedNetProfitPercent: sizedSummary.sizedNetProfitPercent,
+        sizedTrades: sizedSummary.sizedTrades,
+        sizedSkippedTrades: sizedSummary.sizedSkippedTrades,
+        sizedSizingMode: sizedSummary.sizedSizingMode,
+    };
 }
 
 function buildNativeSessionResolveHoldEvalResult(args: {
@@ -439,6 +581,11 @@ export async function runPolymarketFinder(
     const is5mRun = interval === "5m";
     const isLimitEntryMode = limitEntrySettings?.enabled === true;
     const isMultiSubEventRun = !isNativeOutcomeSession && !is5mRun && !isSignalExitMode && !isLimitEntryMode;
+    const requiresSizedNetRank = options.sortPriority.includes("polySizedNet");
+    if (requiresSizedNetRank && !isAlternativeSizingMode(input.capitalSettings)) {
+        callbacks.setStatus("Sized Net rank mode requires Alternative Sizing mode other than fixed or percent.");
+        return { results: [] };
+    }
 
     // Validate symbol support
     if (
@@ -481,7 +628,7 @@ export async function runPolymarketFinder(
         }
         const rankMode = options.polymarketRankMode ?? "balanced";
         if (!SIGNAL_EXIT_SUPPORTED_RANK_MODES.has(rankMode as any)) {
-            callbacks.setStatus(`signal_exit_same_event does not support rank mode "${rankMode}". Use expectancy or profitFactor variants.`);
+            callbacks.setStatus(`signal_exit_same_event does not support rank mode "${rankMode}". Use expectancy, profitFactor, or sized net variants.`);
             return { results: [] };
         }
     }
@@ -594,6 +741,7 @@ export async function runPolymarketFinder(
     const polymarketBridgeContext = isMultiSubEventRun
         ? createPolymarketBridgeEvaluationContext(closedData, outcomes)
         : undefined;
+    const computeSizedNet = requiresSizedNetRank;
     const ranker = new FinderResultRanker(Math.max(options.topN, 50), options.sortPriority);
     let processedCount = 0;
     let filteredCount = 0;
@@ -669,15 +817,16 @@ export async function runPolymarketFinder(
                     : backtestResult.trades;
 
                 if (isSignalExitMode) {
-                    const { summary: exitSummary } = evaluateSignalExitTrades({
+                    const signalExitEvaluation = evaluateSignalExitTrades({
                         trades: tradesForPolymarketEvaluation,
                         outcomes,
                         priceIndex,
                         outcomeByEntryTs,
                         limitEntry: limitEntrySettings,
                     });
+                    const exitSummary = signalExitEvaluation.summary;
 
-                    const evalResult: import("../types/polymarket-outcomes").PolymarketEvalResult = {
+                    const evalResultBase: PolymarketEvalResult = {
                         evaluatedEvents: polymarketContext.evaluatedEvents,
                         predictionsTaken: tradesForPolymarketEvaluation.length,
                         scoredPredictions: exitSummary.scoredTrades,
@@ -738,7 +887,7 @@ export async function runPolymarketFinder(
                     };
 
                     processedCount++;
-                    if (evalResult.scoredPredictions < (options.polymarketMinScoredPredictions ?? 0)) {
+                    if (evalResultBase.scoredPredictions < (options.polymarketMinScoredPredictions ?? 0)) {
                         const now = performance.now();
                         if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
                             lastUiUpdateAt = now;
@@ -751,6 +900,25 @@ export async function runPolymarketFinder(
                         }
                         continue;
                     }
+
+                    const evalResult = applySizedNetToEvalResult({
+                        enabled: computeSizedNet,
+                        evalResult: evalResultBase,
+                        baseResult: backtestResult,
+                        annotatedTrades: computeSizedNet
+                            ? buildSignalExitSizedTrades(signalExitEvaluation.results)
+                            : undefined,
+                        chartData: closedData,
+                        backtestSettings: settings,
+                        capitalSettings: input.capitalSettings,
+                        summary: {
+                            seriesId,
+                            outcomeRowsLoaded: outcomes.length,
+                            scoredTrades: exitSummary.scoredTrades,
+                            missingOutcomeTrades: exitSummary.missingOutcomeTrades,
+                            evaluationMode: "signal_exit_same_event",
+                        },
+                    });
 
                     const finderResult: FinderResult = buildFinderResult({
                         key: plan.key,
@@ -781,7 +949,7 @@ export async function runPolymarketFinder(
                         await callbacks.yieldControl();
                     }
                 } else {
-                    const evaluations = (isNativeOutcomeSession || isLimitEntryMode)
+                    const evaluations: FinderPolymarketEvaluation[] = (isNativeOutcomeSession || isLimitEntryMode)
                         ? (() => {
                             const annotatedTrades = annotateTradesWithPolymarketOutcomesForRun(
                                 tradesForPolymarketEvaluation,
@@ -810,6 +978,7 @@ export async function runPolymarketFinder(
                                     summary,
                                     context: polymarketContext,
                                 }),
+                                annotatedTrades: computeSizedNet ? annotatedTrades : undefined,
                             }];
                         })()
                         : (() => {
@@ -821,9 +990,8 @@ export async function runPolymarketFinder(
                                 : undefined;
 
                             return isMultiSubEventRun
-                                ? bridgeOffsetsToEvaluate.map((offset) => ({
-                                    offset,
-                                    evalResult: interval === "1m"
+                                ? bridgeOffsetsToEvaluate.map((offset) => {
+                                    const evalResult = interval === "1m"
                                         ? evaluateMappedPolymarketBacktestTrades1mBridge({
                                             chartData: closedData,
                                             mappedTrades: legacyMappedTrades ?? [],
@@ -841,8 +1009,17 @@ export async function runPolymarketFinder(
                                             includeRows: false,
                                             predictionsTaken: tradesForPolymarketEvaluation.length,
                                             context: polymarketBridgeContext!,
-                                        }),
-                                }))
+                                        });
+                                    return {
+                                        offset,
+                                        evalResult,
+                                        buildAnnotatedTrades: computeSizedNet
+                                            ? () => interval === "1m"
+                                                ? buildLegacyBridgeSizedTrades(legacyMappedTrades ?? [], offset)
+                                                : buildMultiIntervalSizedTrades(superMappedTrades ?? [], offset)
+                                            : undefined,
+                                    };
+                                })
                                 : [{
                                     offset: undefined,
                                     evalResult: evaluatePolymarketBacktestTrades({
@@ -850,16 +1027,26 @@ export async function runPolymarketFinder(
                                         trades: tradesForPolymarketEvaluation,
                                         outcomes,
                                         strategyKey: plan.key,
-                                        context: polymarketContext,
-                                        includeRows: false,
-                                    }),
+                                            context: polymarketContext,
+                                            includeRows: false,
+                                        }),
+                                    buildAnnotatedTrades: computeSizedNet
+                                        ? () => annotateTradesWithPolymarketOutcomesForRun(
+                                            tradesForPolymarketEvaluation,
+                                            outcomes,
+                                            interval,
+                                            undefined,
+                                            "fixed_offset"
+                                        )
+                                        : undefined,
                                 }];
                         })();
 
                     for (const evaluation of evaluations) {
                         processedCount++;
-                        const { offset, evalResult } = evaluation;
-                        if (evalResult.scoredPredictions < (options.polymarketMinScoredPredictions ?? 0)) {
+                        const { offset } = evaluation;
+                        const evalResultBase = evaluation.evalResult;
+                        if (evalResultBase.scoredPredictions < (options.polymarketMinScoredPredictions ?? 0)) {
                             const now = performance.now();
                             if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
                                 lastUiUpdateAt = now;
@@ -873,6 +1060,24 @@ export async function runPolymarketFinder(
                             }
                             continue;
                         }
+
+                        const evalResult = applySizedNetToEvalResult({
+                            enabled: computeSizedNet,
+                            evalResult: evalResultBase,
+                            baseResult: backtestResult,
+                            annotatedTrades: evaluation.annotatedTrades ?? evaluation.buildAnnotatedTrades?.(),
+                            chartData: closedData,
+                            backtestSettings: settings,
+                            capitalSettings: input.capitalSettings,
+                            summary: {
+                                seriesId,
+                                outcomeRowsLoaded: outcomes.length,
+                                scoredTrades: evaluation.evalResult.scoredPredictions,
+                                missingOutcomeTrades: evaluation.evalResult.missingOutcomeRows,
+                                entryOffset: offset,
+                                evaluationMode: evaluation.evalResult.evaluationMode,
+                            },
+                        });
 
                         const finderResult: FinderResult = buildFinderResult({
                             key: plan.key,

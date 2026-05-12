@@ -130,6 +130,9 @@ export class FinderUI {
                     metrics.appendChild(this.createMetricChip(`Poly Exp ${this.formatPolymarketCents(poly.expectancy)}`));
                 }
                 metrics.appendChild(this.createMetricChip(`Poly PF ${this.formatOptionalProfitFactor(poly.profitFactor)}`));
+                if (typeof poly.sizedNetProfit === "number") {
+                    metrics.appendChild(this.createMetricChip(`Sized Net ${this.formatCompactCurrency(poly.sizedNetProfit)}`));
+                }
                 metrics.appendChild(this.createMetricChip(`Coverage ${(poly.coverage * 100).toFixed(1)}%`));
                 metrics.appendChild(this.createMetricChip(`Wins ${poly.wins}`));
                 metrics.appendChild(this.createMetricChip(`Scored ${poly.scoredPredictions}`));
@@ -342,6 +345,24 @@ export class FinderUI {
     private formatCurrency(value: number): string {
         const sign = value >= 0 ? "+" : "";
         return `${sign}$${value.toFixed(2)}`;
+    }
+
+    private formatCompactCurrency(value: number): string {
+        if (Number.isNaN(value)) return "n/a";
+        if (!Number.isFinite(value)) return value > 0 ? "+$Inf" : "-$Inf";
+        const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+        const abs = Math.abs(value);
+        if (abs >= 1e15) {
+            const [mantissa, exponent] = abs.toExponential(2).split("e");
+            return `${sign}$${mantissa ?? abs.toFixed(2)}x10^${Number(exponent ?? 0)}`;
+        }
+        if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}T`;
+        if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
+        if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
+        if (abs >= 1_000) {
+            return `${sign}$${abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        }
+        return `${sign}$${abs.toFixed(2)}`;
     }
 
     private formatUniverseStatus(status: string): string {

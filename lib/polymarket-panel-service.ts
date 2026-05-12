@@ -211,6 +211,7 @@ class PolymarketPanelService {
                     || result.polymarketTradeSummary?.limitExitEnabled === true
             ) : "",
             summary ? this.buildPolymarketSummarySection(summary) : "",
+            summary ? this.buildSizedBankrollSection(summary) : "",
             ...sections.map((section) => this.buildDiagnosticBucketSection(section)),
         ].filter(Boolean).join("");
 
@@ -259,6 +260,21 @@ class PolymarketPanelService {
         limitExitFilledTrades?: number;
         limitExitFallbackTrades?: number;
         limitExitUnreachableTrades?: number;
+        sizedSizingMode?: NonNullable<BacktestResult["polymarketTradeSummary"]>["sizedSizingMode"];
+        sizedInitialCapital?: number;
+        sizedFinalEquity?: number;
+        sizedNetProfit?: number;
+        sizedNetProfitPercent?: number;
+        sizedProfitFactor?: number;
+        sizedExpectancy?: number;
+        sizedMaxDrawdown?: number;
+        sizedMaxDrawdownPercent?: number;
+        sizedTrades?: number;
+        sizedSkippedTrades?: number;
+        sizedNoCapitalTrades?: number;
+        sizedCappedTrades?: number;
+        sizedAvgStake?: number;
+        sizedMaxStake?: number;
     } | null {
         const summary = result.polymarketTradeSummary;
         const isSignalExit = summary?.evaluationMode === "signal_exit_same_event";
@@ -347,6 +363,21 @@ class PolymarketPanelService {
             limitExitFilledTrades: summary?.limitExitFilledTrades,
             limitExitFallbackTrades: summary?.limitExitFallbackTrades,
             limitExitUnreachableTrades: summary?.limitExitUnreachableTrades,
+            sizedSizingMode: summary?.sizedSizingMode,
+            sizedInitialCapital: summary?.sizedInitialCapital,
+            sizedFinalEquity: summary?.sizedFinalEquity,
+            sizedNetProfit: summary?.sizedNetProfit,
+            sizedNetProfitPercent: summary?.sizedNetProfitPercent,
+            sizedProfitFactor: summary?.sizedProfitFactor,
+            sizedExpectancy: summary?.sizedExpectancy,
+            sizedMaxDrawdown: summary?.sizedMaxDrawdown,
+            sizedMaxDrawdownPercent: summary?.sizedMaxDrawdownPercent,
+            sizedTrades: summary?.sizedTrades,
+            sizedSkippedTrades: summary?.sizedSkippedTrades,
+            sizedNoCapitalTrades: summary?.sizedNoCapitalTrades,
+            sizedCappedTrades: summary?.sizedCappedTrades,
+            sizedAvgStake: summary?.sizedAvgStake,
+            sizedMaxStake: summary?.sizedMaxStake,
         };
     }
 
@@ -447,6 +478,46 @@ class PolymarketPanelService {
                     ${summary.duplicateTradesIgnored && summary.duplicateTradesIgnored > 0 ? this.renderStatCard("Duplicate Trades Ignored", String(summary.duplicateTradesIgnored)) : ""}
                     ${summary.missingTrades > 0 ? this.renderStatCard("Missing Outcome Rows", String(summary.missingTrades)) : ""}
                     ${this.renderStatCard("Outcome Rows Fetched", String(summary.outcomeRowsLoaded))}
+                </div>
+            </div>
+        `;
+    }
+
+    private buildSizedBankrollSection(summary: NonNullable<ReturnType<PolymarketPanelService["getPolymarketSummary"]>>): string {
+        if (
+            !summary.sizedSizingMode
+            || summary.sizedSizingMode === "fixed"
+            || summary.sizedSizingMode === "percent"
+            || !summary.sizedTrades
+        ) {
+            return "";
+        }
+
+        const netProfit = summary.sizedNetProfit ?? 0;
+        const returnPercent = summary.sizedNetProfitPercent ?? 0;
+        const drawdown = summary.sizedMaxDrawdown ?? 0;
+        const drawdownPercent = summary.sizedMaxDrawdownPercent ?? 0;
+        const skipped = summary.sizedSkippedTrades ?? 0;
+        const noCapital = summary.sizedNoCapitalTrades ?? 0;
+        const capped = summary.sizedCappedTrades ?? 0;
+
+        return `
+            <div class="deployability-section">
+                <div class="section-subtitle">Sized Polymarket Bankroll</div>
+                <div class="entry-stats-hint polymarket-diagnostics__hint">Dollar results from the selected non-fixed Alternative Sizing Mode. Chart backtest PnL is unchanged.</div>
+                <div class="stats-grid polymarket-panel__stats">
+                    ${this.renderStatCard("Sizing Mode", summary.sizedSizingMode.replace(/_/g, " "))}
+                    ${this.renderStatCard("Final Equity", `$${(summary.sizedFinalEquity ?? 0).toFixed(2)}`, netProfit)}
+                    ${this.renderStatCard("Net Profit", `${formatSignedUsd(netProfit)} (${returnPercent >= 0 ? "+" : ""}${returnPercent.toFixed(1)}%)`, netProfit)}
+                    ${this.renderStatCard("Max Drawdown", `$${drawdown.toFixed(2)} (${drawdownPercent.toFixed(1)}%)`, -drawdown)}
+                    ${this.renderStatCard("Profit Factor", formatProfitFactor(summary.sizedProfitFactor ?? 0))}
+                    ${this.renderStatCard("Expectancy", formatSignedUsd(summary.sizedExpectancy ?? 0), summary.sizedExpectancy ?? 0)}
+                    ${this.renderStatCard("Sized Trades", String(summary.sizedTrades))}
+                    ${this.renderStatCard("Avg Stake", `$${(summary.sizedAvgStake ?? 0).toFixed(2)}`)}
+                    ${this.renderStatCard("Max Stake", `$${(summary.sizedMaxStake ?? 0).toFixed(2)}`)}
+                    ${skipped > 0 ? this.renderStatCard("Skipped Sizing", String(skipped)) : ""}
+                    ${noCapital > 0 ? this.renderStatCard("No Capital", String(noCapital), -noCapital) : ""}
+                    ${capped > 0 ? this.renderStatCard("Capped Stakes", String(capped)) : ""}
                 </div>
             </div>
         `;

@@ -1,4 +1,4 @@
-import type { CapitalSettings } from "./backtest";
+import type { CapitalSettings, TradeSizingMode } from "./backtest";
 import type { BacktestSettings } from "./strategies";
 import type { PolymarketEntrySelectionMode } from "../polymarket-entry-selection-mode";
 import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
@@ -86,6 +86,22 @@ export interface TradePolymarketOutcome {
     marketExitStatus?: PolymarketLimitExitStatus;
     /** PnL for the Polymarket leg: marketExitPrice - marketEntryPrice */
     marketPnl?: number | null;
+    /** Polymarket bankroll stake in dollars, only for non-fixed Alternative Sizing runs. */
+    sizedStake?: number;
+    /** Polymarket shares bought with sizedStake. */
+    sizedShares?: number;
+    /** Sized Polymarket dollar PnL for this trade. */
+    sizedPnl?: number;
+    /** Sized Polymarket return on staked dollars, expressed as percent. */
+    sizedPnlPercent?: number;
+    /** Polymarket bankroll before this sized trade. */
+    sizedEquityBefore?: number;
+    /** Polymarket bankroll after this sized trade. */
+    sizedEquityAfter?: number;
+    /** Sizing mode used for this Polymarket stake. */
+    sizedSizingMode?: TradeSizingMode;
+    /** Whether the intended stake was capped to available Polymarket bankroll. */
+    sizedStakeCapped?: boolean;
 }
 
 export interface BacktestPolymarketTimingProfileEntry {
@@ -147,6 +163,24 @@ export interface BacktestPolymarketTradeSummary {
     limitExitFilledTrades?: number;
     limitExitFallbackTrades?: number;
     limitExitUnreachableTrades?: number;
+    sizedSizingMode?: TradeSizingMode;
+    sizedInitialCapital?: number;
+    sizedFinalEquity?: number;
+    sizedNetProfit?: number;
+    sizedNetProfitPercent?: number;
+    sizedGrossProfit?: number;
+    sizedGrossLoss?: number;
+    sizedProfitFactor?: number;
+    sizedExpectancy?: number;
+    sizedMaxDrawdown?: number;
+    sizedMaxDrawdownPercent?: number;
+    sizedTrades?: number;
+    sizedSkippedTrades?: number;
+    sizedNoCapitalTrades?: number;
+    sizedCappedTrades?: number;
+    sizedTotalStaked?: number;
+    sizedAvgStake?: number;
+    sizedMaxStake?: number;
 }
 
 export interface PolymarketEvalResult {
@@ -208,6 +242,11 @@ export interface PolymarketEvalResult {
     limitExitUnreachableTrades?: number;
     netPnl?: number;
     avgExitPrice?: number;
+    sizedNetProfit?: number;
+    sizedNetProfitPercent?: number;
+    sizedTrades?: number;
+    sizedSkippedTrades?: number;
+    sizedSizingMode?: TradeSizingMode;
     rows: PolymarketEvalRow[];
 }
 

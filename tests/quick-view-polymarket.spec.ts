@@ -826,6 +826,116 @@ describe("Quick View Polymarket streak summary", () => {
         expect(html).to.contain("100.0% | 1t");
     });
 
+    it("preserves and renders sized polymarket bankroll metrics", () => {
+        const result = {
+            trades: [makeTrade(1, true), makeTrade(2, false)],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 2,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            polymarketTradeSummary: {
+                seriesId: "btc-5m",
+                outcomeRowsLoaded: 2,
+                scoredTrades: 2,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 0,
+                sizedSizingMode: "anti_martingale",
+                sizedInitialCapital: 10_000,
+                sizedFinalEquity: 10_250,
+                sizedNetProfit: 250,
+                sizedNetProfitPercent: 2.5,
+                sizedProfitFactor: 2,
+                sizedExpectancy: 125,
+                sizedMaxDrawdownPercent: 1.25,
+                sizedTrades: 2,
+                sizedSkippedTrades: 1,
+                sizedNoCapitalTrades: 0,
+                sizedCappedTrades: 1,
+                sizedAvgStake: 1_125,
+                sizedMaxStake: 1_250,
+            },
+        } satisfies BacktestResult;
+        const enriched = (quickViewManager as any).withPolymarketTradeSummary(result, result.trades, "btc-5m");
+        const html = (quickViewManager as any).buildPolymarketSection(enriched);
+
+        expect(enriched.polymarketTradeSummary?.sizedNetProfit).to.equal(250);
+        expect(html).to.contain("Alternative Sizing: Anti-Martingale");
+        expect(html).to.contain("Sized Net");
+        expect(html).to.contain("+$250.00");
+        expect(html).to.contain("Sized Return");
+        expect(html).to.contain("+2.50%");
+        expect(html).to.contain("Sized PF");
+        expect(html).to.contain("Sized Max DD");
+        expect(html).to.not.contain("Final Equity");
+        expect(html).to.not.contain("Sized Exp / Trade");
+        expect(html).to.not.contain("Avg Poly Stake");
+        expect(html).to.not.contain("Max Poly Stake");
+        expect(html).to.contain("0 no capital | 1 capped");
+    });
+
+    it("formats extreme sized bankroll values compactly in Quick View", () => {
+        const html = (quickViewManager as any).buildPolymarketSection({
+            trades: [makeTrade(1, true)],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            polymarketTradeSummary: {
+                seriesId: "btc-5m",
+                outcomeRowsLoaded: 1,
+                scoredTrades: 1,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 0,
+                sizedSizingMode: "kelly_criterion",
+                sizedInitialCapital: 10_000,
+                sizedFinalEquity: 1.0005009959564123e73,
+                sizedNetProfit: 1.0005009959564123e73,
+                sizedNetProfitPercent: 1.0005009959564123e71,
+                sizedProfitFactor: 2.23,
+                sizedExpectancy: 1.1028450131794668e69,
+                sizedMaxDrawdownPercent: 12.5,
+                sizedTrades: 9072,
+                sizedSkippedTrades: 4641,
+                sizedAvgStake: 1.0493366798419991e70,
+                sizedMaxStake: 1.381416276030043e72,
+            },
+        } satisfies BacktestResult);
+
+        expect(html).to.contain("9,072 sized | 4,641 skipped");
+        expect(html).to.contain("+$1.00x10^73");
+        expect(html).to.contain("+1.00x10^71");
+        expect(html).to.not.contain("1.0005009959564123e+73");
+        expect(html).to.not.contain("+$1.00e73");
+        expect(html).to.not.contain("+1.00e71%");
+        expect(html).to.not.contain("+1.00%");
+        expect(html).to.not.contain("Final Equity");
+        expect(html).to.not.contain("Sized Exp / Trade");
+        expect(html).to.not.contain("Avg Poly Stake");
+        expect(html).to.not.contain("Max Poly Stake");
+    });
+
     it("renders post-signal limit-entry diagnostics", () => {
         const html = (quickViewManager as any).buildPolymarketSection({
             trades: [

@@ -235,4 +235,29 @@ describe("Finder Polymarket sorting", () => {
             "low_edge_large_sample",
         ]);
     });
+
+    it("ranks by sized net when Polymarket sized-net mode is selected", () => {
+        const sortPriority: FinderMetric[] = ["polySizedNet", "polyPredictions", "polyWinRate"];
+        const smallerSizedNet = makePolymarketResult("smaller_sized_net", 60, 100, 0.1, 100, {
+            sizedNetProfit: 25,
+        });
+        const largerSizedNet = makePolymarketResult("larger_sized_net", 52, 100, 0.02, 100, {
+            sizedNetProfit: 75,
+        });
+
+        expect(compareFinderResults(largerSizedNet, smallerSizedNet, sortPriority)).to.be.lessThan(0);
+        expect(sortFinderResults([smallerSizedNet, largerSizedNet], sortPriority).map((result) => result.key))
+            .to.deep.equal(["larger_sized_net", "smaller_sized_net"]);
+    });
+
+    it("pushes missing sized-net values behind real sized-net losses", () => {
+        const sortPriority: FinderMetric[] = ["polySizedNet", "polyPredictions", "polyWinRate"];
+        const missingSizedNet = makePolymarketResult("missing_sized_net", 70, 100, 0.1, 100);
+        const losingSizedNet = makePolymarketResult("losing_sized_net", 40, 100, -0.1, 100, {
+            sizedNetProfit: -25,
+        });
+
+        expect(sortFinderResults([missingSizedNet, losingSizedNet], sortPriority).map((result) => result.key))
+            .to.deep.equal(["losing_sized_net", "missing_sized_net"]);
+    });
 });

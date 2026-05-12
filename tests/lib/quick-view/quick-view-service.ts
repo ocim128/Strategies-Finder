@@ -46,6 +46,9 @@ import {
     renderEmptyTradesHtml,
     buildPolymarketSectionHtml,
 } from "./quick-view-renderer";
+import type { TradeSizingMode } from "../types/backtest";
+import { applyPolymarketAlternativeSizing } from "../polymarket-alternative-sizing";
+import { getAlternativeSizingEnabled, getBacktestSettings, getCapitalSettings } from "../backtest-settings-reader";
 
 
 export type QuickViewPolymarketSummary = {
@@ -108,6 +111,20 @@ export type QuickViewPolymarketSummary = {
     limitExitFilledTrades?: number;
     limitExitFallbackTrades?: number;
     limitExitUnreachableTrades?: number;
+    sizedSizingMode?: TradeSizingMode;
+    sizedInitialCapital?: number;
+    sizedFinalEquity?: number;
+    sizedNetProfit?: number;
+    sizedNetProfitPercent?: number;
+    sizedProfitFactor?: number;
+    sizedExpectancy?: number;
+    sizedMaxDrawdownPercent?: number;
+    sizedTrades?: number;
+    sizedSkippedTrades?: number;
+    sizedNoCapitalTrades?: number;
+    sizedCappedTrades?: number;
+    sizedAvgStake?: number;
+    sizedMaxStake?: number;
 };
 
 export type QuickViewPolymarketPayoutSummary = {
@@ -662,6 +679,7 @@ class QuickViewManager {
         const fallbackOutcomeRowsLoaded = options.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(trades);
         const existingSummary = result.polymarketTradeSummary;
         const inferredCounts = inferPolymarketSummaryCounts(trades, totalTrades);
+        const preserveSizedSummary = !options.summary;
 
         return {
             ...result,
@@ -716,6 +734,24 @@ class QuickViewManager {
                 limitExitFilledTrades: existingSummary?.limitExitFilledTrades ?? options.summary?.limitExitFilledTrades,
                 limitExitFallbackTrades: existingSummary?.limitExitFallbackTrades ?? options.summary?.limitExitFallbackTrades,
                 limitExitUnreachableTrades: existingSummary?.limitExitUnreachableTrades ?? options.summary?.limitExitUnreachableTrades,
+                sizedSizingMode: preserveSizedSummary ? existingSummary?.sizedSizingMode : undefined,
+                sizedInitialCapital: preserveSizedSummary ? existingSummary?.sizedInitialCapital : undefined,
+                sizedFinalEquity: preserveSizedSummary ? existingSummary?.sizedFinalEquity : undefined,
+                sizedNetProfit: preserveSizedSummary ? existingSummary?.sizedNetProfit : undefined,
+                sizedNetProfitPercent: preserveSizedSummary ? existingSummary?.sizedNetProfitPercent : undefined,
+                sizedGrossProfit: preserveSizedSummary ? existingSummary?.sizedGrossProfit : undefined,
+                sizedGrossLoss: preserveSizedSummary ? existingSummary?.sizedGrossLoss : undefined,
+                sizedProfitFactor: preserveSizedSummary ? existingSummary?.sizedProfitFactor : undefined,
+                sizedExpectancy: preserveSizedSummary ? existingSummary?.sizedExpectancy : undefined,
+                sizedMaxDrawdown: preserveSizedSummary ? existingSummary?.sizedMaxDrawdown : undefined,
+                sizedMaxDrawdownPercent: preserveSizedSummary ? existingSummary?.sizedMaxDrawdownPercent : undefined,
+                sizedTrades: preserveSizedSummary ? existingSummary?.sizedTrades : undefined,
+                sizedSkippedTrades: preserveSizedSummary ? existingSummary?.sizedSkippedTrades : undefined,
+                sizedNoCapitalTrades: preserveSizedSummary ? existingSummary?.sizedNoCapitalTrades : undefined,
+                sizedCappedTrades: preserveSizedSummary ? existingSummary?.sizedCappedTrades : undefined,
+                sizedTotalStaked: preserveSizedSummary ? existingSummary?.sizedTotalStaked : undefined,
+                sizedAvgStake: preserveSizedSummary ? existingSummary?.sizedAvgStake : undefined,
+                sizedMaxStake: preserveSizedSummary ? existingSummary?.sizedMaxStake : undefined,
             },
         };
     }
@@ -1019,7 +1055,9 @@ class QuickViewManager {
         if (!this.overlay) return;
         const renderGeneration = ++this.overlayRenderGeneration;
 
-        const enrichedResult = await this.ensurePolymarketOutcomes(result);
+        const enrichedResult = this.applyCurrentPolymarketAlternativeSizing(
+            await this.ensurePolymarketOutcomes(result)
+        );
         if (renderGeneration !== this.overlayRenderGeneration) {
             return;
         }
@@ -1097,6 +1135,33 @@ class QuickViewManager {
         content.innerHTML = renderResultsHtml(result, {
             polymarketPayoutSummary,
             polymarketSectionHtml,
+        });
+    }
+
+    private applyCurrentPolymarketAlternativeSizing(result: BacktestResult): BacktestResult {
+        if ((result.polymarketTradeSummary?.sizedTrades ?? 0) > 0) {
+            return result;
+        }
+        if (!result.trades.some((trade) => trade.polymarketOutcome)) {
+            return result;
+        }
+        if (state.ohlcvData.length === 0) {
+            return result;
+        }
+
+        const resultContext = resolveBacktestResultMarketContext(result);
+        const backtestSettings = {
+            ...getBacktestSettings(),
+            symbol: resultContext?.symbol,
+            interval: resultContext?.interval,
+        };
+
+        return applyPolymarketAlternativeSizing({
+            result,
+            chartData: state.ohlcvData,
+            backtestSettings,
+            capitalSettings: getCapitalSettings(),
+            alternativeSizingEnabled: getAlternativeSizingEnabled(),
         });
     }
 
@@ -1271,6 +1336,8 @@ class QuickViewManager {
         const recentFormSummary = summarizeRecentPolymarketForm(result.trades, 50);
         const exitReasonWinRates = summarizePolymarketExitReasonWinRates(result.trades);
         const afterTakeProfitExpectancy = summarizePolymarketExpectancyAfterTakeProfit(result.trades);
+        const hasSizedBankroll = (summary?.sizedTrades ?? 0) > 0
+            && typeof summary?.sizedNetProfit === "number";
 
         return {
             wins, losses, neutralTrades, scoredTrades, missingTrades, unscoredTrades, coverage,
@@ -1325,6 +1392,20 @@ class QuickViewManager {
             limitExitFilledTrades: summary?.limitExitFilledTrades,
             limitExitFallbackTrades: summary?.limitExitFallbackTrades,
             limitExitUnreachableTrades: summary?.limitExitUnreachableTrades,
+            sizedSizingMode: hasSizedBankroll ? summary?.sizedSizingMode : undefined,
+            sizedInitialCapital: hasSizedBankroll ? summary?.sizedInitialCapital : undefined,
+            sizedFinalEquity: hasSizedBankroll ? summary?.sizedFinalEquity : undefined,
+            sizedNetProfit: hasSizedBankroll ? summary?.sizedNetProfit : undefined,
+            sizedNetProfitPercent: hasSizedBankroll ? summary?.sizedNetProfitPercent : undefined,
+            sizedProfitFactor: hasSizedBankroll ? summary?.sizedProfitFactor : undefined,
+            sizedExpectancy: hasSizedBankroll ? summary?.sizedExpectancy : undefined,
+            sizedMaxDrawdownPercent: hasSizedBankroll ? summary?.sizedMaxDrawdownPercent : undefined,
+            sizedTrades: hasSizedBankroll ? summary?.sizedTrades : undefined,
+            sizedSkippedTrades: hasSizedBankroll ? summary?.sizedSkippedTrades : undefined,
+            sizedNoCapitalTrades: hasSizedBankroll ? summary?.sizedNoCapitalTrades : undefined,
+            sizedCappedTrades: hasSizedBankroll ? summary?.sizedCappedTrades : undefined,
+            sizedAvgStake: hasSizedBankroll ? summary?.sizedAvgStake : undefined,
+            sizedMaxStake: hasSizedBankroll ? summary?.sizedMaxStake : undefined,
         };
     }
 

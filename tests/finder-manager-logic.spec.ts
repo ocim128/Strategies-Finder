@@ -150,6 +150,15 @@ describe("Finder manager logic", () => {
             polymarketScoringEnabled: true,
             polymarketRankMode: "profitFactorTrades",
         })).to.deep.equal(["polyProfitFactorBalance", "polyProfitFactor", "totalTrades", "polyPredictions", "polyWinRate"]);
+
+        expect(resolveFinderSortPriority({
+            useAdvancedSort: false,
+            advancedSortValues: [],
+            primarySort: "expectancy",
+            secondarySort: "profitFactor",
+            polymarketScoringEnabled: true,
+            polymarketRankMode: "sizedNet",
+        })).to.deep.equal(["polySizedNet", "polyPredictions", "polyWinRate"]);
     });
 
     it("keeps finder polymarket exit mode on signal_exit_same_event when the current run snapshot supports it", () => {

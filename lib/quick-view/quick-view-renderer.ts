@@ -235,6 +235,38 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
   const timingProfileSection = !usesNativeLongSession && summary.timingProfile && summary.timingProfile.length > 0
     ? buildPolymarketTimingProfileSectionHtml(summary)
     : '';
+  const hasSizedBankroll = typeof summary.sizedNetProfit === 'number'
+    && typeof summary.sizedTrades === 'number'
+    && summary.sizedTrades > 0;
+  const sizedTradeCount = summary.sizedTrades ?? 0;
+  const sizedBankrollCards = hasSizedBankroll ? `
+          <div class="qv-stat-card full-width qv-poly-meta-card">
+              <div class="qv-stat-label">Alternative Sizing: ${formatSizingModeLabel(summary.sizedSizingMode)}</div>
+              <div class="qv-stat-value">${formatCount(sizedTradeCount)} sized${(summary.sizedSkippedTrades ?? 0) > 0 ? ` | ${formatCount(summary.sizedSkippedTrades ?? 0)} skipped` : ''}</div>
+          </div>
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Sized Net</div>
+              <div class="qv-stat-value ${summary.sizedNetProfit! >= 0 ? 'positive' : 'negative'}">${formatSignedDollar(summary.sizedNetProfit!)}</div>
+          </div>
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Sized Return</div>
+              <div class="qv-stat-value ${(summary.sizedNetProfitPercent ?? 0) >= 0 ? 'positive' : 'negative'}">${formatSignedPercent(summary.sizedNetProfitPercent ?? 0)}</div>
+          </div>
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Sized PF</div>
+              <div class="qv-stat-value">${formatProfitFactor(summary.sizedProfitFactor ?? null)}</div>
+          </div>
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Sized Max DD</div>
+              <div class="qv-stat-value negative">${(summary.sizedMaxDrawdownPercent ?? 0).toFixed(2)}%</div>
+          </div>
+          ${(summary.sizedNoCapitalTrades ?? 0) > 0 || (summary.sizedCappedTrades ?? 0) > 0 ? `
+          <div class="qv-stat-card">
+              <div class="qv-stat-label">Sizing Constraints</div>
+              <div class="qv-stat-value">${formatCount(summary.sizedNoCapitalTrades ?? 0)} no capital | ${formatCount(summary.sizedCappedTrades ?? 0)} capped</div>
+          </div>
+          ` : ''}
+  ` : '';
   const diagnosticsNote = `
       <div class="qv-stat-card full-width qv-poly-meta-card">
           <div class="qv-stat-label">Detailed Diagnostics</div>
@@ -340,6 +372,7 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
               <div class="qv-stat-label">${modeLabel}</div>
               <div class="qv-stat-value">${summary.bestTimingProfile ? `Best Minute ${summary.bestTimingProfile.entryOffset} (${(summary.bestTimingProfile.winRate * 100).toFixed(1)}%)` : (usesActualEntryMinute ? 'See Polymarket tab for auto-mode diagnostics' : 'See Polymarket tab for full diagnostics')}</div>
           </div>
+          ${sizedBankrollCards}
           <div class="qv-stat-card">
               <div class="qv-stat-label">${usesRealizedPnl ? 'Poly Profitable' : 'Poly Win Rate'}</div>
               <div class="qv-stat-value ${profitabilityToneClass}">
@@ -518,6 +551,52 @@ export function formatPolymarketCents(value: number): string {
 
 export function formatProbabilityCents(value: number): string {
   return `${(Math.abs(value) * 100).toFixed(1)}c`;
+}
+
+function formatCount(value: number): string {
+  if (!Number.isFinite(value)) return 'n/a';
+  return Math.round(value).toLocaleString('en-US');
+}
+
+function formatCompactMagnitude(value: number): string {
+  const abs = Math.abs(value);
+  if (!Number.isFinite(abs)) return 'n/a';
+  if (abs >= 1e15) {
+    const [mantissa, exponent] = abs.toExponential(2).split('e');
+    return `${mantissa ?? abs.toFixed(2)}x10^${Number(exponent ?? 0)}`;
+  }
+  if (abs >= 1e12) return `${(abs / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1_000) return abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return abs.toFixed(2);
+}
+
+function formatSignedDollar(value: number): string {
+  const prefix = value > 0 ? '+' : value < 0 ? '-' : '';
+  return `${prefix}$${formatCompactMagnitude(value)}`;
+}
+
+function formatSignedPercent(value: number): string {
+  const prefix = value > 0 ? '+' : value < 0 ? '-' : '';
+  const suffix = Math.abs(value) >= 1e15 ? '' : '%';
+  return `${prefix}${formatCompactMagnitude(value)}${suffix}`;
+}
+
+function formatSizingModeLabel(mode: string | undefined): string {
+  if (!mode) return 'Unknown';
+  const labels: Record<string, string> = {
+    smart_fixed_velocity_memory: 'Smart Fixed Velocity Memory',
+    smart_fixed_quality_x_velocity: 'Smart Fixed Quality x Velocity',
+    kelly_criterion: 'Kelly Criterion',
+    volatility_targeting: 'Volatility Targeting',
+    risk_parity: 'Risk Parity',
+    martingale: 'Martingale',
+    anti_martingale: 'Anti-Martingale',
+    optimal_f: 'Optimal f',
+    secure_f: 'Secure f',
+  };
+  return labels[mode] ?? mode;
 }
 
 export function formatProfitFactor(value: number | null): string {

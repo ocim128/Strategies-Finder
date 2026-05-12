@@ -32,13 +32,14 @@ export function readDomSettingValue(id: string): unknown {
 export function getCapitalSettings(): CapitalSettings {
     const fixedTradeToggle = getOptionalElement<HTMLInputElement>('fixedTradeToggle');
     const tradeSizingMode = getOptionalElement<HTMLSelectElement>('tradeSizingMode');
+    const alternativeSizingEnabled = fixedTradeToggle?.checked === true;
     const raw: Record<string, unknown> = {
         initialCapital: readNumberInputValue('initialCapital', CAPITAL_DEFAULTS.initialCapital),
         positionSize: readNumberInputValue('positionSize', CAPITAL_DEFAULTS.positionSize),
         commission: readNumberInputValue('commission', CAPITAL_DEFAULTS.commission),
         fixedTradeAmount: readNumberInputValue('fixedTradeAmount', CAPITAL_DEFAULTS.fixedTradeAmount),
-        fixedTradeToggle: fixedTradeToggle?.checked,
-        sizingMode: tradeSizingMode?.value,
+        fixedTradeToggle: alternativeSizingEnabled,
+        sizingMode: alternativeSizingEnabled ? tradeSizingMode?.value : undefined,
     };
 
     for (const key of ADVANCED_SIZING_FIELD_IDS) {
@@ -50,6 +51,11 @@ export function getCapitalSettings(): CapitalSettings {
     }
 
     return resolveCapitalSettingsFromRaw(raw);
+}
+
+export function getAlternativeSizingEnabled(): boolean {
+    const fixedTradeToggle = getOptionalElement<HTMLInputElement>('fixedTradeToggle');
+    return fixedTradeToggle?.checked === true;
 }
 
 export function getBacktestSettings(): BacktestSettings {

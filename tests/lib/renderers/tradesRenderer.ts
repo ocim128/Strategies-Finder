@@ -641,6 +641,42 @@ export class TradesRenderer {
         return `${(price * 100).toFixed(1)}c`;
     }
 
+    private formatPolymarketSizedMoney(value: number): string {
+        const sign = value > 0 ? '+' : value < 0 ? '-' : '';
+        return `${sign}$${Math.abs(value).toFixed(2)}`;
+    }
+
+    private getPolymarketSizingRow(trade: Trade): string {
+        const outcome = trade.polymarketOutcome;
+        if (!outcome) {
+            return '';
+        }
+        const { sizedStake, sizedShares, sizedPnl, sizedPnlPercent, marketEntryPrice } = outcome;
+        if (
+            typeof sizedStake !== 'number'
+            || !Number.isFinite(sizedStake)
+            || typeof sizedShares !== 'number'
+            || !Number.isFinite(sizedShares)
+            || typeof sizedPnl !== 'number'
+            || !Number.isFinite(sizedPnl)
+            || typeof marketEntryPrice !== 'number'
+            || !Number.isFinite(marketEntryPrice)
+        ) {
+            return '';
+        }
+
+        const pnlClass = sizedPnl > 0 ? 'positive' : sizedPnl < 0 ? 'negative' : '';
+        const pctLabel = typeof sizedPnlPercent === 'number' && Number.isFinite(sizedPnlPercent)
+            ? ` (${sizedPnlPercent >= 0 ? '+' : ''}${sizedPnlPercent.toFixed(2)}%)`
+            : '';
+        const cappedLabel = outcome.sizedStakeCapped ? ' | capped' : '';
+        return `
+                            <div class="trade-sub-info">
+                                <span class="trade-size">Poly Stake: $${sizedStake.toFixed(2)} | Shares: ${sizedShares.toFixed(2)} @ ${this.formatPolymarketEntryPrice(marketEntryPrice)} | Profit: <span class="${pnlClass}">${this.formatPolymarketSizedMoney(sizedPnl)}${pctLabel}</span>${cappedLabel}</span>
+                            </div>
+        `;
+    }
+
     private formatPolymarketExitTime(ts: number | null | undefined): string {
         if (typeof ts !== 'number' || !Number.isFinite(ts)) {
             return 'n/a';
@@ -762,6 +798,14 @@ export class TradesRenderer {
             : `Qty: ${trade.size.toFixed(4)}`;
         const exitReasonBadge = this.getExitReasonBadge(display.displayExitReason);
         const polymarketOutcomeBadge = this.getPolymarketOutcomeBadge(trade);
+        const polymarketSizingRow = this.getPolymarketSizingRow(trade);
+        const chartSizeRow = trade.polymarketOutcome
+            ? ''
+            : `
+                            <div class="trade-sub-info">
+                                <span class="trade-size">${sizeLabel}</span>
+                            </div>
+            `;
         const entryDate = formatDate(trade.entryTime);
 
         let targetRow = '';
@@ -801,9 +845,8 @@ export class TradesRenderer {
                                  ${polymarketOutcomeBadge}
                                  ${fees ? `<span class="separator">|</span><span class="trade-fees">${fees}</span>` : ''}
                              </div>
-                            <div class="trade-sub-info">
-                                <span class="trade-size">${sizeLabel}</span>
-                            </div>
+                            ${chartSizeRow}
+                            ${polymarketSizingRow}
                         </div>
                     </div>
                     <div class="trade-result-group">

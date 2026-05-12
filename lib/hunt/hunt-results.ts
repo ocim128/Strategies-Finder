@@ -57,6 +57,7 @@ export function formatHuntMetricValue(metric: FinderMetric, value: number): stri
         case "expectancy":
         case "averageGain":
         case "polyExpectancyBalance":
+        case "polySizedNet":
             return formatCurrency(value);
         case "netProfitPercent":
         case "winRate":
