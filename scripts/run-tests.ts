@@ -86,6 +86,7 @@ const TEST_FILES = [
     "tests/feature-dom-contracts.spec.ts",
     "tests/portfolio-lab.spec.ts",
     "tests/strategy-ensemble.spec.ts",
+    "tests/monte-carlo-sizing.spec.ts",
     "tests/monte-carlo-polymarket.spec.ts",
     "tests/quick-view-polymarket.spec.ts",
     "tests/polymarket-sync-outcomes-cli.spec.ts",

@@ -1,4 +1,5 @@
 import { state } from "./state";
+import { backtestService } from "./backtest-service";
 import {
     buildPolymarketMonteCarloInput,
     runMonteCarloSimulation,
@@ -6,6 +7,7 @@ import {
     type MonteCarloProgress,
     type MonteCarloResult,
     type MonteCarloSettings,
+    type MonteCarloSizingConfig,
     type PolymarketMonteCarloInput,
 } from "./strategies/monte-carlo";
 import { createMonteCarloDom, type MonteCarloDomElements } from "./monte-carlo-dom";
@@ -141,6 +143,7 @@ async function handleRun(source: RunSource): Promise<void> {
                     undefined,
                     {
                         signal: abortController.signal,
+                        sizing: createChartMonteCarloSizingConfig(),
                         onProgress: (progress: MonteCarloProgress) => {
                             if (!dom) {
                                 return;
@@ -248,6 +251,18 @@ function readSettingsFromDom(): MonteCarloSettings {
         ruinThresholdPercent: parseFloat(dom.ruinThresholdInput.value) || 50,
         initialCapital: parseFloat(dom.initialCapitalInput.value) || 10000,
         polymarketStakePerTrade: parseFloat(dom.polymarketStakePerTradeInput.value) || 1,
+    };
+}
+
+function createChartMonteCarloSizingConfig(): MonteCarloSizingConfig {
+    const capitalSettings = backtestService.getCapitalSettings();
+    return {
+        mode: capitalSettings.sizingMode,
+        positionSizePercent: capitalSettings.positionSize,
+        fixedTradeAmount: capitalSettings.fixedTradeAmount,
+        commissionPercent: capitalSettings.commission,
+        advancedSizing: capitalSettings.advancedSizing,
+        ohlcvData: state.ohlcvData,
     };
 }
 

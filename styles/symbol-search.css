@@ -6,9 +6,10 @@
 /* Main Dropdown Enhancements */
 .symbol-search-dropdown {
     min-width: 320px;
-    max-height: 450px;
+    max-height: min(450px, calc(100vh - 120px));
     padding: 0;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
     display: none;
     flex-direction: column;
 }
@@ -154,6 +155,23 @@
 }
 
 .symbol-search-results::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--hsl-ink-2) / 0.5);
+}
+
+.symbol-search-dropdown::-webkit-scrollbar {
+    width: 6px;
+}
+
+.symbol-search-dropdown::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.symbol-search-dropdown::-webkit-scrollbar-thumb {
+    background: hsl(var(--hsl-border));
+    border-radius: var(--radius-pill);
+}
+
+.symbol-search-dropdown::-webkit-scrollbar-thumb:hover {
     background: hsl(var(--hsl-ink-2) / 0.5);
 }
 

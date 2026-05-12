@@ -1,4 +1,5 @@
-import type { Trade } from "../../types/strategies";
+import type { AdvancedSizingSettings, TradeSizingMode } from "../../types/backtest";
+import type { OHLCVData, Trade } from "../../types/strategies";
 import type { PolymarketExitMode } from "../../polymarket-exit-mode";
 
 // ============================================================================
@@ -24,6 +25,15 @@ export interface MonteCarloSettings {
     initialCapital: number;
     /** Fixed dollar stake per trade for Polymarket bankroll simulation */
     polymarketStakePerTrade?: number;
+}
+
+export interface MonteCarloSizingConfig {
+    mode: TradeSizingMode;
+    positionSizePercent: number;
+    fixedTradeAmount: number;
+    commissionPercent: number;
+    advancedSizing?: AdvancedSizingSettings;
+    ohlcvData?: OHLCVData[];
 }
 
 export interface ParameterPerturbationConfig {

@@ -218,7 +218,7 @@ function resolveDirectAllocation(
     return null;
 }
 
-function resolveAllocatedCapital(
+export function resolveAllocatedCapital(
     sizingMode: TradeSizingMode,
     capital: number,
     positionSizePercent: number,

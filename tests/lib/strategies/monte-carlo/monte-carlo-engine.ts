@@ -4,6 +4,7 @@ import type {
     MonteCarloCoverageSummary,
     MonteCarloResult,
     MonteCarloSettings,
+    MonteCarloSizingConfig,
     MonteCarloSimulation,
     PolymarketMonteCarloInput,
     PolymarketMonteCarloTradeInput,
@@ -12,6 +13,11 @@ import type {
 import { createSeededRandom } from "./utils";
 import { calculateSharpeRatioFromEquitySamples } from "../performance-metrics";
 import { mean, median, percentile, sampleStdDev } from "../../statistics-utils";
+import { timeKey } from "../backtest/backtest-utils";
+import { resolveAllocatedCapital, type SmartSizingState } from "../backtest/position-builder";
+import { createKellySizingState, updateKellyState } from "../sizing/kelly-criterion";
+import { createMartingaleState, updateMartingaleState } from "../sizing/martingale";
+import { createOptimalFState, updateOptimalFState } from "../sizing/optimal-f";
 
 export * from "./types";
 
@@ -28,6 +34,17 @@ export interface MonteCarloProgress {
 export interface RunMonteCarloOptions {
     signal?: AbortSignal;
     onProgress?: (progress: MonteCarloProgress) => void;
+    sizing?: MonteCarloSizingConfig;
+}
+
+interface ChartTradeSample {
+    pnl: number;
+    returnOnAllocatedCapital: number | null;
+    exitTime: Trade["exitTime"];
+    entryTime: Trade["entryTime"];
+    entryPrice: number;
+    type: Trade["type"];
+    entryBarIndex: number;
 }
 
 interface SimulatedMetrics {
@@ -102,8 +119,14 @@ export async function runMonteCarloSimulation(
         });
     }
 
-    const tradePnls = trades.map((trade) => trade.pnl);
-    const tradeExitTimes = trades.map((trade) => trade.exitTime);
+    const sizing = options.sizing
+        ? {
+            ...options.sizing,
+            ohlcvData: options.sizing.ohlcvData ?? _ohlcvData,
+        }
+        : undefined;
+    const tradeSamples = createChartTradeSamples(trades, sizing);
+    const tradeExitTimes = tradeSamples.map((trade) => trade.exitTime);
     const runContext = createSimulationRunContext(settings, trades.length);
     const netProfitValues = new Array<number>(settings.simulations);
     const maxDrawdownPercentValues = new Array<number>(settings.simulations);
@@ -119,12 +142,13 @@ export async function runMonteCarloSimulation(
         const order = buildSimulationOrder(trades.length, runContext.baseSeeds[simulationId], settings);
         const shouldStoreSimulation =
             sampledSimulations.length < MAX_STORED_SIMULATIONS && simulationId % runContext.sampleEvery === 0;
-        const metrics = simulateFixedPnlTradePath(
+        const metrics = simulateChartTradePath(
             order,
-            tradePnls,
+            tradeSamples,
             tradeExitTimes,
             settings.initialCapital,
             runContext.ruinThreshold,
+            sizing,
             shouldStoreSimulation ? runContext.curveSampleIndices : null,
         );
 
@@ -478,12 +502,45 @@ function buildCurveSampleIndices(tradeCount: number, maxPoints: number): number[
     return indices;
 }
 
-function simulateFixedPnlTradePath(
+function createChartTradeSamples(
+    trades: readonly Trade[],
+    sizing?: MonteCarloSizingConfig,
+): ChartTradeSample[] {
+    const dataIndexByTime = new Map<string, number>();
+    for (const [index, candle] of (sizing?.ohlcvData ?? []).entries()) {
+        dataIndexByTime.set(timeKey(candle.time), index);
+    }
+
+    const commissionRate = Math.max(0, sizing?.commissionPercent ?? 0) / 100;
+
+    return trades.map((trade) => {
+        const entryValue = Math.abs(trade.size * trade.entryPrice);
+        const allocatedCapital = entryValue > 0
+            ? entryValue * (1 + commissionRate)
+            : 0;
+        const returnOnAllocatedCapital = allocatedCapital > 0
+            ? trade.pnl / allocatedCapital
+            : null;
+
+        return {
+            pnl: trade.pnl,
+            returnOnAllocatedCapital,
+            exitTime: trade.exitTime,
+            entryTime: trade.entryTime,
+            entryPrice: trade.entryPrice,
+            type: trade.type,
+            entryBarIndex: dataIndexByTime.get(timeKey(trade.entryTime)) ?? -1,
+        };
+    });
+}
+
+function simulateChartTradePath(
     order: readonly number[],
-    tradePnls: readonly number[],
+    tradeSamples: readonly ChartTradeSample[],
     tradeExitTimes: readonly Trade["exitTime"][],
     initialCapital: number,
     ruinThreshold: number,
+    sizing: MonteCarloSizingConfig | undefined,
     curveSampleIndices: readonly number[] | null,
 ): SimulatedMetrics {
     let equity = initialCapital;
@@ -496,10 +553,14 @@ function simulateFixedPnlTradePath(
     let nextCurvePoint = 0;
     const equitySamples = new Array<number>(order.length);
     const equityCurve = curveSampleIndices ? new Array<number>(curveSampleIndices.length) : undefined;
+    const smartSizingState = sizing ? createMonteCarloSmartSizingState() : null;
 
     for (let step = 0; step < order.length; step++) {
         const tradeIndex = order[step];
-        const pnl = tradePnls[tradeIndex] ?? 0;
+        const trade = tradeSamples[tradeIndex];
+        const pnl = trade
+            ? resolveChartTradePnl(trade, equity, sizing, smartSizingState)
+            : 0;
 
         equity += pnl;
         equitySamples[step] = equity;
@@ -527,6 +588,10 @@ function simulateFixedPnlTradePath(
         if (pnl > 0) {
             winCount++;
         }
+
+        if (trade && sizing && smartSizingState) {
+            updateMonteCarloSmartSizingState(smartSizingState, sizing, trade, pnl);
+        }
     }
 
     while (equityCurve && nextCurvePoint < equityCurve.length) {
@@ -550,6 +615,107 @@ function simulateFixedPnlTradePath(
         timeToRuin,
         equityCurve,
     };
+}
+
+function createMonteCarloSmartSizingState(): SmartSizingState {
+    return {
+        recentVelocityScores: [],
+        kellyState: createKellySizingState(),
+        martingaleState: createMartingaleState(),
+        optimalFState: createOptimalFState(),
+    };
+}
+
+function resolveChartTradePnl(
+    trade: ChartTradeSample,
+    equity: number,
+    sizing: MonteCarloSizingConfig | undefined,
+    smartSizingState: SmartSizingState | null,
+): number {
+    if (!sizing || !smartSizingState || trade.returnOnAllocatedCapital === null) {
+        return trade.pnl;
+    }
+
+    const allocatedCapital = resolveMonteCarloAllocatedCapital(trade, equity, sizing, smartSizingState);
+    if (!Number.isFinite(allocatedCapital) || allocatedCapital <= 0) {
+        return 0;
+    }
+
+    return allocatedCapital * trade.returnOnAllocatedCapital;
+}
+
+function resolveMonteCarloAllocatedCapital(
+    trade: ChartTradeSample,
+    equity: number,
+    sizing: MonteCarloSizingConfig,
+    smartSizingState: SmartSizingState,
+): number {
+    const data = sizing.ohlcvData ?? [];
+    const sizingBarIndex = trade.entryBarIndex >= 0 ? trade.entryBarIndex : data.length - 1;
+    const direction = trade.type === "short" ? "short" : "long";
+
+    return resolveAllocatedCapital(
+        sizing.mode,
+        equity,
+        sizing.positionSizePercent,
+        sizing.fixedTradeAmount,
+        data,
+        sizingBarIndex,
+        direction,
+        trade.entryPrice,
+        null,
+        smartSizingState,
+        sizing.advancedSizing,
+    );
+}
+
+function updateMonteCarloSmartSizingState(
+    state: SmartSizingState,
+    sizing: MonteCarloSizingConfig,
+    trade: ChartTradeSample,
+    pnl: number,
+): void {
+    if (!Number.isFinite(pnl)) {
+        return;
+    }
+
+    pushRecentVelocityScore(state.recentVelocityScores, estimateVelocityScore(trade, pnl));
+    updateKellyState(state.kellyState ?? createKellySizingState(), { pnl, isWin: pnl > 0 });
+
+    if (sizing.mode === "martingale" || sizing.mode === "anti_martingale") {
+        updateMartingaleState(
+            state.martingaleState ?? createMartingaleState(),
+            { pnl, isWin: pnl > 0 },
+            sizing.advancedSizing,
+            sizing.mode === "anti_martingale",
+        );
+    }
+
+    if (sizing.mode === "optimal_f" || sizing.mode === "secure_f") {
+        updateOptimalFState(state.optimalFState ?? createOptimalFState(), pnl, sizing.advancedSizing);
+    }
+}
+
+function pushRecentVelocityScore(target: number[], score: number | null, maxLength = 12): void {
+    if (score === null || !Number.isFinite(score)) {
+        return;
+    }
+    target.push(score);
+    if (target.length > maxLength) {
+        target.shift();
+    }
+}
+
+function estimateVelocityScore(trade: ChartTradeSample, pnl: number): number | null {
+    if (!Number.isFinite(pnl) || !Number.isFinite(trade.entryPrice) || trade.entryPrice <= 0) {
+        return null;
+    }
+
+    if (pnl > 0) {
+        return Math.abs(trade.returnOnAllocatedCapital ?? 0) >= 0.02 ? 1 : 0.35;
+    }
+
+    return Math.abs(trade.returnOnAllocatedCapital ?? 0) >= 0.02 ? -0.75 : -0.15;
 }
 
 function simulatePolymarketTradePath(
