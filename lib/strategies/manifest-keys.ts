@@ -61,4 +61,5 @@ export const builtInStrategyKeys: readonly string[] = [
     "trailing_boundary_composite",
     "true_range_skew_acceptance",
     "volume_roc_regime_router",
+    "atr_range_conviction_follow",
 ];

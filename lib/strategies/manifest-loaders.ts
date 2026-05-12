@@ -63,4 +63,5 @@ export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {
     "trailing_boundary_composite": () => import("./lib/trailing_boundary_composite").then(m => m.trailing_boundary_composite),
     "true_range_skew_acceptance": () => import("./lib/true_range_skew_acceptance").then(m => m.true_range_skew_acceptance),
     "volume_roc_regime_router": () => import("./lib/volume_roc_regime_router").then(m => m.volume_roc_regime_router),
+    "atr_range_conviction_follow": () => import("./lib/atr_range_conviction_follow").then(m => m.atr_range_conviction_follow),
 };

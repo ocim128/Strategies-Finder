@@ -1023,4 +1023,24 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         walkForwardParams: ["volume_lookback", "regime_threshold"],
     },
     },
+    {
+        key: "atr_range_conviction_follow",
+        name: "ATR Range Conviction Follow",
+        description: "Trades completed volatility expansion bars only when true range is large versus ATR and the candle settles with strong directional acceptance.",
+        defaultParams: {
+		atr_period: 14,
+		range_atr_min: 1.6,
+		acceptance_min: 0.55,
+	} as Record<string, number>,
+        paramLabels: {
+		atr_period: "ATR Period",
+		range_atr_min: "Min Range / ATR",
+		acceptance_min: "Min Close Acceptance",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["atr_period", "range_atr_min", "acceptance_min"],
+	},
+    },
 ];

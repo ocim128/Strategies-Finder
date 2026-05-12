@@ -62,6 +62,7 @@ import { volatility_regime_median_alignment } from "./lib/volatility_regime_medi
 import { trailing_boundary_composite } from "./lib/trailing_boundary_composite";
 import { true_range_skew_acceptance } from "./lib/true_range_skew_acceptance";
 import { volume_roc_regime_router } from "./lib/volume_roc_regime_router";
+import { atr_range_conviction_follow } from "./lib/atr_range_conviction_follow";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -129,6 +130,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "trailing_boundary_composite", strategy: trailing_boundary_composite },
     { key: "true_range_skew_acceptance", strategy: true_range_skew_acceptance },
     { key: "volume_roc_regime_router", strategy: volume_roc_regime_router },
+    { key: "atr_range_conviction_follow", strategy: atr_range_conviction_follow },
 ];
 
 export function createStrategiesRecordFromManifest(
