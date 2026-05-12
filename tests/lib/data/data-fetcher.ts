@@ -64,6 +64,11 @@ type ProviderFallbackChain = {
     resampleOptions?: ResampleOptions;
     localNonBinance: NonBinanceLocalData | null;
 };
+type FastPathLocalCandlesOptions = {
+    minBars?: number;
+    lookbackBars?: number | null;
+    skipCache?: boolean;
+};
 
 export class DataFetcher {
     private static readonly PRICE_JUMP_GUARD_RATIO = 8;
@@ -83,25 +88,11 @@ export class DataFetcher {
         const cacheKey = this.buildCacheKey(symbol, storageInterval, provider);
         const lookbackBars = this.getChartLookbackBars();
         const shouldRefreshHotCache = provider === 'bybit-tradfi' && storageInterval === '1d';
-
-        const imported = this.getImportedDataByKey().get(cacheKey);
-        if (imported) {
-            const candles = this.sanitizeFastPathCandles(provider, symbol, storageInterval, imported, 'imported');
-            if (candles.length > 0) {
-                return sliceCandlesToLookback(candles, lookbackBars);
-            }
-        }
-
-        const cached = this.cache.get(cacheKey);
-        if (cached && !shouldRefreshHotCache) {
-            const candles = this.sanitizeFastPathCandles(provider, symbol, storageInterval, cached.candles, String(cached.source ?? 'cache'));
-            if (candles.length !== cached.candles.length) {
-                this.cache.set(cacheKey, candles, cached.source);
-            }
-            if (candles.length > 0) {
-                return sliceCandlesToLookback(candles, lookbackBars);
-            }
-        }
+        const fastPathCandles = this.readFastPathLocalCandles(provider, symbol, storageInterval, cacheKey, {
+            lookbackBars,
+            skipCache: shouldRefreshHotCache,
+        });
+        if (fastPathCandles) return fastPathCandles;
 
         const chain = await this.resolveProviderFallbackChain(symbol, interval, signal);
         return this.fetchDataFromProviderChain(chain, symbol, interval, signal);
@@ -150,24 +141,10 @@ export class DataFetcher {
 
         const storageInterval = resolveStorageInterval(interval);
         const cacheKey = this.buildCacheKey(symbol, storageInterval, provider);
-        const imported = this.getImportedDataByKey().get(cacheKey);
-        if (imported && imported.length > 0) {
-            const data = this.sanitizeFastPathCandles(provider, symbol, storageInterval, imported, 'imported');
-            if (data.length > 0) {
-                return { data: trimToLastCandles(data, maxBars), source: 'local' };
-            }
-        }
-
-        const cached = this.cache.get(cacheKey);
-        if (cached) {
-            const data = this.sanitizeFastPathCandles(provider, symbol, storageInterval, cached.candles, String(cached.source ?? 'cache'));
-            if (data.length !== cached.candles.length) {
-                this.cache.set(cacheKey, data, cached.source);
-            }
-            if (data.length > 0) {
-                return { data: trimToLastCandles(data, maxBars), source: 'local' };
-            }
-        }
+        const fastPathCandles = this.readFastPathLocalCandles(provider, symbol, storageInterval, cacheKey, {
+            lookbackBars: maxBars,
+        });
+        if (fastPathCandles) return { data: fastPathCandles, source: 'local' };
 
         if (!isBinanceDataProvider(provider)) {
             const localData = await this.loadNonBinanceLocalData(symbol, interval, maxBars, signal);
@@ -220,25 +197,11 @@ export class DataFetcher {
         const provider = this.providerRouter.getProvider(symbol);
         const storageInterval = resolveStorageInterval(interval);
         const cacheKey = this.buildCacheKey(symbol, storageInterval, provider);
-
-        const imported = this.getImportedDataByKey().get(cacheKey);
-        if (imported && imported.length >= limit) {
-            const candles = this.sanitizeFastPathCandles(provider, symbol, storageInterval, imported, 'imported');
-            if (candles.length >= limit) {
-                return trimToLastCandles(candles, limit);
-            }
-        }
-
-        const cached = this.cache.get(cacheKey);
-        if (cached && cached.candles.length >= limit) {
-            const candles = this.sanitizeFastPathCandles(provider, symbol, storageInterval, cached.candles, String(cached.source ?? 'cache'));
-            if (candles.length !== cached.candles.length) {
-                this.cache.set(cacheKey, candles, cached.source);
-            }
-            if (candles.length >= limit) {
-                return trimToLastCandles(candles, limit);
-            }
-        }
+        const fastPathCandles = this.readFastPathLocalCandles(provider, symbol, storageInterval, cacheKey, {
+            minBars: limit,
+            lookbackBars: limit,
+        });
+        if (fastPathCandles) return fastPathCandles;
 
         const resampleOptions = this.getResampleOptions(interval);
         const localNonBinance = !isBinanceDataProvider(provider)
@@ -393,6 +356,41 @@ export class DataFetcher {
         return isBinanceDataProvider(provider)
             ? this.sanitizeBinanceCandles(symbol, storageInterval, candles, source)
             : candles;
+    }
+
+    private readFastPathLocalCandles(
+        provider: DataProvider,
+        symbol: string,
+        storageInterval: string,
+        cacheKey: string,
+        options: FastPathLocalCandlesOptions = {}
+    ): OHLCVData[] | null {
+        const minBars = Math.max(0, Math.floor(options.minBars ?? 1));
+        const takeCandles = (candles: OHLCVData[]) =>
+            sliceCandlesToLookback(candles, options.lookbackBars ?? null);
+
+        const imported = this.getImportedDataByKey().get(cacheKey);
+        if (imported && imported.length >= minBars) {
+            const candles = this.sanitizeFastPathCandles(provider, symbol, storageInterval, imported, 'imported');
+            if (candles.length >= minBars) {
+                return takeCandles(candles);
+            }
+        }
+
+        if (options.skipCache) return null;
+
+        const cached = this.cache.get(cacheKey);
+        if (cached && cached.candles.length >= minBars) {
+            const candles = this.sanitizeFastPathCandles(provider, symbol, storageInterval, cached.candles, String(cached.source ?? 'cache'));
+            if (candles.length !== cached.candles.length) {
+                this.cache.set(cacheKey, candles, cached.source);
+            }
+            if (candles.length >= minBars) {
+                return takeCandles(candles);
+            }
+        }
+
+        return null;
     }
 
     queuePersistCandles(

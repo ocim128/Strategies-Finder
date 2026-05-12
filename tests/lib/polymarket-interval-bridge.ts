@@ -142,7 +142,7 @@ export function buildSuperEvents(
             superEventStartTs: o.event_start_ts,
             superEventEndTs: o.event_end_ts,
             outcomes: [o],
-            subEventCount: 1,
+            subEventCount: config.subEventCount,
         }));
     }
 
@@ -279,8 +279,11 @@ export function mapTradesToSuperEvents(
         );
         if (entryOffset < 0 || entryOffset >= config.subEventCount) continue;
 
-        // Use the outcome at the entry offset as the base outcome
-        const baseOutcome = superEvent.outcomes[entryOffset];
+        // 1m offsets are minutes inside one 5m outcome; larger intervals use
+        // the 5m sub-event at the selected offset.
+        const baseOutcome = interval === "1m"
+            ? superEvent.outcomes[0]
+            : superEvent.outcomes[entryOffset];
         if (!baseOutcome) continue;
 
         result.push({

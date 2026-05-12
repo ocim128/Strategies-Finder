@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
+import { toBoolean, toFinite, toPositiveInt } from "./lib/cli-args";
 
 type CliOptions = {
     strategyKey: string;
@@ -63,25 +64,6 @@ function printUsage(): void {
         "  --seed <n>                  default 2026",
         "  --out <file>                default quality_hunt.json",
     ].join("\n"));
-}
-
-function toFinite(value: string | undefined, fallback: number): number {
-    if (value === undefined) return fallback;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function toPositiveInt(value: string | undefined, fallback: number, min = 1): number {
-    const parsed = Math.floor(toFinite(value, fallback));
-    return Math.max(min, parsed);
-}
-
-function toBoolean(value: string | undefined, fallback: boolean): boolean {
-    if (!value) return fallback;
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") return true;
-    if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") return false;
-    return fallback;
 }
 
 function parseArgs(argv: string[]): CliOptions & { help?: boolean } {

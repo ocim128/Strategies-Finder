@@ -161,6 +161,50 @@ type PreparedRun = {
     signals: Signal[];
 };
 
+type FinderCandidateForEnrichment = Pick<FinderResult, "key" | "name" | "params" | "result">
+    & Partial<Pick<FinderResult, "comboMode" | "comboPrimaryConfigName" | "compositeEdgeRatio" | "polymarketEval">>;
+
+function enrichFinderCandidate(args: {
+    candidate: FinderCandidateForEnrichment;
+    candidateData: OHLCVData[];
+    lastDataTime: Time | null;
+    initialCapital: number;
+    requiresCompositeEdgeRatioSort: boolean;
+    requiresTradeTimingQualitySort: boolean;
+    comboMode?: boolean;
+    comboPrimaryConfigName?: string;
+}): FinderResult {
+    const {
+        candidate,
+        candidateData,
+        lastDataTime,
+        initialCapital,
+        requiresCompositeEdgeRatioSort,
+        requiresTradeTimingQualitySort,
+    } = args;
+    const normalizedResult = normalizeResultSharpe(candidate.result, initialCapital);
+    if (requiresTradeTimingQualitySort) {
+        attachTradeTimingQuality(normalizedResult, candidateData);
+    }
+    const adjustment = buildSelection(normalizedResult, lastDataTime, initialCapital);
+    if (requiresTradeTimingQualitySort) {
+        attachTradeTimingQuality(adjustment.result, candidateData);
+    }
+
+    return buildFinderResult({
+        ...candidate,
+        comboMode: args.comboMode ?? candidate.comboMode,
+        comboPrimaryConfigName: args.comboPrimaryConfigName ?? candidate.comboPrimaryConfigName,
+        result: normalizedResult,
+        selectionResult: adjustment.result,
+        compositeEdgeRatio: requiresCompositeEdgeRatioSort
+            ? computeFinderCompositeEdgeRatio(normalizedResult, candidateData)
+            : candidate.compositeEdgeRatio,
+        endpointAdjusted: adjustment.adjusted,
+        endpointRemovedTrades: adjustment.removedTrades,
+    });
+}
+
 export async function runFinderExecution(input: FinderRunInput, callbacks: FinderRunCallbacks): Promise<FinderRunOutput> {
     const {
         options,
@@ -625,19 +669,18 @@ async function runGeneticFinder(params: GeneticFinderRunParams): Promise<FinderR
             continue;
         }
 
-        const normalizedResult = normalizeResultSharpe(optimization.bestGenome.result, initialCapital);
-        const adjustment = buildSelection(normalizedResult, lastDataTime, initialCapital);
-        const candidate: FinderResult = buildFinderResult({
-            key: selection.key,
-            name: selection.name,
-            params: normalizeFinderCandidateParams(selection.strategy, optimization.bestGenome.params),
-            result: normalizedResult,
-            selectionResult: adjustment.result,
-            compositeEdgeRatio: finderSortRequiresCompositeEdgeRatio(input.options.sortPriority)
-                ? computeFinderCompositeEdgeRatio(normalizedResult, closedData)
-                : undefined,
-            endpointAdjusted: adjustment.adjusted,
-            endpointRemovedTrades: adjustment.removedTrades,
+        const candidate = enrichFinderCandidate({
+            candidate: {
+                key: selection.key,
+                name: selection.name,
+                params: normalizeFinderCandidateParams(selection.strategy, optimization.bestGenome.params),
+                result: optimization.bestGenome.result,
+            },
+            candidateData: closedData,
+            lastDataTime,
+            initialCapital,
+            requiresCompositeEdgeRatioSort: finderSortRequiresCompositeEdgeRatio(input.options.sortPriority),
+            requiresTradeTimingQualitySort: finderSortRequiresTradeTimingQuality(input.options.sortPriority),
         });
 
         if (input.options.tradeFilterEnabled) {
@@ -1115,25 +1158,15 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         }
 
         const candidateData = crossSymbolContextMap.get(candidate.key)?.data ?? closedData;
-        const normalizedResult = normalizeResultSharpe(candidate.result, effectiveInitialCapital);
-        if (requiresTradeTimingQualitySort) {
-            attachTradeTimingQuality(normalizedResult, candidateData);
-        }
-        const adjustment = buildSelection(normalizedResult, lastDataTime, effectiveInitialCapital);
-        if (requiresTradeTimingQualitySort) {
-            attachTradeTimingQuality(adjustment.result, candidateData);
-        }
-        const enriched: FinderResult = buildFinderResult({
-            ...candidate,
+        const enriched = enrichFinderCandidate({
+            candidate,
+            candidateData,
+            lastDataTime,
+            initialCapital: effectiveInitialCapital,
+            requiresCompositeEdgeRatioSort,
+            requiresTradeTimingQualitySort,
             comboMode: Boolean(input.comboPrimarySignals),
             comboPrimaryConfigName: input.options.comboPrimaryConfigName,
-            result: normalizedResult,
-            selectionResult: adjustment.result,
-            compositeEdgeRatio: requiresCompositeEdgeRatioSort
-                ? computeFinderCompositeEdgeRatio(normalizedResult, candidateData)
-                : undefined,
-            endpointAdjusted: adjustment.adjusted,
-            endpointRemovedTrades: adjustment.removedTrades,
         });
 
         if (input.options.tradeFilterEnabled) {
@@ -1788,25 +1821,17 @@ async function reconcileSingleTimeframeTopResults(
                 backtestFn: runBacktest,
                 precomputed: jobPrecomputed,
             });
-            const normalizedResult = normalizeResultSharpe(rawResult, initialCapital);
-            if (requiresTradeTimingQualitySort) {
-                attachTradeTimingQuality(normalizedResult, jobData);
-            }
-            const adjustment = buildSelection(normalizedResult, lastDataTime, initialCapital);
-            if (requiresTradeTimingQualitySort) {
-                attachTradeTimingQuality(adjustment.result, jobData);
-            }
-
-            reconciled.push(buildFinderResult({
-                ...candidate,
-                params: normalizedParams,
-                result: normalizedResult,
-                selectionResult: adjustment.result,
-                compositeEdgeRatio: requiresCompositeEdgeRatioSort
-                    ? computeFinderCompositeEdgeRatio(normalizedResult, jobData)
-                    : candidate.compositeEdgeRatio,
-                endpointAdjusted: adjustment.adjusted,
-                endpointRemovedTrades: adjustment.removedTrades,
+            reconciled.push(enrichFinderCandidate({
+                candidate: {
+                    ...candidate,
+                    params: normalizedParams,
+                    result: rawResult,
+                },
+                candidateData: jobData,
+                lastDataTime,
+                initialCapital,
+                requiresCompositeEdgeRatioSort,
+                requiresTradeTimingQualitySort,
             }));
         } catch (_error) {
             reconciled.push(candidate);

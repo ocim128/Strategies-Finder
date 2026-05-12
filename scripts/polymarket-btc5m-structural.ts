@@ -1,5 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+    fetchJsonWithRetry,
+    mean,
+    parseIsoSec,
+    parseStringArray,
+    std,
+} from "./lib/polymarket-research";
 
 type CliConfig = {
     seriesId: string;
@@ -283,55 +290,6 @@ function parseArgs(argv: string[]): CliConfig | null {
         permutations,
         outPath,
     };
-}
-
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchJsonWithRetry<T>(url: string, retries = 4): Promise<T> {
-    let lastErr: unknown = null;
-    for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-            const res = await fetch(url, {
-                headers: { Accept: "application/json" },
-            });
-            if (!res.ok) {
-                const body = await res.text().catch(() => "");
-                const err = new Error(`HTTP ${res.status}: ${body.slice(0, 220)}`);
-                const retryable = res.status === 429 || res.status >= 500;
-                if (!retryable || attempt === retries) throw err;
-                await sleep((attempt + 1) * 250);
-                continue;
-            }
-            return await res.json() as T;
-        } catch (error) {
-            lastErr = error;
-            if (attempt === retries) break;
-            await sleep((attempt + 1) * 250);
-        }
-    }
-    throw lastErr ?? new Error("Unknown request failure");
-}
-
-function parseStringArray(value: unknown): string[] {
-    if (Array.isArray(value)) return value.map((v) => String(v ?? "").trim()).filter(Boolean);
-    if (typeof value === "string") {
-        try {
-            const parsed = JSON.parse(value);
-            if (Array.isArray(parsed)) return parsed.map((v) => String(v ?? "").trim()).filter(Boolean);
-        } catch {
-            return [];
-        }
-    }
-    return [];
-}
-
-function parseIsoSec(value: unknown): number | null {
-    if (typeof value !== "string") return null;
-    const ms = Date.parse(value);
-    if (!Number.isFinite(ms)) return null;
-    return Math.floor(ms / 1000);
 }
 
 function normalizeEvent(raw: RawEvent): SeriesEvent | null {
@@ -877,18 +835,6 @@ function evaluateRows(rows: DataRow[], probs: number[], fee: FeeLevel, volMedian
         ...summarizePnL(arr),
     }));
     return { eval: evalSummary, regimes, bucketRows };
-}
-
-function mean(values: number[]): number {
-    if (values.length === 0) return 0;
-    return values.reduce((s, v) => s + v, 0) / values.length;
-}
-
-function std(values: number[]): number {
-    if (values.length < 2) return 0;
-    const m = mean(values);
-    const variance = values.reduce((s, v) => s + (v - m) * (v - m), 0) / (values.length - 1);
-    return Math.sqrt(Math.max(0, variance));
 }
 
 function createTrendDayMap(rows: DataRow[]): Map<string, boolean> {

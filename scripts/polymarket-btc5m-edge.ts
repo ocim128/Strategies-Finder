@@ -1,5 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+    fetchJsonWithRetry,
+    parseIsoSec,
+    parseStringArray,
+} from "./lib/polymarket-research";
 
 type CliConfig = {
     seriesId: string;
@@ -250,61 +255,6 @@ function parseArgs(argv: string[]): CliConfig | null {
         entryMinutes,
         outPath,
     };
-}
-
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchJsonWithRetry<T>(url: string, retries = 4): Promise<T> {
-    let lastErr: unknown = null;
-    for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-            const res = await fetch(url, {
-                headers: { Accept: "application/json" },
-            });
-            if (!res.ok) {
-                const body = await res.text().catch(() => "");
-                const err = new Error(`HTTP ${res.status}: ${body.slice(0, 240)}`);
-                const retryable = res.status === 429 || res.status >= 500;
-                if (!retryable || attempt === retries) throw err;
-                await sleep(250 * (attempt + 1));
-                continue;
-            }
-            return await res.json() as T;
-        } catch (error) {
-            lastErr = error;
-            if (attempt === retries) break;
-            await sleep(250 * (attempt + 1));
-        }
-    }
-    throw lastErr ?? new Error("Unknown fetch failure");
-}
-
-function parseStringArray(value: unknown): string[] {
-    if (Array.isArray(value)) {
-        return value.map((v) => String(v ?? "").trim()).filter(Boolean);
-    }
-    if (typeof value === "string") {
-        const trimmed = value.trim();
-        if (!trimmed) return [];
-        try {
-            const parsed = JSON.parse(trimmed);
-            if (Array.isArray(parsed)) {
-                return parsed.map((v) => String(v ?? "").trim()).filter(Boolean);
-            }
-        } catch {
-            return [];
-        }
-    }
-    return [];
-}
-
-function parseIsoSec(value: unknown): number | null {
-    if (typeof value !== "string") return null;
-    const ms = Date.parse(value);
-    if (!Number.isFinite(ms)) return null;
-    return Math.floor(ms / 1000);
 }
 
 function chooseUpIndex(outcomes: string[]): number {

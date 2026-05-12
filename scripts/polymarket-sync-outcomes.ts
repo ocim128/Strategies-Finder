@@ -47,6 +47,11 @@ import {
     resolvePolymarketOutcomeInterval,
     type PolymarketOutcomeInterval,
 } from "../lib/polymarket-outcome-interval";
+import {
+    fetchJsonWithRetry,
+    parseIsoSec,
+    parseStringArray,
+} from "./lib/polymarket-research";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -396,52 +401,7 @@ export function resolveOutcomeSyncTargets(config: Pick<CliConfig, "allSymbols" |
 
 // ─── Fetch helpers ────────────────────────────────────────────────────────
 
-function sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function fetchJsonWithRetry<T>(url: string, retries = 4): Promise<T> {
-    let lastErr: unknown = null;
-    for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-            const res = await fetch(url, { headers: { Accept: "application/json" } });
-            if (!res.ok) {
-                const body = await res.text().catch(() => "");
-                const err = new Error(`HTTP ${res.status}: ${body.slice(0, 240)}`);
-                if ((res.status !== 429 && res.status < 500) || attempt === retries) throw err;
-                await sleep(300 * (attempt + 1));
-                continue;
-            }
-            return await res.json() as T;
-        } catch (error) {
-            lastErr = error;
-            if (attempt === retries) break;
-            await sleep(300 * (attempt + 1));
-        }
-    }
-    throw lastErr ?? new Error("Unknown fetch failure");
-}
-
 // ─── Event parsing ────────────────────────────────────────────────────────
-
-function parseStringArray(value: unknown): string[] {
-    if (Array.isArray(value)) return value.map(v => String(v ?? "").trim()).filter(Boolean);
-    if (typeof value === "string") {
-        const trimmed = value.trim();
-        if (!trimmed) return [];
-        try {
-            const p = JSON.parse(trimmed);
-            if (Array.isArray(p)) return p.map(v => String(v ?? "").trim()).filter(Boolean);
-        } catch { /* ignore */ }
-    }
-    return [];
-}
-
-function parseIsoSec(value: unknown): number | null {
-    if (typeof value !== "string") return null;
-    const ms = Date.parse(value);
-    return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
-}
 
 function chooseUpIndex(outcomes: string[]): number {
     const norm = outcomes.map(v => v.trim().toLowerCase());

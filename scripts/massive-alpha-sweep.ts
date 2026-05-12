@@ -11,12 +11,12 @@ import { parseArgs as parseVerifyArgs, runVerification as runVerifyAlphaReport }
 import type {
     BacktestSettings,
     ExecutionModel,
-    OHLCVData,
     Strategy,
-    Time,
     TradeDirection,
     TradeFilterMode,
 } from "../lib/types/strategies";
+import { toBoolean, toFinite, toPositiveInt } from "./lib/cli-args";
+import { parseOhlcvDataFile } from "./lib/ohlcv-file";
 
 type CliOptions = {
     topN: number;
@@ -47,10 +47,6 @@ type CliOptions = {
     slippageBps: number;
     allowSameBarExit: boolean;
     dataDir: string;
-};
-
-type ParsedDataFile = {
-    bars: OHLCVData[];
 };
 
 type SeedRun = {
@@ -135,25 +131,6 @@ function printUsage(): void {
         "Positional fallback:",
         "  hunt:massive [top] [generations] [seeds]",
     ].join("\n"));
-}
-
-function toFinite(value: string | undefined, fallback: number): number {
-    if (value === undefined) return fallback;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function toPositiveInt(value: string | undefined, fallback: number, min = 1): number {
-    const parsed = Math.floor(toFinite(value, fallback));
-    return Math.max(min, parsed);
-}
-
-function toBoolean(value: string | undefined, fallback: boolean): boolean {
-    if (!value) return fallback;
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") return true;
-    if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") return false;
-    return fallback;
 }
 
 function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
@@ -313,66 +290,6 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
         allowSameBarExit,
         dataDir,
     };
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function parseBar(row: unknown): OHLCVData | null {
-    if (Array.isArray(row)) {
-        if (row.length < 5) return null;
-        const time = Number(row[0]);
-        const open = Number(row[1]);
-        const high = Number(row[2]);
-        const low = Number(row[3]);
-        const close = Number(row[4]);
-        const volume = row.length > 5 ? Number(row[5]) : 0;
-        if (!Number.isFinite(time) || !Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) return null;
-        const unix = time > 1e12 ? Math.floor(time / 1000) : Math.floor(time);
-        return { time: unix as Time, open, high, low, close, volume: Number.isFinite(volume) ? volume : 0 };
-    }
-
-    if (!isObject(row)) return null;
-    const timeRaw = row.time ?? row.t ?? row.timestamp ?? row.date ?? row.datetime ?? row.openTime;
-    const timeNum = Number(timeRaw);
-    const time = Number.isFinite(timeNum)
-        ? (timeNum > 1e12 ? Math.floor(timeNum / 1000) : Math.floor(timeNum))
-        : Math.floor(Date.parse(String(timeRaw ?? "")) / 1000);
-    const open = Number(row.open ?? row.o);
-    const high = Number(row.high ?? row.h);
-    const low = Number(row.low ?? row.l);
-    const close = Number(row.close ?? row.c);
-    const volume = Number(row.volume ?? row.v ?? 0);
-    if (!Number.isFinite(time) || !Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) return null;
-    return { time: time as Time, open, high, low, close, volume: Number.isFinite(volume) ? volume : 0 };
-}
-
-function parseDataFile(raw: unknown): ParsedDataFile {
-    let rows: unknown[] = [];
-    if (Array.isArray(raw)) {
-        rows = raw;
-    } else if (isObject(raw)) {
-        if (Array.isArray(raw.data)) rows = raw.data;
-        else if (Array.isArray(raw.ohlcv)) rows = raw.ohlcv;
-        else if (Array.isArray(raw.candles)) rows = raw.candles;
-    }
-
-    const parsed = rows
-        .map((row) => parseBar(row))
-        .filter((bar): bar is OHLCVData => Boolean(bar))
-        .sort((a, b) => Number(a.time) - Number(b.time));
-
-    const deduped: OHLCVData[] = [];
-    for (const bar of parsed) {
-        const last = deduped[deduped.length - 1];
-        if (last && Number(last.time) === Number(bar.time)) {
-            deduped[deduped.length - 1] = bar;
-        } else {
-            deduped.push(bar);
-        }
-    }
-    return { bars: deduped };
 }
 
 function inferDirection(strategy: Strategy): TradeDirection {
@@ -567,7 +484,7 @@ async function runMassiveSweep(options: CliOptions): Promise<void> {
 
     for (const dataset of market.datasets) {
         const raw = JSON.parse(fs.readFileSync(dataset.filePath, "utf8"));
-        const parsedData = parseDataFile(raw);
+        const parsedData = parseOhlcvDataFile(raw);
         const data = trimToClosedCandles(parsedData.bars, dataset.interval);
         if (data.length < 300) {
             console.warn(`[MassiveSweep] Skipping ${dataset.symbol}: insufficient closed bars (${data.length}).`);

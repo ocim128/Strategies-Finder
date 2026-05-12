@@ -5,17 +5,17 @@ import { fetchBinanceDataWithLimit } from "../lib/dataProviders/binance";
 import { runGeneticOptimization, type GeneticOptimizerConfig } from "../lib/finder/genetic-optimizer";
 import { trimToClosedCandles } from "../lib/closed-candle-utils";
 import { CAPITAL_DEFAULTS, resolveBacktestSettingsFromRaw } from "../lib/backtest-settings-resolver";
-import { parseTimeToUnixSeconds } from "../lib/time-normalization";
 import { strategies } from "../lib/strategies/library";
 import type {
     BacktestSettings,
     ExecutionModel,
     OHLCVData,
     Strategy,
-    Time,
     TradeDirection,
     TradeFilterMode,
 } from "../lib/types/strategies";
+import { toBoolean, toFinite, toPositiveInt } from "./lib/cli-args";
+import { parseOhlcvDataFile, type ParsedOhlcvDataFile } from "./lib/ohlcv-file";
 
 type CliOptions = {
     strategyKey: string;
@@ -41,12 +41,6 @@ type CliOptions = {
     tradeFilterMode: TradeFilterMode;
     slippageBps: number;
     allowSameBarExit: boolean;
-};
-
-type ParsedDataFile = {
-    bars: OHLCVData[];
-    symbol: string | null;
-    interval: string | null;
 };
 
 function printUsage(): void {
@@ -79,25 +73,6 @@ function printUsage(): void {
         "  --slippage-bps <n> (default: 0)",
         "  --allow-same-bar-exit <true|false> (default: true)",
     ].join("\n"));
-}
-
-function toBoolean(value: string | undefined, fallback: boolean): boolean {
-    if (!value) return fallback;
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") return true;
-    if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") return false;
-    return fallback;
-}
-
-function toFinite(value: string | undefined, fallback: number): number {
-    if (value === undefined) return fallback;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function toPositiveInt(value: string | undefined, fallback: number, min = 1): number {
-    const parsed = Math.floor(toFinite(value, fallback));
-    return Math.max(min, parsed);
 }
 
 function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
@@ -247,72 +222,9 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
     };
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function parseBar(row: unknown): OHLCVData | null {
-    if (Array.isArray(row)) {
-        if (row.length < 5) return null;
-        const time = parseTimeToUnixSeconds(row[0]);
-        const open = Number(row[1]);
-        const high = Number(row[2]);
-        const low = Number(row[3]);
-        const close = Number(row[4]);
-        const volume = row.length > 5 ? Number(row[5]) : 0;
-        if (time === null) return null;
-        if (!Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) return null;
-        return { time: time as Time, open, high, low, close, volume: Number.isFinite(volume) ? volume : 0 };
-    }
-
-    if (!isObject(row)) return null;
-    const time = parseTimeToUnixSeconds(row.time ?? row.t ?? row.timestamp ?? row.date ?? row.datetime ?? row.start ?? row.openTime);
-    const open = Number(row.open ?? row.o);
-    const high = Number(row.high ?? row.h);
-    const low = Number(row.low ?? row.l);
-    const close = Number(row.close ?? row.c);
-    const volume = Number(row.volume ?? row.v ?? 0);
-    if (time === null) return null;
-    if (!Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) return null;
-    return { time: time as Time, open, high, low, close, volume: Number.isFinite(volume) ? volume : 0 };
-}
-
-function parseDataFile(raw: unknown): ParsedDataFile {
-    let symbol: string | null = null;
-    let interval: string | null = null;
-    let rows: unknown[] = [];
-
-    if (Array.isArray(raw)) {
-        rows = raw;
-    } else if (isObject(raw)) {
-        if (typeof raw.symbol === "string" && raw.symbol.trim()) symbol = raw.symbol.trim().toUpperCase();
-        if (typeof raw.interval === "string" && raw.interval.trim()) interval = raw.interval.trim();
-        if (Array.isArray(raw.data)) rows = raw.data;
-        else if (Array.isArray(raw.ohlcv)) rows = raw.ohlcv;
-        else if (Array.isArray(raw.candles)) rows = raw.candles;
-    }
-
-    const parsed = rows
-        .map((row) => parseBar(row))
-        .filter((bar): bar is OHLCVData => Boolean(bar))
-        .sort((a, b) => Number(a.time) - Number(b.time));
-
-    const deduped: OHLCVData[] = [];
-    for (const bar of parsed) {
-        const last = deduped[deduped.length - 1];
-        if (last && Number(last.time) === Number(bar.time)) {
-            deduped[deduped.length - 1] = bar;
-        } else {
-            deduped.push(bar);
-        }
-    }
-
-    return { bars: deduped, symbol, interval };
-}
-
-function readDataFile(filePath: string): ParsedDataFile {
+function readDataFile(filePath: string): ParsedOhlcvDataFile {
     const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    return parseDataFile(raw);
+    return parseOhlcvDataFile(raw);
 }
 
 function inferDirection(strategy: Strategy, requested: TradeDirection | undefined): TradeDirection {

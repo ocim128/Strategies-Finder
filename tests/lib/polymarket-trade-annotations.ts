@@ -22,7 +22,6 @@ import type { BacktestResult, OHLCVData, Trade } from "./types/strategies";
 import type {
     BacktestPolymarketTimingProfileEntry,
     PolymarketEvalResult,
-    PolymarketEvalRow,
     PolymarketOutcomeRow,
     BacktestPolymarketTradeSummary,
     PolymarketMarketEntryStatus,
@@ -52,6 +51,7 @@ import {
     resolvePolymarketOutcomeInterval,
     type PolymarketOutcomeInterval,
 } from "./polymarket-outcome-interval";
+import { PolymarketEvalAccumulator } from "./polymarket-eval-accumulator";
 
 function clampProbability(value: number | null): number | null {
     if (value === null || !Number.isFinite(value)) {
@@ -105,26 +105,6 @@ function getTradeMarketSidePrices(
         marketYesPrice: yesPrice,
         marketNoPrice: yesPrice === null ? null : clampProbability(1 - yesPrice),
     };
-}
-
-function getTradePayoutFromPrice(
-    marketEntryPrice: number | null,
-    isWin: boolean
-): number | null {
-    if (marketEntryPrice === null || !Number.isFinite(marketEntryPrice)) {
-        return null;
-    }
-    return isWin ? (1 - marketEntryPrice) : -marketEntryPrice;
-}
-
-function getProfitFactorFromPayoutTotals(grossProfit: number, grossLoss: number): number {
-    if (!Number.isFinite(grossProfit) || grossProfit <= 0) {
-        return 0;
-    }
-    if (!Number.isFinite(grossLoss) || grossLoss <= 0) {
-        return Infinity;
-    }
-    return grossProfit / grossLoss;
 }
 
 type AnnotationContext = {
@@ -828,129 +808,49 @@ export function evaluatePolymarketBacktestTrades(args: {
     const { trades, strategyKey } = args;
     const context = args.context ?? createPolymarketTradeEvaluationContext(args.chartData, args.outcomes);
     const includeRows = args.includeRows !== false;
-    const rows: PolymarketEvalRow[] = [];
-    let wins = 0;
-    let losses = 0;
-    let longPredictions = 0;
-    let shortPredictions = 0;
-    let scoredLongPredictions = 0;
-    let scoredShortPredictions = 0;
-    let longWins = 0;
-    let shortWins = 0;
-    let missingOutcomeRows = 0;
-    let pricedPredictions = 0;
-    let totalEntryPrice = 0;
-    let totalPayout = 0;
-    let grossProfit = 0;
-    let grossLoss = 0;
+    const accumulator = new PolymarketEvalAccumulator({
+        evaluatedEvents: context.evaluatedEvents,
+        predictionsTaken: trades.length,
+        resolvedUpCount: context.resolvedUpCount,
+        includeRows,
+        strategyKey,
+    });
 
     for (const trade of trades) {
-        if (trade.type === "long") {
-            longPredictions++;
-        } else {
-            shortPredictions++;
-        }
+        accumulator.recordPrediction(trade.type);
 
         const entryTs = parseTimeToUnixSeconds(trade.entryTime);
         if (entryTs === null) {
-            missingOutcomeRows++;
+            accumulator.recordMissingOutcome();
             continue;
         }
 
         const outcome = context.outcomeByStartTs.get(entryTs);
         if (!outcome) {
-            missingOutcomeRows++;
+            accumulator.recordMissingOutcome();
             continue;
         }
 
         const prediction = trade.type === "long" ? "yes" : "no";
-        const isWin = prediction === "yes"
-            ? outcome.resolved_outcome_up === 1
-            : outcome.resolved_outcome_up === 0;
         const marketEntryPrice = getTradeMarketEntryPrice(outcome, prediction);
-        const payout = getTradePayoutFromPrice(marketEntryPrice, isWin);
-
-        if (trade.type === "long") {
-            scoredLongPredictions++;
-        } else {
-            scoredShortPredictions++;
-        }
-
-        if (isWin) {
-            wins++;
-            if (trade.type === "long") longWins++;
-            else shortWins++;
-        } else {
-            losses++;
-        }
-
-        if (marketEntryPrice !== null && payout !== null) {
-            pricedPredictions++;
-            totalEntryPrice += marketEntryPrice;
-            totalPayout += payout;
-            if (payout > 0) {
-                grossProfit += payout;
-            } else if (payout < 0) {
-                grossLoss += Math.abs(payout);
-            }
-        }
-
-        if (includeRows) {
-            const executionBarIndex = context.executionBarIndexByTs.get(entryTs);
-            const signalBarIndex = executionBarIndex === undefined ? -1 : Math.max(0, executionBarIndex - 1);
-            const signalTime = signalBarIndex >= 0
-                ? (parseTimeToUnixSeconds(args.chartData[signalBarIndex]?.time) ?? entryTs)
-                : entryTs;
-            rows.push({
-                eventStartTs: outcome.event_start_ts,
-                eventEndTs: outcome.event_end_ts,
-                eventSlug: outcome.event_slug,
-                signalBarIndex,
-                signalTime,
-                prediction,
-                actualOutcomeUp: outcome.resolved_outcome_up,
-                isWin,
-                signalReason: undefined,
-                strategyKey,
-            });
-        }
+        const executionBarIndex = context.executionBarIndexByTs.get(entryTs);
+        const signalBarIndex = executionBarIndex === undefined ? -1 : Math.max(0, executionBarIndex - 1);
+        const signalTime = signalBarIndex >= 0
+            ? (parseTimeToUnixSeconds(args.chartData[signalBarIndex]?.time) ?? entryTs)
+            : entryTs;
+        accumulator.recordScoredPrediction({
+            tradeType: trade.type,
+            eventStartTs: outcome.event_start_ts,
+            eventEndTs: outcome.event_end_ts,
+            eventSlug: outcome.event_slug,
+            actualOutcomeUp: outcome.resolved_outcome_up,
+            marketEntryPrice,
+            signalBarIndex,
+            signalTime,
+        });
     }
 
-    const predictionsTaken = trades.length;
-    const scoredCount = includeRows ? rows.length : wins + losses;
-    const avgEntryPrice = pricedPredictions > 0 ? totalEntryPrice / pricedPredictions : 0;
-    const breakEvenWinRate = avgEntryPrice;
-    const expectancy = pricedPredictions > 0 ? totalPayout / pricedPredictions : 0;
-
-    return {
-        evaluatedEvents: context.evaluatedEvents,
-        predictionsTaken,
-        scoredPredictions: scoredCount,
-        pricedPredictions,
-        profitFactor: getProfitFactorFromPayoutTotals(grossProfit, grossLoss),
-        grossProfit,
-        grossLoss,
-        wins,
-        losses,
-        skips: Math.max(0, context.evaluatedEvents - scoredCount),
-        winRate: scoredCount > 0 ? wins / scoredCount : 0,
-        coverage: context.evaluatedEvents > 0 ? scoredCount / context.evaluatedEvents : 0,
-        longPredictions,
-        shortPredictions,
-        longWins,
-        shortWins,
-        longWinRate: scoredLongPredictions > 0 ? longWins / scoredLongPredictions : 0,
-        shortWinRate: scoredShortPredictions > 0 ? shortWins / scoredShortPredictions : 0,
-        alwaysYesBaselineWinRate: context.evaluatedEvents > 0 ? context.resolvedUpCount / context.evaluatedEvents : 0,
-        alwaysNoBaselineWinRate: context.evaluatedEvents > 0 ? (context.evaluatedEvents - context.resolvedUpCount) / context.evaluatedEvents : 0,
-        avgEntryPrice,
-        breakEvenWinRate,
-        expectancy,
-        edgeVsBreakEven: (scoredCount > 0 ? wins / scoredCount : 0) - breakEvenWinRate,
-        missingOutcomeRows,
-        ignoredSignals: 0,
-        rows,
-    };
+    return accumulator.toResult();
 }
 
 /**
@@ -1007,130 +907,45 @@ export function evaluateMappedPolymarketBacktestTrades1mBridge(args: {
     const filteredForOffset = filterByEntryOffsetLegacy(mappedTrades, selectedOffset);
     const selected = deduplicateByEventLegacy(filteredForOffset);
     const executionBarIndexByTs = context.executionBarIndexByTs;
-    const evaluatedEvents = context.evaluatedEvents;
-    const resolvedUpCount = context.resolvedUpCount;
-
-    // Evaluate selected trades
-    const rows: PolymarketEvalRow[] = [];
-    let wins = 0;
-    let losses = 0;
-    let longPredictions = 0;
-    let shortPredictions = 0;
-    let scoredLongPredictions = 0;
-    let scoredShortPredictions = 0;
-    let longWins = 0;
-    let shortWins = 0;
-    let missingOutcomeRows = 0;
-    let pricedPredictions = 0;
-    let totalEntryPrice = 0;
-    let totalPayout = 0;
-    let grossProfit = 0;
-    let grossLoss = 0;
-
-    for (const mapped of selected) {
-        const { trade, outcome, entryOffset, entryTs } = mapped;
-
-        if (trade.type === "long") {
-            longPredictions++;
-        } else {
-            shortPredictions++;
-        }
-
-        const prediction = trade.type === "long" ? "yes" : "no";
-        const isWin = prediction === "yes"
-            ? outcome.resolved_outcome_up === 1
-            : outcome.resolved_outcome_up === 0;
-        const marketEntryPrice = getTradeMarketEntryPrice(outcome, prediction, entryOffset);
-        const payout = getTradePayoutFromPrice(marketEntryPrice, isWin);
-
-        if (trade.type === "long") {
-            scoredLongPredictions++;
-        } else {
-            scoredShortPredictions++;
-        }
-
-        if (isWin) {
-            wins++;
-            if (trade.type === "long") longWins++;
-            else shortWins++;
-        } else {
-            losses++;
-        }
-
-        if (marketEntryPrice !== null && payout !== null) {
-            pricedPredictions++;
-            totalEntryPrice += marketEntryPrice;
-            totalPayout += payout;
-            if (payout > 0) {
-                grossProfit += payout;
-            } else if (payout < 0) {
-                grossLoss += Math.abs(payout);
-            }
-        }
-
-        if (includeRows) {
-            const executionBarIndex = executionBarIndexByTs.get(entryTs);
-            const signalBarIndex = executionBarIndex === undefined ? -1 : Math.max(0, executionBarIndex - 1);
-            const signalTime = signalBarIndex >= 0
-                ? (parseTimeToUnixSeconds(chartData[signalBarIndex]?.time) ?? entryTs)
-                : entryTs;
-            rows.push({
-                eventStartTs: outcome.event_start_ts,
-                eventEndTs: outcome.event_end_ts,
-                eventSlug: outcome.event_slug,
-                signalBarIndex,
-                signalTime,
-                prediction,
-                actualOutcomeUp: outcome.resolved_outcome_up,
-                isWin,
-                signalReason: undefined,
-                strategyKey,
-                entryOffset,
-            });
-        }
-    }
-
     const predictionsTaken = Math.max(
         0,
         Number.isFinite(args.predictionsTaken) ? Number(args.predictionsTaken) : mappedTrades.length
     );
-    const scoredCount = includeRows ? rows.length : wins + losses;
-    const duplicateTradesIgnored = Math.max(0, filteredForOffset.length - selected.length);
-    const avgEntryPrice = pricedPredictions > 0 ? totalEntryPrice / pricedPredictions : 0;
-    const breakEvenWinRate = avgEntryPrice;
-    const expectancy = pricedPredictions > 0 ? totalPayout / pricedPredictions : 0;
-
-    return {
-        evaluatedEvents,
+    const accumulator = new PolymarketEvalAccumulator({
+        evaluatedEvents: context.evaluatedEvents,
         predictionsTaken,
-        scoredPredictions: scoredCount,
-        pricedPredictions,
-        profitFactor: getProfitFactorFromPayoutTotals(grossProfit, grossLoss),
-        grossProfit,
-        grossLoss,
-        wins,
-        losses,
-        skips: Math.max(0, evaluatedEvents - scoredCount),
-        winRate: scoredCount > 0 ? wins / scoredCount : 0,
-        coverage: evaluatedEvents > 0 ? scoredCount / evaluatedEvents : 0,
-        longPredictions,
-        shortPredictions,
-        longWins,
-        shortWins,
-        longWinRate: scoredLongPredictions > 0 ? longWins / scoredLongPredictions : 0,
-        shortWinRate: scoredShortPredictions > 0 ? shortWins / scoredShortPredictions : 0,
-        alwaysYesBaselineWinRate: evaluatedEvents > 0 ? resolvedUpCount / evaluatedEvents : 0,
-        alwaysNoBaselineWinRate: evaluatedEvents > 0 ? (evaluatedEvents - resolvedUpCount) / evaluatedEvents : 0,
-        avgEntryPrice,
-        breakEvenWinRate,
-        expectancy,
-        edgeVsBreakEven: (scoredCount > 0 ? wins / scoredCount : 0) - breakEvenWinRate,
-        missingOutcomeRows,
-        ignoredSignals: 0,
+        resolvedUpCount: context.resolvedUpCount,
+        includeRows,
+        strategyKey,
         entryOffset: selectedOffset,
-        duplicateTradesIgnored,
-        rows,
-    };
+        duplicateTradesIgnored: Math.max(0, filteredForOffset.length - selected.length),
+    });
+
+    for (const mapped of selected) {
+        const { trade, outcome, entryOffset, entryTs } = mapped;
+        accumulator.recordPrediction(trade.type);
+
+        const prediction = trade.type === "long" ? "yes" : "no";
+        const marketEntryPrice = getTradeMarketEntryPrice(outcome, prediction, entryOffset);
+        const executionBarIndex = executionBarIndexByTs.get(entryTs);
+        const signalBarIndex = executionBarIndex === undefined ? -1 : Math.max(0, executionBarIndex - 1);
+        const signalTime = signalBarIndex >= 0
+            ? (parseTimeToUnixSeconds(chartData[signalBarIndex]?.time) ?? entryTs)
+            : entryTs;
+        accumulator.recordScoredPrediction({
+            tradeType: trade.type,
+            eventStartTs: outcome.event_start_ts,
+            eventEndTs: outcome.event_end_ts,
+            eventSlug: outcome.event_slug,
+            actualOutcomeUp: outcome.resolved_outcome_up,
+            marketEntryPrice,
+            signalBarIndex,
+            signalTime,
+            entryOffset,
+        });
+    }
+
+    return accumulator.toResult();
 }
 
 export function buildPolymarketTimingProfileFor1mBridge(args: {

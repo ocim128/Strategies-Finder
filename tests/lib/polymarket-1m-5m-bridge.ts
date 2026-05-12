@@ -16,11 +16,17 @@
  * - Only one trade per (event, offset) pair scores; duplicates are ignored
  */
 
-import { parseTimeToUnixSeconds } from "./time-normalization";
 import type { Trade } from "./types/strategies";
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 import type { PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 import { isActualPolymarketEntryMinuteMode } from "./polymarket-entry-selection-mode";
+import {
+    buildSuperEventOffsetTradeMap,
+    deduplicateBySuperEvent,
+    filterByEntryOffset as filterSuperEventByEntryOffset,
+    mapTradesToSuperEvents,
+    type MappedPolymarketTrade as SuperMappedPolymarketTrade,
+} from "./polymarket-interval-bridge";
 
 const ONE_MINUTE_SECONDS = 60;
 
@@ -36,6 +42,27 @@ export interface MappedPolymarketTrade {
     entryOffset: number;
     /** Entry timestamp in unix seconds */
     entryTs: number;
+}
+
+function fromSuperMappedTrade(mapped: SuperMappedPolymarketTrade): MappedPolymarketTrade {
+    return {
+        trade: mapped.trade,
+        outcome: mapped.baseOutcome,
+        entryOffset: mapped.entryOffset,
+        entryTs: mapped.entryTs,
+    };
+}
+
+function toSuperMappedTrade(mapped: MappedPolymarketTrade): SuperMappedPolymarketTrade {
+    return {
+        trade: mapped.trade,
+        outcome: mapped.outcome,
+        baseOutcome: mapped.outcome,
+        superEventStartTs: mapped.outcome.event_start_ts,
+        superEventEndTs: mapped.outcome.event_end_ts,
+        entryOffset: mapped.entryOffset,
+        entryTs: mapped.entryTs,
+    };
 }
 
 /**
@@ -103,27 +130,7 @@ export function mapTradesToEvents(
     trades: readonly Trade[],
     outcomes: readonly PolymarketOutcomeRow[]
 ): MappedPolymarketTrade[] {
-    const result: MappedPolymarketTrade[] = [];
-
-    for (const trade of trades) {
-        const entryTs = parseTimeToUnixSeconds(trade.entryTime);
-        if (entryTs === null) continue;
-
-        const outcome = findContainingEvent(entryTs, outcomes);
-        if (!outcome) continue;
-
-        const entryOffset = calculateEntryOffset(entryTs, outcome.event_start_ts);
-        if (entryOffset < 0 || entryOffset > 4) continue;
-
-        result.push({
-            trade,
-            outcome,
-            entryOffset,
-            entryTs,
-        });
-    }
-
-    return result;
+    return mapTradesToSuperEvents(trades, outcomes, "1m").map(fromSuperMappedTrade);
 }
 
 /**
@@ -137,10 +144,10 @@ export function filterByEntryOffset(
     mappedTrades: readonly MappedPolymarketTrade[],
     selectedOffset: number
 ): MappedPolymarketTrade[] {
-    if (selectedOffset < 0 || selectedOffset > 4) {
-        return [];
-    }
-    return mappedTrades.filter((mt) => mt.entryOffset === selectedOffset);
+    return filterSuperEventByEntryOffset(
+        mappedTrades.map(toSuperMappedTrade),
+        selectedOffset
+    ).map(fromSuperMappedTrade);
 }
 
 /**
@@ -155,19 +162,7 @@ export function filterByEntryOffset(
 export function deduplicateByEvent(
     mappedTrades: readonly MappedPolymarketTrade[]
 ): MappedPolymarketTrade[] {
-    const seenEvents = new Set<number>();
-    const result: MappedPolymarketTrade[] = [];
-
-    for (const mt of mappedTrades) {
-        const eventKey = mt.outcome.event_start_ts;
-        if (seenEvents.has(eventKey)) {
-            continue; // Skip duplicate for this event
-        }
-        seenEvents.add(eventKey);
-        result.push(mt);
-    }
-
-    return result;
+    return deduplicateBySuperEvent(mappedTrades.map(toSuperMappedTrade)).map(fromSuperMappedTrade);
 }
 
 /**
@@ -224,21 +219,13 @@ export function buildEventOffsetTradeMap(
     outcomes: readonly PolymarketOutcomeRow[]
 ): Map<number, Map<number, MappedPolymarketTrade>> {
     const result = new Map<number, Map<number, MappedPolymarketTrade>>();
-    const mapped = mapTradesToEvents(trades, outcomes);
-
-    // Group by event, then by offset, keeping first trade per (event, offset)
-    const seen = new Map<string, MappedPolymarketTrade>();
-    for (const mt of mapped) {
-        const key = `${mt.outcome.event_start_ts}-${mt.entryOffset}`;
-        if (!seen.has(key)) {
-            seen.set(key, mt);
-
-            const eventMap = result.get(mt.outcome.event_start_ts) ?? new Map<number, MappedPolymarketTrade>();
-            eventMap.set(mt.entryOffset, mt);
-            result.set(mt.outcome.event_start_ts, eventMap);
-        }
+    const superMap = buildSuperEventOffsetTradeMap(trades, outcomes, "1m");
+    for (const [eventStartTs, offsetMap] of superMap.entries()) {
+        result.set(
+            eventStartTs,
+            new Map([...offsetMap.entries()].map(([offset, mapped]) => [offset, fromSuperMappedTrade(mapped)]))
+        );
     }
-
     return result;
 }
 

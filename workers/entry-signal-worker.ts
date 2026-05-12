@@ -1,7 +1,12 @@
 import { evaluateLatestEntrySignal } from "../lib/signal-entry-evaluator";
 import type { BacktestSettings, OHLCVData } from "../lib/types/strategies";
-import { parseIntervalSeconds } from "../lib/interval-utils";
-import { parseTimeToUnixSeconds } from "../lib/time-normalization";
+import {
+    intervalToSeconds,
+    normalizeOhlcvCandles,
+    resampleCandles,
+    toBinanceInterval,
+    translateIntervalForApiBase,
+} from "../lib/binance-market-data-utils";
 import {
     buildExecutionAwareCandleWindow,
     countClosedCandles,
@@ -18,8 +23,6 @@ import {
 } from "../lib/alert-subscription-utils";
 import { PENDING_ENTRY_SIGNAL_REASON } from "../lib/alert-signal-utils";
 import { resolveEntryRiskTargets } from "../lib/entry-risk-targets";
-
-type CandleTime = OHLCVData["time"];
 
 interface ScheduledController {
     scheduledTime: number | string;
@@ -234,11 +237,6 @@ function parseTelegramFailCount(status: string | null): number {
     if (status.includes('telegram_send_failed')) return 1;
     return 0;
 }
-const BINANCE_INTERVALS = new Set([
-    "1m", "3m", "5m", "15m", "30m",
-    "1h", "2h", "4h", "6h", "8h", "12h",
-    "1d", "3d", "1w", "1M",
-]);
 const DEFAULT_BINANCE_API_BASES = [
     "https://api.binance.us",
     "https://api.mexc.com",
@@ -285,58 +283,6 @@ function computeScheduleAlignmentDelayMs(
     const targetMs = minuteStartMs + clampedSecond * 1000;
     const waitMs = targetMs - nowMs;
     return waitMs > 0 ? waitMs : 0;
-}
-
-function parseNumeric(value: unknown): number | null {
-    if (typeof value === "number") {
-        return Number.isFinite(value) ? value : null;
-    }
-    if (typeof value === "string" && value.trim() !== "") {
-        const n = Number(value);
-        return Number.isFinite(n) ? n : null;
-    }
-    return null;
-}
-
-function parseTimeToSec(value: unknown): number | null {
-    return parseTimeToUnixSeconds(value);
-}
-
-function normalizeCandles(input: StreamSignalRequest["candles"]): OHLCVData[] {
-    const deduped = new Map<number, OHLCVData>();
-
-    for (const row of input) {
-        const timeSec = parseTimeToSec(row.time);
-        const open = parseNumeric(row.open);
-        const high = parseNumeric(row.high);
-        const low = parseNumeric(row.low);
-        const close = parseNumeric(row.close);
-        const volume = parseNumeric(row.volume);
-
-        if (
-            timeSec === null ||
-            open === null ||
-            high === null ||
-            low === null ||
-            close === null ||
-            volume === null
-        ) {
-            continue;
-        }
-
-        deduped.set(timeSec, {
-            time: timeSec as CandleTime,
-            open,
-            high,
-            low,
-            close,
-            volume,
-        });
-    }
-
-    return Array.from(deduped.entries())
-        .sort((a, b) => a[0] - b[0])
-        .map(([, candle]) => candle);
 }
 
 function normalizeText(value: string): string {
@@ -434,142 +380,6 @@ function normalizeBinanceResponseSnippet(value: string): string {
         .slice(0, RESPONSE_SNIPPET_MAX);
 }
 
-function intervalToSeconds(interval: string): number | null {
-    return parseIntervalSeconds(interval);
-}
-
-function isMexcBase(base: string): boolean {
-    try {
-        return new URL(base).hostname.toLowerCase() === "api.mexc.com";
-    } catch {
-        return base.toLowerCase().includes("api.mexc.com");
-    }
-}
-
-function translateIntervalForApiBase(base: string, interval: string): string | null {
-    if (!isMexcBase(base)) return interval;
-
-    // MEXC supports Binance-style klines endpoint with a narrower interval set.
-    const mexcMap: Record<string, string | null> = {
-        "1m": "1m",
-        "3m": null,
-        "5m": "5m",
-        "15m": "15m",
-        "30m": "30m",
-        "1h": "60m",
-        "2h": null,
-        "4h": "4h",
-        "6h": null,
-        "8h": "8h",
-        "12h": null,
-        "1d": "1d",
-        "3d": null,
-        "1w": null,
-        "1M": "1M",
-    };
-
-    return mexcMap[interval] ?? null;
-}
-
-function getResampleBucketStart(timeSec: number, intervalSec: number): number {
-    return Math.floor(timeSec / intervalSec) * intervalSec;
-}
-
-function resampleCandles(
-    candles: OHLCVData[],
-    targetInterval: string,
-    sourceIntervalSec?: number
-): OHLCVData[] {
-    if (candles.length === 0) return [];
-    const targetSec = intervalToSeconds(targetInterval);
-    if (!targetSec || targetSec <= 0) return candles;
-
-    // When only one candle is available the gap heuristic is unreliable.
-    // Fall back to the explicitly supplied source interval, or to targetSec
-    // (which makes targetSec <= sourceSec true and returns candles as-is — safe).
-    const sourceSec = candles.length > 1
-        ? Math.max(1, Number(candles[1].time) - Number(candles[0].time))
-        : (sourceIntervalSec ?? targetSec);
-    if (targetSec <= sourceSec) return candles;
-
-    const out: OHLCVData[] = [];
-    let current: OHLCVData | null = null;
-    let bucketStart = Number.NaN;
-
-    for (const row of candles) {
-        const t = Number(row.time);
-        if (!Number.isFinite(t)) continue;
-        const nextBucket = getResampleBucketStart(t, targetSec);
-        if (!current || nextBucket !== bucketStart) {
-            if (current) out.push(current);
-            current = {
-                time: nextBucket as CandleTime,
-                open: row.open,
-                high: row.high,
-                low: row.low,
-                close: row.close,
-                volume: row.volume,
-            };
-            bucketStart = nextBucket;
-            continue;
-        }
-
-        current.high = Math.max(current.high, row.high);
-        current.low = Math.min(current.low, row.low);
-        current.close = row.close;
-        current.volume += row.volume;
-    }
-
-    if (current) out.push(current);
-    return out;
-}
-
-function toBinanceInterval(interval: string): string | null {
-    const trimmed = interval.trim();
-    if (BINANCE_INTERVALS.has(trimmed)) return trimmed;
-
-    const minutesMatch = /^(\d+)m$/.exec(trimmed);
-    if (minutesMatch) {
-        const mins = Number(minutesMatch[1]);
-        const map: Record<number, string> = {
-            1: "1m",
-            3: "3m",
-            5: "5m",
-            15: "15m",
-            30: "30m",
-            60: "1h",
-            120: "2h",
-            240: "4h",
-            360: "6h",
-            480: "8h",
-            720: "12h",
-            1440: "1d",
-            4320: "3d",
-            10080: "1w",
-        };
-        return map[mins] ?? null;
-    }
-
-    const hoursMatch = /^(\d+)h$/.exec(trimmed);
-    if (hoursMatch) {
-        const hours = Number(hoursMatch[1]);
-        const map: Record<number, string> = {
-            1: "1h",
-            2: "2h",
-            4: "4h",
-            6: "6h",
-            8: "8h",
-            12: "12h",
-            24: "1d",
-            72: "3d",
-            168: "1w",
-        };
-        return map[hours] ?? null;
-    }
-
-    return null;
-}
-
 async function fetchBinanceCandles(
     symbol: string,
     interval: string,
@@ -647,7 +457,7 @@ async function fetchBinanceCandles(
             }
 
             const sourceCandles = collectedRows.map((kline) => ({
-                time: Math.floor(kline[0] / 1000) as CandleTime,
+                time: Math.floor(kline[0] / 1000) as OHLCVData["time"],
                 open: Number(kline[1]),
                 high: Number(kline[2]),
                 low: Number(kline[3]),
@@ -1016,7 +826,7 @@ async function handleStreamSignal(request: Request, env: Env): Promise<Response>
         );
     }
 
-    const normalizedCandles = normalizeCandles(payload.candles);
+    const normalizedCandles = normalizeOhlcvCandles(payload.candles);
     const streamId = payload.streamId
         ? normalizeText(payload.streamId)
         : buildDefaultStreamId(payload.symbol.toUpperCase(), payload.interval, payload.strategyKey, payload.configName);

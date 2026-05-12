@@ -8,7 +8,8 @@ import { runGeneticOptimization, type GeneticOptimizerConfig } from "../lib/find
 import { trimToClosedCandles } from "../lib/closed-candle-utils";
 import { strategies } from "../lib/strategies/library";
 import { parseArgs as parseVerifyArgs, runVerification as runVerifyAlphaReport } from "./verify-alpha";
-import type { BacktestSettings, ExecutionModel, OHLCVData, Strategy, Time, TradeDirection, TradeFilterMode } from "../lib/types/strategies";
+import { parseOhlcvBars } from "./lib/ohlcv-file";
+import type { BacktestSettings, ExecutionModel, OHLCVData, Strategy, TradeDirection, TradeFilterMode } from "../lib/types/strategies";
 
 type Cli = {
   symbol: string; interval: string; bars: number; freshnessHours: number;
@@ -136,32 +137,6 @@ function parse(argv: string[]): Cli & { help?: boolean } {
   };
 }
 
-function isObj(v: unknown): v is Record<string, unknown> { return typeof v === "object" && v !== null && !Array.isArray(v); }
-function parseBar(row: unknown): OHLCVData | null {
-  if (Array.isArray(row)) {
-    if (row.length < 5) return null;
-    const t = Number(row[0]), o = Number(row[1]), h = Number(row[2]), l = Number(row[3]), c = Number(row[4]), vol = row.length > 5 ? Number(row[5]) : 0;
-    if (![t,o,h,l,c].every(Number.isFinite)) return null;
-    const unix = t > 1e12 ? Math.floor(t / 1000) : Math.floor(t);
-    return { time: unix as Time, open: o, high: h, low: l, close: c, volume: Number.isFinite(vol) ? vol : 0 };
-  }
-  if (!isObj(row)) return null;
-  const rawTime = row.time ?? row.t ?? row.timestamp ?? row.date ?? row.datetime ?? row.openTime;
-  const tn = Number(rawTime);
-  const t = Number.isFinite(tn) ? (tn > 1e12 ? Math.floor(tn / 1000) : Math.floor(tn)) : Math.floor(Date.parse(String(rawTime ?? "")) / 1000);
-  const o = Number(row.open ?? row.o), h = Number(row.high ?? row.h), l = Number(row.low ?? row.l), c = Number(row.close ?? row.c), vol = Number(row.volume ?? row.v ?? 0);
-  if (![t,o,h,l,c].every(Number.isFinite)) return null;
-  return { time: t as Time, open: o, high: h, low: l, close: c, volume: Number.isFinite(vol) ? vol : 0 };
-}
-
-function parseBars(raw: unknown): OHLCVData[] {
-  const rows = Array.isArray(raw) ? raw : (isObj(raw) ? (Array.isArray(raw.data) ? raw.data : Array.isArray(raw.ohlcv) ? raw.ohlcv : Array.isArray(raw.candles) ? raw.candles : []) : []);
-  const sorted = rows.map(parseBar).filter((b): b is OHLCVData => Boolean(b)).sort((a,b) => Number(a.time) - Number(b.time));
-  const out: OHLCVData[] = [];
-  for (const b of sorted) { const last = out[out.length - 1]; if (last && Number(last.time) === Number(b.time)) out[out.length - 1] = b; else out.push(b); }
-  return out;
-}
-
 function freshnessMs(filePath: string): number | null {
   if (!fs.existsSync(filePath)) return null;
   try {
@@ -188,7 +163,7 @@ async function loadData(cfg: Cli): Promise<{ data: OHLCVData[]; filePath: string
   const filePath = path.resolve(cfg.dataDir, `${cfg.symbol}-${cfg.interval}.json`);
   const age = freshnessMs(filePath);
   if (age !== null && age < cfg.freshnessHours * 60 * 60 * 1000) {
-    const rows = parseBars(JSON.parse(fs.readFileSync(filePath, "utf8")));
+    const rows = parseOhlcvBars(JSON.parse(fs.readFileSync(filePath, "utf8")));
     if (rows.length >= cfg.bars) return { data: rows.slice(rows.length - cfg.bars), filePath, source: "cached" };
   }
   const fetched = await fetchBinanceDataWithLimit(cfg.symbol, cfg.interval, cfg.bars, { requestDelayMs: 30, maxRequests: Math.ceil(cfg.bars / 1000) + 2 });

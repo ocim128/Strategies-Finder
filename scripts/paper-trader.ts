@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { toBoolean } from "./lib/cli-args";
 
 type SignalSide = "buy" | "sell";
 
@@ -137,14 +138,6 @@ function wait(ms: number): Promise<void> {
 function toNumberOr(value: unknown, fallback = 0): number {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function toBoolean(value: string | undefined, fallback: boolean): boolean {
-    if (!value) return fallback;
-    const text = value.trim().toLowerCase();
-    if (text === "true" || text === "1" || text === "yes" || text === "on") return true;
-    if (text === "false" || text === "0" || text === "no" || text === "off") return false;
-    return fallback;
 }
 
 function printUsage(): void {

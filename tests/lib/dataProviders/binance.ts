@@ -7,6 +7,7 @@ import { debugLogger } from "../debug-logger";
 import { DATA_PROVIDER_TOTAL_LIMIT } from "../data/constants";
 import { BinanceKline, HistoricalFetchOptions } from '../types/index';
 import { getIntervalSeconds, wait } from "./utils";
+import { BINANCE_INTERVALS } from "../binance-market-data-utils";
 import {
     findBestDivisibleInterval,
     formatProviderError,
@@ -24,11 +25,6 @@ const BINANCE_WS_BASES: Record<BinanceMarketType, string> = {
     spot: "wss://stream.binance.com:9443",
     futures: "wss://fstream.binance.com",
 };
-const BINANCE_INTERVALS = new Set([
-    '1m', '3m', '5m', '15m', '30m',
-    '1h', '2h', '4h', '6h', '8h', '12h',
-    '1d', '3d', '1w', '1M'
-]);
 
 export function isBinanceInterval(interval: string): boolean {
     return BINANCE_INTERVALS.has(interval);

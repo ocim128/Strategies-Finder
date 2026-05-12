@@ -1,5 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+    fetchJsonWithRetry,
+    parseIsoSec,
+} from "./lib/polymarket-research";
 
 type CliConfig = {
     seriesSlug: string;
@@ -250,13 +254,6 @@ function parseArgs(argv: string[]): CliConfig | null {
     };
 }
 
-function parseIsoSec(value: unknown): number | null {
-    if (typeof value !== "string") return null;
-    const ms = Date.parse(value);
-    if (!Number.isFinite(ms)) return null;
-    return Math.floor(ms / 1000);
-}
-
 function parseSeries(raw: RawGammaSeries): SeriesInfo | null {
     const id = String(raw.id ?? "").trim();
     const slug = String(raw.slug ?? "").trim();
@@ -309,33 +306,6 @@ function parseTrade(raw: RawTrade): { size: number; price: number; timestamp: nu
     if (!Number.isFinite(price) || price < 0 || price > 1) return null;
     if (!Number.isFinite(timestamp) || timestamp <= 0) return null;
     return { size, price, timestamp };
-}
-
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchJsonWithRetry<T>(url: string, retries = 4): Promise<T> {
-    let lastErr: unknown = null;
-    for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-            const res = await fetch(url, { headers: { Accept: "application/json" } });
-            if (!res.ok) {
-                const body = await res.text().catch(() => "");
-                const err = new Error(`HTTP ${res.status}: ${body.slice(0, 220)}`);
-                const retryable = res.status === 429 || res.status >= 500;
-                if (!retryable || attempt === retries) throw err;
-                await sleep((attempt + 1) * 250);
-                continue;
-            }
-            return await res.json() as T;
-        } catch (error) {
-            lastErr = error;
-            if (attempt === retries) break;
-            await sleep((attempt + 1) * 250);
-        }
-    }
-    throw lastErr ?? new Error("Unknown request failure");
 }
 
 async function runPool<T, R>(
