@@ -30,6 +30,7 @@ import { sliceOhlcvByBlock } from "./block-selector";
 import { strategyPanelController } from "./strategy-panel-controller";
 import { setCurrentInterval, setCurrentStrategyKey } from "./state-actions";
 import { createTaskYielder } from "./task-yield";
+import { resolveCrossSymbolSecondaryForStrategy } from "./cross-symbol-runtime";
 import {
 	createFinderManagerDom,
 	type FinderManagerDom,
@@ -267,6 +268,16 @@ export class FinderManager {
 	private async loadUniverseDataset(symbol: string, interval: string, signal?: AbortSignal) {
 		await this.prepareUniverseSymbolProvider(symbol);
 		return dataManager.fetchDataDetached(symbol, interval, signal);
+	}
+
+	private async prepareUniverseCrossSymbolProvider(
+		selectedStrategy: FinderSelectedStrategy,
+		settings: ReturnType<typeof backtestService.getBacktestSettings>
+	): Promise<void> {
+		const secondarySymbol = resolveCrossSymbolSecondaryForStrategy(selectedStrategy.strategy, settings);
+		if (secondarySymbol) {
+			await this.prepareUniverseSymbolProvider(secondarySymbol);
+		}
 	}
 
 	private async populateUniverseWithLocalDailySeeds(): Promise<void> {
@@ -1072,6 +1083,7 @@ export class FinderManager {
 
 		for (let strategyIndex = 0; strategyIndex < selectedStrategies.length; strategyIndex += 1) {
 			const selectedStrategy = selectedStrategies[strategyIndex]!;
+			await this.prepareUniverseCrossSymbolProvider(selectedStrategy, settings);
 			const output = await runFinderUniverseExecution(
 				{
 					interval: state.currentInterval,
@@ -1080,6 +1092,7 @@ export class FinderManager {
 					capitalSettings,
 					selectedStrategy,
 					loadDataset: (symbol, interval, signal) => this.loadUniverseDataset(symbol, interval, signal),
+					getProvider: (symbol) => dataManager.getProvider(symbol),
 					generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),
 				},
 				{

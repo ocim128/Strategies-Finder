@@ -286,6 +286,8 @@ class SettingsManager {
             name,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
+            symbol: state.currentSymbol,
+            interval: state.currentInterval,
             strategyKey: state.currentStrategyKey,
             strategyParams,
             backtestSettings: this.getBacktestSettings(),

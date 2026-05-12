@@ -149,6 +149,8 @@ export interface StrategyConfig {
     name: string;
     createdAt: string;
     updatedAt: string;
+    symbol?: string;
+    interval?: string;
     strategyKey: string;
     strategyParams: Record<string, number>;
     backtestSettings: BacktestSettingsData;
@@ -263,6 +265,10 @@ function toRecord(value: unknown): Record<string, unknown> | null {
 
 function readString(value: unknown, fallback: string): string {
     return typeof value === 'string' && value.trim() ? value : fallback;
+}
+
+function readOptionalString(value: unknown): string | undefined {
+    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function readBoolean(value: unknown, fallback: boolean): boolean {
@@ -460,6 +466,8 @@ export function normalizeStoredStrategyConfig(raw: unknown): StrategyConfig | nu
         name,
         createdAt: readString(source.createdAt, nowIso),
         updatedAt: readString(source.updatedAt, readString(source.createdAt, nowIso)),
+        symbol: readOptionalString(source.symbol)?.toUpperCase(),
+        interval: readOptionalString(source.interval),
         strategyKey: readString(source.strategyKey, DEFAULT_BUILT_IN_STRATEGY_KEY),
         strategyParams: normalizeStrategyParams(source.strategyParams),
         backtestSettings: normalizeStoredBacktestSettings(source.backtestSettings),

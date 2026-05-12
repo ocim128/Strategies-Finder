@@ -1,4 +1,5 @@
 import { executeBacktest } from "../backtest-executor";
+import type { CrossSymbolDataFetcher } from "../cross-symbol-runtime";
 import { debugLogger } from "../debug-logger";
 import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import type { CapitalSettings } from "../types/backtest";
@@ -42,6 +43,7 @@ export interface FinderUniverseRunInput {
     capitalSettings: CapitalSettings;
     selectedStrategy: FinderSelectedStrategy;
     loadDataset: (symbol: string, interval: string, signal?: AbortSignal) => Promise<OHLCVData[]>;
+    getProvider?: (symbol: string) => string;
     generateParamSets: (defaultParams: Record<string, number>, options: FinderOptions) => Record<string, number>[];
 }
 
@@ -246,9 +248,6 @@ function assertUniverseRunSupported(input: FinderUniverseRunInput): FinderUniver
     if (input.settings.strategyTimeframeEnabled) {
         throw new Error("Symbol Universe mode does not support strategy timeframe resampling in v1.");
     }
-    if (input.selectedStrategy.strategy.crossSymbolConfig) {
-        throw new Error(`Strategy "${input.selectedStrategy.name}" is cross-symbol and is not supported in Symbol Universe mode.`);
-    }
     if (universe.symbols.length === 0) {
         throw new Error("Add at least one symbol for Symbol Universe mode.");
     }
@@ -272,16 +271,26 @@ export async function runFinderUniverseExecution(
     const loadCache = new Map<string, Promise<OHLCVData[]>>();
     const datasetAbort = new AbortController();
 
-    const getOrLoadDataset = (symbol: string): Promise<OHLCVData[]> => {
-        const key = `${symbol}|${input.interval}`;
+    const getOrLoadDataset = (symbol: string, interval = input.interval): Promise<OHLCVData[]> => {
+        const key = `${symbol}|${interval}`;
         const cached = loadCache.get(key);
         if (cached) {
             return cached;
         }
-        const promise = input.loadDataset(symbol, input.interval, datasetAbort.signal);
+        const promise = input.loadDataset(symbol, interval, datasetAbort.signal);
         loadCache.set(key, promise);
         return promise;
     };
+    let crossSymbolDataFetcher: CrossSymbolDataFetcher | undefined;
+    if (input.selectedStrategy.strategy.crossSymbolConfig) {
+        if (!input.getProvider) {
+            throw new Error("Symbol Universe cross-symbol runs require a provider lookup.");
+        }
+        crossSymbolDataFetcher = {
+            getProvider: input.getProvider,
+            fetchDataDetached: (symbol, interval) => getOrLoadDataset(symbol, interval),
+        };
+    }
 
     callbacks.setProgress(0, "Preparing symbol universe...");
     callbacks.setStatus("Loading universe symbols...");
@@ -297,7 +306,7 @@ export async function runFinderUniverseExecution(
         callbacks.setStatus(`Loading ${symbol} ${input.interval}...`);
 
         try {
-            const data = await getOrLoadDataset(symbol);
+            const data = await getOrLoadDataset(symbol, input.interval);
             if (!Array.isArray(data) || data.length === 0) {
                 loadFailures.set(symbol, buildLoadFailedResult(symbol, "No candles returned."));
                 continue;
@@ -415,6 +424,7 @@ export async function runFinderUniverseExecution(
                     strategyParams: params,
                     backtestSettings,
                     capitalSettings: input.capitalSettings,
+                    dataFetcher: crossSymbolDataFetcher,
                     context: {
                         blockRange: null,
                         annotatePolymarket: false,

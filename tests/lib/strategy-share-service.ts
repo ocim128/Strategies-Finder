@@ -120,6 +120,33 @@ function parseToken(token: string): StrategyConfig | null {
     }
 }
 
+function normalizeSharedSymbol(value: string | null): string | undefined {
+    const symbol = value?.trim().toUpperCase();
+    return symbol || undefined;
+}
+
+function normalizeSharedInterval(value: string | null): string | undefined {
+    const interval = value?.trim().toLowerCase();
+    if (!interval) return undefined;
+    if (/^\d+$/.test(interval)) {
+        return `${interval}m`;
+    }
+    if (/^\d+(m|h|d|w)$/.test(interval)) {
+        return interval;
+    }
+    return undefined;
+}
+
+function applyUrlChartContext(config: StrategyConfig, url: URL): StrategyConfig {
+    const symbol = normalizeSharedSymbol(config.symbol ?? null) ?? normalizeSharedSymbol(url.searchParams.get("symbol"));
+    const interval = normalizeSharedInterval(config.interval ?? null) ?? normalizeSharedInterval(url.searchParams.get("interval"));
+    return {
+        ...config,
+        ...(symbol ? { symbol } : {}),
+        ...(interval ? { interval } : {}),
+    };
+}
+
 export function createStrategyShareLink(config: StrategyConfig, sourceUrl?: string): string {
     const payload = {
         v: SHARE_VERSION,
@@ -146,7 +173,8 @@ export function parseStrategyConfigFromSharedInput(input: string): StrategyConfi
     try {
         const asUrl = new URL(trimmed);
         const token = asUrl.searchParams.get(SHARE_QUERY_PARAM);
-        return token ? parseToken(token) : null;
+        const config = token ? parseToken(token) : null;
+        return config ? applyUrlChartContext(config, asUrl) : null;
     } catch {
         return parseToken(trimmed);
     }
@@ -156,6 +184,7 @@ export function parseStrategyConfigFromCurrentUrl(): StrategyConfig | null {
     const url = new URL(window.location.href);
     const token = url.searchParams.get(SHARE_QUERY_PARAM);
     if (!token) return null;
-    return parseToken(token);
+    const config = parseToken(token);
+    return config ? applyUrlChartContext(config, url) : null;
 }
 

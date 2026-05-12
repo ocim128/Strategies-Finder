@@ -172,4 +172,84 @@ describe("Finder universe runner", () => {
         expect(output.results).to.have.length(1);
         expect(output.results[0]!.params.threshold).to.equal(1);
     });
+
+    it("runs cross-symbol strategies in Symbol Universe mode", async () => {
+        const datasets = new Map<string, OHLCVData[]>([
+            ["AAA", makeCandles([100, 103, 106, 109, 112])],
+            ["BBB", makeCandles([80, 82, 84, 86, 88])],
+            ["HEDGE", makeCandles([50, 51, 52, 53, 54])],
+        ]);
+        const seenPrimarySymbols = new Set<string>();
+        const seenSecondarySymbols = new Set<string>();
+        const crossSymbolStrategy: Strategy = {
+            name: "Universe Cross Symbol Test",
+            description: "Uses secondary context so the universe runner must provide it.",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            crossSymbolConfig: {
+                defaultSymbol: "HEDGE",
+                minBars: 3,
+            },
+            execute(data, _params, context) {
+                if (!context?.crossSymbol || context.crossSymbol.secondaryData.length !== data.length) {
+                    return [];
+                }
+                seenPrimarySymbols.add(context.crossSymbol.primarySymbol);
+                seenSecondarySymbols.add(context.crossSymbol.secondarySymbol);
+                return [
+                    { time: data[0]!.time, type: "buy", price: data[0]!.close },
+                    { time: data[data.length - 1]!.time, type: "sell", price: data[data.length - 1]!.close },
+                ];
+            },
+        };
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 3,
+            rangePercent: 35,
+            maxRuns: 20,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols: ["AAA", "BBB"],
+                minActiveSymbols: 2,
+                minTotalTrades: 2,
+                minProfitableActiveRatio: 1,
+                sortPriority: ["profitableActiveRatio", "medianExpectancy", "worstNetProfit"],
+            },
+        };
+
+        const output = await runFinderUniverseExecution(
+            {
+                interval: "5m",
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategy: {
+                    key: "universe_cross_symbol_test",
+                    name: crossSymbolStrategy.name,
+                    strategy: crossSymbolStrategy,
+                },
+                loadDataset: async (symbol) => datasets.get(symbol) ?? [],
+                getProvider: () => "test",
+                generateParamSets: () => [{ threshold: 1 }],
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                yieldControl: async () => {},
+                isCancelled: () => false,
+            }
+        );
+
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]!.activeSymbols).to.equal(2);
+        expect(output.results[0]!.profitableSymbols).to.equal(2);
+        expect(seenPrimarySymbols).to.deep.equal(new Set(["AAA", "BBB"]));
+        expect(seenSecondarySymbols).to.deep.equal(new Set(["HEDGE"]));
+    });
 });

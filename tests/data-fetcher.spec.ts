@@ -9,10 +9,10 @@ function makeCandles(count: number): OHLCVData[] {
     return Array.from({ length: count }, (_, index) => {
         const base = index + 1;
         return {
-            time: base,
+            time: base * 60,
             open: base,
             high: base + 1,
-            low: base - 1,
+            low: Math.max(0.1, base - 0.5),
             close: base + 0.5,
             volume: 1000 + index,
         };
@@ -25,7 +25,7 @@ function createFetcher(options: {
     getLookbackBars: () => number | null;
 }): DataFetcher {
     const providerRouter = {
-        getProvider: () => "spot",
+        getProvider: () => "binance",
         getStorageSymbol: (symbol: string) => symbol,
         getProviderStorageLabel: () => "Binance Spot",
     };
@@ -76,5 +76,25 @@ describe("DataFetcher chart lookback", () => {
         const trimmed = await fetcher.fetchData("ETHUSDT", "1m");
         assert.equal(trimmed.length, 300);
         assert.deepEqual(trimmed, candles.slice(-300));
+    });
+
+    it("sanitizes unaligned Binance candles from the in-memory cache", async () => {
+        const cache = new DataCache();
+        const candles: OHLCVData[] = [
+            { time: 0, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 1_800, open: 101, high: 102, low: 100, close: 101, volume: 1000 },
+            { time: 3_600, open: 102, high: 103, low: 101, close: 102, volume: 1000 },
+            { time: 5_400, open: 103, high: 104, low: 102, close: 103, volume: 1000 },
+            { time: 7_200, open: 104, high: 105, low: 103, close: 104, volume: 1000 },
+        ];
+        cache.set("ETHUSDT::1h", candles, "network");
+
+        const fetcher = createFetcher({
+            cache,
+            getLookbackBars: () => null,
+        });
+
+        const data = await fetcher.fetchData("ETHUSDT", "1h");
+        assert.deepEqual(data.map((candle) => candle.time), [0, 3_600, 7_200]);
     });
 });

@@ -1,6 +1,6 @@
 # Cross-Symbol Support
 
-This document describes the current cross-symbol contract in the repo as of April 12, 2026.
+This document describes the current cross-symbol contract in the repo as of May 12, 2026.
 
 Use it when you need to change cross-symbol behavior, add support to a new surface, or debug a run that depends on a secondary symbol.
 
@@ -111,6 +111,7 @@ Do not assume the first resolved pair from `cross-symbol-runtime.ts` is the fina
 | HTTP backtest endpoint | Supported | Request must include `crossSymbol.secondarySymbol` and `crossSymbol.dataset` |
 | Preview Endpoint / Copy Endpoint | Supported | Secondary dataset is resolved from the latest UI snapshot and attached automatically |
 | Finder single/random | Supported | `lib/finder/finder-runner-single.ts` resolves once per strategy key |
+| Finder Symbol Universe | Supported | `lib/finder/finder-runner-universe.ts` passes the universe data loader into the shared executor |
 | Finder genetic | Supported | `lib/finder/finder-runner-genetic.ts` resolves once per selected strategy |
 | Finder Polymarket mode | Supported | `lib/finder/finder-runner-polymarket.ts` resolves once per base strategy plan |
 | Walk Forward | Supported | `lib/walk-forward-service.ts` resolves once per run and threads the context through WFA helpers |

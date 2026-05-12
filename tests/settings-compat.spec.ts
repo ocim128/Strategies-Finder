@@ -635,6 +635,8 @@ describe('Backtest settings compatibility', () => {
     it('normalizes malformed saved strategy configs and filters unusable entries', () => {
         const normalized = normalizeStoredStrategyConfig({
             name: 'My Config',
+            symbol: 'btcusdt',
+            interval: '1h',
             strategyKey: '',
             strategyParams: {
                 foo: '42',
@@ -649,6 +651,8 @@ describe('Backtest settings compatibility', () => {
         });
 
         expect(normalized).to.not.equal(null);
+        expect(normalized?.symbol).to.equal('BTCUSDT');
+        expect(normalized?.interval).to.equal('1h');
         expect(normalized?.strategyKey).to.equal(DEFAULT_BUILT_IN_STRATEGY_KEY);
         expect(normalized?.strategyParams).to.deep.equal({ foo: 42 });
         expect(normalized?.backtestSettings.initialCapital).to.equal(25000);

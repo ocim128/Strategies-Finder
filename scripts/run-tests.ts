@@ -74,6 +74,7 @@ const TEST_FILES = [
     "tests/finder-cache-decision.spec.ts",
     "tests/finder-engine.spec.ts",
     "tests/finder-manager-logic.spec.ts",
+    "tests/finder-universe-runner.spec.ts",
     "tests/hunt-model.spec.ts",
     "tests/hunt-results.spec.ts",
     "tests/backtest-result-analysis.spec.ts",

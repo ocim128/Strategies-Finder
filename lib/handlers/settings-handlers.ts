@@ -29,6 +29,42 @@ function notifyStrategyConfigsChanged(): void {
     window.dispatchEvent(new Event(STRATEGY_CONFIGS_CHANGED_EVENT));
 }
 
+function normalizeConfigSymbol(value: string | undefined): string | null {
+    const symbol = value?.trim().toUpperCase();
+    return symbol ? symbol : null;
+}
+
+function normalizeConfigInterval(value: string | undefined): string | null {
+    const interval = value?.trim().toLowerCase();
+    if (!interval) return null;
+    if (/^\d+$/.test(interval)) {
+        return `${interval}m`;
+    }
+    if (/^\d+(m|h|d|w)$/.test(interval)) {
+        return interval;
+    }
+    return null;
+}
+
+function getStrategyConfigChartContext(config: StrategyConfig): { symbol: string | null; interval: string | null } {
+    return {
+        symbol: normalizeConfigSymbol(config.symbol),
+        interval: normalizeConfigInterval(config.interval),
+    };
+}
+
+async function applyUserStrategyConfig(config: StrategyConfig): Promise<void> {
+    await settingsManager.applyStrategyConfig(config);
+
+    const context = getStrategyConfigChartContext(config);
+    if (context.symbol && context.symbol !== state.currentSymbol) {
+        setCurrentSymbol(context.symbol);
+    }
+    if (context.interval && context.interval !== state.currentInterval) {
+        setCurrentInterval(context.interval);
+    }
+}
+
 export function setupSettingsHandlers() {
     const dom = createSettingsHandlersDom();
     // Reset to Default button
@@ -103,7 +139,7 @@ export function setupSettingsHandlers() {
             }
             const config = settingsManager.loadStrategyConfig(name);
             if (config) {
-                await settingsManager.applyStrategyConfig(config);
+                await applyUserStrategyConfig(config);
                 uiManager.showToast(`Configuration "${name}" loaded`, 'success');
                 debugLogger.event('ui.config.loaded', { name });
             }
@@ -157,7 +193,7 @@ export function setupSettingsHandlers() {
         }
 
         const persisted = settingsManager.upsertStrategyConfig(parsed);
-        void settingsManager.applyStrategyConfig(persisted);
+        void applyUserStrategyConfig(persisted);
         updateConfigDropdown(persisted.name);
         notifyStrategyConfigsChanged();
         debugLogger.event('ui.config.shared.loaded', { name: persisted.name, source });
@@ -184,8 +220,9 @@ export function setupSettingsHandlers() {
 
             const baseLink = createStrategyShareLink(config);
             const withChartContext = new URL(baseLink);
-            withChartContext.searchParams.set('symbol', state.currentSymbol);
-            withChartContext.searchParams.set('interval', state.currentInterval);
+            const context = getStrategyConfigChartContext(config);
+            withChartContext.searchParams.set('symbol', context.symbol ?? state.currentSymbol);
+            withChartContext.searchParams.set('interval', context.interval ?? state.currentInterval);
             setShareLinkOutput(withChartContext.toString());
             uiManager.showToast('Share link generated', 'success');
             debugLogger.event('ui.config.shared.link_generated', { name });

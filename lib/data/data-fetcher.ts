@@ -79,15 +79,29 @@ export class DataFetcher {
 
     async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
         const provider = this.providerRouter.getProvider(symbol);
-        const cacheKey = this.buildCacheKey(symbol, resolveStorageInterval(interval), provider);
+        const storageInterval = resolveStorageInterval(interval);
+        const cacheKey = this.buildCacheKey(symbol, storageInterval, provider);
         const lookbackBars = this.getChartLookbackBars();
-        const shouldRefreshHotCache = provider === 'bybit-tradfi' && resolveStorageInterval(interval) === '1d';
+        const shouldRefreshHotCache = provider === 'bybit-tradfi' && storageInterval === '1d';
 
         const imported = this.getImportedDataByKey().get(cacheKey);
-        if (imported) return sliceCandlesToLookback(imported, lookbackBars);
+        if (imported) {
+            const candles = this.sanitizeFastPathCandles(provider, symbol, storageInterval, imported, 'imported');
+            if (candles.length > 0) {
+                return sliceCandlesToLookback(candles, lookbackBars);
+            }
+        }
 
         const cached = this.cache.get(cacheKey);
-        if (cached && !shouldRefreshHotCache) return sliceCandlesToLookback(cached.candles, lookbackBars);
+        if (cached && !shouldRefreshHotCache) {
+            const candles = this.sanitizeFastPathCandles(provider, symbol, storageInterval, cached.candles, String(cached.source ?? 'cache'));
+            if (candles.length !== cached.candles.length) {
+                this.cache.set(cacheKey, candles, cached.source);
+            }
+            if (candles.length > 0) {
+                return sliceCandlesToLookback(candles, lookbackBars);
+            }
+        }
 
         const chain = await this.resolveProviderFallbackChain(symbol, interval, signal);
         return this.fetchDataFromProviderChain(chain, symbol, interval, signal);
@@ -134,15 +148,25 @@ export class DataFetcher {
             : 1000;
         const resampleOptions = this.getResampleOptions(interval);
 
-        const cacheKey = this.buildCacheKey(symbol, resolveStorageInterval(interval), provider);
+        const storageInterval = resolveStorageInterval(interval);
+        const cacheKey = this.buildCacheKey(symbol, storageInterval, provider);
         const imported = this.getImportedDataByKey().get(cacheKey);
         if (imported && imported.length > 0) {
-            return { data: trimToLastCandles(imported, maxBars), source: 'local' };
+            const data = this.sanitizeFastPathCandles(provider, symbol, storageInterval, imported, 'imported');
+            if (data.length > 0) {
+                return { data: trimToLastCandles(data, maxBars), source: 'local' };
+            }
         }
 
         const cached = this.cache.get(cacheKey);
         if (cached) {
-            return { data: trimToLastCandles(cached.candles, maxBars), source: 'local' };
+            const data = this.sanitizeFastPathCandles(provider, symbol, storageInterval, cached.candles, String(cached.source ?? 'cache'));
+            if (data.length !== cached.candles.length) {
+                this.cache.set(cacheKey, data, cached.source);
+            }
+            if (data.length > 0) {
+                return { data: trimToLastCandles(data, maxBars), source: 'local' };
+            }
         }
 
         if (!isBinanceDataProvider(provider)) {
@@ -194,16 +218,26 @@ export class DataFetcher {
         }
 
         const provider = this.providerRouter.getProvider(symbol);
-        const cacheKey = this.buildCacheKey(symbol, resolveStorageInterval(interval), provider);
+        const storageInterval = resolveStorageInterval(interval);
+        const cacheKey = this.buildCacheKey(symbol, storageInterval, provider);
 
         const imported = this.getImportedDataByKey().get(cacheKey);
         if (imported && imported.length >= limit) {
-            return trimToLastCandles(imported, limit);
+            const candles = this.sanitizeFastPathCandles(provider, symbol, storageInterval, imported, 'imported');
+            if (candles.length >= limit) {
+                return trimToLastCandles(candles, limit);
+            }
         }
 
         const cached = this.cache.get(cacheKey);
         if (cached && cached.candles.length >= limit) {
-            return trimToLastCandles(cached.candles, limit);
+            const candles = this.sanitizeFastPathCandles(provider, symbol, storageInterval, cached.candles, String(cached.source ?? 'cache'));
+            if (candles.length !== cached.candles.length) {
+                this.cache.set(cacheKey, candles, cached.source);
+            }
+            if (candles.length >= limit) {
+                return trimToLastCandles(candles, limit);
+            }
         }
 
         const resampleOptions = this.getResampleOptions(interval);
@@ -347,6 +381,18 @@ export class DataFetcher {
         }
 
         return cleaned;
+    }
+
+    private sanitizeFastPathCandles(
+        provider: DataProvider,
+        symbol: string,
+        storageInterval: string,
+        candles: OHLCVData[],
+        source: string
+    ): OHLCVData[] {
+        return isBinanceDataProvider(provider)
+            ? this.sanitizeBinanceCandles(symbol, storageInterval, candles, source)
+            : candles;
     }
 
     queuePersistCandles(
