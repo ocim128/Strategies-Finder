@@ -58,6 +58,48 @@ function makeRng(seed: number): () => number {
     };
 }
 
+function clampFinite(value: number, min: number, max: number, fallback: number): number {
+    if (!Number.isFinite(value)) return fallback;
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+}
+
+function createLogClamp(logFloor: number, logCeil: number): (value: number) => number {
+    return (value) => clampFinite(value, logFloor, logCeil, logFloor);
+}
+
+function clampFiniteReturn(value: number, limit: number): number {
+    return clampFinite(value, -limit, limit, 0);
+}
+
+function clampMockRange(
+    open: number,
+    close: number,
+    high: number,
+    low: number,
+    lowFloor: number,
+    highCeil: number
+): { high: number; low: number } {
+    const clampedLow = Math.max(low, lowFloor);
+    const clampedHigh = Math.min(high, highCeil);
+    return clampedHigh < clampedLow
+        ? { high: Math.max(open, close), low: clampedLow }
+        : { high: clampedHigh, low: clampedLow };
+}
+
+function pushMockCandle(
+    data: OHLCVData[],
+    time: Time,
+    open: number,
+    high: number,
+    low: number,
+    close: number,
+    volume: number
+): void {
+    data.push({ time, open, high, low, close, volume });
+}
+
 function createRandomSeed(): number {
     return Math.floor(Math.random() * 1000000000);
 }
@@ -109,14 +151,7 @@ function generateSimpleMockData(config: MockChartConfig): OHLCVData[] {
         const low = Math.min(open, close) - Math.random() * volatility * 0.5;
         const volume = Math.floor(Math.random() * 1000000) + 100000;
 
-        data.push({
-            time,
-            open,
-            high,
-            low,
-            close,
-            volume,
-        });
+        pushMockCandle(data, time, open, high, low, close, volume);
 
         price = close;
         if (price < config.startPrice * 0.1) {
@@ -151,20 +186,8 @@ function generateChallengingMockData(config: MockChartConfig, seed: number): OHL
     const ceiling = Math.max(floor * 2, config.startPrice * 50);
     const logFloor = Math.log(floor);
     const logCeil = Math.log(ceiling);
-    const clampLog = (value: number): number => {
-        if (!Number.isFinite(value)) return logFloor;
-        if (value < logFloor) return logFloor;
-        if (value > logCeil) return logCeil;
-        return value;
-    };
-    const clampReturn = (value: number): number => {
-        // Reduce extreme single-bar moves vs earlier versions.
-        const limit = 0.22;
-        if (!Number.isFinite(value)) return 0;
-        if (value < -limit) return -limit;
-        if (value > limit) return limit;
-        return value;
-    };
+    const clampLog = createLogClamp(logFloor, logCeil);
+    const clampReturn = (value: number): number => clampFiniteReturn(value, 0.22);
 
     let logPrice = Math.log(Math.max(config.startPrice, floor));
     let vol = baseVol;
@@ -281,23 +304,12 @@ function generateChallengingMockData(config: MockChartConfig, seed: number): OHL
         let high = Math.max(open, close) + wick;
         let low = Math.min(open, close) - wick;
 
-        const lowFloor = floor * 0.8;
-        const highCeil = ceiling * 1.2;
-        if (low < lowFloor) low = lowFloor;
-        if (high > highCeil) high = highCeil;
-        if (high < low) high = Math.max(open, close);
+        ({ high, low } = clampMockRange(open, close, high, low, floor * 0.8, ceiling * 1.2));
 
         const volFactor = Math.min(5, 0.5 + Math.abs(ret) / baseVol);
         const volume = Math.floor(100000 * (1 + volFactor) * (0.7 + rng() * 0.6));
 
-        data.push({
-            time,
-            open,
-            high,
-            low,
-            close,
-            volume,
-        });
+        pushMockCandle(data, time, open, high, low, close, volume);
 
         prevRet = ret;
         time = (Number(time) + config.intervalSeconds) as Time;
@@ -329,19 +341,8 @@ function generateAdversarialMockData(config: MockChartConfig, seed: number): OHL
     const ceiling = Math.max(floor * 2, config.startPrice * 50);
     const logFloor = Math.log(floor);
     const logCeil = Math.log(ceiling);
-    const clampLog = (value: number): number => {
-        if (!Number.isFinite(value)) return logFloor;
-        if (value < logFloor) return logFloor;
-        if (value > logCeil) return logCeil;
-        return value;
-    };
-    const clampReturn = (value: number): number => {
-        const limit = Math.max(0.08, baseVol * 8);
-        if (!Number.isFinite(value)) return 0;
-        if (value < -limit) return -limit;
-        if (value > limit) return limit;
-        return value;
-    };
+    const clampLog = createLogClamp(logFloor, logCeil);
+    const clampReturn = (value: number): number => clampFiniteReturn(value, Math.max(0.08, baseVol * 8));
 
     let logPrice = Math.log(Math.max(config.startPrice, floor));
     let anchor = logPrice;
@@ -470,23 +471,12 @@ function generateAdversarialMockData(config: MockChartConfig, seed: number): OHL
         let high = Math.max(open, close) + wick;
         let low = Math.min(open, close) - wick;
 
-        const lowFloor = floor * 0.8;
-        const highCeil = ceiling * 1.2;
-        if (low < lowFloor) low = lowFloor;
-        if (high > highCeil) high = highCeil;
-        if (high < low) high = Math.max(open, close);
+        ({ high, low } = clampMockRange(open, close, high, low, floor * 0.8, ceiling * 1.2));
 
         const volFactor = Math.min(6, 0.6 + Math.abs(ret) / baseVol);
         const volume = Math.floor(120000 * (1 + volFactor) * (0.5 + rng() * 0.7));
 
-        data.push({
-            time,
-            open,
-            high,
-            low,
-            close,
-            volume,
-        });
+        pushMockCandle(data, time, open, high, low, close, volume);
 
         prevRet = ret;
         time = (Number(time) + config.intervalSeconds) as Time;
@@ -518,19 +508,8 @@ function generateMarketRealismMockData(config: MockChartConfig, seed: number): O
     const logFloor = Math.log(floor);
     const logCeil = Math.log(ceiling);
 
-    const clampLog = (value: number): number => {
-        if (!Number.isFinite(value)) return logFloor;
-        if (value < logFloor) return logFloor;
-        if (value > logCeil) return logCeil;
-        return value;
-    };
-    const clampReturn = (value: number): number => {
-        const limit = Math.max(0.10, baseVol * 9);
-        if (!Number.isFinite(value)) return 0;
-        if (value < -limit) return -limit;
-        if (value > limit) return limit;
-        return value;
-    };
+    const clampLog = createLogClamp(logFloor, logCeil);
+    const clampReturn = (value: number): number => clampFiniteReturn(value, Math.max(0.10, baseVol * 9));
 
     let logPrice = Math.log(Math.max(config.startPrice, floor));
     let vol = baseVol;
@@ -769,11 +748,7 @@ function generateMarketRealismMockData(config: MockChartConfig, seed: number): O
             }
         }
 
-        const lowFloor = floor * 0.8;
-        const highCeil = ceiling * 1.2;
-        if (low < lowFloor) low = lowFloor;
-        if (high > highCeil) high = highCeil;
-        if (high < low) high = Math.max(open, close);
+        ({ high, low } = clampMockRange(open, close, high, low, floor * 0.8, ceiling * 1.2));
 
         // Volume - correlates with price movement and volatility
         const absRet = Math.abs(ret);
@@ -781,14 +756,7 @@ function generateMarketRealismMockData(config: MockChartConfig, seed: number): O
         const huntVolBoost = huntPhase > 0 ? 1.8 : 1.0;
         const volume = Math.floor(100000 * (1 + volFactor) * huntVolBoost * (0.6 + rng() * 0.6));
 
-        data.push({
-            time,
-            open,
-            high,
-            low,
-            close,
-            volume,
-        });
+        pushMockCandle(data, time, open, high, low, close, volume);
 
         // Update history
         priceHistory.push(logPrice);
@@ -837,19 +805,8 @@ function generateMarketRealismMockDataV5(config: MockChartConfig, seed: number):
     const logCeil = Math.log(ceiling);
     const baseVolume = 110000;
 
-    const clampLog = (value: number): number => {
-        if (!Number.isFinite(value)) return logFloor;
-        if (value < logFloor) return logFloor;
-        if (value > logCeil) return logCeil;
-        return value;
-    };
-    const clampReturn = (value: number): number => {
-        const limit = Math.min(0.35, Math.max(0.08, baseVol * 10 * volScale));
-        if (!Number.isFinite(value)) return 0;
-        if (value < -limit) return -limit;
-        if (value > limit) return limit;
-        return value;
-    };
+    const clampLog = createLogClamp(logFloor, logCeil);
+    const clampReturn = (value: number): number => clampFiniteReturn(value, Math.min(0.35, Math.max(0.08, baseVol * 10 * volScale)));
 
     let logPrice = Math.log(Math.max(config.startPrice, floor));
     let vol = baseVol;
@@ -986,25 +943,14 @@ function generateMarketRealismMockDataV5(config: MockChartConfig, seed: number):
             }
         }
 
-        const lowFloor = floor * 0.8;
-        const highCeil = ceiling * 1.2;
-        if (low < lowFloor) low = lowFloor;
-        if (high > highCeil) high = highCeil;
-        if (high < low) high = Math.max(open, close);
+        ({ high, low } = clampMockRange(open, close, high, low, floor * 0.8, ceiling * 1.2));
 
         const absRet = Math.abs(ret);
         const volFactor = Math.min(8, 0.5 + (absRet / baseVol) * 1.1 + (vol / baseVol) * 0.5);
         const jumpBoost = absRet > baseVol * 3 ? 1.3 : 1.0;
         const volume = Math.floor(baseVolume * regime.volumeBias * (1 + volFactor) * jumpBoost * (0.6 + rng() * 0.6));
 
-        data.push({
-            time,
-            open,
-            high,
-            low,
-            close,
-            volume,
-        });
+        pushMockCandle(data, time, open, high, low, close, volume);
 
         prevRet = ret;
         anchor = anchor * 0.995 + logPrice * 0.005;
@@ -1053,20 +999,8 @@ function generateVolatileCryptoMockData(config: MockChartConfig, seed: number): 
     const logCeil = Math.log(ceiling);
     const baseVolume = 125000;
 
-    const clampLog = (value: number): number => {
-        if (!Number.isFinite(value)) return logFloor;
-        if (value < logFloor) return logFloor;
-        if (value > logCeil) return logCeil;
-        return value;
-    };
-    const clampReturn = (value: number): number => {
-        // Allow larger moves for crypto volatility
-        const limit = Math.min(0.45, Math.max(0.12, baseVol * 14 * volScale));
-        if (!Number.isFinite(value)) return 0;
-        if (value < -limit) return -limit;
-        if (value > limit) return limit;
-        return value;
-    };
+    const clampLog = createLogClamp(logFloor, logCeil);
+    const clampReturn = (value: number): number => clampFiniteReturn(value, Math.min(0.45, Math.max(0.12, baseVol * 14 * volScale)));
 
     let logPrice = Math.log(Math.max(config.startPrice, floor));
     let vol = baseVol * 1.2;
@@ -1314,11 +1248,7 @@ function generateVolatileCryptoMockData(config: MockChartConfig, seed: number): 
             }
         }
 
-        const lowFloor = floor * 0.75;
-        const highCeil = ceiling * 1.25;
-        if (low < lowFloor) low = lowFloor;
-        if (high > highCeil) high = highCeil;
-        if (high < low) high = Math.max(open, close);
+        ({ high, low } = clampMockRange(open, close, high, low, floor * 0.75, ceiling * 1.25));
 
         // Volume correlates strongly with volatility in crypto
         const absRet = Math.abs(ret);
@@ -1335,14 +1265,7 @@ function generateVolatileCryptoMockData(config: MockChartConfig, seed: number): 
             cascadeVolBoost * flashVolBoost * (0.5 + rng() * 0.7)
         );
 
-        data.push({
-            time,
-            open,
-            high,
-            low,
-            close,
-            volume,
-        });
+        pushMockCandle(data, time, open, high, low, close, volume);
 
         // Update history
         priceHistory.push(logPrice);
