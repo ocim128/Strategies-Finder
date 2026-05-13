@@ -3,6 +3,16 @@ import { BacktestSettings } from "./types/strategies";
 
 export const ENDPOINT_IGNORED_BACKTEST_SETTING_KEYS = [
     ...SNAPSHOT_FILTER_SETTING_KEYS,
+    "allowSameBarExit",
+    "partialTakeProfitAtR",
+    "partialTakeProfitPercent",
+    "breakEvenAtR",
+    "breakEvenPercent",
+    "timeStopBars",
+    "riskWinStreakStopLossEnabled",
+    "riskWinStreakStopLossAfterWins",
+    "riskWinStreakStopLossPercent",
+    "marketMode",
     "polymarketOutcomeInterval",
     "polymarketPostSignalLimitEntryEnabled",
     "polymarketPostSignalLimitEntryMode",

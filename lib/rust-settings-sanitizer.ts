@@ -7,9 +7,9 @@ const RUST_UNSUPPORTED_TRADE_FILTER_MODES = new Set([
 
 export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     const executionModel = settings.executionModel ?? 'signal_close';
-    const allowSameBarExit = settings.allowSameBarExit ?? true;
+    const allowSameBarExit = false;
     const slippageBps = settings.slippageBps ?? 0;
-    const marketMode = settings.marketMode ?? 'all';
+    const marketMode = 'all';
     const tradeFilterMode = settings.tradeFilterMode ?? 'none';
 
     const usesRealismConstraints =
@@ -32,11 +32,7 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         ((settings.historicalLevelTakeProfitEnabled === true)
             || (settings.historicalLevelStopLossEnabled === true))
         && (settings.historicalLevelLookbackBars ?? 0) > 0;
-    const usesPercentageWinStreakStopLoss =
-        settings.riskMode === 'percentage'
-        && settings.riskWinStreakStopLossEnabled === true
-        && (settings.riskWinStreakStopLossAfterWins ?? 0) > 0
-        && (settings.riskWinStreakStopLossPercent ?? 0) > 0;
+    const usesPercentageWinStreakStopLoss = false;
     const usesAdaptivePercentageTakeProfit =
         settings.riskMode === 'percentage'
         && settings.takeProfitEnabled === true

@@ -76,9 +76,6 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     const takeProfitModeSelect = dom.takeProfitMode;
     const riskSimpleAdvanced = dom.riskSimpleAdvanced;
     const riskPercentage = dom.riskPercentage;
-    const riskAdvanced = dom.riskAdvanced;
-    const riskAdvancedGroups = Array.from(riskAdvanced.querySelectorAll<HTMLElement>('.param-group'));
-    const riskAdvancedInputs = Array.from(riskAdvanced.querySelectorAll<HTMLInputElement>('input'));
 
     const riskPercentageGroups = riskPercentage ? Array.from(riskPercentage.querySelectorAll<HTMLElement>('.param-group')) : [];
     const riskPercentageInputs = riskPercentage ? Array.from(riskPercentage.querySelectorAll<HTMLInputElement>('input')) : [];
@@ -139,20 +136,14 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
 
     const applyRiskMode = () => {
         const mode = riskModeSelect.value;
-        const isAdvanced = mode === 'advanced';
         const isPercentage = mode === 'percentage';
-        const isSimpleOrAdvanced = mode === 'simple' || mode === 'advanced';
 
         if (riskSimpleAdvanced) {
-            setSectionVisibility(riskSimpleAdvanced, isSimpleOrAdvanced);
+            setSectionVisibility(riskSimpleAdvanced, !isPercentage);
         }
         if (riskPercentage) {
             setSectionVisibility(riskPercentage, isPercentage);
         }
-
-        setSectionVisibility(riskAdvanced, isAdvanced);
-        setGroupDisabledState(riskAdvancedGroups, isAdvanced);
-        setDisabledState(riskAdvancedInputs, isAdvanced);
 
         setGroupDisabledState(riskPercentageGroups, isPercentage);
         setDisabledState(riskPercentageInputs, isPercentage);

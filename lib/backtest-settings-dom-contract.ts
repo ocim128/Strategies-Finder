@@ -210,11 +210,6 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("stopLossAtr"),
     createField("takeProfitAtr"),
     createField("trailingAtr"),
-    createField("partialTakeProfitAtR"),
-    createField("partialTakeProfitPercent"),
-    createField("breakEvenAtR"),
-    createField("breakEvenPercent"),
-    createField("timeStopBars"),
     createField("stopLossPercent"),
     createField("takeProfitPercent"),
     createField("takeProfitMode", {
@@ -260,20 +255,6 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         legacyAliases: ["riskMaxHoldEnabled"],
         rustSupport: "unsupported",
     }),
-    createField("riskWinStreakStopLossToggle", {
-        settingKey: "riskWinStreakStopLossEnabled",
-        parser: "boolean",
-        legacyAliases: ["riskWinStreakStopLossEnabled"],
-        rustSupport: "unsupported",
-    }),
-    createField("riskWinStreakStopLossAfterWins", { rustSupport: "unsupported" }),
-    createField("riskWinStreakStopLossPercent", { rustSupport: "unsupported" }),
-    createField("marketMode", {
-        parser: "marketMode",
-        rustSupport: "conditional",
-        readFromSettings: (settings) => resolveMarketMode(settings, DEFAULT_BACKTEST_SETTINGS),
-    }),
-
     createField("tradeFilterSettingsToggle", {
         parser: "boolean",
         legacyAliases: ["entrySettingsToggle"],
@@ -325,12 +306,6 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         parser: "executionModel",
         rustSupport: "unsupported",
         readFromSettings: (settings) => resolveExecutionModelValue(settings.executionModel, DEFAULT_BACKTEST_SETTINGS),
-    }),
-    createField("allowSameBarExitToggle", {
-        settingKey: "allowSameBarExit",
-        parser: "boolean",
-        legacyAliases: ["allowSameBarExit"],
-        rustSupport: "unsupported",
     }),
     createField("slippageBps", { rustSupport: "unsupported" }),
     createField("maxOpenTrades", { rustSupport: "unsupported" }),

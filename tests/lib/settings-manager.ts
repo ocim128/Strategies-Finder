@@ -568,8 +568,7 @@ class SettingsManager {
             'takeProfitToggle',
             'historicalLevelTakeProfitToggle',
             'historicalLevelStopLossToggle',
-            'riskMaxHoldToggle',
-            'riskWinStreakStopLossToggle'
+            'riskMaxHoldToggle'
         ];
 
         triggerSettingsChangeEvents(toggleIds);

@@ -546,9 +546,7 @@ export function resolveMarketMode(
     settings: Partial<BacktestSettingsData>,
     defaults: BacktestSettingsData = DEFAULT_BACKTEST_SETTINGS
 ): MarketMode {
-    if (settings.marketMode === "all" || settings.marketMode === "uptrend" || settings.marketMode === "downtrend" || settings.marketMode === "sideway") {
-        return settings.marketMode;
-    }
+    void settings;
     return defaults.marketMode;
 }
 
@@ -556,7 +554,7 @@ export function resolveRiskModeValue(
     value: unknown,
     defaults: BacktestSettingsData = DEFAULT_BACKTEST_SETTINGS
 ): NonNullable<BacktestSettings["riskMode"]> {
-    if (value === "simple" || value === "advanced" || value === "percentage") {
+    if (value === "simple" || value === "percentage") {
         return value;
     }
     return defaults.riskMode;

@@ -70,6 +70,8 @@ describe("backtest endpoint execution helpers", () => {
         assert.strictEqual(request.backtestSettings.symbol, snapshot.symbol);
         assert.strictEqual(request.backtestSettings.interval, snapshot.interval);
         assert.strictEqual(request.backtestSettings.polymarketAnnotationEnabled, true);
+        assert.ok(!("allowSameBarExit" in request.backtestSettings));
+        assert.ok(!("marketMode" in request.backtestSettings));
         assert.ok(!("snapshotRsiMin" in request.backtestSettings));
         assert.ok(!("snapshotRsiMax" in request.backtestSettings));
         assert.ok(!("polymarketExitMode" in request.backtestSettings));

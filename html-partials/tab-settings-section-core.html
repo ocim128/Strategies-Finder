@@ -130,21 +130,9 @@
                         <label class="param-label">Mode</label>
                         <select class="param-input" id="riskMode">
                             <option value="simple" selected>Simple</option>
-                            <option value="advanced">Advanced</option>
                             <option value="percentage">Percentage</option>
                         </select>
-                        <div class="param-hint">Simple shows core stops. Advanced adds scale-out, break-even, and time
-                            stop. Percentage uses fixed % from entry.</div>
-                    </div>
-                    <div class="param-group">
-                        <label class="param-label">Market Mode</label>
-                        <select class="param-input" id="marketMode">
-                            <option value="all" selected>All Markets</option>
-                            <option value="uptrend">Uptrend</option>
-                            <option value="downtrend">Downtrend</option>
-                            <option value="sideway">Sideway / Range</option>
-                        </select>
-                        <div class="param-hint">Trade filter by market regime before opening positions.</div>
+                        <div class="param-hint">Simple uses ATR-based stops. Percentage uses fixed % from entry.</div>
                     </div>
                 </div>
                 <div class="risk-simple-advanced" id="riskSimpleAdvanced">
@@ -167,31 +155,6 @@
                         <div class="param-group">
                             <label class="param-label">Trailing Stop (ATR x)</label>
                             <input type="number" class="param-input" id="trailingAtr" value="2" min="0" step="0.1">
-                        </div>
-                    </div>
-                    <div class="risk-advanced is-hidden" id="riskAdvanced">
-                        <div class="param-row">
-                            <div class="param-group">
-                                <label class="param-label">Scale Out at R</label>
-                                <input type="number" class="param-input" id="partialTakeProfitAtR" value="1" min="0"
-                                    step="0.1">
-                                <div class="param-hint">R = distance from entry to stop loss.</div>
-                            </div>
-                            <div class="param-group">
-                                <label class="param-label">Scale Out Size (%)</label>
-                                <input type="number" class="param-input" id="partialTakeProfitPercent" value="50" min="0"
-                                    max="100">
-                            </div>
-                        </div>
-                        <div class="param-row">
-                            <div class="param-group">
-                                <label class="param-label">Move Stop to Break-even at R</label>
-                                <input type="number" class="param-input" id="breakEvenAtR" value="1" min="0" step="0.1">
-                            </div>
-                            <div class="param-group">
-                                <label class="param-label">Exit After N Bars (if losing)</label>
-                                <input type="number" class="param-input" id="timeStopBars" value="0" min="0">
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -406,37 +369,6 @@
                             <label class="param-label">Max TP Multiplier</label>
                             <input type="number" class="param-input" value="1.5" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMaxMultiplier">
                             <div class="param-hint">Chooses the TP that best matches observed hit/miss outcomes given the entry-quality distribution, minimizing outcome surprisal.</div>
-                        </div>
-                    </div>
-                    <div class="param-row">
-                        <div class="param-group">
-                            <label class="param-label">Break-Even Trigger (%)</label>
-                            <input type="number" class="param-input" id="breakEvenPercent" value="0" min="0" max="50"
-                                step="0.5">
-                            <div class="param-hint">Once price moves this % in your favor, stop to entry price. 0 = off.</div>
-                        </div>
-                    </div>
-                    <div class="param-row">
-                        <div class="param-group">
-                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                                <label class="param-label" style="margin-bottom: 0;">Win Streak Trigger (N)</label>
-                                <label class="section-toggle" style="transform: scale(0.8);"
-                                    aria-label="Toggle win-streak stop loss override">
-                                    <input type="checkbox" id="riskWinStreakStopLossToggle">
-                                    <span class="section-toggle-track"></span>
-                                </label>
-                            </div>
-                            <input type="number" class="param-input" id="riskWinStreakStopLossAfterWins" value="3" min="1"
-                                step="1">
-                            <div class="param-hint">After N consecutive profitable closed trades, new entries can switch
-                                to the stop loss below.</div>
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Stop Loss After Streak (%)</label>
-                            <input type="number" class="param-input" id="riskWinStreakStopLossPercent" value="0" min="0"
-                                max="15" step="0.1">
-                            <div class="param-hint">0 = off. Overrides the regular Stop Loss % for new entries while the
-                                win streak stays active.</div>
                         </div>
                     </div>
                 </div>

@@ -202,21 +202,17 @@ describe('Backtest settings compatibility', () => {
         expect('minTradesBeforeFirstFlip' in sanitized).to.equal(false);
     });
 
-    it('requires TS engine when marketMode is not "all"', () => {
-        // Default marketMode is 'all', should not require TS
-        expect(requiresTypescriptEngine({})).to.equal(false);
-        expect(requiresTypescriptEngine({ marketMode: 'all' })).to.equal(false);
-
-        // Any non-'all' marketMode should require TS
-        expect(requiresTypescriptEngine({ marketMode: 'uptrend' })).to.equal(true);
-        expect(requiresTypescriptEngine({ marketMode: 'downtrend' })).to.equal(true);
-        expect(requiresTypescriptEngine({ marketMode: 'sideway' })).to.equal(true);
+    it('ignores removed marketMode settings', () => {
+        // Market Mode is no longer configurable; every path resolves to all markets.
+        expect(resolveBacktestSettingsFromRaw({ marketMode: 'uptrend' } as BacktestSettings).marketMode).to.equal('all');
+        expect(normalizeBacktestSettings({ marketMode: 'downtrend' }).marketMode).to.equal('all');
+        expect(normalizeStoredBacktestSettings({ marketMode: 'sideway' }).marketMode).to.equal('all');
     });
 
     it('requires TS engine for realism constraints', () => {
-        // signal_close (default) with no slippage and allowSameBarExit should not require TS
-        expect(requiresTypescriptEngine({})).to.equal(false);
-        expect(requiresTypescriptEngine({ executionModel: 'signal_close', slippageBps: 0, allowSameBarExit: true })).to.equal(false);
+        // Same-bar exits are no longer configurable, so the TS engine is required.
+        expect(requiresTypescriptEngine({})).to.equal(true);
+        expect(requiresTypescriptEngine({ executionModel: 'signal_close', slippageBps: 0, allowSameBarExit: true })).to.equal(true);
 
         // Non-signal_close execution model requires TS
         expect(requiresTypescriptEngine({ executionModel: 'next_open' })).to.equal(true);
@@ -225,13 +221,12 @@ describe('Backtest settings compatibility', () => {
         // Slippage requires TS
         expect(requiresTypescriptEngine({ slippageBps: 5 })).to.equal(true);
 
-        // Disabled same-bar exit requires TS
         expect(requiresTypescriptEngine({ allowSameBarExit: false })).to.equal(true);
     });
 
-    it('requires TS engine for combined trade directions', () => {
-        expect(requiresTypescriptEngine({ tradeDirection: 'long' })).to.equal(false);
-        expect(requiresTypescriptEngine({ tradeDirection: 'short' })).to.equal(false);
+    it('keeps combined trade directions on the TS engine path', () => {
+        expect(requiresTypescriptEngine({ tradeDirection: 'long' })).to.equal(true);
+        expect(requiresTypescriptEngine({ tradeDirection: 'short' })).to.equal(true);
         expect(requiresTypescriptEngine({ tradeDirection: 'both' })).to.equal(true);
         expect(requiresTypescriptEngine({ tradeDirection: 'both_flip_loss_2' })).to.equal(true);
         expect(requiresTypescriptEngine({ tradeDirection: 'combined' })).to.equal(true);
@@ -271,8 +266,8 @@ describe('Backtest settings compatibility', () => {
         expect(resolved.stopLossEnabled).to.equal(true);
         expect(resolved.takeProfitEnabled).to.equal(true);
         expect(resolved.takeProfitMfeBootstrapPercentile).to.equal(99);
-        expect(resolved.riskWinStreakStopLossEnabled).to.equal(true);
-        expect(resolved.riskWinStreakStopLossAfterWins).to.equal(1);
+        expect(resolved.riskWinStreakStopLossEnabled).to.equal(false);
+        expect(resolved.riskWinStreakStopLossAfterWins).to.equal(3);
         expect(resolved.riskWinStreakStopLossPercent).to.equal(0);
         expect(resolved.rsiPeriod).to.equal(23);
         expect(resolved.rsiBullish).to.equal(61);
@@ -493,6 +488,58 @@ describe('Backtest settings compatibility', () => {
         expect(readNumber('0,78', 99, { parseString: parseInputNumber })).to.equal(0.78);
     });
 
+    it('forces removed backtest settings to inert values', () => {
+        const resolved = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: true,
+            riskMode: 'advanced',
+            partialTakeProfitAtR: 2,
+            partialTakeProfitPercent: 50,
+            breakEvenAtR: 1,
+            breakEvenPercent: 4,
+            timeStopBars: 6,
+            riskWinStreakStopLossToggle: true,
+            riskWinStreakStopLossAfterWins: 2,
+            riskWinStreakStopLossPercent: 1,
+            marketMode: 'uptrend',
+            allowSameBarExit: true,
+        } as unknown as BacktestSettings);
+        const normalized = normalizeBacktestSettings({
+            riskMode: 'advanced',
+            partialTakeProfitAtR: 2,
+            partialTakeProfitPercent: 50,
+            breakEvenAtR: 1,
+            breakEvenPercent: 4,
+            timeStopBars: 6,
+            riskWinStreakStopLossEnabled: true,
+            riskWinStreakStopLossAfterWins: 2,
+            riskWinStreakStopLossPercent: 1,
+            marketMode: 'uptrend',
+            allowSameBarExit: true,
+        } as BacktestSettings);
+
+        expect(resolved.riskMode).to.equal('simple');
+        expect(resolved.partialTakeProfitAtR).to.equal(0);
+        expect(resolved.partialTakeProfitPercent).to.equal(0);
+        expect(resolved.breakEvenAtR).to.equal(0);
+        expect(resolved.breakEvenPercent).to.equal(0);
+        expect(resolved.timeStopBars).to.equal(0);
+        expect(resolved.riskWinStreakStopLossEnabled).to.equal(false);
+        expect(resolved.riskWinStreakStopLossPercent).to.equal(0);
+        expect(resolved.marketMode).to.equal('all');
+        expect(resolved.allowSameBarExit).to.equal(false);
+
+        expect(normalized.riskMode).to.equal('simple');
+        expect(normalized.partialTakeProfitAtR).to.equal(0);
+        expect(normalized.partialTakeProfitPercent).to.equal(0);
+        expect(normalized.breakEvenAtR).to.equal(0);
+        expect(normalized.breakEvenPercent).to.equal(0);
+        expect(normalized.timeStopBars).to.equal(0);
+        expect(normalized.riskWinStreakStopLossEnabled).to.equal(false);
+        expect(normalized.riskWinStreakStopLossPercent).to.equal(0);
+        expect(normalized.marketMode).to.equal('all');
+        expect(normalized.allowSameBarExit).to.equal(false);
+    });
+
     it('resolves historical-level risk settings behind the risk section toggle', () => {
         const enabled = resolveBacktestSettingsFromRaw({
             riskSettingsToggle: true,
@@ -574,6 +621,10 @@ describe('Backtest settings compatibility', () => {
         expect(getBacktestDomSettingContract('historicalLevelTakeProfitToggle')?.settingKey).to.equal('historicalLevelTakeProfitEnabled');
         expect(getBacktestDomSettingContract('historicalLevelStopLossToggle')?.settingKey).to.equal('historicalLevelStopLossEnabled');
         expect(getBacktestDomSettingContract('historicalLevelLookbackBars')?.rustSupport).to.equal('unsupported');
+        expect(getBacktestDomSettingContract('allowSameBarExitToggle')).to.equal(undefined);
+        expect(getBacktestDomSettingContract('marketMode')).to.equal(undefined);
+        expect(getBacktestDomSettingContract('breakEvenPercent')).to.equal(undefined);
+        expect(getBacktestDomSettingContract('riskWinStreakStopLossToggle')).to.equal(undefined);
         expect(getBacktestDomSettingContract('snapshotAtrFilterToggle')).to.equal(undefined);
         expect(getBacktestDomSettingContract('snapshotAtrPercentMin')).to.equal(undefined);
     });

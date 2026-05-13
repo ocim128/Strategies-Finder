@@ -40,19 +40,20 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
     const executionModel = rawExecutionModel === 'next_open' || rawExecutionModel === 'next_close' || rawExecutionModel === 'signal_close'
         ? rawExecutionModel
         : 'signal_close';
+    const riskMode = settings?.riskMode === 'percentage' ? 'percentage' : 'simple';
 
     return {
         atrPeriod: Math.max(1, toNumberOr(settings?.atrPeriod, 14)),
         stopLossAtr: Math.max(0, toNumberOr(settings?.stopLossAtr, 0)),
         takeProfitAtr: Math.max(0, toNumberOr(settings?.takeProfitAtr, 0)),
         trailingAtr: Math.max(0, toNumberOr(settings?.trailingAtr, 0)),
-        partialTakeProfitAtR: Math.max(0, toNumberOr(settings?.partialTakeProfitAtR, 0)),
-        partialTakeProfitPercent: clamp(Math.max(0, toNumberOr(settings?.partialTakeProfitPercent, 0)), 0, 100),
-        breakEvenAtR: Math.max(0, toNumberOr(settings?.breakEvenAtR, 0)),
-        breakEvenPercent: Math.max(0, toNumberOr(settings?.breakEvenPercent, 0)),
-        timeStopBars: Math.max(0, toNumberOr(settings?.timeStopBars, 0)),
+        partialTakeProfitAtR: 0,
+        partialTakeProfitPercent: 0,
+        breakEvenAtR: 0,
+        breakEvenPercent: 0,
+        timeStopBars: 0,
 
-        riskMode: settings?.riskMode ?? 'simple',
+        riskMode,
         stopLossPercent: Math.max(0, toNumberOr(settings?.stopLossPercent, 0)),
         takeProfitPercent: Math.max(0, toNumberOr(settings?.takeProfitPercent, 0)),
         takeProfitMode: resolveTakeProfitMode(settings?.takeProfitMode),
@@ -71,9 +72,9 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         historicalLevelLookbackBars: Math.max(0, Math.round(toNumberOr(settings?.historicalLevelLookbackBars, 0))),
         riskMaxHoldBars: Math.max(0, toNumberOr(settings?.riskMaxHoldBars, 0)),
         riskMaxHoldEnabled: settings?.riskMaxHoldEnabled ?? false,
-        riskWinStreakStopLossEnabled: settings?.riskWinStreakStopLossEnabled ?? false,
-        riskWinStreakStopLossAfterWins: Math.max(1, Math.round(toNumberOr(settings?.riskWinStreakStopLossAfterWins, 3))),
-        riskWinStreakStopLossPercent: Math.max(0, toNumberOr(settings?.riskWinStreakStopLossPercent, 0)),
+        riskWinStreakStopLossEnabled: false,
+        riskWinStreakStopLossAfterWins: 3,
+        riskWinStreakStopLossPercent: 0,
         flipAfterConsecutiveLosses: Math.max(1, Math.round(toNumberOr(settings?.flipAfterConsecutiveLosses, 2))),
         flipCooldownTrades: Math.max(0, Math.round(toNumberOr(settings?.flipCooldownTrades, 0))),
         minTradesBeforeFirstFlip: Math.max(0, Math.round(toNumberOr(settings?.minTradesBeforeFirstFlip, 0))),
@@ -95,11 +96,9 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         rsiPeriod: Math.max(1, toNumberOr(settings?.rsiPeriod, 14)),
         rsiBullish: clamp(toNumberOr(settings?.rsiBullish, 55), 0, 100),
         rsiBearish: clamp(toNumberOr(settings?.rsiBearish, 45), 0, 100),
-        marketMode: settings?.marketMode === 'uptrend' || settings?.marketMode === 'downtrend' || settings?.marketMode === 'sideway'
-            ? settings.marketMode
-            : 'all',
+        marketMode: 'all',
         executionModel,
-        allowSameBarExit: settings?.allowSameBarExit ?? true,
+        allowSameBarExit: false,
         slippageBps: Math.max(0, toNumberOr(settings?.slippageBps, 0)),
         maxOpenTrades: clamp(Math.round(toNumberOr(settings?.maxOpenTrades, 1)), 1, 2),
     };

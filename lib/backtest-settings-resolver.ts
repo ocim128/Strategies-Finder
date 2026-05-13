@@ -40,9 +40,9 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     stopLossAtr: 1.5,
     takeProfitAtr: 3,
     trailingAtr: 2,
-    partialTakeProfitAtR: 1,
-    partialTakeProfitPercent: 50,
-    breakEvenAtR: 1,
+    partialTakeProfitAtR: 0,
+    partialTakeProfitPercent: 0,
+    breakEvenAtR: 0,
     breakEvenPercent: 0,
     timeStopBars: 0,
     riskMode: "simple" as NonNullable<BacktestSettings["riskMode"]>,
@@ -191,7 +191,7 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
     { key: "partialTakeProfitAtR", guard: "useAdvancedRisk", disabledValue: 0 },
     { key: "partialTakeProfitPercent", guard: "useAdvancedRisk", disabledValue: 0 },
     { key: "breakEvenAtR", guard: "useAdvancedRisk", disabledValue: 0 },
-    { key: "breakEvenPercent", guard: "usePercentRisk", disabledValue: 0 },
+    { key: "breakEvenPercent", guard: "useAdvancedRisk", disabledValue: 0 },
     { key: "timeStopBars", guard: "useAdvancedRisk", disabledValue: 0 },
     { key: "stopLossPercent", guard: "usePercentRisk", disabledValue: 0 },
     { key: "takeProfitPercent", guard: "usePercentRisk", disabledValue: 0 },
@@ -244,12 +244,13 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
     { key: "riskMaxHoldBars", guard: "useRiskMaxHold", disabledValue: 0 },
     {
         key: "riskWinStreakStopLossAfterWins",
-        guard: "usePercentRisk",
+        guard: "useAdvancedRisk",
+        disabledValue: EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossAfterWins,
         resolve: (raw) => Math.max(1, Math.round(readDefaultedNumber(raw, "riskWinStreakStopLossAfterWins"))),
     },
     {
         key: "riskWinStreakStopLossPercent",
-        guard: "usePercentRisk",
+        guard: "useAdvancedRisk",
         disabledValue: 0,
         resolve: (raw) => Math.max(0, readDefaultedNumber(raw, "riskWinStreakStopLossPercent")),
     },
@@ -303,7 +304,7 @@ const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
     {
         key: "riskWinStreakStopLossEnabled",
         keys: ["riskWinStreakStopLossEnabled", "riskWinStreakStopLossToggle"],
-        guard: "usePercentRisk",
+        guard: "useAdvancedRisk",
         disabledValue: false,
     },
     { key: "invertSignals", keys: ["invertSignals", "invertSignalsToggle"] },
@@ -357,11 +358,6 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "stopLossAtr",
     "takeProfitAtr",
     "trailingAtr",
-    "partialTakeProfitAtR",
-    "partialTakeProfitPercent",
-    "breakEvenAtR",
-    "breakEvenPercent",
-    "timeStopBars",
     "stopLossPercent",
     "takeProfitPercent",
     "takeProfitMode",
@@ -380,10 +376,6 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "historicalLevelLookbackBars",
     "riskMaxHoldBars",
     "riskMaxHoldToggle",
-    "riskWinStreakStopLossToggle",
-    "riskWinStreakStopLossAfterWins",
-    "riskWinStreakStopLossPercent",
-    "marketMode",
     "tradeFilterMode",
     "htfBiasEmaPeriod",
     "executionTrendEmaPeriod",
@@ -399,7 +391,6 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "flipCooldownTrades",
     "minTradesBeforeFirstFlip",
     "executionModel",
-    "allowSameBarExitToggle",
     "slippageBps",
     "maxOpenTrades",
     "strategyTimeframeToggle",
@@ -549,9 +540,23 @@ export function hasUiToggleSettings(raw: Record<string, unknown>): boolean {
         "riskSettingsToggle",
         "tradeFilterSettingsToggle",
         "entrySettingsToggle",
-        "riskWinStreakStopLossToggle",
         "invertSignalsToggle",
     ].some((key) => key in raw);
+}
+
+function applyRemovedBacktestSettingDefaults(settings: Record<string, unknown>): Record<string, unknown> {
+    settings.riskMode = settings.riskMode === "percentage" ? "percentage" : EFFECTIVE_BACKTEST_DEFAULTS.riskMode;
+    settings.partialTakeProfitAtR = 0;
+    settings.partialTakeProfitPercent = 0;
+    settings.breakEvenAtR = 0;
+    settings.breakEvenPercent = 0;
+    settings.timeStopBars = 0;
+    settings.riskWinStreakStopLossEnabled = false;
+    settings.riskWinStreakStopLossAfterWins = EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossAfterWins;
+    settings.riskWinStreakStopLossPercent = 0;
+    settings.marketMode = EFFECTIVE_BACKTEST_DEFAULTS.marketMode;
+    settings.allowSameBarExit = EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit;
+    return settings;
 }
 
 export function resolveBacktestSettingsFromRaw(
@@ -578,18 +583,18 @@ export function resolveBacktestSettingsFromRaw(
             raw,
             (key, fallback) => readBoolean(raw, key, fallback)
         ));
-        return coerced;
+        return applyRemovedBacktestSettingDefaults(coerced as Record<string, unknown>) as BacktestSettings;
     }
 
     const riskEnabled = readBoolean(raw, "riskSettingsToggle", false);
     const riskModeRaw = raw["riskMode"];
     const riskMode: BacktestSettings["riskMode"] =
-        riskModeRaw === "advanced" || riskModeRaw === "percentage"
+        riskModeRaw === "percentage"
             ? riskModeRaw
             : EFFECTIVE_BACKTEST_DEFAULTS.riskMode;
-    const useAtrRisk = riskEnabled && (riskMode === "simple" || riskMode === "advanced");
+    const useAtrRisk = riskEnabled && riskMode === "simple";
     const usePercentRisk = riskEnabled && riskMode === "percentage";
-    const useAdvancedRisk = riskEnabled && riskMode === "advanced";
+    const useAdvancedRisk = false;
     const useRiskMaxHold = riskEnabled;
 
     const tradeFilterEnabled = readBoolean(
@@ -619,11 +624,7 @@ export function resolveBacktestSettingsFromRaw(
             : EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
     const tradeDirection = readTradeDirection(raw["tradeDirection"], EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection);
 
-    const marketModeRaw = raw["marketMode"];
-    const marketMode: MarketMode =
-        marketModeRaw === "uptrend" || marketModeRaw === "downtrend" || marketModeRaw === "sideway"
-            ? marketModeRaw
-            : EFFECTIVE_BACKTEST_DEFAULTS.marketMode;
+    const marketMode: MarketMode = EFFECTIVE_BACKTEST_DEFAULTS.marketMode;
     const guards: ResolverGuardState = {
         useAtrRisk,
         usePercentRisk,
@@ -671,5 +672,5 @@ export function resolveBacktestSettingsFromRaw(
         crossSymbolSecondary: readString(raw, "crossSymbolSecondary", EFFECTIVE_BACKTEST_DEFAULTS.crossSymbolSecondary),
     };
 
-    return resolved;
+    return applyRemovedBacktestSettingDefaults(resolved as Record<string, unknown>) as BacktestSettings;
 }

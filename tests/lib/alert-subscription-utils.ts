@@ -77,9 +77,18 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
     merged.executionModel = isValidExecutionModel(merged.executionModel)
         ? merged.executionModel
         : EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
+    merged.riskMode = merged.riskMode === "percentage" ? "percentage" : EFFECTIVE_BACKTEST_DEFAULTS.riskMode;
     merged.takeProfitMode = resolveTakeProfitMode(merged.takeProfitMode);
-    merged.allowSameBarExit = toBooleanLike(merged.allowSameBarExit)
-        ?? EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit;
+    merged.partialTakeProfitAtR = 0;
+    merged.partialTakeProfitPercent = 0;
+    merged.breakEvenAtR = 0;
+    merged.breakEvenPercent = 0;
+    merged.timeStopBars = 0;
+    merged.riskWinStreakStopLossEnabled = false;
+    merged.riskWinStreakStopLossAfterWins = EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossAfterWins;
+    merged.riskWinStreakStopLossPercent = 0;
+    merged.marketMode = EFFECTIVE_BACKTEST_DEFAULTS.marketMode;
+    merged.allowSameBarExit = EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit;
     merged.invertSignals = toBooleanLike(merged.invertSignals)
         ?? EFFECTIVE_BACKTEST_DEFAULTS.invertSignals;
     merged.flipAfterConsecutiveLosses = toFiniteNumber(merged.flipAfterConsecutiveLosses)

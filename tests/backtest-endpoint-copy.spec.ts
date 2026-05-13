@@ -67,9 +67,9 @@ describe("backtest endpoint copy helpers", () => {
         assert.deepStrictEqual(request.strategyParams, snapshot.strategyParams);
         assert.strictEqual(request.backtestSettings.executionModel, snapshot.backtestSettings.executionModel);
         assert.strictEqual(request.backtestSettings.tradeDirection, snapshot.backtestSettings.tradeDirection);
-        assert.strictEqual(request.backtestSettings.allowSameBarExit, snapshot.backtestSettings.allowSameBarExit);
         assert.strictEqual(request.backtestSettings.slippageBps, snapshot.backtestSettings.slippageBps);
-        assert.strictEqual(request.backtestSettings.marketMode, snapshot.backtestSettings.marketMode);
+        assert.ok(!("allowSameBarExit" in request.backtestSettings));
+        assert.ok(!("marketMode" in request.backtestSettings));
         assert.ok(!("snapshotRsiMin" in request.backtestSettings));
         assert.ok(!("snapshotRsiMax" in request.backtestSettings));
         assert.strictEqual(request.backtestSettings.polymarketAnnotationEnabled, true);

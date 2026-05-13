@@ -37,7 +37,6 @@ const UI_EVENT_HANDLER_DOM_IDS = {
     takeProfitAdaptiveGridSteps: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveGridSteps,
     takeProfitAdaptiveRegimeBlend: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveRegimeBlend,
     takeProfitAdaptiveIcScale: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveIcScale,
-    riskAdvanced: "riskAdvanced",
     tradeDirection: "tradeDirection",
     flipAfterConsecutiveLosses: "flipAfterConsecutiveLosses",
     flipCooldownTrades: "flipCooldownTrades",

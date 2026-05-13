@@ -11,7 +11,6 @@ import { getOptionalElement } from "./dom-utils";
 import { resolveEntryRiskTargets } from "./entry-risk-targets";
 import { getLegacyCompatibleTradeFilterModeValue } from "./legacy-settings-compat";
 import { createAccessibleModal, type AccessibleModalController } from "./modal-accessibility";
-import { toFiniteNumber } from "./settings-parse-utils";
 import { resolveTradeFilterMode } from "./settings-model";
 import { BacktestSettings, OHLCVData, Time, Trade } from "./strategies/index";
 import { parseTimeToUnixSeconds } from "./time-normalization";
@@ -375,11 +374,6 @@ export function openSubscriptionInfoModal(
         `Risk Mode: ${formatValue(settings.riskMode)}`,
         `Take Profit: ${settings.takeProfitEnabled === true ? `on (${formatValue(settings.takeProfitPercent)}%)` : "off"}`,
         `Stop Loss: ${settings.stopLossEnabled === true ? `on (${formatValue(settings.stopLossPercent)}%)` : "off"}`,
-        `Win-Streak SL Override: ${(settings.riskWinStreakStopLossEnabled === true || settings.riskWinStreakStopLossToggle === true)
-            && toFiniteNumber(settings.riskWinStreakStopLossAfterWins)
-            && toFiniteNumber(settings.riskWinStreakStopLossPercent)
-            ? `after ${formatValue(settings.riskWinStreakStopLossAfterWins)} wins => ${formatValue(settings.riskWinStreakStopLossPercent)}%`
-            : "off"}`,
         `ATR Period: ${formatValue(settings.atrPeriod)}`,
         `Stop Loss ATR: ${formatValue(settings.stopLossAtr)}`,
         `Take Profit ATR: ${formatValue(settings.takeProfitAtr)}`,
@@ -402,7 +396,6 @@ export function openSubscriptionInfoModal(
         `Trade Direction: ${formatValue(settings.tradeDirection)}`,
         `Invert Signals: ${formatValue(settings.invertSignals)}`,
         `Execution Model: ${formatValue(settings.executionModel)}`,
-        `Allow Same Bar Exit: ${formatValue(settings.allowSameBarExit)}`,
         `Slippage Bps: ${formatValue(settings.slippageBps)}`,
         `Strategy Timeframe Enabled: ${formatValue(settings.strategyTimeframeEnabled)}`,
         `Strategy Timeframe Minutes: ${formatValue(settings.strategyTimeframeMinutes)}`,

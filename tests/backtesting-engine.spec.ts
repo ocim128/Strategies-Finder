@@ -254,7 +254,7 @@ describe('Backtesting Engine', () => {
         expect(result.trades[0].exitPrice).to.be.closeTo(101, 1e-9);
     });
 
-    it('should override percentage stop loss after the configured win streak', () => {
+    it('should ignore removed win-streak stop loss settings', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
             { time: '2023-01-02' as Time, open: 100, high: 104.5, low: 99.5, close: 104, volume: 1000 },
@@ -289,7 +289,7 @@ describe('Backtesting Engine', () => {
         expect(result.trades[2].entryTime).to.equal('2023-01-06' as Time);
         expect(result.trades[0].exitReason).to.equal('signal');
         expect(result.trades[1].exitReason).to.equal('signal');
-        expect(result.trades[2].exitReason).to.equal('stop_loss');
+        expect(result.trades[2].exitReason).to.equal('end_of_data');
         expect(result.trades[2].exitTime).to.equal('2023-01-07' as Time);
     });
 
@@ -427,9 +427,9 @@ describe('Backtesting Engine', () => {
         expect(resolved.takeProfitEnabled).to.equal(false);
         expect(resolved.riskMaxHoldBars).to.equal(12);
         expect(resolved.riskMaxHoldEnabled).to.equal(true);
-        expect(resolved.riskWinStreakStopLossEnabled).to.equal(true);
-        expect(resolved.riskWinStreakStopLossAfterWins).to.equal(4);
-        expect(resolved.riskWinStreakStopLossPercent).to.equal(1.25);
+        expect(resolved.riskWinStreakStopLossEnabled).to.equal(false);
+        expect(resolved.riskWinStreakStopLossAfterWins).to.equal(3);
+        expect(resolved.riskWinStreakStopLossPercent).to.equal(0);
         expect(resolved.tradeFilterMode).to.equal('rsi');
         expect(resolved.confirmLookback).to.equal(3);
         expect(resolved.volumeSmaPeriod).to.equal(21);
@@ -444,7 +444,7 @@ describe('Backtesting Engine', () => {
                 slowPeriod: 21,
             }
         });
-        expect(resolved.allowSameBarExit).to.equal(true);
+        expect(resolved.allowSameBarExit).to.equal(false);
         expect(resolved.slippageBps).to.equal(12);
         expect(resolved.tradeDirection).to.equal('combined');
     });

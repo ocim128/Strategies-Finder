@@ -84,25 +84,12 @@ function inferRiskToggle(settings: Record<string, unknown>): boolean {
             || (toBoolean(settings.takeProfitEnabled) === true)
             || toFiniteNumber(settings.stopLossPercent) > 0
             || toFiniteNumber(settings.takeProfitPercent) > 0
-            || (toBoolean(settings.riskMaxHoldEnabled) === true)
-            || (
-                toBoolean(settings.riskWinStreakStopLossEnabled) === true
-                && toFiniteNumber(settings.riskWinStreakStopLossAfterWins) > 0
-                && toFiniteNumber(settings.riskWinStreakStopLossPercent) > 0
-            )
-            || (
-                toBoolean(settings.riskWinStreakStopLossToggle) === true
-                && toFiniteNumber(settings.riskWinStreakStopLossAfterWins) > 0
-                && toFiniteNumber(settings.riskWinStreakStopLossPercent) > 0
-            );
+            || (toBoolean(settings.riskMaxHoldEnabled) === true);
     }
     return toFiniteNumber(settings.stopLossAtr) > 0
         || toFiniteNumber(settings.takeProfitAtr) > 0
         || toFiniteNumber(settings.trailingAtr) > 0
-        || (toBoolean(settings.riskMaxHoldEnabled) === true && toFiniteNumber(settings.riskMaxHoldBars) > 0)
-        || toFiniteNumber(settings.partialTakeProfitAtR) > 0
-        || toFiniteNumber(settings.breakEvenAtR) > 0
-        || toFiniteNumber(settings.timeStopBars) > 0;
+        || (toBoolean(settings.riskMaxHoldEnabled) === true && toFiniteNumber(settings.riskMaxHoldBars) > 0);
 }
 
 function inferTradeFilterToggle(settings: Record<string, unknown>): boolean {

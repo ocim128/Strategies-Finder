@@ -193,7 +193,7 @@ function applyModeSpecificTakeProfitOverrides(
 }
 
 function usesAtrRiskSettings(settings: BacktestSettings): boolean {
-    if (settings.riskMode !== "simple" && settings.riskMode !== "advanced") {
+    if (settings.riskMode !== "simple") {
         return false;
     }
 
@@ -368,7 +368,7 @@ export function mergeFinderRiskParamsIntoBacktestSettings<
     const mergedRecord = merged as unknown as Record<string, number | undefined>;
     const usesAtrRisk =
         settings.riskSettingsToggle === true
-        && (settings.riskMode === "simple" || settings.riskMode === "advanced");
+        && settings.riskMode === "simple";
 
     if (usesAtrRisk && Number.isFinite(params.atrPeriod)) {
         merged.atrPeriod = clampAtrPeriod(Number(params.atrPeriod));
@@ -392,14 +392,6 @@ export function mergeFinderRiskParamsIntoBacktestSettings<
 
     if (Number.isFinite(params.riskMaxHoldBars)) {
         merged.riskMaxHoldBars = Number(params.riskMaxHoldBars);
-    }
-
-    if (Number.isFinite(params.riskWinStreakStopLossAfterWins)) {
-        merged.riskWinStreakStopLossAfterWins = Number(params.riskWinStreakStopLossAfterWins);
-    }
-
-    if (Number.isFinite(params.riskWinStreakStopLossPercent)) {
-        merged.riskWinStreakStopLossPercent = Number(params.riskWinStreakStopLossPercent);
     }
 
     return merged;
