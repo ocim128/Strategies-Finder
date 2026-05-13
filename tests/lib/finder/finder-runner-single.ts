@@ -825,6 +825,104 @@ function runBacktestAndInsert(
     }
 }
 
+type BacktestFallbackRunnerOptions = {
+    closedData: OHLCVData[];
+    backtestFn: typeof runBacktest;
+    capitalSettings: CapitalSettings;
+    resolveBacktestSettings: (job: ParamJob) => BacktestSettings;
+    getJobData: (job: ParamJob, defaultData: OHLCVData[]) => OHLCVData[];
+    getJobPrecomputed: (job: ParamJob, defaultPrecomputed: ReturnType<typeof precomputeIndicators>) => ReturnType<typeof precomputeIndicators>;
+    defaultPrecomputed: ReturnType<typeof precomputeIndicators>;
+    insertResult: (candidate: CandidateResult) => void;
+    timing: FinderTiming;
+};
+
+function createBacktestFallbackRunner(options: BacktestFallbackRunnerOptions): (run: PreparedRun) => void {
+    return (run: PreparedRun): void => {
+        const tTsStart = performance.now();
+        const jobData = options.getJobData(run.job, options.closedData);
+        runBacktestAndInsert(
+            jobData,
+            run.signals,
+            run.job,
+            options.backtestFn,
+            options.capitalSettings,
+            options.resolveBacktestSettings(run.job),
+            options.getJobPrecomputed(run.job, options.defaultPrecomputed),
+            options.insertResult,
+            (durationMs) => { options.timing.resultInsertion += durationMs; }
+        );
+        options.timing.tsFallback += performance.now() - tTsStart;
+    };
+}
+
+type RustRunPreparationOptions = {
+    jobs: ParamJob[];
+    closedData: OHLCVData[];
+    preparedDataCache: FinderPreparedDataCache;
+    preparedSettings: BacktestSettings;
+    input: FinderRunInput;
+    getJobData: (job: ParamJob, defaultData: OHLCVData[]) => OHLCVData[];
+    getJobCtx: (job: ParamJob) => StrategyExecutionContext | undefined;
+    isCrossSymbolJobSkipped: (job: ParamJob) => boolean;
+    insertResult: (candidate: CandidateResult) => void;
+    timing: FinderTiming;
+    idForJob: (job: ParamJob) => string;
+    mergeComboSignals: boolean;
+    failureContext: string;
+};
+
+function prepareRustBatchRuns(options: RustRunPreparationOptions): PreparedRun[] {
+    const batchRuns: PreparedRun[] = [];
+    const tSignalStart = performance.now();
+
+    for (const job of options.jobs) {
+        if (options.isCrossSymbolJobSkipped(job)) continue;
+        try {
+            const jobData = options.getJobData(job, options.closedData);
+            let signals = generateSignalsForJob(
+                job,
+                jobData,
+                options.preparedDataCache,
+                options.preparedSettings,
+                options.getJobCtx(job)
+            );
+            if (options.mergeComboSignals) {
+                signals = applyComboMerge(signals, options.input);
+            }
+
+            const evaluation = job.strategy.evaluate?.(jobData, job.params, signals);
+            const entryStats = evaluation?.entryStats;
+            if (job.strategy.metadata?.role === "entry" && entryStats) {
+                const result = buildEntryBacktestResult(entryStats);
+                const insertStartedAt = performance.now();
+                options.insertResult({
+                    key: job.key,
+                    name: job.name,
+                    params: job.params,
+                    result,
+                });
+                options.timing.resultInsertion += performance.now() - insertStartedAt;
+                signals.length = 0;
+                continue;
+            }
+
+            batchRuns.push({
+                id: options.idForJob(job),
+                job,
+                signals,
+            });
+        } catch (error) {
+            debugLogger.warn(`[Finder] ${options.failureContext} failed for ${job.key}`, {
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+
+    options.timing.signalGeneration += performance.now() - tSignalStart;
+    return batchRuns;
+}
+
 async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promise<RustBatchDispatchStats> {
     const {
         batchRuns,
@@ -1434,6 +1532,18 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
 
         const backtestFn = usingCompactBacktest ? runBacktestCompact : runBacktest;
         if (!useRustForFinder) {
+            const runBacktestFallback = createBacktestFallbackRunner({
+                closedData,
+                backtestFn,
+                capitalSettings: effectiveCapitalSettings,
+                resolveBacktestSettings: (job) => resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
+                getJobData,
+                getJobPrecomputed,
+                defaultPrecomputed: singleTfPrecomputed,
+                insertResult,
+                timing,
+            });
+
             for (let i = 0; i < shortlisted.length; i++) {
                 const { job } = shortlisted[i];
                 if (isCrossSymbolJobSkipped(job)) continue;
@@ -1444,19 +1554,11 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     timing.signalGeneration += performance.now() - tSignalStart;
                     signals = applyComboMerge(signals, input);
 
-                    const tTsStart = performance.now();
-                    runBacktestAndInsert(
-                        jobData,
-                        signals,
+                    runBacktestFallback({
+                        id: `${job.key}-funnel-${job.id}`,
                         job,
-                        backtestFn,
-                        effectiveCapitalSettings,
-                        resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
-                        getJobPrecomputed(job, singleTfPrecomputed),
-                        insertResult,
-                        (durationMs) => { timing.resultInsertion += durationMs; }
-                    );
-                    timing.tsFallback += performance.now() - tTsStart;
+                        signals,
+                    });
                 } catch (error) {
                     debugLogger.warn(`[Finder] Random funnel full run failed for ${job.key}`, {
                         error: error instanceof Error ? error.message : String(error),
@@ -1489,62 +1591,35 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         const funnelBatchSize = Math.max(1, Math.min(flags.batchSize, shortlistedJobs.length));
         const totalFunnelBatches = Math.ceil(shortlistedJobs.length / funnelBatchSize);
 
-        const runBacktestFallback = (run: PreparedRun): void => {
-            const tTsStart = performance.now();
-            const jobData = getJobData(run.job, closedData);
-            runBacktestAndInsert(
-                jobData,
-                run.signals,
-                run.job,
-                backtestFn,
-                effectiveCapitalSettings,
-                resolveFinderCandidateBacktestSettings(run.job.backtestSettings, input.comboPrimarySettings),
-                getJobPrecomputed(run.job, singleTfPrecomputed),
-                insertResult,
-                (durationMs) => { timing.resultInsertion += durationMs; }
-            );
-            timing.tsFallback += performance.now() - tTsStart;
-        };
+        const runBacktestFallback = createBacktestFallbackRunner({
+            closedData,
+            backtestFn,
+            capitalSettings: effectiveCapitalSettings,
+            resolveBacktestSettings: (job) => resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
+            getJobData,
+            getJobPrecomputed,
+            defaultPrecomputed: singleTfPrecomputed,
+            insertResult,
+            timing,
+        });
 
         for (let batchIndex = 0; batchIndex < totalFunnelBatches; batchIndex++) {
             const batchJobs = shortlistedJobs.slice(batchIndex * funnelBatchSize, (batchIndex + 1) * funnelBatchSize);
-            const batchRuns: PreparedRun[] = [];
-
-            const tSignalStart = performance.now();
-            for (const job of batchJobs) {
-                if (isCrossSymbolJobSkipped(job)) continue;
-                try {
-                    const jobData = getJobData(job, closedData);
-                    let signals = generateSignalsForJob(job, jobData, preparedDataCache, effectiveBacktestSettings, getJobCtx(job));
-                    signals = applyComboMerge(signals, input);
-                    const evaluation = job.strategy.evaluate?.(jobData, job.params, signals);
-                    const entryStats = evaluation?.entryStats;
-                    if (job.strategy.metadata?.role === "entry" && entryStats) {
-                        const result = buildEntryBacktestResult(entryStats);
-                        const insertStartedAt = performance.now();
-                        insertResult({
-                            key: job.key,
-                            name: job.name,
-                            params: job.params,
-                            result,
-                        });
-                        timing.resultInsertion += performance.now() - insertStartedAt;
-                        signals.length = 0;
-                        continue;
-                    }
-
-                    batchRuns.push({
-                        id: `${job.key}-funnel-${job.id}`,
-                        job,
-                        signals,
-                    });
-                } catch (error) {
-                    debugLogger.warn(`[Finder] Random funnel signal generation failed for ${job.key}`, {
-                        error: error instanceof Error ? error.message : String(error),
-                    });
-                }
-            }
-            timing.signalGeneration += performance.now() - tSignalStart;
+            const batchRuns = prepareRustBatchRuns({
+                jobs: batchJobs,
+                closedData,
+                preparedDataCache,
+                preparedSettings: effectiveBacktestSettings,
+                input,
+                getJobData,
+                getJobCtx,
+                isCrossSymbolJobSkipped,
+                insertResult,
+                timing,
+                idForJob: (job) => `${job.key}-funnel-${job.id}`,
+                mergeComboSignals: true,
+                failureContext: "Random funnel signal generation",
+            });
 
             recordRustDispatchStats(await dispatchRustBatchWithFallback({
                 batchRuns,
@@ -1596,6 +1671,18 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         batchNum++;
 
         if (!useRustForFinder) {
+            const runBacktestFallback = createBacktestFallbackRunner({
+                closedData,
+                backtestFn,
+                capitalSettings: effectiveCapitalSettings,
+                resolveBacktestSettings: (job) => resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
+                getJobData,
+                getJobPrecomputed,
+                defaultPrecomputed: singleTfPrecomputed,
+                insertResult,
+                timing,
+            });
+
             for (const job of batchJobs) {
                 if (isCrossSymbolJobSkipped(job)) continue;
                 try {
@@ -1604,20 +1691,11 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     const signals = generateSignalsForJob(job, jobData, preparedDataCache, effectiveBacktestSettings, getJobCtx(job));
                     timing.signalGeneration += performance.now() - tSignalStart;
 
-                    const mergedSignals = applyComboMerge(signals, input);
-                    const tTsStart = performance.now();
-                    runBacktestAndInsert(
-                        jobData,
-                        mergedSignals,
+                    runBacktestFallback({
+                        id: `${job.key}-${job.id}`,
                         job,
-                        backtestFn,
-                        effectiveCapitalSettings,
-                        resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
-                        getJobPrecomputed(job, singleTfPrecomputed),
-                        insertResult,
-                        (durationMs) => { timing.resultInsertion += durationMs; }
-                    );
-                    timing.tsFallback += performance.now() - tTsStart;
+                        signals: applyComboMerge(signals, input),
+                    });
                 } catch (error) {
                     debugLogger.warn(`[Finder] Backtest failed for ${job.key}`, {
                         error: error instanceof Error ? error.message : String(error),
@@ -1646,60 +1724,33 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             continue;
         }
 
-        const batchRuns: PreparedRun[] = [];
+        const runBacktestFallback = createBacktestFallbackRunner({
+            closedData,
+            backtestFn,
+            capitalSettings,
+            resolveBacktestSettings: (job) => job.backtestSettings,
+            getJobData,
+            getJobPrecomputed,
+            defaultPrecomputed: singleTfPrecomputed,
+            insertResult,
+            timing,
+        });
 
-        const runBacktestFallback = (run: PreparedRun): void => {
-            const tTsStart = performance.now();
-            const jobData = getJobData(run.job, closedData);
-            runBacktestAndInsert(
-                jobData,
-                run.signals,
-                run.job,
-                backtestFn,
-                capitalSettings,
-                run.job.backtestSettings,
-                getJobPrecomputed(run.job, singleTfPrecomputed),
-                insertResult,
-                (durationMs) => { timing.resultInsertion += durationMs; }
-            );
-            timing.tsFallback += performance.now() - tTsStart;
-        };
-
-        const tSignalStart = performance.now();
-        for (const job of batchJobs) {
-            if (isCrossSymbolJobSkipped(job)) continue;
-            try {
-                const jobData = getJobData(job, closedData);
-                const signals = generateSignalsForJob(job, jobData, preparedDataCache, effectiveBacktestSettings, getJobCtx(job));
-
-                const evaluation = job.strategy.evaluate?.(jobData, job.params, signals);
-                const entryStats = evaluation?.entryStats;
-                if (job.strategy.metadata?.role === "entry" && entryStats) {
-                    const result = buildEntryBacktestResult(entryStats);
-                    const insertStartedAt = performance.now();
-                    insertResult({
-                        key: job.key,
-                        name: job.name,
-                        params: job.params,
-                        result,
-                    });
-                    timing.resultInsertion += performance.now() - insertStartedAt;
-                    signals.length = 0;
-                    continue;
-                }
-
-                batchRuns.push({
-                    id: `${job.key}-${job.id}`,
-                    job,
-                    signals,
-                });
-            } catch (error) {
-                debugLogger.warn(`[Finder] Signal generation failed for ${job.key}`, {
-                    error: error instanceof Error ? error.message : String(error),
-                });
-            }
-        }
-        timing.signalGeneration += performance.now() - tSignalStart;
+        const batchRuns = prepareRustBatchRuns({
+            jobs: batchJobs,
+            closedData,
+            preparedDataCache,
+            preparedSettings: effectiveBacktestSettings,
+            input,
+            getJobData,
+            getJobCtx,
+            isCrossSymbolJobSkipped,
+            insertResult,
+            timing,
+            idForJob: (job) => `${job.key}-${job.id}`,
+            mergeComboSignals: false,
+            failureContext: "Signal generation",
+        });
 
         if (batchRuns.length === 0) {
             processedCount += batchJobs.length;

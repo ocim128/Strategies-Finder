@@ -1,10 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+    defaultStartDateIso,
     fetchJsonWithRetry,
     mean,
     parseIsoSec,
+    parseNumber,
     parseStringArray,
+    runPool,
     std,
 } from "./lib/polymarket-research";
 
@@ -154,18 +157,6 @@ const PROXY_FEATURES = [
 ];
 
 const FEES: FeeLevel[] = [0.01, 0.02, 0.03];
-
-function defaultStartDateIso(daysBack: number): string {
-    const now = new Date();
-    const past = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);
-    return past.toISOString();
-}
-
-function parseNumber(raw: string | undefined, fallback: number): number {
-    if (!raw) return fallback;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : fallback;
-}
 
 function printUsage(): void {
     console.log([
@@ -498,26 +489,6 @@ function buildRowsForEvent(event: SeriesEvent, points: HistoryPoint[]): DataRow[
     }
 
     return rows;
-}
-
-async function runPool<T, R>(
-    items: T[],
-    concurrency: number,
-    worker: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-    const out: R[] = new Array(items.length);
-    let index = 0;
-    async function next(): Promise<void> {
-        while (true) {
-            const i = index;
-            index += 1;
-            if (i >= items.length) return;
-            out[i] = await worker(items[i], i);
-        }
-    }
-    const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => next());
-    await Promise.all(workers);
-    return out;
 }
 
 async function buildDataset(cfg: CliConfig): Promise<Dataset> {

@@ -25,6 +25,7 @@ import type {
     PolymarketOutcomeRow,
     TradePolymarketOutcome,
 } from "./types/polymarket-outcomes";
+import { buildPolymarketOutcomeBase } from "./polymarket-outcome-annotation";
 
 export interface SignalExitEvalInput {
     trades: readonly Trade[];
@@ -580,34 +581,54 @@ function buildSignalExitSummary(
     };
 }
 
+function buildSignalExitOutcomeAnnotation(
+    result: SignalExitTradeResult,
+    overrides: Pick<
+        TradePolymarketOutcome,
+        | "isWin"
+        | "isProfitable"
+        | "marketEntryPrice"
+        | "marketExitPrice"
+        | "marketExitTs"
+        | "marketExitSource"
+        | "marketPnl"
+    >
+): TradePolymarketOutcome {
+    const outcome = result.outcome!;
+    const prediction = result.side as "yes" | "no";
+    return {
+        ...buildPolymarketOutcomeBase({ outcome, prediction, isWin: overrides.isWin ?? null }),
+        evaluationMode: "signal_exit_same_event",
+        isProfitable: overrides.isProfitable ?? null,
+        marketEntrySource: result.entrySource,
+        marketEntryStatus: result.entryStatus,
+        marketEntryFillTs: result.entryFillTs,
+        marketEntryLimitPrice: result.entryLimitPrice,
+        marketEntryImprovement: result.entryImprovement,
+        marketEntryPrice: overrides.marketEntryPrice,
+        marketExitPrice: overrides.marketExitPrice,
+        marketExitTs: overrides.marketExitTs,
+        marketExitSource: overrides.marketExitSource,
+        marketExitTargetPrice: result.exitTargetPrice,
+        marketExitStatus: result.exitStatus,
+        marketPnl: overrides.marketPnl,
+    };
+}
+
 export function buildTradeAnnotationFromSignalExitResult(
     result: SignalExitTradeResult
 ): TradePolymarketOutcome | null {
     if (result.exitSource === "missing") {
         if (result.entrySource === "limit" && result.outcome && result.entryStatus && result.entryStatus !== "filled") {
-            return {
-                eventStartTs: result.outcome.event_start_ts,
-                eventEndTs: result.outcome.event_end_ts,
-                eventSlug: result.outcome.event_slug,
-                marketSlug: result.outcome.market_slug || result.outcome.event_slug,
-                prediction: result.side as "yes" | "no",
-                actualOutcomeUp: result.outcome.resolved_outcome_up,
+            return buildSignalExitOutcomeAnnotation(result, {
                 isWin: null,
-                evaluationMode: "signal_exit_same_event",
                 isProfitable: null,
-                marketEntrySource: "limit",
-                marketEntryStatus: result.entryStatus,
-                marketEntryFillTs: null,
-                marketEntryLimitPrice: result.entryLimitPrice ?? null,
-                marketEntryImprovement: null,
                 marketEntryPrice: null,
                 marketExitPrice: null,
                 marketExitTs: null,
                 marketExitSource: "missing",
-                marketExitTargetPrice: result.exitTargetPrice,
-                marketExitStatus: result.exitStatus,
                 marketPnl: null,
-            };
+            });
         }
         return null;
     }
@@ -639,52 +660,24 @@ export function buildTradeAnnotationFromSignalExitResult(
     }
 
     if (result.exitSource === "duplicate") {
-        return {
-            eventStartTs: result.outcome!.event_start_ts,
-            eventEndTs: result.outcome!.event_end_ts,
-            eventSlug: result.outcome!.event_slug,
-            marketSlug: result.outcome!.market_slug || result.outcome!.event_slug,
-            prediction: result.side as "yes" | "no",
-            actualOutcomeUp: result.outcome!.resolved_outcome_up,
+        return buildSignalExitOutcomeAnnotation(result, {
             isWin: null,
-            evaluationMode: "signal_exit_same_event",
             isProfitable: null,
-            marketEntrySource: result.entrySource,
-            marketEntryStatus: result.entryStatus,
-            marketEntryFillTs: result.entryFillTs,
-            marketEntryLimitPrice: result.entryLimitPrice,
-            marketEntryImprovement: result.entryImprovement,
             marketEntryPrice: null,
             marketExitPrice: null,
             marketExitTs: null,
             marketExitSource: "duplicate",
-            marketExitTargetPrice: result.exitTargetPrice,
-            marketExitStatus: result.exitStatus,
             marketPnl: null,
-        };
+        });
     }
 
-    return {
-        eventStartTs: result.outcome!.event_start_ts,
-        eventEndTs: result.outcome!.event_end_ts,
-        eventSlug: result.outcome!.event_slug,
-        marketSlug: result.outcome!.market_slug || result.outcome!.event_slug,
-        prediction: result.side as "yes" | "no",
-        actualOutcomeUp: result.outcome!.resolved_outcome_up,
+    return buildSignalExitOutcomeAnnotation(result, {
         isWin: result.isWin,
-        evaluationMode: "signal_exit_same_event",
         isProfitable: result.isProfitable,
-        marketEntrySource: result.entrySource,
-        marketEntryStatus: result.entryStatus,
-        marketEntryFillTs: result.entryFillTs,
-        marketEntryLimitPrice: result.entryLimitPrice,
-        marketEntryImprovement: result.entryImprovement,
         marketEntryPrice: result.entryPrice,
         marketExitPrice: result.exitPrice,
         marketExitTs: result.exitTs,
         marketExitSource: result.exitSource as TradePolymarketOutcome["marketExitSource"],
-        marketExitTargetPrice: result.exitTargetPrice,
-        marketExitStatus: result.exitStatus,
         marketPnl: result.pnl,
-    };
+    });
 }

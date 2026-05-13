@@ -128,6 +128,51 @@ export function resolvePolymarketPostSignalLimitExitMode(value: unknown): Polyma
         : DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_MODE;
 }
 
+export type PolymarketPostSignalLimitSettingFields = {
+    polymarketPostSignalLimitEntryEnabled: boolean;
+    polymarketPostSignalLimitEntryMode: PolymarketLimitEntryPriceMode;
+    polymarketPostSignalLimitEntryPriceCents: number;
+    polymarketPostSignalLimitEntryOffsetCents: number;
+    polymarketPostSignalLimitExitEnabled: boolean;
+    polymarketPostSignalLimitExitMode: PolymarketLimitExitPriceMode;
+    polymarketPostSignalLimitExitPriceCents: number;
+    polymarketPostSignalLimitExitOffsetCents: number;
+};
+
+export function resolvePolymarketPostSignalLimitSettingFields(
+    raw: Record<string, unknown>,
+    readBoolean: (key: string, fallback: boolean) => boolean
+): PolymarketPostSignalLimitSettingFields {
+    return {
+        polymarketPostSignalLimitEntryEnabled: readBoolean(
+            "polymarketPostSignalLimitEntryEnabled",
+            DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_ENABLED
+        ),
+        polymarketPostSignalLimitEntryMode: resolvePolymarketPostSignalLimitEntryMode(
+            raw["polymarketPostSignalLimitEntryMode"]
+        ),
+        polymarketPostSignalLimitEntryPriceCents: clampPolymarketPostSignalLimitEntryPriceCents(
+            raw["polymarketPostSignalLimitEntryPriceCents"]
+        ),
+        polymarketPostSignalLimitEntryOffsetCents: clampPolymarketPostSignalLimitOffsetCents(
+            raw["polymarketPostSignalLimitEntryOffsetCents"]
+        ),
+        polymarketPostSignalLimitExitEnabled: readBoolean(
+            "polymarketPostSignalLimitExitEnabled",
+            DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_ENABLED
+        ),
+        polymarketPostSignalLimitExitMode: resolvePolymarketPostSignalLimitExitMode(
+            raw["polymarketPostSignalLimitExitMode"]
+        ),
+        polymarketPostSignalLimitExitPriceCents: clampPolymarketPostSignalLimitExitPriceCents(
+            raw["polymarketPostSignalLimitExitPriceCents"]
+        ),
+        polymarketPostSignalLimitExitOffsetCents: clampPolymarketPostSignalLimitOffsetCents(
+            raw["polymarketPostSignalLimitExitOffsetCents"]
+        ),
+    };
+}
+
 function clampLimitPrice(value: number): number {
     const clamped = Math.max(0.01, Math.min(0.99, value));
     return Math.round(clamped * 1_000_000) / 1_000_000;

@@ -27,6 +27,48 @@ export function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function defaultStartDateIso(daysBack: number): string {
+    const now = Date.now();
+    return new Date(now - daysBack * 24 * 60 * 60 * 1000).toISOString();
+}
+
+export function parseNumber(raw: string | undefined, fallback: number): number {
+    if (!raw) return fallback;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+export function parseNumberList(raw: string | undefined, fallback: number[]): number[] {
+    if (!raw) return fallback;
+    const list = raw
+        .split(",")
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isFinite(value));
+    return list.length > 0 ? list : fallback;
+}
+
+export async function runPool<T, R>(
+    items: T[],
+    concurrency: number,
+    worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+    const out: R[] = new Array(items.length);
+    let index = 0;
+
+    async function next(): Promise<void> {
+        while (true) {
+            const current = index;
+            index += 1;
+            if (current >= items.length) return;
+            out[current] = await worker(items[current], current);
+        }
+    }
+
+    const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => next());
+    await Promise.all(workers);
+    return out;
+}
+
 export async function fetchJsonWithRetry<T>(url: string, retries = 4): Promise<T> {
     let lastErr: unknown = null;
     for (let attempt = 0; attempt <= retries; attempt++) {

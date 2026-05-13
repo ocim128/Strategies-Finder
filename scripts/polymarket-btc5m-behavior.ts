@@ -3,10 +3,13 @@ import path from "node:path";
 import {
     clamp01,
     correlation,
+    defaultStartDateIso,
     fetchJsonWithRetry,
     mean,
     parseIsoSec,
+    parseNumber,
     parseStringArray,
+    runPool,
     sleep,
     std,
 } from "./lib/polymarket-research";
@@ -187,11 +190,6 @@ type WalletSummary = {
 const FEES: FeeLevel[] = [0.01, 0.02, 0.03];
 const FEE_REF = 0.01;
 
-function defaultStartDateIso(daysBack: number): string {
-    const now = Date.now();
-    return new Date(now - daysBack * 24 * 60 * 60 * 1000).toISOString();
-}
-
 function printUsage(): void {
     console.log([
         "Usage:",
@@ -213,12 +211,6 @@ function printUsage(): void {
         "  --slippage <points>         default: 0.002",
         "  --out <file>                optional JSON output",
     ].join("\n"));
-}
-
-function parseNumber(raw: string | undefined, fallback: number): number {
-    if (!raw) return fallback;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : fallback;
 }
 
 function parseArgs(argv: string[]): CliConfig | null {
@@ -556,22 +548,6 @@ async function buildEventRecordsFromSeries(metas: EventMeta[], cfg: CliConfig): 
         return { meta, trades, randomPrices } as EventRecord;
     });
     return rows.filter((x): x is EventRecord => x !== null).sort((a, b) => a.meta.endTs - b.meta.endTs);
-}
-
-async function runPool<T, R>(items: T[], concurrency: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {
-    const out: R[] = new Array(items.length);
-    let index = 0;
-    async function next(): Promise<void> {
-        while (true) {
-            const i = index;
-            index += 1;
-            if (i >= items.length) return;
-            out[i] = await worker(items[i], i);
-        }
-    }
-    const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => next());
-    await Promise.all(workers);
-    return out;
 }
 
 async function buildEventRecords(trades: Trade[], cfg: CliConfig): Promise<EventRecord[]> {

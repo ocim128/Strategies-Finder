@@ -1,9 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+    defaultStartDateIso,
     fetchJsonWithRetry,
     parseIsoSec,
+    parseNumber,
     parseStringArray,
+    runPool,
 } from "./lib/polymarket-research";
 
 type CliConfig = {
@@ -102,12 +105,6 @@ type RuleResult = {
 const DEFAULT_SERIES_ID = "10684";
 const DEFAULT_ENTRY_MINUTES = [1, 2, 3, 4];
 
-function defaultStartDateIso(daysBack: number): string {
-    const now = new Date();
-    const past = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);
-    return past.toISOString();
-}
-
 function printUsage(): void {
     console.log([
         "Usage:",
@@ -130,12 +127,6 @@ function printUsage(): void {
         "Example:",
         "  npm run poly:edge -- --start-date 2026-02-01T00:00:00Z --max-events 1500 --fee 0.004",
     ].join("\n"));
-}
-
-function parseNumber(raw: string | undefined, fallback: number): number {
-    if (!raw) return fallback;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : fallback;
 }
 
 function parseArgs(argv: string[]): CliConfig | null {
@@ -600,24 +591,6 @@ function evaluateMetrics(samples: Sample[], rule: Rule): Metrics {
 
 function formatNum(n: number, digits = 4): string {
     return Number.isFinite(n) ? n.toFixed(digits) : "NaN";
-}
-
-async function runPool<T, R>(items: T[], concurrency: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {
-    const out: R[] = new Array(items.length);
-    let index = 0;
-
-    async function next(): Promise<void> {
-        while (true) {
-            const current = index;
-            index += 1;
-            if (current >= items.length) return;
-            out[current] = await worker(items[current], current);
-        }
-    }
-
-    const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => next());
-    await Promise.all(workers);
-    return out;
 }
 
 async function main(): Promise<void> {

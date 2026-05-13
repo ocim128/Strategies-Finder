@@ -52,6 +52,11 @@ import {
     type PolymarketOutcomeInterval,
 } from "./polymarket-outcome-interval";
 import { PolymarketEvalAccumulator } from "./polymarket-eval-accumulator";
+import {
+    buildPolymarketOutcomeBase,
+    getPolymarketPredictionForTrade,
+    isPolymarketPredictionWin,
+} from "./polymarket-outcome-annotation";
 
 function clampProbability(value: number | null): number | null {
     if (value === null || !Number.isFinite(value)) {
@@ -238,21 +243,13 @@ function buildAnnotatedTrade(
         return { ...trade, polymarketOutcome: null };
     }
 
-    const prediction = trade.type === "long" ? "yes" : "no";
-    const isWin = prediction === "yes"
-        ? outcome.resolved_outcome_up === 1
-        : outcome.resolved_outcome_up === 0;
+    const prediction = getPolymarketPredictionForTrade(trade);
+    const isWin = isPolymarketPredictionWin(prediction, outcome);
 
     return {
         ...trade,
         polymarketOutcome: {
-            eventStartTs: outcome.event_start_ts,
-            eventEndTs: outcome.event_end_ts,
-            eventSlug: outcome.event_slug,
-            marketSlug: outcome.market_slug || outcome.event_slug,
-            prediction,
-            actualOutcomeUp: outcome.resolved_outcome_up,
-            isWin,
+            ...buildPolymarketOutcomeBase({ outcome, prediction, isWin }),
             ...getTradeMarketSidePrices(outcome),
             marketEntryPrice: getTradeMarketEntryPrice(outcome, prediction),
         },
@@ -289,21 +286,13 @@ function buildAnnotatedTradeForBridge(
         return { ...trade, polymarketOutcome: null };
     }
 
-    const prediction = trade.type === "long" ? "yes" : "no";
-    const isWin = prediction === "yes"
-        ? outcome.resolved_outcome_up === 1
-        : outcome.resolved_outcome_up === 0;
+    const prediction = getPolymarketPredictionForTrade(trade);
+    const isWin = isPolymarketPredictionWin(prediction, outcome);
 
     return {
         ...trade,
         polymarketOutcome: {
-            eventStartTs: outcome.event_start_ts,
-            eventEndTs: outcome.event_end_ts,
-            eventSlug: outcome.event_slug,
-            marketSlug: outcome.market_slug || outcome.event_slug,
-            prediction,
-            actualOutcomeUp: outcome.resolved_outcome_up,
-            isWin,
+            ...buildPolymarketOutcomeBase({ outcome, prediction, isWin }),
             ...getTradeMarketSidePrices(outcome, entryOffset),
             marketEntryPrice: getTradeMarketEntryPrice(outcome, prediction, entryOffset),
             entryOffset,
@@ -390,10 +379,8 @@ function buildAnnotatedTradeForNativeSession(
     }
 
     const entryOffset = calculateEntryOffsetWithinSession(entryTs, outcome);
-    const prediction = trade.type === "long" ? "yes" : "no";
-    const isWin = prediction === "yes"
-        ? outcome.resolved_outcome_up === 1
-        : outcome.resolved_outcome_up === 0;
+    const prediction = getPolymarketPredictionForTrade(trade);
+    const isWin = isPolymarketPredictionWin(prediction, outcome);
     const entryPricePoint = findFirstPricePointAtOrAfterEntry(outcome, entryTs, pricePointsByEventStart);
     const marketYesPrice = clampProbability(entryPricePoint?.yes_price ?? null);
     const marketNoPrice = clampProbability(entryPricePoint?.no_price ?? (
@@ -404,13 +391,7 @@ function buildAnnotatedTradeForNativeSession(
     return {
         ...trade,
         polymarketOutcome: {
-            eventStartTs: outcome.event_start_ts,
-            eventEndTs: outcome.event_end_ts,
-            eventSlug: outcome.event_slug,
-            marketSlug: outcome.market_slug || outcome.event_slug,
-            prediction,
-            actualOutcomeUp: outcome.resolved_outcome_up,
-            isWin,
+            ...buildPolymarketOutcomeBase({ outcome, prediction, isWin }),
             marketYesPrice,
             marketNoPrice,
             marketEntryPrice,
@@ -424,17 +405,11 @@ function buildSkippedAnnotatedTradeForBridge(
     mappedTrade: LegacyMappedPolymarketTrade,
     reason: "duplicate" | "filtered"
 ): Trade {
-    const prediction = trade.type === "long" ? "yes" : "no";
+    const prediction = getPolymarketPredictionForTrade(trade);
     return {
         ...trade,
         polymarketOutcome: {
-            eventStartTs: mappedTrade.outcome.event_start_ts,
-            eventEndTs: mappedTrade.outcome.event_end_ts,
-            eventSlug: mappedTrade.outcome.event_slug,
-            marketSlug: mappedTrade.outcome.market_slug || mappedTrade.outcome.event_slug,
-            prediction,
-            actualOutcomeUp: mappedTrade.outcome.resolved_outcome_up,
-            isWin: null,
+            ...buildPolymarketOutcomeBase({ outcome: mappedTrade.outcome, prediction, isWin: null }),
             entryOffset: mappedTrade.entryOffset,
             evaluationMode: "resolve_hold",
             marketExitSource: reason,
@@ -473,11 +448,9 @@ function buildLimitEntryAnnotatedTrade(args: {
     exitSource?: NonNullable<Trade["polymarketOutcome"]>["marketExitSource"];
 }): Trade {
     const { trade, outcome, status, limitPrice } = args;
-    const prediction = trade.type === "long" ? "yes" : "no";
+    const prediction = getPolymarketPredictionForTrade(trade);
     const isFilled = status === "filled";
-    const isWin = prediction === "yes"
-        ? outcome.resolved_outcome_up === 1
-        : outcome.resolved_outcome_up === 0;
+    const isWin = isPolymarketPredictionWin(prediction, outcome);
     const fallbackExitPrice = isFilled
         ? isWin ? 1 : 0
         : null;
@@ -500,13 +473,7 @@ function buildLimitEntryAnnotatedTrade(args: {
     return {
         ...trade,
         polymarketOutcome: {
-            eventStartTs: outcome.event_start_ts,
-            eventEndTs: outcome.event_end_ts,
-            eventSlug: outcome.event_slug,
-            marketSlug: outcome.market_slug || outcome.event_slug,
-            prediction,
-            actualOutcomeUp: outcome.resolved_outcome_up,
-            isWin: isFilled ? isWin : null,
+            ...buildPolymarketOutcomeBase({ outcome, prediction, isWin: isFilled ? isWin : null }),
             ...buildLimitEntrySidePrices(prediction, limitPrice),
             marketEntrySource: "limit",
             marketEntryStatus: status,

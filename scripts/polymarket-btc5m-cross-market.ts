@@ -1,10 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+    defaultStartDateIso,
     fetchJsonWithRetry,
     mean,
     parseIsoSec,
+    parseNumber,
+    parseNumberList,
     parseStringArray,
+    runPool,
     std,
 } from "./lib/polymarket-research";
 
@@ -176,24 +180,6 @@ const DEFAULT_SERIES_ID = "10684";
 const DEFAULT_SYMBOL = "BTCUSDT";
 const FEES = [0.01, 0.02, 0.03] as const;
 const CHECKPOINTS = [4, 3, 2, 1] as const;
-
-function defaultStartDateIso(daysBack: number): string {
-    const now = new Date();
-    const past = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);
-    return past.toISOString();
-}
-
-function parseNumber(raw: string | undefined, fallback: number): number {
-    if (!raw) return fallback;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : fallback;
-}
-
-function parseNumberList(raw: string | undefined, fallback: number[]): number[] {
-    if (!raw) return fallback;
-    const list = raw.split(",").map((x) => Number(x.trim())).filter((x) => Number.isFinite(x));
-    return list.length > 0 ? list : fallback;
-}
 
 function printUsage(): void {
     console.log([
@@ -763,26 +749,6 @@ function buildEventData(
             polyAgeSeries,
         },
     };
-}
-
-async function runPool<T, R>(
-    items: T[],
-    concurrency: number,
-    worker: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-    const out: R[] = new Array(items.length);
-    let index = 0;
-    async function next(): Promise<void> {
-        while (true) {
-            const i = index;
-            index += 1;
-            if (i >= items.length) return;
-            out[i] = await worker(items[i], i);
-        }
-    }
-    const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => next());
-    await Promise.all(workers);
-    return out;
 }
 
 async function buildDataset(cfg: CliConfig): Promise<Dataset> {

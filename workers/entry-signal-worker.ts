@@ -1231,6 +1231,58 @@ async function updateSubscriptionStatus(
         .run();
 }
 
+type SubscriptionCandleContext = {
+    parsedStrategyParams: Record<string, number>;
+    parsedBacktestSettings: BacktestSettings;
+    closed: NonNullable<ReturnType<typeof selectClosedCandleWindow>>;
+    evaluationCandles: OHLCVData[];
+};
+
+async function buildSubscriptionCandleContext(
+    env: Env,
+    subscription: SubscriptionRow
+): Promise<
+    | { ok: true; context: SubscriptionCandleContext }
+    | { ok: false; reason: string; closedCandleTimeSec: null }
+> {
+    const parsedStrategyParams = safeJsonParse(subscription.strategy_params_json, {} as Record<string, number>);
+    const parsedBacktestSettings = resolveSubscriptionExecutionBacktestSettings(
+        safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings)
+    );
+    const minClosedCandles = readMinClosedCandles(env);
+    const candles = await fetchMarketCandles(
+        subscription.symbol,
+        subscription.interval,
+        subscription.candle_limit || DEFAULT_SUBSCRIPTION_CANDLE_LIMIT,
+        env
+    );
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const closed = selectClosedCandleWindow(candles, subscription.interval, nowSec, minClosedCandles);
+    if (!closed) {
+        const closedCount = countClosedCandles(candles, subscription.interval, nowSec);
+        return {
+            ok: false,
+            reason: `insufficient_candles:${closedCount}/${minClosedCandles}`,
+            closedCandleTimeSec: null,
+        };
+    }
+
+    return {
+        ok: true,
+        context: {
+            parsedStrategyParams,
+            parsedBacktestSettings,
+            closed,
+            evaluationCandles: buildExecutionAwareCandleWindow(
+                closed.candles,
+                closed.nextOpenCandle,
+                parsedBacktestSettings
+            ),
+        },
+    };
+}
+
 async function runSubscription(
     env: Env,
     subscription: SubscriptionRow,
@@ -1239,11 +1291,6 @@ async function runSubscription(
     const streamId = subscription.stream_id;
     const lastExitAlertKey = extractExitAlertKey(subscription.last_status);
     let persistedExitAlertKey: string | null = lastExitAlertKey;
-    const parsedStrategyParams = safeJsonParse(subscription.strategy_params_json, {} as Record<string, number>);
-    const parsedBacktestSettings = resolveSubscriptionExecutionBacktestSettings(
-        safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings)
-    );
-    const minClosedCandles = readMinClosedCandles(env);
     const subscriptionFreshnessBars = Math.max(0, subscription.freshness_bars ?? 1);
     const effectiveFreshnessBars = force
         ? Math.max(subscriptionFreshnessBars, subscription.candle_limit || DEFAULT_SUBSCRIPTION_CANDLE_LIMIT)
@@ -1252,21 +1299,13 @@ async function runSubscription(
     const telegramRetriesExhausted = prevTelegramFailCount >= MAX_TELEGRAM_RETRIES;
 
     try {
-        const candles = await fetchMarketCandles(
-            subscription.symbol,
-            subscription.interval,
-            subscription.candle_limit || DEFAULT_SUBSCRIPTION_CANDLE_LIMIT,
-            env
-        );
-
-        const nowSec = Math.floor(Date.now() / 1000);
-        const closed = selectClosedCandleWindow(candles, subscription.interval, nowSec, minClosedCandles);
-        if (!closed) {
-            const closedCount = countClosedCandles(candles, subscription.interval, nowSec);
-            const status = composeSubscriptionStatus(`insufficient_candles:${closedCount}/${minClosedCandles}`, persistedExitAlertKey);
+        const prepared = await buildSubscriptionCandleContext(env, subscription);
+        if (!prepared.ok) {
+            const status = composeSubscriptionStatus(prepared.reason, persistedExitAlertKey);
             await updateSubscriptionStatus(env, streamId, status);
             return { streamId, status };
         }
+        const { parsedStrategyParams, parsedBacktestSettings, closed, evaluationCandles } = prepared.context;
 
         if (!force && closed.closedCandleTimeSec <= (subscription.last_processed_candle_open_time || 0)) {
             const status = composeSubscriptionStatus("no_new_closed_candle", persistedExitAlertKey);
@@ -1277,12 +1316,6 @@ async function runSubscription(
                 closedCandleTimeSec: closed.closedCandleTimeSec,
             };
         }
-
-        const evaluationCandles = buildExecutionAwareCandleWindow(
-            closed.candles,
-            closed.nextOpenCandle,
-            parsedBacktestSettings
-        );
 
         const result = await processSignalPayload(
             {
@@ -1391,11 +1424,6 @@ async function evaluateSubscriptionState(
     subscription: SubscriptionRow
 ): Promise<SubscriptionStateResult> {
     const streamId = subscription.stream_id;
-    const parsedStrategyParams = safeJsonParse(subscription.strategy_params_json, {} as Record<string, number>);
-    const parsedBacktestSettings = resolveSubscriptionExecutionBacktestSettings(
-        safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings)
-    );
-    const minClosedCandles = readMinClosedCandles(env);
 
     const base: Omit<SubscriptionStateResult, "ok" | "reason" | "closedCandleTimeSec" | "latestTrade" | "latestEntry"> = {
         streamId,
@@ -1405,32 +1433,18 @@ async function evaluateSubscriptionState(
         evaluatedAt: new Date().toISOString(),
     };
 
-    const candles = await fetchMarketCandles(
-        subscription.symbol,
-        subscription.interval,
-        subscription.candle_limit || DEFAULT_SUBSCRIPTION_CANDLE_LIMIT,
-        env
-    );
-
-    const nowSec = Math.floor(Date.now() / 1000);
-    const closed = selectClosedCandleWindow(candles, subscription.interval, nowSec, minClosedCandles);
-    if (!closed) {
-        const closedCount = countClosedCandles(candles, subscription.interval, nowSec);
+    const prepared = await buildSubscriptionCandleContext(env, subscription);
+    if (!prepared.ok) {
         return {
             ...base,
             ok: false,
-            reason: `insufficient_candles:${closedCount}/${minClosedCandles}`,
+            reason: prepared.reason,
             closedCandleTimeSec: null,
             latestTrade: null,
             latestEntry: null,
         };
     }
-
-    const evaluationCandles = buildExecutionAwareCandleWindow(
-        closed.candles,
-        closed.nextOpenCandle,
-        parsedBacktestSettings
-    );
+    const { parsedStrategyParams, parsedBacktestSettings, closed, evaluationCandles } = prepared.context;
 
     const evaluation = evaluateLatestEntrySignal({
         strategyKey: subscription.strategy_key,

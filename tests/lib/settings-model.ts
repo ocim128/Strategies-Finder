@@ -13,11 +13,7 @@ import { coerceAdaptiveTakeProfitFieldValue, resolveTakeProfitMode } from "./tak
 import type { PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 import type { PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import {
-    clampPolymarketPostSignalLimitEntryPriceCents,
-    clampPolymarketPostSignalLimitExitPriceCents,
-    clampPolymarketPostSignalLimitOffsetCents,
-    resolvePolymarketPostSignalLimitEntryMode,
-    resolvePolymarketPostSignalLimitExitMode,
+    resolvePolymarketPostSignalLimitSettingFields,
     type PolymarketLimitEntryPriceMode,
     type PolymarketLimitExitPriceMode,
 } from "./polymarket-post-signal-limit-entry";
@@ -410,24 +406,10 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
     normalized.entrySettingsToggle = source.entrySettingsToggle === undefined
         ? undefined
         : readBoolean(source.entrySettingsToggle, false);
-    normalized.polymarketPostSignalLimitEntryPriceCents = clampPolymarketPostSignalLimitEntryPriceCents(
-        source.polymarketPostSignalLimitEntryPriceCents
-    );
-    normalized.polymarketPostSignalLimitEntryMode = resolvePolymarketPostSignalLimitEntryMode(
-        source.polymarketPostSignalLimitEntryMode
-    );
-    normalized.polymarketPostSignalLimitEntryOffsetCents = clampPolymarketPostSignalLimitOffsetCents(
-        source.polymarketPostSignalLimitEntryOffsetCents
-    );
-    normalized.polymarketPostSignalLimitExitMode = resolvePolymarketPostSignalLimitExitMode(
-        source.polymarketPostSignalLimitExitMode
-    );
-    normalized.polymarketPostSignalLimitExitPriceCents = clampPolymarketPostSignalLimitExitPriceCents(
-        source.polymarketPostSignalLimitExitPriceCents
-    );
-    normalized.polymarketPostSignalLimitExitOffsetCents = clampPolymarketPostSignalLimitOffsetCents(
-        source.polymarketPostSignalLimitExitOffsetCents
-    );
+    Object.assign(normalized, resolvePolymarketPostSignalLimitSettingFields(
+        source,
+        (key, fallback) => readBoolean(source[key], fallback)
+    ));
 
     // Cross-symbol
     normalized.crossSymbolSecondary = typeof source.crossSymbolSecondary === 'string'

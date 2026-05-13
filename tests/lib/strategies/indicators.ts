@@ -72,6 +72,34 @@ function getOrComputeOHLC(
     return result;
 }
 
+function calculateRollingHighLow(
+    high: number[],
+    low: number[],
+    period: number
+): { upper: (number | null)[]; lower: (number | null)[] } {
+    const upper: (number | null)[] = new Array(high.length).fill(null);
+    const lower: (number | null)[] = new Array(high.length).fill(null);
+    const maxDeque: number[] = [];
+    const minDeque: number[] = [];
+
+    for (let i = 0; i < high.length; i++) {
+        while (maxDeque.length > 0 && high[maxDeque[maxDeque.length - 1]] <= high[i]) maxDeque.pop();
+        maxDeque.push(i);
+        if (maxDeque[0] <= i - period) maxDeque.shift();
+
+        while (minDeque.length > 0 && low[minDeque[minDeque.length - 1]] >= low[i]) minDeque.pop();
+        minDeque.push(i);
+        if (minDeque[0] <= i - period) minDeque.shift();
+
+        if (i >= period - 1) {
+            upper[i] = high[maxDeque[0]];
+            lower[i] = low[minDeque[0]];
+        }
+    }
+
+    return { upper, lower };
+}
+
 export function calculateEMA(data: number[], period: number): (number | null)[] {
     return getOrCompute(__emaCache, data, period, () => {
         const result: (number | null)[] = new Array(data.length).fill(null);
@@ -647,20 +675,13 @@ function calculateMidpointChannel(
     period: number
 ): (number | null)[] {
     const result: (number | null)[] = new Array(high.length).fill(null);
-    const maxDeque: number[] = [];
-    const minDeque: number[] = [];
+    const { upper, lower } = calculateRollingHighLow(high, low, period);
 
-    for (let i = 0; i < high.length; i++) {
-        while (maxDeque.length > 0 && high[maxDeque[maxDeque.length - 1]] <= high[i]) maxDeque.pop();
-        maxDeque.push(i);
-        if (maxDeque[0] <= i - period) maxDeque.shift();
-
-        while (minDeque.length > 0 && low[minDeque[minDeque.length - 1]] >= low[i]) minDeque.pop();
-        minDeque.push(i);
-        if (minDeque[0] <= i - period) minDeque.shift();
-
-        if (i >= period - 1) {
-            result[i] = (high[maxDeque[0]] + low[minDeque[0]]) / 2;
+    for (let i = period - 1; i < high.length; i++) {
+        const upperValue = upper[i];
+        const lowerValue = lower[i];
+        if (upperValue !== null && lowerValue !== null) {
+            result[i] = (upperValue + lowerValue) / 2;
         }
     }
 
@@ -717,32 +738,14 @@ export function calculateDonchianChannels(
     lower: (number | null)[];
     middle: (number | null)[];
 } {
-    const upper: (number | null)[] = [];
-    const lower: (number | null)[] = [];
-    const middle: (number | null)[] = [];
+    const { upper, lower } = calculateRollingHighLow(high, low, period);
+    const middle: (number | null)[] = new Array(high.length).fill(null);
 
-    const maxDeque: number[] = [];
-    const minDeque: number[] = [];
-
-    for (let i = 0; i < high.length; i++) {
-        while (maxDeque.length > 0 && high[maxDeque[maxDeque.length - 1]] <= high[i]) maxDeque.pop();
-        maxDeque.push(i);
-        if (maxDeque[0] <= i - period) maxDeque.shift();
-
-        while (minDeque.length > 0 && low[minDeque[minDeque.length - 1]] >= low[i]) minDeque.pop();
-        minDeque.push(i);
-        if (minDeque[0] <= i - period) minDeque.shift();
-
-        if (i < period - 1) {
-            upper.push(null);
-            lower.push(null);
-            middle.push(null);
-        } else {
-            const maxHigh = high[maxDeque[0]];
-            const minLow = low[minDeque[0]];
-            upper.push(maxHigh);
-            lower.push(minLow);
-            middle.push((maxHigh + minLow) / 2);
+    for (let i = period - 1; i < high.length; i++) {
+        const upperValue = upper[i];
+        const lowerValue = lower[i];
+        if (upperValue !== null && lowerValue !== null) {
+            middle[i] = (upperValue + lowerValue) / 2;
         }
     }
     return { upper, lower, middle };
