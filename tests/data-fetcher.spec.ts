@@ -29,9 +29,10 @@ function createFetcher(options: {
     cache?: DataCache;
     importedDataByKey?: Map<string, OHLCVData[]>;
     getLookbackBars: () => number | null;
+    provider?: string;
 }): DataFetcher {
     const providerRouter = {
-        getProvider: () => "binance",
+        getProvider: () => options.provider ?? "binance",
         getStorageSymbol: (symbol: string) => symbol,
         getProviderStorageLabel: () => "Binance Spot",
     };
@@ -107,7 +108,31 @@ describe("DataFetcher chart lookback", () => {
         assert.equal(url.pathname, "/api/second-market/candles");
         assert.equal(url.searchParams.get("symbol"), "BTCUSDT");
         assert.equal(url.searchParams.get("limit"), "2");
+        assert.equal(url.searchParams.get("marketType"), "spot");
         assert.deepEqual(data.map((candle) => candle.time), [1_700_000_001, 1_700_000_002]);
+    });
+
+    it("loads 1s charts with the selected Binance futures market type", async () => {
+        let requestedUrl = "";
+        globalThis.fetch = async (input) => {
+            requestedUrl = String(input);
+            return new Response(JSON.stringify({
+                ok: true,
+                candles: [
+                    { ts: 1_700_000_001, open: 100, high: 101, low: 99, close: 100.5, volume: 10 },
+                ],
+            }), { status: 200 });
+        };
+
+        const fetcher = createFetcher({
+            getLookbackBars: () => 1,
+            provider: "binance-futures",
+        });
+
+        await fetcher.fetchData("BTCUSDT", "1s");
+        const url = new URL(requestedUrl);
+
+        assert.equal(url.searchParams.get("marketType"), "futures");
     });
 
     it("sanitizes unaligned Binance candles from the in-memory cache", async () => {

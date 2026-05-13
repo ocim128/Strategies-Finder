@@ -29,8 +29,8 @@ If you want to score a strategy against resolved Polymarket crypto events:
 - optionally set `Polymarket Outcome Symbol` if the chart symbol is different from the outcome target
 - choose `Polymarket Exit Mode`:
   - `resolve_hold` scores at final event resolution on supported non-`1s` chart intervals
-  - `signal_exit_same_event` is effective on `1m` + `next_open` using locally cached Polymarket price points, and is forced on supported `1s` BTCUSDT/XRPUSDT CLOB runs using exact-second bid/ask rows
-- optional for native `5m` outcome sessions: enable `Post-Signal Limit Entry` to require the selected YES/NO side to trade at or below the configured limit price after the chart entry signal and before the event's final minute
+  - `signal_exit_same_event` is effective on `1m` + `next_open` using locally cached Polymarket price points, and on supported `1s` + `next_open` BTCUSDT/XRPUSDT CLOB runs using exact-second bid/ask rows
+- optional for native `5m` non-`1s` outcome sessions: enable `Post-Signal Limit Entry` to require the selected YES/NO side to trade at or below the configured limit price after the chart entry signal and before the event's final minute
 
 If you want to manually paper-trade the latest still-open backtest trade:
 
@@ -165,7 +165,7 @@ Behavior:
 - `1m` uses the `1m -> 5m` bridge with two entry-selection modes:
   - `fixed_offset` keeps the existing `polymarketEntryOffset` filter
   - `actual_entry_minute` scores the first eligible trade per `5m` event and uses that trade's real minute for entry pricing while still holding to final resolution
-- `1s` charts do not expose `resolve_hold`; they are forced to `signal_exit_same_event`
+- `1s` charts only use CLOB scoring under `next_open`; other execution models downgrade to `resolve_hold` and skip the CLOB annotation pass
 - native `15m` and `1h` use the first local price point at or after the chart trade entry when payout diagnostics need an entry price
 - Quick View uses annotated Polymarket payout data for its Performance expectancy card when resolve-hold trades have priced Polymarket outcomes
 - the Trades panel now keeps row-level skip context on `1m` resolve-hold runs:
@@ -181,8 +181,8 @@ This is the new pricing-aware mode.
 Effective gating:
 
 - annotation must be enabled
-- chart interval must be `1m` with execution model `next_open`, or a supported `1s` BTCUSDT/XRPUSDT CLOB run
-- `1s` charts force this mode even when saved settings requested `resolve_hold`; other unsupported contexts downgrade to `resolve_hold` through `resolveEffectivePolymarketExitMode(...)`
+- chart interval must be `1m` with execution model `next_open`, or a supported `1s` BTCUSDT/XRPUSDT CLOB run with execution model `next_open`
+- `1s` charts force this mode only under `next_open`; other unsupported contexts downgrade to `resolve_hold` through `resolveEffectivePolymarketExitMode(...)`
 
 Behavior:
 
@@ -295,11 +295,11 @@ If you add another target, update:
 | Surface | `resolve_hold` | `signal_exit_same_event` | Post-signal limit entry | Important notes |
 | --- | --- | --- | --- | --- |
 | Direct Polymarket charting | not applicable | not applicable | not applicable | provider path only |
-| Manual backtest annotation | native `5m` / `15m` / `1h`, existing `1m` / `15m` / `1h` / `4h` bridge paths; not exposed on `1s` | `1m` + `next_open` on the selected native outcome session; `1s` is forced and uses exact-second CLOB exits inside the event | `5m` outcome session only | same chart backtest, Polymarket post-pass |
+| Manual backtest annotation | native `5m` / `15m` / `1h`, existing `1m` / `15m` / `1h` / `4h` bridge paths; not exposed on `1s` | `1m` + `next_open` on the selected native outcome session; supported `1s` + `next_open` uses exact-second CLOB exits inside the event | `5m` outcome session only on non-`1s` charts | same chart backtest, Polymarket post-pass |
 | Headless `evaluatePolymarketOutcomes(...)` | resolve-hold only | not supported | not supported | caller supplies outcome rows only; no price-point input surface |
-| Finder Polymarket mode | `1m`, `5m`, `15m`, `1h`, `4h`; not exposed on `1s` | `1m` + `next_open`; supported `1s` is forced and uses exact-second CLOB exits inside the event | `5m` outcome session only | `grid` and `random` only; no combo; no multi-timeframe |
+| Finder Polymarket mode | `1m`, `5m`, `15m`, `1h`, `4h`; not exposed on `1s` | `1m` + `next_open`; supported `1s` + `next_open` uses exact-second CLOB exits inside the event | `5m` outcome session only on non-`1s` charts | `grid` and `random` only; no combo; no multi-timeframe |
 | Hunt | same as Finder | same as Finder | same as Finder | preserves Polymarket mode settings in profiles |
-| Quick View / Trades / Polymarket diagnostics reload | can reuse stored summary broadly; native `15m` / `1h` show summary and payout cards; stale `1s` resolve-hold summaries are rebuilt as signal-exit CLOB annotations | `1m` when price points are available or can be ensured; supported `1s` uses exact-second CLOB rows | reloads price points for `5m` limit attempts | active consumers, not passive renderers |
+| Quick View / Trades / Polymarket diagnostics reload | can reuse stored summary broadly; native `15m` / `1h` show summary and payout cards; stale `1s` resolve-hold summaries are rebuilt as signal-exit CLOB annotations when execution is `next_open` | `1m` when price points are available or can be ensured; supported `1s` + `next_open` uses exact-second CLOB rows | reloads price points for `5m` limit attempts on non-`1s` charts | active consumers, not passive renderers |
 | Endpoint Preview / Copy / HTTP execution | `resolve_hold` only | not supported | not supported | exit mode and limit-entry settings are stripped |
 | Strategy Ensemble Polymarket | `resolve_hold` only | not supported | not supported | explicit fence in the ensemble path |
 | Bridge export | separate contract | separate contract | separate contract | ignores scoring-mode settings; still chart-symbol `5m` entry-signal export |
@@ -491,10 +491,11 @@ Current UI rules:
 - `polymarketOutcomeSymbol` shows when annotation is enabled
 - `polymarketOutcomeInterval` shows when annotation is enabled
 - `polymarketExitMode` shows when annotation is enabled
-- on `1s` charts, `polymarketExitMode` is forced to `signal_exit_same_event` and the `resolve_hold` option is hidden
+- on `1s` + `next_open` charts, `polymarketExitMode` is forced to `signal_exit_same_event` and the `resolve_hold` option is hidden
+- on `1s` charts with other execution models, `signal_exit_same_event` is disabled and CLOB scoring is skipped
 - `polymarketEntrySelectionMode` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, and the selected exit mode is not `signal_exit_same_event`
 - `polymarketEntryOffset` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, the selected exit mode is not `signal_exit_same_event`, and entry selection is `fixed_offset`
-- `polymarketPostSignalLimitEntryEnabled` only shows when annotation is enabled and native outcome session is `5m`
+- `polymarketPostSignalLimitEntryEnabled` only shows when annotation is enabled, native outcome session is `5m`, and the chart interval is not `1s`
 - post-signal entry mode and exit toggle only show when post-signal limit entry is enabled
 - fixed entry price only shows when entry mode is `fixed_price`
 - entry offset only shows when entry mode is `signal_offset`
@@ -506,7 +507,8 @@ Current UI rules:
 Persistence and compatibility:
 
 - `polymarketExitMode` defaults to `resolve_hold`
-- on `1s` charts, saved `resolve_hold` values are treated as `signal_exit_same_event`
+- on `1s` + `next_open` charts, saved `resolve_hold` values are treated as `signal_exit_same_event`
+- on `1s` charts with other execution models, saved `signal_exit_same_event` values downgrade to `resolve_hold` and CLOB scoring is skipped
 - invalid persisted values normalize back to `resolve_hold`
 - Hunt uses the same default and normalization behavior
 - `polymarketOutcomeSymbol` is normalized to uppercase

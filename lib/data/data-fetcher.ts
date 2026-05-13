@@ -74,6 +74,7 @@ type FastPathLocalCandlesOptions = {
     lookbackBars?: number | null;
     skipCache?: boolean;
 };
+type SecondMarketMarketType = "spot" | "futures";
 
 export class DataFetcher {
     private static readonly PRICE_JUMP_GUARD_RATIO = 8;
@@ -87,12 +88,17 @@ export class DataFetcher {
         private reporter: DataLoadReporter,
     ) {}
 
+    private getSecondMarketMarketType(symbol: string): SecondMarketMarketType {
+        return this.providerRouter.getProvider(symbol) === "binance-futures" ? "futures" : "spot";
+    }
+
     async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
         const secondMarketSymbol = normalizeSecondMarketChartSymbol(symbol);
         if (secondMarketSymbol && isSecondMarketChartContext(symbol, interval)) {
             if (signal?.aborted) return [];
             const data = await loadSecondMarketCandles({
                 symbol: secondMarketSymbol,
+                marketType: this.getSecondMarketMarketType(symbol),
                 limit: this.getChartLookbackBars() ?? DATA_CHART_TOTAL_LIMIT,
             });
             this.reporter.updateSymbolDataSource?.(
@@ -152,6 +158,7 @@ export class DataFetcher {
                 : DATA_CHART_TOTAL_LIMIT;
             const data = await loadSecondMarketCandles({
                 symbol: secondMarketSymbol,
+                marketType: this.getSecondMarketMarketType(symbol),
                 limit: maxBars,
             });
             return { data, source: 'local' };
@@ -227,6 +234,7 @@ export class DataFetcher {
             if (options?.signal?.aborted) return [];
             return loadSecondMarketCandles({
                 symbol: secondMarketSymbol,
+                marketType: this.getSecondMarketMarketType(symbol),
                 limit,
             });
         }

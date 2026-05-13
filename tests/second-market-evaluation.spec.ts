@@ -1,6 +1,10 @@
 import { describe, it } from "node:test";
 import { expect } from "chai";
-import { evaluateSecondMarketBacktest, type SecondMarketEvaluationContext } from "../lib/second-market/evaluation";
+import {
+    annotateBacktestResultWithSecondMarketClob,
+    evaluateSecondMarketBacktest,
+    type SecondMarketEvaluationContext,
+} from "../lib/second-market/evaluation";
 import type { PolymarketClob1sQuoteRow } from "../lib/second-market/types";
 import type { BacktestResult, Trade } from "../lib/types/strategies";
 import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
@@ -95,6 +99,7 @@ function context(quotes: PolymarketClob1sQuoteRow[]): SecondMarketEvaluationCont
         symbol: "BTCUSDT",
         outcomeSymbol: "BTCUSDT",
         seriesId: "10684",
+        outcomeInterval: "5m",
         outcomes: [outcome()],
         quotes,
     };
@@ -157,5 +162,47 @@ describe("second market shared evaluation", () => {
         expect(evaluated.polymarketSummary.missingPriceTrades).to.equal(1);
         expect(evaluated.polymarketEval.coverage).to.equal(0);
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitSource).to.equal("missing");
+    });
+
+    it("preserves the selected native outcome interval in summaries", () => {
+        const baseOutcome = outcome();
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([trade(1, 1_700_000_010, 1_700_000_020)]),
+            context: {
+                symbol: "BTCUSDT",
+                outcomeSymbol: "BTCUSDT",
+                seriesId: "10192",
+                outcomeInterval: "15m",
+                outcomes: [{
+                    ...baseOutcome,
+                    series_id: "10192",
+                    interval: "15m",
+                    event_end_ts: 1_700_000_900,
+                }],
+                quotes: [
+                    {
+                        ...quote(1_700_000_010, 0.55, 0.53),
+                        series_id: "10192",
+                        outcome_interval: "15m",
+                        event_end_ts: 1_700_000_900,
+                    },
+                ],
+            },
+        });
+
+        expect(evaluated.polymarketSummary.outcomeInterval).to.equal("15m");
+    });
+
+    it("does not annotate 1s CLOB results unless execution is next_open", async () => {
+        const base = result([trade(1, 1_700_000_010, 1_700_000_020)]);
+        const annotated = await annotateBacktestResultWithSecondMarketClob({
+            result: base,
+            symbol: "BTCUSDT",
+            interval: "1s",
+            executionModel: "signal_close",
+        });
+
+        expect(annotated).to.equal(base);
+        expect(annotated.polymarketTradeSummary).to.equal(undefined);
     });
 });

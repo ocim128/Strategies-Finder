@@ -710,11 +710,13 @@ Deliverables:
 
 - add a gated 1s Polymarket evaluation path
 - load main chart and Finder `1s` BTCUSDT/XRPUSDT candles from `/api/second-market/candles`
+- pass the selected Binance Spot/Futures market type through those candle requests
 - keep 1s chart data sourced from local SQLite only; do not mix Binance live WebSocket candles into this interval
 - add a dedicated 1s Polymarket Finder runner that reuses one loaded CLOB/outcome context per run
 - allow Quick View to rebuild missing 1s CLOB annotations from the same second-market DB
 - require TypeScript engine
 - require explicit 1s interval
+- require execution model `next_open`
 - require explicit Polymarket CLOB fill source
 - produce coverage summary in result
 - keep existing `signal_exit_same_event` behavior unchanged for 1m

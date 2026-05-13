@@ -28,6 +28,7 @@ import {
     getPolymarketPostSignalLimitExitModeSelect,
     getPolymarketSettingsRows,
     getFinderPolymarketRankModeSelect,
+    getExecutionModelSelect,
     getChartModeToggle,
     getChartModeLabel,
 } from "./state-subscriptions-dom";
@@ -39,13 +40,14 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
     const annotationEnabled = annotationToggle?.checked ?? false;
     const polymarketSettings = resolvePolymarketDomSettings();
     const isNative5mSession = polymarketSettings.outcomeInterval === '5m';
-    const supportsLimitEntry = annotationEnabled && isNative5mSession;
+    const isOneSecondInterval = interval === '1s';
+    const supportsLimitEntry = annotationEnabled && isNative5mSession && !isOneSecondInterval;
     const limitEntryEnabled = supportsLimitEntry && polymarketSettings.postSignalLimitEntryEnabled;
     const usesSignalOffsetEntry = polymarketSettings.postSignalLimitEntryMode === 'signal_offset';
     const limitExitEnabled = limitEntryEnabled && polymarketSettings.postSignalLimitExitEnabled;
     const usesFixedLimitExit = polymarketSettings.postSignalLimitExitMode === 'fixed_price';
-    const isOneSecondInterval = interval === '1s';
-    const supportsSignalExit = interval === '1m' || isOneSecondInterval;
+    const supportsSignalExit = (interval === '1m' || isOneSecondInterval)
+        && polymarketSettings.executionModel === 'next_open';
     const isSignalExit = supportsSignalExit && polymarketSettings.exitMode === 'signal_exit_same_event';
     const usesActualEntryMinute = polymarketSettings.entrySelectionMode === 'actual_entry_minute';
     const showsEntryBridgeControls = interval === '1m' && isNative5mSession && annotationEnabled && !isSignalExit;
@@ -77,14 +79,14 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
         ? Array.from(exitModeSelect.options).find((option) => option.value === 'signal_exit_same_event')
         : undefined;
     if (resolveHoldOption) {
-        resolveHoldOption.disabled = isOneSecondInterval;
-        resolveHoldOption.hidden = isOneSecondInterval;
+        resolveHoldOption.disabled = isOneSecondInterval && supportsSignalExit;
+        resolveHoldOption.hidden = isOneSecondInterval && supportsSignalExit;
     }
     if (signalExitOption) {
         signalExitOption.disabled = !supportsSignalExit;
     }
     if (exitModeSelect) {
-        if (isOneSecondInterval) {
+        if (isOneSecondInterval && supportsSignalExit) {
             exitModeSelect.value = 'signal_exit_same_event';
         } else if (exitModeSelect.value === 'signal_exit_same_event' && !supportsSignalExit) {
             exitModeSelect.value = 'resolve_hold';
@@ -125,6 +127,7 @@ export function setupStateSubscriptions() {
         { element: getPolymarketPostSignalLimitEntryModeSelect(), refreshRankModes: false },
         { element: getPolymarketPostSignalLimitExitToggle(), refreshRankModes: false },
         { element: getPolymarketPostSignalLimitExitModeSelect(), refreshRankModes: false },
+        { element: getExecutionModelSelect(), refreshRankModes: true },
     ].forEach(({ element, refreshRankModes }) => {
         element?.addEventListener('change', () => {
             updatePolymarketEntryOffsetVisibility();

@@ -7,20 +7,21 @@ export function resolveEffectivePolymarketExitMode(args: {
     polymarketAnnotationEnabled?: boolean;
 }): PolymarketExitMode {
     const { requestedMode, interval, executionModel, polymarketAnnotationEnabled } = args;
+    const normalizedInterval = interval.trim().toLowerCase();
 
     if (!polymarketAnnotationEnabled) {
         return "resolve_hold";
     }
 
-    if (interval === "1s") {
-        return "signal_exit_same_event";
+    if (normalizedInterval === "1s") {
+        return executionModel === "next_open" ? "signal_exit_same_event" : "resolve_hold";
     }
 
     if (requestedMode !== "signal_exit_same_event") {
         return requestedMode ?? "resolve_hold";
     }
 
-    if (interval !== "1m") {
+    if (normalizedInterval !== "1m") {
         return "resolve_hold";
     }
 

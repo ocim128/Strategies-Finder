@@ -33,6 +33,7 @@ export const POLYMARKET_SETTINGS_IDS = {
   postSignalLimitEntryModeSelect: 'polymarketPostSignalLimitEntryMode',
   postSignalLimitExitToggle: 'polymarketPostSignalLimitExitEnabled',
   postSignalLimitExitModeSelect: 'polymarketPostSignalLimitExitMode',
+  executionModelSelect: 'executionModel',
 } as const;
 
 export const FINDER_POLYMARKET_IDS = {
@@ -109,6 +110,10 @@ export function getPolymarketPostSignalLimitExitToggle(): HTMLInputElement | nul
 
 export function getPolymarketPostSignalLimitExitModeSelect(): HTMLSelectElement | null {
   return getTypedElement(POLYMARKET_SETTINGS_IDS.postSignalLimitExitModeSelect, HTMLSelectElement);
+}
+
+export function getExecutionModelSelect(): HTMLSelectElement | null {
+  return getTypedElement(POLYMARKET_SETTINGS_IDS.executionModelSelect, HTMLSelectElement);
 }
 
 export function getPolymarketSettingsRows(): {

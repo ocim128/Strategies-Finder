@@ -87,7 +87,7 @@ function makeInput(): FinderRunInput {
             polymarketExitMode: "resolve_hold",
         },
         settings: {
-            executionModel: "signal_close",
+            executionModel: "next_open",
             allowSameBarExit: true,
             tradeDirection: "both",
             polymarketAnnotationEnabled: true,
@@ -146,6 +146,7 @@ describe("second market Finder runner", () => {
                     quotes: [
                         quote(1_700_000_010, 0.55, 0.53),
                         quote(1_700_000_020, 0.60, 0.58),
+                        quote(1_700_000_030, 0.65, 0.63),
                     ],
                 }), { status: 200 });
             }
@@ -167,5 +168,29 @@ describe("second market Finder runner", () => {
         expect(output.results[0]?.polymarketEval?.evaluationMode).to.equal("signal_exit_same_event");
         expect(output.results[0]?.polymarketEval?.expectancy).to.be.closeTo(0.03, 1e-9);
         expect(statuses.at(-1)).to.contain("CLOB quote rows");
+    });
+
+    it("rejects 1s CLOB scoring when execution is not next_open", async () => {
+        let fetchCount = 0;
+        globalThis.fetch = async () => {
+            fetchCount++;
+            throw new Error("fetch should not be called before execution gating");
+        };
+
+        const input = makeInput();
+        input.settings.executionModel = "signal_close";
+
+        const statuses: string[] = [];
+        const output = await runSecondMarketFinder(input, {
+            setProgress: () => undefined,
+            setStatus: (text) => statuses.push(text),
+            yieldControl: async () => undefined,
+            isCancelled: () => false,
+            onResultsUpdate: () => undefined,
+        });
+
+        expect(output.results).to.deep.equal([]);
+        expect(fetchCount).to.equal(0);
+        expect(statuses.at(-1)).to.equal("1s CLOB Polymarket scoring requires next_open execution model.");
     });
 });

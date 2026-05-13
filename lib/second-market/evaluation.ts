@@ -7,14 +7,15 @@ import type {
 } from "../types/polymarket-outcomes";
 import type { PolymarketExitMode } from "../polymarket-exit-mode";
 import {
-    getEffectivePolymarket5mSeriesId,
-    loadPolymarket5mOutcomesForTimeRange,
+    getEffectivePolymarketSeriesId,
+    loadPolymarketOutcomesForTimeRange,
     resolvePolymarketOutcomeSymbol,
 } from "../polymarket-btc5m";
 import { buildPolymarketOutcomeBase } from "../polymarket-outcome-annotation";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { evaluateSecondMarketTrades, SECOND_MARKET_UNRESOLVED_OUTCOME_SOURCE } from "./backtest";
 import { loadSecondMarketClobQuotes, normalizeSecondMarketChartSymbol } from "./api";
+import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import type {
     PolymarketClob1sQuoteRow,
     SecondMarketBacktestSummary,
@@ -26,6 +27,7 @@ export type SecondMarketEvaluationContext = {
     symbol: SecondMarketSymbol;
     outcomeSymbol: SecondMarketSymbol;
     seriesId: string;
+    outcomeInterval: PolymarketOutcomeInterval;
     outcomes: PolymarketOutcomeRow[];
     quotes: PolymarketClob1sQuoteRow[];
 };
@@ -40,6 +42,15 @@ export type SecondMarketEvaluationResult = {
 
 export function isSecondMarketPolymarketSupported(symbol: string, interval: string): boolean {
     return interval.trim().toLowerCase() === "1s" && normalizeSecondMarketChartSymbol(symbol) !== null;
+}
+
+export function isSecondMarketPolymarketScoringSupported(args: {
+    symbol: string;
+    interval: string;
+    executionModel?: string;
+}): boolean {
+    return isSecondMarketPolymarketSupported(args.symbol, args.interval)
+        && args.executionModel === "next_open";
 }
 
 function getTradeTimeRange(trades: readonly Trade[]): { startTs: number; endTs: number } | null {
@@ -179,7 +190,7 @@ function summarizePolymarketResult(args: {
     return {
         seriesId: context.seriesId,
         outcomeSymbol: context.outcomeSymbol,
-        outcomeInterval: "5m",
+        outcomeInterval: context.outcomeInterval,
         outcomeRowsLoaded: context.outcomes.length,
         scoredTrades: summary.scoredTrades,
         missingOutcomeTrades: summary.missingOutcomeTrades,
@@ -264,23 +275,25 @@ function buildPolymarketEval(args: {
 export async function loadSecondMarketEvaluationContext(args: {
     symbol: string;
     outcomeSymbol?: string;
+    outcomeInterval?: PolymarketOutcomeInterval;
     startTs: number;
     endTs: number;
 }): Promise<SecondMarketEvaluationContext | null> {
     const symbol = normalizeSecondMarketChartSymbol(args.symbol);
+    const outcomeInterval = resolvePolymarketOutcomeInterval(args.outcomeInterval);
     const resolvedOutcomeSymbol = resolvePolymarketOutcomeSymbol(args.symbol, args.outcomeSymbol);
     const outcomeSymbol = resolvedOutcomeSymbol
         ? normalizeSecondMarketChartSymbol(resolvedOutcomeSymbol)
         : null;
     if (!symbol || !outcomeSymbol) return null;
 
-    const seriesId = getEffectivePolymarket5mSeriesId(args.symbol, outcomeSymbol);
+    const seriesId = getEffectivePolymarketSeriesId(args.symbol, outcomeInterval, outcomeSymbol);
     if (!seriesId) return null;
 
     const startTs = Math.floor(args.startTs);
     const endTs = Math.floor(args.endTs);
     const [outcomes, quotes] = await Promise.all([
-        loadPolymarket5mOutcomesForTimeRange(args.symbol, startTs, endTs, outcomeSymbol),
+        loadPolymarketOutcomesForTimeRange(args.symbol, startTs, endTs, outcomeSymbol, outcomeInterval),
         loadSecondMarketClobQuotes({
             symbol: outcomeSymbol,
             seriesId,
@@ -293,6 +306,7 @@ export async function loadSecondMarketEvaluationContext(args: {
         symbol,
         outcomeSymbol,
         seriesId,
+        outcomeInterval,
         outcomes: mergeOutcomeRowsWithClobEvents(outcomes, quotes),
         quotes,
     };
@@ -348,9 +362,18 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
     symbol: string;
     interval: string;
     outcomeSymbol?: string;
+    outcomeInterval?: PolymarketOutcomeInterval;
+    executionModel?: string;
     polymarketExitMode?: PolymarketExitMode;
 }): Promise<BacktestResult> {
-    if (!isSecondMarketPolymarketSupported(args.symbol, args.interval) || args.result.trades.length === 0) {
+    if (
+        !isSecondMarketPolymarketScoringSupported({
+            symbol: args.symbol,
+            interval: args.interval,
+            executionModel: args.executionModel,
+        })
+        || args.result.trades.length === 0
+    ) {
         return args.result;
     }
 
@@ -360,6 +383,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
     const context = await loadSecondMarketEvaluationContext({
         symbol: args.symbol,
         outcomeSymbol: args.outcomeSymbol,
+        outcomeInterval: args.outcomeInterval,
         startTs: range.startTs - 300,
         endTs: range.endTs + 300,
     });

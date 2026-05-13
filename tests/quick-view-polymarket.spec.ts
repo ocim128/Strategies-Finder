@@ -1196,11 +1196,20 @@ describe("Quick View Polymarket streak summary", () => {
         const content = { style: { display: "" }, innerHTML: "" };
         const empty = { style: { display: "" } };
 
-        (globalThis as { HTMLSelectElement?: typeof HTMLSelectElement }).HTMLSelectElement = class {} as typeof HTMLSelectElement;
+        class FakeSelectElement {
+            value: string;
+
+            constructor(value = "") {
+                this.value = value;
+            }
+        }
+        (globalThis as { HTMLSelectElement?: typeof HTMLSelectElement }).HTMLSelectElement = FakeSelectElement as unknown as typeof HTMLSelectElement;
+        const executionModelSelect = new FakeSelectElement("next_open");
         (globalThis as { document?: Document }).document = {
             getElementById: (id: string) => {
                 if (id === "qvStatsContent") return content as unknown as HTMLElement;
                 if (id === "qvEmpty") return empty as unknown as HTMLElement;
+                if (id === "executionModel") return executionModelSelect as unknown as HTMLElement;
                 return null;
             },
         } as Document;
@@ -1379,9 +1388,19 @@ describe("Quick View Polymarket streak summary", () => {
         const tradeExitTs = eventStartTs + 20;
         let clobRequests = 0;
 
-        (globalThis as { HTMLSelectElement?: typeof HTMLSelectElement }).HTMLSelectElement = class {} as typeof HTMLSelectElement;
+        class FakeSelectElement {
+            value: string;
+
+            constructor(value = "") {
+                this.value = value;
+            }
+        }
+        (globalThis as { HTMLSelectElement?: typeof HTMLSelectElement }).HTMLSelectElement = FakeSelectElement as unknown as typeof HTMLSelectElement;
+        const executionModelSelect = new FakeSelectElement("next_open");
         (globalThis as { document?: Document }).document = {
-            getElementById: () => null,
+            getElementById: (id: string) => id === "executionModel"
+                ? (executionModelSelect as unknown as HTMLElement)
+                : null,
         } as Document;
 
         globalThis.fetch = (async (input) => {

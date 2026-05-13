@@ -896,6 +896,8 @@ class QuickViewManager {
                     symbol: resultContext.symbol,
                     interval: resultContext.interval,
                     outcomeSymbol: outcomeSymbol ?? undefined,
+                    outcomeInterval,
+                    executionModel: this.readCurrentExecutionModel(),
                     polymarketExitMode: effectiveExitMode,
                 });
             } catch (error) {

@@ -642,17 +642,18 @@ export class BacktestService {
                 executionModel: settings.executionModel,
                 polymarketAnnotationEnabled: settings.polymarketAnnotationEnabled,
             });
+            const outcomeInterval = resolvePolymarketOutcomeInterval(settings.polymarketOutcomeInterval);
             if (isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval)) {
                 return await annotateBacktestResultWithSecondMarketClob({
                     result,
                     symbol: state.currentSymbol,
                     interval: state.currentInterval,
                     outcomeSymbol: settings.polymarketOutcomeSymbol,
+                    outcomeInterval,
+                    executionModel: settings.executionModel,
                     polymarketExitMode: effectiveExitMode,
                 });
             }
-
-            const outcomeInterval = resolvePolymarketOutcomeInterval(settings.polymarketOutcomeInterval);
 
             return await annotateBacktestResultWithPolymarketOutcomes(result, {
                 symbol: state.currentSymbol,

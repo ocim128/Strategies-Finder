@@ -28,9 +28,11 @@ import { resolveEffectivePolymarketExitMode } from "../polymarket-exit-mode";
 import { filterTradesByPreviousClosedTradeExitReason } from "../polymarket-trade-annotations";
 import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import {
+    isSecondMarketPolymarketScoringSupported,
     evaluateSecondMarketBacktest,
     loadSecondMarketEvaluationContext,
 } from "./evaluation";
+import { resolvePolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 
 function isAlternativeSizingMode(capitalSettings: CapitalSettings): boolean {
     return capitalSettings.sizingMode !== "fixed" && capitalSettings.sizingMode !== "percent";
@@ -108,6 +110,15 @@ export async function runSecondMarketFinder(
         return { results: [] };
     }
 
+    if (!isSecondMarketPolymarketScoringSupported({
+        symbol: input.symbol,
+        interval: input.interval,
+        executionModel: settings.executionModel,
+    })) {
+        callbacks.setStatus("1s CLOB Polymarket scoring requires next_open execution model.");
+        return { results: [] };
+    }
+
     const requiresSizedNetRank = options.sortPriority.includes("polySizedNet");
     if (requiresSizedNetRank && !isAlternativeSizingMode(input.capitalSettings)) {
         callbacks.setStatus("Sized Net rank mode requires Alternative Sizing mode other than fixed or percent.");
@@ -120,6 +131,7 @@ export async function runSecondMarketFinder(
         executionModel: settings.executionModel,
         polymarketAnnotationEnabled: options.polymarketScoringEnabled,
     });
+    const outcomeInterval = resolvePolymarketOutcomeInterval(settings.polymarketOutcomeInterval);
 
     callbacks.setProgress(5, "Preparing 1s chart data...");
     const closedData = buildFinderEvaluationData(input.ohlcvData, input.interval, settings);
@@ -141,6 +153,7 @@ export async function runSecondMarketFinder(
         context = await loadSecondMarketEvaluationContext({
             symbol: input.symbol,
             outcomeSymbol: settings.polymarketOutcomeSymbol,
+            outcomeInterval,
             startTs: range.startTs - 300,
             endTs: range.endTs + 300,
         });
