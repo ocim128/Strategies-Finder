@@ -1,4 +1,6 @@
 import { setVisible } from "./dom-utils";
+import { renderEmptyTableRow, renderLabeledCard } from "./ui-render-helpers";
+import { formatRatioPercent, formatSignedRatioPercent } from "./ui-formatters";
 import type { EnsembleLabDom } from "./strategy-ensemble-dom";
 import type {
     EnsemblePolymarketConfigResult,
@@ -11,29 +13,9 @@ import type {
 } from "./strategy-ensemble-polymarket-engine";
 import { escapeHtml } from "./strategy-ensemble-renderer";
 
-const EMPTY_TABLE_ROW = `
-    <tr>
-        <td colspan="14" style="text-align:center;color:var(--text-secondary);padding:16px;">
-            Run Ensemble Polymarket to compare executable config edge against Polymarket outcomes.
-        </td>
-    </tr>
-`;
-
-const EMPTY_VETO_TABLE_ROW = `
-    <tr>
-        <td colspan="14" style="text-align:center;color:var(--text-secondary);padding:16px;">
-            Run Ensemble Polymarket to rank asymmetric veto pairs.
-        </td>
-    </tr>
-`;
-
-const EMPTY_OVERRIDE_TABLE_ROW = `
-    <tr>
-        <td colspan="14" style="text-align:center;color:var(--text-secondary);padding:16px;">
-            Run Ensemble Polymarket to rank secondary-override pairs.
-        </td>
-    </tr>
-`;
+const EMPTY_TABLE_ROW = renderEmptyTableRow(14, "Run Ensemble Polymarket to compare executable config edge against Polymarket outcomes.");
+const EMPTY_VETO_TABLE_ROW = renderEmptyTableRow(14, "Run Ensemble Polymarket to rank asymmetric veto pairs.");
+const EMPTY_OVERRIDE_TABLE_ROW = renderEmptyTableRow(14, "Run Ensemble Polymarket to rank secondary-override pairs.");
 
 export function renderEnsemblePolymarketResults(
     dom: EnsembleLabDom,
@@ -362,12 +344,13 @@ function renderSelectedActionBar(result: EnsemblePolymarketRunResult): string {
 }
 
 function card(label: string, value: string): string {
-    return `
-        <div class="sim-card">
-            <div class="sim-card-label">${escapeHtml(label)}</div>
-            <div class="sim-card-value">${escapeHtml(value)}</div>
-        </div>
-    `;
+    return renderLabeledCard({
+        label,
+        value,
+        cardClass: "sim-card",
+        labelClass: "sim-card-label",
+        valueClass: "sim-card-value",
+    });
 }
 
 function insight(label: string, detail: string): string {
@@ -375,7 +358,7 @@ function insight(label: string, detail: string): string {
 }
 
 function formatPercent(value: number): string {
-    return `${(value * 100).toFixed(1)}%`;
+    return formatRatioPercent(value);
 }
 
 function formatOptionalPercent(value: number, sampleCount: number): string {
@@ -383,8 +366,7 @@ function formatOptionalPercent(value: number, sampleCount: number): string {
 }
 
 function formatSignedPercent(value: number): string {
-    const sign = value >= 0 ? "+" : "-";
-    return `${sign}${Math.abs(value * 100).toFixed(1)}%`;
+    return formatSignedRatioPercent(value);
 }
 
 function formatSignedFixed(value: number): string {

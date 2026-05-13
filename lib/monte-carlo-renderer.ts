@@ -1,6 +1,12 @@
 import type { MonteCarloResult, MonteCarloSimulation } from "./strategies/monte-carlo/monte-carlo-engine";
 import type { MonteCarloDomElements } from "./monte-carlo-dom";
 import { mean, median, percentile, sampleStdDev } from "./statistics-utils";
+import {
+    formatDecimal,
+    formatDollarAmount,
+    formatPercentPoints as formatPercent,
+    formatSignedCurrency,
+} from "./ui-formatters";
 
 export interface MonteCarloMethodComparisonRow {
     label: string;
@@ -471,22 +477,4 @@ function formatValue(value: number, metric: string): string {
         return formatDollarAmount(value);
     }
     return formatDecimal(value);
-}
-
-function formatSignedCurrency(value: number): string {
-    const prefix = value >= 0 ? "+" : "-";
-    return `${prefix}$${Math.abs(value).toFixed(2)}`;
-}
-
-function formatDollarAmount(value: number): string {
-    const prefix = value < 0 ? "-" : "";
-    return `${prefix}$${Math.abs(value).toFixed(2)}`;
-}
-
-function formatPercent(value: number): string {
-    return `${value.toFixed(2)}%`;
-}
-
-function formatDecimal(value: number): string {
-    return value.toFixed(3);
 }

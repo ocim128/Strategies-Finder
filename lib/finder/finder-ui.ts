@@ -1,4 +1,9 @@
 import { getRequiredElement, setVisible } from "../dom-utils";
+import {
+    formatPolymarketCents,
+    formatProfitFactor,
+    formatSignedCompactDollar,
+} from "../ui-formatters";
 import type { FinderMode, FinderRandomBenchmark, FinderResult, FinderUniverseCandidate } from "../types/finder";
 import type { BacktestResult, StrategyParams, Time } from "../types/strategies";
 import { getFinderSelectionResult } from "./finder-engine";
@@ -88,16 +93,6 @@ export class FinderUI {
 
         const fragment = document.createDocumentFragment();
         results.forEach((item, index) => {
-            const row = document.createElement("div");
-            row.className = "finder-row";
-
-            const rank = document.createElement("div");
-            rank.className = "finder-rank";
-            rank.textContent = `${index + 1}`;
-
-            const main = document.createElement("div");
-            main.className = "finder-main";
-
             const title = document.createElement("div");
             title.className = "finder-title";
             const titleText = document.createElement("span");
@@ -110,14 +105,7 @@ export class FinderUI {
                 title.appendChild(comboBadge);
             }
 
-            const sub = document.createElement("div");
-            sub.className = "finder-sub";
             const timeframeLabel = item.timeframes && item.timeframes.length === 1 ? ` @ ${item.timeframes[0]}` : "";
-            sub.textContent = `${item.key}${timeframeLabel}`;
-
-            const params = document.createElement("div");
-            params.className = "finder-params";
-            params.textContent = this.formatParams(item.params);
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
             const result = getFinderDisplayResult(item);
@@ -127,11 +115,11 @@ export class FinderUI {
                 const poly = item.polymarketEval;
                 metrics.appendChild(this.createMetricChip(`Poly Win ${(poly.winRate * 100).toFixed(1)}%`));
                 if (typeof poly.expectancy === "number" && Number.isFinite(poly.expectancy)) {
-                    metrics.appendChild(this.createMetricChip(`Poly Exp ${this.formatPolymarketCents(poly.expectancy)}`));
+                    metrics.appendChild(this.createMetricChip(`Poly Exp ${formatPolymarketCents(poly.expectancy)}`));
                 }
-                metrics.appendChild(this.createMetricChip(`Poly PF ${this.formatOptionalProfitFactor(poly.profitFactor)}`));
+                metrics.appendChild(this.createMetricChip(`Poly PF ${formatProfitFactor(poly.profitFactor)}`));
                 if (typeof poly.sizedNetProfit === "number") {
-                    metrics.appendChild(this.createMetricChip(`Sized Net ${this.formatCompactCurrency(poly.sizedNetProfit)}`));
+                    metrics.appendChild(this.createMetricChip(`Sized Net ${formatSignedCompactDollar(poly.sizedNetProfit)}`));
                 }
                 metrics.appendChild(this.createMetricChip(`Coverage ${(poly.coverage * 100).toFixed(1)}%`));
                 metrics.appendChild(this.createMetricChip(`Wins ${poly.wins}`));
@@ -157,7 +145,7 @@ export class FinderUI {
                 }
             } else {
                 metrics.appendChild(this.createMetricChip(`Net ${this.formatCurrency(result.netProfit)}`));
-                metrics.appendChild(this.createMetricChip(`PF ${this.formatProfitFactor(result.profitFactor)}`));
+                metrics.appendChild(this.createMetricChip(`PF ${formatProfitFactor(result.profitFactor)}`));
                 metrics.appendChild(this.createMetricChip(`Sharpe ${result.sharpeRatio.toFixed(2)}`));
                 if (Number.isFinite(item.compositeEdgeRatio)) {
                     metrics.appendChild(this.createMetricChip(`ER ${item.compositeEdgeRatio!.toFixed(2)}`));
@@ -176,20 +164,13 @@ export class FinderUI {
                 }
             }
 
-            main.appendChild(title);
-            main.appendChild(sub);
-            main.appendChild(params);
-            main.appendChild(metrics);
-
-            const button = document.createElement("button");
-            button.className = "btn btn-secondary finder-apply";
-            button.textContent = "Apply";
-            button.dataset.index = index.toString();
-
-            row.appendChild(rank);
-            row.appendChild(main);
-            row.appendChild(button);
-            fragment.appendChild(row);
+            fragment.appendChild(this.createResultRow({
+                index,
+                title,
+                subText: `${item.key}${timeframeLabel}`,
+                paramsText: this.formatParams(item.params),
+                metrics,
+            }));
         });
         list.appendChild(fragment);
     }
@@ -210,27 +191,9 @@ export class FinderUI {
 
         const fragment = document.createDocumentFragment();
         results.forEach((item, index) => {
-            const row = document.createElement("div");
-            row.className = "finder-row";
-
-            const rank = document.createElement("div");
-            rank.className = "finder-rank";
-            rank.textContent = `${index + 1}`;
-
-            const main = document.createElement("div");
-            main.className = "finder-main";
-
             const title = document.createElement("div");
             title.className = "finder-title";
             title.textContent = item.strategyName;
-
-            const sub = document.createElement("div");
-            sub.className = "finder-sub";
-            sub.textContent = `${item.strategyKey} | ${item.profitableSymbols}/${item.activeSymbols} profitable active symbols`;
-
-            const params = document.createElement("div");
-            params.className = "finder-params";
-            params.textContent = this.formatParams(item.params);
 
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
@@ -257,21 +220,14 @@ export class FinderUI {
                 details.appendChild(line);
             });
 
-            main.appendChild(title);
-            main.appendChild(sub);
-            main.appendChild(params);
-            main.appendChild(metrics);
-            main.appendChild(details);
-
-            const button = document.createElement("button");
-            button.className = "btn btn-secondary finder-apply";
-            button.textContent = "Apply";
-            button.dataset.index = index.toString();
-
-            row.appendChild(rank);
-            row.appendChild(main);
-            row.appendChild(button);
-            fragment.appendChild(row);
+            fragment.appendChild(this.createResultRow({
+                index,
+                title,
+                subText: `${item.strategyKey} | ${item.profitableSymbols}/${item.activeSymbols} profitable active symbols`,
+                paramsText: this.formatParams(item.params),
+                metrics,
+                details,
+            }));
         });
         list.appendChild(fragment);
     }
@@ -331,6 +287,51 @@ export class FinderUI {
         return span;
     }
 
+    private createResultRow(options: {
+        index: number;
+        title: HTMLElement;
+        subText: string;
+        paramsText: string;
+        metrics: HTMLElement;
+        details?: HTMLElement;
+    }): HTMLDivElement {
+        const row = document.createElement("div");
+        row.className = "finder-row";
+
+        const rank = document.createElement("div");
+        rank.className = "finder-rank";
+        rank.textContent = `${options.index + 1}`;
+
+        const main = document.createElement("div");
+        main.className = "finder-main";
+
+        const sub = document.createElement("div");
+        sub.className = "finder-sub";
+        sub.textContent = options.subText;
+
+        const params = document.createElement("div");
+        params.className = "finder-params";
+        params.textContent = options.paramsText;
+
+        main.appendChild(options.title);
+        main.appendChild(sub);
+        main.appendChild(params);
+        main.appendChild(options.metrics);
+        if (options.details) {
+            main.appendChild(options.details);
+        }
+
+        const button = document.createElement("button");
+        button.className = "btn btn-secondary finder-apply";
+        button.textContent = "Apply";
+        button.dataset.index = options.index.toString();
+
+        row.appendChild(rank);
+        row.appendChild(main);
+        row.appendChild(button);
+        return row;
+    }
+
     private formatParams(params: StrategyParams): string {
         return Object.entries(params)
             .map(([key, value]) => `${key}=${this.formatParamValue(value)}`)
@@ -345,24 +346,6 @@ export class FinderUI {
     private formatCurrency(value: number): string {
         const sign = value >= 0 ? "+" : "";
         return `${sign}$${value.toFixed(2)}`;
-    }
-
-    private formatCompactCurrency(value: number): string {
-        if (Number.isNaN(value)) return "n/a";
-        if (!Number.isFinite(value)) return value > 0 ? "+$Inf" : "-$Inf";
-        const sign = value > 0 ? "+" : value < 0 ? "-" : "";
-        const abs = Math.abs(value);
-        if (abs >= 1e15) {
-            const [mantissa, exponent] = abs.toExponential(2).split("e");
-            return `${sign}$${mantissa ?? abs.toFixed(2)}x10^${Number(exponent ?? 0)}`;
-        }
-        if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}T`;
-        if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
-        if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
-        if (abs >= 1_000) {
-            return `${sign}$${abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-        }
-        return `${sign}$${abs.toFixed(2)}`;
     }
 
     private formatUniverseStatus(status: string): string {
@@ -409,24 +392,8 @@ export class FinderUI {
         return String(time);
     }
 
-    private formatProfitFactor(value: number): string {
-        return value === Infinity ? "Inf" : value.toFixed(2);
-    }
-
     private formatScore(value: number): string {
         return Number.isInteger(value) ? value.toString() : value.toFixed(1);
-    }
-
-    private formatOptionalProfitFactor(value: number | undefined): string {
-        if (value === undefined || value === null || Number.isNaN(value)) {
-            return "n/a";
-        }
-        return value === Infinity ? "Inf" : value.toFixed(2);
-    }
-
-    private formatPolymarketCents(value: number): string {
-        const sign = value > 0 ? "+" : value < 0 ? "-" : "";
-        return `${sign}${(Math.abs(value) * 100).toFixed(1)}c`;
     }
 
     private formatSelectionSummary(result: BacktestResult): string {

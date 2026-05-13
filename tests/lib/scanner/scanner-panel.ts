@@ -188,6 +188,10 @@ export class ScannerPanel {
             this.handleScanClick();
         });
 
+        this.container.querySelector('.scanner-panel__results-body')?.addEventListener('click', (e) => {
+            this.handleResultsClick(e);
+        });
+
         // Subscribe to scanner events
         this.unsubscribe = scannerManager.subscribe((event) => {
             switch (event.type) {
@@ -482,25 +486,22 @@ export class ScannerPanel {
             })
             .join('');
 
-        // Add click handlers to rows
-        tbody.querySelectorAll('.scanner-panel__result-row').forEach((row) => {
-            row.addEventListener('click', (e) => {
-                if ((e.target as HTMLElement).closest('.scanner-panel__alert-btn')) return;
-                const symbol = (row as HTMLElement).dataset.symbol;
-                if (symbol) this.handleResultClick(symbol);
-            });
-        });
+    }
 
-        // Add click handlers to alert buttons
-        tbody.querySelectorAll('.scanner-panel__alert-btn').forEach((btn) => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const el = e.currentTarget as HTMLElement;
-                const encodedName = el.dataset.configName;
-                const configName = encodedName ? decodeURIComponent(encodedName) : undefined;
-                this.handleAlertSubscribe(el.dataset.symbol!, el.dataset.strategyKey!, configName);
-            });
-        });
+    private handleResultsClick(e: Event): void {
+        const target = e.target as HTMLElement;
+        const alertButton = target.closest<HTMLElement>('.scanner-panel__alert-btn');
+        if (alertButton) {
+            e.stopPropagation();
+            const encodedName = alertButton.dataset.configName;
+            const configName = encodedName ? decodeURIComponent(encodedName) : undefined;
+            this.handleAlertSubscribe(alertButton.dataset.symbol!, alertButton.dataset.strategyKey!, configName);
+            return;
+        }
+
+        const row = target.closest<HTMLElement>('.scanner-panel__result-row');
+        const symbol = row?.dataset.symbol;
+        if (symbol) this.handleResultClick(symbol);
     }
 
     private handleResultClick(symbol: string): void {

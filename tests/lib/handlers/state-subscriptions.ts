@@ -34,21 +34,7 @@ import {
 import type { Time } from "lightweight-charts";
 
 function updatePolymarketEntryOffsetVisibility(interval: string = state.currentInterval): void {
-    const {
-        outcomeIntervalRow,
-        entrySelectionModeRow,
-        offsetRow,
-        exitModeRow,
-        postSignalLimitEntryEnabledRow,
-        postSignalLimitEntryModeRow,
-        postSignalLimitEntryPriceCentsRow,
-        postSignalLimitEntryOffsetCentsRow,
-        postSignalLimitExitEnabledRow,
-        postSignalLimitExitModeRow,
-        postSignalLimitExitPriceCentsRow,
-        postSignalLimitExitOffsetCentsRow,
-        outcomeSymbolRow,
-    } = getPolymarketSettingsRows();
+    const rows = getPolymarketSettingsRows();
     const annotationToggle = getPolymarketAnnotationToggle();
     const annotationEnabled = annotationToggle?.checked ?? false;
     const polymarketSettings = resolvePolymarketDomSettings();
@@ -63,46 +49,23 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
     const usesActualEntryMinute = polymarketSettings.entrySelectionMode === 'actual_entry_minute';
     const showsEntryBridgeControls = interval === '1m' && isNative5mSession && annotationEnabled && !isSignalExit;
 
-    if (outcomeIntervalRow) {
-        outcomeIntervalRow.style.display = annotationEnabled ? 'block' : 'none';
-    }
-
-    if (entrySelectionModeRow) {
-        entrySelectionModeRow.style.display = showsEntryBridgeControls ? 'block' : 'none';
-    }
-
-    if (offsetRow) {
-        offsetRow.style.display = showsEntryBridgeControls && !usesActualEntryMinute ? 'block' : 'none';
-    }
-    if (exitModeRow) {
-        exitModeRow.style.display = annotationEnabled ? 'block' : 'none';
-    }
-    if (postSignalLimitEntryEnabledRow) {
-        postSignalLimitEntryEnabledRow.style.display = supportsLimitEntry ? 'block' : 'none';
-    }
-    if (postSignalLimitEntryModeRow) {
-        postSignalLimitEntryModeRow.style.display = limitEntryEnabled ? 'block' : 'none';
-    }
-    if (postSignalLimitEntryPriceCentsRow) {
-        postSignalLimitEntryPriceCentsRow.style.display = limitEntryEnabled && !usesSignalOffsetEntry ? 'block' : 'none';
-    }
-    if (postSignalLimitEntryOffsetCentsRow) {
-        postSignalLimitEntryOffsetCentsRow.style.display = limitEntryEnabled && usesSignalOffsetEntry ? 'block' : 'none';
-    }
-    if (postSignalLimitExitEnabledRow) {
-        postSignalLimitExitEnabledRow.style.display = limitEntryEnabled ? 'block' : 'none';
-    }
-    if (postSignalLimitExitModeRow) {
-        postSignalLimitExitModeRow.style.display = limitExitEnabled ? 'block' : 'none';
-    }
-    if (postSignalLimitExitPriceCentsRow) {
-        postSignalLimitExitPriceCentsRow.style.display = limitExitEnabled && usesFixedLimitExit ? 'block' : 'none';
-    }
-    if (postSignalLimitExitOffsetCentsRow) {
-        postSignalLimitExitOffsetCentsRow.style.display = limitExitEnabled && !usesFixedLimitExit ? 'block' : 'none';
-    }
-    if (outcomeSymbolRow) {
-        outcomeSymbolRow.style.display = annotationEnabled ? 'block' : 'none';
+    const visibilityRules: Array<[HTMLElement | null, boolean]> = [
+        [rows.outcomeIntervalRow, annotationEnabled],
+        [rows.entrySelectionModeRow, showsEntryBridgeControls],
+        [rows.offsetRow, showsEntryBridgeControls && !usesActualEntryMinute],
+        [rows.exitModeRow, annotationEnabled],
+        [rows.postSignalLimitEntryEnabledRow, supportsLimitEntry],
+        [rows.postSignalLimitEntryModeRow, limitEntryEnabled],
+        [rows.postSignalLimitEntryPriceCentsRow, limitEntryEnabled && !usesSignalOffsetEntry],
+        [rows.postSignalLimitEntryOffsetCentsRow, limitEntryEnabled && usesSignalOffsetEntry],
+        [rows.postSignalLimitExitEnabledRow, limitEntryEnabled],
+        [rows.postSignalLimitExitModeRow, limitExitEnabled],
+        [rows.postSignalLimitExitPriceCentsRow, limitExitEnabled && usesFixedLimitExit],
+        [rows.postSignalLimitExitOffsetCentsRow, limitExitEnabled && !usesFixedLimitExit],
+        [rows.outcomeSymbolRow, annotationEnabled],
+    ];
+    for (const [row, visible] of visibilityRules) {
+        if (row) row.style.display = visible ? 'block' : 'none';
     }
 
     const exitModeSelect = getPolymarketExitModeSelect();
@@ -140,60 +103,21 @@ function updateFinderRankModeOptions(): void {
 
 export function setupStateSubscriptions() {
     updatePolymarketEntryOffsetVisibility();
-    const polymarketAnnotationToggle = getPolymarketAnnotationToggle();
-    if (polymarketAnnotationToggle) {
-        polymarketAnnotationToggle.addEventListener('change', () => {
+    [
+        { element: getPolymarketAnnotationToggle(), refreshRankModes: false },
+        { element: getPolymarketExitModeSelect(), refreshRankModes: true },
+        { element: getPolymarketEntrySelectionModeSelect(), refreshRankModes: false },
+        { element: getPolymarketOutcomeIntervalSelect(), refreshRankModes: true },
+        { element: getPolymarketPostSignalLimitEntryToggle(), refreshRankModes: false },
+        { element: getPolymarketPostSignalLimitEntryModeSelect(), refreshRankModes: false },
+        { element: getPolymarketPostSignalLimitExitToggle(), refreshRankModes: false },
+        { element: getPolymarketPostSignalLimitExitModeSelect(), refreshRankModes: false },
+    ].forEach(({ element, refreshRankModes }) => {
+        element?.addEventListener('change', () => {
             updatePolymarketEntryOffsetVisibility();
+            if (refreshRankModes) updateFinderRankModeOptions();
         });
-    }
-
-    const polymarketExitModeSelect = getPolymarketExitModeSelect();
-    if (polymarketExitModeSelect) {
-        polymarketExitModeSelect.addEventListener('change', () => {
-            updatePolymarketEntryOffsetVisibility();
-            updateFinderRankModeOptions();
-        });
-    }
-
-    const polymarketEntrySelectionModeSelect = getPolymarketEntrySelectionModeSelect();
-    if (polymarketEntrySelectionModeSelect) {
-        polymarketEntrySelectionModeSelect.addEventListener('change', () => {
-            updatePolymarketEntryOffsetVisibility();
-        });
-    }
-
-    const polymarketOutcomeIntervalSelect = getPolymarketOutcomeIntervalSelect();
-    if (polymarketOutcomeIntervalSelect) {
-        polymarketOutcomeIntervalSelect.addEventListener('change', () => {
-            updatePolymarketEntryOffsetVisibility();
-            updateFinderRankModeOptions();
-        });
-    }
-
-    const polymarketPostSignalLimitEntryToggle = getPolymarketPostSignalLimitEntryToggle();
-    if (polymarketPostSignalLimitEntryToggle) {
-        polymarketPostSignalLimitEntryToggle.addEventListener('change', () => {
-            updatePolymarketEntryOffsetVisibility();
-        });
-    }
-    const polymarketPostSignalLimitEntryModeSelect = getPolymarketPostSignalLimitEntryModeSelect();
-    if (polymarketPostSignalLimitEntryModeSelect) {
-        polymarketPostSignalLimitEntryModeSelect.addEventListener('change', () => {
-            updatePolymarketEntryOffsetVisibility();
-        });
-    }
-    const polymarketPostSignalLimitExitToggle = getPolymarketPostSignalLimitExitToggle();
-    if (polymarketPostSignalLimitExitToggle) {
-        polymarketPostSignalLimitExitToggle.addEventListener('change', () => {
-            updatePolymarketEntryOffsetVisibility();
-        });
-    }
-    const polymarketPostSignalLimitExitModeSelect = getPolymarketPostSignalLimitExitModeSelect();
-    if (polymarketPostSignalLimitExitModeSelect) {
-        polymarketPostSignalLimitExitModeSelect.addEventListener('change', () => {
-            updatePolymarketEntryOffsetVisibility();
-        });
-    }
+    });
 
     updateFinderRankModeOptions();
 

@@ -23,6 +23,26 @@ export function getOptionalElement<T extends HTMLElement>(id: string): T | null 
     return (document.getElementById(id) as T | null) ?? null;
 }
 
+export type RequiredDomElementMap<TIds extends Record<string, string>> = {
+    [K in keyof TIds]: HTMLElement;
+};
+
+export function getRequiredDomIds<TIds extends Record<string, string>>(
+    ids: TIds
+): readonly TIds[keyof TIds][] {
+    return Object.values(ids) as TIds[keyof TIds][];
+}
+
+export function getRequiredDomElements<TIds extends Record<string, string>>(
+    ids: TIds
+): RequiredDomElementMap<TIds> {
+    const elements = {} as RequiredDomElementMap<TIds>;
+    for (const key of Object.keys(ids) as Array<keyof TIds>) {
+        elements[key] = getRequiredElement(ids[key]);
+    }
+    return elements;
+}
+
 /**
  * Set text content of an element and optionally apply a class.
  */

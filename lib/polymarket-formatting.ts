@@ -1,4 +1,11 @@
 import type { PolymarketFillScope } from "./polymarket-fill-analysis";
+import {
+    formatPolymarketCents,
+    formatProfitFactor as formatUiProfitFactor,
+    formatRatioPercent,
+} from "./ui-formatters";
+
+export { formatPolymarketCents };
 
 export function formatScopeLabel(scope: PolymarketFillScope): string {
     if (scope === "long") return "YES-only fills";
@@ -7,26 +14,19 @@ export function formatScopeLabel(scope: PolymarketFillScope): string {
 }
 
 export function formatPercent(value: number): string {
-    return `${(value * 100).toFixed(1)}%`;
+    return formatRatioPercent(value);
 }
 
 export function formatProbability(value: number): string {
     return `${(Math.abs(value) * 100).toFixed(1)}c`;
 }
 
-export function formatPolymarketCents(value: number): string {
-    const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
-    return `${prefix}${(Math.abs(value) * 100).toFixed(1)}c`;
-}
-
 export function formatProfitFactor(value: number | null): string {
-    if (value === null || !Number.isFinite(value)) {
-        return value === Infinity ? "∞" : "n/a";
-    }
-    return value.toFixed(2);
+    return formatUiProfitFactor(value, "∞");
 }
 
 export function formatSignedUsd(value: number): string {
+    if (!Number.isFinite(value)) return "-";
     const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
     return `${prefix}$${Math.abs(value).toFixed(2)}`;
 }

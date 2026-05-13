@@ -3,6 +3,8 @@ import { resolveLiveRecommendation } from "./strategy-ensemble-live-context";
 import { buildRadarFindings } from "./strategy-ensemble-radar";
 import { describeScenarioPrimaryRow } from "./strategy-ensemble-rules";
 import { escapeHtml } from "./html-escape";
+import { renderEmptyTableRow, renderLabeledCard } from "./ui-render-helpers";
+import { formatSignedCurrency, formatSignedPercentPoints } from "./ui-formatters";
 import type {
     EnsembleBuilderRow,
     EnsembleCurrentVoteLabel,
@@ -41,51 +43,31 @@ export function renderStrategyEnsembleResults(dom: EnsembleLabDom, context: Ense
 }
 
 export function resetStrategyEnsembleResultPanels(dom: EnsembleLabDom): void {
-    dom.ensembleResults.style.display = "none";
-    dom.ensembleCurrentContextSection.style.display = "none";
-    dom.ensembleBuilderSection.style.display = "none";
-    dom.ensembleHistoricalOddsSection.style.display = "none";
-    dom.ensembleDiagnosticsSection.style.display = "none";
+    [
+        dom.ensembleResults,
+        dom.ensembleCurrentContextSection,
+        dom.ensembleBuilderSection,
+        dom.ensembleHistoricalOddsSection,
+        dom.ensembleDiagnosticsSection,
+        dom.ensembleContributionSection,
+        dom.ensembleReplacementSection,
+        dom.ensembleRadarSection,
+    ].forEach((section) => {
+        section.style.display = "none";
+    });
     dom.ensembleDiagnosticsSection.open = false;
-    dom.ensembleContributionSection.style.display = "none";
-    dom.ensembleReplacementSection.style.display = "none";
-    dom.ensembleRadarSection.style.display = "none";
 
     dom.ensembleSummary.innerHTML = "";
     dom.ensembleCurrentContextSummary.innerHTML = "";
     dom.ensembleCurrentContextDetails.innerHTML = "";
     dom.ensembleHistoricalOddsSummary.innerHTML = "";
-    dom.ensembleHistoricalOddsTableBody.innerHTML = `
-        <tr>
-            <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                Run Strategy Ensemble Lab to calculate conditional outcome probabilities.
-            </td>
-        </tr>
-    `;
+    dom.ensembleHistoricalOddsTableBody.innerHTML = renderEmptyTableRow(9, "Run Strategy Ensemble Lab to calculate conditional outcome probabilities.");
     dom.ensembleBuilderSummary.innerHTML = "";
-    dom.ensembleBuilderTableBody.innerHTML = `
-        <tr>
-            <td colspan="10" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                Run Strategy Ensemble Lab to compare ensemble filtering rules.
-            </td>
-        </tr>
-    `;
+    dom.ensembleBuilderTableBody.innerHTML = renderEmptyTableRow(10, "Run Strategy Ensemble Lab to compare ensemble filtering rules.");
     dom.ensembleContributionSummary.innerHTML = "";
-    dom.ensembleContributionTableBody.innerHTML = `
-        <tr>
-            <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                Run Strategy Ensemble Lab to identify helpful and harmful context families.
-            </td>
-        </tr>
-    `;
+    dom.ensembleContributionTableBody.innerHTML = renderEmptyTableRow(12, "Run Strategy Ensemble Lab to identify helpful and harmful context families.");
     dom.ensembleReplacementSummary.innerHTML = "";
-    dom.ensembleReplacementTableBody.innerHTML = `
-        <tr>
-            <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                Run Strategy Ensemble Lab to rank candidate replacements for the weakest context family.
-            </td>
-        </tr>
-    `;
+    dom.ensembleReplacementTableBody.innerHTML = renderEmptyTableRow(9, "Run Strategy Ensemble Lab to rank candidate replacements for the weakest context family.");
     dom.ensembleRadarContent.innerHTML = "";
 }
 
@@ -177,13 +159,7 @@ function renderHistoricalOdds(dom: EnsembleLabDom, context: EnsembleRunContext):
 
     if (rows.length === 0) {
         dom.ensembleHistoricalOddsSummary.innerHTML = card("Status", "No qualifying buckets");
-        dom.ensembleHistoricalOddsTableBody.innerHTML = `
-            <tr>
-                <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                    Not enough samples to produce conditional odds.
-                </td>
-            </tr>
-        `;
+        dom.ensembleHistoricalOddsTableBody.innerHTML = renderEmptyTableRow(9, "Not enough samples to produce conditional odds.");
         return;
     }
 
@@ -390,13 +366,7 @@ function renderContribution(dom: EnsembleLabDom, context: EnsembleRunContext): v
     dom.ensembleContributionSummary.innerHTML = summaryCards.join("");
 
     if (context.contributionRows.length === 0) {
-        dom.ensembleContributionTableBody.innerHTML = `
-            <tr>
-                <td colspan="12" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                    No context family contribution data available.
-                </td>
-            </tr>
-        `;
+        dom.ensembleContributionTableBody.innerHTML = renderEmptyTableRow(12, "No context family contribution data available.");
         return;
     }
 
@@ -419,7 +389,7 @@ function renderContribution(dom: EnsembleLabDom, context: EnsembleRunContext): v
                 <td>${escapeHtml(formatOptionalExpectancy(row.voteProfile.opposeStats))}</td>
                 <td>${row.voteProfile.conflictCoverage.toFixed(1)}%</td>
                 <td>${escapeHtml(formatSignedCurrency(row.deltaExpectancy))}</td>
-                <td>${escapeHtml(formatSignedPercent(row.deltaWinRate))}</td>
+                <td>${escapeHtml(formatSignedPercentPoints(row.deltaWinRate))}</td>
                 <td>${row.tradeRetentionPercent.toFixed(0)}%</td>
                 <td>${escapeHtml(formatSignedInteger(row.deltaTrades))}</td>
                 <td>${escapeHtml(describeScenarioPrimaryRow(row.primaryRow))}</td>
@@ -451,13 +421,7 @@ function renderReplacement(dom: EnsembleLabDom, context: EnsembleRunContext): vo
     dom.ensembleReplacementSummary.innerHTML = summaryCards.join("");
 
     if (context.replacementRows.length === 0) {
-        dom.ensembleReplacementTableBody.innerHTML = `
-            <tr>
-                <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                    No replacement candidates improved on the evaluated context set.
-                </td>
-            </tr>
-        `;
+        dom.ensembleReplacementTableBody.innerHTML = renderEmptyTableRow(9, "No replacement candidates improved on the evaluated context set.");
         return;
     }
 
@@ -475,7 +439,7 @@ function renderReplacement(dom: EnsembleLabDom, context: EnsembleRunContext): vo
                 <td>${escapeHtml(formatVoteLabel(row.currentVote))}</td>
                 <td>${escapeHtml(formatSignedCurrency(row.deltaExpectancyVsRemoved))}</td>
                 <td>${escapeHtml(formatSignedCurrency(row.deltaExpectancyVsCurrent))}</td>
-                <td>${escapeHtml(formatSignedPercent(row.deltaWinRateVsCurrent))}</td>
+                <td>${escapeHtml(formatSignedPercentPoints(row.deltaWinRateVsCurrent))}</td>
                 <td>${row.tradeRetentionPercent.toFixed(0)}%</td>
                 <td>${escapeHtml(formatSignedInteger(row.deltaTradesVsCurrent))}</td>
                 <td>${escapeHtml(describeScenarioPrimaryRow(row.primaryRow))}</td>
@@ -493,26 +457,13 @@ function renderRadar(dom: EnsembleLabDom, context: EnsembleRunContext): void {
 }
 
 function card(label: string, value: string): string {
-    return `
-        <div class="sim-card">
-            <div class="sim-card-label">${escapeHtml(label)}</div>
-            <div class="sim-card-value">${escapeHtml(value)}</div>
-        </div>
-    `;
-}
-
-function formatSignedCurrency(value: number): string {
-    if (!Number.isFinite(value)) {
-        return "-";
-    }
-    return `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(2)}`;
-}
-
-function formatSignedPercent(value: number): string {
-    if (!Number.isFinite(value)) {
-        return "-";
-    }
-    return `${value >= 0 ? "+" : "-"}${Math.abs(value).toFixed(2)}%`;
+    return renderLabeledCard({
+        label,
+        value,
+        cardClass: "sim-card",
+        labelClass: "sim-card-label",
+        valueClass: "sim-card-value",
+    });
 }
 
 function formatSignedInteger(value: number): string {

@@ -1,155 +1,120 @@
-import { getRequiredElement } from "./dom-utils";
+import {
+    getRequiredDomElements,
+    getRequiredDomIds,
+    type RequiredDomElementMap,
+} from "./dom-utils";
 
-export const ENSEMBLE_LAB_REQUIRED_IDS = [
-    "ensembleTab",
-    "ensembleEmpty",
-    "ensembleContent",
-    "ensembleTargetPicker",
-    "ensembleTargetSelect",
-    "ensembleTargetButton",
-    "ensembleTargetMenu",
-    "ensembleTargetSearch",
-    "ensembleTargetList",
-    "ensembleTargetPickerEmptyState",
-    "ensembleTargetSummary",
-    "ensembleMinSamples",
-    "ensembleSymbolBadge",
-    "ensembleIntervalBadge",
-    "ensembleContextSearch",
-    "ensembleContextFamilyFilter",
-    "ensembleContextSelectAll",
-    "ensembleContextSelectNone",
-    "ensembleContextInvertVisible",
-    "ensembleContextSelectVisible",
-    "ensembleContextSelectSameFamily",
-    "ensembleContextExcludeSameFamily",
-    "ensembleContextSummary",
-    "ensembleContextList",
-    "ensembleContextHelper",
-    "ensembleContextEmptyState",
-    "ensembleRefreshConfigsBtn",
-    "ensembleRunBtn",
-    "ensembleRunPolymarketBtn",
-    "ensembleLoadConflictBacktestBtn",
-    "ensembleLoadBestVetoBacktestBtn",
-    "ensembleSaveConflictRecipeBtn",
-    "ensembleSaveBestVetoRecipeBtn",
-    "ensembleStatus",
-    "ensembleResults",
-    "ensembleSummary",
-    "ensembleCurrentContextSection",
-    "ensembleCurrentContextSummary",
-    "ensembleCurrentContextDetails",
-    "ensembleHistoricalOddsSection",
-    "ensembleHistoricalOddsSummary",
-    "ensembleHistoricalOddsTableBody",
-    "ensemblePolymarketSection",
-    "ensemblePolymarketEmpty",
-    "ensemblePolymarketStatus",
-    "ensemblePolymarketConflictPolicy",
-    "ensemblePolymarketDirectionSlice",
-    "ensembleSignalRecipeSelect",
-    "ensembleSignalRecipeDirectionSelect",
-    "ensembleSignalRecipeDownloadScriptBtn",
-    "ensembleSignalRecipeCopyEnvBtn",
-    "ensembleSignalRecipeDeleteBtn",
-    "ensembleSignalRecipeStatus",
-    "ensemblePolymarketSummary",
-    "ensemblePolymarketAgreement",
-    "ensemblePolymarketTableBody",
-    "ensemblePolymarketVetoSummary",
-    "ensemblePolymarketVetoTableBody",
-    "ensemblePolymarketOverrideSummary",
-    "ensemblePolymarketOverrideTableBody",
-    "ensembleBuilderSection",
-    "ensembleBuilderSummary",
-    "ensembleBuilderTableBody",
-    "ensembleDiagnosticsSection",
-    "ensembleContributionSection",
-    "ensembleContributionSummary",
-    "ensembleContributionTableBody",
-    "ensembleReplacementSection",
-    "ensembleReplacementSummary",
-    "ensembleReplacementTableBody",
-    "ensembleRadarSection",
-    "ensembleRadarContent",
-] as const;
+const ENSEMBLE_LAB_DOM_IDS = {
+    ensembleTab: "ensembleTab",
+    ensembleEmpty: "ensembleEmpty",
+    ensembleContent: "ensembleContent",
+    ensembleTargetPicker: "ensembleTargetPicker",
+    ensembleTargetSelect: "ensembleTargetSelect",
+    ensembleTargetButton: "ensembleTargetButton",
+    ensembleTargetMenu: "ensembleTargetMenu",
+    ensembleTargetSearch: "ensembleTargetSearch",
+    ensembleTargetList: "ensembleTargetList",
+    ensembleTargetPickerEmptyState: "ensembleTargetPickerEmptyState",
+    ensembleTargetSummary: "ensembleTargetSummary",
+    ensembleMinSamples: "ensembleMinSamples",
+    ensembleSymbolBadge: "ensembleSymbolBadge",
+    ensembleIntervalBadge: "ensembleIntervalBadge",
+    ensembleContextSearch: "ensembleContextSearch",
+    ensembleContextFamilyFilter: "ensembleContextFamilyFilter",
+    ensembleContextSelectAll: "ensembleContextSelectAll",
+    ensembleContextSelectNone: "ensembleContextSelectNone",
+    ensembleContextInvertVisible: "ensembleContextInvertVisible",
+    ensembleContextSelectVisible: "ensembleContextSelectVisible",
+    ensembleContextSelectSameFamily: "ensembleContextSelectSameFamily",
+    ensembleContextExcludeSameFamily: "ensembleContextExcludeSameFamily",
+    ensembleContextSummary: "ensembleContextSummary",
+    ensembleContextList: "ensembleContextList",
+    ensembleContextHelper: "ensembleContextHelper",
+    ensembleContextEmptyState: "ensembleContextEmptyState",
+    ensembleRefreshConfigsBtn: "ensembleRefreshConfigsBtn",
+    ensembleRunBtn: "ensembleRunBtn",
+    ensembleRunPolymarketBtn: "ensembleRunPolymarketBtn",
+    ensembleLoadConflictBacktestBtn: "ensembleLoadConflictBacktestBtn",
+    ensembleLoadBestVetoBacktestBtn: "ensembleLoadBestVetoBacktestBtn",
+    ensembleSaveConflictRecipeBtn: "ensembleSaveConflictRecipeBtn",
+    ensembleSaveBestVetoRecipeBtn: "ensembleSaveBestVetoRecipeBtn",
+    ensembleStatus: "ensembleStatus",
+    ensembleResults: "ensembleResults",
+    ensembleSummary: "ensembleSummary",
+    ensembleCurrentContextSection: "ensembleCurrentContextSection",
+    ensembleCurrentContextSummary: "ensembleCurrentContextSummary",
+    ensembleCurrentContextDetails: "ensembleCurrentContextDetails",
+    ensembleHistoricalOddsSection: "ensembleHistoricalOddsSection",
+    ensembleHistoricalOddsSummary: "ensembleHistoricalOddsSummary",
+    ensembleHistoricalOddsTableBody: "ensembleHistoricalOddsTableBody",
+    ensemblePolymarketSection: "ensemblePolymarketSection",
+    ensemblePolymarketEmpty: "ensemblePolymarketEmpty",
+    ensemblePolymarketStatus: "ensemblePolymarketStatus",
+    ensemblePolymarketConflictPolicy: "ensemblePolymarketConflictPolicy",
+    ensemblePolymarketDirectionSlice: "ensemblePolymarketDirectionSlice",
+    ensembleSignalRecipeSelect: "ensembleSignalRecipeSelect",
+    ensembleSignalRecipeDirectionSelect: "ensembleSignalRecipeDirectionSelect",
+    ensembleSignalRecipeDownloadScriptBtn: "ensembleSignalRecipeDownloadScriptBtn",
+    ensembleSignalRecipeCopyEnvBtn: "ensembleSignalRecipeCopyEnvBtn",
+    ensembleSignalRecipeDeleteBtn: "ensembleSignalRecipeDeleteBtn",
+    ensembleSignalRecipeStatus: "ensembleSignalRecipeStatus",
+    ensemblePolymarketSummary: "ensemblePolymarketSummary",
+    ensemblePolymarketAgreement: "ensemblePolymarketAgreement",
+    ensemblePolymarketTableBody: "ensemblePolymarketTableBody",
+    ensemblePolymarketVetoSummary: "ensemblePolymarketVetoSummary",
+    ensemblePolymarketVetoTableBody: "ensemblePolymarketVetoTableBody",
+    ensemblePolymarketOverrideSummary: "ensemblePolymarketOverrideSummary",
+    ensemblePolymarketOverrideTableBody: "ensemblePolymarketOverrideTableBody",
+    ensembleBuilderSection: "ensembleBuilderSection",
+    ensembleBuilderSummary: "ensembleBuilderSummary",
+    ensembleBuilderTableBody: "ensembleBuilderTableBody",
+    ensembleDiagnosticsSection: "ensembleDiagnosticsSection",
+    ensembleContributionSection: "ensembleContributionSection",
+    ensembleContributionSummary: "ensembleContributionSummary",
+    ensembleContributionTableBody: "ensembleContributionTableBody",
+    ensembleReplacementSection: "ensembleReplacementSection",
+    ensembleReplacementSummary: "ensembleReplacementSummary",
+    ensembleReplacementTableBody: "ensembleReplacementTableBody",
+    ensembleRadarSection: "ensembleRadarSection",
+    ensembleRadarContent: "ensembleRadarContent",
+} as const;
 
-export function createEnsembleLabDom() {
-    return {
-        ensembleTab: getRequiredElement("ensembleTab"),
-        ensembleEmpty: getRequiredElement("ensembleEmpty"),
-        ensembleContent: getRequiredElement("ensembleContent"),
-        ensembleTargetPicker: getRequiredElement("ensembleTargetPicker"),
-        ensembleTargetSelect: getRequiredElement<HTMLSelectElement>("ensembleTargetSelect"),
-        ensembleTargetButton: getRequiredElement<HTMLButtonElement>("ensembleTargetButton"),
-        ensembleTargetMenu: getRequiredElement("ensembleTargetMenu"),
-        ensembleTargetSearch: getRequiredElement<HTMLInputElement>("ensembleTargetSearch"),
-        ensembleTargetList: getRequiredElement("ensembleTargetList"),
-        ensembleTargetPickerEmptyState: getRequiredElement("ensembleTargetPickerEmptyState"),
-        ensembleTargetSummary: getRequiredElement("ensembleTargetSummary"),
-        ensembleMinSamples: getRequiredElement<HTMLInputElement>("ensembleMinSamples"),
-        ensembleSymbolBadge: getRequiredElement("ensembleSymbolBadge"),
-        ensembleIntervalBadge: getRequiredElement("ensembleIntervalBadge"),
-        ensembleContextSearch: getRequiredElement<HTMLInputElement>("ensembleContextSearch"),
-        ensembleContextFamilyFilter: getRequiredElement<HTMLSelectElement>("ensembleContextFamilyFilter"),
-        ensembleContextSelectAll: getRequiredElement<HTMLButtonElement>("ensembleContextSelectAll"),
-        ensembleContextSelectNone: getRequiredElement<HTMLButtonElement>("ensembleContextSelectNone"),
-        ensembleContextInvertVisible: getRequiredElement<HTMLButtonElement>("ensembleContextInvertVisible"),
-        ensembleContextSelectVisible: getRequiredElement<HTMLButtonElement>("ensembleContextSelectVisible"),
-        ensembleContextSelectSameFamily: getRequiredElement<HTMLButtonElement>("ensembleContextSelectSameFamily"),
-        ensembleContextExcludeSameFamily: getRequiredElement<HTMLButtonElement>("ensembleContextExcludeSameFamily"),
-        ensembleContextSummary: getRequiredElement("ensembleContextSummary"),
-        ensembleContextList: getRequiredElement("ensembleContextList"),
-        ensembleContextHelper: getRequiredElement("ensembleContextHelper"),
-        ensembleContextEmptyState: getRequiredElement("ensembleContextEmptyState"),
-        ensembleRefreshConfigsBtn: getRequiredElement<HTMLButtonElement>("ensembleRefreshConfigsBtn"),
-        ensembleRunBtn: getRequiredElement<HTMLButtonElement>("ensembleRunBtn"),
-        ensembleRunPolymarketBtn: getRequiredElement<HTMLButtonElement>("ensembleRunPolymarketBtn"),
-        ensembleLoadConflictBacktestBtn: getRequiredElement<HTMLButtonElement>("ensembleLoadConflictBacktestBtn"),
-        ensembleLoadBestVetoBacktestBtn: getRequiredElement<HTMLButtonElement>("ensembleLoadBestVetoBacktestBtn"),
-        ensembleSaveConflictRecipeBtn: getRequiredElement<HTMLButtonElement>("ensembleSaveConflictRecipeBtn"),
-        ensembleSaveBestVetoRecipeBtn: getRequiredElement<HTMLButtonElement>("ensembleSaveBestVetoRecipeBtn"),
-        ensembleStatus: getRequiredElement("ensembleStatus"),
-        ensembleResults: getRequiredElement("ensembleResults"),
-        ensembleSummary: getRequiredElement("ensembleSummary"),
-        ensembleCurrentContextSection: getRequiredElement("ensembleCurrentContextSection"),
-        ensembleCurrentContextSummary: getRequiredElement("ensembleCurrentContextSummary"),
-        ensembleCurrentContextDetails: getRequiredElement("ensembleCurrentContextDetails"),
-        ensembleHistoricalOddsSection: getRequiredElement("ensembleHistoricalOddsSection"),
-        ensembleHistoricalOddsSummary: getRequiredElement("ensembleHistoricalOddsSummary"),
-        ensembleHistoricalOddsTableBody: getRequiredElement("ensembleHistoricalOddsTableBody"),
-        ensemblePolymarketSection: getRequiredElement("ensemblePolymarketSection"),
-        ensemblePolymarketEmpty: getRequiredElement("ensemblePolymarketEmpty"),
-        ensemblePolymarketStatus: getRequiredElement("ensemblePolymarketStatus"),
-        ensemblePolymarketConflictPolicy: getRequiredElement<HTMLSelectElement>("ensemblePolymarketConflictPolicy"),
-        ensemblePolymarketDirectionSlice: getRequiredElement<HTMLSelectElement>("ensemblePolymarketDirectionSlice"),
-        ensembleSignalRecipeSelect: getRequiredElement<HTMLSelectElement>("ensembleSignalRecipeSelect"),
-        ensembleSignalRecipeDirectionSelect: getRequiredElement<HTMLSelectElement>("ensembleSignalRecipeDirectionSelect"),
-        ensembleSignalRecipeDownloadScriptBtn: getRequiredElement<HTMLButtonElement>("ensembleSignalRecipeDownloadScriptBtn"),
-        ensembleSignalRecipeCopyEnvBtn: getRequiredElement<HTMLButtonElement>("ensembleSignalRecipeCopyEnvBtn"),
-        ensembleSignalRecipeDeleteBtn: getRequiredElement<HTMLButtonElement>("ensembleSignalRecipeDeleteBtn"),
-        ensembleSignalRecipeStatus: getRequiredElement("ensembleSignalRecipeStatus"),
-        ensemblePolymarketSummary: getRequiredElement("ensemblePolymarketSummary"),
-        ensemblePolymarketAgreement: getRequiredElement("ensemblePolymarketAgreement"),
-        ensemblePolymarketTableBody: getRequiredElement("ensemblePolymarketTableBody"),
-        ensemblePolymarketVetoSummary: getRequiredElement("ensemblePolymarketVetoSummary"),
-        ensemblePolymarketVetoTableBody: getRequiredElement("ensemblePolymarketVetoTableBody"),
-        ensemblePolymarketOverrideSummary: getRequiredElement("ensemblePolymarketOverrideSummary"),
-        ensemblePolymarketOverrideTableBody: getRequiredElement("ensemblePolymarketOverrideTableBody"),
-        ensembleBuilderSection: getRequiredElement("ensembleBuilderSection"),
-        ensembleBuilderSummary: getRequiredElement("ensembleBuilderSummary"),
-        ensembleBuilderTableBody: getRequiredElement("ensembleBuilderTableBody"),
-        ensembleDiagnosticsSection: getRequiredElement<HTMLDetailsElement>("ensembleDiagnosticsSection"),
-        ensembleContributionSection: getRequiredElement("ensembleContributionSection"),
-        ensembleContributionSummary: getRequiredElement("ensembleContributionSummary"),
-        ensembleContributionTableBody: getRequiredElement("ensembleContributionTableBody"),
-        ensembleReplacementSection: getRequiredElement("ensembleReplacementSection"),
-        ensembleReplacementSummary: getRequiredElement("ensembleReplacementSummary"),
-        ensembleReplacementTableBody: getRequiredElement("ensembleReplacementTableBody"),
-        ensembleRadarSection: getRequiredElement("ensembleRadarSection"),
-        ensembleRadarContent: getRequiredElement("ensembleRadarContent"),
-    };
+export const ENSEMBLE_LAB_REQUIRED_IDS = getRequiredDomIds(ENSEMBLE_LAB_DOM_IDS);
+
+type EnsembleLabTypedControls = {
+    ensembleTargetSelect: HTMLSelectElement;
+    ensembleTargetButton: HTMLButtonElement;
+    ensembleTargetSearch: HTMLInputElement;
+    ensembleMinSamples: HTMLInputElement;
+    ensembleContextSearch: HTMLInputElement;
+    ensembleContextFamilyFilter: HTMLSelectElement;
+    ensembleContextSelectAll: HTMLButtonElement;
+    ensembleContextSelectNone: HTMLButtonElement;
+    ensembleContextInvertVisible: HTMLButtonElement;
+    ensembleContextSelectVisible: HTMLButtonElement;
+    ensembleContextSelectSameFamily: HTMLButtonElement;
+    ensembleContextExcludeSameFamily: HTMLButtonElement;
+    ensembleRefreshConfigsBtn: HTMLButtonElement;
+    ensembleRunBtn: HTMLButtonElement;
+    ensembleRunPolymarketBtn: HTMLButtonElement;
+    ensembleLoadConflictBacktestBtn: HTMLButtonElement;
+    ensembleLoadBestVetoBacktestBtn: HTMLButtonElement;
+    ensembleSaveConflictRecipeBtn: HTMLButtonElement;
+    ensembleSaveBestVetoRecipeBtn: HTMLButtonElement;
+    ensemblePolymarketConflictPolicy: HTMLSelectElement;
+    ensemblePolymarketDirectionSlice: HTMLSelectElement;
+    ensembleSignalRecipeSelect: HTMLSelectElement;
+    ensembleSignalRecipeDirectionSelect: HTMLSelectElement;
+    ensembleSignalRecipeDownloadScriptBtn: HTMLButtonElement;
+    ensembleSignalRecipeCopyEnvBtn: HTMLButtonElement;
+    ensembleSignalRecipeDeleteBtn: HTMLButtonElement;
+    ensembleDiagnosticsSection: HTMLDetailsElement;
+};
+
+export type EnsembleLabDom =
+    Omit<RequiredDomElementMap<typeof ENSEMBLE_LAB_DOM_IDS>, keyof EnsembleLabTypedControls>
+    & EnsembleLabTypedControls;
+
+export function createEnsembleLabDom(): EnsembleLabDom {
+    return getRequiredDomElements(ENSEMBLE_LAB_DOM_IDS) as EnsembleLabDom;
 }
-
-export type EnsembleLabDom = ReturnType<typeof createEnsembleLabDom>;

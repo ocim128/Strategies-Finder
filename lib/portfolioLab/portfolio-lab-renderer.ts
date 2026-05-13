@@ -1,10 +1,15 @@
 import type { PortfolioLabDom } from "../portfolio-lab-dom";
+import { renderEmptyTableRow } from "../ui-render-helpers";
 
 type RowWithNetProfit = {
     result: {
         netProfitPercent: number;
     };
 };
+
+function setDisplay(element: HTMLElement, visible: boolean): void {
+    element.style.display = visible ? "" : "none";
+}
 
 export interface PortfolioLabRenderHost<
     TRow extends RowWithNetProfit,
@@ -119,81 +124,42 @@ export function renderPortfolioLab<
         currentInterval,
     } = input;
 
+    const hasRows = rows.length > 0;
     dom.portfolioContent.style.display = "";
-    dom.portfolioEmpty.style.display = rows.length > 0 ? "none" : "";
-    dom.portfolioResults.style.display = rows.length > 0 ? "" : "none";
-    dom.portfolioLiveContextSection.style.display = rows.length > 0 ? "" : "none";
-    dom.portfolioForecastSection.style.display = rows.length > 0 ? "" : "none";
-    dom.portfolioInsightSection.style.display = rows.length > 0 ? "" : "none";
-    dom.portfolioExecutionSection.style.display = rows.length > 0 ? "" : "none";
-    dom.portfolioConsensusSection.style.display = rows.length > 0 ? "" : "none";
-    dom.portfolioRankingSection.style.display = rows.length > 0 ? "" : "none";
-    dom.portfolioSizingSection.style.display = rows.length > 0 ? "" : "none";
-    dom.portfolioMatrixSection.style.display = rows.length > 1 ? "" : "none";
+    setDisplay(dom.portfolioEmpty, !hasRows);
+    [
+        dom.portfolioResults,
+        dom.portfolioLiveContextSection,
+        dom.portfolioForecastSection,
+        dom.portfolioInsightSection,
+        dom.portfolioExecutionSection,
+        dom.portfolioConsensusSection,
+        dom.portfolioRankingSection,
+        dom.portfolioSizingSection,
+    ].forEach((section) => setDisplay(section, hasRows));
+    setDisplay(dom.portfolioMatrixSection, rows.length > 1);
 
-    if (rows.length === 0) {
+    if (!hasRows) {
         dom.portfolioSummary.innerHTML = "";
         dom.portfolioLiveContextSummary.innerHTML = "";
         dom.portfolioLiveContextDetails.innerHTML = "";
         dom.portfolioForecastSummary.innerHTML = "";
         dom.portfolioForecastDetails.innerHTML = "";
-        dom.portfolioForecastTableBody.innerHTML = `
-            <tr>
-                <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                    Run Portfolio Lab to estimate open-trade win/loss odds from historical analog states.
-                </td>
-            </tr>
-        `;
+        dom.portfolioForecastTableBody.innerHTML = renderEmptyTableRow(9, "Run Portfolio Lab to estimate open-trade win/loss odds from historical analog states.");
         dom.portfolioInsights.innerHTML = "";
         dom.portfolioExecutionSummary.innerHTML = "";
         dom.portfolioConsensusSummary.innerHTML = "";
-        dom.portfolioConsensusTableBody.innerHTML = `
-            <tr>
-                <td colspan="9" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                    No usable pair runs. Check the symbol list and data availability.
-                </td>
-            </tr>
-        `;
+        dom.portfolioConsensusTableBody.innerHTML = renderEmptyTableRow(9, "No usable pair runs. Check the symbol list and data availability.");
         dom.portfolioBreadthSweepSection.style.display = "none";
-        dom.portfolioBreadthSweepTableBody.innerHTML = `
-            <tr>
-                <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                    Run Breadth Sweep to compare agreement thresholds.
-                </td>
-            </tr>
-        `;
+        dom.portfolioBreadthSweepTableBody.innerHTML = renderEmptyTableRow(8, "Run Breadth Sweep to compare agreement thresholds.");
         dom.portfolioOppositionSweepSection.style.display = "none";
-        dom.portfolioOppositionSweepTableBody.innerHTML = `
-            <tr>
-                <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                    Run Sweep Opposition to compare conflict thresholds.
-                </td>
-            </tr>
-        `;
+        dom.portfolioOppositionSweepTableBody.innerHTML = renderEmptyTableRow(8, "Run Sweep Opposition to compare conflict thresholds.");
         dom.portfolioRankingSummary.innerHTML = "";
-        dom.portfolioRankingTableBody.innerHTML = `
-            <tr>
-                <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                    Run Portfolio Lab to rank pairs by quality, diversification, and context response.
-                </td>
-            </tr>
-        `;
+        dom.portfolioRankingTableBody.innerHTML = renderEmptyTableRow(8, "Run Portfolio Lab to rank pairs by quality, diversification, and context response.");
         dom.portfolioSizingSummary.innerHTML = "";
-        dom.portfolioSizingTableBody.innerHTML = `
-            <tr>
-                <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                    Run Portfolio Lab to compare context-weighted sizing scenarios.
-                </td>
-            </tr>
-        `;
+        dom.portfolioSizingTableBody.innerHTML = renderEmptyTableRow(8, "Run Portfolio Lab to compare context-weighted sizing scenarios.");
         dom.portfolioCorrelationMatrix.innerHTML = "";
-        dom.portfolioPairsTableBody.innerHTML = `
-            <tr>
-                <td colspan="10" style="text-align:center;color:var(--text-secondary);padding:20px;">
-                    No usable pair runs. Check the symbol list and data availability.
-                </td>
-            </tr>
-        `;
+        dom.portfolioPairsTableBody.innerHTML = renderEmptyTableRow(10, "No usable pair runs. Check the symbol list and data availability.");
         host.updateStatus(skipped.length > 0 ? `No usable results. Skipped: ${skipped.join(", ")}` : "No usable results.");
         return;
     }

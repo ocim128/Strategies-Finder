@@ -1,102 +1,191 @@
-import { getOptionalElement, getRequiredElement } from "../dom-utils";
+import {
+    getOptionalElement,
+    getRequiredDomElements,
+    getRequiredDomIds,
+    type RequiredDomElementMap,
+} from "../dom-utils";
 import { ADVANCED_SIZING_DOM_IDS } from "../advanced-sizing-dom";
 import { TAKE_PROFIT_DOM_IDS } from "../take-profit-dom";
 
-export const UI_EVENT_HANDLER_REQUIRED_IDS = [
-    "symbolSelector",
-    "symbolDropdown",
-    "binanceMarketTypeSelect",
-    "themeToggle",
-    "strategySelect",
-    "strategyTabs",
-    "panelContent",
-    "runBacktestEndpointPreview",
-    "copyBacktestEndpoint",
-    "runBacktest",
-    "clearTradesBtn",
-    "togglePanel",
-    "strategyPanel",
-    "zoomInTool",
-    "zoomOutTool",
-    "fitTool",
-    "riskSettingsToggle",
-    "riskSettings",
-    "tradeFilterSettingsToggle",
-    "tradeFilterSettings",
-    "riskMode",
-    "takeProfitMode",
-    "takeProfitAdaptiveLookbackTrades",
-    "takeProfitAdaptiveRecentWindow",
-    "takeProfitAdaptiveMinMultiplier",
-    "takeProfitAdaptiveMaxMultiplier",
-    "takeProfitAdaptiveGridSteps",
-    "takeProfitAdaptiveRegimeBlend",
-    "takeProfitAdaptiveIcScale",
-    "riskAdvanced",
-    "tradeDirection",
-    "flipAfterConsecutiveLosses",
-    "flipCooldownTrades",
-    "minTradesBeforeFirstFlip",
-    "tradeFilterMode",
-    "htfBiasEmaPeriod",
-    "executionTrendEmaPeriod",
-    "confirmLookback",
-    "volumeSmaPeriod",
-    "volumeMultiplier",
-    "confirmRsiPeriod",
-    "confirmRsiBullish",
-    "confirmRsiBearish",
-    "strategyTimeframeToggle",
-    "strategyTimeframeMinutes",
-    "finderTradesToggle",
-    "finderTradeFilters",
-    "fixedTradeToggle",
-    "initialCapitalGroup",
-    "fixedTradeGroup",
-    "tradeSizingModeGroup",
-    "positionSizeGroup",
-    "initialCapital",
-    "tradeSizingMode",
-    "fixedTradeAmount",
-    "positionSize",
-    "advancedSizingSettingsPanel",
-    "kellySettings",
-    "volatilityTargetingSettings",
-    "riskParitySettings",
-    "martingaleSettings",
-    "optimalFSettings",
-    "kellyFraction",
-    "kellyWinRateCap",
-    "kellyProfitFactorCap",
-    "volTargetAnnual",
-    "volLookbackBars",
-    "volScalingMethod",
-    "riskParityLookback",
-    "riskParityMethod",
-    "martingaleMultiplier",
-    "martingaleMaxSequence",
-    "martingaleResetOnWin",
-    "martingaleResetOnLoss",
-    "martingaleBaseSize",
-    "optimalFLookback",
-    "optimalFBootstrapSamples",
-    "secureFConfidence",
-    "secureFMethod",
-    "panelResizeHandle",
-    "takeProfitEdgeWeightedSettings",
-    "takeProfitExpectancyOptimalSettings",
-    "takeProfitRegimeCalibratedSettings",
-    "takeProfitInformationCoefficientSettings",
-    "takeProfitPathEfficiencySettings",
-    "takeProfitSerialDependencySettings",
-    "takeProfitMinimumSurprisalSettings",
-] as const;
+const UI_EVENT_HANDLER_DOM_IDS = {
+    symbolSelector: "symbolSelector",
+    symbolDropdown: "symbolDropdown",
+    binanceMarketTypeSelect: "binanceMarketTypeSelect",
+    themeToggle: "themeToggle",
+    strategySelect: "strategySelect",
+    strategyTabs: "strategyTabs",
+    panelContent: "panelContent",
+    runBacktestEndpointPreview: "runBacktestEndpointPreview",
+    copyBacktestEndpoint: "copyBacktestEndpoint",
+    runBacktest: "runBacktest",
+    clearTradesBtn: "clearTradesBtn",
+    togglePanel: "togglePanel",
+    strategyPanel: "strategyPanel",
+    zoomInTool: "zoomInTool",
+    zoomOutTool: "zoomOutTool",
+    fitTool: "fitTool",
+    riskSettingsToggle: "riskSettingsToggle",
+    riskSettings: "riskSettings",
+    tradeFilterSettingsToggle: "tradeFilterSettingsToggle",
+    tradeFilterSettings: "tradeFilterSettings",
+    riskMode: "riskMode",
+    takeProfitMode: "takeProfitMode",
+    takeProfitAdaptiveLookbackTrades: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveLookbackTrades,
+    takeProfitAdaptiveRecentWindow: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveRecentWindow,
+    takeProfitAdaptiveMinMultiplier: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveMinMultiplier,
+    takeProfitAdaptiveMaxMultiplier: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveMaxMultiplier,
+    takeProfitAdaptiveGridSteps: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveGridSteps,
+    takeProfitAdaptiveRegimeBlend: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveRegimeBlend,
+    takeProfitAdaptiveIcScale: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveIcScale,
+    riskAdvanced: "riskAdvanced",
+    tradeDirection: "tradeDirection",
+    flipAfterConsecutiveLosses: "flipAfterConsecutiveLosses",
+    flipCooldownTrades: "flipCooldownTrades",
+    minTradesBeforeFirstFlip: "minTradesBeforeFirstFlip",
+    tradeFilterMode: "tradeFilterMode",
+    htfBiasEmaPeriod: "htfBiasEmaPeriod",
+    executionTrendEmaPeriod: "executionTrendEmaPeriod",
+    confirmLookback: "confirmLookback",
+    volumeSmaPeriod: "volumeSmaPeriod",
+    volumeMultiplier: "volumeMultiplier",
+    confirmRsiPeriod: "confirmRsiPeriod",
+    confirmRsiBullish: "confirmRsiBullish",
+    confirmRsiBearish: "confirmRsiBearish",
+    strategyTimeframeToggle: "strategyTimeframeToggle",
+    strategyTimeframeMinutes: "strategyTimeframeMinutes",
+    finderTradesToggle: "finderTradesToggle",
+    finderTradeFilters: "finderTradeFilters",
+    fixedTradeToggle: "fixedTradeToggle",
+    initialCapitalGroup: "initialCapitalGroup",
+    fixedTradeGroup: "fixedTradeGroup",
+    tradeSizingModeGroup: "tradeSizingModeGroup",
+    positionSizeGroup: "positionSizeGroup",
+    initialCapital: "initialCapital",
+    tradeSizingMode: "tradeSizingMode",
+    fixedTradeAmount: "fixedTradeAmount",
+    positionSize: "positionSize",
+    advancedSizingSettingsPanel: ADVANCED_SIZING_DOM_IDS.advancedSizingSettingsPanel,
+    kellySettings: ADVANCED_SIZING_DOM_IDS.kellySettings,
+    volatilityTargetingSettings: ADVANCED_SIZING_DOM_IDS.volatilityTargetingSettings,
+    riskParitySettings: ADVANCED_SIZING_DOM_IDS.riskParitySettings,
+    martingaleSettings: ADVANCED_SIZING_DOM_IDS.martingaleSettings,
+    optimalFSettings: ADVANCED_SIZING_DOM_IDS.optimalFSettings,
+    kellyFraction: ADVANCED_SIZING_DOM_IDS.kellyFraction,
+    kellyWinRateCap: ADVANCED_SIZING_DOM_IDS.kellyWinRateCap,
+    kellyProfitFactorCap: ADVANCED_SIZING_DOM_IDS.kellyProfitFactorCap,
+    volTargetAnnual: ADVANCED_SIZING_DOM_IDS.volTargetAnnual,
+    volLookbackBars: ADVANCED_SIZING_DOM_IDS.volLookbackBars,
+    volScalingMethod: ADVANCED_SIZING_DOM_IDS.volScalingMethod,
+    riskParityLookback: ADVANCED_SIZING_DOM_IDS.riskParityLookback,
+    riskParityMethod: ADVANCED_SIZING_DOM_IDS.riskParityMethod,
+    martingaleMultiplier: ADVANCED_SIZING_DOM_IDS.martingaleMultiplier,
+    martingaleMaxSequence: ADVANCED_SIZING_DOM_IDS.martingaleMaxSequence,
+    martingaleResetOnWin: ADVANCED_SIZING_DOM_IDS.martingaleResetOnWin,
+    martingaleResetOnLoss: ADVANCED_SIZING_DOM_IDS.martingaleResetOnLoss,
+    martingaleBaseSize: ADVANCED_SIZING_DOM_IDS.martingaleBaseSize,
+    optimalFLookback: ADVANCED_SIZING_DOM_IDS.optimalFLookback,
+    optimalFBootstrapSamples: ADVANCED_SIZING_DOM_IDS.optimalFBootstrapSamples,
+    secureFConfidence: ADVANCED_SIZING_DOM_IDS.secureFConfidence,
+    secureFMethod: ADVANCED_SIZING_DOM_IDS.secureFMethod,
+    panelResizeHandle: "panelResizeHandle",
+    takeProfitEdgeWeightedSettings: TAKE_PROFIT_DOM_IDS.edgeWeightedSettings,
+    takeProfitExpectancyOptimalSettings: TAKE_PROFIT_DOM_IDS.expectancyOptimalSettings,
+    takeProfitRegimeCalibratedSettings: TAKE_PROFIT_DOM_IDS.regimeCalibratedSettings,
+    takeProfitInformationCoefficientSettings: TAKE_PROFIT_DOM_IDS.informationCoefficientSettings,
+    takeProfitPathEfficiencySettings: TAKE_PROFIT_DOM_IDS.pathEfficiencySettings,
+    takeProfitSerialDependencySettings: TAKE_PROFIT_DOM_IDS.serialDependencySettings,
+    takeProfitMinimumSurprisalSettings: TAKE_PROFIT_DOM_IDS.minimumSurprisalSettings,
+} as const;
 
-export function createUiEventHandlersDom() {
+export const UI_EVENT_HANDLER_REQUIRED_IDS = getRequiredDomIds(UI_EVENT_HANDLER_DOM_IDS);
+
+type UiEventTypedControls = {
+    binanceMarketTypeSelect: HTMLSelectElement;
+    strategySelect: HTMLSelectElement;
+    runBacktestEndpointPreview: HTMLButtonElement;
+    copyBacktestEndpoint: HTMLButtonElement;
+    riskSettingsToggle: HTMLInputElement;
+    tradeFilterSettingsToggle: HTMLInputElement;
+    riskMode: HTMLSelectElement;
+    takeProfitMode: HTMLSelectElement;
+    takeProfitAdaptiveLookbackTrades: HTMLInputElement;
+    takeProfitAdaptiveRecentWindow: HTMLInputElement;
+    takeProfitAdaptiveMinMultiplier: HTMLInputElement;
+    takeProfitAdaptiveMaxMultiplier: HTMLInputElement;
+    takeProfitAdaptiveGridSteps: HTMLInputElement;
+    takeProfitAdaptiveRegimeBlend: HTMLInputElement;
+    takeProfitAdaptiveIcScale: HTMLInputElement;
+    tradeDirection: HTMLSelectElement;
+    flipAfterConsecutiveLosses: HTMLInputElement;
+    flipCooldownTrades: HTMLInputElement;
+    minTradesBeforeFirstFlip: HTMLInputElement;
+    tradeFilterMode: HTMLSelectElement;
+    htfBiasEmaPeriod: HTMLInputElement;
+    executionTrendEmaPeriod: HTMLInputElement;
+    confirmLookback: HTMLInputElement;
+    volumeSmaPeriod: HTMLInputElement;
+    volumeMultiplier: HTMLInputElement;
+    confirmRsiPeriod: HTMLInputElement;
+    confirmRsiBullish: HTMLInputElement;
+    confirmRsiBearish: HTMLInputElement;
+    strategyTimeframeToggle: HTMLInputElement;
+    strategyTimeframeMinutes: HTMLInputElement;
+    finderTradesToggle: HTMLInputElement;
+    fixedTradeToggle: HTMLInputElement;
+    initialCapital: HTMLInputElement;
+    tradeSizingMode: HTMLSelectElement;
+    fixedTradeAmount: HTMLInputElement;
+    positionSize: HTMLInputElement;
+    kellyFraction: HTMLSelectElement;
+    kellyWinRateCap: HTMLInputElement;
+    kellyProfitFactorCap: HTMLInputElement;
+    volTargetAnnual: HTMLInputElement;
+    volLookbackBars: HTMLInputElement;
+    volScalingMethod: HTMLSelectElement;
+    riskParityLookback: HTMLInputElement;
+    riskParityMethod: HTMLSelectElement;
+    martingaleMultiplier: HTMLInputElement;
+    martingaleMaxSequence: HTMLInputElement;
+    martingaleResetOnWin: HTMLInputElement;
+    martingaleResetOnLoss: HTMLInputElement;
+    martingaleBaseSize: HTMLSelectElement;
+    optimalFLookback: HTMLInputElement;
+    optimalFBootstrapSamples: HTMLInputElement;
+    secureFConfidence: HTMLInputElement;
+    secureFMethod: HTMLSelectElement;
+};
+
+type UiEventRequiredDom =
+    Omit<RequiredDomElementMap<typeof UI_EVENT_HANDLER_DOM_IDS>, keyof UiEventTypedControls>
+    & UiEventTypedControls;
+
+export type UiEventHandlersDom = UiEventRequiredDom & {
+    symbolSearchInput: HTMLInputElement | null;
+    symbolSearchResults: HTMLElement | null;
+    symbolSearchSpinner: HTMLElement | null;
+    symbolSearchClear: HTMLElement | null;
+    symbolSearchLoading: HTMLElement | null;
+    symbolSearchEmpty: HTMLElement | null;
+    localSp500Select: HTMLSelectElement | null;
+    mockModelSelect: HTMLSelectElement | null;
+    mockBarsInput: HTMLInputElement | null;
+    chartModeToggle: HTMLButtonElement | null;
+    chartModeLabel: HTMLElement | null;
+    timeframeMinutesInput: HTMLInputElement | null;
+    timeframeMinutesApply: HTMLElement | null;
+    visibleCandlesInput: HTMLInputElement | null;
+    visibleCandlesApply: HTMLElement | null;
+    screenshotTool: HTMLElement | null;
+    copyChartBtn: HTMLElement | null;
+    riskSimpleAdvanced: HTMLElement | null;
+    riskPercentage: HTMLElement | null;
+    flipLossStreakSettingsRow: HTMLElement | null;
+    strategyTimeframeMinutesGroup: HTMLElement | null;
+};
+
+export function createUiEventHandlersDom(): UiEventHandlersDom {
     return {
-        symbolSelector: getRequiredElement("symbolSelector"),
-        symbolDropdown: getRequiredElement("symbolDropdown"),
-        binanceMarketTypeSelect: getRequiredElement<HTMLSelectElement>("binanceMarketTypeSelect"),
+        ...(getRequiredDomElements(UI_EVENT_HANDLER_DOM_IDS) as UiEventRequiredDom),
         symbolSearchInput: getOptionalElement<HTMLInputElement>("symbolSearchInput"),
         symbolSearchResults: getOptionalElement("symbolSearchResults"),
         symbolSearchSpinner: getOptionalElement("symbolSearchSpinner"),
@@ -112,97 +201,11 @@ export function createUiEventHandlersDom() {
         timeframeMinutesApply: getOptionalElement("timeframeMinutesApply"),
         visibleCandlesInput: getOptionalElement<HTMLInputElement>("visibleCandlesInput"),
         visibleCandlesApply: getOptionalElement("visibleCandlesApply"),
-        themeToggle: getRequiredElement("themeToggle"),
-        strategySelect: getRequiredElement<HTMLSelectElement>("strategySelect"),
-        strategyTabs: getRequiredElement("strategyTabs"),
-        panelContent: getRequiredElement("panelContent"),
-        runBacktestEndpointPreview: getRequiredElement<HTMLButtonElement>("runBacktestEndpointPreview"),
-        copyBacktestEndpoint: getRequiredElement<HTMLButtonElement>("copyBacktestEndpoint"),
-        runBacktest: getRequiredElement("runBacktest"),
-        clearTradesBtn: getRequiredElement("clearTradesBtn"),
-        togglePanel: getRequiredElement("togglePanel"),
-        strategyPanel: getRequiredElement("strategyPanel"),
-        zoomInTool: getRequiredElement("zoomInTool"),
-        zoomOutTool: getRequiredElement("zoomOutTool"),
-        fitTool: getRequiredElement("fitTool"),
         screenshotTool: getOptionalElement("screenshotTool"),
         copyChartBtn: getOptionalElement("copyChartBtn"),
-        riskSettingsToggle: getRequiredElement<HTMLInputElement>("riskSettingsToggle"),
-        riskSettings: getRequiredElement("riskSettings"),
-        tradeFilterSettingsToggle: getRequiredElement<HTMLInputElement>("tradeFilterSettingsToggle"),
-        tradeFilterSettings: getRequiredElement("tradeFilterSettings"),
-        riskMode: getRequiredElement<HTMLSelectElement>("riskMode"),
-        takeProfitMode: getRequiredElement<HTMLSelectElement>("takeProfitMode"),
-        takeProfitAdaptiveLookbackTrades: getRequiredElement<HTMLInputElement>(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveLookbackTrades),
-        takeProfitAdaptiveRecentWindow: getRequiredElement<HTMLInputElement>(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveRecentWindow),
-        takeProfitAdaptiveMinMultiplier: getRequiredElement<HTMLInputElement>(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveMinMultiplier),
-        takeProfitAdaptiveMaxMultiplier: getRequiredElement<HTMLInputElement>(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveMaxMultiplier),
-        takeProfitAdaptiveGridSteps: getRequiredElement<HTMLInputElement>(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveGridSteps),
-        takeProfitAdaptiveRegimeBlend: getRequiredElement<HTMLInputElement>(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveRegimeBlend),
-        takeProfitAdaptiveIcScale: getRequiredElement<HTMLInputElement>(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveIcScale),
         riskSimpleAdvanced: getOptionalElement("riskSimpleAdvanced"),
         riskPercentage: getOptionalElement("riskPercentage"),
-        riskAdvanced: getRequiredElement("riskAdvanced"),
-        takeProfitEdgeWeightedSettings: getRequiredElement(TAKE_PROFIT_DOM_IDS.edgeWeightedSettings),
-        takeProfitExpectancyOptimalSettings: getRequiredElement(TAKE_PROFIT_DOM_IDS.expectancyOptimalSettings),
-        takeProfitRegimeCalibratedSettings: getRequiredElement(TAKE_PROFIT_DOM_IDS.regimeCalibratedSettings),
-        takeProfitInformationCoefficientSettings: getRequiredElement(TAKE_PROFIT_DOM_IDS.informationCoefficientSettings),
-        takeProfitPathEfficiencySettings: getRequiredElement(TAKE_PROFIT_DOM_IDS.pathEfficiencySettings),
-        takeProfitSerialDependencySettings: getRequiredElement(TAKE_PROFIT_DOM_IDS.serialDependencySettings),
-        takeProfitMinimumSurprisalSettings: getRequiredElement(TAKE_PROFIT_DOM_IDS.minimumSurprisalSettings),
-        tradeDirection: getRequiredElement<HTMLSelectElement>("tradeDirection"),
         flipLossStreakSettingsRow: getOptionalElement("flipLossStreakSettingsRow"),
-        flipAfterConsecutiveLosses: getRequiredElement<HTMLInputElement>("flipAfterConsecutiveLosses"),
-        flipCooldownTrades: getRequiredElement<HTMLInputElement>("flipCooldownTrades"),
-        minTradesBeforeFirstFlip: getRequiredElement<HTMLInputElement>("minTradesBeforeFirstFlip"),
-        tradeFilterMode: getRequiredElement<HTMLSelectElement>("tradeFilterMode"),
-        htfBiasEmaPeriod: getRequiredElement<HTMLInputElement>("htfBiasEmaPeriod"),
-        executionTrendEmaPeriod: getRequiredElement<HTMLInputElement>("executionTrendEmaPeriod"),
-        confirmLookback: getRequiredElement<HTMLInputElement>("confirmLookback"),
-        volumeSmaPeriod: getRequiredElement<HTMLInputElement>("volumeSmaPeriod"),
-        volumeMultiplier: getRequiredElement<HTMLInputElement>("volumeMultiplier"),
-        confirmRsiPeriod: getRequiredElement<HTMLInputElement>("confirmRsiPeriod"),
-        confirmRsiBullish: getRequiredElement<HTMLInputElement>("confirmRsiBullish"),
-        confirmRsiBearish: getRequiredElement<HTMLInputElement>("confirmRsiBearish"),
-        strategyTimeframeToggle: getRequiredElement<HTMLInputElement>("strategyTimeframeToggle"),
-        strategyTimeframeMinutes: getRequiredElement<HTMLInputElement>("strategyTimeframeMinutes"),
         strategyTimeframeMinutesGroup: getOptionalElement("strategyTimeframeMinutesGroup"),
-        finderTradesToggle: getRequiredElement<HTMLInputElement>("finderTradesToggle"),
-        finderTradeFilters: getRequiredElement("finderTradeFilters"),
-        fixedTradeToggle: getRequiredElement<HTMLInputElement>("fixedTradeToggle"),
-        initialCapitalGroup: getRequiredElement("initialCapitalGroup"),
-        fixedTradeGroup: getRequiredElement("fixedTradeGroup"),
-        tradeSizingModeGroup: getRequiredElement("tradeSizingModeGroup"),
-        positionSizeGroup: getRequiredElement("positionSizeGroup"),
-        initialCapital: getRequiredElement<HTMLInputElement>("initialCapital"),
-        tradeSizingMode: getRequiredElement<HTMLSelectElement>("tradeSizingMode"),
-        fixedTradeAmount: getRequiredElement<HTMLInputElement>("fixedTradeAmount"),
-        positionSize: getRequiredElement<HTMLInputElement>("positionSize"),
-        advancedSizingSettingsPanel: getRequiredElement(ADVANCED_SIZING_DOM_IDS.advancedSizingSettingsPanel),
-        kellySettings: getRequiredElement(ADVANCED_SIZING_DOM_IDS.kellySettings),
-        volatilityTargetingSettings: getRequiredElement(ADVANCED_SIZING_DOM_IDS.volatilityTargetingSettings),
-        riskParitySettings: getRequiredElement(ADVANCED_SIZING_DOM_IDS.riskParitySettings),
-        martingaleSettings: getRequiredElement(ADVANCED_SIZING_DOM_IDS.martingaleSettings),
-        optimalFSettings: getRequiredElement(ADVANCED_SIZING_DOM_IDS.optimalFSettings),
-        kellyFraction: getRequiredElement<HTMLSelectElement>(ADVANCED_SIZING_DOM_IDS.kellyFraction),
-        kellyWinRateCap: getRequiredElement<HTMLInputElement>(ADVANCED_SIZING_DOM_IDS.kellyWinRateCap),
-        kellyProfitFactorCap: getRequiredElement<HTMLInputElement>(ADVANCED_SIZING_DOM_IDS.kellyProfitFactorCap),
-        volTargetAnnual: getRequiredElement<HTMLInputElement>(ADVANCED_SIZING_DOM_IDS.volTargetAnnual),
-        volLookbackBars: getRequiredElement<HTMLInputElement>(ADVANCED_SIZING_DOM_IDS.volLookbackBars),
-        volScalingMethod: getRequiredElement<HTMLSelectElement>(ADVANCED_SIZING_DOM_IDS.volScalingMethod),
-        riskParityLookback: getRequiredElement<HTMLInputElement>(ADVANCED_SIZING_DOM_IDS.riskParityLookback),
-        riskParityMethod: getRequiredElement<HTMLSelectElement>(ADVANCED_SIZING_DOM_IDS.riskParityMethod),
-        martingaleMultiplier: getRequiredElement<HTMLInputElement>(ADVANCED_SIZING_DOM_IDS.martingaleMultiplier),
-        martingaleMaxSequence: getRequiredElement<HTMLInputElement>(ADVANCED_SIZING_DOM_IDS.martingaleMaxSequence),
-        martingaleResetOnWin: getRequiredElement<HTMLInputElement>(ADVANCED_SIZING_DOM_IDS.martingaleResetOnWin),
-        martingaleResetOnLoss: getRequiredElement<HTMLInputElement>(ADVANCED_SIZING_DOM_IDS.martingaleResetOnLoss),
-        martingaleBaseSize: getRequiredElement<HTMLSelectElement>(ADVANCED_SIZING_DOM_IDS.martingaleBaseSize),
-        optimalFLookback: getRequiredElement<HTMLInputElement>(ADVANCED_SIZING_DOM_IDS.optimalFLookback),
-        optimalFBootstrapSamples: getRequiredElement<HTMLInputElement>(ADVANCED_SIZING_DOM_IDS.optimalFBootstrapSamples),
-        secureFConfidence: getRequiredElement<HTMLInputElement>(ADVANCED_SIZING_DOM_IDS.secureFConfidence),
-        secureFMethod: getRequiredElement<HTMLSelectElement>(ADVANCED_SIZING_DOM_IDS.secureFMethod),
-        panelResizeHandle: getRequiredElement("panelResizeHandle"),
     };
 }
-
-export type UiEventHandlersDom = ReturnType<typeof createUiEventHandlersDom>;

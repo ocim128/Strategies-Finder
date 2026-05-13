@@ -1,4 +1,5 @@
 import type { RadarFinding, EnsembleRunContext } from "./strategy-ensemble-types";
+import { formatSignedCurrency } from "./ui-formatters";
 
 export function buildRadarFindings(context: EnsembleRunContext): RadarFinding[] {
     const findings: RadarFinding[] = [];
@@ -104,11 +105,4 @@ export function buildRadarFindings(context: EnsembleRunContext): RadarFinding[] 
     }
 
     return findings;
-}
-
-function formatSignedCurrency(value: number): string {
-    if (!Number.isFinite(value)) {
-        return "-";
-    }
-    return `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(2)}`;
 }

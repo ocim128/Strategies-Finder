@@ -1,11 +1,47 @@
 import type { BacktestResult, Trade } from "../strategies/index";
 import type { Time } from "lightweight-charts";
 import { formatDisplayPrice } from "../price-format";
+import { renderLabeledCard } from "../ui-render-helpers";
+import {
+  formatCount,
+  formatPolymarketCents,
+  formatProbabilityCents,
+  formatProfitFactor as formatUiProfitFactor,
+  formatSignedCompactDollar,
+  formatSignedCompactPercentPoints,
+} from "../ui-formatters";
 import type {
   QuickViewPolymarketSummary,
   QuickViewPolymarketExitReasonSummary,
   QuickViewPolymarketExpectancySummary,
 } from "./quick-view-service";
+
+interface QvStatCard {
+  label: string;
+  value: string;
+  toneClass?: string;
+  extraClass?: string;
+}
+
+function renderQvStatCard(card: QvStatCard): string {
+  return renderLabeledCard({
+    label: card.label,
+    value: card.value,
+    cardClass: "qv-stat-card",
+    labelClass: "qv-stat-label",
+    valueClass: "qv-stat-value",
+    toneClass: card.toneClass,
+    extraClass: card.extraClass,
+  });
+}
+
+function renderQvStatCards(cards: readonly QvStatCard[]): string {
+  return cards.map(renderQvStatCard).join("");
+}
+
+function formatQvProfitFactor(value: number | null | undefined): string {
+  return formatUiProfitFactor(value, "∞");
+}
 
 export function buildShell(): string {
   return `
@@ -71,76 +107,38 @@ export function renderResultsHtml(
   const performanceExpectancyTone = polymarketPayoutSummary
     ? polymarketPayoutSummary.expectancy
     : result.expectancy;
-  const isPositive = result.netProfit >= 0;
-  const pfText = result.profitFactor === Infinity ? '∞' : result.profitFactor.toFixed(2);
+  const profitTone = result.netProfit >= 0 ? 'positive' : 'negative';
+  const performanceCards: QvStatCard[] = [
+    { label: 'Net Profit', value: `$${result.netProfit.toFixed(2)}`, toneClass: profitTone },
+    { label: 'Net Profit %', value: `${result.netProfitPercent.toFixed(2)}%`, toneClass: profitTone },
+    { label: 'Win Rate', value: `${result.winRate.toFixed(1)}%` },
+    { label: 'Profit Factor', value: formatQvProfitFactor(result.profitFactor) },
+    {
+      label: performanceExpectancyLabel,
+      value: performanceExpectancyValue,
+      toneClass: performanceExpectancyTone >= 0 ? 'positive' : 'negative',
+    },
+    { label: 'Max Drawdown', value: `${result.maxDrawdownPercent.toFixed(2)}%`, toneClass: 'negative' },
+  ];
+  const tradeCards: QvStatCard[] = [
+    { label: 'Total Trades', value: String(result.totalTrades) },
+    { label: 'Avg Trade', value: `$${result.avgTrade.toFixed(2)}`, toneClass: result.avgTrade >= 0 ? 'positive' : 'negative' },
+    { label: 'Winning', value: String(result.winningTrades), toneClass: 'positive' },
+    { label: 'Losing', value: String(result.losingTrades), toneClass: 'negative' },
+    { label: 'Avg Win', value: `$${result.avgWin.toFixed(2)}`, toneClass: 'positive' },
+    { label: 'Avg Loss', value: `$${result.avgLoss.toFixed(2)}`, toneClass: 'negative' },
+    { label: 'Sharpe Ratio', value: result.sharpeRatio.toFixed(2), extraClass: 'full-width' },
+  ];
 
   return `
       <div class="qv-section-title">Performance</div>
       <div class="qv-stats-grid">
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Net Profit</div>
-              <div class="qv-stat-value ${isPositive ? 'positive' : 'negative'}">
-                  $${result.netProfit.toFixed(2)}
-              </div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Net Profit %</div>
-              <div class="qv-stat-value ${isPositive ? 'positive' : 'negative'}">
-                  ${result.netProfitPercent.toFixed(2)}%
-              </div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Win Rate</div>
-              <div class="qv-stat-value">${result.winRate.toFixed(1)}%</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Profit Factor</div>
-              <div class="qv-stat-value">${pfText}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">${performanceExpectancyLabel}</div>
-              <div class="qv-stat-value ${performanceExpectancyTone >= 0 ? 'positive' : 'negative'}">
-                  ${performanceExpectancyValue}
-              </div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Max Drawdown</div>
-              <div class="qv-stat-value negative">${result.maxDrawdownPercent.toFixed(2)}%</div>
-          </div>
+          ${renderQvStatCards(performanceCards)}
       </div>
 
       <div class="qv-section-title">Trade Stats</div>
       <div class="qv-stats-grid">
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Total Trades</div>
-              <div class="qv-stat-value">${result.totalTrades}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Avg Trade</div>
-              <div class="qv-stat-value ${result.avgTrade >= 0 ? 'positive' : 'negative'}">
-                  $${result.avgTrade.toFixed(2)}
-              </div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Winning</div>
-              <div class="qv-stat-value positive">${result.winningTrades}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Losing</div>
-              <div class="qv-stat-value negative">${result.losingTrades}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Avg Win</div>
-              <div class="qv-stat-value positive">$${result.avgWin.toFixed(2)}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Avg Loss</div>
-              <div class="qv-stat-value negative">$${result.avgLoss.toFixed(2)}</div>
-          </div>
-          <div class="qv-stat-card full-width">
-              <div class="qv-stat-label">Sharpe Ratio</div>
-              <div class="qv-stat-value">${result.sharpeRatio.toFixed(2)}</div>
-          </div>
+          ${renderQvStatCards(tradeCards)}
       </div>
       ${polymarketSectionHtml}
   `;
@@ -239,34 +237,22 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
     && typeof summary.sizedTrades === 'number'
     && summary.sizedTrades > 0;
   const sizedTradeCount = summary.sizedTrades ?? 0;
-  const sizedBankrollCards = hasSizedBankroll ? `
-          <div class="qv-stat-card full-width qv-poly-meta-card">
-              <div class="qv-stat-label">Alternative Sizing: ${formatSizingModeLabel(summary.sizedSizingMode)}</div>
-              <div class="qv-stat-value">${formatCount(sizedTradeCount)} sized${(summary.sizedSkippedTrades ?? 0) > 0 ? ` | ${formatCount(summary.sizedSkippedTrades ?? 0)} skipped` : ''}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Sized Net</div>
-              <div class="qv-stat-value ${summary.sizedNetProfit! >= 0 ? 'positive' : 'negative'}">${formatSignedDollar(summary.sizedNetProfit!)}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Sized Return</div>
-              <div class="qv-stat-value ${(summary.sizedNetProfitPercent ?? 0) >= 0 ? 'positive' : 'negative'}">${formatSignedPercent(summary.sizedNetProfitPercent ?? 0)}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Sized PF</div>
-              <div class="qv-stat-value">${formatProfitFactor(summary.sizedProfitFactor ?? null)}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Sized Max DD</div>
-              <div class="qv-stat-value negative">${(summary.sizedMaxDrawdownPercent ?? 0).toFixed(2)}%</div>
-          </div>
-          ${(summary.sizedNoCapitalTrades ?? 0) > 0 || (summary.sizedCappedTrades ?? 0) > 0 ? `
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Sizing Constraints</div>
-              <div class="qv-stat-value">${formatCount(summary.sizedNoCapitalTrades ?? 0)} no capital | ${formatCount(summary.sizedCappedTrades ?? 0)} capped</div>
-          </div>
-          ` : ''}
-  ` : '';
+  const sizedBankrollCards = hasSizedBankroll
+    ? renderQvStatCards([
+      {
+        label: `Alternative Sizing: ${formatSizingModeLabel(summary.sizedSizingMode)}`,
+        value: `${formatCount(sizedTradeCount)} sized${(summary.sizedSkippedTrades ?? 0) > 0 ? ` | ${formatCount(summary.sizedSkippedTrades ?? 0)} skipped` : ''}`,
+        extraClass: 'full-width qv-poly-meta-card',
+      },
+      { label: 'Sized Net', value: formatSignedCompactDollar(summary.sizedNetProfit!), toneClass: summary.sizedNetProfit! >= 0 ? 'positive' : 'negative' },
+      { label: 'Sized Return', value: formatSignedCompactPercentPoints(summary.sizedNetProfitPercent ?? 0), toneClass: (summary.sizedNetProfitPercent ?? 0) >= 0 ? 'positive' : 'negative' },
+      { label: 'Sized PF', value: formatQvProfitFactor(summary.sizedProfitFactor ?? null) },
+      { label: 'Sized Max DD', value: `${(summary.sizedMaxDrawdownPercent ?? 0).toFixed(2)}%`, toneClass: 'negative' },
+      ...((summary.sizedNoCapitalTrades ?? 0) > 0 || (summary.sizedCappedTrades ?? 0) > 0
+        ? [{ label: 'Sizing Constraints', value: `${formatCount(summary.sizedNoCapitalTrades ?? 0)} no capital | ${formatCount(summary.sizedCappedTrades ?? 0)} capped` }]
+        : []),
+    ])
+    : '';
   const diagnosticsNote = `
       <div class="qv-stat-card full-width qv-poly-meta-card">
           <div class="qv-stat-label">Detailed Diagnostics</div>
@@ -274,196 +260,90 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
       </div>
   `;
 
-  const signalExitCards = isSignalExit ? `
-          ${(summary.targetExitedTrades ?? 0) > 0 ? `
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Target Exited</div>
-              <div class="qv-stat-value">${summary.targetExitedTrades}</div>
-          </div>
-          ` : ""}
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Signal Exited</div>
-              <div class="qv-stat-value">${summary.signalExitedTrades ?? 0}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Resolved (Held)</div>
-              <div class="qv-stat-value">${summary.resolvedTrades ?? 0}</div>
-          </div>
-          ${summary.neutralTrades > 0 ? `
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Neutral Trades</div>
-              <div class="qv-stat-value">${summary.neutralTrades}</div>
-          </div>
-          ` : ""}
-          ${summary.missingPriceTrades && summary.missingPriceTrades > 0 ? `
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Missing Price Trades</div>
-              <div class="qv-stat-value">${summary.missingPriceTrades}</div>
-          </div>
-          ` : ""}
-  ` : '';
+  const signalExitCards = isSignalExit
+    ? renderQvStatCards([
+      ...((summary.targetExitedTrades ?? 0) > 0 ? [{ label: 'Target Exited', value: String(summary.targetExitedTrades) }] : []),
+      { label: 'Signal Exited', value: String(summary.signalExitedTrades ?? 0) },
+      { label: 'Resolved (Held)', value: String(summary.resolvedTrades ?? 0) },
+      ...(summary.neutralTrades > 0 ? [{ label: 'Neutral Trades', value: String(summary.neutralTrades) }] : []),
+      ...((summary.missingPriceTrades ?? 0) > 0 ? [{ label: 'Missing Price Trades', value: String(summary.missingPriceTrades) }] : []),
+    ])
+    : '';
 
-  const limitEntryCards = summary.limitEntryEnabled ? `
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Limit Attempts</div>
-              <div class="qv-stat-value">${summary.limitEntryAttempts ?? 0}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Limit Filled</div>
-              <div class="qv-stat-value">${summary.limitEntryFilledTrades ?? 0}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Limit Missed</div>
-              <div class="qv-stat-value">${summary.limitEntryMissedTrades ?? 0}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Limit Fill Rate</div>
-              <div class="qv-stat-value">${((summary.limitEntryFillRate ?? 0) * 100).toFixed(1)}%</div>
-          </div>
-          ${(summary.limitEntryNotTouchedTrades ?? 0) > 0 ? `
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Not Touched</div>
-              <div class="qv-stat-value">${summary.limitEntryNotTouchedTrades}</div>
-          </div>
-          ` : ""}
-          ${(summary.limitEntryLastMinuteOnlyTrades ?? 0) > 0 ? `
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Last-Min Only</div>
-              <div class="qv-stat-value">${summary.limitEntryLastMinuteOnlyTrades}</div>
-          </div>
-          ` : ""}
-          ${(summary.limitEntryMissingPriceTrades ?? 0) > 0 ? `
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Missing Limit Price</div>
-              <div class="qv-stat-value">${summary.limitEntryMissingPriceTrades}</div>
-          </div>
-          ` : ""}
-          ${summary.limitExitEnabled ? `
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Target Filled</div>
-              <div class="qv-stat-value">${summary.limitExitFilledTrades ?? 0}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Target Fallback</div>
-              <div class="qv-stat-value">${summary.limitExitFallbackTrades ?? 0}</div>
-          </div>
-          ${(summary.limitExitUnreachableTrades ?? 0) > 0 ? `
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Target Unreachable</div>
-              <div class="qv-stat-value">${summary.limitExitUnreachableTrades}</div>
-          </div>
-          ` : ""}
-          ` : ""}
-  ` : '';
+  const limitEntryCards = summary.limitEntryEnabled
+    ? renderQvStatCards([
+      { label: 'Limit Attempts', value: String(summary.limitEntryAttempts ?? 0) },
+      { label: 'Limit Filled', value: String(summary.limitEntryFilledTrades ?? 0) },
+      { label: 'Limit Missed', value: String(summary.limitEntryMissedTrades ?? 0) },
+      { label: 'Limit Fill Rate', value: `${((summary.limitEntryFillRate ?? 0) * 100).toFixed(1)}%` },
+      ...((summary.limitEntryNotTouchedTrades ?? 0) > 0 ? [{ label: 'Not Touched', value: String(summary.limitEntryNotTouchedTrades) }] : []),
+      ...((summary.limitEntryLastMinuteOnlyTrades ?? 0) > 0 ? [{ label: 'Last-Min Only', value: String(summary.limitEntryLastMinuteOnlyTrades) }] : []),
+      ...((summary.limitEntryMissingPriceTrades ?? 0) > 0 ? [{ label: 'Missing Limit Price', value: String(summary.limitEntryMissingPriceTrades) }] : []),
+      ...(summary.limitExitEnabled ? [
+        { label: 'Target Filled', value: String(summary.limitExitFilledTrades ?? 0) },
+        { label: 'Target Fallback', value: String(summary.limitExitFallbackTrades ?? 0) },
+        ...((summary.limitExitUnreachableTrades ?? 0) > 0 ? [{ label: 'Target Unreachable', value: String(summary.limitExitUnreachableTrades) }] : []),
+      ] : []),
+    ])
+    : '';
 
-  const baselineCard = usesRealizedPnl ? '' : `
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Baseline Delta</div>
-              <div class="qv-stat-value ${summary.baselineDelta >= 0 ? 'positive' : 'negative'}">
-                  ${summary.baselineDelta >= 0 ? '+' : ''}${(summary.baselineDelta * 100).toFixed(1)}pp
-              </div>
-          </div>
-  `;
+  const baselineCard = usesRealizedPnl
+    ? ''
+    : renderQvStatCard({
+      label: 'Baseline Delta',
+      value: `${summary.baselineDelta >= 0 ? '+' : ''}${(summary.baselineDelta * 100).toFixed(1)}pp`,
+      toneClass: summary.baselineDelta >= 0 ? 'positive' : 'negative',
+    });
+  const modeCard = renderQvStatCard({
+    label: modeLabel,
+    value: summary.bestTimingProfile
+      ? `Best Minute ${summary.bestTimingProfile.entryOffset} (${(summary.bestTimingProfile.winRate * 100).toFixed(1)}%)`
+      : (usesActualEntryMinute ? 'See Polymarket tab for auto-mode diagnostics' : 'See Polymarket tab for full diagnostics'),
+    extraClass: 'full-width qv-poly-meta-card',
+  });
+  const corePolymarketCards = renderQvStatCards([
+    { label: usesRealizedPnl ? 'Poly Profitable' : 'Poly Win Rate', value: `${(summary.winRate * 100).toFixed(1)}%`, toneClass: profitabilityToneClass },
+    {
+      label: 'Poly Exp / Trade',
+      value: summary.expectancy === null ? 'n/a' : formatPolymarketCents(summary.expectancy),
+      toneClass: summary.expectancy === null ? '' : (summary.expectancy >= 0 ? 'positive' : 'negative'),
+    },
+    { label: 'Poly Profit Factor', value: formatQvProfitFactor(summary.profitFactor) },
+    { label: 'Avg Win', value: summary.avgWin === null ? 'n/a' : formatPolymarketCents(summary.avgWin), toneClass: summary.avgWin === null ? '' : 'positive' },
+    { label: 'Avg Loss', value: summary.avgLoss === null ? 'n/a' : formatPolymarketCents(-summary.avgLoss), toneClass: summary.avgLoss === null ? '' : 'negative' },
+    { label: 'Avg Entry Price', value: summary.avgEntryPrice === null ? 'n/a' : formatProbabilityCents(summary.avgEntryPrice) },
+    { label: 'Scored Trade Share', value: `${(summary.coverage * 100).toFixed(1)}%` },
+    { label: winCountLabel, value: String(summary.wins), toneClass: 'positive' },
+    { label: lossCountLabel, value: String(summary.losses), toneClass: 'negative' },
+  ]);
+  const streakPolymarketCards = renderQvStatCards([
+    { label: streakWinLabel, value: String(summary.longestWinStreak), toneClass: 'positive' },
+    { label: streakLossLabel, value: String(summary.longestLossStreak), toneClass: 'negative' },
+    { label: recentFormLabel, value: recentFormValue, toneClass: recentFormToneClass },
+  ]);
+  const footerPolymarketCards = renderQvStatCards([
+    { label: 'Scored Trades', value: String(summary.scoredTrades) },
+    { label: 'Unscored Trades', value: String(summary.unscoredTrades) },
+    ...((summary.duplicateTradesIgnored ?? 0) > 0 ? [{ label: 'Duplicate Trades Ignored', value: String(summary.duplicateTradesIgnored) }] : []),
+    ...(summary.missingTrades > 0 ? [{ label: 'Missing Outcome Rows', value: String(summary.missingTrades) }] : []),
+    { label: 'Outcome Rows Fetched', value: String(summary.outcomeRowsLoaded), extraClass: 'full-width qv-poly-meta-card' },
+  ]);
 
   return `
       <div class="qv-section-title">Polymarket</div>
       <div class="qv-stats-grid">
-          <div class="qv-stat-card full-width qv-poly-meta-card">
-              <div class="qv-stat-label">${modeLabel}</div>
-              <div class="qv-stat-value">${summary.bestTimingProfile ? `Best Minute ${summary.bestTimingProfile.entryOffset} (${(summary.bestTimingProfile.winRate * 100).toFixed(1)}%)` : (usesActualEntryMinute ? 'See Polymarket tab for auto-mode diagnostics' : 'See Polymarket tab for full diagnostics')}</div>
-          </div>
+          ${modeCard}
           ${sizedBankrollCards}
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">${usesRealizedPnl ? 'Poly Profitable' : 'Poly Win Rate'}</div>
-              <div class="qv-stat-value ${profitabilityToneClass}">
-                  ${(summary.winRate * 100).toFixed(1)}%
-              </div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Poly Exp / Trade</div>
-              <div class="qv-stat-value ${summary.expectancy === null ? '' : (summary.expectancy >= 0 ? 'positive' : 'negative')}">
-                  ${summary.expectancy === null ? 'n/a' : formatPolymarketCents(summary.expectancy)}
-              </div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Poly Profit Factor</div>
-              <div class="qv-stat-value">${formatProfitFactor(summary.profitFactor)}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Avg Win</div>
-              <div class="qv-stat-value ${summary.avgWin === null ? '' : 'positive'}">
-                  ${summary.avgWin === null ? 'n/a' : formatPolymarketCents(summary.avgWin)}
-              </div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Avg Loss</div>
-              <div class="qv-stat-value ${summary.avgLoss === null ? '' : 'negative'}">
-                  ${summary.avgLoss === null ? 'n/a' : formatPolymarketCents(-summary.avgLoss)}
-              </div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Avg Entry Price</div>
-              <div class="qv-stat-value">
-                  ${summary.avgEntryPrice === null ? 'n/a' : formatProbabilityCents(summary.avgEntryPrice)}
-              </div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Scored Trade Share</div>
-              <div class="qv-stat-value">${(summary.coverage * 100).toFixed(1)}%</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">${winCountLabel}</div>
-              <div class="qv-stat-value positive">${summary.wins}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">${lossCountLabel}</div>
-              <div class="qv-stat-value negative">${summary.losses}</div>
-          </div>
+          ${corePolymarketCards}
           ${baselineCard}
           ${signalExitCards}
           ${limitEntryCards}
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">${streakWinLabel}</div>
-              <div class="qv-stat-value positive">${summary.longestWinStreak}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">${streakLossLabel}</div>
-              <div class="qv-stat-value negative">${summary.longestLossStreak}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">${recentFormLabel}</div>
-              <div class="qv-stat-value ${recentFormToneClass}">
-                  ${recentFormValue}
-              </div>
-          </div>
+          ${streakPolymarketCards}
           ${renderPolymarketExitReasonWinRateCardHtml(afterMaxHoldLabel, summary.exitReasonWinRates.maxHold)}
           ${renderPolymarketExitReasonWinRateCardHtml(afterTakeProfitLabel, summary.exitReasonWinRates.takeProfit)}
           ${renderPolymarketExpectancyCardHtml('Entry Exp / Trade | After TP', summary.afterTakeProfitExpectancy)}
           ${renderPolymarketExitReasonWinRateCardHtml(afterSignalLabel, summary.exitReasonWinRates.signal)}
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Scored Trades</div>
-              <div class="qv-stat-value">${summary.scoredTrades}</div>
-          </div>
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Unscored Trades</div>
-              <div class="qv-stat-value">${summary.unscoredTrades}</div>
-          </div>
-          ${summary.duplicateTradesIgnored && summary.duplicateTradesIgnored > 0 ? `
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Duplicate Trades Ignored</div>
-              <div class="qv-stat-value">${summary.duplicateTradesIgnored}</div>
-          </div>
-          ` : ''}
-          ${summary.missingTrades > 0 ? `
-          <div class="qv-stat-card">
-              <div class="qv-stat-label">Missing Outcome Rows</div>
-              <div class="qv-stat-value">${summary.missingTrades}</div>
-          </div>
-          ` : ''}
-          <div class="qv-stat-card full-width qv-poly-meta-card">
-              <div class="qv-stat-label">Outcome Rows Fetched</div>
-              <div class="qv-stat-value">${summary.outcomeRowsLoaded}</div>
-          </div>
+          ${footerPolymarketCards}
           ${diagnosticsNote}
           ${timingProfileSection}
       </div>
@@ -511,12 +391,7 @@ function renderPolymarketExitReasonWinRateCardHtml(
     ? (summary.wins === 0 && summary.losses === 0 ? '' : (summary.winRate >= 0.5 ? 'positive' : 'negative'))
     : '';
 
-  return `
-      <div class="qv-stat-card">
-          <div class="qv-stat-label">${label}</div>
-          <div class="qv-stat-value ${toneClass}">${value}</div>
-      </div>
-  `;
+  return renderQvStatCard({ label, value, toneClass });
 }
 
 function renderPolymarketExpectancyCardHtml(
@@ -532,55 +407,11 @@ function renderPolymarketExpectancyCardHtml(
     ? (expectancyValue >= 0 ? "positive" : "negative")
     : "";
 
-  return `
-      <div class="qv-stat-card">
-          <div class="qv-stat-label">${label}</div>
-          <div class="qv-stat-value ${toneClass}">${value}</div>
-      </div>
-  `;
+  return renderQvStatCard({ label, value, toneClass });
 }
 
 export function fmtPrice(price: number): string {
   return formatDisplayPrice(price);
-}
-
-export function formatPolymarketCents(value: number): string {
-  const prefix = value > 0 ? '+' : value < 0 ? '-' : '';
-  return `${prefix}${(Math.abs(value) * 100).toFixed(1)}c`;
-}
-
-export function formatProbabilityCents(value: number): string {
-  return `${(Math.abs(value) * 100).toFixed(1)}c`;
-}
-
-function formatCount(value: number): string {
-  if (!Number.isFinite(value)) return 'n/a';
-  return Math.round(value).toLocaleString('en-US');
-}
-
-function formatCompactMagnitude(value: number): string {
-  const abs = Math.abs(value);
-  if (!Number.isFinite(abs)) return 'n/a';
-  if (abs >= 1e15) {
-    const [mantissa, exponent] = abs.toExponential(2).split('e');
-    return `${mantissa ?? abs.toFixed(2)}x10^${Number(exponent ?? 0)}`;
-  }
-  if (abs >= 1e12) return `${(abs / 1e12).toFixed(2)}T`;
-  if (abs >= 1e9) return `${(abs / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${(abs / 1e6).toFixed(2)}M`;
-  if (abs >= 1_000) return abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return abs.toFixed(2);
-}
-
-function formatSignedDollar(value: number): string {
-  const prefix = value > 0 ? '+' : value < 0 ? '-' : '';
-  return `${prefix}$${formatCompactMagnitude(value)}`;
-}
-
-function formatSignedPercent(value: number): string {
-  const prefix = value > 0 ? '+' : value < 0 ? '-' : '';
-  const suffix = Math.abs(value) >= 1e15 ? '' : '%';
-  return `${prefix}${formatCompactMagnitude(value)}${suffix}`;
 }
 
 function formatSizingModeLabel(mode: string | undefined): string {
@@ -597,13 +428,6 @@ function formatSizingModeLabel(mode: string | undefined): string {
     secure_f: 'Secure f',
   };
   return labels[mode] ?? mode;
-}
-
-export function formatProfitFactor(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) {
-    return value === Infinity ? '∞' : 'n/a';
-  }
-  return value.toFixed(2);
 }
 
 export function formatTradeTime(time: Time): string {

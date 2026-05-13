@@ -39,50 +39,76 @@ export const FINDER_POLYMARKET_IDS = {
   finderRankMode: 'finderPolymarketRankMode',
 } as const;
 
+const POLYMARKET_SETTINGS_ROW_IDS = {
+  outcomeIntervalRow: POLYMARKET_SETTINGS_IDS.outcomeIntervalRow,
+  entrySelectionModeRow: POLYMARKET_SETTINGS_IDS.entrySelectionModeRow,
+  offsetRow: POLYMARKET_SETTINGS_IDS.entryOffsetRow,
+  exitModeRow: POLYMARKET_SETTINGS_IDS.exitModeRow,
+  postSignalLimitEntryEnabledRow: POLYMARKET_SETTINGS_IDS.postSignalLimitEntryEnabledRow,
+  postSignalLimitEntryModeRow: POLYMARKET_SETTINGS_IDS.postSignalLimitEntryModeRow,
+  postSignalLimitEntryPriceCentsRow: POLYMARKET_SETTINGS_IDS.postSignalLimitEntryPriceCentsRow,
+  postSignalLimitEntryOffsetCentsRow: POLYMARKET_SETTINGS_IDS.postSignalLimitEntryOffsetCentsRow,
+  postSignalLimitExitEnabledRow: POLYMARKET_SETTINGS_IDS.postSignalLimitExitEnabledRow,
+  postSignalLimitExitModeRow: POLYMARKET_SETTINGS_IDS.postSignalLimitExitModeRow,
+  postSignalLimitExitPriceCentsRow: POLYMARKET_SETTINGS_IDS.postSignalLimitExitPriceCentsRow,
+  postSignalLimitExitOffsetCentsRow: POLYMARKET_SETTINGS_IDS.postSignalLimitExitOffsetCentsRow,
+  outcomeSymbolRow: POLYMARKET_SETTINGS_IDS.outcomeSymbolRow,
+} as const;
+
 export const STATE_SUBSCRIPTIONS_REQUIRED_IDS = [
   ...Object.values(CHART_MODE_IDS),
   ...Object.values(POLYMARKET_SETTINGS_IDS),
   ...Object.values(FINDER_POLYMARKET_IDS),
 ] as const;
 
+function getTypedElement<T extends HTMLElement>(
+  id: string,
+  constructor: { new(): T }
+): T | null {
+  const el = document.getElementById(id);
+  return el instanceof constructor ? el : null;
+}
+
+function getElements<TIds extends Record<string, string>>(ids: TIds): {
+  [K in keyof TIds]: HTMLElement | null;
+} {
+  const elements = {} as { [K in keyof TIds]: HTMLElement | null };
+  for (const key of Object.keys(ids) as Array<keyof TIds>) {
+    elements[key] = document.getElementById(ids[key]);
+  }
+  return elements;
+}
+
 export function getPolymarketAnnotationToggle(): HTMLInputElement | null {
-  const el = document.getElementById(POLYMARKET_SETTINGS_IDS.annotationToggle);
-  return el instanceof HTMLInputElement ? el : null;
+  return getTypedElement(POLYMARKET_SETTINGS_IDS.annotationToggle, HTMLInputElement);
 }
 
 export function getPolymarketExitModeSelect(): HTMLSelectElement | null {
-  const el = document.getElementById(POLYMARKET_SETTINGS_IDS.exitModeSelect);
-  return el instanceof HTMLSelectElement ? el : null;
+  return getTypedElement(POLYMARKET_SETTINGS_IDS.exitModeSelect, HTMLSelectElement);
 }
 
 export function getPolymarketEntrySelectionModeSelect(): HTMLSelectElement | null {
-  const el = document.getElementById(POLYMARKET_SETTINGS_IDS.entrySelectionModeSelect);
-  return el instanceof HTMLSelectElement ? el : null;
+  return getTypedElement(POLYMARKET_SETTINGS_IDS.entrySelectionModeSelect, HTMLSelectElement);
 }
 
 export function getPolymarketOutcomeIntervalSelect(): HTMLSelectElement | null {
-  const el = document.getElementById(POLYMARKET_SETTINGS_IDS.outcomeIntervalSelect);
-  return el instanceof HTMLSelectElement ? el : null;
+  return getTypedElement(POLYMARKET_SETTINGS_IDS.outcomeIntervalSelect, HTMLSelectElement);
 }
 
 export function getPolymarketPostSignalLimitEntryToggle(): HTMLInputElement | null {
-  const el = document.getElementById(POLYMARKET_SETTINGS_IDS.postSignalLimitEntryToggle);
-  return el instanceof HTMLInputElement ? el : null;
+  return getTypedElement(POLYMARKET_SETTINGS_IDS.postSignalLimitEntryToggle, HTMLInputElement);
 }
 
 export function getPolymarketPostSignalLimitEntryModeSelect(): HTMLSelectElement | null {
-  const el = document.getElementById(POLYMARKET_SETTINGS_IDS.postSignalLimitEntryModeSelect);
-  return el instanceof HTMLSelectElement ? el : null;
+  return getTypedElement(POLYMARKET_SETTINGS_IDS.postSignalLimitEntryModeSelect, HTMLSelectElement);
 }
 
 export function getPolymarketPostSignalLimitExitToggle(): HTMLInputElement | null {
-  const el = document.getElementById(POLYMARKET_SETTINGS_IDS.postSignalLimitExitToggle);
-  return el instanceof HTMLInputElement ? el : null;
+  return getTypedElement(POLYMARKET_SETTINGS_IDS.postSignalLimitExitToggle, HTMLInputElement);
 }
 
 export function getPolymarketPostSignalLimitExitModeSelect(): HTMLSelectElement | null {
-  const el = document.getElementById(POLYMARKET_SETTINGS_IDS.postSignalLimitExitModeSelect);
-  return el instanceof HTMLSelectElement ? el : null;
+  return getTypedElement(POLYMARKET_SETTINGS_IDS.postSignalLimitExitModeSelect, HTMLSelectElement);
 }
 
 export function getPolymarketSettingsRows(): {
@@ -100,24 +126,9 @@ export function getPolymarketSettingsRows(): {
   postSignalLimitExitOffsetCentsRow: HTMLElement | null;
   outcomeSymbolRow: HTMLElement | null;
 } {
-  return {
-    outcomeIntervalRow: document.getElementById(POLYMARKET_SETTINGS_IDS.outcomeIntervalRow),
-    entrySelectionModeRow: document.getElementById(POLYMARKET_SETTINGS_IDS.entrySelectionModeRow),
-    offsetRow: document.getElementById(POLYMARKET_SETTINGS_IDS.entryOffsetRow),
-    exitModeRow: document.getElementById(POLYMARKET_SETTINGS_IDS.exitModeRow),
-    postSignalLimitEntryEnabledRow: document.getElementById(POLYMARKET_SETTINGS_IDS.postSignalLimitEntryEnabledRow),
-    postSignalLimitEntryModeRow: document.getElementById(POLYMARKET_SETTINGS_IDS.postSignalLimitEntryModeRow),
-    postSignalLimitEntryPriceCentsRow: document.getElementById(POLYMARKET_SETTINGS_IDS.postSignalLimitEntryPriceCentsRow),
-    postSignalLimitEntryOffsetCentsRow: document.getElementById(POLYMARKET_SETTINGS_IDS.postSignalLimitEntryOffsetCentsRow),
-    postSignalLimitExitEnabledRow: document.getElementById(POLYMARKET_SETTINGS_IDS.postSignalLimitExitEnabledRow),
-    postSignalLimitExitModeRow: document.getElementById(POLYMARKET_SETTINGS_IDS.postSignalLimitExitModeRow),
-    postSignalLimitExitPriceCentsRow: document.getElementById(POLYMARKET_SETTINGS_IDS.postSignalLimitExitPriceCentsRow),
-    postSignalLimitExitOffsetCentsRow: document.getElementById(POLYMARKET_SETTINGS_IDS.postSignalLimitExitOffsetCentsRow),
-    outcomeSymbolRow: document.getElementById(POLYMARKET_SETTINGS_IDS.outcomeSymbolRow),
-  };
+  return getElements(POLYMARKET_SETTINGS_ROW_IDS);
 }
 
 export function getFinderPolymarketRankModeSelect(): HTMLSelectElement | null {
-  const el = document.getElementById(FINDER_POLYMARKET_IDS.finderRankMode);
-  return el instanceof HTMLSelectElement ? el : null;
+  return getTypedElement(FINDER_POLYMARKET_IDS.finderRankMode, HTMLSelectElement);
 }

@@ -1,113 +1,88 @@
-import { getRequiredElement } from "./dom-utils";
+import {
+    getRequiredDomElements,
+    getRequiredDomIds,
+    type RequiredDomElementMap,
+} from "./dom-utils";
 
-export const PORTFOLIO_LAB_REQUIRED_IDS = [
-    "portfolioTab",
-    "portfolioEmpty",
-    "portfolioContent",
-    "portfolioSymbolList",
-    "portfolioBenchmarkSymbol",
-    "portfolioAnchorSymbol",
-    "portfolioLookbackBars",
-    "portfolioWindowMode",
-    "portfolioConsensusLagBars",
-    "portfolioConsensusMinSamples",
-    "portfolioUseCurrentBtn",
-    "portfolioFillMajorsBtn",
-    "portfolioRunBtn",
-    "portfolioStatus",
-    "portfolioResults",
-    "portfolioSummary",
-    "portfolioLiveContextSection",
-    "portfolioLiveContextSummary",
-    "portfolioLiveContextDetails",
-    "portfolioForecastSection",
-    "portfolioForecastSummary",
-    "portfolioForecastDetails",
-    "portfolioForecastTableBody",
-    "portfolioInsightSection",
-    "portfolioInsights",
-    "portfolioExecutionSection",
-    "portfolioExecutionSummary",
-    "portfolioConsensusSection",
-    "portfolioConsensusSummary",
-    "portfolioConsensusTableBody",
-    "portfolioBreadthMinAgree",
-    "portfolioMaxOppose",
-    "portfolioRunBreadthBacktestBtn",
-    "portfolioRunFilterBacktestBtn",
-    "portfolioRunBreadthSweepBtn",
-    "portfolioRunOppositionSweepBtn",
-    "portfolioBreadthSweepSection",
-    "portfolioBreadthSweepTableBody",
-    "portfolioOppositionSweepSection",
-    "portfolioOppositionSweepTableBody",
-    "portfolioRankingSection",
-    "portfolioRankingSummary",
-    "portfolioRankingTableBody",
-    "portfolioSizingSection",
-    "portfolioSizingSummary",
-    "portfolioSizingTableBody",
-    "portfolioMatrixSection",
-    "portfolioCorrelationMatrix",
-    "portfolioPairsTableBody",
-    "portfolioIntervalBadge",
-    "portfolioStrategyBadge",
-] as const;
+const PORTFOLIO_LAB_DOM_IDS = {
+    portfolioTab: "portfolioTab",
+    portfolioEmpty: "portfolioEmpty",
+    portfolioContent: "portfolioContent",
+    portfolioSymbolList: "portfolioSymbolList",
+    portfolioBenchmarkSymbol: "portfolioBenchmarkSymbol",
+    portfolioAnchorSymbol: "portfolioAnchorSymbol",
+    portfolioLookbackBars: "portfolioLookbackBars",
+    portfolioWindowMode: "portfolioWindowMode",
+    portfolioConsensusLagBars: "portfolioConsensusLagBars",
+    portfolioConsensusMinSamples: "portfolioConsensusMinSamples",
+    portfolioUseCurrentBtn: "portfolioUseCurrentBtn",
+    portfolioFillMajorsBtn: "portfolioFillMajorsBtn",
+    portfolioRunBtn: "portfolioRunBtn",
+    portfolioStatus: "portfolioStatus",
+    portfolioResults: "portfolioResults",
+    portfolioSummary: "portfolioSummary",
+    portfolioLiveContextSection: "portfolioLiveContextSection",
+    portfolioLiveContextSummary: "portfolioLiveContextSummary",
+    portfolioLiveContextDetails: "portfolioLiveContextDetails",
+    portfolioForecastSection: "portfolioForecastSection",
+    portfolioForecastSummary: "portfolioForecastSummary",
+    portfolioForecastDetails: "portfolioForecastDetails",
+    portfolioForecastTableBody: "portfolioForecastTableBody",
+    portfolioInsightSection: "portfolioInsightSection",
+    portfolioInsights: "portfolioInsights",
+    portfolioExecutionSection: "portfolioExecutionSection",
+    portfolioExecutionSummary: "portfolioExecutionSummary",
+    portfolioConsensusSection: "portfolioConsensusSection",
+    portfolioConsensusSummary: "portfolioConsensusSummary",
+    portfolioConsensusTableBody: "portfolioConsensusTableBody",
+    portfolioBreadthMinAgree: "portfolioBreadthMinAgree",
+    portfolioMaxOppose: "portfolioMaxOppose",
+    portfolioRunBreadthBacktestBtn: "portfolioRunBreadthBacktestBtn",
+    portfolioRunFilterBacktestBtn: "portfolioRunFilterBacktestBtn",
+    portfolioRunBreadthSweepBtn: "portfolioRunBreadthSweepBtn",
+    portfolioRunOppositionSweepBtn: "portfolioRunOppositionSweepBtn",
+    portfolioBreadthSweepSection: "portfolioBreadthSweepSection",
+    portfolioBreadthSweepTableBody: "portfolioBreadthSweepTableBody",
+    portfolioOppositionSweepSection: "portfolioOppositionSweepSection",
+    portfolioOppositionSweepTableBody: "portfolioOppositionSweepTableBody",
+    portfolioRankingSection: "portfolioRankingSection",
+    portfolioRankingSummary: "portfolioRankingSummary",
+    portfolioRankingTableBody: "portfolioRankingTableBody",
+    portfolioSizingSection: "portfolioSizingSection",
+    portfolioSizingSummary: "portfolioSizingSummary",
+    portfolioSizingTableBody: "portfolioSizingTableBody",
+    portfolioMatrixSection: "portfolioMatrixSection",
+    portfolioCorrelationMatrix: "portfolioCorrelationMatrix",
+    portfolioPairsTableBody: "portfolioPairsTableBody",
+    portfolioIntervalBadge: "portfolioIntervalBadge",
+    portfolioStrategyBadge: "portfolioStrategyBadge",
+} as const;
 
-export function createPortfolioLabDom() {
-    return {
-        portfolioTab: getRequiredElement("portfolioTab"),
-        portfolioEmpty: getRequiredElement("portfolioEmpty"),
-        portfolioContent: getRequiredElement("portfolioContent"),
-        portfolioSymbolList: getRequiredElement<HTMLTextAreaElement>("portfolioSymbolList"),
-        portfolioBenchmarkSymbol: getRequiredElement<HTMLInputElement>("portfolioBenchmarkSymbol"),
-        portfolioAnchorSymbol: getRequiredElement<HTMLInputElement>("portfolioAnchorSymbol"),
-        portfolioLookbackBars: getRequiredElement<HTMLInputElement>("portfolioLookbackBars"),
-        portfolioWindowMode: getRequiredElement<HTMLSelectElement>("portfolioWindowMode"),
-        portfolioConsensusLagBars: getRequiredElement<HTMLInputElement>("portfolioConsensusLagBars"),
-        portfolioConsensusMinSamples: getRequiredElement<HTMLInputElement>("portfolioConsensusMinSamples"),
-        portfolioUseCurrentBtn: getRequiredElement<HTMLButtonElement>("portfolioUseCurrentBtn"),
-        portfolioFillMajorsBtn: getRequiredElement<HTMLButtonElement>("portfolioFillMajorsBtn"),
-        portfolioRunBtn: getRequiredElement<HTMLButtonElement>("portfolioRunBtn"),
-        portfolioStatus: getRequiredElement("portfolioStatus"),
-        portfolioResults: getRequiredElement("portfolioResults"),
-        portfolioSummary: getRequiredElement("portfolioSummary"),
-        portfolioLiveContextSection: getRequiredElement("portfolioLiveContextSection"),
-        portfolioLiveContextSummary: getRequiredElement("portfolioLiveContextSummary"),
-        portfolioLiveContextDetails: getRequiredElement("portfolioLiveContextDetails"),
-        portfolioForecastSection: getRequiredElement("portfolioForecastSection"),
-        portfolioForecastSummary: getRequiredElement("portfolioForecastSummary"),
-        portfolioForecastDetails: getRequiredElement("portfolioForecastDetails"),
-        portfolioForecastTableBody: getRequiredElement("portfolioForecastTableBody"),
-        portfolioInsightSection: getRequiredElement("portfolioInsightSection"),
-        portfolioInsights: getRequiredElement("portfolioInsights"),
-        portfolioExecutionSection: getRequiredElement("portfolioExecutionSection"),
-        portfolioExecutionSummary: getRequiredElement("portfolioExecutionSummary"),
-        portfolioConsensusSection: getRequiredElement("portfolioConsensusSection"),
-        portfolioConsensusSummary: getRequiredElement("portfolioConsensusSummary"),
-        portfolioConsensusTableBody: getRequiredElement("portfolioConsensusTableBody"),
-        portfolioBreadthMinAgree: getRequiredElement<HTMLInputElement>("portfolioBreadthMinAgree"),
-        portfolioMaxOppose: getRequiredElement<HTMLInputElement>("portfolioMaxOppose"),
-        portfolioRunBreadthBacktestBtn: getRequiredElement<HTMLButtonElement>("portfolioRunBreadthBacktestBtn"),
-        portfolioRunFilterBacktestBtn: getRequiredElement<HTMLButtonElement>("portfolioRunFilterBacktestBtn"),
-        portfolioRunBreadthSweepBtn: getRequiredElement<HTMLButtonElement>("portfolioRunBreadthSweepBtn"),
-        portfolioRunOppositionSweepBtn: getRequiredElement<HTMLButtonElement>("portfolioRunOppositionSweepBtn"),
-        portfolioBreadthSweepSection: getRequiredElement("portfolioBreadthSweepSection"),
-        portfolioBreadthSweepTableBody: getRequiredElement("portfolioBreadthSweepTableBody"),
-        portfolioOppositionSweepSection: getRequiredElement("portfolioOppositionSweepSection"),
-        portfolioOppositionSweepTableBody: getRequiredElement("portfolioOppositionSweepTableBody"),
-        portfolioRankingSection: getRequiredElement("portfolioRankingSection"),
-        portfolioRankingSummary: getRequiredElement("portfolioRankingSummary"),
-        portfolioRankingTableBody: getRequiredElement("portfolioRankingTableBody"),
-        portfolioSizingSection: getRequiredElement("portfolioSizingSection"),
-        portfolioSizingSummary: getRequiredElement("portfolioSizingSummary"),
-        portfolioSizingTableBody: getRequiredElement("portfolioSizingTableBody"),
-        portfolioMatrixSection: getRequiredElement("portfolioMatrixSection"),
-        portfolioCorrelationMatrix: getRequiredElement("portfolioCorrelationMatrix"),
-        portfolioPairsTableBody: getRequiredElement("portfolioPairsTableBody"),
-        portfolioIntervalBadge: getRequiredElement("portfolioIntervalBadge"),
-        portfolioStrategyBadge: getRequiredElement("portfolioStrategyBadge"),
-    };
+export const PORTFOLIO_LAB_REQUIRED_IDS = getRequiredDomIds(PORTFOLIO_LAB_DOM_IDS);
+
+type PortfolioLabTypedControls = {
+    portfolioSymbolList: HTMLTextAreaElement;
+    portfolioBenchmarkSymbol: HTMLInputElement;
+    portfolioAnchorSymbol: HTMLInputElement;
+    portfolioLookbackBars: HTMLInputElement;
+    portfolioWindowMode: HTMLSelectElement;
+    portfolioConsensusLagBars: HTMLInputElement;
+    portfolioConsensusMinSamples: HTMLInputElement;
+    portfolioUseCurrentBtn: HTMLButtonElement;
+    portfolioFillMajorsBtn: HTMLButtonElement;
+    portfolioRunBtn: HTMLButtonElement;
+    portfolioBreadthMinAgree: HTMLInputElement;
+    portfolioMaxOppose: HTMLInputElement;
+    portfolioRunBreadthBacktestBtn: HTMLButtonElement;
+    portfolioRunFilterBacktestBtn: HTMLButtonElement;
+    portfolioRunBreadthSweepBtn: HTMLButtonElement;
+    portfolioRunOppositionSweepBtn: HTMLButtonElement;
+};
+
+export type PortfolioLabDom =
+    Omit<RequiredDomElementMap<typeof PORTFOLIO_LAB_DOM_IDS>, keyof PortfolioLabTypedControls>
+    & PortfolioLabTypedControls;
+
+export function createPortfolioLabDom(): PortfolioLabDom {
+    return getRequiredDomElements(PORTFOLIO_LAB_DOM_IDS) as PortfolioLabDom;
 }
-
-export type PortfolioLabDom = ReturnType<typeof createPortfolioLabDom>;
