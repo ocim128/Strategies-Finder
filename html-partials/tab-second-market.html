@@ -1,0 +1,96 @@
+<div id="secondmarketTab">
+    <div class="section-title">1s Market</div>
+
+    <div class="second-market-toolbar">
+        <div class="param-group">
+            <label class="param-label" for="secondMarketSymbol">Symbol</label>
+            <select class="param-input" id="secondMarketSymbol">
+                <option value="BTCUSDT">BTCUSDT</option>
+                <option value="XRPUSDT">XRPUSDT</option>
+            </select>
+        </div>
+        <div class="param-group">
+            <label class="param-label" for="secondMarketWindowSec">Window</label>
+            <select class="param-input" id="secondMarketWindowSec">
+                <option value="300">5m</option>
+                <option value="900" selected>15m</option>
+                <option value="1800">30m</option>
+                <option value="3600">1h</option>
+            </select>
+        </div>
+        <label class="second-market-toggle">
+            <input id="secondMarketAutoRefresh" type="checkbox" checked>
+            <span>Auto</span>
+        </label>
+        <button class="btn btn-primary btn-compact" id="secondMarketRefresh" type="button">Refresh</button>
+    </div>
+
+    <div class="second-market-status" id="secondMarketStatus">Ready</div>
+
+    <div class="second-market-metrics">
+        <div class="second-market-metric">
+            <span class="second-market-metric__label">Binance</span>
+            <span class="second-market-metric__value" id="secondMarketMetricBinance">--</span>
+        </div>
+        <div class="second-market-metric">
+            <span class="second-market-metric__label">CLOB</span>
+            <span class="second-market-metric__value" id="secondMarketMetricClob">--</span>
+        </div>
+        <div class="second-market-metric">
+            <span class="second-market-metric__label">Reference</span>
+            <span class="second-market-metric__value" id="secondMarketMetricReference">--</span>
+        </div>
+        <div class="second-market-metric">
+            <span class="second-market-metric__label">Coverage</span>
+            <span class="second-market-metric__value" id="secondMarketMetricCoverage">--</span>
+        </div>
+        <div class="second-market-metric">
+            <span class="second-market-metric__label">Quote Age</span>
+            <span class="second-market-metric__value" id="secondMarketMetricQuoteAge">--</span>
+        </div>
+        <div class="second-market-metric">
+            <span class="second-market-metric__label">Lag</span>
+            <span class="second-market-metric__value" id="secondMarketMetricLag">--</span>
+        </div>
+    </div>
+
+    <div class="second-market-event">
+        <div>
+            <span class="second-market-event__label">Event</span>
+            <span class="second-market-event__value" id="secondMarketActiveEvent">--</span>
+        </div>
+        <div>
+            <span class="second-market-event__label">Latest</span>
+            <span class="second-market-event__value" id="secondMarketLatestTime">--</span>
+        </div>
+        <div>
+            <span class="second-market-event__label">Gamma YES</span>
+            <span class="second-market-event__value" id="secondMarketGammaYes">--</span>
+        </div>
+        <div>
+            <span class="second-market-event__label">Gamma NO</span>
+            <span class="second-market-event__value" id="secondMarketGammaNo">--</span>
+        </div>
+    </div>
+
+    <div class="second-market-chart-panel">
+        <div class="second-market-chart-title">Binance 1s</div>
+        <div class="second-market-chart" id="secondMarketBinanceChart"></div>
+    </div>
+
+    <div class="second-market-chart-panel">
+        <div class="second-market-chart-title">Polymarket CLOB</div>
+        <div class="second-market-legend">
+            <span class="second-market-legend__item second-market-legend__item--yes-bid">YES bid</span>
+            <span class="second-market-legend__item second-market-legend__item--yes-ask">YES ask</span>
+            <span class="second-market-legend__item second-market-legend__item--no-bid">NO bid</span>
+            <span class="second-market-legend__item second-market-legend__item--no-ask">NO ask</span>
+        </div>
+        <div class="second-market-chart" id="secondMarketClobChart"></div>
+    </div>
+
+    <div class="second-market-chart-panel">
+        <div class="second-market-chart-title">RTDS Reference</div>
+        <div class="second-market-chart second-market-chart--small" id="secondMarketReferenceChart"></div>
+    </div>
+</div>

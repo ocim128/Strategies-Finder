@@ -3,7 +3,7 @@ import { parseTimeToUnixSeconds } from "./time-normalization";
 import type { OHLCVData } from "./types/strategies";
 
 export const BINANCE_INTERVALS = new Set([
-    "1m", "3m", "5m", "15m", "30m",
+    "1s", "1m", "3m", "5m", "15m", "30m",
     "1h", "2h", "4h", "6h", "8h", "12h",
     "1d", "3d", "1w", "1M",
 ]);
@@ -175,6 +175,12 @@ export function toBinanceInterval(interval: string): string | null {
             10080: "1w",
         };
         return map[mins] ?? null;
+    }
+
+    const secondsMatch = /^(\d+)s$/.exec(trimmed);
+    if (secondsMatch) {
+        const seconds = Number(secondsMatch[1]);
+        return seconds === 1 ? "1s" : null;
     }
 
     const hoursMatch = /^(\d+)h$/.exec(trimmed);

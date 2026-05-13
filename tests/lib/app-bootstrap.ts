@@ -35,6 +35,7 @@ import { bindFormAccessibility } from "./form-accessibility";
 import { strategyPanelController } from "./strategy-panel-controller";
 import { getOptionalElement } from "./dom-utils";
 import { polymarketPanelService } from "./polymarket-panel-service";
+import { secondMarketViewerService } from "./second-market/second-market-viewer-service";
 import { initMonteCarloService } from "./monte-carlo-service";
 import { initCrossSymbolUI } from "./cross-symbol-ui";
 import { huntService } from "./hunt/hunt-service";
@@ -316,6 +317,12 @@ export async function bootstrapApp(): Promise<void> {
     await runBootstrapFeatureStage(APP_BOOTSTRAP_FEATURES, "post_restore", "init", context);
     bindDirectLazyFeatureTriggers();
     attachTabLazyListener();
+    const activeTabId = strategyPanelController.getActiveTabId();
+    if (activeTabId) {
+        window.dispatchEvent(new CustomEvent("strategy-panel:tab-change", {
+            detail: { tabId: activeTabId },
+        }));
+    }
     markAppTiming("bootstrapReady");
     debugLogger.event("app.init.ready");
     logAppTimingSnapshot();
@@ -331,6 +338,7 @@ function registerLazyFeatures(): void {
     registerLazyFeature("portfolio-lab", () => portfolioLabService.init());
     registerLazyFeature("strategy-ensemble", () => strategyEnsembleService.init());
     registerLazyFeature("polymarket-panel", () => polymarketPanelService.init());
+    registerLazyFeature("second-market-viewer", () => secondMarketViewerService.init());
     registerLazyFeature("monte-carlo", () => initMonteCarloService());
     registerLazyFeature("strategy-library-admin", () => strategyLibraryAdminService.init());
 }

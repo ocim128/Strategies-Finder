@@ -405,6 +405,10 @@ Price points are different:
 - they are ensured on demand by the scoring surfaces that need them
 - they are fetched from Polymarket history by event and cached into `polymarket_price_points`
 
+1-second Polymarket research has a separate implementation plan:
+
+- [1-Second Polymarket Data Plan](second-polymarket-data-plan.md)
+
 ## Finder And Hunt Behavior
 
 Finder uses a dedicated Polymarket runner instead of bolting scoring onto the normal sort path.

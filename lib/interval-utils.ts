@@ -2,13 +2,14 @@ export function parseIntervalSeconds(interval: string): number | null {
     const trimmed = interval.trim();
     if (!trimmed) return null;
 
-    const match = /^(\d+)(m|h|d|w|M)$/.exec(trimmed);
+    const match = /^(\d+)(s|m|h|d|w|M)$/.exec(trimmed);
     if (!match) return null;
 
     const value = Number(match[1]);
     if (!Number.isFinite(value) || value <= 0) return null;
 
     const unit = match[2];
+    if (unit === 's') return value;
     if (unit === 'm') return value * 60;
     if (unit === 'h') return value * 3600;
     if (unit === 'd') return value * 86400;

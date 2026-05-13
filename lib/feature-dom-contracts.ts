@@ -9,6 +9,7 @@ export * from "./renderers/results-renderer-dom";
 export * from "./renderers/trades-renderer-dom";
 export * from "./settings-manager-dom";
 export * from "./polymarket-panel-dom";
+export * from "./second-market/second-market-viewer-dom";
 export * from "./portfolio-lab-dom";
 export * from "./live-positions-dom";
 export * from "./finder/finder-manager-dom";

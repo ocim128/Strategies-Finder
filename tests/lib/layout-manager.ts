@@ -12,6 +12,7 @@ import tabDataminingHtml from '../html-partials/tab-datamining.html?raw';
 import tabFinderHtml from '../html-partials/tab-finder.html?raw';
 import tabHuntHtml from '../html-partials/tab-hunt.html?raw';
 import tabPolymarketHtml from '../html-partials/tab-polymarket.html?raw';
+import tabSecondMarketHtml from '../html-partials/tab-second-market.html?raw';
 import tabWalkforwardHtml from '../html-partials/tab-walkforward.html?raw';
 import tabMonteCarloHtml from '../html-partials/tab-monte-carlo.html?raw';
 
@@ -44,6 +45,7 @@ const STRATEGY_PANEL_TAB_PARTIALS = [
     tabFinderHtml,
     tabHuntHtml,
     tabPolymarketHtml,
+    tabSecondMarketHtml,
     tabWalkforwardHtml,
     tabMonteCarloHtml,
     tabResultsHtml,

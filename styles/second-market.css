@@ -1,0 +1,188 @@
+#secondmarketTab {
+    display: none;
+}
+
+.second-market-toolbar {
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) minmax(110px, 0.8fr) auto auto;
+    gap: var(--space-2);
+    align-items: end;
+    margin-bottom: var(--space-3);
+}
+
+.second-market-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    min-height: 34px;
+    padding: 0 var(--space-3);
+    border: 1px solid var(--field-border);
+    border-radius: var(--radius-s);
+    background: var(--field-bg);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+}
+
+.second-market-status {
+    margin-bottom: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-s);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+}
+
+.second-market-status.is-good {
+    color: var(--green);
+    background: var(--success-soft);
+    border-color: hsl(var(--hsl-success) / 0.35);
+}
+
+.second-market-status.is-warning {
+    color: var(--warning);
+    background: hsl(var(--hsl-warning) / 0.15);
+    border-color: hsl(var(--hsl-warning) / 0.35);
+}
+
+.second-market-status.is-error {
+    color: var(--red);
+    background: var(--danger-soft);
+    border-color: hsl(var(--hsl-danger) / 0.35);
+}
+
+.second-market-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+}
+
+.second-market-metric,
+.second-market-event {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-s);
+    background: var(--bg-tertiary);
+}
+
+.second-market-metric {
+    min-height: 54px;
+    padding: var(--space-2);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+}
+
+.second-market-metric__label,
+.second-market-event__label {
+    color: var(--text-secondary);
+    font-size: var(--font-size-2xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-medium);
+}
+
+.second-market-metric__value,
+.second-market-event__value {
+    color: var(--text-primary);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    overflow-wrap: anywhere;
+}
+
+.second-market-event {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2);
+    padding: var(--space-2);
+    margin-bottom: var(--space-3);
+}
+
+.second-market-event > div {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.second-market-chart-panel {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-s);
+    background: var(--bg-secondary);
+    padding: var(--space-2);
+    margin-bottom: var(--space-3);
+}
+
+.second-market-chart-title {
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    margin-bottom: var(--space-2);
+}
+
+.second-market-chart {
+    width: 100%;
+    height: 220px;
+    min-height: 220px;
+}
+
+.second-market-chart--small {
+    height: 160px;
+    min-height: 160px;
+}
+
+.second-market-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+}
+
+.second-market-legend__item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--text-secondary);
+    font-size: var(--font-size-2xs);
+    font-family: var(--font-family-mono);
+}
+
+.second-market-legend__item::before {
+    content: "";
+    width: 16px;
+    height: 2px;
+    border-radius: 999px;
+    background: currentColor;
+}
+
+.second-market-legend__item--yes-bid {
+    color: var(--green);
+}
+
+.second-market-legend__item--yes-ask {
+    color: var(--accent-light);
+}
+
+.second-market-legend__item--no-bid {
+    color: var(--warning);
+}
+
+.second-market-legend__item--no-ask {
+    color: var(--red-light);
+}
+
+@media (max-width: 720px) {
+    .second-market-toolbar {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .second-market-metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .second-market-event {
+        grid-template-columns: 1fr;
+    }
+}

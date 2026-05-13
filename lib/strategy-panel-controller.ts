@@ -172,6 +172,10 @@ class StrategyPanelController {
         return this.switchTab(tabId, { focus: true });
     }
 
+    public getActiveTabId(): string | null {
+        return this.activeTabId;
+    }
+
     public setVisibleTabs(tabIds: Iterable<string> | null): void {
         this.allowedTabs = tabIds ? new Set(tabIds) : null;
 

@@ -10,6 +10,7 @@ import { RESULTS_RENDERER_REQUIRED_IDS } from "./lib/renderers/results-renderer-
 import { TRADES_RENDERER_REQUIRED_IDS } from "./lib/renderers/trades-renderer-dom";
 import { SETTINGS_MANAGER_REQUIRED_IDS } from "./lib/settings-manager-dom";
 import { POLYMARKET_PANEL_REQUIRED_IDS } from "./lib/polymarket-panel-dom";
+import { SECOND_MARKET_VIEWER_REQUIRED_IDS } from "../lib/second-market/second-market-viewer-dom";
 import { PORTFOLIO_LAB_REQUIRED_IDS } from "./lib/portfolio-lab-dom";
 import { LIVE_POSITIONS_REQUIRED_IDS } from "./lib/live-positions-dom";
 import { FINDER_MANAGER_REQUIRED_IDS } from "./lib/finder/finder-manager-dom";
@@ -44,6 +45,26 @@ function extractIds(markup: string): Set<string> {
     return ids;
 }
 
+function extractStrategyPanelTabIds(markup: string): string[] {
+    const tabIds: string[] = [];
+    const buttonPattern = /<button\b[^>]*>/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = buttonPattern.exec(markup)) !== null) {
+        const tag = match[0];
+        const classMatch = /class\s*=\s*["']([^"']*)["']/.exec(tag);
+        if (!classMatch?.[1].split(/\s+/).includes("panel-tab")) {
+            continue;
+        }
+        const dataTabMatch = /data-tab\s*=\s*["']([^"']+)["']/.exec(tag);
+        if (dataTabMatch) {
+            tabIds.push(dataTabMatch[1]);
+        }
+    }
+
+    return tabIds;
+}
+
 describe("Feature DOM contracts", () => {
     const markup = loadPartialMarkup();
     const htmlIds = extractIds(markup);
@@ -60,6 +81,7 @@ describe("Feature DOM contracts", () => {
         portfolioLab: [...PORTFOLIO_LAB_REQUIRED_IDS],
         livePositions: [...LIVE_POSITIONS_REQUIRED_IDS],
         polymarketPanel: [...POLYMARKET_PANEL_REQUIRED_IDS],
+        secondMarketViewer: [...SECOND_MARKET_VIEWER_REQUIRED_IDS],
         ensembleLab: [...ENSEMBLE_LAB_REQUIRED_IDS],
         finderManager: [...FINDER_MANAGER_REQUIRED_IDS],
         hunt: [...HUNT_REQUIRED_IDS],
@@ -81,4 +103,11 @@ describe("Feature DOM contracts", () => {
             expect(missingIds).to.deep.equal([]);
         });
     }
+
+    it("strategy panel tab buttons have matching tab panels", () => {
+        const missingPanels = extractStrategyPanelTabIds(markup)
+            .filter(tabId => !htmlIds.has(`${tabId}Tab`));
+
+        expect(missingPanels).to.deep.equal([]);
+    });
 });
