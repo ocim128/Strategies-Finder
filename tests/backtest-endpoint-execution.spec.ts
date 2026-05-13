@@ -31,6 +31,7 @@ function buildSnapshot(): UiBacktestEndpointSnapshot {
             allowSameBarExit: true,
             slippageBps: 0,
             marketMode: "all",
+            polymarketSignalExitAllowMultipleTradesPerEvent: true,
             polymarketPostSignalLimitEntryEnabled: true,
             polymarketPostSignalLimitEntryMode: "signal_offset",
             polymarketPostSignalLimitEntryPriceCents: 45,
@@ -75,6 +76,7 @@ describe("backtest endpoint execution helpers", () => {
         assert.ok(!("snapshotRsiMin" in request.backtestSettings));
         assert.ok(!("snapshotRsiMax" in request.backtestSettings));
         assert.ok(!("polymarketExitMode" in request.backtestSettings));
+        assert.ok(!("polymarketSignalExitAllowMultipleTradesPerEvent" in request.backtestSettings));
         assert.ok(!("polymarketPostSignalLimitEntryEnabled" in request.backtestSettings));
         assert.ok(!("polymarketPostSignalLimitEntryMode" in request.backtestSettings));
         assert.ok(!("polymarketPostSignalLimitEntryPriceCents" in request.backtestSettings));
@@ -94,12 +96,14 @@ describe("backtest endpoint execution helpers", () => {
             backtestSettings: {
                 ...buildSnapshot().backtestSettings,
                 polymarketExitMode: "signal_exit_same_event" as const,
+                polymarketSignalExitAllowMultipleTradesPerEvent: true,
             },
         } satisfies UiBacktestEndpointSnapshot;
 
         const request = buildBacktestEndpointExecutorRequestFromSnapshot(snapshot, candles);
 
         assert.ok(!("polymarketExitMode" in request.backtestSettings));
+        assert.ok(!("polymarketSignalExitAllowMultipleTradesPerEvent" in request.backtestSettings));
     });
 
     it("forwards explicit cross-symbol snapshot input into the executor request", () => {

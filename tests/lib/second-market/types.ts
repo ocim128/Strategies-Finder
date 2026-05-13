@@ -200,6 +200,7 @@ export interface SecondMarketTradeResult {
 
 export interface SecondMarketBacktestSummary {
     evaluationMode: PolymarketExitMode;
+    allowMultipleTradesPerEvent?: boolean;
     scoredTrades: number;
     duplicateTradesIgnored: number;
     missingOutcomeTrades: number;

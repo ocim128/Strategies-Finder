@@ -759,6 +759,7 @@ export async function runPolymarketFinder(
                         outcomes,
                         priceIndex,
                         outcomeByEntryTs,
+                        allowMultipleTradesPerEvent: options.polymarketSignalExitAllowMultipleTradesPerEvent,
                         limitEntry: limitEntrySettings,
                     });
                     const exitSummary = signalExitEvaluation.summary;
@@ -793,6 +794,7 @@ export async function runPolymarketFinder(
                         missingOutcomeRows: exitSummary.missingOutcomeTrades + exitSummary.missingPriceTrades,
                         ignoredSignals: exitSummary.duplicateTradesIgnored,
                         evaluationMode: "signal_exit_same_event",
+                        signalExitAllowMultipleTradesPerEvent: exitSummary.allowMultipleTradesPerEvent,
                         targetExitedTrades: exitSummary.targetExitedTrades,
                         signalExitedTrades: exitSummary.signalExitedTrades,
                         resolvedTrades: exitSummary.resolvedTrades,
@@ -854,6 +856,7 @@ export async function runPolymarketFinder(
                             scoredTrades: exitSummary.scoredTrades,
                             missingOutcomeTrades: exitSummary.missingOutcomeTrades,
                             evaluationMode: "signal_exit_same_event",
+                            signalExitAllowMultipleTradesPerEvent: exitSummary.allowMultipleTradesPerEvent,
                         },
                     });
 

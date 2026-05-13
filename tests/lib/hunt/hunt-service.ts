@@ -246,6 +246,7 @@ class HuntService {
             dom.huntPolymarketMinScored,
             dom.huntPolymarketLockOffset,
             dom.huntPolymarketAfterTakeProfitOnly,
+            dom.huntPolymarketSignalExitAllowMultipleTradesPerEvent,
             dom.huntFreezeRiskManagementToggle,
             dom.huntTradesMin,
             dom.huntTradesMax,
@@ -831,6 +832,7 @@ class HuntService {
         dom.huntPolymarketMinScored.value = String(settings.polymarketMinScoredPredictions);
         dom.huntPolymarketLockOffset.checked = settings.polymarketLockOffset;
         dom.huntPolymarketAfterTakeProfitOnly.checked = settings.polymarketAfterTakeProfitOnly;
+        dom.huntPolymarketSignalExitAllowMultipleTradesPerEvent.checked = settings.polymarketSignalExitAllowMultipleTradesPerEvent;
         dom.huntFreezeRiskManagementToggle.checked = settings.freezeRiskManagement;
         dom.huntTradesToggle.checked = settings.tradeCountFilterEnabled;
         dom.huntTradesMin.value = String(settings.minTrades);
@@ -872,6 +874,7 @@ class HuntService {
             polymarketMinScoredPredictions: Math.max(0, Math.round(this.readNumber(dom.huntPolymarketMinScored.value, 0))),
             polymarketLockOffset: dom.huntPolymarketLockOffset.checked,
             polymarketAfterTakeProfitOnly: dom.huntPolymarketAfterTakeProfitOnly.checked,
+            polymarketSignalExitAllowMultipleTradesPerEvent: dom.huntPolymarketSignalExitAllowMultipleTradesPerEvent.checked,
             polymarketExitMode,
             freezeRiskManagement: dom.huntFreezeRiskManagementToggle.checked,
             tradeCountFilterEnabled,
@@ -894,11 +897,14 @@ class HuntService {
         dom.huntPolymarketMinScored.disabled = !dom.huntPolymarketToggle.checked;
         dom.huntPolymarketLockOffset.disabled = !dom.huntPolymarketToggle.checked;
         dom.huntPolymarketAfterTakeProfitOnly.disabled = !dom.huntPolymarketToggle.checked;
+        dom.huntPolymarketSignalExitAllowMultipleTradesPerEvent.disabled = !dom.huntPolymarketToggle.checked;
         this.syncPolymarketRankModeOptions();
 
         const exitMode = this.uiState.runSettings.polymarketExitMode;
         if (exitMode === "signal_exit_same_event") {
             dom.huntPolymarketLockOffset.disabled = true;
+        } else {
+            dom.huntPolymarketSignalExitAllowMultipleTradesPerEvent.disabled = true;
         }
 
         dom.huntTradesMin.disabled = !dom.huntTradesToggle.checked;
@@ -1236,6 +1242,7 @@ class HuntService {
         if (effectiveExitMode === "signal_exit_same_event") {
             mergedBacktestSettings.polymarketAnnotationEnabled = true;
             mergedBacktestSettings.polymarketExitMode = "signal_exit_same_event";
+            mergedBacktestSettings.polymarketSignalExitAllowMultipleTradesPerEvent = this.runOutput?.finderOptions?.polymarketSignalExitAllowMultipleTradesPerEvent === true;
             if (tagged.result.polymarketEval?.limitEntryEnabled) {
                 applyLimitEntryEvalSettings();
             }

@@ -29,6 +29,7 @@ export interface FinderOptionsInput {
     polymarketLockOffset: boolean;
     polymarketAfterTakeProfitOnly: boolean;
     polymarketExitMode: PolymarketExitMode;
+    polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
     polymarketPostSignalLimitEntryEnabled?: boolean;
     polymarketPostSignalLimitEntryMode?: "fixed_price" | "signal_offset";
     polymarketPostSignalLimitEntryPriceCents?: number;
@@ -136,6 +137,9 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
         polymarketLockOffset: input.polymarketScoringEnabled && input.polymarketLockOffset,
         polymarketAfterTakeProfitOnly: input.polymarketScoringEnabled && input.polymarketAfterTakeProfitOnly,
         polymarketExitMode: input.polymarketExitMode,
+        polymarketSignalExitAllowMultipleTradesPerEvent: input.polymarketScoringEnabled
+            && input.polymarketExitMode === "signal_exit_same_event"
+            && input.polymarketSignalExitAllowMultipleTradesPerEvent === true,
         polymarketPostSignalLimitEntryEnabled: input.polymarketScoringEnabled && input.polymarketPostSignalLimitEntryEnabled === true,
         polymarketPostSignalLimitEntryMode: input.polymarketPostSignalLimitEntryMode,
         polymarketPostSignalLimitEntryPriceCents: input.polymarketPostSignalLimitEntryPriceCents,

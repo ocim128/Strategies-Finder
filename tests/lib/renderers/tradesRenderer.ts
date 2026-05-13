@@ -256,6 +256,9 @@ export class TradesRenderer {
                 polymarketAnnotationEnabled: true,
         });
         const currentPolymarketSettings = resolvePolymarketDomSettings();
+        const allowMultipleTradesPerEvent = state.currentBacktestResult?.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event"
+            ? state.currentBacktestResult.polymarketTradeSummary.signalExitAllowMultipleTradesPerEvent === true
+            : currentPolymarketSettings.signalExitAllowMultipleTradesPerEvent;
         const existingLimitSummary = state.currentBacktestResult?.polymarketTradeSummary?.limitEntryEnabled === true
             ? state.currentBacktestResult.polymarketTradeSummary
             : null;
@@ -307,6 +310,7 @@ export class TradesRenderer {
                     trades,
                     outcomes,
                     pricePoints,
+                    allowMultipleTradesPerEvent,
                     limitEntry,
                 });
                 const exitResultMap = new Map(exitResults.map((r) => [r.trade, r]));

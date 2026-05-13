@@ -25,6 +25,7 @@ export interface PolymarketDomSettings {
     outcomeSymbol: string | null;
     outcomeInterval: PolymarketOutcomeInterval;
     exitMode: "resolve_hold" | "signal_exit_same_event" | undefined;
+    signalExitAllowMultipleTradesPerEvent: boolean;
     postSignalLimitEntryEnabled: boolean;
     postSignalLimitEntryMode: PolymarketLimitEntryPriceMode;
     postSignalLimitEntryPriceCents: number;
@@ -66,6 +67,7 @@ export function resolvePolymarketDomSettings(doc: Document = document): Polymark
     const outcomeSymbolSelect = readSelectElement(doc, "polymarketOutcomeSymbol");
     const outcomeIntervalSelect = readSelectElement(doc, "polymarketOutcomeInterval");
     const exitModeSelect = readSelectElement(doc, "polymarketExitMode");
+    const signalExitAllowMultipleTradesToggle = readInputElement(doc, "polymarketSignalExitAllowMultipleTradesPerEvent");
     const limitEntryToggle = readInputElement(doc, "polymarketPostSignalLimitEntryEnabled");
     const limitEntryModeSelect = readSelectElement(doc, "polymarketPostSignalLimitEntryMode");
     const limitEntryPriceInput = readInputElement(doc, "polymarketPostSignalLimitEntryPriceCents");
@@ -87,6 +89,7 @@ export function resolvePolymarketDomSettings(doc: Document = document): Polymark
         exitMode: exitModeSelect
             ? (exitModeSelect.value === "signal_exit_same_event" ? "signal_exit_same_event" : "resolve_hold")
             : undefined,
+        signalExitAllowMultipleTradesPerEvent: signalExitAllowMultipleTradesToggle?.checked === true,
         postSignalLimitEntryEnabled: limitEntryToggle
             ? limitEntryToggle.checked
             : DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_ENABLED,

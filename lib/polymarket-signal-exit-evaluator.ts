@@ -33,6 +33,7 @@ export interface SignalExitEvalInput {
     pricePoints?: readonly PolymarketPricePoint[];
     priceIndex?: EventPriceIndex;
     outcomeByEntryTs?: ReadonlyMap<number, PolymarketOutcomeRow | null>;
+    allowMultipleTradesPerEvent?: boolean;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }
 
@@ -80,6 +81,7 @@ export interface SignalExitSummary {
     avgExitPrice: number;
     totalPnl: number;
     limitEntryEnabled?: boolean;
+    allowMultipleTradesPerEvent?: boolean;
     limitEntryMode?: PolymarketPostSignalLimitEntrySettings["priceMode"];
     limitEntryPriceCents?: number;
     limitEntryOffsetCents?: number;
@@ -139,6 +141,7 @@ export function evaluateSignalExitTrades(
     }
     const results: SignalExitTradeResult[] = [];
 
+    const allowMultipleTradesPerEvent = input.allowMultipleTradesPerEvent === true;
     const seenEvents = new Set<number>();
     const limitPriceByEventStart = new Map<number, number>();
     const limitEntryEnabled = input.limitEntry?.enabled === true;
@@ -176,7 +179,7 @@ export function evaluateSignalExitTrades(
             continue;
         }
 
-        if (seenEvents.has(outcome.event_start_ts)) {
+        if (!allowMultipleTradesPerEvent && seenEvents.has(outcome.event_start_ts)) {
             results.push({
                 trade,
                 outcome,
@@ -383,7 +386,9 @@ export function evaluateSignalExitTrades(
 
         // Missing-price and unfilled limit attempts do not consume the event;
         // the first scored trade claims it.
-        seenEvents.add(outcome.event_start_ts);
+        if (!allowMultipleTradesPerEvent) {
+            seenEvents.add(outcome.event_start_ts);
+        }
         results.push({
             trade,
             outcome,
@@ -408,13 +413,14 @@ export function evaluateSignalExitTrades(
         });
     }
 
-    const summary = buildSignalExitSummary(results, input.limitEntry);
+    const summary = buildSignalExitSummary(results, input.limitEntry, allowMultipleTradesPerEvent);
     return { results, summary };
 }
 
 function buildSignalExitSummary(
     results: readonly SignalExitTradeResult[],
-    settings?: PolymarketPostSignalLimitEntrySettings
+    settings?: PolymarketPostSignalLimitEntrySettings,
+    allowMultipleTradesPerEvent = false
 ): SignalExitSummary {
     let scoredTrades = 0;
     let missingPriceTrades = 0;
@@ -554,6 +560,7 @@ function buildSignalExitSummary(
         avgExitPrice: pricedCount > 0 ? totalExitPrice / pricedCount : 0,
         totalPnl: netPnl,
         limitEntryEnabled: limitEntryEnabled || undefined,
+        allowMultipleTradesPerEvent: allowMultipleTradesPerEvent || undefined,
         limitEntryMode: limitEntryEnabled ? resolvePolymarketPostSignalLimitEntryMode(settings?.priceMode) : undefined,
         limitEntryPriceCents: limitEntryEnabled && resolvePolymarketPostSignalLimitEntryMode(settings?.priceMode) === "fixed_price"
             ? clampPolymarketPostSignalLimitEntryPriceCents(settings?.priceCents)

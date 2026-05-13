@@ -347,6 +347,8 @@ export interface BacktestSettings {
     polymarketEntryOffset?: number;
     /** Polymarket exit evaluation mode: resolve_hold scores at final binary outcome, signal_exit_same_event exits on chart sell signal inside the mapped native outcome session */
     polymarketExitMode?: "resolve_hold" | "signal_exit_same_event";
+    /** In signal_exit_same_event mode, score every eligible chart trade in the event instead of one trade per Polymarket event. */
+    polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
     /** Enable post-chart-entry Polymarket limit-entry fill simulation for supported annotated runs. */
     polymarketPostSignalLimitEntryEnabled?: boolean;
     /** Limit-entry pricing mode: fixed cents or first quote minus offset. */

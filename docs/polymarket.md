@@ -197,9 +197,9 @@ Behavior:
 - the signal-exit quote must not be earlier than the chosen entry quote
 - if the latest locally captured quote before the chart exit is the same quote that was used for entry, the trade scores as a flat same-event exit instead of being dropped
 - if no same-event signal exit applies, the Polymarket leg settles to final binary resolution at event end
-- only the first eligible trade per `5m` event is scored; later duplicates in that event are ignored
-- this is intentional: `signal_exit_same_event` is a per-event scoring model, not a literal replay of every chart trade inside that `5m` event
-- missing-price attempts do not claim the event; the first scorable trade claims it and later scored attempts in that `5m` event are reported as duplicates instead of adding extra scored trades
+- by default, only the first eligible trade per `5m` event is scored; later duplicates in that event are ignored
+- when `polymarketSignalExitAllowMultipleTradesPerEvent` is enabled, every eligible chart trade inside the same event is scored instead of marking later trades as duplicates
+- missing-price attempts do not claim the event; with the default event cap, the first scorable trade claims it and later scored attempts in that `5m` event are reported as duplicates instead of adding extra scored trades
 - if the entry quote is missing, the trade is unscored
 - if a same-event signal exit is required but no usable exit quote exists, the trade is unscored and counted as a missing-price trade
 - in the Trades panel, worker-backed live-open rows can render `Poly open`; otherwise missing-price or current-bucket unresolved rows stay unscored / silent rather than claiming live-open state from `end_of_data`
@@ -452,7 +452,7 @@ Important signal-exit differences versus the old `1m` bridge mode:
 - Finder does not fan out one parameter set into five offset variants
 - `polymarketEntryOffset` is ignored in signal-exit mode
 - `polymarketLockOffset` becomes irrelevant and the UI disables it
-- signal-exit results are still per-event, not per-chart-trade; when a config produces multiple chart trades inside one `5m` event, only the first trade is scored and the rest contribute to `duplicateTradesIgnored`
+- signal-exit results are per-event by default; when `polymarketSignalExitAllowMultipleTradesPerEvent` is enabled, Finder and Hunt rank the per-chart-trade variant and duplicate counts should be expected to fall
 - applying a Finder result preserves `polymarketExitMode` and only writes `polymarketEntryOffset` back when the effective mode is still `resolve_hold`
 
 Native-session resolve-hold note:
@@ -463,7 +463,7 @@ Native-session resolve-hold note:
 
 Hunt behavior:
 
-- Hunt exposes its own `Polymarket Exit Mode` selector and preserves `polymarketExitMode` in run settings and saved profiles
+- Hunt exposes its own `Polymarket Exit Mode` and signal-exit multi-trade controls and preserves them in run settings and saved profiles
 - Hunt inherits the actual execution logic from Finder
 - applying a Hunt survivor follows the same mode-aware rule as Finder result application
 
@@ -477,6 +477,7 @@ User-facing controls live in the Backtest Realism section:
 - `polymarketEntrySelectionMode`
 - `polymarketEntryOffset`
 - `polymarketExitMode`
+- `polymarketSignalExitAllowMultipleTradesPerEvent`
 - `polymarketPostSignalLimitEntryEnabled`
 - `polymarketPostSignalLimitEntryMode`
 - `polymarketPostSignalLimitEntryPriceCents`
@@ -493,6 +494,7 @@ Current UI rules:
 - `polymarketExitMode` shows when annotation is enabled
 - on `1s` + `next_open` charts, `polymarketExitMode` is forced to `signal_exit_same_event` and the `resolve_hold` option is hidden
 - on `1s` charts with other execution models, `signal_exit_same_event` is disabled and CLOB scoring is skipped
+- `polymarketSignalExitAllowMultipleTradesPerEvent` only shows when annotation is enabled and signal-exit mode is active
 - `polymarketEntrySelectionMode` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, and the selected exit mode is not `signal_exit_same_event`
 - `polymarketEntryOffset` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, the selected exit mode is not `signal_exit_same_event`, and entry selection is `fixed_offset`
 - `polymarketPostSignalLimitEntryEnabled` only shows when annotation is enabled, native outcome session is `5m`, and the chart interval is not `1s`
@@ -517,6 +519,7 @@ Persistence and compatibility:
 - `polymarketEntrySelectionMode` defaults to `fixed_offset`
 - invalid persisted values normalize back to `fixed_offset`
 - `polymarketEntryOffset` stays persisted for backward compatibility even when ignored by signal-exit mode
+- `polymarketSignalExitAllowMultipleTradesPerEvent` defaults to `false`
 - `polymarketPostSignalLimitEntryEnabled` defaults to `false`
 - `polymarketPostSignalLimitEntryMode` defaults to `fixed_price`
 - `polymarketPostSignalLimitEntryPriceCents` defaults to `50` and clamps to `1..99`

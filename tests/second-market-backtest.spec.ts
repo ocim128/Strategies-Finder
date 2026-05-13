@@ -154,6 +154,33 @@ describe("second market backtest evaluator", () => {
         expect(evaluated.results[0].exitPrice).to.equal(1);
     });
 
+    it("can score multiple signal-exit trades in one event when enabled", () => {
+        const secondTrade = trade(1_700_000_030, 1_700_000_040);
+        secondTrade.id = 2;
+
+        const evaluated = evaluateSecondMarketTrades({
+            trades: [
+                trade(1_700_000_010, 1_700_000_020),
+                secondTrade,
+            ],
+            outcomes: [outcome()],
+            quotes: [
+                quote(1_700_000_010, 0.55, 0.53),
+                quote(1_700_000_020, 0.60, 0.58),
+                quote(1_700_000_030, 0.50, 0.48),
+                quote(1_700_000_040, 0.57, 0.55),
+            ],
+            evaluationMode: "signal_exit_same_event",
+            allowMultipleTradesPerEvent: true,
+            mode: "strict",
+        });
+
+        expect(evaluated.results.map((result) => result.exitSource)).to.deep.equal(["signal", "signal"]);
+        expect(evaluated.summary.scoredTrades).to.equal(2);
+        expect(evaluated.summary.duplicateTradesIgnored).to.equal(0);
+        expect(evaluated.summary.allowMultipleTradesPerEvent).to.equal(true);
+    });
+
     it("does not use future quotes to fill missing strict entries", () => {
         const evaluated = evaluateSecondMarketTrades({
             trades: [trade(1_700_000_010, 1_700_000_020)],

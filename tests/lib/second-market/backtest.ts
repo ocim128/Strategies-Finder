@@ -76,7 +76,8 @@ function resolveResolutionExitPrice(outcome: PolymarketOutcomeRow, side: SecondM
 
 function buildSummary(
     results: readonly SecondMarketTradeResult[],
-    evaluationMode: PolymarketExitMode
+    evaluationMode: PolymarketExitMode,
+    allowMultipleTradesPerEvent = false
 ): SecondMarketBacktestSummary {
     const scored = results.filter((result) => result.pnl !== null);
     const grossProfit = scored.reduce((sum, result) => sum + Math.max(0, result.pnl ?? 0), 0);
@@ -89,6 +90,7 @@ function buildSummary(
     }).length;
     return {
         evaluationMode,
+        allowMultipleTradesPerEvent: allowMultipleTradesPerEvent || undefined,
         scoredTrades: scored.length,
         duplicateTradesIgnored: results.filter((result) => result.exitSource === "duplicate").length,
         missingOutcomeTrades: results.filter((result) => result.exitSource === "no_event").length,
@@ -115,11 +117,13 @@ export function evaluateSecondMarketTrades(args: {
     outcomes: readonly PolymarketOutcomeRow[];
     quotes: readonly PolymarketClob1sQuoteRow[];
     evaluationMode?: PolymarketExitMode;
+    allowMultipleTradesPerEvent?: boolean;
     mode?: SecondMarketAlignmentMode;
     maxQuoteAgeSec?: number;
     fillSource?: SecondMarketFillSource;
 }): { results: SecondMarketTradeResult[]; summary: SecondMarketBacktestSummary } {
     const evaluationMode = args.evaluationMode ?? "resolve_hold";
+    const allowMultipleTradesPerEvent = args.allowMultipleTradesPerEvent === true;
     const mode = args.mode ?? "strict";
     const maxQuoteAgeSec = Math.max(0, Math.floor(args.maxQuoteAgeSec ?? DEFAULT_MAX_QUOTE_AGE_SEC));
     const fillSource = args.fillSource ?? "bid_ask";
@@ -148,7 +152,7 @@ export function evaluateSecondMarketTrades(args: {
         }
 
         const eventKey = `${outcome.series_id}:${outcome.event_start_ts}`;
-        if (seenEvents.has(eventKey)) {
+        if (!allowMultipleTradesPerEvent && seenEvents.has(eventKey)) {
             results.push({
                 trade,
                 outcome,
@@ -248,7 +252,9 @@ export function evaluateSecondMarketTrades(args: {
             continue;
         }
 
-        seenEvents.add(eventKey);
+        if (!allowMultipleTradesPerEvent) {
+            seenEvents.add(eventKey);
+        }
         const pnl = exit.price - entry.price;
         results.push({
             trade,
@@ -264,5 +270,5 @@ export function evaluateSecondMarketTrades(args: {
         });
     }
 
-    return { results, summary: buildSummary(results, evaluationMode) };
+    return { results, summary: buildSummary(results, evaluationMode, allowMultipleTradesPerEvent) };
 }

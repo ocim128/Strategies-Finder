@@ -485,6 +485,36 @@ console.log("\n=== evaluateSignalExitTrades: same entry quote can also serve as 
     eq(summary.neutralTrades, 1, "flat same-quote exit is neutral");
 }
 
+console.log("\n=== evaluateSignalExitTrades: optional multi-trade signal exit per event ===");
+
+{
+    const t1 = makeTrade({ id: 1, entryTime: 1020 as any, exitTime: 1030 as any, exitReason: "signal" });
+    const t2 = makeTrade({ id: 2, entryTime: 1040 as any, exitTime: 1050 as any, exitReason: "signal" });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300 });
+    const pricePoints = [
+        makePricePoint({ ts: 1020, yes_price: 0.50, no_price: 0.50 }),
+        makePricePoint({ ts: 1030, yes_price: 0.60, no_price: 0.40 }),
+        makePricePoint({ ts: 1040, yes_price: 0.55, no_price: 0.45 }),
+        makePricePoint({ ts: 1050, yes_price: 0.58, no_price: 0.42 }),
+    ];
+
+    const { results, summary } = evaluateSignalExitTrades({
+        trades: [t1, t2],
+        outcomes: [outcome],
+        pricePoints,
+        allowMultipleTradesPerEvent: true,
+    });
+
+    eq(results.length, 2, "two results emitted");
+    eq(results[0]!.exitSource, "signal", "first trade exits by signal");
+    eq(results[1]!.exitSource, "signal", "second same-event trade also exits by signal");
+    eq(summary.scoredTrades, 2, "both same-event trades are scored");
+    eq(summary.duplicateTradesIgnored, 0, "no duplicate trades counted");
+    eq(summary.unscoredTrades, 0, "no duplicate unscored trades");
+    eq(summary.allowMultipleTradesPerEvent, true, "summary records multi-trade mode");
+    approx(summary.netPnl, 0.13, 0.001, "both trade pnls contribute");
+}
+
 console.log("\n=== evaluateSignalExitTrades: zero-offset limit entry can reuse the signal-exit quote ===");
 
 {
@@ -946,14 +976,17 @@ console.log("\n=== settings resolver: polymarketExitMode ===");
 {
     const withSignalExit = resolveBacktestSettingsFromRaw({
         polymarketExitMode: "signal_exit_same_event",
+        polymarketSignalExitAllowMultipleTradesPerEvent: true,
         riskSettingsToggle: true,
     } as any);
     eq(withSignalExit.polymarketExitMode, "signal_exit_same_event", "signal_exit_same_event preserved");
+    eq(withSignalExit.polymarketSignalExitAllowMultipleTradesPerEvent, true, "multi-trade setting preserved");
 
     const withDefault = resolveBacktestSettingsFromRaw({
         riskSettingsToggle: true,
     });
     eq(withDefault.polymarketExitMode, "resolve_hold", "default is resolve_hold");
+    eq(withDefault.polymarketSignalExitAllowMultipleTradesPerEvent, false, "multi-trade default is false");
 
     const withInvalid = resolveBacktestSettingsFromRaw({
         polymarketExitMode: "invalid_mode",
@@ -966,11 +999,14 @@ console.log("\n=== hunt model: polymarketExitMode ===");
 
 {
     eq(DEFAULT_HUNT_RUN_SETTINGS.polymarketExitMode, "resolve_hold", "hunt default is resolve_hold");
+    eq(DEFAULT_HUNT_RUN_SETTINGS.polymarketSignalExitAllowMultipleTradesPerEvent, false, "hunt multi-trade default is false");
 
     const withSignalExit = normalizeStoredHuntRunSettings({
         polymarketExitMode: "signal_exit_same_event",
+        polymarketSignalExitAllowMultipleTradesPerEvent: true,
     });
     eq(withSignalExit.polymarketExitMode, "signal_exit_same_event", "hunt preserves signal_exit_same_event");
+    eq(withSignalExit.polymarketSignalExitAllowMultipleTradesPerEvent, true, "hunt preserves multi-trade setting");
 
     const withInvalid = normalizeStoredHuntRunSettings({
         polymarketExitMode: "garbage",

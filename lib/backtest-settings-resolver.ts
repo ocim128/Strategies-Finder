@@ -94,6 +94,7 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     polymarketEntrySelectionMode: "fixed_offset" as const,
     polymarketEntryOffset: 0,
     polymarketExitMode: "resolve_hold" as const,
+    polymarketSignalExitAllowMultipleTradesPerEvent: false,
     polymarketPostSignalLimitEntryEnabled: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_ENABLED,
     polymarketPostSignalLimitEntryMode: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_MODE,
     polymarketPostSignalLimitEntryPriceCents: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_PRICE_CENTS,
@@ -401,6 +402,7 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "polymarketEntrySelectionMode",
     "polymarketEntryOffset",
     "polymarketExitMode",
+    "polymarketSignalExitAllowMultipleTradesPerEvent",
     "polymarketPostSignalLimitEntryEnabled",
     "polymarketPostSignalLimitEntryMode",
     "polymarketPostSignalLimitEntryPriceCents",
@@ -665,6 +667,11 @@ export function resolveBacktestSettingsFromRaw(
             && raw["polymarketExitMode"].trim().toLowerCase() === "signal_exit_same_event"
             ? "signal_exit_same_event"
             : EFFECTIVE_BACKTEST_DEFAULTS.polymarketExitMode,
+        polymarketSignalExitAllowMultipleTradesPerEvent: readBoolean(
+            raw,
+            "polymarketSignalExitAllowMultipleTradesPerEvent",
+            EFFECTIVE_BACKTEST_DEFAULTS.polymarketSignalExitAllowMultipleTradesPerEvent
+        ),
         ...resolvePolymarketPostSignalLimitSettingFields(
             raw,
             (key, fallback) => readBoolean(raw, key, fallback)

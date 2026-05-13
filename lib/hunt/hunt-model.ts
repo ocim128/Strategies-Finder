@@ -39,6 +39,7 @@ export interface HuntRunSettings {
     polymarketLockOffset: boolean;
     polymarketAfterTakeProfitOnly: boolean;
     polymarketExitMode: PolymarketExitMode;
+    polymarketSignalExitAllowMultipleTradesPerEvent: boolean;
     freezeRiskManagement: boolean;
     tradeCountFilterEnabled: boolean;
     minTrades: number;
@@ -106,6 +107,7 @@ export const DEFAULT_HUNT_RUN_SETTINGS: Readonly<HuntRunSettings> = Object.freez
     polymarketLockOffset: false,
     polymarketAfterTakeProfitOnly: false,
     polymarketExitMode: "resolve_hold" as PolymarketExitMode,
+    polymarketSignalExitAllowMultipleTradesPerEvent: false,
     freezeRiskManagement: false,
     tradeCountFilterEnabled: true,
     minTrades: 40,
@@ -360,6 +362,10 @@ export function normalizeStoredHuntRunSettings(raw: unknown): HuntRunSettings {
             DEFAULT_HUNT_RUN_SETTINGS.polymarketAfterTakeProfitOnly
         ),
         polymarketExitMode,
+        polymarketSignalExitAllowMultipleTradesPerEvent: readBoolean(
+            source.polymarketSignalExitAllowMultipleTradesPerEvent,
+            DEFAULT_HUNT_RUN_SETTINGS.polymarketSignalExitAllowMultipleTradesPerEvent
+        ),
         polymarketRankMode: normalizeHuntPolymarketRankMode(normalizedRankMode, polymarketExitMode),
         freezeRiskManagement: readBoolean(
             source.freezeRiskManagement,

@@ -128,6 +128,7 @@ export interface BacktestPolymarketTradeSummary {
     duplicateTradesIgnored?: number;
     timingProfile?: BacktestPolymarketTimingProfileEntry[];
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+    signalExitAllowMultipleTradesPerEvent?: boolean;
     profitableTrades?: number;
     losingTrades?: number;
     neutralTrades?: number;
@@ -215,6 +216,7 @@ export interface PolymarketEvalResult {
     /** Number of duplicate trades ignored due to same-event deduplication */
     duplicateTradesIgnored?: number;
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+    signalExitAllowMultipleTradesPerEvent?: boolean;
     signalExitedTrades?: number;
     targetExitedTrades?: number;
     resolvedTrades?: number;

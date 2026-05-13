@@ -322,6 +322,7 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("polymarketEntrySelectionMode", { rustSupport: "unsupported", parser: "polymarketEntrySelectionMode" }),
     createField("polymarketEntryOffset", { rustSupport: "unsupported" }),
     createField("polymarketExitMode", { rustSupport: "unsupported", parser: "polymarketExitMode" }),
+    createField("polymarketSignalExitAllowMultipleTradesPerEvent", { rustSupport: "unsupported" }),
     createField("polymarketPostSignalLimitEntryEnabled", { rustSupport: "unsupported" }),
     createField("polymarketPostSignalLimitEntryMode", { rustSupport: "unsupported", parser: "polymarketLimitEntryMode" }),
     createField("polymarketPostSignalLimitEntryPriceCents", { rustSupport: "unsupported", parser: "polymarketLimitEntryPriceCents" }),

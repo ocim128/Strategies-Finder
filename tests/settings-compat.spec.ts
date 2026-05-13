@@ -104,6 +104,8 @@ describe('Backtest settings compatibility', () => {
         expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketPostSignalLimitExitMode).to.equal('entry_offset');
         expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketPostSignalLimitExitPriceCents).to.equal(80);
         expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketPostSignalLimitExitOffsetCents).to.equal(20);
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketSignalExitAllowMultipleTradesPerEvent).to.equal(false);
+        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketSignalExitAllowMultipleTradesPerEvent')).to.equal(true);
         expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketPostSignalLimitEntryEnabled')).to.equal(true);
         expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketPostSignalLimitEntryMode')).to.equal(true);
         expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketPostSignalLimitEntryPriceCents')).to.equal(true);
@@ -131,6 +133,7 @@ describe('Backtest settings compatibility', () => {
 
         const resolved = resolveBacktestSettingsFromRaw({
             polymarketPostSignalLimitEntryEnabled: true,
+            polymarketSignalExitAllowMultipleTradesPerEvent: true,
             polymarketPostSignalLimitEntryMode: 'signal_offset',
             polymarketPostSignalLimitEntryPriceCents: 120,
             polymarketPostSignalLimitEntryOffsetCents: -2,
@@ -140,6 +143,7 @@ describe('Backtest settings compatibility', () => {
             polymarketPostSignalLimitExitOffsetCents: 120,
         } as BacktestSettings);
         expect(resolved.polymarketPostSignalLimitEntryEnabled).to.equal(true);
+        expect(resolved.polymarketSignalExitAllowMultipleTradesPerEvent).to.equal(true);
         expect(resolved.polymarketPostSignalLimitEntryMode).to.equal('signal_offset');
         expect(resolved.polymarketPostSignalLimitEntryPriceCents).to.equal(99);
         expect(resolved.polymarketPostSignalLimitEntryOffsetCents).to.equal(0);
@@ -170,6 +174,7 @@ describe('Backtest settings compatibility', () => {
             tradeFilterMode: 'volume',
             executionModel: 'next_open',
             polymarketOutcomeInterval: '15m',
+            polymarketSignalExitAllowMultipleTradesPerEvent: true,
             polymarketPostSignalLimitEntryEnabled: true,
             polymarketPostSignalLimitEntryMode: 'signal_offset',
             polymarketPostSignalLimitEntryPriceCents: 45,
@@ -189,6 +194,7 @@ describe('Backtest settings compatibility', () => {
         expect(sanitized.tradeFilterMode).to.equal('volume');
         expect('executionModel' in sanitized).to.equal(false);
         expect('polymarketOutcomeInterval' in sanitized).to.equal(false);
+        expect('polymarketSignalExitAllowMultipleTradesPerEvent' in sanitized).to.equal(false);
         expect('polymarketPostSignalLimitEntryEnabled' in sanitized).to.equal(false);
         expect('polymarketPostSignalLimitEntryMode' in sanitized).to.equal(false);
         expect('polymarketPostSignalLimitEntryPriceCents' in sanitized).to.equal(false);

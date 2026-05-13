@@ -142,6 +142,18 @@
                     <div class="param-hint">Signal Exit mode uses chart strategy timing for entry/exit inside the same 5m Polymarket event. Requires 1m chart, native 5m session, and next_open execution.</div>
                 </div>
             </div>
+            <div class="param-row" id="polymarketSignalExitAllowMultipleTradesPerEventRow" style="display: none;">
+                <div class="param-group">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Allow Multiple Trades Per Event</label>
+                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Allow multiple signal-exit Polymarket trades per event">
+                            <input type="checkbox" id="polymarketSignalExitAllowMultipleTradesPerEvent">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <div class="param-hint">When Signal Exit mode is active, score every eligible chart trade in the same Polymarket event instead of marking later trades as duplicates.</div>
+                </div>
+            </div>
             <div class="param-row" id="polymarketPostSignalLimitEntryEnabledRow" style="display: none;">
                 <div class="param-group">
                     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">

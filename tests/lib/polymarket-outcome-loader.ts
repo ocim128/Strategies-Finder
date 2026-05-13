@@ -34,6 +34,7 @@ export interface PolymarketOutcomeLoaderDeps {
     readCurrentPolymarketEntryOffset: () => number | null;
     readCurrentPolymarketEntrySelectionMode: () => PolymarketEntrySelectionMode;
     readCurrentPolymarketExitMode: () => "resolve_hold" | "signal_exit_same_event" | undefined;
+    readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent: () => boolean;
     readCurrentPolymarketOutcomeSymbol: () => string | null;
     readCurrentPolymarketOutcomeInterval: () => PolymarketOutcomeInterval;
     isPanelVisible: () => boolean;
@@ -171,6 +172,9 @@ export class PolymarketOutcomeLoader {
                 exitOffsetCents: existingSummary.limitExitOffsetCents,
             }
             : undefined;
+        const allowMultipleTradesPerEvent = existingSummary?.evaluationMode === "signal_exit_same_event"
+            ? existingSummary.signalExitAllowMultipleTradesPerEvent === true
+            : this.deps.readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent();
 
         if (isSignalExitSameEventMode(effectiveExitMode) && resultContext.interval === "1m") {
             const targetTimes = result.trades
@@ -201,6 +205,7 @@ export class PolymarketOutcomeLoader {
                         trades: result.trades,
                         outcomes,
                         pricePoints,
+                        allowMultipleTradesPerEvent,
                         limitEntry,
                     });
                     const exitResultMap = new Map(exitResults.map((r) => [r.trade, r]));
@@ -222,6 +227,7 @@ export class PolymarketOutcomeLoader {
                             unscoredTrades: exitSummary.unscoredTrades,
                             duplicateTradesIgnored: exitSummary.duplicateTradesIgnored > 0 ? exitSummary.duplicateTradesIgnored : undefined,
                             evaluationMode: "signal_exit_same_event",
+                            signalExitAllowMultipleTradesPerEvent: exitSummary.allowMultipleTradesPerEvent,
                             profitableTrades: exitSummary.profitableTrades,
                             losingTrades: exitSummary.losingTrades,
                             neutralTrades: exitSummary.neutralTrades,

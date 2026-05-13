@@ -1158,7 +1158,7 @@ export class FinderManager {
 		return true;
 	}
 
-	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'polymarketExitMode' | 'executionModel' | 'polymarketPostSignalLimitEntryEnabled' | 'polymarketPostSignalLimitEntryMode' | 'polymarketPostSignalLimitEntryPriceCents' | 'polymarketPostSignalLimitEntryOffsetCents' | 'polymarketPostSignalLimitExitEnabled' | 'polymarketPostSignalLimitExitMode' | 'polymarketPostSignalLimitExitPriceCents' | 'polymarketPostSignalLimitExitOffsetCents'>): FinderOptions {
+	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'polymarketExitMode' | 'polymarketSignalExitAllowMultipleTradesPerEvent' | 'executionModel' | 'polymarketPostSignalLimitEntryEnabled' | 'polymarketPostSignalLimitEntryMode' | 'polymarketPostSignalLimitEntryPriceCents' | 'polymarketPostSignalLimitEntryOffsetCents' | 'polymarketPostSignalLimitExitEnabled' | 'polymarketPostSignalLimitExitMode' | 'polymarketPostSignalLimitExitPriceCents' | 'polymarketPostSignalLimitExitOffsetCents'>): FinderOptions {
 		const dom = this.getDom();
 		const scope = this.isUniverseScope() ? 'symbol_universe' : 'current_chart';
 		const useAdvancedSort = dom.finderAdvancedToggle.checked;
@@ -1219,6 +1219,7 @@ export class FinderManager {
 			polymarketLockOffset,
 			polymarketAfterTakeProfitOnly,
 			polymarketExitMode: effectiveExitMode,
+			polymarketSignalExitAllowMultipleTradesPerEvent: backtestSettings.polymarketSignalExitAllowMultipleTradesPerEvent,
 			polymarketPostSignalLimitEntryEnabled: backtestSettings.polymarketPostSignalLimitEntryEnabled,
 			polymarketPostSignalLimitEntryMode: backtestSettings.polymarketPostSignalLimitEntryMode,
 			polymarketPostSignalLimitEntryPriceCents: backtestSettings.polymarketPostSignalLimitEntryPriceCents,
@@ -1519,6 +1520,7 @@ export class FinderManager {
 		if (isSignalExitSameEventMode(effectiveMode)) {
 			mergedSettings.polymarketAnnotationEnabled = true;
 			mergedSettings.polymarketExitMode = 'signal_exit_same_event';
+			mergedSettings.polymarketSignalExitAllowMultipleTradesPerEvent = this.lastFinderOptions?.polymarketSignalExitAllowMultipleTradesPerEvent === true;
 			applyPolymarketLimitEntrySettings();
 		} else if (polymarketEval && isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval)) {
 			mergedSettings.polymarketAnnotationEnabled = true;

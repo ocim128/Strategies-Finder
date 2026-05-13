@@ -80,10 +80,12 @@ describe("Hunt model", () => {
     it("coerces Hunt rank mode to a supported option in signal-exit mode", () => {
         const settings = normalizeStoredHuntRunSettings({
             polymarketExitMode: "signal_exit_same_event",
+            polymarketSignalExitAllowMultipleTradesPerEvent: true,
             polymarketRankMode: "balanced",
         });
 
         expect(settings.polymarketExitMode).to.equal("signal_exit_same_event");
+        expect(settings.polymarketSignalExitAllowMultipleTradesPerEvent).to.equal(true);
         expect(settings.polymarketRankMode).to.equal("expectancy");
     });
 

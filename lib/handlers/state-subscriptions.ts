@@ -22,6 +22,7 @@ import {
     getPolymarketEntrySelectionModeSelect,
     getPolymarketOutcomeIntervalSelect,
     getPolymarketExitModeSelect,
+    getPolymarketSignalExitAllowMultipleTradesToggle,
     getPolymarketPostSignalLimitEntryToggle,
     getPolymarketPostSignalLimitEntryModeSelect,
     getPolymarketPostSignalLimitExitToggle,
@@ -57,6 +58,7 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
         [rows.entrySelectionModeRow, showsEntryBridgeControls],
         [rows.offsetRow, showsEntryBridgeControls && !usesActualEntryMinute],
         [rows.exitModeRow, annotationEnabled],
+        [rows.signalExitAllowMultipleTradesPerEventRow, annotationEnabled && isSignalExit],
         [rows.postSignalLimitEntryEnabledRow, supportsLimitEntry],
         [rows.postSignalLimitEntryModeRow, limitEntryEnabled],
         [rows.postSignalLimitEntryPriceCentsRow, limitEntryEnabled && !usesSignalOffsetEntry],
@@ -121,6 +123,7 @@ export function setupStateSubscriptions() {
     [
         { element: getPolymarketAnnotationToggle(), refreshRankModes: false },
         { element: getPolymarketExitModeSelect(), refreshRankModes: true },
+        { element: getPolymarketSignalExitAllowMultipleTradesToggle(), refreshRankModes: false },
         { element: getPolymarketEntrySelectionModeSelect(), refreshRankModes: false },
         { element: getPolymarketOutcomeIntervalSelect(), refreshRankModes: true },
         { element: getPolymarketPostSignalLimitEntryToggle(), refreshRankModes: false },

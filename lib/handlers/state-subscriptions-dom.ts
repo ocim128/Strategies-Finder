@@ -16,6 +16,7 @@ export const POLYMARKET_SETTINGS_IDS = {
   entrySelectionModeRow: 'polymarketEntrySelectionModeRow',
   entryOffsetRow: 'polymarketEntryOffsetRow',
   exitModeRow: 'polymarketExitModeRow',
+  signalExitAllowMultipleTradesPerEventRow: 'polymarketSignalExitAllowMultipleTradesPerEventRow',
   postSignalLimitEntryEnabledRow: 'polymarketPostSignalLimitEntryEnabledRow',
   postSignalLimitEntryModeRow: 'polymarketPostSignalLimitEntryModeRow',
   postSignalLimitEntryPriceCentsRow: 'polymarketPostSignalLimitEntryPriceCentsRow',
@@ -29,6 +30,7 @@ export const POLYMARKET_SETTINGS_IDS = {
   outcomeIntervalSelect: 'polymarketOutcomeInterval',
   entrySelectionModeSelect: 'polymarketEntrySelectionMode',
   exitModeSelect: 'polymarketExitMode',
+  signalExitAllowMultipleTradesPerEventToggle: 'polymarketSignalExitAllowMultipleTradesPerEvent',
   postSignalLimitEntryToggle: 'polymarketPostSignalLimitEntryEnabled',
   postSignalLimitEntryModeSelect: 'polymarketPostSignalLimitEntryMode',
   postSignalLimitExitToggle: 'polymarketPostSignalLimitExitEnabled',
@@ -45,6 +47,7 @@ const POLYMARKET_SETTINGS_ROW_IDS = {
   entrySelectionModeRow: POLYMARKET_SETTINGS_IDS.entrySelectionModeRow,
   offsetRow: POLYMARKET_SETTINGS_IDS.entryOffsetRow,
   exitModeRow: POLYMARKET_SETTINGS_IDS.exitModeRow,
+  signalExitAllowMultipleTradesPerEventRow: POLYMARKET_SETTINGS_IDS.signalExitAllowMultipleTradesPerEventRow,
   postSignalLimitEntryEnabledRow: POLYMARKET_SETTINGS_IDS.postSignalLimitEntryEnabledRow,
   postSignalLimitEntryModeRow: POLYMARKET_SETTINGS_IDS.postSignalLimitEntryModeRow,
   postSignalLimitEntryPriceCentsRow: POLYMARKET_SETTINGS_IDS.postSignalLimitEntryPriceCentsRow,
@@ -88,6 +91,10 @@ export function getPolymarketExitModeSelect(): HTMLSelectElement | null {
   return getTypedElement(POLYMARKET_SETTINGS_IDS.exitModeSelect, HTMLSelectElement);
 }
 
+export function getPolymarketSignalExitAllowMultipleTradesToggle(): HTMLInputElement | null {
+  return getTypedElement(POLYMARKET_SETTINGS_IDS.signalExitAllowMultipleTradesPerEventToggle, HTMLInputElement);
+}
+
 export function getPolymarketEntrySelectionModeSelect(): HTMLSelectElement | null {
   return getTypedElement(POLYMARKET_SETTINGS_IDS.entrySelectionModeSelect, HTMLSelectElement);
 }
@@ -121,6 +128,7 @@ export function getPolymarketSettingsRows(): {
   entrySelectionModeRow: HTMLElement | null;
   offsetRow: HTMLElement | null;
   exitModeRow: HTMLElement | null;
+  signalExitAllowMultipleTradesPerEventRow: HTMLElement | null;
   postSignalLimitEntryEnabledRow: HTMLElement | null;
   postSignalLimitEntryModeRow: HTMLElement | null;
   postSignalLimitEntryPriceCentsRow: HTMLElement | null;

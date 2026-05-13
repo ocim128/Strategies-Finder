@@ -14,6 +14,7 @@ export const ENDPOINT_IGNORED_BACKTEST_SETTING_KEYS = [
     "riskWinStreakStopLossPercent",
     "marketMode",
     "polymarketOutcomeInterval",
+    "polymarketSignalExitAllowMultipleTradesPerEvent",
     "polymarketPostSignalLimitEntryEnabled",
     "polymarketPostSignalLimitEntryMode",
     "polymarketPostSignalLimitEntryPriceCents",

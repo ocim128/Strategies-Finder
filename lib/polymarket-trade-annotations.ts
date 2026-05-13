@@ -121,6 +121,7 @@ type AnnotationContext = {
     outcomeInterval?: PolymarketOutcomeInterval;
     polymarketEntrySelectionMode?: PolymarketEntrySelectionMode;
     polymarketExitMode?: "resolve_hold" | "signal_exit_same_event";
+    polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
 };
 
 export interface PolymarketAnnotationRunOptions {
@@ -1251,6 +1252,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
             trades: result.trades,
             outcomes,
             pricePoints: resolvedPricePoints,
+            allowMultipleTradesPerEvent: context.polymarketSignalExitAllowMultipleTradesPerEvent,
             limitEntry,
         });
 
@@ -1279,6 +1281,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
                 unscoredTrades: exitSummary.unscoredTrades,
                 duplicateTradesIgnored: exitSummary.duplicateTradesIgnored > 0 ? exitSummary.duplicateTradesIgnored : undefined,
                 evaluationMode: "signal_exit_same_event",
+                signalExitAllowMultipleTradesPerEvent: exitSummary.allowMultipleTradesPerEvent,
                 profitableTrades: exitSummary.profitableTrades,
                 losingTrades: exitSummary.losingTrades,
                 neutralTrades: exitSummary.neutralTrades,

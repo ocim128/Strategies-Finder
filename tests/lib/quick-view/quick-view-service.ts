@@ -726,6 +726,7 @@ class QuickViewManager {
                 entryOffset: existingSummary?.entryOffset ?? options.selectedOffset,
                 timingProfile: existingSummary?.timingProfile,
                 evaluationMode: existingSummary?.evaluationMode,
+                signalExitAllowMultipleTradesPerEvent: existingSummary?.signalExitAllowMultipleTradesPerEvent,
                 profitableTrades: existingSummary?.profitableTrades,
                 losingTrades: existingSummary?.losingTrades,
                 neutralTrades: existingSummary?.neutralTrades,
@@ -819,6 +820,10 @@ class QuickViewManager {
         return resolvePolymarketDomSettings().exitMode;
     }
 
+    private readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent(): boolean {
+        return resolvePolymarketDomSettings().signalExitAllowMultipleTradesPerEvent;
+    }
+
     private readCurrentExecutionModel(): string | undefined {
         return resolvePolymarketDomSettings().executionModel;
     }
@@ -899,6 +904,9 @@ class QuickViewManager {
                     outcomeInterval,
                     executionModel: this.readCurrentExecutionModel(),
                     polymarketExitMode: effectiveExitMode,
+                    polymarketSignalExitAllowMultipleTradesPerEvent: result.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event"
+                        ? result.polymarketTradeSummary.signalExitAllowMultipleTradesPerEvent === true
+                        : this.readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent(),
                 });
             } catch (error) {
                 debugLogger.warn("quick_view.second_market_polymarket_annotation_failed", {
@@ -950,6 +958,9 @@ class QuickViewManager {
             polymarketAnnotationEnabled: true,
         });
         const currentPolymarketSettings = resolvePolymarketDomSettings();
+        const allowMultipleTradesPerEvent = result.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event"
+            ? result.polymarketTradeSummary.signalExitAllowMultipleTradesPerEvent === true
+            : currentPolymarketSettings.signalExitAllowMultipleTradesPerEvent;
         const existingLimitSummary = result.polymarketTradeSummary?.limitEntryEnabled === true
             ? result.polymarketTradeSummary
             : null;
@@ -1001,6 +1012,7 @@ class QuickViewManager {
                     trades: result.trades,
                     outcomes,
                     pricePoints,
+                    allowMultipleTradesPerEvent,
                     limitEntry,
                 });
                 const exitResultByTrade = new Map(exitResults.map((exitResult) => [exitResult.trade, exitResult]));
@@ -1023,6 +1035,7 @@ class QuickViewManager {
                         unscoredTrades: exitSummary.unscoredTrades,
                         duplicateTradesIgnored: exitSummary.duplicateTradesIgnored > 0 ? exitSummary.duplicateTradesIgnored : undefined,
                         evaluationMode: "signal_exit_same_event",
+                        signalExitAllowMultipleTradesPerEvent: exitSummary.allowMultipleTradesPerEvent,
                         profitableTrades: exitSummary.profitableTrades,
                         losingTrades: exitSummary.losingTrades,
                         neutralTrades: exitSummary.neutralTrades,

@@ -549,6 +549,115 @@ describe("Polymarket backtest trade annotations", () => {
         expect(html).to.include("exited same-event");
     });
 
+    it("can score multiple signal-exit trades inside the same Polymarket event when enabled", async () => {
+        const bars = makeMinuteBars(12);
+        const eventStartTs = 1_700_000_300;
+        installOutcomeFetch([
+            {
+                series_id: "10684",
+                event_slug: "btc-signal-exit-multi",
+                market_slug: "btc-signal-exit-multi",
+                interval: "5m",
+                event_start_ts: eventStartTs,
+                event_end_ts: eventStartTs + 300,
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.52,
+                yes_entry_minute_2_price: 0.54,
+                yes_entry_minute_3_price: 0.56,
+                yes_entry_minute_4_price: 0.58,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ]);
+
+        const firstEntryTs = eventStartTs + 60;
+        const firstExitTs = eventStartTs + 120;
+        const secondEntryTs = eventStartTs + 180;
+        const secondExitTs = eventStartTs + 240;
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([
+                {
+                    ...makeTrade(1, "long", firstEntryTs, 10),
+                    exitTime: firstExitTs,
+                    exitReason: "signal",
+                },
+                {
+                    ...makeTrade(2, "long", secondEntryTs, 10),
+                    exitTime: secondExitTs,
+                    exitReason: "signal",
+                },
+            ]),
+            {
+                symbol: "BTCUSDT",
+                interval: "1m",
+                executionModel: "next_open",
+                chartData: bars,
+                polymarketExitMode: "signal_exit_same_event",
+                polymarketSignalExitAllowMultipleTradesPerEvent: true,
+            },
+            undefined,
+            [
+                {
+                    series_id: "10684",
+                    event_start_ts: eventStartTs,
+                    event_end_ts: eventStartTs + 300,
+                    market_slug: "btc-signal-exit-multi",
+                    yes_token_id: "yes-1",
+                    no_token_id: "no-1",
+                    ts: firstEntryTs,
+                    yes_price: 0.52,
+                    no_price: 0.48,
+                    updated_at: 1,
+                },
+                {
+                    series_id: "10684",
+                    event_start_ts: eventStartTs,
+                    event_end_ts: eventStartTs + 300,
+                    market_slug: "btc-signal-exit-multi",
+                    yes_token_id: "yes-1",
+                    no_token_id: "no-1",
+                    ts: firstExitTs,
+                    yes_price: 0.62,
+                    no_price: 0.38,
+                    updated_at: 1,
+                },
+                {
+                    series_id: "10684",
+                    event_start_ts: eventStartTs,
+                    event_end_ts: eventStartTs + 300,
+                    market_slug: "btc-signal-exit-multi",
+                    yes_token_id: "yes-1",
+                    no_token_id: "no-1",
+                    ts: secondEntryTs,
+                    yes_price: 0.55,
+                    no_price: 0.45,
+                    updated_at: 1,
+                },
+                {
+                    series_id: "10684",
+                    event_start_ts: eventStartTs,
+                    event_end_ts: eventStartTs + 300,
+                    market_slug: "btc-signal-exit-multi",
+                    yes_token_id: "yes-1",
+                    no_token_id: "no-1",
+                    ts: secondExitTs,
+                    yes_price: 0.60,
+                    no_price: 0.40,
+                    updated_at: 1,
+                },
+            ]
+        );
+
+        expect(result.polymarketTradeSummary?.signalExitAllowMultipleTradesPerEvent).to.equal(true);
+        expect(result.polymarketTradeSummary?.scoredTrades).to.equal(2);
+        expect(result.polymarketTradeSummary?.duplicateTradesIgnored).to.equal(undefined);
+        expect(result.trades[0]?.polymarketOutcome?.marketExitSource).to.equal("signal");
+        expect(result.trades[1]?.polymarketOutcome?.marketExitSource).to.equal("signal");
+    });
+
     it("reuses the entry quote as a flat same-event exit when no newer quote exists before exit", async () => {
         const bars = makeMinuteBars(12);
         const eventStartTs = 1_700_000_300;

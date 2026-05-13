@@ -198,11 +198,13 @@ describe("Hunt results", () => {
             ...DEFAULT_HUNT_RUN_SETTINGS,
             polymarketScoringEnabled: true,
             polymarketExitMode: "signal_exit_same_event",
+            polymarketSignalExitAllowMultipleTradesPerEvent: true,
             polymarketRankMode: "balanced",
             selectedStrategyKeys: ["hunt_test"],
         });
 
         expect(finderOptions.polymarketExitMode).to.equal("signal_exit_same_event");
+        expect(finderOptions.polymarketSignalExitAllowMultipleTradesPerEvent).to.equal(true);
         expect(finderOptions.polymarketRankMode).to.equal("expectancy");
     });
 });

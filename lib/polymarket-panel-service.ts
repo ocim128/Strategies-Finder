@@ -57,6 +57,7 @@ class PolymarketPanelService {
             readCurrentPolymarketEntryOffset: () => this.readCurrentPolymarketEntryOffset(),
             readCurrentPolymarketEntrySelectionMode: () => this.readCurrentPolymarketEntrySelectionMode(),
             readCurrentPolymarketExitMode: () => this.readCurrentPolymarketExitMode(),
+            readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent: () => this.readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent(),
             readCurrentPolymarketOutcomeSymbol: () => this.readCurrentPolymarketOutcomeSymbol(),
             readCurrentPolymarketOutcomeInterval: () => this.readCurrentPolymarketOutcomeInterval(),
             isPanelVisible: () => this.isPanelVisible(),
@@ -131,6 +132,10 @@ class PolymarketPanelService {
 
     private readCurrentPolymarketExitMode(): "resolve_hold" | "signal_exit_same_event" | undefined {
         return resolvePolymarketDomSettings().exitMode;
+    }
+
+    private readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent(): boolean {
+        return resolvePolymarketDomSettings().signalExitAllowMultipleTradesPerEvent;
     }
 
     private readCurrentExecutionModel(): string | undefined {
@@ -236,6 +241,7 @@ class PolymarketPanelService {
         outcomeInterval?: PolymarketOutcomeInterval;
         bestTimingProfile?: NonNullable<NonNullable<BacktestResult["polymarketTradeSummary"]>["timingProfile"]>[number] | null;
         evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+        signalExitAllowMultipleTradesPerEvent?: boolean;
         missingPriceTrades?: number;
         targetExitedTrades?: number;
         signalExitedTrades?: number;
@@ -339,6 +345,7 @@ class PolymarketPanelService {
             outcomeInterval: summary?.outcomeInterval,
             bestTimingProfile,
             evaluationMode: isSignalExit ? "signal_exit_same_event" : undefined,
+            signalExitAllowMultipleTradesPerEvent: summary?.signalExitAllowMultipleTradesPerEvent,
             missingPriceTrades: isSignalExit ? (summary?.missingPriceTrades ?? 0) : undefined,
             targetExitedTrades: summary?.targetExitedTrades,
             signalExitedTrades: isSignalExit ? (summary?.signalExitedTrades ?? 0) : undefined,
@@ -416,7 +423,7 @@ class PolymarketPanelService {
                 : (!usesNativeLongSession && typeof summary.entryOffset === "number" ? "Selected Offset" : "Run Mode")
         );
         const runModeValue = isSignalExit
-            ? "Signal Exit (same event)"
+            ? (summary.signalExitAllowMultipleTradesPerEvent ? "Signal Exit (same event, multi-trade)" : "Signal Exit (same event)")
             : usesActualEntryMinute
                 ? "Auto (actual trade minute)"
                 : (!usesNativeLongSession && typeof summary.entryOffset === "number" ? `Minute ${summary.entryOffset}` : `Native ${outcomeInterval} scoring`);
@@ -428,7 +435,9 @@ class PolymarketPanelService {
         const timingContext = summary.bestTimingProfile
             ? `Best minute ${summary.bestTimingProfile.entryOffset} at ${formatPercent(summary.bestTimingProfile.winRate)}`
             : isSignalExit
-                ? `Signal-exit mode: trades exit on chart sell signal inside the same ${outcomeInterval} session.`
+                ? summary.signalExitAllowMultipleTradesPerEvent
+                    ? `Signal-exit mode: every eligible chart trade can score inside the same ${outcomeInterval} session.`
+                    : `Signal-exit mode: trades exit on chart sell signal inside the same ${outcomeInterval} session.`
                 : usesActualEntryMinute
                     ? "Auto mode scores the first eligible trade in each 5m event and uses that trade's actual minute for entry pricing."
                     : (usesNativeLongSession ? `Full ${outcomeInterval} session timing diagnostics are available below.` : "Full timing profile is available in 1m bridge runs.");

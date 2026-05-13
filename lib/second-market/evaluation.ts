@@ -197,6 +197,7 @@ function summarizePolymarketResult(args: {
         unscoredTrades: Math.max(0, tradeCount - summary.scoredTrades),
         duplicateTradesIgnored: summary.duplicateTradesIgnored || undefined,
         evaluationMode,
+        signalExitAllowMultipleTradesPerEvent: summary.allowMultipleTradesPerEvent,
         profitableTrades,
         losingTrades,
         neutralTrades,
@@ -263,6 +264,7 @@ function buildPolymarketEval(args: {
         ignoredSignals: summary.duplicateTradesIgnored,
         duplicateTradesIgnored: summary.duplicateTradesIgnored,
         evaluationMode,
+        signalExitAllowMultipleTradesPerEvent: summary.allowMultipleTradesPerEvent,
         signalExitedTrades: summary.signalExitedTrades,
         resolvedTrades: summary.resolvedTrades,
         missingPriceTrades: summary.missingQuoteTrades,
@@ -317,6 +319,7 @@ export function evaluateSecondMarketBacktest(args: {
     context: SecondMarketEvaluationContext;
     trades?: readonly Trade[];
     polymarketExitMode?: PolymarketExitMode;
+    polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
 }): SecondMarketEvaluationResult {
     const trades = [...(args.trades ?? args.result.trades)];
     const evaluationMode = "signal_exit_same_event";
@@ -325,6 +328,7 @@ export function evaluateSecondMarketBacktest(args: {
         outcomes: args.context.outcomes,
         quotes: args.context.quotes,
         evaluationMode,
+        allowMultipleTradesPerEvent: args.polymarketSignalExitAllowMultipleTradesPerEvent,
         mode: "strict",
         fillSource: "bid_ask",
     });
@@ -365,6 +369,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
     outcomeInterval?: PolymarketOutcomeInterval;
     executionModel?: string;
     polymarketExitMode?: PolymarketExitMode;
+    polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
 }): Promise<BacktestResult> {
     if (
         !isSecondMarketPolymarketScoringSupported({
@@ -393,6 +398,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
         result: args.result,
         context,
         polymarketExitMode: args.polymarketExitMode,
+        polymarketSignalExitAllowMultipleTradesPerEvent: args.polymarketSignalExitAllowMultipleTradesPerEvent,
     });
 
     return {
