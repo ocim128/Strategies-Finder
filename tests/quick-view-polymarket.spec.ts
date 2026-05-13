@@ -401,6 +401,119 @@ describe("Quick View Polymarket streak summary", () => {
         expect(minute1?.expectancy).to.equal(-0.2);
     });
 
+    it("shows resolve-hold Polymarket expectancy in the Quick View performance cards", () => {
+        const content = { style: { display: "" }, innerHTML: "" };
+        const empty = { style: { display: "" } };
+        (globalThis as { document?: Document }).document = {
+            getElementById: (id: string) => {
+                if (id === "qvStatsContent") return content as unknown as HTMLElement;
+                if (id === "qvEmpty") return empty as unknown as HTMLElement;
+                return null;
+            },
+        } as Document;
+
+        (quickViewManager as any).renderResults({
+            trades: [
+                makeTrade(1, true, {
+                    pnl: -100,
+                    polymarketOutcome: {
+                        ...makeTrade(1, true).polymarketOutcome!,
+                        evaluationMode: "resolve_hold",
+                        marketEntryPrice: 0.55,
+                        marketExitPrice: 1,
+                        marketExitSource: "resolution",
+                        marketPnl: 0.45,
+                    },
+                }),
+            ],
+            netProfit: -100,
+            netProfitPercent: -1,
+            winRate: 0,
+            expectancy: -100,
+            avgTrade: -100,
+            profitFactor: 0,
+            maxDrawdown: 100,
+            maxDrawdownPercent: 1,
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 1,
+            avgWin: 0,
+            avgLoss: -100,
+            sharpeRatio: 0,
+            equityCurve: [],
+            marketContext: {
+                symbol: "BTCUSDT",
+                interval: "5m",
+            },
+            polymarketTradeSummary: {
+                seriesId: "10684",
+                outcomeInterval: "5m",
+                outcomeRowsLoaded: 1,
+                scoredTrades: 1,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 0,
+                evaluationMode: "resolve_hold",
+                resolvedTrades: 1,
+            },
+        } satisfies BacktestResult);
+
+        expect(content.innerHTML).to.contain("Polymarket Exp / Trade");
+        expect(content.innerHTML).to.contain("+45.0c");
+        expect(content.innerHTML).to.contain("Resolve Hold (final outcome)");
+    });
+
+    it("falls back to resolve-hold summary expectancy when Quick View has no priced trade rows", () => {
+        const content = { style: { display: "" }, innerHTML: "" };
+        const empty = { style: { display: "" } };
+        (globalThis as { document?: Document }).document = {
+            getElementById: (id: string) => {
+                if (id === "qvStatsContent") return content as unknown as HTMLElement;
+                if (id === "qvEmpty") return empty as unknown as HTMLElement;
+                return null;
+            },
+        } as Document;
+
+        (quickViewManager as any).renderResults({
+            trades: [
+                makeTrade(1, null, { polymarketOutcome: undefined }),
+            ],
+            netProfit: -100,
+            netProfitPercent: -1,
+            winRate: 0,
+            expectancy: -100,
+            avgTrade: -100,
+            profitFactor: 0,
+            maxDrawdown: 100,
+            maxDrawdownPercent: 1,
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 1,
+            avgWin: 0,
+            avgLoss: -100,
+            sharpeRatio: 0,
+            equityCurve: [],
+            marketContext: {
+                symbol: "BTCUSDT",
+                interval: "5m",
+            },
+            polymarketTradeSummary: {
+                seriesId: "10684",
+                outcomeInterval: "5m",
+                outcomeRowsLoaded: 1,
+                scoredTrades: 1,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 0,
+                evaluationMode: "resolve_hold",
+                resolvedTrades: 1,
+                expectancy: 0.45,
+                profitFactor: Infinity,
+            },
+        } satisfies BacktestResult);
+
+        expect(content.innerHTML).to.contain("Polymarket Exp / Trade");
+        expect(content.innerHTML).to.contain("+45.0c");
+    });
+
     it("labels native 5m runs as observed minute buckets instead of selected offsets", () => {
         const result = {
             trades: [
@@ -1075,7 +1188,192 @@ describe("Quick View Polymarket streak summary", () => {
         expect(html).to.contain("Entry Profit % | After Signal");
     });
 
-    it("rebuilds 1s CLOB polymarket annotations from CLOB event metadata before rendering Quick View", async () => {
+    it("coerces stale 1s resolve-hold annotations to signal-exit before rendering performance cards", async () => {
+        const eventStartTs = 1_700_000_000;
+        const tradeEntryTs = eventStartTs + 10;
+        const tradeExitTs = eventStartTs + 20;
+        let clobRequests = 0;
+        const content = { style: { display: "" }, innerHTML: "" };
+        const empty = { style: { display: "" } };
+
+        (globalThis as { HTMLSelectElement?: typeof HTMLSelectElement }).HTMLSelectElement = class {} as typeof HTMLSelectElement;
+        (globalThis as { document?: Document }).document = {
+            getElementById: (id: string) => {
+                if (id === "qvStatsContent") return content as unknown as HTMLElement;
+                if (id === "qvEmpty") return empty as unknown as HTMLElement;
+                return null;
+            },
+        } as Document;
+
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: [{
+                        series_id: "10684",
+                        event_slug: "btc-1s-stale",
+                        market_slug: "btc-1s-stale",
+                        interval: "5m",
+                        event_start_ts: eventStartTs,
+                        event_end_ts: eventStartTs + 300,
+                        yes_token_id: "yes-1",
+                        no_token_id: "no-1",
+                        yes_open_price: 0.5,
+                        yes_entry_minute_1_price: null,
+                        yes_entry_minute_2_price: null,
+                        yes_entry_minute_3_price: null,
+                        yes_entry_minute_4_price: null,
+                        resolved_outcome_up: 1,
+                        resolution_source: "test",
+                        updated_at: 1,
+                    }],
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/second-market/clob-quotes") {
+                clobRequests++;
+                return new Response(JSON.stringify({
+                    ok: true,
+                    quotes: [
+                        {
+                            series_id: "10684",
+                            symbol: "BTCUSDT",
+                            outcome_interval: "5m",
+                            event_start_ts: eventStartTs,
+                            event_end_ts: eventStartTs + 300,
+                            condition_id: "",
+                            market_slug: "btc-1s-stale",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
+                            sample_ts: tradeEntryTs,
+                            yes_bid: 0.53,
+                            yes_ask: 0.55,
+                            yes_mid: 0.54,
+                            yes_last: null,
+                            no_bid: 0.45,
+                            no_ask: 0.47,
+                            no_mid: 0.46,
+                            no_last: null,
+                            source: "polymarket_clob_1s",
+                            source_ts_ms: tradeEntryTs * 1000,
+                            quote_age_ms: 0,
+                            quality_flags: "",
+                            updated_at: tradeEntryTs,
+                        },
+                        {
+                            series_id: "10684",
+                            symbol: "BTCUSDT",
+                            outcome_interval: "5m",
+                            event_start_ts: eventStartTs,
+                            event_end_ts: eventStartTs + 300,
+                            condition_id: "",
+                            market_slug: "btc-1s-stale",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
+                            sample_ts: tradeExitTs,
+                            yes_bid: 0.58,
+                            yes_ask: 0.60,
+                            yes_mid: 0.59,
+                            yes_last: null,
+                            no_bid: 0.40,
+                            no_ask: 0.42,
+                            no_mid: 0.41,
+                            no_last: null,
+                            source: "polymarket_clob_1s",
+                            source_ts_ms: tradeExitTs * 1000,
+                            quote_age_ms: 0,
+                            quality_flags: "",
+                            updated_at: tradeExitTs,
+                        },
+                    ],
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            throw new Error(`Unexpected URL ${url.pathname}`);
+        }) as typeof fetch;
+
+        const enriched = await (quickViewManager as any).ensurePolymarketOutcomes({
+            trades: [
+                makeTrade(1, true, {
+                    entryTime: tradeEntryTs,
+                    exitTime: tradeExitTs,
+                    exitReason: "signal",
+                    polymarketOutcome: {
+                        ...makeTrade(1, true).polymarketOutcome!,
+                        evaluationMode: "resolve_hold",
+                        marketEntryPrice: null,
+                        marketExitPrice: null,
+                        marketPnl: null,
+                        marketExitSource: "resolution",
+                    },
+                }),
+            ],
+            netProfit: -100,
+            netProfitPercent: -1,
+            winRate: 0,
+            expectancy: -100,
+            avgTrade: -100,
+            profitFactor: 0,
+            maxDrawdown: 100,
+            maxDrawdownPercent: 1,
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 1,
+            avgWin: 0,
+            avgLoss: -100,
+            sharpeRatio: 0,
+            equityCurve: [],
+            marketContext: {
+                symbol: "BTCUSDT",
+                interval: "1s",
+            },
+            polymarketTradeSummary: {
+                seriesId: "10684",
+                outcomeInterval: "5m",
+                outcomeRowsLoaded: 1,
+                scoredTrades: 1,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 0,
+                evaluationMode: "resolve_hold",
+                resolvedTrades: 1,
+            },
+        } satisfies BacktestResult);
+
+        (quickViewManager as any).renderResults(enriched);
+
+        expect(clobRequests).to.equal(1);
+        expect(enriched.polymarketTradeSummary?.evaluationMode).to.equal("signal_exit_same_event");
+        expect(enriched.polymarketTradeSummary?.expectancy).to.be.closeTo(0.03, 1e-9);
+        expect(enriched.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.55);
+        expect(enriched.trades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.58);
+        expect(content.innerHTML).to.contain("Polymarket Exp / Trade");
+        expect(content.innerHTML).to.contain("+3.0c");
+        expect(content.innerHTML).to.contain("Signal Exit (same event)");
+    });
+
+    it("rebuilds 1s CLOB signal-exit annotations before rendering Quick View", async () => {
         const eventStartTs = 1_700_000_000;
         const tradeEntryTs = eventStartTs + 10;
         const tradeExitTs = eventStartTs + 20;
@@ -1106,7 +1404,24 @@ describe("Quick View Polymarket streak summary", () => {
             if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
                 return new Response(JSON.stringify({
                     ok: true,
-                    rows: [],
+                    rows: [{
+                        series_id: "10684",
+                        event_slug: "btc-1s-event",
+                        market_slug: "btc-1s-event",
+                        interval: "5m",
+                        event_start_ts: eventStartTs,
+                        event_end_ts: eventStartTs + 300,
+                        yes_token_id: "yes-1",
+                        no_token_id: "no-1",
+                        yes_open_price: 0.5,
+                        yes_entry_minute_1_price: null,
+                        yes_entry_minute_2_price: null,
+                        yes_entry_minute_3_price: null,
+                        yes_entry_minute_4_price: null,
+                        resolved_outcome_up: 1,
+                        resolution_source: "test",
+                        updated_at: 1,
+                    }],
                 }), {
                     status: 200,
                     headers: { "Content-Type": "application/json" },
@@ -1223,7 +1538,9 @@ describe("Quick View Polymarket streak summary", () => {
         expect(enriched.trades[0]?.polymarketOutcome?.isProfitable).to.equal(true);
         expect(enriched.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.55);
         expect(enriched.trades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.58);
+        expect(enriched.trades[0]?.polymarketOutcome?.marketExitSource).to.equal("signal");
         expect(html).to.contain("Signal Exit (same event)");
+        expect(html).to.contain("Signal Exited");
         expect(html).to.contain("+3.0c");
     });
 

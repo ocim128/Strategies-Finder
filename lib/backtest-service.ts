@@ -636,22 +636,23 @@ export class BacktestService {
         chartData: OHLCVData[]
     ): Promise<BacktestResult> {
         try {
-            if (isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval)) {
-                return await annotateBacktestResultWithSecondMarketClob({
-                    result,
-                    symbol: state.currentSymbol,
-                    interval: state.currentInterval,
-                    outcomeSymbol: settings.polymarketOutcomeSymbol,
-                });
-            }
-
-            const outcomeInterval = resolvePolymarketOutcomeInterval(settings.polymarketOutcomeInterval);
             const effectiveExitMode = resolveEffectivePolymarketExitMode({
                 requestedMode: settings.polymarketExitMode,
                 interval: state.currentInterval,
                 executionModel: settings.executionModel,
                 polymarketAnnotationEnabled: settings.polymarketAnnotationEnabled,
             });
+            if (isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval)) {
+                return await annotateBacktestResultWithSecondMarketClob({
+                    result,
+                    symbol: state.currentSymbol,
+                    interval: state.currentInterval,
+                    outcomeSymbol: settings.polymarketOutcomeSymbol,
+                    polymarketExitMode: effectiveExitMode,
+                });
+            }
+
+            const outcomeInterval = resolvePolymarketOutcomeInterval(settings.polymarketOutcomeInterval);
 
             return await annotateBacktestResultWithPolymarketOutcomes(result, {
                 symbol: state.currentSymbol,

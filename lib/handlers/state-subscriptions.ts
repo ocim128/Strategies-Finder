@@ -44,7 +44,8 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
     const usesSignalOffsetEntry = polymarketSettings.postSignalLimitEntryMode === 'signal_offset';
     const limitExitEnabled = limitEntryEnabled && polymarketSettings.postSignalLimitExitEnabled;
     const usesFixedLimitExit = polymarketSettings.postSignalLimitExitMode === 'fixed_price';
-    const supportsSignalExit = interval === '1m';
+    const isOneSecondInterval = interval === '1s';
+    const supportsSignalExit = interval === '1m' || isOneSecondInterval;
     const isSignalExit = supportsSignalExit && polymarketSettings.exitMode === 'signal_exit_same_event';
     const usesActualEntryMinute = polymarketSettings.entrySelectionMode === 'actual_entry_minute';
     const showsEntryBridgeControls = interval === '1m' && isNative5mSession && annotationEnabled && !isSignalExit;
@@ -69,15 +70,27 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
     }
 
     const exitModeSelect = getPolymarketExitModeSelect();
+    const resolveHoldOption = exitModeSelect
+        ? Array.from(exitModeSelect.options).find((option) => option.value === 'resolve_hold')
+        : undefined;
     const signalExitOption = exitModeSelect
         ? Array.from(exitModeSelect.options).find((option) => option.value === 'signal_exit_same_event')
         : undefined;
+    if (resolveHoldOption) {
+        resolveHoldOption.disabled = isOneSecondInterval;
+        resolveHoldOption.hidden = isOneSecondInterval;
+    }
     if (signalExitOption) {
         signalExitOption.disabled = !supportsSignalExit;
     }
-    if (exitModeSelect && exitModeSelect.value === 'signal_exit_same_event' && !supportsSignalExit) {
-        exitModeSelect.value = 'resolve_hold';
+    if (exitModeSelect) {
+        if (isOneSecondInterval) {
+            exitModeSelect.value = 'signal_exit_same_event';
+        } else if (exitModeSelect.value === 'signal_exit_same_event' && !supportsSignalExit) {
+            exitModeSelect.value = 'resolve_hold';
+        }
     }
+    updateFinderRankModeOptions();
 }
 
 function updateFinderRankModeOptions(): void {

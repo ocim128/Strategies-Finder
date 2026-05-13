@@ -1,5 +1,6 @@
 import type { Time } from "lightweight-charts";
 import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
+import type { PolymarketExitMode } from "../polymarket-exit-mode";
 import type { OHLCVData, Trade } from "../types/strategies";
 import type { PolymarketOutcomeRow } from "../types/polymarket-outcomes";
 
@@ -198,7 +199,7 @@ export interface SecondMarketTradeResult {
 }
 
 export interface SecondMarketBacktestSummary {
-    evaluationMode: "second_clob";
+    evaluationMode: PolymarketExitMode;
     scoredTrades: number;
     duplicateTradesIgnored: number;
     missingOutcomeTrades: number;

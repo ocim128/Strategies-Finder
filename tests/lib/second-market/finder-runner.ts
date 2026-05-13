@@ -24,6 +24,7 @@ import { FinderResultRanker } from "../finder/finder-result-ranker";
 import { isCrossSymbolStrategy, resolveCrossSymbolExecution } from "../cross-symbol-runtime";
 import { debugLogger } from "../debug-logger";
 import { applyPolymarketAlternativeSizing } from "../polymarket-alternative-sizing";
+import { resolveEffectivePolymarketExitMode } from "../polymarket-exit-mode";
 import { filterTradesByPreviousClosedTradeExitReason } from "../polymarket-trade-annotations";
 import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import {
@@ -112,6 +113,13 @@ export async function runSecondMarketFinder(
         callbacks.setStatus("Sized Net rank mode requires Alternative Sizing mode other than fixed or percent.");
         return { results: [] };
     }
+
+    const effectiveExitMode = resolveEffectivePolymarketExitMode({
+        requestedMode: options.polymarketExitMode,
+        interval: input.interval,
+        executionModel: settings.executionModel,
+        polymarketAnnotationEnabled: options.polymarketScoringEnabled,
+    });
 
     callbacks.setProgress(5, "Preparing 1s chart data...");
     const closedData = buildFinderEvaluationData(input.ohlcvData, input.interval, settings);
@@ -267,6 +275,7 @@ export async function runSecondMarketFinder(
                     result: backtestResult,
                     context,
                     trades: tradesForPolymarket,
+                    polymarketExitMode: effectiveExitMode,
                 });
 
                 processedCount++;

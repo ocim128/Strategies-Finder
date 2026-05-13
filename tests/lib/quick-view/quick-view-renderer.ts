@@ -194,17 +194,20 @@ export function renderEmptyTradesHtml(): string {
 export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary): string {
   if (!summary) return '';
   const isSignalExit = summary.evaluationMode === "signal_exit_same_event";
+  const isResolveHold = summary.evaluationMode === "resolve_hold";
   const usesRealizedPnl = isSignalExit || summary.limitExitEnabled === true;
   const usesActualEntryMinute = summary.entrySelectionMode === "actual_entry_minute";
   const outcomeInterval = summary.outcomeInterval ?? "5m";
   const usesNativeLongSession = outcomeInterval !== "5m";
   const modeLabel = isSignalExit
     ? "Signal Exit (same event)"
-    : usesActualEntryMinute
-      ? "Entry Selection: Auto (actual trade minute)"
-      : (!usesNativeLongSession && typeof summary.entryOffset === 'number'
-          ? `Selected Offset: Minute ${summary.entryOffset}`
-          : `Run Mode: Native ${outcomeInterval} scoring`);
+    : isResolveHold
+      ? "Resolve Hold (final outcome)"
+      : usesActualEntryMinute
+        ? "Entry Selection: Auto (actual trade minute)"
+        : (!usesNativeLongSession && typeof summary.entryOffset === 'number'
+            ? `Selected Offset: Minute ${summary.entryOffset}`
+            : `Run Mode: Native ${outcomeInterval} scoring`);
   const winCountLabel = usesRealizedPnl ? "Profitable Trades" : "Poly Wins";
   const lossCountLabel = usesRealizedPnl ? "Losing Trades" : "Poly Losses";
   const streakWinLabel = usesRealizedPnl ? "Max Profit Streak" : "Max Win Streak";
@@ -260,11 +263,17 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
       </div>
   `;
 
-  const signalExitCards = isSignalExit
+  const exitModeCards = (
+    (summary.targetExitedTrades ?? 0) > 0
+    || summary.signalExitedTrades !== undefined
+    || summary.resolvedTrades !== undefined
+    || summary.neutralTrades > 0
+    || (summary.missingPriceTrades ?? 0) > 0
+  )
     ? renderQvStatCards([
       ...((summary.targetExitedTrades ?? 0) > 0 ? [{ label: 'Target Exited', value: String(summary.targetExitedTrades) }] : []),
-      { label: 'Signal Exited', value: String(summary.signalExitedTrades ?? 0) },
-      { label: 'Resolved (Held)', value: String(summary.resolvedTrades ?? 0) },
+      ...(summary.signalExitedTrades !== undefined ? [{ label: 'Signal Exited', value: String(summary.signalExitedTrades) }] : []),
+      ...(summary.resolvedTrades !== undefined ? [{ label: 'Resolved (Held)', value: String(summary.resolvedTrades) }] : []),
       ...(summary.neutralTrades > 0 ? [{ label: 'Neutral Trades', value: String(summary.neutralTrades) }] : []),
       ...((summary.missingPriceTrades ?? 0) > 0 ? [{ label: 'Missing Price Trades', value: String(summary.missingPriceTrades) }] : []),
     ])
@@ -336,7 +345,7 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
           ${sizedBankrollCards}
           ${corePolymarketCards}
           ${baselineCard}
-          ${signalExitCards}
+          ${exitModeCards}
           ${limitEntryCards}
           ${streakPolymarketCards}
           ${renderPolymarketExitReasonWinRateCardHtml(afterMaxHoldLabel, summary.exitReasonWinRates.maxHold)}

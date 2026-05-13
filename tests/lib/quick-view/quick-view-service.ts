@@ -2,7 +2,6 @@ import { state } from "../state";
 import { debugLogger } from "../debug-logger";
 import type { BacktestResult, ExpectancyBreakdownRow, ExpectancyBreakdownSection, Trade } from "../strategies/index";
 import type { Time } from "lightweight-charts";
-import { isPolymarketEventSymbol } from "../dataProviders/polymarket";
 import {
     getEffectivePolymarketSeriesId,
     isSupportedPolymarketOutcomeRun,
@@ -578,6 +577,30 @@ export function summarizePolymarketExecutionGap(trades: Trade[]): QuickViewPolym
     };
 }
 
+function summarizePolymarketPerformanceForResult(
+    result: BacktestResult
+): { expectancy: number; profitFactor: number | null } | null {
+    const payoutSummary = summarizePolymarketPayoutDiagnostics(result.trades);
+    if (payoutSummary) {
+        return {
+            expectancy: payoutSummary.expectancy,
+            profitFactor: payoutSummary.profitFactor,
+        };
+    }
+
+    const summary = result.polymarketTradeSummary;
+    if (!summary || summary.scoredTrades <= 0 || typeof summary.expectancy !== "number" || !Number.isFinite(summary.expectancy)) {
+        return null;
+    }
+
+    return {
+        expectancy: summary.expectancy,
+        profitFactor: typeof summary.profitFactor === "number" && Number.isFinite(summary.profitFactor)
+            ? summary.profitFactor
+            : null,
+    };
+}
+
 class QuickViewManager {
     private static readonly MAX_RENDERED_TRADES = 100;
     private static readonly INITIAL_TRADE_BATCH_SIZE = 40;
@@ -828,11 +851,24 @@ class QuickViewManager {
         const shouldRetryEmptySignalExitSummary = result.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event"
             && (result.polymarketTradeSummary.scoredTrades ?? 0) === 0
             && result.trades.length > 0;
+        const isSecondMarketRun = isSecondMarketPolymarketSupported(resultContext.symbol, resultContext.interval);
+        const shouldRefreshSecondMarketPricing = isSecondMarketRun
+            && result.polymarketTradeSummary !== undefined
+            && (
+                result.polymarketTradeSummary.evaluationMode !== "signal_exit_same_event"
+                || summarizePolymarketPerformanceForResult(result) === null
+            );
         const shouldRepairFilteredActualMode = resultContext.interval === "1m"
             && outcomeInterval === "5m"
             && isActualPolymarketEntryMinuteMode(this.resolveSelectedPolymarketEntrySelectionMode(result))
             && hasFilteredPolymarketTrades(result.trades);
-        if (result.polymarketTradeSummary && hasOutcomes && !shouldRetryEmptySignalExitSummary && !shouldRepairFilteredActualMode) {
+        if (
+            result.polymarketTradeSummary
+            && hasOutcomes
+            && !shouldRetryEmptySignalExitSummary
+            && !shouldRepairFilteredActualMode
+            && !shouldRefreshSecondMarketPricing
+        ) {
             return this.withPolymarketTradeSummary(result, result.trades, seriesId, {
                 entrySelectionMode: result.polymarketTradeSummary.entrySelectionMode,
                 selectedOffset: result.polymarketTradeSummary.entryOffset,
@@ -841,13 +877,26 @@ class QuickViewManager {
             });
         }
 
-        if (isSecondMarketPolymarketSupported(resultContext.symbol, resultContext.interval)) {
+        if (isSecondMarketRun) {
             try {
+                const summaryEvaluationMode = result.polymarketTradeSummary?.evaluationMode;
+                const effectiveExitMode = resolveEffectivePolymarketExitMode({
+                    requestedMode: (
+                        summaryEvaluationMode === "resolve_hold"
+                        || summaryEvaluationMode === "signal_exit_same_event"
+                    )
+                        ? summaryEvaluationMode
+                        : this.readCurrentPolymarketExitMode(),
+                    interval: resultContext.interval,
+                    executionModel: this.readCurrentExecutionModel(),
+                    polymarketAnnotationEnabled: true,
+                });
                 return await annotateBacktestResultWithSecondMarketClob({
                     result,
                     symbol: resultContext.symbol,
                     interval: resultContext.interval,
                     outcomeSymbol: outcomeSymbol ?? undefined,
+                    polymarketExitMode: effectiveExitMode,
                 });
             } catch (error) {
                 debugLogger.warn("quick_view.second_market_polymarket_annotation_failed", {
@@ -1147,9 +1196,7 @@ class QuickViewManager {
         empty.style.display = 'none';
         content.style.display = 'block';
 
-        const resultContext = resolveBacktestResultMarketContext(result);
-        const isPolymarketMarket = Boolean(resultContext && isPolymarketEventSymbol(resultContext.symbol));
-        const polymarketPayoutSummary = isPolymarketMarket ? summarizePolymarketPayoutDiagnostics(result.trades) : null;
+        const polymarketPayoutSummary = summarizePolymarketPerformanceForResult(result);
         const polymarketSectionHtml = this.buildPolymarketSection(result);
 
         content.innerHTML = renderResultsHtml(result, {
@@ -1387,11 +1434,11 @@ class QuickViewManager {
             entryOffset: summary?.entryOffset,
             outcomeInterval: summary?.outcomeInterval,
             timingProfile, bestTimingProfile,
-            evaluationMode: isSignalExit ? "signal_exit_same_event" : undefined,
-            missingPriceTrades: isSignalExit ? (summary?.missingPriceTrades ?? 0) : undefined,
+            evaluationMode: summary?.evaluationMode,
+            missingPriceTrades: summary?.missingPriceTrades,
             targetExitedTrades: summary?.targetExitedTrades,
-            signalExitedTrades: isSignalExit ? (summary?.signalExitedTrades ?? 0) : undefined,
-            resolvedTrades: isSignalExit ? (summary?.resolvedTrades ?? 0) : undefined,
+            signalExitedTrades: summary?.signalExitedTrades,
+            resolvedTrades: summary?.resolvedTrades,
             limitEntryEnabled: summary?.limitEntryEnabled,
             limitEntryMode: summary?.limitEntryMode,
             limitEntryPriceCents: summary?.limitEntryPriceCents,

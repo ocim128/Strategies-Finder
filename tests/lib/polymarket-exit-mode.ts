@@ -12,6 +12,10 @@ export function resolveEffectivePolymarketExitMode(args: {
         return "resolve_hold";
     }
 
+    if (interval === "1s") {
+        return "signal_exit_same_event";
+    }
+
     if (requestedMode !== "signal_exit_same_event") {
         return requestedMode ?? "resolve_hold";
     }

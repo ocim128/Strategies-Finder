@@ -5,6 +5,7 @@ import type {
     PolymarketOutcomeRow,
     TradePolymarketOutcome,
 } from "../types/polymarket-outcomes";
+import type { PolymarketExitMode } from "../polymarket-exit-mode";
 import {
     getEffectivePolymarket5mSeriesId,
     loadPolymarket5mOutcomesForTimeRange,
@@ -114,7 +115,7 @@ function mergeOutcomeRowsWithClobEvents(
     return [...rows.values()].sort((left, right) => left.event_start_ts - right.event_start_ts);
 }
 
-function buildNoEventAnnotation(trade: Trade): TradePolymarketOutcome {
+function buildNoEventAnnotation(trade: Trade, evaluationMode: PolymarketExitMode): TradePolymarketOutcome {
     return {
         eventStartTs: 0,
         eventEndTs: 0,
@@ -123,7 +124,7 @@ function buildNoEventAnnotation(trade: Trade): TradePolymarketOutcome {
         prediction: predictionForTrade(trade),
         actualOutcomeUp: 0,
         isWin: null,
-        evaluationMode: "signal_exit_same_event",
+        evaluationMode,
         isProfitable: null,
         marketEntryPrice: null,
         marketExitPrice: null,
@@ -133,14 +134,14 @@ function buildNoEventAnnotation(trade: Trade): TradePolymarketOutcome {
     };
 }
 
-function buildTradeAnnotation(result: SecondMarketTradeResult): TradePolymarketOutcome {
+function buildTradeAnnotation(result: SecondMarketTradeResult, evaluationMode: PolymarketExitMode): TradePolymarketOutcome {
     if (!result.outcome) {
-        return buildNoEventAnnotation(result.trade);
+        return buildNoEventAnnotation(result.trade, evaluationMode);
     }
 
     const prediction = result.side ?? predictionForTrade(result.trade);
     const scored = result.pnl !== null;
-    const isWin = scored && hasResolvedOutcome(result.outcome)
+    const isWin = scored && result.exitSource !== "signal" && hasResolvedOutcome(result.outcome)
         ? isPredictionWin(prediction, result.outcome)
         : null;
     return {
@@ -149,7 +150,7 @@ function buildTradeAnnotation(result: SecondMarketTradeResult): TradePolymarketO
             prediction,
             isWin,
         }),
-        evaluationMode: "signal_exit_same_event",
+        evaluationMode,
         isProfitable: result.isProfitable,
         marketEntrySource: "quote",
         marketEntryStatus: scored ? "filled" : result.exitSource === "duplicate" ? "duplicate" : undefined,
@@ -159,7 +160,7 @@ function buildTradeAnnotation(result: SecondMarketTradeResult): TradePolymarketO
         marketExitTs: result.exitQuoteTs ?? (
             result.exitSource === "resolution" ? result.outcome.event_end_ts : null
         ),
-        marketExitSource: result.exitSource === "signal" ? "signal" : result.exitSource,
+        marketExitSource: result.exitSource,
         marketPnl: result.pnl,
     };
 }
@@ -169,8 +170,9 @@ function summarizePolymarketResult(args: {
     summary: SecondMarketBacktestSummary;
     tradeResults: readonly SecondMarketTradeResult[];
     tradeCount: number;
+    evaluationMode: PolymarketExitMode;
 }): BacktestPolymarketTradeSummary {
-    const { context, summary, tradeResults, tradeCount } = args;
+    const { context, summary, tradeResults, tradeCount, evaluationMode } = args;
     const profitableTrades = tradeResults.filter((result) => result.isProfitable === true).length;
     const losingTrades = tradeResults.filter((result) => result.isProfitable === false).length;
     const neutralTrades = Math.max(0, summary.scoredTrades - profitableTrades - losingTrades);
@@ -183,7 +185,7 @@ function summarizePolymarketResult(args: {
         missingOutcomeTrades: summary.missingOutcomeTrades,
         unscoredTrades: Math.max(0, tradeCount - summary.scoredTrades),
         duplicateTradesIgnored: summary.duplicateTradesIgnored || undefined,
-        evaluationMode: "signal_exit_same_event",
+        evaluationMode,
         profitableTrades,
         losingTrades,
         neutralTrades,
@@ -205,8 +207,9 @@ function buildPolymarketEval(args: {
     tradeResults: readonly SecondMarketTradeResult[];
     summary: SecondMarketBacktestSummary;
     trades: readonly Trade[];
+    evaluationMode: PolymarketExitMode;
 }): PolymarketEvalResult {
-    const { outcomes, tradeResults, summary, trades } = args;
+    const { outcomes, tradeResults, summary, trades, evaluationMode } = args;
     const scored = tradeResults.filter((result) => result.pnl !== null);
     const wins = scored.filter((result) => result.isProfitable === true).length;
     const losses = scored.filter((result) => result.isProfitable === false).length;
@@ -240,13 +243,15 @@ function buildPolymarketEval(args: {
         alwaysYesBaselineWinRate: resolvedOutcomes.length > 0 ? resolvedUpCount / resolvedOutcomes.length : 0,
         alwaysNoBaselineWinRate: resolvedOutcomes.length > 0 ? (resolvedOutcomes.length - resolvedUpCount) / resolvedOutcomes.length : 0,
         avgEntryPrice: summary.avgEntryPrice ?? 0,
-        breakEvenWinRate: 0,
+        breakEvenWinRate: evaluationMode === "resolve_hold" ? (summary.avgEntryPrice ?? 0) : 0,
         expectancy: summary.expectancy,
-        edgeVsBreakEven: 0,
+        edgeVsBreakEven: evaluationMode === "resolve_hold"
+            ? (summary.scoredTrades > 0 ? wins / summary.scoredTrades : 0) - (summary.avgEntryPrice ?? 0)
+            : 0,
         missingOutcomeRows: summary.missingOutcomeTrades,
         ignoredSignals: summary.duplicateTradesIgnored,
         duplicateTradesIgnored: summary.duplicateTradesIgnored,
-        evaluationMode: "signal_exit_same_event",
+        evaluationMode,
         signalExitedTrades: summary.signalExitedTrades,
         resolvedTrades: summary.resolvedTrades,
         missingPriceTrades: summary.missingQuoteTrades,
@@ -297,17 +302,20 @@ export function evaluateSecondMarketBacktest(args: {
     result: Pick<BacktestResult, "trades">;
     context: SecondMarketEvaluationContext;
     trades?: readonly Trade[];
+    polymarketExitMode?: PolymarketExitMode;
 }): SecondMarketEvaluationResult {
     const trades = [...(args.trades ?? args.result.trades)];
+    const evaluationMode = "signal_exit_same_event";
     const evaluated = evaluateSecondMarketTrades({
         trades,
         outcomes: args.context.outcomes,
         quotes: args.context.quotes,
+        evaluationMode,
         mode: "strict",
         fillSource: "bid_ask",
     });
     const annotatedByTrade = new Map<Trade, TradePolymarketOutcome>(
-        evaluated.results.map((result) => [result.trade, buildTradeAnnotation(result)] as const)
+        evaluated.results.map((result) => [result.trade, buildTradeAnnotation(result, evaluationMode)] as const)
     );
     const annotatedTrades = args.result.trades.map((trade) => ({
         ...trade,
@@ -318,6 +326,7 @@ export function evaluateSecondMarketBacktest(args: {
         summary: evaluated.summary,
         tradeResults: evaluated.results,
         tradeCount: trades.length,
+        evaluationMode,
     });
     return {
         tradeResults: evaluated.results,
@@ -328,6 +337,7 @@ export function evaluateSecondMarketBacktest(args: {
             tradeResults: evaluated.results,
             summary: evaluated.summary,
             trades,
+            evaluationMode,
         }),
         annotatedTrades,
     };
@@ -338,6 +348,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
     symbol: string;
     interval: string;
     outcomeSymbol?: string;
+    polymarketExitMode?: PolymarketExitMode;
 }): Promise<BacktestResult> {
     if (!isSecondMarketPolymarketSupported(args.symbol, args.interval) || args.result.trades.length === 0) {
         return args.result;
@@ -357,6 +368,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
     const evaluated = evaluateSecondMarketBacktest({
         result: args.result,
         context,
+        polymarketExitMode: args.polymarketExitMode,
     });
 
     return {

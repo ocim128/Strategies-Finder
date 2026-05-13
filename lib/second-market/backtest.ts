@@ -1,6 +1,7 @@
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { Trade } from "../types/strategies";
 import type { PolymarketOutcomeRow } from "../types/polymarket-outcomes";
+import type { PolymarketExitMode } from "../polymarket-exit-mode";
 import {
     DEFAULT_MAX_QUOTE_AGE_SEC,
     findContainingPolymarketEvent,
@@ -73,7 +74,10 @@ function resolveResolutionExitPrice(outcome: PolymarketOutcomeRow, side: SecondM
     return side === "yes" ? 0 : 1;
 }
 
-function buildSummary(results: readonly SecondMarketTradeResult[]): SecondMarketBacktestSummary {
+function buildSummary(
+    results: readonly SecondMarketTradeResult[],
+    evaluationMode: PolymarketExitMode
+): SecondMarketBacktestSummary {
     const scored = results.filter((result) => result.pnl !== null);
     const grossProfit = scored.reduce((sum, result) => sum + Math.max(0, result.pnl ?? 0), 0);
     const grossLoss = Math.abs(scored.reduce((sum, result) => sum + Math.min(0, result.pnl ?? 0), 0));
@@ -84,7 +88,7 @@ function buildSummary(results: readonly SecondMarketTradeResult[]): SecondMarket
         return entryTs !== null && result.entryQuoteTs === entryTs;
     }).length;
     return {
-        evaluationMode: "second_clob",
+        evaluationMode,
         scoredTrades: scored.length,
         duplicateTradesIgnored: results.filter((result) => result.exitSource === "duplicate").length,
         missingOutcomeTrades: results.filter((result) => result.exitSource === "no_event").length,
@@ -110,10 +114,12 @@ export function evaluateSecondMarketTrades(args: {
     trades: readonly Trade[];
     outcomes: readonly PolymarketOutcomeRow[];
     quotes: readonly PolymarketClob1sQuoteRow[];
+    evaluationMode?: PolymarketExitMode;
     mode?: SecondMarketAlignmentMode;
     maxQuoteAgeSec?: number;
     fillSource?: SecondMarketFillSource;
 }): { results: SecondMarketTradeResult[]; summary: SecondMarketBacktestSummary } {
+    const evaluationMode = args.evaluationMode ?? "resolve_hold";
     const mode = args.mode ?? "strict";
     const maxQuoteAgeSec = Math.max(0, Math.floor(args.maxQuoteAgeSec ?? DEFAULT_MAX_QUOTE_AGE_SEC));
     const fillSource = args.fillSource ?? "bid_ask";
@@ -190,7 +196,10 @@ export function evaluateSecondMarketTrades(args: {
         const rawExitTs = trade.exitReason === "end_of_data"
             ? null
             : parseTimeToUnixSeconds(trade.exitTime);
-        const signalExitTs = rawExitTs !== null && rawExitTs < outcome.event_end_ts
+        const signalExitTs = evaluationMode === "signal_exit_same_event"
+            && trade.exitReason === "signal"
+            && rawExitTs !== null
+            && rawExitTs < outcome.event_end_ts
             ? rawExitTs
             : null;
         const exit = signalExitTs === null
@@ -255,5 +264,5 @@ export function evaluateSecondMarketTrades(args: {
         });
     }
 
-    return { results, summary: buildSummary(results) };
+    return { results, summary: buildSummary(results, evaluationMode) };
 }

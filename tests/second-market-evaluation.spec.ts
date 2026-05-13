@@ -101,7 +101,7 @@ function context(quotes: PolymarketClob1sQuoteRow[]): SecondMarketEvaluationCont
 }
 
 describe("second market shared evaluation", () => {
-    it("builds reusable Polymarket summary, eval metrics, and trade annotations", () => {
+    it("defaults reusable 1s annotations to signal-exit mode", () => {
         const evaluated = evaluateSecondMarketBacktest({
             result: result([trade(1, 1_700_000_010, 1_700_000_020)]),
             context: context([
@@ -110,14 +110,38 @@ describe("second market shared evaluation", () => {
             ]),
         });
 
+        expect(evaluated.polymarketSummary.evaluationMode).to.equal("signal_exit_same_event");
         expect(evaluated.polymarketSummary.scoredTrades).to.equal(1);
-        expect(evaluated.polymarketSummary.netPnl).to.be.closeTo(0.03, 1e-9);
+        expect(evaluated.polymarketSummary.netPnl).to.be.closeTo(0.45, 1e-9);
+        expect(evaluated.polymarketEval.evaluationMode).to.equal("signal_exit_same_event");
         expect(evaluated.polymarketEval.scoredPredictions).to.equal(1);
         expect(evaluated.polymarketEval.coverage).to.equal(1);
         expect(evaluated.polymarketEval.breakEvenWinRate).to.equal(0);
         expect(evaluated.polymarketEval.edgeVsBreakEven).to.equal(0);
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.55);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitSource).to.equal("resolution");
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitPrice).to.equal(1);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.isWin).to.equal(true);
+    });
+
+    it("uses exact 1s CLOB exit fills when signal-exit mode is selected", () => {
+        const signalTrade = trade(1, 1_700_000_010, 1_700_000_020);
+        signalTrade.exitReason = "signal";
+
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([signalTrade]),
+            context: context([
+                quote(1_700_000_010, 0.55, 0.53),
+                quote(1_700_000_020, 0.60, 0.58),
+            ]),
+            polymarketExitMode: "signal_exit_same_event",
+        });
+
+        expect(evaluated.polymarketSummary.evaluationMode).to.equal("signal_exit_same_event");
+        expect(evaluated.polymarketSummary.netPnl).to.be.closeTo(0.03, 1e-9);
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitSource).to.equal("signal");
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.58);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.isWin).to.equal(null);
     });
 
     it("marks missing exact CLOB quotes as unscored instead of forward filling", () => {

@@ -103,6 +103,28 @@ eq(
 
 eq(
     resolveEffectivePolymarketExitMode({
+        interval: "1s",
+        executionModel: "signal_close",
+        polymarketAnnotationEnabled: true,
+        requestedMode: "signal_exit_same_event",
+    }),
+    "signal_exit_same_event",
+    "1s + enabled \u2192 signal_exit_same_event"
+);
+
+eq(
+    resolveEffectivePolymarketExitMode({
+        interval: "1s",
+        executionModel: "signal_close",
+        polymarketAnnotationEnabled: true,
+        requestedMode: "resolve_hold",
+    }),
+    "signal_exit_same_event",
+    "1s + requested resolve_hold \u2192 signal_exit_same_event"
+);
+
+eq(
+    resolveEffectivePolymarketExitMode({
         interval: "5m",
         executionModel: "next_open",
         polymarketAnnotationEnabled: true,

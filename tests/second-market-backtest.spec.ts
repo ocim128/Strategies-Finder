@@ -105,6 +105,7 @@ describe("second market backtest evaluator", () => {
                 quote(1_700_000_010, 0.55, 0.53),
                 quote(1_700_000_020, 0.60, 0.58),
             ],
+            evaluationMode: "signal_exit_same_event",
             mode: "strict",
         });
 
@@ -114,7 +115,7 @@ describe("second market backtest evaluator", () => {
         expect(evaluated.summary.scoredTrades).to.equal(1);
     });
 
-    it("uses the chart exit second for non-signal exits inside the same event", () => {
+    it("can still compute final event resolution fills at the evaluator layer", () => {
         const position = trade(1_700_000_010, 1_700_000_020);
         position.exitReason = "take_profit";
 
@@ -125,11 +126,32 @@ describe("second market backtest evaluator", () => {
                 quote(1_700_000_010, 0.55, 0.53),
                 quote(1_700_000_020, 0.60, 0.58),
             ],
+            evaluationMode: "resolve_hold",
             mode: "strict",
         });
 
-        expect(evaluated.results[0].exitSource).to.equal("signal");
-        expect(evaluated.results[0].exitPrice).to.equal(0.58);
+        expect(evaluated.results[0].exitSource).to.equal("resolution");
+        expect(evaluated.results[0].exitPrice).to.equal(1);
+        expect(evaluated.results[0].pnl).to.be.closeTo(0.45, 1e-9);
+    });
+
+    it("only exits early on actual signal exits in 1s signal-exit mode", () => {
+        const position = trade(1_700_000_010, 1_700_000_020);
+        position.exitReason = "take_profit";
+
+        const evaluated = evaluateSecondMarketTrades({
+            trades: [position],
+            outcomes: [outcome()],
+            quotes: [
+                quote(1_700_000_010, 0.55, 0.53),
+                quote(1_700_000_020, 0.60, 0.58),
+            ],
+            evaluationMode: "signal_exit_same_event",
+            mode: "strict",
+        });
+
+        expect(evaluated.results[0].exitSource).to.equal("resolution");
+        expect(evaluated.results[0].exitPrice).to.equal(1);
     });
 
     it("does not use future quotes to fill missing strict entries", () => {
