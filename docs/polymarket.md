@@ -74,7 +74,7 @@ Core files:
 
 ### 2. Outcome scoring and annotation
 
-This is the research path for asking whether executed chart trades would have been correct on the Polymarket contract and, in `1m` signal-exit mode, what the realized Polymarket trade PnL would have been.
+This is the research path for asking whether executed chart trades would have been correct on the Polymarket contract and, in `1m` signal-exit or supported `1s` CLOB mode, what the realized Polymarket trade PnL would have been.
 
 Important behavior:
 
@@ -83,6 +83,7 @@ Important behavior:
 - `polymarketOutcomeInterval` selects which native outcome session rows to load; default is `5m`
 - native `15m` and `1h` runs match each trade to the containing Polymarket session event
 - `signal_exit_same_event` also uses local SQLite price points for intra-event pricing
+- `1s` BTCUSDT/XRPUSDT runs use the separate second-market SQLite DB and executable CLOB bid/ask quotes sampled by `sample_ts`
 - post-signal limit entry is an optional `5m` outcome-session overlay that uses local SQLite price points to decide whether a chart trade would have filled at a fixed limit price or a signal-quote offset before scoring it
 - `lib/polymarket-outcome-evaluator.ts` remains the headless resolve-hold helper when the caller only supplies outcome rows
 - stores the resolved target on `BacktestResult.polymarketTradeSummary.outcomeSymbol` so later UI reloads do not drift
@@ -101,6 +102,8 @@ Core files:
 - `lib/polymarket-price-points-ingest.ts`
 - `lib/backtest-service.ts`
 - `lib/finder/finder-runner-polymarket.ts`
+- `lib/second-market/evaluation.ts`
+- `lib/second-market/finder-runner.ts`
 
 ### 3. Diagnostics and deployability analysis
 
@@ -117,6 +120,7 @@ Important behavior:
 
 - Quick View, Trades, and the Polymarket tab can rebuild Polymarket annotations lazily
 - when the active result uses `signal_exit_same_event`, the lazy rebuild path also ensures local price points before recomputing
+- when the active result is a supported `1s` BTCUSDT/XRPUSDT run, Quick View can rebuild strict CLOB annotations from the second-market DB
 - the Polymarket tab still has its own fillability and deployability analysis path using Polymarket history snapshots
 
 Core files:
@@ -289,11 +293,11 @@ If you add another target, update:
 | Surface | `resolve_hold` | `signal_exit_same_event` | Post-signal limit entry | Important notes |
 | --- | --- | --- | --- | --- |
 | Direct Polymarket charting | not applicable | not applicable | not applicable | provider path only |
-| Manual backtest annotation | native `5m` / `15m` / `1h`, plus existing `1m` / `15m` / `1h` / `4h` bridge paths where applicable | `1m` + `next_open` on the selected native outcome session | `5m` outcome session only | same chart backtest, Polymarket post-pass |
+| Manual backtest annotation | native `5m` / `15m` / `1h`, existing `1m` / `15m` / `1h` / `4h` bridge paths, plus `1s` BTCUSDT/XRPUSDT CLOB scoring | `1m` + `next_open` on the selected native outcome session; `1s` uses exact-second CLOB exits inside the event | `5m` outcome session only | same chart backtest, Polymarket post-pass |
 | Headless `evaluatePolymarketOutcomes(...)` | resolve-hold only | not supported | not supported | caller supplies outcome rows only; no price-point input surface |
-| Finder Polymarket mode | `1m`, `5m`, `15m`, `1h`, `4h` | `1m` + `next_open` only | `5m` outcome session only | `grid` and `random` only; no combo; no multi-timeframe |
+| Finder Polymarket mode | `1m`, `5m`, `15m`, `1h`, `4h`, plus `1s` BTCUSDT/XRPUSDT CLOB scoring | `1m` + `next_open` only; `1s` uses exact-second CLOB exits inside the event | `5m` outcome session only | `grid` and `random` only; no combo; no multi-timeframe |
 | Hunt | same as Finder | same as Finder | same as Finder | preserves Polymarket mode settings in profiles |
-| Quick View / Trades / Polymarket diagnostics reload | can reuse stored summary broadly; native `15m` / `1h` show summary and payout cards | `1m` only when price points are available or can be ensured | reloads price points for `5m` limit attempts | active consumers, not passive renderers |
+| Quick View / Trades / Polymarket diagnostics reload | can reuse stored summary broadly; native `15m` / `1h` show summary and payout cards; Quick View can rebuild `1s` BTCUSDT/XRPUSDT CLOB annotations | `1m` only when price points are available or can be ensured; `1s` uses exact-second CLOB rows | reloads price points for `5m` limit attempts | active consumers, not passive renderers |
 | Endpoint Preview / Copy / HTTP execution | `resolve_hold` only | not supported | not supported | exit mode and limit-entry settings are stripped |
 | Strategy Ensemble Polymarket | `resolve_hold` only | not supported | not supported | explicit fence in the ensemble path |
 | Bridge export | separate contract | separate contract | separate contract | ignores scoring-mode settings; still chart-symbol `5m` entry-signal export |

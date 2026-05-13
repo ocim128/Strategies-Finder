@@ -1,9 +1,15 @@
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { DataCache } from "../lib/data/data-cache";
 import { DataFetcher } from "../lib/data/data-fetcher";
 import type { OHLCVData } from "../lib/types/strategies";
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+    globalThis.fetch = originalFetch;
+});
 
 function makeCandles(count: number): OHLCVData[] {
     return Array.from({ length: count }, (_, index) => {
@@ -76,6 +82,32 @@ describe("DataFetcher chart lookback", () => {
         const trimmed = await fetcher.fetchData("ETHUSDT", "1m");
         assert.equal(trimmed.length, 300);
         assert.deepEqual(trimmed, candles.slice(-300));
+    });
+
+    it("loads supported 1s charts from the second-market SQLite endpoint", async () => {
+        let requestedUrl = "";
+        globalThis.fetch = async (input) => {
+            requestedUrl = String(input);
+            return new Response(JSON.stringify({
+                ok: true,
+                candles: [
+                    { ts: 1_700_000_001, open: 100, high: 101, low: 99, close: 100.5, volume: 10 },
+                    { ts: 1_700_000_002, open: 100.5, high: 102, low: 100, close: 101, volume: 12 },
+                ],
+            }), { status: 200 });
+        };
+
+        const fetcher = createFetcher({
+            getLookbackBars: () => 2,
+        });
+
+        const data = await fetcher.fetchData("BTCUSDT", "1s");
+        const url = new URL(requestedUrl);
+
+        assert.equal(url.pathname, "/api/second-market/candles");
+        assert.equal(url.searchParams.get("symbol"), "BTCUSDT");
+        assert.equal(url.searchParams.get("limit"), "2");
+        assert.deepEqual(data.map((candle) => candle.time), [1_700_000_001, 1_700_000_002]);
     });
 
     it("sanitizes unaligned Binance candles from the in-memory cache", async () => {

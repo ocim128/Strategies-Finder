@@ -41,6 +41,7 @@ import { DataProviderRouter } from "./data/data-provider-router";
 import { DataCache } from "./data/data-cache";
 import { DataPersistence } from "./data/data-persistence";
 import { DataFetcher } from "./data/data-fetcher";
+import { isSecondMarketChartContext } from "./second-market/api";
 
 export type { DataLoadReporter } from "./data/data-fetcher";
 
@@ -223,6 +224,10 @@ export class DataManager {
     }
 
     public startStreaming(symbol: string = state.currentSymbol, interval: string = state.currentInterval): void {
+        if (isSecondMarketChartContext(symbol, interval)) {
+            debugLogger.info('data.stream.skip_second_market_1s', { symbol, interval });
+            return;
+        }
         if (this.isMockSymbol(symbol)) {
             debugLogger.info('data.stream.skip_mock', { symbol });
             return;

@@ -1,6 +1,9 @@
 import { describe, it } from "node:test";
 import { expect } from "chai";
-import { evaluateSecondMarketTrades } from "../lib/second-market/backtest";
+import {
+    evaluateSecondMarketTrades,
+    SECOND_MARKET_UNRESOLVED_OUTCOME_SOURCE,
+} from "../lib/second-market/backtest";
 import type { PolymarketClob1sQuoteRow } from "../lib/second-market/types";
 import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
 import type { Trade } from "../lib/types/strategies";
@@ -23,6 +26,14 @@ function outcome(): PolymarketOutcomeRow {
         resolved_outcome_up: 1,
         resolution_source: "test",
         updated_at: 1_700_000_301,
+    };
+}
+
+function unresolvedOutcome(): PolymarketOutcomeRow {
+    return {
+        ...outcome(),
+        resolved_outcome_up: 0,
+        resolution_source: SECOND_MARKET_UNRESOLVED_OUTCOME_SOURCE,
     };
 }
 
@@ -103,6 +114,24 @@ describe("second market backtest evaluator", () => {
         expect(evaluated.summary.scoredTrades).to.equal(1);
     });
 
+    it("uses the chart exit second for non-signal exits inside the same event", () => {
+        const position = trade(1_700_000_010, 1_700_000_020);
+        position.exitReason = "take_profit";
+
+        const evaluated = evaluateSecondMarketTrades({
+            trades: [position],
+            outcomes: [outcome()],
+            quotes: [
+                quote(1_700_000_010, 0.55, 0.53),
+                quote(1_700_000_020, 0.60, 0.58),
+            ],
+            mode: "strict",
+        });
+
+        expect(evaluated.results[0].exitSource).to.equal("signal");
+        expect(evaluated.results[0].exitPrice).to.equal(0.58);
+    });
+
     it("does not use future quotes to fill missing strict entries", () => {
         const evaluated = evaluateSecondMarketTrades({
             trades: [trade(1_700_000_010, 1_700_000_020)],
@@ -132,6 +161,23 @@ describe("second market backtest evaluator", () => {
         expect(evaluated.results[0].exitSource).to.equal("resolution");
         expect(evaluated.results[0].exitPrice).to.equal(1);
         expect(evaluated.results[0].pnl).to.equal(0.6);
+    });
+
+    it("does not invent resolution exits for unresolved CLOB-only events", () => {
+        const position = trade(1_700_000_010, 1_700_000_400);
+        position.exitReason = "end_of_data";
+        const evaluated = evaluateSecondMarketTrades({
+            trades: [position],
+            outcomes: [unresolvedOutcome()],
+            quotes: [quote(1_700_000_010, 0.40, 0.38)],
+            mode: "strict",
+        });
+
+        expect(evaluated.results[0].exitSource).to.equal("missing");
+        expect(evaluated.results[0].exitPrice).to.equal(null);
+        expect(evaluated.results[0].pnl).to.equal(null);
+        expect(evaluated.summary.scoredTrades).to.equal(0);
+        expect(evaluated.summary.missingQuoteTrades).to.equal(1);
     });
 
     it("does not fill from another symbol series at the same second", () => {

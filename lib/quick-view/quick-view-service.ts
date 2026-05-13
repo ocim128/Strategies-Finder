@@ -23,6 +23,10 @@ import { findContainingEvent } from "../polymarket-1m-5m-bridge";
 import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
 import { getPolymarketOutcomeIntervalDurationSec, resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import {
+    annotateBacktestResultWithSecondMarketClob,
+    isSecondMarketPolymarketSupported,
+} from "../second-market/evaluation";
+import {
     hasFilteredPolymarketTrades,
     isActualPolymarketEntryMinuteMode,
     resolvePolymarketEntrySelectionModeForDisplay,
@@ -835,6 +839,22 @@ class QuickViewManager {
                 outcomeSymbol: result.polymarketTradeSummary.outcomeSymbol ?? resolvedOutcomeSymbol ?? undefined,
                 outcomeInterval: result.polymarketTradeSummary.outcomeInterval ?? outcomeInterval,
             });
+        }
+
+        if (isSecondMarketPolymarketSupported(resultContext.symbol, resultContext.interval)) {
+            try {
+                return await annotateBacktestResultWithSecondMarketClob({
+                    result,
+                    symbol: resultContext.symbol,
+                    interval: resultContext.interval,
+                    outcomeSymbol: outcomeSymbol ?? undefined,
+                });
+            } catch (error) {
+                debugLogger.warn("quick_view.second_market_polymarket_annotation_failed", {
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                return result;
+            }
         }
 
         if (!isSupportedPolymarketOutcomeRun(resultContext.symbol, resultContext.interval, outcomeInterval, outcomeSymbol)) {

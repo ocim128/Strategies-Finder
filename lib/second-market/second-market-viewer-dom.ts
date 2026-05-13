@@ -3,6 +3,8 @@ export const SECOND_MARKET_VIEWER_IDS = {
     symbol: "secondMarketSymbol",
     windowSec: "secondMarketWindowSec",
     autoRefresh: "secondMarketAutoRefresh",
+    inspectSecond: "secondMarketInspectSecond",
+    inspectGo: "secondMarketInspectGo",
     refresh: "secondMarketRefresh",
     status: "secondMarketStatus",
     metricBinance: "secondMarketMetricBinance",
@@ -15,6 +17,14 @@ export const SECOND_MARKET_VIEWER_IDS = {
     latestTime: "secondMarketLatestTime",
     gammaYes: "secondMarketGammaYes",
     gammaNo: "secondMarketGammaNo",
+    detailTime: "secondMarketDetailTime",
+    detailBinance: "secondMarketDetailBinance",
+    detailVolume: "secondMarketDetailVolume",
+    detailYes: "secondMarketDetailYes",
+    detailNo: "secondMarketDetailNo",
+    detailReference: "secondMarketDetailReference",
+    detailGamma: "secondMarketDetailGamma",
+    detailAlignment: "secondMarketDetailAlignment",
     binanceChart: "secondMarketBinanceChart",
     clobChart: "secondMarketClobChart",
     referenceChart: "secondMarketReferenceChart",
@@ -27,6 +37,8 @@ export type SecondMarketViewerDom = {
     symbolSelect: HTMLSelectElement;
     windowSelect: HTMLSelectElement;
     autoRefreshInput: HTMLInputElement;
+    inspectSecondInput: HTMLInputElement;
+    inspectGoButton: HTMLButtonElement;
     refreshButton: HTMLButtonElement;
     status: HTMLElement;
     metricBinance: HTMLElement;
@@ -39,6 +51,14 @@ export type SecondMarketViewerDom = {
     latestTime: HTMLElement;
     gammaYes: HTMLElement;
     gammaNo: HTMLElement;
+    detailTime: HTMLElement;
+    detailBinance: HTMLElement;
+    detailVolume: HTMLElement;
+    detailYes: HTMLElement;
+    detailNo: HTMLElement;
+    detailReference: HTMLElement;
+    detailGamma: HTMLElement;
+    detailAlignment: HTMLElement;
     binanceChart: HTMLElement;
     clobChart: HTMLElement;
     referenceChart: HTMLElement;
@@ -58,6 +78,8 @@ export function querySecondMarketViewerDom(): SecondMarketViewerDom {
         symbolSelect: requireElement<HTMLSelectElement>(SECOND_MARKET_VIEWER_IDS.symbol),
         windowSelect: requireElement<HTMLSelectElement>(SECOND_MARKET_VIEWER_IDS.windowSec),
         autoRefreshInput: requireElement<HTMLInputElement>(SECOND_MARKET_VIEWER_IDS.autoRefresh),
+        inspectSecondInput: requireElement<HTMLInputElement>(SECOND_MARKET_VIEWER_IDS.inspectSecond),
+        inspectGoButton: requireElement<HTMLButtonElement>(SECOND_MARKET_VIEWER_IDS.inspectGo),
         refreshButton: requireElement<HTMLButtonElement>(SECOND_MARKET_VIEWER_IDS.refresh),
         status: requireElement(SECOND_MARKET_VIEWER_IDS.status),
         metricBinance: requireElement(SECOND_MARKET_VIEWER_IDS.metricBinance),
@@ -70,6 +92,14 @@ export function querySecondMarketViewerDom(): SecondMarketViewerDom {
         latestTime: requireElement(SECOND_MARKET_VIEWER_IDS.latestTime),
         gammaYes: requireElement(SECOND_MARKET_VIEWER_IDS.gammaYes),
         gammaNo: requireElement(SECOND_MARKET_VIEWER_IDS.gammaNo),
+        detailTime: requireElement(SECOND_MARKET_VIEWER_IDS.detailTime),
+        detailBinance: requireElement(SECOND_MARKET_VIEWER_IDS.detailBinance),
+        detailVolume: requireElement(SECOND_MARKET_VIEWER_IDS.detailVolume),
+        detailYes: requireElement(SECOND_MARKET_VIEWER_IDS.detailYes),
+        detailNo: requireElement(SECOND_MARKET_VIEWER_IDS.detailNo),
+        detailReference: requireElement(SECOND_MARKET_VIEWER_IDS.detailReference),
+        detailGamma: requireElement(SECOND_MARKET_VIEWER_IDS.detailGamma),
+        detailAlignment: requireElement(SECOND_MARKET_VIEWER_IDS.detailAlignment),
         binanceChart: requireElement(SECOND_MARKET_VIEWER_IDS.binanceChart),
         clobChart: requireElement(SECOND_MARKET_VIEWER_IDS.clobChart),
         referenceChart: requireElement(SECOND_MARKET_VIEWER_IDS.referenceChart),

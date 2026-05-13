@@ -23,6 +23,7 @@ import { finderSortRequiresTradeTimingQuality } from "../trade-timing-quality";
 import type { FinderDataset } from "./finder-timeframe-loader";
 import type { CapitalSettings } from "../types/backtest";
 import type { FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
+import { isSecondMarketPolymarketSupported } from "../second-market/evaluation";
 
 export { buildFinderEvaluationData, resolveFinderCandidateBacktestSettings, shouldUseRustCachedMode };
 
@@ -77,6 +78,10 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
 
     // Polymarket classification mode intercepts before any backtest logic
     if (options.polymarketScoringEnabled) {
+        if (isSecondMarketPolymarketSupported(input.symbol, input.interval)) {
+            const { runSecondMarketFinder } = await import("../second-market/finder-runner");
+            return runSecondMarketFinder(input, callbacks);
+        }
         const { runPolymarketFinder } = await import("./finder-runner-polymarket");
         return runPolymarketFinder(input, callbacks);
     }

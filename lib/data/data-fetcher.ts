@@ -34,6 +34,11 @@ import {
 import {
     loadSqliteCandles,
 } from "../local-sqlite-api";
+import {
+    isSecondMarketChartContext,
+    loadSecondMarketCandles,
+    normalizeSecondMarketChartSymbol,
+} from "../second-market/api";
 import type { ResampleOptions } from "../strategies/resample-utils";
 import {
     DATA_CACHE_SYNC_MIN_MS,
@@ -83,6 +88,21 @@ export class DataFetcher {
     ) {}
 
     async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
+        const secondMarketSymbol = normalizeSecondMarketChartSymbol(symbol);
+        if (secondMarketSymbol && isSecondMarketChartContext(symbol, interval)) {
+            if (signal?.aborted) return [];
+            const data = await loadSecondMarketCandles({
+                symbol: secondMarketSymbol,
+                limit: this.getChartLookbackBars() ?? DATA_CHART_TOTAL_LIMIT,
+            });
+            this.reporter.updateSymbolDataSource?.(
+                "1s miner DB",
+                "seed",
+                "Chart data is loaded from price-data/1second-chart/second-market-data.sqlite."
+            );
+            return data;
+        }
+
         const provider = this.providerRouter.getProvider(symbol);
         const storageInterval = resolveStorageInterval(interval);
         const cacheKey = this.buildCacheKey(symbol, storageInterval, provider);
@@ -124,6 +144,19 @@ export class DataFetcher {
         signal?: AbortSignal,
         lookbackBars?: number
     ): Promise<{ data: OHLCVData[]; source: 'mock' | 'local' | 'network' }> {
+        const secondMarketSymbol = normalizeSecondMarketChartSymbol(symbol);
+        if (secondMarketSymbol && isSecondMarketChartContext(symbol, interval)) {
+            if (signal?.aborted) return { data: [], source: 'local' };
+            const maxBars = Number.isFinite(lookbackBars)
+                ? Math.max(200, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(lookbackBars!)))
+                : DATA_CHART_TOTAL_LIMIT;
+            const data = await loadSecondMarketCandles({
+                symbol: secondMarketSymbol,
+                limit: maxBars,
+            });
+            return { data, source: 'local' };
+        }
+
         if (isMockSymbol(symbol)) {
             if (signal?.aborted) return { data: [], source: 'mock' };
             const mockData = generateMockData(symbol, interval);
@@ -189,6 +222,15 @@ export class DataFetcher {
         limit: number,
         options?: HistoricalFetchOptions
     ): Promise<OHLCVData[]> {
+        const secondMarketSymbol = normalizeSecondMarketChartSymbol(symbol);
+        if (secondMarketSymbol && isSecondMarketChartContext(symbol, interval)) {
+            if (options?.signal?.aborted) return [];
+            return loadSecondMarketCandles({
+                symbol: secondMarketSymbol,
+                limit,
+            });
+        }
+
         if (isMockSymbol(symbol)) {
             const data = generateMockData(symbol, interval);
             return trimToLastCandles(data, limit);

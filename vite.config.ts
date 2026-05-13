@@ -52,6 +52,12 @@ function parseSecondMarketWindowSec(raw: string | null): number {
     return Math.max(60, Math.min(7200, Math.floor(parsed)));
 }
 
+function parseSecondMarketLimit(raw: string | null): number {
+    const parsed = Number(raw || '50000');
+    if (!Number.isFinite(parsed)) return 50000;
+    return Math.max(1, Math.min(200000, Math.floor(parsed)));
+}
+
 function parseSecondMarketSymbol(raw: string | null): string {
     const symbol = String(raw || 'BTCUSDT').trim().toUpperCase();
     return SECOND_MARKET_SYMBOLS.has(symbol) ? symbol : 'BTCUSDT';
@@ -178,14 +184,19 @@ type SecondMarketClobDbRow = {
     outcome_interval: string;
     event_start_ts: number;
     event_end_ts: number;
+    condition_id: string;
     market_slug: string;
+    yes_token_id: string;
+    no_token_id: string;
     sample_ts: number;
     yes_bid: number | null;
     yes_ask: number | null;
     yes_mid: number | null;
+    yes_last: number | null;
     no_bid: number | null;
     no_ask: number | null;
     no_mid: number | null;
+    no_last: number | null;
     source_ts_ms: number | null;
     quote_age_ms: number | null;
     quality_flags: string;
@@ -815,6 +826,123 @@ function secondMarketVisualizerPlugin(): Plugin {
                     return;
                 }
 
+                if (path === '/candles') {
+                    const symbol = parseSecondMarketSymbol(requestUrl.searchParams.get('symbol'));
+                    const marketType = requestUrl.searchParams.get('marketType') === 'futures' ? 'futures' : 'spot';
+                    const limit = parseSecondMarketLimit(requestUrl.searchParams.get('limit'));
+                    const explicitStartTs = toUnixSeconds(requestUrl.searchParams.get('startTs'));
+                    const explicitEndTs = toUnixSeconds(requestUrl.searchParams.get('endTs'));
+                    const latestClosedTs = Math.floor(Date.now() / 1000) - 2;
+                    const endTs = Math.min(explicitEndTs ?? latestClosedTs, latestClosedTs);
+
+                    const db = openReadOnlyDb();
+                    if (!db) {
+                        sendJson(res, 404, {
+                            ok: false,
+                            dbPath: SECOND_MARKET_DB_PATH,
+                            error: 'Second-market SQLite DB not found.',
+                        });
+                        return;
+                    }
+
+                    try {
+                        const candles = explicitStartTs !== null
+                            ? db.prepare(`
+                                SELECT symbol, market_type, ts, open, high, low, close, volume, trade_count, updated_at
+                                FROM binance_1s_candles
+                                WHERE symbol = ? AND market_type = ? AND ts >= ? AND ts <= ?
+                                ORDER BY ts ASC
+                                LIMIT ?
+                            `).all(symbol, marketType, explicitStartTs, endTs, limit) as SecondMarketBinanceDbRow[]
+                            : (db.prepare(`
+                                SELECT symbol, market_type, ts, open, high, low, close, volume, trade_count, updated_at
+                                FROM binance_1s_candles
+                                WHERE symbol = ? AND market_type = ? AND ts <= ?
+                                ORDER BY ts DESC
+                                LIMIT ?
+                            `).all(symbol, marketType, endTs, limit) as SecondMarketBinanceDbRow[]).reverse();
+                        const latestDataTs = maxFinite(candles.map((row) => row.ts));
+                        sendJson(res, 200, {
+                            ok: true,
+                            dbPath: SECOND_MARKET_DB_PATH,
+                            symbol,
+                            marketType,
+                            endTs,
+                            candles,
+                            stats: {
+                                latestDataTs,
+                                latestLagSec: latestDataTs === null ? null : Math.max(0, Math.floor(Date.now() / 1000) - latestDataTs),
+                            },
+                        });
+                    } finally {
+                        db.close();
+                    }
+                    return;
+                }
+
+                if (path === '/clob-quotes') {
+                    const symbol = parseSecondMarketSymbol(requestUrl.searchParams.get('symbol'));
+                    const seriesId = String(requestUrl.searchParams.get('seriesId') || '').trim();
+                    const startTs = toUnixSeconds(requestUrl.searchParams.get('startTs'));
+                    const endTs = toUnixSeconds(requestUrl.searchParams.get('endTs'));
+                    if (startTs === null || endTs === null || endTs < startTs) {
+                        sendJson(res, 400, { ok: false, error: 'Valid startTs and endTs are required.' });
+                        return;
+                    }
+
+                    const db = openReadOnlyDb();
+                    if (!db) {
+                        sendJson(res, 404, {
+                            ok: false,
+                            dbPath: SECOND_MARKET_DB_PATH,
+                            error: 'Second-market SQLite DB not found.',
+                        });
+                        return;
+                    }
+
+                    try {
+                        const bindings: Array<string | number> = [symbol, startTs, endTs];
+                        const seriesFilter = seriesId ? 'AND series_id = ?' : '';
+                        if (seriesId) bindings.push(seriesId);
+                        const quotes = db.prepare(`
+                            SELECT series_id, symbol, outcome_interval, event_start_ts, event_end_ts,
+                                   condition_id, market_slug, yes_token_id, no_token_id,
+                                   sample_ts, yes_bid, yes_ask, yes_mid, yes_last,
+                                   no_bid, no_ask, no_mid, no_last,
+                                   source, source_ts_ms, quote_age_ms, quality_flags, updated_at
+                            FROM polymarket_clob_1s_quotes
+                            WHERE symbol = ?
+                              AND sample_ts >= ?
+                              AND sample_ts <= ?
+                              AND event_start_ts <= sample_ts
+                              AND event_end_ts > sample_ts
+                              ${seriesFilter}
+                            ORDER BY sample_ts ASC, updated_at ASC
+                            LIMIT 250000
+                        `).all(...bindings) as SecondMarketClobDbRow[];
+                        const quoteTimes = quotes.map((row) => row.sample_ts);
+                        const requestedSeconds = endTs - startTs + 1;
+                        const distinctSeconds = distinctCount(quoteTimes);
+                        sendJson(res, 200, {
+                            ok: true,
+                            dbPath: SECOND_MARKET_DB_PATH,
+                            symbol,
+                            seriesId: seriesId || null,
+                            startTs,
+                            endTs,
+                            quotes,
+                            stats: {
+                                distinctSeconds,
+                                missingSeconds: Math.max(0, requestedSeconds - distinctSeconds),
+                                exactSampleCoveragePct: requestedSeconds > 0 ? (distinctSeconds / requestedSeconds) * 100 : 0,
+                            },
+                        });
+                    } finally {
+                        db.close();
+                    }
+                    return;
+                }
+
                 if (path === '/window') {
                     const symbol = parseSecondMarketSymbol(requestUrl.searchParams.get('symbol'));
                     const marketType = requestUrl.searchParams.get('marketType') === 'futures' ? 'futures' : 'spot';
@@ -847,7 +975,8 @@ function secondMarketVisualizerPlugin(): Plugin {
 
                         const clobRows = db.prepare(`
                             SELECT series_id, symbol, outcome_interval, event_start_ts, event_end_ts, market_slug,
-                                   sample_ts, yes_bid, yes_ask, yes_mid, no_bid, no_ask, no_mid,
+                                   sample_ts, yes_bid, yes_ask, yes_mid, yes_last,
+                                   no_bid, no_ask, no_mid, no_last,
                                    source_ts_ms, quote_age_ms, quality_flags, updated_at
                             FROM polymarket_clob_1s_quotes
                             WHERE symbol = ?
@@ -876,10 +1005,10 @@ function secondMarketVisualizerPlugin(): Plugin {
                               AND event_end_ts > ?
                               AND snapshot_ts <= ?
                             ORDER BY snapshot_ts DESC
-                            LIMIT 20
-                        `).all(symbol, endTs, endTs, endTs) as SecondMarketGammaDbRow[];
+                            LIMIT 200
+                        `).all(symbol, endTs, startTs, endTs) as SecondMarketGammaDbRow[];
                         const gammaSnapshots = gammaRows.slice().reverse();
-                        const latestGamma = gammaRows[0] ?? null;
+                        const latestGamma = gammaRows.find((row) => row.event_start_ts <= endTs && row.event_end_ts > endTs) ?? gammaRows[0] ?? null;
 
                         const binanceTimes = candles.map((row) => row.ts);
                         const clobTimes = clobRows.map((row) => row.sample_ts);

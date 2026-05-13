@@ -72,6 +72,10 @@ import {
     transferBacktestEdgeAnalysisInput,
 } from "./backtest-edge-analysis";
 import { attachTradeTimingQuality } from "./trade-timing-quality";
+import {
+    annotateBacktestResultWithSecondMarketClob,
+    isSecondMarketPolymarketSupported,
+} from "./second-market/evaluation";
 
 type CurrentBacktestExecution = {
     result: BacktestResult;
@@ -632,6 +636,15 @@ export class BacktestService {
         chartData: OHLCVData[]
     ): Promise<BacktestResult> {
         try {
+            if (isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval)) {
+                return await annotateBacktestResultWithSecondMarketClob({
+                    result,
+                    symbol: state.currentSymbol,
+                    interval: state.currentInterval,
+                    outcomeSymbol: settings.polymarketOutcomeSymbol,
+                });
+            }
+
             const outcomeInterval = resolvePolymarketOutcomeInterval(settings.polymarketOutcomeInterval);
             const effectiveExitMode = resolveEffectivePolymarketExitMode({
                 requestedMode: settings.polymarketExitMode,

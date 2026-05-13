@@ -21,6 +21,8 @@ type Fill = {
     quoteTs: number;
 };
 
+export const SECOND_MARKET_UNRESOLVED_OUTCOME_SOURCE = "second_market_clob_unresolved";
+
 function isFillAgeUsable(ageSec: number, mode: SecondMarketAlignmentMode, maxQuoteAgeSec: number): boolean {
     if (ageSec < 0) return false;
     return mode === "strict" ? ageSec === 0 : ageSec <= maxQuoteAgeSec;
@@ -61,7 +63,10 @@ function findQuoteFill(args: {
     return price === null ? null : { price, quoteTs: best.quoteTs };
 }
 
-function resolveResolutionExitPrice(outcome: PolymarketOutcomeRow, side: SecondMarketSide): number {
+function resolveResolutionExitPrice(outcome: PolymarketOutcomeRow, side: SecondMarketSide): number | null {
+    if (outcome.resolution_source === SECOND_MARKET_UNRESOLVED_OUTCOME_SOURCE) {
+        return null;
+    }
     if (outcome.resolved_outcome_up === 1) {
         return side === "yes" ? 1 : 0;
     }
@@ -182,18 +187,23 @@ export function evaluateSecondMarketTrades(args: {
             continue;
         }
 
-        const rawExitTs = trade.exitReason === "signal"
-            ? parseTimeToUnixSeconds(trade.exitTime)
-            : null;
+        const rawExitTs = trade.exitReason === "end_of_data"
+            ? null
+            : parseTimeToUnixSeconds(trade.exitTime);
         const signalExitTs = rawExitTs !== null && rawExitTs < outcome.event_end_ts
             ? rawExitTs
             : null;
         const exit = signalExitTs === null
-            ? {
-                price: resolveResolutionExitPrice(outcome, side),
-                quoteTs: null,
-                source: "resolution" as const,
-            }
+            ? (() => {
+                const price = resolveResolutionExitPrice(outcome, side);
+                return price === null
+                    ? null
+                    : {
+                        price,
+                        quoteTs: null,
+                        source: "resolution" as const,
+                    };
+            })()
             : (() => {
                 const fill = findQuoteFill({
                     seriesId: outcome.series_id,

@@ -709,6 +709,10 @@ Purpose: allow 1-second Polymarket performance testing without changing current 
 Deliverables:
 
 - add a gated 1s Polymarket evaluation path
+- load main chart and Finder `1s` BTCUSDT/XRPUSDT candles from `/api/second-market/candles`
+- keep 1s chart data sourced from local SQLite only; do not mix Binance live WebSocket candles into this interval
+- add a dedicated 1s Polymarket Finder runner that reuses one loaded CLOB/outcome context per run
+- allow Quick View to rebuild missing 1s CLOB annotations from the same second-market DB
 - require TypeScript engine
 - require explicit 1s interval
 - require explicit Polymarket CLOB fill source
@@ -727,6 +731,8 @@ Verification:
 Exit criteria:
 
 - 1s backtest can score BTCUSDT and XRPUSDT against CLOB quotes
+- 1s Finder can rank BTCUSDT and XRPUSDT candidates against strict CLOB bid/ask fills
+- Quick View can show 1s Polymarket performance for scored results
 - result reports skipped trades and quote coverage
 - no existing 1m Polymarket tests regress
 
@@ -772,16 +778,19 @@ Deliverables:
 
 - add read-only `1s` panel tab
 - load bounded ranges from SQLite through `/api/second-market/window`
+- load main chart candles from SQLite through `/api/second-market/candles`
 - render Binance 1-second candles
 - render Polymarket CLOB YES/NO bid/ask lines on a probability scale
 - render RTDS reference price separately from CLOB execution prices
 - show coverage, lag, quote age, active event, and latest Gamma prices
+- show exact selected-second details for Binance OHLCV, CLOB YES/NO, reference price, Gamma, and alignment state
 
 Verification:
 
 - chart loads a short 1s range
 - chart does not request unbounded 1s history
 - overlay timestamps match candle timestamps
+- selected-second inspector uses the exact `sample_ts` row, not a future or nearest future CLOB row
 
 Exit criteria:
 

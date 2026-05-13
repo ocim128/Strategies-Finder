@@ -24,9 +24,11 @@ export type SecondMarketViewerClobQuote = {
     yes_bid: number | null;
     yes_ask: number | null;
     yes_mid: number | null;
+    yes_last: number | null;
     no_bid: number | null;
     no_ask: number | null;
     no_mid: number | null;
+    no_last: number | null;
     source_ts_ms: number | null;
     quote_age_ms: number | null;
     quality_flags: string;
@@ -109,11 +111,15 @@ type SecondMarketViewerError = {
 export async function loadSecondMarketViewerWindow(args: {
     symbol: SecondMarketViewerSymbol;
     windowSec: number;
+    endTs?: number;
 }): Promise<SecondMarketViewerWindow> {
     const params = new URLSearchParams({
         symbol: args.symbol,
         windowSec: String(Math.max(60, Math.floor(args.windowSec))),
     });
+    if (Number.isFinite(args.endTs)) {
+        params.set("endTs", String(Math.floor(args.endTs!)));
+    }
 
     const response = await fetch(`/api/second-market/window?${params.toString()}`, {
         method: "GET",

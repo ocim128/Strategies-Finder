@@ -57,6 +57,7 @@ import {
 	resolvePolymarketPostSignalLimitExitMode,
 } from "./polymarket-post-signal-limit-entry";
 import { finderSortRequiresTradeTimingQuality } from "./trade-timing-quality";
+import { isSecondMarketPolymarketSupported } from "./second-market/evaluation";
 
 type FinderPersistedUiState = {
 	scope: FinderScope;
@@ -1519,6 +1520,8 @@ export class FinderManager {
 			mergedSettings.polymarketAnnotationEnabled = true;
 			mergedSettings.polymarketExitMode = 'signal_exit_same_event';
 			applyPolymarketLimitEntrySettings();
+		} else if (polymarketEval && isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval)) {
+			mergedSettings.polymarketAnnotationEnabled = true;
 		} else if (applyPolymarketLimitEntrySettings()) {
 			mergedSettings.polymarketAnnotationEnabled = true;
 		} else if (Number.isFinite(params.polymarketEntryOffset)) {

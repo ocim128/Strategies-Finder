@@ -106,6 +106,8 @@ const TEST_FILES = [
     "tests/second-market-reference.spec.ts",
     "tests/second-market-gamma.spec.ts",
     "tests/second-market-backtest.spec.ts",
+    "tests/second-market-evaluation.spec.ts",
+    "tests/second-market-finder.spec.ts",
     "tests/backtest-endpoint-parity.spec.ts",
     "tests/backtest-endpoint-batch.spec.ts",
     "tests/backtest-endpoint-plugin.spec.ts",
