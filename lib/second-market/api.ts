@@ -1,4 +1,4 @@
-import type { OHLCVData } from "../types/strategies";
+import type { OHLCVData, Polymarket1sGammaContextRow } from "../types/strategies";
 import type { PolymarketClob1sQuoteRow, SecondMarketSymbol } from "./types";
 import { SECOND_MARKET_SYMBOLS } from "./types";
 
@@ -30,12 +30,18 @@ type SecondMarketClobQuotesResponse = {
     };
 };
 
+type SecondMarketGammaSnapshotsResponse = {
+    ok: true;
+    gammaSnapshots: Polymarket1sGammaContextRow[];
+};
+
 type SecondMarketApiError = {
     ok?: false;
     error?: string;
 };
 
-function getBaseUrl(): string {
+function getBaseUrl(baseUrl?: string): string {
+    if (baseUrl) return baseUrl.replace(/\/+$/, "");
     return typeof window === "undefined" ? "http://localhost:5173" : "";
 }
 
@@ -94,6 +100,7 @@ export async function loadSecondMarketClobQuotes(args: {
     startTs: number;
     endTs: number;
     seriesId?: string;
+    baseUrl?: string;
 }): Promise<PolymarketClob1sQuoteRow[]> {
     const params = new URLSearchParams({
         symbol: args.symbol,
@@ -102,7 +109,26 @@ export async function loadSecondMarketClobQuotes(args: {
     });
     if (args.seriesId) params.set("seriesId", args.seriesId);
 
-    const response = await fetch(`${getBaseUrl()}/api/second-market/clob-quotes?${params.toString()}`, { method: "GET" });
+    const response = await fetch(`${getBaseUrl(args.baseUrl)}/api/second-market/clob-quotes?${params.toString()}`, { method: "GET" });
     const payload = await response.json().catch(() => ({})) as SecondMarketClobQuotesResponse | SecondMarketApiError;
     return assertOk(response, payload, "/api/second-market/clob-quotes").quotes;
+}
+
+export async function loadSecondMarketGammaSnapshots(args: {
+    symbol: SecondMarketSymbol;
+    startTs: number;
+    endTs: number;
+    seriesId?: string;
+    baseUrl?: string;
+}): Promise<Polymarket1sGammaContextRow[]> {
+    const params = new URLSearchParams({
+        symbol: args.symbol,
+        startTs: String(Math.floor(args.startTs)),
+        endTs: String(Math.floor(args.endTs)),
+    });
+    if (args.seriesId) params.set("seriesId", args.seriesId);
+
+    const response = await fetch(`${getBaseUrl(args.baseUrl)}/api/second-market/gamma-snapshots?${params.toString()}`, { method: "GET" });
+    const payload = await response.json().catch(() => ({})) as SecondMarketGammaSnapshotsResponse | SecondMarketApiError;
+    return assertOk(response, payload, "/api/second-market/gamma-snapshots").gammaSnapshots;
 }

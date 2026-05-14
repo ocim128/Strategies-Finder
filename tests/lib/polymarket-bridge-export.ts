@@ -174,6 +174,10 @@ export class PolymarketBridgeExport {
             this.getDom().polymarketBridgeStatus.textContent = `"${config.name}" uses cross-symbol strategy "${config.strategyKey}" which is not supported by bridge export.`;
             return null;
         }
+        if (strategy.polymarket1sConfig) {
+            this.getDom().polymarketBridgeStatus.textContent = `"${config.name}" uses 1s Polymarket context strategy "${config.strategyKey}" which is not supported by bridge export.`;
+            return null;
+        }
 
         const botSymbol = resolveExternalSignalSymbol(state.currentSymbol);
         if (!botSymbol) {

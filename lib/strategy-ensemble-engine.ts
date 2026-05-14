@@ -70,6 +70,13 @@ export async function buildSignalArtifact(
         return null;
     }
 
+    if (strategy.polymarket1sConfig) {
+        deps.warn(
+            `[StrategyEnsembleLab] Strategy "${config.strategyKey}" from config "${configName}" uses 1s Polymarket context and is not supported in Ensemble Lab.`
+        );
+        return null;
+    }
+
     const params = config.strategyParams ?? strategy.defaultParams;
     const backtestSettings = resolveBacktestSettingsFromRaw(
         config.backtestSettings as unknown as BacktestSettings,

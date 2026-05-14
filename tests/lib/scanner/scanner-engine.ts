@@ -314,6 +314,13 @@ export class ScannerEngine {
                 continue;
             }
 
+            if (strategy.polymarket1sConfig) {
+                debugLogger.warn('scanner.polymarket_1s_unsupported', {
+                    strategyKey: stratConfig.strategyKey,
+                });
+                continue;
+            }
+
             try {
                 // Use saved params from config, fall back to defaults
                 const params = normalizeStrategyParams(strategy.defaultParams, stratConfig.strategyParams);

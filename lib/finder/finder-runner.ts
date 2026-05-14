@@ -73,6 +73,7 @@ export interface FinderRunOutput {
 export async function runFinderExecution(input: FinderRunInput, callbacks: FinderRunCallbacks): Promise<FinderRunOutput> {
     const { options, settings, selectedStrategies, capitalSettings } = input;
     const rustSettings = sanitizeBacktestSettingsForRust(settings);
+    const hasPolymarket1sStrategy = selectedStrategies.some((selection) => selection.strategy.polymarket1sConfig);
 
     const flags = computeDatasetFlags(input.ohlcvData.length, settings, options, false);
 
@@ -82,8 +83,17 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
             const { runSecondMarketFinder } = await import("../second-market/finder-runner");
             return runSecondMarketFinder(input, callbacks);
         }
+        if (hasPolymarket1sStrategy) {
+            callbacks.setStatus("1s Polymarket context strategies require the 1s CLOB Polymarket Finder.");
+            return { results: [] };
+        }
         const { runPolymarketFinder } = await import("./finder-runner-polymarket");
         return runPolymarketFinder(input, callbacks);
+    }
+
+    if (hasPolymarket1sStrategy) {
+        callbacks.setStatus("1s Polymarket context strategies require Polymarket scoring on a supported 1s chart.");
+        return { results: [] };
     }
 
     if (options.mode === "genetic") {

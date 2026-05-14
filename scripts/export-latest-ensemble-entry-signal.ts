@@ -275,6 +275,9 @@ async function main(): Promise<void> {
         if (componentStrategy?.crossSymbolConfig) {
             throw new Error(`Ensemble recipe component "${componentConfig.name}" uses cross-symbol strategy "${componentConfig.strategyKey}" which is not supported by this export script. Remove it or use a non-cross-symbol strategy.`);
         }
+        if (componentStrategy?.polymarket1sConfig) {
+            throw new Error(`Ensemble recipe component "${componentConfig.name}" uses 1s Polymarket context strategy "${componentConfig.strategyKey}" which is not supported by this export script. Remove it or use a strategy that does not require CLOB/Gamma context.`);
+        }
     }
 
     const resolved = buildPreparedSignalsForEnsembleRecipe({

@@ -96,6 +96,7 @@ const TEST_FILES = [
     "tests/polymarket-post-signal-limit-entry.spec.ts",
     "tests/polymarket-native-session-intervals.spec.ts",
     "tests/polymarket-price-points-ingest.spec.ts",
+    "tests/polymarket-1s-helpers.spec.ts",
     "tests/finder-polymarket.spec.ts",
     "tests/polymarket-open-trade-market.spec.ts",
     "tests/polymarket-trade-annotations.spec.ts",

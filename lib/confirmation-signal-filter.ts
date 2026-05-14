@@ -73,6 +73,7 @@ export function applyConfirmationStrategiesToSignals(args: {
     for (const key of keys) {
         const strategy = builtInStrategies[key];
         if (!strategy) return [];
+        if (strategy.crossSymbolConfig || strategy.polymarket1sConfig) return [];
 
         const rawParams = {
             ...strategy.defaultParams,

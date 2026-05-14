@@ -37,7 +37,8 @@ export function buildBacktestEndpointExecutorRequest(
     crossSymbolInput?: {
         secondarySymbol: string;
         secondaryData: OHLCVData[];
-    }
+    },
+    secondMarketApiBaseUrl?: string
 ): BacktestExecutorRequest {
     return {
         ohlcvData: candles,
@@ -53,6 +54,7 @@ export function buildBacktestEndpointExecutorRequest(
                 secondaryData: crossSymbolInput.secondaryData.map((candle) => ({ ...candle })),
             }
             : undefined,
+        secondMarketApiBaseUrl,
         context: {
             nowSec,
             blockRange: cloneBlockRange(blockRange),

@@ -477,9 +477,45 @@ export interface CrossSymbolRuntimeContext {
     trimmedLeadingBars: number;
 }
 
+export interface Polymarket1sQuoteContextRow {
+    series_id: string;
+    symbol: string;
+    outcome_interval: string;
+    event_start_ts: number;
+    event_end_ts: number;
+    sample_ts: number;
+    yes_mid: number | null;
+    no_mid: number | null;
+}
+
+export interface Polymarket1sGammaContextRow {
+    series_id: string;
+    symbol: string;
+    outcome_interval: string;
+    event_start_ts: number;
+    event_end_ts: number;
+    snapshot_ts: number;
+    gamma_yes_price: number | null;
+    gamma_no_price: number | null;
+}
+
+export interface Polymarket1sRuntimeContext {
+    symbol: string;
+    outcomeSymbol: string;
+    seriesId: string;
+    outcomeInterval: PolymarketOutcomeInterval;
+    quotes: readonly Polymarket1sQuoteContextRow[];
+    gammaSnapshots?: readonly Polymarket1sGammaContextRow[];
+}
+
+export interface Polymarket1sConfig {
+    required?: boolean;
+}
+
 /** Execution context bag passed as an optional argument to strategy methods. */
 export interface StrategyExecutionContext {
     crossSymbol?: CrossSymbolRuntimeContext;
+    polymarket1s?: Polymarket1sRuntimeContext;
 }
 
 export interface Strategy {
@@ -491,6 +527,8 @@ export interface Strategy {
     normalizeParams?: (params: StrategyParams) => StrategyParams;
     /** Optional cross-symbol configuration. When present, the runtime will provide secondary data via execution context. */
     crossSymbolConfig?: CrossSymbolConfig;
+    /** Optional 1s Polymarket context requirement for strategies using CLOB/Gamma signal-quality helpers. */
+    polymarket1sConfig?: Polymarket1sConfig;
     execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => Signal[];
     /**
      * Optional Finder/optimizer precompute seam for reusing dataset-derived state

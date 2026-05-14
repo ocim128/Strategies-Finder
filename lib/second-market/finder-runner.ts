@@ -50,6 +50,23 @@ function getDataRange(data: readonly OHLCVData[]): { startTs: number; endTs: num
     };
 }
 
+function withSecondMarketStrategyContext(
+    baseContext: StrategyExecutionContext | undefined,
+    context: NonNullable<Awaited<ReturnType<typeof loadSecondMarketEvaluationContext>>>
+): StrategyExecutionContext {
+    return {
+        ...(baseContext ?? {}),
+        polymarket1s: {
+            symbol: context.symbol,
+            outcomeSymbol: context.outcomeSymbol,
+            seriesId: context.seriesId,
+            outcomeInterval: context.outcomeInterval,
+            quotes: context.quotes,
+            gammaSnapshots: context.gammaSnapshots,
+        },
+    };
+}
+
 function applySizedNetToEvalResult(args: {
     enabled: boolean;
     evalResult: NonNullable<FinderResult["polymarketEval"]>;
@@ -239,6 +256,7 @@ export async function runSecondMarketFinder(
                 continue;
             }
         }
+        executionContext = withSecondMarketStrategyContext(executionContext, context);
 
         for (const params of plan.paramSets) {
             if (callbacks.isCancelled()) {

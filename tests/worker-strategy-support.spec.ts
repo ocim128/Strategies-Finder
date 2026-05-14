@@ -8,15 +8,15 @@ import { strategyManifest } from './lib/strategies/manifest';
 import { strategies } from './lib/strategies/library';
 
 describe('Worker strategy support', () => {
-    it('supports every non-cross-symbol manifest strategy in the worker path', () => {
-        const crossSymbolKeys = new Set(
+    it('supports every manifest strategy that does not need runtime-only context', () => {
+        const unsupportedContextKeys = new Set(
             Object.entries(strategies)
-                .filter(([, s]) => s.crossSymbolConfig != null)
+                .filter(([, s]) => s.crossSymbolConfig != null || s.polymarket1sConfig != null)
                 .map(([key]) => key)
         );
         const expectedWorkerKeys = strategyManifest
             .map((entry) => entry.key)
-            .filter((key) => !crossSymbolKeys.has(key))
+            .filter((key) => !unsupportedContextKeys.has(key))
             .sort((a, b) => a.localeCompare(b));
         const workerKeys = getWorkerSupportedStrategyKeys();
 
@@ -29,10 +29,10 @@ describe('Worker strategy support', () => {
             ).to.equal(true);
         }
 
-        for (const key of crossSymbolKeys) {
+        for (const key of unsupportedContextKeys) {
             expect(
                 isWorkerSupportedStrategyKey(key),
-                `worker should NOT support cross-symbol strategy ${key}`
+                `worker should NOT support runtime-context strategy ${key}`
             ).to.equal(false);
         }
     });

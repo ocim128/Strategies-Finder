@@ -314,6 +314,18 @@ function steppedRandom(min: number, max: number, step: number, rng: () => number
     return min + Math.floor(rng() * (steps + 1)) * step;
 }
 
+function getRequestBaseUrl(req?: IncomingMessage): string | undefined {
+    const host = req?.headers?.host;
+    if (typeof host !== "string" || host.trim().length === 0) return undefined;
+    const forwardedProto = req?.headers?.["x-forwarded-proto"];
+    const proto = Array.isArray(forwardedProto)
+        ? forwardedProto[0]
+        : typeof forwardedProto === "string" && forwardedProto.trim().length > 0
+            ? forwardedProto
+            : "http";
+    return `${proto}://${host}`;
+}
+
 // ============================================================================
 // Endpoint handlers
 // ============================================================================
@@ -402,7 +414,8 @@ async function handleSingleBacktest(
             nowSec,
             blockRange,
             annotatePolymarket,
-            crossSymbolInput ?? undefined
+            crossSymbolInput ?? undefined,
+            getRequestBaseUrl(httpRequest)
         ));
 
         // If the strategy is entry-only, we may need to use the parity-specific path
@@ -433,7 +446,8 @@ async function handleSingleBacktest(
 
 async function handleBatchBacktest(
     strategyKey: string,
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
+    httpRequest?: IncomingMessage
 ): Promise<BacktestBatchResponse | BacktestErrorResponse> {
     const req = body as unknown as BacktestBatchRequest;
 
@@ -488,7 +502,8 @@ async function handleBatchBacktest(
                 itemCtx.nowSec ?? nowSec,
                 itemCtx.blockRange ?? blockRange,
                 itemCtx.annotatePolymarket ?? annotatePolymarket,
-                crossSymbolInput ?? undefined
+                crossSymbolInput ?? undefined,
+                getRequestBaseUrl(httpRequest)
             ));
 
             results.push({
@@ -530,7 +545,8 @@ async function handleBatchBacktest(
 
 async function handleRandomSearch(
     strategyKey: string,
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
+    httpRequest?: IncomingMessage
 ): Promise<BacktestRandomSearchResponse | BacktestErrorResponse> {
     const req = body as unknown as BacktestRandomSearchRequest;
 
@@ -598,7 +614,8 @@ async function handleRandomSearch(
                 nowSec,
                 blockRange,
                 annotatePolymarket,
-                crossSymbolInput ?? undefined
+                crossSymbolInput ?? undefined,
+                getRequestBaseUrl(httpRequest)
             ));
 
             allResults.push({
@@ -756,7 +773,7 @@ export function backtestEndpointPlugin(): Plugin {
                 if (method === "POST" && pathParts.length === 2 && pathParts[1] === "batch") {
                     const strategyKey = pathParts[0];
                     const body = await readJsonBody(req as IncomingMessage);
-                    const result = await handleBatchBacktest(strategyKey, body);
+                    const result = await handleBatchBacktest(strategyKey, body, req as IncomingMessage);
                     const status = result.ok ? 200 : 400;
                     sendJson(res, status, result);
                     return;
@@ -766,7 +783,7 @@ export function backtestEndpointPlugin(): Plugin {
                 if (method === "POST" && pathParts.length === 3 && pathParts[1] === "search" && pathParts[2] === "random") {
                     const strategyKey = pathParts[0];
                     const body = await readJsonBody(req as IncomingMessage);
-                    const result = await handleRandomSearch(strategyKey, body);
+                    const result = await handleRandomSearch(strategyKey, body, req as IncomingMessage);
                     const status = result.ok ? 200 : 400;
                     sendJson(res, status, result);
                     return;

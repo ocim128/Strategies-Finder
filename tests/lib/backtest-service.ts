@@ -354,8 +354,16 @@ export class BacktestService {
                 runUi.setStatus(`"${primaryStrategy.name}" is a cross-symbol strategy and is not supported in combined backtest.`);
                 return;
             }
+            if (primaryStrategy.polymarket1sConfig) {
+                runUi.setStatus(`"${primaryStrategy.name}" uses 1s Polymarket context and is not supported in combined backtest.`);
+                return;
+            }
             if (secondaryStrategy.crossSymbolConfig) {
                 runUi.setStatus(`"${secondaryStrategy.name}" is a cross-symbol strategy and is not supported in combined backtest.`);
+                return;
+            }
+            if (secondaryStrategy.polymarket1sConfig) {
+                runUi.setStatus(`"${secondaryStrategy.name}" uses 1s Polymarket context and is not supported in combined backtest.`);
                 return;
             }
 

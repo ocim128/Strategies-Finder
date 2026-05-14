@@ -944,6 +944,58 @@ function secondMarketVisualizerPlugin(): Plugin {
                     return;
                 }
 
+                if (path === '/gamma-snapshots') {
+                    const symbol = parseSecondMarketSymbol(requestUrl.searchParams.get('symbol'));
+                    const seriesId = String(requestUrl.searchParams.get('seriesId') || '').trim();
+                    const startTs = toUnixSeconds(requestUrl.searchParams.get('startTs'));
+                    const endTs = toUnixSeconds(requestUrl.searchParams.get('endTs'));
+                    if (startTs === null || endTs === null || endTs < startTs) {
+                        sendJson(res, 400, { ok: false, error: 'Valid startTs and endTs are required.' });
+                        return;
+                    }
+
+                    const db = openReadOnlyDb();
+                    if (!db) {
+                        sendJson(res, 404, {
+                            ok: false,
+                            dbPath: SECOND_MARKET_DB_PATH,
+                            error: 'Second-market SQLite DB not found.',
+                        });
+                        return;
+                    }
+
+                    try {
+                        const bindings: Array<string | number> = [symbol, startTs, endTs];
+                        const seriesFilter = seriesId ? 'AND series_id = ?' : '';
+                        if (seriesId) bindings.push(seriesId);
+                        const gammaSnapshots = db.prepare(`
+                            SELECT series_id, symbol, outcome_interval, event_start_ts, event_end_ts,
+                                   snapshot_ts, gamma_yes_price, gamma_no_price
+                            FROM polymarket_gamma_snapshots
+                            WHERE symbol = ?
+                              AND snapshot_ts >= ?
+                              AND snapshot_ts <= ?
+                              AND event_start_ts <= snapshot_ts
+                              AND event_end_ts > snapshot_ts
+                              ${seriesFilter}
+                            ORDER BY snapshot_ts ASC
+                            LIMIT 50000
+                        `).all(...bindings);
+                        sendJson(res, 200, {
+                            ok: true,
+                            dbPath: SECOND_MARKET_DB_PATH,
+                            symbol,
+                            seriesId: seriesId || null,
+                            startTs,
+                            endTs,
+                            gammaSnapshots,
+                        });
+                    } finally {
+                        db.close();
+                    }
+                    return;
+                }
+
                 if (path === '/window') {
                     const symbol = parseSecondMarketSymbol(requestUrl.searchParams.get('symbol'));
                     const marketType = requestUrl.searchParams.get('marketType') === 'futures' ? 'futures' : 'spot';

@@ -328,6 +328,9 @@ async function main(): Promise<void> {
     if (strategy.crossSymbolConfig) {
         throw new Error(`Cross-symbol strategy "${config.strategyKey}" is not supported by this export script. Use a non-cross-symbol strategy.`);
     }
+    if (strategy.polymarket1sConfig) {
+        throw new Error(`1s Polymarket context strategy "${config.strategyKey}" is not supported by this export script. Use a strategy that does not require CLOB/Gamma context.`);
+    }
 
     const rawCandles = await fetchBinanceDataWithLimit(config.symbol, config.interval, config.bars);
     if (!rawCandles.length) {

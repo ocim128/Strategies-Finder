@@ -57,6 +57,9 @@ export function buildEnsembleRecipeSignalArtifact(
     if (strategy.crossSymbolConfig) {
         throw new Error(`Ensemble recipes do not support cross-symbol strategy "${config.strategyKey}". Remove it from the recipe or use a non-cross-symbol strategy.`);
     }
+    if (strategy.polymarket1sConfig) {
+        throw new Error(`Ensemble recipes do not support 1s Polymarket context strategy "${config.strategyKey}". Remove it from the recipe or use a non-Polymarket-context strategy.`);
+    }
     const backtestSettings = resolveBacktestSettingsFromRaw(
         config.backtestSettings as unknown as BacktestSettings,
         { coerceWithoutUiToggles: true }

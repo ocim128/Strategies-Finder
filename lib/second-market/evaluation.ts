@@ -14,8 +14,9 @@ import {
 import { buildPolymarketOutcomeBase } from "../polymarket-outcome-annotation";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { evaluateSecondMarketTrades, SECOND_MARKET_UNRESOLVED_OUTCOME_SOURCE } from "./backtest";
-import { loadSecondMarketClobQuotes, normalizeSecondMarketChartSymbol } from "./api";
+import { loadSecondMarketClobQuotes, loadSecondMarketGammaSnapshots, normalizeSecondMarketChartSymbol } from "./api";
 import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
+import type { Polymarket1sGammaContextRow } from "../types/strategies";
 import type {
     PolymarketClob1sQuoteRow,
     SecondMarketBacktestSummary,
@@ -30,6 +31,7 @@ export type SecondMarketEvaluationContext = {
     outcomeInterval: PolymarketOutcomeInterval;
     outcomes: PolymarketOutcomeRow[];
     quotes: PolymarketClob1sQuoteRow[];
+    gammaSnapshots: Polymarket1sGammaContextRow[];
 };
 
 export type SecondMarketEvaluationResult = {
@@ -282,6 +284,7 @@ export async function loadSecondMarketEvaluationContext(args: {
     outcomeInterval?: PolymarketOutcomeInterval;
     startTs: number;
     endTs: number;
+    apiBaseUrl?: string;
 }): Promise<SecondMarketEvaluationContext | null> {
     const symbol = normalizeSecondMarketChartSymbol(args.symbol);
     const outcomeInterval = resolvePolymarketOutcomeInterval(args.outcomeInterval);
@@ -296,14 +299,22 @@ export async function loadSecondMarketEvaluationContext(args: {
 
     const startTs = Math.floor(args.startTs);
     const endTs = Math.floor(args.endTs);
-    const [outcomes, quotes] = await Promise.all([
+    const [outcomes, quotes, gammaSnapshots] = await Promise.all([
         loadPolymarketOutcomesForTimeRange(args.symbol, startTs, endTs, outcomeSymbol, outcomeInterval),
         loadSecondMarketClobQuotes({
             symbol: outcomeSymbol,
             seriesId,
             startTs,
             endTs,
+            baseUrl: args.apiBaseUrl,
         }),
+        loadSecondMarketGammaSnapshots({
+            symbol: outcomeSymbol,
+            seriesId,
+            startTs,
+            endTs,
+            baseUrl: args.apiBaseUrl,
+        }).catch(() => []),
     ]);
 
     return {
@@ -313,6 +324,7 @@ export async function loadSecondMarketEvaluationContext(args: {
         outcomeInterval,
         outcomes: mergeOutcomeRowsWithClobEvents(outcomes, quotes),
         quotes,
+        gammaSnapshots,
     };
 }
 

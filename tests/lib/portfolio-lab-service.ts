@@ -579,6 +579,12 @@ class PortfolioLabService {
                 'Cross-symbol strategies require secondary symbol data that Portfolio Lab does not provide.'
             );
         }
+        if (strategy.polymarket1sConfig) {
+            throw new Error(
+                `"${strategy.name}" uses 1s Polymarket context and is not supported in Portfolio Lab. ` +
+                'Portfolio Lab does not provide CLOB/Gamma context for basket symbols.'
+            );
+        }
 
         const runResult = await backtestService.evaluateStrategyOnData(data, state.currentInterval, strategy, params, settings, capitalSettings);
         const fullSignals = applyConfirmationStrategiesToSignals({

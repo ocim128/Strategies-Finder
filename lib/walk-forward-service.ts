@@ -143,6 +143,10 @@ class WalkForwardService {
                 debugLogger.error(`Strategy not found: ${strategyKey}`);
                 return null;
             }
+            if (strategy.polymarket1sConfig) {
+                this.updateStatus("Walk-forward analysis does not support 1s Polymarket context strategies.");
+                return null;
+            }
 
             let effectiveData = data;
             let crossSymbolCtx: import("./types/strategies").StrategyExecutionContext | undefined;

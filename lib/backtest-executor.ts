@@ -78,6 +78,7 @@ export interface BacktestExecutorRequest {
     capitalSettings: CapitalSettings | Record<string, unknown>;
     context: BacktestExecutionContext;
     dataFetcher?: CrossSymbolDataFetcher;
+    secondMarketApiBaseUrl?: string;
     crossSymbolInput?: {
         secondarySymbol: string;
         secondaryData: OHLCVData[];
@@ -199,13 +200,23 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         };
     }
 
+    const executionContext = await resolvePolymarket1sExecutionContext({
+        strategy,
+        primarySymbol,
+        interval,
+        data: backtestData,
+        settings: resolvedSettings,
+        baseContext: alignedCrossSymbolContext,
+        apiBaseUrl: req.secondMarketApiBaseUrl,
+    });
+
     const signals = resolveBacktestSignalsForData({
         data: backtestData,
         strategy,
         params: normalizedParams,
         settings: resolvedSettings,
         blockRange,
-        crossSymbolContext: alignedCrossSymbolContext,
+        executionContext,
     });
 
     const evaluation = strategy.evaluate?.(backtestData, normalizedParams, signals);
@@ -368,7 +379,7 @@ function resolveBacktestSignalsForData(args: {
     params: StrategyParams;
     settings: BacktestSettings;
     blockRange: { from: number; to: number } | null;
-    crossSymbolContext?: StrategyExecutionContext;
+    executionContext?: StrategyExecutionContext;
 }): Signal[] {
     const signals = executeStrategySignals(
         args.data,
@@ -376,7 +387,7 @@ function resolveBacktestSignalsForData(args: {
         args.params,
         args.settings,
         hasGlobalStrategyTimeframeWrapper(args.strategy),
-        args.crossSymbolContext
+        args.executionContext
     );
     const confirmedSignals = applyConfirmationStrategies(args.data, signals, args.settings);
     return filterSignalsByBlockRange(confirmedSignals, args.blockRange);
@@ -420,6 +431,86 @@ function selectClosedCandleData(
     );
     const base = executionAware ?? data;
     return sliceOhlcvByBlock(base, blockRange);
+}
+
+function getDataTimeRange(data: readonly OHLCVData[]): { startTs: number; endTs: number } | null {
+    const times: number[] = [];
+    for (const bar of data) {
+        const ts = parseTimeToUnixSeconds(bar.time);
+        if (ts !== null) times.push(ts);
+    }
+    if (times.length === 0) return null;
+    return {
+        startTs: Math.min(...times),
+        endTs: Math.max(...times),
+    };
+}
+
+async function resolvePolymarket1sExecutionContext(args: {
+    strategy: Strategy;
+    primarySymbol: string;
+    interval: string;
+    data: OHLCVData[];
+    settings: BacktestSettings;
+    baseContext?: StrategyExecutionContext;
+    apiBaseUrl?: string;
+}): Promise<StrategyExecutionContext | undefined> {
+    const config = args.strategy.polymarket1sConfig;
+    if (!config) return args.baseContext;
+
+    if (args.settings.strategyTimeframeEnabled) {
+        throw new Error(
+            `"${args.strategy.name}" uses 1s Polymarket context and cannot be run with Strategy Timeframe enabled.`
+        );
+    }
+
+    const { isSecondMarketPolymarketSupported, loadSecondMarketEvaluationContext } = await import("./second-market/evaluation");
+    if (!isSecondMarketPolymarketSupported(args.primarySymbol, args.interval)) {
+        if (config.required) {
+            throw new Error(`"${args.strategy.name}" requires a supported 1s Polymarket chart context.`);
+        }
+        return args.baseContext;
+    }
+
+    const range = getDataTimeRange(args.data);
+    if (!range) return args.baseContext;
+
+    let context: Awaited<ReturnType<typeof loadSecondMarketEvaluationContext>>;
+    try {
+        context = await loadSecondMarketEvaluationContext({
+            symbol: args.primarySymbol,
+            outcomeSymbol: args.settings.polymarketOutcomeSymbol,
+            outcomeInterval: args.settings.polymarketOutcomeInterval,
+            startTs: range.startTs - 300,
+            endTs: range.endTs + 300,
+            apiBaseUrl: args.apiBaseUrl,
+        });
+    } catch (error) {
+        if (config.required) {
+            const detail = error instanceof Error ? error.message : String(error);
+            throw new Error(`"${args.strategy.name}" could not load 1s Polymarket context. ${detail}`);
+        }
+        return args.baseContext;
+    }
+
+    if (!context) {
+        if (config.required) {
+            throw new Error(`"${args.strategy.name}" could not load 1s Polymarket context.`);
+        }
+        return args.baseContext;
+    }
+
+    return {
+        ...(args.baseContext ?? {}),
+        polymarket1s: {
+            symbol: context.symbol,
+            outcomeSymbol: context.outcomeSymbol,
+            seriesId: context.seriesId,
+            outcomeInterval: context.outcomeInterval,
+            quotes: context.quotes,
+            gammaSnapshots: context.gammaSnapshots,
+        },
+    };
 }
 
 async function tryRustBacktest(

@@ -239,6 +239,9 @@ function assertUniverseRunSupported(input: FinderUniverseRunInput): FinderUniver
     if (input.options.polymarketScoringEnabled) {
         throw new Error("Symbol Universe mode does not support Polymarket scoring in v1.");
     }
+    if (input.selectedStrategy.strategy.polymarket1sConfig) {
+        throw new Error("Symbol Universe mode does not support 1s Polymarket context strategies in v1.");
+    }
     if (input.options.comboEnabled) {
         throw new Error("Symbol Universe mode does not support combo mode in v1.");
     }
