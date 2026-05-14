@@ -80,8 +80,8 @@ export interface TradePolymarketOutcome {
     marketExitPrice?: number | null;
     /** Exit timestamp for the Polymarket leg */
     marketExitTs?: number | null;
-    /** How the Polymarket leg exited: target (limit target), signal (same-event), resolution (final outcome), duplicate (same-event already scored), filtered (excluded by resolve-hold minute selection), no_event (no matching Polymarket event), or missing (price data unavailable) */
-    marketExitSource?: "target" | "signal" | "resolution" | "duplicate" | "filtered" | "no_event" | "missing";
+    /** How the Polymarket leg exited: target (limit target), signal (same-event), resolution (final outcome), duplicate (same-event already scored), filtered (excluded by resolve-hold minute selection), entry_price_filtered (entry price outside the configured band), no_event (no matching Polymarket event), or missing (price data unavailable) */
+    marketExitSource?: "target" | "signal" | "resolution" | "duplicate" | "filtered" | "entry_price_filtered" | "no_event" | "missing";
     marketExitTargetPrice?: number | null;
     marketExitStatus?: PolymarketLimitExitStatus;
     /** PnL for the Polymarket leg: marketExitPrice - marketEntryPrice */
@@ -126,6 +126,7 @@ export interface BacktestPolymarketTradeSummary {
     entrySelectionMode?: PolymarketEntrySelectionMode;
     entryOffset?: number;
     duplicateTradesIgnored?: number;
+    entryPriceFilteredTrades?: number;
     timingProfile?: BacktestPolymarketTimingProfileEntry[];
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
     signalExitAllowMultipleTradesPerEvent?: boolean;
@@ -215,6 +216,7 @@ export interface PolymarketEvalResult {
     entryOffset?: number;
     /** Number of duplicate trades ignored due to same-event deduplication */
     duplicateTradesIgnored?: number;
+    entryPriceFilteredPredictions?: number;
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
     signalExitAllowMultipleTradesPerEvent?: boolean;
     signalExitedTrades?: number;
@@ -257,6 +259,7 @@ export interface PolymarketEvalOptions {
     tradeDirection?: 'long' | 'short' | 'both';
     usePreparedData?: boolean;
     strategyKey?: string;
+    entryPriceFilterCents?: number;
     backtestSettings?: BacktestSettings;
     capitalSettings?: Partial<CapitalSettings>;
 }

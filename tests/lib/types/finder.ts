@@ -66,6 +66,7 @@ export interface FinderOptions {
     polymarketMinScoredPredictions?: number;
     polymarketLockOffset?: boolean;
     polymarketAfterTakeProfitOnly?: boolean;
+    polymarketEntryPriceFilterCents?: number;
     polymarketExitMode?: PolymarketExitMode;
     polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
     polymarketPostSignalLimitEntryEnabled?: boolean;

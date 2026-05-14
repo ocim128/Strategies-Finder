@@ -29,6 +29,8 @@ export interface NormalizedSettings {
     historicalLevelTakeProfitEnabled: boolean;
     historicalLevelStopLossEnabled: boolean;
     historicalLevelLookbackBars: number;
+    riskMinHoldBars: number;
+    riskMinHoldEnabled: boolean;
     riskMaxHoldBars: number;
     riskMaxHoldEnabled: boolean;
     riskWinStreakStopLossEnabled: boolean;

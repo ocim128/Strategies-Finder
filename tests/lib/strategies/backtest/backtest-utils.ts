@@ -70,6 +70,8 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         historicalLevelTakeProfitEnabled: settings?.historicalLevelTakeProfitEnabled ?? false,
         historicalLevelStopLossEnabled: settings?.historicalLevelStopLossEnabled ?? false,
         historicalLevelLookbackBars: Math.max(0, Math.round(toNumberOr(settings?.historicalLevelLookbackBars, 0))),
+        riskMinHoldBars: Math.max(0, Math.round(toNumberOr(settings?.riskMinHoldBars, 0))),
+        riskMinHoldEnabled: settings?.riskMinHoldEnabled ?? false,
         riskMaxHoldBars: Math.max(0, toNumberOr(settings?.riskMaxHoldBars, 0)),
         riskMaxHoldEnabled: settings?.riskMaxHoldEnabled ?? false,
         riskWinStreakStopLossEnabled: false,

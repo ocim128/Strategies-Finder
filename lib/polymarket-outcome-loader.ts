@@ -32,6 +32,7 @@ export interface PolymarketOutcomeLoaderDeps {
     getDom: () => PolymarketPanelDom;
     readCurrentExecutionModel: () => string | undefined;
     readCurrentPolymarketEntryOffset: () => number | null;
+    readCurrentPolymarketEntryPriceFilterCents: () => number;
     readCurrentPolymarketEntrySelectionMode: () => PolymarketEntrySelectionMode;
     readCurrentPolymarketExitMode: () => "resolve_hold" | "signal_exit_same_event" | undefined;
     readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent: () => boolean;
@@ -206,6 +207,7 @@ export class PolymarketOutcomeLoader {
                         outcomes,
                         pricePoints,
                         allowMultipleTradesPerEvent,
+                        entryPriceFilterCents: this.deps.readCurrentPolymarketEntryPriceFilterCents(),
                         limitEntry,
                     });
                     const exitResultMap = new Map(exitResults.map((r) => [r.trade, r]));
@@ -226,6 +228,7 @@ export class PolymarketOutcomeLoader {
                             missingOutcomeTrades: exitSummary.missingOutcomeTrades,
                             unscoredTrades: exitSummary.unscoredTrades,
                             duplicateTradesIgnored: exitSummary.duplicateTradesIgnored > 0 ? exitSummary.duplicateTradesIgnored : undefined,
+                            entryPriceFilteredTrades: exitSummary.entryPriceFilteredTrades > 0 ? exitSummary.entryPriceFilteredTrades : undefined,
                             evaluationMode: "signal_exit_same_event",
                             signalExitAllowMultipleTradesPerEvent: exitSummary.allowMultipleTradesPerEvent,
                             profitableTrades: exitSummary.profitableTrades,
@@ -304,6 +307,7 @@ export class PolymarketOutcomeLoader {
             {
                 outcomeInterval,
                 pricePoints: limitEntryPricePoints,
+                entryPriceFilterCents: this.deps.readCurrentPolymarketEntryPriceFilterCents(),
                 limitEntry,
             }
         );
@@ -333,6 +337,7 @@ export class PolymarketOutcomeLoader {
                 missingOutcomeTrades: existingSummary?.missingOutcomeTrades ?? summary.missingOutcomeTrades,
                 unscoredTrades: existingSummary?.unscoredTrades ?? summary.unscoredTrades ?? Math.max(0, totalTrades - summary.scoredTrades),
                 duplicateTradesIgnored: existingSummary?.duplicateTradesIgnored ?? summary.duplicateTradesIgnored,
+                entryPriceFilteredTrades: existingSummary?.entryPriceFilteredTrades ?? summary.entryPriceFilteredTrades,
                 entrySelectionMode: existingSummary?.entrySelectionMode ?? summary.entrySelectionMode,
                 entryOffset: existingSummary?.entryOffset ?? summary.entryOffset,
                 timingProfile: existingSummary?.timingProfile ?? summary.timingProfile,
@@ -439,6 +444,7 @@ export class PolymarketOutcomeLoader {
             outcomeInterval,
             entrySelectionMode,
             selectedOffset,
+            this.deps.readCurrentPolymarketEntryPriceFilterCents(),
             result.polymarketTradeSummary?.limitEntryEnabled ? "limit" : "quote",
             result.polymarketTradeSummary?.limitEntryMode ?? "fixed_price",
             result.polymarketTradeSummary?.limitEntryPriceCents ?? "na",

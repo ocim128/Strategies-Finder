@@ -139,6 +139,78 @@ describe('Backtesting Engine', () => {
         expect(result.trades[0].exitTime).to.equal('2023-01-04' as Time);
     });
 
+    it('ignores strategy signal exits before the configured minimum hold', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 101, high: 102, low: 100, close: 101, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 102, high: 103, low: 101, close: 102, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 103, high: 104, low: 102, close: 103, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'buy', price: 100 },
+            { time: '2023-01-02' as Time, type: 'sell', price: 101 },
+            { time: '2023-01-04' as Time, type: 'sell', price: 103 },
+        ];
+
+        const result = runBacktest(data, signals, 1000, 100, 0, {
+            executionModel: 'signal_close',
+            tradeDirection: 'long',
+            riskMinHoldEnabled: true,
+            riskMinHoldBars: 2,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].exitReason).to.equal('signal');
+        expect(result.trades[0].exitTime).to.equal('2023-01-04' as Time);
+        expect(result.trades[0].exitPrice).to.equal(103);
+    });
+
+    it('does not let minimum hold block protective stop loss exits', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 101, low: 94, close: 95, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 95, high: 96, low: 93, close: 94, volume: 1000 },
+        ];
+
+        const result = runBacktest(data, [{ time: '2023-01-01' as Time, type: 'buy', price: 100 }], 1000, 100, 0, {
+            executionModel: 'signal_close',
+            tradeDirection: 'long',
+            riskMode: 'percentage',
+            stopLossEnabled: true,
+            stopLossPercent: 5,
+            takeProfitEnabled: false,
+            riskMinHoldEnabled: true,
+            riskMinHoldBars: 10,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].exitReason).to.equal('stop_loss');
+        expect(result.trades[0].exitTime).to.equal('2023-01-02' as Time);
+    });
+
+    it('does not let max hold close before minimum hold is satisfied', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-05' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+        ];
+
+        const result = runBacktest(data, [{ time: '2023-01-01' as Time, type: 'buy', price: 100 }], 1000, 100, 0, {
+            executionModel: 'signal_close',
+            tradeDirection: 'long',
+            riskMinHoldEnabled: true,
+            riskMinHoldBars: 3,
+            riskMaxHoldEnabled: true,
+            riskMaxHoldBars: 1,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].exitReason).to.equal('time_stop');
+        expect(result.trades[0].exitTime).to.equal('2023-01-04' as Time);
+    });
+
     it('uses historical resistance as a long take-profit without requiring a stop loss', () => {
         const data = buildHistoricalLevelData([
             makeHistoricalLevelCandle(16, 109.7, 98, 106),

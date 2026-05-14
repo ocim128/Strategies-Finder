@@ -132,6 +132,13 @@
                     <div class="param-hint">For 1m chart runs: only trades entering at the selected minute offset within each 5m Polymarket event will be scored. One trade per event is scored; duplicates are ignored.</div>
                 </div>
             </div>
+            <div class="param-row" id="polymarketEntryPriceFilterCentsRow" style="display: none;">
+                <div class="param-group">
+                    <label class="param-label">Polymarket Entry Price Filter (cents)</label>
+                    <input type="number" class="param-input" id="polymarketEntryPriceFilterCents" value="0" min="0" max="49" step="1">
+                    <div class="param-hint">0 disables. Example: 20 skips entries priced at 20c or below and 80c or above.</div>
+                </div>
+            </div>
             <div class="param-row" id="polymarketExitModeRow" style="display: none;">
                 <div class="param-group">
                     <label class="param-label">Polymarket Exit Mode</label>

@@ -55,6 +55,7 @@ class PolymarketPanelService {
             getDom: () => this.getDom(),
             readCurrentExecutionModel: () => this.readCurrentExecutionModel(),
             readCurrentPolymarketEntryOffset: () => this.readCurrentPolymarketEntryOffset(),
+            readCurrentPolymarketEntryPriceFilterCents: () => this.readCurrentPolymarketEntryPriceFilterCents(),
             readCurrentPolymarketEntrySelectionMode: () => this.readCurrentPolymarketEntrySelectionMode(),
             readCurrentPolymarketExitMode: () => this.readCurrentPolymarketExitMode(),
             readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent: () => this.readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent(),
@@ -128,6 +129,10 @@ class PolymarketPanelService {
 
     private readCurrentPolymarketEntrySelectionMode(): PolymarketEntrySelectionMode {
         return resolvePolymarketDomSettings().entrySelectionMode;
+    }
+
+    private readCurrentPolymarketEntryPriceFilterCents(): number {
+        return resolvePolymarketDomSettings().entryPriceFilterCents;
     }
 
     private readCurrentPolymarketExitMode(): "resolve_hold" | "signal_exit_same_event" | undefined {
@@ -232,6 +237,7 @@ class PolymarketPanelService {
         missingTrades: number;
         unscoredTrades: number;
         duplicateTradesIgnored?: number;
+        entryPriceFilteredTrades?: number;
         coverage: number;
         winRate: number;
         outcomeRowsLoaded: number;
@@ -336,6 +342,7 @@ class PolymarketPanelService {
             missingTrades,
             unscoredTrades,
             duplicateTradesIgnored,
+            entryPriceFilteredTrades: summary?.entryPriceFilteredTrades,
             coverage,
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
             outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
@@ -485,6 +492,7 @@ class PolymarketPanelService {
                     ${this.renderStatCard("Scored Trades", String(summary.scoredTrades))}
                     ${this.renderStatCard("Unscored Trades", String(summary.unscoredTrades))}
                     ${summary.duplicateTradesIgnored && summary.duplicateTradesIgnored > 0 ? this.renderStatCard("Duplicate Trades Ignored", String(summary.duplicateTradesIgnored)) : ""}
+                    ${summary.entryPriceFilteredTrades && summary.entryPriceFilteredTrades > 0 ? this.renderStatCard("Entry Price Filtered", String(summary.entryPriceFilteredTrades)) : ""}
                     ${summary.missingTrades > 0 ? this.renderStatCard("Missing Outcome Rows", String(summary.missingTrades)) : ""}
                     ${this.renderStatCard("Outcome Rows Fetched", String(summary.outcomeRowsLoaded))}
                 </div>

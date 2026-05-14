@@ -58,6 +58,7 @@ export class PolymarketEvalAccumulator {
     private longWins = 0;
     private shortWins = 0;
     private missingOutcomeRows = 0;
+    private entryPriceFilteredPredictions = 0;
     private pricedPredictions = 0;
     private totalEntryPrice = 0;
     private totalPayout = 0;
@@ -76,6 +77,10 @@ export class PolymarketEvalAccumulator {
 
     recordMissingOutcome(): void {
         this.missingOutcomeRows++;
+    }
+
+    recordEntryPriceFiltered(): void {
+        this.entryPriceFilteredPredictions++;
     }
 
     recordScoredPrediction(input: PolymarketScoredPrediction): void {
@@ -170,6 +175,7 @@ export class PolymarketEvalAccumulator {
             ignoredSignals: this.options.ignoredSignals ?? 0,
             entryOffset: this.options.entryOffset,
             duplicateTradesIgnored: this.options.duplicateTradesIgnored,
+            entryPriceFilteredPredictions: this.entryPriceFilteredPredictions > 0 ? this.entryPriceFilteredPredictions : undefined,
             rows: this.rows,
         };
     }

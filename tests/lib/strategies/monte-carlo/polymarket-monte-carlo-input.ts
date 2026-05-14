@@ -79,6 +79,7 @@ export function buildPolymarketMonteCarloInput(backtestResult: BacktestResult): 
                 countedDuplicateTradesIgnored++;
                 continue;
             case "filtered":
+            case "entry_price_filtered":
                 countedFilteredTradesIgnored++;
                 continue;
             case "missing":

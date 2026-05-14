@@ -98,6 +98,144 @@ afterEach(() => {
 });
 
 describe("Polymarket backtest trade annotations", () => {
+    it("skips Polymarket entries outside the configured entry price band", async () => {
+        const bars = makeBars(5);
+        const lowLongTs = Number(bars[1]!.time);
+        const scoredLongTs = Number(bars[2]!.time);
+        const highShortTs = Number(bars[3]!.time);
+        installOutcomeFetch([
+            {
+                series_id: "10684",
+                event_slug: "btc-low-long",
+                market_slug: "btc-low-long",
+                interval: "5m",
+                event_start_ts: lowLongTs,
+                event_end_ts: lowLongTs + 300,
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                yes_open_price: 0.2,
+                yes_entry_minute_1_price: 0.2,
+                yes_entry_minute_2_price: 0.2,
+                yes_entry_minute_3_price: 0.2,
+                yes_entry_minute_4_price: 0.2,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+            {
+                series_id: "10684",
+                event_slug: "btc-scored-long",
+                market_slug: "btc-scored-long",
+                interval: "5m",
+                event_start_ts: scoredLongTs,
+                event_end_ts: scoredLongTs + 300,
+                yes_token_id: "yes-2",
+                no_token_id: "no-2",
+                yes_open_price: 0.5,
+                yes_entry_minute_1_price: 0.5,
+                yes_entry_minute_2_price: 0.5,
+                yes_entry_minute_3_price: 0.5,
+                yes_entry_minute_4_price: 0.5,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+            {
+                series_id: "10684",
+                event_slug: "btc-high-short",
+                market_slug: "btc-high-short",
+                interval: "5m",
+                event_start_ts: highShortTs,
+                event_end_ts: highShortTs + 300,
+                yes_token_id: "yes-3",
+                no_token_id: "no-3",
+                yes_open_price: 0.2,
+                yes_entry_minute_1_price: 0.2,
+                yes_entry_minute_2_price: 0.2,
+                yes_entry_minute_3_price: 0.2,
+                yes_entry_minute_4_price: 0.2,
+                resolved_outcome_up: 0,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ]);
+
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([
+                makeTrade(1, "long", lowLongTs, 10),
+                makeTrade(2, "long", scoredLongTs, 10),
+                makeTrade(3, "short", highShortTs, 10),
+            ]),
+            {
+                symbol: "BTCUSDT",
+                interval: "5m",
+                executionModel: "next_open",
+                chartData: bars,
+            },
+            { entryPriceFilterCents: 20 }
+        );
+
+        expect(result.polymarketTradeSummary?.scoredTrades).to.equal(1);
+        expect(result.polymarketTradeSummary?.unscoredTrades).to.equal(2);
+        expect(result.polymarketTradeSummary?.entryPriceFilteredTrades).to.equal(2);
+        expect(result.trades[0]?.polymarketOutcome?.marketExitSource).to.equal("entry_price_filtered");
+        expect(result.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.2);
+        expect(result.trades[1]?.polymarketOutcome?.isWin).to.equal(true);
+        expect(result.trades[2]?.polymarketOutcome?.marketExitSource).to.equal("entry_price_filtered");
+        expect(result.trades[2]?.polymarketOutcome?.marketEntryPrice).to.equal(0.8);
+    });
+
+    it("does not let a price-filtered 1m bridge trade consume the event slot", async () => {
+        const bars = makeMinuteBars(8);
+        const eventStartTs = Number(bars[1]!.time);
+        const filteredTradeTs = eventStartTs;
+        const scoredTradeTs = eventStartTs + 60;
+        installOutcomeFetch([
+            {
+                series_id: "10684",
+                event_slug: "btc-bridge-filter-order",
+                market_slug: "btc-bridge-filter-order",
+                interval: "5m",
+                event_start_ts: eventStartTs,
+                event_end_ts: eventStartTs + 300,
+                yes_token_id: "yes-bridge",
+                no_token_id: "no-bridge",
+                yes_open_price: 0.2,
+                yes_entry_minute_1_price: 0.5,
+                yes_entry_minute_2_price: 0.5,
+                yes_entry_minute_3_price: 0.5,
+                yes_entry_minute_4_price: 0.5,
+                resolved_outcome_up: 1,
+                resolution_source: "test",
+                updated_at: 1,
+            },
+        ]);
+
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([
+                makeTrade(1, "long", filteredTradeTs, 10),
+                makeTrade(2, "long", scoredTradeTs, 10),
+            ]),
+            {
+                symbol: "BTCUSDT",
+                interval: "1m",
+                executionModel: "next_open",
+                chartData: bars,
+            },
+            {
+                entrySelectionMode: "actual_entry_minute",
+                entryPriceFilterCents: 20,
+            }
+        );
+
+        expect(result.trades[0]?.polymarketOutcome?.marketExitSource).to.equal("entry_price_filtered");
+        expect(result.trades[1]?.polymarketOutcome?.isWin).to.equal(true);
+        expect(result.trades[1]?.polymarketOutcome?.marketExitSource).to.not.equal("duplicate");
+        expect(result.polymarketTradeSummary?.scoredTrades).to.equal(1);
+        expect(result.polymarketTradeSummary?.entryPriceFilteredTrades).to.equal(1);
+        expect(result.polymarketTradeSummary?.duplicateTradesIgnored).to.equal(undefined);
+    });
+
     it("annotates eligible BTC 5m next_open trades and renders the outcome badge", async () => {
         const bars = makeBars(4);
         const firstEventTs = Number(bars[1]!.time);

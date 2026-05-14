@@ -163,7 +163,7 @@ export type PaperEntryRecord = ExecutionLabBaseRecord & {
 
 export type PaperUnfilledRecord = ExecutionLabBaseRecord & {
     recordType: "paper_unfilled";
-    reason: "missing_event" | "missing_entry_quote" | "missing_exit_quote" | "duplicate_event" | "open_position" | "invalid_price";
+    reason: "missing_event" | "missing_entry_quote" | "missing_exit_quote" | "duplicate_event" | "open_position" | "invalid_price" | "entry_price_filtered";
     signalTimeSec: number;
     entryTimeSec: number | null;
     expectedExitTimeSec?: number;
@@ -199,7 +199,7 @@ export type PaperResolutionPendingRecord = ExecutionLabBaseRecord & {
 
 export type ExecutionParityMismatchRecord = ExecutionLabBaseRecord & {
     recordType: "execution_parity_mismatch";
-    mismatchType: "paper_open_after_backtest_exit" | "paper_open_after_event_end" | "missing_exit_quote";
+    mismatchType: "paper_open_after_backtest_exit" | "paper_open_after_event_end" | "missing_exit_quote" | "entry_price_filter_violation";
     latestCandleTimeSec: number;
     detail: string;
     tradeId?: string;

@@ -14,6 +14,12 @@ export interface PositionExitOptions {
     openOnly?: boolean;
 }
 
+export function canExitAfterMinimumHold(position: PositionState, config: NormalizedSettings): boolean {
+    return !config.riskMinHoldEnabled
+        || config.riskMinHoldBars <= 0
+        || position.barsInTrade >= config.riskMinHoldBars;
+}
+
 function comparisonTolerance(left: number, right: number): number {
     return Math.max(1e-9, Math.max(Math.abs(left), Math.abs(right), 1) * 1e-12);
 }
@@ -155,8 +161,9 @@ export function processPositionExits(
         }
     }
 
-    // Global max hold cap (hard exit regardless of PnL)
+    // Global max hold cap, gated by the minimum hold guard.
     if (
+        canExitAfterMinimumHold(position, config) &&
         config.riskMaxHoldEnabled &&
         config.riskMaxHoldBars > 0 &&
         position.barsInTrade >= config.riskMaxHoldBars
@@ -169,7 +176,11 @@ export function processPositionExits(
     }
 
     // Time stop
-    if (config.timeStopBars > 0 && position.barsInTrade >= config.timeStopBars) {
+    if (
+        canExitAfterMinimumHold(position, config) &&
+        config.timeStopBars > 0 &&
+        position.barsInTrade >= config.timeStopBars
+    ) {
         const isLosing = isShortPosition ? candle.close >= position.entryPrice : candle.close <= position.entryPrice;
         if (!position.partialTaken && isLosing) {
             return {

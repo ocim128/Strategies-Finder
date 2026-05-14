@@ -275,6 +275,10 @@ export interface BacktestSettings {
     historicalLevelStopLossEnabled?: boolean;
     /** Historical support/resistance lookback used for level-based TP/SL targets. */
     historicalLevelLookbackBars?: number;
+    /** Minimum bars held before strategy signal exits and time-stop exits can close a trade. */
+    riskMinHoldBars?: number;
+    /** Enable the minimum hold-bars guard. */
+    riskMinHoldEnabled?: boolean;
     /** Hard cap on bars held when risk management is active */
     riskMaxHoldBars?: number;
     /** Enable max hold bars cap */
@@ -345,6 +349,8 @@ export interface BacktestSettings {
     polymarketEntrySelectionMode?: PolymarketEntrySelectionMode;
     /** Entry offset minute (0..4) for fixed-offset 1m -> 5m Polymarket bridge scoring */
     polymarketEntryOffset?: number;
+    /** Skip Polymarket entries priced at or below N cents, or at or above 100-N cents. 0 disables. */
+    polymarketEntryPriceFilterCents?: number;
     /** Polymarket exit evaluation mode: resolve_hold scores at final binary outcome, signal_exit_same_event exits on chart sell signal inside the mapped native outcome session */
     polymarketExitMode?: "resolve_hold" | "signal_exit_same_event";
     /** In signal_exit_same_event mode, score every eligible chart trade in the event instead of one trade per Polymarket event. */

@@ -1,4 +1,5 @@
 import { parseTimeToUnixSeconds } from "../time-normalization";
+import { isPolymarketEntryPriceFiltered } from "../polymarket-entry-price-filter";
 import type { Trade } from "../types/strategies";
 import type { PolymarketOutcomeRow } from "../types/polymarket-outcomes";
 import type { PolymarketExitMode } from "../polymarket-exit-mode";
@@ -93,6 +94,7 @@ function buildSummary(
         allowMultipleTradesPerEvent: allowMultipleTradesPerEvent || undefined,
         scoredTrades: scored.length,
         duplicateTradesIgnored: results.filter((result) => result.exitSource === "duplicate").length,
+        entryPriceFilteredTrades: results.filter((result) => result.exitSource === "entry_price_filtered").length,
         missingOutcomeTrades: results.filter((result) => result.exitSource === "no_event").length,
         missingQuoteTrades: results.filter((result) => result.exitSource === "missing").length,
         signalExitedTrades: scored.filter((result) => result.exitSource === "signal").length,
@@ -121,6 +123,7 @@ export function evaluateSecondMarketTrades(args: {
     mode?: SecondMarketAlignmentMode;
     maxQuoteAgeSec?: number;
     fillSource?: SecondMarketFillSource;
+    entryPriceFilterCents?: number;
 }): { results: SecondMarketTradeResult[]; summary: SecondMarketBacktestSummary } {
     const evaluationMode = args.evaluationMode ?? "resolve_hold";
     const allowMultipleTradesPerEvent = args.allowMultipleTradesPerEvent === true;
@@ -191,6 +194,21 @@ export function evaluateSecondMarketTrades(args: {
                 exitPrice: null,
                 exitQuoteTs: null,
                 exitSource: "missing",
+                pnl: null,
+                isProfitable: null,
+            });
+            continue;
+        }
+        if (isPolymarketEntryPriceFiltered(entry.price, args.entryPriceFilterCents)) {
+            results.push({
+                trade,
+                outcome,
+                side,
+                entryPrice: entry.price,
+                entryQuoteTs: entry.quoteTs,
+                exitPrice: null,
+                exitQuoteTs: null,
+                exitSource: "entry_price_filtered",
                 pnl: null,
                 isProfitable: null,
             });

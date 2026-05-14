@@ -28,6 +28,9 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     const usesRiskMaxHold =
         settings.riskMaxHoldEnabled === true
         && (settings.riskMaxHoldBars ?? 0) > 0;
+    const usesRiskMinHold =
+        settings.riskMinHoldEnabled === true
+        && (settings.riskMinHoldBars ?? 0) > 0;
     const usesHistoricalLevels =
         ((settings.historicalLevelTakeProfitEnabled === true)
             || (settings.historicalLevelStopLossEnabled === true))
@@ -48,6 +51,7 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         || usesNonAllMarketMode
         || usesUnsupportedTradeFilterMode
         || usesRiskMaxHold
+        || usesRiskMinHold
         || usesHistoricalLevels
         || usesPercentageWinStreakStopLoss
         || usesAdaptivePercentageTakeProfit
@@ -64,6 +68,8 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "executionTrendEmaPeriod",
     "maxOpenTrades",
     "marketMode",
+    "riskMinHoldBars",
+    "riskMinHoldEnabled",
     "riskMaxHoldBars",
     "riskMaxHoldEnabled",
     "historicalLevelTakeProfitEnabled",
@@ -89,6 +95,7 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "polymarketOutcomeSymbol",
     "polymarketOutcomeInterval",
     "polymarketEntrySelectionMode",
+    "polymarketEntryPriceFilterCents",
     "polymarketExitMode",
     "polymarketSignalExitAllowMultipleTradesPerEvent",
     "polymarketPostSignalLimitEntryEnabled",

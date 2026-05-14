@@ -103,6 +103,7 @@ export function evaluatePolymarketOutcomes(
             selectedOffset: bridgeOptions.entryOffset,
             includeRows: true,
             context: tradeContext,
+            entryPriceFilterCents: options.entryPriceFilterCents,
         })
         : evaluatePolymarketBacktestTrades({
             chartData,
@@ -111,6 +112,7 @@ export function evaluatePolymarketOutcomes(
             strategyKey,
             includeRows: true,
             context: tradeContext,
+            entryPriceFilterCents: options.entryPriceFilterCents,
         });
 
     const ignoredSignals = Math.max(0, signals.length - backtestResult.totalTrades);

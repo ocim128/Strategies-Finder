@@ -161,6 +161,18 @@
                 <div class="param-row">
                     <div class="param-group">
                         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Min Hold (bars)</label>
+                            <label class="section-toggle" style="transform: scale(0.8);"
+                                aria-label="Toggle minimum hold guard">
+                                <input type="checkbox" id="riskMinHoldToggle">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <input type="number" class="param-input" id="riskMinHoldBars" value="10" min="1" step="1">
+                        <div class="param-hint">Delay strategy, time-stop, and max-hold exits until N bars are held. Protective stops and profit targets still fire.</div>
+                    </div>
+                    <div class="param-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
                             <label class="param-label" style="margin-bottom: 0;">Max Hold (bars)</label>
                             <label class="section-toggle" style="transform: scale(0.8);"
                                 aria-label="Toggle max hold cap">

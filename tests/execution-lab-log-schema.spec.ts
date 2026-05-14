@@ -77,6 +77,13 @@ describe("Execution Lab JSONL schema", () => {
         expect(validateExecutionLabRecord({
             ...baseRecord,
             recordType: "execution_parity_mismatch",
+            mismatchType: "entry_price_filter_violation",
+            latestCandleTimeSec: 1778730004,
+            detail: "paper entry violates price filter",
+        }).ok).to.equal(true);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "execution_parity_mismatch",
             mismatchType: "raw_signal_only",
             latestCandleTimeSec: 1778730004,
             detail: "bad",

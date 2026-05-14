@@ -653,6 +653,7 @@ export class BacktestService {
                     executionModel: settings.executionModel,
                     polymarketExitMode: effectiveExitMode,
                     polymarketSignalExitAllowMultipleTradesPerEvent: settings.polymarketSignalExitAllowMultipleTradesPerEvent,
+                    entryPriceFilterCents: settings.polymarketEntryPriceFilterCents,
                 });
             }
 
@@ -668,6 +669,7 @@ export class BacktestService {
             }, {
                 selectedOffset: settings.polymarketEntryOffset,
                 entrySelectionMode: settings.polymarketEntrySelectionMode,
+                entryPriceFilterCents: settings.polymarketEntryPriceFilterCents,
                 limitEntry: {
                     enabled: settings.polymarketPostSignalLimitEntryEnabled === true,
                     priceMode: settings.polymarketPostSignalLimitEntryMode,

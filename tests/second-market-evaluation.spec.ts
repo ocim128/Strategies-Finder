@@ -149,6 +149,26 @@ describe("second market shared evaluation", () => {
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.isWin).to.equal(null);
     });
 
+    it("carries entry price filter counts through 1s CLOB summaries and annotations", () => {
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([trade(1, 1_700_000_010, 1_700_000_020)]),
+            context: context([
+                quote(1_700_000_010, 0.20, 0.18),
+                quote(1_700_000_020, 0.30, 0.28),
+            ]),
+            polymarketExitMode: "signal_exit_same_event",
+            entryPriceFilterCents: 20,
+        });
+
+        expect(evaluated.summary.entryPriceFilteredTrades).to.equal(1);
+        expect(evaluated.polymarketSummary.entryPriceFilteredTrades).to.equal(1);
+        expect(evaluated.polymarketSummary.scoredTrades).to.equal(0);
+        expect(evaluated.polymarketEval.entryPriceFilteredPredictions).to.equal(1);
+        expect(evaluated.polymarketEval.scoredPredictions).to.equal(0);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitSource).to.equal("entry_price_filtered");
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.20);
+    });
+
     it("marks missing exact CLOB quotes as unscored instead of forward filling", () => {
         const evaluated = evaluateSecondMarketBacktest({
             result: result([trade(1, 1_700_000_010, 1_700_000_020)]),

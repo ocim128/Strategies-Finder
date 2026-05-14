@@ -14,6 +14,7 @@ import {
     toFiniteNumber,
 } from "./settings-parse-utils";
 import { resolvePolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
+import { clampPolymarketEntryPriceFilterCents } from "./polymarket-entry-price-filter";
 import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import {
     DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_ENABLED,
@@ -62,6 +63,8 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     historicalLevelTakeProfitEnabled: false,
     historicalLevelStopLossEnabled: false,
     historicalLevelLookbackBars: 120,
+    riskMinHoldBars: 10,
+    riskMinHoldEnabled: false,
     riskMaxHoldBars: 10,
     riskMaxHoldEnabled: false,
     riskWinStreakStopLossEnabled: false,
@@ -93,6 +96,7 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     polymarketOutcomeInterval: "5m" as const,
     polymarketEntrySelectionMode: "fixed_offset" as const,
     polymarketEntryOffset: 0,
+    polymarketEntryPriceFilterCents: 0,
     polymarketExitMode: "resolve_hold" as const,
     polymarketSignalExitAllowMultipleTradesPerEvent: false,
     polymarketPostSignalLimitEntryEnabled: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_ENABLED,
@@ -111,6 +115,7 @@ type ResolverGuardName =
     | "usePercentRisk"
     | "useAdvancedRisk"
     | "useRiskManagement"
+    | "useRiskMinHold"
     | "useRiskMaxHold"
     | "tradeFilterEnabled";
 
@@ -137,6 +142,7 @@ type NumericResolverKey =
     | "takeProfitAdaptiveRegimeBlend"
     | "takeProfitAdaptiveIcScale"
     | "historicalLevelLookbackBars"
+    | "riskMinHoldBars"
     | "riskMaxHoldBars"
     | "riskWinStreakStopLossAfterWins"
     | "riskWinStreakStopLossPercent"
@@ -160,6 +166,7 @@ type BooleanResolverKey =
     | "takeProfitEnabled"
     | "historicalLevelTakeProfitEnabled"
     | "historicalLevelStopLossEnabled"
+    | "riskMinHoldEnabled"
     | "riskMaxHoldEnabled"
     | "riskWinStreakStopLossEnabled"
     | "invertSignals"
@@ -242,6 +249,12 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
         disabledValue: 0,
         resolve: (raw) => Math.max(0, Math.round(readDefaultedNumber(raw, "historicalLevelLookbackBars"))),
     },
+    {
+        key: "riskMinHoldBars",
+        guard: "useRiskMinHold",
+        disabledValue: 0,
+        resolve: (raw) => Math.max(1, Math.round(readDefaultedNumber(raw, "riskMinHoldBars"))),
+    },
     { key: "riskMaxHoldBars", guard: "useRiskMaxHold", disabledValue: 0 },
     {
         key: "riskWinStreakStopLossAfterWins",
@@ -301,6 +314,7 @@ const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
         guard: "useRiskManagement",
         disabledValue: false,
     },
+    { key: "riskMinHoldEnabled", keys: ["riskMinHoldEnabled", "riskMinHoldToggle"], guard: "useRiskMinHold", disabledValue: false },
     { key: "riskMaxHoldEnabled", keys: ["riskMaxHoldEnabled", "riskMaxHoldToggle"], guard: "useRiskMaxHold", disabledValue: false },
     {
         key: "riskWinStreakStopLossEnabled",
@@ -375,6 +389,8 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "historicalLevelTakeProfitToggle",
     "historicalLevelStopLossToggle",
     "historicalLevelLookbackBars",
+    "riskMinHoldBars",
+    "riskMinHoldToggle",
     "riskMaxHoldBars",
     "riskMaxHoldToggle",
     "tradeFilterMode",
@@ -401,6 +417,7 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "polymarketOutcomeInterval",
     "polymarketEntrySelectionMode",
     "polymarketEntryOffset",
+    "polymarketEntryPriceFilterCents",
     "polymarketExitMode",
     "polymarketSignalExitAllowMultipleTradesPerEvent",
     "polymarketPostSignalLimitEntryEnabled",
@@ -581,6 +598,7 @@ export function resolveBacktestSettingsFromRaw(
             coerced.polymarketOutcomeSymbol = coerced.polymarketOutcomeSymbol.trim().toUpperCase();
         }
         coerced.polymarketOutcomeInterval = resolvePolymarketOutcomeInterval(coerced.polymarketOutcomeInterval);
+        coerced.polymarketEntryPriceFilterCents = clampPolymarketEntryPriceFilterCents(coerced.polymarketEntryPriceFilterCents);
         Object.assign(coerced, resolvePolymarketPostSignalLimitSettingFields(
             raw,
             (key, fallback) => readBoolean(raw, key, fallback)
@@ -597,6 +615,7 @@ export function resolveBacktestSettingsFromRaw(
     const useAtrRisk = riskEnabled && riskMode === "simple";
     const usePercentRisk = riskEnabled && riskMode === "percentage";
     const useAdvancedRisk = false;
+    const useRiskMinHold = riskEnabled;
     const useRiskMaxHold = riskEnabled;
 
     const tradeFilterEnabled = readBoolean(
@@ -632,6 +651,7 @@ export function resolveBacktestSettingsFromRaw(
         usePercentRisk,
         useAdvancedRisk,
         useRiskManagement: riskEnabled,
+        useRiskMinHold,
         useRiskMaxHold,
         tradeFilterEnabled,
     };
@@ -663,6 +683,7 @@ export function resolveBacktestSettingsFromRaw(
         polymarketOutcomeInterval: resolvePolymarketOutcomeInterval(raw["polymarketOutcomeInterval"]),
         polymarketEntrySelectionMode: resolvePolymarketEntrySelectionMode(raw["polymarketEntrySelectionMode"]),
         polymarketEntryOffset: readNumber(raw, "polymarketEntryOffset", EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryOffset),
+        polymarketEntryPriceFilterCents: clampPolymarketEntryPriceFilterCents(raw["polymarketEntryPriceFilterCents"]),
         polymarketExitMode: typeof raw["polymarketExitMode"] === "string"
             && raw["polymarketExitMode"].trim().toLowerCase() === "signal_exit_same_event"
             ? "signal_exit_same_event"

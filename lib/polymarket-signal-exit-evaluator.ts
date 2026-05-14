@@ -7,6 +7,7 @@ import {
     indexPricePointsByEvent,
     type EventPriceIndex,
 } from "./polymarket-price-points";
+import { isPolymarketEntryPriceFiltered } from "./polymarket-entry-price-filter";
 import {
     clampPolymarketPostSignalLimitEntryPriceCents,
     clampPolymarketPostSignalLimitExitPriceCents,
@@ -34,6 +35,7 @@ export interface SignalExitEvalInput {
     priceIndex?: EventPriceIndex;
     outcomeByEntryTs?: ReadonlyMap<number, PolymarketOutcomeRow | null>;
     allowMultipleTradesPerEvent?: boolean;
+    entryPriceFilterCents?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }
 
@@ -51,7 +53,7 @@ export interface SignalExitTradeResult {
     entryImprovement?: number | null;
     exitPrice: number | null;
     exitTs: number | null;
-    exitSource: "target" | "signal" | "resolution" | "missing" | "duplicate" | "no_event";
+    exitSource: "target" | "signal" | "resolution" | "missing" | "duplicate" | "entry_price_filtered" | "no_event";
     exitTargetPrice?: number | null;
     exitStatus?: "filled" | "not_touched" | "missing_price_points" | "unreachable";
     pnl: number | null;
@@ -65,6 +67,7 @@ export interface SignalExitSummary {
     missingPriceTrades: number;
     missingOutcomeTrades: number;
     duplicateTradesIgnored: number;
+    entryPriceFilteredTrades: number;
     unscoredTrades: number;
     profitableTrades: number;
     losingTrades: number;
@@ -280,6 +283,30 @@ export function evaluateSignalExitTrades(
             entryFillTs = quoteEntryFill.ts;
         }
 
+        if (isPolymarketEntryPriceFiltered(entryPrice, input.entryPriceFilterCents)) {
+            results.push({
+                trade,
+                outcome,
+                side,
+                entrySource: limitEntryEnabled ? "limit" : "quote",
+                entryStatus: limitEntryEnabled ? "filled" : undefined,
+                entryMode: limitEntryEnabled ? limitEntryMode : undefined,
+                entryOffsetCents: limitEntryEnabled ? limitEntryOffsetCents : undefined,
+                entryPrice,
+                entryFillTs,
+                entryLimitPrice: limitEntryEnabled ? entryPrice : null,
+                entryImprovement: limitEntryEnabled ? entryImprovement : null,
+                exitPrice: null,
+                exitTs: null,
+                exitSource: "entry_price_filtered",
+                pnl: null,
+                isProfitable: null,
+                actualOutcomeUp: outcome.resolved_outcome_up,
+                isWin: null,
+            });
+            continue;
+        }
+
         let exitPrice: number | null = null;
         let exitTs: number | null = null;
         let exitSource: "target" | "signal" | "resolution" | "missing" = "resolution";
@@ -426,6 +453,7 @@ function buildSignalExitSummary(
     let missingPriceTrades = 0;
     let missingOutcomeTrades = 0;
     let duplicateTradesIgnored = 0;
+    let entryPriceFilteredTrades = 0;
     let profitableTrades = 0;
     let losingTrades = 0;
     let neutralTrades = 0;
@@ -497,6 +525,10 @@ function buildSignalExitSummary(
             duplicateTradesIgnored++;
             continue;
         }
+        if (r.exitSource === "entry_price_filtered") {
+            entryPriceFilteredTrades++;
+            continue;
+        }
         if (r.exitSource === "no_event") {
             missingOutcomeTrades++;
             continue;
@@ -544,7 +576,8 @@ function buildSignalExitSummary(
         missingPriceTrades,
         missingOutcomeTrades,
         duplicateTradesIgnored,
-        unscoredTrades: missingPriceTrades + missingOutcomeTrades + duplicateTradesIgnored + limitEntryMissesWithoutMissingPrices,
+        entryPriceFilteredTrades,
+        unscoredTrades: missingPriceTrades + missingOutcomeTrades + duplicateTradesIgnored + entryPriceFilteredTrades + limitEntryMissesWithoutMissingPrices,
         profitableTrades,
         losingTrades,
         neutralTrades,
@@ -674,6 +707,18 @@ export function buildTradeAnnotationFromSignalExitResult(
             marketExitPrice: null,
             marketExitTs: null,
             marketExitSource: "duplicate",
+            marketPnl: null,
+        });
+    }
+
+    if (result.exitSource === "entry_price_filtered") {
+        return buildSignalExitOutcomeAnnotation(result, {
+            isWin: null,
+            isProfitable: null,
+            marketEntryPrice: result.entryPrice,
+            marketExitPrice: null,
+            marketExitTs: null,
+            marketExitSource: "entry_price_filtered",
             marketPnl: null,
         });
     }

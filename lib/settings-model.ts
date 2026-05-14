@@ -88,6 +88,8 @@ export interface BacktestSettingsData {
     historicalLevelTakeProfitEnabled: boolean;
     historicalLevelStopLossEnabled: boolean;
     historicalLevelLookbackBars: number;
+    riskMinHoldBars: number;
+    riskMinHoldEnabled: boolean;
     riskMaxHoldBars: number;
     riskMaxHoldEnabled: boolean;
     riskWinStreakStopLossEnabled: boolean;
@@ -128,6 +130,7 @@ export interface BacktestSettingsData {
     polymarketOutcomeInterval: PolymarketOutcomeInterval;
     polymarketEntrySelectionMode: PolymarketEntrySelectionMode;
     polymarketEntryOffset: number;
+    polymarketEntryPriceFilterCents: number;
     polymarketExitMode: "resolve_hold" | "signal_exit_same_event";
     polymarketSignalExitAllowMultipleTradesPerEvent: boolean;
     polymarketPostSignalLimitEntryEnabled: boolean;

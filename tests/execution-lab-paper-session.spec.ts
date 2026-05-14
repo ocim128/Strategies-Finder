@@ -3,7 +3,14 @@ import { describe, it } from "node:test";
 import type { PolymarketClob1sQuoteRow } from "../lib/second-market/types";
 import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
 import type { Signal, Trade } from "../lib/types/strategies";
-import type { ExecutionLabSessionSnapshot, PaperEntryRecord, PaperExitRecord, PaperUnfilledRecord } from "../lib/execution-lab/execution-lab-model";
+import type {
+    ExecutionLabOpenPaperPosition,
+    ExecutionLabSessionSnapshot,
+    PaperEntryRecord,
+    PaperExitRecord,
+    PaperUnfilledRecord,
+} from "../lib/execution-lab/execution-lab-model";
+import { collectEntryPriceFilterParityMismatches } from "../lib/execution-lab/execution-parity";
 import {
     buildEvaluatedSignals,
     createExecutionLabPaperState,
@@ -13,7 +20,7 @@ import {
 const EVENT_START = 1_700_000_000;
 const EVENT_END = EVENT_START + 300;
 
-function snapshot(allowMultipleTradesPerEvent = false): ExecutionLabSessionSnapshot {
+function snapshot(allowMultipleTradesPerEvent = false, entryPriceFilterCents = 0): ExecutionLabSessionSnapshot {
     return {
         sessionId: "session-1",
         symbol: "BTCUSDT",
@@ -22,7 +29,7 @@ function snapshot(allowMultipleTradesPerEvent = false): ExecutionLabSessionSnaps
         strategyKey: "test_strategy",
         strategyName: "Test Strategy",
         params: {},
-        backtestSettings: {},
+        backtestSettings: { polymarketEntryPriceFilterCents: entryPriceFilterCents },
         capitalSettings: {
             initialCapital: 10000,
             positionSize: 100,
@@ -208,6 +215,69 @@ describe("Execution Lab paper session", () => {
         const unfilled = result.records.find((record): record is PaperUnfilledRecord => record.recordType === "paper_unfilled");
 
         expect(unfilled?.reason).to.equal("missing_entry_quote");
+    });
+
+    it("blocks edge-priced entries without claiming the event slot", () => {
+        const state = createExecutionLabPaperState(snapshot(false, 20));
+        const secondTrade = trade(2, "long", EVENT_START + 20);
+        const result = tick({
+            state,
+            latestTs: EVENT_START + 25,
+            trades: [
+                trade(1, "long", EVENT_START + 10),
+                secondTrade,
+            ],
+            signals: [
+                signal("buy", EVENT_START + 9),
+                signal("buy", EVENT_START + 19),
+            ],
+            quotes: [
+                quote(EVENT_START + 10, 0.20, 0.18),
+                quote(EVENT_START + 20, 0.55, 0.53),
+            ],
+            outcomes: [outcome(1)],
+        });
+
+        const unfilled = result.records.find((record): record is PaperUnfilledRecord =>
+            record.recordType === "paper_unfilled" && record.reason === "entry_price_filtered"
+        );
+        const entry = result.records.find((record): record is PaperEntryRecord => record.recordType === "paper_entry");
+
+        expect(unfilled?.entryTimeSec).to.equal(EVENT_START + 10);
+        expect(entry?.entryTimeSec).to.equal(EVENT_START + 20);
+        expect(entry?.entryPrice).to.equal(0.55);
+        expect(state.totalEntries).to.equal(1);
+    });
+
+    it("flags existing paper positions that violate the entry price filter as parity mismatches", () => {
+        const state = createExecutionLabPaperState(snapshot(false, 20));
+        const sourceTrade = trade(1, "short", EVENT_START + 10);
+        const position: ExecutionLabOpenPaperPosition = {
+            tradeId: "filtered-position",
+            sourceTrade,
+            seriesId: "10684",
+            eventStartTs: EVENT_START,
+            eventEndTs: EVENT_END,
+            marketSlug: "btc-event",
+            conditionId: "condition",
+            yesTokenId: "yes",
+            noTokenId: "no",
+            side: "no",
+            chartDirection: "short",
+            signalTimeSec: EVENT_START + 9,
+            entryTimeSec: EVENT_START + 10,
+            entryQuoteTs: EVENT_START + 10,
+            entryPrice: 0.15,
+            stakeUsd: 5,
+            shares: 5 / 0.15,
+        };
+        state.openPositions.set(position.tradeId, position);
+
+        const mismatches = collectEntryPriceFilterParityMismatches(state, EVENT_START + 20);
+
+        expect(mismatches).to.have.length(1);
+        expect(mismatches[0]?.mismatchType).to.equal("entry_price_filter_violation");
+        expect(mismatches[0]?.tradeId).to.equal("filtered-position");
     });
 
     it("ignores raw strategy signals that do not become configured trades", () => {

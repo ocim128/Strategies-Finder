@@ -1,5 +1,6 @@
 import type { ExecutionModel } from "./types/strategies";
 import { resolvePolymarketEntrySelectionMode, type PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
+import { clampPolymarketEntryPriceFilterCents } from "./polymarket-entry-price-filter";
 import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import {
     DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_ENABLED,
@@ -24,6 +25,7 @@ export interface PolymarketDomSettings {
     entrySelectionMode: PolymarketEntrySelectionMode;
     outcomeSymbol: string | null;
     outcomeInterval: PolymarketOutcomeInterval;
+    entryPriceFilterCents: number;
     exitMode: "resolve_hold" | "signal_exit_same_event" | undefined;
     signalExitAllowMultipleTradesPerEvent: boolean;
     postSignalLimitEntryEnabled: boolean;
@@ -66,6 +68,7 @@ export function resolvePolymarketDomSettings(doc: Document = document): Polymark
     const entrySelectionModeSelect = readSelectElement(doc, "polymarketEntrySelectionMode");
     const outcomeSymbolSelect = readSelectElement(doc, "polymarketOutcomeSymbol");
     const outcomeIntervalSelect = readSelectElement(doc, "polymarketOutcomeInterval");
+    const entryPriceFilterInput = readInputElement(doc, "polymarketEntryPriceFilterCents");
     const exitModeSelect = readSelectElement(doc, "polymarketExitMode");
     const signalExitAllowMultipleTradesToggle = readInputElement(doc, "polymarketSignalExitAllowMultipleTradesPerEvent");
     const limitEntryToggle = readInputElement(doc, "polymarketPostSignalLimitEntryEnabled");
@@ -86,6 +89,7 @@ export function resolvePolymarketDomSettings(doc: Document = document): Polymark
         entrySelectionMode: resolvePolymarketEntrySelectionMode(entrySelectionModeSelect?.value),
         outcomeSymbol: outcomeSymbol.length > 0 ? outcomeSymbol : null,
         outcomeInterval: resolvePolymarketOutcomeInterval(outcomeIntervalSelect?.value),
+        entryPriceFilterCents: clampPolymarketEntryPriceFilterCents(entryPriceFilterInput?.value),
         exitMode: exitModeSelect
             ? (exitModeSelect.value === "signal_exit_same_event" ? "signal_exit_same_event" : "resolve_hold")
             : undefined,

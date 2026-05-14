@@ -84,11 +84,13 @@ function inferRiskToggle(settings: Record<string, unknown>): boolean {
             || (toBoolean(settings.takeProfitEnabled) === true)
             || toFiniteNumber(settings.stopLossPercent) > 0
             || toFiniteNumber(settings.takeProfitPercent) > 0
+            || (toBoolean(settings.riskMinHoldEnabled) === true)
             || (toBoolean(settings.riskMaxHoldEnabled) === true);
     }
     return toFiniteNumber(settings.stopLossAtr) > 0
         || toFiniteNumber(settings.takeProfitAtr) > 0
         || toFiniteNumber(settings.trailingAtr) > 0
+        || (toBoolean(settings.riskMinHoldEnabled) === true && toFiniteNumber(settings.riskMinHoldBars) > 0)
         || (toBoolean(settings.riskMaxHoldEnabled) === true && toFiniteNumber(settings.riskMaxHoldBars) > 0);
 }
 

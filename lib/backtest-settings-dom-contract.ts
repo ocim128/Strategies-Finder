@@ -22,6 +22,7 @@ import {
     type BacktestSettingsData,
 } from "./settings-model";
 import { resolvePolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
+import { clampPolymarketEntryPriceFilterCents } from "./polymarket-entry-price-filter";
 import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import {
     clampPolymarketPostSignalLimitEntryPriceCents,
@@ -41,6 +42,7 @@ export type BacktestDomSettingParser =
     | "string"
     | "polymarketOutcomeInterval"
     | "polymarketEntrySelectionMode"
+    | "polymarketEntryPriceFilterCents"
     | "polymarketExitMode"
     | "polymarketLimitEntryPriceCents"
     | "polymarketLimitExitPriceCents"
@@ -248,6 +250,13 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         rustSupport: "unsupported",
     }),
     createField("historicalLevelLookbackBars", { rustSupport: "unsupported" }),
+    createField("riskMinHoldBars", { rustSupport: "unsupported" }),
+    createField("riskMinHoldToggle", {
+        settingKey: "riskMinHoldEnabled",
+        parser: "boolean",
+        legacyAliases: ["riskMinHoldEnabled"],
+        rustSupport: "unsupported",
+    }),
     createField("riskMaxHoldBars", { rustSupport: "unsupported" }),
     createField("riskMaxHoldToggle", {
         settingKey: "riskMaxHoldEnabled",
@@ -321,6 +330,7 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("polymarketOutcomeInterval", { rustSupport: "unsupported", parser: "polymarketOutcomeInterval" }),
     createField("polymarketEntrySelectionMode", { rustSupport: "unsupported", parser: "polymarketEntrySelectionMode" }),
     createField("polymarketEntryOffset", { rustSupport: "unsupported" }),
+    createField("polymarketEntryPriceFilterCents", { rustSupport: "unsupported", parser: "polymarketEntryPriceFilterCents" }),
     createField("polymarketExitMode", { rustSupport: "unsupported", parser: "polymarketExitMode" }),
     createField("polymarketSignalExitAllowMultipleTradesPerEvent", { rustSupport: "unsupported" }),
     createField("polymarketPostSignalLimitEntryEnabled", { rustSupport: "unsupported" }),
@@ -385,6 +395,8 @@ export function coerceBacktestDomSettingValue(
             return resolvePolymarketOutcomeInterval(value);
         case "polymarketEntrySelectionMode":
             return resolvePolymarketEntrySelectionMode(value);
+        case "polymarketEntryPriceFilterCents":
+            return clampPolymarketEntryPriceFilterCents(value);
         case "polymarketExitMode":
             return typeof value === "string" && value.trim().toLowerCase() === "signal_exit_same_event"
                 ? "signal_exit_same_event"

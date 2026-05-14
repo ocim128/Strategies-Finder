@@ -62,6 +62,7 @@ export type QuickViewPolymarketSummary = {
     missingTrades: number;
     unscoredTrades: number;
     duplicateTradesIgnored?: number;
+    entryPriceFilteredTrades?: number;
     coverage: number;
     winRate: number;
     expectancy: number | null;
@@ -343,6 +344,7 @@ function getScoredPolymarketTrades(trades: readonly Trade[]): Trade[] {
         && trade.polymarketOutcome !== undefined
         && trade.polymarketOutcome.marketExitSource !== "duplicate"
         && trade.polymarketOutcome.marketExitSource !== "filtered"
+        && trade.polymarketOutcome.marketExitSource !== "entry_price_filtered"
         && trade.polymarketOutcome.marketExitSource !== "no_event"
         && trade.polymarketOutcome.marketExitSource !== "missing"
     ));
@@ -356,21 +358,26 @@ function inferPolymarketSummaryCounts(
     missingOutcomeTrades: number;
     unscoredTrades: number;
     duplicateTradesIgnored?: number;
+    entryPriceFilteredTrades?: number;
 } {
     const scoredTrades = getScoredPolymarketTrades(trades).length;
     const hasSignalExitAnnotations = trades.some((trade) => trade.polymarketOutcome?.evaluationMode === "signal_exit_same_event");
     const duplicateTradesIgnored = hasSignalExitAnnotations
         ? trades.filter((trade) => trade.polymarketOutcome?.marketExitSource === "duplicate").length
         : 0;
+    const entryPriceFilteredTrades = trades.filter(
+        (trade) => trade.polymarketOutcome?.marketExitSource === "entry_price_filtered"
+    ).length;
     const missingOutcomeTrades = hasSignalExitAnnotations
         ? trades.filter((trade) => trade.polymarketOutcome?.marketExitSource === "no_event").length
-        : Math.max(0, totalTrades - scoredTrades);
+        : Math.max(0, totalTrades - scoredTrades - entryPriceFilteredTrades);
 
     return {
         scoredTrades,
         missingOutcomeTrades,
         unscoredTrades: Math.max(0, totalTrades - scoredTrades),
         duplicateTradesIgnored: duplicateTradesIgnored > 0 ? duplicateTradesIgnored : undefined,
+        entryPriceFilteredTrades: entryPriceFilteredTrades > 0 ? entryPriceFilteredTrades : undefined,
     };
 }
 
@@ -722,6 +729,7 @@ class QuickViewManager {
                 missingOutcomeTrades: existingSummary?.missingOutcomeTrades ?? options.missingOutcomeTrades ?? inferredCounts.missingOutcomeTrades,
                 unscoredTrades: existingSummary?.unscoredTrades ?? options.unscoredTrades ?? inferredCounts.unscoredTrades,
                 duplicateTradesIgnored: existingSummary?.duplicateTradesIgnored ?? inferredCounts.duplicateTradesIgnored,
+                entryPriceFilteredTrades: existingSummary?.entryPriceFilteredTrades ?? options.summary?.entryPriceFilteredTrades ?? inferredCounts.entryPriceFilteredTrades,
                 entrySelectionMode: existingSummary?.entrySelectionMode ?? options.entrySelectionMode,
                 entryOffset: existingSummary?.entryOffset ?? options.selectedOffset,
                 timingProfile: existingSummary?.timingProfile,
@@ -824,6 +832,10 @@ class QuickViewManager {
         return resolvePolymarketDomSettings().signalExitAllowMultipleTradesPerEvent;
     }
 
+    private readCurrentPolymarketEntryPriceFilterCents(): number {
+        return resolvePolymarketDomSettings().entryPriceFilterCents;
+    }
+
     private readCurrentExecutionModel(): string | undefined {
         return resolvePolymarketDomSettings().executionModel;
     }
@@ -907,6 +919,7 @@ class QuickViewManager {
                     polymarketSignalExitAllowMultipleTradesPerEvent: result.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event"
                         ? result.polymarketTradeSummary.signalExitAllowMultipleTradesPerEvent === true
                         : this.readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent(),
+                    entryPriceFilterCents: this.readCurrentPolymarketEntryPriceFilterCents(),
                 });
             } catch (error) {
                 debugLogger.warn("quick_view.second_market_polymarket_annotation_failed", {
@@ -1013,6 +1026,7 @@ class QuickViewManager {
                     outcomes,
                     pricePoints,
                     allowMultipleTradesPerEvent,
+                    entryPriceFilterCents: currentPolymarketSettings.entryPriceFilterCents,
                     limitEntry,
                 });
                 const exitResultByTrade = new Map(exitResults.map((exitResult) => [exitResult.trade, exitResult]));
@@ -1034,6 +1048,7 @@ class QuickViewManager {
                         missingOutcomeTrades: exitSummary.missingOutcomeTrades,
                         unscoredTrades: exitSummary.unscoredTrades,
                         duplicateTradesIgnored: exitSummary.duplicateTradesIgnored > 0 ? exitSummary.duplicateTradesIgnored : undefined,
+                        entryPriceFilteredTrades: exitSummary.entryPriceFilteredTrades > 0 ? exitSummary.entryPriceFilteredTrades : undefined,
                         evaluationMode: "signal_exit_same_event",
                         signalExitAllowMultipleTradesPerEvent: exitSummary.allowMultipleTradesPerEvent,
                         profitableTrades: exitSummary.profitableTrades,
@@ -1110,6 +1125,7 @@ class QuickViewManager {
                 {
                     outcomeInterval,
                     pricePoints: limitEntryPricePoints,
+                    entryPriceFilterCents: currentPolymarketSettings.entryPriceFilterCents,
                     limitEntry,
                 }
             );
@@ -1424,6 +1440,7 @@ class QuickViewManager {
         return {
             wins, losses, neutralTrades, scoredTrades, missingTrades, unscoredTrades, coverage,
             duplicateTradesIgnored,
+            entryPriceFilteredTrades: summary?.entryPriceFilteredTrades,
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
             expectancy: isSignalExit
                 ? (summary?.expectancy ?? payoutSummary?.expectancy ?? null)

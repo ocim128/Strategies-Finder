@@ -44,6 +44,13 @@ Transform tasks into verifiable goals:
 "Refactor X" → "Ensure tests pass before and after"
 For multi-step tasks, state a brief plan:
 
+
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+
 5. Use the model only for judgment calls
 Use for: classification, drafting, summarization, extraction.
 Do NOT use for: routing, retries, status-code handling, deterministic transforms.
@@ -75,12 +82,6 @@ If you think a convention is harmful, surface it. Don't fork it silently.
 "Completed" is wrong if anything was skipped silently.
 "Tests pass" is wrong if any were skipped.
 Default to surfacing uncertainty, not hiding it.
-
-
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
 
 

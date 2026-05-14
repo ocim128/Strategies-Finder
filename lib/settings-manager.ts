@@ -573,6 +573,7 @@ class SettingsManager {
             'takeProfitToggle',
             'historicalLevelTakeProfitToggle',
             'historicalLevelStopLossToggle',
+            'riskMinHoldToggle',
             'riskMaxHoldToggle'
         ];
 

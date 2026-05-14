@@ -196,6 +196,7 @@ function summarizePolymarketResult(args: {
         missingOutcomeTrades: summary.missingOutcomeTrades,
         unscoredTrades: Math.max(0, tradeCount - summary.scoredTrades),
         duplicateTradesIgnored: summary.duplicateTradesIgnored || undefined,
+        entryPriceFilteredTrades: summary.entryPriceFilteredTrades || undefined,
         evaluationMode,
         signalExitAllowMultipleTradesPerEvent: summary.allowMultipleTradesPerEvent,
         profitableTrades,
@@ -263,6 +264,7 @@ function buildPolymarketEval(args: {
         missingOutcomeRows: summary.missingOutcomeTrades,
         ignoredSignals: summary.duplicateTradesIgnored,
         duplicateTradesIgnored: summary.duplicateTradesIgnored,
+        entryPriceFilteredPredictions: summary.entryPriceFilteredTrades || undefined,
         evaluationMode,
         signalExitAllowMultipleTradesPerEvent: summary.allowMultipleTradesPerEvent,
         signalExitedTrades: summary.signalExitedTrades,
@@ -320,6 +322,7 @@ export function evaluateSecondMarketBacktest(args: {
     trades?: readonly Trade[];
     polymarketExitMode?: PolymarketExitMode;
     polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
+    entryPriceFilterCents?: number;
 }): SecondMarketEvaluationResult {
     const trades = [...(args.trades ?? args.result.trades)];
     const evaluationMode = "signal_exit_same_event";
@@ -331,6 +334,7 @@ export function evaluateSecondMarketBacktest(args: {
         allowMultipleTradesPerEvent: args.polymarketSignalExitAllowMultipleTradesPerEvent,
         mode: "strict",
         fillSource: "bid_ask",
+        entryPriceFilterCents: args.entryPriceFilterCents,
     });
     const annotatedByTrade = new Map<Trade, TradePolymarketOutcome>(
         evaluated.results.map((result) => [result.trade, buildTradeAnnotation(result, evaluationMode)] as const)
@@ -370,6 +374,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
     executionModel?: string;
     polymarketExitMode?: PolymarketExitMode;
     polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
+    entryPriceFilterCents?: number;
 }): Promise<BacktestResult> {
     if (
         !isSecondMarketPolymarketScoringSupported({
@@ -399,6 +404,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
         context,
         polymarketExitMode: args.polymarketExitMode,
         polymarketSignalExitAllowMultipleTradesPerEvent: args.polymarketSignalExitAllowMultipleTradesPerEvent,
+        entryPriceFilterCents: args.entryPriceFilterCents,
     });
 
     return {

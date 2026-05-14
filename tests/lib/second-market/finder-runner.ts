@@ -290,6 +290,7 @@ export async function runSecondMarketFinder(
                     trades: tradesForPolymarket,
                     polymarketExitMode: effectiveExitMode,
                     polymarketSignalExitAllowMultipleTradesPerEvent: options.polymarketSignalExitAllowMultipleTradesPerEvent,
+                    entryPriceFilterCents: options.polymarketEntryPriceFilterCents ?? settings.polymarketEntryPriceFilterCents,
                 });
 
                 processedCount++;

@@ -9,7 +9,7 @@ import { prepareSignals } from './signal-preparation';
 import { calculateTradeExitDetails, createEmptyBacktestResult, finalizeBacktestMetrics, calculateBacktestStats, calculateMaxDrawdown } from './position-stats';
 import { precomputeIndicators, resolveIndicators } from './indicator-precompute';
 import { buildPositionFromSignal, type SmartSizingState } from './position-builder';
-import { processPositionExits, updatePositionState } from './exit-handlers';
+import { canExitAfterMinimumHold, processPositionExits, updatePositionState } from './exit-handlers';
 import {
     createAdaptiveTakeProfitState,
     registerAdaptiveTakeProfitPosition,
@@ -993,6 +993,9 @@ export function runBacktestCompact(
                     }
                     openSignalPosition(signal, i, currentBarOpenedPositions);
                 } else if (exitTarget) {
+                    if (!canExitAfterMinimumHold(exitTarget, config)) {
+                        continue;
+                    }
                     const exitOrder = resolveSignalExitOrder(exitTarget, signal);
                     if (!exitOrder) continue;
 
@@ -1073,6 +1076,9 @@ export function runBacktestCompact(
                         }
                     } else if (exitTarget) {
                         // Signal exit: close the opposite-direction position
+                        if (!canExitAfterMinimumHold(exitTarget, config)) {
+                            continue;
+                        }
                         const exitOrder = resolveSignalExitOrder(exitTarget, signal);
                         if (!exitOrder) continue;
 
@@ -1402,6 +1408,9 @@ export function runBacktest(
                     openSignalPosition(signal, i, currentBarOpenedPositions);
                 } else if (exitTarget) {
                     // Signal exit
+                    if (!canExitAfterMinimumHold(exitTarget, config)) {
+                        continue;
+                    }
                     const exitOrder = resolveSignalExitOrder(exitTarget, signal);
                     if (!exitOrder) continue;
 
@@ -1481,6 +1490,9 @@ export function runBacktest(
                         }
                     } else if (exitTarget) {
                         // Signal exit
+                        if (!canExitAfterMinimumHold(exitTarget, config)) {
+                            continue;
+                        }
                         const exitOrder = resolveSignalExitOrder(exitTarget, signal);
                         if (!exitOrder) continue;
 

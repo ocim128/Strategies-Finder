@@ -193,7 +193,7 @@ export interface SecondMarketTradeResult {
     entryQuoteTs: number | null;
     exitPrice: number | null;
     exitQuoteTs: number | null;
-    exitSource: "signal" | "resolution" | "duplicate" | "no_event" | "missing";
+    exitSource: "signal" | "resolution" | "duplicate" | "entry_price_filtered" | "no_event" | "missing";
     pnl: number | null;
     isProfitable: boolean | null;
 }
@@ -203,6 +203,7 @@ export interface SecondMarketBacktestSummary {
     allowMultipleTradesPerEvent?: boolean;
     scoredTrades: number;
     duplicateTradesIgnored: number;
+    entryPriceFilteredTrades: number;
     missingOutcomeTrades: number;
     missingQuoteTrades: number;
     signalExitedTrades: number;

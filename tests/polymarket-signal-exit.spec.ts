@@ -456,6 +456,32 @@ console.log("\n=== evaluateSignalExitTrades: missing entry quote → unscored ==
     eq(summary.scoredTrades, 0, "0 scored trades");
 }
 
+console.log("\n=== evaluateSignalExitTrades: entry price filter skips edge-priced trades ===");
+
+{
+    const trade = makeTrade({ entryTime: 1020 as any });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300, resolved_outcome_up: 1 });
+    const pricePoints = [
+        makePricePoint({ ts: 1020, yes_price: 0.2, no_price: 0.8 }),
+        makePricePoint({ ts: 1050, yes_price: 0.3, no_price: 0.7 }),
+    ];
+
+    const { results, summary } = evaluateSignalExitTrades({
+        trades: [trade],
+        outcomes: [outcome],
+        pricePoints,
+        entryPriceFilterCents: 20,
+    });
+    const annotation = buildTradeAnnotationFromSignalExitResult(results[0]!);
+
+    eq(results[0]!.exitSource, "entry_price_filtered", "edge entry is marked as price-filtered");
+    eq(summary.entryPriceFilteredTrades, 1, "price-filtered trade counted");
+    eq(summary.scoredTrades, 0, "price-filtered trade is not scored");
+    eq(summary.unscoredTrades, 1, "price-filtered trade is unscored");
+    eq(annotation?.marketExitSource, "entry_price_filtered", "annotation preserves price-filtered source");
+    eq(annotation?.marketEntryPrice, 0.2, "annotation keeps the filtered entry price");
+}
+
 console.log("\n=== evaluateSignalExitTrades: same entry quote can also serve as a flat same-event exit ===");
 
 {

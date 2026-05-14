@@ -84,6 +84,24 @@ describe('Backtest settings compatibility', () => {
         expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketEntrySelectionMode')).to.equal(true);
     });
 
+    it('normalizes the Polymarket entry price filter as a symmetric cents boundary', () => {
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryPriceFilterCents).to.equal(0);
+        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketEntryPriceFilterCents')).to.equal(true);
+
+        const contract = getBacktestDomSettingContract('polymarketEntryPriceFilterCents');
+        expect(contract).to.not.equal(undefined);
+        expect(coerceBacktestDomSettingValue(contract!, 20)).to.equal(20);
+        expect(coerceBacktestDomSettingValue(contract!, 80)).to.equal(49);
+        expect(coerceBacktestDomSettingValue(contract!, -5)).to.equal(0);
+        expect(coerceBacktestDomSettingValue(contract!, 'bad')).to.equal(0);
+
+        const resolved = resolveBacktestSettingsFromRaw({
+            polymarketEntryPriceFilterCents: 80,
+        } as unknown as BacktestSettings);
+        expect(resolved.polymarketEntryPriceFilterCents).to.equal(49);
+        expect('polymarketEntryPriceFilterCents' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
+    });
+
     it('includes polymarketOutcomeInterval in shared defaults and manual-backtest DOM ids', () => {
         expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketOutcomeInterval).to.equal('5m');
         expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketOutcomeInterval')).to.equal(true);
@@ -580,6 +598,21 @@ describe('Backtest settings compatibility', () => {
         expect('historicalLevelLookbackBars' in sanitized).to.equal(false);
     });
 
+    it('keeps minimum hold on the TypeScript-only path when enabled', () => {
+        const resolved = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: true,
+            riskMinHoldToggle: true,
+            riskMinHoldBars: '10',
+        } as unknown as BacktestSettings);
+        const sanitized = sanitizeBacktestSettingsForRust(resolved);
+
+        expect(resolved.riskMinHoldEnabled).to.equal(true);
+        expect(resolved.riskMinHoldBars).to.equal(10);
+        expect(requiresTypescriptEngine(resolved)).to.equal(true);
+        expect('riskMinHoldEnabled' in sanitized).to.equal(false);
+        expect('riskMinHoldBars' in sanitized).to.equal(false);
+    });
+
     it('does not expose removed snapshot filter defaults', () => {
         expect('snapshotAtrFilterToggle' in (DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)).to.equal(false);
         expect('snapshotAtrPercentMin' in (DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)).to.equal(false);
@@ -624,9 +657,12 @@ describe('Backtest settings compatibility', () => {
         expect(getBacktestDomSettingContract('polymarketOutcomeSymbol')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('polymarketEntrySelectionMode')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('polymarketEntryOffset')).to.not.equal(undefined);
+        expect(getBacktestDomSettingContract('polymarketEntryPriceFilterCents')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('historicalLevelTakeProfitToggle')?.settingKey).to.equal('historicalLevelTakeProfitEnabled');
         expect(getBacktestDomSettingContract('historicalLevelStopLossToggle')?.settingKey).to.equal('historicalLevelStopLossEnabled');
         expect(getBacktestDomSettingContract('historicalLevelLookbackBars')?.rustSupport).to.equal('unsupported');
+        expect(getBacktestDomSettingContract('riskMinHoldToggle')?.settingKey).to.equal('riskMinHoldEnabled');
+        expect(getBacktestDomSettingContract('riskMinHoldBars')?.rustSupport).to.equal('unsupported');
         expect(getBacktestDomSettingContract('allowSameBarExitToggle')).to.equal(undefined);
         expect(getBacktestDomSettingContract('marketMode')).to.equal(undefined);
         expect(getBacktestDomSettingContract('breakEvenPercent')).to.equal(undefined);

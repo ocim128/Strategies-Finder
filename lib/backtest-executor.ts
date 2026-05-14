@@ -463,7 +463,11 @@ async function annotatePolymarketResult(
             // The shared executor does not load same-event price points, so
             // endpoint/executor annotation stays on resolve_hold.
             polymarketExitMode: "resolve_hold",
-        }, settings.polymarketEntryOffset, undefined, settings.polymarketEntrySelectionMode);
+        }, {
+            selectedOffset: settings.polymarketEntryOffset,
+            entrySelectionMode: settings.polymarketEntrySelectionMode,
+            entryPriceFilterCents: settings.polymarketEntryPriceFilterCents,
+        });
     } catch {
         return result;
     }

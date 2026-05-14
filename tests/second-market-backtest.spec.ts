@@ -115,6 +115,33 @@ describe("second market backtest evaluator", () => {
         expect(evaluated.summary.scoredTrades).to.equal(1);
     });
 
+    it("filters edge-priced CLOB entries before same-event dedupe", () => {
+        const secondTrade = trade(1_700_000_030, 1_700_000_040);
+        secondTrade.id = 2;
+
+        const evaluated = evaluateSecondMarketTrades({
+            trades: [
+                trade(1_700_000_010, 1_700_000_020),
+                secondTrade,
+            ],
+            outcomes: [outcome()],
+            quotes: [
+                quote(1_700_000_010, 0.20, 0.18),
+                quote(1_700_000_020, 0.30, 0.28),
+                quote(1_700_000_030, 0.55, 0.53),
+                quote(1_700_000_040, 0.65, 0.63),
+            ],
+            evaluationMode: "signal_exit_same_event",
+            entryPriceFilterCents: 20,
+            mode: "strict",
+        });
+
+        expect(evaluated.results.map((result) => result.exitSource)).to.deep.equal(["entry_price_filtered", "signal"]);
+        expect(evaluated.summary.entryPriceFilteredTrades).to.equal(1);
+        expect(evaluated.summary.scoredTrades).to.equal(1);
+        expect(evaluated.summary.duplicateTradesIgnored).to.equal(0);
+    });
+
     it("can still compute final event resolution fills at the evaluator layer", () => {
         const position = trade(1_700_000_010, 1_700_000_020);
         position.exitReason = "take_profit";

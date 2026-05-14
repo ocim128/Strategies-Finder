@@ -311,6 +311,7 @@ export class TradesRenderer {
                     outcomes,
                     pricePoints,
                     allowMultipleTradesPerEvent,
+                    entryPriceFilterCents: currentPolymarketSettings.entryPriceFilterCents,
                     limitEntry,
                 });
                 const exitResultMap = new Map(exitResults.map((r) => [r.trade, r]));
@@ -355,6 +356,7 @@ export class TradesRenderer {
             {
                 outcomeInterval,
                 pricePoints: limitEntryPricePoints,
+                entryPriceFilterCents: currentPolymarketSettings.entryPriceFilterCents,
                 limitEntry,
             }
         );
@@ -420,6 +422,12 @@ export class TradesRenderer {
                 : "the active 1m bridge selection";
             const badgeLabel = entryOffset === null ? "Poly skip" : `Poly skip m${entryOffset}`;
             return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly Skip: resolve-hold scoring excluded this trade because it entered on ${escapeHtml(entryMinute)} instead of ${escapeHtml(activeMinute)}">${escapeHtml(badgeLabel)}</span>`;
+        }
+        if (outcome.marketExitSource === "entry_price_filtered") {
+            const entryPrice = typeof outcome.marketEntryPrice === "number" && Number.isFinite(outcome.marketEntryPrice)
+                ? this.formatPolymarketEntryPrice(outcome.marketEntryPrice)
+                : "n/a";
+            return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly Price Filter: entry price ${escapeHtml(entryPrice)} is outside the configured scoring band">Poly price</span>`;
         }
         if (outcome.marketExitSource === "no_event") {
             if (this.isCurrentSignalExitPolymarketTradeInCurrentBucket(trade)) {

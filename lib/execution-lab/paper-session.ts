@@ -1,4 +1,5 @@
 import type { Time } from "lightweight-charts";
+import { isPolymarketEntryPriceFiltered } from "../polymarket-entry-price-filter";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { Trade } from "../types/strategies";
 import type { PolymarketOutcomeRow } from "../types/polymarket-outcomes";
@@ -613,6 +614,18 @@ export function evaluateExecutionLabPaperTick(
                     `unfilled:missing_entry_quote:${tradeId}`,
                     records,
                     buildUnfilledRecord(state, input, { reason: "missing_entry_quote", signalTimeSec, entryTimeSec, side, event })
+                );
+                continue;
+            }
+            if (isPolymarketEntryPriceFiltered(
+                entryFill.price,
+                state.snapshot.backtestSettings.polymarketEntryPriceFilterCents
+            )) {
+                logOnce(
+                    state,
+                    `unfilled:entry_price_filtered:${tradeId}`,
+                    records,
+                    buildUnfilledRecord(state, input, { reason: "entry_price_filtered", signalTimeSec, entryTimeSec, side, event })
                 );
                 continue;
             }

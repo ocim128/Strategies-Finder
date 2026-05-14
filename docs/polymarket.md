@@ -30,6 +30,7 @@ If you want to score a strategy against resolved Polymarket crypto events:
 - choose `Polymarket Exit Mode`:
   - `resolve_hold` scores at final event resolution on supported non-`1s` chart intervals
   - `signal_exit_same_event` is effective on `1m` + `next_open` using locally cached Polymarket price points, and on supported `1s` + `next_open` BTCUSDT/XRPUSDT CLOB runs using exact-second bid/ask rows
+- optionally set `Polymarket Entry Price Filter`; for example, `20` skips trades whose selected Polymarket entry price is at or below 20c or at or above 80c
 - optional for native `5m` non-`1s` outcome sessions: enable `Post-Signal Limit Entry` to require the selected YES/NO side to trade at or below the configured limit price after the chart entry signal and before the event's final minute
 
 If you want to manually paper-trade the latest still-open backtest trade:
@@ -199,6 +200,7 @@ Behavior:
 - if no same-event signal exit applies, the Polymarket leg settles to final binary resolution at event end
 - by default, only the first eligible trade per `5m` event is scored; later duplicates in that event are ignored
 - when `polymarketSignalExitAllowMultipleTradesPerEvent` is enabled, every eligible chart trade inside the same event is scored instead of marking later trades as duplicates
+- `polymarketEntryPriceFilterCents` skips trades with selected entry prices at or below `N` cents or at or above `100 - N` cents; skipped trades do not claim the same-event slot before duplicate detection
 - missing-price attempts do not claim the event; with the default event cap, the first scorable trade claims it and later scored attempts in that `5m` event are reported as duplicates instead of adding extra scored trades
 - if the entry quote is missing, the trade is unscored
 - if a same-event signal exit is required but no usable exit quote exists, the trade is unscored and counted as a missing-price trade
@@ -476,6 +478,7 @@ User-facing controls live in the Backtest Realism section:
 - `polymarketOutcomeInterval`
 - `polymarketEntrySelectionMode`
 - `polymarketEntryOffset`
+- `polymarketEntryPriceFilterCents`
 - `polymarketExitMode`
 - `polymarketSignalExitAllowMultipleTradesPerEvent`
 - `polymarketPostSignalLimitEntryEnabled`
@@ -495,6 +498,7 @@ Current UI rules:
 - on `1s` + `next_open` charts, `polymarketExitMode` is forced to `signal_exit_same_event` and the `resolve_hold` option is hidden
 - on `1s` charts with other execution models, `signal_exit_same_event` is disabled and CLOB scoring is skipped
 - `polymarketSignalExitAllowMultipleTradesPerEvent` only shows when annotation is enabled and signal-exit mode is active
+- `polymarketEntryPriceFilterCents` shows when annotation is enabled
 - `polymarketEntrySelectionMode` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, and the selected exit mode is not `signal_exit_same_event`
 - `polymarketEntryOffset` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, the selected exit mode is not `signal_exit_same_event`, and entry selection is `fixed_offset`
 - `polymarketPostSignalLimitEntryEnabled` only shows when annotation is enabled, native outcome session is `5m`, and the chart interval is not `1s`
@@ -519,6 +523,7 @@ Persistence and compatibility:
 - `polymarketEntrySelectionMode` defaults to `fixed_offset`
 - invalid persisted values normalize back to `fixed_offset`
 - `polymarketEntryOffset` stays persisted for backward compatibility even when ignored by signal-exit mode
+- `polymarketEntryPriceFilterCents` defaults to `0`, disables filtering at `0`, and clamps to `0..49`
 - `polymarketSignalExitAllowMultipleTradesPerEvent` defaults to `false`
 - `polymarketPostSignalLimitEntryEnabled` defaults to `false`
 - `polymarketPostSignalLimitEntryMode` defaults to `fixed_price`

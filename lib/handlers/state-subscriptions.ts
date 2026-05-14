@@ -57,6 +57,7 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
         [rows.outcomeIntervalRow, annotationEnabled],
         [rows.entrySelectionModeRow, showsEntryBridgeControls],
         [rows.offsetRow, showsEntryBridgeControls && !usesActualEntryMinute],
+        [rows.entryPriceFilterCentsRow, annotationEnabled],
         [rows.exitModeRow, annotationEnabled],
         [rows.signalExitAllowMultipleTradesPerEventRow, annotationEnabled && isSignalExit],
         [rows.postSignalLimitEntryEnabledRow, supportsLimitEntry],

@@ -8,6 +8,7 @@ import type {
     PolymarketFinderRankMode,
 } from "../types/finder";
 import { resolveEffectivePolymarketExitMode, type PolymarketExitMode } from "../polymarket-exit-mode";
+import { clampPolymarketEntryPriceFilterCents } from "../polymarket-entry-price-filter";
 
 export interface FinderOptionsInput {
     useAdvancedSort: boolean;
@@ -28,6 +29,7 @@ export interface FinderOptionsInput {
     polymarketMinScoredPredictions: number;
     polymarketLockOffset: boolean;
     polymarketAfterTakeProfitOnly: boolean;
+    polymarketEntryPriceFilterCents?: number;
     polymarketExitMode: PolymarketExitMode;
     polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
     polymarketPostSignalLimitEntryEnabled?: boolean;
@@ -136,6 +138,9 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
         polymarketMinScoredPredictions: Math.max(0, input.polymarketMinScoredPredictions),
         polymarketLockOffset: input.polymarketScoringEnabled && input.polymarketLockOffset,
         polymarketAfterTakeProfitOnly: input.polymarketScoringEnabled && input.polymarketAfterTakeProfitOnly,
+        polymarketEntryPriceFilterCents: input.polymarketScoringEnabled
+            ? clampPolymarketEntryPriceFilterCents(input.polymarketEntryPriceFilterCents)
+            : 0,
         polymarketExitMode: input.polymarketExitMode,
         polymarketSignalExitAllowMultipleTradesPerEvent: input.polymarketScoringEnabled
             && input.polymarketExitMode === "signal_exit_same_event"

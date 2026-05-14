@@ -25,6 +25,10 @@ import {
 } from "./execution-lab-api";
 import { queryExecutionLabDom, type ExecutionLabDom } from "./execution-lab-dom";
 import {
+    collectEntryPriceFilterParityMismatches,
+    type ExecutionParityMismatch,
+} from "./execution-parity";
+import {
     EXECUTION_LAB_DEFAULT_STAKE_USD,
     EXECUTION_LAB_SETTINGS_STORAGE_KEY,
     type ExecutionLabEvaluatedSignal,
@@ -52,16 +56,6 @@ const INITIAL_CANDLE_LIMIT = 900;
 const MAX_STREAM_CANDLES = 20000;
 const MAX_LIVE_CANDLE_LAG_SEC = 10;
 const MAX_POLYMARKET_PRICE_POINTS = 3600;
-
-type ExecutionParityMismatch = {
-    mismatchType: ExecutionParityMismatchRecord["mismatchType"];
-    latestCandleTimeSec: number;
-    detail: string;
-    tradeId?: string;
-    expectedExitTimeSec?: number;
-    expectedExitReason?: string;
-    eventEndTs?: number;
-};
 
 type LivePollFetchResult<T> = { ok: true; value: T } | { ok: false };
 
@@ -584,6 +578,8 @@ export class ExecutionLabService {
                 eventEndTs: record.eventEndTs,
             });
         }
+
+        mismatches.push(...collectEntryPriceFilterParityMismatches(paperState, latestCandleTimeSec));
 
         for (const position of paperState.openPositions.values()) {
             const trade = this.findBacktestTradeForPosition(position, trades);
