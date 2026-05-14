@@ -1,0 +1,62 @@
+<div id="executionlabTab">
+    <div class="execution-lab-header">
+        <div>
+            <div class="section-title">Execution Lab</div>
+        </div>
+        <div class="execution-lab-actions">
+            <label class="param-group execution-lab-stake">
+                <span class="param-label">Stake</span>
+                <input class="param-input" id="executionLabStakeUsd" type="number" min="1" step="1" value="5">
+            </label>
+            <button class="btn btn-primary btn-compact" id="executionLabStartPaper" type="button">Start Paper</button>
+            <button class="btn btn-secondary btn-compact" id="executionLabStopPaper" type="button" disabled>Stop</button>
+        </div>
+    </div>
+
+    <div class="execution-lab-status" id="executionLabStatus">Ready</div>
+
+    <div class="execution-lab-grid">
+        <section class="execution-lab-panel">
+            <div class="execution-lab-panel-title">Session</div>
+            <div class="execution-lab-kv">
+                <span>Config</span>
+                <strong id="executionLabConfigSnapshot">--</strong>
+                <span>Latest Stream Time</span>
+                <strong id="executionLabLatestCandle">--</strong>
+                <span>Polymarket Quote</span>
+                <strong id="executionLabQuoteSnapshot">--</strong>
+                <span>Feed Lag</span>
+                <strong id="executionLabFeedLag">--</strong>
+                <span>Quote Age</span>
+                <strong id="executionLabQuoteAge">--</strong>
+                <span>Active Event</span>
+                <strong id="executionLabActiveEvent">--</strong>
+                <span>Log</span>
+                <strong id="executionLabLogPath">--</strong>
+            </div>
+        </section>
+
+        <section class="execution-lab-panel">
+            <div class="execution-lab-panel-title">Paper State</div>
+            <div class="execution-lab-kv">
+                <span>Latest Signal</span>
+                <strong id="executionLabLatestSignal">--</strong>
+                <span>Execution Parity</span>
+                <strong id="executionLabSignalParity">--</strong>
+                <span>Mismatch Detail</span>
+                <strong id="executionLabSignalMismatch">--</strong>
+                <span>Open Position</span>
+                <strong id="executionLabOpenPosition">--</strong>
+                <span>Session PnL</span>
+                <strong id="executionLabSessionPnl">--</strong>
+            </div>
+        </section>
+    </div>
+
+    <section class="execution-lab-panel execution-lab-trades-panel">
+        <div class="execution-lab-panel-title">Recent Trades</div>
+        <div class="execution-lab-recent-trades" id="executionLabRecentTrades">
+            <div class="execution-lab-empty">No paper trades yet.</div>
+        </div>
+    </section>
+</div>

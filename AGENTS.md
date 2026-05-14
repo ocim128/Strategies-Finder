@@ -8,6 +8,7 @@ State your assumptions explicitly. If uncertain, ask.
 If multiple interpretations exist, present them - don't pick silently.
 If a simpler approach exists, say so. Push back when warranted.
 If something is unclear, stop. Name what's confusing. Ask.
+
 2. Simplicity First
 Minimum code that solves the problem. Nothing speculative.
 
@@ -42,6 +43,39 @@ Transform tasks into verifiable goals:
 "Fix the bug" → "Write a test that reproduces it, then make it pass"
 "Refactor X" → "Ensure tests pass before and after"
 For multi-step tasks, state a brief plan:
+
+5. Use the model only for judgment calls
+Use for: classification, drafting, summarization, extraction.
+Do NOT use for: routing, retries, status-code handling, deterministic transforms.
+If code can answer, code answers.
+
+6. Surface conflicts, don't average them
+If two patterns contradict, pick one (more recent / more tested).
+Explain why. Flag the other for cleanup.
+Don't blend conflicting patterns.
+
+7. Read before you write
+Before adding code, read exports, immediate callers, shared utilities.
+If unsure why existing code is structured a certain way, ask.
+
+8. Tests verify intent, not just behavior
+Tests must encode WHY behavior matters, not just WHAT it does.
+A test that can't fail when business logic changes is wrong.
+
+9. Checkpoint after every significant step
+Summarize what was done, what's verified, what's left.
+Don't continue from a state you can't describe back.
+If you lose track, stop and restate.
+
+10. Match the codebase's conventions, even if you disagree
+Conformance > taste inside the codebase.
+If you think a convention is harmful, surface it. Don't fork it silently.
+
+11. Fail loud
+"Completed" is wrong if anything was skipped silently.
+"Tests pass" is wrong if any were skipped.
+Default to surfacing uncertainty, not hiding it.
+
 
 1. [Step] → verify: [check]
 2. [Step] → verify: [check]

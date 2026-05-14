@@ -36,6 +36,7 @@ import { strategyPanelController } from "./strategy-panel-controller";
 import { getOptionalElement } from "./dom-utils";
 import { polymarketPanelService } from "./polymarket-panel-service";
 import { secondMarketViewerService } from "./second-market/second-market-viewer-service";
+import { executionLabService } from "./execution-lab/execution-lab-service";
 import { initMonteCarloService } from "./monte-carlo-service";
 import { initCrossSymbolUI } from "./cross-symbol-ui";
 import { huntService } from "./hunt/hunt-service";
@@ -289,9 +290,15 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         init: () => settingsManager.setupAutoSave(),
     },
     {
-        id: "initial-data-load",
+        id: "execution-lab-ui",
         stage: "post_restore",
         dependsOn: ["settings-autosave"],
+        init: () => executionLabService.init(),
+    },
+    {
+        id: "initial-data-load",
+        stage: "post_restore",
+        dependsOn: ["execution-lab-ui"],
         init: async (context) => {
             if (context.shouldLoadData) {
                 markAppTiming("dataLoadStart");

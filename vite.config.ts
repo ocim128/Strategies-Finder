@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { defineConfig, type Plugin } from 'vite';
 import { backtestEndpointPlugin } from './lib/backtest-endpoint-plugin';
 import { strategyLibraryAdminPlugin } from './lib/strategy-library-admin-plugin';
+import { executionLabVitePlugin } from './lib/execution-lab/execution-lab-vite-plugin';
 
 const BYBIT_TRADFI_KLINE_URL = 'https://www.bybit.com/x-api/fapi/copymt5/kline';
 const POLYMARKET_GAMMA_EVENT_SLUG_URL = 'https://gamma-api.polymarket.com/events/slug';
@@ -1636,6 +1637,7 @@ export default defineConfig({
         polymarketProxyPlugin(),
         localPriceDataCatalogPlugin(),
         secondMarketVisualizerPlugin(),
+        executionLabVitePlugin(),
         localSqlitePlugin(),
         strategyLibraryAdminPlugin(),
         backtestEndpointPlugin(),

@@ -11,6 +11,7 @@ import { TRADES_RENDERER_REQUIRED_IDS } from "./lib/renderers/trades-renderer-do
 import { SETTINGS_MANAGER_REQUIRED_IDS } from "./lib/settings-manager-dom";
 import { POLYMARKET_PANEL_REQUIRED_IDS } from "./lib/polymarket-panel-dom";
 import { SECOND_MARKET_VIEWER_REQUIRED_IDS } from "../lib/second-market/second-market-viewer-dom";
+import { EXECUTION_LAB_REQUIRED_IDS } from "../lib/execution-lab/execution-lab-dom";
 import { PORTFOLIO_LAB_REQUIRED_IDS } from "./lib/portfolio-lab-dom";
 import { LIVE_POSITIONS_REQUIRED_IDS } from "./lib/live-positions-dom";
 import { FINDER_MANAGER_REQUIRED_IDS } from "./lib/finder/finder-manager-dom";
@@ -82,6 +83,7 @@ describe("Feature DOM contracts", () => {
         livePositions: [...LIVE_POSITIONS_REQUIRED_IDS],
         polymarketPanel: [...POLYMARKET_PANEL_REQUIRED_IDS],
         secondMarketViewer: [...SECOND_MARKET_VIEWER_REQUIRED_IDS],
+        executionLab: [...EXECUTION_LAB_REQUIRED_IDS],
         ensembleLab: [...ENSEMBLE_LAB_REQUIRED_IDS],
         finderManager: [...FINDER_MANAGER_REQUIRED_IDS],
         hunt: [...HUNT_REQUIRED_IDS],

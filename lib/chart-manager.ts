@@ -8,6 +8,7 @@ import {
     Time,
     createSeriesMarkers,
     SeriesMarker,
+    ISeriesMarkersPluginApi,
     MouseEventParams,
     ISeriesApi,
     TickMarkType,
@@ -28,6 +29,12 @@ import { getTimeIndex, timeKey } from "./strategies/backtest/backtest-utils";
 type IndicatorTooltipPoint = {
     time: Time;
     value?: number | null;
+};
+
+export type ExecutionLabPolymarketPricePoint = {
+    time: Time;
+    yes: number | null;
+    no: number | null;
 };
 
 // ============================================================================
@@ -61,6 +68,9 @@ export class ChartManager {
     private spreadSeries: ISeriesApi<"Line"> | null = null;
     private correlationUpperSeries: ISeriesApi<"Line"> | null = null;
     private correlationLowerSeries: ISeriesApi<"Line"> | null = null;
+    private executionLabYesSeries: ISeriesApi<"Line"> | null = null;
+    private executionLabNoSeries: ISeriesApi<"Line"> | null = null;
+    private executionLabMarkersPlugin: ISeriesMarkersPluginApi<Time> | null = null;
     private indicatorDomCache = new Map<string, { node: HTMLElement; valNode: HTMLElement }>();
     private tooltipIndicatorSetRef: typeof state.indicators | null = null;
     private cachedContainerRect: DOMRect | null = null;
@@ -692,6 +702,96 @@ export class ChartManager {
         }
     }
 
+    public displayPaperStreamData(data: OHLCVData[]): void {
+        if (data.length === 0) return;
+        const displayData = state.chartMode === 'heikin-ashi'
+            ? toHeikinAshi(data)
+            : data;
+
+        state._ohlcvTimeMap = new Map(data.map((candle) => [timeKey(candle.time), candle]));
+        state.candlestickSeries.setData(displayData.map(d => ({
+            time: d.time,
+            open: d.open,
+            high: d.high,
+            low: d.low,
+            close: d.close,
+        })));
+        state.chart.timeScale().scrollToRealTime();
+    }
+
+    public displayExecutionLabPolymarketPrices(points: ExecutionLabPolymarketPricePoint[]): void {
+        if (points.length === 0) {
+            this.clearExecutionLabPolymarketPrices();
+            return;
+        }
+
+        if (!this.executionLabYesSeries) {
+            this.executionLabYesSeries = state.chart.addSeries(LineSeries, {
+                color: ENHANCED_CANDLE_COLORS.up,
+                lineWidth: 2,
+                priceLineVisible: true,
+                lastValueVisible: true,
+                crosshairMarkerVisible: true,
+                priceScaleId: "execution-lab-polymarket",
+                title: "YES",
+                priceFormat: {
+                    type: "price",
+                    precision: 3,
+                    minMove: 0.001,
+                },
+            });
+        }
+
+        if (!this.executionLabNoSeries) {
+            this.executionLabNoSeries = state.chart.addSeries(LineSeries, {
+                color: ENHANCED_CANDLE_COLORS.down,
+                lineWidth: 2,
+                priceLineVisible: true,
+                lastValueVisible: true,
+                crosshairMarkerVisible: true,
+                priceScaleId: "execution-lab-polymarket",
+                title: "NO",
+                priceFormat: {
+                    type: "price",
+                    precision: 3,
+                    minMove: 0.001,
+                },
+            });
+        }
+
+        state.chart.priceScale("execution-lab-polymarket").applyOptions({
+            scaleMargins: { top: 0.72, bottom: 0.08 },
+            visible: false,
+        });
+
+        this.executionLabYesSeries.setData(points
+            .filter((point) => point.yes !== null)
+            .map((point) => ({ time: point.time, value: point.yes as number })));
+        this.executionLabNoSeries.setData(points
+            .filter((point) => point.no !== null)
+            .map((point) => ({ time: point.time, value: point.no as number })));
+    }
+
+    public clearExecutionLabPolymarketPrices(): void {
+        if (this.executionLabYesSeries) {
+            state.chart.removeSeries(this.executionLabYesSeries);
+            this.executionLabYesSeries = null;
+        }
+        if (this.executionLabNoSeries) {
+            state.chart.removeSeries(this.executionLabNoSeries);
+            this.executionLabNoSeries = null;
+        }
+    }
+
+    public restoreStateChartData(): void {
+        state._ohlcvTimeMap = new Map(state.ohlcvData.map((candle) => [timeKey(candle.time), candle]));
+        if (state.ohlcvData.length === 0) {
+            state.candlestickSeries.setData([]);
+            return;
+        }
+        this.updateChartData();
+    }
+
     // ========================================================================
     // Pair Overlay & Spread Visualization
     // ========================================================================
@@ -935,6 +1035,18 @@ export class ChartManager {
         if (state.markersPlugin) {
             state.markersPlugin.detach();
             setMarkersPlugin(null);
+        }
+    }
+
+    public displayExecutionLabMarkers(markers: SeriesMarker<Time>[]): void {
+        this.clearExecutionLabMarkers();
+        this.executionLabMarkersPlugin = createSeriesMarkers(state.candlestickSeries, markers);
+    }
+
+    public clearExecutionLabMarkers(): void {
+        if (this.executionLabMarkersPlugin) {
+            this.executionLabMarkersPlugin.detach();
+            this.executionLabMarkersPlugin = null;
         }
     }
 

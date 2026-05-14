@@ -86,6 +86,7 @@ export interface BacktestExecutorRequest {
 export interface BacktestExecutorResult {
     result: BacktestResult;
     engineUsed: "rust" | "typescript";
+    signals: Signal[];
 }
 
 // ============================================================================
@@ -117,11 +118,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         ...(backtestSettings as Record<string, unknown>),
         interval,
     } as BacktestSettings;
-    const resolvedSettings = resolveBacktestSettingsFromRaw(settingsWithMeta, {
-        coerceWithoutUiToggles: true,
-    });
-    resolvedSettings.tradeDirection = resolvedSettings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
-    resolvedSettings.executionModel = resolvedSettings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
+    const resolvedSettings = resolveExecutorBacktestSettings(settingsWithMeta, interval);
 
     const resolvedCapital = resolveCapitalSettingsFromRaw(capitalSettings as Record<string, unknown>);
 
@@ -201,15 +198,14 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         };
     }
 
-    let signals = executeStrategySignals(
-        backtestData,
+    const signals = resolveBacktestSignalsForData({
+        data: backtestData,
         strategy,
-        normalizedParams,
-        resolvedSettings,
-        hasGlobalStrategyTimeframeWrapper(strategy),
-        alignedCrossSymbolContext
-    );
-    signals = filterSignalsByBlockRange(signals, blockRange);
+        params: normalizedParams,
+        settings: resolvedSettings,
+        blockRange,
+        crossSymbolContext: alignedCrossSymbolContext,
+    });
 
     const evaluation = strategy.evaluate?.(backtestData, normalizedParams, signals);
     const entryStats = evaluation?.entryStats;
@@ -223,7 +219,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             result = annotatedResult;
         }
         registerBacktestEdgeAnalysisInput(result, backtestData);
-        return { result, engineUsed: "typescript" };
+        return { result, engineUsed: "typescript", signals };
     }
 
     const requireTs = requiresTypescriptEngine(resolvedSettings) || isSmartTradeSizingMode(resolvedCapital.sizingMode);
@@ -238,7 +234,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
                 result = annotatedResult;
             }
             registerBacktestEdgeAnalysisInput(result, backtestData);
-            return { result, engineUsed: "rust" };
+            return { result, engineUsed: "rust", signals };
         }
     }
 
@@ -262,7 +258,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         result = annotatedResult;
     }
     registerBacktestEdgeAnalysisInput(result, backtestData);
-    return { result, engineUsed: "typescript" };
+    return { result, engineUsed: "typescript", signals };
 }
 
 /**
@@ -280,15 +276,7 @@ export async function executeBacktestFromSignals(
     const nowSec = context.nowSec ?? Math.floor(Date.now() / 1000);
     const blockRange = context.blockRange ?? null;
     const annotatePolymarket = context.annotatePolymarket ?? false;
-    const resolvedSettings = resolveBacktestSettingsFromRaw(
-        {
-            ...(settings as Record<string, unknown>),
-            interval,
-        } as BacktestSettings,
-        { coerceWithoutUiToggles: true }
-    );
-    resolvedSettings.tradeDirection = resolvedSettings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
-    resolvedSettings.executionModel = resolvedSettings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
+    const resolvedSettings = resolveExecutorBacktestSettings(settings, interval);
 
     const resolvedCapital = resolveCapitalSettingsFromRaw(
         capitalSettings as Record<string, unknown>
@@ -317,7 +305,7 @@ export async function executeBacktestFromSignals(
                 result = annotatedResult;
             }
             registerBacktestEdgeAnalysisInput(result, backtestData);
-            return { result, engineUsed: "rust" };
+            return { result, engineUsed: "rust", signals: filteredSignals };
         }
     }
 
@@ -337,7 +325,7 @@ export async function executeBacktestFromSignals(
         result = annotatedResult;
     }
     registerBacktestEdgeAnalysisInput(result, backtestData);
-    return { result, engineUsed: "typescript" };
+    return { result, engineUsed: "typescript", signals: filteredSignals };
 }
 
 // ============================================================================
@@ -355,6 +343,41 @@ function shouldAttemptRust(
     if (requireTs || engineMode === "typescript") return false;
     if (engineMode === "rust_preferred") return true;
     return isBrowser() && shouldUseRustEngine();
+}
+
+function resolveExecutorBacktestSettings(
+    settings: BacktestSettings | Record<string, unknown>,
+    interval: string
+): BacktestSettings {
+    const resolvedSettings = resolveBacktestSettingsFromRaw(
+        {
+            ...(settings as Record<string, unknown>),
+            interval,
+        } as BacktestSettings,
+        { coerceWithoutUiToggles: true }
+    );
+    resolvedSettings.tradeDirection = resolvedSettings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
+    resolvedSettings.executionModel = resolvedSettings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
+    return resolvedSettings;
+}
+
+function resolveBacktestSignalsForData(args: {
+    data: OHLCVData[];
+    strategy: Strategy;
+    params: StrategyParams;
+    settings: BacktestSettings;
+    blockRange: { from: number; to: number } | null;
+    crossSymbolContext?: StrategyExecutionContext;
+}): Signal[] {
+    const signals = executeStrategySignals(
+        args.data,
+        args.strategy,
+        args.params,
+        args.settings,
+        hasGlobalStrategyTimeframeWrapper(args.strategy),
+        args.crossSymbolContext
+    );
+    return filterSignalsByBlockRange(signals, args.blockRange);
 }
 
 function selectClosedCandleData(
