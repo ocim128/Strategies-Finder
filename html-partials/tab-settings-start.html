@@ -2,7 +2,17 @@
 <div id="settingsTab" data-preset="standard">
     <div class="strategy-workspace">
         <div class="strategy-workspace-header" id="strategyWorkspaceHeader">
-            <div class="strategy-workspace-grid">
+            <div class="strategy-workspace-toggle section-header collapsible" id="strategyWorkspaceToggle"
+                data-target="strategyWorkspaceBody">
+                <div style="display:flex;align-items:center;">
+                    <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M7 10l5 5 5-5z" />
+                        </svg></span>
+                    <div class="section-title">Strategy Workspace</div>
+                </div>
+            </div>
+            <div class="strategy-workspace-body accordion-body" id="strategyWorkspaceBody">
+                <div class="strategy-workspace-grid">
                 <section class="strategy-workspace-card strategy-workspace-card--strategy">
                     <div class="strategy-workspace-card-top">
                         <div class="strategy-workspace-kicker">Strategy Workspace</div>
@@ -110,6 +120,7 @@
                         </button>
                     </div>
                 </section>
+                </div>
             </div>
         </div>
 

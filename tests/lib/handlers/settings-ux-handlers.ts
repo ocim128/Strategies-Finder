@@ -17,16 +17,16 @@ import {
 
 const PRESET_STORAGE_KEY = 'playground_settings_preset';
 
+function applyAccordionState(header: HTMLElement, body: HTMLElement): void {
+    const expanded = !header.classList.contains('collapsed');
+    header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    body.setAttribute('aria-hidden', expanded ? 'false' : 'true');
+    body.toggleAttribute('inert', !expanded);
+}
+
 function initAccordion(): void {
     const settingsTab = document.getElementById('settingsTab');
     if (!settingsTab) return;
-
-    const applyAccordionState = (header: HTMLElement, body: HTMLElement): void => {
-        const expanded = !header.classList.contains('collapsed');
-        header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-        body.setAttribute('aria-hidden', expanded ? 'false' : 'true');
-        body.toggleAttribute('inert', !expanded);
-    };
 
     STRATEGY_PANEL_SETTINGS_SECTIONS.forEach((sectionDef) => {
         const section = settingsTab.querySelector<HTMLElement>(`.settings-section[data-section="${sectionDef.id}"]`);
@@ -69,6 +69,31 @@ function initAccordion(): void {
             event.preventDefault();
             toggleSection();
         });
+    });
+}
+
+function initWorkspaceAccordion(): void {
+    const header = document.getElementById('strategyWorkspaceToggle');
+    const body = document.getElementById('strategyWorkspaceBody');
+    if (!header || !body) return;
+
+    header.setAttribute('role', 'button');
+    header.tabIndex = 0;
+    header.setAttribute('aria-controls', body.id);
+    applyAccordionState(header, body);
+
+    const toggleWorkspace = (): void => {
+        const isCollapsed = header.classList.contains('collapsed');
+        header.classList.toggle('collapsed', !isCollapsed);
+        body.classList.toggle('collapsed', !isCollapsed);
+        applyAccordionState(header, body);
+    };
+
+    header.addEventListener('click', toggleWorkspace);
+    header.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        toggleWorkspace();
     });
 }
 
@@ -152,10 +177,15 @@ function syncRegistryMarkup(): void {
     const settingsTab = document.getElementById('settingsTab');
     if (!settingsTab) return;
 
+    const sectionsContainer = document.getElementById('strategyWorkspaceSections');
+    const firstFooterElement = Array.from(sectionsContainer?.children ?? [])
+        .find((child) => !(child as HTMLElement).classList.contains('settings-section')) ?? null;
+
     STRATEGY_PANEL_SETTINGS_SECTIONS.forEach((sectionDef) => {
         const section = settingsTab.querySelector<HTMLElement>(`.settings-section[data-section="${sectionDef.id}"]`);
         if (!section) return;
 
+        sectionsContainer?.insertBefore(section, firstFooterElement);
         section.dataset.complexity = sectionDef.preset;
 
         const header = section.querySelector<HTMLElement>('.section-header.collapsible');
@@ -178,6 +208,7 @@ function syncRegistryMarkup(): void {
 
 export function initSettingsUX(): void {
     syncRegistryMarkup();
+    initWorkspaceAccordion();
     initAccordion();
     initPresets();
     initTooltips();

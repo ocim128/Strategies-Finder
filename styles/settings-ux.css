@@ -33,6 +33,23 @@
     align-items: start;
 }
 
+.strategy-workspace-toggle.section-header.collapsible {
+    margin: 0 0 var(--space-2);
+}
+
+.strategy-workspace-body.accordion-body {
+    overflow: hidden;
+    transition: max-height 0.25s ease, opacity 0.15s ease;
+    max-height: 1200px;
+    opacity: 1;
+}
+
+.strategy-workspace-body.accordion-body.collapsed {
+    max-height: 0 !important;
+    opacity: 0;
+    pointer-events: none;
+}
+
 .strategy-workspace-card {
     display: flex;
     flex-direction: column;

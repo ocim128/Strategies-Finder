@@ -10,16 +10,6 @@ export interface StrategyPanelSettingsSectionDefinition {
 
 export const STRATEGY_PANEL_SETTINGS_SECTIONS: readonly StrategyPanelSettingsSectionDefinition[] = [
     {
-        id: "combiner",
-        preset: "standard",
-        accordionBodyId: "combinerBody",
-    },
-    {
-        id: "direction",
-        preset: "simple",
-        accordionBodyId: "directionBody",
-    },
-    {
         id: "risk",
         preset: "simple",
         accordionBodyId: "riskSectionBody",
@@ -27,19 +17,19 @@ export const STRATEGY_PANEL_SETTINGS_SECTIONS: readonly StrategyPanelSettingsSec
         featureContentId: "riskSettings",
     },
     {
+        id: "realism",
+        preset: "standard",
+        accordionBodyId: "realismBody",
+    },
+    {
         id: "sizing",
         preset: "simple",
         accordionBodyId: "tradeSizingBody",
     },
     {
-        id: "engine",
-        preset: "standard",
-        accordionBodyId: "engineBody",
-    },
-    {
-        id: "realism",
-        preset: "standard",
-        accordionBodyId: "realismBody",
+        id: "direction",
+        preset: "simple",
+        accordionBodyId: "directionBody",
     },
     {
         id: "tradeFilter",
@@ -47,6 +37,16 @@ export const STRATEGY_PANEL_SETTINGS_SECTIONS: readonly StrategyPanelSettingsSec
         accordionBodyId: "tradeFilterSectionBody",
         featureToggleId: "tradeFilterSettingsToggle",
         featureContentId: "tradeFilterSettings",
+    },
+    {
+        id: "engine",
+        preset: "standard",
+        accordionBodyId: "engineBody",
+    },
+    {
+        id: "combiner",
+        preset: "standard",
+        accordionBodyId: "combinerBody",
     },
 ] as const;
 

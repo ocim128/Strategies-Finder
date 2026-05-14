@@ -2,7 +2,10 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { getSettingsSectionDefinition } from "./lib/strategy-panel-settings-registry";
+import {
+    STRATEGY_PANEL_SETTINGS_SECTIONS,
+    getSettingsSectionDefinition,
+} from "./lib/strategy-panel-settings-registry";
 
 function readSettingsSectionIds(partialPath: string): string[] {
     const html = readFileSync(resolve(process.cwd(), partialPath), "utf8");
@@ -23,5 +26,17 @@ describe("Strategy panel settings registry", () => {
                 `Missing settings registry entry for section ${sectionId}`
             ).to.not.equal(null);
         });
+    });
+
+    it("keeps the settings sections in the requested display order", () => {
+        expect(STRATEGY_PANEL_SETTINGS_SECTIONS.map((section) => section.id)).to.deep.equal([
+            "risk",
+            "realism",
+            "sizing",
+            "direction",
+            "tradeFilter",
+            "engine",
+            "combiner",
+        ]);
     });
 });
