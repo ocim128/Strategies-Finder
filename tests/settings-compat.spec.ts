@@ -26,21 +26,20 @@ import {
     BACKTEST_SETTINGS_DOM_CONTRACTS,
     coerceBacktestDomSettingValue,
     getBacktestDomSettingContract,
-    resolveBacktestDomSettingWriteValue,
 } from '../lib/backtest-settings-dom-contract';
 import { strategyManifest } from '../lib/strategies/manifest';
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from '../lib/strategy-defaults';
 import { resolvePolymarketEntrySelectionModeForDisplay } from '../lib/polymarket-entry-selection-mode';
 
 describe('Backtest settings compatibility', () => {
-    it('uses tradeFilterMode when provided', () => {
+    it('ignores removed tradeFilterMode when provided', () => {
         const normalized = normalizeBacktestSettings({
             tradeFilterMode: 'rsi',
         });
-        expect(normalized.tradeFilterMode).to.equal('rsi');
+        expect('tradeFilterMode' in (normalized as Record<string, unknown>)).to.equal(false);
     });
 
-    it('reads legacy entryConfirmation but does not retain it in normalized stored settings', () => {
+    it('ignores legacy entryConfirmation and trade filter toggles in stored settings', () => {
         const resolved = resolveBacktestSettingsFromRaw({
             tradeFilterSettingsToggle: true,
             entryConfirmation: 'trend',
@@ -50,8 +49,9 @@ describe('Backtest settings compatibility', () => {
             entryConfirmation: 'trend',
         });
 
-        expect(resolved.tradeFilterMode).to.equal('trend');
-        expect(normalized.tradeFilterMode).to.equal('trend');
+        expect('tradeFilterMode' in (resolved as Record<string, unknown>)).to.equal(false);
+        expect('tradeFilterMode' in (normalized as Record<string, unknown>)).to.equal(false);
+        expect('tradeFilterSettingsToggle' in (normalized as Record<string, unknown>)).to.equal(false);
         expect('entryConfirmation' in (normalized as Record<string, unknown>)).to.equal(false);
     });
 
@@ -111,6 +111,55 @@ describe('Backtest settings compatibility', () => {
         expect(BACKTEST_DOM_SETTING_IDS.includes('historicalLevelTakeProfitToggle')).to.equal(true);
         expect(BACKTEST_DOM_SETTING_IDS.includes('historicalLevelStopLossToggle')).to.equal(true);
         expect(BACKTEST_DOM_SETTING_IDS.includes('historicalLevelLookbackBars')).to.equal(true);
+    });
+
+    it('normalizes selected confirmation strategies from the settings UI payload', () => {
+        expect(BACKTEST_DOM_SETTING_IDS.includes('confirmationStrategiesToggle')).to.equal(true);
+        expect(BACKTEST_DOM_SETTING_IDS.includes('confirmationStrategies')).to.equal(true);
+        expect(BACKTEST_DOM_SETTING_IDS.includes('confirmationStrategyParams')).to.equal(true);
+
+        const contract = getBacktestDomSettingContract('confirmationStrategies');
+        const paramsContract = getBacktestDomSettingContract('confirmationStrategyParams');
+        expect(contract).to.not.equal(undefined);
+        expect(paramsContract).to.not.equal(undefined);
+        expect(coerceBacktestDomSettingValue(
+            contract!,
+            'entropy_ratio_regime_alignment,close_location_median_alignment,kurtosis_distribution_alignment'
+        )).to.deep.equal([
+            'entropy_ratio_regime_alignment',
+            'close_location_median_alignment',
+            'kurtosis_distribution_alignment',
+        ]);
+        expect(coerceBacktestDomSettingValue(
+            paramsContract!,
+            JSON.stringify({
+                entropy_ratio_regime_alignment: { slowWindow: '21' },
+                close_location_median_alignment: { lookback: '34' },
+            })
+        )).to.deep.equal({
+            entropy_ratio_regime_alignment: { slowWindow: 21 },
+            close_location_median_alignment: { lookback: 34 },
+        });
+
+        const resolved = resolveBacktestSettingsFromRaw({
+            confirmationStrategiesToggle: true,
+            confirmationStrategies: 'entropy_ratio_regime_alignment,close_location_median_alignment',
+            confirmationStrategyParams: JSON.stringify({
+                entropy_ratio_regime_alignment: { slowWindow: '21' },
+                close_location_median_alignment: { lookback: '34' },
+                kurtosis_distribution_alignment: { lookback: '55' },
+            }),
+        } as unknown as BacktestSettings);
+        expect(resolved.confirmationStrategies).to.deep.equal([
+            'entropy_ratio_regime_alignment',
+            'close_location_median_alignment',
+        ]);
+        expect(resolved.confirmationStrategyParams).to.deep.equal({
+            entropy_ratio_regime_alignment: { slowWindow: 21 },
+            close_location_median_alignment: { lookback: 34 },
+        });
+        expect('confirmationStrategies' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
+        expect('confirmationStrategyParams' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
     });
 
     it('normalizes post-signal Polymarket limit-entry settings', () => {
@@ -186,8 +235,8 @@ describe('Backtest settings compatibility', () => {
         expect(resolved).to.equal('actual_entry_minute');
     });
 
-    it('sanitizes Rust payloads without dropping compatibility fields', () => {
-        const settings: BacktestSettings = {
+    it('sanitizes Rust payloads and strips removed trade-filter fields', () => {
+        const settings = {
             atrPeriod: 14,
             tradeFilterMode: 'volume',
             executionModel: 'next_open',
@@ -204,12 +253,12 @@ describe('Backtest settings compatibility', () => {
             flipAfterConsecutiveLosses: 3,
             flipCooldownTrades: 2,
             minTradesBeforeFirstFlip: 10,
-        };
+        } as unknown as BacktestSettings;
 
         const sanitized = sanitizeBacktestSettingsForRust(settings);
 
         expect(sanitized.atrPeriod).to.equal(14);
-        expect(sanitized.tradeFilterMode).to.equal('volume');
+        expect('tradeFilterMode' in sanitized).to.equal(false);
         expect('executionModel' in sanitized).to.equal(false);
         expect('polymarketOutcomeInterval' in sanitized).to.equal(false);
         expect('polymarketSignalExitAllowMultipleTradesPerEvent' in sanitized).to.equal(false);
@@ -256,7 +305,7 @@ describe('Backtest settings compatibility', () => {
         expect(requiresTypescriptEngine({ tradeDirection: 'combined' })).to.equal(true);
     });
 
-    it('normalizes removed trend-only filter modes back to none', () => {
+    it('ignores removed trade filter modes from raw and stored settings', () => {
         const resolved = resolveBacktestSettingsFromRaw({
             tradeFilterSettingsToggle: true,
             tradeFilterMode: 'trend_mtf_stack',
@@ -266,8 +315,8 @@ describe('Backtest settings compatibility', () => {
             tradeFilterMode: 'trend_persistence',
         });
 
-        expect(resolved.tradeFilterMode).to.equal('none');
-        expect(normalized.tradeFilterMode).to.equal('none');
+        expect('tradeFilterMode' in (resolved as Record<string, unknown>)).to.equal(false);
+        expect('tradeFilterMode' in (normalized as Record<string, unknown>)).to.equal(false);
     });
 
     it('preserves guarded resolver semantics across schema-driven numeric and boolean fields', () => {
@@ -280,10 +329,6 @@ describe('Backtest settings compatibility', () => {
             riskWinStreakStopLossToggle: true,
             riskWinStreakStopLossAfterWins: 0.2,
             riskWinStreakStopLossPercent: -5,
-            tradeFilterSettingsToggle: true,
-            confirmRsiPeriod: 23,
-            confirmRsiBullish: 61,
-            confirmRsiBearish: 39,
             maxOpenTrades: 7,
         } as unknown as BacktestSettings);
 
@@ -293,20 +338,15 @@ describe('Backtest settings compatibility', () => {
         expect(resolved.riskWinStreakStopLossEnabled).to.equal(false);
         expect(resolved.riskWinStreakStopLossAfterWins).to.equal(3);
         expect(resolved.riskWinStreakStopLossPercent).to.equal(0);
-        expect(resolved.rsiPeriod).to.equal(23);
-        expect(resolved.rsiBullish).to.equal(61);
-        expect(resolved.rsiBearish).to.equal(39);
         expect(resolved.maxOpenTrades).to.equal(2);
 
         const disabled = resolveBacktestSettingsFromRaw({
             riskSettingsToggle: false,
             stopLossAtr: 9,
-            tradeFilterSettingsToggle: false,
-            htfBiasEmaPeriod: 10,
         } as unknown as BacktestSettings);
 
         expect(disabled.stopLossAtr).to.equal(0);
-        expect(disabled.htfBiasEmaPeriod).to.equal(EFFECTIVE_BACKTEST_DEFAULTS.htfBiasEmaPeriod);
+        expect('htfBiasEmaPeriod' in (disabled as Record<string, unknown>)).to.equal(false);
     });
 
     it('hydrates subscription execution defaults to the UI-compatible semantics', () => {
@@ -621,18 +661,6 @@ describe('Backtest settings compatibility', () => {
 
     it('keeps shared UI defaults aligned with engine defaults except for explicit UI overrides', () => {
         for (const [key, value] of Object.entries(EFFECTIVE_BACKTEST_DEFAULTS)) {
-            if (key === 'rsiPeriod') {
-                expect(DEFAULT_BACKTEST_SETTINGS.confirmRsiPeriod).to.equal(value);
-                continue;
-            }
-            if (key === 'rsiBullish') {
-                expect(DEFAULT_BACKTEST_SETTINGS.confirmRsiBullish).to.equal(value);
-                continue;
-            }
-            if (key === 'rsiBearish') {
-                expect(DEFAULT_BACKTEST_SETTINGS.confirmRsiBearish).to.equal(value);
-                continue;
-            }
             if (key === 'stopLossEnabled') {
                 expect(DEFAULT_BACKTEST_SETTINGS.stopLossEnabled).to.equal(false);
                 continue;
@@ -650,9 +678,6 @@ describe('Backtest settings compatibility', () => {
         expect(new Set(BACKTEST_SETTINGS_DOM_CONTRACTS.map((contract) => contract.domId)).size)
             .to.equal(BACKTEST_SETTINGS_DOM_CONTRACTS.length);
 
-        expect(getBacktestDomSettingContract('confirmRsiPeriod')?.legacyAliases).to.deep.equal(['rsiPeriod']);
-        expect(getBacktestDomSettingContract('tradeFilterMode')?.legacyAliases).to.deep.equal(['entryConfirmation']);
-        expect(getBacktestDomSettingContract('tradeFilterSettingsToggle')?.legacyAliases).to.deep.equal(['entrySettingsToggle']);
         expect(getBacktestDomSettingContract('polymarketAnnotationEnabled')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('polymarketOutcomeSymbol')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('polymarketEntrySelectionMode')).to.not.equal(undefined);
@@ -665,33 +690,13 @@ describe('Backtest settings compatibility', () => {
         expect(getBacktestDomSettingContract('riskMinHoldBars')?.rustSupport).to.equal('unsupported');
         expect(getBacktestDomSettingContract('allowSameBarExitToggle')).to.equal(undefined);
         expect(getBacktestDomSettingContract('marketMode')).to.equal(undefined);
+        expect(getBacktestDomSettingContract('tradeFilterMode')).to.equal(undefined);
+        expect(getBacktestDomSettingContract('tradeFilterSettingsToggle')).to.equal(undefined);
+        expect(getBacktestDomSettingContract('confirmRsiPeriod')).to.equal(undefined);
         expect(getBacktestDomSettingContract('breakEvenPercent')).to.equal(undefined);
         expect(getBacktestDomSettingContract('riskWinStreakStopLossToggle')).to.equal(undefined);
         expect(getBacktestDomSettingContract('snapshotAtrFilterToggle')).to.equal(undefined);
         expect(getBacktestDomSettingContract('snapshotAtrPercentMin')).to.equal(undefined);
-    });
-
-    it('derives shared write-back values for trade filter toggles from the same DOM contract', () => {
-        const tradeFilterToggle = getBacktestDomSettingContract('tradeFilterSettingsToggle');
-        const entryToggle = getBacktestDomSettingContract('entrySettingsToggle');
-
-        expect(tradeFilterToggle).to.not.equal(undefined);
-        expect(entryToggle).to.not.equal(undefined);
-
-        const inferred = {
-            ...DEFAULT_BACKTEST_SETTINGS,
-            tradeFilterSettingsToggle: false,
-            tradeFilterMode: 'rsi' as const,
-        };
-        const explicitLegacy = {
-            ...DEFAULT_BACKTEST_SETTINGS,
-            tradeFilterSettingsToggle: false,
-            entrySettingsToggle: true,
-        };
-
-        expect(resolveBacktestDomSettingWriteValue(tradeFilterToggle!, inferred)).to.equal(false);
-        expect(resolveBacktestDomSettingWriteValue(entryToggle!, inferred)).to.equal(false);
-        expect(resolveBacktestDomSettingWriteValue(entryToggle!, explicitLegacy)).to.equal(true);
     });
 
     it('normalizes malformed stored app settings instead of crashing on partial payloads', () => {
@@ -749,8 +754,8 @@ describe('Backtest settings compatibility', () => {
         expect(normalized?.strategyKey).to.equal(DEFAULT_BUILT_IN_STRATEGY_KEY);
         expect(normalized?.strategyParams).to.deep.equal({ foo: 42 });
         expect(normalized?.backtestSettings.initialCapital).to.equal(25000);
-        expect(normalized?.backtestSettings.tradeFilterMode).to.equal('rsi');
-        expect(normalized?.backtestSettings.tradeFilterSettingsToggle).to.equal(true);
+        expect('tradeFilterMode' in (normalized?.backtestSettings as Record<string, unknown>)).to.equal(false);
+        expect('tradeFilterSettingsToggle' in (normalized?.backtestSettings as Record<string, unknown>)).to.equal(false);
         expect(normalized?.backtestSettings.polymarketOutcomeSymbol).to.equal('ETHUSDT');
         expect(normalizeStoredStrategyConfig({ strategyKey: 'missing-name' })).to.equal(null);
     });

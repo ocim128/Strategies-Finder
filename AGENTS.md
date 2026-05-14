@@ -150,8 +150,7 @@ If a built-in strategy is added or renamed and the manifest is not re-synced, th
 ### 3. Settings compatibility
 - Preserve localStorage/backward compatibility unless you add migration logic
 - For JSON blob persistence, prefer `lib/persisted-json.ts` over open-coded `localStorage` + `JSON.parse/stringify`
-- `tradeFilterMode` is canonical
-- `entryConfirmation` is legacy compatibility still consumed in some paths
+- Removed settings may still appear in old saved payloads; ignore them unless you are explicitly writing a migration
 
 If a new setting is unsupported by Rust, strip it in both:
 - `lib/backtest-service.ts`

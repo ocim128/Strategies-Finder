@@ -30,6 +30,7 @@ import type { CapitalSettings } from "../types/backtest";
 import { trimToClosedCandles } from "../closed-candle-utils";
 import { selectExecutionAwareClosedCandles } from "../alert-evaluation-window";
 import { mergeStrategySignals } from "../signal-merge";
+import { applyConfirmationStrategiesToSignals } from "../confirmation-signal-filter";
 import { runGeneticOptimization } from "./genetic-optimizer";
 import {
     attachTradeTimingQuality,
@@ -418,10 +419,14 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
                         { coerceWithoutUiToggles: true }
                     );
                     for (const dataset of activeDatasets) {
-                        const primarySigs = applySignalPolarity(
-                            primaryStrategy.execute(dataset.data, primaryConfig.strategyParams),
-                            primarySettings
-                        );
+                        const primarySigs = applyConfirmationStrategiesToSignals({
+                            data: dataset.data,
+                            baseSignals: applySignalPolarity(
+                                primaryStrategy.execute(dataset.data, primaryConfig.strategyParams),
+                                primarySettings
+                            ),
+                            settings: primarySettings,
+                        });
                         comboPrimarySignalsByInterval.set(dataset.interval, primarySigs);
                     }
                 }
@@ -768,7 +773,11 @@ function generateSignalsForJob(
     const rawSignals = job.strategy.executePrepared
         ? job.strategy.executePrepared(preparedFinderData, job.params, data, executionContext)
         : job.strategy.execute(data, job.params, executionContext);
-    return applySignalPolarity(rawSignals, job.backtestSettings);
+    return applyConfirmationStrategiesToSignals({
+        data,
+        baseSignals: applySignalPolarity(rawSignals, job.backtestSettings),
+        settings: job.backtestSettings,
+    });
 }
 
 /**
@@ -1860,7 +1869,11 @@ async function reconcileSingleTimeframeTopResults(
             const rawSignals = strategy.executePrepared
                 ? strategy.executePrepared(preparedFinderData, normalizedParams, jobData, jobCtx)
                 : strategy.execute(jobData, normalizedParams, jobCtx);
-            const signals = applySignalPolarity(rawSignals, backtestSettings);
+            const signals = applyConfirmationStrategiesToSignals({
+                data: jobData,
+                baseSignals: applySignalPolarity(rawSignals, backtestSettings),
+                settings: backtestSettings,
+            });
             const mergedSignals = comboActive ? applyComboMerge(signals, input) : signals;
             const rawResult = runStrategyBacktest({
                 strategy,

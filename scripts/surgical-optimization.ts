@@ -9,7 +9,7 @@ import { trimToClosedCandles } from "../lib/closed-candle-utils";
 import { strategies } from "../lib/strategies/library";
 import { parseArgs as parseVerifyArgs, runVerification as runVerifyAlphaReport } from "./verify-alpha";
 import { parseOhlcvBars } from "./lib/ohlcv-file";
-import type { BacktestSettings, ExecutionModel, OHLCVData, Strategy, TradeDirection, TradeFilterMode } from "../lib/types/strategies";
+import type { BacktestSettings, ExecutionModel, OHLCVData, Strategy, TradeDirection } from "../lib/types/strategies";
 
 type Cli = {
   symbol: string; interval: string; bars: number; freshnessHours: number;
@@ -17,7 +17,7 @@ type Cli = {
   mutationRate: number; mutationSigma: number; rangePercent: number; minTrades: number; seed: number;
   adaptiveStagnation: number; adaptiveIncrease: number; adaptiveDecay: number; adaptiveMinRate: number; adaptiveMaxRate: number;
   initialCapital: number; positionSize: number; commission: number; sizingMode: "percent" | "fixed"; fixedTradeAmount: number;
-  executionModel: ExecutionModel; tradeFilterMode: TradeFilterMode; slippageBps: number; allowSameBarExit: boolean;
+  executionModel: ExecutionModel; slippageBps: number; allowSameBarExit: boolean;
   dataDir: string; outFile: string; verifiedOutFile: string; autoVerify: boolean;
   verifySeeds: number; verifyMinPass: number; verifyMaxCandidates: number;
 };
@@ -66,7 +66,7 @@ function parse(argv: string[]): Cli & { help?: boolean } {
   let adaptiveStagnation = 12, adaptiveIncrease = 1.35, adaptiveDecay = 0.92, adaptiveMinRate = 0.08, adaptiveMaxRate = 0.45;
   let initialCapital = Number(CAPITAL_DEFAULTS.initialCapital), positionSize = Number(CAPITAL_DEFAULTS.positionSize), commission = Number(CAPITAL_DEFAULTS.commission);
   let sizingMode: "percent" | "fixed" = "percent"; let fixedTradeAmount = Number(CAPITAL_DEFAULTS.fixedTradeAmount);
-  let executionModel: ExecutionModel = "signal_close"; let tradeFilterMode: TradeFilterMode = "none";
+  let executionModel: ExecutionModel = "signal_close";
   let slippageBps = 0, allowSameBarExit = true;
   let dataDir = path.resolve("price-data", "universal"), outFile = path.resolve("alpha_report.json"), verifiedOutFile = path.resolve("verified_alpha.json");
   let autoVerify = true, verifySeeds = 5, verifyMinPass = 4, verifyMaxCandidates = 0;
@@ -100,7 +100,6 @@ function parse(argv: string[]): Cli & { help?: boolean } {
     if (a === "--sizing") { sizingMode = String(n ?? "").toLowerCase() === "fixed" ? "fixed" : "percent"; i++; continue; }
     if (a === "--fixed-trade-amount") { fixedTradeAmount = num(n, fixedTradeAmount); i++; continue; }
     if (a === "--execution") { const v = String(n ?? "").toLowerCase(); if (v === "signal_close" || v === "next_open" || v === "next_close") executionModel = v; i++; continue; }
-    if (a === "--trade-filter") { const v = String(n ?? "").toLowerCase(); if (["none","close","volume","rsi","trend","adx","htf_drift"].includes(v)) tradeFilterMode = v as TradeFilterMode; i++; continue; }
     if (a === "--slippage-bps") { slippageBps = num(n, slippageBps); i++; continue; }
     if (a === "--allow-same-bar-exit") { allowSameBarExit = bool(n, allowSameBarExit); i++; continue; }
     if (a === "--data-dir") { dataDir = path.resolve(String(n ?? dataDir)); i++; continue; }
@@ -132,7 +131,7 @@ function parse(argv: string[]): Cli & { help?: boolean } {
     mutationRate: Math.max(0, Math.min(1, mutationRate)), mutationSigma: Math.max(0.0001, mutationSigma), rangePercent: Math.max(0, rangePercent), minTrades: Math.max(0, minTrades), seed: Math.max(1, seed),
     adaptiveStagnation: Math.max(1, adaptiveStagnation), adaptiveIncrease: Math.max(1.01, adaptiveIncrease), adaptiveDecay: Math.max(0.5, Math.min(1, adaptiveDecay)), adaptiveMinRate: minRate, adaptiveMaxRate: maxRate,
     initialCapital: Math.max(1, initialCapital), positionSize: Math.max(0.0001, positionSize), commission: Math.max(0, commission), sizingMode, fixedTradeAmount: Math.max(0, fixedTradeAmount),
-    executionModel, tradeFilterMode, slippageBps: Math.max(0, slippageBps), allowSameBarExit,
+    executionModel, slippageBps: Math.max(0, slippageBps), allowSameBarExit,
     dataDir, outFile, verifiedOutFile, autoVerify, verifySeeds: verifySeedsSafe, verifyMinPass: verifyMinSafe, verifyMaxCandidates: Math.max(0, verifyMaxCandidates),
   };
 }
@@ -272,7 +271,7 @@ async function main(): Promise<void> {
 
   for (const s of selected) {
     const settings = resolveBacktestSettingsFromRaw({
-      tradeDirection: inferDirection(s.strategy), executionModel: cfg.executionModel, tradeFilterMode: cfg.tradeFilterMode,
+      tradeDirection: inferDirection(s.strategy), executionModel: cfg.executionModel,
       allowSameBarExit: cfg.allowSameBarExit, slippageBps: cfg.slippageBps,
     } as BacktestSettings, { coerceWithoutUiToggles: true });
 
@@ -327,7 +326,7 @@ async function main(): Promise<void> {
       mode: "surgical", target: { symbol: cfg.symbol, interval: cfg.interval, bars: cfg.bars }, strategies: selected.map((s) => s.key),
       deepDive: { population: cfg.population, generations: cfg.generations, runsPerStrategy: cfg.runs, eliteCount: cfg.eliteCount },
       mutation: { baseRate: cfg.mutationRate, sigma: cfg.mutationSigma, rangePercent: cfg.rangePercent, adaptive: { stagnationGenerations: cfg.adaptiveStagnation, increaseFactor: cfg.adaptiveIncrease, decayFactor: cfg.adaptiveDecay, minRate: cfg.adaptiveMinRate, maxRate: cfg.adaptiveMaxRate } },
-      backtest: { minTrades: cfg.minTrades, initialCapital: cfg.initialCapital, positionSize: cfg.positionSize, commission: cfg.commission, sizingMode: cfg.sizingMode, fixedTradeAmount: cfg.fixedTradeAmount, executionModel: cfg.executionModel, tradeFilterMode: cfg.tradeFilterMode, slippageBps: cfg.slippageBps, allowSameBarExit: cfg.allowSameBarExit },
+      backtest: { minTrades: cfg.minTrades, initialCapital: cfg.initialCapital, positionSize: cfg.positionSize, commission: cfg.commission, sizingMode: cfg.sizingMode, fixedTradeAmount: cfg.fixedTradeAmount, executionModel: cfg.executionModel, slippageBps: cfg.slippageBps, allowSameBarExit: cfg.allowSameBarExit },
     },
     market: { fetchedSymbol: cfg.symbol, interval: cfg.interval, bars: data.length, source: loaded.source, dataFile: loaded.filePath },
     winners,

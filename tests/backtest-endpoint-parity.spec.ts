@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import { executeBacktest, getManifestFingerprint } from "../lib/backtest-executor";
-import type { OHLCVData, BacktestSettings, Time } from "../lib/types/strategies";
+import type { OHLCVData, BacktestSettings, Signal, Strategy, Time } from "../lib/types/strategies";
 import type { CapitalSettings } from "../lib/types/backtest";
 import { strategyManifest } from "../lib/strategies/manifest";
 
@@ -104,6 +104,66 @@ describe("backtest executor", () => {
         assert.strictEqual(run1.result.winRate, run2.result.winRate);
         assert.strictEqual(run1.result.netProfit, run2.result.netProfit);
         assert.strictEqual(run1.engineUsed, run2.engineUsed);
+    });
+
+    it("requires confirmation strategies to agree with both entry and exit signals", async () => {
+        const candles: OHLCVData[] = [
+            { time: 1 as Time, open: 10, high: 11, low: 9, close: 10, volume: 1000 },
+            { time: 2 as Time, open: 10, high: 12, low: 10, close: 11.8, volume: 1000 },
+            { time: 3 as Time, open: 11.8, high: 13, low: 11, close: 12.5, volume: 1000 },
+            { time: 4 as Time, open: 12.5, high: 13, low: 8, close: 8.5, volume: 1000 },
+            { time: 5 as Time, open: 8.5, high: 9, low: 7, close: 8, volume: 1000 },
+        ];
+        const primaryStrategy: Strategy = {
+            name: "Confirmation Executor Test",
+            description: "Emits entries and exits that must be confirmed by a secondary strategy.",
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data): Signal[] => {
+                const signals: Signal[] = [
+                    { time: data[1].time, type: "buy", price: data[1].close, barIndex: 1 },
+                    { time: data[2].time, type: "buy", price: data[2].close, barIndex: 2 },
+                    { time: data[3].time, type: "sell", price: data[3].close, barIndex: 3 },
+                ];
+                if (data[4]) {
+                    signals.push({ time: data[4].time, type: "sell", price: data[4].close, barIndex: 4 });
+                }
+                return signals;
+            },
+        };
+
+        const result = await executeBacktest({
+            ohlcvData: candles,
+            interval: "1m",
+            strategyKey: "__test_confirmation_executor__",
+            strategy: primaryStrategy,
+            strategyParams: {},
+            backtestSettings: {
+                ...defaultSettings,
+                tradeDirection: "long",
+                executionModel: "signal_close",
+                confirmationStrategiesToggle: true,
+                confirmationStrategies: ["close_location_median_alignment"],
+                confirmationStrategyParams: {
+                    close_location_median_alignment: { lookback: 2 },
+                },
+            },
+            capitalSettings: defaultCapital,
+            context: {
+                nowSec: 10,
+                blockRange: null,
+                annotatePolymarket: false,
+                engineMode: "typescript",
+            },
+        });
+
+        assert.deepStrictEqual(
+            result.signals.map((signal) => [signal.time, signal.type]),
+            [
+                [3 as Time, "buy"],
+                [4 as Time, "sell"],
+            ]
+        );
     });
 
     it("throws on missing strategy", async () => {

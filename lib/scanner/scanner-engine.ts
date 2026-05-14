@@ -9,6 +9,7 @@ import { debugLogger } from '../debug-logger';
 
 import type { BacktestSettings, Signal, StrategyParams } from '../types/strategies';
 import { applySignalPolarity, getOpenPositionForScanner } from '../strategies/backtest';
+import { applyConfirmationStrategiesToSignals } from '../confirmation-signal-filter';
 import { resolveBacktestSettingsFromRaw } from '../backtest-settings-resolver';
 import { trimToClosedCandles } from '../closed-candle-utils';
 import { toFiniteNumber } from '../settings-parse-utils';
@@ -323,7 +324,11 @@ export class ScannerEngine {
 
                 // Normalize persisted UI config into effective backtest settings.
                 const backtestSettings = resolveScannerBacktestSettings(stratConfig.backtestSettings);
-                const rawSignals = applySignalPolarity(generatedSignals, backtestSettings);
+                const rawSignals = applyConfirmationStrategiesToSignals({
+                    data: scanData,
+                    baseSignals: applySignalPolarity(generatedSignals, backtestSettings),
+                    settings: backtestSettings,
+                });
 
                 // Early exit: no raw signals → skip
                 if (rawSignals.length === 0) continue;

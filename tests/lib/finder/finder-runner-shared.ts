@@ -17,6 +17,7 @@ import { hasNonZeroSnapshotFilter } from "../rust-settings-sanitizer";
 import { selectExecutionAwareClosedCandles } from "../alert-evaluation-window";
 import { mergeStrategySignals } from "../signal-merge";
 import { debugLogger } from "../debug-logger";
+import { applyConfirmationStrategiesToSignals } from "../confirmation-signal-filter";
 import {
     getPreparedFinderData,
     type CandidateResult,
@@ -96,7 +97,11 @@ export function generateSignalsForJob(
     const rawSignals = job.strategy.executePrepared
         ? job.strategy.executePrepared(preparedFinderData, job.params, data, executionContext)
         : job.strategy.execute(data, job.params, executionContext);
-    return applySignalPolarity(rawSignals, job.backtestSettings);
+    return applyConfirmationStrategiesToSignals({
+        data,
+        baseSignals: applySignalPolarity(rawSignals, job.backtestSettings),
+        settings: job.backtestSettings,
+    });
 }
 
 export function applyComboMerge(

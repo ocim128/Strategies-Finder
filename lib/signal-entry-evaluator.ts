@@ -19,7 +19,7 @@ import {
 import { runBacktest } from "./strategies/backtest/backtest-engine";
 import { getResampleBucketStart, resampleOHLCV, type ResampleOptions } from "./strategies/resample-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
-import { mergeStrategySignals } from "./signal-merge";
+import { applyConfirmationStrategiesToSignals } from "./confirmation-signal-filter";
 import { toBooleanLike } from "./settings-parse-utils";
 import { isTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
 import { resolveCapitalSettingsFromRaw } from "./backtest-capital-settings";
@@ -256,27 +256,13 @@ function applyConfirmationStrategies(
     baseSignals: Signal[],
     settings: BacktestSettings,
 ): Signal[] {
-    const keys = Array.isArray(settings.confirmationStrategies)
-        ? settings.confirmationStrategies.filter((key): key is string => typeof key === "string" && key.trim().length > 0)
-        : [];
-    if (keys.length === 0 || baseSignals.length === 0) return baseSignals;
-
-    const confirmationParamsByStrategy = settings.confirmationStrategyParams ?? {};
-    let mergedSignals: Signal[] = baseSignals;
-    for (const key of keys) {
-        const confirmationStrategy = strategies[key];
-        if (!confirmationStrategy) continue;
-
-        const confirmationParams = {
-            ...confirmationStrategy.defaultParams,
-            ...(confirmationParamsByStrategy[key] ?? {}),
-        };
-        const confirmationSignals = executeStrategyWithSettings(candles, confirmationStrategy, confirmationParams, settings);
-        mergedSignals = mergeStrategySignals(mergedSignals, confirmationSignals, "and") as Signal[];
-        if (mergedSignals.length === 0) break;
-    }
-
-    return mergedSignals;
+    return applyConfirmationStrategiesToSignals({
+        data: candles,
+        baseSignals,
+        settings,
+        executeStrategy: (_key, confirmationStrategy, confirmationParams) =>
+            executeStrategyWithSettings(candles, confirmationStrategy, confirmationParams, settings),
+    });
 }
 
 function buildSignalFingerprint(
@@ -384,9 +370,7 @@ function findSourceSignalForTradeEntry(
     if (!preparedSignal || !rawEntrySignals || rawEntrySignals.length === 0) return null;
 
     const normalizedSettings = normalizeBacktestSettings(settings);
-    const totalLeadBars =
-        getExecutionShift(normalizedSettings)
-        + (normalizedSettings.tradeFilterMode === "close" ? 1 : 0);
+    const totalLeadBars = getExecutionShift(normalizedSettings);
     const preparedIndex = Number.isFinite(preparedSignal.barIndex)
         ? Math.trunc(preparedSignal.barIndex as number)
         : candles.findIndex((bar) => toUnixSeconds(bar.time) === toUnixSeconds(preparedSignal.time));
@@ -444,8 +428,6 @@ function normalizePreparedSignalBacktestSettings(settings: BacktestSettings): Ba
     return {
         ...settings,
         executionModel: "signal_close",
-        tradeFilterMode: "none",
-        entrySettingsToggle: false,
         slippageBps: 0,
     };
 }

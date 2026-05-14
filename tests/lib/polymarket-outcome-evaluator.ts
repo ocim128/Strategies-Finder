@@ -1,5 +1,6 @@
 import { applySignalPolarity, precomputeIndicators, runBacktest } from './strategies/index';
 import { CAPITAL_DEFAULTS } from './backtest-settings-resolver';
+import { applyConfirmationStrategiesToSignals } from './confirmation-signal-filter';
 import {
     createPolymarketBridgeEvaluationContext,
     createPolymarketTradeEvaluationContext,
@@ -34,7 +35,6 @@ function resolvePolymarketBacktestSettings(options: PolymarketEvalOptions): Back
     return {
         executionModel: options.executionMode ?? 'next_open',
         tradeDirection: options.tradeDirection ?? 'both',
-        tradeFilterMode: 'none',
         marketMode: 'all',
         stopLossEnabled: false,
         takeProfitEnabled: false,
@@ -72,7 +72,11 @@ export function evaluatePolymarketOutcomes(
     const rawSignals = options.usePreparedData && strategy.prepareFinderData && strategy.executePrepared
         ? strategy.executePrepared(strategy.prepareFinderData(chartData, undefined, executionContext), normalizedParams, chartData, executionContext)
         : strategy.execute(chartData, normalizedParams, executionContext);
-    const signals = applySignalPolarity(rawSignals, effectiveSettings);
+    const signals = applyConfirmationStrategiesToSignals({
+        data: chartData,
+        baseSignals: applySignalPolarity(rawSignals, effectiveSettings),
+        settings: effectiveSettings,
+    });
     const precomputed = precomputeIndicators(chartData, effectiveSettings);
     const backtestResult = runBacktest(
         chartData,

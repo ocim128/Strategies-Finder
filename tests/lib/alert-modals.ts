@@ -9,9 +9,7 @@ import { backtestService } from "./backtest-service";
 import { dataManager } from "./data-manager";
 import { getOptionalElement } from "./dom-utils";
 import { resolveEntryRiskTargets } from "./entry-risk-targets";
-import { getLegacyCompatibleTradeFilterModeValue } from "./legacy-settings-compat";
 import { createAccessibleModal, type AccessibleModalController } from "./modal-accessibility";
-import { resolveTradeFilterMode } from "./settings-model";
 import { BacktestSettings, OHLCVData, Time, Trade } from "./strategies/index";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { formatJakartaTime, isBusinessDayTime } from "./timezone-utils";
@@ -378,18 +376,6 @@ export function openSubscriptionInfoModal(
         `Stop Loss ATR: ${formatValue(settings.stopLossAtr)}`,
         `Take Profit ATR: ${formatValue(settings.takeProfitAtr)}`,
         `Trailing ATR: ${formatValue(settings.trailingAtr)}`,
-    ]);
-
-    appendModalSection(bodyEl, "Trade Filter", [
-        `Filter Enabled: ${settings.tradeFilterSettingsToggle === true ? "on" : "off"}`,
-        `Filter Mode: ${formatValue(resolveTradeFilterMode({ tradeFilterMode: getLegacyCompatibleTradeFilterModeValue(settings) as any }))}`,
-        `Execution EMA Period: ${formatValue(settings.executionTrendEmaPeriod)}`,
-        `Confirm Lookback: ${formatValue(settings.confirmLookback)}`,
-        `Volume SMA Period: ${formatValue(settings.volumeSmaPeriod)}`,
-        `Volume Multiplier: ${formatValue(settings.volumeMultiplier)}`,
-        `RSI Period: ${formatValue(settings.confirmRsiPeriod)}`,
-        `RSI Bullish: ${formatValue(settings.confirmRsiBullish)}`,
-        `RSI Bearish: ${formatValue(settings.confirmRsiBearish)}`,
     ]);
 
     appendModalSection(bodyEl, "Execution", [

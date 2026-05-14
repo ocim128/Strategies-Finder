@@ -210,16 +210,6 @@ export interface StrategyParams {
     [key: string]: number;
 }
 
-export type TradeFilterMode =
-    | 'none'
-    | 'close'
-    | 'volume'
-    | 'rsi'
-    | 'trend'
-    | 'adx'
-    | 'htf_drift'
-    | 'trend_htf_bias'
-    | 'trend_exec_alignment';
 export type TradeDirection = 'long' | 'short' | 'both' | 'both_flip_loss_2' | 'combined';
 export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
 export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';
@@ -291,10 +281,6 @@ export interface BacktestSettings {
     riskWinStreakStopLossPercent?: number;
 
     trendEmaPeriod?: number;
-    /** EMA period used by HTF bias filters (trend_htf_bias). */
-    htfBiasEmaPeriod?: number;
-    /** EMA period used by execution-side trend filters (trend_exec_alignment). */
-    executionTrendEmaPeriod?: number;
     trendEmaSlopeBars?: number;
     atrPercentMin?: number;
     atrPercentMax?: number;
@@ -302,21 +288,12 @@ export interface BacktestSettings {
     adxMin?: number;
     adxMax?: number;
 
-    tradeFilterMode?: TradeFilterMode;
-    /** @deprecated Legacy key retained for backward compatibility when loading old configs */
-    entryConfirmation?: string;
-    /** @deprecated Legacy UI toggle retained for compatibility with persisted finder/scanner configs */
-    entrySettingsToggle?: boolean;
-    /** Optional secondary confirmation strategies (legacy combiner path). */
+    /** UI toggle for optional secondary confirmation strategies. */
+    confirmationStrategiesToggle?: boolean;
+    /** Optional secondary confirmation strategies. */
     confirmationStrategies?: string[];
     /** Optional params keyed by confirmation strategy id. */
     confirmationStrategyParams?: Record<string, StrategyParams>;
-    confirmLookback?: number;
-    volumeSmaPeriod?: number;
-    volumeMultiplier?: number;
-    rsiPeriod?: number;
-    rsiBullish?: number;
-    rsiBearish?: number;
     marketMode?: MarketMode;
     tradeDirection?: TradeDirection;
     /** Invert strategy output by swapping buy/sell signals before execution handling */

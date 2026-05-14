@@ -1,5 +1,6 @@
 import { resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
 import { resolveCapitalSettingsFromRaw } from "./backtest-capital-settings";
+import { applyConfirmationStrategiesToSignals } from "./confirmation-signal-filter";
 import type { EntrySignalCapitalSettings, EntrySignalEvaluationResult } from "./signal-entry-evaluator";
 import { evaluateLatestEntrySignalFromPreparedSignals } from "./signal-entry-evaluator";
 import {
@@ -56,15 +57,19 @@ export function buildEnsembleRecipeSignalArtifact(
     if (strategy.crossSymbolConfig) {
         throw new Error(`Ensemble recipes do not support cross-symbol strategy "${config.strategyKey}". Remove it from the recipe or use a non-cross-symbol strategy.`);
     }
-        const backtestSettings = resolveBacktestSettingsFromRaw(
-            config.backtestSettings as unknown as BacktestSettings,
-            { coerceWithoutUiToggles: true }
-        );
-    const tradeDirection = normalizeTradeDirection(backtestSettings);
-    const rawSignals = applySignalPolarity(
-        strategy.execute(candles, config.strategyParams ?? strategy.defaultParams),
-        backtestSettings
+    const backtestSettings = resolveBacktestSettingsFromRaw(
+        config.backtestSettings as unknown as BacktestSettings,
+        { coerceWithoutUiToggles: true }
     );
+    const tradeDirection = normalizeTradeDirection(backtestSettings);
+    const rawSignals = applyConfirmationStrategiesToSignals({
+        data: candles,
+        baseSignals: applySignalPolarity(
+            strategy.execute(candles, config.strategyParams ?? strategy.defaultParams),
+            backtestSettings
+        ),
+        settings: backtestSettings,
+    });
     const capitalSettings = resolveCapitalSettingsFromRaw(config.backtestSettings as unknown as Record<string, unknown>);
     const result = runBacktest(
         candles,
@@ -286,8 +291,6 @@ function buildRecipeReplayBacktestSettings(
         ...anchorBacktestSettings,
         executionModel: "next_open",
         tradeDirection,
-        tradeFilterMode: "none",
-        entrySettingsToggle: false,
         slippageBps: 0,
     };
 }
@@ -304,9 +307,6 @@ function buildRecipeReplayConfig(
             ...anchorConfig.backtestSettings,
             executionModel: "next_open",
             tradeDirection: resolveReplayTradeDirection(preparedSignals, directionOverride),
-            tradeFilterMode: "none",
-            tradeFilterSettingsToggle: false,
-            entrySettingsToggle: false,
             slippageBps: 0,
         },
     };

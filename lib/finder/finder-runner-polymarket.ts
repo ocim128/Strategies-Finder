@@ -11,6 +11,7 @@
  * - default 5m multi-interval bridge runs: 15m / 1h / 4h group 5m events by offset
  */
 import { applySignalPolarity, precomputeIndicators, runBacktest } from "../strategies/index";
+import { applyConfirmationStrategiesToSignals } from "../confirmation-signal-filter";
 import { debugLogger } from "../debug-logger";
 import type { FinderResult } from "../types/finder";
 import {
@@ -785,7 +786,11 @@ export async function runPolymarketFinder(
                         crossSymbolCtx
                     )
                     : plan.strategy.execute(strategyData, normalizedParams, crossSymbolCtx);
-                const signals = applySignalPolarity(rawSignals, settings);
+                const signals = applyConfirmationStrategiesToSignals({
+                    data: strategyData,
+                    baseSignals: applySignalPolarity(rawSignals, settings),
+                    settings,
+                });
                 const backtestResult = runStrategyBacktest({
                     strategy: plan.strategy,
                     data: strategyData,

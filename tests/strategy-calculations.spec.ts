@@ -240,8 +240,6 @@ describe('Strategy Calculations', () => {
             riskMode: 'percentage' as const,
             takeProfitEnabled: true,
             takeProfitMode: 'fixed' as const,
-            tradeFilterMode: 'rsi' as const,
-            rsiPeriod: 14,
             trendEmaPeriod: 50,
             adxPeriod: 14,
             adxMin: 20,
@@ -264,10 +262,6 @@ describe('Strategy Calculations', () => {
         expect(first.atr).to.equal(second.atr);
         expect(first.emaTrend).to.equal(second.emaTrend);
         expect(first.adx).to.equal(second.adx);
-        expect(first.rsi).to.equal(second.rsi);
-        expect(first.volumeSma).to.equal(second.volumeSma);
-        expect(first.sessionVwap).to.equal(second.sessionVwap);
-        expect(first.vwapDeviationStd).to.equal(second.vwapDeviationStd);
     });
 
     it('should ignore stale precomputed indicators when atrPeriod changes', () => {

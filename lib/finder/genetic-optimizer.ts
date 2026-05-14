@@ -10,6 +10,7 @@ import {
 } from "../strategies/index";
 import type { StrategyExecutionContext } from "../types/strategies";
 import type { AdvancedSizingSettings, TradeSizingMode } from "../types/backtest";
+import { applyConfirmationStrategiesToSignals } from "../confirmation-signal-filter";
 import {
     computeParamRange,
     createSeededRandom,
@@ -291,7 +292,11 @@ export async function runGeneticOptimization(input: GeneticOptimizerInput): Prom
         const rawSignals = strategy.executePrepared
             ? strategy.executePrepared(preparedFinderData, params, data, executionContext)
             : strategy.execute(data, params, executionContext);
-        const signals = applySignalPolarity(rawSignals, backtestSettings);
+        const signals = applyConfirmationStrategiesToSignals({
+            data,
+            baseSignals: applySignalPolarity(rawSignals, backtestSettings),
+            settings: backtestSettings,
+        });
         const result = runBacktestCompact(
             data,
             signals,

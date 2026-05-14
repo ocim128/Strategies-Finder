@@ -52,6 +52,7 @@ import {
 } from "./strategies/performance-metrics";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { filterSignalsByBlockRange as filterSignalsBySelectedBlockRange } from "./signal-block-filter";
+import { applyConfirmationStrategiesToSignals } from "./confirmation-signal-filter";
 import { timeKey } from "./strategies/backtest/backtest-utils";
 import {
     registerBacktestEdgeAnalysisInput,
@@ -377,7 +378,27 @@ function resolveBacktestSignalsForData(args: {
         hasGlobalStrategyTimeframeWrapper(args.strategy),
         args.crossSymbolContext
     );
-    return filterSignalsByBlockRange(signals, args.blockRange);
+    const confirmedSignals = applyConfirmationStrategies(args.data, signals, args.settings);
+    return filterSignalsByBlockRange(confirmedSignals, args.blockRange);
+}
+
+function applyConfirmationStrategies(
+    data: OHLCVData[],
+    baseSignals: Signal[],
+    settings: BacktestSettings
+): Signal[] {
+    return applyConfirmationStrategiesToSignals({
+        data,
+        baseSignals,
+        settings,
+        executeStrategy: (_key, confirmationStrategy, confirmationParams) => executeStrategySignals(
+            data,
+            confirmationStrategy,
+            confirmationParams,
+            settings,
+            hasGlobalStrategyTimeframeWrapper(confirmationStrategy)
+        ),
+    });
 }
 
 function selectClosedCandleData(

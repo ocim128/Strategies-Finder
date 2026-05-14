@@ -176,9 +176,8 @@ This ordering matters because Finder, Scanner, and repeated backtests depend on 
 If you add or rename a built-in strategy, run `npm run strategies:sync-manifest` or the strategy will not load consistently.
 
 ### Settings compatibility is real
-- `tradeFilterMode` is canonical
-- `entryConfirmation` still exists as compatibility baggage in some paths
 - persisted JSON blobs now route through `lib/persisted-json.ts`, which supports schema/version envelopes while still reading legacy raw JSON payloads
+- removed trade-filter settings may still appear in old saved payloads; ignore them instead of restoring behavior
 - any new setting unsupported by Rust must be stripped in both:
   - `lib/backtest-service.ts`
   - `lib/finder-manager.ts`

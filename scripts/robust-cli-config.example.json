@@ -20,8 +20,6 @@
     "minTrades": 40
   },
   "backtestSettings": {
-    "tradeFilterMode": "close",
-    "confirmLookback": 1,
     "tradeDirection": "both",
     "slippageBps": 5,
     "executionModel": "next_open",

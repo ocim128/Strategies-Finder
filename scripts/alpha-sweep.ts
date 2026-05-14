@@ -11,7 +11,6 @@ import type {
     ExecutionModel,
     Strategy,
     TradeDirection,
-    TradeFilterMode,
 } from "../lib/types/strategies";
 import { ensureUniversalMarketData } from "./universal-market-loader";
 import { toBoolean, toFinite, toPositiveInt } from "./lib/cli-args";
@@ -38,7 +37,6 @@ type CliOptions = {
     sizingMode: "percent" | "fixed";
     fixedTradeAmount: number;
     executionModel: ExecutionModel;
-    tradeFilterMode: TradeFilterMode;
     slippageBps: number;
     allowSameBarExit: boolean;
     outputDir: string;
@@ -114,7 +112,6 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
     let sizingMode: "percent" | "fixed" = "percent";
     let fixedTradeAmount = Number(CAPITAL_DEFAULTS.fixedTradeAmount);
     let executionModel: ExecutionModel = "signal_close";
-    let tradeFilterMode: TradeFilterMode = "none";
     let slippageBps = 0;
     let allowSameBarExit = true;
     let outputDir = path.resolve("price-data", "universal");
@@ -146,7 +143,6 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
                 sizingMode,
                 fixedTradeAmount,
                 executionModel,
-                tradeFilterMode,
                 slippageBps,
                 allowSameBarExit,
                 outputDir,
@@ -189,14 +185,6 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
             i++;
             continue;
         }
-        if (arg === "--trade-filter") {
-            const value = String(next ?? "").trim().toLowerCase();
-            if (value === "none" || value === "close" || value === "volume" || value === "rsi" || value === "trend" || value === "adx" || value === "htf_drift") {
-                tradeFilterMode = value;
-            }
-            i++;
-            continue;
-        }
         if (arg === "--slippage-bps") { slippageBps = toFinite(next, slippageBps); i++; continue; }
         if (arg === "--allow-same-bar-exit") { allowSameBarExit = toBoolean(next, allowSameBarExit); i++; continue; }
         if (arg === "--data-dir") { outputDir = path.resolve(String(next ?? outputDir)); i++; continue; }
@@ -229,7 +217,6 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
         sizingMode,
         fixedTradeAmount: Math.max(0, fixedTradeAmount),
         executionModel,
-        tradeFilterMode,
         slippageBps: Math.max(0, slippageBps),
         allowSameBarExit,
         outputDir,
@@ -318,7 +305,6 @@ async function runAlphaSweep(options: CliOptions): Promise<void> {
             const backtestSettings = resolveBacktestSettingsFromRaw({
                 tradeDirection: inferDirection(item.strategy),
                 executionModel: options.executionModel,
-                tradeFilterMode: options.tradeFilterMode,
                 allowSameBarExit: options.allowSameBarExit,
                 slippageBps: options.slippageBps,
             } as BacktestSettings, {

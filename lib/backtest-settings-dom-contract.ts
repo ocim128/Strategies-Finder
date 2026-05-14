@@ -15,9 +15,6 @@ import {
     resolveRiskModeValue,
     resolveTakeProfitModeValue,
     resolveTradeDirection,
-    resolveTradeFilterMode,
-    resolveTradeFilterModeValue,
-    resolveTradeFilterToggle,
     resolveTradeSizingModeValue,
     type BacktestSettingsData,
 } from "./settings-model";
@@ -33,13 +30,15 @@ import {
 } from "./polymarket-post-signal-limit-entry";
 import { RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS } from "./rust-settings-sanitizer";
 import { resolveTakeProfitMode } from "./take-profit-settings";
-import type { BacktestSettings } from "./types/strategies";
+import type { BacktestSettings, StrategyParams } from "./types/strategies";
 
-export type BacktestDomSettingKey = keyof BacktestSettingsData | "entrySettingsToggle";
+export type BacktestDomSettingKey = keyof BacktestSettingsData;
 export type BacktestDomSettingParser =
     | "number"
     | "boolean"
     | "string"
+    | "stringArray"
+    | "confirmationStrategyParams"
     | "polymarketOutcomeInterval"
     | "polymarketEntrySelectionMode"
     | "polymarketEntryPriceFilterCents"
@@ -51,7 +50,6 @@ export type BacktestDomSettingParser =
     | "polymarketLimitExitMode"
     | "riskMode"
     | "takeProfitMode"
-    | "tradeFilterMode"
     | "tradeDirection"
     | "marketMode"
     | "executionModel"
@@ -97,8 +95,6 @@ function inferParser(settingKey: BacktestDomSettingKey): BacktestDomSettingParse
             return "riskMode";
         case "takeProfitMode":
             return "takeProfitMode";
-        case "tradeFilterMode":
-            return "tradeFilterMode";
         case "tradeDirection":
             return "tradeDirection";
         case "marketMode":
@@ -107,6 +103,10 @@ function inferParser(settingKey: BacktestDomSettingKey): BacktestDomSettingParse
             return "executionModel";
         case "sizingMode":
             return "tradeSizingMode";
+        case "confirmationStrategies":
+            return "stringArray";
+        case "confirmationStrategyParams":
+            return "confirmationStrategyParams";
         case "kellyFraction":
             return "kellyFraction";
         case "volScalingMethod":
@@ -117,8 +117,6 @@ function inferParser(settingKey: BacktestDomSettingKey): BacktestDomSettingParse
             return "martingaleBaseSize";
         case "secureFMethod":
             return "secureFMethod";
-        case "entrySettingsToggle":
-            return "boolean";
         default: {
             const fallback = (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[settingKey];
             if (typeof fallback === "number") {
@@ -138,7 +136,7 @@ function inferRustSupport(settingKey: BacktestDomSettingKey): SettingSupportLeve
     if (settingKey === "useRustEngine") {
         return "ui_only";
     }
-    if (settingKey === "tradeFilterMode" || settingKey === "tradeDirection" || settingKey === "marketMode" || settingKey === "takeProfitMode") {
+    if (settingKey === "tradeDirection" || settingKey === "marketMode" || settingKey === "takeProfitMode") {
         return "conditional";
     }
     return RUST_UNSUPPORTED_KEY_SET.has(settingKey as keyof BacktestSettings as string)
@@ -264,38 +262,6 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         legacyAliases: ["riskMaxHoldEnabled"],
         rustSupport: "unsupported",
     }),
-    createField("tradeFilterSettingsToggle", {
-        parser: "boolean",
-        legacyAliases: ["entrySettingsToggle"],
-        readFromSettings: (settings) => resolveTradeFilterToggle(settings, DEFAULT_BACKTEST_SETTINGS),
-    }),
-    createField("entrySettingsToggle", {
-        parser: "boolean",
-        legacyAliases: ["tradeFilterSettingsToggle"],
-        fallbackValue: false,
-        readFromSettings: (settings) => settings.entrySettingsToggle ?? resolveTradeFilterToggle(settings, DEFAULT_BACKTEST_SETTINGS),
-    }),
-    createField("tradeFilterMode", {
-        parser: "tradeFilterMode",
-        legacyAliases: ["entryConfirmation"],
-        rustSupport: "conditional",
-        readFromSettings: (settings) => resolveTradeFilterMode(settings, DEFAULT_BACKTEST_SETTINGS),
-    }),
-    createField("htfBiasEmaPeriod"),
-    createField("executionTrendEmaPeriod", { rustSupport: "unsupported" }),
-    createField("confirmLookback"),
-    createField("volumeSmaPeriod"),
-    createField("volumeMultiplier"),
-    createField("confirmRsiPeriod", {
-        legacyAliases: ["rsiPeriod"],
-    }),
-    createField("confirmRsiBullish", {
-        legacyAliases: ["rsiBullish"],
-    }),
-    createField("confirmRsiBearish", {
-        legacyAliases: ["rsiBearish"],
-    }),
-
     createField("tradeDirection", {
         parser: "tradeDirection",
         rustSupport: "conditional",
@@ -310,6 +276,19 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("flipAfterConsecutiveLosses", { rustSupport: "unsupported" }),
     createField("flipCooldownTrades", { rustSupport: "unsupported" }),
     createField("minTradesBeforeFirstFlip", { rustSupport: "unsupported" }),
+    createField("confirmationStrategiesToggle", {
+        parser: "boolean",
+        rustSupport: "ui_only",
+        workerSupport: "ui_only",
+    }),
+    createField("confirmationStrategies", {
+        parser: "stringArray",
+        rustSupport: "unsupported",
+    }),
+    createField("confirmationStrategyParams", {
+        parser: "confirmationStrategyParams",
+        rustSupport: "unsupported",
+    }),
 
     createField("executionModel", {
         parser: "executionModel",
@@ -368,6 +347,56 @@ function readBooleanValue(value: unknown, fallback: boolean): boolean {
     return readBoolean(value, fallback);
 }
 
+function readStringArrayValue(value: unknown): string[] {
+    const source = Array.isArray(value)
+        ? value
+        : typeof value === "string"
+            ? value.split(",")
+            : [];
+    const seen = new Set<string>();
+    const result: string[] = [];
+
+    for (const item of source) {
+        if (typeof item !== "string") continue;
+        const normalized = item.trim();
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        result.push(normalized);
+    }
+
+    return result;
+}
+
+function readConfirmationStrategyParamsValue(value: unknown): Record<string, StrategyParams> {
+    let source = value;
+    if (typeof value === "string") {
+        try {
+            source = JSON.parse(value || "{}");
+        } catch {
+            return {};
+        }
+    }
+    if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+
+    const result: Record<string, StrategyParams> = {};
+    for (const [strategyKey, rawParams] of Object.entries(source as Record<string, unknown>)) {
+        if (!rawParams || typeof rawParams !== "object" || Array.isArray(rawParams)) continue;
+
+        const params: StrategyParams = {};
+        for (const [paramKey, rawValue] of Object.entries(rawParams as Record<string, unknown>)) {
+            const parsed = readNumericValue(rawValue, Number.NaN);
+            if (Number.isFinite(parsed)) {
+                params[paramKey] = parsed;
+            }
+        }
+        if (Object.keys(params).length > 0) {
+            result[strategyKey] = params;
+        }
+    }
+
+    return result;
+}
+
 export function getBacktestDomSettingContract(domId: string): BacktestDomSettingContract | undefined {
     return BACKTEST_SETTINGS_DOM_CONTRACT_MAP.get(domId);
 }
@@ -383,8 +412,6 @@ export function coerceBacktestDomSettingValue(
             return resolveRiskModeValue(value, DEFAULT_BACKTEST_SETTINGS);
         case "takeProfitMode":
             return resolveTakeProfitMode(value);
-        case "tradeFilterMode":
-            return resolveTradeFilterModeValue(value, DEFAULT_BACKTEST_SETTINGS);
         case "tradeDirection":
             return resolveTradeDirection({ tradeDirection: value as any }, DEFAULT_BACKTEST_SETTINGS);
         case "marketMode":
@@ -430,6 +457,10 @@ export function coerceBacktestDomSettingValue(
             const fallback = contract.fallbackValue ?? (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[contract.settingKey];
             return typeof fallback === "string" ? fallback : "";
         }
+        case "stringArray":
+            return readStringArrayValue(value);
+        case "confirmationStrategyParams":
+            return readConfirmationStrategyParamsValue(value);
         case "number": {
             const fallback = contract.fallbackValue ?? (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[contract.settingKey];
             return readNumericValue(value, typeof fallback === "number" ? fallback : 0);

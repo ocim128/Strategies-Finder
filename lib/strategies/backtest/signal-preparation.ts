@@ -2,7 +2,7 @@
 import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection } from '../../types/index';
 import { IndicatorSeries, NormalizedSettings, PreparedSignal } from '../../types/backtest';
 import { getTimeIndex, getExecutionShift, resolveExecutionPrice, compareTime, isBothLikeTradeDirection, normalizeBacktestSettings, normalizeTradeDirection, timeToNumber, timeKey, signalToPositionDirection } from './backtest-utils';
-import { passesTradeFilter, passesRegimeFilters } from './trade-filters';
+import { passesRegimeFilters } from './regime-filters';
 import { resolveIndicators } from './indicator-precompute';
 import { runBacktest } from './backtest-engine';
 import { resolveEntryRiskTargets } from '../../entry-risk-targets';
@@ -49,15 +49,12 @@ export function prepareSignals(
 
             if (signal.type !== entryType) return;
 
-            const decisionIndex = config.tradeFilterMode === 'close'
-                ? signalIndex + 1
-                : signalIndex;
+            const decisionIndex = signalIndex;
             if (decisionIndex >= data.length) return;
 
             const executionIndex = decisionIndex + executionShift;
             if (executionIndex >= data.length) return;
 
-            if (!passesTradeFilter(data, decisionIndex, config, indicators, tradeDirection)) return;
             if (!passesRegimeFilters(data, decisionIndex, config, indicators, tradeDirection)) return;
 
             const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
@@ -77,16 +74,13 @@ export function prepareSignals(
 
         if (signal.type !== 'buy' && signal.type !== 'sell') return;
 
-        const decisionIndex = config.tradeFilterMode === 'close'
-            ? signalIndex + 1
-            : signalIndex;
+        const decisionIndex = signalIndex;
         if (decisionIndex >= data.length) return;
 
         const executionIndex = decisionIndex + executionShift;
         if (executionIndex >= data.length) return;
 
         const signalDirection = signalToPositionDirection(signal.type);
-        if (!passesTradeFilter(data, decisionIndex, config, indicators, signalDirection)) return;
         if (!passesRegimeFilters(data, decisionIndex, config, indicators, signalDirection)) return;
 
         const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);

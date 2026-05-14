@@ -18,7 +18,6 @@ type CliOptions = {
     sizingMode: "percent" | "fixed";
     fixedTradeAmount: number;
     executionModel: "signal_close" | "next_open" | "next_close";
-    tradeFilterMode: "none" | "close" | "volume" | "rsi" | "trend" | "adx" | "htf_drift";
     slippageBps: number;
     allowSameBarExit: boolean;
 };
@@ -80,7 +79,6 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
     let sizingMode: "percent" | "fixed" = "percent";
     let fixedTradeAmount = 1000;
     let executionModel: "signal_close" | "next_open" | "next_close" = "signal_close";
-    let tradeFilterMode: "none" | "close" | "volume" | "rsi" | "trend" | "adx" | "htf_drift" = "none";
     let slippageBps = 0;
     let allowSameBarExit = true;
     const positional: string[] = [];
@@ -104,7 +102,6 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
                 sizingMode,
                 fixedTradeAmount,
                 executionModel,
-                tradeFilterMode,
                 slippageBps,
                 allowSameBarExit,
             };
@@ -132,14 +129,6 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
             i++;
             continue;
         }
-        if (arg === "--trade-filter") {
-            const value = String(next ?? "").trim().toLowerCase();
-            if (value === "none" || value === "close" || value === "volume" || value === "rsi" || value === "trend" || value === "adx" || value === "htf_drift") {
-                tradeFilterMode = value;
-            }
-            i++;
-            continue;
-        }
         if (arg === "--slippage-bps") { slippageBps = toFinite(next, slippageBps); i++; continue; }
         if (arg === "--allow-same-bar-exit") { allowSameBarExit = toBoolean(next, allowSameBarExit); i++; continue; }
         positional.push(arg);
@@ -161,7 +150,6 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
         sizingMode,
         fixedTradeAmount: Math.max(0, fixedTradeAmount),
         executionModel,
-        tradeFilterMode,
         slippageBps: Math.max(0, slippageBps),
         allowSameBarExit,
     };
@@ -244,7 +232,6 @@ function runWalkForwardStage(
         "--sizing", options.sizingMode,
         "--fixed-trade-amount", String(options.fixedTradeAmount),
         "--execution", options.executionModel,
-        "--trade-filter", options.tradeFilterMode,
         "--slippage-bps", String(options.slippageBps),
         "--allow-same-bar-exit", String(options.allowSameBarExit),
         "--data-dir", options.dataDir,
@@ -409,7 +396,6 @@ async function runQualityHunt(options: CliOptions): Promise<void> {
                 sizingMode: options.sizingMode,
                 fixedTradeAmount: options.fixedTradeAmount,
                 executionModel: options.executionModel,
-                tradeFilterMode: options.tradeFilterMode,
                 slippageBps: options.slippageBps,
                 allowSameBarExit: options.allowSameBarExit,
             },

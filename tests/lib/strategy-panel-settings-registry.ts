@@ -32,11 +32,11 @@ export const STRATEGY_PANEL_SETTINGS_SECTIONS: readonly StrategyPanelSettingsSec
         accordionBodyId: "directionBody",
     },
     {
-        id: "tradeFilter",
+        id: "confirmation",
         preset: "standard",
-        accordionBodyId: "tradeFilterSectionBody",
-        featureToggleId: "tradeFilterSettingsToggle",
-        featureContentId: "tradeFilterSettings",
+        accordionBodyId: "confirmationSectionBody",
+        featureToggleId: "confirmationStrategiesToggle",
+        featureContentId: "confirmationStrategiesSettings",
     },
     {
         id: "engine",

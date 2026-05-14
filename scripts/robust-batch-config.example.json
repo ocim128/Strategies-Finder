@@ -16,15 +16,10 @@
     "topN": 10,
     "minTrades": 40
   },
-  "tradeFilterModes": [
-    "none",
-    "close"
-  ],
   "tradeDirections": [
     "both"
   ],
   "backtestSettings": {
-    "tradeFilterMode": "none",
     "tradeDirection": "both",
     "executionModel": "next_open",
     "allowSameBarExit": false,
@@ -65,4 +60,3 @@
     }
   ]
 }
-

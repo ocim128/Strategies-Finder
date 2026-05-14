@@ -94,20 +94,6 @@ function inferRiskToggle(settings: Record<string, unknown>): boolean {
         || (toBoolean(settings.riskMaxHoldEnabled) === true && toFiniteNumber(settings.riskMaxHoldBars) > 0);
 }
 
-function inferTradeFilterToggle(settings: Record<string, unknown>): boolean {
-    if (typeof settings.tradeFilterMode === 'string' && settings.tradeFilterMode !== 'none') {
-        return true;
-    }
-
-    for (const [key, value] of Object.entries(settings)) {
-        if (!key.startsWith('snapshot')) continue;
-        if (typeof value === 'boolean' && value) return true;
-        if (toFiniteNumber(value) > 0) return true;
-    }
-
-    return false;
-}
-
 function buildUiCompatibleBacktestSettings(source: unknown): Record<string, unknown> {
     const settings = (source && typeof source === 'object')
         ? { ...(source as Record<string, unknown>) }
@@ -115,12 +101,6 @@ function buildUiCompatibleBacktestSettings(source: unknown): Record<string, unkn
 
     if (typeof settings.riskSettingsToggle !== 'boolean') {
         settings.riskSettingsToggle = inferRiskToggle(settings);
-    }
-    if (typeof settings.tradeFilterSettingsToggle !== 'boolean') {
-        settings.tradeFilterSettingsToggle = inferTradeFilterToggle(settings);
-    }
-    if (typeof settings.entrySettingsToggle !== 'boolean') {
-        settings.entrySettingsToggle = settings.tradeFilterSettingsToggle;
     }
 
     return settings;

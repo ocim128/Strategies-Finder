@@ -31,6 +31,7 @@ import {
     type FinderDatasetFlags,
     type ParamJob,
 } from "./finder-runner-shared";
+import { applyConfirmationStrategiesToSignals } from "../confirmation-signal-filter";
 import type { FinderResult } from "../types/finder";
 import type { FinderRunCallbacks, FinderRunInput, FinderRunOutput } from "./finder-runner";
 
@@ -103,10 +104,14 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
                     for (const dataset of activeDatasets) {
                         let primarySigs: Signal[];
                         try {
-                            primarySigs = applySignalPolarity(
-                                primaryStrategy.execute(dataset.data, primaryConfig.strategyParams),
-                                primarySettings
-                            );
+                            primarySigs = applyConfirmationStrategiesToSignals({
+                                data: dataset.data,
+                                baseSignals: applySignalPolarity(
+                                    primaryStrategy.execute(dataset.data, primaryConfig.strategyParams),
+                                    primarySettings
+                                ),
+                                settings: primarySettings,
+                            });
                         } catch (error) {
                             const detail = error instanceof Error ? error.message : String(error);
                             debugLogger.error("finder.combo.primary_multitimeframe_failed", {

@@ -26,8 +26,6 @@ const UI_EVENT_HANDLER_DOM_IDS = {
     fitTool: "fitTool",
     riskSettingsToggle: "riskSettingsToggle",
     riskSettings: "riskSettings",
-    tradeFilterSettingsToggle: "tradeFilterSettingsToggle",
-    tradeFilterSettings: "tradeFilterSettings",
     riskMode: "riskMode",
     takeProfitMode: "takeProfitMode",
     takeProfitAdaptiveLookbackTrades: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveLookbackTrades,
@@ -41,15 +39,16 @@ const UI_EVENT_HANDLER_DOM_IDS = {
     flipAfterConsecutiveLosses: "flipAfterConsecutiveLosses",
     flipCooldownTrades: "flipCooldownTrades",
     minTradesBeforeFirstFlip: "minTradesBeforeFirstFlip",
-    tradeFilterMode: "tradeFilterMode",
-    htfBiasEmaPeriod: "htfBiasEmaPeriod",
-    executionTrendEmaPeriod: "executionTrendEmaPeriod",
-    confirmLookback: "confirmLookback",
-    volumeSmaPeriod: "volumeSmaPeriod",
-    volumeMultiplier: "volumeMultiplier",
-    confirmRsiPeriod: "confirmRsiPeriod",
-    confirmRsiBullish: "confirmRsiBullish",
-    confirmRsiBearish: "confirmRsiBearish",
+    confirmationStrategiesToggle: "confirmationStrategiesToggle",
+    confirmationStrategiesSettings: "confirmationStrategiesSettings",
+    confirmationStrategies: "confirmationStrategies",
+    confirmationStrategyParams: "confirmationStrategyParams",
+    confirmationEntropyRatioRegimeAlignment: "confirmationEntropyRatioRegimeAlignment",
+    confirmationEntropySlowWindow: "confirmationEntropySlowWindow",
+    confirmationCloseLocationMedianAlignment: "confirmationCloseLocationMedianAlignment",
+    confirmationCloseLocationLookback: "confirmationCloseLocationLookback",
+    confirmationKurtosisDistributionAlignment: "confirmationKurtosisDistributionAlignment",
+    confirmationKurtosisLookback: "confirmationKurtosisLookback",
     strategyTimeframeToggle: "strategyTimeframeToggle",
     strategyTimeframeMinutes: "strategyTimeframeMinutes",
     finderTradesToggle: "finderTradesToggle",
@@ -104,7 +103,6 @@ type UiEventTypedControls = {
     runBacktestEndpointPreview: HTMLButtonElement;
     copyBacktestEndpoint: HTMLButtonElement;
     riskSettingsToggle: HTMLInputElement;
-    tradeFilterSettingsToggle: HTMLInputElement;
     riskMode: HTMLSelectElement;
     takeProfitMode: HTMLSelectElement;
     takeProfitAdaptiveLookbackTrades: HTMLInputElement;
@@ -118,15 +116,15 @@ type UiEventTypedControls = {
     flipAfterConsecutiveLosses: HTMLInputElement;
     flipCooldownTrades: HTMLInputElement;
     minTradesBeforeFirstFlip: HTMLInputElement;
-    tradeFilterMode: HTMLSelectElement;
-    htfBiasEmaPeriod: HTMLInputElement;
-    executionTrendEmaPeriod: HTMLInputElement;
-    confirmLookback: HTMLInputElement;
-    volumeSmaPeriod: HTMLInputElement;
-    volumeMultiplier: HTMLInputElement;
-    confirmRsiPeriod: HTMLInputElement;
-    confirmRsiBullish: HTMLInputElement;
-    confirmRsiBearish: HTMLInputElement;
+    confirmationStrategiesToggle: HTMLInputElement;
+    confirmationStrategies: HTMLInputElement;
+    confirmationStrategyParams: HTMLInputElement;
+    confirmationEntropyRatioRegimeAlignment: HTMLInputElement;
+    confirmationEntropySlowWindow: HTMLInputElement;
+    confirmationCloseLocationMedianAlignment: HTMLInputElement;
+    confirmationCloseLocationLookback: HTMLInputElement;
+    confirmationKurtosisDistributionAlignment: HTMLInputElement;
+    confirmationKurtosisLookback: HTMLInputElement;
     strategyTimeframeToggle: HTMLInputElement;
     strategyTimeframeMinutes: HTMLInputElement;
     finderTradesToggle: HTMLInputElement;

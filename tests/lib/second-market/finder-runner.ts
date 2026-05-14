@@ -3,6 +3,7 @@ import {
     precomputeIndicators,
     runBacktest,
 } from "../strategies/index";
+import { applyConfirmationStrategiesToSignals } from "../confirmation-signal-filter";
 import type { BacktestResult, OHLCVData, StrategyExecutionContext } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 import type { FinderResult } from "../types/finder";
@@ -261,7 +262,11 @@ export async function runSecondMarketFinder(
                         executionContext
                     )
                     : plan.strategy.execute(strategyData, normalizedParams, executionContext);
-                const signals = applySignalPolarity(rawSignals, backtestSettings);
+                const signals = applyConfirmationStrategiesToSignals({
+                    data: strategyData,
+                    baseSignals: applySignalPolarity(rawSignals, backtestSettings),
+                    settings: backtestSettings,
+                });
                 const backtestResult = runStrategyBacktest({
                     strategy: plan.strategy,
                     data: strategyData,

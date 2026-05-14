@@ -15,7 +15,6 @@ import type {
     Strategy,
     StrategyParams,
     TradeDirection,
-    TradeFilterMode,
 } from "../lib/types/strategies";
 import { toBoolean, toFinite, toPositiveInt } from "./lib/cli-args";
 import { parseOhlcvBars } from "./lib/ohlcv-file";
@@ -40,7 +39,6 @@ export type VerifyAlphaCliOptions = {
     mutationSigma: number;
     rangePercent: number;
     executionModel: ExecutionModel;
-    tradeFilterMode: TradeFilterMode;
     allowSameBarExit: boolean;
     maxCandidates: number;
     seed: number;
@@ -181,7 +179,6 @@ export function parseArgs(argv: string[]): VerifyAlphaCliOptions & { help?: bool
     let mutationSigma = 0.12;
     let rangePercent = 35;
     let executionModel: ExecutionModel = "signal_close";
-    let tradeFilterMode: TradeFilterMode = "none";
     let allowSameBarExit = true;
     let maxCandidates = 0;
     let seed = 2026;
@@ -198,7 +195,7 @@ export function parseArgs(argv: string[]): VerifyAlphaCliOptions & { help?: bool
             inputFile, outFile, trainRatio, dropThresholdPercent, maxDrawdownPercent, tortureSlippageBps,
             commissionPercent, initialCapital, positionSize, sizingMode, fixedTradeAmount, minTrades,
             population, generations, eliteCount, mutationRate, mutationSigma, rangePercent,
-            executionModel, tradeFilterMode, allowSameBarExit, maxCandidates, seed, verificationSeeds, minPassCount, dataDir,
+            executionModel, allowSameBarExit, maxCandidates, seed, verificationSeeds, minPassCount, dataDir,
         };
         if (arg === "--in") { inputFile = path.resolve(String(next ?? inputFile)); i++; continue; }
         if (arg === "--out") { outFile = path.resolve(String(next ?? outFile)); i++; continue; }
@@ -226,14 +223,6 @@ export function parseArgs(argv: string[]): VerifyAlphaCliOptions & { help?: bool
         if (arg === "--execution") {
             const value = String(next ?? "").trim().toLowerCase();
             if (value === "signal_close" || value === "next_open" || value === "next_close") executionModel = value;
-            i++;
-            continue;
-        }
-        if (arg === "--trade-filter") {
-            const value = String(next ?? "").trim().toLowerCase();
-            if (value === "none" || value === "close" || value === "volume" || value === "rsi" || value === "trend" || value === "adx" || value === "htf_drift") {
-                tradeFilterMode = value;
-            }
             i++;
             continue;
         }
@@ -272,7 +261,6 @@ export function parseArgs(argv: string[]): VerifyAlphaCliOptions & { help?: bool
         mutationSigma: Math.max(0.0001, mutationSigma),
         rangePercent: Math.max(0, rangePercent),
         executionModel,
-        tradeFilterMode,
         allowSameBarExit,
         maxCandidates: Math.max(0, maxCandidates),
         seed: Math.max(1, seed),
@@ -468,7 +456,6 @@ async function validateCandidate(
     const baselineSettings = resolveBacktestSettingsFromRaw({
         tradeDirection: inferDirection(strategy!),
         executionModel: options.executionModel,
-        tradeFilterMode: options.tradeFilterMode,
         allowSameBarExit: options.allowSameBarExit,
         slippageBps: 0,
     } as BacktestSettings, {

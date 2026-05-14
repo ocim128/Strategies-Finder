@@ -18,14 +18,13 @@ import {
     type PolymarketLimitExitPriceMode,
 } from "./polymarket-post-signal-limit-entry";
 
-import type { BacktestSettings, ExecutionModel, MarketMode, PercentageTakeProfitMode, TradeDirection, TradeFilterMode } from "./types/strategies";
+import type { BacktestSettings, ExecutionModel, MarketMode, PercentageTakeProfitMode, StrategyParams, TradeDirection } from "./types/strategies";
 import { isTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from "./types/backtest";
 import {
     CAPITAL_DEFAULTS,
     EFFECTIVE_BACKTEST_DEFAULTS,
     resolveBacktestSettingsFromRaw,
 } from "./backtest-settings-resolver";
-import { getLegacyCompatibleTradeFilterModeValue, getLegacyCompatibleTradeFilterToggleValue } from "./legacy-settings-compat";
 
 // ============================================================================
 // Types
@@ -104,19 +103,10 @@ export interface BacktestSettingsData {
     flipCooldownTrades: number;
     minTradesBeforeFirstFlip: number;
 
-    // Trade filter
-    tradeFilterSettingsToggle: boolean;
-    tradeFilterMode: TradeFilterMode;
-    /** @deprecated Legacy key retained for backward compatibility when loading old configs */
-    entrySettingsToggle?: boolean;
-    htfBiasEmaPeriod: number;
-    executionTrendEmaPeriod: number;
-    confirmLookback: number;
-    volumeSmaPeriod: number;
-    volumeMultiplier: number;
-    confirmRsiPeriod: number;
-    confirmRsiBullish: number;
-    confirmRsiBearish: number;
+    // Signal confirmation
+    confirmationStrategiesToggle: boolean;
+    confirmationStrategies: string[];
+    confirmationStrategyParams: Record<string, StrategyParams>;
 
     // Execution realism
     executionModel: ExecutionModel;
@@ -211,15 +201,8 @@ export interface AppSettings {
 // Default Values
 // ============================================================================
 
-const {
-    rsiPeriod: DEFAULT_CONFIRM_RSI_PERIOD,
-    rsiBullish: DEFAULT_CONFIRM_RSI_BULLISH,
-    rsiBearish: DEFAULT_CONFIRM_RSI_BEARISH,
-    ...DEFAULT_SHARED_BACKTEST_SETTINGS
-} = EFFECTIVE_BACKTEST_DEFAULTS;
-
 export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
-    ...DEFAULT_SHARED_BACKTEST_SETTINGS,
+    ...EFFECTIVE_BACKTEST_DEFAULTS,
 
     // Capital settings
     initialCapital: CAPITAL_DEFAULTS.initialCapital,
@@ -236,14 +219,13 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     stopLossEnabled: false,
     takeProfitEnabled: false,
 
-    // Trade filter
-    tradeFilterSettingsToggle: false,
-    confirmRsiPeriod: DEFAULT_CONFIRM_RSI_PERIOD,
-    confirmRsiBullish: DEFAULT_CONFIRM_RSI_BULLISH,
-    confirmRsiBearish: DEFAULT_CONFIRM_RSI_BEARISH,
-
     // Cross-symbol
     crossSymbolSecondary: "",
+
+    // Signal confirmation
+    confirmationStrategiesToggle: false,
+    confirmationStrategies: [],
+    confirmationStrategyParams: {},
 };
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -326,15 +308,8 @@ const UI_ONLY_BACKTEST_SETTING_KEYS = new Set<keyof BacktestSettingsData>([
     'takeProfitAdaptiveIcScale',
     'useRustEngine',
     'riskSettingsToggle',
-    'tradeFilterSettingsToggle',
-    'entrySettingsToggle',
+    'confirmationStrategiesToggle',
 ]);
-
-const RESOLVED_TO_STORED_SETTING_KEY_MAP: Partial<Record<keyof BacktestSettingsData, keyof BacktestSettings>> = {
-    confirmRsiPeriod: 'rsiPeriod',
-    confirmRsiBullish: 'rsiBullish',
-    confirmRsiBearish: 'rsiBearish',
-};
 
 export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsData {
     const source = toRecord(raw);
@@ -360,7 +335,7 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
             continue;
         }
 
-        const resolvedKey = RESOLVED_TO_STORED_SETTING_KEY_MAP[key] ?? key;
+        const resolvedKey = key;
         const resolvedValue = (resolved as Record<string, unknown>)[resolvedKey as string];
         if (resolvedValue === undefined) {
             continue;
@@ -403,13 +378,10 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
     normalized.takeProfitAdaptiveIcScale = coerceAdaptiveTakeProfitFieldValue("takeProfitAdaptiveIcScale", source.takeProfitAdaptiveIcScale);
     normalized.useRustEngine = readBoolean(source.useRustEngine, DEFAULT_BACKTEST_SETTINGS.useRustEngine);
     normalized.riskSettingsToggle = readBoolean(source.riskSettingsToggle, DEFAULT_BACKTEST_SETTINGS.riskSettingsToggle);
-    normalized.tradeFilterSettingsToggle = readBoolean(
-        getLegacyCompatibleTradeFilterToggleValue(source),
-        resolved.tradeFilterMode !== 'none'
+    normalized.confirmationStrategiesToggle = readBoolean(
+        source.confirmationStrategiesToggle,
+        Array.isArray(normalized.confirmationStrategies) && normalized.confirmationStrategies.length > 0
     );
-    normalized.entrySettingsToggle = source.entrySettingsToggle === undefined
-        ? undefined
-        : readBoolean(source.entrySettingsToggle, false);
     Object.assign(normalized, resolvePolymarketPostSignalLimitSettingFields(
         source,
         (key, fallback) => readBoolean(source[key], fallback)
@@ -599,26 +571,6 @@ export function resolveTradeSizingModeValue(
     return fallback ?? defaults.sizingMode;
 }
 
-export function resolveTradeFilterModeValue(
-    value: unknown,
-    defaults: BacktestSettingsData = DEFAULT_BACKTEST_SETTINGS
-): TradeFilterMode {
-    if (
-        value === "none"
-        || value === "close"
-        || value === "volume"
-        || value === "rsi"
-        || value === "trend"
-        || value === "adx"
-        || value === "htf_drift"
-        || value === "trend_htf_bias"
-        || value === "trend_exec_alignment"
-    ) {
-        return value;
-    }
-    return defaults.tradeFilterMode;
-}
-
 export function resolveExecutionModelValue(
     value: unknown,
     defaults: BacktestSettingsData = DEFAULT_BACKTEST_SETTINGS
@@ -628,24 +580,3 @@ export function resolveExecutionModelValue(
     }
     return defaults.executionModel;
 }
-
-export function resolveTradeFilterMode(
-    settings: Partial<BacktestSettingsData> & { entryConfirmation?: string },
-    defaults: BacktestSettingsData = DEFAULT_BACKTEST_SETTINGS
-): TradeFilterMode {
-    return resolveTradeFilterModeValue(getLegacyCompatibleTradeFilterModeValue(settings), defaults);
-}
-
-export function resolveTradeFilterToggle(
-    settings: Partial<BacktestSettingsData>,
-    defaults: BacktestSettingsData = DEFAULT_BACKTEST_SETTINGS
-): boolean {
-    if (typeof settings.tradeFilterSettingsToggle === "boolean") {
-        return settings.tradeFilterSettingsToggle;
-    }
-    if (typeof settings.entrySettingsToggle === "boolean") {
-        return settings.entrySettingsToggle;
-    }
-    return defaults.tradeFilterSettingsToggle;
-}
-

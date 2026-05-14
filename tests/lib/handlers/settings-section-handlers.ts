@@ -5,6 +5,33 @@ import { TAKE_PROFIT_MODE_PANEL_IDS } from "../take-profit-dom";
 import { setStrategyTimeframeSettings } from "../state-actions";
 import type { UiEventHandlersDom } from "./ui-event-handlers-dom";
 
+const CONFIRMATION_STRATEGY_CHECKBOXES = [
+    {
+        checkboxKey: "confirmationEntropyRatioRegimeAlignment",
+        inputKey: "confirmationEntropySlowWindow",
+        strategyKey: "entropy_ratio_regime_alignment",
+        paramKey: "slowWindow",
+        defaultValue: 30,
+        minValue: 2,
+    },
+    {
+        checkboxKey: "confirmationCloseLocationMedianAlignment",
+        inputKey: "confirmationCloseLocationLookback",
+        strategyKey: "close_location_median_alignment",
+        paramKey: "lookback",
+        defaultValue: 63,
+        minValue: 2,
+    },
+    {
+        checkboxKey: "confirmationKurtosisDistributionAlignment",
+        inputKey: "confirmationKurtosisLookback",
+        strategyKey: "kurtosis_distribution_alignment",
+        paramKey: "lookback",
+        defaultValue: 63,
+        minValue: 4,
+    },
+] as const;
+
 function setDisabledState(
     inputs: ArrayLike<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>,
     enabled: boolean
@@ -49,9 +76,9 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
             toggle: dom.riskSettingsToggle,
             content: dom.riskSettings,
         },
-        tradeFilterSettingsToggle: {
-            toggle: dom.tradeFilterSettingsToggle,
-            content: dom.tradeFilterSettings,
+        confirmationStrategiesToggle: {
+            toggle: dom.confirmationStrategiesToggle,
+            content: dom.confirmationStrategiesSettings,
         },
     } as const;
 
@@ -180,62 +207,99 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     tradeDirectionSelect.addEventListener('change', applyTradeDirectionMode);
     applyTradeDirectionMode();
 
-    const tradeFilterModeSelect = dom.tradeFilterMode;
-    const tradeFilterFieldConfig: Array<{ inputId: string; modes: string[] }> = [
-        { inputId: 'htfBiasEmaPeriod', modes: ['trend_htf_bias'] },
-        { inputId: 'executionTrendEmaPeriod', modes: ['trend_exec_alignment'] },
-        { inputId: 'confirmLookback', modes: ['close', 'trend', 'htf_drift'] },
-        { inputId: 'volumeSmaPeriod', modes: ['volume'] },
-        { inputId: 'volumeMultiplier', modes: ['volume'] },
-        { inputId: 'confirmRsiPeriod', modes: ['rsi'] },
-        { inputId: 'confirmRsiBullish', modes: ['rsi'] },
-        { inputId: 'confirmRsiBearish', modes: ['rsi'] },
-    ];
-    const tradeFilterFields = tradeFilterFieldConfig.map(({ inputId, modes }) => {
-        const inputMap: Record<string, HTMLInputElement> = {
-            htfBiasEmaPeriod: dom.htfBiasEmaPeriod,
-            executionTrendEmaPeriod: dom.executionTrendEmaPeriod,
-            confirmLookback: dom.confirmLookback,
-            volumeSmaPeriod: dom.volumeSmaPeriod,
-            volumeMultiplier: dom.volumeMultiplier,
-            confirmRsiPeriod: dom.confirmRsiPeriod,
-            confirmRsiBullish: dom.confirmRsiBullish,
-            confirmRsiBearish: dom.confirmRsiBearish,
-        };
-        const input = inputMap[inputId];
-        const group = input.closest<HTMLElement>('.param-group');
-        if (!group) {
-            throw new Error(`Trade filter input #${inputId} must be inside .param-group`);
+    const confirmationStrategiesInput = dom.confirmationStrategies;
+    const confirmationStrategyParamsInput = dom.confirmationStrategyParams;
+    const confirmationCheckboxes = CONFIRMATION_STRATEGY_CHECKBOXES.map((definition) => ({
+        strategyKey: definition.strategyKey,
+        paramKey: definition.paramKey,
+        defaultValue: definition.defaultValue,
+        minValue: definition.minValue,
+        checkbox: dom[definition.checkboxKey],
+        input: dom[definition.inputKey],
+    }));
+    const readConfirmationStrategyParams = (): Record<string, Record<string, number>> => {
+        try {
+            const parsed = JSON.parse(confirmationStrategyParamsInput.value || '{}');
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+
+            const result: Record<string, Record<string, number>> = {};
+            Object.entries(parsed as Record<string, unknown>).forEach(([strategyKey, rawParams]) => {
+                if (!rawParams || typeof rawParams !== 'object' || Array.isArray(rawParams)) return;
+                const params: Record<string, number> = {};
+                Object.entries(rawParams as Record<string, unknown>).forEach(([paramKey, rawValue]) => {
+                    const parsedValue = parseInputNumber(String(rawValue));
+                    if (typeof parsedValue === 'number' && Number.isFinite(parsedValue)) {
+                        params[paramKey] = parsedValue;
+                    }
+                });
+                if (Object.keys(params).length > 0) {
+                    result[strategyKey] = params;
+                }
+            });
+            return result;
+        } catch {
+            return {};
         }
-        return { input, group, modes };
-    });
-    const tradeFilterRows = Array.from(
-        new Set(
-            tradeFilterFields
-                .map(({ group }) => group.closest<HTMLElement>('.param-row'))
-                .filter((row): row is HTMLElement => Boolean(row))
-        )
-    );
-
-    const applyTradeFilterMode = () => {
-        const mode = tradeFilterModeSelect.value;
-
-        tradeFilterFields.forEach(({ input, group, modes }) => {
-            const isRelevant = modes.includes(mode);
-            group.classList.toggle('is-hidden', !isRelevant);
-            setGroupDisabledState([group], isRelevant);
-            setDisabledState([input], isRelevant);
-        });
-
-        tradeFilterRows.forEach((row) => {
-            const hasVisibleGroup = Array.from(row.querySelectorAll<HTMLElement>('.param-group'))
-                .some((group) => !group.classList.contains('is-hidden'));
-            row.classList.toggle('is-hidden', !hasVisibleGroup);
-        });
     };
+    const readConfirmationStrategies = () => new Set(
+        confirmationStrategiesInput.value
+            .split(',')
+            .map((value) => value.trim())
+            .filter(Boolean)
+    );
+    const syncConfirmationCheckboxesFromInput = () => {
+        const selected = readConfirmationStrategies();
+        confirmationCheckboxes.forEach(({ strategyKey, checkbox }) => {
+            checkbox.checked = selected.has(strategyKey);
+        });
+        applyConfirmationParameterState();
+    };
+    const syncConfirmationInputFromCheckboxes = () => {
+        confirmationStrategiesInput.value = confirmationCheckboxes
+            .filter(({ checkbox }) => checkbox.checked)
+            .map(({ strategyKey }) => strategyKey)
+            .join(',');
+        applyConfirmationParameterState();
+    };
+    const syncConfirmationParamsFromInput = () => {
+        const paramsByStrategy = readConfirmationStrategyParams();
+        confirmationCheckboxes.forEach(({ strategyKey, paramKey, defaultValue, input }) => {
+            const rawValue = paramsByStrategy[strategyKey]?.[paramKey];
+            input.value = String(Number.isFinite(rawValue) ? rawValue : defaultValue);
+        });
+        applyConfirmationParameterState();
+    };
+    const syncConfirmationParamsInputFromFields = () => {
+        const paramsByStrategy: Record<string, Record<string, number>> = {};
+        confirmationCheckboxes.forEach(({ strategyKey, paramKey, defaultValue, minValue, input }) => {
+            const parsedValue = parseInputNumber(input.value);
+            const value = typeof parsedValue === 'number' && Number.isFinite(parsedValue)
+                ? Math.max(minValue, Math.round(parsedValue))
+                : defaultValue;
+            paramsByStrategy[strategyKey] = { [paramKey]: value };
+        });
+        confirmationStrategyParamsInput.value = JSON.stringify(paramsByStrategy);
+    };
+    function applyConfirmationParameterState(): void {
+        confirmationCheckboxes.forEach(({ checkbox, input }) => {
+            input.disabled = !checkbox.checked;
+        });
+    }
 
-    tradeFilterModeSelect.addEventListener('change', applyTradeFilterMode);
-    applyTradeFilterMode();
+    confirmationCheckboxes.forEach(({ checkbox }) => {
+        checkbox.addEventListener('change', syncConfirmationInputFromCheckboxes);
+    });
+    confirmationCheckboxes.forEach(({ input }) => {
+        input.addEventListener('input', syncConfirmationParamsInputFromFields);
+        input.addEventListener('change', syncConfirmationParamsInputFromFields);
+    });
+    confirmationStrategiesInput.addEventListener('change', syncConfirmationCheckboxesFromInput);
+    confirmationStrategiesInput.addEventListener('input', syncConfirmationCheckboxesFromInput);
+    confirmationStrategyParamsInput.addEventListener('change', syncConfirmationParamsFromInput);
+    confirmationStrategyParamsInput.addEventListener('input', syncConfirmationParamsFromInput);
+    syncConfirmationCheckboxesFromInput();
+    syncConfirmationParamsFromInput();
+    syncConfirmationParamsInputFromFields();
 
     const strategyTimeframeToggle = dom.strategyTimeframeToggle;
     const strategyTimeframeMinutes = dom.strategyTimeframeMinutes;

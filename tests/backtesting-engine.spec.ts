@@ -412,7 +412,6 @@ describe('Backtesting Engine', () => {
             takeProfitPercent: 10,
             stopLossEnabled: true,
             takeProfitEnabled: true,
-            tradeFilterSettingsToggle: false,
             tradeFilterMode: 'rsi',
             confirmLookback: 4,
             volumeSmaPeriod: 25,
@@ -436,7 +435,7 @@ describe('Backtesting Engine', () => {
         expect(resolved.trailingAtr).to.equal(0);
         expect(resolved.stopLossEnabled).to.equal(false);
         expect(resolved.takeProfitEnabled).to.equal(false);
-        expect(resolved.tradeFilterMode).to.equal('none');
+        expect('tradeFilterMode' in (resolved as Record<string, unknown>)).to.equal(false);
         expect(resolved.confirmationStrategies).to.deep.equal([]);
         expect(resolved.confirmationStrategyParams).to.deep.equal({});
     });
@@ -445,7 +444,6 @@ describe('Backtesting Engine', () => {
         const resolved = resolveScannerBacktestSettings({
             tradeDirection: 'combined',
             riskSettingsToggle: false,
-            tradeFilterSettingsToggle: false
         } as any);
         expect(resolved.tradeDirection).to.equal('combined');
     });
@@ -454,7 +452,6 @@ describe('Backtesting Engine', () => {
         const resolved = resolveScannerBacktestSettings({
             tradeDirection: 'both_flip_loss_2',
             riskSettingsToggle: false,
-            tradeFilterSettingsToggle: false
         } as any);
         expect(resolved.tradeDirection).to.equal('both_flip_loss_2');
     });
@@ -472,7 +469,6 @@ describe('Backtesting Engine', () => {
             riskWinStreakStopLossToggle: 'true',
             riskWinStreakStopLossAfterWins: '4',
             riskWinStreakStopLossPercent: '1.25',
-            tradeFilterSettingsToggle: 'true',
             tradeFilterMode: 'rsi',
             confirmLookback: '3',
             volumeSmaPeriod: '21',
@@ -502,13 +498,13 @@ describe('Backtesting Engine', () => {
         expect(resolved.riskWinStreakStopLossEnabled).to.equal(false);
         expect(resolved.riskWinStreakStopLossAfterWins).to.equal(3);
         expect(resolved.riskWinStreakStopLossPercent).to.equal(0);
-        expect(resolved.tradeFilterMode).to.equal('rsi');
-        expect(resolved.confirmLookback).to.equal(3);
-        expect(resolved.volumeSmaPeriod).to.equal(21);
-        expect(resolved.volumeMultiplier).to.equal(1.8);
-        expect(resolved.rsiPeriod).to.equal(11);
-        expect(resolved.rsiBullish).to.equal(60);
-        expect(resolved.rsiBearish).to.equal(40);
+        expect('tradeFilterMode' in (resolved as Record<string, unknown>)).to.equal(false);
+        expect('confirmLookback' in (resolved as Record<string, unknown>)).to.equal(false);
+        expect('volumeSmaPeriod' in (resolved as Record<string, unknown>)).to.equal(false);
+        expect('volumeMultiplier' in (resolved as Record<string, unknown>)).to.equal(false);
+        expect('rsiPeriod' in (resolved as Record<string, unknown>)).to.equal(false);
+        expect('rsiBullish' in (resolved as Record<string, unknown>)).to.equal(false);
+        expect('rsiBearish' in (resolved as Record<string, unknown>)).to.equal(false);
         expect(resolved.confirmationStrategies).to.deep.equal(['sma_crossover']);
         expect(resolved.confirmationStrategyParams).to.deep.equal({
             sma_crossover: {
@@ -528,7 +524,6 @@ describe('Backtesting Engine', () => {
             stopLossAtr: 1.5,
             riskMaxHoldBars: 7,
             riskMaxHoldEnabled: true,
-            tradeFilterSettingsToggle: false,
         } as any);
 
         expect(resolved.stopLossAtr).to.equal(1.5);

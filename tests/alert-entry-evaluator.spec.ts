@@ -114,7 +114,6 @@ describe('Alert Entry Evaluator', () => {
                 backtestSettings: {
                     tradeDirection: 'long',
                     executionModel: 'signal_close',
-                    tradeFilterMode: 'none',
                     confirmationStrategies: [confKey]
                 },
                 freshnessBars: 20

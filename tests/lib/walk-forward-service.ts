@@ -7,6 +7,7 @@ import { backtestService } from "./backtest-service";
 import { rustEngine } from "./rust-engine-client";
 import { shouldUseRustEngine } from "./engine-preferences";
 import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
+import { applyConfirmationStrategiesToSignals } from "./confirmation-signal-filter";
 import { applySignalPolarity, runBacktestCompact } from "./strategies/backtest";
 import { parseInputNumber } from "./dom-input-readers";
 import type { Strategy, StrategyParams, BacktestSettings, OHLCVData, BacktestResult } from "./strategies/index";
@@ -345,7 +346,11 @@ class WalkForwardService {
         backtestSettings: BacktestSettings
     ): { totalTrades: number; tradesPerBar: number } | null {
         try {
-            const signals = applySignalPolarity(strategy.execute(data, params), backtestSettings);
+            const signals = applyConfirmationStrategiesToSignals({
+                data,
+                baseSignals: applySignalPolarity(strategy.execute(data, params), backtestSettings),
+                settings: backtestSettings,
+            });
             const result = runBacktestCompact(
                 data,
                 signals,

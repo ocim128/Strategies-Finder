@@ -543,13 +543,23 @@ class SettingsManager {
                 element.checked = Boolean(value);
                 return;
             }
-            element.value = String(value);
+            element.value = this.formatBacktestDomValue(value);
             return;
         }
 
         if (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) {
-            element.value = String(value);
+            element.value = this.formatBacktestDomValue(value);
         }
+    }
+
+    private formatBacktestDomValue(value: unknown): string {
+        if (Array.isArray(value)) {
+            return value.join(",");
+        }
+        if (value && typeof value === "object") {
+            return JSON.stringify(value);
+        }
+        return String(value);
     }
 
     private triggerChangeEvents(): void {
@@ -559,7 +569,9 @@ class SettingsManager {
             'tradeSizingMode',
             'martingaleBaseSize',
             'riskSettingsToggle',
-            'tradeFilterSettingsToggle',
+            'confirmationStrategiesToggle',
+            'confirmationStrategies',
+            'confirmationStrategyParams',
             'invertSignalsToggle',
             'useRustEngineToggle',
             'strategyTimeframeToggle',
@@ -582,7 +594,6 @@ class SettingsManager {
         // Trigger riskMode change
         dom.riskMode.dispatchEvent(new Event('change', { bubbles: true }));
         dom.takeProfitMode.dispatchEvent(new Event('change', { bubbles: true }));
-        dom.tradeFilterMode.dispatchEvent(new Event('change', { bubbles: true }));
         dom.tradeDirection.dispatchEvent(new Event('change', { bubbles: true }));
     }
 }

@@ -1,5 +1,6 @@
 import type { StrategyConfig } from "./settings-manager";
 import { resolveBacktestSettingsFromRaw } from "./backtest-settings-resolver";
+import { applyConfirmationStrategiesToSignals } from "./confirmation-signal-filter";
 import {
     applySignalPolarity,
     prepareSignalsForScanner,
@@ -77,7 +78,11 @@ export async function buildSignalArtifact(
     const tradeDirection = normalizeTradeDirection(backtestSettings);
 
     try {
-        const rawSignals = applySignalPolarity(strategy.execute(candles, params), backtestSettings);
+        const rawSignals = applyConfirmationStrategiesToSignals({
+            data: candles,
+            baseSignals: applySignalPolarity(strategy.execute(candles, params), backtestSettings),
+            settings: backtestSettings,
+        });
         const preparedSignals = prepareSignalsForScanner(candles, rawSignals, backtestSettings);
         const entrySignals = extractEntrySignals(preparedSignals, tradeDirection);
 

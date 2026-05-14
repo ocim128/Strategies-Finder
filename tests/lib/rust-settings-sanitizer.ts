@@ -1,16 +1,10 @@
 import type { BacktestSettings } from "./types/strategies";
 
-const RUST_UNSUPPORTED_TRADE_FILTER_MODES = new Set([
-    "trend_htf_bias",
-    "trend_exec_alignment",
-]);
-
 export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     const executionModel = settings.executionModel ?? 'signal_close';
     const allowSameBarExit = false;
     const slippageBps = settings.slippageBps ?? 0;
     const marketMode = 'all';
-    const tradeFilterMode = settings.tradeFilterMode ?? 'none';
 
     const usesRealismConstraints =
         executionModel !== 'signal_close'
@@ -23,7 +17,6 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         || settings.tradeDirection === 'combined';
 
     const usesNonAllMarketMode = marketMode !== 'all';
-    const usesUnsupportedTradeFilterMode = RUST_UNSUPPORTED_TRADE_FILTER_MODES.has(tradeFilterMode);
 
     const usesRiskMaxHold =
         settings.riskMaxHoldEnabled === true
@@ -49,7 +42,6 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     return usesRealismConstraints
         || usesCombinedDirection
         || usesNonAllMarketMode
-        || usesUnsupportedTradeFilterMode
         || usesRiskMaxHold
         || usesRiskMinHold
         || usesHistoricalLevels
@@ -65,7 +57,6 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "executionModel",
     "allowSameBarExit",
     "slippageBps",
-    "executionTrendEmaPeriod",
     "maxOpenTrades",
     "marketMode",
     "riskMinHoldBars",
@@ -90,6 +81,24 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "flipAfterConsecutiveLosses",
     "flipCooldownTrades",
     "minTradesBeforeFirstFlip",
+    "tradeFilterMode",
+    "tradeFilterSettingsToggle",
+    "entrySettingsToggle",
+    "entryConfirmation",
+    "htfBiasEmaPeriod",
+    "executionTrendEmaPeriod",
+    "confirmLookback",
+    "volumeSmaPeriod",
+    "volumeMultiplier",
+    "confirmRsiPeriod",
+    "confirmRsiBullish",
+    "confirmRsiBearish",
+    "rsiPeriod",
+    "rsiBullish",
+    "rsiBearish",
+    "confirmationStrategiesToggle",
+    "confirmationStrategies",
+    "confirmationStrategyParams",
     "strategyTimeframeEnabled",
     "strategyTimeframeMinutes",
     "polymarketOutcomeSymbol",

@@ -34,7 +34,7 @@ describe("Strategy panel settings registry", () => {
             "realism",
             "sizing",
             "direction",
-            "tradeFilter",
+            "confirmation",
             "engine",
             "combiner",
         ]);

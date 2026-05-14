@@ -585,8 +585,6 @@ function buildReplayBacktestSettings(
         ...backtestSettings,
         executionModel: "next_open",
         tradeDirection: inferReplayTradeDirection(preparedSignals, directionSlice, fallbackDirection),
-        tradeFilterMode: "none",
-        entrySettingsToggle: false,
         slippageBps: 0,
     };
 }

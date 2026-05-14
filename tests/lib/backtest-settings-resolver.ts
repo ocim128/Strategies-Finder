@@ -4,9 +4,7 @@ import type {
     MarketMode,
     StrategyParams,
     TradeDirection,
-    TradeFilterMode,
 } from "./types/strategies";
-import { getLegacyCompatibleTradeFilterModeValue } from "./legacy-settings-compat";
 import {
     readBoolean as readBooleanValue,
     readNumber as readNumberValue,
@@ -71,15 +69,6 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     riskWinStreakStopLossAfterWins: 3,
     riskWinStreakStopLossPercent: 0,
     marketMode: "all" as MarketMode,
-    tradeFilterMode: "none" as TradeFilterMode,
-    htfBiasEmaPeriod: 200,
-    executionTrendEmaPeriod: 50,
-    confirmLookback: 1,
-    volumeSmaPeriod: 20,
-    volumeMultiplier: 1.5,
-    rsiPeriod: 14,
-    rsiBullish: 55,
-    rsiBearish: 45,
     tradeDirection: "short" as TradeDirection,
     invertSignals: false,
     flipAfterConsecutiveLosses: 2,
@@ -116,8 +105,7 @@ type ResolverGuardName =
     | "useAdvancedRisk"
     | "useRiskManagement"
     | "useRiskMinHold"
-    | "useRiskMaxHold"
-    | "tradeFilterEnabled";
+    | "useRiskMaxHold";
 
 type ResolverGuardState = Record<ResolverGuardName, boolean>;
 
@@ -146,14 +134,6 @@ type NumericResolverKey =
     | "riskMaxHoldBars"
     | "riskWinStreakStopLossAfterWins"
     | "riskWinStreakStopLossPercent"
-    | "htfBiasEmaPeriod"
-    | "executionTrendEmaPeriod"
-    | "confirmLookback"
-    | "volumeSmaPeriod"
-    | "volumeMultiplier"
-    | "rsiPeriod"
-    | "rsiBullish"
-    | "rsiBearish"
     | "flipAfterConsecutiveLosses"
     | "flipCooldownTrades"
     | "minTradesBeforeFirstFlip"
@@ -268,26 +248,6 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
         disabledValue: 0,
         resolve: (raw) => Math.max(0, readDefaultedNumber(raw, "riskWinStreakStopLossPercent")),
     },
-    { key: "htfBiasEmaPeriod", guard: "tradeFilterEnabled" },
-    { key: "executionTrendEmaPeriod", guard: "tradeFilterEnabled" },
-    { key: "confirmLookback", guard: "tradeFilterEnabled" },
-    { key: "volumeSmaPeriod", guard: "tradeFilterEnabled" },
-    { key: "volumeMultiplier", guard: "tradeFilterEnabled" },
-    {
-        key: "rsiPeriod",
-        guard: "tradeFilterEnabled",
-        resolve: (raw) => readNumber(raw, "rsiPeriod", readNumber(raw, "confirmRsiPeriod", EFFECTIVE_BACKTEST_DEFAULTS.rsiPeriod)),
-    },
-    {
-        key: "rsiBullish",
-        guard: "tradeFilterEnabled",
-        resolve: (raw) => readNumber(raw, "rsiBullish", readNumber(raw, "confirmRsiBullish", EFFECTIVE_BACKTEST_DEFAULTS.rsiBullish)),
-    },
-    {
-        key: "rsiBearish",
-        guard: "tradeFilterEnabled",
-        resolve: (raw) => readNumber(raw, "rsiBearish", readNumber(raw, "confirmRsiBearish", EFFECTIVE_BACKTEST_DEFAULTS.rsiBearish)),
-    },
     { key: "flipAfterConsecutiveLosses" },
     { key: "flipCooldownTrades" },
     { key: "minTradesBeforeFirstFlip" },
@@ -365,8 +325,6 @@ function resolveBooleanSettingRules(
 
 export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "riskSettingsToggle",
-    "tradeFilterSettingsToggle",
-    "entrySettingsToggle",
 
     "riskMode",
     "atrPeriod",
@@ -393,20 +351,14 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "riskMinHoldToggle",
     "riskMaxHoldBars",
     "riskMaxHoldToggle",
-    "tradeFilterMode",
-    "htfBiasEmaPeriod",
-    "executionTrendEmaPeriod",
-    "confirmLookback",
-    "volumeSmaPeriod",
-    "volumeMultiplier",
-    "confirmRsiPeriod",
-    "confirmRsiBullish",
-    "confirmRsiBearish",
     "tradeDirection",
     "invertSignalsToggle",
     "flipAfterConsecutiveLosses",
     "flipCooldownTrades",
     "minTradesBeforeFirstFlip",
+    "confirmationStrategiesToggle",
+    "confirmationStrategies",
+    "confirmationStrategyParams",
     "executionModel",
     "slippageBps",
     "maxOpenTrades",
@@ -431,17 +383,6 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "crossSymbolSecondary",
 ]);
 
-const VALID_TRADE_FILTER_MODES = new Set<TradeFilterMode>([
-    "none",
-    "close",
-    "volume",
-    "rsi",
-    "trend",
-    "adx",
-    "htf_drift",
-    "trend_htf_bias",
-    "trend_exec_alignment",
-]);
 const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_flip_loss_2", "combined"]);
 function coerceScalar(rawValue: unknown): unknown {
     if (typeof rawValue === "boolean") return rawValue;
@@ -493,14 +434,6 @@ function readBooleanAny(raw: Record<string, unknown>, keys: string[], fallback: 
     return fallback;
 }
 
-function readTradeFilterMode(rawValue: unknown, fallback: TradeFilterMode): TradeFilterMode {
-    if (typeof rawValue === "string") {
-        const mode = rawValue.trim().toLowerCase() as TradeFilterMode;
-        if (VALID_TRADE_FILTER_MODES.has(mode)) return mode;
-    }
-    return fallback;
-}
-
 function readTradeDirection(rawValue: unknown, fallback: TradeDirection): TradeDirection {
     if (typeof rawValue === "string") {
         const direction = rawValue.trim().toLowerCase() as TradeDirection;
@@ -510,10 +443,14 @@ function readTradeDirection(rawValue: unknown, fallback: TradeDirection): TradeD
 }
 
 function readStringArray(rawValue: unknown): string[] {
-    if (!Array.isArray(rawValue)) return [];
+    const source = Array.isArray(rawValue)
+        ? rawValue
+        : typeof rawValue === "string"
+            ? rawValue.split(",")
+            : [];
     const seen = new Set<string>();
     const items: string[] = [];
-    for (const item of rawValue) {
+    for (const item of source) {
         if (typeof item !== "string") continue;
         const normalized = item.trim();
         if (!normalized || seen.has(normalized)) continue;
@@ -527,14 +464,22 @@ function readConfirmationStrategyParams(
     rawValue: unknown,
     allowedStrategies?: ReadonlySet<string>
 ): Record<string, StrategyParams> {
-    if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) return {};
+    let rawSource = rawValue;
+    if (typeof rawValue === "string") {
+        try {
+            rawSource = JSON.parse(rawValue || "{}");
+        } catch {
+            return {};
+        }
+    }
+    if (!rawSource || typeof rawSource !== "object" || Array.isArray(rawSource)) return {};
 
-    const source = coerceDeepValue(rawValue);
+    const source = coerceDeepValue(rawSource);
     if (!source || typeof source !== "object" || Array.isArray(source)) return {};
 
     const result: Record<string, StrategyParams> = {};
     for (const [strategyKey, strategyParamsRaw] of Object.entries(source as Record<string, unknown>)) {
-        if (allowedStrategies && allowedStrategies.size > 0 && !allowedStrategies.has(strategyKey)) {
+        if (allowedStrategies && !allowedStrategies.has(strategyKey)) {
             continue;
         }
         if (!strategyParamsRaw || typeof strategyParamsRaw !== "object" || Array.isArray(strategyParamsRaw)) {
@@ -557,8 +502,6 @@ function readConfirmationStrategyParams(
 export function hasUiToggleSettings(raw: Record<string, unknown>): boolean {
     return [
         "riskSettingsToggle",
-        "tradeFilterSettingsToggle",
-        "entrySettingsToggle",
         "invertSignalsToggle",
     ].some((key) => key in raw);
 }
@@ -575,6 +518,21 @@ function applyRemovedBacktestSettingDefaults(settings: Record<string, unknown>):
     settings.riskWinStreakStopLossPercent = 0;
     settings.marketMode = EFFECTIVE_BACKTEST_DEFAULTS.marketMode;
     settings.allowSameBarExit = EFFECTIVE_BACKTEST_DEFAULTS.allowSameBarExit;
+    delete settings.tradeFilterMode;
+    delete settings.tradeFilterSettingsToggle;
+    delete settings.entrySettingsToggle;
+    delete settings.entryConfirmation;
+    delete settings.htfBiasEmaPeriod;
+    delete settings.executionTrendEmaPeriod;
+    delete settings.confirmLookback;
+    delete settings.volumeSmaPeriod;
+    delete settings.volumeMultiplier;
+    delete settings.confirmRsiPeriod;
+    delete settings.confirmRsiBullish;
+    delete settings.confirmRsiBearish;
+    delete settings.rsiPeriod;
+    delete settings.rsiBullish;
+    delete settings.rsiBearish;
     return settings;
 }
 
@@ -603,6 +561,19 @@ export function resolveBacktestSettingsFromRaw(
             raw,
             (key, fallback) => readBoolean(raw, key, fallback)
         ));
+        if ("confirmationStrategies" in raw || "confirmationStrategiesToggle" in raw) {
+            const rawConfirmationStrategies = readStringArray(raw["confirmationStrategies"]);
+            const confirmationStrategiesEnabled = readBoolean(
+                raw,
+                "confirmationStrategiesToggle",
+                rawConfirmationStrategies.length > 0
+            );
+            const confirmationStrategies = confirmationStrategiesEnabled ? rawConfirmationStrategies : [];
+            coerced.confirmationStrategies = confirmationStrategies;
+            coerced.confirmationStrategyParams = confirmationStrategiesEnabled
+                ? readConfirmationStrategyParams(raw["confirmationStrategyParams"], new Set(confirmationStrategies))
+                : {};
+        }
         return applyRemovedBacktestSettingDefaults(coerced as Record<string, unknown>) as BacktestSettings;
     }
 
@@ -618,25 +589,17 @@ export function resolveBacktestSettingsFromRaw(
     const useRiskMinHold = riskEnabled;
     const useRiskMaxHold = riskEnabled;
 
-    const tradeFilterEnabled = readBoolean(
+    const rawConfirmationStrategies = readStringArray(raw["confirmationStrategies"]);
+    const confirmationStrategiesEnabled = readBoolean(
         raw,
-        "tradeFilterSettingsToggle",
-        readBoolean(raw, "entrySettingsToggle", false)
+        "confirmationStrategiesToggle",
+        rawConfirmationStrategies.length > 0
     );
-    const tradeFilterMode = tradeFilterEnabled
-        ? readTradeFilterMode(
-            getLegacyCompatibleTradeFilterModeValue(raw),
-            EFFECTIVE_BACKTEST_DEFAULTS.tradeFilterMode
-        )
-        : "none";
-    const confirmationStrategiesEnabled = readBoolean(raw, "confirmationStrategiesToggle", false);
-    const confirmationStrategies = confirmationStrategiesEnabled ? readStringArray(raw["confirmationStrategies"]) : [];
+    const confirmationStrategies = confirmationStrategiesEnabled ? rawConfirmationStrategies : [];
     const allowedConfirmationStrategies = new Set(confirmationStrategies);
     const confirmationStrategyParams = confirmationStrategiesEnabled
         ? readConfirmationStrategyParams(raw["confirmationStrategyParams"], allowedConfirmationStrategies)
         : {};
-
-
 
     const executionModelRaw = raw["executionModel"];
     const executionModel: ExecutionModel =
@@ -653,7 +616,6 @@ export function resolveBacktestSettingsFromRaw(
         useRiskManagement: riskEnabled,
         useRiskMinHold,
         useRiskMaxHold,
-        tradeFilterEnabled,
     };
     const numericSettings = resolveNumericSettingRules(raw, guards);
     const booleanSettings = resolveBooleanSettingRules(raw, guards);
@@ -673,7 +635,6 @@ export function resolveBacktestSettingsFromRaw(
         adxPeriod: 14,
         adxMin: 0,
         adxMax: 0,
-        tradeFilterMode,
         confirmationStrategies,
         confirmationStrategyParams,
         tradeDirection,

@@ -85,7 +85,7 @@ Create subscription example:
   "interval": "120m",
   "strategyKey": "exhaustion_spike_pullback",
   "strategyParams": { "spikeAtrMult": 0, "pullbackEma": -28, "maxWaitBars": 32 },
-  "backtestSettings": { "tradeDirection": "both", "executionModel": "next_open", "tradeFilterMode": "close" },
+  "backtestSettings": { "tradeDirection": "both", "executionModel": "next_open" },
   "freshnessBars": 1,
   "notifyTelegram": true,
   "enabled": true

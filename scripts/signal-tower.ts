@@ -400,7 +400,6 @@ function buildBacktestSettings(state: TowerAssetState): BacktestSettings {
     return {
         tradeDirection: inferTradeDirection(state.strategy),
         executionModel: "signal_close",
-        tradeFilterMode: "none",
         allowSameBarExit: true,
         slippageBps: 0,
     };

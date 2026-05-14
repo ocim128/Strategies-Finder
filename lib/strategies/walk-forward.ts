@@ -10,6 +10,7 @@ import type { TradeSizingMode } from '../types/backtest';
 import type { WalkForwardDecayMonitoring } from './walk-forward-decay';
 import { withWalkForwardDecayMonitoring } from './walk-forward-decay';
 import { debugLogger } from '../debug-logger';
+import { applyConfirmationStrategiesToSignals } from '../confirmation-signal-filter';
 
 // ============================================================================
 // Walk-Forward Analysis (WFA) Module
@@ -428,7 +429,11 @@ function prepareWindowBacktest(
     const rawSignals = strategy.executePrepared
         ? strategy.executePrepared(preparedData, params, context.bufferedData, windowCtx)
         : strategy.execute(context.bufferedData, params, windowCtx);
-    const allSignals = applySignalPolarity(rawSignals, backtestSettings);
+    const allSignals = applyConfirmationStrategiesToSignals({
+        data: context.bufferedData,
+        baseSignals: applySignalPolarity(rawSignals, backtestSettings),
+        settings: backtestSettings,
+    });
     const windowSignals = filterSignalsForWindow(allSignals, context);
     return { windowSignals };
 }

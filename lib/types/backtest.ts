@@ -1,4 +1,4 @@
-import { Signal, Time, TradeFilterMode, MarketMode, PercentageTakeProfitMode } from './strategies';
+import { Signal, Time, MarketMode, PercentageTakeProfitMode } from './strategies';
 
 export interface NormalizedSettings {
     atrPeriod: number;
@@ -41,8 +41,6 @@ export interface NormalizedSettings {
     minTradesBeforeFirstFlip: number;
 
     trendEmaPeriod: number;
-    htfBiasEmaPeriod: number;
-    executionTrendEmaPeriod: number;
     trendEmaSlopeBars: number;
     atrPercentMin: number;
     atrPercentMax: number;
@@ -50,13 +48,6 @@ export interface NormalizedSettings {
     adxMin: number;
     adxMax: number;
 
-    tradeFilterMode: TradeFilterMode;
-    confirmLookback: number;
-    volumeSmaPeriod: number;
-    volumeMultiplier: number;
-    rsiPeriod: number;
-    rsiBullish: number;
-    rsiBearish: number;
     marketMode: MarketMode;
     executionModel: 'signal_close' | 'next_open' | 'next_close';
     allowSameBarExit: boolean;
@@ -69,13 +60,7 @@ export interface NormalizedSettings {
 export interface IndicatorSeries {
     atr: (number | null)[];
     emaTrend: (number | null)[];
-    emaFast: (number | null)[];
-    emaSlow: (number | null)[];
     adx: (number | null)[];
-    volumeSma: (number | null)[];
-    rsi: (number | null)[];
-    sessionVwap: (number | null)[];
-    vwapDeviationStd: (number | null)[];
 }
 
 /**

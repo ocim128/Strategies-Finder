@@ -1,14 +1,10 @@
 
 import { BacktestSettings, OHLCVData } from '../../types/index';
-import { calculateADX, calculateATR, calculateEMA, calculateRSI, calculateSMA } from '../indicators';
-import { getCloses, getHighs, getLows, getVolumes } from '../strategy-helpers';
+import { calculateADX, calculateATR, calculateEMA } from '../indicators';
+import { getCloses, getHighs, getLows } from '../strategy-helpers';
 import { IndicatorSeries, NormalizedSettings, PrecomputedIndicators } from '../../types/backtest';
 import { normalizeBacktestSettings } from './backtest-utils';
-import {
-    resolveExecutionTrendPeriod,
-    resolveHtfBiasPeriod,
-    resolveTrendPeriod,
-} from './trade-filters';
+import { resolveTrendPeriod } from './regime-filters';
 
 const MAX_SETTINGS_CACHE_PER_DATASET = 24;
 const indicatorCache = new WeakMap<OHLCVData[], Map<string, PrecomputedIndicators>>();
@@ -20,16 +16,11 @@ function buildIndicatorCacheKey(config: NormalizedSettings): string {
         config.atrPercentMax,
         config.partialTakeProfitAtR,
         config.breakEvenAtR,
-        config.tradeFilterMode,
         config.trendEmaPeriod,
-        config.htfBiasEmaPeriod,
-        config.executionTrendEmaPeriod,
         config.marketMode,
         config.adxPeriod,
         config.adxMin,
         config.adxMax,
-        config.volumeSmaPeriod,
-        config.rsiPeriod
     ].join('|');
 }
 
@@ -40,44 +31,19 @@ function precomputeIndicatorsFromConfig(
     const highs = getHighs(data);
     const lows = getLows(data);
     const closes = getCloses(data);
-    const volumes = getVolumes(data);
-
     const atr = calculateATR(highs, lows, closes, config.atrPeriod);
     const trendPeriod = resolveTrendPeriod(config);
     const emaTrend = trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : [];
-    const useFastTrendFilter = config.tradeFilterMode === 'trend_exec_alignment';
-    const useSlowTrendFilter = config.tradeFilterMode === 'trend_htf_bias';
-    const htfBiasPeriod = resolveHtfBiasPeriod(config);
-    const executionTrendPeriod = resolveExecutionTrendPeriod(config);
-    const emaFast = useFastTrendFilter ? calculateEMA(closes, executionTrendPeriod) : [];
-    const emaSlow = useSlowTrendFilter ? calculateEMA(closes, htfBiasPeriod) : [];
 
-    const useAdx = config.tradeFilterMode === 'adx'
-        || config.adxMin > 0
+    const useAdx = config.adxMin > 0
         || config.adxMax > 0;
     const adxPeriod = useAdx ? Math.max(1, config.adxPeriod) : 0;
     const adx = useAdx ? calculateADX(highs, lows, closes, adxPeriod) : [];
 
-    const volumeSma = config.tradeFilterMode === 'volume'
-        ? calculateSMA(volumes, config.volumeSmaPeriod)
-        : [];
-    const rsi = config.tradeFilterMode === 'rsi'
-        ? calculateRSI(closes, config.rsiPeriod)
-        : [];
-
-    const sessionVwap: (number | null)[] = [];
-    const vwapDeviationStd: (number | null)[] = [];
-
     return {
         atr,
         emaTrend,
-        emaFast,
-        emaSlow,
         adx,
-        volumeSma,
-        rsi,
-        sessionVwap,
-        vwapDeviationStd,
         dataLength: data.length,
         settingsKey: buildIndicatorCacheKey(config)
     };
@@ -141,13 +107,7 @@ export function resolveIndicators(
     return {
         atr: computed.atr,
         emaTrend: computed.emaTrend,
-        emaFast: computed.emaFast,
-        emaSlow: computed.emaSlow,
         adx: computed.adx,
-        volumeSma: computed.volumeSma,
-        rsi: computed.rsi,
-        sessionVwap: computed.sessionVwap,
-        vwapDeviationStd: computed.vwapDeviationStd
     };
 }
 

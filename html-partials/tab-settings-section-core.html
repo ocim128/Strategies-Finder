@@ -109,6 +109,69 @@
         </div>
     </div>
 
+    <div class="settings-section" data-complexity="standard" data-section="confirmation">
+        <div class="section-header collapsible collapsed" data-target="confirmationSectionBody">
+            <div style="display:flex;align-items:center;">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Entry Confirmation</div>
+            </div>
+            <label class="section-toggle" aria-label="Toggle entry confirmation">
+                <input type="checkbox" id="confirmationStrategiesToggle">
+                <span class="section-toggle-track"></span>
+            </label>
+        </div>
+        <div class="section-body accordion-body collapsed" id="confirmationSectionBody">
+            <div class="section-feature-body" id="confirmationStrategiesSettings">
+                <input type="hidden" id="confirmationStrategies" value="">
+                <input type="hidden" id="confirmationStrategyParams" value="">
+                <div class="param-row">
+                    <div class="param-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Entropy Ratio Regime Alignment</label>
+                            <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle entropy ratio regime alignment confirmation">
+                                <input type="checkbox" id="confirmationEntropyRatioRegimeAlignment">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">Requires the confirmation strategy to agree on the same buy or sell bar.</div>
+                        <label class="param-label">Slow Window</label>
+                        <input type="number" class="param-input" id="confirmationEntropySlowWindow" value="30" min="2" step="1">
+                    </div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Close Location Median Alignment</label>
+                            <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle close location median alignment confirmation">
+                                <input type="checkbox" id="confirmationCloseLocationMedianAlignment">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">Requires the confirmation strategy to agree on the same buy or sell bar.</div>
+                        <label class="param-label">Lookback</label>
+                        <input type="number" class="param-input" id="confirmationCloseLocationLookback" value="63" min="2" step="1">
+                    </div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Kurtosis Distribution Alignment</label>
+                            <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle kurtosis distribution alignment confirmation">
+                                <input type="checkbox" id="confirmationKurtosisDistributionAlignment">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">Requires the confirmation strategy to agree on the same buy or sell bar.</div>
+                        <label class="param-label">Lookback</label>
+                        <input type="number" class="param-input" id="confirmationKurtosisLookback" value="63" min="4" step="1">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="settings-section" data-complexity="simple" data-section="risk">
         <div class="section-header collapsible" data-target="riskSectionBody">
             <div style="display:flex;align-items:center;">
