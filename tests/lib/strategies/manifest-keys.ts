@@ -62,4 +62,6 @@ export const builtInStrategyKeys: readonly string[] = [
     "true_range_skew_acceptance",
     "volume_roc_regime_router",
     "atr_range_conviction_follow",
+    "cmf_pressure_alignment",
+    "keltner_boundary_pressure_gap",
 ];

@@ -64,4 +64,6 @@ export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {
     "true_range_skew_acceptance": () => import("./lib/true_range_skew_acceptance").then(m => m.true_range_skew_acceptance),
     "volume_roc_regime_router": () => import("./lib/volume_roc_regime_router").then(m => m.volume_roc_regime_router),
     "atr_range_conviction_follow": () => import("./lib/atr_range_conviction_follow").then(m => m.atr_range_conviction_follow),
+    "cmf_pressure_alignment": () => import("./lib/cmf_pressure_alignment").then(m => m.cmf_pressure_alignment),
+    "keltner_boundary_pressure_gap": () => import("./lib/keltner_boundary_pressure_gap").then(m => m.keltner_boundary_pressure_gap),
 };

@@ -1043,4 +1043,44 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		walkForwardParams: ["atr_period", "range_atr_min", "acceptance_min"],
 	},
     },
+    {
+        key: "cmf_pressure_alignment",
+        name: "CMF Pressure Alignment",
+        description: "Uses volume-weighted money flow to identify accumulation/distribution, vetoing entries if Polymarket probabilities strongly oppose the flow.",
+        defaultParams: {
+    cmfPeriod: 20,
+    cmfThreshold: 0.15,
+    maxAdverse: 0.04,
+  } as Record<string, number>,
+        paramLabels: {
+    cmfPeriod: "CMF Period",
+    cmfThreshold: "CMF Threshold",
+    maxAdverse: "Max Adverse Pressure",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["cmfPeriod", "cmfThreshold", "maxAdverse"],
+  },
+    },
+    {
+        key: "keltner_boundary_pressure_gap",
+        name: "Keltner Boundary Pressure Gap",
+        description: "Trades true boundary expansions when Binance price accepts outside Keltner channels and Polymarket directly agrees the move is underpriced.",
+        defaultParams: {
+    keltnerPeriod: 20,
+    keltnerMultiplier: 2.0,
+    minPressureEdge: 0.02,
+  } as Record<string, number>,
+        paramLabels: {
+    keltnerPeriod: "Keltner Period",
+    keltnerMultiplier: "Keltner Multiplier",
+    minPressureEdge: "Min Pressure Edge",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["keltnerPeriod", "keltnerMultiplier", "minPressureEdge"],
+  },
+    },
 ];

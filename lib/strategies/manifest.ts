@@ -63,6 +63,8 @@ import { trailing_boundary_composite } from "./lib/trailing_boundary_composite";
 import { true_range_skew_acceptance } from "./lib/true_range_skew_acceptance";
 import { volume_roc_regime_router } from "./lib/volume_roc_regime_router";
 import { atr_range_conviction_follow } from "./lib/atr_range_conviction_follow";
+import { cmf_pressure_alignment } from "./lib/cmf_pressure_alignment";
+import { keltner_boundary_pressure_gap } from "./lib/keltner_boundary_pressure_gap";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -131,6 +133,8 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "true_range_skew_acceptance", strategy: true_range_skew_acceptance },
     { key: "volume_roc_regime_router", strategy: volume_roc_regime_router },
     { key: "atr_range_conviction_follow", strategy: atr_range_conviction_follow },
+    { key: "cmf_pressure_alignment", strategy: cmf_pressure_alignment },
+    { key: "keltner_boundary_pressure_gap", strategy: keltner_boundary_pressure_gap },
 ];
 
 export function createStrategiesRecordFromManifest(
