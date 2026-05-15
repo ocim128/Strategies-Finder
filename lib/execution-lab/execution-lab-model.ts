@@ -199,7 +199,7 @@ export type PaperResolutionPendingRecord = ExecutionLabBaseRecord & {
 
 export type ExecutionParityMismatchRecord = ExecutionLabBaseRecord & {
     recordType: "execution_parity_mismatch";
-    mismatchType: "paper_open_after_backtest_exit" | "paper_open_after_event_end" | "missing_exit_quote" | "entry_price_filter_violation";
+    mismatchType: "paper_open_after_backtest_exit" | "paper_open_after_event_end" | "missing_exit_quote" | "entry_price_filter_violation" | "late_paper_execution";
     latestCandleTimeSec: number;
     detail: string;
     tradeId?: string;

@@ -47,6 +47,7 @@ import {
     evaluateExecutionLabPaperTick,
 } from "./paper-session";
 import { executionLabErrorMessage, isExecutionLabTransientPollError } from "./poll-errors";
+import { buildExecutionLabStrategyExecutionContext } from "./execution-lab-strategy-context";
 import { collectExecutionLabTradeQuoteTimes } from "./trade-quote-times";
 
 const SETTINGS_SCHEMA = "execution-lab.settings";
@@ -55,6 +56,7 @@ const POLL_MS = 1000;
 const INITIAL_CANDLE_LIMIT = 900;
 const MAX_STREAM_CANDLES = 20000;
 const MAX_LIVE_CANDLE_LAG_SEC = 10;
+const MAX_PAPER_EXECUTION_DELAY_SEC = MAX_LIVE_CANDLE_LAG_SEC + 5;
 const MAX_POLYMARKET_PRICE_POINTS = 3600;
 
 type LivePollFetchResult<T> = { ok: true; value: T } | { ok: false };
@@ -99,6 +101,11 @@ function liveCandleLagSec(latestTs: number): number {
 
 function liveLagMessage(latestTs: number, lagSec: number): string {
     return `Live Binance 1s feed is lagging: latest ${formatDateTime(latestTs)} (${formatSeconds(lagSec)} lag).`;
+}
+
+function recordedAtUnixSeconds(record: ExecutionLabRecord): number | null {
+    const parsed = Date.parse(record.recordedAtIso);
+    return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
 }
 
 function quoteMid(bid: number | null, ask: number | null, mid: number | null): number | null {
@@ -160,6 +167,7 @@ export class ExecutionLabService {
     private feedLagSec: number | null = null;
     private liveEvents: SecondMarketPolymarketEvent[] = [];
     private liveQuoteByTime = new Map<number, PolymarketClob1sQuoteRow>();
+    private strategyQuoteByTime = new Map<number, PolymarketClob1sQuoteRow>();
     private polymarketPriceByTime = new Map<number, ExecutionLabPolymarketPricePoint>();
     private executionParityOk: boolean | null = null;
     private executionMismatchTotal = 0;
@@ -235,6 +243,7 @@ export class ExecutionLabService {
         this.latestQuote = null;
         this.feedLagSec = null;
         this.liveQuoteByTime.clear();
+        this.strategyQuoteByTime.clear();
         this.polymarketPriceByTime.clear();
         this.executionParityOk = null;
         this.executionMismatchTotal = 0;
@@ -337,7 +346,11 @@ export class ExecutionLabService {
     }
 
     private loadInitialCandles(symbol: SecondMarketSymbol): Promise<OHLCVData[]> {
-        return loadExecutionLabLiveCandles({ symbol, marketType: state.binanceMarketType, limit: INITIAL_CANDLE_LIMIT });
+        return loadExecutionLabLiveCandles({
+            symbol,
+            marketType: state.binanceMarketType,
+            limit: INITIAL_CANDLE_LIMIT,
+        });
     }
 
     private async getLiveEventForTime(snapshot: ExecutionLabSessionSnapshot, ts: number): Promise<SecondMarketPolymarketEvent | null> {
@@ -433,6 +446,13 @@ export class ExecutionLabService {
             if (!activeEventResult.ok) return;
             const activeEvent = activeEventResult.value;
             const previousPaperTs = paperState.lastProcessedCandleTimeSec;
+            const liveQuoteResult = activeEvent
+                ? await this.tryLivePollFetch(() => loadExecutionLabLiveQuote({ event: activeEvent, sampleTs: latestBufferedTs }))
+                : { ok: true as const, value: null };
+            if (!liveQuoteResult.ok) return;
+            const liveQuote = liveQuoteResult.value;
+            if (liveQuote) this.addPolymarketQuote(liveQuote);
+
             const backtestPromise = executeBacktest({
                 ohlcvData: this.candles,
                 interval: "1s",
@@ -448,18 +468,19 @@ export class ExecutionLabService {
                     annotatePolymarket: false,
                     engineMode: "typescript",
                 },
+                strategyExecutionContext: buildExecutionLabStrategyExecutionContext({
+                    snapshot,
+                    quotes: this.getStrategyQuoteBuffer(),
+                }),
+                polymarket1sContextMode: "provided",
             });
-            const liveDataPromise = this.tryLivePollFetch(() => Promise.all([
-                activeEvent ? loadExecutionLabLiveQuote({ event: activeEvent, sampleTs: latestBufferedTs }) : Promise.resolve(null),
-                this.loadLiveOutcomesForOpenPositions(snapshot, latestBufferedTs),
-            ]));
-            const [backtestResult, liveDataResult] = await Promise.all([backtestPromise, liveDataPromise]);
-            if (!liveDataResult.ok) return;
-            const [liveQuote, outcomes] = liveDataResult.value;
+            const outcomesPromise = this.tryLivePollFetch(() => this.loadLiveOutcomesForOpenPositions(snapshot, latestBufferedTs));
+            const [backtestResult, outcomesResult] = await Promise.all([backtestPromise, outcomesPromise]);
+            if (!outcomesResult.ok) return;
+            const outcomes = outcomesResult.value;
 
             const backtestSignals = buildEvaluatedSignals(backtestResult.signals)
                 .filter((signal) => signal.signalTimeSec <= latestBufferedTs);
-            if (liveQuote) this.addPolymarketQuote(liveQuote);
             const missingTradeQuotesResult = await this.tryLivePollFetch(() =>
                 this.loadMissingTradeQuotes(snapshot, backtestResult.result.trades, latestBufferedTs, previousPaperTs)
             );
@@ -490,12 +511,13 @@ export class ExecutionLabService {
                 chartManager.displayExecutionLabPolymarketPrices(this.getPolymarketPricePoints());
             }
             this.render();
+            const hasActiveEvent = Boolean(activeEvent || liveQuote);
             const statusText = this.executionMismatchTotal > 0
                 ? `Execution parity mismatch | ${this.latestExecutionMismatch?.detail ?? "see detail"}`
-                : activeEvent
+                : hasActiveEvent
                     ? `Running live ${snapshot.symbol} 1s | latest ${formatDateTime(latestBufferedTs)}`
                     : `Running live ${snapshot.symbol} 1s | no active Polymarket event for ${formatDateTime(latestBufferedTs)}`;
-            this.setStatus(statusText, this.executionMismatchTotal === 0 && activeEvent ? "running" : "warning");
+            this.setStatus(statusText, this.executionMismatchTotal === 0 && hasActiveEvent ? "running" : "warning");
         } catch (error) {
             await this.stop("error", executionLabErrorMessage(error));
         } finally {
@@ -567,6 +589,32 @@ export class ExecutionLabService {
         const mismatches: ExecutionParityMismatch[] = [];
         const missingExitKeys = new Set<string>();
         for (const record of records) {
+            const recordedAtSec = recordedAtUnixSeconds(record);
+            if (record.recordType === "paper_entry" && recordedAtSec !== null) {
+                const delaySec = recordedAtSec - record.entryTimeSec;
+                if (delaySec > MAX_PAPER_EXECUTION_DELAY_SEC) {
+                    mismatches.push({
+                        mismatchType: "late_paper_execution",
+                        latestCandleTimeSec,
+                        detail: `paper ${record.side.toUpperCase()} entry was processed ${formatSeconds(delaySec)} after entry time ${formatDateTime(record.entryTimeSec)}`,
+                        tradeId: record.tradeId,
+                        eventEndTs: record.eventEndTs,
+                    });
+                }
+            }
+            if (record.recordType === "paper_exit" && record.exitReason !== "resolution" && recordedAtSec !== null) {
+                const delaySec = recordedAtSec - record.exitTimeSec;
+                if (delaySec > MAX_PAPER_EXECUTION_DELAY_SEC) {
+                    mismatches.push({
+                        mismatchType: "late_paper_execution",
+                        latestCandleTimeSec,
+                        detail: `paper ${record.exitReason} exit was processed ${formatSeconds(delaySec)} after exit time ${formatDateTime(record.exitTimeSec)}`,
+                        tradeId: record.tradeId,
+                        expectedExitTimeSec: record.exitTimeSec,
+                        expectedExitReason: record.exitReason,
+                    });
+                }
+            }
             if (record.recordType !== "paper_unfilled" || record.reason !== "missing_exit_quote") continue;
             missingExitKeys.add(`${record.side ?? ""}|${record.expectedExitTimeSec ?? ""}|${record.eventEndTs ?? ""}`);
             mismatches.push({
@@ -679,23 +727,41 @@ export class ExecutionLabService {
         if (nextSignals.length > 0) this.latestSignals = [...this.latestSignals, ...nextSignals].slice(-20);
     }
 
-    private addPolymarketQuote(quote: PolymarketClob1sQuoteRow): void {
+    private addPolymarketQuote(quote: PolymarketClob1sQuoteRow, includeStrategyContext = true): void {
         this.liveQuoteByTime.set(quote.sample_ts, quote);
+        if (includeStrategyContext) {
+            this.strategyQuoteByTime.set(quote.sample_ts, quote);
+        }
         this.polymarketPriceByTime.set(quote.sample_ts, {
             time: quote.sample_ts as Time,
             yes: quoteMid(quote.yes_bid, quote.yes_ask, quote.yes_mid),
             no: quoteMid(quote.no_bid, quote.no_ask, quote.no_mid),
         });
-        if (this.liveQuoteByTime.size <= MAX_POLYMARKET_PRICE_POINTS) return;
-        const sortedKeys = Array.from(this.liveQuoteByTime.keys()).sort((left, right) => left - right);
-        for (const key of sortedKeys.slice(0, this.liveQuoteByTime.size - MAX_POLYMARKET_PRICE_POINTS)) {
-            this.liveQuoteByTime.delete(key);
-            this.polymarketPriceByTime.delete(key);
+        this.trimQuoteBuffers();
+    }
+
+    private trimQuoteBuffers(): void {
+        this.trimQuoteBuffer(this.liveQuoteByTime);
+        this.trimQuoteBuffer(this.strategyQuoteByTime);
+        this.trimQuoteBuffer(this.polymarketPriceByTime);
+    }
+
+    private trimQuoteBuffer<T>(buffer: Map<number, T>): void {
+        if (buffer.size <= MAX_POLYMARKET_PRICE_POINTS) return;
+        const sortedKeys = Array.from(buffer.keys()).sort((left, right) => left - right);
+        for (const key of sortedKeys.slice(0, buffer.size - MAX_POLYMARKET_PRICE_POINTS)) {
+            buffer.delete(key);
         }
     }
 
     private getLiveQuoteBuffer(): PolymarketClob1sQuoteRow[] {
         return Array.from(this.liveQuoteByTime.entries())
+            .sort((left, right) => left[0] - right[0])
+            .map((entry) => entry[1]);
+    }
+
+    private getStrategyQuoteBuffer(): PolymarketClob1sQuoteRow[] {
+        return Array.from(this.strategyQuoteByTime.entries())
             .sort((left, right) => left[0] - right[0])
             .map((entry) => entry[1]);
     }
@@ -715,7 +781,7 @@ export class ExecutionLabService {
             if (this.liveQuoteByTime.has(sampleTs)) continue;
             const event = await this.getLiveEventForTime(snapshot, sampleTs);
             if (!event) continue;
-            this.addPolymarketQuote(await loadExecutionLabLiveQuote({ event, sampleTs }));
+            this.addPolymarketQuote(await loadExecutionLabLiveQuote({ event, sampleTs }), false);
         }
     }
 

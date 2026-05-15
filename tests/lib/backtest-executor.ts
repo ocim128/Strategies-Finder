@@ -15,6 +15,7 @@ import type {
     StrategyExecutionContext,
     StrategyParams,
     Time,
+    Polymarket1sRuntimeContext,
 } from "./types/strategies";
 import { isSmartTradeSizingMode, type CapitalSettings } from "./types/backtest";
 import { selectExecutionAwareClosedCandles } from "./alert-evaluation-window";
@@ -83,6 +84,10 @@ export interface BacktestExecutorRequest {
     /** Raw or fully-resolved capital configuration. */
     capitalSettings: CapitalSettings | Record<string, unknown>;
     context: BacktestExecutionContext;
+    /** Optional caller-supplied runtime context for strategy helpers. */
+    strategyExecutionContext?: StrategyExecutionContext;
+    /** Use "provided" when a caller must not augment Polymarket 1s helpers from local historical quote storage. */
+    polymarket1sContextMode?: "auto" | "provided";
     dataFetcher?: CrossSymbolDataFetcher;
     secondMarketApiBaseUrl?: string;
     crossSymbolInput?: {
@@ -95,6 +100,20 @@ export interface BacktestExecutorResult {
     result: BacktestResult;
     engineUsed: "rust" | "typescript";
     signals: Signal[];
+}
+
+function mergeStrategyExecutionContext(
+    base: StrategyExecutionContext | undefined,
+    override: StrategyExecutionContext | undefined
+): StrategyExecutionContext | undefined {
+    if (!base) return override;
+    if (!override) return base;
+    return {
+        ...base,
+        ...override,
+        crossSymbol: override.crossSymbol ?? base.crossSymbol,
+        polymarket1s: override.polymarket1s ?? base.polymarket1s,
+    };
 }
 
 // ============================================================================
@@ -166,9 +185,9 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
                 settings: resolvedSettings,
                 dataFetcher: req.dataFetcher,
             })
-            : { primaryData: ohlcvData, context: undefined } as const;
+            : { primaryData: ohlcvData, context: req.strategyExecutionContext } as const;
     const effectiveData = crossSymbolResolved.primaryData;
-    const crossSymbolContext: StrategyExecutionContext | undefined = crossSymbolResolved.context;
+    const crossSymbolContext = mergeStrategyExecutionContext(req.strategyExecutionContext, crossSymbolResolved.context);
 
     const backtestData = selectClosedCandleData(effectiveData, interval, resolvedSettings, nowSec, blockRange);
 
@@ -215,6 +234,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         settings: resolvedSettings,
         baseContext: alignedCrossSymbolContext,
         apiBaseUrl: req.secondMarketApiBaseUrl,
+        contextMode: req.polymarket1sContextMode ?? "auto",
     });
 
     const signals = resolveBacktestSignalsForData({
@@ -453,6 +473,35 @@ function getDataTimeRange(data: readonly OHLCVData[]): { startTs: number; endTs:
     };
 }
 
+function polymarket1sQuoteKey(quote: Polymarket1sRuntimeContext["quotes"][number]): string {
+    return [
+        quote.series_id,
+        quote.symbol,
+        quote.event_start_ts,
+        quote.sample_ts,
+    ].join("|");
+}
+
+function mergePolymarket1sRuntimeContext(
+    loaded: Polymarket1sRuntimeContext,
+    caller: Polymarket1sRuntimeContext | undefined
+): Polymarket1sRuntimeContext {
+    if (!caller) return loaded;
+
+    const quoteByKey = new Map<string, Polymarket1sRuntimeContext["quotes"][number]>();
+    for (const quote of loaded.quotes) quoteByKey.set(polymarket1sQuoteKey(quote), quote);
+    for (const quote of caller.quotes) quoteByKey.set(polymarket1sQuoteKey(quote), quote);
+
+    return {
+        ...loaded,
+        quotes: Array.from(quoteByKey.values()).sort((left, right) => left.sample_ts - right.sample_ts),
+        gammaSnapshots: [
+            ...(loaded.gammaSnapshots ?? []),
+            ...(caller.gammaSnapshots ?? []),
+        ],
+    };
+}
+
 async function resolvePolymarket1sExecutionContext(args: {
     strategy: Strategy;
     primarySymbol: string;
@@ -461,14 +510,20 @@ async function resolvePolymarket1sExecutionContext(args: {
     settings: BacktestSettings;
     baseContext?: StrategyExecutionContext;
     apiBaseUrl?: string;
+    contextMode: "auto" | "provided";
 }): Promise<StrategyExecutionContext | undefined> {
     const config = args.strategy.polymarket1sConfig;
     if (!config) return args.baseContext;
+    const callerPolymarketContext = args.baseContext?.polymarket1s;
 
     if (args.settings.strategyTimeframeEnabled) {
         throw new Error(
             `"${args.strategy.name}" uses 1s Polymarket context and cannot be run with Strategy Timeframe enabled.`
         );
+    }
+
+    if (args.contextMode === "provided") {
+        return args.baseContext;
     }
 
     const { isSecondMarketPolymarketSupported, loadSecondMarketEvaluationContext } = await import("./second-market/evaluation");
@@ -493,6 +548,9 @@ async function resolvePolymarket1sExecutionContext(args: {
             apiBaseUrl: args.apiBaseUrl,
         });
     } catch (error) {
+        if (callerPolymarketContext && callerPolymarketContext.quotes.length > 0) {
+            return args.baseContext;
+        }
         if (config.required) {
             const detail = error instanceof Error ? error.message : String(error);
             throw new Error(`"${args.strategy.name}" could not load 1s Polymarket context. ${detail}`);
@@ -501,22 +559,27 @@ async function resolvePolymarket1sExecutionContext(args: {
     }
 
     if (!context) {
+        if (callerPolymarketContext && callerPolymarketContext.quotes.length > 0) {
+            return args.baseContext;
+        }
         if (config.required) {
             throw new Error(`"${args.strategy.name}" could not load 1s Polymarket context.`);
         }
         return args.baseContext;
     }
 
+    const polymarket1s = mergePolymarket1sRuntimeContext({
+        symbol: context.symbol,
+        outcomeSymbol: context.outcomeSymbol,
+        seriesId: context.seriesId,
+        outcomeInterval: context.outcomeInterval,
+        quotes: context.quotes,
+        gammaSnapshots: context.gammaSnapshots,
+    }, callerPolymarketContext);
+
     return {
         ...(args.baseContext ?? {}),
-        polymarket1s: {
-            symbol: context.symbol,
-            outcomeSymbol: context.outcomeSymbol,
-            seriesId: context.seriesId,
-            outcomeInterval: context.outcomeInterval,
-            quotes: context.quotes,
-            gammaSnapshots: context.gammaSnapshots,
-        },
+        polymarket1s,
     };
 }
 
@@ -742,9 +805,11 @@ function executeStrategySignals(
         return [];
     }
 
-    // Note: cross-symbol context is not forwarded to higher-timeframe execution
-    // because strategyTimeframe + crossSymbol is rejected by the runtime resolver.
-    const higherSignals = strategy.execute(higherData, params);
+    // Cross-symbol and Polymarket-1s context combinations with Strategy Timeframe
+    // are rejected before this point; keep the context argument here so helper
+    // strategies cannot silently lose their runtime context if another caller
+    // reaches this path.
+    const higherSignals = strategy.execute(higherData, params, crossSymbolContext);
     const mappedSignals = mapSignalsFromHigherTimeframe(
         data,
         numericData,

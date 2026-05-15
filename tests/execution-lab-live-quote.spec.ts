@@ -1,10 +1,14 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { Readable } from "node:stream";
+import { executeBacktest } from "../lib/backtest-executor";
+import { buildExecutionLabStrategyExecutionContext } from "../lib/execution-lab/execution-lab-strategy-context";
 import { executionLabVitePlugin, normalizeExecutionLabClobPrice } from "../lib/execution-lab/execution-lab-vite-plugin";
+import type { ExecutionLabSessionSnapshot } from "../lib/execution-lab/execution-lab-model";
 import { isExecutionLabTransientPollError } from "../lib/execution-lab/poll-errors";
 import { collectExecutionLabTradeQuoteTimes } from "../lib/execution-lab/trade-quote-times";
-import type { Trade } from "../lib/types/strategies";
+import type { PolymarketClob1sQuoteRow } from "../lib/second-market/types";
+import type { OHLCVData, Strategy, Time, Trade } from "../lib/types/strategies";
 
 type MockHandler = (req: NodeJS.ReadableStream & { method?: string; url?: string }, res: {
     statusCode: number;
@@ -58,6 +62,61 @@ function trade(id: number, entryTime: number, exitTime: number, exitReason: Trad
         pnlPercent: 1,
         size: 1,
         exitReason,
+    };
+}
+
+function sessionSnapshot(): ExecutionLabSessionSnapshot {
+    return {
+        sessionId: "session-1",
+        symbol: "BTCUSDT",
+        outcomeSymbol: "BTCUSDT",
+        interval: "1s",
+        strategyKey: "context_strategy",
+        strategyName: "Context Strategy",
+        params: {},
+        backtestSettings: { executionModel: "signal_close" },
+        capitalSettings: {
+            initialCapital: 10000,
+            positionSize: 100,
+            commission: 0,
+            sizingMode: "percent",
+            fixedTradeAmount: 0,
+        },
+        polymarketSettings: {},
+        outcomeInterval: "5m",
+        seriesId: "10684",
+        exitMode: "resolve_hold",
+        allowMultipleTradesPerEvent: false,
+        stakeUsd: 5,
+        startedAtIso: "2026-01-01T00:00:00.000Z",
+    };
+}
+
+function clobQuote(sampleTs: number): PolymarketClob1sQuoteRow {
+    return {
+        series_id: "10684",
+        symbol: "BTCUSDT",
+        outcome_interval: "5m",
+        event_start_ts: sampleTs - 10,
+        event_end_ts: sampleTs + 290,
+        condition_id: "condition",
+        market_slug: "btc-event",
+        yes_token_id: "yes",
+        no_token_id: "no",
+        sample_ts: sampleTs,
+        yes_bid: 0.51,
+        yes_ask: 0.53,
+        yes_mid: 0.52,
+        yes_last: null,
+        no_bid: 0.47,
+        no_ask: 0.49,
+        no_mid: 0.48,
+        no_last: null,
+        source: "polymarket_clob_live",
+        source_ts_ms: sampleTs * 1000,
+        quote_age_ms: 0,
+        quality_flags: "",
+        updated_at: sampleTs,
     };
 }
 
@@ -130,6 +189,49 @@ describe("Execution Lab live helpers", () => {
         });
 
         expect(times).to.deep.equal([1_700_000_102, 1_700_000_103, 1_700_000_104]);
+    });
+
+    it("passes live CLOB quotes into Polymarket-1s helper strategy execution", async () => {
+        const candles: OHLCVData[] = [
+            { time: 1_700_000_100 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1 },
+            { time: 1_700_000_101 as Time, open: 100, high: 102, low: 100, close: 101, volume: 1 },
+            { time: 1_700_000_102 as Time, open: 101, high: 103, low: 101, close: 102, volume: 1 },
+        ];
+        const strategy: Strategy = {
+            name: "Context Strategy",
+            description: "Emits only when the caller-supplied live quote reaches the latest candle.",
+            defaultParams: {},
+            paramLabels: {},
+            polymarket1sConfig: { required: true },
+            execute(data, _params, context) {
+                const last = data[data.length - 1];
+                const latestTs = Number(last?.time);
+                const hasLiveQuote = context?.polymarket1s?.quotes.some((quote) => quote.sample_ts === latestTs) === true;
+                return last && hasLiveQuote
+                    ? [{ time: last.time, type: "buy", price: last.close, barIndex: data.length - 1 }]
+                    : [];
+            },
+        };
+
+        const result = await executeBacktest({
+            ohlcvData: candles,
+            interval: "1s",
+            primarySymbol: "BTCUSDT",
+            strategyKey: "context_strategy",
+            strategy,
+            strategyParams: {},
+            backtestSettings: { executionModel: "signal_close", tradeDirection: "long" },
+            capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "percent", fixedTradeAmount: 0 },
+            context: { nowSec: 1_700_000_104, blockRange: null, annotatePolymarket: false, engineMode: "typescript" },
+            strategyExecutionContext: buildExecutionLabStrategyExecutionContext({
+                snapshot: sessionSnapshot(),
+                quotes: [clobQuote(1_700_000_102)],
+            }),
+            polymarket1sContextMode: "provided",
+        });
+
+        expect(result.signals).to.have.length(1);
+        expect(result.result.trades).to.have.length(1);
     });
 
     it("classifies live fetch timeouts as transient poll errors", () => {

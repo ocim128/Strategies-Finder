@@ -226,16 +226,14 @@ function resolveEventOpenPrice(
     index: number,
     eventStartTs: number
 ): number | null {
-    const currentTs = parseTimeToUnixSeconds(data[index].time);
-    if (currentTs === null) return null;
-    if (currentTs === eventStartTs) return data[index].close;
-
-    if (index === 0) return null;
-    const previousTs = parseTimeToUnixSeconds(data[index - 1].time);
-    if (previousTs === null) return null;
-    if (previousTs === eventStartTs) return data[index - 1].close;
-    if (previousTs < eventStartTs && currentTs > eventStartTs) return data[index].close;
-
+    let firstCloseAfterStart: number | null = null;
+    for (let cursor = index; cursor >= 0; cursor--) {
+        const ts = parseTimeToUnixSeconds(data[cursor].time);
+        if (ts === null) continue;
+        if (ts === eventStartTs) return data[cursor].close;
+        if (ts < eventStartTs) return firstCloseAfterStart;
+        firstCloseAfterStart = data[cursor].close;
+    }
     return null;
 }
 

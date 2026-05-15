@@ -80,6 +80,18 @@ describe("Polymarket 1s helper series", () => {
         expect(frame.consensusShortEdge[7]).to.equal(0);
     });
 
+    it("uses the charted event open when the first available quote is mid-event", () => {
+        const baseContext = context();
+        const liveStartedMidEvent = {
+            ...baseContext,
+            quotes: baseContext.quotes.slice(-1),
+        };
+        const frame = buildPolymarket1sPressureGap(candles(), liveStartedMidEvent, { volLookback: 5 });
+
+        expect(frame.available).to.equal(true);
+        expect(frame.pressureGap[7]).to.be.a("number");
+    });
+
     it("fails closed when the chart window starts after the active event open", () => {
         const midEventData = candles().map((bar, index) => ({
             ...bar,

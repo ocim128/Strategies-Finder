@@ -81,6 +81,7 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
                 && value.mismatchType !== "paper_open_after_event_end"
                 && value.mismatchType !== "missing_exit_quote"
                 && value.mismatchType !== "entry_price_filter_violation"
+                && value.mismatchType !== "late_paper_execution"
             ) {
                 return { ok: false, error: "invalid mismatchType" };
             }
