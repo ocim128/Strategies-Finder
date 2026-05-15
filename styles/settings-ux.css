@@ -98,6 +98,18 @@
     letter-spacing: var(--tracking-wide);
 }
 
+.strategy-workspace-pill[data-strategy-kind="polymarket-1s"] {
+    border-color: hsl(var(--hsl-warning) / 0.48);
+    background: hsl(var(--hsl-warning) / 0.18);
+    color: var(--yellow-light);
+}
+
+.strategy-workspace-pill[data-strategy-kind="cross-symbol"] {
+    border-color: hsl(var(--hsl-success) / 0.48);
+    background: hsl(var(--hsl-success) / 0.18);
+    color: var(--green-light);
+}
+
 .strategy-workspace-copy {
     display: flex;
     flex-direction: column;
@@ -108,6 +120,14 @@
     font-size: calc(var(--font-size-base) + 4px);
     font-weight: var(--font-weight-bold);
     color: var(--text-primary);
+}
+
+.strategy-workspace-title[data-strategy-kind="polymarket-1s"] {
+    color: var(--yellow-light);
+}
+
+.strategy-workspace-title[data-strategy-kind="cross-symbol"] {
+    color: var(--green-light);
 }
 
 .strategy-workspace-description {

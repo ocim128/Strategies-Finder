@@ -399,7 +399,7 @@
 
     display: grid;
 
-    grid-template-columns: auto 1fr;
+    grid-template-columns: 4px auto 1fr;
 
     align-items: center;
 
@@ -411,6 +411,32 @@
 
     color: var(--text-primary);
 
+}
+
+.strategy-list-item::before {
+    content: "";
+    width: 4px;
+    height: 18px;
+    border-radius: var(--radius-pill);
+    background: transparent;
+}
+
+.strategy-list-item[data-strategy-kind="polymarket-1s"]::before {
+    background: var(--warning);
+    box-shadow: 0 0 10px hsl(var(--hsl-warning) / 0.34);
+}
+
+.strategy-list-item[data-strategy-kind="cross-symbol"]::before {
+    background: var(--green);
+    box-shadow: 0 0 10px hsl(var(--hsl-success) / 0.34);
+}
+
+.strategy-list-item[data-strategy-kind="polymarket-1s"] label {
+    color: var(--yellow-light);
+}
+
+.strategy-list-item[data-strategy-kind="cross-symbol"] label {
+    color: var(--green-light);
 }
 
 .strategy-list-item label {

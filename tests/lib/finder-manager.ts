@@ -1,5 +1,5 @@
 import { StrategyParams, type OHLCVData } from "./strategies/index";
-import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey } from "../strategyRegistry";
+import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey, getStrategyKind, getStrategyKindTitle } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtest-service";
 import { paramManager } from "./param-manager";
@@ -704,10 +704,13 @@ export class FinderManager {
 		for (const { key, name } of allStrategies) {
 			const strategy = strategies[key];
 			const displayName = strategy?.name ?? name;
+			const kind = getStrategyKind(key, strategy);
 			const item = document.createElement('div');
 			item.className = 'strategy-list-item';
 			item.dataset.strategyKey = key;
 			item.dataset.strategyName = displayName.toLowerCase();
+			item.dataset.strategyKind = kind;
+			item.title = getStrategyKindTitle(kind);
 
 			const checkbox = document.createElement('input');
 			checkbox.type = 'checkbox';

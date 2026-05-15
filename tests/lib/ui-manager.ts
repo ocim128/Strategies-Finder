@@ -1,8 +1,8 @@
 ﻿import type { Time } from "lightweight-charts";
-import type { OHLCVData, BacktestResult, Trade } from "./strategies/index";
+import type { OHLCVData, BacktestResult, Trade, Strategy } from "./strategies/index";
 import { state } from "./state";
 import { setCurrentStrategyKey } from "./state-actions";
-import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey } from "../strategyRegistry";
+import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey, getStrategyKind, getStrategyKindTitle } from "../strategyRegistry";
 import { getOptionalElement, getRequiredElement } from "./dom-utils";
 import { resultsRenderer } from "./renderers/resultsRenderer";
 import { tradesRenderer } from "./renderers/tradesRenderer";
@@ -172,7 +172,7 @@ export class UIManager {
             strategy = await loadBuiltInStrategyByKey(currentStrategyKey);
         }
         if (strategy) {
-            this.updateStrategyWorkspaceContext(currentStrategyKey, strategy.name, strategy.description, Object.keys(strategy.defaultParams).length);
+            this.updateStrategyWorkspaceContext(currentStrategyKey, strategy.name, strategy.description, Object.keys(strategy.defaultParams).length, strategy);
             paramManager.render(strategy);
         }
     }
@@ -186,10 +186,14 @@ export class UIManager {
 
         strategySelect.innerHTML = '';
         strategies.forEach(({ key, name, description }) => {
+            const strategy = strategyRegistry.get(key);
+            const kind = getStrategyKind(key, strategy);
             const option = document.createElement('option');
             option.value = key;
             option.textContent = name;
-            option.title = description;
+            option.title = kind === "standard" ? description : `${description} (${getStrategyKindTitle(kind)})`;
+            option.dataset.strategyKind = kind;
+            option.className = `strategy-option--${kind}`;
             strategySelect.appendChild(option);
         });
 
@@ -203,7 +207,7 @@ export class UIManager {
         }
     }
 
-    private updateStrategyWorkspaceContext(strategyKey: string, name: string, description: string, paramCount: number): void {
+    private updateStrategyWorkspaceContext(strategyKey: string, name: string, description: string, paramCount: number, strategy: Strategy): void {
         const workspaceExists = getOptionalElement('strategyMetaName')
             && getOptionalElement('strategyMetaDescription')
             && getOptionalElement('strategyMetaKey')
@@ -214,10 +218,15 @@ export class UIManager {
         }
 
         const workspace = createSettingsWorkspaceDom();
+        const kind = getStrategyKind(strategyKey, strategy);
         workspace.strategyMetaName.textContent = name;
         workspace.strategyMetaDescription.textContent = description;
         workspace.strategyMetaKey.textContent = strategyKey.replace(/_/g, ' ');
         workspace.strategyParamCount.textContent = `${paramCount} param${paramCount === 1 ? '' : 's'}`;
+        workspace.strategyMetaName.dataset.strategyKind = kind;
+        workspace.strategyMetaKey.dataset.strategyKind = kind;
+        workspace.strategyMetaKey.title = getStrategyKindTitle(kind);
+        this.getDom().strategySelect.dataset.strategyKind = kind;
     }
 
     public updateTimeframeUI(interval: string) {

@@ -105,3 +105,21 @@
     box-shadow: var(--focus-ring-soft), var(--focus-ring);
 }
 
+.strategy-select[data-strategy-kind="polymarket-1s"] {
+    border-color: hsl(var(--hsl-warning) / 0.5);
+    box-shadow: 0 0 0 1px hsl(var(--hsl-warning) / 0.18), var(--shadow-xs);
+}
+
+.strategy-select[data-strategy-kind="cross-symbol"] {
+    border-color: hsl(var(--hsl-success) / 0.5);
+    box-shadow: 0 0 0 1px hsl(var(--hsl-success) / 0.18), var(--shadow-xs);
+}
+
+.strategy-option--polymarket-1s {
+    color: var(--warning);
+}
+
+.strategy-option--cross-symbol {
+    color: var(--green-light);
+}
+

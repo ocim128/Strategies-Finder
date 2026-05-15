@@ -2,6 +2,8 @@ import {
     getStrategyList,
     isBuiltInStrategyKey,
     loadBuiltInStrategyByKey,
+    getStrategyKind,
+    getStrategyKindTitle,
     strategyRegistry,
 } from "../../strategyRegistry";
 import { backtestService } from "../backtest-service";
@@ -668,10 +670,13 @@ class HuntService {
         getStrategyList().forEach(({ key, name }) => {
             const strategy = strategies[key];
             const displayName = strategy?.name ?? name;
+            const kind = getStrategyKind(key, strategy);
             const item = document.createElement("div");
             item.className = "strategy-list-item";
             item.dataset.strategyKey = key;
             item.dataset.strategyName = `${key} ${displayName}`.toLowerCase();
+            item.dataset.strategyKind = kind;
+            item.title = getStrategyKindTitle(kind);
 
             const checkbox = document.createElement("input");
             checkbox.type = "checkbox";
