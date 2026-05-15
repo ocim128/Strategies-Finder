@@ -64,4 +64,7 @@ export const builtInStrategyKeys: readonly string[] = [
     "atr_range_conviction_follow",
     "cmf_pressure_alignment",
     "keltner_boundary_pressure_gap",
+    "weighted_price_roc_veto",
+    "micro_level_ping_adverse_veto",
+    "chop_breakout_adverse_veto",
 ];

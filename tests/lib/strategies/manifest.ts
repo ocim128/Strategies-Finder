@@ -65,6 +65,9 @@ import { volume_roc_regime_router } from "./lib/volume_roc_regime_router";
 import { atr_range_conviction_follow } from "./lib/atr_range_conviction_follow";
 import { cmf_pressure_alignment } from "./lib/cmf_pressure_alignment";
 import { keltner_boundary_pressure_gap } from "./lib/keltner_boundary_pressure_gap";
+import { weighted_price_roc_veto } from "./lib/weighted_price_roc_veto";
+import { micro_level_ping_adverse_veto } from "./lib/micro_level_ping_adverse_veto";
+import { chop_breakout_adverse_veto } from "./lib/chop_breakout_adverse_veto";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -135,6 +138,9 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "atr_range_conviction_follow", strategy: atr_range_conviction_follow },
     { key: "cmf_pressure_alignment", strategy: cmf_pressure_alignment },
     { key: "keltner_boundary_pressure_gap", strategy: keltner_boundary_pressure_gap },
+    { key: "weighted_price_roc_veto", strategy: weighted_price_roc_veto },
+    { key: "micro_level_ping_adverse_veto", strategy: micro_level_ping_adverse_veto },
+    { key: "chop_breakout_adverse_veto", strategy: chop_breakout_adverse_veto },
 ];
 
 export function createStrategiesRecordFromManifest(

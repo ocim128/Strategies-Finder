@@ -1083,4 +1083,64 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
     walkForwardParams: ["keltnerPeriod", "keltnerMultiplier", "minPressureEdge"],
   },
     },
+    {
+        key: "weighted_price_roc_veto",
+        name: "Weighted Price ROC Veto",
+        description: "Trades volume-weighted close momentum unless Polymarket adverse pressure marks the move as overextended.",
+        defaultParams: {
+        rocLookback: 10,
+        minWapRoc: 0.0015,
+        maxAdverse: 0.03,
+    } as Record<string, number>,
+        paramLabels: {
+        rocLookback: "ROC Lookback",
+        minWapRoc: "Minimum Weighted Price ROC",
+        maxAdverse: "Max Adverse Pressure",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["rocLookback", "minWapRoc", "maxAdverse"],
+    },
+    },
+    {
+        key: "micro_level_ping_adverse_veto",
+        name: "Micro Level Ping Adverse Veto",
+        description: "Detects repeated median pinging and trades the clean breakout unless Polymarket adverse pressure vetoes it.",
+        defaultParams: {
+        pingLookback: 10,
+        minPings: 4,
+        maxAdverse: 0.03,
+    } as Record<string, number>,
+        paramLabels: {
+        pingLookback: "Ping Lookback",
+        minPings: "Minimum Pings",
+        maxAdverse: "Max Adverse Pressure",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["pingLookback", "minPings", "maxAdverse"],
+    },
+    },
+    {
+        key: "chop_breakout_adverse_veto",
+        name: "Chop Breakout Adverse Veto",
+        description: "Trades clean exits from high-frequency SMA chop unless Polymarket adverse pressure vetoes the breakout.",
+        defaultParams: {
+        chopLookback: 15,
+        minCrosses: 5,
+        maxAdverse: 0.025,
+    } as Record<string, number>,
+        paramLabels: {
+        chopLookback: "Chop Lookback",
+        minCrosses: "Minimum Crosses",
+        maxAdverse: "Max Adverse Pressure",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["chopLookback", "minCrosses", "maxAdverse"],
+    },
+    },
 ];

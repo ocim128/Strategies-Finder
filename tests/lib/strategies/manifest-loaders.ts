@@ -66,4 +66,7 @@ export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {
     "atr_range_conviction_follow": () => import("./lib/atr_range_conviction_follow").then(m => m.atr_range_conviction_follow),
     "cmf_pressure_alignment": () => import("./lib/cmf_pressure_alignment").then(m => m.cmf_pressure_alignment),
     "keltner_boundary_pressure_gap": () => import("./lib/keltner_boundary_pressure_gap").then(m => m.keltner_boundary_pressure_gap),
+    "weighted_price_roc_veto": () => import("./lib/weighted_price_roc_veto").then(m => m.weighted_price_roc_veto),
+    "micro_level_ping_adverse_veto": () => import("./lib/micro_level_ping_adverse_veto").then(m => m.micro_level_ping_adverse_veto),
+    "chop_breakout_adverse_veto": () => import("./lib/chop_breakout_adverse_veto").then(m => m.chop_breakout_adverse_veto),
 };
