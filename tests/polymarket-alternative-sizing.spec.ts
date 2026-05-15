@@ -118,13 +118,30 @@ describe("Polymarket alternative sizing", () => {
         expect(skipped.skipReason).to.equal("duplicate");
     });
 
-    it("does not apply when alternative sizing is disabled, fixed, or percent", () => {
+    it("does not apply when alternative sizing is disabled or percent", () => {
         const data = makeData(3);
         const trades = [makeTrade(1, data[1]!.time, 0.5)];
 
         expect(applySizing({ trades, alternativeSizingEnabled: false }).trades[0]!.polymarketOutcome?.sizedStake).to.equal(undefined);
-        expect(applySizing({ trades, capital: { sizingMode: "fixed" } }).trades[0]!.polymarketOutcome?.sizedStake).to.equal(undefined);
         expect(applySizing({ trades, capital: { sizingMode: "percent" } }).trades[0]!.polymarketOutcome?.sizedStake).to.equal(undefined);
+    });
+
+    it("sizes fixed amount alternative sizing from the configured base trade amount", () => {
+        const data = makeData(3);
+        const result = applySizing({
+            trades: [makeTrade(1, data[1]!.time, 0.5)],
+            capital: {
+                sizingMode: "fixed",
+                fixedTradeAmount: 100,
+            },
+        });
+
+        expect(result.trades[0]!.polymarketOutcome?.sizedStake).to.equal(100);
+        expect(result.trades[0]!.polymarketOutcome?.sizedShares).to.equal(200);
+        expect(result.trades[0]!.polymarketOutcome?.sizedPnl).to.equal(100);
+        expect(result.polymarketTradeSummary?.sizedSizingMode).to.equal("fixed");
+        expect(result.polymarketTradeSummary?.sizedNetProfit).to.equal(100);
+        expect(result.polymarketTradeSummary?.sizedAvgStake).to.equal(100);
     });
 
     it("sizes martingale from Polymarket losses instead of chart pnl", () => {

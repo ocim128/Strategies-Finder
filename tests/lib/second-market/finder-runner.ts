@@ -39,7 +39,7 @@ import {
 import { resolvePolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 
 function isAlternativeSizingMode(capitalSettings: CapitalSettings): boolean {
-    return capitalSettings.sizingMode !== "fixed" && capitalSettings.sizingMode !== "percent";
+    return capitalSettings.sizingMode !== "percent";
 }
 
 function getDataRange(data: readonly OHLCVData[]): { startTs: number; endTs: number } | null {
@@ -143,7 +143,7 @@ export async function runSecondMarketFinder(
 
     const requiresSizedNetRank = options.sortPriority.includes("polySizedNet");
     if (requiresSizedNetRank && !isAlternativeSizingMode(input.capitalSettings)) {
-        callbacks.setStatus("Sized Net rank mode requires Alternative Sizing mode other than fixed or percent.");
+        callbacks.setStatus("Sized Net rank mode requires Alternative Sizing mode other than percent.");
         return { results: [] };
     }
 

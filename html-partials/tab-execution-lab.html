@@ -8,6 +8,8 @@
                 <span class="param-label">Stake</span>
                 <input class="param-input" id="executionLabStakeUsd" type="number" min="1" step="1" value="5">
             </label>
+            <button class="btn btn-secondary btn-compact" id="executionLabStartMiner" type="button">Start 1s Miner</button>
+            <button class="btn btn-secondary btn-compact" id="executionLabStopMiner" type="button" disabled>Stop Miner</button>
             <button class="btn btn-primary btn-compact" id="executionLabStartPaper" type="button">Start Paper</button>
             <button class="btn btn-secondary btn-compact" id="executionLabStopPaper" type="button" disabled>Stop</button>
         </div>
@@ -31,6 +33,8 @@
                 <strong id="executionLabQuoteAge">--</strong>
                 <span>Active Event</span>
                 <strong id="executionLabActiveEvent">--</strong>
+                <span>Miner</span>
+                <strong id="executionLabMinerStatus">--</strong>
                 <span>Log</span>
                 <strong id="executionLabLogPath">--</strong>
             </div>
@@ -52,6 +56,34 @@
             </div>
         </section>
     </div>
+
+    <section class="execution-lab-panel">
+        <div class="execution-lab-panel-title">Performance</div>
+        <div class="execution-lab-metrics" id="executionLabPaperMetrics"></div>
+    </section>
+
+    <section class="execution-lab-panel">
+        <div class="execution-lab-panel-title">Alternative View</div>
+        <div class="execution-lab-compare-controls">
+            <label class="param-group">
+                <span class="param-label">Source</span>
+                <select class="param-input" id="executionLabComparisonSource">
+                    <option value="original">Original Paper Trade</option>
+                    <option value="current">Current Settings</option>
+                    <option value="saved">Saved Configuration</option>
+                </select>
+            </label>
+            <label class="param-group">
+                <span class="param-label">Saved Config</span>
+                <select class="param-input" id="executionLabComparisonSavedConfig">
+                    <option value="">-- Select configuration --</option>
+                </select>
+            </label>
+            <button class="btn btn-secondary btn-compact" id="executionLabRunComparison" type="button">Run View</button>
+        </div>
+        <div class="execution-lab-status execution-lab-substatus" id="executionLabComparisonStatus">No comparison run.</div>
+        <div class="execution-lab-metrics" id="executionLabComparisonMetrics"></div>
+    </section>
 
     <section class="execution-lab-panel execution-lab-trades-panel">
         <div class="execution-lab-panel-title">Recent Trades</div>

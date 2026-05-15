@@ -9,6 +9,9 @@ It must:
 - stream closed Binance `1s` candles
 - evaluate the active Strategy Panel configuration
 - fill paper entries/exits from live Polymarket CLOB bid/ask
+- show compact paper-session performance metrics
+- optionally launch the local `1s` miner used by `scripts/run-1s-miner.bat`
+- compare original/current/saved configurations against the active paper-session stream without writing comparison logs
 - show YES/NO price lines on the chart
 - log compact JSONL records for later analysis
 - never place live orders
@@ -16,10 +19,8 @@ It must:
 ## Non-Goals
 
 - no real Polymarket order placement
-- no SQLite stream writes
-- no replacement for `run-1s-miner.bat`
 - no speculative future submenus
-- no manual fill comparison workflow
+- no persistent JSONL logging for alternative comparison runs
 
 ## Session Snapshot
 
@@ -47,6 +48,7 @@ The live stream must use the same trade lifecycle as the `1s` backtest:
 - a new candidate while a paper position is open logs `paper_unfilled` with `reason: "open_position"`
 - positions that reach event end without a resolved outcome move to pending settlement and must not block the next event
 - Execution Parity reports paper/backtest lifecycle drift, not raw signal drift
+- late paper execution parity compares fill/exit time to the latest processed stream candle, not JSONL record wall-clock time
 - effective Polymarket exit mode is resolved through `resolveEffectivePolymarketExitMode`
 - `Allow Multiple Trades Per Event` only applies when the effective mode is `signal_exit_same_event`
 
@@ -58,9 +60,11 @@ Use local Vite APIs:
 - `/api/execution-lab/live-events` for active Gamma market token ids
 - `/api/execution-lab/live-quote` for live CLOB bid/ask
 - `/api/execution-lab/live-outcomes` for closed event settlement
-- `/api/execution-lab/session/start` and `/api/execution-lab/log` for JSONL logs
+- `/api/second-market/clob-quotes` for exact historical CLOB quotes used by missed-fill recovery and alternative replay
+- `/api/execution-lab/miner/status`, `/api/execution-lab/miner/start`, and `/api/execution-lab/miner/stop` for local miner lifecycle
+- `/api/execution-lab/session/start`, `/api/execution-lab/log`, and `/api/execution-lab/logs` for JSONL logs
 
-Execution Lab must not require the local second-market SQLite DB to start.
+Execution Lab paper sessions must not require the local second-market SQLite DB to start. The miner controls launch `scripts/second-market-miner.ts --mode live --symbols BTCUSDT,XRPUSDT --db price-data/1second-chart/second-market-data.sqlite`, matching `scripts/run-1s-miner.bat`, and write a latest-run log under `price-data/1second-chart/logs/`.
 
 ## Candle Rule
 
@@ -87,6 +91,8 @@ Entry quote match must include:
 - exact fill timestamp
 
 For exits, use only a captured quote at the exact backtest exit timestamp. If no exit quote was captured for that second, log `paper_unfilled` with `reason: "missing_exit_quote"` and remove the active paper position without realizing PnL, so a missed quote cannot become a fake late fill.
+
+When a fill timestamp is already historical, recover the quote from the local second-market SQLite DB. Do not call the live CLOB price endpoint and label the current book as an old `sample_ts`.
 
 ## PnL
 
@@ -131,6 +137,7 @@ Record types:
 - `duplicate_event`
 - `open_position`
 - `invalid_price`
+- `entry_price_filtered`
 
 ## UI
 
@@ -139,6 +146,7 @@ The tab is `data-tab="executionlab"` and root is `#executionlabTab`.
 Show:
 
 - session config snapshot
+- 1s miner status and controls
 - latest stream candle time
 - YES/NO bid/ask/mid
 - feed lag and quote age
@@ -148,8 +156,12 @@ Show:
 - open paper position
 - pending settlement count
 - realized PnL
+- compact performance metrics: trades, entries, win rate, profit factor, expectancy, average win/loss, total PnL
+- alternative view metrics for original paper trade, current settings, or a saved configuration
 - recent closed paper trades
 - JSONL path
+
+Alternative views reuse the active session candles, start scoring after the `Start Paper` baseline candle, merge local second-market DB quotes with captured live quotes, and run an in-memory comparison only. They must not append `paper_*`, parity, or session records to the JSONL log.
 
 Chart overlays:
 

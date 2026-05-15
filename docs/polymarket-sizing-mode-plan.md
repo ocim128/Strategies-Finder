@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add Polymarket bankroll sizing for manual Polymarket-annotated backtests when Alternative Sizing is enabled and the resolved sizing mode is neither `fixed` nor `percent`.
+Add Polymarket bankroll sizing for manual Polymarket-annotated backtests when Alternative Sizing is enabled and the resolved sizing mode is not `percent`.
 
 The user should be able to test whether Polymarket edge improves or degrades under modes such as:
 
@@ -21,7 +21,6 @@ The Trades menu must show the Polymarket entry stake and realized Polymarket pro
 
 - Do not change normal chart backtest sizing.
 - Do not overwrite `trade.pnl`, `trade.size`, chart net profit, or chart equity curve.
-- Do not apply this to Alternative Sizing Mode `fixed`.
 - Do not apply this to normal `percent` sizing when Alternative Sizing is off.
 - Do not change endpoint behavior.
 - Do not add Finder/Hunt ranking changes in the first implementation.
@@ -43,11 +42,10 @@ Enable Polymarket sizing only when all are true:
 
 - manual backtest result has Polymarket trade annotations
 - Alternative Sizing is enabled in the manual run settings
-- resolved `capitalSettings.sizingMode` is not `fixed`
 - resolved `capitalSettings.sizingMode` is not `percent`
 - the trade has usable Polymarket entry price and payout
 
-If the selected mode is `fixed` or `percent`, keep existing Polymarket per-share diagnostics unchanged.
+If the selected mode is `percent`, keep existing Polymarket per-share diagnostics unchanged.
 
 Implementation guard:
 
@@ -70,7 +68,7 @@ Check the manual capital read path before adding Polymarket sizing:
 Verification:
 
 - Alternative Sizing off plus hidden `martingale` select does not produce sized Polymarket fields
-- Alternative Sizing on plus `fixed` does not produce sized Polymarket fields
+- Alternative Sizing on plus `fixed` produces sized Polymarket fields using Base Trade Amount
 - Alternative Sizing on plus `martingale` does produce sized Polymarket fields when trades are eligible
 
 ## Phase 1: Sizing Model Contract
@@ -179,7 +177,7 @@ For each eligible trade:
 
 Mode behavior:
 
-- `fixed`: no Polymarket sizing overlay
+- `fixed`: Polymarket sizing overlay using configured Base Trade Amount
 - `percent`: no Polymarket sizing overlay for this feature
 - multiplier modes use a Polymarket-specific `$1` base trade amount unless configured to use percent base
 - Kelly history uses Polymarket return per `$1` stake; the `$1` amount is only the fallback before enough valid history exists
@@ -222,7 +220,7 @@ Inputs:
 
 Rules:
 
-- only run when Alternative Sizing is enabled and resolved sizing mode is neither `fixed` nor `percent`
+- only run when Alternative Sizing is enabled and resolved sizing mode is not `percent`
 - leave unannotated and unsupported Polymarket results unchanged
 - preserve existing `polymarketTradeSummary` fields
 - append sized fields without changing existing per-share expectancy/profit-factor semantics
@@ -231,8 +229,7 @@ Rules:
 
 Verification:
 
-- manual backtest result has sized fields for non-fixed modes
-- manual backtest result has no sized fields for `fixed`
+- manual backtest result has sized fields for fixed-dollar and advanced modes
 - manual backtest result has no sized fields for `percent`
 - existing Polymarket summary metrics remain unchanged
 - lazy Trades-panel Polymarket annotation does not create partial or inconsistent sized fields
@@ -261,7 +258,7 @@ Summary behavior:
 Verification:
 
 - trade row renders stake, shares, entry price, and profit
-- fixed mode does not render the sized row
+- fixed mode renders the sized row when eligible
 - percent mode does not render the sized row
 - skipped Polymarket outcomes do not render misleading zero profit
 
@@ -282,15 +279,14 @@ Add a small sized bankroll section when sized data exists:
 
 Rules:
 
-- hide the section when sizing mode is `fixed`
 - hide the section when sizing mode is `percent`
 - hide the section when no sized trades exist
 - keep current per-share Polymarket expectancy visible
 
 Verification:
 
-- section appears after a non-fixed sized Polymarket run
-- section is absent for fixed mode and unsupported runs
+- section appears after a fixed-dollar or advanced sized Polymarket run
+- section is absent for percent mode and unsupported runs
 
 ## Phase 7: Tests
 
@@ -301,7 +297,7 @@ Required tests:
 - Polymarket payout helper tests
 - Polymarket bankroll sizing tests
 - manual annotation integration tests
-- capital activation tests for `fixed`, `percent`, and non-fixed Alternative Sizing modes
+- capital activation tests for `fixed`, `percent`, and advanced Alternative Sizing modes
 - Trades renderer output test if an existing renderer test seam is practical
 
 Recommended commands:
@@ -334,14 +330,13 @@ Possible later rank modes:
 Rules for later work:
 
 - Finder/Hunt must use the same Polymarket bankroll sizer as manual backtest
-- do not rank non-fixed sizing results using old per-share expectancy without making that explicit
-- keep fixed mode on existing per-share ranking semantics
+- do not rank sized results using old per-share expectancy without making that explicit
 
 ## Success Criteria
 
-- Non-fixed Alternative Sizing Modes produce Polymarket stake and dollar profit per trade.
+- Fixed-dollar and advanced Alternative Sizing modes produce Polymarket stake and dollar profit per trade.
 - Martingale and anti-martingale react to Polymarket outcomes, not chart outcomes.
-- Fixed mode behavior remains unchanged.
+- Fixed mode uses Base Trade Amount and reports sized net.
 - Percent sizing behavior remains unchanged.
 - Existing chart backtest metrics remain unchanged.
 - Existing Polymarket per-share diagnostics remain available.

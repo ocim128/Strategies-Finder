@@ -1,6 +1,8 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { Readable } from "node:stream";
+import { dirname } from "node:path";
+import { readFileSync, rmSync } from "node:fs";
 import { executeBacktest } from "../lib/backtest-executor";
 import { buildExecutionLabStrategyExecutionContext } from "../lib/execution-lab/execution-lab-strategy-context";
 import { executionLabVitePlugin, normalizeExecutionLabClobPrice } from "../lib/execution-lab/execution-lab-vite-plugin";
@@ -34,6 +36,26 @@ async function invoke(handler: MockHandler, path: string): Promise<{ statusCode:
     return await new Promise((resolve, reject) => {
         const request = Readable.from([]) as NodeJS.ReadableStream & { method?: string; url?: string };
         request.method = "GET";
+        request.url = path;
+        const response = {
+            statusCode: 200,
+            setHeader() {},
+            end(rawBody?: string) {
+                try {
+                    resolve({ statusCode: response.statusCode, json: rawBody ? JSON.parse(rawBody) : null });
+                } catch (error) {
+                    reject(error);
+                }
+            },
+        };
+        Promise.resolve(handler(request, response)).catch(reject);
+    });
+}
+
+async function invokePost(handler: MockHandler, path: string, body: unknown): Promise<{ statusCode: number; json: any }> {
+    return await new Promise((resolve, reject) => {
+        const request = Readable.from([JSON.stringify(body)]) as NodeJS.ReadableStream & { method?: string; url?: string };
+        request.method = "POST";
         request.url = path;
         const response = {
             statusCode: 200,
@@ -169,12 +191,155 @@ describe("Execution Lab live helpers", () => {
         }
     });
 
+    it("coalesces repeated live outcome requests through the middleware cache", async () => {
+        const handler = createHandler();
+        const originalFetch = globalThis.fetch;
+        let fetchCount = 0;
+        globalThis.fetch = (async () => {
+            fetchCount += 1;
+            return new Response(JSON.stringify([{
+                slug: "btc-updown-5m-1700000100",
+                endDate: new Date(1_700_000_400 * 1000).toISOString(),
+                markets: [{
+                    id: "market-1",
+                    slug: "btc-updown-5m-1700000100",
+                    conditionId: "condition-1",
+                    outcomes: JSON.stringify(["Up", "Down"]),
+                    clobTokenIds: JSON.stringify(["yes-token", "no-token"]),
+                    outcomePrices: JSON.stringify(["0.99", "0.01"]),
+                }],
+            }]));
+        }) as typeof fetch;
+
+        try {
+            const path = "/live-outcomes?symbol=BTCUSDT&outcomeInterval=5m&seriesId=10684&startTs=1700000340&endTs=1700000460";
+            const first = await invoke(handler, path);
+            const second = await invoke(handler, path);
+
+            expect(first.statusCode).to.equal(200);
+            expect(second.statusCode).to.equal(200);
+            expect(fetchCount).to.equal(1);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
     it("rejects unsupported live stream symbols instead of silently using BTCUSDT", async () => {
         const handler = createHandler();
         const response = await invoke(handler, "/live-candles?symbol=DOGEUSDT&limit=1");
 
         expect(response.statusCode).to.equal(400);
         expect(response.json.error).to.include("symbol");
+    });
+
+    it("reports idle miner status without starting a process", async () => {
+        const handler = createHandler();
+        const response = await invoke(handler, "/miner/status");
+
+        expect(response.statusCode).to.equal(200);
+        expect(response.json.running).to.equal(false);
+        expect(response.json.dbPath).to.include("second-market-data.sqlite");
+    });
+
+    it("rejects unsupported session symbols before creating a log", async () => {
+        const handler = createHandler();
+        const response = await invokePost(handler, "/session/start", {
+            strategyKey: "test_strategy",
+            symbol: "DOGEUSDT",
+            startedAtIso: "2026-01-01T00:00:00.000Z",
+        });
+
+        expect(response.statusCode).to.equal(400);
+        expect(response.json.error).to.include("symbol");
+    });
+
+    it("rejects stale live quote requests instead of labeling the current book as historical", async () => {
+        const handler = createHandler();
+        const response = await invoke(
+            handler,
+            "/live-quote?symbol=BTCUSDT&outcomeInterval=5m&seriesId=10684&eventStartTs=1700000000&eventEndTs=1700000300&marketSlug=btc-event&yesTokenId=yes&noTokenId=no&sampleTs=1700000010"
+        );
+
+        expect(response.statusCode).to.equal(409);
+        expect(response.json.error).to.include("stored second-market quotes");
+    });
+
+    it("appends batched log records and closes the session", async () => {
+        const handler = createHandler();
+        const started = await invokePost(handler, "/session/start", {
+            strategyKey: "test_strategy",
+            symbol: "BTCUSDT",
+            startedAtIso: "2026-01-01T00:00:00.000Z",
+        });
+        const logPath = String(started.json.logPath);
+
+        try {
+            const base = {
+                sessionId: started.json.sessionId,
+                recordedAtIso: "2026-01-01T00:00:01.000Z",
+                symbol: "BTCUSDT",
+                interval: "1s",
+                strategyKey: "test_strategy",
+            };
+            const response = await invokePost(handler, "/logs", {
+                records: [
+                    {
+                        ...base,
+                        recordType: "signal_seen",
+                        signalTimeSec: 1_700_000_100,
+                        signalType: "buy",
+                        signalPrice: 100,
+                        candleClose: 100,
+                        latestCandleTimeSec: 1_700_000_101,
+                        feedLagSec: 1,
+                    },
+                    {
+                        ...base,
+                        recordType: "session_stop",
+                        reason: "user_stop",
+                        totalEntries: 0,
+                        totalClosed: 0,
+                        realizedPnlUsd: 0,
+                    },
+                ],
+            });
+
+            expect(response.statusCode).to.equal(200);
+            const lines = readFileSync(logPath, "utf8").trim().split("\n");
+            expect(lines).to.have.length(2);
+
+            const afterStop = await invokePost(handler, "/log", {
+                ...base,
+                recordType: "session_stop",
+                reason: "user_stop",
+                totalEntries: 0,
+                totalClosed: 0,
+                realizedPnlUsd: 0,
+            });
+            expect(afterStop.statusCode).to.equal(404);
+        } finally {
+            rmSync(dirname(logPath), { recursive: true, force: true });
+        }
+    });
+
+    it("rejects invalid batched log records before session lookup", async () => {
+        const handler = createHandler();
+        const response = await invokePost(handler, "/logs", {
+            records: [{
+                recordType: "paper_entry",
+                sessionId: "missing-session",
+                recordedAtIso: "2026-01-01T00:00:00.000Z",
+                symbol: "BTCUSDT",
+                interval: "1s",
+                strategyKey: "test_strategy",
+                tradeId: "trade-1",
+                side: "yes",
+                entryPrice: 0,
+            }],
+        });
+
+        expect(response.statusCode).to.equal(400);
+        expect(response.json.error).to.include("entryPrice");
     });
 
     it("requests quotes for backtest trade seconds missed by the latest quote", () => {

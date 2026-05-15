@@ -226,17 +226,17 @@ PnL semantics:
 
 Sized bankroll overlay:
 
-- manual annotated runs can add dollar sizing only when Alternative Sizing is enabled and the resolved sizing mode is neither `fixed` nor `percent`
+- manual annotated runs can add dollar sizing only when Alternative Sizing is enabled and the resolved sizing mode is not `percent`
 - chart backtest PnL, chart trade size, and chart equity are unchanged
 - Polymarket stake is dollars spent to buy YES/NO shares
-- Polymarket multiplier and fallback sizing uses a $1 base trade amount, independent of the chart backtest Base Trade Amount
+- Fixed Amount uses the configured Base Trade Amount; Polymarket multiplier and fallback sizing use a $1 base trade amount, independent of the chart backtest Base Trade Amount
 - Kelly uses Polymarket return per $1 staked for its history; after enough valid win/loss history, the stake is a bankroll fraction instead of the $1 fallback
 - shares are `sizedStake / marketEntryPrice`
 - sized dollar PnL is `sizedShares * marketPnl`, with resolve-hold fallback from final binary payout when needed
 - martingale, anti-martingale, Kelly, Optimal f, and related sizing state updates use Polymarket dollar PnL, not chart trade PnL
 - stakes are capped to the available Polymarket bankroll; later eligible trades are skipped once bankroll is depleted
 - Trades shows `Poly Stake`, share count, entry price, and dollar profit when sized fields exist
-- fixed and percent modes keep existing per-share Polymarket diagnostics only
+- percent mode keeps existing per-share Polymarket diagnostics only
 
 ### Post-signal limit entry
 

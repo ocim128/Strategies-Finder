@@ -427,6 +427,7 @@ export function fmtPrice(price: number): string {
 function formatSizingModeLabel(mode: string | undefined): string {
   if (!mode) return 'Unknown';
   const labels: Record<string, string> = {
+    fixed: 'Fixed Amount',
     smart_fixed_velocity_memory: 'Smart Fixed Velocity Memory',
     smart_fixed_quality_x_velocity: 'Smart Fixed Quality x Velocity',
     kelly_criterion: 'Kelly Criterion',

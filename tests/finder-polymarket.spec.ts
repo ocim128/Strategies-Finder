@@ -642,7 +642,7 @@ describe('Finder Polymarket runner', () => {
         );
 
         expect(output.results).to.deep.equal([]);
-        expect(statuses.at(-1)).to.equal('Sized Net rank mode requires Alternative Sizing mode other than fixed or percent.');
+        expect(statuses.at(-1)).to.equal('Sized Net rank mode requires Alternative Sizing mode other than percent.');
     });
 
     it('supports expectancy-based polymarket ranking', async () => {

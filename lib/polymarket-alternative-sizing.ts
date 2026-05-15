@@ -30,8 +30,13 @@ function shouldApplyPolymarketAlternativeSizing(
     alternativeSizingEnabled: boolean
 ): boolean {
     return alternativeSizingEnabled
-        && capitalSettings.sizingMode !== "fixed"
         && capitalSettings.sizingMode !== "percent";
+}
+
+function getPolymarketBaseTradeAmount(capitalSettings: CapitalSettings): number {
+    return capitalSettings.sizingMode === "fixed"
+        ? capitalSettings.fixedTradeAmount
+        : POLYMARKET_BASE_TRADE_AMOUNT;
 }
 
 function createPolymarketSizingState(): SmartSizingState {
@@ -160,6 +165,7 @@ export function applyPolymarketAlternativeSizing(input: PolymarketAlternativeSiz
     const sizingState = createPolymarketSizingState();
     const advancedSizing = capitalSettings.advancedSizing;
     const executionModel = backtestSettings.executionModel ?? "signal_close";
+    const baseTradeAmount = getPolymarketBaseTradeAmount(capitalSettings);
 
     let equity = capitalSettings.initialCapital;
     let sizedTrades = 0;
@@ -199,7 +205,7 @@ export function applyPolymarketAlternativeSizing(input: PolymarketAlternativeSiz
             sizingMode,
             equity,
             capitalSettings.positionSize,
-            POLYMARKET_BASE_TRADE_AMOUNT,
+            baseTradeAmount,
             chartData,
             sizingBarIndex,
             direction,

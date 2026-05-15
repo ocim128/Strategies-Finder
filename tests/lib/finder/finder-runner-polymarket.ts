@@ -115,7 +115,7 @@ function getProfitFactorFromTotals(grossProfit: number, grossLoss: number): numb
 }
 
 function isAlternativeSizingMode(capitalSettings: CapitalSettings): boolean {
-    return capitalSettings.sizingMode !== "fixed" && capitalSettings.sizingMode !== "percent";
+    return capitalSettings.sizingMode !== "percent";
 }
 
 function buildMappedTradeOutcome(args: {
@@ -573,7 +573,7 @@ export async function runPolymarketFinder(
     const isMultiSubEventRun = !isNativeOutcomeSession && !is5mRun && !isSignalExitMode && !isLimitEntryMode;
     const requiresSizedNetRank = options.sortPriority.includes("polySizedNet");
     if (requiresSizedNetRank && !isAlternativeSizingMode(input.capitalSettings)) {
-        callbacks.setStatus("Sized Net rank mode requires Alternative Sizing mode other than fixed or percent.");
+        callbacks.setStatus("Sized Net rank mode requires Alternative Sizing mode other than percent.");
         return { results: [] };
     }
 

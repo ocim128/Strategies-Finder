@@ -86,7 +86,7 @@ export interface TradePolymarketOutcome {
     marketExitStatus?: PolymarketLimitExitStatus;
     /** PnL for the Polymarket leg: marketExitPrice - marketEntryPrice */
     marketPnl?: number | null;
-    /** Polymarket bankroll stake in dollars, only for non-fixed Alternative Sizing runs. */
+    /** Polymarket bankroll stake in dollars, only for Alternative Sizing runs. */
     sizedStake?: number;
     /** Polymarket shares bought with sizedStake. */
     sizedShares?: number;

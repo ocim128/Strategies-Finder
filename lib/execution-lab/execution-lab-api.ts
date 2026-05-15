@@ -1,4 +1,5 @@
 import type { OHLCVData } from "../types/strategies";
+import { loadSecondMarketClobQuotes } from "../second-market/api";
 import type { PolymarketClob1sQuoteRow, SecondMarketPolymarketEvent, SecondMarketSymbol } from "../second-market/types";
 import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import type { PolymarketOutcomeRow } from "../types/polymarket-outcomes";
@@ -6,6 +7,16 @@ import type { ExecutionLabRecord } from "./execution-lab-model";
 
 type ApiError = { ok?: false; error?: string };
 type SessionStartResponse = { ok: true; sessionId: string; logPath: string };
+export type ExecutionLabMinerStatus = {
+    ok: true;
+    running: boolean;
+    pid: number | null;
+    startedAtIso: string | null;
+    logPath: string;
+    dbPath: string;
+    exitCode: number | null;
+    message?: string;
+};
 type LiveCandlesResponse = {
     ok: true;
     candles: Array<{ ts: number; open: number; high: number; low: number; close: number; volume: number }>;
@@ -13,6 +24,7 @@ type LiveCandlesResponse = {
 type LiveEventsResponse = { ok: true; events: SecondMarketPolymarketEvent[] };
 type LiveQuoteResponse = { ok: true; quote: PolymarketClob1sQuoteRow };
 type LiveOutcomesResponse = { ok: true; outcomes: PolymarketOutcomeRow[] };
+const MAX_EXECUTION_LAB_LOG_BATCH_RECORDS = 100;
 
 function baseUrl(): string {
     return typeof window === "undefined" ? "http://localhost:5173" : "";
@@ -50,6 +62,30 @@ export async function startExecutionLabSession(args: {
 
 export async function appendExecutionLabRecord(record: ExecutionLabRecord): Promise<void> {
     await postJson<{ ok: true }>("/api/execution-lab/log", record);
+}
+
+export async function appendExecutionLabRecords(records: readonly ExecutionLabRecord[]): Promise<void> {
+    if (records.length === 0) return;
+    if (records.length === 1) {
+        await appendExecutionLabRecord(records[0]);
+        return;
+    }
+    for (let index = 0; index < records.length; index += MAX_EXECUTION_LAB_LOG_BATCH_RECORDS) {
+        const chunk = records.slice(index, index + MAX_EXECUTION_LAB_LOG_BATCH_RECORDS);
+        await postJson<{ ok: true }>("/api/execution-lab/logs", { records: chunk });
+    }
+}
+
+export async function startExecutionLabMiner(): Promise<ExecutionLabMinerStatus> {
+    return postJson<ExecutionLabMinerStatus>("/api/execution-lab/miner/start", {});
+}
+
+export async function stopExecutionLabMiner(): Promise<ExecutionLabMinerStatus> {
+    return postJson<ExecutionLabMinerStatus>("/api/execution-lab/miner/stop", {});
+}
+
+export async function loadExecutionLabMinerStatus(): Promise<ExecutionLabMinerStatus> {
+    return getJson<ExecutionLabMinerStatus>("/api/execution-lab/miner/status");
 }
 
 export async function loadExecutionLabLiveCandles(args: {
@@ -126,4 +162,13 @@ export async function loadExecutionLabLiveOutcomes(args: {
     });
     const data = await getJson<LiveOutcomesResponse>(`/api/execution-lab/live-outcomes?${params.toString()}`);
     return data.outcomes;
+}
+
+export async function loadExecutionLabStoredQuotes(args: {
+    symbol: SecondMarketSymbol;
+    startTs: number;
+    endTs: number;
+    seriesId?: string;
+}): Promise<PolymarketClob1sQuoteRow[]> {
+    return loadSecondMarketClobQuotes(args);
 }

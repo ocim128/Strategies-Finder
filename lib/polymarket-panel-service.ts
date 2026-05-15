@@ -503,7 +503,6 @@ class PolymarketPanelService {
     private buildSizedBankrollSection(summary: NonNullable<ReturnType<PolymarketPanelService["getPolymarketSummary"]>>): string {
         if (
             !summary.sizedSizingMode
-            || summary.sizedSizingMode === "fixed"
             || summary.sizedSizingMode === "percent"
             || !summary.sizedTrades
         ) {
@@ -521,9 +520,9 @@ class PolymarketPanelService {
         return `
             <div class="deployability-section">
                 <div class="section-subtitle">Sized Polymarket Bankroll</div>
-                <div class="entry-stats-hint polymarket-diagnostics__hint">Dollar results from the selected non-fixed Alternative Sizing Mode. Chart backtest PnL is unchanged.</div>
+                <div class="entry-stats-hint polymarket-diagnostics__hint">Dollar results from the selected Alternative Sizing Mode. Chart backtest PnL is unchanged.</div>
                 <div class="stats-grid polymarket-panel__stats">
-                    ${this.renderStatCard("Sizing Mode", summary.sizedSizingMode.replace(/_/g, " "))}
+                    ${this.renderStatCard("Sizing Mode", this.formatSizingModeLabel(summary.sizedSizingMode))}
                     ${this.renderStatCard("Final Equity", `$${(summary.sizedFinalEquity ?? 0).toFixed(2)}`, netProfit)}
                     ${this.renderStatCard("Net Profit", `${formatSignedUsd(netProfit)} (${returnPercent >= 0 ? "+" : ""}${returnPercent.toFixed(1)}%)`, netProfit)}
                     ${this.renderStatCard("Max Drawdown", `$${drawdown.toFixed(2)} (${drawdownPercent.toFixed(1)}%)`, -drawdown)}
@@ -538,6 +537,13 @@ class PolymarketPanelService {
                 </div>
             </div>
         `;
+    }
+
+    private formatSizingModeLabel(mode: string): string {
+        if (mode === "fixed") {
+            return "Fixed Amount";
+        }
+        return mode.replace(/_/g, " ");
     }
 
     private buildDiagnosticBucketSection(section: ExpectancyBreakdownSection): string {

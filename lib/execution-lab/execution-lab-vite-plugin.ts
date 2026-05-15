@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, createWriteStream, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { dirname, resolve } from "node:path";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Plugin } from "vite";
 import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import type { PolymarketOutcomeRow } from "../types/polymarket-outcomes";
@@ -10,10 +11,24 @@ import type {
     SecondMarketPolymarketEvent,
     SecondMarketSymbol,
 } from "../second-market/types";
+import type { ExecutionLabRecord } from "./execution-lab-model";
 import { sanitizeExecutionLabPathPart, validateExecutionLabRecord } from "./paper-log-schema";
 
 const LOG_ROOT = resolve(process.cwd(), "logs", "paper-execution");
 const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_LOG_BATCH_RECORDS = 100;
+const MINER_DB_PATH = resolve(process.cwd(), "price-data", "1second-chart", "second-market-data.sqlite");
+const MINER_LOG_PATH = resolve(process.cwd(), "price-data", "1second-chart", "logs", "execution-lab-1s-miner-latest.log");
+const ESNO_BIN = resolve(
+    process.cwd(),
+    "..",
+    "..",
+    "..",
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "esno.cmd" : "esno"
+);
+const ESNO_SCRIPT = resolve(process.cwd(), "..", "..", "..", "node_modules", "esno", "esno.js");
 const BINANCE_BASES = {
     spot: "https://api.binance.com",
     futures: "https://fapi.binance.com",
@@ -40,6 +55,10 @@ type LiveCandleRow = {
 };
 
 type LiveOutcomeRow = PolymarketOutcomeRow;
+type CacheEntry<T> = {
+    expiresAtMs: number;
+    value: T;
+};
 
 function sendJson(res: any, status: number, payload: unknown): void {
     res.statusCode = status;
@@ -404,6 +423,159 @@ async function buildLiveQuote(event: SecondMarketPolymarketEvent, sampleTs: numb
 
 export function executionLabVitePlugin(): Plugin {
     const sessions = new Map<string, string>();
+    const liveEventCache = new Map<string, CacheEntry<SecondMarketPolymarketEvent[]>>();
+    const liveOutcomeCache = new Map<string, CacheEntry<LiveOutcomeRow[]>>();
+    const inFlightFetches = new Map<string, Promise<unknown>>();
+    let minerProcess: ChildProcessWithoutNullStreams | null = null;
+    let minerStartedAtIso: string | null = null;
+    let minerExitCode: number | null = null;
+    let minerMessage = "Idle";
+
+    function pruneExpiredCache<T>(cache: Map<string, CacheEntry<T>>, now: number): void {
+        for (const [cacheKey, entry] of cache.entries()) {
+            if (entry.expiresAtMs <= now) {
+                cache.delete(cacheKey);
+            }
+        }
+    }
+
+    async function loadCached<T>(
+        cache: Map<string, CacheEntry<T>>,
+        key: string,
+        ttlMs: number,
+        load: () => Promise<T>
+    ): Promise<T> {
+        const now = Date.now();
+        pruneExpiredCache(cache, now);
+        const cached = cache.get(key);
+        if (cached && cached.expiresAtMs > now) return cached.value;
+
+        const existing = inFlightFetches.get(key) as Promise<T> | undefined;
+        if (existing) return existing;
+
+        const pending = load()
+            .then((value) => {
+                cache.set(key, { expiresAtMs: Date.now() + ttlMs, value });
+                return value;
+            })
+            .finally(() => {
+                inFlightFetches.delete(key);
+            });
+        inFlightFetches.set(key, pending);
+        return pending;
+    }
+
+    function appendValidatedRecords(records: readonly ExecutionLabRecord[]): { ok: true } | { ok: false; status: number; error: string } {
+        if (records.length === 0) {
+            return { ok: false, status: 400, error: "records must not be empty" };
+        }
+        if (records.length > MAX_LOG_BATCH_RECORDS) {
+            return { ok: false, status: 400, error: `records must contain at most ${MAX_LOG_BATCH_RECORDS} items` };
+        }
+
+        const sessionId = records[0].sessionId;
+        if (records.some((record) => record.sessionId !== sessionId)) {
+            return { ok: false, status: 400, error: "records must belong to one session" };
+        }
+
+        const logPath = sessions.get(sessionId);
+        if (!logPath) {
+            return { ok: false, status: 404, error: "Unknown execution lab session" };
+        }
+
+        appendFileSync(logPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
+        if (records.some((record) => record.recordType === "session_stop")) {
+            sessions.delete(sessionId);
+        }
+        return { ok: true };
+    }
+
+    function minerStatusPayload() {
+        const running = minerProcess !== null && minerProcess.exitCode === null && minerProcess.signalCode === null;
+        return {
+            ok: true as const,
+            running,
+            pid: running ? minerProcess?.pid ?? null : null,
+            startedAtIso: running ? minerStartedAtIso : null,
+            logPath: MINER_LOG_PATH,
+            dbPath: MINER_DB_PATH,
+            exitCode: minerExitCode,
+            message: minerMessage,
+        };
+    }
+
+    function startMiner(): ReturnType<typeof minerStatusPayload> {
+        if (minerProcess && minerProcess.exitCode === null && minerProcess.signalCode === null) {
+            minerMessage = "Already running";
+            return minerStatusPayload();
+        }
+        if (!existsSync(ESNO_BIN) || !existsSync(ESNO_SCRIPT)) {
+            throw new Error(`Missing esno launcher: ${ESNO_BIN}`);
+        }
+
+        mkdirSync(dirname(MINER_LOG_PATH), { recursive: true });
+        const startedAtIso = new Date().toISOString();
+        writeFileSync(
+            MINER_LOG_PATH,
+            [
+                `[execution-lab-miner] Started ${startedAtIso}`,
+                `Repo: ${process.cwd()}`,
+                `ESNO: ${ESNO_BIN}`,
+                `ESNO_SCRIPT: ${ESNO_SCRIPT}`,
+                `NODE: ${process.execPath}`,
+                `DB: ${MINER_DB_PATH}`,
+                "Args: --mode live --symbols BTCUSDT,XRPUSDT",
+                "",
+            ].join("\n"),
+            "utf8"
+        );
+
+        const logStream = createWriteStream(MINER_LOG_PATH, { flags: "a" });
+        minerProcess = spawn(process.execPath, [
+            ESNO_SCRIPT,
+            "scripts/second-market-miner.ts",
+            "--mode",
+            "live",
+            "--symbols",
+            "BTCUSDT,XRPUSDT",
+            "--db",
+            MINER_DB_PATH,
+        ], {
+            cwd: process.cwd(),
+            windowsHide: true,
+        });
+        minerStartedAtIso = startedAtIso;
+        minerExitCode = null;
+        minerMessage = "Running";
+        minerProcess.stdout.pipe(logStream, { end: false });
+        minerProcess.stderr.pipe(logStream, { end: false });
+        minerProcess.once("exit", (code, signal) => {
+            minerExitCode = code;
+            minerMessage = signal ? `Exited by ${signal}` : `Exited with code ${code ?? "unknown"}`;
+            appendFileSync(MINER_LOG_PATH, `\n[execution-lab-miner] ${minerMessage}\n`, "utf8");
+            logStream.end();
+            minerProcess = null;
+        });
+        minerProcess.once("error", (error) => {
+            minerExitCode = 1;
+            minerMessage = error.message;
+            appendFileSync(MINER_LOG_PATH, `\n[execution-lab-miner] ERROR ${error.message}\n`, "utf8");
+            logStream.end();
+            minerProcess = null;
+        });
+        return minerStatusPayload();
+    }
+
+    function stopMiner(): ReturnType<typeof minerStatusPayload> {
+        if (!minerProcess || minerProcess.exitCode !== null || minerProcess.signalCode !== null) {
+            minerMessage = minerMessage === "Running" ? "Idle" : minerMessage;
+            minerProcess = null;
+            return minerStatusPayload();
+        }
+        minerMessage = "Stopping";
+        minerProcess.kill();
+        return minerStatusPayload();
+    }
 
     const register = (middlewares: any) => {
         middlewares.use("/api/execution-lab", async (req: any, res: any) => {
@@ -448,7 +620,12 @@ export function executionLabVitePlugin(): Plugin {
                         sendJson(res, 400, { ok: false, error: "seriesId is required." });
                         return;
                     }
-                    const events = await fetchLiveEvents({ symbol, outcomeInterval, seriesId });
+                    const events = await loadCached(
+                        liveEventCache,
+                        `events|${symbol}|${outcomeInterval}|${seriesId}`,
+                        2000,
+                        () => fetchLiveEvents({ symbol, outcomeInterval, seriesId })
+                    );
                     sendJson(res, 200, { ok: true, source: "gamma_live", symbol, outcomeInterval, seriesId, events });
                     return;
                 }
@@ -467,7 +644,12 @@ export function executionLabVitePlugin(): Plugin {
                         sendJson(res, 400, { ok: false, error: "seriesId, startTs, and endTs are required." });
                         return;
                     }
-                    const outcomes = await fetchLiveOutcomes({ symbol, outcomeInterval, seriesId, startTs, endTs });
+                    const outcomes = await loadCached(
+                        liveOutcomeCache,
+                        `outcomes|${symbol}|${outcomeInterval}|${seriesId}|${startTs}|${endTs}`,
+                        10000,
+                        () => fetchLiveOutcomes({ symbol, outcomeInterval, seriesId, startTs, endTs })
+                    );
                     sendJson(res, 200, { ok: true, source: "gamma_live_outcomes", symbol, outcomeInterval, seriesId, outcomes });
                     return;
                 }
@@ -493,6 +675,10 @@ export function executionLabVitePlugin(): Plugin {
                         sendJson(res, 400, { ok: false, error: "seriesId, event time, marketSlug, and yesTokenId are required." });
                         return;
                     }
+                    if (sampleTs < Math.floor(Date.now() / 1000) - 30) {
+                        sendJson(res, 409, { ok: false, error: "Historical CLOB quote requests must use stored second-market quotes." });
+                        return;
+                    }
                     const quote = await buildLiveQuote({
                         seriesId,
                         symbol,
@@ -510,17 +696,32 @@ export function executionLabVitePlugin(): Plugin {
                     return;
                 }
 
+                if (method === "GET" && path === "/miner/status") {
+                    sendJson(res, 200, minerStatusPayload());
+                    return;
+                }
+
                 if (method !== "POST") {
                     sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                    return;
+                }
+
+                if (path === "/miner/start") {
+                    sendJson(res, 200, startMiner());
+                    return;
+                }
+
+                if (path === "/miner/stop") {
+                    sendJson(res, 200, stopMiner());
                     return;
                 }
 
                 if (path === "/session/start") {
                     const payload = await readJsonBody(req as IncomingMessage);
                     const strategyKey = typeof payload.strategyKey === "string" ? payload.strategyKey : "";
-                    const symbol = typeof payload.symbol === "string" ? payload.symbol : "";
+                    const symbol = parseSymbol(typeof payload.symbol === "string" ? payload.symbol : "");
                     const startedAtIso = typeof payload.startedAtIso === "string" ? payload.startedAtIso : "";
-                    if (!strategyKey.trim() || !symbol.trim()) {
+                    if (!strategyKey.trim() || !symbol) {
                         sendJson(res, 400, { ok: false, error: "strategyKey and symbol are required" });
                         return;
                     }
@@ -548,14 +749,39 @@ export function executionLabVitePlugin(): Plugin {
                         sendJson(res, 400, { ok: false, error: validation.error });
                         return;
                     }
-                    const logPath = sessions.get(validation.record.sessionId);
-                    if (!logPath) {
-                        sendJson(res, 404, { ok: false, error: "Unknown execution lab session" });
+                    const appendResult = appendValidatedRecords([validation.record]);
+                    if (!appendResult.ok) {
+                        sendJson(res, appendResult.status, { ok: false, error: appendResult.error });
                         return;
                     }
-                    appendFileSync(logPath, `${JSON.stringify(validation.record)}\n`, "utf8");
-                    if (validation.record.recordType === "session_stop") {
-                        sessions.delete(validation.record.sessionId);
+                    sendJson(res, 200, { ok: true });
+                    return;
+                }
+
+                if (path === "/logs") {
+                    const payload = await readJsonBody(req as IncomingMessage);
+                    const rawRecords = Array.isArray(payload.records) ? payload.records : null;
+                    if (!rawRecords) {
+                        sendJson(res, 400, { ok: false, error: "records must be an array" });
+                        return;
+                    }
+                    if (rawRecords.length > MAX_LOG_BATCH_RECORDS) {
+                        sendJson(res, 400, { ok: false, error: `records must contain at most ${MAX_LOG_BATCH_RECORDS} items` });
+                        return;
+                    }
+                    const records: ExecutionLabRecord[] = [];
+                    for (const rawRecord of rawRecords) {
+                        const validation = validateExecutionLabRecord(rawRecord);
+                        if (!validation.ok) {
+                            sendJson(res, 400, { ok: false, error: validation.error });
+                            return;
+                        }
+                        records.push(validation.record);
+                    }
+                    const appendResult = appendValidatedRecords(records);
+                    if (!appendResult.ok) {
+                        sendJson(res, appendResult.status, { ok: false, error: appendResult.error });
+                        return;
                     }
                     sendJson(res, 200, { ok: true });
                     return;

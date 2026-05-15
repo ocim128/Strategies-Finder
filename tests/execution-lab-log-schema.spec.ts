@@ -34,6 +34,28 @@ describe("Execution Lab JSONL schema", () => {
         expect(validation.ok).to.equal(true);
     });
 
+    it("rejects invalid timestamps and non-positive stake", () => {
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordedAtIso: "not-a-date",
+            recordType: "session_stop",
+            reason: "user_stop",
+            totalEntries: 0,
+            totalClosed: 0,
+            realizedPnlUsd: 0,
+        }).ok).to.equal(false);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "session_start",
+            stakeUsd: 0,
+            strategyName: "Test Strategy",
+            params: {},
+            backtestSettings: {},
+            polymarketSettings: {},
+            allowMultipleTradesPerEvent: false,
+        }).ok).to.equal(false);
+    });
+
     it("rejects invalid record type and interval values", () => {
         expect(validateExecutionLabRecord({
             ...baseRecord,
@@ -61,6 +83,27 @@ describe("Execution Lab JSONL schema", () => {
             tradeId: "trade-1",
             exitReason: "manual",
             exitPrice: 0.6,
+        }).ok).to.equal(false);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "paper_entry",
+            tradeId: "trade-1",
+            side: "yes",
+            entryPrice: 0,
+        }).ok).to.equal(false);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "paper_exit",
+            tradeId: "trade-1",
+            exitReason: "resolution",
+            exitPrice: 0,
+        }).ok).to.equal(true);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "paper_exit",
+            tradeId: "trade-1",
+            exitReason: "resolution",
+            exitPrice: 1.01,
         }).ok).to.equal(false);
     });
 

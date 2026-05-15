@@ -47,6 +47,10 @@
     border-color: rgba(245, 182, 66, 0.45);
 }
 
+.execution-lab-substatus {
+    margin-top: 8px;
+}
+
 .execution-lab-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -93,6 +97,47 @@
 
 .execution-lab-kv strong.is-warning {
     color: var(--warning);
+}
+
+.execution-lab-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.execution-lab-metric {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 8px;
+    min-width: 0;
+}
+
+.execution-lab-metric-label {
+    color: var(--text-secondary);
+    font-size: 11px;
+    margin-bottom: 4px;
+}
+
+.execution-lab-metric-value {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.execution-lab-metric-value.is-positive {
+    color: var(--green);
+}
+
+.execution-lab-metric-value.is-negative {
+    color: var(--red);
+}
+
+.execution-lab-compare-controls {
+    display: grid;
+    grid-template-columns: minmax(140px, 0.8fr) minmax(180px, 1fr) auto;
+    gap: 8px;
+    align-items: end;
 }
 
 .execution-lab-trades-panel {
@@ -152,6 +197,11 @@
     }
 
     .execution-lab-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .execution-lab-metrics,
+    .execution-lab-compare-controls {
         grid-template-columns: 1fr;
     }
 

@@ -1,5 +1,5 @@
 import type { SeriesMarker, Time } from "lightweight-charts";
-import { strategyRegistry } from "../../strategyRegistry";
+import { loadBuiltInStrategyByKey, strategyRegistry } from "../../strategyRegistry";
 import { getBacktestSettings, getCapitalSettings } from "../backtest-settings-reader";
 import { executeBacktest } from "../backtest-executor";
 import { chartManager, type ExecutionLabPolymarketPricePoint } from "../chart-manager";
@@ -16,16 +16,22 @@ import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { BacktestSettings, OHLCVData, Strategy, Trade } from "../types/strategies";
 import { uiManager } from "../ui-manager";
 import {
-    appendExecutionLabRecord,
+    appendExecutionLabRecords,
+    loadExecutionLabMinerStatus,
     loadExecutionLabLiveCandles,
     loadExecutionLabLiveEvents,
     loadExecutionLabLiveOutcomes,
     loadExecutionLabLiveQuote,
+    loadExecutionLabStoredQuotes,
+    startExecutionLabMiner,
     startExecutionLabSession,
+    stopExecutionLabMiner,
+    type ExecutionLabMinerStatus,
 } from "./execution-lab-api";
 import { queryExecutionLabDom, type ExecutionLabDom } from "./execution-lab-dom";
 import {
     collectEntryPriceFilterParityMismatches,
+    collectLatePaperExecutionMismatches,
     type ExecutionParityMismatch,
 } from "./execution-parity";
 import {
@@ -49,6 +55,11 @@ import {
 import { executionLabErrorMessage, isExecutionLabTransientPollError } from "./poll-errors";
 import { buildExecutionLabStrategyExecutionContext } from "./execution-lab-strategy-context";
 import { collectExecutionLabTradeQuoteTimes } from "./trade-quote-times";
+import { mergeExecutionLabCandles, mergeExecutionLabQuotes, sortedMapValues } from "./execution-lab-buffers";
+import { computeExecutionLabPerformanceMetrics, type ExecutionLabPerformanceMetrics } from "./execution-lab-metrics";
+import { settingsManager, sortStrategyConfigsNewestFirst } from "../settings-manager";
+import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
+import type { CapitalSettings } from "../types/backtest";
 
 const SETTINGS_SCHEMA = "execution-lab.settings";
 const SETTINGS_VERSION = 1;
@@ -60,6 +71,20 @@ const MAX_PAPER_EXECUTION_DELAY_SEC = MAX_LIVE_CANDLE_LAG_SEC + 5;
 const MAX_POLYMARKET_PRICE_POINTS = 3600;
 
 type LivePollFetchResult<T> = { ok: true; value: T } | { ok: false };
+type ComparisonSource = "original" | "current" | "saved";
+type ComparisonCandidate = {
+    label: string;
+    strategyKey: string;
+    strategyName: string;
+    strategy: Strategy;
+    params: Record<string, number>;
+    backtestSettings: BacktestSettings;
+    capitalSettings: CapitalSettings;
+};
+type ComparisonResult = {
+    metrics: ExecutionLabPerformanceMetrics;
+    totalEntries: number;
+};
 
 function finiteUnixSeconds(time: OHLCVData["time"]): number | null {
     const seconds = parseTimeToUnixSeconds(time);
@@ -83,12 +108,28 @@ function formatPolyPrice(value: number | null | undefined): string {
 }
 
 function formatMoney(value: number): string {
-    const sign = value > 0 ? "+" : "";
-    return `${sign}$${value.toFixed(2)}`;
+    if (value > 0) return `+$${value.toFixed(2)}`;
+    if (value < 0) return `-$${Math.abs(value).toFixed(2)}`;
+    return "$0.00";
 }
 
 function formatUsd(value: number): string {
     return `$${value.toFixed(2)}`;
+}
+
+function formatSignedUsdNullable(value: number | null): string {
+    if (value === null || !Number.isFinite(value)) return "--";
+    return formatMoney(value);
+}
+
+function formatPercentNullable(value: number | null): string {
+    return value === null || !Number.isFinite(value) ? "--" : `${value.toFixed(1)}%`;
+}
+
+function formatRatioNullable(value: number | null): string {
+    if (value === null || Number.isNaN(value)) return "--";
+    if (value === Number.POSITIVE_INFINITY) return "Inf";
+    return value.toFixed(2);
 }
 
 function formatSeconds(value: number | null | undefined): string {
@@ -101,11 +142,6 @@ function liveCandleLagSec(latestTs: number): number {
 
 function liveLagMessage(latestTs: number, lagSec: number): string {
     return `Live Binance 1s feed is lagging: latest ${formatDateTime(latestTs)} (${formatSeconds(lagSec)} lag).`;
-}
-
-function recordedAtUnixSeconds(record: ExecutionLabRecord): number | null {
-    const parsed = Date.parse(record.recordedAtIso);
-    return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
 }
 
 function quoteMid(bid: number | null, ask: number | null, mid: number | null): number | null {
@@ -173,14 +209,20 @@ export class ExecutionLabService {
     private executionMismatchTotal = 0;
     private latestExecutionMismatch: ExecutionParityMismatch | null = null;
     private loggedExecutionMismatchKeys = new Set<string>();
+    private comparisonRunning = false;
+    private latestComparison: ComparisonResult | null = null;
+    private sessionStartCandleTimeSec: number | null = null;
 
     init(): void {
         if (this.initialized) return;
         this.initialized = true;
         this.dom = queryExecutionLabDom();
         this.dom.stakeInput.value = String(readPersistedSettings().stakeUsd);
+        this.syncSavedConfigOptions();
         this.bindEvents();
         this.renderIdle();
+        void this.refreshMinerStatus();
+        setInterval(() => void this.refreshMinerStatus(), 5000);
     }
 
     async startPaper(): Promise<void> {
@@ -209,11 +251,12 @@ export class ExecutionLabService {
             const initialLagSec = liveCandleLagSec(latestInitialTs);
             if (initialLagSec > MAX_LIVE_CANDLE_LAG_SEC) throw new Error(liveLagMessage(latestInitialTs, initialLagSec));
 
-        this.paperState.lastProcessedCandleTimeSec = latestInitialTs;
-        this.setRunningState(true);
-        this.render();
-        chartManager.clearTradeMarkers();
-        chartManager.displayPaperStreamData(this.candles);
+            this.paperState.lastProcessedCandleTimeSec = latestInitialTs;
+            this.sessionStartCandleTimeSec = latestInitialTs;
+            this.setRunningState(true);
+            this.render();
+            chartManager.clearTradeMarkers();
+            chartManager.displayPaperStreamData(this.candles);
             this.timer = setInterval(() => void this.poll(), POLL_MS);
             await this.poll();
         } catch (error) {
@@ -249,6 +292,8 @@ export class ExecutionLabService {
         this.executionMismatchTotal = 0;
         this.latestExecutionMismatch = null;
         this.loggedExecutionMismatchKeys.clear();
+        this.latestComparison = null;
+        this.sessionStartCandleTimeSec = null;
         this.renderIdle();
     }
 
@@ -257,6 +302,10 @@ export class ExecutionLabService {
         if (!dom) return;
         dom.startButton.addEventListener("click", () => void this.startPaper());
         dom.stopButton.addEventListener("click", () => void this.stop("user_stop"));
+        dom.startMinerButton.addEventListener("click", () => void this.startMiner());
+        dom.stopMinerButton.addEventListener("click", () => void this.stopMiner());
+        dom.comparisonSource.addEventListener("change", () => this.syncComparisonControls());
+        dom.runComparisonButton.addEventListener("click", () => void this.runComparison());
         dom.stakeInput.addEventListener("change", () => {
             dom.stakeInput.value = String(normalizeStake(dom.stakeInput.value));
             writePersistedSettings(Number(dom.stakeInput.value));
@@ -281,6 +330,265 @@ export class ExecutionLabService {
         dom.stakeInput.disabled = running;
     }
 
+    private setComparisonStatus(text: string, tone: "neutral" | "running" | "warning" | "error" = "neutral"): void {
+        const status = this.dom?.comparisonStatus;
+        if (!status) return;
+        status.textContent = text;
+        status.classList.toggle("is-running", tone === "running");
+        status.classList.toggle("is-warning", tone === "warning");
+        status.classList.toggle("is-error", tone === "error");
+    }
+
+    private renderMinerStatus(status: ExecutionLabMinerStatus | null, fallback?: string): void {
+        const dom = this.dom;
+        if (!dom) return;
+        if (!status) {
+            dom.minerStatus.textContent = fallback ?? "--";
+            dom.startMinerButton.disabled = false;
+            dom.stopMinerButton.disabled = true;
+            return;
+        }
+        dom.minerStatus.textContent = status.running
+            ? `running pid ${status.pid ?? "--"} | ${status.logPath}`
+            : `${status.message ?? "idle"} | ${status.logPath}`;
+        dom.startMinerButton.disabled = status.running;
+        dom.stopMinerButton.disabled = !status.running;
+    }
+
+    private async refreshMinerStatus(): Promise<void> {
+        try {
+            this.renderMinerStatus(await loadExecutionLabMinerStatus());
+        } catch (error) {
+            this.renderMinerStatus(null, executionLabErrorMessage(error));
+        }
+    }
+
+    private async startMiner(): Promise<void> {
+        try {
+            this.renderMinerStatus(await startExecutionLabMiner());
+        } catch (error) {
+            this.renderMinerStatus(null, executionLabErrorMessage(error));
+        }
+    }
+
+    private async stopMiner(): Promise<void> {
+        try {
+            this.renderMinerStatus(await stopExecutionLabMiner());
+        } catch (error) {
+            this.renderMinerStatus(null, executionLabErrorMessage(error));
+        }
+    }
+
+    private syncSavedConfigOptions(): void {
+        const dom = this.dom;
+        if (!dom) return;
+        const previous = dom.comparisonSavedConfig.value;
+        const configs = sortStrategyConfigsNewestFirst(settingsManager.loadAllStrategyConfigs());
+        dom.comparisonSavedConfig.innerHTML = '<option value="">-- Select configuration --</option>';
+        for (const config of configs) {
+            const option = document.createElement("option");
+            option.value = config.name;
+            option.textContent = `${config.name} (${config.strategyKey})`;
+            dom.comparisonSavedConfig.appendChild(option);
+        }
+        if (previous && configs.some((config) => config.name === previous)) {
+            dom.comparisonSavedConfig.value = previous;
+        }
+        this.syncComparisonControls();
+    }
+
+    private syncComparisonControls(): void {
+        const dom = this.dom;
+        if (!dom) return;
+        dom.comparisonSavedConfig.disabled = dom.comparisonSource.value !== "saved";
+    }
+
+    private currentComparisonSource(): ComparisonSource {
+        const value = this.dom?.comparisonSource.value;
+        return value === "current" || value === "saved" ? value : "original";
+    }
+
+    private async resolveStrategyForKey(strategyKey: string): Promise<Strategy> {
+        let strategy = strategyRegistry.get(strategyKey);
+        if (!strategy) {
+            strategy = await loadBuiltInStrategyByKey(strategyKey);
+        }
+        if (!strategy) throw new Error(`Strategy not loaded: ${strategyKey}`);
+        if (strategy.crossSymbolConfig) throw new Error("Execution Lab comparison does not support cross-symbol strategies.");
+        return strategy;
+    }
+
+    private async buildComparisonCandidate(source: ComparisonSource): Promise<ComparisonCandidate | null> {
+        const snapshot = this.snapshot;
+        if (!snapshot) return null;
+        if (source === "original") {
+            const strategy = this.strategy ?? await this.resolveStrategyForKey(snapshot.strategyKey);
+            return {
+                label: "Original Paper Trade",
+                strategyKey: snapshot.strategyKey,
+                strategyName: snapshot.strategyName,
+                strategy,
+                params: { ...snapshot.params },
+                backtestSettings: { ...snapshot.backtestSettings },
+                capitalSettings: { ...snapshot.capitalSettings },
+            };
+        }
+
+        if (source === "current") {
+            const strategy = await this.resolveStrategyForKey(state.currentStrategyKey);
+            const rawParams = paramManager.getValues(strategy);
+            return {
+                label: "Current Settings",
+                strategyKey: state.currentStrategyKey,
+                strategyName: strategy.name,
+                strategy,
+                params: strategy.normalizeParams ? strategy.normalizeParams(rawParams) : rawParams,
+                backtestSettings: { ...getBacktestSettings(), symbol: snapshot.symbol, interval: "1s" } as BacktestSettings,
+                capitalSettings: getCapitalSettings(),
+            };
+        }
+
+        this.syncSavedConfigOptions();
+        const configName = this.dom?.comparisonSavedConfig.value ?? "";
+        if (!configName) throw new Error("Select a saved configuration first.");
+        const config = settingsManager.loadStrategyConfig(configName);
+        if (!config) throw new Error(`Saved configuration "${configName}" was not found.`);
+        const strategy = await this.resolveStrategyForKey(config.strategyKey);
+        const params = strategy.normalizeParams
+            ? strategy.normalizeParams(config.strategyParams)
+            : config.strategyParams;
+        return {
+            label: `Saved: ${config.name}`,
+            strategyKey: config.strategyKey,
+            strategyName: strategy.name,
+            strategy,
+            params,
+            backtestSettings: { ...config.backtestSettings, symbol: snapshot.symbol, interval: "1s" } as unknown as BacktestSettings,
+            capitalSettings: resolveCapitalSettingsFromRaw(config.backtestSettings as unknown as Record<string, unknown>),
+        };
+    }
+
+    private comparisonSnapshot(candidate: ComparisonCandidate): ExecutionLabSessionSnapshot {
+        const snapshot = this.snapshot;
+        if (!snapshot) throw new Error("Start Paper first.");
+        const comparisonBacktestSettings = {
+            ...candidate.backtestSettings,
+            symbol: snapshot.symbol,
+            interval: "1s",
+            polymarketAnnotationEnabled: true,
+            polymarketOutcomeSymbol: snapshot.outcomeSymbol,
+            polymarketOutcomeInterval: snapshot.outcomeInterval,
+        } as BacktestSettings;
+        const exitMode = resolveEffectivePolymarketExitMode({
+            requestedMode: comparisonBacktestSettings.polymarketExitMode,
+            interval: "1s",
+            executionModel: comparisonBacktestSettings.executionModel,
+            polymarketAnnotationEnabled: true,
+        });
+        const allowMultipleTradesPerEvent = exitMode === "signal_exit_same_event"
+            && comparisonBacktestSettings.polymarketSignalExitAllowMultipleTradesPerEvent === true;
+        return {
+            ...snapshot,
+            strategyKey: candidate.strategyKey,
+            strategyName: candidate.strategyName,
+            params: candidate.params,
+            backtestSettings: comparisonBacktestSettings,
+            capitalSettings: candidate.capitalSettings,
+            polymarketSettings: {
+                ...snapshot.polymarketSettings,
+                exitMode,
+                allowMultipleTradesPerEvent,
+            },
+            exitMode,
+            allowMultipleTradesPerEvent,
+        };
+    }
+
+    private async loadComparisonOutcomes(snapshot: ExecutionLabSessionSnapshot, latestTs: number) {
+        const firstTs = this.candles[0] ? finiteUnixSeconds(this.candles[0].time) : null;
+        if (firstTs === null) return [];
+        return loadExecutionLabLiveOutcomes({
+            symbol: snapshot.outcomeSymbol,
+            outcomeInterval: snapshot.outcomeInterval,
+            seriesId: snapshot.seriesId,
+            startTs: Math.max(0, firstTs - 60),
+            endTs: latestTs + 60,
+        });
+    }
+
+    private async runComparison(): Promise<void> {
+        if (this.comparisonRunning) return;
+        const snapshot = this.snapshot;
+        const latestCandle = this.candles[this.candles.length - 1] ?? null;
+        const latestTs = latestCandle ? finiteUnixSeconds(latestCandle.time) : null;
+        const sessionStartTs = this.sessionStartCandleTimeSec;
+        if (!snapshot || !latestCandle || latestTs === null || sessionStartTs === null) {
+            this.setComparisonStatus("Start Paper first.", "warning");
+            return;
+        }
+
+        this.comparisonRunning = true;
+        this.dom!.runComparisonButton.disabled = true;
+        this.setComparisonStatus("Running comparison", "running");
+        try {
+            const source = this.currentComparisonSource();
+            const candidate = await this.buildComparisonCandidate(source);
+            if (!candidate) throw new Error("Start Paper first.");
+            const comparisonSnapshot = this.comparisonSnapshot(candidate);
+            const firstTs = this.candles[0] ? finiteUnixSeconds(this.candles[0].time) : null;
+            if (firstTs === null) throw new Error("No valid comparison candle range.");
+            const storedQuotes = await this.loadStoredQuoteRange(comparisonSnapshot, firstTs, latestTs);
+            const replayQuotes = mergeExecutionLabQuotes(storedQuotes, this.getLiveQuoteBuffer());
+            const backtestResult = await executeBacktest({
+                ohlcvData: this.candles,
+                interval: "1s",
+                primarySymbol: snapshot.symbol,
+                strategyKey: candidate.strategyKey,
+                strategy: candidate.strategy,
+                strategyParams: candidate.params,
+                backtestSettings: { ...comparisonSnapshot.backtestSettings, polymarketAnnotationEnabled: false },
+                capitalSettings: candidate.capitalSettings,
+                context: {
+                    nowSec: latestTs + 2,
+                    blockRange: null,
+                    annotatePolymarket: false,
+                    engineMode: "typescript",
+                },
+                strategyExecutionContext: buildExecutionLabStrategyExecutionContext({
+                    snapshot: comparisonSnapshot,
+                    quotes: replayQuotes,
+                }),
+                polymarket1sContextMode: "provided",
+            });
+            const outcomes = await this.loadComparisonOutcomes(comparisonSnapshot, latestTs);
+            const scratch = createExecutionLabPaperState(comparisonSnapshot);
+            scratch.lastProcessedCandleTimeSec = sessionStartTs;
+            evaluateExecutionLabPaperTick(scratch, {
+                latestCandleTimeSec: latestTs,
+                latestCandle,
+                trades: backtestResult.result.trades,
+                signals: buildEvaluatedSignals(backtestResult.signals).filter((signal) => signal.signalTimeSec <= latestTs),
+                quotes: replayQuotes,
+                outcomes,
+                recordedAtIso: new Date().toISOString(),
+                feedLagSec: this.feedLagSec,
+            });
+            this.latestComparison = {
+                metrics: computeExecutionLabPerformanceMetrics(scratch.closedTrades),
+                totalEntries: scratch.totalEntries,
+            };
+            this.renderComparisonMetrics();
+            this.setComparisonStatus(`${candidate.label} | no logs written`, "running");
+        } catch (error) {
+            this.latestComparison = null;
+            this.renderComparisonMetrics();
+            this.setComparisonStatus(executionLabErrorMessage(error), "error");
+        } finally {
+            this.comparisonRunning = false;
+            if (this.dom) this.dom.runComparisonButton.disabled = false;
+        }
+    }
+
     private async prepareSession(): Promise<{ snapshot: ExecutionLabSessionSnapshot; strategy: Strategy; logPath: string }> {
         const chartSymbol = normalizeSecondMarketChartSymbol(state.currentSymbol);
         if (state.currentInterval !== "1s" || !chartSymbol) {
@@ -293,7 +601,7 @@ export class ExecutionLabService {
         const backtestSettings = getBacktestSettings();
         const capitalSettings = getCapitalSettings();
         const polymarketDom = resolvePolymarketDomSettings();
-        const polymarketAnnotationEnabled = backtestSettings.polymarketAnnotationEnabled === true;
+        const polymarketAnnotationEnabled = true;
         const outcomeSymbolRaw = resolvePolymarketOutcomeSymbol(
             chartSymbol,
             backtestSettings.polymarketOutcomeSymbol ?? polymarketDom.outcomeSymbol,
@@ -320,6 +628,16 @@ export class ExecutionLabService {
         const allowMultipleTradesPerEvent = exitMode === "signal_exit_same_event"
             && (backtestSettings.polymarketSignalExitAllowMultipleTradesPerEvent
                 ?? polymarketDom.signalExitAllowMultipleTradesPerEvent) === true;
+        const snapshotBacktestSettings = {
+            ...backtestSettings,
+            symbol: chartSymbol,
+            interval: "1s",
+            polymarketAnnotationEnabled: true,
+            polymarketOutcomeSymbol: outcomeSymbol,
+            polymarketOutcomeInterval: outcomeInterval,
+            polymarketExitMode: exitMode,
+            polymarketSignalExitAllowMultipleTradesPerEvent: allowMultipleTradesPerEvent,
+        } as BacktestSettings;
 
         return {
             strategy,
@@ -332,7 +650,7 @@ export class ExecutionLabService {
                 strategyKey: state.currentStrategyKey,
                 strategyName: strategy.name,
                 params,
-                backtestSettings: { ...backtestSettings, symbol: chartSymbol, interval: "1s" } as BacktestSettings,
+                backtestSettings: snapshotBacktestSettings,
                 capitalSettings,
                 polymarketSettings: { outcomeSymbol, outcomeInterval, exitMode, allowMultipleTradesPerEvent },
                 outcomeInterval,
@@ -394,6 +712,41 @@ export class ExecutionLabService {
         });
     }
 
+    private async loadStoredQuoteRange(
+        snapshot: ExecutionLabSessionSnapshot,
+        startTs: number,
+        endTs: number,
+        required = true
+    ): Promise<PolymarketClob1sQuoteRow[]> {
+        const start = Math.floor(startTs);
+        const end = Math.floor(endTs);
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return [];
+        try {
+            return await loadExecutionLabStoredQuotes({
+                symbol: snapshot.outcomeSymbol,
+                seriesId: snapshot.seriesId,
+                startTs: start,
+                endTs: end,
+            });
+        } catch (error) {
+            if (required) throw error;
+            return [];
+        }
+    }
+
+    private async addStoredQuoteRange(
+        snapshot: ExecutionLabSessionSnapshot,
+        startTs: number,
+        endTs: number,
+        includeStrategyContext: boolean,
+        required = false
+    ): Promise<void> {
+        const quotes = await this.loadStoredQuoteRange(snapshot, startTs, endTs, required);
+        for (const quote of quotes) {
+            this.addPolymarketQuote(quote, includeStrategyContext);
+        }
+    }
+
     private async poll(): Promise<void> {
         if (!this.running || this.polling) return;
         const snapshot = this.snapshot;
@@ -424,16 +777,18 @@ export class ExecutionLabService {
             }
 
             const lastBufferedTs = this.getLastBufferedTs();
-            if (lastBufferedTs === null || latestTs > lastBufferedTs) {
+            if (lastBufferedTs === null || latestTs >= lastBufferedTs) {
                 const newCandlesResult = lastBufferedTs === null
                     ? { ok: true as const, value: latestBatch }
-                    : await this.tryLivePollFetch(() => loadExecutionLabLiveCandles({
-                        symbol: snapshot.symbol,
-                        marketType: state.binanceMarketType,
-                        startTs: lastBufferedTs + 1,
-                        endTs: latestTs,
-                        limit: Math.min(10000, latestTs - lastBufferedTs),
-                    }));
+                    : latestTs === lastBufferedTs
+                        ? { ok: true as const, value: latestBatch }
+                        : await this.tryLivePollFetch(() => loadExecutionLabLiveCandles({
+                            symbol: snapshot.symbol,
+                            marketType: state.binanceMarketType,
+                            startTs: lastBufferedTs + 1,
+                            endTs: latestTs,
+                            limit: Math.min(10000, latestTs - lastBufferedTs),
+                        }));
                 if (!newCandlesResult.ok) return;
                 this.mergeCandles(newCandlesResult.value);
             }
@@ -452,6 +807,12 @@ export class ExecutionLabService {
             if (!liveQuoteResult.ok) return;
             const liveQuote = liveQuoteResult.value;
             if (liveQuote) this.addPolymarketQuote(liveQuote);
+            const storedQuoteStart = previousPaperTs === null ? latestBufferedTs : previousPaperTs + 1;
+            const storedQuotesResult = await this.tryLivePollFetch(() =>
+                this.addStoredQuoteRange(snapshot, storedQuoteStart, latestBufferedTs, true)
+            );
+            if (!storedQuotesResult.ok) return;
+            const strategyQuotes = this.getStrategyQuoteBuffer();
 
             const backtestPromise = executeBacktest({
                 ohlcvData: this.candles,
@@ -470,7 +831,7 @@ export class ExecutionLabService {
                 },
                 strategyExecutionContext: buildExecutionLabStrategyExecutionContext({
                     snapshot,
-                    quotes: this.getStrategyQuoteBuffer(),
+                    quotes: strategyQuotes,
                 }),
                 polymarket1sContextMode: "provided",
             });
@@ -486,13 +847,14 @@ export class ExecutionLabService {
             );
             if (!missingTradeQuotesResult.ok) return;
             const feedLag = liveCandleLagSec(latestBufferedTs);
+            const liveQuotes = this.getLiveQuoteBuffer();
             const recordedAtIso = new Date().toISOString();
             const tickResult = evaluateExecutionLabPaperTick(paperState, {
                 latestCandleTimeSec: latestBufferedTs,
                 latestCandle: latestBuffered,
                 trades: backtestResult.result.trades,
                 signals: backtestSignals,
-                quotes: this.getLiveQuoteBuffer(),
+                quotes: liveQuotes,
                 outcomes,
                 recordedAtIso,
                 feedLagSec: feedLag,
@@ -526,7 +888,6 @@ export class ExecutionLabService {
     }
 
     private assertSessionContext(snapshot: ExecutionLabSessionSnapshot): void {
-        if (state.currentStrategyKey !== snapshot.strategyKey) throw new Error("Strategy changed. Stop and start a new Execution Lab session.");
         if (state.currentSymbol !== snapshot.symbol || state.currentInterval !== "1s") {
             throw new Error("Chart market changed. Stop and start a new Execution Lab session.");
         }
@@ -538,24 +899,11 @@ export class ExecutionLabService {
     }
 
     private mergeCandles(candles: readonly OHLCVData[]): void {
-        if (candles.length === 0) return;
-        const byTime = new Map<number, OHLCVData>();
-        for (const candle of this.candles) {
-            const ts = finiteUnixSeconds(candle.time);
-            if (ts !== null) byTime.set(ts, candle);
-        }
-        for (const candle of candles) {
-            const ts = finiteUnixSeconds(candle.time);
-            if (ts !== null) byTime.set(ts, candle);
-        }
-        this.candles = Array.from(byTime.entries())
-            .sort((left, right) => left[0] - right[0])
-            .slice(-MAX_STREAM_CANDLES)
-            .map((entry) => entry[1]);
+        this.candles = mergeExecutionLabCandles(this.candles, candles, MAX_STREAM_CANDLES);
     }
 
     private async appendRecords(records: readonly ExecutionLabRecord[]): Promise<void> {
-        for (const record of records) await appendExecutionLabRecord(record);
+        await appendExecutionLabRecords(records);
     }
 
     private async tryLivePollFetch<T>(operation: () => Promise<T>): Promise<LivePollFetchResult<T>> {
@@ -588,33 +936,8 @@ export class ExecutionLabService {
         if (!paperState) return [];
         const mismatches: ExecutionParityMismatch[] = [];
         const missingExitKeys = new Set<string>();
+        mismatches.push(...collectLatePaperExecutionMismatches(records, latestCandleTimeSec, MAX_PAPER_EXECUTION_DELAY_SEC));
         for (const record of records) {
-            const recordedAtSec = recordedAtUnixSeconds(record);
-            if (record.recordType === "paper_entry" && recordedAtSec !== null) {
-                const delaySec = recordedAtSec - record.entryTimeSec;
-                if (delaySec > MAX_PAPER_EXECUTION_DELAY_SEC) {
-                    mismatches.push({
-                        mismatchType: "late_paper_execution",
-                        latestCandleTimeSec,
-                        detail: `paper ${record.side.toUpperCase()} entry was processed ${formatSeconds(delaySec)} after entry time ${formatDateTime(record.entryTimeSec)}`,
-                        tradeId: record.tradeId,
-                        eventEndTs: record.eventEndTs,
-                    });
-                }
-            }
-            if (record.recordType === "paper_exit" && record.exitReason !== "resolution" && recordedAtSec !== null) {
-                const delaySec = recordedAtSec - record.exitTimeSec;
-                if (delaySec > MAX_PAPER_EXECUTION_DELAY_SEC) {
-                    mismatches.push({
-                        mismatchType: "late_paper_execution",
-                        latestCandleTimeSec,
-                        detail: `paper ${record.exitReason} exit was processed ${formatSeconds(delaySec)} after exit time ${formatDateTime(record.exitTimeSec)}`,
-                        tradeId: record.tradeId,
-                        expectedExitTimeSec: record.exitTimeSec,
-                        expectedExitReason: record.exitReason,
-                    });
-                }
-            }
             if (record.recordType !== "paper_unfilled" || record.reason !== "missing_exit_quote") continue;
             missingExitKeys.add(`${record.side ?? ""}|${record.expectedExitTimeSec ?? ""}|${record.eventEndTs ?? ""}`);
             mismatches.push({
@@ -755,15 +1078,11 @@ export class ExecutionLabService {
     }
 
     private getLiveQuoteBuffer(): PolymarketClob1sQuoteRow[] {
-        return Array.from(this.liveQuoteByTime.entries())
-            .sort((left, right) => left[0] - right[0])
-            .map((entry) => entry[1]);
+        return sortedMapValues(this.liveQuoteByTime);
     }
 
     private getStrategyQuoteBuffer(): PolymarketClob1sQuoteRow[] {
-        return Array.from(this.strategyQuoteByTime.entries())
-            .sort((left, right) => left[0] - right[0])
-            .map((entry) => entry[1]);
+        return sortedMapValues(this.strategyQuoteByTime);
     }
 
     private async loadMissingTradeQuotes(
@@ -777,18 +1096,18 @@ export class ExecutionLabService {
             latestCandleTimeSec,
             previousProcessedCandleTimeSec,
         });
-        for (const sampleTs of quoteTimes) {
-            if (this.liveQuoteByTime.has(sampleTs)) continue;
-            const event = await this.getLiveEventForTime(snapshot, sampleTs);
-            if (!event) continue;
-            this.addPolymarketQuote(await loadExecutionLabLiveQuote({ event, sampleTs }), false);
-        }
+        const missingTimes = quoteTimes.filter((sampleTs) => !this.liveQuoteByTime.has(sampleTs));
+        if (missingTimes.length === 0) return;
+        await this.addStoredQuoteRange(
+            snapshot,
+            Math.min(...missingTimes),
+            Math.max(...missingTimes),
+            false
+        );
     }
 
     private getPolymarketPricePoints(): ExecutionLabPolymarketPricePoint[] {
-        return Array.from(this.polymarketPriceByTime.entries())
-            .sort((left, right) => left[0] - right[0])
-            .map((entry) => entry[1]);
+        return sortedMapValues(this.polymarketPriceByTime);
     }
 
     private async stop(reason: "user_stop" | "error", message?: string): Promise<void> {
@@ -842,6 +1161,79 @@ export class ExecutionLabService {
         };
     }
 
+    private renderMetricGrid(container: HTMLElement, metrics: ExecutionLabPerformanceMetrics | null, extras?: { entries?: number }): void {
+        container.innerHTML = "";
+        const values = metrics
+            ? [
+                ["Trades", String(metrics.trades)],
+                ["Entries", String(extras?.entries ?? metrics.trades)],
+                ["Win Rate", formatPercentNullable(metrics.winRatePct)],
+                ["Profit Factor", formatRatioNullable(metrics.profitFactor)],
+                ["Expectancy", formatSignedUsdNullable(metrics.expectancyUsd)],
+                ["Avg Win", formatSignedUsdNullable(metrics.avgWinUsd)],
+                ["Avg Loss", formatSignedUsdNullable(metrics.avgLossUsd)],
+                ["Total PnL", formatMoney(metrics.totalPnlUsd)],
+            ]
+            : [
+                ["Trades", "--"],
+                ["Entries", "--"],
+                ["Win Rate", "--"],
+                ["Profit Factor", "--"],
+                ["Expectancy", "--"],
+                ["Avg Win", "--"],
+                ["Avg Loss", "--"],
+                ["Total PnL", "--"],
+            ];
+        for (const [label, value] of values) {
+            const item = document.createElement("div");
+            item.className = "execution-lab-metric";
+            const labelEl = document.createElement("div");
+            labelEl.className = "execution-lab-metric-label";
+            labelEl.textContent = label;
+            const valueEl = document.createElement("div");
+            valueEl.className = "execution-lab-metric-value";
+            valueEl.textContent = value;
+            if (label.includes("PnL") || label.includes("Expectancy") || label.includes("Avg")) {
+                const numeric = value.startsWith("+$") ? 1 : value.startsWith("-$") ? -1 : 0;
+                valueEl.classList.toggle("is-positive", numeric > 0);
+                valueEl.classList.toggle("is-negative", numeric < 0);
+            }
+            item.appendChild(labelEl);
+            item.appendChild(valueEl);
+            container.appendChild(item);
+        }
+    }
+
+    private renderPaperMetrics(): void {
+        const dom = this.dom;
+        if (!dom) return;
+        const paperState = this.paperState;
+        this.renderMetricGrid(
+            dom.paperMetrics,
+            paperState ? computeExecutionLabPerformanceMetrics(paperState.closedTrades) : null,
+            paperState
+                ? {
+                    entries: paperState.totalEntries,
+                }
+                : undefined
+        );
+    }
+
+    private renderComparisonMetrics(): void {
+        const dom = this.dom;
+        if (!dom) return;
+        const comparison = this.latestComparison;
+        this.renderMetricGrid(
+            dom.comparisonMetrics,
+            comparison?.metrics ?? null,
+            comparison
+                ? {
+                    entries: comparison.totalEntries,
+                }
+                : undefined
+        );
+    }
+
     private renderIdle(): void {
         const dom = this.dom;
         if (!dom) return;
@@ -858,6 +1250,9 @@ export class ExecutionLabService {
         dom.openPosition.textContent = "--";
         dom.sessionPnl.textContent = "--";
         dom.logPath.textContent = "--";
+        this.renderPaperMetrics();
+        this.renderComparisonMetrics();
+        this.setComparisonStatus("No comparison run.");
         dom.recentTrades.innerHTML = '<div class="execution-lab-empty">No paper trades yet.</div>';
     }
 
@@ -923,6 +1318,7 @@ export class ExecutionLabService {
 
         const realized = this.paperState?.realizedPnlUsd ?? 0;
         dom.sessionPnl.textContent = `realized ${formatMoney(realized)} | entries ${this.paperState?.totalEntries ?? 0} | open ${openPositions.length} | pending ${pendingSettlements.length} | closed ${this.paperState?.totalClosed ?? 0}`;
+        this.renderPaperMetrics();
         this.renderRecentTrades();
     }
 

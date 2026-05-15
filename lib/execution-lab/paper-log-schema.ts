@@ -23,6 +23,14 @@ function isFiniteNumber(value: unknown): value is number {
     return typeof value === "number" && Number.isFinite(value);
 }
 
+function isValidIsoDate(value: string): boolean {
+    return Number.isFinite(Date.parse(value));
+}
+
+function isPriceInRange(value: unknown, min: number): value is number {
+    return isFiniteNumber(value) && value >= min && value <= 1;
+}
+
 export function sanitizeExecutionLabPathPart(value: string): string {
     const normalized = value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
     return normalized || "unknown";
@@ -34,14 +42,16 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
         return { ok: false, error: "invalid recordType" };
     }
     if (!isNonEmptyString(value.sessionId)) return { ok: false, error: "sessionId is required" };
-    if (!isNonEmptyString(value.recordedAtIso)) return { ok: false, error: "recordedAtIso is required" };
+    if (!isNonEmptyString(value.recordedAtIso) || !isValidIsoDate(value.recordedAtIso)) {
+        return { ok: false, error: "recordedAtIso is invalid" };
+    }
     if (!isNonEmptyString(value.symbol)) return { ok: false, error: "symbol is required" };
     if (value.interval !== "1s") return { ok: false, error: "interval must be 1s" };
     if (!isNonEmptyString(value.strategyKey)) return { ok: false, error: "strategyKey is required" };
 
     switch (value.recordType) {
         case "session_start":
-            if (!isFiniteNumber(value.stakeUsd)) return { ok: false, error: "stakeUsd is required" };
+            if (!isFiniteNumber(value.stakeUsd) || value.stakeUsd <= 0) return { ok: false, error: "stakeUsd is required" };
             break;
         case "signal_seen":
             if (!isFiniteNumber(value.signalTimeSec)) return { ok: false, error: "signalTimeSec is required" };
@@ -50,7 +60,7 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
         case "paper_entry":
             if (!isNonEmptyString(value.tradeId)) return { ok: false, error: "tradeId is required" };
             if (value.side !== "yes" && value.side !== "no") return { ok: false, error: "invalid side" };
-            if (!isFiniteNumber(value.entryPrice) || value.entryPrice <= 0) return { ok: false, error: "entryPrice is required" };
+            if (!isPriceInRange(value.entryPrice, 0.000000001)) return { ok: false, error: "entryPrice is required" };
             break;
         case "paper_unfilled":
             if (!isNonEmptyString(value.reason)) return { ok: false, error: "reason is required" };
@@ -68,7 +78,7 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
             ) {
                 return { ok: false, error: "invalid exitReason" };
             }
-            if (!isFiniteNumber(value.exitPrice)) return { ok: false, error: "exitPrice is required" };
+            if (!isPriceInRange(value.exitPrice, 0)) return { ok: false, error: "exitPrice is required" };
             break;
         case "paper_resolution_pending":
             if (!isNonEmptyString(value.tradeId)) return { ok: false, error: "tradeId is required" };

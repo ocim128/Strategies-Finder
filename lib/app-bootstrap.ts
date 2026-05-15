@@ -27,7 +27,6 @@ import { blockSelectorManager } from "./block-selector-manager";
 import { bindFormAccessibility } from "./form-accessibility";
 import { strategyPanelController } from "./strategy-panel-controller";
 import { getOptionalElement } from "./dom-utils";
-import { executionLabService } from "./execution-lab/execution-lab-service";
 import { initCrossSymbolUI } from "./cross-symbol-ui";
 import { setBinanceMarketType, setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
 import { getLocalDailyAsset } from "./local-daily-datasets";
@@ -291,15 +290,9 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         init: () => settingsManager.setupAutoSave(),
     },
     {
-        id: "execution-lab-ui",
-        stage: "post_restore",
-        dependsOn: ["settings-autosave"],
-        init: () => executionLabService.init(),
-    },
-    {
         id: "initial-data-load",
         stage: "post_restore",
-        dependsOn: ["execution-lab-ui"],
+        dependsOn: ["settings-autosave"],
         init: async (context) => {
             if (context.shouldLoadData) {
                 markAppTiming("dataLoadStart");
@@ -347,6 +340,7 @@ function registerLazyFeatures(): void {
     registerLazyFeature("strategy-ensemble", async () => (await import("./strategy-ensemble-service")).strategyEnsembleService.init());
     registerLazyFeature("polymarket-panel", async () => (await import("./polymarket-panel-service")).polymarketPanelService.init());
     registerLazyFeature("second-market-viewer", async () => (await import("./second-market/second-market-viewer-service")).secondMarketViewerService.init());
+    registerLazyFeature("execution-lab", async () => (await import("./execution-lab/execution-lab-service")).executionLabService.init());
     registerLazyFeature("monte-carlo", async () => (await import("./monte-carlo-service")).initMonteCarloService());
     registerLazyFeature("strategy-library-admin", async () => (await import("./strategy-library-admin-service")).strategyLibraryAdminService.init());
 }

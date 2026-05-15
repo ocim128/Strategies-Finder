@@ -997,6 +997,42 @@ describe("Quick View Polymarket streak summary", () => {
         expect(html).to.contain("0 no capital | 1 capped");
     });
 
+    it("labels fixed amount sized bankroll metrics in Quick View", () => {
+        const result = {
+            trades: [makeTrade(1, true)],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            polymarketTradeSummary: {
+                seriesId: "btc-5m",
+                outcomeRowsLoaded: 1,
+                scoredTrades: 1,
+                missingOutcomeTrades: 0,
+                sizedSizingMode: "fixed",
+                sizedNetProfit: 100,
+                sizedNetProfitPercent: 1,
+                sizedTrades: 1,
+            },
+        } satisfies BacktestResult;
+
+        const html = (quickViewManager as any).buildPolymarketSection(result);
+
+        expect(html).to.contain("Alternative Sizing: Fixed Amount");
+        expect(html).to.contain("Sized Net");
+    });
+
     it("formats extreme sized bankroll values compactly in Quick View", () => {
         const html = (quickViewManager as any).buildPolymarketSection({
             trades: [makeTrade(1, true)],

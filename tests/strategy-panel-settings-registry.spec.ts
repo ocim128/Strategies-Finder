@@ -6,11 +6,18 @@ import {
     STRATEGY_PANEL_SETTINGS_SECTIONS,
     getSettingsSectionDefinition,
 } from "./lib/strategy-panel-settings-registry";
+import { BACKTEST_SETTINGS_DOM_IDS } from "./lib/backtest-settings-dom-contract";
 
 function readSettingsSectionIds(partialPath: string): string[] {
     const html = readFileSync(resolve(process.cwd(), partialPath), "utf8");
     const matches = html.matchAll(/data-section="([^"]+)"/g);
     return Array.from(matches, (match) => match[1]);
+}
+
+function readFormControlIds(partialPath: string): string[] {
+    const html = readFileSync(resolve(process.cwd(), partialPath), "utf8");
+    const controlMatches = html.matchAll(/<(?:input|select|textarea)\b[^>]*\bid="([^"]+)"/g);
+    return Array.from(controlMatches, (match) => match[1]);
 }
 
 describe("Strategy panel settings registry", () => {
@@ -38,5 +45,13 @@ describe("Strategy panel settings registry", () => {
             "engine",
             "combiner",
         ]);
+    });
+
+    it("registers every execution settings form control in the backtest settings DOM contract", () => {
+        const contractIds = new Set(BACKTEST_SETTINGS_DOM_IDS);
+        const missing = readFormControlIds("html-partials/tab-settings-section-execution.html")
+            .filter((id) => !contractIds.has(id));
+
+        expect(missing).to.deep.equal([]);
     });
 });
