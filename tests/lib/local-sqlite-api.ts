@@ -2,6 +2,8 @@ import type { OHLCVData } from "./types/index";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 
 const AVAILABILITY_CACHE_MS = 60000;
+const SQLITE_REQUEST_TIMEOUT_MS = 8000;
+const SQLITE_INGEST_TIMEOUT_MS = 180000;
 const OHLCV_BINARY_MAGIC = 0x4F484C56;
 const OHLCV_BINARY_VERSION = 1;
 const OHLCV_BINARY_FIELD_COUNT = 6;
@@ -9,6 +11,7 @@ const OHLCV_BINARY_HEADER_BYTES = 16;
 const OHLCV_BINARY_STORE_MIN_ROWS = 1024;
 let sqliteApiAvailable: boolean | null = null;
 let sqliteApiCheckedAt = 0;
+let sqliteApiAvailabilityCheckPromise: Promise<boolean> | null = null;
 
 type StoreSqliteResponse = {
     ok: boolean;
@@ -49,6 +52,13 @@ function toStoreRow(candle: OHLCVData): { time: number; open: number; high: numb
         close,
         volume: Number.isFinite(volume) ? volume : 0,
     };
+}
+
+function createRequestTimeoutSignal(timeoutMs = SQLITE_REQUEST_TIMEOUT_MS): AbortSignal | undefined {
+    if (typeof AbortSignal === "undefined" || typeof AbortSignal.timeout !== "function") {
+        return undefined;
+    }
+    return AbortSignal.timeout(timeoutMs);
 }
 
 function markSqliteApiUnavailable(): void {
@@ -168,6 +178,7 @@ async function loadSqliteCandlesJson(query: URLSearchParams): Promise<{ candles:
     const response = await fetch(`/api/sqlite/load-ohlcv?${query.toString()}`, {
         method: 'GET',
         headers: { Accept: 'application/json' },
+        signal: createRequestTimeoutSignal(),
     });
     if (!response.ok) {
         handleLoadFailureStatus(response);
@@ -178,18 +189,37 @@ async function loadSqliteCandlesJson(query: URLSearchParams): Promise<{ candles:
 
 async function checkSqliteApiAvailable(force = false): Promise<boolean> {
     const now = Date.now();
-    if (!force && sqliteApiAvailable !== null && now - sqliteApiCheckedAt < AVAILABILITY_CACHE_MS) {
-        return sqliteApiAvailable;
+    const cacheIsFresh = sqliteApiAvailable !== null && now - sqliteApiCheckedAt < AVAILABILITY_CACHE_MS;
+    if (cacheIsFresh && (!force || sqliteApiAvailable === true)) {
+        return sqliteApiAvailable === true;
     }
 
-    try {
-        const response = await fetch('/api/sqlite/status', { method: 'GET' });
-        sqliteApiAvailable = response.ok;
-    } catch {
-        sqliteApiAvailable = false;
+    if (sqliteApiAvailabilityCheckPromise) {
+        return await sqliteApiAvailabilityCheckPromise;
     }
-    sqliteApiCheckedAt = now;
-    return sqliteApiAvailable;
+
+    const availabilityCheck = (async () => {
+        try {
+            const response = await fetch('/api/sqlite/status', {
+                method: 'GET',
+                signal: createRequestTimeoutSignal(),
+            });
+            sqliteApiAvailable = response.ok;
+        } catch {
+            sqliteApiAvailable = false;
+        }
+        sqliteApiCheckedAt = Date.now();
+        return sqliteApiAvailable;
+    })();
+
+    sqliteApiAvailabilityCheckPromise = availabilityCheck;
+    try {
+        return await availabilityCheck;
+    } finally {
+        if (sqliteApiAvailabilityCheckPromise === availabilityCheck) {
+            sqliteApiAvailabilityCheckPromise = null;
+        }
+    }
 }
 
 export async function loadSqliteCandles(
@@ -213,6 +243,7 @@ export async function loadSqliteCandles(
         const response = await fetch(`/api/sqlite/load-ohlcv?${query.toString()}`, {
             method: 'GET',
             headers: { Accept: 'application/octet-stream' },
+            signal: createRequestTimeoutSignal(),
         });
         if (!response.ok) {
             handleLoadFailureStatus(response);
@@ -271,6 +302,7 @@ export async function storeSqliteCandles(
                 source,
                 candles: normalizedRows,
             }),
+            signal: createRequestTimeoutSignal(SQLITE_INGEST_TIMEOUT_MS),
         });
 
         const payload = await response.json() as StoreSqliteResponse;
@@ -291,6 +323,7 @@ export async function storeSqliteCandles(
             method: 'POST',
             headers: { 'Content-Type': 'application/octet-stream' },
             body: encodeBinaryCandles(normalizedRows),
+            signal: createRequestTimeoutSignal(SQLITE_INGEST_TIMEOUT_MS),
         });
         const payload = await response.json().catch(() => null) as StoreSqliteResponse | null;
         if (!response.ok || !payload?.ok) {
@@ -311,4 +344,10 @@ export async function storeSqliteCandles(
         markSqliteApiUnavailable();
         return null;
     }
+}
+
+export function resetLocalSqliteApiAvailabilityForTests(): void {
+    sqliteApiAvailable = null;
+    sqliteApiCheckedAt = 0;
+    sqliteApiAvailabilityCheckPromise = null;
 }

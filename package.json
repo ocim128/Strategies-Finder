@@ -5,6 +5,7 @@
     "test:json": "..\\..\\..\\node_modules\\.bin\\esno scripts\\run-tests.ts --json",
     "test:e2e": "..\\..\\..\\node_modules\\.bin\\esno tests\\e2e.spec.ts",
     "typecheck": "tsc --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
     "genetic:hunt": "..\\..\\..\\node_modules\\.bin\\esno scripts\\genetic-hunt.ts",
     "market:load": "..\\..\\..\\node_modules\\.bin\\esno scripts\\universal-market-loader.ts",
     "alpha:sweep": "..\\..\\..\\node_modules\\.bin\\esno scripts\\alpha-sweep.ts",

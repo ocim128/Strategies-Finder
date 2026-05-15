@@ -46,17 +46,17 @@ export class DataCache {
             }
 
             if (oldestKey) {
-                this.lruCache.delete(oldestKey);
+                this.removeEntry(oldestKey);
             }
         }
     }
 
     delete(key: string): boolean {
-        return this.lruCache.delete(key);
+        return this.removeEntry(key);
     }
 
     invalidate(cacheKey: string): void {
-        this.lruCache.delete(cacheKey);
+        this.removeEntry(cacheKey);
     }
 
     updateCandles(cacheKey: string, candles: OHLCVData[]): void {
@@ -64,5 +64,10 @@ export class DataCache {
         if (entry) {
             entry.candles = candles;
         }
+    }
+
+    private removeEntry(cacheKey: string): boolean {
+        this.cacheSyncAtByKey.delete(cacheKey);
+        return this.lruCache.delete(cacheKey);
     }
 }

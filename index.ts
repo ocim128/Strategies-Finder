@@ -1,4 +1,6 @@
 import { bootstrapApp } from "./lib/app-bootstrap";
+import { debugLogger } from "./lib/debug-logger";
+import { state } from "./lib/state";
 
 void bootstrapApp();
 
@@ -8,13 +10,11 @@ const shouldExposeDebugGlobals =
 
 if (shouldExposeDebugGlobals) {
     void Promise.all([
-        import("./lib/state"),
-        import("./lib/debug-logger"),
         import("./lib/command-palette"),
         import("./lib/scanner"),
-    ]).then(([stateModule, debugModule, commandPaletteModule, scannerModule]) => {
-        (window as any).__state = stateModule.state;
-        (window as any).__debug = debugModule.debugLogger;
+    ]).then(([commandPaletteModule, scannerModule]) => {
+        (window as any).__state = state;
+        (window as any).__debug = debugLogger;
         (window as any).__commandPalette = commandPaletteModule.commandPaletteManager;
         (window as any).__scannerPanel = scannerModule.scannerPanel;
         (window as any).__scannerManager = scannerModule.scannerManager;

@@ -1,0 +1,16 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"types": ["node"],
+		"noEmit": true
+	},
+	"include": [
+		"tests/app-timing.spec.ts",
+		"tests/data-cache.spec.ts",
+		"tests/lazy-feature-init.spec.ts",
+		"tests/local-sqlite-api.spec.ts",
+		"tests/persisted-json.spec.ts",
+		"tests/simple-storage.spec.ts",
+		"tests/statistics-utils.spec.ts"
+	]
+}

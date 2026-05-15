@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
-import { loadSqliteCandles, storeSqliteCandles } from "../lib/local-sqlite-api";
+import { loadSqliteCandles, resetLocalSqliteApiAvailabilityForTests, storeSqliteCandles } from "../lib/local-sqlite-api";
 import type { OHLCVData } from "../lib/types";
 
 const originalFetch = globalThis.fetch;
@@ -52,6 +52,7 @@ function installFetch(handler: (url: string, init?: RequestInit) => Response | P
 
 afterEach(() => {
     globalThis.fetch = originalFetch;
+    resetLocalSqliteApiAvailabilityForTests();
 });
 
 describe("local sqlite api binary transport", () => {
@@ -152,5 +153,48 @@ describe("local sqlite api binary transport", () => {
         assert.equal(storeCalls.length, 2);
         assert.equal((storeCalls[0].init?.headers as Record<string, string>)?.["Content-Type"], "application/octet-stream");
         assert.equal((storeCalls[1].init?.headers as Record<string, string>)?.["Content-Type"], "application/json");
+    });
+
+    it("coalesces concurrent status probes before loading candles", async () => {
+        const calls: FetchCall[] = [];
+        let resolveStatus!: (response: Response) => void;
+        const statusResponse = new Promise<Response>((resolve) => {
+            resolveStatus = resolve;
+        });
+
+        globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = typeof input === "string" ? input : input.toString();
+            calls.push({ url, init });
+            if (url.includes("/api/sqlite/status")) {
+                return await statusResponse;
+            }
+            return new Response(JSON.stringify({
+                ok: true,
+                candles: [
+                    { time: 300, open: 3, high: 4, low: 2, close: 3.5, volume: 30 },
+                ],
+            }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+            });
+        }) as typeof fetch;
+
+        const first = loadSqliteCandles("ethusdt", "1m", 50);
+        const second = loadSqliteCandles("btcusdt", "1m", 50);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        assert.equal(calls.filter((call) => call.url.includes("/api/sqlite/status")).length, 1);
+
+        resolveStatus(new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+        }));
+
+        const [firstResult, secondResult] = await Promise.all([first, second]);
+
+        assert.equal(firstResult?.trusted, true);
+        assert.equal(secondResult?.trusted, true);
+        assert.equal(calls.filter((call) => call.url.includes("/api/sqlite/status")).length, 1);
+        assert.equal(calls.filter((call) => call.url.includes("/api/sqlite/load-ohlcv")).length, 2);
     });
 });

@@ -14,7 +14,6 @@ import { editorManager } from "./editor-manager";
 import { debugLogger } from "./debug-logger";
 import { settingsManager } from "./settings-manager";
 import { injectLayout } from "./layout-manager";
-import { scannerPanel } from "./scanner";
 import { setupGlobalErrorHandlers } from "./handlers/global-error-handlers";
 import { setupStateSubscriptions } from "./handlers/state-subscriptions";
 import { setupEventHandlers } from "./handlers/ui-event-handlers";
@@ -97,6 +96,20 @@ async function restoreSavedSettings(context: AppBootstrapContext): Promise<void>
     }
 
     setCurrentStrategyKey(state.currentStrategyKey);
+}
+
+async function toggleScannerPanel(): Promise<void> {
+    const { scannerPanel } = await import("./scanner");
+    scannerPanel.toggle();
+}
+
+async function hideScannerPanel(): Promise<void> {
+    const { scannerPanel } = await import("./scanner");
+    scannerPanel.hide();
+}
+
+function logScannerLoadError(error: unknown): void {
+    debugLogger.error("scanner.load_failed", { error: error instanceof Error ? error.message : String(error) });
 }
 
 export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapContext>[] = [
@@ -212,7 +225,7 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
             window.addEventListener("keydown", (event) => {
                 if (event.ctrlKey && event.shiftKey && event.key === "S") {
                     event.preventDefault();
-                    scannerPanel.toggle();
+                    void toggleScannerPanel().catch(logScannerLoadError);
                 }
             });
         },
@@ -224,7 +237,7 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         init: () => {
             window.addEventListener("scanner:load-symbol", ((event: CustomEvent<{ symbol: string }>) => {
                 setCurrentSymbol(event.detail.symbol);
-                scannerPanel.hide();
+                void hideScannerPanel().catch(logScannerLoadError);
             }) as EventListener);
         },
     },

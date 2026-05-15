@@ -16,6 +16,28 @@ import {
 } from '../strategy-panel-settings-registry';
 
 const PRESET_STORAGE_KEY = 'playground_settings_preset';
+const VALID_PRESETS = ['simple', 'standard', 'advanced'] as const;
+
+function isSettingsPresetMode(value: string | null | undefined): value is SettingsPresetMode {
+    return !!value && VALID_PRESETS.includes(value as SettingsPresetMode);
+}
+
+function readSavedPreset(): SettingsPresetMode | null {
+    try {
+        const preset = localStorage.getItem(PRESET_STORAGE_KEY);
+        return isSettingsPresetMode(preset) ? preset : null;
+    } catch {
+        return null;
+    }
+}
+
+function writeSavedPreset(preset: SettingsPresetMode): void {
+    try {
+        localStorage.setItem(PRESET_STORAGE_KEY, preset);
+    } catch {
+        // Storage can be unavailable in private browsing or embedded contexts.
+    }
+}
 
 function applyAccordionState(header: HTMLElement, body: HTMLElement): void {
     const expanded = !header.classList.contains('collapsed');
@@ -102,10 +124,7 @@ function initPresets(): void {
     const presetBar = document.getElementById('settingsPresetBar');
     if (!settingsTab || !presetBar) return;
 
-    const savedPreset = localStorage.getItem(PRESET_STORAGE_KEY) as SettingsPresetMode | null;
-    const initialPreset: SettingsPresetMode = savedPreset && ['simple', 'standard', 'advanced'].includes(savedPreset)
-        ? savedPreset
-        : 'standard';
+    const initialPreset: SettingsPresetMode = readSavedPreset() ?? 'standard';
 
     applyPreset(initialPreset, settingsTab, presetBar);
 
@@ -113,11 +132,11 @@ function initPresets(): void {
         const button = (event.target as HTMLElement).closest<HTMLElement>('.settings-preset-btn');
         if (!button) return;
 
-        const preset = button.dataset.preset as SettingsPresetMode;
-        if (!preset) return;
+        const preset = button.dataset.preset;
+        if (!isSettingsPresetMode(preset)) return;
 
         applyPreset(preset, settingsTab, presetBar);
-        localStorage.setItem(PRESET_STORAGE_KEY, preset);
+        writeSavedPreset(preset);
         debugLogger.event('ui.settings.preset', { preset });
     });
 }

@@ -1157,12 +1157,15 @@ function localSqlitePlugin(): Plugin {
             try {
                 if (method === 'GET' && path === '/status') {
                     const db = getSqliteDb();
-                    const total = db.prepare('SELECT COUNT(*) AS count FROM candles').get() as { count?: number };
-                    sendJson(res, 200, {
+                    const payload: { ok: true; dbPath: string; totalCandles?: number } = {
                         ok: true,
                         dbPath: SQLITE_DB_PATH,
-                        totalCandles: Number(total.count) || 0,
-                    });
+                    };
+                    if (requestUrl.searchParams.get('includeCount') === '1') {
+                        const total = db.prepare('SELECT COUNT(*) AS count FROM candles').get() as { count?: number };
+                        payload.totalCandles = Number(total.count) || 0;
+                    }
+                    sendJson(res, 200, payload);
                     return;
                 }
 

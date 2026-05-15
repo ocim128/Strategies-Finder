@@ -12,6 +12,7 @@ type TestRunResult = {
     durationMs: number;
     exitCode: number | null;
     signal: NodeJS.Signals | null;
+    timedOut: boolean;
     logFile: string;
     stdout: string;
     stderr: string;
@@ -26,6 +27,7 @@ type TestRunSummary = {
     passedCount: number;
     failedCount: number;
     durationMs: number;
+    timeoutMs: number;
     verbose: boolean;
     filters: string[];
     logsDir: string;
@@ -35,11 +37,13 @@ type TestRunSummary = {
         durationMs: number;
         exitCode: number | null;
         signal: NodeJS.Signals | null;
+        timedOut: boolean;
         logFile: string;
     }>;
 };
 
 const MAX_CAPTURE_BUFFER_BYTES = 64 * 1024 * 1024;
+const DEFAULT_TEST_TIMEOUT_MS = 120000;
 const FAILURE_TAIL_LINE_COUNT = 8;
 const FAILURE_LINE_WIDTH = 180;
 const TESTS_DIR_NAME = "tests";
@@ -61,6 +65,7 @@ function printUsage(): void {
         "  npm run test",
         "  npm run test -- <filter>",
         "  npm run test -- --jobs=4",
+        "  npm run test -- --timeoutMs=120000",
         "  npm run test -- --runInBand",
         "  npm run test:verbose",
         "  npm run test:json",
@@ -71,6 +76,7 @@ function printUsage(): void {
         "  - Full per-spec logs are written to `artifacts/test-logs/latest`.",
         "  - Pass one or more filters to run a subset by path fragment or filename.",
         "  - Use --runInBand for serial execution or --jobs=<n> for bounded parallelism.",
+        "  - Use --timeoutMs=<n> to terminate a hung spec after a bounded time.",
         "",
         "Examples:",
         "  npm run test -- backtesting-engine",
@@ -172,6 +178,14 @@ function parseExplicitJobCount(raw: string | undefined): number {
     return Math.floor(parsed);
 }
 
+function parseTimeoutMs(raw: string | undefined): number {
+    const parsed = Number(raw);
+    if (!raw || !Number.isFinite(parsed) || parsed < 1000) {
+        throw new Error("--timeoutMs requires a numeric value of at least 1000.");
+    }
+    return Math.floor(parsed);
+}
+
 function isEnabledEnvFlag(value: string | undefined): boolean {
     if (value === undefined) return false;
     return value === "true" || value === "1";
@@ -223,12 +237,13 @@ function printTestResult(result: TestRunResult, outputMode: OutputMode): void {
     }
 }
 
-async function runSingleTest(file: string): Promise<TestRunResult> {
+async function runSingleTest(file: string, timeoutMs: number): Promise<TestRunResult> {
     const startedAt = Date.now();
     let stdout = "";
     let stderr = "";
     let capturedBytes = 0;
     let outputTruncated = false;
+    let timedOut = false;
     let spawnError: unknown = null;
 
     const child = spawn(process.execPath, [esnoCliPath, file], {
@@ -261,8 +276,15 @@ async function runSingleTest(file: string): Promise<TestRunResult> {
         spawnError = error;
     });
 
+    const timeoutId = setTimeout(() => {
+        timedOut = true;
+        stderr += `\n[runner-error]\nTest exceeded ${timeoutMs}ms and was terminated.\n`;
+        child.kill();
+    }, timeoutMs);
+
     const { exitCode, signal } = await new Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>((resolve) => {
         child.on("close", (code, closeSignal) => {
+            clearTimeout(timeoutId);
             resolve({ exitCode: code, signal: closeSignal });
         });
     });
@@ -272,13 +294,18 @@ async function runSingleTest(file: string): Promise<TestRunResult> {
         ? `\n[runner-error]\n${spawnError instanceof Error ? String(spawnError.stack || spawnError.message) : String(spawnError)}\n`
         : "";
     stderr = `${stderr}${runErrorText}`;
-    const status: TestRunStatus = exitCode === 0 && !spawnError && !outputTruncated ? "PASS" : "FAIL";
+    const status: TestRunStatus = exitCode === 0 && !spawnError && !outputTruncated && !timedOut ? "PASS" : "FAIL";
     const logFile = writeTestLog(file, stdout, stderr);
 
-    return { file, status, durationMs, exitCode, signal, logFile, stdout, stderr };
+    return { file, status, durationMs, exitCode, signal, timedOut, logFile, stdout, stderr };
 }
 
-async function runTestsInPool(selectedTests: readonly string[], jobs: number): Promise<TestRunResult[]> {
+async function runTestsInPool(
+    selectedTests: readonly string[],
+    jobs: number,
+    timeoutMs: number,
+    onResult?: (result: TestRunResult) => void
+): Promise<TestRunResult[]> {
     const results: TestRunResult[] = new Array(selectedTests.length);
     let nextIndex = 0;
     const workerCount = Math.max(1, Math.min(jobs, selectedTests.length));
@@ -287,7 +314,9 @@ async function runTestsInPool(selectedTests: readonly string[], jobs: number): P
         while (nextIndex < selectedTests.length) {
             const index = nextIndex;
             nextIndex += 1;
-            results[index] = await runSingleTest(selectedTests[index]);
+            const result = await runSingleTest(selectedTests[index], timeoutMs);
+            results[index] = result;
+            onResult?.(result);
         }
     }));
 
@@ -307,13 +336,26 @@ async function main(): Promise<void> {
     let runInBand = isEnabledEnvFlag(process.env.npm_config_runinband)
         || isEnabledEnvFlag(process.env.npm_config_run_in_band);
     let requestedJobs: number | null = null;
+    let timeoutMs = DEFAULT_TEST_TIMEOUT_MS;
     let expectNpmJobsValue = false;
+    let expectNpmTimeoutValue = false;
     if (process.env.npm_config_jobs) {
         if (process.env.npm_config_jobs === "true") {
             expectNpmJobsValue = true;
         } else {
             requestedJobs = parseExplicitJobCount(process.env.npm_config_jobs);
         }
+    }
+    const npmTimeout = process.env.npm_config_timeoutms ?? process.env.npm_config_timeout_ms;
+    if (npmTimeout) {
+        if (npmTimeout === "true") {
+            expectNpmTimeoutValue = true;
+        } else {
+            timeoutMs = parseTimeoutMs(npmTimeout);
+        }
+    }
+    if (process.env.TEST_TIMEOUT_MS) {
+        timeoutMs = parseTimeoutMs(process.env.TEST_TIMEOUT_MS);
     }
     const filters: string[] = [];
 
@@ -322,6 +364,11 @@ async function main(): Promise<void> {
         if (expectNpmJobsValue) {
             requestedJobs = parseExplicitJobCount(arg);
             expectNpmJobsValue = false;
+            continue;
+        }
+        if (expectNpmTimeoutValue) {
+            timeoutMs = parseTimeoutMs(arg);
+            expectNpmTimeoutValue = false;
             continue;
         }
         if (arg === "--verbose") {
@@ -345,6 +392,19 @@ async function main(): Promise<void> {
             requestedJobs = parseExplicitJobCount(arg.slice("--jobs=".length));
             continue;
         }
+        if (arg === "--timeoutMs" || arg === "--timeout") {
+            timeoutMs = parseTimeoutMs(args[index + 1]);
+            index += 1;
+            continue;
+        }
+        if (arg.startsWith("--timeoutMs=")) {
+            timeoutMs = parseTimeoutMs(arg.slice("--timeoutMs=".length));
+            continue;
+        }
+        if (arg.startsWith("--timeout=")) {
+            timeoutMs = parseTimeoutMs(arg.slice("--timeout=".length));
+            continue;
+        }
         if (arg === "--help" || arg === "-h") {
             printUsage();
             process.exit(0);
@@ -353,6 +413,9 @@ async function main(): Promise<void> {
     }
     if (expectNpmJobsValue) {
         throw new Error("--jobs requires a positive numeric value.");
+    }
+    if (expectNpmTimeoutValue) {
+        throw new Error("--timeoutMs requires a numeric value of at least 1000.");
     }
 
     const testFiles = discoverTestFiles();
@@ -368,12 +431,10 @@ async function main(): Promise<void> {
     const startedAt = Date.now();
     const outputMode: OutputMode = json ? "silent" : verbose ? "verbose" : "compact";
     const jobs = runInBand ? 1 : requestedJobs ?? resolveDefaultJobCount();
-    const results = await runTestsInPool(selectedTests, jobs);
-    const durationMs = Date.now() - startedAt;
-
-    for (const result of results) {
+    const results = await runTestsInPool(selectedTests, jobs, timeoutMs, (result) => {
         printTestResult(result, outputMode);
-    }
+    });
+    const durationMs = Date.now() - startedAt;
 
     const passedCount = results.filter((result) => result.status === "PASS").length;
     const failedCount = results.length - passedCount;
@@ -384,6 +445,7 @@ async function main(): Promise<void> {
         passedCount,
         failedCount,
         durationMs,
+        timeoutMs,
         verbose,
         filters,
         logsDir: latestLogsDir,
@@ -393,6 +455,7 @@ async function main(): Promise<void> {
             durationMs: result.durationMs,
             exitCode: result.exitCode,
             signal: result.signal,
+            timedOut: result.timedOut,
             logFile: result.logFile,
         })),
     };
@@ -408,6 +471,7 @@ async function main(): Promise<void> {
         console.log(`Logs: ${latestLogsDir}`);
         console.log(`Summary JSON: ${summaryPath}`);
         console.log(`Jobs: ${jobs}`);
+        console.log(`Timeout: ${timeoutMs}ms`);
         if (filters.length > 0) {
             console.log(`Filters: ${filters.join(", ")}`);
         }
@@ -417,7 +481,7 @@ async function main(): Promise<void> {
 }
 
 void main().catch((error: unknown) => {
-    if (error instanceof Error && error.message.startsWith("--jobs")) {
+    if (error instanceof Error && (error.message.startsWith("--jobs") || error.message.startsWith("--timeout"))) {
         console.error(`Error: ${error.message}`);
         process.exit(1);
     }

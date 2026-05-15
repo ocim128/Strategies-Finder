@@ -83,6 +83,13 @@ export interface StrategyRegistry {
 
 const builtInStrategyKeys = new Set<string>();
 
+function logRegistryInfo(message: string): void {
+    const env = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env;
+    if (env?.DEV === true) {
+        console.log(message);
+    }
+}
+
 // ============================================================================
 // Strategy Registry Implementation
 // ============================================================================
@@ -238,7 +245,7 @@ class StrategyRegistryImpl implements StrategyRegistry {
         const wrappedStrategy = this.wrapStrategyWithGlobalTimeframe(strategy);
         this.strategies.set(key, wrappedStrategy);
 
-        console.log(`[StrategyRegistry] ${isUpdate ? 'Updated' : 'Registered'}: ${key} - "${strategy.name}"`);
+        logRegistryInfo(`[StrategyRegistry] ${isUpdate ? 'Updated' : 'Registered'}: ${key} - "${strategy.name}"`);
 
         this.emit({
             type: isUpdate ? 'update' : 'register',
@@ -251,7 +258,7 @@ class StrategyRegistryImpl implements StrategyRegistry {
         const existed = this.strategies.delete(key);
 
         if (existed) {
-            console.log(`[StrategyRegistry] Unregistered: ${key}`);
+            logRegistryInfo(`[StrategyRegistry] Unregistered: ${key}`);
             this.emit({ type: 'unregister', strategyKey: key });
         }
 
@@ -276,7 +283,7 @@ class StrategyRegistryImpl implements StrategyRegistry {
 
     clear(): void {
         this.strategies.clear();
-        console.log('[StrategyRegistry] Cleared all strategies');
+        logRegistryInfo('[StrategyRegistry] Cleared all strategies');
         this.emit({ type: 'clear' });
     }
 
@@ -321,7 +328,7 @@ export async function loadBuiltInStrategies(keys?: string[]): Promise<void> {
             loadedCount++;
         }
     }
-    console.log(`[StrategyRegistry] Loaded ${loadedCount} built-in strategies`);
+    logRegistryInfo(`[StrategyRegistry] Loaded ${loadedCount} built-in strategies`);
 }
 
 export async function loadBuiltInStrategyByKey(key: string): Promise<Strategy | undefined> {
@@ -359,14 +366,14 @@ export async function ensureStrategyKeysLoaded(keys: Iterable<string>): Promise<
 if (import.meta.hot) {
     // Accept loader updates and reload currently registered built-ins.
     import.meta.hot.accept("./lib/strategies/manifest-loaders", async () => {
-        console.log('[HMR] Strategy loaders updated, reloading...');
+        logRegistryInfo('[HMR] Strategy loaders updated, reloading...');
 
         const loadedBuiltInKeys = strategyRegistry.keys().filter((key) => builtInStrategyKeys.has(key));
         strategyRegistry.clear();
         builtInStrategyKeys.clear();
         await loadBuiltInStrategies(loadedBuiltInKeys);
 
-        console.log('[HMR] Strategies reloaded successfully');
+        logRegistryInfo('[HMR] Strategies reloaded successfully');
     });
 
     // Also accept updates to this file itself
@@ -448,7 +455,7 @@ export function saveCustomStrategiesToStorage(configs: CustomStrategyConfig[]): 
         },
     });
     if (saved) {
-        console.log(`[StrategyRegistry] Saved ${configs.length} custom strategies to localStorage`);
+        logRegistryInfo(`[StrategyRegistry] Saved ${configs.length} custom strategies to localStorage`);
     }
 }
 
@@ -462,7 +469,7 @@ export function loadCustomStrategiesFromStorage(): CustomStrategyConfig[] {
         },
     });
     if (configs.length > 0) {
-        console.log(`[StrategyRegistry] Loaded ${configs.length} custom strategies from localStorage`);
+        logRegistryInfo(`[StrategyRegistry] Loaded ${configs.length} custom strategies from localStorage`);
     }
     return configs;
 }
