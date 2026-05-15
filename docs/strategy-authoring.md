@@ -11,7 +11,7 @@ Finder, Walk Forward, the base UI, and the worker-facing library must all observ
 That means:
 - the file lives in `lib/strategies/lib/<strategy-key>.ts`
 - the exported const is the strategy key
-- `lib/strategies/manifest.ts` is regenerated from the strategy files
+- generated strategy catalog files under `lib/strategies/manifest*.ts` are regenerated from the strategy files
 - `normalizeParams(...)` exposes the same canonical parameter semantics that `execute(...)` actually uses
 
 If a strategy silently clamps, rounds, or flips a parameter inside `execute(...)` but does not expose that through `normalizeParams(...)`, the UI and optimization layers drift.

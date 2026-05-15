@@ -10,30 +10,38 @@ export class ParamManager {
 
     private getParamInput(key: string): HTMLInputElement | HTMLSelectElement | null {
         const container = this.getParamContainer();
-        return container.querySelector(`#param_${key}`) as HTMLInputElement | HTMLSelectElement | null;
+        return Array.from(container.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-param]'))
+            .find((input) => input.dataset.param === key) ?? null;
     }
 
     public render(strategy: Strategy) {
         const container = this.getParamContainer();
-        let html = '';
         const paramKeys = Object.keys(strategy.defaultParams);
+        const fragment = document.createDocumentFragment();
 
         for (let i = 0; i < paramKeys.length; i += 2) {
-            html += '<div class="param-row">';
+            const row = document.createElement('div');
+            row.className = 'param-row';
             for (let j = i; j < Math.min(i + 2, paramKeys.length); j++) {
                 const key = paramKeys[j];
                 const value = strategy.defaultParams[key];
                 const label = strategy.paramLabels[key] || key;
-                html += `
-					<div class="param-group" id="param_group_${key}">
-						<label class="param-label" id="param_label_${key}" for="param_${key}">${label}</label>
-						${this.renderParamInput(key, value)}
-					</div>
-				`;
+                const group = document.createElement('div');
+                group.className = 'param-group';
+                group.id = `param_group_${key}`;
+
+                const labelEl = document.createElement('label');
+                labelEl.className = 'param-label';
+                labelEl.id = `param_label_${key}`;
+                labelEl.htmlFor = `param_${key}`;
+                labelEl.textContent = label;
+
+                group.append(labelEl, this.renderParamInput(key, value));
+                row.appendChild(group);
             }
-            html += '</div>';
+            fragment.appendChild(row);
         }
-        container.innerHTML = html;
+        container.replaceChildren(fragment);
         bindFormAccessibility(container);
     }
 
@@ -82,8 +90,14 @@ export class ParamManager {
         }
     }
 
-    private renderParamInput(key: string, value: number): string {
-        return `<input type="number" class="param-input" id="param_${key}" value="${value}" data-param="${key}">`;
+    private renderParamInput(key: string, value: number): HTMLInputElement {
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.className = 'param-input';
+        input.id = `param_${key}`;
+        input.value = String(value);
+        input.dataset.param = key;
+        return input;
     }
 }
 

@@ -6,7 +6,7 @@ import {
 import { extractAdvancedSizingRaw, writeAdvancedSizingIntoRecord } from "./advanced-sizing-settings";
 import { toBooleanLike, toFiniteNumber } from "./settings-parse-utils";
 import { resolveTakeProfitMode } from "./take-profit-settings";
-import { strategies } from "./strategies/library";
+import { builtInStrategyMeta } from "./strategies/manifest-meta";
 import type { BacktestSettings, TradeDirection } from "./types/strategies";
 import { isTradeSizingMode } from "./types/backtest";
 
@@ -29,9 +29,9 @@ export interface WorkerStrategySupportSnapshot {
 }
 
 export function getWorkerSupportedStrategyKeys(): string[] {
-    return Object.entries(strategies)
-        .filter(([, s]) => !s.crossSymbolConfig && !s.polymarket1sConfig)
-        .map(([key]) => key)
+    return builtInStrategyMeta
+        .filter((strategy) => !strategy.crossSymbolConfig && !strategy.polymarket1sConfig)
+        .map((strategy) => strategy.key)
         .sort((a, b) => a.localeCompare(b));
 }
 
@@ -51,7 +51,7 @@ export function getWorkerStrategySupportSnapshot(): WorkerStrategySupportSnapsho
 export function isWorkerSupportedStrategyKey(strategyKey: string): boolean {
     const key = strategyKey.trim();
     if (key.length === 0) return false;
-    const strategy = strategies[key];
+    const strategy = builtInStrategyMeta.find((entry) => entry.key === key);
     if (!strategy) return false;
     return !strategy.crossSymbolConfig && !strategy.polymarket1sConfig;
 }

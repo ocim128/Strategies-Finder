@@ -16,7 +16,7 @@ import type { StrategyExecutionContext } from "../types/strategies";
 import { rustEngine } from "../rust-engine-client";
 import { shouldUseRustEngine } from "../engine-preferences";
 import { debugLogger } from "../debug-logger";
-import { strategies as builtInStrategies } from "../strategies/library";
+import { isBuiltInKey } from "../strategies/built-in-catalog";
 import { isCrossSymbolStrategy, resolveCrossSymbolExecution } from "../cross-symbol-runtime";
 
 import { calculateSharpeRatioFromEquityCurve, calculateSharpeRatioFromReturns } from "../strategies/performance-metrics";
@@ -30,7 +30,10 @@ import type { CapitalSettings } from "../types/backtest";
 import { trimToClosedCandles } from "../closed-candle-utils";
 import { selectExecutionAwareClosedCandles } from "../alert-evaluation-window";
 import { mergeStrategySignals } from "../signal-merge";
-import { applyConfirmationStrategiesToSignals } from "../confirmation-signal-filter";
+import {
+    applyConfirmationStrategiesToSignals,
+    ensureConfirmationStrategiesLoaded,
+} from "../confirmation-signal-filter";
 import { runGeneticOptimization } from "./genetic-optimizer";
 import {
     attachTradeTimingQuality,
@@ -215,6 +218,7 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
     } = input;
 
     const rustSettings = sanitizeBacktestSettingsForRust(settings);
+    await ensureConfirmationStrategiesLoaded(settings);
     const runTimeframes = input.getFinderTimeframesForRun(options);
     const usingMultiTimeframe = options.multiTimeframeEnabled === true;
 
@@ -418,6 +422,7 @@ async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<Finde
                         primaryConfig.backtestSettings,
                         { coerceWithoutUiToggles: true }
                     );
+                    await ensureConfirmationStrategiesLoaded(primarySettings);
                     for (const dataset of activeDatasets) {
                         const primarySigs = applyConfirmationStrategiesToSignals({
                             data: dataset.data,
@@ -1077,7 +1082,7 @@ async function resolveFinderEngineDecision(args: {
         !input.options.multiTimeframeEnabled &&
         rustHealthy &&
         input.selectedStrategies.length === 1 &&
-        Object.prototype.hasOwnProperty.call(builtInStrategies, input.selectedStrategies[0]?.key ?? "");
+        isBuiltInKey(input.selectedStrategies[0]?.key ?? "");
 
     if (!comboActive && input.requiresTsEngine && !rustHealthy) {
         debugLogger.info("[Finder] TypeScript-only sizing or realism settings enabled - forcing TypeScript engine.");

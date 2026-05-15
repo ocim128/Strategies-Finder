@@ -69,8 +69,9 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 
 ### Strategy and backtest engine
 - Strategy registry and loading: `strategyRegistry.ts`
-- Built-in source of truth: `lib/strategies/lib/*`, with `lib/strategies/manifest.ts` generated from those files
-- Worker-facing built-in library: `lib/strategies/library.ts`
+- Built-in source of truth: `lib/strategies/lib/*`, with generated metadata/loaders/eager manifests under `lib/strategies/manifest*.ts`
+- Browser built-in loading: metadata and per-key loaders from `lib/strategies/manifest-meta.ts` and `lib/strategies/manifest-loaders.ts`
+- Worker/test eager built-in library: `lib/strategies/library.ts`
 - Backtest orchestration/UI: `lib/backtest-service.ts`
 - Backtest run feedback presenter: `lib/backtest-run-presenter.ts`
 - TS engine: `lib/strategies/backtest/*`
@@ -119,7 +120,7 @@ flowchart LR
     F --> G[chart-manager]
     F --> H[backtest-service]
 
-    H --> I[strategyRegistry + manifest]
+    H --> I[strategyRegistry + manifest metadata/loaders]
     I --> J[TS / Rust backtest engine]
     J --> K[resultsRenderer]
     J --> L[tradesRenderer]
@@ -139,7 +140,7 @@ flowchart LR
 ## How It Boots
 1. `index.ts` delegates startup to `lib/app-bootstrap.ts`.
 2. The bootstrap registry injects the runtime HTML layout from `html-partials/*`.
-3. Built-in and saved custom strategies are loaded, then the chart layer and feature managers are initialized in dependency order.
+3. Strategy metadata and saved custom strategies are loaded, with built-in strategy code loaded on demand; then the chart layer and feature managers are initialized in dependency order.
 4. Saved settings are restored and applied back into UI state and feature state.
 5. Initial market data is loaded, after which reactive state updates drive chart, backtest, and renderer refreshes.
 
@@ -170,8 +171,9 @@ This ordering matters because Finder, Scanner, and repeated backtests depend on 
 
 ### Strategy registration is split
 - UI and runtime loading use `strategyRegistry`
-- Built-in source of truth is `lib/strategies/lib/*`, with `lib/strategies/manifest.ts` generated from those files
-- `lib/strategies/library.ts` is derived from that manifest and is what worker-side evaluation imports
+- Built-in source of truth is `lib/strategies/lib/*`, with generated metadata, loader, key, and eager manifest files under `lib/strategies/manifest*.ts`
+- Browser UI listing uses `manifest-meta.ts`; browser strategy execution loads code through `manifest-loaders.ts`
+- `lib/strategies/library.ts` uses the eager manifest and is what worker-side evaluation imports
 
 If you add or rename a built-in strategy, run `npm run strategies:sync-manifest` or the strategy will not load consistently.
 
@@ -340,12 +342,14 @@ npm run test
 npm run test:e2e
 ```
 
-`npm run test` now uses a compact wrapper that prints one status line per spec and a short summary. Full per-spec logs are written to `artifacts/test-logs/latest`, and `artifacts/test-logs/latest/summary.json` contains the machine-readable summary for agent or tooling use.
+`npm run test` uses a compact wrapper that discovers `tests/**/*.spec.ts`, excludes `tests/e2e.spec.ts`, prints one status line per spec, and writes full per-spec logs to `artifacts/test-logs/latest`. `artifacts/test-logs/latest/summary.json` contains the machine-readable summary for agent or tooling use.
 
 Useful variants:
 ```bash
 npm run test:verbose
 npm run test:json
+npm run test -- --runInBand
+npm run test -- --jobs=4
 npm run test -- backtesting-engine
 ```
 

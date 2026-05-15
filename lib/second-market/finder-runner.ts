@@ -3,7 +3,10 @@ import {
     precomputeIndicators,
     runBacktest,
 } from "../strategies/index";
-import { applyConfirmationStrategiesToSignals } from "../confirmation-signal-filter";
+import {
+    applyConfirmationStrategiesToSignals,
+    ensureConfirmationStrategiesLoaded,
+} from "../confirmation-signal-filter";
 import type { BacktestResult, OHLCVData, StrategyExecutionContext } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 import type { FinderResult } from "../types/finder";
@@ -111,6 +114,7 @@ export async function runSecondMarketFinder(
     callbacks: FinderRunCallbacks
 ): Promise<FinderRunOutput> {
     const { options, settings, selectedStrategies } = input;
+    await ensureConfirmationStrategiesLoaded(settings);
     const rustSettings = sanitizeBacktestSettingsForRust(settings);
 
     if (options.multiTimeframeEnabled) {

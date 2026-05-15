@@ -10,7 +10,10 @@ import type { TradeSizingMode } from '../types/backtest';
 import type { WalkForwardDecayMonitoring } from './walk-forward-decay';
 import { withWalkForwardDecayMonitoring } from './walk-forward-decay';
 import { debugLogger } from '../debug-logger';
-import { applyConfirmationStrategiesToSignals } from '../confirmation-signal-filter';
+import {
+    applyConfirmationStrategiesToSignals,
+    ensureConfirmationStrategiesLoaded,
+} from '../confirmation-signal-filter';
 
 // ============================================================================
 // Walk-Forward Analysis (WFA) Module
@@ -781,6 +784,7 @@ export async function runWalkForwardAnalysis(
 ): Promise<WalkForwardResult> {
     const startTime = performance.now();
     let lastYieldTime = startTime;
+    await ensureConfirmationStrategiesLoaded(backtestSettings);
 
     // Clean input data to prevent crashes on undefined elements
     data = ensureCleanData(data);
@@ -1169,6 +1173,7 @@ export async function runFixedParamWalkForward(
 ): Promise<WalkForwardResult> {
     const startTime = performance.now();
     let lastYieldTime = startTime;
+    await ensureConfirmationStrategiesLoaded(backtestSettings);
 
     // Clean input data
     data = ensureCleanData(data);

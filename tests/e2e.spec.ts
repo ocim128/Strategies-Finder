@@ -1,10 +1,23 @@
 import puppeteer, { Page } from 'puppeteer';
-import { spawn } from 'child_process';
+import { spawn, spawnSync, type ChildProcess } from 'child_process';
 
 // Helper to wait
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 console.log('Script starting...');
+
+function stopProcessTree(child: ChildProcess): void {
+    if (!child.pid) return;
+    if (process.platform === 'win32') {
+        spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+        return;
+    }
+    try {
+        child.kill('SIGTERM');
+    } catch {
+        // ignore cleanup errors
+    }
+}
 
 type DebugEntry = {
     ts: number;
@@ -183,7 +196,7 @@ async function runTest() {
             if (Date.now() - startTime > 30000) {
                 console.error('Timeout waiting for Vite server to start.');
                 console.error('Full Buffer:', outputBuffer);
-                viteProcess.kill();
+                stopProcessTree(viteProcess);
                 throw new Error('Timeout waiting for Vite');
             }
             if (viteProcess.exitCode !== null) {
@@ -395,25 +408,15 @@ async function runTest() {
             console.log('Screenshot saved to e2e-success.png');
             console.log('E2E Test Passed Successfully!');
 
-            // Mark as shutting down before cleanup
-            isShuttingDown = true;
-
         } catch (error) {
             throw error;
         } finally {
+            isShuttingDown = true;
             if (browser) {
                 await browser.close();
             }
             console.log('Stopping Vite server...');
-            // On Windows, killing the spawned shell might not kill the child node process.
-            // Using taskkill is often more reliable
-            try {
-                process.kill(viteProcess.pid!, 'SIGTERM');
-            } catch (e) {
-                // ignore
-            }
-            // Force kill if needed
-            viteProcess.kill();
+            stopProcessTree(viteProcess);
         }
 
         // Explicitly exit with success code

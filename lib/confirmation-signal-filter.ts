@@ -1,6 +1,9 @@
 import { mergeStrategySignals } from "./signal-merge";
 import { applySignalPolarity } from "./strategies/backtest/backtest-utils";
-import { strategies as builtInStrategies } from "./strategies/library";
+import {
+    ensureBuiltInStrategiesLoaded,
+    getLoadedBuiltInStrategy,
+} from "./strategies/built-in-catalog";
 import type { BacktestSettings, OHLCVData, Signal, Strategy, StrategyParams } from "./types/strategies";
 
 type ConfirmationSignalExecutor = (
@@ -11,7 +14,7 @@ type ConfirmationSignalExecutor = (
 
 const defaultConfirmationSignalCache = new WeakMap<OHLCVData[], Map<string, Signal[]>>();
 
-function readConfirmationStrategyKeys(value: unknown): string[] {
+export function readConfirmationStrategyKeys(value: unknown): string[] {
     if (!Array.isArray(value)) return [];
     const keys: string[] = [];
     const seen = new Set<string>();
@@ -23,6 +26,10 @@ function readConfirmationStrategyKeys(value: unknown): string[] {
         keys.push(key);
     }
     return keys;
+}
+
+export async function ensureConfirmationStrategiesLoaded(settings: { confirmationStrategies?: unknown } | null | undefined): Promise<void> {
+    await ensureBuiltInStrategiesLoaded(readConfirmationStrategyKeys(settings?.confirmationStrategies));
 }
 
 function cacheKeyForConfirmation(
@@ -62,6 +69,7 @@ export function applyConfirmationStrategiesToSignals(args: {
     data: OHLCVData[];
     baseSignals: Signal[];
     settings: BacktestSettings;
+    resolveStrategy?: (key: string) => Strategy | undefined;
     executeStrategy?: ConfirmationSignalExecutor;
 }): Signal[] {
     const keys = readConfirmationStrategyKeys(args.settings.confirmationStrategies);
@@ -71,7 +79,7 @@ export function applyConfirmationStrategiesToSignals(args: {
     let mergedSignals = args.baseSignals;
 
     for (const key of keys) {
-        const strategy = builtInStrategies[key];
+        const strategy = args.resolveStrategy?.(key) ?? getLoadedBuiltInStrategy(key);
         if (!strategy) return [];
         if (strategy.crossSymbolConfig || strategy.polymarket1sConfig) return [];
 

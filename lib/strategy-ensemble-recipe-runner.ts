@@ -1,5 +1,6 @@
 import { ensureStrategyKeysLoaded, strategyRegistry } from "../strategyRegistry";
 import { backtestService } from "./backtest-service";
+import { ensureConfirmationStrategiesLoaded } from "./confirmation-signal-filter";
 import { buildPreparedSignalsForEnsembleRecipe } from "./ensemble-signal-recipes";
 import {
     settingsManager,
@@ -144,6 +145,10 @@ export class StrategyEnsembleRecipeRunner {
             ...recipe.componentConfigs.map((config) => config.strategyKey),
         ];
         await ensureStrategyKeysLoaded(strategyKeys);
+        await Promise.all([
+            recipe.anchorConfig,
+            ...recipe.componentConfigs,
+        ].map((config) => ensureConfirmationStrategiesLoaded(config.backtestSettings)));
     }
 
     private async loadConflictFilterRecipePreview(

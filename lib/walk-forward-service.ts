@@ -7,7 +7,10 @@ import { backtestService } from "./backtest-service";
 import { rustEngine } from "./rust-engine-client";
 import { shouldUseRustEngine } from "./engine-preferences";
 import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
-import { applyConfirmationStrategiesToSignals } from "./confirmation-signal-filter";
+import {
+    applyConfirmationStrategiesToSignals,
+    ensureConfirmationStrategiesLoaded,
+} from "./confirmation-signal-filter";
 import { applySignalPolarity, runBacktestCompact } from "./strategies/backtest";
 import { parseInputNumber } from "./dom-input-readers";
 import type { Strategy, StrategyParams, BacktestSettings, OHLCVData, BacktestResult } from "./strategies/index";
@@ -426,6 +429,7 @@ class WalkForwardService {
         return this.withRunGuard("analysis", "No data loaded for walk-forward analysis", async ({ signal, data, strategyKey, strategy, crossSymbolCtx }) => {
             const capitalSettings = backtestService.getCapitalSettings();
             const backtestSettings = backtestService.getBacktestSettings();
+            await ensureConfirmationStrategiesLoaded(backtestSettings);
             const sizing = {
                 mode: capitalSettings.sizingMode,
                 fixedTradeAmount: capitalSettings.fixedTradeAmount,

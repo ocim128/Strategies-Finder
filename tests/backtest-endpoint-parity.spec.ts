@@ -3,7 +3,7 @@ import assert from "node:assert";
 import { executeBacktest, getManifestFingerprint } from "../lib/backtest-executor";
 import type { OHLCVData, BacktestSettings, Signal, Strategy, Time } from "../lib/types/strategies";
 import type { CapitalSettings } from "../lib/types/backtest";
-import { strategyManifest } from "../lib/strategies/manifest";
+import { strategyManifest } from "../lib/strategies/manifest-eager";
 
 const defaultStrategyEntry = strategyManifest.find((entry) => !entry.strategy.crossSymbolConfig);
 assert.ok(defaultStrategyEntry, "Expected at least one non-cross-symbol strategy in manifest");

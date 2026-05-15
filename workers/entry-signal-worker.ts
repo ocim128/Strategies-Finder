@@ -1,4 +1,5 @@
 import { evaluateLatestEntrySignal } from "../lib/signal-entry-evaluator";
+import "../lib/strategies/library";
 import type { BacktestSettings, OHLCVData } from "../lib/types/strategies";
 import {
     intervalToSeconds,

@@ -555,7 +555,11 @@ async function openDetailModal(streamId: string): Promise<void> {
         detailLoading.style.display = 'none';
         detailContent.style.display = '';
     } catch (err) {
-        detailContent.innerHTML = `<p class="lp-empty">Error loading details: ${err instanceof Error ? err.message : String(err)}</p>`;
+        detailContent.innerHTML = '';
+        const errorMessage = document.createElement('p');
+        errorMessage.className = 'lp-empty';
+        errorMessage.textContent = `Error loading details: ${err instanceof Error ? err.message : String(err)}`;
+        detailContent.appendChild(errorMessage);
         detailLoading.style.display = 'none';
         detailContent.style.display = '';
     }

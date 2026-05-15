@@ -4,7 +4,7 @@ import { BACKTEST_ENDPOINT_CAPITAL_SETTINGS } from "../lib/backtest-endpoint-con
 import { computeBacktestEndpointDatasetFingerprint, type UiBacktestEndpointSnapshot } from "../lib/backtest-endpoint-copy";
 import { buildBacktestEndpointExecutorRequestFromSnapshot } from "../lib/backtest-endpoint-execution";
 import type { OHLCVData, Time } from "../lib/types/strategies";
-import { strategyManifest } from "../lib/strategies/manifest";
+import { strategyManifest } from "../lib/strategies/manifest-eager";
 
 const defaultStrategyEntry = strategyManifest.find((entry) => !entry.strategy.crossSymbolConfig);
 assert.ok(defaultStrategyEntry, "Expected at least one non-cross-symbol strategy in manifest");

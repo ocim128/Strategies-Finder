@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import type { OHLCVData, Strategy, StrategyExecutionContext, Time } from '../../lib/strategies/index';
-import { strategyManifest } from '../../lib/strategies/manifest';
+import { strategyManifest } from '../../lib/strategies/manifest-eager';
 
 function buildExecutionContext(strategy: Strategy, bars: OHLCVData[]): StrategyExecutionContext | undefined {
     if (!strategy.crossSymbolConfig) {

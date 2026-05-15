@@ -31,7 +31,10 @@ import {
     type FinderDatasetFlags,
     type ParamJob,
 } from "./finder-runner-shared";
-import { applyConfirmationStrategiesToSignals } from "../confirmation-signal-filter";
+import {
+    applyConfirmationStrategiesToSignals,
+    ensureConfirmationStrategiesLoaded,
+} from "../confirmation-signal-filter";
 import type { FinderResult } from "../types/finder";
 import type { FinderRunCallbacks, FinderRunInput, FinderRunOutput } from "./finder-runner";
 
@@ -101,6 +104,7 @@ export async function runMultiTimeframe(params: MultiTimeframeRunParams): Promis
                         primaryConfig.backtestSettings,
                         { coerceWithoutUiToggles: true }
                     );
+                    await ensureConfirmationStrategiesLoaded(primarySettings);
                     for (const dataset of activeDatasets) {
                         let primarySigs: Signal[];
                         try {

@@ -6,7 +6,10 @@ import { dataManager } from "./data-manager";
 import { createPortfolioLabDom, type PortfolioLabDom } from "./portfolio-lab-dom";
 import { debugLogger } from "./debug-logger";
 import { paramManager } from "./param-manager";
-import { applyConfirmationStrategiesToSignals } from "./confirmation-signal-filter";
+import {
+    applyConfirmationStrategiesToSignals,
+    ensureConfirmationStrategiesLoaded,
+} from "./confirmation-signal-filter";
 import {
     buildFilterRun,
     buildBreadthSweepRows,
@@ -587,6 +590,7 @@ class PortfolioLabService {
         }
 
         const runResult = await backtestService.evaluateStrategyOnData(data, state.currentInterval, strategy, params, settings, capitalSettings);
+        await ensureConfirmationStrategiesLoaded(settings);
         const fullSignals = applyConfirmationStrategiesToSignals({
             data,
             baseSignals: applySignalPolarity(strategy.execute(data, params), settings),

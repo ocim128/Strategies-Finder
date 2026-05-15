@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { beforeEach, describe, it } from "node:test";
-import { collectStrategyModuleDefinitions, generateStrategyManifestSource } from "../scripts/strategy-manifest-generator";
+import { collectStrategyModuleDefinitions, generateStrategyManifestEagerSource } from "../scripts/strategy-manifest-generator";
 import {
     ensureStrategyKeysLoaded,
     getBuiltInMeta,
@@ -9,6 +9,8 @@ import {
     loadBuiltInStrategies,
     strategyRegistry,
 } from "../strategyRegistry";
+import { ensureConfirmationStrategiesLoaded } from "../lib/confirmation-signal-filter";
+import { getLoadedBuiltInStrategy } from "../lib/strategies/built-in-catalog";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "../lib/strategy-defaults";
 
 function getNonDefaultBuiltInStrategyKey(): string {
@@ -53,9 +55,9 @@ describe("Strategy registry loading", () => {
         }
     });
 
-    it("generated manifest source contains all strategy entries", () => {
+    it("generated eager manifest source contains all strategy entries", () => {
         const definitions = collectStrategyModuleDefinitions();
-        const source = generateStrategyManifestSource(definitions);
+        const source = generateStrategyManifestEagerSource(definitions);
         for (const def of definitions) {
             expect(source).to.include(`key: "${def.key}"`);
             expect(source).to.include(`strategy: ${def.exportName}`);
@@ -78,6 +80,14 @@ describe("Strategy registry loading", () => {
             name: meta!.name,
             description: meta!.description,
         });
+    });
+
+    it("preloads confirmation strategies for synchronous signal filters", async () => {
+        const confirmationKey = "close_location_median_alignment";
+
+        await ensureConfirmationStrategiesLoaded({ confirmationStrategies: [confirmationKey] });
+
+        expect(getLoadedBuiltInStrategy(confirmationKey)).to.exist;
     });
 
     it("can lazily load a valid built-in strategy key after boot", async () => {

@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { OHLCVData, StrategyParams } from '../../lib/strategies';
-import { strategyManifest } from '../../lib/strategies/manifest';
+import { strategyManifest } from '../../lib/strategies/manifest-eager';
 
 function buildBars(length: number): OHLCVData[] {
     const bars: OHLCVData[] = [];

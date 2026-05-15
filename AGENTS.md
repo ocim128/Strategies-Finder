@@ -142,8 +142,9 @@ If you rename or remove a structural id:
 
 ### 2. Strategy registration split
 - Main UI/runtime registers built-ins through `strategyRegistry.ts`
-- Built-in source of truth is `lib/strategies/lib/*`, with `lib/strategies/manifest.ts` generated from those files
-- `lib/strategies/library.ts` is derived from that manifest and is what worker-side evaluation imports
+- Built-in source of truth is `lib/strategies/lib/*`, with generated metadata, loader, key, and eager manifest files under `lib/strategies/manifest*.ts`
+- Browser UI listing uses `manifest-meta.ts`; browser strategy execution loads code through `manifest-loaders.ts`
+- `lib/strategies/library.ts` uses the eager manifest and is what worker-side evaluation imports
 
 If a built-in strategy is added or renamed and the manifest is not re-synced, the strategy will not load consistently in the UI/worker path.
 
@@ -404,11 +405,13 @@ Core:
 - `npm run test`
 - `npm run test:e2e`
 
-`npm run test` is intentionally compact for agent use. It prints one status line per spec plus a short summary, while full logs are written to `artifacts/test-logs/latest` and the structured summary to `artifacts/test-logs/latest/summary.json`.
+`npm run test` is intentionally compact for agent use. It recursively discovers `tests/**/*.spec.ts`, excludes `tests/e2e.spec.ts`, prints one status line per spec plus a short summary, while full logs are written to `artifacts/test-logs/latest` and the structured summary to `artifacts/test-logs/latest/summary.json`.
 
 Useful test runner variants:
 - `npm run test:verbose`
 - `npm run test:json`
+- `npm run test -- --runInBand`
+- `npm run test -- --jobs=4`
 - `npm run test -- backtesting-engine`
 
 Useful extras:

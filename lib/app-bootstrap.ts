@@ -11,15 +11,9 @@ import { dataManager } from "./data-manager";
 import { uiManager } from "./ui-manager";
 import { backtestService } from "./backtest-service";
 import { editorManager } from "./editor-manager";
-import { finderManager } from "./finder-manager";
 import { debugLogger } from "./debug-logger";
-import { initDebugPanel } from "./debug-panel";
-import { walkForwardService } from "./walk-forward-service";
 import { settingsManager } from "./settings-manager";
 import { injectLayout } from "./layout-manager";
-import { dataMiningManager } from "./data-mining-manager";
-import { portfolioLabService } from "./portfolio-lab-service";
-import { strategyEnsembleService } from "./strategy-ensemble-service";
 import { scannerPanel } from "./scanner";
 import { setupGlobalErrorHandlers } from "./handlers/global-error-handlers";
 import { setupStateSubscriptions } from "./handlers/state-subscriptions";
@@ -34,14 +28,8 @@ import { blockSelectorManager } from "./block-selector-manager";
 import { bindFormAccessibility } from "./form-accessibility";
 import { strategyPanelController } from "./strategy-panel-controller";
 import { getOptionalElement } from "./dom-utils";
-import { polymarketPanelService } from "./polymarket-panel-service";
-import { secondMarketViewerService } from "./second-market/second-market-viewer-service";
 import { executionLabService } from "./execution-lab/execution-lab-service";
-import { initMonteCarloService } from "./monte-carlo-service";
 import { initCrossSymbolUI } from "./cross-symbol-ui";
-import { huntService } from "./hunt/hunt-service";
-import { strategyLibraryAdminService } from "./strategy-library-admin-service";
-import { quickViewManager } from "./quick-view";
 import { setBinanceMarketType, setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
 import { getLocalDailyAsset } from "./local-daily-datasets";
 import {
@@ -336,18 +324,18 @@ export async function bootstrapApp(): Promise<void> {
 }
 
 function registerLazyFeatures(): void {
-    registerLazyFeature("debug-panel", () => initDebugPanel());
-    registerLazyFeature("quick-view", () => quickViewManager.init());
-    registerLazyFeature("finder", () => finderManager.init());
-    registerLazyFeature("hunt", () => huntService.init());
-    registerLazyFeature("data-mining", () => dataMiningManager.init());
-    registerLazyFeature("walk-forward", () => walkForwardService.initUI());
-    registerLazyFeature("portfolio-lab", () => portfolioLabService.init());
-    registerLazyFeature("strategy-ensemble", () => strategyEnsembleService.init());
-    registerLazyFeature("polymarket-panel", () => polymarketPanelService.init());
-    registerLazyFeature("second-market-viewer", () => secondMarketViewerService.init());
-    registerLazyFeature("monte-carlo", () => initMonteCarloService());
-    registerLazyFeature("strategy-library-admin", () => strategyLibraryAdminService.init());
+    registerLazyFeature("debug-panel", async () => (await import("./debug-panel")).initDebugPanel());
+    registerLazyFeature("quick-view", async () => (await import("./quick-view")).quickViewManager.init());
+    registerLazyFeature("finder", async () => (await import("./finder-manager")).finderManager.init());
+    registerLazyFeature("hunt", async () => (await import("./hunt/hunt-service")).huntService.init());
+    registerLazyFeature("data-mining", async () => (await import("./data-mining-manager")).dataMiningManager.init());
+    registerLazyFeature("walk-forward", async () => (await import("./walk-forward-service")).walkForwardService.initUI());
+    registerLazyFeature("portfolio-lab", async () => (await import("./portfolio-lab-service")).portfolioLabService.init());
+    registerLazyFeature("strategy-ensemble", async () => (await import("./strategy-ensemble-service")).strategyEnsembleService.init());
+    registerLazyFeature("polymarket-panel", async () => (await import("./polymarket-panel-service")).polymarketPanelService.init());
+    registerLazyFeature("second-market-viewer", async () => (await import("./second-market/second-market-viewer-service")).secondMarketViewerService.init());
+    registerLazyFeature("monte-carlo", async () => (await import("./monte-carlo-service")).initMonteCarloService());
+    registerLazyFeature("strategy-library-admin", async () => (await import("./strategy-library-admin-service")).strategyLibraryAdminService.init());
 }
 
 function bindDirectLazyFeatureTriggers(): void {

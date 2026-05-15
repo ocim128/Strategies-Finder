@@ -343,7 +343,7 @@ export function buildBacktestPolymarketPerformanceSummary(
     const bestBaselineWinRate = isSignalExit ? 0 : computePolymarketBestBaselineWinRate(result.trades);
     const coverageSummary = resolvePolymarketCoverageSummary(result, summary, scoredTrades);
 
-    return {
+    const performance: BacktestPolymarketPerformanceSummary = {
         wins,
         losses,
         neutralTrades,
@@ -363,9 +363,12 @@ export function buildBacktestPolymarketPerformanceSummary(
         outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
         bestBaselineWinRate,
         baselineDelta: isSignalExit ? 0 : (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
-        entrySelectionMode: summary?.entrySelectionMode,
         longestWinStreak: streakSummary.longestWinStreak,
         longestLossStreak: streakSummary.longestLossStreak,
         entryOffset: summary?.entryOffset,
     };
+    if (summary?.entrySelectionMode !== undefined) {
+        performance.entrySelectionMode = summary.entrySelectionMode;
+    }
+    return performance;
 }

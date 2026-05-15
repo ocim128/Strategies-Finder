@@ -11,7 +11,10 @@
  * - default 5m multi-interval bridge runs: 15m / 1h / 4h group 5m events by offset
  */
 import { applySignalPolarity, precomputeIndicators, runBacktest } from "../strategies/index";
-import { applyConfirmationStrategiesToSignals } from "../confirmation-signal-filter";
+import {
+    applyConfirmationStrategiesToSignals,
+    ensureConfirmationStrategiesLoaded,
+} from "../confirmation-signal-filter";
 import { debugLogger } from "../debug-logger";
 import type { FinderResult } from "../types/finder";
 import {
@@ -489,6 +492,7 @@ export async function runPolymarketFinder(
     callbacks: FinderRunCallbacks
 ): Promise<FinderRunOutput> {
     const { options, settings, selectedStrategies } = input;
+    await ensureConfirmationStrategiesLoaded(settings);
     const interval = input.interval as PolymarketInterval;
     const intervalConfig = getIntervalConfig(interval);
     const outcomeSymbol = resolvePolymarketOutcomeSymbol(input.symbol, settings.polymarketOutcomeSymbol);

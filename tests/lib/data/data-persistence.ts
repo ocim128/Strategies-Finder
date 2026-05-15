@@ -78,26 +78,29 @@ export class DataPersistence {
             });
         }
 
-        const sqliteRaw = await loadSqliteCandles(storageSymbol, storageInterval, normalizedLimit);
-        if (sqliteRaw && sqliteRaw.candles.length > 0) {
+        const [sqliteResult, cachedResult, seedResult] = await Promise.allSettled([
+            loadSqliteCandles(storageSymbol, storageInterval, normalizedLimit),
+            loadCachedCandles(storageSymbol, storageInterval),
+            loadSeedCandlesFromPriceData(symbol, interval, signal),
+        ]);
+
+        if (sqliteResult.status === 'fulfilled' && sqliteResult.value && sqliteResult.value.candles.length > 0) {
             candidates.push({
-                candles: trimToLastCandles(this.normalizeProviderCandles(sqliteRaw.candles, interval, provider), normalizedLimit),
+                candles: trimToLastCandles(this.normalizeProviderCandles(sqliteResult.value.candles, interval, provider), normalizedLimit),
                 source: 'sqlite',
             });
         }
 
-        const cached = await loadCachedCandles(storageSymbol, storageInterval);
-        if (cached && cached.candles.length > 0) {
+        if (cachedResult.status === 'fulfilled' && cachedResult.value && cachedResult.value.candles.length > 0) {
             candidates.push({
-                candles: trimToLastCandles(this.normalizeProviderCandles(cached.candles, interval, provider), normalizedLimit),
+                candles: trimToLastCandles(this.normalizeProviderCandles(cachedResult.value.candles, interval, provider), normalizedLimit),
                 source: 'cache',
             });
         }
 
-        const seedData = await loadSeedCandlesFromPriceData(symbol, interval, signal);
-        if (seedData && seedData.length > 0) {
+        if (seedResult.status === 'fulfilled' && seedResult.value && seedResult.value.length > 0) {
             candidates.push({
-                candles: trimToLastCandles(this.normalizeProviderCandles(seedData, interval, provider), normalizedLimit),
+                candles: trimToLastCandles(this.normalizeProviderCandles(seedResult.value, interval, provider), normalizedLimit),
                 source: 'seed',
             });
         }

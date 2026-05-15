@@ -9,7 +9,10 @@ import { debugLogger } from '../debug-logger';
 
 import type { BacktestSettings, Signal, StrategyParams } from '../types/strategies';
 import { applySignalPolarity, getOpenPositionForScanner } from '../strategies/backtest';
-import { applyConfirmationStrategiesToSignals } from '../confirmation-signal-filter';
+import {
+    applyConfirmationStrategiesToSignals,
+    ensureConfirmationStrategiesLoaded,
+} from '../confirmation-signal-filter';
 import { resolveBacktestSettingsFromRaw } from '../backtest-settings-resolver';
 import { trimToClosedCandles } from '../closed-candle-utils';
 import { toFiniteNumber } from '../settings-parse-utils';
@@ -91,6 +94,9 @@ export class ScannerEngine {
 
         try {
             await ensureStrategyKeysLoaded(config.strategyConfigs.map((entry) => entry.strategyKey));
+            await Promise.all(config.strategyConfigs.map((entry) =>
+                ensureConfirmationStrategiesLoaded(resolveScannerBacktestSettings(entry.backtestSettings))
+            ));
 
             // Invalidate cache if config changed since last scan
             const configFp = this.buildConfigFingerprint(config);

@@ -39,7 +39,10 @@ import {
     buildEntryBacktestResult,
     runBacktest,
 } from "./strategies/index";
-import { strategies as builtInStrategies } from "./strategies/library";
+import {
+    ensureBuiltInStrategyLoaded,
+    getBuiltInStrategyKeys,
+} from "./strategies/built-in-catalog";
 import {
     getResampleBucketStart,
     resampleOHLCV,
@@ -52,7 +55,10 @@ import {
 } from "./strategies/performance-metrics";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { filterSignalsByBlockRange as filterSignalsBySelectedBlockRange } from "./signal-block-filter";
-import { applyConfirmationStrategiesToSignals } from "./confirmation-signal-filter";
+import {
+    applyConfirmationStrategiesToSignals,
+    ensureConfirmationStrategiesLoaded,
+} from "./confirmation-signal-filter";
 import { timeKey } from "./strategies/backtest/backtest-utils";
 import {
     registerBacktestEdgeAnalysisInput,
@@ -107,7 +113,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     const nowSec = req.context.nowSec ?? Math.floor(Date.now() / 1000);
     const blockRange = req.context.blockRange ?? null;
     const annotatePolymarket = req.context.annotatePolymarket ?? false;
-    const strategy = req.strategy ?? builtInStrategies[strategyKey];
+    const strategy = req.strategy ?? await ensureBuiltInStrategyLoaded(strategyKey);
     if (!strategy) {
         throw new Error(`Strategy not found: "${strategyKey}"`);
     }
@@ -121,6 +127,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         interval,
     } as BacktestSettings;
     const resolvedSettings = resolveExecutorBacktestSettings(settingsWithMeta, interval);
+    await ensureConfirmationStrategiesLoaded(resolvedSettings);
 
     const resolvedCapital = resolveCapitalSettingsFromRaw(capitalSettings as Record<string, unknown>);
 
@@ -757,7 +764,7 @@ function executeStrategySignals(
  * Return the manifest fingerprint for external drift detection.
  */
 export function getManifestFingerprint(): { strategyCount: number; strategyKeys: string[]; hash: string } {
-    const keys = Object.keys(builtInStrategies).sort();
+    const keys = [...getBuiltInStrategyKeys()].sort();
     const hashStr = keys.join(",");
     let hash = 0;
     for (let i = 0; i < hashStr.length; i++) {

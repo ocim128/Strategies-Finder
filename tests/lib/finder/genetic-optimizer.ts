@@ -10,7 +10,10 @@ import {
 } from "../strategies/index";
 import type { StrategyExecutionContext } from "../types/strategies";
 import type { AdvancedSizingSettings, TradeSizingMode } from "../types/backtest";
-import { applyConfirmationStrategiesToSignals } from "../confirmation-signal-filter";
+import {
+    applyConfirmationStrategiesToSignals,
+    ensureConfirmationStrategiesLoaded,
+} from "../confirmation-signal-filter";
 import {
     computeParamRange,
     createSeededRandom,
@@ -271,6 +274,7 @@ function median(values: number[]): number {
 export async function runGeneticOptimization(input: GeneticOptimizerInput): Promise<GeneticOptimizationResult> {
     const startedAt = performance.now();
     const { strategy, strategyKey, data, backtestSettings, onGeneration, executionContext } = input;
+    await ensureConfirmationStrategiesLoaded(backtestSettings);
     const cfg = input.config;
     const rand = createSeededRandom(cfg.seed);
     const defaultParams = { ...strategy.defaultParams };

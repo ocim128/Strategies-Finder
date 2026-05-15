@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import type { OHLCVData, Time } from "../lib/types/strategies";
-import { strategyManifest } from "../lib/strategies/manifest";
+import { strategyManifest } from "../lib/strategies/manifest-eager";
 
 const strategies = strategyManifest;
 

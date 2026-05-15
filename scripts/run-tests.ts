@@ -1,6 +1,7 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 type TestRunStatus = "PASS" | "FAIL";
@@ -38,92 +39,14 @@ type TestRunSummary = {
     }>;
 };
 
-const TEST_FILES = [
-    "tests/app-bootstrap.spec.ts",
-    "tests/app-timing.spec.ts",
-    "tests/lazy-feature-init.spec.ts",
-    "tests/advanced-sizing.spec.ts",
-    "tests/backtest-capital-settings.spec.ts",
-    "tests/backtest-service-block-range.spec.ts",
-    "tests/backtest-edge-analysis.spec.ts",
-    "tests/strategy-calculations.spec.ts",
-    "tests/data-interval-utils.spec.ts",
-    "tests/data-fetcher.spec.ts",
-    "tests/signal-merge.spec.ts",
-    "tests/signal-stability.spec.ts",
-    "tests/walk-forward-engine.spec.ts",
-    "tests/strategies-lib/prepared-execution-parity.spec.ts",
-    "tests/strategies-lib/retained-strategy-registration.spec.ts",
-    "tests/strategies-lib/strategy-normalization-parity.spec.ts",
-    "tests/new-strategy-lib-smoke.spec.ts",
-    "tests/strategy-manifest-sync.spec.ts",
-    "tests/strategy-registry-loading.spec.ts",
-    "tests/strategy-library-admin-plugin.spec.ts",
-    "tests/strategy-library-admin-service.spec.ts",
-    "tests/pivot-detection.spec.ts",
-    "tests/backtesting-engine.spec.ts",
-    "tests/alert-entry-evaluator.spec.ts",
-    "tests/alert-evaluation-window.spec.ts",
-    "tests/latest-entry-export-window.spec.ts",
-    "tests/candle-cache.spec.ts",
-    "tests/worker-strategy-support.spec.ts",
-    "tests/alert-signal-utils.spec.ts",
-    "tests/entry-signal-worker.spec.ts",
-    "tests/settings-compat.spec.ts",
-    "tests/strategy-panel-settings-registry.spec.ts",
-    "tests/finder-cache-decision.spec.ts",
-    "tests/finder-engine.spec.ts",
-    "tests/finder-manager-logic.spec.ts",
-    "tests/finder-universe-runner.spec.ts",
-    "tests/hunt-model.spec.ts",
-    "tests/hunt-results.spec.ts",
-    "tests/backtest-result-analysis.spec.ts",
-    "tests/polymarket-diagnostics-utils.spec.ts",
-    "tests/state-domains.spec.ts",
-    "tests/edge-statistics.spec.ts",
-    "tests/statistics-utils.spec.ts",
-    "tests/walk-forward-thresholds.spec.ts",
-    "tests/feature-dom-contracts.spec.ts",
-    "tests/portfolio-lab.spec.ts",
-    "tests/strategy-ensemble.spec.ts",
-    "tests/monte-carlo-sizing.spec.ts",
-    "tests/monte-carlo-polymarket.spec.ts",
-    "tests/quick-view-polymarket.spec.ts",
-    "tests/polymarket-sync-outcomes-cli.spec.ts",
-    "tests/polymarket-sync-utils.spec.ts",
-    "tests/polymarket-outcome-evaluator.spec.ts",
-    "tests/polymarket-fill-analysis.spec.ts",
-    "tests/polymarket-post-signal-limit-entry.spec.ts",
-    "tests/polymarket-native-session-intervals.spec.ts",
-    "tests/polymarket-price-points-ingest.spec.ts",
-    "tests/polymarket-1s-helpers.spec.ts",
-    "tests/finder-polymarket.spec.ts",
-    "tests/polymarket-open-trade-market.spec.ts",
-    "tests/polymarket-trade-annotations.spec.ts",
-    "tests/polymarket-deployability-analysis.spec.ts",
-    "tests/second-market-schema.spec.ts",
-    "tests/second-market-alignment.spec.ts",
-    "tests/second-market-clob.spec.ts",
-    "tests/second-market-reference.spec.ts",
-    "tests/second-market-gamma.spec.ts",
-    "tests/second-market-backtest.spec.ts",
-    "tests/second-market-evaluation.spec.ts",
-    "tests/second-market-finder.spec.ts",
-    "tests/second-market-trades-renderer.spec.ts",
-    "tests/execution-lab-live-quote.spec.ts",
-    "tests/execution-lab-log-schema.spec.ts",
-    "tests/execution-lab-paper-session.spec.ts",
-    "tests/backtest-endpoint-parity.spec.ts",
-    "tests/backtest-endpoint-batch.spec.ts",
-    "tests/backtest-endpoint-plugin.spec.ts",
-    "tests/cross-symbol-helpers.spec.ts",
-    "tests/cross-symbol-runtime.spec.ts",
-    "tests/strategy-registry-cross-symbol.spec.ts",
-] as const;
-
 const MAX_CAPTURE_BUFFER_BYTES = 64 * 1024 * 1024;
 const FAILURE_TAIL_LINE_COUNT = 8;
 const FAILURE_LINE_WIDTH = 180;
+const TESTS_DIR_NAME = "tests";
+const EXCLUDED_TEST_FILES = new Set([
+    "tests/e2e.spec.ts",
+]);
+const DEFAULT_MAX_JOBS = 6;
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const scriptDir = path.dirname(currentFilePath);
@@ -137,17 +60,22 @@ function printUsage(): void {
         "Usage:",
         "  npm run test",
         "  npm run test -- <filter>",
+        "  npm run test -- --jobs=4",
+        "  npm run test -- --runInBand",
         "  npm run test:verbose",
         "  npm run test:json",
         "",
         "Behavior:",
-        "  - `npm run test` prints one compact status line per spec and a short summary.",
+        "  - `npm run test` discovers tests/**/*.spec.ts, excluding tests/e2e.spec.ts.",
+        "  - It prints one compact status line per spec and a short summary.",
         "  - Full per-spec logs are written to `artifacts/test-logs/latest`.",
         "  - Pass one or more filters to run a subset by path fragment or filename.",
+        "  - Use --runInBand for serial execution or --jobs=<n> for bounded parallelism.",
         "",
         "Examples:",
         "  npm run test -- backtesting-engine",
         "  npm run test -- tests/feature-dom-contracts.spec.ts",
+        "  npm run test -- persisted-json",
         "  npm run test:verbose -- strategy-ensemble",
     ].join("\n"));
 }
@@ -196,11 +124,64 @@ function ensureLatestLogsDir(): void {
     fs.mkdirSync(latestLogsDir, { recursive: true });
 }
 
-function selectTests(filters: string[]): string[] {
-    if (filters.length === 0) return [...TEST_FILES];
+function toPosixPath(value: string): string {
+    return value.replace(/\\/g, "/");
+}
+
+function discoverTestFiles(): string[] {
+    const testsRoot = path.join(repoRoot, TESTS_DIR_NAME);
+    const files: string[] = [];
+
+    function walk(dir: string): void {
+        const entries = fs.readdirSync(dir, { withFileTypes: true })
+            .sort((left, right) => left.name.localeCompare(right.name));
+
+        for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+                walk(fullPath);
+                continue;
+            }
+            if (!entry.isFile() || !entry.name.endsWith(".spec.ts")) {
+                continue;
+            }
+
+            const relativePath = toPosixPath(path.relative(repoRoot, fullPath));
+            if (!EXCLUDED_TEST_FILES.has(relativePath)) {
+                files.push(relativePath);
+            }
+        }
+    }
+
+    walk(testsRoot);
+    return files;
+}
+
+function resolveDefaultJobCount(): number {
+    const available = typeof os.availableParallelism === "function"
+        ? os.availableParallelism()
+        : os.cpus().length;
+    return Math.max(1, Math.min(DEFAULT_MAX_JOBS, Math.max(1, available - 1)));
+}
+
+function parseExplicitJobCount(raw: string | undefined): number {
+    const parsed = Number(raw);
+    if (!raw || !Number.isFinite(parsed) || parsed < 1) {
+        throw new Error("--jobs requires a positive numeric value.");
+    }
+    return Math.floor(parsed);
+}
+
+function isEnabledEnvFlag(value: string | undefined): boolean {
+    if (value === undefined) return false;
+    return value === "true" || value === "1";
+}
+
+function selectTests(testFiles: readonly string[], filters: string[]): string[] {
+    if (filters.length === 0) return [...testFiles];
 
     const normalizedFilters = filters.map(normalizeForMatch);
-    const selected = TEST_FILES.filter((file) => {
+    const selected = testFiles.filter((file) => {
         const normalizedFile = normalizeForMatch(file);
         const baseName = path.basename(normalizedFile);
         return normalizedFilters.some((filter) => normalizedFile.includes(filter) || baseName.includes(filter));
@@ -209,52 +190,108 @@ function selectTests(filters: string[]): string[] {
     return [...selected];
 }
 
-function runSingleTest(file: string, outputMode: OutputMode): TestRunResult {
-    const startedAt = Date.now();
-    const run = spawnSync(process.execPath, [esnoCliPath, file], {
-        cwd: repoRoot,
-        encoding: "utf8",
-        maxBuffer: MAX_CAPTURE_BUFFER_BYTES,
-    });
-    const durationMs = Date.now() - startedAt;
-
-    const stdout = run.stdout ?? "";
-    const stderr = run.stderr ?? "";
-    const status: TestRunStatus = run.status === 0 && !run.error ? "PASS" : "FAIL";
+function writeTestLog(file: string, stdout: string, stderr: string): string {
     const logFile = path.join(latestLogsDir, `${sanitizeLogName(file)}.log`);
-    const runErrorText = run.error ? `\n[runner-error]\n${String(run.error.stack || run.error.message || run.error)}\n` : "";
+    fs.writeFileSync(logFile, formatOutputForLog(stdout, stderr), "utf8");
+    return logFile;
+}
 
-    fs.writeFileSync(logFile, `${formatOutputForLog(stdout, stderr)}${runErrorText}`, "utf8");
-
+function printTestResult(result: TestRunResult, outputMode: OutputMode): void {
     if (outputMode === "verbose") {
-        console.log(`\n[${status}] ${file} (${formatDuration(durationMs)})`);
-        if (stdout.trim().length > 0) process.stdout.write(stdout.endsWith("\n") ? stdout : `${stdout}\n`);
-        if (stderr.trim().length > 0) process.stderr.write(stderr.endsWith("\n") ? stderr : `${stderr}\n`);
-        if (runErrorText) process.stderr.write(runErrorText);
-    } else if (outputMode === "compact") {
-        console.log(`${status} ${file} (${formatDuration(durationMs)})`);
-        if (status === "FAIL") {
-            const tail = getFailureTail(stdout, `${stderr}${runErrorText}`);
-            if (tail.length > 0) {
-                for (const line of tail) {
-                    console.log(`  ${line}`);
-                }
-            } else {
-                console.log("  No captured output. Check the log file.");
-            }
+        console.log(`\n[${result.status}] ${result.file} (${formatDuration(result.durationMs)})`);
+        if (result.stdout.trim().length > 0) {
+            process.stdout.write(result.stdout.endsWith("\n") ? result.stdout : `${result.stdout}\n`);
         }
+        if (result.stderr.trim().length > 0) {
+            process.stderr.write(result.stderr.endsWith("\n") ? result.stderr : `${result.stderr}\n`);
+        }
+        return;
     }
 
-    return {
-        file,
-        status,
-        durationMs,
-        exitCode: run.status,
-        signal: run.signal,
-        logFile,
-        stdout,
-        stderr: `${stderr}${runErrorText}`,
+    if (outputMode !== "compact") return;
+
+    console.log(`${result.status} ${result.file} (${formatDuration(result.durationMs)})`);
+    if (result.status === "FAIL") {
+        const tail = getFailureTail(result.stdout, result.stderr);
+        if (tail.length > 0) {
+            for (const line of tail) {
+                console.log(`  ${line}`);
+            }
+        } else {
+            console.log("  No captured output. Check the log file.");
+        }
+    }
+}
+
+async function runSingleTest(file: string): Promise<TestRunResult> {
+    const startedAt = Date.now();
+    let stdout = "";
+    let stderr = "";
+    let capturedBytes = 0;
+    let outputTruncated = false;
+    let spawnError: unknown = null;
+
+    const child = spawn(process.execPath, [esnoCliPath, file], {
+        cwd: repoRoot,
+        stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const capture = (chunk: Buffer, streamName: "stdout" | "stderr"): void => {
+        capturedBytes += chunk.byteLength;
+        if (capturedBytes > MAX_CAPTURE_BUFFER_BYTES) {
+            if (!outputTruncated) {
+                const message = `\n[runner-error]\nCaptured output exceeded ${MAX_CAPTURE_BUFFER_BYTES} bytes. Test process was terminated.\n`;
+                stderr += message;
+                outputTruncated = true;
+                child.kill();
+            }
+            return;
+        }
+
+        if (streamName === "stdout") {
+            stdout += chunk.toString("utf8");
+        } else {
+            stderr += chunk.toString("utf8");
+        }
     };
+
+    child.stdout?.on("data", (chunk: Buffer) => capture(chunk, "stdout"));
+    child.stderr?.on("data", (chunk: Buffer) => capture(chunk, "stderr"));
+    child.on("error", (error) => {
+        spawnError = error;
+    });
+
+    const { exitCode, signal } = await new Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+        child.on("close", (code, closeSignal) => {
+            resolve({ exitCode: code, signal: closeSignal });
+        });
+    });
+
+    const durationMs = Date.now() - startedAt;
+    const runErrorText = spawnError
+        ? `\n[runner-error]\n${spawnError instanceof Error ? String(spawnError.stack || spawnError.message) : String(spawnError)}\n`
+        : "";
+    stderr = `${stderr}${runErrorText}`;
+    const status: TestRunStatus = exitCode === 0 && !spawnError && !outputTruncated ? "PASS" : "FAIL";
+    const logFile = writeTestLog(file, stdout, stderr);
+
+    return { file, status, durationMs, exitCode, signal, logFile, stdout, stderr };
+}
+
+async function runTestsInPool(selectedTests: readonly string[], jobs: number): Promise<TestRunResult[]> {
+    const results: TestRunResult[] = new Array(selectedTests.length);
+    let nextIndex = 0;
+    const workerCount = Math.max(1, Math.min(jobs, selectedTests.length));
+
+    await Promise.all(Array.from({ length: workerCount }, async () => {
+        while (nextIndex < selectedTests.length) {
+            const index = nextIndex;
+            nextIndex += 1;
+            results[index] = await runSingleTest(selectedTests[index]);
+        }
+    }));
+
+    return results;
 }
 
 function writeSummary(summary: TestRunSummary): string {
@@ -263,13 +300,30 @@ function writeSummary(summary: TestRunSummary): string {
     return summaryPath;
 }
 
-function main(): void {
+async function main(): Promise<void> {
     const args = process.argv.slice(2);
     let verbose = false;
     let json = false;
+    let runInBand = isEnabledEnvFlag(process.env.npm_config_runinband)
+        || isEnabledEnvFlag(process.env.npm_config_run_in_band);
+    let requestedJobs: number | null = null;
+    let expectNpmJobsValue = false;
+    if (process.env.npm_config_jobs) {
+        if (process.env.npm_config_jobs === "true") {
+            expectNpmJobsValue = true;
+        } else {
+            requestedJobs = parseExplicitJobCount(process.env.npm_config_jobs);
+        }
+    }
     const filters: string[] = [];
 
-    for (const arg of args) {
+    for (let index = 0; index < args.length; index += 1) {
+        const arg = args[index];
+        if (expectNpmJobsValue) {
+            requestedJobs = parseExplicitJobCount(arg);
+            expectNpmJobsValue = false;
+            continue;
+        }
         if (arg === "--verbose") {
             verbose = true;
             continue;
@@ -278,36 +332,55 @@ function main(): void {
             json = true;
             continue;
         }
+        if (arg === "--runInBand") {
+            runInBand = true;
+            continue;
+        }
+        if (arg === "--jobs") {
+            requestedJobs = parseExplicitJobCount(args[index + 1]);
+            index += 1;
+            continue;
+        }
+        if (arg.startsWith("--jobs=")) {
+            requestedJobs = parseExplicitJobCount(arg.slice("--jobs=".length));
+            continue;
+        }
         if (arg === "--help" || arg === "-h") {
             printUsage();
             process.exit(0);
         }
         filters.push(arg);
     }
+    if (expectNpmJobsValue) {
+        throw new Error("--jobs requires a positive numeric value.");
+    }
 
-    const selectedTests = selectTests(filters);
+    const testFiles = discoverTestFiles();
+    const selectedTests = selectTests(testFiles, filters);
     if (selectedTests.length === 0) {
         console.error("No test files matched the provided filters.");
-        console.error(`Available tests: ${TEST_FILES.join(", ")}`);
+        console.error(`Available tests: ${testFiles.join(", ")}`);
         process.exit(1);
     }
 
     ensureLatestLogsDir();
 
     const startedAt = Date.now();
-    const results: TestRunResult[] = [];
-    for (const file of selectedTests) {
-        const outputMode: OutputMode = json ? "silent" : verbose ? "verbose" : "compact";
-        results.push(runSingleTest(file, outputMode));
-    }
+    const outputMode: OutputMode = json ? "silent" : verbose ? "verbose" : "compact";
+    const jobs = runInBand ? 1 : requestedJobs ?? resolveDefaultJobCount();
+    const results = await runTestsInPool(selectedTests, jobs);
     const durationMs = Date.now() - startedAt;
+
+    for (const result of results) {
+        printTestResult(result, outputMode);
+    }
 
     const passedCount = results.filter((result) => result.status === "PASS").length;
     const failedCount = results.length - passedCount;
     const summary: TestRunSummary = {
         generatedAt: new Date().toISOString(),
         selectedCount: results.length,
-        totalCount: TEST_FILES.length,
+        totalCount: testFiles.length,
         passedCount,
         failedCount,
         durationMs,
@@ -334,6 +407,7 @@ function main(): void {
         );
         console.log(`Logs: ${latestLogsDir}`);
         console.log(`Summary JSON: ${summaryPath}`);
+        console.log(`Jobs: ${jobs}`);
         if (filters.length > 0) {
             console.log(`Filters: ${filters.join(", ")}`);
         }
@@ -342,4 +416,11 @@ function main(): void {
     process.exit(failedCount === 0 ? 0 : 1);
 }
 
-main();
+void main().catch((error: unknown) => {
+    if (error instanceof Error && error.message.startsWith("--jobs")) {
+        console.error(`Error: ${error.message}`);
+        process.exit(1);
+    }
+    console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+    process.exit(1);
+});

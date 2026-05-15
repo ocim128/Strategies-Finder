@@ -29,6 +29,14 @@ export function getLoadedBuiltInStrategy(key: string): Strategy | undefined {
     return loadedStrategies.get(key);
 }
 
+export function registerLoadedBuiltInStrategy(key: string, strategy: Strategy): void {
+    loadedStrategies.set(key, strategy);
+}
+
+export function unregisterLoadedBuiltInStrategy(key: string): void {
+    loadedStrategies.delete(key);
+}
+
 export function isBuiltInStrategyLoaded(key: string): boolean {
     return loadedStrategies.has(key);
 }

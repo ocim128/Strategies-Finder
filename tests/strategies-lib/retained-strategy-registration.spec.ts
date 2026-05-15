@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { strategies } from '../../lib/strategies/library';
-import { strategyManifest } from '../../lib/strategies/manifest';
+import { strategyManifest } from '../../lib/strategies/manifest-eager';
 
 describe('strategy library registration', () => {
     it('keeps the generated strategy library aligned with the manifest', () => {

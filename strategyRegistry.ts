@@ -18,7 +18,6 @@ import type {
     StrategyExecutionContext,
     Time,
 } from "./lib/strategies/index";
-import type { StrategyManifestEntry } from "./lib/strategies/manifest";
 import { state } from "./lib/state";
 import {
     getResampleBucketStart,
@@ -28,6 +27,7 @@ import {
 import { readPersistedJson, writePersistedJson } from "./lib/persisted-json";
 import {
     getAllBuiltInMeta,
+    getBuiltInStrategyKeys,
     getBuiltInStrategyMeta,
     getLoadedBuiltInStrategy,
     isBuiltInKey,
@@ -303,39 +303,24 @@ export const strategyRegistry: StrategyRegistry = new StrategyRegistryImpl();
 // ============================================================================
 
 /**
- * Register all built-in strategies from a manifest
- */
-function registerBuiltInStrategyManifest(manifest: readonly StrategyManifestEntry[]): void {
-    builtInStrategyKeys.clear();
-    manifest.forEach(({ key, strategy }) => {
-        builtInStrategyKeys.add(key);
-        strategyRegistry.register(key, strategy);
-    });
-}
-
-/**
- * Load built-in strategies from the shared manifest (eager path for worker/server).
+ * Load built-in strategies through per-key dynamic loaders.
  */
 export async function loadBuiltInStrategies(keys?: string[]): Promise<void> {
-    if (keys && keys.length > 0) {
-        for (const key of keys) {
-            if (!isBuiltInKey(key)) continue;
-            if (strategyRegistry.has(key)) continue;
-            const strategy = isBuiltInStrategyLoaded(key)
-                ? getLoadedBuiltInStrategy(key)
-                : await ensureBuiltInStrategyLoaded(key);
-            if (strategy) {
-                builtInStrategyKeys.add(key);
-                strategyRegistry.register(key, strategy);
-            }
+    const keysToLoad = keys && keys.length > 0 ? keys : [...getBuiltInStrategyKeys()];
+    let loadedCount = 0;
+    for (const key of keysToLoad) {
+        if (!isBuiltInKey(key)) continue;
+        if (strategyRegistry.has(key)) continue;
+        const strategy = isBuiltInStrategyLoaded(key)
+            ? getLoadedBuiltInStrategy(key)
+            : await ensureBuiltInStrategyLoaded(key);
+        if (strategy) {
+            builtInStrategyKeys.add(key);
+            strategyRegistry.register(key, strategy);
+            loadedCount++;
         }
-        console.log(`[StrategyRegistry] Loaded ${keys.length} requested built-in strategies`);
-        return;
     }
-
-    const { strategyManifest } = await import("./lib/strategies/manifest");
-    registerBuiltInStrategyManifest(strategyManifest);
-    console.log(`[StrategyRegistry] Loaded ${strategyManifest.length} built-in strategies`);
+    console.log(`[StrategyRegistry] Loaded ${loadedCount} built-in strategies`);
 }
 
 export async function loadBuiltInStrategyByKey(key: string): Promise<Strategy | undefined> {
@@ -371,17 +356,16 @@ export async function ensureStrategyKeysLoaded(keys: Iterable<string>): Promise<
 
 // Check if HMR is available (Vite)
 if (import.meta.hot) {
-    // Accept updates to the shared strategy manifest
-    import.meta.hot.accept("./lib/strategies/manifest", async (newModule) => {
-        if (newModule) {
-            console.log('[HMR] Strategy manifest updated, reloading...');
+    // Accept loader updates and reload currently registered built-ins.
+    import.meta.hot.accept("./lib/strategies/manifest-loaders", async () => {
+        console.log('[HMR] Strategy loaders updated, reloading...');
 
-            // Clear existing strategies and reload
-            strategyRegistry.clear();
-            registerBuiltInStrategyManifest(newModule.strategyManifest as readonly StrategyManifestEntry[]);
+        const loadedBuiltInKeys = strategyRegistry.keys().filter((key) => builtInStrategyKeys.has(key));
+        strategyRegistry.clear();
+        builtInStrategyKeys.clear();
+        await loadBuiltInStrategies(loadedBuiltInKeys);
 
-            console.log('[HMR] Strategies reloaded successfully');
-        }
+        console.log('[HMR] Strategies reloaded successfully');
     });
 
     // Also accept updates to this file itself

@@ -14,6 +14,8 @@ export interface BuiltInStrategyMeta {
         direction?: string;
         walkForwardParams?: string[];
     };
+    crossSymbolConfig?: boolean;
+    polymarket1sConfig?: boolean;
 }
 
 export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
@@ -29,6 +31,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         role: "entry",
         direction: "both",
         walkForwardParams: ["slowWindow"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "adx_skewness_drift",
@@ -46,6 +50,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         role: "entry",
         direction: "both",
         walkForwardParams: ["adxPeriod", "adxThresh", "skewThreshold"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "wick_responsive_boundary",
@@ -61,6 +67,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["boundary_lookback", "test_threshold"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "wick_responsive_boundary_retest",
@@ -78,6 +86,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["boundary_lookback", "test_threshold", "retest_tolerance"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "poly_5m_pivot_breakout_entry",
@@ -95,6 +105,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["pivotLookback", "breakoutBars", "minRoc"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "true_range_ratio_pop_chase",
@@ -110,6 +122,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["trMult", "minCloseReturn"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "probability_boundary_eigen_shift",
@@ -118,6 +132,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         defaultParams: { stateLookback: 50, eigenLimit: 3.0 } as Record<string, number>,
         paramLabels: { stateLookback: "State Lookback", eigenLimit: "Eigen Limit (Z-Score)" } as Record<string, string>,
         metadata: { role: "entry", direction: "both", walkForwardParams: ["stateLookback", "eigenLimit"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "volume_divergent_roc_reversion",
@@ -138,6 +154,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
     direction: 'both',
     walkForwardParams: ['lookback', 'rocExtreme', 'corrLimit']
   },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "wick_imbalance_decay_fade",
@@ -153,6 +171,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: 'entry',
 		direction: 'both',
 		walkForwardParams: ['decayRate', 'zscoreExtreme'] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "velocity_percentile_phi_snap",
@@ -164,6 +184,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["velocityWindow", "erLookback", "phiInefficiency"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "autocorrelation_phi_decay",
@@ -172,6 +194,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         defaultParams: { autoCorrLookback: 21, phiDecay: 0.618, zscoreExtreme: 1.618 } as Record<string, number>,
         paramLabels: { autoCorrLookback: "Autocorrelation Lookback", phiDecay: "Phi Decay", zscoreExtreme: "Z-Score Extreme" } as Record<string, string>,
         metadata: { role: "entry", direction: "both", walkForwardParams: ["autoCorrLookback", "phiDecay", "zscoreExtreme"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "ichimoku_conversion_base_cross",
@@ -180,6 +204,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         defaultParams: { conversionPeriod: 9, basePeriod: 26 } as Record<string, number>,
         paramLabels: { conversionPeriod: 'Conversion Period', basePeriod: 'Base Period' } as Record<string, string>,
         metadata: { role: 'entry', direction: 'both', walkForwardParams: ['conversionPeriod', 'basePeriod'] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "close_acceptance_streak_reversion",
@@ -195,6 +221,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["acceptanceThreshold", "streakThreshold"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "entropy_acceleration_transition",
@@ -210,6 +238,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["entropyWindow", "rocPeriod"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "body_concentration_entropy_squeeze",
@@ -228,6 +258,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		direction: "both",
 		walkForwardParams: ["entropyWindow", "compressionRank"],
 	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "close_acceptance_volume_conviction",
@@ -243,6 +275,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["lookback", "convictionRank"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "euphoria_volume_phi_divergence",
@@ -263,6 +297,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
     direction: "both",
     walkForwardParams: ["corr_lookback", "phi_correlation", "vol_z_min"],
   },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "panic_skewness_phi_trap",
@@ -283,6 +319,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
     direction: "both",
     walkForwardParams: ["skew_lookback", "phi_skew", "phi_acceptance"],
   },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "weighted_typical_phi_dislocation",
@@ -298,6 +336,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["atr_lookback", "phi_dislocation"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "volume_zscore_phi_compression",
@@ -315,6 +355,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["lookback", "vol_z_min", "phi_compression"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "initiative_autocorrelation_phi_fade",
@@ -330,6 +372,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["flow_lookback", "phi_memory_limit"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "range_clustering_momentum",
@@ -345,6 +389,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["autocorrWindow", "rangeMedianWindow"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "pivot_midpoint_anchor_fade",
@@ -360,6 +406,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["pivotLeftBars", "deviationMultiplier"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "volatility_percentile_reversal",
@@ -375,6 +423,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["stdDevWindow", "percentileWindow"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "efficiency_phi_micro_streak",
@@ -395,6 +445,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		direction: "both",
 		walkForwardParams: ["er_lookback", "phi_efficiency", "streak_min"],
 	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "body_proportion_phi_implosion",
@@ -413,6 +465,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		direction: "both",
 		walkForwardParams: ["lookback", "body_phi_limit"],
 	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "volume_thrust_phi_correlation",
@@ -433,6 +487,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		direction: "both",
 		walkForwardParams: ["corr_lookback", "corr_ceiling", "vol_z_min"],
 	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "midpoint_gravity_fade",
@@ -451,6 +507,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["dev_z_threshold", "vol_z_min"]
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "volume_exhaustion_decay",
@@ -471,6 +529,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["fast_vol_window", "slow_vol_window", "decay_ratio_threshold"]
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "limit_wall_liquidity_vacuum",
@@ -491,6 +551,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["z_lookback", "vol_z_min", "tr_z_max"]
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "autocorrelation_momentum_divergence",
@@ -511,6 +573,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["auto_lookback", "auto_min", "roc_lookback"]
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "velocity_reversal_shock",
@@ -531,6 +595,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["roc_lookback", "z_lookback", "roc_z_extreme"]
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "true_range_skewness_initiation",
@@ -549,6 +615,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		direction: "both",
 		walkForwardParams: ["skew_window", "zscore_trigger"],
 	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "body_proportion_entropy_ignition",
@@ -567,6 +635,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		direction: "both",
 		walkForwardParams: ["entropy_window", "implosion_threshold"],
 	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "return_skewness_exhaustion_fade",
@@ -585,6 +655,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		direction: "both",
 		walkForwardParams: ["skew_window", "zscore_threshold"],
 	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "volume_weighted_entropy_ignition",
@@ -603,6 +675,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		direction: "both",
 		walkForwardParams: ["entropy_window", "roc_threshold"],
 	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "poc_liquidity_rejection_fade",
@@ -625,6 +699,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		direction: "both",
 		walkForwardParams: ["poc_proximity_pct", "rejection_threshold", "profile_period"],
 	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "initiative_crossing_frequency_chop",
@@ -643,6 +719,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		direction: "both",
 		walkForwardParams: ["pressure_lookback", "count_window"],
 	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "relative_strength_mean_reversion",
@@ -661,6 +739,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["lookback", "zThreshold"],
     },
+        crossSymbolConfig: true,
+        polymarket1sConfig: false,
     },
     {
         key: "cross_pressure_initiative_inversion",
@@ -681,6 +761,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["initiativeLookback", "divergenceLookback", "zThreshold"],
     },
+        crossSymbolConfig: true,
+        polymarket1sConfig: false,
     },
     {
         key: "dominance_handoff_exhaustion",
@@ -703,6 +785,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["dominanceLookback", "rocLookback", "acceptanceBuyThreshold", "acceptanceSellThreshold"],
     },
+        crossSymbolConfig: true,
+        polymarket1sConfig: false,
     },
     {
         key: "close_location_correlation_break",
@@ -719,6 +803,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
+        crossSymbolConfig: true,
+        polymarket1sConfig: false,
     },
     {
         key: "correlation_range_fragmentation",
@@ -737,6 +823,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["lookback", "corrGapThreshold"],
     },
+        crossSymbolConfig: true,
+        polymarket1sConfig: false,
     },
     {
         key: "correlation_flash_gamma_trigger",
@@ -755,6 +843,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["corrLookback", "corrDropThreshold"],
     },
+        crossSymbolConfig: true,
+        polymarket1sConfig: false,
     },
     {
         key: "volatility_ratio_overextension",
@@ -775,6 +865,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		direction: "both",
 		walkForwardParams: ["fast_window", "slow_window", "ratio_threshold"],
 	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "rolling_vwap_center",
@@ -791,6 +883,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		direction: "both",
 		walkForwardParams: ["lookback"],
 	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "initiative_pressure_side",
@@ -809,6 +903,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		direction: "both",
 		walkForwardParams: ["lookback", "threshold"],
 	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "decay_momentum_alignment",
@@ -827,6 +923,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["decay", "roc_period"],
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "initiative_pressure_gated_median",
@@ -845,6 +943,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["median_lookback", "pressure_lookback"],
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "roc_percentile_regime",
@@ -867,6 +967,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		direction: "both",
 		walkForwardParams: ["roc_period", "lookback", "upper_pct", "lower_pct"],
 	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "accumulation_persistence_streak_gate",
@@ -885,6 +987,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["streakReq", "medianLookback"],
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "keltner_halfband_acceptance",
@@ -905,6 +1009,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["period", "multiplier", "halfband_frac"],
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "kurtosis_distribution_alignment",
@@ -921,6 +1027,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "close_location_median_alignment",
@@ -937,6 +1045,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "typical_price_percentile_alignment",
@@ -955,6 +1065,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["lookback", "threshold"],
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "volatility_regime_median_alignment",
@@ -970,6 +1082,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["lookback", "vol_threshold"] },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "trailing_boundary_composite",
@@ -988,6 +1102,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["boundary_lookback", "extreme_threshold"],
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "true_range_skew_acceptance",
@@ -1004,6 +1120,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["lookback"],
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "volume_roc_regime_router",
@@ -1022,6 +1140,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["volume_lookback", "regime_threshold"],
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "atr_range_conviction_follow",
@@ -1042,6 +1162,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
 		direction: "both",
 		walkForwardParams: ["atr_period", "range_atr_min", "acceptance_min"],
 	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
     {
         key: "cmf_pressure_alignment",
@@ -1062,6 +1184,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
     direction: "both",
     walkForwardParams: ["cmfPeriod", "cmfThreshold", "maxAdverse"],
   },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
     },
     {
         key: "keltner_boundary_pressure_gap",
@@ -1082,6 +1206,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
     direction: "both",
     walkForwardParams: ["keltnerPeriod", "keltnerMultiplier", "minPressureEdge"],
   },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
     },
     {
         key: "weighted_price_roc_veto",
@@ -1102,6 +1228,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["rocLookback", "minWapRoc", "maxAdverse"],
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
     },
     {
         key: "micro_level_ping_adverse_veto",
@@ -1122,6 +1250,8 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["pingLookback", "minPings", "maxAdverse"],
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
     },
     {
         key: "chop_breakout_adverse_veto",
@@ -1142,5 +1272,7 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         direction: "both",
         walkForwardParams: ["chopLookback", "minCrosses", "maxAdverse"],
     },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
     },
 ];

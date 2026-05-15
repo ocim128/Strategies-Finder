@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { Readable } from "node:stream";
 import type { OHLCVData, Time } from "../lib/types/strategies";
 import { backtestEndpointPlugin } from "../lib/backtest-endpoint-plugin";
-import { strategyManifest } from "../lib/strategies/manifest";
+import { strategyManifest } from "../lib/strategies/manifest-eager";
 
 const defaultStrategyEntry = strategyManifest.find((entry) => !entry.strategy.crossSymbolConfig);
 assert.ok(defaultStrategyEntry, "Expected at least one non-cross-symbol strategy in manifest");

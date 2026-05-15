@@ -1,15 +1,24 @@
 import { bootstrapApp } from "./lib/app-bootstrap";
-import { state } from "./lib/state";
-import { debugLogger } from "./lib/debug-logger";
-import { commandPaletteManager } from "./lib/command-palette";
-import { scannerPanel, scannerManager } from "./lib/scanner";
 
 void bootstrapApp();
 
-if (typeof window !== "undefined") {
-    (window as any).__state = state;
-    (window as any).__debug = debugLogger;
-    (window as any).__commandPalette = commandPaletteManager;
-    (window as any).__scannerPanel = scannerPanel;
-    (window as any).__scannerManager = scannerManager;
+const shouldExposeDebugGlobals =
+    typeof window !== "undefined"
+    && (import.meta.env.DEV || import.meta.env.VITE_EXPOSE_DEBUG_GLOBALS === "1");
+
+if (shouldExposeDebugGlobals) {
+    void Promise.all([
+        import("./lib/state"),
+        import("./lib/debug-logger"),
+        import("./lib/command-palette"),
+        import("./lib/scanner"),
+    ]).then(([stateModule, debugModule, commandPaletteModule, scannerModule]) => {
+        (window as any).__state = stateModule.state;
+        (window as any).__debug = debugModule.debugLogger;
+        (window as any).__commandPalette = commandPaletteModule.commandPaletteManager;
+        (window as any).__scannerPanel = scannerModule.scannerPanel;
+        (window as any).__scannerManager = scannerModule.scannerManager;
+    }).catch((error: unknown) => {
+        console.warn("[debug-globals] Failed to expose debug globals", error);
+    });
 }

@@ -11,7 +11,6 @@ import { getRequiredElement } from "../dom-utils";
 import { SYMBOL_MAP } from "../constants";
 import { clearAll } from "../app-actions";
 import { formatPolymarketDisplayName } from "../dataProviders/polymarket";
-import { quickViewManager } from "../quick-view";
 import { livePositionsService } from "../live-positions-service";
 import { isBinanceDataProvider } from "../binance-market";
 import { SIGNAL_EXIT_SUPPORTED_RANK_MODES } from "../polymarket-exit-mode";
@@ -280,11 +279,12 @@ export function setupStateSubscriptions() {
 
                 chartManager.displayTradeMarkers(result.trades, uiManager.formatPrice);
                 void activateLazyFeature("quick-view")
-                    .then(() => {
+                    .then(async () => {
                         if (state.currentBacktestResult !== result) {
                             return;
                         }
 
+                        const { quickViewManager } = await import("../quick-view");
                         quickViewManager.setJumpToTrade(jumpToTrade);
                         return quickViewManager.onBacktestComplete(result);
                     })

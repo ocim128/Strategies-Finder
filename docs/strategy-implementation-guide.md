@@ -10,7 +10,7 @@ For repo-level orientation, read [`README.md`](../README.md) first. For the oper
 
 - Built-in strategies live in `lib/strategies/lib/<strategy-key>.ts`.
 - The exported `const` should match the strategy key.
-- Built-ins are loaded from the generated manifest. Do not manually wire `strategyRegistry.ts`.
+- Built-ins are loaded from generated metadata/loaders/eager manifests. Do not manually wire `strategyRegistry.ts`.
 - After adding or renaming a built-in strategy, run `npm run strategies:sync-manifest`.
 - Entry logic must be causal and non-repainting. Bar `i` may only use information available in `data[0..i]`.
 - If `execute(...)` rounds, clamps, coerces sign, or otherwise sanitizes params, expose the same behavior through `normalizeParams(...)`.

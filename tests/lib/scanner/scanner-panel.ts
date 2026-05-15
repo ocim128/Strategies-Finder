@@ -555,7 +555,7 @@ export class ScannerPanel {
     private showError(message: string): void {
         const tbody = this.container.querySelector('.scanner-panel__results-body') as HTMLTableSectionElement;
         if (tbody) {
-            tbody.innerHTML = `<tr><td colspan="9" class="scanner-panel__error">Error: ${message}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="9" class="scanner-panel__error">Error: ${escapeHtml(message)}</td></tr>`;
         }
     }
 }

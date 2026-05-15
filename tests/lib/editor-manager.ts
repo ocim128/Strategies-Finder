@@ -195,18 +195,33 @@ return signals;`;
 
     private renderPresetList() {
         const { presetList } = this.getDom();
+        presetList.innerHTML = "";
 
         if (this.customPresets.length === 0) {
             presetList.innerHTML = '<div class="empty-state" style="padding: 20px; font-size: 12px; text-align: center; color: var(--text-secondary);">No saved presets</div>';
             return;
         }
 
-        presetList.innerHTML = this.customPresets.map((preset, index) => `
-            <div class="preset-item ${this.currentPresetKey === preset.key ? "active" : ""}" data-key="${preset.key}" tabindex="0">
-                <span class="preset-name">${preset.name}</span>
-                <button class="preset-delete" data-index="${index}">&times;</button>
-            </div>
-        `).join("");
+        const fragment = document.createDocumentFragment();
+        this.customPresets.forEach((preset, index) => {
+            const item = document.createElement("div");
+            item.className = `preset-item ${this.currentPresetKey === preset.key ? "active" : ""}`;
+            item.dataset.key = preset.key;
+            item.tabIndex = 0;
+
+            const name = document.createElement("span");
+            name.className = "preset-name";
+            name.textContent = preset.name;
+
+            const deleteButton = document.createElement("button");
+            deleteButton.className = "preset-delete";
+            deleteButton.dataset.index = String(index);
+            deleteButton.textContent = "\u00d7";
+
+            item.append(name, deleteButton);
+            fragment.appendChild(item);
+        });
+        presetList.appendChild(fragment);
 
         presetList.querySelectorAll(".preset-item").forEach(item => {
             const activatePreset = (event: Event) => {

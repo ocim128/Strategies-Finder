@@ -44,6 +44,7 @@ function writeStrategyFile(
 
 const generatedStrategyArtifacts = [
     "manifest.ts",
+    "manifest-eager.ts",
     "manifest-meta.ts",
     "manifest-loaders.ts",
     "manifest-keys.ts",
@@ -96,7 +97,7 @@ describe("Strategy library admin plugin", () => {
             expect(existsSync(alphaPath)).to.equal(false);
             expect(existsSync(path.join(repoRoot, result.backupRelativePath))).to.equal(true);
 
-            const manifestSource = readFileSync(path.join(repoRoot, "lib", "strategies", "manifest.ts"), "utf8");
+            const manifestSource = readFileSync(path.join(repoRoot, "lib", "strategies", "manifest-eager.ts"), "utf8");
             expect(manifestSource.includes('key: "alpha_strategy"')).to.equal(false);
             expect(manifestSource.includes('key: "beta_strategy"')).to.equal(true);
         } finally {
@@ -128,7 +129,7 @@ describe("Strategy library admin plugin", () => {
             expect(existsSync(path.join(repoRoot, result.deleted[1].backupRelativePath))).to.equal(true);
             expect(result.manifestStrategyCount).to.equal(1);
 
-            const manifestSource = readFileSync(path.join(repoRoot, "lib", "strategies", "manifest.ts"), "utf8");
+            const manifestSource = readFileSync(path.join(repoRoot, "lib", "strategies", "manifest-eager.ts"), "utf8");
             expect(manifestSource.includes('key: "alpha_strategy"')).to.equal(false);
             expect(manifestSource.includes('key: "beta_strategy"')).to.equal(false);
             expect(manifestSource.includes('key: "gamma_strategy"')).to.equal(true);
@@ -162,7 +163,7 @@ describe("Strategy library admin plugin", () => {
             expect(existsSync(alphaPath)).to.equal(false);
             expect(existsSync(betaPath)).to.equal(false);
 
-            const manifestSource = readFileSync(path.join(repoRoot, "lib", "strategies", "manifest.ts"), "utf8");
+            const manifestSource = readFileSync(path.join(repoRoot, "lib", "strategies", "manifest-eager.ts"), "utf8");
             expect(manifestSource.includes('key: "alpha_strategy"')).to.equal(false);
             expect(manifestSource.includes('key: "beta_strategy"')).to.equal(false);
             expect(manifestSource.includes('key: "gamma_strategy"')).to.equal(true);

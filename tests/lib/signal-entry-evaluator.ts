@@ -7,7 +7,7 @@ import type {
     Time,
     Trade,
 } from "./types/strategies";
-import { strategies } from "./strategies/library";
+import { getLoadedBuiltInStrategy } from "./strategies/built-in-catalog";
 import { prepareSignalsForScanner } from "./strategies/backtest/signal-preparation";
 import {
     allowsSignalAsEntry,
@@ -260,6 +260,7 @@ function applyConfirmationStrategies(
         data: candles,
         baseSignals,
         settings,
+        resolveStrategy: (key) => getLoadedBuiltInStrategy(key),
         executeStrategy: (_key, confirmationStrategy, confirmationParams) =>
             executeStrategyWithSettings(candles, confirmationStrategy, confirmationParams, settings),
     });
@@ -446,7 +447,7 @@ export function evaluateLatestEntrySignal(
         };
     }
 
-    const strategy = strategies[request.strategyKey];
+    const strategy = getLoadedBuiltInStrategy(request.strategyKey);
     if (!strategy) {
         return {
             ok: false,
