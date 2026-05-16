@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
 import { buildCloseAcceptanceSeries } from "./price-action-frequency-core";
 import { buildRollingMedian, buildRollingSkewness, extractBarMetricSeries } from "./price-action-statistics-core";
@@ -52,3 +52,8 @@ export const true_range_skew_acceptance: Strategy = {
         walkForwardParams: ["lookback"],
     },
 };
+
+
+
+
+

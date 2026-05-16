@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getVolumes } from "../strategy-helpers";
 import { buildCloseAcceptanceSeries } from "./price-action-frequency-core";
 import { buildPercentileRank } from "./price-action-statistics-core";
@@ -53,3 +53,8 @@ export const close_acceptance_volume_conviction: Strategy = {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["lookback", "convictionRank"] } };
+
+
+
+
+

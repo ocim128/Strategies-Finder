@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildTrailingHighLow } from "./price-action-frequency-core";
 import { buildRollingMedian, extractBarMetricSeries } from "./price-action-statistics-core";
@@ -52,3 +52,8 @@ export const body_proportion_phi_implosion: Strategy = {
 		walkForwardParams: ["lookback", "body_phi_limit"],
 	},
 };
+
+
+
+
+

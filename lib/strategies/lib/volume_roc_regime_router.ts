@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import {
     createBuySignal,
     createSellSignal,
@@ -84,3 +84,8 @@ export const volume_roc_regime_router: Strategy = {
         walkForwardParams: ["volume_lookback", "regime_threshold"],
     },
 };
+
+
+
+
+

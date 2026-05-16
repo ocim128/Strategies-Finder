@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import {
     createBuySignal,
     createSellSignal,
@@ -58,3 +58,8 @@ export const kurtosis_distribution_alignment: Strategy = {
         walkForwardParams: ["lookback"],
     },
 };
+
+
+
+
+

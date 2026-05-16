@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getVolumes } from "../strategy-helpers";
 import { buildTrailingHighLow } from "./price-action-frequency-core";
 import { extractBarMetricSeries, buildRollingZScore } from "./price-action-statistics-core";
@@ -48,12 +48,17 @@ export const volume_zscore_phi_compression: Strategy = {
 			const bullishBar = cleanData[i].close > cleanData[i].open;
 
 			if (bullishBar) {
-				return createBuySignal(cleanData, i, `VolZ ${vz.toFixed(2)} > ${p.vol_z_min}, TR compressed < phi * spread — bullish coil`);
+				return createBuySignal(cleanData, i, `VolZ ${vz.toFixed(2)} > ${p.vol_z_min}, TR compressed < phi * spread â€” bullish coil`);
 			}
-			return createSellSignal(cleanData, i, `VolZ ${vz.toFixed(2)} > ${p.vol_z_min}, TR compressed < phi * spread — bearish coil`);
+			return createSellSignal(cleanData, i, `VolZ ${vz.toFixed(2)} > ${p.vol_z_min}, TR compressed < phi * spread â€” bearish coil`);
 		});
 	},
 	metadata: {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["lookback", "vol_z_min", "phi_compression"] } };
+
+
+
+
+

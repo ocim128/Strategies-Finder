@@ -1,4 +1,4 @@
-import type {
+﻿import type {
     Strategy,
     OHLCVData,
     StrategyParams,
@@ -27,7 +27,7 @@ function normalizeCorrelationRangeFragmentationParams(params: StrategyParams): S
 
 export const correlation_range_fragmentation: Strategy = {
     name: "Correlation Range Fragmentation",
-    description: "Signals when price correlation remains high but range correlation has dropped — volatility structure fragmenting beneath stable directional surface, likely to resolve with range catching up.",
+    description: "Signals when price correlation remains high but range correlation has dropped â€” volatility structure fragmenting beneath stable directional surface, likely to resolve with range catching up.",
     defaultParams: {
         lookback: 25,
         corrGapThreshold: 0.35,
@@ -90,3 +90,8 @@ export const correlation_range_fragmentation: Strategy = {
         walkForwardParams: ["lookback", "corrGapThreshold"],
     },
 };
+
+
+
+
+

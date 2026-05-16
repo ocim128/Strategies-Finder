@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import {
     createBuySignal,
     createSellSignal,
@@ -76,3 +76,8 @@ export const trailing_boundary_composite: Strategy = {
         walkForwardParams: ["boundary_lookback", "extreme_threshold"],
     },
 };
+
+
+
+
+

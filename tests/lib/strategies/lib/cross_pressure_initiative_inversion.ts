@@ -1,4 +1,4 @@
-import type {
+﻿import type {
     Strategy,
     OHLCVData,
     StrategyParams,
@@ -86,3 +86,8 @@ export const cross_pressure_initiative_inversion: Strategy = {
         walkForwardParams: ["initiativeLookback", "divergenceLookback", "zThreshold"],
     },
 };
+
+
+
+
+

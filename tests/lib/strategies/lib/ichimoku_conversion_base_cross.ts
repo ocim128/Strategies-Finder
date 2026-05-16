@@ -1,4 +1,4 @@
-import { Strategy } from "../../types/strategies";
+﻿import { Strategy } from "../../types/strategies";
 import { getHighs, getLows, getCloses, createSignalLoop, createBuySignal, createSellSignal, ensureCleanData, checkCrossover } from '../strategy-helpers';
 import { calculateIchimoku } from '../indicators';
 
@@ -26,3 +26,7 @@ export const ichimoku_conversion_base_cross: Strategy = {
     });
   }
 };
+
+
+
+

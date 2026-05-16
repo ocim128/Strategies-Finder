@@ -1,4 +1,4 @@
-import type { Strategy, OHLCVData, StrategyExecutionContext, StrategyParams } from "../../types/strategies";
+﻿import type { Strategy, OHLCVData, StrategyExecutionContext, StrategyParams } from "../../types/strategies";
 import {
     createBuySignal,
     createSellSignal,
@@ -80,3 +80,8 @@ export const chop_breakout_adverse_veto: Strategy = {
         walkForwardParams: ["chopLookback", "minCrosses", "maxAdverse"],
     },
 };
+
+
+
+
+

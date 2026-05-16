@@ -1,4 +1,4 @@
-import type { Strategy, OHLCVData, StrategyExecutionContext, StrategyParams } from "../../types/strategies";
+﻿import type { Strategy, OHLCVData, StrategyExecutionContext, StrategyParams } from "../../types/strategies";
 import {
     createBuySignal,
     createSellSignal,
@@ -66,3 +66,8 @@ export const weighted_price_roc_veto: Strategy = {
         walkForwardParams: ["rocLookback", "minWapRoc", "maxAdverse"],
     },
 };
+
+
+
+
+

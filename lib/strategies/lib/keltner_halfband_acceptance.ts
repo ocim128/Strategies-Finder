@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import {
     createBuySignal,
     createSellSignal,
@@ -71,3 +71,8 @@ export const keltner_halfband_acceptance: Strategy = {
         walkForwardParams: ["period", "multiplier", "halfband_frac"],
     },
 };
+
+
+
+
+

@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildBodyPctSeries, buildRollingAverage } from "./price-action-frequency-core";
 import { buildRollingEntropy, buildPercentileRank } from "./price-action-statistics-core";
@@ -113,3 +113,8 @@ export const body_concentration_entropy_squeeze: Strategy = {
 		walkForwardParams: ["entropyWindow", "compressionRank"],
 	},
 };
+
+
+
+
+

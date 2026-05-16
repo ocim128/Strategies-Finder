@@ -1,4 +1,4 @@
-import type {
+﻿import type {
     OHLCVData,
     Polymarket1sQuoteContextRow,
     Polymarket1sGammaContextRow,
@@ -419,3 +419,8 @@ export function buildPolymarket1sGammaAgreement(
     frame.available = populated > 0;
     return frame;
 }
+
+
+
+
+

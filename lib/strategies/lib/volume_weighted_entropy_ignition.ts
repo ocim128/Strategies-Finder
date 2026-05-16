@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getWeightedClosePrices } from "../strategy-helpers";
 import { buildRollingEntropy, buildRateOfChange } from "./price-action-statistics-core";
 
@@ -62,3 +62,8 @@ export const volume_weighted_entropy_ignition: Strategy = {
 		walkForwardParams: ["entropy_window", "roc_threshold"],
 	},
 };
+
+
+
+
+

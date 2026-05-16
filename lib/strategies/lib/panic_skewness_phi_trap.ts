@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import {
   createBuySignal,
   createSellSignal,
@@ -66,3 +66,8 @@ export const panic_skewness_phi_trap: Strategy = {
     walkForwardParams: ["skew_lookback", "phi_skew", "phi_acceptance"],
   },
 };
+
+
+
+
+

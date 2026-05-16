@@ -1,4 +1,4 @@
-import { OHLCVData } from "../../types/strategies";
+﻿import { OHLCVData } from "../../types/strategies";
 
 export interface PriceActionBarMetrics {
 	range: number;
@@ -291,3 +291,8 @@ export function extractBarMetricSeries(data: OHLCVData[], metricType: BarMetricT
 	}
 	return result;
 }
+
+
+
+
+

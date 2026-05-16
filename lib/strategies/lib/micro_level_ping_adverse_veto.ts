@@ -1,4 +1,4 @@
-import type { Strategy, OHLCVData, StrategyExecutionContext, StrategyParams } from "../../types/strategies";
+﻿import type { Strategy, OHLCVData, StrategyExecutionContext, StrategyParams } from "../../types/strategies";
 import {
     createBuySignal,
     createSellSignal,
@@ -78,3 +78,8 @@ export const micro_level_ping_adverse_veto: Strategy = {
         walkForwardParams: ["pingLookback", "minPings", "maxAdverse"],
     },
 };
+
+
+
+
+

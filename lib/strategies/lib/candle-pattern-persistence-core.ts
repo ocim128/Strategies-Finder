@@ -1,4 +1,4 @@
-import { OHLCVData } from "../../types/strategies";
+﻿import { OHLCVData } from "../../types/strategies";
 import { ensureCleanData, getCloses, getHighs, getLows } from "../strategy-helpers";
 
 export interface CandlePatternPersistenceState {
@@ -114,3 +114,8 @@ export function calculateCCI(
 
     return result;
 }
+
+
+
+
+

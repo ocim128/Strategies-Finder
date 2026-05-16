@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses, getHighs, getLows, buildPivotFlags } from "../strategy-helpers";
 
 function normalizePivotMidpointAnchorFadeParams(params: StrategyParams): StrategyParams {
@@ -61,3 +61,8 @@ export const pivot_midpoint_anchor_fade: Strategy = {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["pivotLeftBars", "deviationMultiplier"] } };
+
+
+
+
+

@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
 import { buildInitiativePressureSeries } from "./price-action-frequency-core";
 import { buildThresholdCrossingCount, buildPercentileRank } from "./price-action-statistics-core";
@@ -66,3 +66,8 @@ export const initiative_crossing_frequency_chop: Strategy = {
 		walkForwardParams: ["pressure_lookback", "count_window"],
 	},
 };
+
+
+
+
+

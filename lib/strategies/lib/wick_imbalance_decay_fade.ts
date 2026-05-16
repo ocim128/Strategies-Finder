@@ -1,4 +1,4 @@
-import { Strategy, StrategyParams } from '../../types/strategies';
+﻿import { Strategy, StrategyParams } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from '../strategy-helpers';
 import { extractBarMetricSeries, buildCumulativeDecaySum, buildRollingZScore } from './price-action-statistics-core';
 
@@ -49,3 +49,8 @@ export const wick_imbalance_decay_fade: Strategy = {
 		role: 'entry',
 		direction: 'both',
 		walkForwardParams: ['decayRate', 'zscoreExtreme'] } };
+
+
+
+
+

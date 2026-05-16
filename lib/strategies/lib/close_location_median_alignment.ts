@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildCloseLocationSeries } from "./price-action-frequency-core";
 import { buildRollingMedian } from "./price-action-statistics-core";
@@ -50,3 +50,8 @@ export const close_location_median_alignment: Strategy = {
         walkForwardParams: ["lookback"],
     },
 };
+
+
+
+
+

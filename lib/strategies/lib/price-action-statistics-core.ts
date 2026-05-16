@@ -1,4 +1,4 @@
-import { OHLCVData } from "../../types/strategies";
+﻿import { OHLCVData } from "../../types/strategies";
 import { getPriceActionBarMetrics } from "./price-action-frequency-core";
 
 // ============================================================================
@@ -221,7 +221,7 @@ export function buildRollingSkewness(
 /**
  * Exponentially decaying cumulative sum.
  * Each bar: accum = accum * decayFactor + score[i].
- * decayFactor in (0, 1) controls memory — 0.9 = long memory, 0.5 = fast decay.
+ * decayFactor in (0, 1) controls memory â€” 0.9 = long memory, 0.5 = fast decay.
  * Alternative to flat rolling average for score accumulation.
  */
 export function buildCumulativeDecaySum(
@@ -314,7 +314,7 @@ export function buildRollingKurtosis(
 
 /**
  * Rolling median over a fixed lookback window.
- * Robust to outliers — useful as an alternative center-of-gravity to mean.
+ * Robust to outliers â€” useful as an alternative center-of-gravity to mean.
  * Uses insertion-sort on the window for simplicity at typical lookback sizes.
  */
 export function buildRollingMedian(
@@ -455,7 +455,7 @@ export function buildRollingEntropy(
 
 		const wRange = wMax - wMin;
 		if (wRange <= 0) {
-			result[i] = 0; // all identical → zero entropy
+			result[i] = 0; // all identical â†’ zero entropy
 			continue;
 		}
 
@@ -634,3 +634,8 @@ export function extractBarMetricSeries(
 
 	return result;
 }
+
+
+
+
+

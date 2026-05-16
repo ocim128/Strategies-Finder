@@ -1,4 +1,4 @@
-import type {
+﻿import type {
     Strategy,
     OHLCVData,
     StrategyParams,
@@ -25,7 +25,7 @@ function normalizeCloseLocationCorrelationBreakParams(params: StrategyParams): S
 
 export const close_location_correlation_break: Strategy = {
     name: "Close Location Correlation Break",
-    description: "Signals when close-location correlation between the pair declines (auction quality diverging) while price correlation remains stable — hidden regime break preceding visible price decoupling.",
+    description: "Signals when close-location correlation between the pair declines (auction quality diverging) while price correlation remains stable â€” hidden regime break preceding visible price decoupling.",
     defaultParams: {
         lookback: 25,
     },
@@ -77,3 +77,8 @@ export const close_location_correlation_break: Strategy = {
         walkForwardParams: ["lookback"],
     },
 };
+
+
+
+
+

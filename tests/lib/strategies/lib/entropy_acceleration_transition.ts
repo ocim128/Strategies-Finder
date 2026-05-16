@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildRollingEntropy, buildRateOfChange, buildRollingMedian } from "./price-action-statistics-core";
 
@@ -48,10 +48,10 @@ export const entropy_acceleration_transition: Strategy = {
 				if (median === null) return null;
 
 				if (closes[i] > median) {
-					return createBuySignal(cleanData, i, `Entropy ROC structuring transition (disordering→ordering), close above median`);
+					return createBuySignal(cleanData, i, `Entropy ROC structuring transition (disorderingâ†’ordering), close above median`);
 				}
 				if (closes[i] < median) {
-					return createSellSignal(cleanData, i, `Entropy ROC structuring transition (disordering→ordering), close below median`);
+					return createSellSignal(cleanData, i, `Entropy ROC structuring transition (disorderingâ†’ordering), close below median`);
 				}
 			}
 			return null;
@@ -61,3 +61,8 @@ export const entropy_acceleration_transition: Strategy = {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["entropyWindow", "rocPeriod"] } };
+
+
+
+
+

@@ -1,4 +1,4 @@
-import { Strategy, StrategyParams } from '../../types/strategies';
+﻿import { Strategy, StrategyParams } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses, from '../strategy-helpers';
 import { buildRollingMinMax, from './price-action-statistics-core';
 import { buildPercentileRank } from './price-action-statistics-core';
@@ -55,3 +55,8 @@ import { getCloses } in '../strategy-helpers';
  (${cc} crosses) bearish)`);
             }
             return null;
+
+
+
+
+

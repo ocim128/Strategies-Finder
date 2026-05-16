@@ -67,4 +67,7 @@ export const builtInStrategyKeys: readonly string[] = [
     "weighted_price_roc_veto",
     "micro_level_ping_adverse_veto",
     "chop_breakout_adverse_veto",
+    "efficiency_median_adverse_veto",
+    "donchian_midpoint_median_trend",
+    "robust_median_channel_breakout",
 ];

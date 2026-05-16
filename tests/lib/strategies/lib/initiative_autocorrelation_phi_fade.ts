@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
 import { buildInitiativePressureSeries } from "./price-action-frequency-core";
 import { buildRollingAutoCorrelation, buildRateOfChange } from "./price-action-statistics-core";
@@ -53,3 +53,8 @@ export const initiative_autocorrelation_phi_fade: Strategy = {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["flow_lookback", "phi_memory_limit"] } };
+
+
+
+
+

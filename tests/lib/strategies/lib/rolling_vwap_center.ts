@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, getCloses, getVolumes } from "../strategy-helpers";
 
 type RollingVwapCenterPrepared = {
@@ -100,3 +100,8 @@ export const rolling_vwap_center: Strategy = {
 		walkForwardParams: ["lookback"],
 	},
 };
+
+
+
+
+

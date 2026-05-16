@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildRollingMedian } from "./price-action-statistics-core";
 
@@ -85,3 +85,8 @@ export const entropy_ratio_regime_alignment: Strategy = {
         role: "entry",
         direction: "both",
         walkForwardParams: ["slowWindow"] } };
+
+
+
+
+

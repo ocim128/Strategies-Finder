@@ -75,4 +75,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     builtInStrategyMetaByKey["weighted_price_roc_veto"],
     builtInStrategyMetaByKey["micro_level_ping_adverse_veto"],
     builtInStrategyMetaByKey["chop_breakout_adverse_veto"],
+    builtInStrategyMetaByKey["efficiency_median_adverse_veto"],
+    builtInStrategyMetaByKey["donchian_midpoint_median_trend"],
+    builtInStrategyMetaByKey["robust_median_channel_breakout"],
 ];

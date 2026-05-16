@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses, getHighs, getLows } from "../strategy-helpers";
 import { buildCloseAcceptanceSeries } from "./price-action-frequency-core";
 import { buildStreakCount } from "./price-action-statistics-core";
@@ -61,3 +61,8 @@ export const close_acceptance_streak_reversion: Strategy = {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["acceptanceThreshold", "streakThreshold"] } };
+
+
+
+
+

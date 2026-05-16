@@ -1,4 +1,4 @@
-import { Strategy, StrategyParams, OHLCVData } from "../../types/strategies";
+﻿import { Strategy, StrategyParams, OHLCVData } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses, getHighs, getLows } from "../strategy-helpers";
 import { buildRateOfChange } from "./price-action-statistics-core";
 
@@ -117,3 +117,8 @@ export const poly_5m_pivot_breakout_entry: Strategy = {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["pivotLookback", "breakoutBars", "minRoc"] } };
+
+
+
+
+

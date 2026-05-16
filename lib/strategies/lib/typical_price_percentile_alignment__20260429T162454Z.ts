@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getTypicalPrices } from "../strategy-helpers";
 import { buildPercentileRank } from "./price-action-statistics-core";
 
@@ -52,3 +52,8 @@ export const typical_price_percentile_alignment: Strategy = {
         walkForwardParams: ["lookback", "threshold"],
     },
 };
+
+
+
+
+

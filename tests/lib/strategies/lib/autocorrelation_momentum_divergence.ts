@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildRateOfChange, buildRollingAutoCorrelation } from "./price-action-statistics-core";
 
@@ -65,3 +65,8 @@ export const autocorrelation_momentum_divergence: Strategy = {
         walkForwardParams: ["auto_lookback", "auto_min", "roc_lookback"]
     }
 };
+
+
+
+
+

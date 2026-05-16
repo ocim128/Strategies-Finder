@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildRateOfChange, buildRollingStdDev, buildPercentileRank } from "./price-action-statistics-core";
 
@@ -64,3 +64,8 @@ export const volatility_percentile_reversal: Strategy = {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["stdDevWindow", "percentileWindow"] } };
+
+
+
+
+

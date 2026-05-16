@@ -69,4 +69,7 @@ export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {
     "weighted_price_roc_veto": () => import("./lib/weighted_price_roc_veto").then(m => m.weighted_price_roc_veto),
     "micro_level_ping_adverse_veto": () => import("./lib/micro_level_ping_adverse_veto").then(m => m.micro_level_ping_adverse_veto),
     "chop_breakout_adverse_veto": () => import("./lib/chop_breakout_adverse_veto").then(m => m.chop_breakout_adverse_veto),
+    "efficiency_median_adverse_veto": () => import("./lib/efficiency_median_adverse_veto").then(m => m.efficiency_median_adverse_veto),
+    "donchian_midpoint_median_trend": () => import("./lib/donchian_midpoint_median_trend").then(m => m.donchian_midpoint_median_trend),
+    "robust_median_channel_breakout": () => import("./lib/robust_median_channel_breakout").then(m => m.robust_median_channel_breakout),
 };

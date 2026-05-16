@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import {
 	buildRollingAutoCorrelation,
@@ -39,3 +39,8 @@ export const autocorrelation_phi_decay: Strategy = {
 		});
 	},
 	metadata: { role: "entry", direction: "both", walkForwardParams: ["autoCorrLookback", "phiDecay", "zscoreExtreme"] } };
+
+
+
+
+

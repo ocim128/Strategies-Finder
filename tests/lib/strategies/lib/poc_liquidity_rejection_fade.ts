@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getHighs, getLows } from "../strategy-helpers";
 import { calculateVolumeProfile } from "../indicators";
 import { buildCloseLocationSeries } from "./price-action-frequency-core";
@@ -73,3 +73,8 @@ export const poc_liquidity_rejection_fade: Strategy = {
 		walkForwardParams: ["poc_proximity_pct", "rejection_threshold", "profile_period"],
 	},
 };
+
+
+
+
+

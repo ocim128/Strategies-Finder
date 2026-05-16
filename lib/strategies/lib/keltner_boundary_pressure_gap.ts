@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, StrategyExecutionContext } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams, StrategyExecutionContext } from "../../types/strategies";
 import {
   createBuySignal,
   createSellSignal,
@@ -86,3 +86,8 @@ export const keltner_boundary_pressure_gap: Strategy = {
     walkForwardParams: ["keltnerPeriod", "keltnerMultiplier", "minPressureEdge"],
   },
 };
+
+
+
+
+

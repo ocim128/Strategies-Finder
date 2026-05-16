@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, ensureCleanData, getCloses, getHighs, getLows } from "../strategy-helpers";
 
 function normalizeParams(params: StrategyParams): StrategyParams {
@@ -83,3 +83,7 @@ export const wick_responsive_boundary_retest: Strategy = {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["boundary_lookback", "test_threshold", "retest_tolerance"] } };
+
+
+
+

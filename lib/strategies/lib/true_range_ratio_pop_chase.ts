@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
 import { extractBarMetricSeries } from "./price-action-frequency-core";
 
@@ -38,3 +38,8 @@ export const true_range_ratio_pop_chase: Strategy = {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["trMult", "minCloseReturn"] } };
+
+
+
+
+

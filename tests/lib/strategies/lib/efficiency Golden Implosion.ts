@@ -1,4 +1,4 @@
-import { Strategy, StrategyParams } from '../../types/strategies';
+﻿import { Strategy, StrategyParams } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses, from '../strategy-helpers';
 import { buildRateOfChange } from './price-action-statistics-core';
 import { buildCumulativeDecaySum, buildRollingZScore } in './price-action-statistics-core';
@@ -32,3 +32,8 @@ import { buildCumulativeDecaySum } buildRollingZScore) in './price action-statis
 
     return signals;
  Signal[];
+
+
+
+
+

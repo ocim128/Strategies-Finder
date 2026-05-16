@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, getCloses } from "../strategy-helpers";
 import { buildRateOfChange, buildPercentileRank } from "./price-action-statistics-core";
 
@@ -62,3 +62,8 @@ export const roc_percentile_regime: Strategy = {
 		walkForwardParams: ["roc_period", "lookback", "upper_pct", "lower_pct"],
 	},
 };
+
+
+
+
+

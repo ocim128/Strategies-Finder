@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import {
     createBuySignal,
     createSellSignal,
@@ -70,3 +70,8 @@ export const accumulation_persistence_streak_gate: Strategy = {
         walkForwardParams: ["streakReq", "medianLookback"],
     },
 };
+
+
+
+
+

@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop } from "../strategy-helpers";
 import {
 	getAtrSeries,
@@ -68,3 +68,8 @@ export const atr_range_conviction_follow: Strategy = {
 		walkForwardParams: ["atr_period", "range_atr_min", "acceptance_min"],
 	},
 };
+
+
+
+
+

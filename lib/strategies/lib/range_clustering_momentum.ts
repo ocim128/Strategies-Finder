@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
 import { buildRangeSeries } from "./price-action-frequency-core";
 import { buildRollingAutoCorrelation, buildRollingMedian } from "./price-action-statistics-core";
@@ -50,3 +50,8 @@ export const range_clustering_momentum: Strategy = {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["autocorrWindow", "rangeMedianWindow"] } };
+
+
+
+
+

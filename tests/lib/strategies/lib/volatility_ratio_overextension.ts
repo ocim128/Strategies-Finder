@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
 import { extractBarMetricSeries } from "./price-action-frequency-core";
 import { buildDualTimeframeRatio, buildRollingStdDev } from "./price-action-statistics-core";
@@ -57,3 +57,8 @@ export const volatility_ratio_overextension: Strategy = {
 		walkForwardParams: ["fast_window", "slow_window", "ratio_threshold"],
 	},
 };
+
+
+
+
+

@@ -68,6 +68,9 @@ import { keltner_boundary_pressure_gap } from "./lib/keltner_boundary_pressure_g
 import { weighted_price_roc_veto } from "./lib/weighted_price_roc_veto";
 import { micro_level_ping_adverse_veto } from "./lib/micro_level_ping_adverse_veto";
 import { chop_breakout_adverse_veto } from "./lib/chop_breakout_adverse_veto";
+import { efficiency_median_adverse_veto } from "./lib/efficiency_median_adverse_veto";
+import { donchian_midpoint_median_trend } from "./lib/donchian_midpoint_median_trend";
+import { robust_median_channel_breakout } from "./lib/robust_median_channel_breakout";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -141,6 +144,9 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "weighted_price_roc_veto", strategy: weighted_price_roc_veto },
     { key: "micro_level_ping_adverse_veto", strategy: micro_level_ping_adverse_veto },
     { key: "chop_breakout_adverse_veto", strategy: chop_breakout_adverse_veto },
+    { key: "efficiency_median_adverse_veto", strategy: efficiency_median_adverse_veto },
+    { key: "donchian_midpoint_median_trend", strategy: donchian_midpoint_median_trend },
+    { key: "robust_median_channel_breakout", strategy: robust_median_channel_breakout },
 ];
 
 export function createStrategiesRecordFromManifest(

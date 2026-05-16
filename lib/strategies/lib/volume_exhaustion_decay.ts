@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getVolumes } from "../strategy-helpers";
 import { buildRollingAverage } from "./price-action-frequency-core";
 
@@ -73,3 +73,8 @@ export const volume_exhaustion_decay: Strategy = {
         walkForwardParams: ["fast_vol_window", "slow_vol_window", "decay_ratio_threshold"]
     }
 };
+
+
+
+
+

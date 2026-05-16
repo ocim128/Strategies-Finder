@@ -1,4 +1,4 @@
-import { OHLCVData } from "../../types/strategies";
+﻿import { OHLCVData } from "../../types/strategies";
 import { calculateADX, calculateATR, calculateCMF, calculateVolumeProfile } from "../indicators";
 import { ensureCleanData, getCloses, getHighs, getLows, getVolumes } from "../strategy-helpers";
 import {
@@ -288,3 +288,8 @@ export function getVolumeProfileSeries(
 	}
 	return profile;
 }
+
+
+
+
+

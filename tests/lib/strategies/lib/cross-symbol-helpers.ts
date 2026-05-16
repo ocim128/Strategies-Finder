@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Cross-symbol alignment and derived-series helpers.
  *
  * These are pure, stateless functions that operate on already-fetched OHLCV
@@ -51,7 +51,7 @@ export function alignSecondaryToPrimary(
     for (let i = 0; i < primary.length; i++) {
         const primaryTime = parseTimeToUnixSeconds(primary[i].time);
         if (primaryTime === null) {
-            // Cannot compare — carry forward whatever we have.
+            // Cannot compare â€” carry forward whatever we have.
             aligned[i] = secIdx > 0 ? secondaryNumeric[secIdx - 1].bar : null;
             continue;
         }
@@ -267,3 +267,8 @@ export class CrossSymbolAlignmentError extends Error {
         this.name = 'CrossSymbolAlignmentError';
     }
 }
+
+
+
+
+

@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import {
   createBuySignal,
   createSellSignal,
@@ -68,3 +68,8 @@ export const euphoria_volume_phi_divergence: Strategy = {
     walkForwardParams: ["corr_lookback", "phi_correlation", "vol_z_min"],
   },
 };
+
+
+
+
+

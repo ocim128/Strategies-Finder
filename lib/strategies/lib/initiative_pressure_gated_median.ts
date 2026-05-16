@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import {
     createBuySignal,
     createSellSignal,
@@ -60,3 +60,8 @@ export const initiative_pressure_gated_median: Strategy = {
         walkForwardParams: ["median_lookback", "pressure_lookback"],
     },
 };
+
+
+
+
+

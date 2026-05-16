@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, ensureCleanData } from "../strategy-helpers";
 import { buildRateOfChange, buildPercentileRank, buildEfficiencyRatio, extractBarMetricSeries } from "./price-action-statistics-core";
 
@@ -52,3 +52,8 @@ export const velocity_percentile_phi_snap: Strategy = {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["velocityWindow", "erLookback", "phiInefficiency"] } };
+
+
+
+
+

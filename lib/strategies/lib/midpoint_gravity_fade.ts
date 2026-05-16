@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getVolumes } from "../strategy-helpers";
 import { extractBarMetricSeries } from "./price-action-frequency-core";
 import { buildRollingZScore } from "./price-action-statistics-core";
@@ -62,3 +62,8 @@ export const midpoint_gravity_fade: Strategy = {
         walkForwardParams: ["dev_z_threshold", "vol_z_min"]
     }
 };
+
+
+
+
+

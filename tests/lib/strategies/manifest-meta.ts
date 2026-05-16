@@ -791,7 +791,7 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
     {
         key: "close_location_correlation_break",
         name: "Close Location Correlation Break",
-        description: "Signals when close-location correlation between the pair declines (auction quality diverging) while price correlation remains stable — hidden regime break preceding visible price decoupling.",
+        description: "Signals when close-location correlation between the pair declines (auction quality diverging) while price correlation remains stable â€” hidden regime break preceding visible price decoupling.",
         defaultParams: {
         lookback: 25,
     } as Record<string, number>,
@@ -809,7 +809,7 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
     {
         key: "correlation_range_fragmentation",
         name: "Correlation Range Fragmentation",
-        description: "Signals when price correlation remains high but range correlation has dropped — volatility structure fragmenting beneath stable directional surface, likely to resolve with range catching up.",
+        description: "Signals when price correlation remains high but range correlation has dropped â€” volatility structure fragmenting beneath stable directional surface, likely to resolve with range catching up.",
         defaultParams: {
         lookback: 25,
         corrGapThreshold: 0.35,
@@ -829,7 +829,7 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
     {
         key: "correlation_flash_gamma_trigger",
         name: "Correlation Flash Gamma Trigger",
-        description: "Signals when rolling pair correlation drops sharply (flash decoupling) with high body pct on the primary bar — a vol-expansion gamma trigger with directional conviction.",
+        description: "Signals when rolling pair correlation drops sharply (flash decoupling) with high body pct on the primary bar â€” a vol-expansion gamma trigger with directional conviction.",
         defaultParams: {
         corrLookback: 10,
         corrDropThreshold: -0.15,
@@ -1274,5 +1274,65 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
     },
         crossSymbolConfig: false,
         polymarket1sConfig: true,
+    },
+    {
+        key: "efficiency_median_adverse_veto",
+        name: "Efficiency Median Adverse Veto",
+        description: "A highly efficient Binance price trend dictates direction, permitted only when Polymarket isn't aggressively fighting the spot implied state.",
+        defaultParams: {
+        erLookback: 60,
+        minER: 0.35,
+        maxAdverse: 0.05,
+    } as Record<string, number>,
+        paramLabels: {
+        erLookback: "ER / Median Lookback",
+        minER: "Min Efficiency Ratio",
+        maxAdverse: "Max PM Adverse Gap",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["erLookback", "minER", "maxAdverse"]
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
+    },
+    {
+        key: "donchian_midpoint_median_trend",
+        name: "Donchian Midpoint Median Trend",
+        description: "Extracts the structural center of price extremes by taking the rolling median of the Donchian Channel midpoint, capturing pure geometric momentum.",
+        defaultParams: {
+		donchian_period: 20,
+		median_lookback: 40,
+	} as Record<string, number>,
+        paramLabels: {
+		donchian_period: "Donchian Period",
+		median_lookback: "Median Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["donchian_period", "median_lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "robust_median_channel_breakout",
+        name: "Robust Median Channel Breakout",
+        description: "Constructs a highly resilient trailing channel using the rolling median of highs and the rolling median of lows, entering on structural containment breaks.",
+        defaultParams: {
+		lookback: 40,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
     },
 ];

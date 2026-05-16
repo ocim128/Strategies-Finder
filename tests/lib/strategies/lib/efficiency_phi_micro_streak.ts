@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
 import { buildEfficiencyRatio, buildStreakCount } from "./price-action-statistics-core";
 
@@ -56,3 +56,8 @@ export const efficiency_phi_micro_streak: Strategy = {
 		walkForwardParams: ["er_lookback", "phi_efficiency", "streak_min"],
 	},
 };
+
+
+
+
+

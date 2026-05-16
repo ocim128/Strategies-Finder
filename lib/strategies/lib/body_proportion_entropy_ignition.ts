@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData } from "../strategy-helpers";
 import { extractBarMetricSeries } from "./price-action-frequency-core";
 import { buildRollingEntropy, buildRateOfChange } from "./price-action-statistics-core";
@@ -55,3 +55,8 @@ export const body_proportion_entropy_ignition: Strategy = {
 		walkForwardParams: ["entropy_window", "implosion_threshold"],
 	},
 };
+
+
+
+
+

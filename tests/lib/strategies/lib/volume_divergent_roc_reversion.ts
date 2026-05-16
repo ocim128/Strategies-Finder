@@ -1,4 +1,4 @@
-import { Strategy, StrategyParams } from '../../types/strategies';
+﻿import { Strategy, StrategyParams } from '../../types/strategies';
 import { 
   getCloses, 
   getVolumes,
@@ -75,4 +75,9 @@ export const volume_divergent_roc_reversion: Strategy = {
     );
   }
 };
+
+
+
+
+
 

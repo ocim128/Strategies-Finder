@@ -1,4 +1,4 @@
-import type {
+﻿import type {
     Strategy,
     OHLCVData,
     StrategyParams,
@@ -27,7 +27,7 @@ function normalizeCorrelationFlashGammaTriggerParams(params: StrategyParams): St
 
 export const correlation_flash_gamma_trigger: Strategy = {
     name: "Correlation Flash Gamma Trigger",
-    description: "Signals when rolling pair correlation drops sharply (flash decoupling) with high body pct on the primary bar — a vol-expansion gamma trigger with directional conviction.",
+    description: "Signals when rolling pair correlation drops sharply (flash decoupling) with high body pct on the primary bar â€” a vol-expansion gamma trigger with directional conviction.",
     defaultParams: {
         corrLookback: 10,
         corrDropThreshold: -0.15,
@@ -78,3 +78,8 @@ export const correlation_flash_gamma_trigger: Strategy = {
         walkForwardParams: ["corrLookback", "corrDropThreshold"],
     },
 };
+
+
+
+
+

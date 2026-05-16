@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop } from "../strategy-helpers";
 import { buildInitiativePressureSeries } from "./price-action-frequency-core";
 
@@ -49,3 +49,8 @@ export const initiative_pressure_side: Strategy = {
 		walkForwardParams: ["lookback", "threshold"],
 	},
 };
+
+
+
+
+

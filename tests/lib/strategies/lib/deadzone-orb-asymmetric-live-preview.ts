@@ -1,4 +1,4 @@
-import type { EntryPreview, EntryPreviewRow, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import type { EntryPreview, EntryPreviewRow, OHLCVData, StrategyParams } from "../../types/strategies";
 import { parseTimeToUnixSeconds } from "../../time-normalization";
 import { ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildEfficiencyRatio, buildRateOfChange, buildRollingZScore } from "./price-action-statistics-core";
@@ -222,3 +222,8 @@ export function buildDeadzoneOrbAsymmetricLivePreview(
 				? "Preview only. It uses the forming bar and can disappear before the candle closes."
 				: "Deadzone gate is not active on the forming bar yet. Wait for ER to compress before trusting the breakout preview." };
 }
+
+
+
+
+

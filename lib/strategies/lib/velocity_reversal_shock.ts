@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildRateOfChange, buildRollingZScore } from "./price-action-statistics-core";
 
@@ -61,3 +61,8 @@ export const velocity_reversal_shock: Strategy = {
         walkForwardParams: ["roc_lookback", "z_lookback", "roc_z_extreme"]
     }
 };
+
+
+
+
+

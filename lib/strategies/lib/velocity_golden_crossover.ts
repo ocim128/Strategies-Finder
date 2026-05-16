@@ -1,4 +1,4 @@
-import { Strategy, StrategyParams } from '../../types/strategies';
+﻿import { Strategy, StrategyParams } from '../../types/strategies';
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses, getOpens } from '../strategy-helpers';
 import { extractBarMetricSeries } from './price-action-statistics-core';
 import { buildPercentileRank } from './price-action-statistics-core';
@@ -25,3 +25,8 @@ import { buildCumulativeDecaySum, buildRollingZScore);
  bodyDirection=' + bodyPct > bpThresh && bodyDir[i] === 1);
             }
             return null;
+
+
+
+
+

@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams, StrategyExecutionContext } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams, StrategyExecutionContext } from "../../types/strategies";
 import {
   createBuySignal,
   createSellSignal,
@@ -84,3 +84,8 @@ export const cmf_pressure_alignment: Strategy = {
     walkForwardParams: ["cmfPeriod", "cmfThreshold", "maxAdverse"],
   },
 };
+
+
+
+
+

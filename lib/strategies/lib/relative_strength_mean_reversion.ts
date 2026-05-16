@@ -1,4 +1,4 @@
-import type {
+﻿import type {
     Strategy,
     OHLCVData,
     StrategyParams,
@@ -142,3 +142,8 @@ export const relative_strength_mean_reversion: Strategy = {
         walkForwardParams: ["lookback", "zThreshold"],
     },
 };
+
+
+
+
+

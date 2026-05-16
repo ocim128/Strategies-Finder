@@ -1,4 +1,4 @@
-import type {
+﻿import type {
     Strategy,
     OHLCVData,
     StrategyParams,
@@ -90,3 +90,8 @@ export const dominance_handoff_exhaustion: Strategy = {
         walkForwardParams: ["dominanceLookback", "rocLookback", "acceptanceBuyThreshold", "acceptanceSellThreshold"],
     },
 };
+
+
+
+
+

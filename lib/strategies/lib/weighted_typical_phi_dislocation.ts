@@ -1,4 +1,4 @@
-import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
+﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
 import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getWeightedClosePrices, getTypicalPrices } from "../strategy-helpers";
 import { extractBarMetricSeries, buildRollingAverage } from "./price-action-frequency-core";
 
@@ -50,3 +50,8 @@ export const weighted_typical_phi_dislocation: Strategy = {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["atr_lookback", "phi_dislocation"] } };
+
+
+
+
+
