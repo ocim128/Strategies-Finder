@@ -21,6 +21,7 @@ import {
 } from "./polymarket-post-signal-limit-entry";
 import type { Trade } from "./types/strategies";
 import type {
+    BacktestPolymarketTradeSummary,
     PolymarketMarketEntrySource,
     PolymarketMarketEntryStatus,
     PolymarketOutcomeRow,
@@ -107,6 +108,64 @@ export interface SignalExitSummary {
     limitExitUnreachableTrades?: number;
 }
 
+export function buildSignalExitPolymarketTradeSummary(args: {
+    seriesId: string;
+    outcomeSymbol?: string | null;
+    outcomeInterval?: BacktestPolymarketTradeSummary["outcomeInterval"];
+    outcomeRowsLoaded: number;
+    summary: SignalExitSummary;
+}): BacktestPolymarketTradeSummary {
+    const { summary } = args;
+    return {
+        seriesId: args.seriesId,
+        outcomeSymbol: args.outcomeSymbol ?? undefined,
+        outcomeInterval: args.outcomeInterval,
+        outcomeRowsLoaded: args.outcomeRowsLoaded,
+        scoredTrades: summary.scoredTrades,
+        missingOutcomeTrades: summary.missingOutcomeTrades,
+        unscoredTrades: summary.unscoredTrades,
+        duplicateTradesIgnored: summary.duplicateTradesIgnored > 0 ? summary.duplicateTradesIgnored : undefined,
+        entryPriceFilteredTrades: summary.entryPriceFilteredTrades > 0 ? summary.entryPriceFilteredTrades : undefined,
+        evaluationMode: "signal_exit_same_event",
+        signalExitAllowMultipleTradesPerEvent: summary.allowMultipleTradesPerEvent,
+        profitableTrades: summary.profitableTrades,
+        losingTrades: summary.losingTrades,
+        neutralTrades: summary.neutralTrades,
+        targetExitedTrades: summary.targetExitedTrades,
+        signalExitedTrades: summary.signalExitedTrades,
+        resolvedTrades: summary.resolvedTrades,
+        missingPriceTrades: summary.missingPriceTrades,
+        netPnl: summary.netPnl,
+        grossProfit: summary.grossProfit,
+        grossLoss: summary.grossLoss,
+        profitFactor: summary.profitFactor,
+        expectancy: summary.expectancy,
+        avgEntryPrice: summary.avgEntryPrice,
+        avgExitPrice: summary.avgExitPrice,
+        limitEntryEnabled: summary.limitEntryEnabled,
+        limitEntryMode: summary.limitEntryMode,
+        limitEntryPriceCents: summary.limitEntryPriceCents,
+        limitEntryOffsetCents: summary.limitEntryOffsetCents,
+        limitEntryAttempts: summary.limitEntryAttempts,
+        limitEntryFilledTrades: summary.limitEntryFilledTrades,
+        limitEntryMissedTrades: summary.limitEntryMissedTrades,
+        limitEntryNotTouchedTrades: summary.limitEntryNotTouchedTrades,
+        limitEntryLastMinuteOnlyTrades: summary.limitEntryLastMinuteOnlyTrades,
+        limitEntryMissingPriceTrades: summary.limitEntryMissingPriceTrades,
+        limitEntryInvalidWindowTrades: summary.limitEntryInvalidWindowTrades,
+        limitEntryFillRate: summary.limitEntryFillRate,
+        avgLimitEntryWaitSec: summary.avgLimitEntryWaitSec,
+        avgLimitEntryImprovement: summary.avgLimitEntryImprovement,
+        limitExitEnabled: summary.limitExitEnabled,
+        limitExitMode: summary.limitExitMode,
+        limitExitPriceCents: summary.limitExitPriceCents,
+        limitExitOffsetCents: summary.limitExitOffsetCents,
+        limitExitFilledTrades: summary.limitExitFilledTrades,
+        limitExitFallbackTrades: summary.limitExitFallbackTrades,
+        limitExitUnreachableTrades: summary.limitExitUnreachableTrades,
+    };
+}
+
 export function indexSignalExitOutcomesByEntryTs(
     entryTimestamps: readonly number[],
     outcomes: readonly PolymarketOutcomeRow[]
@@ -130,6 +189,18 @@ export function indexSignalExitOutcomesByEntryTs(
     }
 
     return index;
+}
+
+export function indexSignalExitOutcomesForTrades(
+    trades: readonly Trade[],
+    outcomes: readonly PolymarketOutcomeRow[]
+): Map<number, PolymarketOutcomeRow | null> {
+    return indexSignalExitOutcomesByEntryTs(
+        trades
+            .map((trade) => parseTimeToUnixSeconds(trade.entryTime))
+            .filter((value): value is number => value !== null),
+        outcomes
+    );
 }
 
 export function evaluateSignalExitTrades(

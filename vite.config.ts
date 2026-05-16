@@ -6,6 +6,11 @@ import { defineConfig, type Plugin } from 'vite';
 import { backtestEndpointPlugin } from './lib/backtest-endpoint-plugin';
 import { strategyLibraryAdminPlugin } from './lib/strategy-library-admin-plugin';
 import { executionLabVitePlugin } from './lib/execution-lab/execution-lab-vite-plugin';
+import {
+    fetchPolymarketHistoryWithFallback,
+    normalizePolymarketHistoryPoints,
+    type PolymarketHistoryPoint,
+} from './lib/polymarket-history-client';
 
 const BYBIT_TRADFI_KLINE_URL = 'https://www.bybit.com/x-api/fapi/copymt5/kline';
 const POLYMARKET_GAMMA_EVENT_SLUG_URL = 'https://gamma-api.polymarket.com/events/slug';
@@ -237,47 +242,10 @@ type SecondMarketGammaDbRow = {
     updated_at: number;
 };
 
-type PolymarketHistoryResponse = {
-    history?: Array<{ t?: unknown; p?: unknown }>;
-};
-
-type PolymarketHistoryPoint = {
-    t: number;
-    p: number;
-};
-
 const POLYMARKET_PRICE_HISTORY_TIMEOUT_MS = 8000;
 // First-run signal-exit scoring can touch many distinct 5m events. Fetch in a
 // wider batch so server-side ensure can populate the local cache in one pass.
 const POLYMARKET_PRICE_POINT_BATCH_SIZE = 24;
-
-function normalizePolymarketHistoryPoints(response: PolymarketHistoryResponse | null): PolymarketHistoryPoint[] {
-    const rows = Array.isArray(response?.history) ? response.history : [];
-    const dedup = new Map<number, number>();
-
-    for (const row of rows) {
-        const t = Math.floor(Number(row?.t));
-        const p = Number(row?.p);
-        if (!Number.isFinite(t) || !Number.isFinite(p)) continue;
-        if (p < 0 || p > 1) continue;
-        dedup.set(t, p);
-    }
-
-    return Array.from(dedup.entries())
-        .sort((left, right) => left[0] - right[0])
-        .map(([t, p]) => ({ t, p }));
-}
-
-async function fetchPolymarketHistory(url: string): Promise<PolymarketHistoryResponse> {
-    const response = await fetch(url, {
-        headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(POLYMARKET_PRICE_HISTORY_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status} for ${url}`);
-    }
-    return await response.json() as PolymarketHistoryResponse;
-}
 
 async function fetchPolymarketYesHistory(outcome: PolymarketOutcomeDbRow): Promise<PolymarketHistoryPoint[]> {
     if (!outcome.yes_token_id) {
@@ -290,7 +258,9 @@ async function fetchPolymarketYesHistory(outcome: PolymarketOutcomeDbRow): Promi
         endTs: String(outcome.event_end_ts),
     });
     const nearPoints = normalizePolymarketHistoryPoints(
-        await fetchPolymarketHistory(`${POLYMARKET_CLOB_HISTORY_URL}?${nearParams.toString()}`)
+        await fetchPolymarketHistoryWithFallback([`${POLYMARKET_CLOB_HISTORY_URL}?${nearParams.toString()}`], {
+            timeoutMs: POLYMARKET_PRICE_HISTORY_TIMEOUT_MS,
+        })
     );
     if (nearPoints.length > 0) {
         return nearPoints;
@@ -301,7 +271,9 @@ async function fetchPolymarketYesHistory(outcome: PolymarketOutcomeDbRow): Promi
         interval: 'max',
     });
     return normalizePolymarketHistoryPoints(
-        await fetchPolymarketHistory(`${POLYMARKET_CLOB_HISTORY_URL}?${fallbackParams.toString()}`)
+        await fetchPolymarketHistoryWithFallback([`${POLYMARKET_CLOB_HISTORY_URL}?${fallbackParams.toString()}`], {
+            timeoutMs: POLYMARKET_PRICE_HISTORY_TIMEOUT_MS,
+        })
     ).filter((point) => (
         point.t >= outcome.event_start_ts
         && point.t <= outcome.event_end_ts
@@ -405,7 +377,13 @@ async function ensurePolymarketPricePointsInDb(args: {
     db: DatabaseSync;
     seriesId: string;
     outcomes: readonly PolymarketOutcomeDbRow[];
-}): Promise<{ rows: PolymarketPricePointDbRow[]; upserted: number; fetchedEvents: number; }> {
+}): Promise<{
+    rows: PolymarketPricePointDbRow[];
+    upserted: number;
+    fetchedEvents: number;
+    failedEvents: number;
+    missingTokenEvents: number;
+}> {
     const eventStartTs = Array.from(new Set(
         args.outcomes
             .map((outcome) => Number(outcome.event_start_ts))
@@ -413,7 +391,7 @@ async function ensurePolymarketPricePointsInDb(args: {
     )).sort((left, right) => left - right);
 
     if (eventStartTs.length === 0) {
-        return { rows: [], upserted: 0, fetchedEvents: 0 };
+        return { rows: [], upserted: 0, fetchedEvents: 0, failedEvents: 0, missingTokenEvents: 0 };
     }
 
     const existingRows = loadStoredPolymarketPricePoints(args.db, args.seriesId, eventStartTs);
@@ -445,16 +423,23 @@ async function ensurePolymarketPricePointsInDb(args: {
     const uncoveredOutcomes = args.outcomes.filter((outcome) => !coveredEventStarts.has(outcome.event_start_ts));
 
     if (uncoveredOutcomes.length === 0) {
-        return { rows: existingRows, upserted: 0, fetchedEvents: 0 };
+        return { rows: existingRows, upserted: 0, fetchedEvents: 0, failedEvents: 0, missingTokenEvents: 0 };
     }
 
     const newRows: PolymarketPricePointDbRow[] = [];
+    let failedEvents = 0;
+    let missingTokenEvents = 0;
     for (let index = 0; index < uncoveredOutcomes.length; index += POLYMARKET_PRICE_POINT_BATCH_SIZE) {
         const batch = uncoveredOutcomes.slice(index, index + POLYMARKET_PRICE_POINT_BATCH_SIZE);
         const batchRows = await Promise.all(batch.map(async (outcome) => {
+            if (!outcome.yes_token_id) {
+                missingTokenEvents++;
+                return [];
+            }
             try {
                 return await fetchPolymarketPricePointsForOutcome(outcome, args.seriesId);
             } catch {
+                failedEvents++;
                 return [];
             }
         }));
@@ -468,6 +453,8 @@ async function ensurePolymarketPricePointsInDb(args: {
         rows: loadStoredPolymarketPricePoints(args.db, args.seriesId, eventStartTs),
         upserted,
         fetchedEvents: uncoveredOutcomes.length,
+        failedEvents,
+        missingTokenEvents,
     };
 }
 
@@ -1527,6 +1514,8 @@ function localSqlitePlugin(): Plugin {
                         rows: ensured.rows,
                         upserted: ensured.upserted,
                         fetchedEvents: ensured.fetchedEvents,
+                        failedEvents: ensured.failedEvents,
+                        missingTokenEvents: ensured.missingTokenEvents,
                     });
                     return;
                 }
@@ -1546,24 +1535,41 @@ function localSqlitePlugin(): Plugin {
                         sendJson(res, 400, { ok: false, error: 'seriesId is required' });
                         return;
                     }
+                    if (startTs !== null && !Number.isFinite(startTs)) {
+                        sendJson(res, 400, { ok: false, error: 'startTs must be a finite number' });
+                        return;
+                    }
+                    if (endTs !== null && !Number.isFinite(endTs)) {
+                        sendJson(res, 400, { ok: false, error: 'endTs must be a finite number' });
+                        return;
+                    }
+                    if (limitRaw !== null && !Number.isFinite(Number(limitRaw))) {
+                        sendJson(res, 400, { ok: false, error: 'limit must be a finite number' });
+                        return;
+                    }
 
                     const db = getSqliteDb();
                     const conditions: string[] = ['series_id = ?'];
                     const bindings: (string | number)[] = [seriesId];
 
                     if (eventStartTsRaw !== null) {
-                        const parts = eventStartTsRaw.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n));
+                        const rawParts = eventStartTsRaw.split(',').map(s => s.trim()).filter(Boolean);
+                        const parts = rawParts.map(s => Number(s));
+                        if (rawParts.length === 0 || parts.some(n => !Number.isFinite(n))) {
+                            sendJson(res, 400, { ok: false, error: 'eventStartTs must be comma-separated finite numbers' });
+                            return;
+                        }
                         if (parts.length > 0) {
                             const placeholders = parts.map(() => '?').join(',');
                             conditions.push(`event_start_ts IN (${placeholders})`);
                             bindings.push(...parts);
                         }
                     }
-                    if (startTs !== null && Number.isFinite(startTs)) {
+                    if (startTs !== null) {
                         conditions.push('ts >= ?');
                         bindings.push(Math.floor(startTs));
                     }
-                    if (endTs !== null && Number.isFinite(endTs)) {
+                    if (endTs !== null) {
                         conditions.push('ts <= ?');
                         bindings.push(Math.floor(endTs));
                     }

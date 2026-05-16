@@ -48,7 +48,7 @@ The live stream must use the same trade lifecycle as the `1s` backtest:
 - a new candidate while a paper position is open logs `paper_unfilled` with `reason: "open_position"`
 - positions that reach event end without a resolved outcome move to pending settlement and must not block the next event
 - Execution Parity reports paper/backtest lifecycle drift, not raw signal drift
-- late paper execution parity compares fill/exit time to the latest processed stream candle, not JSONL record wall-clock time
+- exact-second quote recovery during normal stream catch-up is not a parity mismatch; missing quotes and lifecycle drift are
 - effective Polymarket exit mode is resolved through `resolveEffectivePolymarketExitMode`
 - `Allow Multiple Trades Per Event` only applies when the effective mode is `signal_exit_same_event`
 

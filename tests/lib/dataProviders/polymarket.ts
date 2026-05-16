@@ -4,6 +4,11 @@ import { debugLogger } from "../debug-logger";
 import { HistoricalFetchOptions } from "../types/index";
 import { getIntervalSeconds } from "./utils";
 import { formatProviderError, isAbortError } from "./fetch-helpers";
+import {
+    fetchPolymarketHistoryWithFallback,
+    normalizePolymarketHistoryPoints,
+    type PolymarketHistoryPoint,
+} from "../polymarket-history-client";
 
 const POLYMARKET_PROXY_EVENT_URL = "/api/polymarket-event";
 const POLYMARKET_PROXY_HISTORY_URL = "/api/polymarket-history";
@@ -17,15 +22,6 @@ type ParsedPolymarketInput = {
     slug: string;
     direction?: PolymarketDirection;
     canonicalSymbol: string;
-};
-
-type PolymarketHistoryPoint = {
-    t: number;
-    p: number;
-};
-
-type PolymarketHistoryResponse = {
-    history?: Array<{ t?: number; p?: number }>;
 };
 
 type PolymarketMarket = {
@@ -237,23 +233,6 @@ async function resolvePolymarketMarket(
     return resolved;
 }
 
-function normalizeHistoryPoints(response: PolymarketHistoryResponse | null): PolymarketHistoryPoint[] {
-    const rows = Array.isArray(response?.history) ? response!.history! : [];
-    const dedup = new Map<number, number>();
-
-    for (const row of rows) {
-        if (!row || typeof row !== "object") continue;
-        const t = Math.floor(Number(row.t));
-        const p = Number(row.p);
-        if (!Number.isFinite(t) || !Number.isFinite(p)) continue;
-        dedup.set(t, p);
-    }
-
-    return Array.from(dedup.entries())
-        .sort((a, b) => a[0] - b[0])
-        .map(([t, p]) => ({ t, p }));
-}
-
 function toCandles(points: PolymarketHistoryPoint[], interval: string): OHLCVData[] {
     if (points.length === 0) return [];
 
@@ -304,12 +283,12 @@ async function fetchPolymarketHistory(
         params.set("interval", "max");
     }
 
-    const response = await fetchJsonWithFallback<PolymarketHistoryResponse>([
+    const response = await fetchPolymarketHistoryWithFallback([
         `${POLYMARKET_PROXY_HISTORY_URL}?${params.toString()}`,
         `${POLYMARKET_HISTORY_URL}?${params.toString()}`,
-    ], signal);
+    ], { signal });
 
-    const points = normalizeHistoryPoints(response);
+    const points = normalizePolymarketHistoryPoints(response);
     if (points.length > 0) return points;
 
     // Fallback for markets that reject start/end windows.
@@ -317,11 +296,11 @@ async function fetchPolymarketHistory(
         market: market.clobTokenId,
         interval: "max",
     });
-    const fallback = await fetchJsonWithFallback<PolymarketHistoryResponse>([
+    const fallback = await fetchPolymarketHistoryWithFallback([
         `${POLYMARKET_PROXY_HISTORY_URL}?${fallbackParams.toString()}`,
         `${POLYMARKET_HISTORY_URL}?${fallbackParams.toString()}`,
-    ], signal);
-    return normalizeHistoryPoints(fallback);
+    ], { signal });
+    return normalizePolymarketHistoryPoints(fallback);
 }
 
 export async function fetchPolymarketData(

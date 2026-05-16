@@ -268,6 +268,8 @@ type EnsurePolymarketPricePointsResponse = {
     rows?: PolymarketPricePoint[];
     upserted?: number;
     fetchedEvents?: number;
+    failedEvents?: number;
+    missingTokenEvents?: number;
     error?: string;
 };
 
@@ -311,12 +313,20 @@ export async function storePolymarketPricePoints(
     return payload;
 }
 
-export async function ensurePolymarketPricePoints(args: {
+export type EnsurePolymarketPricePointsResult = {
+    rows: PolymarketPricePoint[];
+    upserted: number;
+    fetchedEvents: number;
+    failedEvents: number;
+    missingTokenEvents: number;
+};
+
+export async function ensurePolymarketPricePointsWithMetadata(args: {
     seriesId: string;
     outcomes: PolymarketOutcomeRow[];
-}): Promise<PolymarketPricePoint[]> {
+}): Promise<EnsurePolymarketPricePointsResult> {
     if (!args.seriesId || args.outcomes.length === 0) {
-        return [];
+        return { rows: [], upserted: 0, fetchedEvents: 0, failedEvents: 0, missingTokenEvents: 0 };
     }
 
     const available = await checkSqliteApiAvailable(true);
@@ -360,5 +370,18 @@ export async function ensurePolymarketPricePoints(args: {
         throw new Error(payload.error ?? 'ensure-polymarket-price-points: ok=false');
     }
 
-    return payload.rows ?? [];
+    return {
+        rows: payload.rows ?? [],
+        upserted: payload.upserted ?? 0,
+        fetchedEvents: payload.fetchedEvents ?? 0,
+        failedEvents: payload.failedEvents ?? 0,
+        missingTokenEvents: payload.missingTokenEvents ?? 0,
+    };
+}
+
+export async function ensurePolymarketPricePoints(args: {
+    seriesId: string;
+    outcomes: PolymarketOutcomeRow[];
+}): Promise<PolymarketPricePoint[]> {
+    return (await ensurePolymarketPricePointsWithMetadata(args)).rows;
 }

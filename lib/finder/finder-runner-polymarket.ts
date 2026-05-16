@@ -88,7 +88,6 @@ import {
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import {
     DEFAULT_POLYMARKET_OUTCOME_INTERVAL,
-    getPolymarketOutcomeIntervalDurationSec,
     resolvePolymarketOutcomeInterval,
 } from "../polymarket-outcome-interval";
 import { applyPolymarketAlternativeSizing } from "../polymarket-alternative-sizing";
@@ -665,16 +664,8 @@ export async function runPolymarketFinder(
     let outcomeByEntryTs: ReadonlyMap<number, import("../types/polymarket-outcomes").PolymarketOutcomeRow | null> | undefined;
     if (isSignalExitMode || isNativeOutcomeSession || isLimitEntryMode) {
         try {
-            const rawFirst = closedData.length > 0 ? closedData[0].time : 0;
-            const rawLast = closedData.length > 0 ? closedData[closedData.length - 1].time : 0;
-            const firstTs = typeof rawFirst === 'number' ? rawFirst : 0;
-            const lastTs = typeof rawLast === 'number' ? rawLast : 0;
-            const paddingSec = getPolymarketOutcomeIntervalDurationSec(resolvedOutcomeInterval);
             callbacks.setStatus(`Ensuring Polymarket price points for ${outcomes.length} events...`);
-            pricePoints = await ensurePricePointsForOutcomes(outcomes, seriesId, {
-                startTs: firstTs > 0 ? firstTs - paddingSec : undefined,
-                endTs: lastTs > 0 ? lastTs + paddingSec : undefined,
-            });
+            pricePoints = await ensurePricePointsForOutcomes(outcomes, seriesId);
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
             callbacks.setStatus(`Failed to ensure Polymarket price points: ${detail}`);

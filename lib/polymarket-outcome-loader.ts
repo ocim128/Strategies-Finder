@@ -18,10 +18,14 @@ import {
     resolvePolymarketEntrySelectionModeForDisplay,
     type PolymarketEntrySelectionMode,
 } from "./polymarket-entry-selection-mode";
-import { evaluateSignalExitTrades, buildTradeAnnotationFromSignalExitResult } from "./polymarket-signal-exit-evaluator";
+import {
+    buildSignalExitPolymarketTradeSummary,
+    evaluateSignalExitTrades,
+    buildTradeAnnotationFromSignalExitResult,
+    indexSignalExitOutcomesForTrades,
+} from "./polymarket-signal-exit-evaluator";
 import { ensurePricePointsForOutcomes } from "./polymarket-price-points-ingest";
 import { resolveBacktestResultMarketContext } from "./backtest-result-context";
-import { findContainingEvent } from "./polymarket-1m-5m-bridge";
 import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import {
     annotateTradesWithPolymarketOutcomesForRun,
@@ -182,30 +186,23 @@ export class PolymarketOutcomeLoader {
                 .map((trade) => parseTimeToUnixSeconds(trade.entryTime))
                 .filter((value): value is number => value !== null);
             if (targetTimes.length > 0) {
-                const startTs = Math.min(...targetTimes);
-                const endTs = Math.max(...targetTimes);
                 try {
+                    const outcomeByEntryTs = indexSignalExitOutcomesForTrades(result.trades, outcomes);
                     const relevantOutcomeByStart = new Map<number, (typeof outcomes)[number]>();
-                    for (const trade of result.trades) {
-                        const entryTs = parseTimeToUnixSeconds(trade.entryTime);
-                        if (entryTs === null) continue;
-                        const outcome = findContainingEvent(entryTs, outcomes);
+                    for (const outcome of outcomeByEntryTs.values()) {
                         if (outcome) {
                             relevantOutcomeByStart.set(outcome.event_start_ts, outcome);
                         }
                     }
                     const pricePoints = await ensurePricePointsForOutcomes(
                         relevantOutcomeByStart.size > 0 ? [...relevantOutcomeByStart.values()] : outcomes,
-                        seriesId,
-                        {
-                            startTs: startTs - 300,
-                            endTs: endTs + 300,
-                        }
+                        seriesId
                     );
                     const { results: exitResults, summary: exitSummary } = evaluateSignalExitTrades({
                         trades: result.trades,
                         outcomes,
                         pricePoints,
+                        outcomeByEntryTs,
                         allowMultipleTradesPerEvent,
                         entryPriceFilterCents: this.deps.readCurrentPolymarketEntryPriceFilterCents(),
                         limitEntry,
@@ -219,54 +216,13 @@ export class PolymarketOutcomeLoader {
                     return {
                         ...result,
                         trades: annotatedTrades,
-                        polymarketTradeSummary: {
+                        polymarketTradeSummary: buildSignalExitPolymarketTradeSummary({
                             seriesId,
-                            outcomeSymbol: existingSummary?.outcomeSymbol ?? resolvedOutcomeSymbol ?? undefined,
+                            outcomeSymbol: existingSummary?.outcomeSymbol ?? resolvedOutcomeSymbol,
                             outcomeInterval,
                             outcomeRowsLoaded: outcomes.length,
-                            scoredTrades: exitSummary.scoredTrades,
-                            missingOutcomeTrades: exitSummary.missingOutcomeTrades,
-                            unscoredTrades: exitSummary.unscoredTrades,
-                            duplicateTradesIgnored: exitSummary.duplicateTradesIgnored > 0 ? exitSummary.duplicateTradesIgnored : undefined,
-                            entryPriceFilteredTrades: exitSummary.entryPriceFilteredTrades > 0 ? exitSummary.entryPriceFilteredTrades : undefined,
-                            evaluationMode: "signal_exit_same_event",
-                            signalExitAllowMultipleTradesPerEvent: exitSummary.allowMultipleTradesPerEvent,
-                            profitableTrades: exitSummary.profitableTrades,
-                            losingTrades: exitSummary.losingTrades,
-                            neutralTrades: exitSummary.neutralTrades,
-                            targetExitedTrades: exitSummary.targetExitedTrades,
-                            signalExitedTrades: exitSummary.signalExitedTrades,
-                            resolvedTrades: exitSummary.resolvedTrades,
-                            missingPriceTrades: exitSummary.missingPriceTrades,
-                            netPnl: exitSummary.netPnl,
-                            grossProfit: exitSummary.grossProfit,
-                            grossLoss: exitSummary.grossLoss,
-                            profitFactor: exitSummary.profitFactor,
-                            expectancy: exitSummary.expectancy,
-                            avgEntryPrice: exitSummary.avgEntryPrice,
-                            avgExitPrice: exitSummary.avgExitPrice,
-                            limitEntryEnabled: exitSummary.limitEntryEnabled,
-                            limitEntryMode: exitSummary.limitEntryMode,
-                            limitEntryPriceCents: exitSummary.limitEntryPriceCents,
-                            limitEntryOffsetCents: exitSummary.limitEntryOffsetCents,
-                            limitEntryAttempts: exitSummary.limitEntryAttempts,
-                            limitEntryFilledTrades: exitSummary.limitEntryFilledTrades,
-                            limitEntryMissedTrades: exitSummary.limitEntryMissedTrades,
-                            limitEntryNotTouchedTrades: exitSummary.limitEntryNotTouchedTrades,
-                            limitEntryLastMinuteOnlyTrades: exitSummary.limitEntryLastMinuteOnlyTrades,
-                            limitEntryMissingPriceTrades: exitSummary.limitEntryMissingPriceTrades,
-                            limitEntryInvalidWindowTrades: exitSummary.limitEntryInvalidWindowTrades,
-                            limitEntryFillRate: exitSummary.limitEntryFillRate,
-                            avgLimitEntryWaitSec: exitSummary.avgLimitEntryWaitSec,
-                            avgLimitEntryImprovement: exitSummary.avgLimitEntryImprovement,
-                            limitExitEnabled: exitSummary.limitExitEnabled,
-                            limitExitMode: exitSummary.limitExitMode,
-                            limitExitPriceCents: exitSummary.limitExitPriceCents,
-                            limitExitOffsetCents: exitSummary.limitExitOffsetCents,
-                            limitExitFilledTrades: exitSummary.limitExitFilledTrades,
-                            limitExitFallbackTrades: exitSummary.limitExitFallbackTrades,
-                            limitExitUnreachableTrades: exitSummary.limitExitUnreachableTrades,
-                        },
+                            summary: exitSummary,
+                        }),
                     };
                 } catch (error) {
                     debugLogger.warn("polymarket_panel.signal_exit_annotation_failed", {
@@ -289,10 +245,7 @@ export class PolymarketOutcomeLoader {
                 .filter((value): value is number => value !== null);
             if (targetTimes.length > 0) {
                 try {
-                    limitEntryPricePoints = await ensurePricePointsForOutcomes(outcomes, seriesId, {
-                        startTs: Math.min(...targetTimes) - 300,
-                        endTs: Math.max(...targetTimes) + 300,
-                    });
+                    limitEntryPricePoints = await ensurePricePointsForOutcomes(outcomes, seriesId);
                 } catch {
                     limitEntryPricePoints = [];
                 }

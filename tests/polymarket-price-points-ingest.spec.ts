@@ -1,6 +1,9 @@
 import { expect } from "chai";
 import { afterEach, describe, it } from "node:test";
-import { resetLocalSqlitePolymarketApiAvailabilityForTests } from "../lib/local-sqlite-polymarket-api";
+import {
+    ensurePolymarketPricePointsWithMetadata,
+    resetLocalSqlitePolymarketApiAvailabilityForTests,
+} from "../lib/local-sqlite-polymarket-api";
 import { ensurePricePointsForOutcomes } from "../lib/polymarket-price-points-ingest";
 import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
 
@@ -160,5 +163,139 @@ describe("Polymarket price-point ingestion coverage", () => {
 
         expect(ensureCalls).to.equal(0);
         expect(rows).to.have.length(2);
+    });
+
+    it("returns server-side ensure diagnostics for ingestion visibility", async () => {
+        const eventStartTs = 1_700_020_000;
+        const eventEndTs = eventStartTs + 900;
+
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/ensure-polymarket-price-points") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: [makePoint(eventStartTs, eventEndTs, eventStartTs + 60)],
+                    upserted: 1,
+                    fetchedEvents: 2,
+                    failedEvents: 1,
+                    missingTokenEvents: 1,
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            throw new Error(`Unexpected URL ${url.pathname}`);
+        }) as typeof fetch;
+
+        const result = await ensurePolymarketPricePointsWithMetadata({
+            seriesId: "series-test",
+            outcomes: [makeOutcome("15m", eventStartTs, eventEndTs)],
+        });
+
+        expect(result.rows).to.have.length(1);
+        expect(result.upserted).to.equal(1);
+        expect(result.fetchedEvents).to.equal(2);
+        expect(result.failedEvents).to.equal(1);
+        expect(result.missingTokenEvents).to.equal(1);
+    });
+
+    it("falls back only for events still uncovered after a partial server ensure", async () => {
+        const firstStartTs = 1_700_030_000;
+        const secondStartTs = firstStartTs + 900;
+        const firstEndTs = firstStartTs + 900;
+        const secondEndTs = secondStartTs + 900;
+        let directHistoryCalls = 0;
+
+        globalThis.fetch = (async (input, init) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-price-points") {
+                return new Response(JSON.stringify({ ok: true, rows: [] }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/ensure-polymarket-price-points") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: [
+                        makePoint(firstStartTs, firstEndTs, firstStartTs),
+                        makePoint(firstStartTs, firstEndTs, firstEndTs - 30),
+                    ],
+                    upserted: 2,
+                    fetchedEvents: 2,
+                    failedEvents: 1,
+                    missingTokenEvents: 0,
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/polymarket-history") {
+                directHistoryCalls++;
+                expect(Number(url.searchParams.get("startTs"))).to.equal(secondStartTs - 15);
+                return new Response(JSON.stringify({
+                    history: [
+                        { t: secondStartTs, p: 0.48 },
+                        { t: secondEndTs - 30, p: 0.52 },
+                    ],
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/store-polymarket-price-points") {
+                const body = JSON.parse(String(init?.body ?? "{}")) as { rows?: Array<{ event_start_ts?: number }> };
+                expect(body.rows?.every((row) => row.event_start_ts === secondStartTs)).to.equal(true);
+                return new Response(JSON.stringify({ ok: true, upserted: body.rows?.length ?? 0 }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            throw new Error(`Unexpected URL ${url.pathname}`);
+        }) as typeof fetch;
+
+        const rows = await ensurePricePointsForOutcomes([
+            makeOutcome("15m", firstStartTs, firstEndTs),
+            makeOutcome("15m", secondStartTs, secondEndTs),
+        ], "series-test");
+
+        expect(directHistoryCalls).to.equal(1);
+        expect(rows.some((row) => row.event_start_ts === firstStartTs)).to.equal(true);
+        expect(rows.some((row) => row.event_start_ts === secondStartTs)).to.equal(true);
     });
 });

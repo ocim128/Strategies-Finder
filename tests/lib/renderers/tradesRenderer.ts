@@ -13,11 +13,14 @@ import {
 } from "../polymarket-btc5m";
 import { annotateTradesWithPolymarketOutcomesForRun } from "../polymarket-trade-annotations";
 import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "../polymarket-exit-mode";
-import { evaluateSignalExitTrades, buildTradeAnnotationFromSignalExitResult } from "../polymarket-signal-exit-evaluator";
+import {
+    evaluateSignalExitTrades,
+    buildTradeAnnotationFromSignalExitResult,
+    indexSignalExitOutcomesForTrades,
+} from "../polymarket-signal-exit-evaluator";
 import { ensurePricePointsForOutcomes } from "../polymarket-price-points-ingest";
 import { resolveBacktestResultMarketContext } from "../backtest-result-context";
 import { parseTimeToUnixSeconds } from "../time-normalization";
-import { findContainingEvent } from "../polymarket-1m-5m-bridge";
 import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
 import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import { resolveCurrentAlertSubscriptionContext } from "../current-alert-subscription";
@@ -289,27 +292,22 @@ export class TradesRenderer {
 
         if (isSignalExitSameEventMode(effectiveExitMode) && resultContext.interval === "1m") {
             try {
+                const outcomeByEntryTs = indexSignalExitOutcomesForTrades(trades, outcomes);
                 const relevantOutcomeByStart = new Map<number, (typeof outcomes)[number]>();
-                for (const trade of trades) {
-                    const entryTs = parseTimeToUnixSeconds(trade.entryTime);
-                    if (entryTs === null) continue;
-                    const outcome = findContainingEvent(entryTs, outcomes);
+                for (const outcome of outcomeByEntryTs.values()) {
                     if (outcome) {
                         relevantOutcomeByStart.set(outcome.event_start_ts, outcome);
                     }
                 }
                 const pricePoints = await ensurePricePointsForOutcomes(
                     relevantOutcomeByStart.size > 0 ? [...relevantOutcomeByStart.values()] : outcomes,
-                    seriesId,
-                    {
-                    startTs: startTs - 300,
-                    endTs: endTs + 300,
-                    }
+                    seriesId
                 );
                 const { results: exitResults } = evaluateSignalExitTrades({
                     trades,
                     outcomes,
                     pricePoints,
+                    outcomeByEntryTs,
                     allowMultipleTradesPerEvent,
                     entryPriceFilterCents: currentPolymarketSettings.entryPriceFilterCents,
                     limitEntry,
@@ -339,10 +337,7 @@ export class TradesRenderer {
         let limitEntryPricePoints: Awaited<ReturnType<typeof ensurePricePointsForOutcomes>> | undefined;
         if (limitEntry) {
             try {
-                limitEntryPricePoints = await ensurePricePointsForOutcomes(outcomes, seriesId, {
-                    startTs: startTs - 300,
-                    endTs: endTs + 300,
-                });
+                limitEntryPricePoints = await ensurePricePointsForOutcomes(outcomes, seriesId);
             } catch {
                 limitEntryPricePoints = [];
             }

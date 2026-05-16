@@ -32,7 +32,12 @@ import {
     isActualPolymarketEntryMinuteMode,
     type PolymarketEntrySelectionMode,
 } from "./polymarket-entry-selection-mode";
-import { evaluateSignalExitTrades, buildTradeAnnotationFromSignalExitResult } from "./polymarket-signal-exit-evaluator";
+import {
+    buildSignalExitPolymarketTradeSummary,
+    evaluateSignalExitTrades,
+    buildTradeAnnotationFromSignalExitResult,
+    indexSignalExitOutcomesForTrades,
+} from "./polymarket-signal-exit-evaluator";
 import { clampPolymarketEntryPriceFilterCents, isPolymarketEntryPriceFiltered } from "./polymarket-entry-price-filter";
 import {
     clampPolymarketPostSignalLimitEntryPriceCents,
@@ -1395,10 +1400,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
         const pricePointOutcomes = selectPricePointOutcomesForTrades(result.trades, outcomes);
         try {
             resolvedPricePoints = pricePointOutcomes.length > 0
-                ? await ensurePricePointsForOutcomes(pricePointOutcomes, seriesId, {
-                    startTs,
-                    endTs,
-                })
+                ? await ensurePricePointsForOutcomes(pricePointOutcomes, seriesId)
                 : [];
         } catch {
             resolvedPricePoints = [];
@@ -1406,10 +1408,12 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
     }
 
     if (needsSignalExitPricePoints && resolvedPricePoints) {
+        const outcomeByEntryTs = indexSignalExitOutcomesForTrades(result.trades, outcomes);
         const { results: exitResults, summary: exitSummary } = evaluateSignalExitTrades({
             trades: result.trades,
             outcomes,
             pricePoints: resolvedPricePoints,
+            outcomeByEntryTs,
             allowMultipleTradesPerEvent: context.polymarketSignalExitAllowMultipleTradesPerEvent,
             entryPriceFilterCents,
             limitEntry,
@@ -1430,54 +1434,13 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
         return {
             ...result,
             trades: annotatedTrades,
-            polymarketTradeSummary: {
+            polymarketTradeSummary: buildSignalExitPolymarketTradeSummary({
                 seriesId,
-                outcomeSymbol: resolvedOutcomeSymbol ?? undefined,
+                outcomeSymbol: resolvedOutcomeSymbol,
                 outcomeInterval: resolvedOutcomeInterval,
                 outcomeRowsLoaded: outcomes.length,
-                scoredTrades: exitSummary.scoredTrades,
-                missingOutcomeTrades: exitSummary.missingOutcomeTrades,
-                unscoredTrades: exitSummary.unscoredTrades,
-                duplicateTradesIgnored: exitSummary.duplicateTradesIgnored > 0 ? exitSummary.duplicateTradesIgnored : undefined,
-                entryPriceFilteredTrades: exitSummary.entryPriceFilteredTrades > 0 ? exitSummary.entryPriceFilteredTrades : undefined,
-                evaluationMode: "signal_exit_same_event",
-                signalExitAllowMultipleTradesPerEvent: exitSummary.allowMultipleTradesPerEvent,
-                profitableTrades: exitSummary.profitableTrades,
-                losingTrades: exitSummary.losingTrades,
-                neutralTrades: exitSummary.neutralTrades,
-                targetExitedTrades: exitSummary.targetExitedTrades,
-                signalExitedTrades: exitSummary.signalExitedTrades,
-                resolvedTrades: exitSummary.resolvedTrades,
-                missingPriceTrades: exitSummary.missingPriceTrades,
-                netPnl: exitSummary.netPnl,
-                grossProfit: exitSummary.grossProfit,
-                grossLoss: exitSummary.grossLoss,
-                profitFactor: exitSummary.profitFactor,
-                expectancy: exitSummary.expectancy,
-                avgEntryPrice: exitSummary.avgEntryPrice,
-                avgExitPrice: exitSummary.avgExitPrice,
-                limitEntryEnabled: exitSummary.limitEntryEnabled,
-                limitEntryMode: exitSummary.limitEntryMode,
-                limitEntryPriceCents: exitSummary.limitEntryPriceCents,
-                limitEntryOffsetCents: exitSummary.limitEntryOffsetCents,
-                limitEntryAttempts: exitSummary.limitEntryAttempts,
-                limitEntryFilledTrades: exitSummary.limitEntryFilledTrades,
-                limitEntryMissedTrades: exitSummary.limitEntryMissedTrades,
-                limitEntryNotTouchedTrades: exitSummary.limitEntryNotTouchedTrades,
-                limitEntryLastMinuteOnlyTrades: exitSummary.limitEntryLastMinuteOnlyTrades,
-                limitEntryMissingPriceTrades: exitSummary.limitEntryMissingPriceTrades,
-                limitEntryInvalidWindowTrades: exitSummary.limitEntryInvalidWindowTrades,
-                limitEntryFillRate: exitSummary.limitEntryFillRate,
-                avgLimitEntryWaitSec: exitSummary.avgLimitEntryWaitSec,
-                avgLimitEntryImprovement: exitSummary.avgLimitEntryImprovement,
-                limitExitEnabled: exitSummary.limitExitEnabled,
-                limitExitMode: exitSummary.limitExitMode,
-                limitExitPriceCents: exitSummary.limitExitPriceCents,
-                limitExitOffsetCents: exitSummary.limitExitOffsetCents,
-                limitExitFilledTrades: exitSummary.limitExitFilledTrades,
-                limitExitFallbackTrades: exitSummary.limitExitFallbackTrades,
-                limitExitUnreachableTrades: exitSummary.limitExitUnreachableTrades,
-            },
+                summary: exitSummary,
+            }),
         };
     }
 

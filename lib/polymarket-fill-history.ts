@@ -1,19 +1,15 @@
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
+import {
+    fetchPolymarketHistoryWithFallback,
+    normalizePolymarketHistoryPoints,
+    type PolymarketHistoryPoint,
+} from "./polymarket-history-client";
 
 const POLYMARKET_PROXY_HISTORY_URL = "/api/polymarket-history";
 const POLYMARKET_HISTORY_URL = "https://clob.polymarket.com/prices-history";
 const EVENT_DURATION_SEC = 300;
 const WINDOW_OFFSETS_SEC = [0, 60, 120, 180, 240] as const;
 const HISTORY_REQUEST_TIMEOUT_MS = 6000;
-
-type HistoryPoint = {
-    t: number;
-    p: number;
-};
-
-type HistoryResponse = {
-    history?: Array<{ t?: unknown; p?: unknown }>;
-};
 
 export interface PolymarketFillHistoryWindow {
     yesMinPrice: number | null;
@@ -29,43 +25,7 @@ export interface PolymarketFillHistorySummary {
 
 const historyCache = new Map<string, Promise<PolymarketFillHistorySummary>>();
 
-function normalizeHistoryPoints(response: HistoryResponse | null): HistoryPoint[] {
-    const rows = Array.isArray(response?.history) ? response.history : [];
-    const dedup = new Map<number, number>();
-
-    for (const row of rows) {
-        const t = Math.floor(Number(row?.t));
-        const p = Number(row?.p);
-        if (!Number.isFinite(t) || !Number.isFinite(p)) continue;
-        if (p < 0 || p > 1) continue;
-        dedup.set(t, p);
-    }
-
-    return Array.from(dedup.entries())
-        .sort((a, b) => a[0] - b[0])
-        .map(([t, p]) => ({ t, p }));
-}
-
-async function fetchJsonWithFallback(urls: string[]): Promise<HistoryResponse> {
-    let lastError: unknown = null;
-    for (const url of urls) {
-        try {
-            const response = await fetch(url, {
-                headers: { Accept: "application/json" },
-                signal: AbortSignal.timeout(HISTORY_REQUEST_TIMEOUT_MS),
-            });
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status} for ${url}`);
-            }
-            return await response.json() as HistoryResponse;
-        } catch (error) {
-            lastError = error;
-        }
-    }
-    throw lastError ?? new Error("Failed to load Polymarket history.");
-}
-
-async function fetchHistoryPoints(row: PolymarketOutcomeRow): Promise<HistoryPoint[]> {
+async function fetchHistoryPoints(row: PolymarketOutcomeRow): Promise<PolymarketHistoryPoint[]> {
     const params = new URLSearchParams({
         market: row.yes_token_id,
         startTs: String(Math.max(0, row.event_start_ts - 15)),
@@ -75,7 +35,9 @@ async function fetchHistoryPoints(row: PolymarketOutcomeRow): Promise<HistoryPoi
         `${POLYMARKET_PROXY_HISTORY_URL}?${params.toString()}`,
         `${POLYMARKET_HISTORY_URL}?${params.toString()}`,
     ];
-    const windowedPoints = normalizeHistoryPoints(await fetchJsonWithFallback(windowedUrls));
+    const windowedPoints = normalizePolymarketHistoryPoints(await fetchPolymarketHistoryWithFallback(windowedUrls, {
+        timeoutMs: HISTORY_REQUEST_TIMEOUT_MS,
+    }));
     if (windowedPoints.length > 0) {
         return windowedPoints;
     }
@@ -84,13 +46,13 @@ async function fetchHistoryPoints(row: PolymarketOutcomeRow): Promise<HistoryPoi
         market: row.yes_token_id,
         interval: "max",
     });
-    return normalizeHistoryPoints(await fetchJsonWithFallback([
+    return normalizePolymarketHistoryPoints(await fetchPolymarketHistoryWithFallback([
         `${POLYMARKET_PROXY_HISTORY_URL}?${fallbackParams.toString()}`,
         `${POLYMARKET_HISTORY_URL}?${fallbackParams.toString()}`,
-    ]));
+    ], { timeoutMs: HISTORY_REQUEST_TIMEOUT_MS }));
 }
 
-function summarizeHistory(row: PolymarketOutcomeRow, points: HistoryPoint[]): PolymarketFillHistorySummary {
+function summarizeHistory(row: PolymarketOutcomeRow, points: PolymarketHistoryPoint[]): PolymarketFillHistorySummary {
     let cursor = 0;
     let yesMin = Number.POSITIVE_INFINITY;
     let yesMax = Number.NEGATIVE_INFINITY;
@@ -130,7 +92,15 @@ export function loadPolymarketFillHistorySummary(row: PolymarketOutcomeRow): Pro
         return cached;
     }
 
-    const pending = fetchHistoryPoints(row).then((points) => summarizeHistory(row, points));
+    let pending: Promise<PolymarketFillHistorySummary>;
+    pending = fetchHistoryPoints(row)
+        .then((points) => summarizeHistory(row, points))
+        .catch((error) => {
+            if (historyCache.get(cacheKey) === pending) {
+                historyCache.delete(cacheKey);
+            }
+            throw error;
+        });
     historyCache.set(cacheKey, pending);
     return pending;
 }

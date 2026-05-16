@@ -32,7 +32,6 @@ import {
 import { queryExecutionLabDom, type ExecutionLabDom } from "./execution-lab-dom";
 import {
     collectEntryPriceFilterParityMismatches,
-    collectLatePaperExecutionMismatches,
     type ExecutionParityMismatch,
 } from "./execution-parity";
 import {
@@ -69,7 +68,6 @@ const POLL_MS = 1000;
 const INITIAL_CANDLE_LIMIT = 900;
 const MAX_STREAM_CANDLES = 20000;
 const MAX_LIVE_CANDLE_LAG_SEC = 10;
-const MAX_PAPER_EXECUTION_DELAY_SEC = MAX_LIVE_CANDLE_LAG_SEC + 5;
 const MAX_POLYMARKET_PRICE_POINTS = 3600;
 
 type LivePollFetchResult<T> = { ok: true; value: T } | { ok: false };
@@ -979,7 +977,6 @@ export class ExecutionLabService {
         if (!paperState) return [];
         const mismatches: ExecutionParityMismatch[] = [];
         const missingExitKeys = new Set<string>();
-        mismatches.push(...collectLatePaperExecutionMismatches(records, latestCandleTimeSec, MAX_PAPER_EXECUTION_DELAY_SEC));
         for (const record of records) {
             if (record.recordType !== "paper_unfilled" || record.reason !== "missing_exit_quote") continue;
             missingExitKeys.add(`${record.side ?? ""}|${record.expectedExitTimeSec ?? ""}|${record.eventEndTs ?? ""}`);

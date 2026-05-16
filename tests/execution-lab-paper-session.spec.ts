@@ -12,7 +12,6 @@ import type {
 } from "../lib/execution-lab/execution-lab-model";
 import {
     collectEntryPriceFilterParityMismatches,
-    collectLatePaperExecutionMismatches,
 } from "../lib/execution-lab/execution-parity";
 import {
     buildEvaluatedSignals,
@@ -119,34 +118,6 @@ function signal(type: Signal["type"], ts: number): Signal {
         time: ts,
         type,
         price: 100,
-    };
-}
-
-function paperEntryRecord(entryTimeSec: number, recordedAtSec = entryTimeSec): PaperEntryRecord {
-    return {
-        recordType: "paper_entry",
-        sessionId: "session-1",
-        recordedAtIso: new Date(recordedAtSec * 1000).toISOString(),
-        symbol: "BTCUSDT",
-        interval: "1s",
-        strategyKey: "test_strategy",
-        tradeId: "entry-1",
-        eventStartTs: EVENT_START,
-        eventEndTs: EVENT_END,
-        marketSlug: "btc-event",
-        side: "yes",
-        chartDirection: "long",
-        signalTimeSec: entryTimeSec - 1,
-        entryTimeSec,
-        entryQuoteTs: entryTimeSec,
-        entryPrice: 0.5,
-        stakeUsd: 5,
-        shares: 10,
-        yesBid: 0.48,
-        yesAsk: 0.5,
-        noBid: 0.5,
-        noAsk: 0.52,
-        quoteAgeMs: 300,
     };
 }
 
@@ -310,24 +281,6 @@ describe("Execution Lab paper session", () => {
         expect(mismatches).to.have.length(1);
         expect(mismatches[0]?.mismatchType).to.equal("entry_price_filter_violation");
         expect(mismatches[0]?.tradeId).to.equal("filtered-position");
-    });
-
-    it("does not report late paper execution from wall-clock feed lag alone", () => {
-        const entry = paperEntryRecord(EVENT_START + 10, EVENT_START + 30);
-
-        const mismatches = collectLatePaperExecutionMismatches([entry], EVENT_START + 12, 15);
-
-        expect(mismatches).to.deep.equal([]);
-    });
-
-    it("reports late paper execution when the processed stream is too far past the fill time", () => {
-        const entry = paperEntryRecord(EVENT_START + 10, EVENT_START + 30);
-
-        const mismatches = collectLatePaperExecutionMismatches([entry], EVENT_START + 30, 15);
-
-        expect(mismatches).to.have.length(1);
-        expect(mismatches[0]?.mismatchType).to.equal("late_paper_execution");
-        expect(mismatches[0]?.tradeId).to.equal("entry-1");
     });
 
     it("ignores raw strategy signals that do not become configured trades", () => {

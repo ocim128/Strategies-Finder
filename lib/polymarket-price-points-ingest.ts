@@ -1,11 +1,16 @@
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 import type { PolymarketPricePoint } from "./local-sqlite-polymarket-api";
 import {
-    ensurePolymarketPricePoints,
+    ensurePolymarketPricePointsWithMetadata,
     loadPolymarketPricePoints,
     storePolymarketPricePoints,
 } from "./local-sqlite-polymarket-api";
 import { debugLogger } from "./debug-logger";
+import {
+    fetchPolymarketHistoryWithFallback,
+    normalizePolymarketHistoryPoints,
+    type PolymarketHistoryPoint,
+} from "./polymarket-history-client";
 
 const POLYMARKET_PROXY_HISTORY_URL = "/api/polymarket-history";
 const POLYMARKET_HISTORY_URL = "https://clob.polymarket.com/prices-history";
@@ -15,61 +20,17 @@ const HISTORY_REQUEST_TIMEOUT_MS = 6000;
 // client-side ensure timeout expires.
 const MAX_CONCURRENT_FETCHES = 24;
 const MAX_EVENT_STARTS_PER_LOAD_REQUEST = 100;
+const MAX_PRICE_POINTS_PER_LOAD_REQUEST = 500000;
 // Finder can span long 1m ranges, which turns stored-price lookup into dozens
 // of local SQLite requests. Keep those batched so the browser/dev server does
 // not drop same-origin fetches under a large Promise.all fan-out.
 const MAX_CONCURRENT_LOAD_REQUESTS = 4;
 
-type HistoryResponse = {
-    history?: Array<{ t?: unknown; p?: unknown }>;
-};
-
-type RawHistoryPoint = {
-    t: number;
-    p: number;
-};
-
-function normalizeHistoryPoints(response: HistoryResponse | null): RawHistoryPoint[] {
-    const rows = Array.isArray(response?.history) ? response.history : [];
-    const dedup = new Map<number, number>();
-
-    for (const row of rows) {
-        const t = Math.floor(Number(row?.t));
-        const p = Number(row?.p);
-        if (!Number.isFinite(t) || !Number.isFinite(p)) continue;
-        if (p < 0 || p > 1) continue;
-        dedup.set(t, p);
-    }
-
-    return Array.from(dedup.entries())
-        .sort((a, b) => a[0] - b[0])
-        .map(([t, p]) => ({ t, p }));
-}
-
-async function fetchJsonWithFallback(urls: string[]): Promise<HistoryResponse> {
-    let lastError: unknown = null;
-    for (const url of urls) {
-        try {
-            const response = await fetch(url, {
-                headers: { Accept: "application/json" },
-                signal: AbortSignal.timeout(HISTORY_REQUEST_TIMEOUT_MS),
-            });
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status} for ${url}`);
-            }
-            return await response.json() as HistoryResponse;
-        } catch (error) {
-            lastError = error;
-        }
-    }
-    throw lastError ?? new Error("Failed to load Polymarket history.");
-}
-
 async function fetchYesHistory(
     yesTokenId: string,
     eventStartTs: number,
     eventEndTs: number
-): Promise<RawHistoryPoint[]> {
+): Promise<PolymarketHistoryPoint[]> {
     const params = new URLSearchParams({
         market: yesTokenId,
         startTs: String(Math.max(0, eventStartTs - 15)),
@@ -79,7 +40,9 @@ async function fetchYesHistory(
         `${POLYMARKET_PROXY_HISTORY_URL}?${params.toString()}`,
         `${POLYMARKET_HISTORY_URL}?${params.toString()}`,
     ];
-    const windowedPoints = normalizeHistoryPoints(await fetchJsonWithFallback(urls));
+    const windowedPoints = normalizePolymarketHistoryPoints(await fetchPolymarketHistoryWithFallback(urls, {
+        timeoutMs: HISTORY_REQUEST_TIMEOUT_MS,
+    }));
     if (windowedPoints.length > 0) {
         return windowedPoints;
     }
@@ -88,10 +51,10 @@ async function fetchYesHistory(
         market: yesTokenId,
         interval: "max",
     });
-    const fallbackPoints = normalizeHistoryPoints(await fetchJsonWithFallback([
+    const fallbackPoints = normalizePolymarketHistoryPoints(await fetchPolymarketHistoryWithFallback([
         `${POLYMARKET_PROXY_HISTORY_URL}?${fallbackParams.toString()}`,
         `${POLYMARKET_HISTORY_URL}?${fallbackParams.toString()}`,
-    ]));
+    ], { timeoutMs: HISTORY_REQUEST_TIMEOUT_MS }));
     return fallbackPoints.filter(
         (pt) => pt.t >= eventStartTs && pt.t <= eventEndTs
     );
@@ -174,6 +137,7 @@ async function loadExistingPricePoints(
             batch.map((chunk) => loadPolymarketPricePoints({
                 seriesId,
                 eventStartTs: chunk,
+                limit: MAX_PRICE_POINTS_PER_LOAD_REQUEST,
             }))
         );
         rows.push(...batchRows);
@@ -218,12 +182,21 @@ function buildCoveredEventStartSet(
     return coveredEventStarts;
 }
 
+function mergePricePoints(
+    left: readonly PolymarketPricePoint[],
+    right: readonly PolymarketPricePoint[]
+): PolymarketPricePoint[] {
+    const mergedByKey = new Map<string, PolymarketPricePoint>();
+    for (const point of [...left, ...right]) {
+        mergedByKey.set(`${point.series_id}:${point.event_start_ts}:${point.ts}`, point);
+    }
+    return Array.from(mergedByKey.values()).sort((a, b) => a.ts - b.ts);
+}
+
 export async function ensurePricePointsForOutcomes(
     outcomes: readonly PolymarketOutcomeRow[],
     seriesId: string,
     options?: {
-        startTs?: number;
-        endTs?: number;
         onProgress?: (fetched: number, total: number) => void;
     }
 ): Promise<PolymarketPricePoint[]> {
@@ -253,17 +226,38 @@ export async function ensurePricePointsForOutcomes(
         toFetch: uncoveredOutcomes.length,
     });
 
+    let basePoints = existingPoints;
+    let outcomesToFetch = uncoveredOutcomes;
+
     try {
-        const ensuredPoints = await ensurePolymarketPricePoints({
+        const ensureResult = await ensurePolymarketPricePointsWithMetadata({
             seriesId,
             outcomes: uncoveredOutcomes,
         });
+        const ensuredPoints = ensureResult.rows;
+        debugLogger.info("polymarket.price_points.ensure_via_api_complete", {
+            seriesId,
+            toFetch: uncoveredOutcomes.length,
+            rows: ensuredPoints.length,
+            upserted: ensureResult.upserted,
+            fetchedEvents: ensureResult.fetchedEvents,
+            failedEvents: ensureResult.failedEvents,
+            missingTokenEvents: ensureResult.missingTokenEvents,
+        });
         if (ensuredPoints.length > 0) {
-            const mergedByKey = new Map<string, PolymarketPricePoint>();
-            for (const point of [...existingPoints, ...ensuredPoints]) {
-                mergedByKey.set(`${point.series_id}:${point.event_start_ts}:${point.ts}`, point);
+            const mergedPoints = mergePricePoints(existingPoints, ensuredPoints);
+            const coveredAfterEnsure = buildCoveredEventStartSet(outcomes, mergedPoints);
+            outcomesToFetch = uncoveredOutcomes.filter(
+                (outcome) => !coveredAfterEnsure.has(outcome.event_start_ts)
+            );
+            if (outcomesToFetch.length === 0) {
+                return mergedPoints;
             }
-            return Array.from(mergedByKey.values()).sort((left, right) => left.ts - right.ts);
+            basePoints = mergedPoints;
+            debugLogger.info("polymarket.price_points.ensure_via_api_partial", {
+                seriesId,
+                remainingEvents: outcomesToFetch.length,
+            });
         }
     } catch (error) {
         debugLogger.info("polymarket.price_points.ensure_via_api_failed", {
@@ -274,7 +268,7 @@ export async function ensurePricePointsForOutcomes(
     }
 
     const newPoints = await processBatch(
-        uncoveredOutcomes,
+        outcomesToFetch,
         seriesId,
         options?.onProgress
     );
@@ -288,6 +282,5 @@ export async function ensurePricePointsForOutcomes(
         });
     }
 
-    const merged = [...existingPoints, ...newPoints];
-    return merged;
+    return mergePricePoints(basePoints, newPoints);
 }
