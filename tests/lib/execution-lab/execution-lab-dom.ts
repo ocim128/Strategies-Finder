@@ -21,6 +21,14 @@ export const EXECUTION_LAB_IDS = {
     signalMismatch: "executionLabSignalMismatch",
     openPosition: "executionLabOpenPosition",
     sessionPnl: "executionLabSessionPnl",
+    decisionCard: "executionLabDecisionCard",
+    decisionStatus: "executionLabDecisionStatus",
+    signalState: "executionLabSignalState",
+    decisionReason: "executionLabDecisionReason",
+    decisionQuote: "executionLabDecisionQuote",
+    decisionCurrentPrice: "executionLabDecisionCurrentPrice",
+    decisionRejectedLabel: "executionLabDecisionRejectedLabel",
+    decisionRejectedEntry: "executionLabDecisionRejectedEntry",
     paperMetrics: "executionLabPaperMetrics",
     comparisonSource: "executionLabComparisonSource",
     comparisonSavedConfig: "executionLabComparisonSavedConfig",
@@ -53,6 +61,14 @@ export interface ExecutionLabDom {
     signalMismatch: HTMLElement;
     openPosition: HTMLElement;
     sessionPnl: HTMLElement;
+    decisionCard: HTMLElement;
+    decisionStatus: HTMLElement;
+    signalState: HTMLElement;
+    decisionReason: HTMLElement;
+    decisionQuote: HTMLElement;
+    decisionCurrentPrice: HTMLElement;
+    decisionRejectedLabel: HTMLElement;
+    decisionRejectedEntry: HTMLElement;
     paperMetrics: HTMLElement;
     comparisonSource: HTMLSelectElement;
     comparisonSavedConfig: HTMLSelectElement;
@@ -84,6 +100,14 @@ export function queryExecutionLabDom(): ExecutionLabDom {
         signalMismatch: getRequiredElement(EXECUTION_LAB_IDS.signalMismatch),
         openPosition: getRequiredElement(EXECUTION_LAB_IDS.openPosition),
         sessionPnl: getRequiredElement(EXECUTION_LAB_IDS.sessionPnl),
+        decisionCard: getRequiredElement(EXECUTION_LAB_IDS.decisionCard),
+        decisionStatus: getRequiredElement(EXECUTION_LAB_IDS.decisionStatus),
+        signalState: getRequiredElement(EXECUTION_LAB_IDS.signalState),
+        decisionReason: getRequiredElement(EXECUTION_LAB_IDS.decisionReason),
+        decisionQuote: getRequiredElement(EXECUTION_LAB_IDS.decisionQuote),
+        decisionCurrentPrice: getRequiredElement(EXECUTION_LAB_IDS.decisionCurrentPrice),
+        decisionRejectedLabel: getRequiredElement(EXECUTION_LAB_IDS.decisionRejectedLabel),
+        decisionRejectedEntry: getRequiredElement(EXECUTION_LAB_IDS.decisionRejectedEntry),
         paperMetrics: getRequiredElement(EXECUTION_LAB_IDS.paperMetrics),
         comparisonSource: getRequiredElement<HTMLSelectElement>(EXECUTION_LAB_IDS.comparisonSource),
         comparisonSavedConfig: getRequiredElement<HTMLSelectElement>(EXECUTION_LAB_IDS.comparisonSavedConfig),

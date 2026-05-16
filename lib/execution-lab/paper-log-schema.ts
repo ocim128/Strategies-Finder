@@ -64,6 +64,9 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
             break;
         case "paper_unfilled":
             if (!isNonEmptyString(value.reason)) return { ok: false, error: "reason is required" };
+            if (value.entryPrice !== undefined && !isPriceInRange(value.entryPrice, 0)) {
+                return { ok: false, error: "entryPrice is invalid" };
+            }
             break;
         case "paper_exit":
             if (!isNonEmptyString(value.tradeId)) return { ok: false, error: "tradeId is required" };

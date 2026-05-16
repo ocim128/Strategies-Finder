@@ -275,6 +275,7 @@ describe("Execution Lab paper session", () => {
         const entry = result.records.find((record): record is PaperEntryRecord => record.recordType === "paper_entry");
 
         expect(unfilled?.entryTimeSec).to.equal(EVENT_START + 10);
+        expect(unfilled?.entryPrice).to.equal(0.20);
         expect(entry?.entryTimeSec).to.equal(EVENT_START + 20);
         expect(entry?.entryPrice).to.equal(0.55);
         expect(state.totalEntries).to.equal(1);

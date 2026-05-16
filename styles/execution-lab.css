@@ -99,6 +99,114 @@
     color: var(--warning);
 }
 
+.execution-lab-decision-card {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    margin-top: 12px;
+    padding: 10px;
+}
+
+.execution-lab-decision-card.is-open,
+.execution-lab-decision-card.is-accepted {
+    border-color: hsl(var(--hsl-success) / 0.45);
+}
+
+.execution-lab-decision-card.is-rejected {
+    border-color: hsl(var(--hsl-danger) / 0.5);
+}
+
+.execution-lab-decision-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+    margin-bottom: 8px;
+}
+
+.execution-lab-decision-header span {
+    color: var(--text-secondary);
+}
+
+.execution-lab-decision-header strong {
+    color: var(--text-primary);
+    font-size: 12px;
+}
+
+.execution-lab-decision-card.is-open .execution-lab-decision-header strong,
+.execution-lab-decision-card.is-accepted .execution-lab-decision-header strong {
+    color: var(--green);
+}
+
+.execution-lab-decision-card.is-rejected .execution-lab-decision-header strong {
+    color: var(--red);
+}
+
+.execution-lab-signal-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.execution-lab-signal-strip span {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.2;
+    min-height: 30px;
+    padding: 8px 6px;
+    text-align: center;
+}
+
+.execution-lab-signal-strip span + span {
+    border-left: 1px solid var(--border-color);
+}
+
+.execution-lab-signal-strip[data-state="buy-up"] [data-signal-state="buy-up"] {
+    background: var(--success-soft);
+    color: var(--green-light);
+}
+
+.execution-lab-signal-strip[data-state="neutral"] [data-signal-state="neutral"] {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+}
+
+.execution-lab-signal-strip[data-state="buy-down"] [data-signal-state="buy-down"] {
+    background: var(--danger-soft);
+    color: var(--red-light);
+}
+
+.execution-lab-decision-reason {
+    color: var(--text-primary);
+    font-size: 12px;
+    line-height: 1.35;
+    margin-top: 8px;
+    overflow-wrap: anywhere;
+}
+
+.execution-lab-decision-kv {
+    display: grid;
+    grid-template-columns: minmax(84px, 0.5fr) minmax(0, 1fr);
+    gap: 5px 8px;
+    margin-top: 8px;
+    font-size: 11px;
+}
+
+.execution-lab-decision-kv span {
+    color: var(--text-secondary);
+}
+
+.execution-lab-decision-kv strong {
+    color: var(--text-primary);
+    font-weight: 500;
+    overflow-wrap: anywhere;
+}
+
 .execution-lab-metrics {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));

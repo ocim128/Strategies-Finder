@@ -272,6 +272,7 @@ function buildUnfilledRecord(
         expectedExitTimeSec?: number;
         expectedExitReason?: string;
         side: SecondMarketSide | null;
+        entryPrice?: number;
         event?: EventRef | null;
     }
 ): PaperUnfilledRecord {
@@ -284,6 +285,7 @@ function buildUnfilledRecord(
         expectedExitTimeSec: args.expectedExitTimeSec,
         expectedExitReason: args.expectedExitReason,
         side: args.side,
+        entryPrice: args.entryPrice,
         eventStartTs: args.event?.eventStartTs,
         eventEndTs: args.event?.eventEndTs,
         marketSlug: args.event?.marketSlug,
@@ -625,7 +627,7 @@ export function evaluateExecutionLabPaperTick(
                     state,
                     `unfilled:entry_price_filtered:${tradeId}`,
                     records,
-                    buildUnfilledRecord(state, input, { reason: "entry_price_filtered", signalTimeSec, entryTimeSec, side, event })
+                    buildUnfilledRecord(state, input, { reason: "entry_price_filtered", signalTimeSec, entryTimeSec, side, entryPrice: entryFill.price, event })
                 );
                 continue;
             }
@@ -636,7 +638,7 @@ export function evaluateExecutionLabPaperTick(
                     state,
                     `unfilled:invalid_price:${tradeId}`,
                     records,
-                    buildUnfilledRecord(state, input, { reason: "invalid_price", signalTimeSec, entryTimeSec, side, event })
+                    buildUnfilledRecord(state, input, { reason: "invalid_price", signalTimeSec, entryTimeSec, side, entryPrice: entryFill.price, event })
                 );
                 continue;
             }

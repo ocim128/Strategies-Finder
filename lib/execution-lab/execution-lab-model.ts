@@ -169,6 +169,7 @@ export type PaperUnfilledRecord = ExecutionLabBaseRecord & {
     expectedExitTimeSec?: number;
     expectedExitReason?: string;
     side: SecondMarketSide | null;
+    entryPrice?: number;
     eventStartTs?: number;
     eventEndTs?: number;
     marketSlug?: string;

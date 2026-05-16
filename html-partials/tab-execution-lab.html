@@ -54,6 +54,26 @@
                 <span>Session PnL</span>
                 <strong id="executionLabSessionPnl">--</strong>
             </div>
+            <div class="execution-lab-decision-card" id="executionLabDecisionCard">
+                <div class="execution-lab-decision-header">
+                    <span>Execution Decision</span>
+                    <strong id="executionLabDecisionStatus">Waiting</strong>
+                </div>
+                <div class="execution-lab-signal-strip" id="executionLabSignalState" data-state="neutral" aria-label="Current execution signal state">
+                    <span data-signal-state="buy-up">Buy Up</span>
+                    <span data-signal-state="neutral">Neutral</span>
+                    <span data-signal-state="buy-down">Buy Down</span>
+                </div>
+                <div class="execution-lab-decision-reason" id="executionLabDecisionReason">No paper decision yet.</div>
+                <div class="execution-lab-decision-kv">
+                    <span>Entry Price</span>
+                    <strong id="executionLabDecisionQuote">--</strong>
+                    <span>Current Price</span>
+                    <strong id="executionLabDecisionCurrentPrice">--</strong>
+                    <span id="executionLabDecisionRejectedLabel" hidden>Current Rejected</span>
+                    <strong id="executionLabDecisionRejectedEntry" hidden>--</strong>
+                </div>
+            </div>
         </section>
     </div>
 

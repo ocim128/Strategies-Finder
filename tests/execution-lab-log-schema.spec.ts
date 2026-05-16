@@ -79,6 +79,12 @@ describe("Execution Lab JSONL schema", () => {
         }).ok).to.equal(true);
         expect(validateExecutionLabRecord({
             ...baseRecord,
+            recordType: "paper_unfilled",
+            reason: "entry_price_filtered",
+            entryPrice: 0.2,
+        }).ok).to.equal(true);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
             recordType: "paper_exit",
             tradeId: "trade-1",
             exitReason: "manual",

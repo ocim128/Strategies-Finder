@@ -8,9 +8,10 @@ import { paramManager } from "../param-manager";
 import { readPersistedJson, writePersistedJson } from "../persisted-json";
 import { getEffectivePolymarketSeriesId, resolvePolymarketOutcomeSymbol } from "../polymarket-btc5m";
 import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
+import { getPolymarketEntryPriceFilterBounds } from "../polymarket-entry-price-filter";
 import { resolveEffectivePolymarketExitMode } from "../polymarket-exit-mode";
 import { normalizeSecondMarketChartSymbol } from "../second-market/api";
-import type { PolymarketClob1sQuoteRow, SecondMarketPolymarketEvent, SecondMarketSymbol } from "../second-market/types";
+import type { PolymarketClob1sQuoteRow, SecondMarketPolymarketEvent, SecondMarketSide, SecondMarketSymbol } from "../second-market/types";
 import { state } from "../state";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { BacktestSettings, OHLCVData, Strategy, Trade } from "../types/strategies";
@@ -39,6 +40,7 @@ import {
     EXECUTION_LAB_SETTINGS_STORAGE_KEY,
     type ExecutionLabEvaluatedSignal,
     type ExecutionLabOpenPaperPosition,
+    type PaperUnfilledRecord,
     type ExecutionLabPaperMarker,
     type ExecutionLabPaperState,
     type ExecutionLabRecord,
@@ -84,6 +86,16 @@ type ComparisonCandidate = {
 type ComparisonResult = {
     metrics: ExecutionLabPerformanceMetrics;
     totalEntries: number;
+};
+type ExecutionLabSignalState = "buy-up" | "neutral" | "buy-down";
+type ExecutionLabPaperDecision = {
+    kind: "accepted" | "rejected";
+    signalState: ExecutionLabSignalState;
+    side: SecondMarketSide | null;
+    status: string;
+    reason: string;
+    quote: string;
+    rejectedEntry: string | null;
 };
 
 function finiteUnixSeconds(time: OHLCVData["time"]): number | null {
@@ -156,6 +168,34 @@ function signalSide(signalType: ExecutionLabEvaluatedSignal["signalType"]): "YES
     return signalType === "buy" ? "YES" : "NO";
 }
 
+function signalTypeToState(signalType: ExecutionLabEvaluatedSignal["signalType"]): ExecutionLabSignalState {
+    return signalType === "buy" ? "buy-up" : "buy-down";
+}
+
+function sideToSignalState(side: SecondMarketSide | null | undefined): ExecutionLabSignalState {
+    return side === "yes" ? "buy-up" : side === "no" ? "buy-down" : "neutral";
+}
+
+function formatDecisionSide(side: SecondMarketSide | null | undefined): string {
+    return side === "yes" ? "Buy Up / YES" : side === "no" ? "Buy Down / NO" : "--";
+}
+
+function formatCents(value: number): string {
+    return `${(value * 100).toFixed(1)}c`;
+}
+
+function quotePriceForSide(
+    quote: PolymarketClob1sQuoteRow | null,
+    side: SecondMarketSide | null,
+    priceSide: "entry" | "exit"
+): number | null {
+    if (!quote || !side) return null;
+    const value = side === "yes"
+        ? (priceSide === "entry" ? quote.yes_ask : quote.yes_bid)
+        : (priceSide === "entry" ? quote.no_ask : quote.no_bid);
+    return value !== null && Number.isFinite(value) ? value : null;
+}
+
 function normalizeStake(value: unknown): number {
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed >= 1
@@ -199,6 +239,7 @@ export class ExecutionLabService {
     private markerById = new Map<string, SeriesMarker<Time>>();
     private logPath: string | null = null;
     private latestSignals: ExecutionLabEvaluatedSignal[] = [];
+    private latestPaperDecision: ExecutionLabPaperDecision | null = null;
     private latestQuote: PolymarketClob1sQuoteRow | null = null;
     private feedLagSec: number | null = null;
     private liveEvents: SecondMarketPolymarketEvent[] = [];
@@ -283,6 +324,7 @@ export class ExecutionLabService {
         chartManager.clearExecutionLabPolymarketPrices();
         this.markerById.clear();
         this.latestSignals = [];
+        this.latestPaperDecision = null;
         this.latestQuote = null;
         this.feedLagSec = null;
         this.liveQuoteByTime.clear();
@@ -864,6 +906,7 @@ export class ExecutionLabService {
 
             await this.appendRecords([...parityRecords, ...tickResult.records]);
             this.updateExecutionParityState(parityMismatches);
+            this.updateLatestPaperDecision(tickResult.records);
             this.appendLatestLoggedSignals(tickResult.records, backtestSignals);
             this.latestQuote = liveQuote;
             this.feedLagSec = feedLag;
@@ -1050,6 +1093,79 @@ export class ExecutionLabService {
         if (nextSignals.length > 0) this.latestSignals = [...this.latestSignals, ...nextSignals].slice(-20);
     }
 
+    private formatDecisionQuote(side: SecondMarketSide | null, entryPrice?: number): string {
+        if (side && entryPrice !== undefined && Number.isFinite(entryPrice)) {
+            return `${side.toUpperCase()} ${formatCents(entryPrice)}`;
+        }
+        return "--";
+    }
+
+    private formatEntryFilterRejection(record: PaperUnfilledRecord): string {
+        const bounds = getPolymarketEntryPriceFilterBounds(this.snapshot?.backtestSettings.polymarketEntryPriceFilterCents);
+        const side = formatDecisionSide(record.side);
+        if (!bounds || record.entryPrice === undefined || !Number.isFinite(record.entryPrice)) {
+            return `${side} rejected by entry price filter`;
+        }
+        if (record.entryPrice <= bounds.lower) {
+            return `${side} ${formatCents(record.entryPrice)} below min ${formatCents(bounds.lower)}`;
+        }
+        if (record.entryPrice >= bounds.upper) {
+            return `${side} ${formatCents(record.entryPrice)} above max ${formatCents(bounds.upper)}`;
+        }
+        return `${side} ${formatCents(record.entryPrice)} rejected by entry price filter`;
+    }
+
+    private paperUnfilledReason(record: PaperUnfilledRecord): string {
+        switch (record.reason) {
+            case "entry_price_filtered":
+                return `Rejected ${formatDecisionSide(record.side)} by Polymarket Entry Price Filter`;
+            case "missing_entry_quote":
+                return "Rejected because the exact entry quote is missing";
+            case "missing_event":
+                return "Rejected because no active event matched the signal";
+            case "duplicate_event":
+                return "Rejected because this event was already claimed";
+            case "open_position":
+                return "Rejected because another paper position is open";
+            case "invalid_price":
+                return "Rejected because the entry price is invalid";
+            case "missing_exit_quote":
+                return "Rejected because the expected exit quote is missing";
+        }
+    }
+
+    private updateLatestPaperDecision(records: readonly ExecutionLabRecord[]): void {
+        for (let i = records.length - 1; i >= 0; i -= 1) {
+            const record = records[i];
+            if (record.recordType === "paper_entry") {
+                this.latestPaperDecision = {
+                    kind: "accepted",
+                    signalState: sideToSignalState(record.side),
+                    side: record.side,
+                    status: "Accepted",
+                    reason: "Paper entry opened",
+                    quote: this.formatDecisionQuote(record.side, record.entryPrice),
+                    rejectedEntry: null,
+                };
+                return;
+            }
+            if (record.recordType === "paper_unfilled") {
+                this.latestPaperDecision = {
+                    kind: "rejected",
+                    signalState: sideToSignalState(record.side),
+                    side: record.side,
+                    status: "Rejected",
+                    reason: this.paperUnfilledReason(record),
+                    quote: this.formatDecisionQuote(record.side, record.entryPrice),
+                    rejectedEntry: record.reason === "entry_price_filtered"
+                        ? this.formatEntryFilterRejection(record)
+                        : null,
+                };
+                return;
+            }
+        }
+    }
+
     private addPolymarketQuote(quote: PolymarketClob1sQuoteRow, includeStrategyContext = true): void {
         this.liveQuoteByTime.set(quote.sample_ts, quote);
         if (includeStrategyContext) {
@@ -1234,6 +1350,65 @@ export class ExecutionLabService {
         );
     }
 
+    private renderDecision(
+        latestSignal: ExecutionLabEvaluatedSignal | null,
+        openPosition: ExecutionLabOpenPaperPosition | null
+    ): void {
+        const dom = this.dom;
+        if (!dom) return;
+        let signalState: ExecutionLabSignalState = "neutral";
+        let status = "Waiting";
+        let reason = latestSignal
+            ? `Latest strategy signal maps to ${signalSide(latestSignal.signalType)}.`
+            : "No paper decision yet.";
+        let quote = "--";
+        let currentSide: SecondMarketSide | null = latestSignal ? (latestSignal.signalType === "buy" ? "yes" : "no") : null;
+        let currentPriceMode: "entry" | "exit" = "entry";
+        let rejectedEntry: string | null = null;
+        let tone: "waiting" | "accepted" | "rejected" | "open" = "waiting";
+
+        if (this.latestPaperDecision) {
+            currentSide = this.latestPaperDecision.side;
+            status = this.latestPaperDecision.status;
+            reason = this.latestPaperDecision.reason;
+            quote = this.latestPaperDecision.quote;
+            rejectedEntry = this.latestPaperDecision.rejectedEntry;
+            tone = this.latestPaperDecision.kind === "accepted" ? "accepted" : "rejected";
+        }
+
+        if (openPosition) {
+            signalState = sideToSignalState(openPosition.side);
+            currentSide = openPosition.side;
+            currentPriceMode = "exit";
+            status = "Open";
+            reason = `Paper ${openPosition.side.toUpperCase()} position is active.`;
+            quote = this.formatDecisionQuote(openPosition.side, openPosition.entryPrice);
+            rejectedEntry = null;
+            tone = "open";
+        }
+
+        if (!openPosition && latestSignal && !this.latestPaperDecision) {
+            status = "Signal";
+            signalState = signalTypeToState(latestSignal.signalType);
+        }
+
+        const currentPrice = quotePriceForSide(this.latestQuote, currentSide, currentPriceMode);
+        dom.signalState.dataset.state = signalState;
+        dom.decisionStatus.textContent = status;
+        dom.decisionReason.textContent = reason;
+        dom.decisionQuote.textContent = quote;
+        dom.decisionCurrentPrice.textContent = currentSide && currentPrice !== null
+            ? `${currentSide.toUpperCase()} ${currentPriceMode === "entry" ? "ask" : "bid"} ${formatCents(currentPrice)}`
+            : "--";
+        dom.decisionRejectedLabel.hidden = !rejectedEntry;
+        dom.decisionRejectedEntry.hidden = !rejectedEntry;
+        dom.decisionRejectedEntry.textContent = rejectedEntry ?? "--";
+        dom.decisionCard.classList.toggle("is-waiting", tone === "waiting");
+        dom.decisionCard.classList.toggle("is-accepted", tone === "accepted");
+        dom.decisionCard.classList.toggle("is-rejected", tone === "rejected");
+        dom.decisionCard.classList.toggle("is-open", tone === "open");
+    }
+
     private renderIdle(): void {
         const dom = this.dom;
         if (!dom) return;
@@ -1250,6 +1425,7 @@ export class ExecutionLabService {
         dom.openPosition.textContent = "--";
         dom.sessionPnl.textContent = "--";
         dom.logPath.textContent = "--";
+        this.renderDecision(null, null);
         this.renderPaperMetrics();
         this.renderComparisonMetrics();
         this.setComparisonStatus("No comparison run.");
@@ -1305,6 +1481,7 @@ export class ExecutionLabService {
         const pendingSettlements = this.paperState ? Array.from(this.paperState.pendingSettlements.values()) : [];
         const firstOpen = openPositions[0] ?? null;
         const firstPending = pendingSettlements[0] ?? null;
+        this.renderDecision(latestSignal, firstOpen);
         const openState = firstOpen && latestTs !== null && firstOpen.eventEndTs <= latestTs
             ? `pending resolution since ${formatDateTime(firstOpen.eventEndTs)}`
             : firstOpen
