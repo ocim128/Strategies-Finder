@@ -908,6 +908,34 @@ class QuickViewManager {
                     executionModel: this.readCurrentExecutionModel(),
                     polymarketAnnotationEnabled: true,
                 });
+                const currentPolymarketSettings = resolvePolymarketDomSettings();
+                const existingLimitSummary = result.polymarketTradeSummary?.limitEntryEnabled === true
+                    ? result.polymarketTradeSummary
+                    : null;
+                const limitEntry = outcomeInterval === "5m"
+                    && (
+                        existingLimitSummary
+                        || (!result.polymarketTradeSummary && currentPolymarketSettings.postSignalLimitEntryEnabled)
+                    )
+                    ? {
+                        enabled: true,
+                        priceMode: existingLimitSummary?.limitEntryMode
+                            ?? currentPolymarketSettings.postSignalLimitEntryMode,
+                        priceCents: existingLimitSummary?.limitEntryPriceCents
+                            ?? currentPolymarketSettings.postSignalLimitEntryPriceCents,
+                        offsetCents: existingLimitSummary?.limitEntryOffsetCents
+                            ?? currentPolymarketSettings.postSignalLimitEntryOffsetCents,
+                        exitEnabled: existingLimitSummary
+                            ? existingLimitSummary.limitExitEnabled === true
+                            : currentPolymarketSettings.postSignalLimitExitEnabled,
+                        exitMode: existingLimitSummary?.limitExitMode
+                            ?? currentPolymarketSettings.postSignalLimitExitMode,
+                        exitPriceCents: existingLimitSummary?.limitExitPriceCents
+                            ?? currentPolymarketSettings.postSignalLimitExitPriceCents,
+                        exitOffsetCents: existingLimitSummary?.limitExitOffsetCents
+                            ?? currentPolymarketSettings.postSignalLimitExitOffsetCents,
+                    }
+                    : undefined;
                 return await annotateBacktestResultWithSecondMarketClob({
                     result,
                     symbol: resultContext.symbol,
@@ -920,6 +948,7 @@ class QuickViewManager {
                         ? result.polymarketTradeSummary.signalExitAllowMultipleTradesPerEvent === true
                         : this.readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent(),
                     entryPriceFilterCents: this.readCurrentPolymarketEntryPriceFilterCents(),
+                    limitEntry,
                 });
             } catch (error) {
                 debugLogger.warn("quick_view.second_market_polymarket_annotation_failed", {

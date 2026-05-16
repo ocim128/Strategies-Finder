@@ -3,6 +3,11 @@ import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import type { PolymarketExitMode } from "../polymarket-exit-mode";
 import type { OHLCVData, Trade } from "../types/strategies";
 import type { PolymarketOutcomeRow } from "../types/polymarket-outcomes";
+import type {
+    PolymarketLimitEntryPriceMode,
+    PolymarketLimitExitPriceMode,
+    PolymarketLimitExitStatus,
+} from "../polymarket-post-signal-limit-entry";
 
 export const SECOND_MARKET_DB_RELATIVE_PATH = "price-data/1second-chart/second-market-data.sqlite";
 
@@ -189,11 +194,19 @@ export interface SecondMarketTradeResult {
     trade: Trade;
     outcome: PolymarketOutcomeRow | null;
     side: SecondMarketSide | null;
+    entrySource?: "quote" | "limit";
+    entryStatus?: "filled" | "not_touched" | "last_minute_only" | "missing_price_points" | "invalid_window" | "duplicate";
+    entryMode?: PolymarketLimitEntryPriceMode;
+    entryOffsetCents?: number;
     entryPrice: number | null;
     entryQuoteTs: number | null;
+    entryLimitPrice?: number | null;
+    entryImprovement?: number | null;
     exitPrice: number | null;
     exitQuoteTs: number | null;
-    exitSource: "signal" | "resolution" | "duplicate" | "entry_price_filtered" | "no_event" | "missing";
+    exitSource: "target" | "signal" | "resolution" | "duplicate" | "entry_price_filtered" | "no_event" | "missing";
+    exitTargetPrice?: number | null;
+    exitStatus?: PolymarketLimitExitStatus;
     pnl: number | null;
     isProfitable: boolean | null;
 }
@@ -207,6 +220,7 @@ export interface SecondMarketBacktestSummary {
     missingOutcomeTrades: number;
     missingQuoteTrades: number;
     signalExitedTrades: number;
+    targetExitedTrades: number;
     resolvedTrades: number;
     netPnl: number;
     grossProfit: number;
@@ -216,4 +230,25 @@ export interface SecondMarketBacktestSummary {
     avgEntryPrice: number | null;
     avgExitPrice: number | null;
     exactQuoteCoveragePct: number;
+    limitEntryEnabled?: boolean;
+    limitEntryMode?: PolymarketLimitEntryPriceMode;
+    limitEntryPriceCents?: number;
+    limitEntryOffsetCents?: number;
+    limitEntryAttempts?: number;
+    limitEntryFilledTrades?: number;
+    limitEntryMissedTrades?: number;
+    limitEntryNotTouchedTrades?: number;
+    limitEntryLastMinuteOnlyTrades?: number;
+    limitEntryMissingPriceTrades?: number;
+    limitEntryInvalidWindowTrades?: number;
+    limitEntryFillRate?: number;
+    avgLimitEntryWaitSec?: number;
+    avgLimitEntryImprovement?: number;
+    limitExitEnabled?: boolean;
+    limitExitMode?: PolymarketLimitExitPriceMode;
+    limitExitPriceCents?: number;
+    limitExitOffsetCents?: number;
+    limitExitFilledTrades?: number;
+    limitExitFallbackTrades?: number;
+    limitExitUnreachableTrades?: number;
 }

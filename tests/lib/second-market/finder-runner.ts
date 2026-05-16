@@ -154,6 +154,18 @@ export async function runSecondMarketFinder(
         polymarketAnnotationEnabled: options.polymarketScoringEnabled,
     });
     const outcomeInterval = resolvePolymarketOutcomeInterval(settings.polymarketOutcomeInterval);
+    const limitEntry = settings.polymarketPostSignalLimitEntryEnabled === true
+        ? {
+            enabled: true,
+            priceMode: settings.polymarketPostSignalLimitEntryMode,
+            priceCents: settings.polymarketPostSignalLimitEntryPriceCents ?? 50,
+            offsetCents: settings.polymarketPostSignalLimitEntryOffsetCents,
+            exitEnabled: settings.polymarketPostSignalLimitExitEnabled === true,
+            exitMode: settings.polymarketPostSignalLimitExitMode,
+            exitPriceCents: settings.polymarketPostSignalLimitExitPriceCents,
+            exitOffsetCents: settings.polymarketPostSignalLimitExitOffsetCents,
+        }
+        : undefined;
 
     callbacks.setProgress(5, "Preparing 1s chart data...");
     const closedData = buildFinderEvaluationData(input.ohlcvData, input.interval, settings);
@@ -318,6 +330,7 @@ export async function runSecondMarketFinder(
                     polymarketExitMode: effectiveExitMode,
                     polymarketSignalExitAllowMultipleTradesPerEvent: options.polymarketSignalExitAllowMultipleTradesPerEvent,
                     entryPriceFilterCents: options.polymarketEntryPriceFilterCents ?? settings.polymarketEntryPriceFilterCents,
+                    limitEntry,
                 });
 
                 processedCount++;

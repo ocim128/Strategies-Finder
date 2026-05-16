@@ -142,6 +142,59 @@ describe("second market backtest evaluator", () => {
         expect(evaluated.summary.duplicateTradesIgnored).to.equal(0);
     });
 
+    it("waits for a 1s CLOB post-signal limit entry before scoring", () => {
+        const evaluated = evaluateSecondMarketTrades({
+            trades: [trade(1_700_000_010, 1_700_000_040)],
+            outcomes: [outcome()],
+            quotes: [
+                quote(1_700_000_010, 0.62, 0.60),
+                quote(1_700_000_020, 0.50, 0.48),
+                quote(1_700_000_040, 0.60, 0.58),
+            ],
+            evaluationMode: "signal_exit_same_event",
+            mode: "strict",
+            limitEntry: {
+                enabled: true,
+                priceCents: 50,
+            },
+        });
+
+        expect(evaluated.results[0].entrySource).to.equal("limit");
+        expect(evaluated.results[0].entryStatus).to.equal("filled");
+        expect(evaluated.results[0].entryPrice).to.equal(0.50);
+        expect(evaluated.results[0].entryQuoteTs).to.equal(1_700_000_020);
+        expect(evaluated.results[0].exitPrice).to.equal(0.58);
+        expect(evaluated.results[0].pnl).to.be.closeTo(0.08, 1e-9);
+        expect(evaluated.summary.limitEntryEnabled).to.equal(true);
+        expect(evaluated.summary.limitEntryAttempts).to.equal(1);
+        expect(evaluated.summary.limitEntryFilledTrades).to.equal(1);
+        expect(evaluated.summary.avgLimitEntryWaitSec).to.equal(10);
+    });
+
+    it("skips 1s CLOB limit entries that only touch after the chart signal exit", () => {
+        const evaluated = evaluateSecondMarketTrades({
+            trades: [trade(1_700_000_010, 1_700_000_020)],
+            outcomes: [outcome()],
+            quotes: [
+                quote(1_700_000_010, 0.62, 0.60),
+                quote(1_700_000_030, 0.50, 0.48),
+            ],
+            evaluationMode: "signal_exit_same_event",
+            mode: "strict",
+            limitEntry: {
+                enabled: true,
+                priceCents: 50,
+            },
+        });
+
+        expect(evaluated.results[0].entryStatus).to.equal("invalid_window");
+        expect(evaluated.results[0].entryPrice).to.equal(null);
+        expect(evaluated.summary.scoredTrades).to.equal(0);
+        expect(evaluated.summary.limitEntryAttempts).to.equal(1);
+        expect(evaluated.summary.limitEntryMissedTrades).to.equal(1);
+        expect(evaluated.summary.limitEntryInvalidWindowTrades).to.equal(1);
+    });
+
     it("can still compute final event resolution fills at the evaluator layer", () => {
         const position = trade(1_700_000_010, 1_700_000_020);
         position.exitReason = "take_profit";

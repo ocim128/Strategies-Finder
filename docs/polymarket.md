@@ -31,7 +31,7 @@ If you want to score a strategy against resolved Polymarket crypto events:
   - `resolve_hold` scores at final event resolution on supported non-`1s` chart intervals
   - `signal_exit_same_event` is effective on `1m` + `next_open` using locally cached Polymarket price points, and on supported `1s` + `next_open` BTCUSDT/XRPUSDT CLOB runs using exact-second bid/ask rows
 - optionally set `Polymarket Entry Price Filter`; for example, `20` skips trades whose selected Polymarket entry price is at or below 20c or at or above 80c
-- optional for native `5m` non-`1s` outcome sessions: enable `Post-Signal Limit Entry` to require the selected YES/NO side to trade at or below the configured limit price after the chart entry signal and before the event's final minute
+- optional for native `5m` outcome sessions, including supported `1s` CLOB runs: enable `Post-Signal Limit Entry` to require the selected YES/NO side to trade at or below the configured limit price after the chart entry signal and before the event's final minute
 
 If you want to manually paper-trade the latest still-open backtest trade:
 
@@ -248,14 +248,14 @@ Effective gating:
 - `Polymarket Outcome Session` must be `5m`
 - the overlay is available in both `resolve_hold` and `signal_exit_same_event`
 - fixed entry limit price is stored as cents and normalized to `1..99`; default is `50`
-- entry offset is stored as cents and normalized to `0..99`; default is `20`
+- entry offset is stored as cents and normalized to `0..99` with 0.1c precision; default is `20`
 
 Behavior:
 
 - long chart trades attempt to buy YES; short chart trades attempt to buy NO
 - the attempt starts at the chart trade entry timestamp
 - fixed-price entry mode fills when the side price is at or below `polymarketPostSignalLimitEntryPriceCents` before `event_end_ts - 60`
-- signal-offset entry mode computes the limit from the first available event-side quote after chart entry minus `polymarketPostSignalLimitEntryOffsetCents`; for example, a 60c first YES quote with offset `20` becomes a 40c entry limit
+- signal-offset entry mode computes the limit from the first available event-side quote after chart entry minus `polymarketPostSignalLimitEntryOffsetCents`; for example, a 60c first YES quote with offset `0.5` becomes a 59.5c entry limit
 - if the contract touches only during the final minute, the attempt is reported as `last_minute_only` and is not scored
 - if `signal_exit_same_event` has a same-event chart signal exit before the limit touch, the attempt is reported as `invalid_window` and is not scored
 - the first chart attempt claims the event even when it misses; later chart trades in the same event are reported as duplicates
@@ -297,11 +297,11 @@ If you add another target, update:
 | Surface | `resolve_hold` | `signal_exit_same_event` | Post-signal limit entry | Important notes |
 | --- | --- | --- | --- | --- |
 | Direct Polymarket charting | not applicable | not applicable | not applicable | provider path only |
-| Manual backtest annotation | native `5m` / `15m` / `1h`, existing `1m` / `15m` / `1h` / `4h` bridge paths; not exposed on `1s` | `1m` + `next_open` on the selected native outcome session; supported `1s` + `next_open` uses exact-second CLOB exits inside the event | `5m` outcome session only on non-`1s` charts | same chart backtest, Polymarket post-pass |
+| Manual backtest annotation | native `5m` / `15m` / `1h`, existing `1m` / `15m` / `1h` / `4h` bridge paths; not exposed on `1s` | `1m` + `next_open` on the selected native outcome session; supported `1s` + `next_open` uses exact-second CLOB exits inside the event | native `5m`, including supported `1s` CLOB runs | same chart backtest, Polymarket post-pass |
 | Headless `evaluatePolymarketOutcomes(...)` | resolve-hold only | not supported | not supported | caller supplies outcome rows only; no price-point input surface |
-| Finder Polymarket mode | `1m`, `5m`, `15m`, `1h`, `4h`; not exposed on `1s` | `1m` + `next_open`; supported `1s` + `next_open` uses exact-second CLOB exits inside the event | `5m` outcome session only on non-`1s` charts | `grid` and `random` only; no combo; no multi-timeframe |
+| Finder Polymarket mode | `1m`, `5m`, `15m`, `1h`, `4h`; not exposed on `1s` | `1m` + `next_open`; supported `1s` + `next_open` uses exact-second CLOB exits inside the event | native `5m`, including supported `1s` CLOB runs | `grid` and `random` only; no combo; no multi-timeframe |
 | Hunt | same as Finder | same as Finder | same as Finder | preserves Polymarket mode settings in profiles |
-| Quick View / Trades / Polymarket diagnostics reload | can reuse stored summary broadly; native `15m` / `1h` show summary and payout cards; stale `1s` resolve-hold summaries are rebuilt as signal-exit CLOB annotations when execution is `next_open` | `1m` when price points are available or can be ensured; supported `1s` + `next_open` uses exact-second CLOB rows | reloads price points for `5m` limit attempts on non-`1s` charts | active consumers, not passive renderers |
+| Quick View / Trades / Polymarket diagnostics reload | can reuse stored summary broadly; native `15m` / `1h` show summary and payout cards; stale `1s` resolve-hold summaries are rebuilt as signal-exit CLOB annotations when execution is `next_open` | `1m` when price points are available or can be ensured; supported `1s` + `next_open` uses exact-second CLOB rows | reloads `1m` price points or `1s` CLOB quotes for `5m` limit attempts | active consumers, not passive renderers |
 | Endpoint Preview / Copy / HTTP execution | `resolve_hold` only | not supported | not supported | exit mode and limit-entry settings are stripped |
 | Strategy Ensemble Polymarket | `resolve_hold` only | not supported | not supported | explicit fence in the ensemble path |
 | Bridge export | separate contract | separate contract | separate contract | ignores scoring-mode settings; still chart-symbol `5m` entry-signal export |
@@ -501,7 +501,7 @@ Current UI rules:
 - `polymarketEntryPriceFilterCents` shows when annotation is enabled
 - `polymarketEntrySelectionMode` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, and the selected exit mode is not `signal_exit_same_event`
 - `polymarketEntryOffset` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, the selected exit mode is not `signal_exit_same_event`, and entry selection is `fixed_offset`
-- `polymarketPostSignalLimitEntryEnabled` only shows when annotation is enabled, native outcome session is `5m`, and the chart interval is not `1s`
+- `polymarketPostSignalLimitEntryEnabled` shows when annotation is enabled and native outcome session is `5m`, including supported `1s` CLOB charts
 - post-signal entry mode and exit toggle only show when post-signal limit entry is enabled
 - fixed entry price only shows when entry mode is `fixed_price`
 - entry offset only shows when entry mode is `signal_offset`
@@ -528,7 +528,7 @@ Persistence and compatibility:
 - `polymarketPostSignalLimitEntryEnabled` defaults to `false`
 - `polymarketPostSignalLimitEntryMode` defaults to `fixed_price`
 - `polymarketPostSignalLimitEntryPriceCents` defaults to `50` and clamps to `1..99`
-- `polymarketPostSignalLimitEntryOffsetCents` defaults to `20` and clamps to `0..99`
+- `polymarketPostSignalLimitEntryOffsetCents` defaults to `20` and clamps to `0..99` with 0.1c precision
 - `polymarketPostSignalLimitExitEnabled` defaults to `false`
 - `polymarketPostSignalLimitExitMode` defaults to `entry_offset`
 - `polymarketPostSignalLimitExitPriceCents` defaults to `80` and clamps to `1..99`

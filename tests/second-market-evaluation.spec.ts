@@ -102,6 +102,7 @@ function context(quotes: PolymarketClob1sQuoteRow[]): SecondMarketEvaluationCont
         outcomeInterval: "5m",
         outcomes: [outcome()],
         quotes,
+        gammaSnapshots: [],
     };
 }
 
@@ -169,6 +170,34 @@ describe("second market shared evaluation", () => {
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.20);
     });
 
+    it("carries post-signal limit entry counts through 1s CLOB summaries and annotations", () => {
+        const signalTrade = trade(1, 1_700_000_010, 1_700_000_040);
+        signalTrade.exitReason = "signal";
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([signalTrade]),
+            context: context([
+                quote(1_700_000_010, 0.62, 0.60),
+                quote(1_700_000_020, 0.50, 0.48),
+                quote(1_700_000_040, 0.60, 0.58),
+            ]),
+            polymarketExitMode: "signal_exit_same_event",
+            limitEntry: {
+                enabled: true,
+                priceCents: 50,
+            },
+        });
+
+        expect(evaluated.polymarketSummary.limitEntryEnabled).to.equal(true);
+        expect(evaluated.polymarketSummary.limitEntryFilledTrades).to.equal(1);
+        expect(evaluated.polymarketEval.limitEntryEnabled).to.equal(true);
+        expect(evaluated.polymarketEval.limitEntryAttempts).to.equal(1);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntrySource).to.equal("limit");
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryStatus).to.equal("filled");
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryFillTs).to.equal(1_700_000_020);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryLimitPrice).to.equal(0.50);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.50);
+    });
+
     it("marks missing exact CLOB quotes as unscored instead of forward filling", () => {
         const evaluated = evaluateSecondMarketBacktest({
             result: result([trade(1, 1_700_000_010, 1_700_000_020)]),
@@ -207,6 +236,7 @@ describe("second market shared evaluation", () => {
                         event_end_ts: 1_700_000_900,
                     },
                 ],
+                gammaSnapshots: [],
             },
         });
 

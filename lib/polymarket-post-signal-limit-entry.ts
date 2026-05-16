@@ -109,11 +109,11 @@ export function clampPolymarketPostSignalLimitExitPriceCents(value: unknown): nu
 }
 
 export function clampPolymarketPostSignalLimitOffsetCents(value: unknown): number {
-    return clampPolymarketPostSignalCentValue(
-        value,
-        DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_OFFSET_CENTS,
-        0
-    );
+    const raw = parseFiniteNumber(value);
+    if (raw === null) {
+        return DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_OFFSET_CENTS;
+    }
+    return Math.max(0, Math.min(99, Math.round(raw * 10) / 10));
 }
 
 export function resolvePolymarketPostSignalLimitEntryMode(value: unknown): PolymarketLimitEntryPriceMode {

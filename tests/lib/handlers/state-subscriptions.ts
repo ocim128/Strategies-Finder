@@ -41,7 +41,7 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
     const polymarketSettings = resolvePolymarketDomSettings();
     const isNative5mSession = polymarketSettings.outcomeInterval === '5m';
     const isOneSecondInterval = interval === '1s';
-    const supportsLimitEntry = annotationEnabled && isNative5mSession && !isOneSecondInterval;
+    const supportsLimitEntry = annotationEnabled && isNative5mSession;
     const limitEntryEnabled = supportsLimitEntry && polymarketSettings.postSignalLimitEntryEnabled;
     const usesSignalOffsetEntry = polymarketSettings.postSignalLimitEntryMode === 'signal_offset';
     const limitExitEnabled = limitEntryEnabled && polymarketSettings.postSignalLimitExitEnabled;

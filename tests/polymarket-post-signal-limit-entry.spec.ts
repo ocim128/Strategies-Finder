@@ -166,7 +166,7 @@ describe("Polymarket post-signal limit entry", () => {
         expect(result.status).to.equal("unreachable");
     });
 
-    it("clamps cents to the supported integer range", () => {
+    it("clamps price cents to integers and offset cents to tenths", () => {
         expect(clampPolymarketPostSignalLimitEntryPriceCents(-3)).to.equal(1);
         expect(clampPolymarketPostSignalLimitEntryPriceCents(140)).to.equal(99);
         expect(clampPolymarketPostSignalLimitEntryPriceCents("47.8")).to.equal(48);
@@ -174,6 +174,9 @@ describe("Polymarket post-signal limit entry", () => {
         expect(clampPolymarketPostSignalLimitEntryPriceCents("")).to.equal(50);
         expect(clampPolymarketPostSignalLimitExitPriceCents("bad")).to.equal(80);
         expect(clampPolymarketPostSignalLimitExitPriceCents("")).to.equal(80);
+        expect(clampPolymarketPostSignalLimitOffsetCents("0.14")).to.equal(0.1);
+        expect(clampPolymarketPostSignalLimitOffsetCents("0.15")).to.equal(0.2);
+        expect(clampPolymarketPostSignalLimitOffsetCents(140)).to.equal(99);
         expect(clampPolymarketPostSignalLimitOffsetCents("")).to.equal(20);
     });
 });

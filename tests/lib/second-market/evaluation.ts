@@ -17,6 +17,7 @@ import { evaluateSecondMarketTrades, SECOND_MARKET_UNRESOLVED_OUTCOME_SOURCE } f
 import { loadSecondMarketClobQuotes, loadSecondMarketGammaSnapshots, normalizeSecondMarketChartSymbol } from "./api";
 import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import type { Polymarket1sGammaContextRow } from "../types/strategies";
+import type { PolymarketPostSignalLimitEntrySettings } from "../polymarket-post-signal-limit-entry";
 import type {
     PolymarketClob1sQuoteRow,
     SecondMarketBacktestSummary,
@@ -165,15 +166,19 @@ function buildTradeAnnotation(result: SecondMarketTradeResult, evaluationMode: P
         }),
         evaluationMode,
         isProfitable: result.isProfitable,
-        marketEntrySource: "quote",
-        marketEntryStatus: scored ? "filled" : result.exitSource === "duplicate" ? "duplicate" : undefined,
+        marketEntrySource: result.entrySource ?? "quote",
+        marketEntryStatus: result.entryStatus ?? (scored ? "filled" : result.exitSource === "duplicate" ? "duplicate" : undefined),
         marketEntryFillTs: result.entryQuoteTs,
+        marketEntryLimitPrice: result.entryLimitPrice,
+        marketEntryImprovement: result.entryImprovement,
         marketEntryPrice: result.entryPrice,
         marketExitPrice: result.exitPrice,
         marketExitTs: result.exitQuoteTs ?? (
             result.exitSource === "resolution" ? result.outcome.event_end_ts : null
         ),
         marketExitSource: result.exitSource,
+        marketExitTargetPrice: result.exitTargetPrice,
+        marketExitStatus: result.exitStatus,
         marketPnl: result.pnl,
     };
 }
@@ -204,6 +209,7 @@ function summarizePolymarketResult(args: {
         profitableTrades,
         losingTrades,
         neutralTrades,
+        targetExitedTrades: summary.targetExitedTrades,
         signalExitedTrades: summary.signalExitedTrades,
         resolvedTrades: summary.resolvedTrades,
         missingPriceTrades: summary.missingQuoteTrades || undefined,
@@ -214,6 +220,27 @@ function summarizePolymarketResult(args: {
         expectancy: summary.expectancy,
         avgEntryPrice: summary.avgEntryPrice ?? undefined,
         avgExitPrice: summary.avgExitPrice ?? undefined,
+        limitEntryEnabled: summary.limitEntryEnabled,
+        limitEntryMode: summary.limitEntryMode,
+        limitEntryPriceCents: summary.limitEntryPriceCents,
+        limitEntryOffsetCents: summary.limitEntryOffsetCents,
+        limitEntryAttempts: summary.limitEntryAttempts,
+        limitEntryFilledTrades: summary.limitEntryFilledTrades,
+        limitEntryMissedTrades: summary.limitEntryMissedTrades,
+        limitEntryNotTouchedTrades: summary.limitEntryNotTouchedTrades,
+        limitEntryLastMinuteOnlyTrades: summary.limitEntryLastMinuteOnlyTrades,
+        limitEntryMissingPriceTrades: summary.limitEntryMissingPriceTrades,
+        limitEntryInvalidWindowTrades: summary.limitEntryInvalidWindowTrades,
+        limitEntryFillRate: summary.limitEntryFillRate,
+        avgLimitEntryWaitSec: summary.avgLimitEntryWaitSec,
+        avgLimitEntryImprovement: summary.avgLimitEntryImprovement,
+        limitExitEnabled: summary.limitExitEnabled,
+        limitExitMode: summary.limitExitMode,
+        limitExitPriceCents: summary.limitExitPriceCents,
+        limitExitOffsetCents: summary.limitExitOffsetCents,
+        limitExitFilledTrades: summary.limitExitFilledTrades,
+        limitExitFallbackTrades: summary.limitExitFallbackTrades,
+        limitExitUnreachableTrades: summary.limitExitUnreachableTrades,
     };
 }
 
@@ -269,9 +296,31 @@ function buildPolymarketEval(args: {
         entryPriceFilteredPredictions: summary.entryPriceFilteredTrades || undefined,
         evaluationMode,
         signalExitAllowMultipleTradesPerEvent: summary.allowMultipleTradesPerEvent,
+        targetExitedTrades: summary.targetExitedTrades,
         signalExitedTrades: summary.signalExitedTrades,
         resolvedTrades: summary.resolvedTrades,
         missingPriceTrades: summary.missingQuoteTrades,
+        limitEntryEnabled: summary.limitEntryEnabled,
+        limitEntryMode: summary.limitEntryMode,
+        limitEntryPriceCents: summary.limitEntryPriceCents,
+        limitEntryOffsetCents: summary.limitEntryOffsetCents,
+        limitEntryAttempts: summary.limitEntryAttempts,
+        limitEntryFilledTrades: summary.limitEntryFilledTrades,
+        limitEntryMissedTrades: summary.limitEntryMissedTrades,
+        limitEntryNotTouchedTrades: summary.limitEntryNotTouchedTrades,
+        limitEntryLastMinuteOnlyTrades: summary.limitEntryLastMinuteOnlyTrades,
+        limitEntryMissingPriceTrades: summary.limitEntryMissingPriceTrades,
+        limitEntryInvalidWindowTrades: summary.limitEntryInvalidWindowTrades,
+        limitEntryFillRate: summary.limitEntryFillRate,
+        avgLimitEntryWaitSec: summary.avgLimitEntryWaitSec,
+        avgLimitEntryImprovement: summary.avgLimitEntryImprovement,
+        limitExitEnabled: summary.limitExitEnabled,
+        limitExitMode: summary.limitExitMode,
+        limitExitPriceCents: summary.limitExitPriceCents,
+        limitExitOffsetCents: summary.limitExitOffsetCents,
+        limitExitFilledTrades: summary.limitExitFilledTrades,
+        limitExitFallbackTrades: summary.limitExitFallbackTrades,
+        limitExitUnreachableTrades: summary.limitExitUnreachableTrades,
         netPnl: summary.netPnl,
         avgExitPrice: summary.avgExitPrice ?? undefined,
         rows: [],
@@ -335,6 +384,7 @@ export function evaluateSecondMarketBacktest(args: {
     polymarketExitMode?: PolymarketExitMode;
     polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
     entryPriceFilterCents?: number;
+    limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }): SecondMarketEvaluationResult {
     const trades = [...(args.trades ?? args.result.trades)];
     const evaluationMode = "signal_exit_same_event";
@@ -347,6 +397,7 @@ export function evaluateSecondMarketBacktest(args: {
         mode: "strict",
         fillSource: "bid_ask",
         entryPriceFilterCents: args.entryPriceFilterCents,
+        limitEntry: args.limitEntry,
     });
     const annotatedByTrade = new Map<Trade, TradePolymarketOutcome>(
         evaluated.results.map((result) => [result.trade, buildTradeAnnotation(result, evaluationMode)] as const)
@@ -387,6 +438,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
     polymarketExitMode?: PolymarketExitMode;
     polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
     entryPriceFilterCents?: number;
+    limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }): Promise<BacktestResult> {
     if (
         !isSecondMarketPolymarketScoringSupported({
@@ -417,6 +469,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
         polymarketExitMode: args.polymarketExitMode,
         polymarketSignalExitAllowMultipleTradesPerEvent: args.polymarketSignalExitAllowMultipleTradesPerEvent,
         entryPriceFilterCents: args.entryPriceFilterCents,
+        limitEntry: args.limitEntry,
     });
 
     return {

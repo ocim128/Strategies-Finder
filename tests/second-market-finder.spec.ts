@@ -193,4 +193,65 @@ describe("second market Finder runner", () => {
         expect(fetchCount).to.equal(0);
         expect(statuses.at(-1)).to.equal("1s CLOB Polymarket scoring requires next_open execution model.");
     });
+
+    it("applies post-signal limit entry settings in 1s CLOB scoring", async () => {
+        globalThis.fetch = async (input) => {
+            const url = new URL(String(input));
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), { status: 200 });
+            }
+            if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: [{
+                        series_id: "10684",
+                        event_slug: "btc-event",
+                        market_slug: "btc-event",
+                        interval: "5m",
+                        event_start_ts: 1_700_000_000,
+                        event_end_ts: 1_700_000_300,
+                        yes_token_id: "yes",
+                        no_token_id: "no",
+                        yes_open_price: 0.5,
+                        yes_entry_minute_1_price: null,
+                        yes_entry_minute_2_price: null,
+                        yes_entry_minute_3_price: null,
+                        yes_entry_minute_4_price: null,
+                        resolved_outcome_up: 1,
+                        resolution_source: "test",
+                        updated_at: 1,
+                    }],
+                }), { status: 200 });
+            }
+            if (url.pathname === "/api/second-market/clob-quotes") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    quotes: [
+                        quote(1_700_000_010, 0.62, 0.60),
+                        quote(1_700_000_020, 0.62, 0.60),
+                        quote(1_700_000_025, 0.50, 0.48),
+                        quote(1_700_000_030, 0.60, 0.58),
+                    ],
+                }), { status: 200 });
+            }
+            throw new Error(`Unexpected fetch ${url.pathname}`);
+        };
+
+        const input = makeInput();
+        input.settings.polymarketPostSignalLimitEntryEnabled = true;
+        input.settings.polymarketPostSignalLimitEntryPriceCents = 50;
+
+        const output = await runSecondMarketFinder(input, {
+            setProgress: () => undefined,
+            setStatus: () => undefined,
+            yieldControl: async () => undefined,
+            isCancelled: () => false,
+            onResultsUpdate: () => undefined,
+        });
+
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]?.polymarketEval?.limitEntryEnabled).to.equal(true);
+        expect(output.results[0]?.polymarketEval?.limitEntryFilledTrades).to.equal(1);
+        expect(output.results[0]?.polymarketEval?.expectancy).to.be.closeTo(0.08, 1e-9);
+    });
 });

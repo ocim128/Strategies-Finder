@@ -662,6 +662,16 @@ export class BacktestService {
                     polymarketExitMode: effectiveExitMode,
                     polymarketSignalExitAllowMultipleTradesPerEvent: settings.polymarketSignalExitAllowMultipleTradesPerEvent,
                     entryPriceFilterCents: settings.polymarketEntryPriceFilterCents,
+                    limitEntry: {
+                        enabled: settings.polymarketPostSignalLimitEntryEnabled === true,
+                        priceMode: settings.polymarketPostSignalLimitEntryMode,
+                        priceCents: settings.polymarketPostSignalLimitEntryPriceCents ?? 50,
+                        offsetCents: settings.polymarketPostSignalLimitEntryOffsetCents,
+                        exitEnabled: settings.polymarketPostSignalLimitExitEnabled === true,
+                        exitMode: settings.polymarketPostSignalLimitExitMode,
+                        exitPriceCents: settings.polymarketPostSignalLimitExitPriceCents,
+                        exitOffsetCents: settings.polymarketPostSignalLimitExitOffsetCents,
+                    },
                 });
             }
 
