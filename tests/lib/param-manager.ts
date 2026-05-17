@@ -4,20 +4,21 @@ import { bindFormAccessibility } from "./form-accessibility";
 import { parseInputNumber } from "./dom-input-readers";
 
 export class ParamManager {
+    private inputsByParam = new Map<string, HTMLInputElement | HTMLSelectElement>();
+
     private getParamContainer(): HTMLElement {
         return getRequiredElement('strategyParams');
     }
 
     private getParamInput(key: string): HTMLInputElement | HTMLSelectElement | null {
-        const container = this.getParamContainer();
-        return Array.from(container.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-param]'))
-            .find((input) => input.dataset.param === key) ?? null;
+        return this.inputsByParam.get(key) ?? null;
     }
 
     public render(strategy: Strategy) {
         const container = this.getParamContainer();
         const paramKeys = Object.keys(strategy.defaultParams);
         const fragment = document.createDocumentFragment();
+        this.inputsByParam.clear();
 
         for (let i = 0; i < paramKeys.length; i += 2) {
             const row = document.createElement('div');
@@ -36,7 +37,9 @@ export class ParamManager {
                 labelEl.htmlFor = `param_${key}`;
                 labelEl.textContent = label;
 
-                group.append(labelEl, this.renderParamInput(key, value));
+                const input = this.renderParamInput(key, value);
+                this.inputsByParam.set(key, input);
+                group.append(labelEl, input);
                 row.appendChild(group);
             }
             fragment.appendChild(row);

@@ -12,6 +12,7 @@ import { state } from "./state";
 import { loadBuiltInStrategyByKey, strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
+import { uiManager } from "./ui-manager";
 import {
     triggerSettingsChangeEvents,
 } from "./settings-dom";
@@ -347,16 +348,10 @@ class SettingsManager {
                 this.getDom().strategySelect.value = config.strategyKey;
             }
 
-            // Apply strategy params with a slight delay to ensure params are rendered
-            await new Promise<void>((resolve) => {
-                setTimeout(() => {
-                    const strategy = strategyRegistry.get(config.strategyKey);
-                    if (strategy ?? targetStrategy) {
-                        paramManager.setValues(strategy ?? targetStrategy!, config.strategyParams);
-                    }
-                    resolve();
-                }, 50);
-            });
+            if (targetStrategy) {
+                await uiManager.updateStrategyParams(config.strategyKey);
+                paramManager.setValues(targetStrategy, config.strategyParams);
+            }
 
             debugLogger.event('settings.config.applied', { name: config.name, strategy: config.strategyKey });
         } finally {
@@ -419,8 +414,15 @@ class SettingsManager {
     public setupAutoSave(): void {
         // Listen for input changes on settings panel
         const { settingsTab } = this.getDom();
-        settingsTab.addEventListener('change', () => this.saveSettingsDebounced());
-        settingsTab.addEventListener('input', () => this.saveSettingsDebounced());
+        const shouldAutoSave = (event: Event): boolean => {
+            return !(event.target instanceof HTMLElement && event.target.closest('#strategyParams'));
+        };
+        settingsTab.addEventListener('change', (event) => {
+            if (shouldAutoSave(event)) this.saveSettingsDebounced();
+        });
+        settingsTab.addEventListener('input', (event) => {
+            if (shouldAutoSave(event)) this.saveSettingsDebounced();
+        });
 
         // Listen for state changes
         state.subscribe('currentStrategyKey', () => this.saveSettingsDebounced());

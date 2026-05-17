@@ -8,25 +8,17 @@ import tabSettingsSectionCoreHtml from '../html-partials/tab-settings-section-co
 import tabSettingsSectionExecutionHtml from '../html-partials/tab-settings-section-execution.html?raw';
 
 import tabSettingsEndHtml from '../html-partials/tab-settings-end.html?raw';
-import tabDataminingHtml from '../html-partials/tab-datamining.html?raw';
-import tabFinderHtml from '../html-partials/tab-finder.html?raw';
-import tabHuntHtml from '../html-partials/tab-hunt.html?raw';
-import tabPolymarketHtml from '../html-partials/tab-polymarket.html?raw';
-import tabSecondMarketHtml from '../html-partials/tab-second-market.html?raw';
-import tabExecutionLabHtml from '../html-partials/tab-execution-lab.html?raw';
-import tabWalkforwardHtml from '../html-partials/tab-walkforward.html?raw';
-import tabMonteCarloHtml from '../html-partials/tab-monte-carlo.html?raw';
 
 import tabResultsHtml from '../html-partials/tab-results.html?raw';
 import tabTradesHtml from '../html-partials/tab-trades.html?raw';
-
-import tabPortfolioHtml from '../html-partials/tab-portfolio.html?raw';
-import tabEnsembleHtml from '../html-partials/tab-ensemble.html?raw';
+import tabFinderHtml from '../html-partials/tab-finder.html?raw';
 import tabAlertsHtml from '../html-partials/tab-alerts.html?raw';
+
 import statusBarHtml from '../html-partials/status-bar.html?raw';
 import debugPanelHtml from '../html-partials/debug-panel.html?raw';
 import { debugLogger } from './debug-logger';
 import codeEditorHtml from '../html-partials/code-editor.html?raw';
+import { appendLazyStrategyPanelTabPlaceholders } from './strategy-panel-tab-markup';
 
 const MAIN_CONTENT_PARTIALS = [
     toolbarHtml,
@@ -40,20 +32,11 @@ const SETTINGS_TAB_HTML = [
     tabSettingsEndHtml,
 ].join('');
 
-const STRATEGY_PANEL_TAB_PARTIALS = [
+const EAGER_STRATEGY_PANEL_TAB_PARTIALS = [
     SETTINGS_TAB_HTML,
-    tabDataminingHtml,
-    tabFinderHtml,
-    tabHuntHtml,
-    tabPolymarketHtml,
-    tabSecondMarketHtml,
-    tabExecutionLabHtml,
-    tabWalkforwardHtml,
-    tabMonteCarloHtml,
     tabResultsHtml,
     tabTradesHtml,
-    tabPortfolioHtml,
-    tabEnsembleHtml,
+    tabFinderHtml,
     tabAlertsHtml,
 ] as const;
 
@@ -118,7 +101,8 @@ export function injectLayout() {
         // Find the #panelContent container to inject tabs
         const panelContentElement = strategyPanelElement.querySelector('#panelContent');
         if (panelContentElement) {
-            appendMarkup(panelContentElement, STRATEGY_PANEL_TAB_PARTIALS);
+            appendMarkup(panelContentElement, EAGER_STRATEGY_PANEL_TAB_PARTIALS);
+            appendLazyStrategyPanelTabPlaceholders(panelContentElement);
         }
         chartArea.appendChild(strategyPanelElement);
     }

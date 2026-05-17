@@ -140,6 +140,11 @@ export function setupStateSubscriptions() {
             if (refreshRankModes) updateFinderRankModeOptions();
         });
     });
+    window.addEventListener("strategy-panel:tab-markup-loaded", ((event: CustomEvent<{ tabId?: string }>) => {
+        if (event.detail?.tabId === 'finder') {
+            updateFinderRankModeOptions();
+        }
+    }) as EventListener);
 
     updateFinderRankModeOptions();
 

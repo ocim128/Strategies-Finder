@@ -23,6 +23,7 @@ import { MONTE_CARLO_REQUIRED_IDS } from "../lib/monte-carlo-dom";
 import { STRATEGY_LIBRARY_ADMIN_REQUIRED_IDS } from "../lib/strategy-library-admin-dom";
 import { CROSS_SYMBOL_REQUIRED_IDS } from "../lib/cross-symbol-dom";
 import { CHART_MANAGER_REQUIRED_IDS } from "../lib/chart-manager-dom";
+import { STRATEGY_PANEL_REQUIRED_IDS } from "../lib/strategy-panel-dom";
 
 const PARTIALS_DIR = path.join(process.cwd(), "html-partials");
 
@@ -93,6 +94,7 @@ describe("Feature DOM contracts", () => {
         strategyLibraryAdmin: [...STRATEGY_LIBRARY_ADMIN_REQUIRED_IDS],
         crossSymbol: [...CROSS_SYMBOL_REQUIRED_IDS],
         chartManager: [...CHART_MANAGER_REQUIRED_IDS],
+        strategyPanel: [...STRATEGY_PANEL_REQUIRED_IDS],
     } as const;
 
     for (const [groupName, ids] of Object.entries(contractGroups)) {

@@ -13,6 +13,7 @@ import { createSettingsWorkspaceDom, createUiManagerDom, type UiManagerDom } fro
 
 export class UIManager {
     private dom: UiManagerDom | null = null;
+    private strategyDropdownSignature: string | null = null;
 
     private getDom(): UiManagerDom {
         return this.dom ??= createUiManagerDom();
@@ -180,28 +181,38 @@ export class UIManager {
     public updateStrategyDropdown(currentStrategyKey: string) {
         const { strategySelect } = this.getDom();
         const strategies = getStrategyList();
+        const strategyRows = strategies.map(({ key, name, description }) => {
+            const strategy = strategyRegistry.get(key);
+            const kind = getStrategyKind(key, strategy);
+            return { key, name, description, kind };
+        });
+        const signature = strategyRows
+            .map(({ key, name, description, kind }) => `${key}\u0000${name}\u0000${description}\u0000${kind}`)
+            .join('\u0001');
         const currentValue = strategies.some(s => s.key === currentStrategyKey)
             ? currentStrategyKey
             : strategySelect.value;
 
-        strategySelect.innerHTML = '';
-        strategies.forEach(({ key, name, description }) => {
-            const strategy = strategyRegistry.get(key);
-            const kind = getStrategyKind(key, strategy);
-            const option = document.createElement('option');
-            option.value = key;
-            option.textContent = name;
-            option.title = kind === "standard" ? description : `${description} (${getStrategyKindTitle(kind)})`;
-            option.dataset.strategyKind = kind;
-            option.className = `strategy-option--${kind}`;
-            strategySelect.appendChild(option);
-        });
+        if (signature !== this.strategyDropdownSignature) {
+            const fragment = document.createDocumentFragment();
+            strategyRows.forEach(({ key, name, description, kind }) => {
+                const option = document.createElement('option');
+                option.value = key;
+                option.textContent = name;
+                option.title = kind === "standard" ? description : `${description} (${getStrategyKindTitle(kind)})`;
+                option.dataset.strategyKind = kind;
+                option.className = `strategy-option--${kind}`;
+                fragment.appendChild(option);
+            });
+            strategySelect.replaceChildren(fragment);
+            this.strategyDropdownSignature = signature;
+        }
 
-        const found = strategies.some(s => s.key === currentValue);
+        const found = strategyRows.some(s => s.key === currentValue);
         if (found) {
             strategySelect.value = currentValue;
-        } else if (strategies.length > 0) {
-            const fallbackKey = strategies[0].key;
+        } else if (strategyRows.length > 0) {
+            const fallbackKey = strategyRows[0].key;
             strategySelect.value = fallbackKey;
             setCurrentStrategyKey(fallbackKey);
         }

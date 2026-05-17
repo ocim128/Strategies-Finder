@@ -489,48 +489,48 @@ export function updateConfigDropdown(selectName?: string) {
     const configs = sortStrategyConfigsNewestFirst(settingsManager.loadAllStrategyConfigs());
     const currentValue = selectName || configSelect.value;
 
-    // Clear existing options
-    configSelect.innerHTML = '<option value="">-- Select configuration --</option>';
-
-    // Add saved configurations
-    configs.forEach(config => {
-        const option = document.createElement('option');
-        option.value = config.name;
-        option.textContent = `${config.name} (${config.strategyKey})`;
-        configSelect.appendChild(option);
-    });
-
-    // Restore selection if still valid or specifically requested
-    if (currentValue && configs.some(c => c.name === currentValue)) {
-        configSelect.value = currentValue;
-    }
+    populateConfigSelect(configSelect, configs, '-- Select configuration --', currentValue);
 
     // Also refresh combiner dropdowns
-    updateCombinerDropdowns();
+    updateCombinerDropdowns(configs);
 }
 
 /**
  * Populates the Strategy Combiner primary/secondary dropdowns from saved configs.
  */
-function updateCombinerDropdowns() {
+function updateCombinerDropdowns(configs: readonly StrategyConfig[]) {
     const { combinerPrimarySelect: primarySelect, combinerSecondarySelect: secondarySelect } = createSettingsHandlersDom();
     if (!primarySelect && !secondarySelect) return;
-
-    const configs = sortStrategyConfigsNewestFirst(settingsManager.loadAllStrategyConfigs());
 
     for (const select of [primarySelect, secondarySelect]) {
         if (!select) continue;
         const currentValue = select.value;
         const placeholder = select === primarySelect ? '-- Select primary --' : '-- Select secondary --';
-        select.innerHTML = `<option value="">${placeholder}</option>`;
-        configs.forEach(config => {
-            const option = document.createElement('option');
-            option.value = config.name;
-            option.textContent = `${config.name} (${config.strategyKey})`;
-            select.appendChild(option);
-        });
-        if (currentValue && configs.some(c => c.name === currentValue)) {
-            select.value = currentValue;
-        }
+        populateConfigSelect(select, configs, placeholder, currentValue);
+    }
+}
+
+function populateConfigSelect(
+    select: HTMLSelectElement,
+    configs: readonly StrategyConfig[],
+    placeholder: string,
+    selectedValue: string
+): void {
+    const fragment = document.createDocumentFragment();
+    const placeholderOption = document.createElement('option');
+    placeholderOption.value = '';
+    placeholderOption.textContent = placeholder;
+    fragment.appendChild(placeholderOption);
+
+    configs.forEach(config => {
+        const option = document.createElement('option');
+        option.value = config.name;
+        option.textContent = `${config.name} (${config.strategyKey})`;
+        fragment.appendChild(option);
+    });
+
+    select.replaceChildren(fragment);
+    if (selectedValue && configs.some(c => c.name === selectedValue)) {
+        select.value = selectedValue;
     }
 }

@@ -47,6 +47,7 @@ class StrategyPanelController {
     private tabKeydownListeners = new Map<string, (event: KeyboardEvent) => void>();
     private togglePanelClickListener: (() => void) | null = null;
     private panelResizeHandlePointerDownListener: ((event: PointerEvent) => void) | null = null;
+    private pendingChartSyncFrame: number | null = null;
 
     public init(): void {
         if (this.initialized) {
@@ -98,6 +99,10 @@ class StrategyPanelController {
             window.removeEventListener("pointerup", this.handleStopResizing as EventListener);
             window.removeEventListener("pointercancel", this.handleStopResizing as EventListener);
             this.handleStopResizing = null;
+        }
+        if (this.pendingChartSyncFrame !== null) {
+            cancelAnimationFrame(this.pendingChartSyncFrame);
+            this.pendingChartSyncFrame = null;
         }
 
         this.isResizing = false;
@@ -430,13 +435,30 @@ class StrategyPanelController {
             return;
         }
 
+        if (!finalSync) {
+            if (this.pendingChartSyncFrame !== null) {
+                return;
+            }
+            this.pendingChartSyncFrame = requestAnimationFrame(() => {
+                this.pendingChartSyncFrame = null;
+                this.resizeCharts();
+            });
+            return;
+        }
+
+        if (this.pendingChartSyncFrame !== null) {
+            cancelAnimationFrame(this.pendingChartSyncFrame);
+            this.pendingChartSyncFrame = null;
+        }
+
+        this.resizeCharts();
+        window.dispatchEvent(new Event("resize"));
+    }
+
+    private resizeCharts(): void {
         if (state.chart && state.equityChart) {
             state.chart.resize(0, 0);
             state.equityChart.resize(0, 0);
-        }
-
-        if (finalSync) {
-            window.dispatchEvent(new Event("resize"));
         }
     }
 

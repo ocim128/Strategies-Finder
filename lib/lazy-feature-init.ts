@@ -1,3 +1,6 @@
+import { debugLogger } from "./debug-logger";
+import { ensureStrategyPanelTabMarkup } from "./strategy-panel-tab-markup";
+
 type LazyFeatureInit = () => void | Promise<void>;
 type LazyFeatureTriggerOptions<TEvent extends Event = Event> = {
     featureId: string;
@@ -25,6 +28,10 @@ const TAB_TO_FEATURE: Record<string, string> = {
     datamining: "data-mining",
 };
 
+const FEATURE_TO_TAB: Record<string, string> = Object.fromEntries(
+    Object.entries(TAB_TO_FEATURE).map(([tabId, featureId]) => [featureId, tabId])
+);
+
 export function registerLazyFeature(featureId: string, init: LazyFeatureInit): void {
     pendingFeatures.set(featureId, init);
 }
@@ -42,12 +49,20 @@ export async function activateLazyFeature(featureId: string): Promise<void> {
     if (!init) return;
 
     const activation = Promise.resolve()
+        .then(() => {
+            const tabId = FEATURE_TO_TAB[featureId];
+            return tabId ? ensureStrategyPanelTabMarkup(tabId) : undefined;
+        })
         .then(() => init())
         .then(() => {
             initializedFeatures.add(featureId);
             pendingFeatures.delete(featureId);
         })
         .catch((error: unknown) => {
+            debugLogger.error("lazy_feature.init_failed", {
+                featureId,
+                error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+            });
             console.error(`[LazyInit] Failed to initialize feature "${featureId}":`, error);
             throw error;
         })
