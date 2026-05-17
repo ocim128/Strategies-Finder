@@ -1,5 +1,6 @@
 import type { ExecutionModel } from "./types/strategies";
 import { resolvePolymarketEntrySelectionMode, type PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
+import { DEFAULT_POLYMARKET_ENTRY_CUTOFF_SECONDS, clampPolymarketEntryCutoffSeconds } from "./polymarket-entry-cutoff";
 import { clampPolymarketEntryPriceFilterCents } from "./polymarket-entry-price-filter";
 import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import {
@@ -26,6 +27,8 @@ export interface PolymarketDomSettings {
     outcomeSymbol: string | null;
     outcomeInterval: PolymarketOutcomeInterval;
     entryPriceFilterCents: number;
+    entryCutoffEnabled: boolean;
+    entryCutoffSeconds: number;
     exitMode: "resolve_hold" | "signal_exit_same_event" | undefined;
     signalExitAllowMultipleTradesPerEvent: boolean;
     postSignalLimitEntryEnabled: boolean;
@@ -69,6 +72,8 @@ export function resolvePolymarketDomSettings(doc: Document = document): Polymark
     const outcomeSymbolSelect = readSelectElement(doc, "polymarketOutcomeSymbol");
     const outcomeIntervalSelect = readSelectElement(doc, "polymarketOutcomeInterval");
     const entryPriceFilterInput = readInputElement(doc, "polymarketEntryPriceFilterCents");
+    const entryCutoffToggle = readInputElement(doc, "polymarketEntryCutoffToggle");
+    const entryCutoffInput = readInputElement(doc, "polymarketEntryCutoffSeconds");
     const exitModeSelect = readSelectElement(doc, "polymarketExitMode");
     const signalExitAllowMultipleTradesToggle = readInputElement(doc, "polymarketSignalExitAllowMultipleTradesPerEvent");
     const limitEntryToggle = readInputElement(doc, "polymarketPostSignalLimitEntryEnabled");
@@ -90,6 +95,10 @@ export function resolvePolymarketDomSettings(doc: Document = document): Polymark
         outcomeSymbol: outcomeSymbol.length > 0 ? outcomeSymbol : null,
         outcomeInterval: resolvePolymarketOutcomeInterval(outcomeIntervalSelect?.value),
         entryPriceFilterCents: clampPolymarketEntryPriceFilterCents(entryPriceFilterInput?.value),
+        entryCutoffEnabled: entryCutoffToggle?.checked === true,
+        entryCutoffSeconds: clampPolymarketEntryCutoffSeconds(
+            entryCutoffInput?.value ?? DEFAULT_POLYMARKET_ENTRY_CUTOFF_SECONDS
+        ),
         exitMode: exitModeSelect
             ? (exitModeSelect.value === "signal_exit_same_event" ? "signal_exit_same_event" : "resolve_hold")
             : undefined,

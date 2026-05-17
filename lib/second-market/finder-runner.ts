@@ -137,7 +137,7 @@ export async function runSecondMarketFinder(
         interval: input.interval,
         executionModel: settings.executionModel,
     })) {
-        callbacks.setStatus("1s CLOB Polymarket scoring requires next_open execution model.");
+        callbacks.setStatus("1s CLOB Polymarket scoring requires next_open or next_close execution model.");
         return { results: [] };
     }
 
@@ -330,6 +330,8 @@ export async function runSecondMarketFinder(
                     polymarketExitMode: effectiveExitMode,
                     polymarketSignalExitAllowMultipleTradesPerEvent: options.polymarketSignalExitAllowMultipleTradesPerEvent,
                     entryPriceFilterCents: options.polymarketEntryPriceFilterCents ?? settings.polymarketEntryPriceFilterCents,
+                    entryCutoffEnabled: settings.polymarketEntryCutoffEnabled,
+                    entryCutoffSeconds: settings.polymarketEntryCutoffSeconds,
                     limitEntry,
                 });
 

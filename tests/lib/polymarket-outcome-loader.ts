@@ -37,6 +37,8 @@ export interface PolymarketOutcomeLoaderDeps {
     readCurrentExecutionModel: () => string | undefined;
     readCurrentPolymarketEntryOffset: () => number | null;
     readCurrentPolymarketEntryPriceFilterCents: () => number;
+    readCurrentPolymarketEntryCutoffEnabled: () => boolean;
+    readCurrentPolymarketEntryCutoffSeconds: () => number;
     readCurrentPolymarketEntrySelectionMode: () => PolymarketEntrySelectionMode;
     readCurrentPolymarketExitMode: () => "resolve_hold" | "signal_exit_same_event" | undefined;
     readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent: () => boolean;
@@ -205,6 +207,8 @@ export class PolymarketOutcomeLoader {
                         outcomeByEntryTs,
                         allowMultipleTradesPerEvent,
                         entryPriceFilterCents: this.deps.readCurrentPolymarketEntryPriceFilterCents(),
+                        entryCutoffEnabled: this.deps.readCurrentPolymarketEntryCutoffEnabled(),
+                        entryCutoffSeconds: this.deps.readCurrentPolymarketEntryCutoffSeconds(),
                         limitEntry,
                     });
                     const exitResultMap = new Map(exitResults.map((r) => [r.trade, r]));
@@ -261,6 +265,8 @@ export class PolymarketOutcomeLoader {
                 outcomeInterval,
                 pricePoints: limitEntryPricePoints,
                 entryPriceFilterCents: this.deps.readCurrentPolymarketEntryPriceFilterCents(),
+                entryCutoffEnabled: this.deps.readCurrentPolymarketEntryCutoffEnabled(),
+                entryCutoffSeconds: this.deps.readCurrentPolymarketEntryCutoffSeconds(),
                 limitEntry,
             }
         );
@@ -291,6 +297,7 @@ export class PolymarketOutcomeLoader {
                 unscoredTrades: existingSummary?.unscoredTrades ?? summary.unscoredTrades ?? Math.max(0, totalTrades - summary.scoredTrades),
                 duplicateTradesIgnored: existingSummary?.duplicateTradesIgnored ?? summary.duplicateTradesIgnored,
                 entryPriceFilteredTrades: existingSummary?.entryPriceFilteredTrades ?? summary.entryPriceFilteredTrades,
+                entryTimeFilteredTrades: existingSummary?.entryTimeFilteredTrades ?? summary.entryTimeFilteredTrades,
                 entrySelectionMode: existingSummary?.entrySelectionMode ?? summary.entrySelectionMode,
                 entryOffset: existingSummary?.entryOffset ?? summary.entryOffset,
                 timingProfile: existingSummary?.timingProfile ?? summary.timingProfile,

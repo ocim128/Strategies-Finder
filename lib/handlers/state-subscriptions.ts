@@ -13,7 +13,7 @@ import { clearAll } from "../app-actions";
 import { formatPolymarketDisplayName } from "../dataProviders/polymarket";
 import { livePositionsService } from "../live-positions-service";
 import { isBinanceDataProvider } from "../binance-market";
-import { SIGNAL_EXIT_SUPPORTED_RANK_MODES } from "../polymarket-exit-mode";
+import { SIGNAL_EXIT_SUPPORTED_RANK_MODES, isPolymarketOneSecondSignalExitExecutionModel } from "../polymarket-exit-mode";
 import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
 import { activateLazyFeature } from "../lazy-feature-init";
 import {
@@ -46,9 +46,12 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
     const usesSignalOffsetEntry = polymarketSettings.postSignalLimitEntryMode === 'signal_offset';
     const limitExitEnabled = limitEntryEnabled && polymarketSettings.postSignalLimitExitEnabled;
     const usesFixedLimitExit = polymarketSettings.postSignalLimitExitMode === 'fixed_price';
-    const supportsSignalExit = (interval === '1m' || isOneSecondInterval)
-        && polymarketSettings.executionModel === 'next_open';
-    const isSignalExit = supportsSignalExit && polymarketSettings.exitMode === 'signal_exit_same_event';
+    const supportsSignalExit = interval === '1m'
+        ? polymarketSettings.executionModel === 'next_open'
+        : isOneSecondInterval && isPolymarketOneSecondSignalExitExecutionModel(polymarketSettings.executionModel);
+    const forcesOneSecondSignalExit = isOneSecondInterval && supportsSignalExit;
+    const isSignalExit = supportsSignalExit
+        && (polymarketSettings.exitMode === 'signal_exit_same_event' || forcesOneSecondSignalExit);
     const usesActualEntryMinute = polymarketSettings.entrySelectionMode === 'actual_entry_minute';
     const showsEntryBridgeControls = interval === '1m' && isNative5mSession && annotationEnabled && !isSignalExit;
 
@@ -81,14 +84,14 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
         ? Array.from(exitModeSelect.options).find((option) => option.value === 'signal_exit_same_event')
         : undefined;
     if (resolveHoldOption) {
-        resolveHoldOption.disabled = isOneSecondInterval && supportsSignalExit;
-        resolveHoldOption.hidden = isOneSecondInterval && supportsSignalExit;
+        resolveHoldOption.disabled = forcesOneSecondSignalExit;
+        resolveHoldOption.hidden = forcesOneSecondSignalExit;
     }
     if (signalExitOption) {
         signalExitOption.disabled = !supportsSignalExit;
     }
     if (exitModeSelect) {
-        if (isOneSecondInterval && supportsSignalExit) {
+        if (forcesOneSecondSignalExit) {
             exitModeSelect.value = 'signal_exit_same_event';
         } else if (exitModeSelect.value === 'signal_exit_same_event' && !supportsSignalExit) {
             exitModeSelect.value = 'resolve_hold';

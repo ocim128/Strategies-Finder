@@ -38,6 +38,7 @@ import {
     buildTradeAnnotationFromSignalExitResult,
     indexSignalExitOutcomesForTrades,
 } from "./polymarket-signal-exit-evaluator";
+import { resolvePolymarketEntryCutoff } from "./polymarket-entry-cutoff";
 import { clampPolymarketEntryPriceFilterCents, isPolymarketEntryPriceFiltered } from "./polymarket-entry-price-filter";
 import {
     clampPolymarketPostSignalLimitEntryPriceCents,
@@ -127,6 +128,8 @@ type AnnotationContext = {
     polymarketEntrySelectionMode?: PolymarketEntrySelectionMode;
     polymarketExitMode?: "resolve_hold" | "signal_exit_same_event";
     polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
+    polymarketEntryCutoffEnabled?: boolean;
+    polymarketEntryCutoffSeconds?: number;
 };
 
 export interface PolymarketAnnotationRunOptions {
@@ -134,6 +137,8 @@ export interface PolymarketAnnotationRunOptions {
     pricePoints?: PolymarketPricePoint[];
     entrySelectionMode?: PolymarketEntrySelectionMode;
     entryPriceFilterCents?: number;
+    entryCutoffEnabled?: boolean;
+    entryCutoffSeconds?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }
 
@@ -273,10 +278,38 @@ function buildEntryPriceFilteredAnnotatedTrade(args: {
     };
 }
 
+function buildEntryTimeFilteredAnnotatedTrade(args: {
+    trade: Trade;
+    outcome: PolymarketOutcomeRow;
+    prediction: "yes" | "no";
+    entryOffset?: number;
+    marketEntrySource?: NonNullable<Trade["polymarketOutcome"]>["marketEntrySource"];
+    marketEntryLimitPrice?: number | null;
+}): Trade {
+    return {
+        ...args.trade,
+        polymarketOutcome: {
+            ...buildPolymarketOutcomeBase({ outcome: args.outcome, prediction: args.prediction, isWin: null }),
+            marketEntrySource: args.marketEntrySource,
+            marketEntryLimitPrice: args.marketEntryLimitPrice,
+            entryOffset: args.entryOffset,
+            evaluationMode: "resolve_hold",
+            marketExitSource: "entry_time_filtered",
+            isProfitable: null,
+            marketEntryPrice: null,
+            marketExitPrice: null,
+            marketExitTs: null,
+            marketPnl: null,
+        },
+    };
+}
+
 function buildAnnotatedTrade(
     trade: Trade,
     outcomeByStartTs: Map<number, PolymarketOutcomeRow>,
-    entryPriceFilterCents?: number
+    entryPriceFilterCents?: number,
+    entryCutoffEnabled?: boolean,
+    entryCutoffSeconds?: number
 ): Trade {
     const entryTs = parseTimeToUnixSeconds(trade.entryTime);
     if (entryTs === null) {
@@ -289,6 +322,16 @@ function buildAnnotatedTrade(
     }
 
     const prediction = getPolymarketPredictionForTrade(trade);
+    const entryCutoff = resolvePolymarketEntryCutoff({
+        entryTimeSec: entryTs,
+        eventEndTs: outcome.event_end_ts,
+        enabled: entryCutoffEnabled,
+        cutoffSeconds: entryCutoffSeconds,
+    });
+    if (!entryCutoff.allowed) {
+        return buildEntryTimeFilteredAnnotatedTrade({ trade, outcome, prediction });
+    }
+
     const isWin = isPolymarketPredictionWin(prediction, outcome);
     const sidePrices = getTradeMarketSidePrices(outcome);
     const marketEntryPrice = getTradeMarketEntryPrice(outcome, prediction);
@@ -322,7 +365,9 @@ function buildAnnotatedTradeForBridge(
     outcomes: readonly PolymarketOutcomeRow[],
     selectedOffset?: number,
     entrySelectionMode: PolymarketEntrySelectionMode = "fixed_offset",
-    entryPriceFilterCents?: number
+    entryPriceFilterCents?: number,
+    entryCutoffEnabled?: boolean,
+    entryCutoffSeconds?: number
 ): Trade {
     const entryTs = parseTimeToUnixSeconds(trade.entryTime);
     if (entryTs === null) {
@@ -345,6 +390,21 @@ function buildAnnotatedTradeForBridge(
     }
 
     const prediction = getPolymarketPredictionForTrade(trade);
+    const entryCutoff = resolvePolymarketEntryCutoff({
+        entryTimeSec: entryTs,
+        eventEndTs: outcome.event_end_ts,
+        enabled: entryCutoffEnabled,
+        cutoffSeconds: entryCutoffSeconds,
+    });
+    if (!entryCutoff.allowed) {
+        return buildEntryTimeFilteredAnnotatedTrade({
+            trade,
+            outcome,
+            prediction,
+            entryOffset,
+        });
+    }
+
     const isWin = isPolymarketPredictionWin(prediction, outcome);
     const sidePrices = getTradeMarketSidePrices(outcome, entryOffset);
     const marketEntryPrice = getTradeMarketEntryPrice(outcome, prediction, entryOffset);
@@ -438,7 +498,9 @@ function buildAnnotatedTradeForNativeSession(
     trade: Trade,
     outcomes: readonly PolymarketOutcomeRow[],
     pricePointsByEventStart: Map<number, PolymarketPricePoint[]>,
-    entryPriceFilterCents?: number
+    entryPriceFilterCents?: number,
+    entryCutoffEnabled?: boolean,
+    entryCutoffSeconds?: number
 ): Trade {
     const entryTs = parseTimeToUnixSeconds(trade.entryTime);
     if (entryTs === null) {
@@ -452,6 +514,21 @@ function buildAnnotatedTradeForNativeSession(
 
     const entryOffset = calculateEntryOffsetWithinSession(entryTs, outcome);
     const prediction = getPolymarketPredictionForTrade(trade);
+    const entryCutoff = resolvePolymarketEntryCutoff({
+        entryTimeSec: entryTs,
+        eventEndTs: outcome.event_end_ts,
+        enabled: entryCutoffEnabled,
+        cutoffSeconds: entryCutoffSeconds,
+    });
+    if (!entryCutoff.allowed) {
+        return buildEntryTimeFilteredAnnotatedTrade({
+            trade,
+            outcome,
+            prediction,
+            entryOffset: entryOffset >= 0 ? entryOffset : undefined,
+        });
+    }
+
     const isWin = isPolymarketPredictionWin(prediction, outcome);
     const entryPricePoint = findFirstPricePointAtOrAfterEntry(outcome, entryTs, pricePointsByEventStart);
     const marketYesPrice = clampProbability(entryPricePoint?.yes_price ?? null);
@@ -588,7 +665,9 @@ function annotateTradesWithLimitEntryForRun(
     outcomes: readonly PolymarketOutcomeRow[],
     pricePointsByEventStart: Map<number, PolymarketPricePoint[]>,
     settings: PolymarketPostSignalLimitEntrySettings,
-    entryPriceFilterCents?: number
+    entryPriceFilterCents?: number,
+    entryCutoffEnabled?: boolean,
+    entryCutoffSeconds?: number
 ): Trade[] {
     const limitPriceCents = clampPolymarketPostSignalLimitEntryPriceCents(settings.priceCents);
     const fixedLimitPrice = limitPriceCents / 100;
@@ -618,6 +697,23 @@ function annotateTradesWithLimitEntryForRun(
         }
 
         const side = trade.type === "long" ? "yes" : "no";
+        const prediction = getPolymarketPredictionForTrade(trade);
+        const entryCutoff = resolvePolymarketEntryCutoff({
+            entryTimeSec: entryTs,
+            eventEndTs: outcome.event_end_ts,
+            enabled: entryCutoffEnabled,
+            cutoffSeconds: entryCutoffSeconds,
+        });
+        if (!entryCutoff.allowed) {
+            return buildEntryTimeFilteredAnnotatedTrade({
+                trade,
+                outcome,
+                prediction,
+                marketEntrySource: "limit",
+                marketEntryLimitPrice: fixedLimitPrice,
+            });
+        }
+
         const eventPoints = pricePointsByEventStart.get(outcome.event_start_ts) ?? [];
         const fill = findPostSignalLimitEntryFill(eventPoints, {
             side,
@@ -723,7 +819,7 @@ function summarizeLimitEntryTrades(
         attempts++;
         if (status === "filled") {
             filled++;
-            if (limitExitEnabled && outcome.marketExitSource !== "entry_price_filtered") {
+            if (limitExitEnabled && outcome.marketExitSource !== "entry_price_filtered" && outcome.marketExitSource !== "entry_time_filtered") {
                 if (outcome.marketExitSource === "target") {
                     limitExitFilledTrades++;
                 } else {
@@ -787,10 +883,18 @@ function summarizeLimitEntryTrades(
 export function annotateTradesWithPolymarketOutcomes(
     trades: readonly Trade[],
     outcomes: readonly PolymarketOutcomeRow[],
-    entryPriceFilterCents?: number
+    entryPriceFilterCents?: number,
+    entryCutoffEnabled?: boolean,
+    entryCutoffSeconds?: number
 ): Trade[] {
     const outcomeByStartTs = new Map(outcomes.map((row) => [Number(row.event_start_ts), row] as const));
-    return trades.map((trade) => buildAnnotatedTrade(trade, outcomeByStartTs, entryPriceFilterCents));
+    return trades.map((trade) => buildAnnotatedTrade(
+        trade,
+        outcomeByStartTs,
+        entryPriceFilterCents,
+        entryCutoffEnabled,
+        entryCutoffSeconds
+    ));
 }
 
 export function annotateTradesWithPolymarketOutcomesForRun(
@@ -803,6 +907,8 @@ export function annotateTradesWithPolymarketOutcomesForRun(
         outcomeInterval?: PolymarketOutcomeInterval;
         pricePoints?: readonly PolymarketPricePoint[];
         entryPriceFilterCents?: number;
+        entryCutoffEnabled?: boolean;
+        entryCutoffSeconds?: number;
         limitEntry?: PolymarketPostSignalLimitEntrySettings;
     }
 ): Trade[] {
@@ -815,7 +921,9 @@ export function annotateTradesWithPolymarketOutcomesForRun(
             outcomes,
             pricePointsByEventStart,
             options.limitEntry,
-            entryPriceFilterCents
+            entryPriceFilterCents,
+            options.entryCutoffEnabled,
+            options.entryCutoffSeconds
         );
     }
 
@@ -825,12 +933,20 @@ export function annotateTradesWithPolymarketOutcomesForRun(
             trade,
             outcomes,
             pricePointsByEventStart,
-            entryPriceFilterCents
+            entryPriceFilterCents,
+            options?.entryCutoffEnabled,
+            options?.entryCutoffSeconds
         ));
     }
 
     if (interval !== "1m") {
-        return annotateTradesWithPolymarketOutcomes(trades, outcomes, entryPriceFilterCents);
+        return annotateTradesWithPolymarketOutcomes(
+            trades,
+            outcomes,
+            entryPriceFilterCents,
+            options?.entryCutoffEnabled,
+            options?.entryCutoffSeconds
+        );
     }
 
     const mappedTrades = mapTradesToEvents(trades, outcomes);
@@ -864,7 +980,15 @@ export function annotateTradesWithPolymarketOutcomesForRun(
         }
 
         if (entryPriceFilteredTradeSet.has(trade) || selectedTradeSet.has(trade)) {
-            return buildAnnotatedTradeForBridge(trade, outcomes, selectedOffset, entrySelectionMode, entryPriceFilterCents);
+            return buildAnnotatedTradeForBridge(
+                trade,
+                outcomes,
+                selectedOffset,
+                entrySelectionMode,
+                entryPriceFilterCents,
+                options?.entryCutoffEnabled,
+                options?.entryCutoffSeconds
+            );
         }
 
         if (isActualMinuteMode) {
@@ -887,6 +1011,8 @@ export function evaluatePolymarketBacktestTrades(args: {
     context?: PolymarketTradeEvaluationContext;
     includeRows?: boolean;
     entryPriceFilterCents?: number;
+    entryCutoffEnabled?: boolean;
+    entryCutoffSeconds?: number;
 }): PolymarketEvalResult {
     const { trades, strategyKey } = args;
     const context = args.context ?? createPolymarketTradeEvaluationContext(args.chartData, args.outcomes);
@@ -915,6 +1041,17 @@ export function evaluatePolymarketBacktestTrades(args: {
         }
 
         const prediction = trade.type === "long" ? "yes" : "no";
+        const entryCutoff = resolvePolymarketEntryCutoff({
+            entryTimeSec: entryTs,
+            eventEndTs: outcome.event_end_ts,
+            enabled: args.entryCutoffEnabled,
+            cutoffSeconds: args.entryCutoffSeconds,
+        });
+        if (!entryCutoff.allowed) {
+            accumulator.recordEntryTimeFiltered();
+            continue;
+        }
+
         const marketEntryPrice = getTradeMarketEntryPrice(outcome, prediction);
         if (isPolymarketEntryPriceFiltered(marketEntryPrice, args.entryPriceFilterCents)) {
             accumulator.recordEntryPriceFiltered();
@@ -961,6 +1098,8 @@ export function evaluatePolymarketBacktestTrades1mBridge(args: {
     includeRows?: boolean;
     context?: PolymarketBridgeEvaluationContext;
     entryPriceFilterCents?: number;
+    entryCutoffEnabled?: boolean;
+    entryCutoffSeconds?: number;
 }): PolymarketEvalResult {
     const { chartData, trades, outcomes, strategyKey, selectedOffset, context } = args;
     const includeRows = args.includeRows !== false;
@@ -976,6 +1115,8 @@ export function evaluatePolymarketBacktestTrades1mBridge(args: {
         predictionsTaken: trades.length,
         context,
         entryPriceFilterCents: args.entryPriceFilterCents,
+        entryCutoffEnabled: args.entryCutoffEnabled,
+        entryCutoffSeconds: args.entryCutoffSeconds,
     });
 }
 
@@ -989,6 +1130,8 @@ export function evaluateMappedPolymarketBacktestTrades1mBridge(args: {
     predictionsTaken?: number;
     context?: PolymarketBridgeEvaluationContext;
     entryPriceFilterCents?: number;
+    entryCutoffEnabled?: boolean;
+    entryCutoffSeconds?: number;
 }): PolymarketEvalResult {
     const { chartData, mappedTrades, outcomes, strategyKey, selectedOffset } = args;
     const includeRows = args.includeRows !== false;
@@ -997,8 +1140,19 @@ export function evaluateMappedPolymarketBacktestTrades1mBridge(args: {
     const filteredForOffset = filterByEntryOffsetLegacy(mappedTrades, selectedOffset);
     const priceEligibleForOffset: LegacyMappedPolymarketTrade[] = [];
     let entryPriceFilteredPredictions = 0;
+    let entryTimeFilteredPredictions = 0;
     for (const mapped of filteredForOffset) {
         const prediction = mapped.trade.type === "long" ? "yes" : "no";
+        const entryCutoff = resolvePolymarketEntryCutoff({
+            entryTimeSec: mapped.entryTs,
+            eventEndTs: mapped.outcome.event_end_ts,
+            enabled: args.entryCutoffEnabled,
+            cutoffSeconds: args.entryCutoffSeconds,
+        });
+        if (!entryCutoff.allowed) {
+            entryTimeFilteredPredictions++;
+            continue;
+        }
         const marketEntryPrice = getTradeMarketEntryPrice(mapped.outcome, prediction, mapped.entryOffset);
         if (isPolymarketEntryPriceFiltered(marketEntryPrice, args.entryPriceFilterCents)) {
             entryPriceFilteredPredictions++;
@@ -1023,6 +1177,9 @@ export function evaluateMappedPolymarketBacktestTrades1mBridge(args: {
     });
     for (let index = 0; index < entryPriceFilteredPredictions; index += 1) {
         accumulator.recordEntryPriceFiltered();
+    }
+    for (let index = 0; index < entryTimeFilteredPredictions; index += 1) {
+        accumulator.recordEntryTimeFiltered();
     }
 
     for (const mapped of selected) {
@@ -1058,6 +1215,8 @@ export function buildPolymarketTimingProfileFor1mBridge(args: {
     outcomes: PolymarketOutcomeRow[];
     strategyKey?: string;
     entryPriceFilterCents?: number;
+    entryCutoffEnabled?: boolean;
+    entryCutoffSeconds?: number;
 }): BacktestPolymarketTimingProfileEntry[] {
     const profile: BacktestPolymarketTimingProfileEntry[] = [];
     const context = createPolymarketBridgeEvaluationContext(args.chartData, args.outcomes);
@@ -1072,6 +1231,8 @@ export function buildPolymarketTimingProfileFor1mBridge(args: {
             includeRows: false,
             context,
             entryPriceFilterCents: args.entryPriceFilterCents,
+            entryCutoffEnabled: args.entryCutoffEnabled,
+            entryCutoffSeconds: args.entryCutoffSeconds,
         });
 
         profile.push({
@@ -1143,6 +1304,14 @@ function countEntryPriceFilteredTrades(trades: readonly Trade[]): number {
     return trades.filter(isEntryPriceFilteredTrade).length;
 }
 
+function isEntryTimeFilteredTrade(trade: Trade): boolean {
+    return trade.polymarketOutcome?.marketExitSource === "entry_time_filtered";
+}
+
+function countEntryTimeFilteredTrades(trades: readonly Trade[]): number {
+    return trades.filter(isEntryTimeFilteredTrade).length;
+}
+
 export function summarizePolymarketTradesForRun(args: {
     trades: readonly Trade[];
     outcomes: readonly PolymarketOutcomeRow[];
@@ -1159,6 +1328,7 @@ export function summarizePolymarketTradesForRun(args: {
     | "unscoredTrades"
     | "duplicateTradesIgnored"
     | "entryPriceFilteredTrades"
+    | "entryTimeFilteredTrades"
     | "entryOffset"
     | "entrySelectionMode"
     | "timingProfile"
@@ -1202,6 +1372,7 @@ export function summarizePolymarketTradesForRun(args: {
             (trade) => trade.polymarketOutcome?.marketEntryStatus === "duplicate"
         ).length;
         const entryPriceFilteredTrades = countEntryPriceFilteredTrades(args.trades);
+        const entryTimeFilteredTrades = countEntryTimeFilteredTrades(args.trades);
 
         return {
             scoredTrades,
@@ -1209,6 +1380,7 @@ export function summarizePolymarketTradesForRun(args: {
             unscoredTrades: Math.max(0, totalTrades - scoredTrades),
             duplicateTradesIgnored: duplicateTradesIgnored > 0 ? duplicateTradesIgnored : undefined,
             entryPriceFilteredTrades: entryPriceFilteredTrades > 0 ? entryPriceFilteredTrades : undefined,
+            entryTimeFilteredTrades: entryTimeFilteredTrades > 0 ? entryTimeFilteredTrades : undefined,
             entrySelectionMode: undefined,
             entryOffset: undefined,
             timingProfile: args.timingProfile,
@@ -1241,6 +1413,7 @@ export function summarizePolymarketTradesForRun(args: {
             missingOutcomeTrades,
             unscoredTrades: Math.max(0, totalTrades - scoredTrades),
             entryPriceFilteredTrades: countEntryPriceFilteredTrades(args.trades) || undefined,
+            entryTimeFilteredTrades: countEntryTimeFilteredTrades(args.trades) || undefined,
             entrySelectionMode: undefined,
             entryOffset: uniqueEntryOffsets.size === 1 ? [...uniqueEntryOffsets][0] : undefined,
             timingProfile: args.timingProfile ?? buildPolymarketTimingProfileForNativeSession(args.trades, resolvedOutcomeInterval),
@@ -1254,12 +1427,14 @@ export function summarizePolymarketTradesForRun(args: {
             trade.polymarketOutcome
             && trade.polymarketOutcome.isWin !== null
             && trade.polymarketOutcome.marketExitSource !== "entry_price_filtered"
+            && trade.polymarketOutcome.marketExitSource !== "entry_time_filtered"
         )).length;
         const missingOutcomeTrades = args.trades.filter((trade) => !trade.polymarketOutcome).length;
         const duplicateTradesIgnored = args.trades.filter(
             (trade) => trade.polymarketOutcome?.marketExitSource === "duplicate"
         ).length;
         const entryPriceFilteredTrades = countEntryPriceFilteredTrades(args.trades);
+        const entryTimeFilteredTrades = countEntryTimeFilteredTrades(args.trades);
 
         return {
             scoredTrades,
@@ -1267,6 +1442,7 @@ export function summarizePolymarketTradesForRun(args: {
             unscoredTrades: Math.max(0, totalTrades - scoredTrades),
             duplicateTradesIgnored: duplicateTradesIgnored > 0 ? duplicateTradesIgnored : undefined,
             entryPriceFilteredTrades: entryPriceFilteredTrades > 0 ? entryPriceFilteredTrades : undefined,
+            entryTimeFilteredTrades: entryTimeFilteredTrades > 0 ? entryTimeFilteredTrades : undefined,
             entryOffset: isActualPolymarketEntryMinuteMode(entrySelectionMode) ? undefined : selectedOffset,
             entrySelectionMode,
             timingProfile: args.timingProfile,
@@ -1283,19 +1459,21 @@ export function summarizePolymarketTradesForRun(args: {
             missingOutcomeTrades++;
             continue;
         }
-        if (isEntryPriceFilteredTrade(trade)) {
+        if (isEntryPriceFilteredTrade(trade) || isEntryTimeFilteredTrade(trade)) {
             continue;
         }
 
         scoredTrades++;
     }
     const entryPriceFilteredTrades = countEntryPriceFilteredTrades(args.trades);
+    const entryTimeFilteredTrades = countEntryTimeFilteredTrades(args.trades);
 
     return {
         scoredTrades,
         missingOutcomeTrades,
         unscoredTrades: Math.max(0, totalTrades - scoredTrades),
         entryPriceFilteredTrades: entryPriceFilteredTrades > 0 ? entryPriceFilteredTrades : undefined,
+        entryTimeFilteredTrades: entryTimeFilteredTrades > 0 ? entryTimeFilteredTrades : undefined,
         entrySelectionMode: undefined,
         entryOffset: undefined,
         timingProfile: args.timingProfile,
@@ -1320,6 +1498,8 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
     const pricePoints = options.pricePoints;
     const entrySelectionMode = options.entrySelectionMode ?? "fixed_offset";
     const entryPriceFilterCents = clampPolymarketEntryPriceFilterCents(options.entryPriceFilterCents);
+    const entryCutoffEnabled = context.polymarketEntryCutoffEnabled ?? options.entryCutoffEnabled;
+    const entryCutoffSeconds = context.polymarketEntryCutoffSeconds ?? options.entryCutoffSeconds;
     const limitEntry = options.limitEntry?.enabled && resolvePolymarketOutcomeInterval(context.outcomeInterval) === "5m"
         ? {
             enabled: true,
@@ -1416,6 +1596,8 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
             outcomeByEntryTs,
             allowMultipleTradesPerEvent: context.polymarketSignalExitAllowMultipleTradesPerEvent,
             entryPriceFilterCents,
+            entryCutoffEnabled: context.polymarketEntryCutoffEnabled ?? options.entryCutoffEnabled,
+            entryCutoffSeconds: context.polymarketEntryCutoffSeconds ?? options.entryCutoffSeconds,
             limitEntry,
         });
 
@@ -1454,6 +1636,8 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
             outcomeInterval: resolvedOutcomeInterval,
             pricePoints: resolvedPricePoints,
             entryPriceFilterCents,
+            entryCutoffEnabled,
+            entryCutoffSeconds,
             limitEntry,
         }
     );
@@ -1465,6 +1649,8 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
             trades: result.trades,
             outcomes,
             entryPriceFilterCents,
+            entryCutoffEnabled,
+            entryCutoffSeconds,
         })
         : undefined;
     const summary = summarizePolymarketTradesForRun({

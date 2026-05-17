@@ -1,5 +1,6 @@
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { isPolymarketEntryPriceFiltered } from "../polymarket-entry-price-filter";
+import { resolvePolymarketEntryCutoff } from "../polymarket-entry-cutoff";
 import {
     clampPolymarketPostSignalLimitEntryPriceCents,
     clampPolymarketPostSignalLimitExitPriceCents,
@@ -192,6 +193,7 @@ function buildSummary(
         scoredTrades: scored.length,
         duplicateTradesIgnored: results.filter((result) => result.exitSource === "duplicate").length,
         entryPriceFilteredTrades: results.filter((result) => result.exitSource === "entry_price_filtered").length,
+        entryTimeFilteredTrades: results.filter((result) => result.exitSource === "entry_time_filtered").length,
         missingOutcomeTrades: results.filter((result) => result.exitSource === "no_event").length,
         missingQuoteTrades: results.filter((result) =>
             result.exitSource === "missing"
@@ -270,6 +272,8 @@ export function evaluateSecondMarketTrades(args: {
     maxQuoteAgeSec?: number;
     fillSource?: SecondMarketFillSource;
     entryPriceFilterCents?: number;
+    entryCutoffEnabled?: boolean;
+    entryCutoffSeconds?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }): { results: SecondMarketTradeResult[]; summary: SecondMarketBacktestSummary } {
     const evaluationMode = args.evaluationMode ?? "resolve_hold";
@@ -340,6 +344,32 @@ export function evaluateSecondMarketTrades(args: {
             && rawExitTs < outcome.event_end_ts
             ? rawExitTs
             : null;
+
+        const entryCutoff = resolvePolymarketEntryCutoff({
+            entryTimeSec: entryTs,
+            eventEndTs: outcome.event_end_ts,
+            enabled: args.entryCutoffEnabled,
+            cutoffSeconds: args.entryCutoffSeconds,
+        });
+        if (!entryCutoff.allowed) {
+            results.push({
+                trade,
+                outcome,
+                side,
+                entrySource: limitEntryEnabled ? "limit" : "quote",
+                entryMode: limitEntryEnabled ? limitEntryMode : undefined,
+                entryOffsetCents: limitEntryEnabled ? limitEntryOffsetCents : undefined,
+                entryLimitPrice: limitEntryEnabled ? fixedLimitPrice : null,
+                entryPrice: null,
+                entryQuoteTs: null,
+                exitPrice: null,
+                exitQuoteTs: null,
+                exitSource: "entry_time_filtered",
+                pnl: null,
+                isProfitable: null,
+            });
+            continue;
+        }
 
         let entry: Fill | null = null;
         let entryLimitPrice: number | null = null;

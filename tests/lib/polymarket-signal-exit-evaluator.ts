@@ -7,6 +7,7 @@ import {
     indexPricePointsByEvent,
     type EventPriceIndex,
 } from "./polymarket-price-points";
+import { resolvePolymarketEntryCutoff } from "./polymarket-entry-cutoff";
 import { isPolymarketEntryPriceFiltered } from "./polymarket-entry-price-filter";
 import {
     clampPolymarketPostSignalLimitEntryPriceCents,
@@ -37,6 +38,8 @@ export interface SignalExitEvalInput {
     outcomeByEntryTs?: ReadonlyMap<number, PolymarketOutcomeRow | null>;
     allowMultipleTradesPerEvent?: boolean;
     entryPriceFilterCents?: number;
+    entryCutoffEnabled?: boolean;
+    entryCutoffSeconds?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }
 
@@ -54,7 +57,7 @@ export interface SignalExitTradeResult {
     entryImprovement?: number | null;
     exitPrice: number | null;
     exitTs: number | null;
-    exitSource: "target" | "signal" | "resolution" | "missing" | "duplicate" | "entry_price_filtered" | "no_event";
+    exitSource: "target" | "signal" | "resolution" | "missing" | "duplicate" | "entry_price_filtered" | "entry_time_filtered" | "no_event";
     exitTargetPrice?: number | null;
     exitStatus?: "filled" | "not_touched" | "missing_price_points" | "unreachable";
     pnl: number | null;
@@ -69,6 +72,7 @@ export interface SignalExitSummary {
     missingOutcomeTrades: number;
     duplicateTradesIgnored: number;
     entryPriceFilteredTrades: number;
+    entryTimeFilteredTrades: number;
     unscoredTrades: number;
     profitableTrades: number;
     losingTrades: number;
@@ -126,6 +130,7 @@ export function buildSignalExitPolymarketTradeSummary(args: {
         unscoredTrades: summary.unscoredTrades,
         duplicateTradesIgnored: summary.duplicateTradesIgnored > 0 ? summary.duplicateTradesIgnored : undefined,
         entryPriceFilteredTrades: summary.entryPriceFilteredTrades > 0 ? summary.entryPriceFilteredTrades : undefined,
+        entryTimeFilteredTrades: summary.entryTimeFilteredTrades > 0 ? summary.entryTimeFilteredTrades : undefined,
         evaluationMode: "signal_exit_same_event",
         signalExitAllowMultipleTradesPerEvent: summary.allowMultipleTradesPerEvent,
         profitableTrades: summary.profitableTrades,
@@ -282,6 +287,35 @@ export function evaluateSignalExitTrades(
             : outcome.resolved_outcome_up === 0;
 
         const eventPoints = priceIndex.pointsByEventStart.get(outcome.event_start_ts) ?? [];
+        const entryCutoff = resolvePolymarketEntryCutoff({
+            entryTimeSec: entryTs,
+            eventEndTs: outcome.event_end_ts,
+            enabled: input.entryCutoffEnabled,
+            cutoffSeconds: input.entryCutoffSeconds,
+        });
+        if (!entryCutoff.allowed) {
+            results.push({
+                trade,
+                outcome,
+                side,
+                entrySource: limitEntryEnabled ? "limit" : "quote",
+                entryStatus: undefined,
+                entryMode: limitEntryEnabled ? limitEntryMode : undefined,
+                entryOffsetCents: limitEntryEnabled ? limitEntryOffsetCents : undefined,
+                entryPrice: null,
+                entryFillTs: null,
+                entryLimitPrice: limitEntryEnabled ? fixedLimitPrice : null,
+                entryImprovement: null,
+                exitPrice: null,
+                exitTs: null,
+                exitSource: "entry_time_filtered",
+                pnl: null,
+                isProfitable: null,
+                actualOutcomeUp: outcome.resolved_outcome_up,
+                isWin: null,
+            });
+            continue;
+        }
 
         const exitTsRaw = trade.exitReason === "signal"
             ? parseTimeToUnixSeconds(trade.exitTime)
@@ -525,6 +559,7 @@ function buildSignalExitSummary(
     let missingOutcomeTrades = 0;
     let duplicateTradesIgnored = 0;
     let entryPriceFilteredTrades = 0;
+    let entryTimeFilteredTrades = 0;
     let profitableTrades = 0;
     let losingTrades = 0;
     let neutralTrades = 0;
@@ -600,6 +635,10 @@ function buildSignalExitSummary(
             entryPriceFilteredTrades++;
             continue;
         }
+        if (r.exitSource === "entry_time_filtered") {
+            entryTimeFilteredTrades++;
+            continue;
+        }
         if (r.exitSource === "no_event") {
             missingOutcomeTrades++;
             continue;
@@ -648,7 +687,8 @@ function buildSignalExitSummary(
         missingOutcomeTrades,
         duplicateTradesIgnored,
         entryPriceFilteredTrades,
-        unscoredTrades: missingPriceTrades + missingOutcomeTrades + duplicateTradesIgnored + entryPriceFilteredTrades + limitEntryMissesWithoutMissingPrices,
+        entryTimeFilteredTrades,
+        unscoredTrades: missingPriceTrades + missingOutcomeTrades + duplicateTradesIgnored + entryPriceFilteredTrades + entryTimeFilteredTrades + limitEntryMissesWithoutMissingPrices,
         profitableTrades,
         losingTrades,
         neutralTrades,
@@ -790,6 +830,18 @@ export function buildTradeAnnotationFromSignalExitResult(
             marketExitPrice: null,
             marketExitTs: null,
             marketExitSource: "entry_price_filtered",
+            marketPnl: null,
+        });
+    }
+
+    if (result.exitSource === "entry_time_filtered") {
+        return buildSignalExitOutcomeAnnotation(result, {
+            isWin: null,
+            isProfitable: null,
+            marketEntryPrice: null,
+            marketExitPrice: null,
+            marketExitTs: null,
+            marketExitSource: "entry_time_filtered",
             marketPnl: null,
         });
     }

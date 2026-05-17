@@ -40,6 +40,7 @@ describe("Execution Lab live executor adapter", () => {
             executorPath: process.execPath,
             liveEnabled: false,
             maxStakeUsd: 12,
+            sizingMode: "exchange_min",
             exitMaxSlippageCents: 3,
         });
 
@@ -47,6 +48,7 @@ describe("Execution Lab live executor adapter", () => {
         expect(status.available).to.equal(true);
         expect(status.dryRun).to.equal(true);
         expect(status.maxStakeUsd).to.equal(12);
+        expect(status.sizingMode).to.equal("exchange_min");
         expect(status.exitMaxSlippageCents).to.equal(3);
     });
 
@@ -57,6 +59,7 @@ describe("Execution Lab live executor adapter", () => {
                 `EXECUTION_LAB_LIVE_EXECUTOR_PATH=${process.execPath}`,
                 "EXECUTION_LAB_LIVE_ENABLED=1",
                 "EXECUTION_LAB_LIVE_MAX_STAKE_USD=7",
+                "EXECUTION_LAB_LIVE_SIZING_MODE=exchange_min",
                 "EXECUTION_LAB_LIVE_EXIT_MAX_SLIPPAGE_CENTS=0",
                 "EXECUTION_LAB_LIVE_TIMEOUT_MS=1234",
             ].join("\n"));
@@ -65,6 +68,7 @@ describe("Execution Lab live executor adapter", () => {
             expect(config.executorPath).to.equal(process.execPath);
             expect(config.liveEnabled).to.equal(true);
             expect(config.maxStakeUsd).to.equal(7);
+            expect(config.sizingMode).to.equal("exchange_min");
             expect(config.exitMaxSlippageCents).to.equal(0);
             expect(config.timeoutMs).to.equal(1234);
         } finally {
@@ -85,11 +89,46 @@ describe("Execution Lab live executor adapter", () => {
             executorPath: process.execPath,
             executorArgs: ["-e", script],
             liveEnabled: false,
+            maxStakeUsd: 10,
             timeoutMs: 1000,
         });
 
         expect(response.status).to.equal("dry_run");
         expect(response.currentAsk).to.equal(0.52);
+    });
+
+    it("does not apply the paper stake cap before exchange-min executor sizing", async () => {
+        const script = [
+            "let body='';",
+            "process.stdin.on('data', c => body += c);",
+            "process.stdin.on('end', () => {",
+            "const req = JSON.parse(body);",
+            "console.log(JSON.stringify({ ok: true, requestId: req.requestId, status: 'dry_run' }));",
+            "});",
+        ].join("");
+        const response = await submitLiveTradeToExecutor({ ...request(), stakeUsd: 11 }, {
+            executorPath: process.execPath,
+            executorArgs: ["-e", script],
+            liveEnabled: false,
+            maxStakeUsd: 10,
+            sizingMode: "exchange_min",
+            timeoutMs: 1000,
+        });
+
+        expect(response.status).to.equal("dry_run");
+    });
+
+    it("keeps the paper stake cap in fixed executor sizing", async () => {
+        const response = await submitLiveTradeToExecutor({ ...request(), stakeUsd: 11 }, {
+            executorPath: process.execPath,
+            liveEnabled: false,
+            maxStakeUsd: 10,
+            sizingMode: "fixed",
+            timeoutMs: 1000,
+        });
+
+        expect(response.status).to.equal("rejected");
+        expect(response.reason).to.equal("stake_above_executor_cap");
     });
 
     it("maps unavailable, timeout, and invalid stdout failures", async () => {
@@ -99,11 +138,13 @@ describe("Execution Lab live executor adapter", () => {
         const timeout = await submitLiveTradeToExecutor(request(), {
             executorPath: process.execPath,
             executorArgs: ["-e", "setTimeout(() => {}, 10000);"],
+            maxStakeUsd: 10,
             timeoutMs: 50,
         });
         const invalidStdout = await submitLiveTradeToExecutor(request(), {
             executorPath: process.execPath,
             executorArgs: ["-e", "console.log('not-json');"],
+            maxStakeUsd: 10,
             timeoutMs: 1000,
         });
 

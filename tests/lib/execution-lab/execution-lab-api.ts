@@ -8,6 +8,7 @@ import type {
     LiveTradeSubmitRequest,
     LiveTradeSubmitResponse,
     LiveTradeOrderType,
+    LiveTradeSizingMode,
 } from "./execution-lab-model";
 
 type ApiError = { ok?: false; error?: string };
@@ -38,6 +39,7 @@ export type LiveExecutorStatus = {
     executorKind: "cli";
     geoblockAllowed: boolean | null;
     maxStakeUsd: number;
+    sizingMode: LiveTradeSizingMode;
     exitMaxSlippageCents: number;
     supportedOrderTypes: LiveTradeOrderType[];
     message: string;

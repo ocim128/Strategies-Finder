@@ -102,6 +102,30 @@ describe('Backtest settings compatibility', () => {
         expect('polymarketEntryPriceFilterCents' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
     });
 
+    it('normalizes the Polymarket event entry cutoff as a Backtest Realism setting', () => {
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffEnabled).to.equal(false);
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffSeconds).to.equal(15);
+        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketEntryCutoffToggle')).to.equal(true);
+        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketEntryCutoffSeconds')).to.equal(true);
+
+        const toggleContract = getBacktestDomSettingContract('polymarketEntryCutoffToggle');
+        expect(toggleContract).to.not.equal(undefined);
+        expect(coerceBacktestDomSettingValue(toggleContract!, true)).to.equal(true);
+
+        const contract = getBacktestDomSettingContract('polymarketEntryCutoffSeconds');
+        expect(contract).to.not.equal(undefined);
+        expect(coerceBacktestDomSettingValue(contract!, 20)).to.equal(20);
+
+        const resolved = resolveBacktestSettingsFromRaw({
+            polymarketEntryCutoffToggle: true,
+            polymarketEntryCutoffSeconds: -5,
+        } as unknown as BacktestSettings);
+        expect(resolved.polymarketEntryCutoffEnabled).to.equal(true);
+        expect(resolved.polymarketEntryCutoffSeconds).to.equal(0);
+        expect('polymarketEntryCutoffEnabled' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
+        expect('polymarketEntryCutoffSeconds' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
+    });
+
     it('includes polymarketOutcomeInterval in shared defaults and manual-backtest DOM ids', () => {
         expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketOutcomeInterval).to.equal('5m');
         expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketOutcomeInterval')).to.equal(true);

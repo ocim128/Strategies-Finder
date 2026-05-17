@@ -142,6 +142,25 @@ describe("second market backtest evaluator", () => {
         expect(evaluated.summary.duplicateTradesIgnored).to.equal(0);
     });
 
+    it("filters entries inside the event-close cutoff before scoring", () => {
+        const evaluated = evaluateSecondMarketTrades({
+            trades: [trade(1_700_000_290, 1_700_000_295)],
+            outcomes: [outcome()],
+            quotes: [
+                quote(1_700_000_290, 0.55, 0.53),
+                quote(1_700_000_295, 0.60, 0.58),
+            ],
+            evaluationMode: "signal_exit_same_event",
+            entryCutoffEnabled: true,
+            entryCutoffSeconds: 15,
+            mode: "strict",
+        });
+
+        expect(evaluated.results[0].exitSource).to.equal("entry_time_filtered");
+        expect(evaluated.summary.entryTimeFilteredTrades).to.equal(1);
+        expect(evaluated.summary.scoredTrades).to.equal(0);
+    });
+
     it("waits for a 1s CLOB post-signal limit entry before scoring", () => {
         const evaluated = evaluateSecondMarketTrades({
             trades: [trade(1_700_000_010, 1_700_000_040)],

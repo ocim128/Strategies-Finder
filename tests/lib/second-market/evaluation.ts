@@ -5,7 +5,7 @@ import type {
     PolymarketOutcomeRow,
     TradePolymarketOutcome,
 } from "../types/polymarket-outcomes";
-import type { PolymarketExitMode } from "../polymarket-exit-mode";
+import { isPolymarketOneSecondSignalExitExecutionModel, type PolymarketExitMode } from "../polymarket-exit-mode";
 import {
     getEffectivePolymarketSeriesId,
     loadPolymarketOutcomesForTimeRange,
@@ -53,7 +53,7 @@ export function isSecondMarketPolymarketScoringSupported(args: {
     executionModel?: string;
 }): boolean {
     return isSecondMarketPolymarketSupported(args.symbol, args.interval)
-        && args.executionModel === "next_open";
+        && isPolymarketOneSecondSignalExitExecutionModel(args.executionModel);
 }
 
 function getTradeTimeRange(trades: readonly Trade[]): { startTs: number; endTs: number } | null {
@@ -204,6 +204,7 @@ function summarizePolymarketResult(args: {
         unscoredTrades: Math.max(0, tradeCount - summary.scoredTrades),
         duplicateTradesIgnored: summary.duplicateTradesIgnored || undefined,
         entryPriceFilteredTrades: summary.entryPriceFilteredTrades || undefined,
+        entryTimeFilteredTrades: summary.entryTimeFilteredTrades || undefined,
         evaluationMode,
         signalExitAllowMultipleTradesPerEvent: summary.allowMultipleTradesPerEvent,
         profitableTrades,
@@ -294,6 +295,7 @@ function buildPolymarketEval(args: {
         ignoredSignals: summary.duplicateTradesIgnored,
         duplicateTradesIgnored: summary.duplicateTradesIgnored,
         entryPriceFilteredPredictions: summary.entryPriceFilteredTrades || undefined,
+        entryTimeFilteredPredictions: summary.entryTimeFilteredTrades || undefined,
         evaluationMode,
         signalExitAllowMultipleTradesPerEvent: summary.allowMultipleTradesPerEvent,
         targetExitedTrades: summary.targetExitedTrades,
@@ -384,6 +386,8 @@ export function evaluateSecondMarketBacktest(args: {
     polymarketExitMode?: PolymarketExitMode;
     polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
     entryPriceFilterCents?: number;
+    entryCutoffEnabled?: boolean;
+    entryCutoffSeconds?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }): SecondMarketEvaluationResult {
     const trades = [...(args.trades ?? args.result.trades)];
@@ -397,6 +401,8 @@ export function evaluateSecondMarketBacktest(args: {
         mode: "strict",
         fillSource: "bid_ask",
         entryPriceFilterCents: args.entryPriceFilterCents,
+        entryCutoffEnabled: args.entryCutoffEnabled,
+        entryCutoffSeconds: args.entryCutoffSeconds,
         limitEntry: args.limitEntry,
     });
     const annotatedByTrade = new Map<Trade, TradePolymarketOutcome>(
@@ -438,6 +444,8 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
     polymarketExitMode?: PolymarketExitMode;
     polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
     entryPriceFilterCents?: number;
+    entryCutoffEnabled?: boolean;
+    entryCutoffSeconds?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }): Promise<BacktestResult> {
     if (
@@ -469,6 +477,8 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
         polymarketExitMode: args.polymarketExitMode,
         polymarketSignalExitAllowMultipleTradesPerEvent: args.polymarketSignalExitAllowMultipleTradesPerEvent,
         entryPriceFilterCents: args.entryPriceFilterCents,
+        entryCutoffEnabled: args.entryCutoffEnabled,
+        entryCutoffSeconds: args.entryCutoffSeconds,
         limitEntry: args.limitEntry,
     });
 

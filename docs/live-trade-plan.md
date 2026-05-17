@@ -74,8 +74,11 @@ V1 is working only when all of these are true:
 - Live Trade targets Polymarket crypto outcome markets, not Binance spot/futures execution.
 - Existing Strategy Finder settings remain the source of truth for signal validity, direction, entry price filtering, Polymarket symbol/session settings, and stake input.
 - The first implementation places live entry orders. The first exit implementation sells the same filled token when the matching paper trade emits `paper_exit`.
-- `stakeUsd` is a hard notional cap. The executor may submit less after tick/lot/depth/min-size checks, but it must never submit more.
-- The executor may reject small stakes. Do not silently upsize from the UI.
+- With `EXECUTION_LAB_LIVE_SIZING_MODE=fixed`, `stakeUsd` is a hard notional cap. The executor may submit less after tick/lot/depth/min-size checks, but it must never submit more.
+- With `EXECUTION_LAB_LIVE_SIZING_MODE=exchange_min`, live entries may auto-size above `stakeUsd` to the minimum valid Polymarket order, but never above `EXECUTION_LAB_LIVE_MAX_STAKE_USD` or `MAX_ORDER_SIZE_USDC`.
+- The executor may reject small stakes in fixed mode or reject exchange-min sizing with `min_size_exceeds_cap` when the minimum valid order is above the configured caps.
+- Strategy Finder applies the Backtest Realism `Polymarket Entry Cutoff` toggle before paper entries are accepted. The toggle defaults off; when enabled, `Polymarket Entry Cutoff (sec)` defaults to `15`.
+- Live entry submission also rejects as `event_too_close_to_close` if the toggle is enabled and the current clock has crossed the same configured cutoff before the executor call.
 - Private keys must not be stored in browser state, localStorage, JSONL logs, or this repository.
 - V1 is a local playground feature for `npm run dev`, not production infrastructure.
 - Live mode is never restored automatically on page load. The UI may remember non-secret settings such as stake, but each session starts from Paper until the user explicitly selects Live again.
@@ -271,6 +274,7 @@ export type LiveTradeSubmitRequest = {
 Notes:
 
 - `maxPrice` is the paper entry price cap, not a claim that live execution will fill at that price.
+- `stakeUsd` is always the paper-session stake. It is also the live entry cap in `fixed` sizing mode, but not in `exchange_min` sizing mode.
 - For `action: "exit"`, `minPrice` is the live sell floor and `shares` is the tracked filled live-token amount to sell.
 - For V1, only allow `FOK` or `FAK`.
 - Prefer `FAK` for first live smoke if partial fills are acceptable; prefer `FOK` only if all-or-nothing execution is required.
@@ -282,7 +286,7 @@ Runtime validation for `/api/execution-lab/live/trade`:
 - `requestId`, `sessionId`, `paperTradeId`, `symbol`, `strategyKey`, `marketSlug`, `conditionId`, and `tokenId` must be non-empty strings.
 - `side` must be `yes` or `no`.
 - `orderType` must be `FOK` or `FAK`.
-- `stakeUsd` must be finite, positive, and no larger than the configured executor cap.
+- `stakeUsd` must be finite, positive, and no larger than the configured Strategy Finder executor cap. In `exchange_min` sizing mode, it is still required for paper-session sizing but no longer caps the live executor order.
 - `maxPrice` must be finite and in `(0, 1]`.
 - `createdAtIso` must parse as an ISO timestamp.
 - `expiresAtSec` must be finite, in the future, and close to current time. Use a short maximum window such as 30 seconds.
@@ -390,7 +394,9 @@ V1 failure behavior should be simple and explicit:
 - If the same `requestId` reaches the executor again, executor returns `status: "duplicate"`.
 - If paper entry has no token/market information, do not submit and log `missing_market_identity`.
 - If current ask is above `maxPrice`, do not submit and log `price_moved_above_cap`.
-- If stake is below exchange minimum after tick/lot/min-size checks, do not auto-upsize.
+- In `fixed` sizing mode, if stake is below exchange minimum after tick/lot/min-size checks, do not auto-upsize.
+- If `exchange_min` sizing would require an order above the configured caps, log `status: "rejected"` and `reason: "min_size_exceeds_cap"`.
+- If Polymarket says a `FAK`/`FOK` order found no matching liquidity, log `status: "rejected"` and `reason: "no_matching_orders"` instead of treating it as an executor failure.
 - If Polymarket returns `delayed`, preserve it as `status: "delayed"` or `orderStatus: "delayed"` with `reason: "order_delayed"`. Do not collapse it into success or failure.
 - Do not retry live entry order submission in Strategy Finder V1.
 
@@ -400,12 +406,15 @@ Live exit is intentionally conservative:
 
 - Strategy Finder tracks a live position only after an entry result is `matched` or `partial`.
 - When the matching paper trade emits `paper_exit`, Strategy Finder submits `action: "exit"` for the same `tokenId`.
+- If the paper trade reaches an executable backtest exit but the exact Polymarket exit quote is missing, Strategy Finder still queues a live exit for the matching tracked live position and anchors the first exit floor to the latest same-event bid when available.
 - Exit requests sell the tracked remaining live shares; they do not buy the opposite outcome.
-- The exit floor is `paperExitPrice - EXECUTION_LAB_LIVE_EXIT_MAX_SLIPPAGE_CENTS`, clamped to at least `0.01`.
+- The exit floor is `min(paperExitPrice, liveEntryPrice) - EXECUTION_LAB_LIVE_EXIT_MAX_SLIPPAGE_CENTS`, clamped to at least `0.01`. This prevents a favorable live entry fill from making the exit floor impossible to reach.
+- Strategy Finder preflights the latest same-event bid against that floor and records a local rejected exit attempt every one-second retry cooldown while the bid is already below `minPrice`.
 - The executor re-fetches the current book and rejects with `price_moved_below_floor` if best bid is below `minPrice`.
+- Exit sizing submits the tracked remaining shares at the lowest valid limit price: `max(minPrice, exchangeMinNotional / shares)`, rounded to tick size. If best bid cannot support that minimum executable price, the executor rejects with `below_exchange_min` and Strategy Finder may retry.
 - The executor submits the sell using the configured `FAK`/`FOK` order type. Existing side-repo GTC wind-down logic remains unchanged.
 - If a live position remains open after an exit rejection or partial fill, Strategy Finder blocks new same-event live entries with `live_position_open`.
-- Exit retries use a short cooldown and a new request id per attempt. Retries stop when the position is closed, the event window is no longer tradeable, or the executor reports an ambiguous accepted state (`delayed`/`posted_live`) that needs reconciliation before another sell attempt is safe.
+- Exit retries use a 1-second cooldown and a new request id per attempt. Retries stop when the position is closed, the event window is no longer tradeable, or the executor reports an ambiguous accepted state (`delayed`/`posted_live`) that needs reconciliation before another sell attempt is safe.
 - If a paper entry and its paper exit are first observed in the same poll batch, Strategy Finder rejects the live entry with `paper_exit_same_tick`; it must not enter live after the paper exit already happened.
 
 ## Implementation Phases

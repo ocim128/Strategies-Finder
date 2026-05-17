@@ -52,6 +52,17 @@
                     <div class="param-hint">Allow up to 2 concurrent positions when a new signal fires while an existing
                         trade is open.</div>
                 </div>
+                <div class="param-group">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Polymarket Entry Cutoff</label>
+                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle Polymarket entry cutoff">
+                            <input type="checkbox" id="polymarketEntryCutoffToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <input type="number" class="param-input" id="polymarketEntryCutoffSeconds" value="15" min="0" max="300" step="1">
+                    <div class="param-hint">When enabled, skip event entries inside the final seconds before close.</div>
+                </div>
             </div>
             <div class="param-row">
                 <div class="param-group">

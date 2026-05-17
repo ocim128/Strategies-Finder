@@ -7,6 +7,7 @@ import type {
     LiveExitSubmitRequest,
     ExecutionLabSessionSnapshot,
     LiveTradeOrderType,
+    LiveTradeSizingMode,
     LiveTradeRequestRecord,
     LiveTradeResultRecord,
     LiveTradeSubmitRequest,
@@ -18,6 +19,7 @@ export const LIVE_TRADE_DEFAULT_ORDER_TYPE: LiveTradeOrderType = "FAK";
 export const LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS = 5;
 export const LIVE_TRADE_REQUEST_TTL_SEC = 10;
 export const LIVE_TRADE_MAX_EXPIRY_WINDOW_SEC = 30;
+const LIVE_TRADE_SHARE_EPSILON = 0.000001;
 
 const LIVE_TRADE_STATUSES = new Set<LiveTradeSubmitStatus>([
     "dry_run",
@@ -41,6 +43,94 @@ function nonEmptyString(value: unknown): string | null {
 function finiteNumber(value: unknown): number | null {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : null;
+}
+
+function finiteNonNegativeNumber(value: unknown): number | null {
+    const numeric = finiteNumber(value);
+    return numeric !== null && numeric >= 0 ? numeric : null;
+}
+
+function finitePositiveNumber(value: unknown): number | null {
+    const numeric = finiteNumber(value);
+    return numeric !== null && numeric > 0 ? numeric : null;
+}
+
+function hasExplicitFilledShares(response: { filledShares?: number }): boolean {
+    return response.filledShares !== undefined && Number.isFinite(response.filledShares);
+}
+
+export function resolveLiveTradeFilledShares(response: {
+    status: string;
+    filledShares?: number;
+    submittedShares?: number;
+}): number | null {
+    if (hasExplicitFilledShares(response)) {
+        return finiteNonNegativeNumber(response.filledShares);
+    }
+    const submittedShares = finitePositiveNumber(response.submittedShares);
+    if (response.status === "matched" && submittedShares !== null) {
+        return submittedShares;
+    }
+    return null;
+}
+
+export function resolveLiveExitShareUpdate(args: {
+    remainingShares: number;
+    response: {
+        status: string;
+        submittedShares?: number;
+        filledShares?: number;
+    };
+    minRemainingShares?: number;
+}): {
+    filledShares: number | null;
+    remainingShares: number;
+    closePosition: boolean;
+} {
+    const currentRemainingShares = Math.max(0, args.remainingShares);
+    const minRemainingShares = Math.max(0, args.minRemainingShares ?? LIVE_TRADE_SHARE_EPSILON);
+    const explicitFilledShares = hasExplicitFilledShares(args.response);
+    const filledShares = resolveLiveTradeFilledShares(args.response);
+
+    if (filledShares === null) {
+        return {
+            filledShares: null,
+            remainingShares: currentRemainingShares,
+            closePosition: args.response.status === "matched" && !explicitFilledShares,
+        };
+    }
+
+    const submittedShares = finitePositiveNumber(args.response.submittedShares);
+    const filledSubmittedShares = explicitFilledShares
+        && submittedShares !== null
+        && filledShares >= submittedShares - LIVE_TRADE_SHARE_EPSILON;
+    const remainingShares = filledSubmittedShares
+        ? 0
+        : Math.max(0, currentRemainingShares - filledShares);
+
+    return {
+        filledShares,
+        remainingShares,
+        closePosition: remainingShares <= minRemainingShares
+            || filledSubmittedShares
+            || (args.response.status === "matched" && !explicitFilledShares),
+    };
+}
+
+export function resolveLiveExitFloorPreflight(args: {
+    currentBid?: number | null;
+    minPrice: number;
+}): { shouldSubmit: true } | { shouldSubmit: false; reason: "price_moved_below_floor" } {
+    if (args.currentBid === null || args.currentBid === undefined) {
+        return { shouldSubmit: true };
+    }
+    const currentBid = finiteNumber(args.currentBid);
+    if (currentBid === null) {
+        return { shouldSubmit: true };
+    }
+    return currentBid >= args.minPrice - LIVE_TRADE_SHARE_EPSILON
+        ? { shouldSubmit: true }
+        : { shouldSubmit: false, reason: "price_moved_below_floor" };
 }
 
 function isIsoTimestamp(value: string): boolean {
@@ -149,6 +239,7 @@ export function buildLiveExitSubmitRequest(args: {
     entryTimeSec: number;
     exitTimeSec: number;
     paperExitPrice: number;
+    liveEntryPrice?: number;
     attempt?: number;
     maxExitSlippageCents?: number;
     createdAtIso: string;
@@ -158,7 +249,11 @@ export function buildLiveExitSubmitRequest(args: {
     const maxExitSlippageCents = Number.isFinite(args.maxExitSlippageCents)
         ? Math.max(0, args.maxExitSlippageCents ?? LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS)
         : LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS;
-    const minPrice = Math.max(0.01, Math.min(1, args.paperExitPrice - (maxExitSlippageCents / 100)));
+    const liveEntryPrice = finitePositiveNumber(args.liveEntryPrice);
+    const floorReferencePrice = liveEntryPrice === null
+        ? args.paperExitPrice
+        : Math.min(args.paperExitPrice, liveEntryPrice);
+    const minPrice = Math.max(0.01, Math.min(1, floorReferencePrice - (maxExitSlippageCents / 100)));
     const shares = Math.max(0, args.shares);
     return {
         action: "exit",
@@ -353,6 +448,14 @@ export function normalizeLiveTradeSubmitResponse(
         const numeric = finiteNumber(value[key]);
         if (numeric !== null) response[key] = numeric;
     }
+    if (
+        response.status === "matched"
+        && hasExplicitFilledShares(response)
+        && finitePositiveNumber(response.submittedShares) !== null
+        && (response.filledShares ?? 0) < (response.submittedShares ?? 0) - LIVE_TRADE_SHARE_EPSILON
+    ) {
+        response.status = "partial";
+    }
 
     return { ok: true, response };
 }
@@ -362,6 +465,7 @@ export function validateLiveTradeSubmitRequest(
     options: {
         nowSec?: number;
         maxStakeUsd: number;
+        sizingMode?: LiveTradeSizingMode;
         maxExpiryWindowSec?: number;
     }
 ): { ok: true; request: LiveTradeSubmitRequest } | { ok: false; error: string } {
@@ -399,7 +503,11 @@ export function validateLiveTradeSubmitRequest(
     const signalTimeSec = finiteNumber(value.signalTimeSec);
     const entryTimeSec = finiteNumber(value.entryTimeSec);
 
-    if (stakeUsd === null || stakeUsd <= 0 || (action === "entry" && stakeUsd > options.maxStakeUsd)) {
+    if (
+        stakeUsd === null
+        || stakeUsd <= 0
+        || (action === "entry" && options.sizingMode !== "exchange_min" && stakeUsd > options.maxStakeUsd)
+    ) {
         return { ok: false, error: "stakeUsd is outside the configured live cap" };
     }
     if (maxPrice === null || maxPrice <= 0 || maxPrice > 1) return { ok: false, error: "maxPrice must be in (0, 1]" };

@@ -22,7 +22,12 @@ import {
 const EVENT_START = 1_700_000_000;
 const EVENT_END = EVENT_START + 300;
 
-function snapshot(allowMultipleTradesPerEvent = false, entryPriceFilterCents = 0): ExecutionLabSessionSnapshot {
+function snapshot(
+    allowMultipleTradesPerEvent = false,
+    entryPriceFilterCents = 0,
+    entryCutoffEnabled = false,
+    entryCutoffSeconds = 15
+): ExecutionLabSessionSnapshot {
     return {
         sessionId: "session-1",
         symbol: "BTCUSDT",
@@ -31,7 +36,11 @@ function snapshot(allowMultipleTradesPerEvent = false, entryPriceFilterCents = 0
         strategyKey: "test_strategy",
         strategyName: "Test Strategy",
         params: {},
-        backtestSettings: { polymarketEntryPriceFilterCents: entryPriceFilterCents },
+        backtestSettings: {
+            polymarketEntryPriceFilterCents: entryPriceFilterCents,
+            polymarketEntryCutoffEnabled: entryCutoffEnabled,
+            polymarketEntryCutoffSeconds: entryCutoffSeconds,
+        },
         capitalSettings: {
             initialCapital: 10000,
             positionSize: 100,
@@ -253,6 +262,29 @@ describe("Execution Lab paper session", () => {
         expect(entry?.entryTimeSec).to.equal(EVENT_START + 20);
         expect(entry?.entryPrice).to.equal(0.55);
         expect(state.totalEntries).to.equal(1);
+    });
+
+    it("blocks entries inside the Polymarket event cutoff", () => {
+        const state = createExecutionLabPaperState(snapshot(false, 0, true, 15));
+        const lateTrade = trade(1, "long", EVENT_END - 10);
+        const result = tick({
+            state,
+            latestTs: EVENT_END - 5,
+            trades: [lateTrade],
+            signals: [signal("buy", EVENT_END - 11)],
+            quotes: [
+                quote(EVENT_END - 10, 0.55, 0.53),
+            ],
+            outcomes: [outcome(1)],
+        });
+
+        const unfilled = result.records.find((record): record is PaperUnfilledRecord =>
+            record.recordType === "paper_unfilled" && record.reason === "entry_too_close_to_close"
+        );
+
+        expect(unfilled?.entryTimeSec).to.equal(EVENT_END - 10);
+        expect(result.acceptedEntries).to.have.length(0);
+        expect(state.totalEntries).to.equal(0);
     });
 
     it("flags existing paper positions that violate the entry price filter as parity mismatches", () => {
@@ -523,6 +555,7 @@ describe("Execution Lab paper session", () => {
         );
 
         expect(exit).to.equal(undefined);
+        expect(unfilled?.tradeId).to.equal("session-1|test_strategy|BTCUSDT|1700000000|yes|1700000009|1700000010");
         expect(unfilled?.expectedExitTimeSec).to.equal(EVENT_START + 13);
         expect(state.openPositions.size).to.equal(0);
     });
@@ -550,6 +583,7 @@ describe("Execution Lab paper session", () => {
         );
 
         expect(unfilled?.reason).to.equal("missing_exit_quote");
+        expect(unfilled?.tradeId).to.equal("session-1|test_strategy|BTCUSDT|1700000000|yes|1700000009|1700000010");
         expect(unfilled?.expectedExitReason).to.equal("time_stop");
         expect(unfilled?.expectedExitTimeSec).to.equal(EVENT_START + 13);
         expect(state.openPositions.size).to.equal(0);

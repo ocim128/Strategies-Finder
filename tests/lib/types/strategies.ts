@@ -328,6 +328,10 @@ export interface BacktestSettings {
     polymarketEntryOffset?: number;
     /** Skip Polymarket entries priced at or below N cents, or at or above 100-N cents. 0 disables. */
     polymarketEntryPriceFilterCents?: number;
+    /** Enable skipping Polymarket entries near event close. */
+    polymarketEntryCutoffEnabled?: boolean;
+    /** Skip Polymarket entries inside the final N seconds of the event when cutoff is enabled. */
+    polymarketEntryCutoffSeconds?: number;
     /** Polymarket exit evaluation mode: resolve_hold scores at final binary outcome, signal_exit_same_event exits on chart sell signal inside the mapped native outcome session */
     polymarketExitMode?: "resolve_hold" | "signal_exit_same_event";
     /** In signal_exit_same_event mode, score every eligible chart trade in the event instead of one trade per Polymarket event. */

@@ -335,6 +335,7 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
     { label: 'Unscored Trades', value: String(summary.unscoredTrades) },
     ...((summary.duplicateTradesIgnored ?? 0) > 0 ? [{ label: 'Duplicate Trades Ignored', value: String(summary.duplicateTradesIgnored) }] : []),
     ...((summary.entryPriceFilteredTrades ?? 0) > 0 ? [{ label: 'Entry Price Filtered', value: String(summary.entryPriceFilteredTrades) }] : []),
+    ...((summary.entryTimeFilteredTrades ?? 0) > 0 ? [{ label: 'Entry Time Filtered', value: String(summary.entryTimeFilteredTrades) }] : []),
     ...(summary.missingTrades > 0 ? [{ label: 'Missing Outcome Rows', value: String(summary.missingTrades) }] : []),
     { label: 'Outcome Rows Fetched', value: String(summary.outcomeRowsLoaded), extraClass: 'full-width qv-poly-meta-card' },
   ]);

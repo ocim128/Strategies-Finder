@@ -9,6 +9,7 @@ import { readPersistedJson, writePersistedJson } from "../persisted-json";
 import { getEffectivePolymarketSeriesId, resolvePolymarketOutcomeSymbol } from "../polymarket-btc5m";
 import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
 import { getPolymarketEntryPriceFilterBounds } from "../polymarket-entry-price-filter";
+import { resolvePolymarketEntryCutoff } from "../polymarket-entry-cutoff";
 import { resolveEffectivePolymarketExitMode } from "../polymarket-exit-mode";
 import { normalizeSecondMarketChartSymbol } from "../second-market/api";
 import type { PolymarketClob1sQuoteRow, SecondMarketPolymarketEvent, SecondMarketSide, SecondMarketSymbol } from "../second-market/types";
@@ -61,6 +62,9 @@ import {
     buildLiveTradeRequestRecord,
     buildLiveTradeResultRecord,
     buildLiveTradeSubmitRequest,
+    resolveLiveExitFloorPreflight,
+    resolveLiveExitShareUpdate,
+    resolveLiveTradeFilledShares,
 } from "./live-trade-request";
 import {
     buildEvaluatedSignals,
@@ -86,7 +90,7 @@ const MAX_STREAM_CANDLES = 20000;
 const MAX_LIVE_CANDLE_LAG_SEC = 10;
 const MAX_POLYMARKET_PRICE_POINTS = 3600;
 const MIN_LIVE_POSITION_SHARES = 0.000001;
-const LIVE_EXIT_RETRY_COOLDOWN_SEC = 5;
+const LIVE_EXIT_RETRY_COOLDOWN_SEC = 1;
 
 type LivePollFetchResult<T> = { ok: true; value: T } | { ok: false };
 type ComparisonSource = "original" | "current" | "saved";
@@ -114,6 +118,7 @@ type LiveOpenExecutionPosition = {
     lastExitReason?: string;
     pendingExit?: LiveExitPlan;
 };
+type LiveExitTriggerRecord = PaperExitRecord | PaperUnfilledRecord;
 type LiveResultView =
     | { action: "entry"; record: LiveTradeResultRecord }
     | { action: "exit"; record: LiveExitResultRecord };
@@ -226,16 +231,6 @@ function formatDecisionSide(side: SecondMarketSide | null | undefined): string {
 
 function formatLiveStatus(status: string): string {
     return status.replace(/_/g, " ");
-}
-
-function liveFilledShares(response: { status: string; filledShares?: number; submittedShares?: number }): number | null {
-    if (response.filledShares !== undefined && Number.isFinite(response.filledShares) && response.filledShares > 0) {
-        return response.filledShares;
-    }
-    if (response.status === "matched" && response.submittedShares !== undefined && Number.isFinite(response.submittedShares) && response.submittedShares > 0) {
-        return response.submittedShares;
-    }
-    return null;
 }
 
 function formatCents(value: number): string {
@@ -513,6 +508,7 @@ export class ExecutionLabService {
             status.available ? "available" : status.configured ? "missing" : "not configured",
             status.liveEnabled ? "live enabled" : "dry-run",
             `cap $${status.maxStakeUsd.toFixed(2)}`,
+            `sizing ${status.sizingMode === "exchange_min" ? "exchange min" : "fixed"}`,
             `exit slip ${status.exitMaxSlippageCents.toFixed(0)}c`,
             status.message,
         ].join(" | ");
@@ -1095,20 +1091,32 @@ export class ExecutionLabService {
     ): Promise<ExecutionLabRecord[]> {
         if (this.executionMode !== "live") return [];
         const exitRecords = paperRecords.filter((record): record is PaperExitRecord => record.recordType === "paper_exit");
-        const sameBatchExitedTradeIds = new Set(exitRecords.map((record) => record.tradeId));
+        const missingExitRecords = paperRecords.filter((record): record is PaperUnfilledRecord =>
+            record.recordType === "paper_unfilled"
+            && record.reason === "missing_exit_quote"
+            && record.expectedExitTimeSec !== undefined
+        );
+        const sameBatchExitedTradeIds = new Set([
+            ...exitRecords.map((record) => record.tradeId),
+            ...missingExitRecords.map((record) => this.findLivePositionForExitTrigger(record)?.paperTradeId ?? record.tradeId ?? ""),
+        ].filter((tradeId) => tradeId.length > 0));
         return [
-            ...await this.buildLiveExitRecords(exitRecords, recordedAtIso),
+            ...await this.buildLiveExitRecords(exitRecords, missingExitRecords, recordedAtIso),
             ...await this.buildLiveTradeRecords(acceptedEntries, recordedAtIso, sameBatchExitedTradeIds),
         ];
     }
 
     private async buildLiveExitRecords(
         exits: readonly PaperExitRecord[],
+        missingExits: readonly PaperUnfilledRecord[],
         recordedAtIso: string
     ): Promise<ExecutionLabRecord[]> {
         const snapshot = this.snapshot;
         if (!snapshot) return [];
         for (const exit of exits) {
+            this.queueLiveExit(exit);
+        }
+        for (const exit of missingExits) {
             this.queueLiveExit(exit);
         }
 
@@ -1131,9 +1139,14 @@ export class ExecutionLabService {
                 continue;
             }
 
-            this.liveExitInFlightByPaperTradeId.add(position.paperTradeId);
-            plan.attempts += 1;
-            plan.nextAttemptAtSec = nowSec + LIVE_EXIT_RETRY_COOLDOWN_SEC;
+            const nextAttempt = plan.attempts + 1;
+            const currentExitQuote = this.latestQuote?.event_start_ts === position.eventStartTs
+                ? this.latestQuote
+                : null;
+            const currentBid = quotePriceForSide(currentExitQuote, position.side, "exit");
+            const exitReferencePrice = nextAttempt > 1 && typeof currentBid === "number" && Number.isFinite(currentBid)
+                ? currentBid
+                : plan.paperExitPrice;
             const request = buildLiveExitSubmitRequest({
                 snapshot,
                 entryRequestId: position.entryRequestId,
@@ -1148,15 +1161,42 @@ export class ExecutionLabService {
                 signalTimeSec: position.signalTimeSec,
                 entryTimeSec: position.entryTimeSec,
                 exitTimeSec: plan.exitTimeSec,
-                paperExitPrice: plan.paperExitPrice,
-                attempt: plan.attempts,
+                paperExitPrice: exitReferencePrice,
+                liveEntryPrice: position.entryPrice,
+                attempt: nextAttempt,
                 maxExitSlippageCents: this.latestLiveExecutorStatus?.exitMaxSlippageCents ?? LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS,
                 createdAtIso: recordedAtIso,
                 nowSec,
             });
+            const floorPreflight = resolveLiveExitFloorPreflight({
+                currentBid,
+                minPrice: request.minPrice,
+            });
+            records.push(buildLiveExitRequestRecord(snapshot, request, recordedAtIso));
+            plan.attempts = nextAttempt;
+            plan.nextAttemptAtSec = nowSec + LIVE_EXIT_RETRY_COOLDOWN_SEC;
+            if (!floorPreflight.shouldSubmit) {
+                position.lastExitStatus = "waiting_floor";
+                position.lastExitReason = floorPreflight.reason;
+                const result = buildLiveExitResultRecord(
+                    snapshot,
+                    request,
+                    buildLiveTradeFailureResponse({
+                        requestId: request.requestId,
+                        status: "rejected",
+                        reason: floorPreflight.reason,
+                        minPrice: request.minPrice,
+                        currentBid: currentBid ?? undefined,
+                    }),
+                    new Date().toISOString()
+                );
+                this.latestLiveExitResult = result;
+                records.push(result);
+                continue;
+            }
 
+            this.liveExitInFlightByPaperTradeId.add(position.paperTradeId);
             try {
-                records.push(buildLiveExitRequestRecord(snapshot, request, recordedAtIso));
                 const response = await submitExecutionLabLiveTrade(request).catch(() =>
                     buildLiveTradeFailureResponse({
                         requestId: request.requestId,
@@ -1176,15 +1216,48 @@ export class ExecutionLabService {
         return records;
     }
 
-    private queueLiveExit(exit: PaperExitRecord): void {
-        const position = this.liveOpenPositionByPaperTradeId.get(exit.tradeId);
-        if (!position || position.pendingExit) return;
-        position.pendingExit = {
-            exitTimeSec: exit.exitTimeSec,
-            paperExitPrice: exit.exitPrice,
+    private findLivePositionForExitTrigger(exit: LiveExitTriggerRecord): LiveOpenExecutionPosition | null {
+        const tradeId = exit.tradeId;
+        if (tradeId) {
+            const position = this.liveOpenPositionByPaperTradeId.get(tradeId);
+            if (position) return position;
+        }
+        if (exit.recordType !== "paper_unfilled" || exit.eventStartTs === undefined || !exit.side) return null;
+        return Array.from(this.liveOpenPositionByPaperTradeId.values()).find((position) =>
+            position.eventStartTs === exit.eventStartTs
+            && position.side === exit.side
+            && position.remainingShares > MIN_LIVE_POSITION_SHARES
+        ) ?? null;
+    }
+
+    private resolveLiveExitTriggerPlan(exit: LiveExitTriggerRecord, position: LiveOpenExecutionPosition): LiveExitPlan | null {
+        if (exit.recordType === "paper_exit") {
+            return {
+                exitTimeSec: exit.exitTimeSec,
+                paperExitPrice: exit.exitPrice,
+                attempts: 0,
+                nextAttemptAtSec: 0,
+            };
+        }
+        if (exit.expectedExitTimeSec === undefined || !Number.isFinite(exit.expectedExitTimeSec)) return null;
+        const currentExitQuote = this.latestQuote?.event_start_ts === position.eventStartTs
+            ? this.latestQuote
+            : null;
+        const currentBid = quotePriceForSide(currentExitQuote, position.side, "exit");
+        return {
+            exitTimeSec: exit.expectedExitTimeSec,
+            paperExitPrice: currentBid ?? position.entryPrice,
             attempts: 0,
             nextAttemptAtSec: 0,
         };
+    }
+
+    private queueLiveExit(exit: LiveExitTriggerRecord): void {
+        const position = this.findLivePositionForExitTrigger(exit);
+        if (!position || position.pendingExit) return;
+        const plan = this.resolveLiveExitTriggerPlan(exit, position);
+        if (!plan) return;
+        position.pendingExit = plan;
     }
 
     private async buildLiveTradeRecords(
@@ -1206,11 +1279,12 @@ export class ExecutionLabService {
 
             this.liveTradeInFlightByPaperTradeId.add(position.tradeId);
             this.liveTradeSubmittedByPaperTradeId.add(position.tradeId);
+            const nowSec = Math.floor(Date.now() / 1000);
             const request = buildLiveTradeSubmitRequest({
                 snapshot,
                 position,
                 createdAtIso: recordedAtIso,
-                nowSec: Math.floor(Date.now() / 1000),
+                nowSec,
             });
 
             try {
@@ -1223,6 +1297,31 @@ export class ExecutionLabService {
                             requestId: request.requestId,
                             status: "rejected",
                             reason: "paper_exit_same_tick",
+                            maxPrice: request.maxPrice,
+                        }),
+                        new Date().toISOString()
+                    );
+                    this.latestLiveTradeResult = result;
+                    records.push(result);
+                    continue;
+                }
+
+                const timingPreflight = resolvePolymarketEntryCutoff({
+                    entryTimeSec: position.entryTimeSec,
+                    eventEndTs: position.eventEndTs,
+                    currentTimeSec: nowSec,
+                    enabled: snapshot.backtestSettings.polymarketEntryCutoffEnabled,
+                    cutoffSeconds: snapshot.backtestSettings.polymarketEntryCutoffSeconds,
+                });
+                if (!timingPreflight.allowed) {
+                    records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso));
+                    const result = buildLiveTradeResultRecord(
+                        snapshot,
+                        request,
+                        buildLiveTradeFailureResponse({
+                            requestId: request.requestId,
+                            status: "rejected",
+                            reason: "event_too_close_to_close",
                             maxPrice: request.maxPrice,
                         }),
                         new Date().toISOString()
@@ -1303,7 +1402,7 @@ export class ExecutionLabService {
         response: { status: string; submittedPrice?: number; submittedShares?: number; filledShares?: number; orderId?: string }
     ): void {
         if (response.status !== "matched" && response.status !== "partial") return;
-        const filledShares = liveFilledShares(response);
+        const filledShares = resolveLiveTradeFilledShares(response);
         if (filledShares === null || filledShares <= MIN_LIVE_POSITION_SHARES) return;
         this.liveOpenPositionByPaperTradeId.set(position.tradeId, {
             entryRequestId,
@@ -1333,15 +1432,17 @@ export class ExecutionLabService {
             return;
         }
         if (response.status !== "matched" && response.status !== "partial") return;
-        const filledShares = liveFilledShares(response);
-        if (filledShares === null) {
-            if (response.status === "matched") {
-                this.liveOpenPositionByPaperTradeId.delete(position.paperTradeId);
-            }
+        const update = resolveLiveExitShareUpdate({
+            remainingShares: position.remainingShares,
+            response,
+            minRemainingShares: MIN_LIVE_POSITION_SHARES,
+        });
+        if (update.filledShares === null) {
+            if (update.closePosition) this.liveOpenPositionByPaperTradeId.delete(position.paperTradeId);
             return;
         }
-        position.remainingShares = Math.max(0, position.remainingShares - filledShares);
-        if (position.remainingShares <= MIN_LIVE_POSITION_SHARES || response.status === "matched") {
+        position.remainingShares = update.remainingShares;
+        if (update.closePosition) {
             this.liveOpenPositionByPaperTradeId.delete(position.paperTradeId);
         }
     }
@@ -1515,6 +1616,8 @@ export class ExecutionLabService {
         switch (record.reason) {
             case "entry_price_filtered":
                 return `Rejected ${formatDecisionSide(record.side)} by Polymarket Entry Price Filter`;
+            case "entry_too_close_to_close":
+                return "Rejected because the event is too close to close";
             case "missing_entry_quote":
                 return "Rejected because the exact entry quote is missing";
             case "missing_event":

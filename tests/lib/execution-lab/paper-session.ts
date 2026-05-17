@@ -1,4 +1,5 @@
 import type { Time } from "lightweight-charts";
+import { resolvePolymarketEntryCutoff } from "../polymarket-entry-cutoff";
 import { isPolymarketEntryPriceFiltered } from "../polymarket-entry-price-filter";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { Trade } from "../types/strategies";
@@ -267,6 +268,7 @@ function buildUnfilledRecord(
     input: ExecutionLabPaperTickInput,
     args: {
         reason: PaperUnfilledRecord["reason"];
+        tradeId?: string;
         signalTimeSec: number;
         entryTimeSec: number | null;
         expectedExitTimeSec?: number;
@@ -280,6 +282,7 @@ function buildUnfilledRecord(
         ...baseRecord(state.snapshot, input.recordedAtIso),
         recordType: "paper_unfilled",
         reason: args.reason,
+        tradeId: args.tradeId,
         signalTimeSec: args.signalTimeSec,
         entryTimeSec: args.entryTimeSec,
         expectedExitTimeSec: args.expectedExitTimeSec,
@@ -485,6 +488,7 @@ function advanceOpenPosition(
             records,
             buildUnfilledRecord(state, input, {
                 reason: "missing_exit_quote",
+                tradeId: position.tradeId,
                 signalTimeSec,
                 entryTimeSec,
                 expectedExitTimeSec: exitTimeSec,
@@ -599,6 +603,22 @@ export function evaluateExecutionLabPaperTick(
                     `unfilled:duplicate:${tradeId}`,
                     records,
                     buildUnfilledRecord(state, input, { reason: "duplicate_event", signalTimeSec, entryTimeSec, side, event })
+                );
+                continue;
+            }
+
+            const entryCutoff = resolvePolymarketEntryCutoff({
+                entryTimeSec,
+                eventEndTs: event.eventEndTs,
+                enabled: state.snapshot.backtestSettings.polymarketEntryCutoffEnabled,
+                cutoffSeconds: state.snapshot.backtestSettings.polymarketEntryCutoffSeconds,
+            });
+            if (!entryCutoff.allowed) {
+                logOnce(
+                    state,
+                    `unfilled:entry_too_close_to_close:${tradeId}`,
+                    records,
+                    buildUnfilledRecord(state, input, { reason: "entry_too_close_to_close", signalTimeSec, entryTimeSec, side, event })
                 );
                 continue;
             }

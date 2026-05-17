@@ -132,6 +132,7 @@ function getScoredPolymarketTrades(trades: readonly Trade[]): Trade[] {
         && trade.polymarketOutcome.marketExitSource !== "duplicate"
         && trade.polymarketOutcome.marketExitSource !== "filtered"
         && trade.polymarketOutcome.marketExitSource !== "entry_price_filtered"
+        && trade.polymarketOutcome.marketExitSource !== "entry_time_filtered"
         && trade.polymarketOutcome.marketExitSource !== "no_event"
         && trade.polymarketOutcome.marketExitSource !== "missing"
     ));

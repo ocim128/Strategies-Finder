@@ -6,6 +6,7 @@ export type PolymarketPayoutSkipReason =
     | "duplicate"
     | "filtered"
     | "entry_price_filtered"
+    | "entry_time_filtered"
     | "no_event"
     | "missing_price"
     | "missing_payout";
@@ -63,6 +64,8 @@ export function resolvePolymarketTradePayout(
             return { payout: null, skipReason: "filtered" };
         case "entry_price_filtered":
             return { payout: null, skipReason: "entry_price_filtered" };
+        case "entry_time_filtered":
+            return { payout: null, skipReason: "entry_time_filtered" };
         case "no_event":
             return { payout: null, skipReason: "no_event" };
         case "missing":

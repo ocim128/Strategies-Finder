@@ -3,6 +3,7 @@ import { expect } from "chai";
 import {
     annotateBacktestResultWithSecondMarketClob,
     evaluateSecondMarketBacktest,
+    isSecondMarketPolymarketScoringSupported,
     type SecondMarketEvaluationContext,
 } from "../lib/second-market/evaluation";
 import type { PolymarketClob1sQuoteRow } from "../lib/second-market/types";
@@ -107,6 +108,24 @@ function context(quotes: PolymarketClob1sQuoteRow[]): SecondMarketEvaluationCont
 }
 
 describe("second market shared evaluation", () => {
+    it("supports 1s CLOB scoring for next-open and next-close chart execution", () => {
+        expect(isSecondMarketPolymarketScoringSupported({
+            symbol: "BTCUSDT",
+            interval: "1s",
+            executionModel: "next_open",
+        })).to.equal(true);
+        expect(isSecondMarketPolymarketScoringSupported({
+            symbol: "BTCUSDT",
+            interval: "1s",
+            executionModel: "next_close",
+        })).to.equal(true);
+        expect(isSecondMarketPolymarketScoringSupported({
+            symbol: "BTCUSDT",
+            interval: "1s",
+            executionModel: "signal_close",
+        })).to.equal(false);
+    });
+
     it("defaults reusable 1s annotations to signal-exit mode", () => {
         const evaluated = evaluateSecondMarketBacktest({
             result: result([trade(1, 1_700_000_010, 1_700_000_020)]),
@@ -243,7 +262,7 @@ describe("second market shared evaluation", () => {
         expect(evaluated.polymarketSummary.outcomeInterval).to.equal("15m");
     });
 
-    it("does not annotate 1s CLOB results unless execution is next_open", async () => {
+    it("does not annotate 1s CLOB results with signal-close execution", async () => {
         const base = result([trade(1, 1_700_000_010, 1_700_000_020)]);
         const annotated = await annotateBacktestResultWithSecondMarketClob({
             result: base,

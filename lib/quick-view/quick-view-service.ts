@@ -67,6 +67,7 @@ export type QuickViewPolymarketSummary = {
     unscoredTrades: number;
     duplicateTradesIgnored?: number;
     entryPriceFilteredTrades?: number;
+    entryTimeFilteredTrades?: number;
     coverage: number;
     winRate: number;
     expectancy: number | null;
@@ -349,6 +350,7 @@ function getScoredPolymarketTrades(trades: readonly Trade[]): Trade[] {
         && trade.polymarketOutcome.marketExitSource !== "duplicate"
         && trade.polymarketOutcome.marketExitSource !== "filtered"
         && trade.polymarketOutcome.marketExitSource !== "entry_price_filtered"
+        && trade.polymarketOutcome.marketExitSource !== "entry_time_filtered"
         && trade.polymarketOutcome.marketExitSource !== "no_event"
         && trade.polymarketOutcome.marketExitSource !== "missing"
     ));
@@ -363,6 +365,7 @@ function inferPolymarketSummaryCounts(
     unscoredTrades: number;
     duplicateTradesIgnored?: number;
     entryPriceFilteredTrades?: number;
+    entryTimeFilteredTrades?: number;
 } {
     const scoredTrades = getScoredPolymarketTrades(trades).length;
     const hasSignalExitAnnotations = trades.some((trade) => trade.polymarketOutcome?.evaluationMode === "signal_exit_same_event");
@@ -372,9 +375,12 @@ function inferPolymarketSummaryCounts(
     const entryPriceFilteredTrades = trades.filter(
         (trade) => trade.polymarketOutcome?.marketExitSource === "entry_price_filtered"
     ).length;
+    const entryTimeFilteredTrades = trades.filter(
+        (trade) => trade.polymarketOutcome?.marketExitSource === "entry_time_filtered"
+    ).length;
     const missingOutcomeTrades = hasSignalExitAnnotations
         ? trades.filter((trade) => trade.polymarketOutcome?.marketExitSource === "no_event").length
-        : Math.max(0, totalTrades - scoredTrades - entryPriceFilteredTrades);
+        : Math.max(0, totalTrades - scoredTrades - entryPriceFilteredTrades - entryTimeFilteredTrades);
 
     return {
         scoredTrades,
@@ -382,6 +388,7 @@ function inferPolymarketSummaryCounts(
         unscoredTrades: Math.max(0, totalTrades - scoredTrades),
         duplicateTradesIgnored: duplicateTradesIgnored > 0 ? duplicateTradesIgnored : undefined,
         entryPriceFilteredTrades: entryPriceFilteredTrades > 0 ? entryPriceFilteredTrades : undefined,
+        entryTimeFilteredTrades: entryTimeFilteredTrades > 0 ? entryTimeFilteredTrades : undefined,
     };
 }
 
@@ -734,6 +741,7 @@ class QuickViewManager {
                 unscoredTrades: existingSummary?.unscoredTrades ?? options.unscoredTrades ?? inferredCounts.unscoredTrades,
                 duplicateTradesIgnored: existingSummary?.duplicateTradesIgnored ?? inferredCounts.duplicateTradesIgnored,
                 entryPriceFilteredTrades: existingSummary?.entryPriceFilteredTrades ?? options.summary?.entryPriceFilteredTrades ?? inferredCounts.entryPriceFilteredTrades,
+                entryTimeFilteredTrades: existingSummary?.entryTimeFilteredTrades ?? options.summary?.entryTimeFilteredTrades ?? inferredCounts.entryTimeFilteredTrades,
                 entrySelectionMode: existingSummary?.entrySelectionMode ?? options.entrySelectionMode,
                 entryOffset: existingSummary?.entryOffset ?? options.selectedOffset,
                 timingProfile: existingSummary?.timingProfile,
@@ -952,6 +960,8 @@ class QuickViewManager {
                         ? result.polymarketTradeSummary.signalExitAllowMultipleTradesPerEvent === true
                         : this.readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent(),
                     entryPriceFilterCents: this.readCurrentPolymarketEntryPriceFilterCents(),
+                    entryCutoffEnabled: currentPolymarketSettings.entryCutoffEnabled,
+                    entryCutoffSeconds: currentPolymarketSettings.entryCutoffSeconds,
                     limitEntry,
                 });
             } catch (error) {
@@ -1055,6 +1065,8 @@ class QuickViewManager {
                     outcomeByEntryTs,
                     allowMultipleTradesPerEvent,
                     entryPriceFilterCents: currentPolymarketSettings.entryPriceFilterCents,
+                    entryCutoffEnabled: currentPolymarketSettings.entryCutoffEnabled,
+                    entryCutoffSeconds: currentPolymarketSettings.entryCutoffSeconds,
                     limitEntry,
                 });
                 const exitResultByTrade = new Map(exitResults.map((exitResult) => [exitResult.trade, exitResult]));
@@ -1110,6 +1122,8 @@ class QuickViewManager {
                     outcomeInterval,
                     pricePoints: limitEntryPricePoints,
                     entryPriceFilterCents: currentPolymarketSettings.entryPriceFilterCents,
+                    entryCutoffEnabled: currentPolymarketSettings.entryCutoffEnabled,
+                    entryCutoffSeconds: currentPolymarketSettings.entryCutoffSeconds,
                     limitEntry,
                 }
             );
@@ -1425,6 +1439,7 @@ class QuickViewManager {
             wins, losses, neutralTrades, scoredTrades, missingTrades, unscoredTrades, coverage,
             duplicateTradesIgnored,
             entryPriceFilteredTrades: summary?.entryPriceFilteredTrades,
+            entryTimeFilteredTrades: summary?.entryTimeFilteredTrades,
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
             expectancy: isSignalExit
                 ? (summary?.expectancy ?? payoutSummary?.expectancy ?? null)

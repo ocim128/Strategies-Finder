@@ -12,6 +12,7 @@ import {
     toFiniteNumber,
 } from "./settings-parse-utils";
 import { resolvePolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
+import { DEFAULT_POLYMARKET_ENTRY_CUTOFF_SECONDS, clampPolymarketEntryCutoffSeconds } from "./polymarket-entry-cutoff";
 import { clampPolymarketEntryPriceFilterCents } from "./polymarket-entry-price-filter";
 import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import {
@@ -86,6 +87,8 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     polymarketEntrySelectionMode: "fixed_offset" as const,
     polymarketEntryOffset: 0,
     polymarketEntryPriceFilterCents: 0,
+    polymarketEntryCutoffEnabled: false,
+    polymarketEntryCutoffSeconds: DEFAULT_POLYMARKET_ENTRY_CUTOFF_SECONDS,
     polymarketExitMode: "resolve_hold" as const,
     polymarketSignalExitAllowMultipleTradesPerEvent: false,
     polymarketPostSignalLimitEntryEnabled: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_ENABLED,
@@ -139,7 +142,8 @@ type NumericResolverKey =
     | "minTradesBeforeFirstFlip"
     | "slippageBps"
     | "maxOpenTrades"
-    | "strategyTimeframeMinutes";
+    | "strategyTimeframeMinutes"
+    | "polymarketEntryCutoffSeconds";
 
 type BooleanResolverKey =
     | "stopLossEnabled"
@@ -151,7 +155,8 @@ type BooleanResolverKey =
     | "riskWinStreakStopLossEnabled"
     | "invertSignals"
     | "allowSameBarExit"
-    | "strategyTimeframeEnabled";
+    | "strategyTimeframeEnabled"
+    | "polymarketEntryCutoffEnabled";
 
 type NumericResolverRule = {
     key: NumericResolverKey;
@@ -257,6 +262,10 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
         resolve: (raw) => Math.max(1, Math.min(2, Math.round(readDefaultedNumber(raw, "maxOpenTrades")))),
     },
     { key: "strategyTimeframeMinutes" },
+    {
+        key: "polymarketEntryCutoffSeconds",
+        resolve: (raw) => clampPolymarketEntryCutoffSeconds(raw["polymarketEntryCutoffSeconds"]),
+    },
 ] as const;
 
 const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
@@ -285,6 +294,7 @@ const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
     { key: "invertSignals", keys: ["invertSignals", "invertSignalsToggle"] },
     { key: "allowSameBarExit", keys: ["allowSameBarExit", "allowSameBarExitToggle"] },
     { key: "strategyTimeframeEnabled", keys: ["strategyTimeframeEnabled", "strategyTimeframeToggle"] },
+    { key: "polymarketEntryCutoffEnabled", keys: ["polymarketEntryCutoffEnabled", "polymarketEntryCutoffToggle"] },
 ] as const;
 
 function resolveNumericSettingRules(
@@ -370,6 +380,8 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "polymarketEntrySelectionMode",
     "polymarketEntryOffset",
     "polymarketEntryPriceFilterCents",
+    "polymarketEntryCutoffToggle",
+    "polymarketEntryCutoffSeconds",
     "polymarketExitMode",
     "polymarketSignalExitAllowMultipleTradesPerEvent",
     "polymarketPostSignalLimitEntryEnabled",
@@ -557,6 +569,8 @@ export function resolveBacktestSettingsFromRaw(
         }
         coerced.polymarketOutcomeInterval = resolvePolymarketOutcomeInterval(coerced.polymarketOutcomeInterval);
         coerced.polymarketEntryPriceFilterCents = clampPolymarketEntryPriceFilterCents(coerced.polymarketEntryPriceFilterCents);
+        coerced.polymarketEntryCutoffEnabled = readBooleanAny(raw, ["polymarketEntryCutoffEnabled", "polymarketEntryCutoffToggle"], EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffEnabled);
+        coerced.polymarketEntryCutoffSeconds = clampPolymarketEntryCutoffSeconds(raw["polymarketEntryCutoffSeconds"]);
         Object.assign(coerced, resolvePolymarketPostSignalLimitSettingFields(
             raw,
             (key, fallback) => readBoolean(raw, key, fallback)
@@ -645,6 +659,8 @@ export function resolveBacktestSettingsFromRaw(
         polymarketEntrySelectionMode: resolvePolymarketEntrySelectionMode(raw["polymarketEntrySelectionMode"]),
         polymarketEntryOffset: readNumber(raw, "polymarketEntryOffset", EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryOffset),
         polymarketEntryPriceFilterCents: clampPolymarketEntryPriceFilterCents(raw["polymarketEntryPriceFilterCents"]),
+        polymarketEntryCutoffEnabled: booleanSettings.polymarketEntryCutoffEnabled,
+        polymarketEntryCutoffSeconds: numericSettings.polymarketEntryCutoffSeconds,
         polymarketExitMode: typeof raw["polymarketExitMode"] === "string"
             && raw["polymarketExitMode"].trim().toLowerCase() === "signal_exit_same_event"
             ? "signal_exit_same_event"

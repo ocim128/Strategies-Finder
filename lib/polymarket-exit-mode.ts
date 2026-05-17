@@ -1,5 +1,9 @@
 export type PolymarketExitMode = "resolve_hold" | "signal_exit_same_event";
 
+export function isPolymarketOneSecondSignalExitExecutionModel(executionModel?: string): boolean {
+    return executionModel === "next_open" || executionModel === "next_close";
+}
+
 export function resolveEffectivePolymarketExitMode(args: {
     requestedMode?: PolymarketExitMode;
     interval: string;
@@ -14,7 +18,9 @@ export function resolveEffectivePolymarketExitMode(args: {
     }
 
     if (normalizedInterval === "1s") {
-        return executionModel === "next_open" ? "signal_exit_same_event" : "resolve_hold";
+        return isPolymarketOneSecondSignalExitExecutionModel(executionModel)
+            ? "signal_exit_same_event"
+            : "resolve_hold";
     }
 
     if (requestedMode !== "signal_exit_same_event") {

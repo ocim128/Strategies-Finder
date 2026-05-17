@@ -338,6 +338,7 @@ describe("Execution Lab live helpers", () => {
     it("maps missing live executor and executor timeout to structured trade results", async () => {
         await withEnv({
             EXECUTION_LAB_LIVE_EXECUTOR_PATH: "Z:\\missing\\live_trade_once.exe",
+            EXECUTION_LAB_LIVE_MAX_STAKE_USD: "10",
             EXECUTION_LAB_LIVE_TIMEOUT_MS: "50",
         }, async () => {
             const handler = createDevHandler();
@@ -351,6 +352,7 @@ describe("Execution Lab live helpers", () => {
         await withEnv({
             EXECUTION_LAB_LIVE_EXECUTOR_PATH: process.execPath,
             EXECUTION_LAB_LIVE_EXECUTOR_ARGS_JSON: JSON.stringify(["-e", "setTimeout(() => {}, 10000);"]),
+            EXECUTION_LAB_LIVE_MAX_STAKE_USD: "10",
             EXECUTION_LAB_LIVE_TIMEOUT_MS: "50",
         }, async () => {
             const handler = createDevHandler();

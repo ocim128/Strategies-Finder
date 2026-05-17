@@ -163,6 +163,7 @@ export type PaperEntryRecord = ExecutionLabBaseRecord & {
 };
 
 export type LiveTradeOrderType = "FOK" | "FAK";
+export type LiveTradeSizingMode = "fixed" | "exchange_min";
 
 export type LiveTradeSubmitStatus =
     | "dry_run"
@@ -300,7 +301,8 @@ export type LiveExitResultRecord = ExecutionLabBaseRecord & {
 
 export type PaperUnfilledRecord = ExecutionLabBaseRecord & {
     recordType: "paper_unfilled";
-    reason: "missing_event" | "missing_entry_quote" | "missing_exit_quote" | "duplicate_event" | "open_position" | "invalid_price" | "entry_price_filtered";
+    reason: "missing_event" | "missing_entry_quote" | "missing_exit_quote" | "duplicate_event" | "open_position" | "invalid_price" | "entry_price_filtered" | "entry_too_close_to_close";
+    tradeId?: string;
     signalTimeSec: number;
     entryTimeSec: number | null;
     expectedExitTimeSec?: number;

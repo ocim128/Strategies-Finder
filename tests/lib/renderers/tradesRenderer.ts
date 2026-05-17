@@ -310,6 +310,8 @@ export class TradesRenderer {
                     outcomeByEntryTs,
                     allowMultipleTradesPerEvent,
                     entryPriceFilterCents: currentPolymarketSettings.entryPriceFilterCents,
+                    entryCutoffEnabled: currentPolymarketSettings.entryCutoffEnabled,
+                    entryCutoffSeconds: currentPolymarketSettings.entryCutoffSeconds,
                     limitEntry,
                 });
                 const exitResultMap = new Map(exitResults.map((r) => [r.trade, r]));
@@ -352,6 +354,8 @@ export class TradesRenderer {
                 outcomeInterval,
                 pricePoints: limitEntryPricePoints,
                 entryPriceFilterCents: currentPolymarketSettings.entryPriceFilterCents,
+                entryCutoffEnabled: currentPolymarketSettings.entryCutoffEnabled,
+                entryCutoffSeconds: currentPolymarketSettings.entryCutoffSeconds,
                 limitEntry,
             }
         );
@@ -423,6 +427,9 @@ export class TradesRenderer {
                 ? this.formatPolymarketEntryPrice(outcome.marketEntryPrice)
                 : "n/a";
             return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly Price Filter: entry price ${escapeHtml(entryPrice)} is outside the configured scoring band">Poly price</span>`;
+        }
+        if (outcome.marketExitSource === "entry_time_filtered") {
+            return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly Time Filter: entry is inside the configured event-close cutoff">Poly time</span>`;
         }
         if (outcome.marketExitSource === "no_event") {
             if (this.isCurrentSignalExitPolymarketTradeInCurrentBucket(trade)) {

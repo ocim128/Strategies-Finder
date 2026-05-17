@@ -121,6 +121,8 @@ export interface BacktestSettingsData {
     polymarketEntrySelectionMode: PolymarketEntrySelectionMode;
     polymarketEntryOffset: number;
     polymarketEntryPriceFilterCents: number;
+    polymarketEntryCutoffEnabled: boolean;
+    polymarketEntryCutoffSeconds: number;
     polymarketExitMode: "resolve_hold" | "signal_exit_same_event";
     polymarketSignalExitAllowMultipleTradesPerEvent: boolean;
     polymarketPostSignalLimitEntryEnabled: boolean;

@@ -738,6 +738,7 @@ export function executionLabVitePlugin(): Plugin {
                     const payload = await readJsonBody(req as IncomingMessage);
                     const validation = validateLiveTradeSubmitRequest(payload, {
                         maxStakeUsd: status.maxStakeUsd,
+                        sizingMode: status.sizingMode,
                         maxExpiryWindowSec: LIVE_TRADE_MAX_EXPIRY_WINDOW_SEC,
                     });
                     if (!validation.ok) {

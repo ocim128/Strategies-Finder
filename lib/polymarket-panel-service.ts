@@ -56,6 +56,8 @@ class PolymarketPanelService {
             readCurrentExecutionModel: () => this.readCurrentExecutionModel(),
             readCurrentPolymarketEntryOffset: () => this.readCurrentPolymarketEntryOffset(),
             readCurrentPolymarketEntryPriceFilterCents: () => this.readCurrentPolymarketEntryPriceFilterCents(),
+            readCurrentPolymarketEntryCutoffEnabled: () => this.readCurrentPolymarketEntryCutoffEnabled(),
+            readCurrentPolymarketEntryCutoffSeconds: () => this.readCurrentPolymarketEntryCutoffSeconds(),
             readCurrentPolymarketEntrySelectionMode: () => this.readCurrentPolymarketEntrySelectionMode(),
             readCurrentPolymarketExitMode: () => this.readCurrentPolymarketExitMode(),
             readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent: () => this.readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent(),
@@ -133,6 +135,14 @@ class PolymarketPanelService {
 
     private readCurrentPolymarketEntryPriceFilterCents(): number {
         return resolvePolymarketDomSettings().entryPriceFilterCents;
+    }
+
+    private readCurrentPolymarketEntryCutoffEnabled(): boolean {
+        return resolvePolymarketDomSettings().entryCutoffEnabled;
+    }
+
+    private readCurrentPolymarketEntryCutoffSeconds(): number {
+        return resolvePolymarketDomSettings().entryCutoffSeconds;
     }
 
     private readCurrentPolymarketExitMode(): "resolve_hold" | "signal_exit_same_event" | undefined {
@@ -238,6 +248,7 @@ class PolymarketPanelService {
         unscoredTrades: number;
         duplicateTradesIgnored?: number;
         entryPriceFilteredTrades?: number;
+        entryTimeFilteredTrades?: number;
         coverage: number;
         winRate: number;
         outcomeRowsLoaded: number;
@@ -343,6 +354,7 @@ class PolymarketPanelService {
             unscoredTrades,
             duplicateTradesIgnored,
             entryPriceFilteredTrades: summary?.entryPriceFilteredTrades,
+            entryTimeFilteredTrades: summary?.entryTimeFilteredTrades,
             coverage,
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
             outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
@@ -493,6 +505,7 @@ class PolymarketPanelService {
                     ${this.renderStatCard("Unscored Trades", String(summary.unscoredTrades))}
                     ${summary.duplicateTradesIgnored && summary.duplicateTradesIgnored > 0 ? this.renderStatCard("Duplicate Trades Ignored", String(summary.duplicateTradesIgnored)) : ""}
                     ${summary.entryPriceFilteredTrades && summary.entryPriceFilteredTrades > 0 ? this.renderStatCard("Entry Price Filtered", String(summary.entryPriceFilteredTrades)) : ""}
+                    ${summary.entryTimeFilteredTrades && summary.entryTimeFilteredTrades > 0 ? this.renderStatCard("Entry Time Filtered", String(summary.entryTimeFilteredTrades)) : ""}
                     ${summary.missingTrades > 0 ? this.renderStatCard("Missing Outcome Rows", String(summary.missingTrades)) : ""}
                     ${this.renderStatCard("Outcome Rows Fetched", String(summary.outcomeRowsLoaded))}
                 </div>

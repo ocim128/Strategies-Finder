@@ -136,6 +136,17 @@ eq(
 
 eq(
     resolveEffectivePolymarketExitMode({
+        interval: "1s",
+        executionModel: "next_close",
+        polymarketAnnotationEnabled: true,
+        requestedMode: "resolve_hold",
+    }),
+    "signal_exit_same_event",
+    "1s + next_close + requested resolve_hold \u2192 signal_exit_same_event"
+);
+
+eq(
+    resolveEffectivePolymarketExitMode({
         interval: "5m",
         executionModel: "next_open",
         polymarketAnnotationEnabled: true,
@@ -480,6 +491,38 @@ console.log("\n=== evaluateSignalExitTrades: entry price filter skips edge-price
     eq(summary.unscoredTrades, 1, "price-filtered trade is unscored");
     eq(annotation?.marketExitSource, "entry_price_filtered", "annotation preserves price-filtered source");
     eq(annotation?.marketEntryPrice, 0.2, "annotation keeps the filtered entry price");
+}
+
+console.log("\n=== evaluateSignalExitTrades: optional entry cutoff skips late-event trades ===");
+
+{
+    const trade = makeTrade({ entryTime: 1288 as any, exitTime: 1290 as any, exitReason: "take_profit" });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300, resolved_outcome_up: 1 });
+    const pricePoints = [
+        makePricePoint({ ts: 1288, yes_price: 0.55, no_price: 0.45 }),
+    ];
+
+    const disabled = evaluateSignalExitTrades({
+        trades: [trade],
+        outcomes: [outcome],
+        pricePoints,
+        entryCutoffSeconds: 15,
+    });
+    const enabled = evaluateSignalExitTrades({
+        trades: [trade],
+        outcomes: [outcome],
+        pricePoints,
+        entryCutoffEnabled: true,
+        entryCutoffSeconds: 15,
+    });
+    const annotation = buildTradeAnnotationFromSignalExitResult(enabled.results[0]!);
+
+    eq(disabled.summary.scoredTrades, 1, "cutoff seconds alone does not filter");
+    eq(enabled.results[0]!.exitSource, "entry_time_filtered", "late entry is marked as time-filtered");
+    eq(enabled.summary.entryTimeFilteredTrades, 1, "time-filtered trade counted");
+    eq(enabled.summary.scoredTrades, 0, "time-filtered trade is not scored");
+    eq(enabled.summary.unscoredTrades, 1, "time-filtered trade is unscored");
+    eq(annotation?.marketExitSource, "entry_time_filtered", "annotation preserves time-filtered source");
 }
 
 console.log("\n=== evaluateSignalExitTrades: same entry quote can also serve as a flat same-event exit ===");

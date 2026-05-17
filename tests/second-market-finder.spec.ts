@@ -109,7 +109,7 @@ function makeInput(): FinderRunInput {
 }
 
 describe("second market Finder runner", () => {
-    it("loads 1s CLOB context once and coerces ranking to signal-exit fills", async () => {
+    it("loads 1s CLOB context once and supports next-close signal-exit fills", async () => {
         let clobLoadCount = 0;
         globalThis.fetch = async (input) => {
             const url = new URL(String(input));
@@ -153,8 +153,11 @@ describe("second market Finder runner", () => {
             throw new Error(`Unexpected fetch ${url.pathname}`);
         };
 
+        const input = makeInput();
+        input.settings.executionModel = "next_close";
+
         const statuses: string[] = [];
-        const output = await runSecondMarketFinder(makeInput(), {
+        const output = await runSecondMarketFinder(input, {
             setProgress: () => undefined,
             setStatus: (text) => statuses.push(text),
             yieldControl: async () => undefined,
@@ -170,7 +173,7 @@ describe("second market Finder runner", () => {
         expect(statuses.at(-1)).to.contain("CLOB quote rows");
     });
 
-    it("rejects 1s CLOB scoring when execution is not next_open", async () => {
+    it("rejects 1s CLOB scoring when execution is signal-close", async () => {
         let fetchCount = 0;
         globalThis.fetch = async () => {
             fetchCount++;
@@ -191,7 +194,7 @@ describe("second market Finder runner", () => {
 
         expect(output.results).to.deep.equal([]);
         expect(fetchCount).to.equal(0);
-        expect(statuses.at(-1)).to.equal("1s CLOB Polymarket scoring requires next_open execution model.");
+        expect(statuses.at(-1)).to.equal("1s CLOB Polymarket scoring requires next_open or next_close execution model.");
     });
 
     it("applies post-signal limit entry settings in 1s CLOB scoring", async () => {

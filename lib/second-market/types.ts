@@ -204,7 +204,7 @@ export interface SecondMarketTradeResult {
     entryImprovement?: number | null;
     exitPrice: number | null;
     exitQuoteTs: number | null;
-    exitSource: "target" | "signal" | "resolution" | "duplicate" | "entry_price_filtered" | "no_event" | "missing";
+    exitSource: "target" | "signal" | "resolution" | "duplicate" | "entry_price_filtered" | "entry_time_filtered" | "no_event" | "missing";
     exitTargetPrice?: number | null;
     exitStatus?: PolymarketLimitExitStatus;
     pnl: number | null;
@@ -217,6 +217,7 @@ export interface SecondMarketBacktestSummary {
     scoredTrades: number;
     duplicateTradesIgnored: number;
     entryPriceFilteredTrades: number;
+    entryTimeFilteredTrades: number;
     missingOutcomeTrades: number;
     missingQuoteTrades: number;
     signalExitedTrades: number;
