@@ -2,13 +2,17 @@
 
 ## Purpose
 
-Add live Polymarket entry execution to the existing Execution Lab path.
+Add live Polymarket entry and signal-exit execution to the existing Execution Lab path.
 
 Paper Trade remains the default. Live Trade reuses the current strategy, settings, market identity, and paper-entry decision path, then changes only the final action from paper fill logging to a real CLOB buy order through a local secret-bearing executor boundary.
 
 Inspiration source:
 
 `C:\Users\user\Documents\Repo2\Polymarket-crypto-5min-arbitrage-bot`
+
+Executor-side operations doc:
+
+`C:\Users\user\Documents\Repo2\Polymarket-crypto-5min-arbitrage-bot\STRATEGY_FINDER_LIVE_TRADE.md`
 
 Relevant side-repo modules:
 
@@ -69,7 +73,7 @@ V1 is working only when all of these are true:
 
 - Live Trade targets Polymarket crypto outcome markets, not Binance spot/futures execution.
 - Existing Strategy Finder settings remain the source of truth for signal validity, direction, entry price filtering, Polymarket symbol/session settings, and stake input.
-- The first implementation places only live entry orders. It does not add automated exits.
+- The first implementation places live entry orders. The first exit implementation sells the same filled token when the matching paper trade emits `paper_exit`.
 - `stakeUsd` is a hard notional cap. The executor may submit less after tick/lot/depth/min-size checks, but it must never submit more.
 - The executor may reject small stakes. Do not silently upsize from the UI.
 - Private keys must not be stored in browser state, localStorage, JSONL logs, or this repository.
@@ -81,7 +85,7 @@ V1 is working only when all of these are true:
 - No new strategy logic.
 - No duplicate risk or signal settings.
 - No new Strategy Finder database.
-- No automated live exits in V1.
+- No hedge exits or opposite-side synthetic exits in V1.
 - No order cancellation controls in V1.
 - No Cloudflare Worker live trading.
 - No production deployment claim.
@@ -190,6 +194,8 @@ export type LiveTradeSubmitResponse = {
     filledShares?: number;
     maxPrice?: number;
     currentAsk?: number;
+    minPrice?: number;
+    currentBid?: number;
     minOrderSize?: number;
     minTickSize?: number;
 };
@@ -236,6 +242,7 @@ Keep the browser request small. Execution-critical normalization belongs to the 
 
 ```ts
 export type LiveTradeSubmitRequest = {
+    action: "entry" | "exit";
     requestId: string;
     sessionId: string;
     paperTradeId: string;
@@ -253,6 +260,10 @@ export type LiveTradeSubmitRequest = {
     signalTimeSec: number;
     entryTimeSec: number;
     maxPrice: number;
+    minPrice?: number;
+    shares?: number;
+    exitTimeSec?: number;
+    entryRequestId?: string;
     orderType: "FOK" | "FAK";
 };
 ```
@@ -260,6 +271,7 @@ export type LiveTradeSubmitRequest = {
 Notes:
 
 - `maxPrice` is the paper entry price cap, not a claim that live execution will fill at that price.
+- For `action: "exit"`, `minPrice` is the live sell floor and `shares` is the tracked filled live-token amount to sell.
 - For V1, only allow `FOK` or `FAK`.
 - Prefer `FAK` for first live smoke if partial fills are acceptable; prefer `FOK` only if all-or-nothing execution is required.
 - Do not allow `GTC` or `GTD` until order status polling and cancellation behavior are implemented.
@@ -380,7 +392,21 @@ V1 failure behavior should be simple and explicit:
 - If current ask is above `maxPrice`, do not submit and log `price_moved_above_cap`.
 - If stake is below exchange minimum after tick/lot/min-size checks, do not auto-upsize.
 - If Polymarket returns `delayed`, preserve it as `status: "delayed"` or `orderStatus: "delayed"` with `reason: "order_delayed"`. Do not collapse it into success or failure.
-- Do not retry live order submission in Strategy Finder V1.
+- Do not retry live entry order submission in Strategy Finder V1.
+
+## Live Exit V1.1
+
+Live exit is intentionally conservative:
+
+- Strategy Finder tracks a live position only after an entry result is `matched` or `partial`.
+- When the matching paper trade emits `paper_exit`, Strategy Finder submits `action: "exit"` for the same `tokenId`.
+- Exit requests sell the tracked remaining live shares; they do not buy the opposite outcome.
+- The exit floor is `paperExitPrice - EXECUTION_LAB_LIVE_EXIT_MAX_SLIPPAGE_CENTS`, clamped to at least `0.01`.
+- The executor re-fetches the current book and rejects with `price_moved_below_floor` if best bid is below `minPrice`.
+- The executor submits the sell using the configured `FAK`/`FOK` order type. Existing side-repo GTC wind-down logic remains unchanged.
+- If a live position remains open after an exit rejection or partial fill, Strategy Finder blocks new same-event live entries with `live_position_open`.
+- Exit retries use a short cooldown and a new request id per attempt. Retries stop when the position is closed, the event window is no longer tradeable, or the executor reports an ambiguous accepted state (`delayed`/`posted_live`) that needs reconciliation before another sell attempt is safe.
+- If a paper entry and its paper exit are first observed in the same poll batch, Strategy Finder rejects the live entry with `paper_exit_same_tick`; it must not enter live after the paper exit already happened.
 
 ## Implementation Phases
 
@@ -530,7 +556,7 @@ Scope:
 
 - Submit one live entry request per accepted paper entry.
 - Display and log executor result.
-- No automated exits.
+- Signal exits use the Live Exit V1.1 path above; no hedge or opposite-side synthetic exits.
 - No `GTC` or `GTD`.
 
 Technical tasks:
@@ -563,7 +589,7 @@ Only consider after V1 live entries are stable:
 
 - Live order status polling.
 - Live position reconciliation.
-- Automated live exits.
+- Configurable exit retry/cancel controls.
 - Order cancellation controls.
 - `GTC` / `GTD` support.
 - Loopback HTTP executor service.

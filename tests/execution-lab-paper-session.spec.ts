@@ -165,6 +165,9 @@ describe("Execution Lab paper session", () => {
         expect(entry?.side).to.equal("yes");
         expect(entry?.entryPrice).to.equal(0.5);
         expect(entry?.shares).to.equal(10);
+        expect(result.acceptedEntries).to.have.length(1);
+        expect(result.acceptedEntries[0]?.conditionId).to.equal("condition");
+        expect(result.acceptedEntries[0]?.yesTokenId).to.equal("yes");
         expect(exit?.exitPrice).to.equal(1);
         expect(exit?.pnlUsd).to.equal(5);
         expect(state.realizedPnlUsd).to.equal(5);
@@ -663,7 +666,9 @@ describe("Execution Lab paper session", () => {
         });
 
         expect(first.records.length).to.be.greaterThan(0);
+        expect(first.acceptedEntries).to.have.length(1);
         expect(second.records).to.deep.equal([]);
+        expect(second.acceptedEntries).to.deep.equal([]);
     });
 
     it("ignores warmup trades and signals before the last processed live candle", () => {

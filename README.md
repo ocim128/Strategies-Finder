@@ -19,7 +19,7 @@ It combines:
 - Validate robustness with walk-forward analysis and latest-OOS checks
 - Stress trade-path robustness with Monte Carlo sequence randomization, bootstrap resampling, and Polymarket bankroll survivability on annotated runs
 - Use Quick View to inspect backtest stats, trades, Polymarket scoring, and Polymarket payout diagnostics, including native `15m` / `1h` session summaries, same-event signal-exit metrics on supported `1m` runs, and exact-second CLOB metrics on supported `1s` runs
-- Paper trade selected `1s` candidates in Execution Lab with live Binance candles, live Polymarket CLOB quotes, chart overlays, and JSONL logs
+- Paper trade selected `1s` candidates in Execution Lab with live Binance candles, live Polymarket CLOB quotes, chart overlays, and JSONL logs; optionally live-trade through a local secret-bearing Polymarket executor after dry-run preflight
 - Run Portfolio Lab across multiple pairs for context, ranking, and sizing decisions
 - Build live or scheduled alert subscriptions through the Worker API
 
@@ -275,6 +275,20 @@ Implementation notes live in [`docs/polymarket.md`](docs/polymarket.md).
 11. The symbol search accepts custom Polymarket event URLs or slugs. Append `:yes` or `:no`, or use the URL `outcome` / `side` query param, to choose the side.
 12. The `PM` control in the timeframe bar prompts for a Polymarket slug or URL when needed, then opens the market at the supported `1m` chart resolution.
 
+### Run Execution Lab Paper Or Live Trade
+Execution Lab is the only browser surface that can dispatch live Polymarket orders. Paper Trade remains the default.
+
+Operational contract:
+- run it on supported `1s` BTCUSDT/XRPUSDT charts with `next_open` Polymarket CLOB timing
+- browser code sends only order intent; wallet secrets stay in the local executor process environment
+- configure Strategy Finder `.env` with `EXECUTION_LAB_LIVE_EXECUTOR_PATH`, `EXECUTION_LAB_LIVE_ENABLED`, and local stake caps
+- configure the side executor repo with `POLYMARKET_PRIVATE_KEY`, `MAX_ORDER_SIZE_USDC`, `ARBITRAGE_ORDER_TYPE=FAK` or `FOK`, `DRY_RUN=false`, and `LIVE_TRADE_ONCE_LIVE_ENABLED=1` only after dry-run preflight is correct
+- live entry buys the same YES/NO token accepted by the paper decision path
+- live exit sells the tracked filled token shares when the matching paper trade emits `paper_exit`; it does not buy the opposite outcome as a hedge
+- rejected or failed exits can retry with fresh request ids while the event remains tradeable; ambiguous accepted states such as `delayed` or `posted_live` stop blind retries until reconciled
+
+Use [`docs/live-trade-plan.md`](docs/live-trade-plan.md) for the Strategy Finder side and `STRATEGY_FINDER_LIVE_TRADE.md` in the Polymarket bot repo for the executor side.
+
 ### Export Latest Entry Signal
 Use the CLI exporter to produce a small local JSON contract for downstream consumers such as the Polymarket bot `external_signal` mode.
 
@@ -364,7 +378,8 @@ Useful extras:
 These are intentionally narrower than the repo itself:
 - `AGENTS.md`: safe-change handbook for coding agents
 - `docs/backtest-endpoint.md`: local backtest endpoint usage and request contract
-- `docs/polymarket.md`: Polymarket scoring, signal-exit, diagnostics, and bridge contracts
+- `docs/polymarket.md`: Polymarket scoring, signal-exit, diagnostics, bridge, and Execution Lab live-trade contracts
+- `docs/live-trade-plan.md`: Execution Lab live-trade executor boundary, request/response schema, and safety plan
 - `docs/strategy-authoring.md`: built-in strategy authoring guide
 - `workers/README.md`: Worker endpoints, cron behavior, D1 setup, Telegram
 - `DEPLOY_TO_VERCEL.md`: deployment notes

@@ -4,6 +4,10 @@ const VALID_RECORD_TYPES = new Set([
     "session_start",
     "signal_seen",
     "paper_entry",
+    "live_trade_request",
+    "live_trade_result",
+    "live_exit_request",
+    "live_exit_result",
     "paper_unfilled",
     "paper_exit",
     "paper_resolution_pending",
@@ -29,6 +33,17 @@ function isValidIsoDate(value: string): boolean {
 
 function isPriceInRange(value: unknown, min: number): value is number {
     return isFiniteNumber(value) && value >= min && value <= 1;
+}
+
+function isLiveTradeStatus(value: unknown): boolean {
+    return value === "dry_run"
+        || value === "rejected"
+        || value === "posted_live"
+        || value === "matched"
+        || value === "delayed"
+        || value === "partial"
+        || value === "duplicate"
+        || value === "failed";
 }
 
 export function sanitizeExecutionLabPathPart(value: string): string {
@@ -61,6 +76,54 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
             if (!isNonEmptyString(value.tradeId)) return { ok: false, error: "tradeId is required" };
             if (value.side !== "yes" && value.side !== "no") return { ok: false, error: "invalid side" };
             if (!isPriceInRange(value.entryPrice, 0.000000001)) return { ok: false, error: "entryPrice is required" };
+            break;
+        case "live_trade_request":
+            if (!isNonEmptyString(value.requestId)) return { ok: false, error: "requestId is required" };
+            if (!isNonEmptyString(value.paperTradeId)) return { ok: false, error: "paperTradeId is required" };
+            if (!isNonEmptyString(value.marketSlug)) return { ok: false, error: "marketSlug is required" };
+            if (!isNonEmptyString(value.conditionId)) return { ok: false, error: "conditionId is required" };
+            if (!isNonEmptyString(value.tokenId)) return { ok: false, error: "tokenId is required" };
+            if (value.side !== "yes" && value.side !== "no") return { ok: false, error: "invalid side" };
+            if (value.orderType !== "FOK" && value.orderType !== "FAK") return { ok: false, error: "invalid orderType" };
+            if (!isFiniteNumber(value.stakeUsd) || value.stakeUsd <= 0) return { ok: false, error: "stakeUsd is required" };
+            if (!isPriceInRange(value.maxPrice, 0.000000001)) return { ok: false, error: "maxPrice is required" };
+            break;
+        case "live_trade_result":
+            if (!isNonEmptyString(value.requestId)) return { ok: false, error: "requestId is required" };
+            if (!isNonEmptyString(value.paperTradeId)) return { ok: false, error: "paperTradeId is required" };
+            if (!isLiveTradeStatus(value.status)) return { ok: false, error: "invalid live trade status" };
+            if (value.reason !== undefined && typeof value.reason !== "string") return { ok: false, error: "invalid live trade reason" };
+            if (value.maxPrice !== undefined && !isPriceInRange(value.maxPrice, 0.000000001)) {
+                return { ok: false, error: "maxPrice is invalid" };
+            }
+            if (value.currentAsk !== undefined && !isPriceInRange(value.currentAsk, 0.000000001)) {
+                return { ok: false, error: "currentAsk is invalid" };
+            }
+            break;
+        case "live_exit_request":
+            if (!isNonEmptyString(value.requestId)) return { ok: false, error: "requestId is required" };
+            if (!isNonEmptyString(value.entryRequestId)) return { ok: false, error: "entryRequestId is required" };
+            if (!isNonEmptyString(value.paperTradeId)) return { ok: false, error: "paperTradeId is required" };
+            if (!isNonEmptyString(value.marketSlug)) return { ok: false, error: "marketSlug is required" };
+            if (!isNonEmptyString(value.conditionId)) return { ok: false, error: "conditionId is required" };
+            if (!isNonEmptyString(value.tokenId)) return { ok: false, error: "tokenId is required" };
+            if (value.side !== "yes" && value.side !== "no") return { ok: false, error: "invalid side" };
+            if (value.orderType !== "FOK" && value.orderType !== "FAK") return { ok: false, error: "invalid orderType" };
+            if (!isFiniteNumber(value.shares) || value.shares <= 0) return { ok: false, error: "shares is required" };
+            if (!isPriceInRange(value.minPrice, 0.000000001)) return { ok: false, error: "minPrice is required" };
+            break;
+        case "live_exit_result":
+            if (!isNonEmptyString(value.requestId)) return { ok: false, error: "requestId is required" };
+            if (!isNonEmptyString(value.entryRequestId)) return { ok: false, error: "entryRequestId is required" };
+            if (!isNonEmptyString(value.paperTradeId)) return { ok: false, error: "paperTradeId is required" };
+            if (!isLiveTradeStatus(value.status)) return { ok: false, error: "invalid live trade status" };
+            if (value.reason !== undefined && typeof value.reason !== "string") return { ok: false, error: "invalid live trade reason" };
+            if (value.minPrice !== undefined && !isPriceInRange(value.minPrice, 0.000000001)) {
+                return { ok: false, error: "minPrice is invalid" };
+            }
+            if (value.currentBid !== undefined && !isPriceInRange(value.currentBid, 0.000000001)) {
+                return { ok: false, error: "currentBid is invalid" };
+            }
             break;
         case "paper_unfilled":
             if (!isNonEmptyString(value.reason)) return { ok: false, error: "reason is required" };

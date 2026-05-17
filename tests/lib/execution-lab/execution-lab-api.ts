@@ -3,7 +3,12 @@ import { loadSecondMarketClobQuotes } from "../second-market/api";
 import type { PolymarketClob1sQuoteRow, SecondMarketPolymarketEvent, SecondMarketSymbol } from "../second-market/types";
 import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import type { PolymarketOutcomeRow } from "../types/polymarket-outcomes";
-import type { ExecutionLabRecord } from "./execution-lab-model";
+import type {
+    ExecutionLabRecord,
+    LiveTradeSubmitRequest,
+    LiveTradeSubmitResponse,
+    LiveTradeOrderType,
+} from "./execution-lab-model";
 
 type ApiError = { ok?: false; error?: string };
 type SessionStartResponse = { ok: true; sessionId: string; logPath: string };
@@ -24,6 +29,20 @@ type LiveCandlesResponse = {
 type LiveEventsResponse = { ok: true; events: SecondMarketPolymarketEvent[] };
 type LiveQuoteResponse = { ok: true; quote: PolymarketClob1sQuoteRow };
 type LiveOutcomesResponse = { ok: true; outcomes: PolymarketOutcomeRow[] };
+export type LiveExecutorStatus = {
+    ok: true;
+    configured: boolean;
+    available: boolean;
+    liveEnabled: boolean;
+    dryRun: boolean;
+    executorKind: "cli";
+    geoblockAllowed: boolean | null;
+    maxStakeUsd: number;
+    exitMaxSlippageCents: number;
+    supportedOrderTypes: LiveTradeOrderType[];
+    message: string;
+    executorPath?: string;
+};
 const MAX_EXECUTION_LAB_LOG_BATCH_RECORDS = 100;
 
 function baseUrl(): string {
@@ -86,6 +105,14 @@ export async function stopExecutionLabMiner(): Promise<ExecutionLabMinerStatus> 
 
 export async function loadExecutionLabMinerStatus(): Promise<ExecutionLabMinerStatus> {
     return getJson<ExecutionLabMinerStatus>("/api/execution-lab/miner/status");
+}
+
+export async function loadExecutionLabLiveExecutorStatus(): Promise<LiveExecutorStatus> {
+    return getJson<LiveExecutorStatus>("/api/execution-lab/live/status");
+}
+
+export async function submitExecutionLabLiveTrade(request: LiveTradeSubmitRequest): Promise<LiveTradeSubmitResponse> {
+    return postJson<LiveTradeSubmitResponse>("/api/execution-lab/live/trade", request);
 }
 
 export async function loadExecutionLabLiveCandles(args: {

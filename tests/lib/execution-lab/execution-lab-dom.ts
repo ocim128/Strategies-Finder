@@ -4,6 +4,7 @@ export const EXECUTION_LAB_IDS = {
     root: "executionlabTab",
     startButton: "executionLabStartPaper",
     stopButton: "executionLabStopPaper",
+    executionMode: "executionLabExecutionMode",
     startMinerButton: "executionLabStartMiner",
     stopMinerButton: "executionLabStopMiner",
     stakeInput: "executionLabStakeUsd",
@@ -14,12 +15,15 @@ export const EXECUTION_LAB_IDS = {
     feedLag: "executionLabFeedLag",
     quoteAge: "executionLabQuoteAge",
     activeEvent: "executionLabActiveEvent",
+    liveExecutorStatus: "executionLabLiveExecutorStatus",
     minerStatus: "executionLabMinerStatus",
     logPath: "executionLabLogPath",
     latestSignal: "executionLabLatestSignal",
     signalParity: "executionLabSignalParity",
     signalMismatch: "executionLabSignalMismatch",
     openPosition: "executionLabOpenPosition",
+    livePosition: "executionLabLivePosition",
+    liveResult: "executionLabLiveResult",
     sessionPnl: "executionLabSessionPnl",
     decisionCard: "executionLabDecisionCard",
     decisionStatus: "executionLabDecisionStatus",
@@ -44,6 +48,7 @@ export interface ExecutionLabDom {
     root: HTMLElement;
     startButton: HTMLButtonElement;
     stopButton: HTMLButtonElement;
+    executionMode: HTMLSelectElement;
     startMinerButton: HTMLButtonElement;
     stopMinerButton: HTMLButtonElement;
     stakeInput: HTMLInputElement;
@@ -54,12 +59,15 @@ export interface ExecutionLabDom {
     feedLag: HTMLElement;
     quoteAge: HTMLElement;
     activeEvent: HTMLElement;
+    liveExecutorStatus: HTMLElement;
     minerStatus: HTMLElement;
     logPath: HTMLElement;
     latestSignal: HTMLElement;
     signalParity: HTMLElement;
     signalMismatch: HTMLElement;
     openPosition: HTMLElement;
+    livePosition: HTMLElement;
+    liveResult: HTMLElement;
     sessionPnl: HTMLElement;
     decisionCard: HTMLElement;
     decisionStatus: HTMLElement;
@@ -83,6 +91,7 @@ export function queryExecutionLabDom(): ExecutionLabDom {
         root: getRequiredElement(EXECUTION_LAB_IDS.root),
         startButton: getRequiredElement<HTMLButtonElement>(EXECUTION_LAB_IDS.startButton),
         stopButton: getRequiredElement<HTMLButtonElement>(EXECUTION_LAB_IDS.stopButton),
+        executionMode: getRequiredElement<HTMLSelectElement>(EXECUTION_LAB_IDS.executionMode),
         startMinerButton: getRequiredElement<HTMLButtonElement>(EXECUTION_LAB_IDS.startMinerButton),
         stopMinerButton: getRequiredElement<HTMLButtonElement>(EXECUTION_LAB_IDS.stopMinerButton),
         stakeInput: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.stakeInput),
@@ -93,12 +102,15 @@ export function queryExecutionLabDom(): ExecutionLabDom {
         feedLag: getRequiredElement(EXECUTION_LAB_IDS.feedLag),
         quoteAge: getRequiredElement(EXECUTION_LAB_IDS.quoteAge),
         activeEvent: getRequiredElement(EXECUTION_LAB_IDS.activeEvent),
+        liveExecutorStatus: getRequiredElement(EXECUTION_LAB_IDS.liveExecutorStatus),
         minerStatus: getRequiredElement(EXECUTION_LAB_IDS.minerStatus),
         logPath: getRequiredElement(EXECUTION_LAB_IDS.logPath),
         latestSignal: getRequiredElement(EXECUTION_LAB_IDS.latestSignal),
         signalParity: getRequiredElement(EXECUTION_LAB_IDS.signalParity),
         signalMismatch: getRequiredElement(EXECUTION_LAB_IDS.signalMismatch),
         openPosition: getRequiredElement(EXECUTION_LAB_IDS.openPosition),
+        livePosition: getRequiredElement(EXECUTION_LAB_IDS.livePosition),
+        liveResult: getRequiredElement(EXECUTION_LAB_IDS.liveResult),
         sessionPnl: getRequiredElement(EXECUTION_LAB_IDS.sessionPnl),
         decisionCard: getRequiredElement(EXECUTION_LAB_IDS.decisionCard),
         decisionStatus: getRequiredElement(EXECUTION_LAB_IDS.decisionStatus),

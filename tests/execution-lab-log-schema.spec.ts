@@ -113,6 +113,84 @@ describe("Execution Lab JSONL schema", () => {
         }).ok).to.equal(false);
     });
 
+    it("validates live trade request and result records", () => {
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "live_trade_request",
+            requestId: "live-1",
+            paperTradeId: "paper-1",
+            eventStartTs: 1_700_000_000,
+            eventEndTs: 1_700_000_300,
+            marketSlug: "btc-event",
+            conditionId: "condition",
+            tokenId: "yes-token",
+            side: "yes",
+            stakeUsd: 5,
+            signalTimeSec: 1_700_000_010,
+            entryTimeSec: 1_700_000_011,
+            maxPrice: 0.54,
+            orderType: "FAK",
+        }).ok).to.equal(true);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "live_trade_result",
+            requestId: "live-1",
+            paperTradeId: "paper-1",
+            status: "dry_run",
+            reason: "executor_dry_run",
+            currentAsk: 0.53,
+            maxPrice: 0.54,
+        }).ok).to.equal(true);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "live_trade_request",
+            requestId: "live-1",
+            paperTradeId: "paper-1",
+            marketSlug: "btc-event",
+            conditionId: "condition",
+            tokenId: "yes-token",
+            side: "yes",
+            stakeUsd: 5,
+            maxPrice: 0.54,
+            orderType: "GTC",
+        }).ok).to.equal(false);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "live_trade_result",
+            requestId: "live-1",
+            paperTradeId: "paper-1",
+            status: "unknown",
+        }).ok).to.equal(false);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "live_exit_request",
+            requestId: "exit-1",
+            entryRequestId: "live-1",
+            paperTradeId: "paper-1",
+            eventStartTs: 1_700_000_000,
+            eventEndTs: 1_700_000_300,
+            marketSlug: "btc-event",
+            conditionId: "condition",
+            tokenId: "yes-token",
+            side: "yes",
+            shares: 8.5,
+            exitTimeSec: 1_700_000_050,
+            minPrice: 0.49,
+            orderType: "FAK",
+        }).ok).to.equal(true);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "live_exit_result",
+            requestId: "exit-1",
+            entryRequestId: "live-1",
+            paperTradeId: "paper-1",
+            status: "rejected",
+            reason: "price_moved_below_floor",
+            currentBid: 0.48,
+            minPrice: 0.49,
+        }).ok).to.equal(true);
+    });
+
     it("validates execution parity mismatch records", () => {
         expect(validateExecutionLabRecord({
             ...baseRecord,

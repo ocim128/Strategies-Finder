@@ -32,6 +32,20 @@ function createHandler(): MockHandler {
     return handler;
 }
 
+function createDevHandler(): MockHandler {
+    let handler: MockHandler | null = null;
+    const plugin = executionLabVitePlugin();
+    plugin.configureServer?.({
+        middlewares: {
+            use(prefix: string, registered: MockHandler) {
+                if (prefix === "/api/execution-lab") handler = registered;
+            },
+        },
+    } as never);
+    if (!handler) throw new Error("Expected execution lab middleware to register");
+    return handler;
+}
+
 async function invoke(handler: MockHandler, path: string): Promise<{ statusCode: number; json: any }> {
     return await new Promise((resolve, reject) => {
         const request = Readable.from([]) as NodeJS.ReadableStream & { method?: string; url?: string };
@@ -142,6 +156,52 @@ function clobQuote(sampleTs: number): PolymarketClob1sQuoteRow {
     };
 }
 
+function liveTradeRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    const nowSec = Math.floor(Date.now() / 1000);
+    return {
+        requestId: "live-request-1",
+        sessionId: "session-1",
+        paperTradeId: "paper-1",
+        createdAtIso: new Date(nowSec * 1000).toISOString(),
+        expiresAtSec: nowSec + 10,
+        symbol: "BTCUSDT",
+        strategyKey: "test_strategy",
+        eventStartTs: nowSec - 20,
+        eventEndTs: nowSec + 280,
+        marketSlug: "btc-event",
+        conditionId: "condition",
+        tokenId: "yes-token",
+        side: "yes",
+        stakeUsd: 5,
+        signalTimeSec: nowSec - 2,
+        entryTimeSec: nowSec - 1,
+        maxPrice: 0.55,
+        orderType: "FAK",
+        ...overrides,
+    };
+}
+
+function withEnv<T>(updates: Record<string, string | undefined>, run: () => Promise<T>): Promise<T> {
+    const previous = new Map<string, string | undefined>();
+    for (const [key, value] of Object.entries(updates)) {
+        previous.set(key, process.env[key]);
+        if (value === undefined) {
+            delete process.env[key];
+        } else {
+            process.env[key] = value;
+        }
+    }
+    return run().finally(() => {
+        for (const [key, value] of previous.entries()) {
+            if (value === undefined) {
+                delete process.env[key];
+            } else {
+                process.env[key] = value;
+            }
+        }
+    });
+}
+
 describe("Execution Lab live helpers", () => {
     it("preserves zero CLOB prices as valid boundary prices", () => {
         expect(normalizeExecutionLabClobPrice(0)).to.equal(0);
@@ -239,6 +299,67 @@ describe("Execution Lab live helpers", () => {
         expect(response.statusCode).to.equal(200);
         expect(response.json.running).to.equal(false);
         expect(response.json.dbPath).to.include("second-market-data.sqlite");
+    });
+
+    it("reports live executor status without starting the executor", async () => {
+        await withEnv({
+            EXECUTION_LAB_LIVE_EXECUTOR_PATH: process.execPath,
+            EXECUTION_LAB_LIVE_ENABLED: "0",
+        }, async () => {
+            const handler = createHandler();
+            const response = await invoke(handler, "/live/status");
+
+            expect(response.statusCode).to.equal(200);
+            expect(response.json.available).to.equal(true);
+            expect(response.json.dryRun).to.equal(true);
+        });
+    });
+
+    it("does not register live trade submission in preview mode by default", async () => {
+        await withEnv({ EXECUTION_LAB_ALLOW_LIVE_TRADE_PREVIEW: undefined }, async () => {
+            const handler = createHandler();
+            const response = await invokePost(handler, "/live/trade", liveTradeRequest());
+
+            expect(response.statusCode).to.equal(404);
+        });
+    });
+
+    it("rejects malformed live trade requests before invoking the executor", async () => {
+        const handler = createDevHandler();
+        const response = await invokePost(handler, "/live/trade", {
+            ...liveTradeRequest(),
+            orderType: "GTC",
+        });
+
+        expect(response.statusCode).to.equal(400);
+        expect(response.json.error).to.include("orderType");
+    });
+
+    it("maps missing live executor and executor timeout to structured trade results", async () => {
+        await withEnv({
+            EXECUTION_LAB_LIVE_EXECUTOR_PATH: "Z:\\missing\\live_trade_once.exe",
+            EXECUTION_LAB_LIVE_TIMEOUT_MS: "50",
+        }, async () => {
+            const handler = createDevHandler();
+            const response = await invokePost(handler, "/live/trade", liveTradeRequest());
+
+            expect(response.statusCode).to.equal(200);
+            expect(response.json.status).to.equal("failed");
+            expect(response.json.reason).to.equal("executor_unavailable");
+        });
+
+        await withEnv({
+            EXECUTION_LAB_LIVE_EXECUTOR_PATH: process.execPath,
+            EXECUTION_LAB_LIVE_EXECUTOR_ARGS_JSON: JSON.stringify(["-e", "setTimeout(() => {}, 10000);"]),
+            EXECUTION_LAB_LIVE_TIMEOUT_MS: "50",
+        }, async () => {
+            const handler = createDevHandler();
+            const response = await invokePost(handler, "/live/trade", liveTradeRequest());
+
+            expect(response.statusCode).to.equal(200);
+            expect(response.json.status).to.equal("failed");
+            expect(response.json.reason).to.equal("executor_timeout");
+        });
     });
 
     it("rejects unsupported session symbols before creating a log", async () => {

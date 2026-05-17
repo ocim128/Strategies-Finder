@@ -287,13 +287,14 @@ Strategy-lib failure modes seen repeatedly:
 - If touching robust mode, keep explicit `PASS`/`FAIL` decision semantics
 
 ### Modify Polymarket scoring
-- Keep the four Polymarket contracts separate:
+- Keep the five Polymarket contracts separate:
   - direct charting
   - outcome scoring
   - diagnostics
   - bridge export
+  - Execution Lab live trade
 - `polymarketExitMode` defaults to `resolve_hold`
-- `signal_exit_same_event` is only effective on `1m` + `next_open`; use `resolveEffectivePolymarketExitMode(...)` instead of open-coded checks
+- `signal_exit_same_event` is only effective on `1m` + `next_open` and supported `1s` BTCUSDT/XRPUSDT CLOB `next_open` runs; use `resolveEffectivePolymarketExitMode(...)` instead of open-coded checks
 - Signal-exit pricing depends on local `polymarket_price_points`; if you change ingestion or storage, update together:
   - `lib/polymarket-price-points-ingest.ts`
   - `lib/local-sqlite-polymarket-api.ts`
@@ -301,11 +302,24 @@ Strategy-lib failure modes seen repeatedly:
   - `docs/polymarket.md`
 - Finder and Hunt signal-exit mode must not fan out by `polymarketEntryOffset`; applying results should preserve `polymarketExitMode` and only write offset data in `resolve_hold`
 - endpoint Preview / Copy / HTTP execution and Strategy Ensemble intentionally stay on `resolve_hold`; do not silently broaden those callers
+- Execution Lab live trade is not bridge export: browser code sends non-secret order intent to a local executor, private keys stay in `.env`, and live entry/exit semantics live in `lib/execution-lab/live-trade-request.ts`, `lib/execution-lab/live-executor-adapter.ts`, and the side-repo one-shot executor docs
 - Validation habit after Polymarket changes:
   - `npm run typecheck`
   - `..\..\..\node_modules\.bin\esno tests\polymarket-signal-exit.spec.ts`
   - `..\..\..\node_modules\.bin\esno tests\finder-polymarket.spec.ts`
   - `..\..\..\node_modules\.bin\esno tests\quick-view-polymarket.spec.ts`
+
+### Modify Execution Lab live trade
+- Treat Paper Trade and Live Trade as separate modes; Paper Trade must remain the startup default
+- Do not send wallet secrets to the browser, localStorage, JSONL logs, or request payloads
+- Keep live entry as a buy of the paper-selected YES/NO token; keep live exit as a sell of tracked filled shares for that same token
+- Do not buy the opposite outcome as an exit unless a separate hedge feature is explicitly requested
+- Preserve idempotency: request ids, ledger behavior, and executor locks must prevent duplicate live submissions
+- If exit retry semantics change, keep `docs/live-trade-plan.md`, `docs/polymarket.md`, and the side-repo Strategy Finder live-trade doc aligned
+- Validation habit after Execution Lab live-trade changes:
+  - `npm run typecheck`
+  - `npm run test -- execution-lab`
+  - `..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts`
 
 ### Modify Walk Forward
 - Be careful with UI state versus backtest state handoff
@@ -446,7 +460,8 @@ Treat unrelated pre-existing failures carefully. Do not assume your change cause
 If you change behavior substantially, update the docs that actually carry that contract:
 - `README.md` for repo-level usage and architecture
 - `docs/backtest-endpoint.md` for local HTTP backtest request/response behavior, fixed endpoint sizing, and Preview/Copy Endpoint parity rules
-- `docs/polymarket.md` for Polymarket scoring, signal-exit, diagnostics, and bridge behavior
+- `docs/polymarket.md` for Polymarket scoring, signal-exit, diagnostics, bridge, and Execution Lab live-trade behavior
+- `docs/live-trade-plan.md` for Execution Lab live-trade request/response, executor boundary, and retry safety
 - `AGENTS.md` for safe-change guidance
 - `workers/README.md` for worker API and cron behavior
 

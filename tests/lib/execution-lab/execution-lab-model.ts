@@ -108,6 +108,7 @@ export interface ExecutionLabPaperMarker {
 export interface ExecutionLabPaperTickResult {
     records: ExecutionLabRecord[];
     markers: ExecutionLabPaperMarker[];
+    acceptedEntries: ExecutionLabOpenPaperPosition[];
 }
 
 export type ExecutionLabBaseRecord = {
@@ -159,6 +160,142 @@ export type PaperEntryRecord = ExecutionLabBaseRecord & {
     noBid: number | null;
     noAsk: number | null;
     quoteAgeMs: number | null;
+};
+
+export type LiveTradeOrderType = "FOK" | "FAK";
+
+export type LiveTradeSubmitStatus =
+    | "dry_run"
+    | "rejected"
+    | "posted_live"
+    | "matched"
+    | "delayed"
+    | "partial"
+    | "duplicate"
+    | "failed";
+
+export type LiveTradeSubmitRequestBase = {
+    requestId: string;
+    sessionId: string;
+    paperTradeId: string;
+    createdAtIso: string;
+    expiresAtSec: number;
+    symbol: string;
+    strategyKey: string;
+    eventStartTs: number;
+    eventEndTs: number;
+    marketSlug: string;
+    conditionId: string;
+    tokenId: string;
+    side: SecondMarketSide;
+    stakeUsd: number;
+    signalTimeSec: number;
+    entryTimeSec: number;
+    maxPrice: number;
+    orderType: LiveTradeOrderType;
+};
+
+export type LiveEntrySubmitRequest = LiveTradeSubmitRequestBase & {
+    action: "entry";
+};
+
+export type LiveExitSubmitRequest = LiveTradeSubmitRequestBase & {
+    action: "exit";
+    entryRequestId: string;
+    shares: number;
+    exitTimeSec: number;
+    minPrice: number;
+};
+
+export type LiveTradeSubmitRequest = LiveEntrySubmitRequest | LiveExitSubmitRequest;
+
+export type LiveTradeSubmitResponse = {
+    ok: true;
+    requestId: string;
+    status: LiveTradeSubmitStatus;
+    reason?: string;
+    orderId?: string;
+    orderStatus?: string;
+    orderSuccess?: boolean;
+    submittedPrice?: number;
+    submittedShares?: number;
+    submittedNotionalUsd?: number;
+    filledShares?: number;
+    maxPrice?: number;
+    currentAsk?: number;
+    minPrice?: number;
+    currentBid?: number;
+    minOrderSize?: number;
+    minTickSize?: number;
+};
+
+export type LiveTradeRequestRecord = ExecutionLabBaseRecord & {
+    recordType: "live_trade_request";
+    requestId: string;
+    paperTradeId: string;
+    eventStartTs: number;
+    eventEndTs: number;
+    marketSlug: string;
+    conditionId: string;
+    tokenId: string;
+    side: SecondMarketSide;
+    stakeUsd: number;
+    signalTimeSec: number;
+    entryTimeSec: number;
+    maxPrice: number;
+    orderType: LiveTradeOrderType;
+};
+
+export type LiveTradeResultRecord = ExecutionLabBaseRecord & {
+    recordType: "live_trade_result";
+    requestId: string;
+    paperTradeId: string;
+    status: LiveTradeSubmitStatus;
+    reason?: string;
+    orderId?: string;
+    orderStatus?: string;
+    orderSuccess?: boolean;
+    submittedPrice?: number;
+    submittedShares?: number;
+    submittedNotionalUsd?: number;
+    filledShares?: number;
+    currentAsk?: number;
+    maxPrice?: number;
+};
+
+export type LiveExitRequestRecord = ExecutionLabBaseRecord & {
+    recordType: "live_exit_request";
+    requestId: string;
+    entryRequestId: string;
+    paperTradeId: string;
+    eventStartTs: number;
+    eventEndTs: number;
+    marketSlug: string;
+    conditionId: string;
+    tokenId: string;
+    side: SecondMarketSide;
+    shares: number;
+    exitTimeSec: number;
+    minPrice: number;
+    orderType: LiveTradeOrderType;
+};
+
+export type LiveExitResultRecord = ExecutionLabBaseRecord & {
+    recordType: "live_exit_result";
+    requestId: string;
+    entryRequestId: string;
+    paperTradeId: string;
+    status: LiveTradeSubmitStatus;
+    reason?: string;
+    orderId?: string;
+    orderStatus?: string;
+    orderSuccess?: boolean;
+    submittedPrice?: number;
+    submittedShares?: number;
+    submittedNotionalUsd?: number;
+    filledShares?: number;
+    currentBid?: number;
+    minPrice?: number;
 };
 
 export type PaperUnfilledRecord = ExecutionLabBaseRecord & {
@@ -222,6 +359,10 @@ export type ExecutionLabRecord =
     | SessionStartRecord
     | SignalSeenRecord
     | PaperEntryRecord
+    | LiveTradeRequestRecord
+    | LiveTradeResultRecord
+    | LiveExitRequestRecord
+    | LiveExitResultRecord
     | PaperUnfilledRecord
     | PaperExitRecord
     | PaperResolutionPendingRecord

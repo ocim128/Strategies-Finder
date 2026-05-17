@@ -23,11 +23,14 @@ import {
     loadExecutionLabLiveEvents,
     loadExecutionLabLiveOutcomes,
     loadExecutionLabLiveQuote,
+    loadExecutionLabLiveExecutorStatus,
     loadExecutionLabStoredQuotes,
     startExecutionLabMiner,
     startExecutionLabSession,
     stopExecutionLabMiner,
+    submitExecutionLabLiveTrade,
     type ExecutionLabMinerStatus,
+    type LiveExecutorStatus,
 } from "./execution-lab-api";
 import { queryExecutionLabDom, type ExecutionLabDom } from "./execution-lab-dom";
 import {
@@ -45,7 +48,20 @@ import {
     type ExecutionLabRecord,
     type ExecutionLabSessionSnapshot,
     type ExecutionParityMismatchRecord,
+    type LiveExitResultRecord,
+    type LiveTradeResultRecord,
+    type PaperExitRecord,
 } from "./execution-lab-model";
+import {
+    LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS,
+    buildLiveExitRequestRecord,
+    buildLiveExitResultRecord,
+    buildLiveExitSubmitRequest,
+    buildLiveTradeFailureResponse,
+    buildLiveTradeRequestRecord,
+    buildLiveTradeResultRecord,
+    buildLiveTradeSubmitRequest,
+} from "./live-trade-request";
 import {
     buildEvaluatedSignals,
     createExecutionLabPaperState,
@@ -69,9 +85,38 @@ const INITIAL_CANDLE_LIMIT = 900;
 const MAX_STREAM_CANDLES = 20000;
 const MAX_LIVE_CANDLE_LAG_SEC = 10;
 const MAX_POLYMARKET_PRICE_POINTS = 3600;
+const MIN_LIVE_POSITION_SHARES = 0.000001;
+const LIVE_EXIT_RETRY_COOLDOWN_SEC = 5;
 
 type LivePollFetchResult<T> = { ok: true; value: T } | { ok: false };
 type ComparisonSource = "original" | "current" | "saved";
+type LiveExitPlan = {
+    exitTimeSec: number;
+    paperExitPrice: number;
+    attempts: number;
+    nextAttemptAtSec: number;
+};
+type LiveOpenExecutionPosition = {
+    entryRequestId: string;
+    paperTradeId: string;
+    eventStartTs: number;
+    eventEndTs: number;
+    marketSlug: string;
+    conditionId: string;
+    tokenId: string;
+    side: SecondMarketSide;
+    signalTimeSec: number;
+    entryTimeSec: number;
+    entryPrice: number;
+    remainingShares: number;
+    entryOrderId?: string;
+    lastExitStatus?: string;
+    lastExitReason?: string;
+    pendingExit?: LiveExitPlan;
+};
+type LiveResultView =
+    | { action: "entry"; record: LiveTradeResultRecord }
+    | { action: "exit"; record: LiveExitResultRecord };
 type ComparisonCandidate = {
     label: string;
     strategyKey: string;
@@ -95,6 +140,7 @@ type ExecutionLabPaperDecision = {
     quote: string;
     rejectedEntry: string | null;
 };
+type ExecutionLabExecutionMode = "paper" | "live";
 
 function finiteUnixSeconds(time: OHLCVData["time"]): number | null {
     const seconds = parseTimeToUnixSeconds(time);
@@ -178,6 +224,20 @@ function formatDecisionSide(side: SecondMarketSide | null | undefined): string {
     return side === "yes" ? "Buy Up / YES" : side === "no" ? "Buy Down / NO" : "--";
 }
 
+function formatLiveStatus(status: string): string {
+    return status.replace(/_/g, " ");
+}
+
+function liveFilledShares(response: { status: string; filledShares?: number; submittedShares?: number }): number | null {
+    if (response.filledShares !== undefined && Number.isFinite(response.filledShares) && response.filledShares > 0) {
+        return response.filledShares;
+    }
+    if (response.status === "matched" && response.submittedShares !== undefined && Number.isFinite(response.submittedShares) && response.submittedShares > 0) {
+        return response.submittedShares;
+    }
+    return null;
+}
+
 function formatCents(value: number): string {
     return `${(value * 100).toFixed(1)}c`;
 }
@@ -251,26 +311,46 @@ export class ExecutionLabService {
     private comparisonRunning = false;
     private latestComparison: ComparisonResult | null = null;
     private sessionStartCandleTimeSec: number | null = null;
+    private executionMode: ExecutionLabExecutionMode = "paper";
+    private liveTradeInFlightByPaperTradeId = new Set<string>();
+    private liveTradeSubmittedByPaperTradeId = new Set<string>();
+    private liveExitInFlightByPaperTradeId = new Set<string>();
+    private liveOpenPositionByPaperTradeId = new Map<string, LiveOpenExecutionPosition>();
+    private latestLiveTradeResult: LiveTradeResultRecord | null = null;
+    private latestLiveExitResult: LiveExitResultRecord | null = null;
+    private latestLiveExecutorStatus: LiveExecutorStatus | null = null;
 
     init(): void {
         if (this.initialized) return;
         this.initialized = true;
         this.dom = queryExecutionLabDom();
         this.dom.stakeInput.value = String(readPersistedSettings().stakeUsd);
+        this.dom.executionMode.value = "paper";
+        this.syncExecutionMode();
         this.syncSavedConfigOptions();
         this.bindEvents();
         this.renderIdle();
         void this.refreshMinerStatus();
+        void this.refreshLiveExecutorStatus();
         setInterval(() => void this.refreshMinerStatus(), 5000);
+        setInterval(() => void this.refreshLiveExecutorStatus(), 5000);
     }
 
     async startPaper(): Promise<void> {
+        await this.startExecutionSession("paper");
+    }
+
+    private async startExecutionSession(mode: ExecutionLabExecutionMode): Promise<void> {
         if (this.running || this.starting) return;
         this.init();
         this.starting = true;
         try {
+            this.executionMode = mode;
+            if (mode === "live" && !this.confirmLiveStart()) {
+                return;
+            }
             this.resetSessionState();
-            this.setStatus("Starting");
+            this.setStatus(mode === "live" ? "Starting Live Trade" : "Starting");
             const prepared = await this.prepareSession();
             this.snapshot = prepared.snapshot;
             this.paperState = createExecutionLabPaperState(prepared.snapshot);
@@ -334,16 +414,23 @@ export class ExecutionLabService {
         this.loggedExecutionMismatchKeys.clear();
         this.latestComparison = null;
         this.sessionStartCandleTimeSec = null;
+        this.liveTradeInFlightByPaperTradeId.clear();
+        this.liveTradeSubmittedByPaperTradeId.clear();
+        this.liveExitInFlightByPaperTradeId.clear();
+        this.liveOpenPositionByPaperTradeId.clear();
+        this.latestLiveTradeResult = null;
+        this.latestLiveExitResult = null;
         this.renderIdle();
     }
 
     private bindEvents(): void {
         const dom = this.dom;
         if (!dom) return;
-        dom.startButton.addEventListener("click", () => void this.startPaper());
+        dom.startButton.addEventListener("click", () => void this.startExecutionSession(this.executionMode));
         dom.stopButton.addEventListener("click", () => void this.stop("user_stop"));
         dom.startMinerButton.addEventListener("click", () => void this.startMiner());
         dom.stopMinerButton.addEventListener("click", () => void this.stopMiner());
+        dom.executionMode.addEventListener("change", () => this.syncExecutionMode());
         dom.comparisonSource.addEventListener("change", () => this.syncComparisonControls());
         dom.runComparisonButton.addEventListener("click", () => void this.runComparison());
         dom.stakeInput.addEventListener("change", () => {
@@ -352,13 +439,31 @@ export class ExecutionLabService {
         });
     }
 
-    private setStatus(text: string, tone: "neutral" | "running" | "warning" | "error" = "neutral"): void {
+    private syncExecutionMode(): void {
+        const dom = this.dom;
+        if (!dom) return;
+        this.executionMode = dom.executionMode.value === "live" ? "live" : "paper";
+        dom.executionMode.value = this.executionMode;
+        dom.startButton.textContent = this.executionMode === "live" ? "Start Live" : "Start Paper";
+        dom.startButton.classList.toggle("btn-primary", this.executionMode === "paper");
+        dom.startButton.classList.toggle("btn-danger", this.executionMode === "live");
+        if (!this.running) {
+            this.setStatus(this.executionMode === "live" ? "Live Trade selected. Session will still start in Paper after reload." : "Ready");
+        }
+    }
+
+    private confirmLiveStart(): boolean {
+        return window.confirm("Start Live Trade? If the local executor is live-enabled, accepted entries can place real Polymarket orders.");
+    }
+
+    private setStatus(text: string, tone: "neutral" | "running" | "warning" | "error" | "live" = "neutral"): void {
         const status = this.dom?.status;
         if (!status) return;
         status.textContent = text;
         status.classList.toggle("is-running", tone === "running");
         status.classList.toggle("is-warning", tone === "warning");
         status.classList.toggle("is-error", tone === "error");
+        status.classList.toggle("is-live", tone === "live");
     }
 
     private setRunningState(running: boolean): void {
@@ -368,6 +473,7 @@ export class ExecutionLabService {
         dom.startButton.disabled = running;
         dom.stopButton.disabled = !running;
         dom.stakeInput.disabled = running;
+        dom.executionMode.disabled = running;
     }
 
     private setComparisonStatus(text: string, tone: "neutral" | "running" | "warning" | "error" = "neutral"): void {
@@ -395,11 +501,40 @@ export class ExecutionLabService {
         dom.stopMinerButton.disabled = !status.running;
     }
 
+    private renderLiveExecutorStatus(status: LiveExecutorStatus | null, fallback?: string): void {
+        const dom = this.dom;
+        if (!dom) return;
+        if (!status) {
+            dom.liveExecutorStatus.textContent = fallback ?? "--";
+            dom.liveExecutorStatus.classList.remove("is-ok", "is-warning");
+            return;
+        }
+        dom.liveExecutorStatus.textContent = [
+            status.available ? "available" : status.configured ? "missing" : "not configured",
+            status.liveEnabled ? "live enabled" : "dry-run",
+            `cap $${status.maxStakeUsd.toFixed(2)}`,
+            `exit slip ${status.exitMaxSlippageCents.toFixed(0)}c`,
+            status.message,
+        ].join(" | ");
+        dom.liveExecutorStatus.classList.toggle("is-ok", status.available && !status.liveEnabled);
+        dom.liveExecutorStatus.classList.toggle("is-warning", status.liveEnabled || !status.available);
+    }
+
     private async refreshMinerStatus(): Promise<void> {
         try {
             this.renderMinerStatus(await loadExecutionLabMinerStatus());
         } catch (error) {
             this.renderMinerStatus(null, executionLabErrorMessage(error));
+        }
+    }
+
+    private async refreshLiveExecutorStatus(): Promise<void> {
+        try {
+            this.latestLiveExecutorStatus = await loadExecutionLabLiveExecutorStatus();
+            this.renderLiveExecutorStatus(this.latestLiveExecutorStatus);
+        } catch (error) {
+            this.latestLiveExecutorStatus = null;
+            this.renderLiveExecutorStatus(null, executionLabErrorMessage(error));
         }
     }
 
@@ -901,8 +1036,9 @@ export class ExecutionLabService {
             });
             const parityMismatches = this.collectExecutionParityMismatches(backtestResult.result.trades, tickResult.records, latestBufferedTs);
             const parityRecords = this.buildExecutionMismatchRecords(parityMismatches, recordedAtIso);
+            const liveExecutionRecords = await this.buildLiveExecutionRecords(tickResult.records, tickResult.acceptedEntries, recordedAtIso);
 
-            await this.appendRecords([...parityRecords, ...tickResult.records]);
+            await this.appendRecords([...parityRecords, ...tickResult.records, ...liveExecutionRecords]);
             this.updateExecutionParityState(parityMismatches);
             this.updateLatestPaperDecision(tickResult.records);
             this.appendLatestLoggedSignals(tickResult.records, backtestSignals);
@@ -918,9 +1054,14 @@ export class ExecutionLabService {
             const statusText = this.executionMismatchTotal > 0
                 ? `Execution parity mismatch | ${this.latestExecutionMismatch?.detail ?? "see detail"}`
                 : hasActiveEvent
-                    ? `Running live ${snapshot.symbol} 1s | latest ${formatDateTime(latestBufferedTs)}`
-                    : `Running live ${snapshot.symbol} 1s | no active Polymarket event for ${formatDateTime(latestBufferedTs)}`;
-            this.setStatus(statusText, this.executionMismatchTotal === 0 && hasActiveEvent ? "running" : "warning");
+                    ? `Running ${this.executionMode === "live" ? "LIVE TRADE" : "Paper Trade"} ${snapshot.symbol} 1s | latest ${formatDateTime(latestBufferedTs)}`
+                    : `Running ${this.executionMode === "live" ? "LIVE TRADE" : "Paper Trade"} ${snapshot.symbol} 1s | no active Polymarket event for ${formatDateTime(latestBufferedTs)}`;
+            this.setStatus(
+                statusText,
+                this.executionMode === "live"
+                    ? "live"
+                    : this.executionMismatchTotal === 0 && hasActiveEvent ? "running" : "warning"
+            );
         } catch (error) {
             await this.stop("error", executionLabErrorMessage(error));
         } finally {
@@ -945,6 +1086,264 @@ export class ExecutionLabService {
 
     private async appendRecords(records: readonly ExecutionLabRecord[]): Promise<void> {
         await appendExecutionLabRecords(records);
+    }
+
+    private async buildLiveExecutionRecords(
+        paperRecords: readonly ExecutionLabRecord[],
+        acceptedEntries: readonly ExecutionLabOpenPaperPosition[],
+        recordedAtIso: string
+    ): Promise<ExecutionLabRecord[]> {
+        if (this.executionMode !== "live") return [];
+        const exitRecords = paperRecords.filter((record): record is PaperExitRecord => record.recordType === "paper_exit");
+        const sameBatchExitedTradeIds = new Set(exitRecords.map((record) => record.tradeId));
+        return [
+            ...await this.buildLiveExitRecords(exitRecords, recordedAtIso),
+            ...await this.buildLiveTradeRecords(acceptedEntries, recordedAtIso, sameBatchExitedTradeIds),
+        ];
+    }
+
+    private async buildLiveExitRecords(
+        exits: readonly PaperExitRecord[],
+        recordedAtIso: string
+    ): Promise<ExecutionLabRecord[]> {
+        const snapshot = this.snapshot;
+        if (!snapshot) return [];
+        for (const exit of exits) {
+            this.queueLiveExit(exit);
+        }
+
+        const records: ExecutionLabRecord[] = [];
+        const nowSec = Math.floor(Date.now() / 1000);
+        for (const position of this.liveOpenPositionByPaperTradeId.values()) {
+            const plan = position.pendingExit;
+            if (
+                !plan
+                || position.remainingShares <= MIN_LIVE_POSITION_SHARES
+                || this.liveExitInFlightByPaperTradeId.has(position.paperTradeId)
+                || nowSec < plan.nextAttemptAtSec
+            ) {
+                continue;
+            }
+            if (nowSec >= position.eventEndTs) {
+                position.pendingExit = undefined;
+                position.lastExitStatus = "rejected";
+                position.lastExitReason = "event_closed_before_exit";
+                continue;
+            }
+
+            this.liveExitInFlightByPaperTradeId.add(position.paperTradeId);
+            plan.attempts += 1;
+            plan.nextAttemptAtSec = nowSec + LIVE_EXIT_RETRY_COOLDOWN_SEC;
+            const request = buildLiveExitSubmitRequest({
+                snapshot,
+                entryRequestId: position.entryRequestId,
+                paperTradeId: position.paperTradeId,
+                eventStartTs: position.eventStartTs,
+                eventEndTs: position.eventEndTs,
+                marketSlug: position.marketSlug,
+                conditionId: position.conditionId,
+                tokenId: position.tokenId,
+                side: position.side,
+                shares: position.remainingShares,
+                signalTimeSec: position.signalTimeSec,
+                entryTimeSec: position.entryTimeSec,
+                exitTimeSec: plan.exitTimeSec,
+                paperExitPrice: plan.paperExitPrice,
+                attempt: plan.attempts,
+                maxExitSlippageCents: this.latestLiveExecutorStatus?.exitMaxSlippageCents ?? LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS,
+                createdAtIso: recordedAtIso,
+                nowSec,
+            });
+
+            try {
+                records.push(buildLiveExitRequestRecord(snapshot, request, recordedAtIso));
+                const response = await submitExecutionLabLiveTrade(request).catch(() =>
+                    buildLiveTradeFailureResponse({
+                        requestId: request.requestId,
+                        reason: "executor_unavailable",
+                        minPrice: request.minPrice,
+                    })
+                );
+                const result = buildLiveExitResultRecord(snapshot, request, response, new Date().toISOString());
+                this.latestLiveExitResult = result;
+                this.updateLiveExitPosition(position, response);
+                records.push(result);
+            } finally {
+                this.liveExitInFlightByPaperTradeId.delete(position.paperTradeId);
+            }
+        }
+
+        return records;
+    }
+
+    private queueLiveExit(exit: PaperExitRecord): void {
+        const position = this.liveOpenPositionByPaperTradeId.get(exit.tradeId);
+        if (!position || position.pendingExit) return;
+        position.pendingExit = {
+            exitTimeSec: exit.exitTimeSec,
+            paperExitPrice: exit.exitPrice,
+            attempts: 0,
+            nextAttemptAtSec: 0,
+        };
+    }
+
+    private async buildLiveTradeRecords(
+        acceptedEntries: readonly ExecutionLabOpenPaperPosition[],
+        recordedAtIso: string,
+        sameBatchExitedTradeIds: ReadonlySet<string>
+    ): Promise<ExecutionLabRecord[]> {
+        const snapshot = this.snapshot;
+        if (this.executionMode !== "live" || !snapshot || acceptedEntries.length === 0) return [];
+
+        const records: ExecutionLabRecord[] = [];
+        for (const position of acceptedEntries) {
+            if (
+                this.liveTradeSubmittedByPaperTradeId.has(position.tradeId)
+                || this.liveTradeInFlightByPaperTradeId.has(position.tradeId)
+            ) {
+                continue;
+            }
+
+            this.liveTradeInFlightByPaperTradeId.add(position.tradeId);
+            this.liveTradeSubmittedByPaperTradeId.add(position.tradeId);
+            const request = buildLiveTradeSubmitRequest({
+                snapshot,
+                position,
+                createdAtIso: recordedAtIso,
+                nowSec: Math.floor(Date.now() / 1000),
+            });
+
+            try {
+                if (sameBatchExitedTradeIds.has(position.tradeId)) {
+                    records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso));
+                    const result = buildLiveTradeResultRecord(
+                        snapshot,
+                        request,
+                        buildLiveTradeFailureResponse({
+                            requestId: request.requestId,
+                            status: "rejected",
+                            reason: "paper_exit_same_tick",
+                            maxPrice: request.maxPrice,
+                        }),
+                        new Date().toISOString()
+                    );
+                    this.latestLiveTradeResult = result;
+                    records.push(result);
+                    continue;
+                }
+
+                const blockingPosition = this.findOpenLivePositionForEvent(position.eventStartTs);
+                if (blockingPosition && blockingPosition.paperTradeId !== position.tradeId) {
+                    records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso));
+                    const result = buildLiveTradeResultRecord(
+                        snapshot,
+                        request,
+                        buildLiveTradeFailureResponse({
+                            requestId: request.requestId,
+                            status: "rejected",
+                            reason: "live_position_open",
+                            maxPrice: request.maxPrice,
+                        }),
+                        new Date().toISOString()
+                    );
+                    this.latestLiveTradeResult = result;
+                    records.push(result);
+                    continue;
+                }
+
+                if (!request.marketSlug || !request.conditionId || !request.tokenId) {
+                    const result = buildLiveTradeResultRecord(
+                        snapshot,
+                        request,
+                        buildLiveTradeFailureResponse({
+                            requestId: request.requestId,
+                            status: "rejected",
+                            reason: "missing_market_identity",
+                            maxPrice: request.maxPrice,
+                        }),
+                        new Date().toISOString()
+                    );
+                    this.latestLiveTradeResult = result;
+                    records.push(result);
+                    continue;
+                }
+
+                records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso));
+                const response = await submitExecutionLabLiveTrade(request).catch(() =>
+                    buildLiveTradeFailureResponse({
+                        requestId: request.requestId,
+                        reason: "executor_unavailable",
+                        maxPrice: request.maxPrice,
+                    })
+                );
+                const result = buildLiveTradeResultRecord(snapshot, request, response, new Date().toISOString());
+                this.latestLiveTradeResult = result;
+                this.trackLiveEntryPosition(position, request.requestId, response);
+                records.push(result);
+            } finally {
+                this.liveTradeInFlightByPaperTradeId.delete(position.tradeId);
+            }
+        }
+
+        return records;
+    }
+
+    private findOpenLivePositionForEvent(eventStartTs: number): LiveOpenExecutionPosition | null {
+        for (const position of this.liveOpenPositionByPaperTradeId.values()) {
+            if (position.eventStartTs === eventStartTs && position.remainingShares > MIN_LIVE_POSITION_SHARES) {
+                return position;
+            }
+        }
+        return null;
+    }
+
+    private trackLiveEntryPosition(
+        position: ExecutionLabOpenPaperPosition,
+        entryRequestId: string,
+        response: { status: string; submittedPrice?: number; submittedShares?: number; filledShares?: number; orderId?: string }
+    ): void {
+        if (response.status !== "matched" && response.status !== "partial") return;
+        const filledShares = liveFilledShares(response);
+        if (filledShares === null || filledShares <= MIN_LIVE_POSITION_SHARES) return;
+        this.liveOpenPositionByPaperTradeId.set(position.tradeId, {
+            entryRequestId,
+            paperTradeId: position.tradeId,
+            eventStartTs: position.eventStartTs,
+            eventEndTs: position.eventEndTs,
+            marketSlug: position.marketSlug,
+            conditionId: position.conditionId,
+            tokenId: position.side === "yes" ? position.yesTokenId : position.noTokenId,
+            side: position.side,
+            signalTimeSec: position.signalTimeSec,
+            entryTimeSec: position.entryTimeSec,
+            entryPrice: response.submittedPrice ?? position.entryPrice,
+            remainingShares: filledShares,
+            entryOrderId: response.orderId,
+        });
+    }
+
+    private updateLiveExitPosition(
+        position: LiveOpenExecutionPosition,
+        response: { status: string; reason?: string; submittedShares?: number; filledShares?: number }
+    ): void {
+        position.lastExitStatus = response.status;
+        position.lastExitReason = response.reason;
+        if (response.status === "delayed" || response.status === "posted_live") {
+            position.pendingExit = undefined;
+            return;
+        }
+        if (response.status !== "matched" && response.status !== "partial") return;
+        const filledShares = liveFilledShares(response);
+        if (filledShares === null) {
+            if (response.status === "matched") {
+                this.liveOpenPositionByPaperTradeId.delete(position.paperTradeId);
+            }
+            return;
+        }
+        position.remainingShares = Math.max(0, position.remainingShares - filledShares);
+        if (position.remainingShares <= MIN_LIVE_POSITION_SHARES || response.status === "matched") {
+            this.liveOpenPositionByPaperTradeId.delete(position.paperTradeId);
+        }
     }
 
     private async tryLivePollFetch<T>(operation: () => Promise<T>): Promise<LivePollFetchResult<T>> {
@@ -1415,11 +1814,14 @@ export class ExecutionLabService {
         dom.feedLag.textContent = "--";
         dom.quoteAge.textContent = "--";
         dom.activeEvent.textContent = "--";
+        this.renderLiveExecutorStatus(this.latestLiveExecutorStatus);
         dom.latestSignal.textContent = "--";
         dom.signalParity.textContent = "--";
         dom.signalParity.classList.remove("is-ok", "is-warning");
         dom.signalMismatch.textContent = "--";
         dom.openPosition.textContent = "--";
+        dom.livePosition.textContent = "--";
+        dom.liveResult.textContent = "--";
         dom.sessionPnl.textContent = "--";
         dom.logPath.textContent = "--";
         this.renderDecision(null, null);
@@ -1441,6 +1843,7 @@ export class ExecutionLabService {
             : this.latestQuote.quote_age_ms / 1000;
 
         dom.configSnapshot.textContent = [
+            this.executionMode === "live" ? "LIVE TRADE" : "Paper Trade",
             snapshot.strategyName,
             `${snapshot.symbol}->${snapshot.outcomeSymbol}`,
             `$${snapshot.stakeUsd.toFixed(2)}`,
@@ -1490,10 +1893,52 @@ export class ExecutionLabService {
                 ? `pending settlement ${pendingSettlements.length} | latest ${firstPending.side.toUpperCase()} ended ${formatDateTime(firstPending.eventEndTs)}`
             : "--";
 
+        const livePosition = this.firstOpenLivePosition();
+        dom.livePosition.textContent = livePosition
+            ? [
+                livePosition.side.toUpperCase(),
+                `shares ${livePosition.remainingShares.toFixed(4)}`,
+                `entry ${formatPolyPrice(livePosition.entryPrice)}`,
+                livePosition.lastExitStatus ? `exit ${formatLiveStatus(livePosition.lastExitStatus)}` : null,
+                livePosition.lastExitReason,
+            ].filter(Boolean).join(" | ")
+            : "--";
+
+        const liveResult = this.latestLiveResult();
+        dom.liveResult.textContent = liveResult
+            ? [
+                liveResult.action,
+                formatLiveStatus(liveResult.record.status),
+                liveResult.record.reason,
+                liveResult.record.orderId ? `order ${liveResult.record.orderId}` : null,
+                liveResult.action === "entry" && liveResult.record.currentAsk !== undefined ? `ask ${formatPolyPrice(liveResult.record.currentAsk)}` : null,
+                liveResult.action === "entry" && liveResult.record.maxPrice !== undefined ? `cap ${formatPolyPrice(liveResult.record.maxPrice)}` : null,
+                liveResult.action === "exit" && liveResult.record.currentBid !== undefined ? `bid ${formatPolyPrice(liveResult.record.currentBid)}` : null,
+                liveResult.action === "exit" && liveResult.record.minPrice !== undefined ? `floor ${formatPolyPrice(liveResult.record.minPrice)}` : null,
+            ].filter(Boolean).join(" | ")
+            : "--";
+
         const realized = this.paperState?.realizedPnlUsd ?? 0;
         dom.sessionPnl.textContent = `realized ${formatMoney(realized)} | entries ${this.paperState?.totalEntries ?? 0} | open ${openPositions.length} | pending ${pendingSettlements.length} | closed ${this.paperState?.totalClosed ?? 0}`;
         this.renderPaperMetrics();
         this.renderRecentTrades();
+    }
+
+    private firstOpenLivePosition(): LiveOpenExecutionPosition | null {
+        return Array.from(this.liveOpenPositionByPaperTradeId.values())
+            .find((position) => position.remainingShares > MIN_LIVE_POSITION_SHARES) ?? null;
+    }
+
+    private latestLiveResult(): LiveResultView | null {
+        const entry = this.latestLiveTradeResult
+            ? { action: "entry" as const, record: this.latestLiveTradeResult }
+            : null;
+        const exit = this.latestLiveExitResult
+            ? { action: "exit" as const, record: this.latestLiveExitResult }
+            : null;
+        if (!entry) return exit;
+        if (!exit) return entry;
+        return Date.parse(exit.record.recordedAtIso) >= Date.parse(entry.record.recordedAtIso) ? exit : entry;
     }
 
     private renderRecentTrades(): void {
@@ -1502,7 +1947,32 @@ export class ExecutionLabService {
         if (!dom || !paperState) return;
         dom.recentTrades.innerHTML = "";
         const trades = paperState.closedTrades.slice(-6).reverse();
-        if (trades.length === 0) {
+        const liveResult = this.latestLiveResult();
+        if (liveResult) {
+            const row = document.createElement("div");
+            row.className = "execution-lab-trade-row";
+            const side = document.createElement("div");
+            side.className = "execution-lab-trade-side";
+            side.textContent = liveResult.action === "entry" ? "LIVE ENTRY" : "LIVE EXIT";
+            const meta = document.createElement("div");
+            meta.className = "execution-lab-trade-meta";
+            meta.textContent = [
+                formatLiveStatus(liveResult.record.status),
+                liveResult.record.reason,
+                `paper ${liveResult.record.paperTradeId}`,
+                liveResult.record.orderId ? `order ${liveResult.record.orderId}` : null,
+            ].filter(Boolean).join(" | ");
+            const pnl = document.createElement("div");
+            pnl.className = liveResult.record.status === "failed" || liveResult.record.status === "rejected"
+                ? "execution-lab-pnl-negative"
+                : "execution-lab-pnl-positive";
+            pnl.textContent = formatLiveStatus(liveResult.record.status);
+            row.appendChild(side);
+            row.appendChild(meta);
+            row.appendChild(pnl);
+            dom.recentTrades.appendChild(row);
+        }
+        if (trades.length === 0 && !liveResult) {
             const empty = document.createElement("div");
             empty.className = "execution-lab-empty";
             empty.textContent = "No paper trades yet.";

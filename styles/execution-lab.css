@@ -23,6 +23,10 @@
     width: 96px;
 }
 
+.execution-lab-mode {
+    width: 132px;
+}
+
 .execution-lab-status {
     border: 1px solid var(--border-color);
     border-radius: 6px;
@@ -45,6 +49,11 @@
 .execution-lab-status.is-warning {
     color: var(--warning);
     border-color: rgba(245, 182, 66, 0.45);
+}
+
+.execution-lab-status.is-live {
+    color: var(--red-light);
+    border-color: hsl(var(--hsl-danger) / 0.55);
 }
 
 .execution-lab-substatus {
@@ -314,6 +323,10 @@
     }
 
     .execution-lab-stake {
+        width: 100%;
+    }
+
+    .execution-lab-mode {
         width: 100%;
     }
 }

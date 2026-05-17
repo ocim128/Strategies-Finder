@@ -8,6 +8,7 @@ Keep these paths separate:
 - Polymarket outcome scoring for backtests, Finder, and Hunt
 - diagnostics and deployability analysis on scored trades
 - bridge export for downstream `external_signal` bots
+- Execution Lab live trade through a local executor
 
 Most Polymarket regressions come from mixing those paths together.
 
@@ -52,7 +53,17 @@ If you want endpoint Preview / Copy or Strategy Ensemble parity:
 - both stay on `resolve_hold`
 - `signal_exit_same_event` is explicitly fenced out there
 
-## The Four Polymarket Contracts
+If you want Execution Lab live trading:
+
+- use the Execution Lab tab on supported `1s` BTCUSDT/XRPUSDT `next_open` runs
+- keep Paper Trade as the default until dry-run executor preflight is clean
+- configure Strategy Finder `.env` with the local executor path and live-enabled flag
+- configure the side executor repo with the private key, signature mode, stake cap, `FAK`/`FOK`, and `LIVE_TRADE_ONCE_LIVE_ENABLED`
+- live entries buy the same YES/NO side accepted by the paper decision path
+- live exits sell tracked filled shares for the same token when the matching paper trade emits `paper_exit`
+- browser code must never receive private keys; it sends only request intent to the local executor endpoint
+
+## The Five Polymarket Contracts
 
 ### 1. Direct Polymarket market charting
 
@@ -152,6 +163,31 @@ Core files:
 - `lib/polymarket-panel-service.ts`
 - `scripts/export-latest-entry-signal.ts`
 - `scripts/export-latest-ensemble-entry-signal.ts`
+
+### 5. Execution Lab live trade
+
+This is the local live-order path for selected `1s` paper decisions. It is not scoring, charting, diagnostics, or bridge export.
+
+Important behavior:
+
+- Paper Trade remains the startup default and writes JSONL paper records only
+- Live Trade requires an explicit UI mode switch and confirmation
+- Strategy Finder reads non-secret executor configuration from `.env`
+- the local executor process reads wallet secrets from its own server-side `.env`
+- entry requests buy the paper-selected YES/NO token with `maxPrice` capped at the paper entry price
+- exit requests sell the tracked filled shares of the same token with `minPrice` floored by the configured exit slippage
+- rejected or failed live exits can retry with fresh request ids; `delayed` and `posted_live` stop blind retries until reconciliation
+- if a paper entry and paper exit first appear in the same poll batch, the live entry is rejected as `paper_exit_same_tick`
+- live submission is registered only in the Vite dev server path unless preview live trading is explicitly allowed
+
+Core files:
+
+- `html-partials/tab-execution-lab.html`
+- `lib/execution-lab/execution-lab-service.ts`
+- `lib/execution-lab/live-trade-request.ts`
+- `lib/execution-lab/live-executor-adapter.ts`
+- `lib/execution-lab/execution-lab-vite-plugin.ts`
+- `docs/live-trade-plan.md`
 
 ## Exit Modes
 
@@ -305,6 +341,7 @@ If you add another target, update:
 | Endpoint Preview / Copy / HTTP execution | `resolve_hold` only | not supported | not supported | exit mode and limit-entry settings are stripped |
 | Strategy Ensemble Polymarket | `resolve_hold` only | not supported | not supported | explicit fence in the ensemble path |
 | Bridge export | separate contract | separate contract | separate contract | ignores scoring-mode settings; still chart-symbol `5m` entry-signal export |
+| Execution Lab Paper/Live Trade | not a scoring surface | supported `1s` BTCUSDT/XRPUSDT `next_open` CLOB decision path | entry filter applies through the paper decision path | browser intent plus local executor; no browser secrets |
 
 Two important nuances:
 
@@ -612,6 +649,7 @@ If you touch Polymarket code, first decide which contract you are editing:
 - `resolve_hold` scoring semantics
 - `signal_exit_same_event` pricing semantics
 - post-signal limit-entry fill semantics
+- Execution Lab live trade request, retry, or executor status semantics
 - local price-point storage or ingestion
 - Finder or Hunt Polymarket ranking
 - diagnostics rendering
@@ -724,6 +762,20 @@ Focused Polymarket tests:
 ..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts
 ```
 
+Execution Lab live-trade tests:
+
+```bash
+..\..\..\node_modules\.bin\esno tests\execution-lab-live-trade-request.spec.ts
+```
+
+```bash
+..\..\..\node_modules\.bin\esno tests\execution-lab-live-executor-adapter.spec.ts
+```
+
+```bash
+npm run test -- execution-lab
+```
+
 ## Rule Of Thumb
 
 Use this mental shortcut:
@@ -731,7 +783,9 @@ Use this mental shortcut:
 - charting a market uses the Polymarket provider
 - scoring a backtest uses local SQLite outcome rows
 - `1m` signal-exit scoring also uses local SQLite price points
+- `1s` signal-exit scoring and Execution Lab live decisions use exact-second CLOB rows
 - diagnostics read scored results and may lazily rebuild them
 - bridge export is a bot-facing file-generation path with tighter rules
+- Execution Lab live trade is a local executor path with real order side effects
 
 When those stay separate, Polymarket changes remain predictable.

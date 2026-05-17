@@ -12,7 +12,15 @@ import type {
     SecondMarketSymbol,
 } from "../second-market/types";
 import type { ExecutionLabRecord } from "./execution-lab-model";
+import {
+    loadLiveExecutorStatus,
+    submitLiveTradeToExecutor,
+} from "./live-executor-adapter";
 import { sanitizeExecutionLabPathPart, validateExecutionLabRecord } from "./paper-log-schema";
+import {
+    LIVE_TRADE_MAX_EXPIRY_WINDOW_SEC,
+    validateLiveTradeSubmitRequest,
+} from "./live-trade-request";
 
 const LOG_ROOT = resolve(process.cwd(), "logs", "paper-execution");
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -577,7 +585,7 @@ export function executionLabVitePlugin(): Plugin {
         return minerStatusPayload();
     }
 
-    const register = (middlewares: any) => {
+    const register = (middlewares: any, allowLiveSubmission: boolean) => {
         middlewares.use("/api/execution-lab", async (req: any, res: any) => {
             const method = req.method || "GET";
             const requestUrl = new URL(req.url || "/", "http://localhost");
@@ -701,6 +709,11 @@ export function executionLabVitePlugin(): Plugin {
                     return;
                 }
 
+                if (method === "GET" && path === "/live/status") {
+                    sendJson(res, 200, loadLiveExecutorStatus());
+                    return;
+                }
+
                 if (method !== "POST") {
                     sendJson(res, 405, { ok: false, error: "Method not allowed" });
                     return;
@@ -713,6 +726,25 @@ export function executionLabVitePlugin(): Plugin {
 
                 if (path === "/miner/stop") {
                     sendJson(res, 200, stopMiner());
+                    return;
+                }
+
+                if (path === "/live/trade") {
+                    if (!allowLiveSubmission) {
+                        sendJson(res, 404, { ok: false, error: "Live trade submission is not registered in preview mode." });
+                        return;
+                    }
+                    const status = loadLiveExecutorStatus();
+                    const payload = await readJsonBody(req as IncomingMessage);
+                    const validation = validateLiveTradeSubmitRequest(payload, {
+                        maxStakeUsd: status.maxStakeUsd,
+                        maxExpiryWindowSec: LIVE_TRADE_MAX_EXPIRY_WINDOW_SEC,
+                    });
+                    if (!validation.ok) {
+                        sendJson(res, 400, { ok: false, error: validation.error });
+                        return;
+                    }
+                    sendJson(res, 200, await submitLiveTradeToExecutor(validation.request));
                     return;
                 }
 
@@ -797,10 +829,13 @@ export function executionLabVitePlugin(): Plugin {
     return {
         name: "execution-lab-api",
         configureServer(server) {
-            register(server.middlewares);
+            register(server.middlewares, true);
         },
         configurePreviewServer(server) {
-            register(server.middlewares);
+            register(
+                server.middlewares,
+                process.env.EXECUTION_LAB_ALLOW_LIVE_TRADE_PREVIEW === "1"
+            );
         },
     };
 }

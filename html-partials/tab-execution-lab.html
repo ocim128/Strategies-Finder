@@ -4,6 +4,13 @@
             <div class="section-title">Execution Lab</div>
         </div>
         <div class="execution-lab-actions">
+            <label class="param-group execution-lab-mode">
+                <span class="param-label">Mode</span>
+                <select class="param-input" id="executionLabExecutionMode">
+                    <option value="paper">Paper Trade</option>
+                    <option value="live">Live Trade</option>
+                </select>
+            </label>
             <label class="param-group execution-lab-stake">
                 <span class="param-label">Stake</span>
                 <input class="param-input" id="executionLabStakeUsd" type="number" min="1" step="1" value="5">
@@ -33,6 +40,8 @@
                 <strong id="executionLabQuoteAge">--</strong>
                 <span>Active Event</span>
                 <strong id="executionLabActiveEvent">--</strong>
+                <span>Live Executor</span>
+                <strong id="executionLabLiveExecutorStatus">--</strong>
                 <span>Miner</span>
                 <strong id="executionLabMinerStatus">--</strong>
                 <span>Log</span>
@@ -51,6 +60,10 @@
                 <strong id="executionLabSignalMismatch">--</strong>
                 <span>Open Position</span>
                 <strong id="executionLabOpenPosition">--</strong>
+                <span>Live Position</span>
+                <strong id="executionLabLivePosition">--</strong>
+                <span>Live Result</span>
+                <strong id="executionLabLiveResult">--</strong>
                 <span>Session PnL</span>
                 <strong id="executionLabSessionPnl">--</strong>
             </div>

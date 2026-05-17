@@ -528,12 +528,13 @@ export function evaluateExecutionLabPaperTick(
 ): ExecutionLabPaperTickResult {
     const previousProcessedCandleTimeSec = state.lastProcessedCandleTimeSec;
     if (previousProcessedCandleTimeSec !== null && input.latestCandleTimeSec <= previousProcessedCandleTimeSec) {
-        return { records: [], markers: [] };
+        return { records: [], markers: [], acceptedEntries: [] };
     }
     state.lastProcessedCandleTimeSec = input.latestCandleTimeSec;
 
     const records: ExecutionLabRecord[] = [];
     const markers: ExecutionLabPaperMarker[] = [];
+    const acceptedEntries: ExecutionLabOpenPaperPosition[] = [];
     settlePendingPositions(state, input, records, markers);
 
     const sortedTrades = input.trades.slice().sort((left, right) => {
@@ -667,6 +668,7 @@ export function evaluateExecutionLabPaperTick(
             state.totalEntries += 1;
             logOnce(state, `entry:${tradeId}`, records, buildEntryRecord(state, input, position, entryFill));
             markers.push(entryMarker(position));
+            acceptedEntries.push(position);
         }
 
         const position = state.openPositions.get(tradeId);
@@ -688,7 +690,7 @@ export function evaluateExecutionLabPaperTick(
         );
     }
 
-    return { records, markers };
+    return { records, markers, acceptedEntries };
 }
 
 export function buildEvaluatedSignals(signals: readonly { time: Time; type: string; price: number; reason?: string; barIndex?: number }[]): ExecutionLabEvaluatedSignal[] {
