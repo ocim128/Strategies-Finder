@@ -67,6 +67,7 @@ V1 is working only when all of these are true:
 - The executor rejects stale requests before signing.
 - The executor returns structured JSON for success, rejection, duplicate, and failure.
 - Duplicate request ids are blocked by both Strategy Finder and the executor boundary.
+- Strategy Finder keeps a small process-local Vite ledger for duplicate `requestId` submissions before invoking the executor; the executor ledger remains the crash-safe source of truth.
 - A failed live attempt creates a log record with enough detail to diagnose the next fix.
 
 ## Assumptions
@@ -77,8 +78,11 @@ V1 is working only when all of these are true:
 - With `EXECUTION_LAB_LIVE_SIZING_MODE=fixed`, `stakeUsd` is a hard notional cap. The executor may submit less after tick/lot/depth/min-size checks, but it must never submit more.
 - With `EXECUTION_LAB_LIVE_SIZING_MODE=exchange_min`, live entries may auto-size above `stakeUsd` to the minimum valid Polymarket order, but never above `EXECUTION_LAB_LIVE_MAX_STAKE_USD` or `MAX_ORDER_SIZE_USDC`.
 - The executor may reject small stakes in fixed mode or reject exchange-min sizing with `min_size_exceeds_cap` when the minimum valid order is above the configured caps.
+- Strategy Finder controls the live order type with `EXECUTION_LAB_LIVE_ORDER_TYPE=FAK|FOK`; if it is unset, `ARBITRAGE_ORDER_TYPE` is accepted as a compatibility fallback, then `FAK`.
+- Strategy Finder runs the executor from the inferred side-repo root when the binary is under `target/debug` or `target/release`; set `EXECUTION_LAB_LIVE_EXECUTOR_CWD` when that inference is wrong.
 - Strategy Finder applies the Backtest Realism `Polymarket Entry Cutoff` toggle before paper entries are accepted. The toggle defaults off; when enabled, `Polymarket Entry Cutoff (sec)` defaults to `15`.
 - Live entry submission also rejects as `event_too_close_to_close` if the toggle is enabled and the current clock has crossed the same configured cutoff before the executor call.
+- Live entry `maxPrice` adds `EXECUTION_LAB_LIVE_ENTRY_MAX_SLIPPAGE_CENTS` to the paper entry price, clamped to `1.00`; the default is `1` cent.
 - Private keys must not be stored in browser state, localStorage, JSONL logs, or this repository.
 - V1 is a local playground feature for `npm run dev`, not production infrastructure.
 - Live mode is never restored automatically on page load. The UI may remember non-secret settings such as stake, but each session starts from Paper until the user explicitly selects Live again.
@@ -273,7 +277,7 @@ export type LiveTradeSubmitRequest = {
 
 Notes:
 
-- `maxPrice` is the paper entry price cap, not a claim that live execution will fill at that price.
+- `maxPrice` is the paper entry price plus configured entry slippage, not a claim that live execution will fill at that price.
 - `stakeUsd` is always the paper-session stake. It is also the live entry cap in `fixed` sizing mode, but not in `exchange_min` sizing mode.
 - For `action: "exit"`, `minPrice` is the live sell floor and `shares` is the tracked filled live-token amount to sell.
 - For V1, only allow `FOK` or `FAK`.
@@ -383,6 +387,8 @@ Executor-side state:
 - include a payload hash in the ledger; if the same `requestId` arrives with a different payload hash, reject with `reason: "request_id_payload_mismatch"`
 - ledger path must be outside browser storage and must not contain secrets
 
+Strategy Finder also keeps a non-durable Vite-process duplicate ledger for the local endpoint. It coalesces in-flight duplicate submissions, reuses the first result for an identical payload, and rejects the same `requestId` with a different payload hash as `request_id_payload_mismatch`.
+
 ## Failure Handling
 
 V1 failure behavior should be simple and explicit:
@@ -483,7 +489,7 @@ Technical tasks:
 - Add `acceptedEntries: ExecutionLabOpenPaperPosition[]` to `ExecutionLabPaperTickResult`.
 - Add `lib/execution-lab/live-trade-request.ts`.
 - Build deterministic `requestId` from session id, paper trade id, token id, and entry time.
-- Use `position.entryPrice` as `maxPrice`.
+- Use `position.entryPrice + EXECUTION_LAB_LIVE_ENTRY_MAX_SLIPPAGE_CENTS` as `maxPrice`, clamped to `1.00`.
 - Add short request expiry, such as `expiresAtSec = now + 10`.
 - In Live Trade mode, append `live_trade_request` and synthetic `live_trade_result` with `status: "failed"` and `reason: "executor_unavailable"`.
 - Display latest live result in existing status/recent-trades surface.
@@ -497,7 +503,7 @@ Validation:
 - Unit test for request construction:
   - YES token for long
   - NO token for short
-  - paper entry price becomes `maxPrice`
+  - paper entry price plus configured entry slippage becomes `maxPrice`
   - duplicate paper trade does not emit twice
 
 Exit criteria:
@@ -535,6 +541,7 @@ Technical tasks:
   - `executorKind`
   - `geoblockAllowed`
   - `maxStakeUsd`
+  - `orderType`
   - `supportedOrderTypes`
   - `message`
 
@@ -614,7 +621,7 @@ Only consider after V1 live entries are stable:
 | Restricted-location order attempt | Polymarket rejects blocked regions and live trading should fail before signing. | Executor checks geoblock/eligibility before signing and returns `geoblocked`. |
 | Wrong market traded | Timestamp re-resolution can cross event boundaries. | Executor validates submitted `conditionId` and `tokenId`; it does not replace them. |
 | Stale request | Browser delay or paused tab can submit late. | Include expiry and reject stale requests before signing. |
-| Paper quote differs from live book | Paper `entryPrice` is historical decision context. | Treat it as `maxPrice`; executor re-fetches current ask and rejects above cap. |
+| Paper quote differs from live book | Paper `entryPrice` is historical decision context. | Treat paper `entryPrice` plus configured entry slippage as `maxPrice`; executor re-fetches current ask and rejects above cap. |
 | Duplicate order | Retry/reload can repeat a valid request. | Deterministic `requestId` plus executor idempotency ledger. |
 | Crash during order submission | A process can die after signing/submitting but before returning. | Ledger writes `pending` before signing; duplicate pending returns `prior_attempt_unknown`, never resubmits. |
 | Wrong order type | Side-repo defaults can drift to `GTD`/`GTC`. | Request `orderType` is authoritative; executor rejects config mismatch. |

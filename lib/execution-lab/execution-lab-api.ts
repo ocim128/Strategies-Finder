@@ -5,10 +5,9 @@ import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import type { PolymarketOutcomeRow } from "../types/polymarket-outcomes";
 import type {
     ExecutionLabRecord,
+    LiveExecutorStatus,
     LiveTradeSubmitRequest,
     LiveTradeSubmitResponse,
-    LiveTradeOrderType,
-    LiveTradeSizingMode,
 } from "./execution-lab-model";
 
 type ApiError = { ok?: false; error?: string };
@@ -30,29 +29,26 @@ type LiveCandlesResponse = {
 type LiveEventsResponse = { ok: true; events: SecondMarketPolymarketEvent[] };
 type LiveQuoteResponse = { ok: true; quote: PolymarketClob1sQuoteRow };
 type LiveOutcomesResponse = { ok: true; outcomes: PolymarketOutcomeRow[] };
-export type LiveExecutorStatus = {
-    ok: true;
-    configured: boolean;
-    available: boolean;
-    liveEnabled: boolean;
-    dryRun: boolean;
-    executorKind: "cli";
-    geoblockAllowed: boolean | null;
-    maxStakeUsd: number;
-    sizingMode: LiveTradeSizingMode;
-    exitMaxSlippageCents: number;
-    supportedOrderTypes: LiveTradeOrderType[];
-    message: string;
-    executorPath?: string;
-};
 const MAX_EXECUTION_LAB_LOG_BATCH_RECORDS = 100;
+const DEFAULT_API_TIMEOUT_MS = 10000;
+const LIVE_TRADE_API_TIMEOUT_MS = 30000;
 
 function baseUrl(): string {
     return typeof window === "undefined" ? "http://localhost:5173" : "";
 }
 
-async function getJson<T extends { ok: true }>(endpoint: string): Promise<T> {
-    const response = await fetch(`${baseUrl()}${endpoint}`, { method: "GET" });
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(input, { ...init, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function getJson<T extends { ok: true }>(endpoint: string, timeoutMs = DEFAULT_API_TIMEOUT_MS): Promise<T> {
+    const response = await fetchWithTimeout(`${baseUrl()}${endpoint}`, { method: "GET" }, timeoutMs);
     const payload = await response.json().catch(() => ({})) as T | ApiError;
     if (!response.ok || payload.ok !== true) {
         throw new Error((payload as ApiError).error ?? `${endpoint} failed (${response.status})`);
@@ -60,12 +56,12 @@ async function getJson<T extends { ok: true }>(endpoint: string): Promise<T> {
     return payload as T;
 }
 
-async function postJson<T extends { ok: true }>(endpoint: string, body: unknown): Promise<T> {
-    const response = await fetch(`${baseUrl()}${endpoint}`, {
+async function postJson<T extends { ok: true }>(endpoint: string, body: unknown, timeoutMs = DEFAULT_API_TIMEOUT_MS): Promise<T> {
+    const response = await fetchWithTimeout(`${baseUrl()}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-    });
+    }, timeoutMs);
     const payload = await response.json().catch(() => ({})) as T | ApiError;
     if (!response.ok || payload.ok !== true) {
         throw new Error((payload as ApiError).error ?? `${endpoint} failed (${response.status})`);
@@ -114,7 +110,7 @@ export async function loadExecutionLabLiveExecutorStatus(): Promise<LiveExecutor
 }
 
 export async function submitExecutionLabLiveTrade(request: LiveTradeSubmitRequest): Promise<LiveTradeSubmitResponse> {
-    return postJson<LiveTradeSubmitResponse>("/api/execution-lab/live/trade", request);
+    return postJson<LiveTradeSubmitResponse>("/api/execution-lab/live/trade", request, LIVE_TRADE_API_TIMEOUT_MS);
 }
 
 export async function loadExecutionLabLiveCandles(args: {

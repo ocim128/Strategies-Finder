@@ -108,7 +108,12 @@ function context(quotes: PolymarketClob1sQuoteRow[]): SecondMarketEvaluationCont
 }
 
 describe("second market shared evaluation", () => {
-    it("supports 1s CLOB scoring for next-open and next-close chart execution", () => {
+    it("supports 1s CLOB scoring for signal-close, next-open, and next-close chart execution", () => {
+        expect(isSecondMarketPolymarketScoringSupported({
+            symbol: "BTCUSDT",
+            interval: "1s",
+            executionModel: "signal_close",
+        })).to.equal(true);
         expect(isSecondMarketPolymarketScoringSupported({
             symbol: "BTCUSDT",
             interval: "1s",
@@ -122,7 +127,7 @@ describe("second market shared evaluation", () => {
         expect(isSecondMarketPolymarketScoringSupported({
             symbol: "BTCUSDT",
             interval: "1s",
-            executionModel: "signal_close",
+            executionModel: "same_bar_open",
         })).to.equal(false);
     });
 
@@ -167,6 +172,32 @@ describe("second market shared evaluation", () => {
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitSource).to.equal("signal");
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.58);
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.isWin).to.equal(null);
+    });
+
+    it("prices close-based 1s executions at the candle close second", () => {
+        for (const executionModel of ["signal_close", "next_close"] as const) {
+            const signalTrade = trade(1, 1_700_000_010, 1_700_000_020);
+            signalTrade.exitReason = "signal";
+
+            const evaluated = evaluateSecondMarketBacktest({
+                result: result([signalTrade]),
+                context: context([
+                    quote(1_700_000_010, 0.20, 0.18),
+                    quote(1_700_000_011, 0.55, 0.53),
+                    quote(1_700_000_020, 0.30, 0.28),
+                    quote(1_700_000_021, 0.60, 0.58),
+                ]),
+                executionModel,
+                polymarketExitMode: "signal_exit_same_event",
+            });
+
+            expect(evaluated.tradeResults[0]?.entryQuoteTs).to.equal(1_700_000_011);
+            expect(evaluated.tradeResults[0]?.exitQuoteTs).to.equal(1_700_000_021);
+            expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryFillTs).to.equal(1_700_000_011);
+            expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.55);
+            expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.58);
+            expect(evaluated.polymarketSummary.netPnl).to.be.closeTo(0.03, 1e-9);
+        }
     });
 
     it("carries entry price filter counts through 1s CLOB summaries and annotations", () => {
@@ -262,11 +293,11 @@ describe("second market shared evaluation", () => {
         expect(evaluated.polymarketSummary.outcomeInterval).to.equal("15m");
     });
 
-    it("does not annotate 1s CLOB results with signal-close execution", async () => {
+    it("does not annotate unsupported 1s symbols with CLOB scoring", async () => {
         const base = result([trade(1, 1_700_000_010, 1_700_000_020)]);
         const annotated = await annotateBacktestResultWithSecondMarketClob({
             result: base,
-            symbol: "BTCUSDT",
+            symbol: "ETHUSDT",
             interval: "1s",
             executionModel: "signal_close",
         });

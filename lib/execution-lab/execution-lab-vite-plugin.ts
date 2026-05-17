@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, createWriteStream, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { dirname, resolve } from "node:path";
@@ -11,13 +11,14 @@ import type {
     SecondMarketPolymarketEvent,
     SecondMarketSymbol,
 } from "../second-market/types";
-import type { ExecutionLabRecord } from "./execution-lab-model";
+import type { ExecutionLabRecord, LiveTradeSubmitRequest, LiveTradeSubmitResponse } from "./execution-lab-model";
 import {
     loadLiveExecutorStatus,
     submitLiveTradeToExecutor,
 } from "./live-executor-adapter";
 import { sanitizeExecutionLabPathPart, validateExecutionLabRecord } from "./paper-log-schema";
 import {
+    buildLiveTradeFailureResponse,
     LIVE_TRADE_MAX_EXPIRY_WINDOW_SEC,
     validateLiveTradeSubmitRequest,
 } from "./live-trade-request";
@@ -25,6 +26,7 @@ import {
 const LOG_ROOT = resolve(process.cwd(), "logs", "paper-execution");
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_LOG_BATCH_RECORDS = 100;
+const LIVE_TRADE_LEDGER_TTL_MS = 60_000;
 const MINER_DB_PATH = resolve(process.cwd(), "price-data", "1second-chart", "second-market-data.sqlite");
 const MINER_LOG_PATH = resolve(process.cwd(), "price-data", "1second-chart", "logs", "execution-lab-1s-miner-latest.log");
 const ESNO_BIN = resolve(
@@ -67,12 +69,31 @@ type CacheEntry<T> = {
     expiresAtMs: number;
     value: T;
 };
+type LiveTradeLedgerEntry = {
+    payloadHash: string;
+    expiresAtMs: number;
+    pending?: Promise<LiveTradeSubmitResponse>;
+    response?: LiveTradeSubmitResponse;
+};
 
 function sendJson(res: any, status: number, payload: unknown): void {
     res.statusCode = status;
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Cache-Control", "no-store");
     res.end(JSON.stringify(payload));
+}
+
+function stableJson(value: unknown): string {
+    if (value === null || typeof value !== "object") return JSON.stringify(value);
+    if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(",")}]`;
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) =>
+        `${JSON.stringify(key)}:${stableJson(record[key])}`
+    ).join(",")}}`;
+}
+
+function payloadHash(value: unknown): string {
+    return createHash("sha256").update(stableJson(value)).digest("hex");
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -434,6 +455,7 @@ export function executionLabVitePlugin(): Plugin {
     const liveEventCache = new Map<string, CacheEntry<SecondMarketPolymarketEvent[]>>();
     const liveOutcomeCache = new Map<string, CacheEntry<LiveOutcomeRow[]>>();
     const inFlightFetches = new Map<string, Promise<unknown>>();
+    const liveTradeLedger = new Map<string, LiveTradeLedgerEntry>();
     let minerProcess: ChildProcessWithoutNullStreams | null = null;
     let minerStartedAtIso: string | null = null;
     let minerExitCode: number | null = null;
@@ -444,6 +466,50 @@ export function executionLabVitePlugin(): Plugin {
             if (entry.expiresAtMs <= now) {
                 cache.delete(cacheKey);
             }
+        }
+    }
+
+    function pruneLiveTradeLedger(now: number): void {
+        for (const [requestId, entry] of liveTradeLedger.entries()) {
+            if (entry.expiresAtMs <= now && !entry.pending) {
+                liveTradeLedger.delete(requestId);
+            }
+        }
+    }
+
+    async function submitLiveTradeOnce(request: LiveTradeSubmitRequest): Promise<LiveTradeSubmitResponse> {
+        const now = Date.now();
+        pruneLiveTradeLedger(now);
+        const hash = payloadHash(request);
+        const existing = liveTradeLedger.get(request.requestId);
+        if (existing) {
+            if (existing.payloadHash !== hash) {
+                return buildLiveTradeFailureResponse({
+                    requestId: request.requestId,
+                    status: "rejected",
+                    reason: "request_id_payload_mismatch",
+                    maxPrice: request.maxPrice,
+                    minPrice: request.action === "exit" ? request.minPrice : undefined,
+                });
+            }
+            if (existing.response) return existing.response;
+            if (existing.pending) return await existing.pending;
+        }
+
+        const pending = submitLiveTradeToExecutor(request);
+        const entry: LiveTradeLedgerEntry = {
+            payloadHash: hash,
+            expiresAtMs: now + LIVE_TRADE_LEDGER_TTL_MS,
+            pending,
+        };
+        liveTradeLedger.set(request.requestId, entry);
+        try {
+            const response = await pending;
+            entry.response = response;
+            entry.expiresAtMs = Date.now() + LIVE_TRADE_LEDGER_TTL_MS;
+            return response;
+        } finally {
+            entry.pending = undefined;
         }
     }
 
@@ -745,7 +811,17 @@ export function executionLabVitePlugin(): Plugin {
                         sendJson(res, 400, { ok: false, error: validation.error });
                         return;
                     }
-                    sendJson(res, 200, await submitLiveTradeToExecutor(validation.request));
+                    if (validation.request.orderType !== status.orderType) {
+                        sendJson(res, 200, buildLiveTradeFailureResponse({
+                            requestId: validation.request.requestId,
+                            status: "rejected",
+                            reason: "order_type_config_mismatch",
+                            maxPrice: validation.request.maxPrice,
+                            minPrice: validation.request.action === "exit" ? validation.request.minPrice : undefined,
+                        }));
+                        return;
+                    }
+                    sendJson(res, 200, await submitLiveTradeOnce(validation.request));
                     return;
                 }
 

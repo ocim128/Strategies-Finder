@@ -43,6 +43,35 @@ export type SecondMarketEvaluationResult = {
     annotatedTrades: Trade[];
 };
 
+function resolveCloseExecutionTimestampShiftSec(executionModel?: string): number {
+    return executionModel === "signal_close" || executionModel === "next_close" ? 1 : 0;
+}
+
+function shiftTradeTimeSeconds(time: Trade["entryTime"], shiftSec: number): Trade["entryTime"] {
+    if (shiftSec <= 0) return time;
+    const seconds = parseTimeToUnixSeconds(time);
+    return seconds === null ? time : (seconds + shiftSec) as Trade["entryTime"];
+}
+
+function buildScoredTradePairs(
+    trades: readonly Trade[],
+    executionModel?: string
+): Array<{ original: Trade; scored: Trade }> {
+    const shiftSec = resolveCloseExecutionTimestampShiftSec(executionModel);
+    if (shiftSec <= 0) {
+        return trades.map((trade) => ({ original: trade, scored: trade }));
+    }
+
+    return trades.map((trade) => ({
+        original: trade,
+        scored: {
+            ...trade,
+            entryTime: shiftTradeTimeSeconds(trade.entryTime, shiftSec),
+            exitTime: shiftTradeTimeSeconds(trade.exitTime, shiftSec),
+        },
+    }));
+}
+
 export function isSecondMarketPolymarketSupported(symbol: string, interval: string): boolean {
     return interval.trim().toLowerCase() === "1s" && normalizeSecondMarketChartSymbol(symbol) !== null;
 }
@@ -383,6 +412,7 @@ export function evaluateSecondMarketBacktest(args: {
     result: Pick<BacktestResult, "trades">;
     context: SecondMarketEvaluationContext;
     trades?: readonly Trade[];
+    executionModel?: string;
     polymarketExitMode?: PolymarketExitMode;
     polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
     entryPriceFilterCents?: number;
@@ -391,9 +421,13 @@ export function evaluateSecondMarketBacktest(args: {
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }): SecondMarketEvaluationResult {
     const trades = [...(args.trades ?? args.result.trades)];
+    const tradePairs = buildScoredTradePairs(trades, args.executionModel);
+    const scoredToOriginal = new Map<Trade, Trade>(
+        tradePairs.map((pair) => [pair.scored, pair.original] as const)
+    );
     const evaluationMode = "signal_exit_same_event";
     const evaluated = evaluateSecondMarketTrades({
-        trades,
+        trades: tradePairs.map((pair) => pair.scored),
         outcomes: args.context.outcomes,
         quotes: args.context.quotes,
         evaluationMode,
@@ -405,8 +439,12 @@ export function evaluateSecondMarketBacktest(args: {
         entryCutoffSeconds: args.entryCutoffSeconds,
         limitEntry: args.limitEntry,
     });
+    const tradeResults = evaluated.results.map((result) => ({
+        ...result,
+        trade: scoredToOriginal.get(result.trade) ?? result.trade,
+    }));
     const annotatedByTrade = new Map<Trade, TradePolymarketOutcome>(
-        evaluated.results.map((result) => [result.trade, buildTradeAnnotation(result, evaluationMode)] as const)
+        tradeResults.map((result) => [result.trade, buildTradeAnnotation(result, evaluationMode)] as const)
     );
     const annotatedTrades = args.result.trades.map((trade) => ({
         ...trade,
@@ -415,17 +453,17 @@ export function evaluateSecondMarketBacktest(args: {
     const polymarketSummary = summarizePolymarketResult({
         context: args.context,
         summary: evaluated.summary,
-        tradeResults: evaluated.results,
+        tradeResults,
         tradeCount: trades.length,
         evaluationMode,
     });
     return {
-        tradeResults: evaluated.results,
+        tradeResults,
         summary: evaluated.summary,
         polymarketSummary,
         polymarketEval: buildPolymarketEval({
             outcomes: args.context.outcomes,
-            tradeResults: evaluated.results,
+            tradeResults,
             summary: evaluated.summary,
             trades,
             evaluationMode,
@@ -474,6 +512,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
     const evaluated = evaluateSecondMarketBacktest({
         result: args.result,
         context,
+        executionModel: args.executionModel,
         polymarketExitMode: args.polymarketExitMode,
         polymarketSignalExitAllowMultipleTradesPerEvent: args.polymarketSignalExitAllowMultipleTradesPerEvent,
         entryPriceFilterCents: args.entryPriceFilterCents,

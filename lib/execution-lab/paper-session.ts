@@ -58,6 +58,16 @@ function toSec(time: Trade["entryTime"]): number | null {
     return parseTimeToUnixSeconds(time);
 }
 
+function closeExecutionTimestampShiftSec(snapshot: ExecutionLabSessionSnapshot): number {
+    const executionModel = snapshot.backtestSettings.executionModel;
+    return executionModel === "signal_close" || executionModel === "next_close" ? 1 : 0;
+}
+
+function tradeExecutionTimeSec(snapshot: ExecutionLabSessionSnapshot, time: Trade["entryTime"]): number | null {
+    const rawTimeSec = toSec(time);
+    return rawTimeSec === null ? null : rawTimeSec + closeExecutionTimestampShiftSec(snapshot);
+}
+
 function eventKey(event: EventRef): string {
     return `${event.seriesId}:${event.eventStartTs}`;
 }
@@ -463,7 +473,7 @@ function advanceOpenPosition(
 ): void {
     position.sourceTrade = trade;
     const exitReason = isExecutableBacktestExit(trade.exitReason) ? trade.exitReason : null;
-    const exitTimeSec = exitReason === null ? null : toSec(trade.exitTime);
+    const exitTimeSec = exitReason === null ? null : tradeExecutionTimeSec(state.snapshot, trade.exitTime);
     const positionEvent = eventFromPosition(position);
 
     if (exitReason !== null && exitTimeSec !== null && exitTimeSec <= input.latestCandleTimeSec && exitTimeSec < position.eventEndTs) {
@@ -542,14 +552,15 @@ export function evaluateExecutionLabPaperTick(
     settlePendingPositions(state, input, records, markers);
 
     const sortedTrades = input.trades.slice().sort((left, right) => {
-        const leftTs = toSec(left.entryTime) ?? 0;
-        const rightTs = toSec(right.entryTime) ?? 0;
+        const leftTs = tradeExecutionTimeSec(state.snapshot, left.entryTime) ?? 0;
+        const rightTs = tradeExecutionTimeSec(state.snapshot, right.entryTime) ?? 0;
         return leftTs - rightTs || left.id - right.id;
     });
 
     for (const trade of sortedTrades) {
-        const entryTimeSec = toSec(trade.entryTime);
+        const entryTimeSec = tradeExecutionTimeSec(state.snapshot, trade.entryTime);
         if (entryTimeSec === null) continue;
+        if (entryTimeSec > input.latestCandleTimeSec) continue;
         const side = tradeDirectionToSide(trade.type);
         const tradeSignal = findSignalForTrade(trade, input.signals);
         const signalTimeSec = tradeSignal?.signalTimeSec ?? entryTimeSec;

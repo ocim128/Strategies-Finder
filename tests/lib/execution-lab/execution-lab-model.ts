@@ -165,6 +165,23 @@ export type PaperEntryRecord = ExecutionLabBaseRecord & {
 export type LiveTradeOrderType = "FOK" | "FAK";
 export type LiveTradeSizingMode = "fixed" | "exchange_min";
 
+export interface LiveExecutorStatus {
+    ok: true;
+    configured: boolean;
+    available: boolean;
+    liveEnabled: boolean;
+    dryRun: boolean;
+    executorKind: "cli";
+    geoblockAllowed: boolean | null;
+    maxStakeUsd: number;
+    sizingMode: LiveTradeSizingMode;
+    orderType: LiveTradeOrderType;
+    entryMaxSlippageCents: number;
+    exitMaxSlippageCents: number;
+    supportedOrderTypes: LiveTradeOrderType[];
+    message: string;
+}
+
 export type LiveTradeSubmitStatus =
     | "dry_run"
     | "rejected"
@@ -206,6 +223,7 @@ export type LiveExitSubmitRequest = LiveTradeSubmitRequestBase & {
     shares: number;
     exitTimeSec: number;
     minPrice: number;
+    attempt?: number;
 };
 
 export type LiveTradeSubmitRequest = LiveEntrySubmitRequest | LiveExitSubmitRequest;
@@ -234,6 +252,7 @@ export type LiveTradeRequestRecord = ExecutionLabBaseRecord & {
     recordType: "live_trade_request";
     requestId: string;
     paperTradeId: string;
+    expiresAtSec?: number;
     eventStartTs: number;
     eventEndTs: number;
     marketSlug: string;
@@ -245,6 +264,8 @@ export type LiveTradeRequestRecord = ExecutionLabBaseRecord & {
     entryTimeSec: number;
     maxPrice: number;
     orderType: LiveTradeOrderType;
+    sizingMode?: LiveTradeSizingMode;
+    dryRun?: boolean;
 };
 
 export type LiveTradeResultRecord = ExecutionLabBaseRecord & {
@@ -262,6 +283,7 @@ export type LiveTradeResultRecord = ExecutionLabBaseRecord & {
     filledShares?: number;
     currentAsk?: number;
     maxPrice?: number;
+    latencyMs?: number;
 };
 
 export type LiveExitRequestRecord = ExecutionLabBaseRecord & {
@@ -279,6 +301,10 @@ export type LiveExitRequestRecord = ExecutionLabBaseRecord & {
     exitTimeSec: number;
     minPrice: number;
     orderType: LiveTradeOrderType;
+    expiresAtSec?: number;
+    attempt?: number;
+    sizingMode?: LiveTradeSizingMode;
+    dryRun?: boolean;
 };
 
 export type LiveExitResultRecord = ExecutionLabBaseRecord & {
@@ -297,6 +323,7 @@ export type LiveExitResultRecord = ExecutionLabBaseRecord & {
     filledShares?: number;
     currentBid?: number;
     minPrice?: number;
+    latencyMs?: number;
 };
 
 export type PaperUnfilledRecord = ExecutionLabBaseRecord & {

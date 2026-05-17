@@ -46,6 +46,29 @@ function isLiveTradeStatus(value: unknown): boolean {
         || value === "failed";
 }
 
+function isLiveSizingMode(value: unknown): boolean {
+    return value === "fixed" || value === "exchange_min";
+}
+
+function validateOptionalLiveMeta(value: Record<string, unknown>): { ok: true } | { ok: false; error: string } {
+    if (value.expiresAtSec !== undefined && !isFiniteNumber(value.expiresAtSec)) {
+        return { ok: false, error: "expiresAtSec is invalid" };
+    }
+    if (value.attempt !== undefined && (!isFiniteNumber(value.attempt) || value.attempt <= 0)) {
+        return { ok: false, error: "attempt is invalid" };
+    }
+    if (value.sizingMode !== undefined && !isLiveSizingMode(value.sizingMode)) {
+        return { ok: false, error: "sizingMode is invalid" };
+    }
+    if (value.dryRun !== undefined && typeof value.dryRun !== "boolean") {
+        return { ok: false, error: "dryRun is invalid" };
+    }
+    if (value.latencyMs !== undefined && (!isFiniteNumber(value.latencyMs) || value.latencyMs < 0)) {
+        return { ok: false, error: "latencyMs is invalid" };
+    }
+    return { ok: true };
+}
+
 export function sanitizeExecutionLabPathPart(value: string): string {
     const normalized = value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
     return normalized || "unknown";
@@ -78,6 +101,10 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
             if (!isPriceInRange(value.entryPrice, 0.000000001)) return { ok: false, error: "entryPrice is required" };
             break;
         case "live_trade_request":
+            {
+                const liveMeta = validateOptionalLiveMeta(value);
+                if (!liveMeta.ok) return liveMeta;
+            }
             if (!isNonEmptyString(value.requestId)) return { ok: false, error: "requestId is required" };
             if (!isNonEmptyString(value.paperTradeId)) return { ok: false, error: "paperTradeId is required" };
             if (!isNonEmptyString(value.marketSlug)) return { ok: false, error: "marketSlug is required" };
@@ -89,6 +116,10 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
             if (!isPriceInRange(value.maxPrice, 0.000000001)) return { ok: false, error: "maxPrice is required" };
             break;
         case "live_trade_result":
+            {
+                const liveMeta = validateOptionalLiveMeta(value);
+                if (!liveMeta.ok) return liveMeta;
+            }
             if (!isNonEmptyString(value.requestId)) return { ok: false, error: "requestId is required" };
             if (!isNonEmptyString(value.paperTradeId)) return { ok: false, error: "paperTradeId is required" };
             if (!isLiveTradeStatus(value.status)) return { ok: false, error: "invalid live trade status" };
@@ -101,6 +132,10 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
             }
             break;
         case "live_exit_request":
+            {
+                const liveMeta = validateOptionalLiveMeta(value);
+                if (!liveMeta.ok) return liveMeta;
+            }
             if (!isNonEmptyString(value.requestId)) return { ok: false, error: "requestId is required" };
             if (!isNonEmptyString(value.entryRequestId)) return { ok: false, error: "entryRequestId is required" };
             if (!isNonEmptyString(value.paperTradeId)) return { ok: false, error: "paperTradeId is required" };
@@ -113,6 +148,10 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
             if (!isPriceInRange(value.minPrice, 0.000000001)) return { ok: false, error: "minPrice is required" };
             break;
         case "live_exit_result":
+            {
+                const liveMeta = validateOptionalLiveMeta(value);
+                if (!liveMeta.ok) return liveMeta;
+            }
             if (!isNonEmptyString(value.requestId)) return { ok: false, error: "requestId is required" };
             if (!isNonEmptyString(value.entryRequestId)) return { ok: false, error: "entryRequestId is required" };
             if (!isNonEmptyString(value.paperTradeId)) return { ok: false, error: "paperTradeId is required" };

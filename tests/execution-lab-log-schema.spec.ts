@@ -119,6 +119,7 @@ describe("Execution Lab JSONL schema", () => {
             recordType: "live_trade_request",
             requestId: "live-1",
             paperTradeId: "paper-1",
+            expiresAtSec: 1_700_000_020,
             eventStartTs: 1_700_000_000,
             eventEndTs: 1_700_000_300,
             marketSlug: "btc-event",
@@ -130,6 +131,8 @@ describe("Execution Lab JSONL schema", () => {
             entryTimeSec: 1_700_000_011,
             maxPrice: 0.54,
             orderType: "FAK",
+            dryRun: true,
+            sizingMode: "fixed",
         }).ok).to.equal(true);
         expect(validateExecutionLabRecord({
             ...baseRecord,
@@ -140,6 +143,7 @@ describe("Execution Lab JSONL schema", () => {
             reason: "executor_dry_run",
             currentAsk: 0.53,
             maxPrice: 0.54,
+            latencyMs: 25,
         }).ok).to.equal(true);
         expect(validateExecutionLabRecord({
             ...baseRecord,
@@ -177,6 +181,10 @@ describe("Execution Lab JSONL schema", () => {
             exitTimeSec: 1_700_000_050,
             minPrice: 0.49,
             orderType: "FAK",
+            expiresAtSec: 1_700_000_060,
+            attempt: 2,
+            dryRun: true,
+            sizingMode: "fixed",
         }).ok).to.equal(true);
         expect(validateExecutionLabRecord({
             ...baseRecord,
@@ -188,7 +196,24 @@ describe("Execution Lab JSONL schema", () => {
             reason: "price_moved_below_floor",
             currentBid: 0.48,
             minPrice: 0.49,
+            latencyMs: 12,
         }).ok).to.equal(true);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "live_exit_request",
+            requestId: "exit-1",
+            entryRequestId: "live-1",
+            paperTradeId: "paper-1",
+            marketSlug: "btc-event",
+            conditionId: "condition",
+            tokenId: "yes-token",
+            side: "yes",
+            shares: 8.5,
+            exitTimeSec: 1_700_000_050,
+            minPrice: 0.49,
+            orderType: "FAK",
+            attempt: 0,
+        }).ok).to.equal(false);
     });
 
     it("validates execution parity mismatch records", () => {

@@ -1,8 +1,9 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { Readable } from "node:stream";
-import { dirname } from "node:path";
-import { readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { executeBacktest } from "../lib/backtest-executor";
 import { buildExecutionLabStrategyExecutionContext } from "../lib/execution-lab/execution-lab-strategy-context";
 import { executionLabVitePlugin, normalizeExecutionLabClobPrice } from "../lib/execution-lab/execution-lab-vite-plugin";
@@ -305,6 +306,7 @@ describe("Execution Lab live helpers", () => {
         await withEnv({
             EXECUTION_LAB_LIVE_EXECUTOR_PATH: process.execPath,
             EXECUTION_LAB_LIVE_ENABLED: "0",
+            EXECUTION_LAB_LIVE_ORDER_TYPE: "FOK",
         }, async () => {
             const handler = createHandler();
             const response = await invoke(handler, "/live/status");
@@ -312,6 +314,7 @@ describe("Execution Lab live helpers", () => {
             expect(response.statusCode).to.equal(200);
             expect(response.json.available).to.equal(true);
             expect(response.json.dryRun).to.equal(true);
+            expect(response.json.orderType).to.equal("FOK");
         });
     });
 
@@ -335,10 +338,25 @@ describe("Execution Lab live helpers", () => {
         expect(response.json.error).to.include("orderType");
     });
 
+    it("rejects live trade requests that do not match the configured order type", async () => {
+        await withEnv({
+            EXECUTION_LAB_LIVE_ORDER_TYPE: "FOK",
+            EXECUTION_LAB_LIVE_MAX_STAKE_USD: "10",
+        }, async () => {
+            const handler = createDevHandler();
+            const response = await invokePost(handler, "/live/trade", liveTradeRequest());
+
+            expect(response.statusCode).to.equal(200);
+            expect(response.json.status).to.equal("rejected");
+            expect(response.json.reason).to.equal("order_type_config_mismatch");
+        });
+    });
+
     it("maps missing live executor and executor timeout to structured trade results", async () => {
         await withEnv({
             EXECUTION_LAB_LIVE_EXECUTOR_PATH: "Z:\\missing\\live_trade_once.exe",
             EXECUTION_LAB_LIVE_MAX_STAKE_USD: "10",
+            EXECUTION_LAB_LIVE_ORDER_TYPE: "FAK",
             EXECUTION_LAB_LIVE_TIMEOUT_MS: "50",
         }, async () => {
             const handler = createDevHandler();
@@ -353,6 +371,7 @@ describe("Execution Lab live helpers", () => {
             EXECUTION_LAB_LIVE_EXECUTOR_PATH: process.execPath,
             EXECUTION_LAB_LIVE_EXECUTOR_ARGS_JSON: JSON.stringify(["-e", "setTimeout(() => {}, 10000);"]),
             EXECUTION_LAB_LIVE_MAX_STAKE_USD: "10",
+            EXECUTION_LAB_LIVE_ORDER_TYPE: "FAK",
             EXECUTION_LAB_LIVE_TIMEOUT_MS: "50",
         }, async () => {
             const handler = createDevHandler();
@@ -361,6 +380,68 @@ describe("Execution Lab live helpers", () => {
             expect(response.statusCode).to.equal(200);
             expect(response.json.status).to.equal("failed");
             expect(response.json.reason).to.equal("executor_timeout");
+        });
+    });
+
+    it("coalesces duplicate live trade request ids before invoking the executor twice", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "execution-lab-ledger-"));
+        const countPath = join(dir, "count.txt");
+        const script = [
+            "const fs = require('node:fs');",
+            "let body='';",
+            "process.stdin.on('data', c => body += c);",
+            "process.stdin.on('end', () => {",
+            `fs.appendFileSync(${JSON.stringify(countPath)}, 'x');`,
+            "const req = JSON.parse(body);",
+            "console.log(JSON.stringify({ ok: true, requestId: req.requestId, status: 'dry_run', currentAsk: 0.52, maxPrice: req.maxPrice }));",
+            "});",
+        ].join("");
+
+        try {
+            await withEnv({
+                EXECUTION_LAB_LIVE_EXECUTOR_PATH: process.execPath,
+                EXECUTION_LAB_LIVE_EXECUTOR_ARGS_JSON: JSON.stringify(["-e", script]),
+                EXECUTION_LAB_LIVE_MAX_STAKE_USD: "10",
+                EXECUTION_LAB_LIVE_ORDER_TYPE: "FAK",
+            }, async () => {
+                const handler = createDevHandler();
+                const request = liveTradeRequest();
+                const first = await invokePost(handler, "/live/trade", request);
+                const second = await invokePost(handler, "/live/trade", request);
+
+                expect(first.statusCode).to.equal(200);
+                expect(second.statusCode).to.equal(200);
+                expect(first.json.status).to.equal("dry_run");
+                expect(second.json.status).to.equal("dry_run");
+                expect(readFileSync(countPath, "utf8")).to.equal("x");
+            });
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("rejects duplicate live request ids with a different payload hash", async () => {
+        await withEnv({
+            EXECUTION_LAB_LIVE_EXECUTOR_PATH: process.execPath,
+            EXECUTION_LAB_LIVE_EXECUTOR_ARGS_JSON: JSON.stringify(["-e", [
+                "let body='';",
+                "process.stdin.on('data', c => body += c);",
+                "process.stdin.on('end', () => {",
+                "const req = JSON.parse(body);",
+                "console.log(JSON.stringify({ ok: true, requestId: req.requestId, status: 'dry_run' }));",
+                "});",
+            ].join("")]),
+            EXECUTION_LAB_LIVE_MAX_STAKE_USD: "10",
+            EXECUTION_LAB_LIVE_ORDER_TYPE: "FAK",
+        }, async () => {
+            const handler = createDevHandler();
+            const first = await invokePost(handler, "/live/trade", liveTradeRequest());
+            const second = await invokePost(handler, "/live/trade", liveTradeRequest({ stakeUsd: 6 }));
+
+            expect(first.statusCode).to.equal(200);
+            expect(second.statusCode).to.equal(200);
+            expect(second.json.status).to.equal("rejected");
+            expect(second.json.reason).to.equal("request_id_payload_mismatch");
         });
     });
 

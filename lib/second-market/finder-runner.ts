@@ -137,7 +137,7 @@ export async function runSecondMarketFinder(
         interval: input.interval,
         executionModel: settings.executionModel,
     })) {
-        callbacks.setStatus("1s CLOB Polymarket scoring requires next_open or next_close execution model.");
+        callbacks.setStatus("1s CLOB Polymarket scoring requires signal_close, next_open, or next_close execution model.");
         return { results: [] };
     }
 
@@ -327,6 +327,7 @@ export async function runSecondMarketFinder(
                     result: backtestResult,
                     context,
                     trades: tradesForPolymarket,
+                    executionModel: settings.executionModel,
                     polymarketExitMode: effectiveExitMode,
                     polymarketSignalExitAllowMultipleTradesPerEvent: options.polymarketSignalExitAllowMultipleTradesPerEvent,
                     entryPriceFilterCents: options.polymarketEntryPriceFilterCents ?? settings.polymarketEntryPriceFilterCents,

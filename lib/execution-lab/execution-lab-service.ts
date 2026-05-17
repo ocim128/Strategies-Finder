@@ -31,7 +31,6 @@ import {
     stopExecutionLabMiner,
     submitExecutionLabLiveTrade,
     type ExecutionLabMinerStatus,
-    type LiveExecutorStatus,
 } from "./execution-lab-api";
 import { queryExecutionLabDom, type ExecutionLabDom } from "./execution-lab-dom";
 import {
@@ -49,12 +48,16 @@ import {
     type ExecutionLabRecord,
     type ExecutionLabSessionSnapshot,
     type ExecutionParityMismatchRecord,
+    type LiveExecutorStatus,
     type LiveExitResultRecord,
+    type LiveTradeSizingMode,
     type LiveTradeResultRecord,
     type PaperExitRecord,
 } from "./execution-lab-model";
 import {
+    LIVE_TRADE_DEFAULT_ENTRY_MAX_SLIPPAGE_CENTS,
     LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS,
+    LIVE_TRADE_DEFAULT_ORDER_TYPE,
     buildLiveExitRequestRecord,
     buildLiveExitResultRecord,
     buildLiveExitSubmitRequest,
@@ -314,6 +317,7 @@ export class ExecutionLabService {
     private latestLiveTradeResult: LiveTradeResultRecord | null = null;
     private latestLiveExitResult: LiveExitResultRecord | null = null;
     private latestLiveExecutorStatus: LiveExecutorStatus | null = null;
+    private sessionRunToken = 0;
 
     init(): void {
         if (this.initialized) return;
@@ -387,6 +391,7 @@ export class ExecutionLabService {
     }
 
     private resetSessionState(): void {
+        this.sessionRunToken += 1;
         this.snapshot = null;
         this.paperState = null;
         this.strategy = null;
@@ -416,6 +421,19 @@ export class ExecutionLabService {
         this.latestLiveTradeResult = null;
         this.latestLiveExitResult = null;
         this.renderIdle();
+    }
+
+    private isSessionActive(sessionToken: number, snapshot: ExecutionLabSessionSnapshot): boolean {
+        return this.running
+            && this.sessionRunToken === sessionToken
+            && this.snapshot?.sessionId === snapshot.sessionId;
+    }
+
+    private liveRecordContext(): { dryRun?: boolean; sizingMode?: LiveTradeSizingMode } {
+        return {
+            dryRun: this.latestLiveExecutorStatus?.dryRun,
+            sizingMode: this.latestLiveExecutorStatus?.sizingMode,
+        };
     }
 
     private bindEvents(): void {
@@ -509,7 +527,9 @@ export class ExecutionLabService {
             status.liveEnabled ? "live enabled" : "dry-run",
             `cap $${status.maxStakeUsd.toFixed(2)}`,
             `sizing ${status.sizingMode === "exchange_min" ? "exchange min" : "fixed"}`,
-            `exit slip ${status.exitMaxSlippageCents.toFixed(0)}c`,
+            `order ${status.orderType ?? LIVE_TRADE_DEFAULT_ORDER_TYPE}`,
+            `entry slip ${(status.entryMaxSlippageCents ?? LIVE_TRADE_DEFAULT_ENTRY_MAX_SLIPPAGE_CENTS).toFixed(0)}c`,
+            `exit slip ${(status.exitMaxSlippageCents ?? LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS).toFixed(0)}c`,
             status.message,
         ].join(" | ");
         dom.liveExecutorStatus.classList.toggle("is-ok", status.available && !status.liveEnabled);
@@ -918,12 +938,30 @@ export class ExecutionLabService {
         }
     }
 
+    private hasReadyLiveExitRetry(nowSec: number): boolean {
+        if (this.executionMode !== "live") return false;
+        for (const position of this.liveOpenPositionByPaperTradeId.values()) {
+            const plan = position.pendingExit;
+            if (
+                plan
+                && position.remainingShares > MIN_LIVE_POSITION_SHARES
+                && !this.liveExitInFlightByPaperTradeId.has(position.paperTradeId)
+                && nowSec >= plan.nextAttemptAtSec
+                && nowSec < position.eventEndTs
+            ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private async poll(): Promise<void> {
         if (!this.running || this.polling) return;
         const snapshot = this.snapshot;
         const paperState = this.paperState;
         const strategy = this.strategy;
         if (!snapshot || !paperState || !strategy) return;
+        const sessionToken = this.sessionRunToken;
 
         this.polling = true;
         try {
@@ -969,12 +1007,14 @@ export class ExecutionLabService {
             if (!latestBuffered || latestBufferedTs === null) return;
 
             const activeEventResult = await this.tryLivePollFetch(() => this.getLiveEventForTime(snapshot, latestBufferedTs));
+            if (!this.isSessionActive(sessionToken, snapshot)) return;
             if (!activeEventResult.ok) return;
             const activeEvent = activeEventResult.value;
             const previousPaperTs = paperState.lastProcessedCandleTimeSec;
             const liveQuoteResult = activeEvent
                 ? await this.tryLivePollFetch(() => loadExecutionLabLiveQuote({ event: activeEvent, sampleTs: latestBufferedTs }))
                 : { ok: true as const, value: null };
+            if (!this.isSessionActive(sessionToken, snapshot)) return;
             if (!liveQuoteResult.ok) return;
             const liveQuote = liveQuoteResult.value;
             if (liveQuote) this.addPolymarketQuote(liveQuote);
@@ -982,8 +1022,24 @@ export class ExecutionLabService {
             const storedQuotesResult = await this.tryLivePollFetch(() =>
                 this.addStoredQuoteRange(snapshot, storedQuoteStart, latestBufferedTs, true)
             );
+            if (!this.isSessionActive(sessionToken, snapshot)) return;
             if (!storedQuotesResult.ok) return;
             const strategyQuotes = this.getStrategyQuoteBuffer();
+            const feedLag = liveCandleLagSec(latestBufferedTs);
+            if (
+                previousPaperTs !== null
+                && latestBufferedTs <= previousPaperTs
+                && !this.hasReadyLiveExitRetry(Math.floor(Date.now() / 1000))
+            ) {
+                this.latestQuote = liveQuote;
+                this.feedLagSec = feedLag;
+                this.render();
+                this.setStatus(
+                    `Running ${this.executionMode === "live" ? "LIVE TRADE" : "Paper Trade"} ${snapshot.symbol} 1s | waiting for next candle after ${formatDateTime(latestBufferedTs)}`,
+                    this.executionMode === "live" ? "live" : "running"
+                );
+                return;
+            }
 
             const backtestPromise = executeBacktest({
                 ohlcvData: this.candles,
@@ -1008,6 +1064,7 @@ export class ExecutionLabService {
             });
             const outcomesPromise = this.tryLivePollFetch(() => this.loadLiveOutcomesForOpenPositions(snapshot, latestBufferedTs));
             const [backtestResult, outcomesResult] = await Promise.all([backtestPromise, outcomesPromise]);
+            if (!this.isSessionActive(sessionToken, snapshot)) return;
             if (!outcomesResult.ok) return;
             const outcomes = outcomesResult.value;
 
@@ -1016,8 +1073,8 @@ export class ExecutionLabService {
             const missingTradeQuotesResult = await this.tryLivePollFetch(() =>
                 this.loadMissingTradeQuotes(snapshot, backtestResult.result.trades, latestBufferedTs, previousPaperTs)
             );
+            if (!this.isSessionActive(sessionToken, snapshot)) return;
             if (!missingTradeQuotesResult.ok) return;
-            const feedLag = liveCandleLagSec(latestBufferedTs);
             const liveQuotes = this.getLiveQuoteBuffer();
             const recordedAtIso = new Date().toISOString();
             const tickResult = evaluateExecutionLabPaperTick(paperState, {
@@ -1032,9 +1089,16 @@ export class ExecutionLabService {
             });
             const parityMismatches = this.collectExecutionParityMismatches(backtestResult.result.trades, tickResult.records, latestBufferedTs);
             const parityRecords = this.buildExecutionMismatchRecords(parityMismatches, recordedAtIso);
-            const liveExecutionRecords = await this.buildLiveExecutionRecords(tickResult.records, tickResult.acceptedEntries, recordedAtIso);
+            const liveExecutionRecords = await this.buildLiveExecutionRecords(
+                tickResult.records,
+                tickResult.acceptedEntries,
+                recordedAtIso,
+                sessionToken
+            );
+            if (!this.isSessionActive(sessionToken, snapshot)) return;
 
             await this.appendRecords([...parityRecords, ...tickResult.records, ...liveExecutionRecords]);
+            if (!this.isSessionActive(sessionToken, snapshot)) return;
             this.updateExecutionParityState(parityMismatches);
             this.updateLatestPaperDecision(tickResult.records);
             this.appendLatestLoggedSignals(tickResult.records, backtestSignals);
@@ -1087,7 +1151,8 @@ export class ExecutionLabService {
     private async buildLiveExecutionRecords(
         paperRecords: readonly ExecutionLabRecord[],
         acceptedEntries: readonly ExecutionLabOpenPaperPosition[],
-        recordedAtIso: string
+        recordedAtIso: string,
+        sessionToken: number
     ): Promise<ExecutionLabRecord[]> {
         if (this.executionMode !== "live") return [];
         const exitRecords = paperRecords.filter((record): record is PaperExitRecord => record.recordType === "paper_exit");
@@ -1101,15 +1166,16 @@ export class ExecutionLabService {
             ...missingExitRecords.map((record) => this.findLivePositionForExitTrigger(record)?.paperTradeId ?? record.tradeId ?? ""),
         ].filter((tradeId) => tradeId.length > 0));
         return [
-            ...await this.buildLiveExitRecords(exitRecords, missingExitRecords, recordedAtIso),
-            ...await this.buildLiveTradeRecords(acceptedEntries, recordedAtIso, sameBatchExitedTradeIds),
+            ...await this.buildLiveExitRecords(exitRecords, missingExitRecords, recordedAtIso, sessionToken),
+            ...await this.buildLiveTradeRecords(acceptedEntries, recordedAtIso, sameBatchExitedTradeIds, sessionToken),
         ];
     }
 
     private async buildLiveExitRecords(
         exits: readonly PaperExitRecord[],
         missingExits: readonly PaperUnfilledRecord[],
-        recordedAtIso: string
+        recordedAtIso: string,
+        sessionToken: number
     ): Promise<ExecutionLabRecord[]> {
         const snapshot = this.snapshot;
         if (!snapshot) return [];
@@ -1138,6 +1204,7 @@ export class ExecutionLabService {
                 position.lastExitReason = "event_closed_before_exit";
                 continue;
             }
+            if (!this.isSessionActive(sessionToken, snapshot)) return records;
 
             const nextAttempt = plan.attempts + 1;
             const currentExitQuote = this.latestQuote?.event_start_ts === position.eventStartTs
@@ -1164,6 +1231,7 @@ export class ExecutionLabService {
                 paperExitPrice: exitReferencePrice,
                 liveEntryPrice: position.entryPrice,
                 attempt: nextAttempt,
+                orderType: this.latestLiveExecutorStatus?.orderType ?? LIVE_TRADE_DEFAULT_ORDER_TYPE,
                 maxExitSlippageCents: this.latestLiveExecutorStatus?.exitMaxSlippageCents ?? LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS,
                 createdAtIso: recordedAtIso,
                 nowSec,
@@ -1172,7 +1240,8 @@ export class ExecutionLabService {
                 currentBid,
                 minPrice: request.minPrice,
             });
-            records.push(buildLiveExitRequestRecord(snapshot, request, recordedAtIso));
+            const recordContext = this.liveRecordContext();
+            records.push(buildLiveExitRequestRecord(snapshot, request, recordedAtIso, recordContext));
             plan.attempts = nextAttempt;
             plan.nextAttemptAtSec = nowSec + LIVE_EXIT_RETRY_COOLDOWN_SEC;
             if (!floorPreflight.shouldSubmit) {
@@ -1197,6 +1266,8 @@ export class ExecutionLabService {
 
             this.liveExitInFlightByPaperTradeId.add(position.paperTradeId);
             try {
+                if (!this.isSessionActive(sessionToken, snapshot)) return records;
+                const startedMs = Date.now();
                 const response = await submitExecutionLabLiveTrade(request).catch(() =>
                     buildLiveTradeFailureResponse({
                         requestId: request.requestId,
@@ -1204,7 +1275,10 @@ export class ExecutionLabService {
                         minPrice: request.minPrice,
                     })
                 );
-                const result = buildLiveExitResultRecord(snapshot, request, response, new Date().toISOString());
+                if (!this.isSessionActive(sessionToken, snapshot)) return records;
+                const result = buildLiveExitResultRecord(snapshot, request, response, new Date().toISOString(), {
+                    latencyMs: Date.now() - startedMs,
+                });
                 this.latestLiveExitResult = result;
                 this.updateLiveExitPosition(position, response);
                 records.push(result);
@@ -1263,7 +1337,8 @@ export class ExecutionLabService {
     private async buildLiveTradeRecords(
         acceptedEntries: readonly ExecutionLabOpenPaperPosition[],
         recordedAtIso: string,
-        sameBatchExitedTradeIds: ReadonlySet<string>
+        sameBatchExitedTradeIds: ReadonlySet<string>,
+        sessionToken: number
     ): Promise<ExecutionLabRecord[]> {
         const snapshot = this.snapshot;
         if (this.executionMode !== "live" || !snapshot || acceptedEntries.length === 0) return [];
@@ -1285,11 +1360,16 @@ export class ExecutionLabService {
                 position,
                 createdAtIso: recordedAtIso,
                 nowSec,
+                orderType: this.latestLiveExecutorStatus?.orderType ?? LIVE_TRADE_DEFAULT_ORDER_TYPE,
+                maxEntrySlippageCents: this.latestLiveExecutorStatus?.entryMaxSlippageCents
+                    ?? LIVE_TRADE_DEFAULT_ENTRY_MAX_SLIPPAGE_CENTS,
             });
 
             try {
+                if (!this.isSessionActive(sessionToken, snapshot)) return records;
+                const recordContext = this.liveRecordContext();
                 if (sameBatchExitedTradeIds.has(position.tradeId)) {
-                    records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso));
+                    records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso, recordContext));
                     const result = buildLiveTradeResultRecord(
                         snapshot,
                         request,
@@ -1314,7 +1394,7 @@ export class ExecutionLabService {
                     cutoffSeconds: snapshot.backtestSettings.polymarketEntryCutoffSeconds,
                 });
                 if (!timingPreflight.allowed) {
-                    records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso));
+                    records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso, recordContext));
                     const result = buildLiveTradeResultRecord(
                         snapshot,
                         request,
@@ -1333,7 +1413,7 @@ export class ExecutionLabService {
 
                 const blockingPosition = this.findOpenLivePositionForEvent(position.eventStartTs);
                 if (blockingPosition && blockingPosition.paperTradeId !== position.tradeId) {
-                    records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso));
+                    records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso, recordContext));
                     const result = buildLiveTradeResultRecord(
                         snapshot,
                         request,
@@ -1367,7 +1447,9 @@ export class ExecutionLabService {
                     continue;
                 }
 
-                records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso));
+                records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso, recordContext));
+                if (!this.isSessionActive(sessionToken, snapshot)) return records;
+                const startedMs = Date.now();
                 const response = await submitExecutionLabLiveTrade(request).catch(() =>
                     buildLiveTradeFailureResponse({
                         requestId: request.requestId,
@@ -1375,7 +1457,10 @@ export class ExecutionLabService {
                         maxPrice: request.maxPrice,
                     })
                 );
-                const result = buildLiveTradeResultRecord(snapshot, request, response, new Date().toISOString());
+                if (!this.isSessionActive(sessionToken, snapshot)) return records;
+                const result = buildLiveTradeResultRecord(snapshot, request, response, new Date().toISOString(), {
+                    latencyMs: Date.now() - startedMs,
+                });
                 this.latestLiveTradeResult = result;
                 this.trackLiveEntryPosition(position, request.requestId, response);
                 records.push(result);
@@ -1726,6 +1811,7 @@ export class ExecutionLabService {
     }
 
     private async stop(reason: "user_stop" | "error", message?: string): Promise<void> {
+        this.sessionRunToken += 1;
         if (this.timer) {
             clearInterval(this.timer);
             this.timer = null;

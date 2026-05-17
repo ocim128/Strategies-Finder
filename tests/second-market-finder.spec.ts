@@ -109,7 +109,7 @@ function makeInput(): FinderRunInput {
 }
 
 describe("second market Finder runner", () => {
-    it("loads 1s CLOB context once and supports next-close signal-exit fills", async () => {
+    it("loads 1s CLOB context once and supports signal-close signal-exit fills", async () => {
         let clobLoadCount = 0;
         globalThis.fetch = async (input) => {
             const url = new URL(String(input));
@@ -144,8 +144,10 @@ describe("second market Finder runner", () => {
                 return new Response(JSON.stringify({
                     ok: true,
                     quotes: [
-                        quote(1_700_000_010, 0.55, 0.53),
-                        quote(1_700_000_020, 0.60, 0.58),
+                        quote(1_700_000_010, 0.20, 0.18),
+                        quote(1_700_000_011, 0.55, 0.53),
+                        quote(1_700_000_020, 0.30, 0.28),
+                        quote(1_700_000_021, 0.60, 0.58),
                         quote(1_700_000_030, 0.65, 0.63),
                     ],
                 }), { status: 200 });
@@ -154,7 +156,7 @@ describe("second market Finder runner", () => {
         };
 
         const input = makeInput();
-        input.settings.executionModel = "next_close";
+        input.settings.executionModel = "signal_close";
 
         const statuses: string[] = [];
         const output = await runSecondMarketFinder(input, {
@@ -173,7 +175,7 @@ describe("second market Finder runner", () => {
         expect(statuses.at(-1)).to.contain("CLOB quote rows");
     });
 
-    it("rejects 1s CLOB scoring when execution is signal-close", async () => {
+    it("rejects 1s CLOB scoring for unsupported execution models", async () => {
         let fetchCount = 0;
         globalThis.fetch = async () => {
             fetchCount++;
@@ -181,7 +183,7 @@ describe("second market Finder runner", () => {
         };
 
         const input = makeInput();
-        input.settings.executionModel = "signal_close";
+        (input.settings as any).executionModel = "same_bar_open";
 
         const statuses: string[] = [];
         const output = await runSecondMarketFinder(input, {
@@ -194,7 +196,7 @@ describe("second market Finder runner", () => {
 
         expect(output.results).to.deep.equal([]);
         expect(fetchCount).to.equal(0);
-        expect(statuses.at(-1)).to.equal("1s CLOB Polymarket scoring requires next_open or next_close execution model.");
+        expect(statuses.at(-1)).to.equal("1s CLOB Polymarket scoring requires signal_close, next_open, or next_close execution model.");
     });
 
     it("applies post-signal limit entry settings in 1s CLOB scoring", async () => {

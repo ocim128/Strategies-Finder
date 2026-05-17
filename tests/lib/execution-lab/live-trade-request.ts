@@ -16,6 +16,7 @@ import type {
 } from "./execution-lab-model";
 
 export const LIVE_TRADE_DEFAULT_ORDER_TYPE: LiveTradeOrderType = "FAK";
+export const LIVE_TRADE_DEFAULT_ENTRY_MAX_SLIPPAGE_CENTS = 1;
 export const LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS = 5;
 export const LIVE_TRADE_REQUEST_TTL_SEC = 10;
 export const LIVE_TRADE_MAX_EXPIRY_WINDOW_SEC = 30;
@@ -31,6 +32,12 @@ const LIVE_TRADE_STATUSES = new Set<LiveTradeSubmitStatus>([
     "duplicate",
     "failed",
 ]);
+
+type LiveRecordContext = {
+    dryRun?: boolean;
+    sizingMode?: LiveTradeSizingMode;
+    latencyMs?: number;
+};
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -171,12 +178,24 @@ export function buildLiveTradeRequestId(args: {
     ])}`;
 }
 
+export function resolveLiveEntryMaxPrice(args: {
+    entryPrice: number;
+    maxEntrySlippageCents?: number;
+}): number {
+    const entryPrice = finitePositiveNumber(args.entryPrice) ?? 0.01;
+    const maxEntrySlippageCents = Number.isFinite(args.maxEntrySlippageCents)
+        ? Math.max(0, args.maxEntrySlippageCents ?? LIVE_TRADE_DEFAULT_ENTRY_MAX_SLIPPAGE_CENTS)
+        : LIVE_TRADE_DEFAULT_ENTRY_MAX_SLIPPAGE_CENTS;
+    return Math.max(0.01, Math.min(1, Number((entryPrice + (maxEntrySlippageCents / 100)).toFixed(4))));
+}
+
 export function buildLiveTradeSubmitRequest(args: {
     snapshot: ExecutionLabSessionSnapshot;
     position: ExecutionLabOpenPaperPosition;
     createdAtIso: string;
     nowSec: number;
     orderType?: LiveTradeOrderType;
+    maxEntrySlippageCents?: number;
 }): LiveEntrySubmitRequest {
     const tokenId = args.position.side === "yes"
         ? args.position.yesTokenId
@@ -204,7 +223,10 @@ export function buildLiveTradeSubmitRequest(args: {
         stakeUsd: args.position.stakeUsd,
         signalTimeSec: args.position.signalTimeSec,
         entryTimeSec: args.position.entryTimeSec,
-        maxPrice: args.position.entryPrice,
+        maxPrice: resolveLiveEntryMaxPrice({
+            entryPrice: args.position.entryPrice,
+            maxEntrySlippageCents: args.maxEntrySlippageCents,
+        }),
         orderType: args.orderType ?? LIVE_TRADE_DEFAULT_ORDER_TYPE,
     };
 }
@@ -285,19 +307,22 @@ export function buildLiveExitSubmitRequest(args: {
         shares,
         exitTimeSec: Math.floor(args.exitTimeSec),
         minPrice,
+        attempt: Math.max(1, Math.floor(args.attempt ?? 1)),
     };
 }
 
 export function buildLiveTradeRequestRecord(
     snapshot: ExecutionLabSessionSnapshot,
     request: LiveEntrySubmitRequest,
-    recordedAtIso: string
+    recordedAtIso: string,
+    context: LiveRecordContext = {}
 ): LiveTradeRequestRecord {
     return {
         ...baseRecord(snapshot, recordedAtIso),
         recordType: "live_trade_request",
         requestId: request.requestId,
         paperTradeId: request.paperTradeId,
+        expiresAtSec: request.expiresAtSec,
         eventStartTs: request.eventStartTs,
         eventEndTs: request.eventEndTs,
         marketSlug: request.marketSlug,
@@ -309,6 +334,8 @@ export function buildLiveTradeRequestRecord(
         entryTimeSec: request.entryTimeSec,
         maxPrice: request.maxPrice,
         orderType: request.orderType,
+        dryRun: context.dryRun,
+        sizingMode: context.sizingMode,
     };
 }
 
@@ -316,7 +343,8 @@ export function buildLiveTradeResultRecord(
     snapshot: ExecutionLabSessionSnapshot,
     request: Pick<LiveTradeSubmitRequest, "requestId" | "paperTradeId">,
     response: LiveTradeSubmitResponse,
-    recordedAtIso: string
+    recordedAtIso: string,
+    context: LiveRecordContext = {}
 ): LiveTradeResultRecord {
     return {
         ...baseRecord(snapshot, recordedAtIso),
@@ -334,13 +362,15 @@ export function buildLiveTradeResultRecord(
         filledShares: response.filledShares,
         currentAsk: response.currentAsk,
         maxPrice: response.maxPrice,
+        latencyMs: context.latencyMs,
     };
 }
 
 export function buildLiveExitRequestRecord(
     snapshot: ExecutionLabSessionSnapshot,
     request: LiveExitSubmitRequest,
-    recordedAtIso: string
+    recordedAtIso: string,
+    context: LiveRecordContext = {}
 ): LiveExitRequestRecord {
     return {
         ...baseRecord(snapshot, recordedAtIso),
@@ -348,6 +378,7 @@ export function buildLiveExitRequestRecord(
         requestId: request.requestId,
         entryRequestId: request.entryRequestId,
         paperTradeId: request.paperTradeId,
+        expiresAtSec: request.expiresAtSec,
         eventStartTs: request.eventStartTs,
         eventEndTs: request.eventEndTs,
         marketSlug: request.marketSlug,
@@ -358,6 +389,9 @@ export function buildLiveExitRequestRecord(
         exitTimeSec: request.exitTimeSec,
         minPrice: request.minPrice,
         orderType: request.orderType,
+        attempt: request.attempt,
+        dryRun: context.dryRun,
+        sizingMode: context.sizingMode,
     };
 }
 
@@ -365,7 +399,8 @@ export function buildLiveExitResultRecord(
     snapshot: ExecutionLabSessionSnapshot,
     request: Pick<LiveExitSubmitRequest, "requestId" | "entryRequestId" | "paperTradeId">,
     response: LiveTradeSubmitResponse,
-    recordedAtIso: string
+    recordedAtIso: string,
+    context: LiveRecordContext = {}
 ): LiveExitResultRecord {
     return {
         ...baseRecord(snapshot, recordedAtIso),
@@ -384,6 +419,7 @@ export function buildLiveExitResultRecord(
         filledShares: response.filledShares,
         currentBid: response.currentBid,
         minPrice: response.minPrice,
+        latencyMs: context.latencyMs,
     };
 }
 
@@ -532,12 +568,15 @@ export function validateLiveTradeSubmitRequest(
         const shares = finiteNumber(value.shares);
         const exitTimeSec = finiteNumber(value.exitTimeSec);
         const minPrice = finiteNumber(value.minPrice);
+        const attempt = value.attempt === undefined ? undefined : finitePositiveNumber(value.attempt);
         if (!entryRequestId) return { ok: false, error: "entryRequestId is required for exits" };
         if (shares === null || shares <= 0) return { ok: false, error: "shares must be positive for exits" };
         if (minPrice === null || minPrice <= 0 || minPrice > 1) return { ok: false, error: "minPrice must be in (0, 1]" };
+        if (value.attempt !== undefined && attempt === null) return { ok: false, error: "attempt must be positive for exits" };
         if (exitTimeSec === null || exitTimeSec < eventStartTs || exitTimeSec >= eventEndTs) {
             return { ok: false, error: "exitTimeSec must be inside the event window" };
         }
+        const normalizedAttempt = attempt === undefined || attempt === null ? undefined : Math.floor(attempt);
         return {
             ok: true,
             request: {
@@ -564,6 +603,7 @@ export function validateLiveTradeSubmitRequest(
                 shares,
                 exitTimeSec: Math.floor(exitTimeSec),
                 minPrice,
+                attempt: normalizedAttempt,
             },
         };
     }

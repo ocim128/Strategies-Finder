@@ -99,15 +99,37 @@ describe("Execution Lab live trade request", () => {
             position: position("no"),
             createdAtIso: "2026-01-01T00:00:01.000Z",
             nowSec: EVENT_START + 11,
+            orderType: "FOK",
         });
 
         expect(yes.action).to.equal("entry");
         expect(yes.tokenId).to.equal("yes-token");
         expect(no.tokenId).to.equal("no-token");
-        expect(yes.maxPrice).to.equal(0.57);
+        expect(yes.maxPrice).to.equal(0.58);
         expect(yes.orderType).to.equal("FAK");
+        expect(no.orderType).to.equal("FOK");
         expect(yes.requestId).to.equal(yesRepeat.requestId);
         expect(no.requestId).to.not.equal(yes.requestId);
+    });
+
+    it("applies configured live entry slippage to the paper entry cap", () => {
+        const zeroSlippage = buildLiveTradeSubmitRequest({
+            snapshot: snapshot(),
+            position: position("yes"),
+            maxEntrySlippageCents: 0,
+            createdAtIso: "2026-01-01T00:00:01.000Z",
+            nowSec: EVENT_START + 11,
+        });
+        const clamped = buildLiveTradeSubmitRequest({
+            snapshot: snapshot(),
+            position: { ...position("yes"), entryPrice: 0.99 },
+            maxEntrySlippageCents: 5,
+            createdAtIso: "2026-01-01T00:00:01.000Z",
+            nowSec: EVENT_START + 11,
+        });
+
+        expect(zeroSlippage.maxPrice).to.equal(0.57);
+        expect(clamped.maxPrice).to.equal(1);
     });
 
     it("builds and validates live exit requests with a floor below paper exit price", () => {
@@ -133,14 +155,20 @@ describe("Execution Lab live trade request", () => {
         const request = buildLiveExitSubmitRequest(exitArgs);
 
         expect(request.action).to.equal("exit");
+        expect(request.attempt).to.equal(1);
         expect(request.minPrice).to.be.closeTo(0.49, 1e-12);
         expect(request.maxPrice).to.be.closeTo(0.49, 1e-12);
         expect(buildLiveExitSubmitRequest({ ...exitArgs, attempt: 2 }).requestId).to.not.equal(request.requestId);
+        expect(buildLiveExitSubmitRequest({ ...exitArgs, attempt: 2 }).attempt).to.equal(2);
         expect(validateLiveTradeSubmitRequest(request, {
             nowSec: EVENT_START + 51,
             maxStakeUsd: 1,
         }).ok).to.equal(true);
         expect(validateLiveTradeSubmitRequest({ ...request, shares: 0 }, {
+            nowSec: EVENT_START + 51,
+            maxStakeUsd: 10,
+        }).ok).to.equal(false);
+        expect(validateLiveTradeSubmitRequest({ ...request, attempt: 0 }, {
             nowSec: EVENT_START + 51,
             maxStakeUsd: 10,
         }).ok).to.equal(false);
@@ -164,11 +192,13 @@ describe("Execution Lab live trade request", () => {
             paperExitPrice: 0.78,
             liveEntryPrice: 0.62,
             maxExitSlippageCents: 5,
+            orderType: "FOK",
             createdAtIso: "2026-01-01T00:00:50.000Z",
             nowSec: EVENT_START + 51,
         });
 
         expect(request.minPrice).to.be.closeTo(0.57, 1e-12);
+        expect(request.orderType).to.equal("FOK");
     });
 
     it("rejects live entries too close to the event close by entry time or current clock", () => {

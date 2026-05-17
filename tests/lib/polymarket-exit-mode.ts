@@ -1,7 +1,7 @@
 export type PolymarketExitMode = "resolve_hold" | "signal_exit_same_event";
 
 export function isPolymarketOneSecondSignalExitExecutionModel(executionModel?: string): boolean {
-    return executionModel === "next_open" || executionModel === "next_close";
+    return executionModel === "signal_close" || executionModel === "next_open" || executionModel === "next_close";
 }
 
 export function resolveEffectivePolymarketExitMode(args: {

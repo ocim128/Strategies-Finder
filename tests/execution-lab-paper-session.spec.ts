@@ -199,6 +199,35 @@ describe("Execution Lab paper session", () => {
         expect(entry?.shares).to.be.closeTo(5 / 0.44, 1e-9);
     });
 
+    it("prices close-based 1s executions at the candle close second", () => {
+        const closeSnapshot = snapshot();
+        closeSnapshot.backtestSettings.executionModel = "signal_close";
+        const state = createExecutionLabPaperState(closeSnapshot);
+        const closedTrade = trade(1, "long", EVENT_START + 10, EVENT_START + 12);
+        closedTrade.exitReason = "signal";
+        const result = tick({
+            state,
+            latestTs: EVENT_START + 13,
+            trades: [closedTrade],
+            signals: [signal("buy", EVENT_START + 10)],
+            quotes: [
+                quote(EVENT_START + 10, 0.57, 0.56),
+                quote(EVENT_START + 11, 0.58, 0.57),
+                quote(EVENT_START + 12, 0.60, 0.59),
+                quote(EVENT_START + 13, 0.63, 0.62),
+            ],
+        });
+        const entry = result.records.find((record): record is PaperEntryRecord => record.recordType === "paper_entry");
+        const exit = result.records.find((record): record is PaperExitRecord => record.recordType === "paper_exit");
+
+        expect(entry?.signalTimeSec).to.equal(EVENT_START + 10);
+        expect(entry?.entryTimeSec).to.equal(EVENT_START + 11);
+        expect(entry?.entryQuoteTs).to.equal(EVENT_START + 11);
+        expect(entry?.entryPrice).to.equal(0.58);
+        expect(exit?.exitTimeSec).to.equal(EVENT_START + 13);
+        expect(exit?.exitPrice).to.equal(0.62);
+    });
+
     it("requires exact outcome symbol, series, token, and timestamp quote matches", () => {
         const state = createExecutionLabPaperState(snapshot());
         const result = tick({

@@ -59,6 +59,9 @@ CREATE TABLE IF NOT EXISTS polymarket_clob_1s_quotes (
 CREATE INDEX IF NOT EXISTS idx_clob_1s_symbol_time
     ON polymarket_clob_1s_quotes(symbol, sample_ts);
 
+CREATE INDEX IF NOT EXISTS idx_clob_1s_symbol_series_time
+    ON polymarket_clob_1s_quotes(symbol, series_id, sample_ts);
+
 CREATE INDEX IF NOT EXISTS idx_clob_1s_event_time
     ON polymarket_clob_1s_quotes(series_id, event_start_ts, sample_ts);
 
@@ -149,4 +152,3 @@ export function ensureSecondMarketSchema(db: DatabaseSync): void {
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run(String(SECOND_MARKET_SCHEMA_VERSION));
 }
-
