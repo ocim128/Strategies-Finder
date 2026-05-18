@@ -92,7 +92,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Execution Lab: `lib/execution-lab/*`
 - Scanner: `lib/scanner/*`
 - Replay: `lib/replay/*`
-- Pair Combiner: `lib/pair-combiner-manager.ts`, `lib/pairCombiner/*`
+- Pair Combiner bridge: `lib/pairCombiner/*`
 - Data Mining / feature export: `lib/data-mining-manager.ts`, `lib/featureLab/*`
 - Strategy Ensemble Lab: `lib/strategy-ensemble-service.ts`
 - Polymarket research / scoring: `lib/polymarket-outcome-evaluator.ts`, `lib/polymarket-signal-exit-evaluator.ts`, `lib/polymarket-price-points-ingest.ts`, `scripts/polymarket-sync-outcomes.ts`
@@ -228,7 +228,7 @@ Dev note:
 - After strategy edits, run `npm run strategies:sync-manifest` if needed and do a manual browser refresh when you are ready to load the new code.
 - Set `WATCH_STRATEGIES=1` before starting Vite if you want live reload for `lib/strategies/**` again.
 
-For strategy-idea generation via [`archive/prompt.txt`](c:\Users\user\Documents\Repo\Experimental\lightweight-charts\debug\playground\Strategies-Finder\archive\prompt.txt), keep the allowed helper surface aligned with helpers that are either already used by manifest-backed built-ins or explicitly approved low-complexity primitives from the shared strategy helper modules. Favor simple price extractors and bar-geometry helpers such as `getOpens`, `getMidpoints`, `getTypicalPrices`, `buildRangeSeries`, `buildBodySeries`, and `buildCloseLocationSeries` before reaching for heavier transforms. Do not add prompt-only helper names that do not exist in the codebase. The prompt now also rejects Tier 1 to Tier 3 retail-pattern or overcrowded ideas and only allows Tier 4 to Tier 5 market-mechanics concepts such as liquidity sweeps, failed auctions, regime shifts, and imbalance-driven state changes. For indicators, the prompt treats the codebase indicator list as an implementation surface only, not an approval list: oscillator-first or overcrowded ideas built around RSI, stochastic, CCI, MACD, Bollinger, MA crossovers, ATR, or similar retail defaults are rejected, while VWAP, Volume Profile, Keltner, Donchian, ADX-context, and structure/liquidity concepts are preferred. The prompt also now rejects overfit ideas that depend on magic-number thresholds, narrow confirmation stacks, exact pattern geometry, or filters whose main job is just to make the backtest look cleaner in hindsight.
+For strategy-idea generation via [`archive/prompt.txt`](archive/prompt.txt), keep the allowed helper surface aligned with real exported strategy-layer utilities. Favor low-complexity price, bar-geometry, crossover, pivot, and timeframe-alignment helpers before heavier transforms, and keep prompt-specific quality filters inside the prompt file rather than expanding the repo-level README.
 
 ### Use Portfolio Lab effectively
 Portfolio Lab is most useful when you separate decision outputs from diagnostics.
@@ -258,13 +258,13 @@ Recommended workflow:
 - if no validation survivor exists, the UI explicitly labels the fallback as `In-Sample Candidate`
 
 ### Evaluate Polymarket Outcomes
-Automate the inspection of executed `next_open` trades against historical Polymarket crypto event resolution.
+Automate the inspection of executed chart trades against historical Polymarket crypto event resolution and locally cached CLOB quotes.
 Implementation notes live in [`docs/polymarket.md`](docs/polymarket.md).
 1. Sync closed Polymarket matching events to your local SQLite database using `npm run poly:sync-outcomes:all` for every supported 5m symbol, or `npm run poly:sync-outcomes` / the direct `esno` command for a single symbol (requires the Vite server running via `npm run dev`).
 2. Use the normal backtest, Finder, or Hunt surfaces for full Polymarket parity. The older headless helper `evaluatePolymarketOutcomes` in `lib/polymarket-outcome-evaluator.ts` still represents the resolve-hold outcome-only path.
 3. Choose `Polymarket Exit Mode` in Backtest Realism:
    - `Resolve Hold` keeps the original final-outcome scoring path.
-   - `Signal Exit Same Event` is available on `1m` + `next_open` runs and prices entry or exit from locally cached Polymarket quotes inside the containing `5m` event.
+   - `Signal Exit Same Event` is available on `1m` + `next_open` runs and on supported `1s` BTCUSDT/XRPUSDT CLOB runs with `signal_close`, `next_open`, or `next_close`.
 4. For `1s` BTCUSDT/XRPUSDT runs, keep `scripts/run-1s-miner.bat` running first. The chart and Finder load Binance candles from `price-data/1second-chart/second-market-data.sqlite`, and Polymarket scoring uses exact-second CLOB bid/ask rows from the same DB.
 5. For chart-exact parity, pass the same backtest and capital settings you use in the UI. The helper scores executed trades, not raw signals.
 6. The supported Polymarket 5m outcome target series are `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, and `XRPUSDT`. The chart symbol can differ if you set `Polymarket Outcome Symbol` to one of those targets.

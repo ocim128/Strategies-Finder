@@ -206,6 +206,8 @@ Core files:
 
 ## Exit Modes
 
+The canonical resolver for effective exit-mode gating is `resolveEffectivePolymarketExitMode(...)` in `lib/polymarket-exit-mode.ts`. If this section, the support matrix, or the settings rules below change, keep all three aligned with that helper and its focused tests.
+
 ### `resolve_hold`
 
 This is the default mode.
@@ -737,6 +739,16 @@ Core:
 
 ```bash
 npm run typecheck
+```
+
+Doc drift checks:
+
+```bash
+rg -n "signal_exit_same_event|resolve_hold|Post-Signal Limit Entry|Polymarket Entry Cutoff" README.md AGENTS.md docs\polymarket.md lib tests
+```
+
+```bash
+rg -n "resolveEffectivePolymarketExitMode|signal_close|next_open|next_close" lib\polymarket-exit-mode.ts tests\polymarket-signal-exit.spec.ts docs\polymarket.md README.md AGENTS.md
 ```
 
 Focused Polymarket tests:

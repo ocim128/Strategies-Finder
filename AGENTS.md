@@ -39,15 +39,15 @@ Define success criteria. Loop until verified.
 
 Transform tasks into verifiable goals:
 
-"Add validation" → "Write tests for invalid inputs, then make them pass"
-"Fix the bug" → "Write a test that reproduces it, then make it pass"
-"Refactor X" → "Ensure tests pass before and after"
+"Add validation" -> "Write tests for invalid inputs, then make them pass"
+"Fix the bug" -> "Write a test that reproduces it, then make it pass"
+"Refactor X" -> "Ensure tests pass before and after"
 For multi-step tasks, state a brief plan:
 
 
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
+1. [Step] -> verify: [check]
+2. [Step] -> verify: [check]
+3. [Step] -> verify: [check]
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
 
@@ -237,7 +237,7 @@ Strategy-lib contract notes:
 - If you add `prepareFinderData(...)`, keep `executePrepared(...)` behavior identical to `execute(...)`
 
 Recommended strategy-lib skeleton:
-Read `lib/strategies/lib/median_deviation_streak.ts` for a simple implementation or `lib/strategies/lib/vwap_zscore_reversion.ts` for a slightly more complex robust logic.
+Read `lib/strategies/lib/robust_median_channel_breakout.ts` for a simple implementation or `lib/strategies/lib/rolling_vwap_center.ts` for a Finder-prepared implementation.
 
 Useful helper maps:
 - `lib/strategies/strategy-helpers.ts`: Core signals (`createSignalLoop`, `createBuySignal`, `createSellSignal`) & base OHLCV array extractors (`getCloses`, `getHighs`, `getVolumes`, `ensureCleanData`).
@@ -251,10 +251,10 @@ Important Type and Dependency Gotchas:
 - Array indexing: ensure you loop against generic padding `if (i < lookback || indicator[i] === null) return null;` securely within closures.
 
 Useful examples:
-- `lib/strategies/lib/median_deviation_streak.ts`
+- `lib/strategies/lib/robust_median_channel_breakout.ts`
   - small strategy with explicit normalization and direct `execute(...)` use
-- `lib/strategies/lib/vwap_zscore_reversion.ts`
-  - WFA/Finder-safe threshold normalization
+- `lib/strategies/lib/rolling_vwap_center.ts`
+  - Finder-safe prepared-data reuse with normalized params
 - search `prepareFinderData` under `lib/strategies/lib/*`
   - only for strategies where dataset-derived precompute materially reduces Finder cost
 
@@ -294,7 +294,7 @@ Strategy-lib failure modes seen repeatedly:
   - bridge export
   - Execution Lab live trade
 - `polymarketExitMode` defaults to `resolve_hold`
-- `signal_exit_same_event` is only effective on `1m` + `next_open` and supported `1s` BTCUSDT/XRPUSDT CLOB `next_open` runs; use `resolveEffectivePolymarketExitMode(...)` instead of open-coded checks
+- `signal_exit_same_event` is only effective on `1m` + `next_open` and supported `1s` BTCUSDT/XRPUSDT CLOB `signal_close`, `next_open`, or `next_close` runs; use `resolveEffectivePolymarketExitMode(...)` instead of open-coded checks
 - Signal-exit pricing depends on local `polymarket_price_points`; if you change ingestion or storage, update together:
   - `lib/polymarket-price-points-ingest.ts`
   - `lib/local-sqlite-polymarket-api.ts`
@@ -466,3 +466,9 @@ If you change behavior substantially, update the docs that actually carry that c
 - `workers/README.md` for worker API and cron behavior
 
 Keep repo-level docs broad and operational. Strategy-specific lore belongs in dedicated docs, not in the main README.
+
+Before calling documentation complete, check:
+- relative Markdown links resolve
+- backticked file paths still exist unless they are placeholders like `<strategy-key>`
+- repeated support matrices match the canonical resolver or service code they describe
+- README summaries stay shorter than feature-specific docs
