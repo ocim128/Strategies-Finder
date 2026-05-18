@@ -339,7 +339,6 @@ function registerLazyFeatures(): void {
     registerLazyFeature("portfolio-lab", async () => (await import("./portfolio-lab-service")).portfolioLabService.init());
     registerLazyFeature("strategy-ensemble", async () => (await import("./strategy-ensemble-service")).strategyEnsembleService.init());
     registerLazyFeature("polymarket-panel", async () => (await import("./polymarket-panel-service")).polymarketPanelService.init());
-    registerLazyFeature("second-market-viewer", async () => (await import("./second-market/second-market-viewer-service")).secondMarketViewerService.init());
     registerLazyFeature("execution-lab", async () => (await import("./execution-lab/execution-lab-service")).executionLabService.init());
     registerLazyFeature("monte-carlo", async () => (await import("./monte-carlo-service")).initMonteCarloService());
     registerLazyFeature("strategy-library-admin", async () => (await import("./strategy-library-admin-service")).strategyLibraryAdminService.init());

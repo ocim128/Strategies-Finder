@@ -5,7 +5,6 @@ const LAZY_STRATEGY_PANEL_TAB_LOADERS = {
     datamining: () => import('../html-partials/tab-datamining.html?raw'),
     hunt: () => import('../html-partials/tab-hunt.html?raw'),
     polymarket: () => import('../html-partials/tab-polymarket.html?raw'),
-    secondmarket: () => import('../html-partials/tab-second-market.html?raw'),
     executionlab: () => import('../html-partials/tab-execution-lab.html?raw'),
     walkforward: () => import('../html-partials/tab-walkforward.html?raw'),
     montecarlo: () => import('../html-partials/tab-monte-carlo.html?raw'),

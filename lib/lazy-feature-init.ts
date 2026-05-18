@@ -23,7 +23,6 @@ const TAB_TO_FEATURE: Record<string, string> = {
     portfolio: "portfolio-lab",
     ensemble: "strategy-ensemble",
     polymarket: "polymarket-panel",
-    secondmarket: "second-market-viewer",
     executionlab: "execution-lab",
     datamining: "data-mining",
 };
