@@ -41,7 +41,9 @@ export class FinderResultRanker {
         while (idx > 0) {
             const parent = Math.floor((idx - 1) / 2);
             if (!this.isWorse(this.heap[idx], this.heap[parent])) break;
-            [this.heap[idx], this.heap[parent]] = [this.heap[parent], this.heap[idx]];
+            const tmp = this.heap[idx];
+            this.heap[idx] = this.heap[parent];
+            this.heap[parent] = tmp;
             idx = parent;
         }
     }
@@ -61,7 +63,9 @@ export class FinderResultRanker {
             }
             if (worst === idx) break;
 
-            [this.heap[idx], this.heap[worst]] = [this.heap[worst], this.heap[idx]];
+            const tmp = this.heap[idx];
+            this.heap[idx] = this.heap[worst];
+            this.heap[worst] = tmp;
             idx = worst;
         }
     }

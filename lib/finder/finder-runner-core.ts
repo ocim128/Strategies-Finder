@@ -83,6 +83,36 @@ export function shouldUseRustCachedMode(
 }
 
 export function compactSignalsForRust(signals: Signal[]): CompactSignal[] {
+    for (const signal of signals) {
+        let keyCount = 0;
+        for (const key in signal) {
+            if (key !== "time" && key !== "type" && key !== "price" && key !== "barIndex") {
+                return cloneCompactSignals(signals);
+            }
+            keyCount++;
+        }
+        if (keyCount !== 4) {
+            return cloneCompactSignals(signals);
+        }
+    }
+
+    return signals as unknown as CompactSignal[];
+}
+
+function serializeCandidateParams(params: StrategyParams): string {
+    const keys = Object.keys(params).sort();
+    let serialized = "";
+    for (let i = 0; i < keys.length; i++) {
+        if (i > 0) serialized += "|";
+        const key = keys[i];
+        serialized += key;
+        serialized += ":";
+        serialized += params[key];
+    }
+    return serialized;
+}
+
+function cloneCompactSignals(signals: Signal[]): CompactSignal[] {
     return signals.map((signal) => ({
         time: signal.time,
         type: signal.type,
@@ -238,13 +268,6 @@ export function buildFinderSearchBaseParams(
     }
     addModeSpecificTakeProfitSearchParams(baseParams, settings);
     return baseParams;
-}
-
-function serializeCandidateParams(params: StrategyParams): string {
-    return Object.keys(params)
-        .sort()
-        .map((key) => `${key}:${params[key]}`)
-        .join("|");
 }
 
 export function normalizeFinderCandidateParams(strategy: Strategy, params: StrategyParams): StrategyParams {

@@ -140,7 +140,7 @@ export async function runGeneticFinder(params: GeneticFinderRunParams): Promise<
             continue;
         }
 
-        const normalizedResult = normalizeResultSharpe(optimization.bestGenome.result, initialCapital);
+        const normalizedResult = normalizeResultSharpe(optimization.bestGenome.result);
         const adjustment = buildSelection(normalizedResult, lastDataTime, initialCapital);
         const candidate: FinderResult = buildFinderResult({
             key: selection.key,

@@ -271,19 +271,11 @@ export function computeDatasetFlags(
     };
 }
 
-export function normalizeResultSharpe(result: BacktestResult, _initialCapital: number): BacktestResult {
+export function normalizeResultSharpe(result: BacktestResult): BacktestResult {
     if (Array.isArray(result.equityCurve) && result.equityCurve.length > 1) {
-        return {
-            ...result,
-            sharpeRatio: calculateSharpeRatioFromEquityCurve(result.equityCurve),
-        };
-    }
-
-    if (Array.isArray(result.trades) && result.trades.length > 0) {
-        return {
-            ...result,
-            sharpeRatio: calculateSharpeRatioFromReturns(result.trades.map((trade) => trade.pnlPercent)),
-        };
+        result.sharpeRatio = calculateSharpeRatioFromEquityCurve(result.equityCurve);
+    } else if (Array.isArray(result.trades) && result.trades.length > 0) {
+        result.sharpeRatio = calculateSharpeRatioFromReturns(result.trades.map((trade) => trade.pnlPercent));
     }
 
     return result;

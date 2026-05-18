@@ -102,6 +102,7 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
 
 function updateFinderRankModeOptions(): void {
     const isSignalExit = resolvePolymarketDomSettings().exitMode === 'signal_exit_same_event';
+    const isOneSecondChart = state.currentInterval === "1s";
 
     const select = getFinderPolymarketRankModeSelect();
     if (!select) {
@@ -109,7 +110,7 @@ function updateFinderRankModeOptions(): void {
     }
 
     for (const option of Array.from(select.options)) {
-        if (!isSignalExit) {
+        if (!isSignalExit || isOneSecondChart) {
             option.disabled = false;
             continue;
         }
@@ -376,6 +377,7 @@ export function setupStateSubscriptions() {
         debugLogger.event('state.currentInterval', { interval });
         uiManager.updateTimeframeUI(interval);
         updatePolymarketEntryOffsetVisibility(interval);
+        updateFinderRankModeOptions();
         scheduleDataReload();
     });
 

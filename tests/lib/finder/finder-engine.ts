@@ -187,11 +187,6 @@ export function sortFinderResults(results: readonly FinderResult[], sortPriority
     return [...results].sort((a, b) => compareFinderResults(a, b, sortPriority));
 }
 
-function average(values: number[]): number {
-    if (values.length === 0) return 0;
-    return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
 export function aggregateFinderBacktestResults(results: BacktestResult[], initialCapital: number): BacktestResult {
     if (results.length === 0) {
         return {
@@ -218,35 +213,62 @@ export function aggregateFinderBacktestResults(results: BacktestResult[], initia
         return results[0];
     }
 
-    const avgNetProfit = average(results.map((result) => result.netProfit));
+    const n = results.length;
+    let sumNetProfit = 0;
+    let sumNetProfitPercent = 0;
+    let sumTotalTrades = 0;
+    let sumWinRate = 0;
+    let sumExpectancy = 0;
+    let sumAvgTrade = 0;
+    let sumProfitFactor = 0;
+    let sumMaxDrawdown = 0;
+    let sumMaxDrawdownPercent = 0;
+    let sumAvgWin = 0;
+    let sumAvgLoss = 0;
+    let sumSharpe = 0;
+
+    for (const result of results) {
+        sumNetProfit += result.netProfit;
+        sumNetProfitPercent += result.netProfitPercent;
+        sumTotalTrades += result.totalTrades;
+        sumWinRate += result.winRate;
+        sumExpectancy += result.expectancy;
+        sumAvgTrade += result.avgTrade;
+        sumProfitFactor += Number.isFinite(result.profitFactor)
+            ? Math.max(0, result.profitFactor)
+            : 4;
+        sumMaxDrawdown += result.maxDrawdown;
+        sumMaxDrawdownPercent += result.maxDrawdownPercent;
+        sumAvgWin += result.avgWin;
+        sumAvgLoss += result.avgLoss;
+        sumSharpe += result.sharpeRatio;
+    }
+
+    const avgNetProfit = sumNetProfit / n;
     const avgNetProfitPercent = initialCapital > 0
         ? (avgNetProfit / initialCapital) * 100
-        : average(results.map((result) => result.netProfitPercent));
-    const avgTrades = Math.max(0, Math.round(average(results.map((result) => result.totalTrades))));
-    const avgWinRate = average(results.map((result) => result.winRate));
+        : sumNetProfitPercent / n;
+    const avgTrades = Math.max(0, Math.round(sumTotalTrades / n));
+    const avgWinRate = sumWinRate / n;
     const winningTrades = Math.max(0, Math.round((avgWinRate / 100) * avgTrades));
     const losingTrades = Math.max(0, avgTrades - winningTrades);
-    const finiteProfitFactors = results.map((result) => result.profitFactor).map((value) => {
-        if (Number.isFinite(value)) return Math.max(0, value);
-        return 4;
-    });
 
     return {
         trades: [],
         netProfit: avgNetProfit,
         netProfitPercent: avgNetProfitPercent,
         winRate: avgWinRate,
-        expectancy: average(results.map((result) => result.expectancy)),
-        avgTrade: average(results.map((result) => result.avgTrade)),
-        profitFactor: average(finiteProfitFactors),
-        maxDrawdown: average(results.map((result) => result.maxDrawdown)),
-        maxDrawdownPercent: average(results.map((result) => result.maxDrawdownPercent)),
+        expectancy: sumExpectancy / n,
+        avgTrade: sumAvgTrade / n,
+        profitFactor: sumProfitFactor / n,
+        maxDrawdown: sumMaxDrawdown / n,
+        maxDrawdownPercent: sumMaxDrawdownPercent / n,
         totalTrades: avgTrades,
         winningTrades,
         losingTrades,
-        avgWin: average(results.map((result) => result.avgWin)),
-        avgLoss: average(results.map((result) => result.avgLoss)),
-        sharpeRatio: average(results.map((result) => result.sharpeRatio)),
+        avgWin: sumAvgWin / n,
+        avgLoss: sumAvgLoss / n,
+        sharpeRatio: sumSharpe / n,
         equityCurve: [],
     };
 }

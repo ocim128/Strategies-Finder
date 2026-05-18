@@ -19,16 +19,14 @@ import { debugLogger } from "../debug-logger";
 import { isBuiltInKey } from "../strategies/built-in-catalog";
 import { isCrossSymbolStrategy, resolveCrossSymbolExecution } from "../cross-symbol-runtime";
 
-import { calculateSharpeRatioFromEquityCurve, calculateSharpeRatioFromReturns } from "../strategies/performance-metrics";
 import { buildSelectionResult } from "./endpoint";
 import { aggregateFinderBacktestResults, compareFinderResults } from "./finder-engine";
 import { FinderResultRanker } from "./finder-result-ranker";
-import { hasNonZeroSnapshotFilter, sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
+import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import type { FinderDataset } from "./finder-timeframe-loader";
-import type { EndpointSelectionAdjustment, FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
+import type { FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
 import type { CapitalSettings } from "../types/backtest";
 import { trimToClosedCandles } from "../closed-candle-utils";
-import { selectExecutionAwareClosedCandles } from "../alert-evaluation-window";
 import { mergeStrategySignals } from "../signal-merge";
 import {
     applyConfirmationStrategiesToSignals,
@@ -60,8 +58,26 @@ import {
     type QuickFunnelCandidate,
     type RandomBenchmarkMeta,
 } from "./finder-runner-core";
-import { buildFinderResult, runStrategyBacktest } from "./finder-runner-shared";
+import {
+    applyComboMerge,
+    buildFinderEvaluationData,
+    buildFinderResult,
+    buildSelection,
+    computeDatasetFlags,
+    deriveStrategySeed,
+    generateSignalsForJob,
+    isBacktestResultConsistent,
+    normalizeResultSharpe,
+    resolveEffectiveCapitalSettings,
+    runBacktestAndInsert,
+    runStrategyBacktest,
+    type FinderDatasetFlags,
+    type ParamJob,
+    type PreparedRun,
+    type StrategyPlan,
+} from "./finder-runner-shared";
 
+export { buildFinderEvaluationData } from "./finder-runner-shared";
 export { resolveFinderCandidateBacktestSettings, shouldUseRustCachedMode } from "./finder-runner-core";
 
 const RUST_NATIVE_FINDER_ENDPOINT_ENABLED = false;
@@ -71,23 +87,6 @@ let dataManagerModulePromise: Promise<typeof import("../data-manager")> | null =
 async function getDataManager() {
     dataManagerModulePromise ??= import("../data-manager");
     return (await dataManagerModulePromise).dataManager;
-}
-
-export function buildFinderEvaluationData(
-    data: OHLCVData[],
-    interval: string,
-    settings: BacktestSettings
-): OHLCVData[] {
-    return selectExecutionAwareClosedCandles(
-        data,
-        interval,
-        settings,
-        {
-            nowSec: Math.floor(Date.now() / 1000),
-            minClosedCandles: 1,
-            fallbackToTrimmedClosed: true,
-        }
-    ) ?? data;
 }
 
 export interface FinderSelectedStrategy {
@@ -130,41 +129,6 @@ export interface FinderRunOutput {
     randomBenchmark?: FinderRandomBenchmark;
 }
 
-type StrategyPlan = {
-    key: string;
-    name: string;
-    strategy: Strategy;
-    paramSets: StrategyParams[];
-};
-
-type ParamJob = {
-    id: number;
-    key: string;
-    name: string;
-    params: StrategyParams;
-    backtestSettings: BacktestSettings;
-    rustBacktestSettings: BacktestSettings;
-    strategy: Strategy;
-};
-
-type FinderDatasetFlags = {
-    dataSize: number;
-    isLargeDataset: boolean;
-    isVeryLargeDataset: boolean;
-    isExtremeDataset: boolean;
-    compactBacktestThreshold: number;
-    shouldUseCompactBacktest: boolean;
-    rustCompactMode: boolean;
-    batchSize: number;
-    isHeavyFinderConfig: boolean;
-};
-
-type PreparedRun = {
-    id: string;
-    job: ParamJob;
-    signals: Signal[];
-};
-
 type FinderCandidateForEnrichment = Pick<FinderResult, "key" | "name" | "params" | "result">
     & Partial<Pick<FinderResult, "comboMode" | "comboPrimaryConfigName" | "compositeEdgeRatio" | "polymarketEval">>;
 
@@ -186,7 +150,7 @@ function enrichFinderCandidate(args: {
         requiresCompositeEdgeRatioSort,
         requiresTradeTimingQualitySort,
     } = args;
-    const normalizedResult = normalizeResultSharpe(candidate.result, initialCapital);
+    const normalizedResult = normalizeResultSharpe(candidate.result);
     if (requiresTradeTimingQualitySort) {
         attachTradeTimingQuality(normalizedResult, candidateData);
     }
@@ -358,10 +322,6 @@ interface MultiTimeframeRunParams {
     maybeYieldByBudget: (force?: boolean) => Promise<void>;
     capitalSettings: CapitalSettings;
     runTimeframes: string[];
-}
-
-function resolveEffectiveCapitalSettings(input: FinderRunInput): CapitalSettings {
-    return input.comboPrimaryCapital ?? input.capitalSettings;
 }
 
 async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<FinderRunOutput> {
@@ -761,84 +721,6 @@ type RustBatchDispatchStats = {
     fallbackRuns: number;
 };
 
-/**
- * Shared helper to generate signals for a job.
- * Extracted to eliminate duplication between TS and Rust branches.
- */
-function generateSignalsForJob(
-    job: ParamJob,
-    data: OHLCVData[],
-    preparedDataCache?: FinderPreparedDataCache,
-    preparedSettings?: BacktestSettings,
-    executionContext?: import("../types/strategies").StrategyExecutionContext
-): Signal[] {
-    const preparedFinderData = preparedDataCache
-        ? getPreparedFinderData(preparedDataCache, job.key, job.strategy, data, preparedSettings ?? job.backtestSettings, executionContext)
-        : undefined;
-    const rawSignals = job.strategy.executePrepared
-        ? job.strategy.executePrepared(preparedFinderData, job.params, data, executionContext)
-        : job.strategy.execute(data, job.params, executionContext);
-    return applyConfirmationStrategiesToSignals({
-        data,
-        baseSignals: applySignalPolarity(rawSignals, job.backtestSettings),
-        settings: job.backtestSettings,
-    });
-}
-
-/**
- * In combo mode, AND-merges secondary signals with primarySignals.
- * In normal mode, returns signals unchanged.
- */
-function applyComboMerge(
-    signals: Signal[],
-    input: FinderRunInput
-): Signal[] {
-    if (!input.comboPrimarySignals) return signals;
-    return mergeStrategySignals(input.comboPrimarySignals, signals, 'and') as Signal[];
-}
-
-
-/**
- * Shared helper to run backtest and insert result.
- * Eliminates duplication between TS fallback paths.
- */
-function runBacktestAndInsert(
-    data: OHLCVData[],
-    signals: Signal[],
-    job: ParamJob,
-    backtestFn: typeof runBacktest,
-    capitalSettings: CapitalSettings,
-    backtestSettings: BacktestSettings,
-    precomputed: ReturnType<typeof precomputeIndicators>,
-    insertResult: (candidate: CandidateResult) => void,
-    onInsertTiming?: (durationMs: number) => void
-): void {
-    try {
-        const result = runStrategyBacktest({
-            strategy: job.strategy,
-            data,
-            signals,
-            params: job.params,
-            capitalSettings,
-            backtestSettings,
-            backtestFn,
-            precomputed,
-        });
-        const insertStartedAt = performance.now();
-        insertResult({
-            key: job.key,
-            name: job.name,
-            params: job.params,
-            result,
-        });
-        onInsertTiming?.(performance.now() - insertStartedAt);
-    } catch (error) {
-        debugLogger.warn(`[Finder] Backtest failed for ${job.key}`, {
-            error: error instanceof Error ? error.message : String(error),
-        });
-    }
-}
-
 type BacktestFallbackRunnerOptions = {
     closedData: OHLCVData[];
     backtestFn: typeof runBacktest;
@@ -869,7 +751,6 @@ function createBacktestFallbackRunner(options: BacktestFallbackRunnerOptions): (
         options.timing.tsFallback += performance.now() - tTsStart;
     };
 }
-
 type RustRunPreparationOptions = {
     jobs: ParamJob[];
     closedData: OHLCVData[];
@@ -1512,7 +1393,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 });
                 timing.tsFallback += performance.now() - tQuickStart;
 
-                const quickResult = normalizeResultSharpe(quickRawResult, effectiveInitialCapital);
+                const quickResult = normalizeResultSharpe(quickRawResult);
                 if (quickMinTrades > 0 && quickResult.totalTrades < quickMinTrades) {
                     signals.length = 0;
                     continue;
@@ -1671,6 +1552,28 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
     const totalBatches = Math.ceil(totalRuns / flags.batchSize);
     let batchNum = 0;
     const backtestFn = usingCompactBacktest ? runBacktestCompact : runBacktest;
+    const tsRunBacktestFallback = createBacktestFallbackRunner({
+        closedData,
+        backtestFn,
+        capitalSettings: effectiveCapitalSettings,
+        resolveBacktestSettings: (job) => resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
+        getJobData,
+        getJobPrecomputed,
+        defaultPrecomputed: singleTfPrecomputed,
+        insertResult,
+        timing,
+    });
+    const rustRunBacktestFallback = createBacktestFallbackRunner({
+        closedData,
+        backtestFn,
+        capitalSettings,
+        resolveBacktestSettings: (job) => job.backtestSettings,
+        getJobData,
+        getJobPrecomputed,
+        defaultPrecomputed: singleTfPrecomputed,
+        insertResult,
+        timing,
+    });
 
     while (processedCount < totalRuns) {
         if (callbacks.isCancelled()) {
@@ -1685,18 +1588,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         batchNum++;
 
         if (!useRustForFinder) {
-            const runBacktestFallback = createBacktestFallbackRunner({
-                closedData,
-                backtestFn,
-                capitalSettings: effectiveCapitalSettings,
-                resolveBacktestSettings: (job) => resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
-                getJobData,
-                getJobPrecomputed,
-                defaultPrecomputed: singleTfPrecomputed,
-                insertResult,
-                timing,
-            });
-
             for (const job of batchJobs) {
                 if (isCrossSymbolJobSkipped(job)) continue;
                 try {
@@ -1705,7 +1596,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     const signals = generateSignalsForJob(job, jobData, preparedDataCache, effectiveBacktestSettings, getJobCtx(job));
                     timing.signalGeneration += performance.now() - tSignalStart;
 
-                    runBacktestFallback({
+                    tsRunBacktestFallback({
                         id: `${job.key}-${job.id}`,
                         job,
                         signals: applyComboMerge(signals, input),
@@ -1738,18 +1629,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             continue;
         }
 
-        const runBacktestFallback = createBacktestFallbackRunner({
-            closedData,
-            backtestFn,
-            capitalSettings,
-            resolveBacktestSettings: (job) => job.backtestSettings,
-            getJobData,
-            getJobPrecomputed,
-            defaultPrecomputed: singleTfPrecomputed,
-            insertResult,
-            timing,
-        });
-
         const batchRuns = prepareRustBatchRuns({
             jobs: batchJobs,
             closedData,
@@ -1779,7 +1658,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             rustSettings,
             rustCompactMode: flags.rustCompactMode,
             insertResult,
-            runBacktestFallback,
+            runBacktestFallback: rustRunBacktestFallback,
             timing,
             onUnknownRunId: (id) => {
                 debugLogger.warn("[Finder] Rust batch returned unknown run id", { id });
@@ -1912,107 +1791,4 @@ async function reconcileSingleTimeframeTopResults(
     return reconciled
         .sort((a, b) => compareFinderResults(a, b, input.options.sortPriority))
         .slice(0, Math.max(1, input.options.topN));
-}
-
-function normalizeSeed(seed: number | undefined): number {
-    if (!Number.isFinite(seed)) return 1;
-    const normalized = (Math.floor(Number(seed)) >>> 0);
-    return normalized === 0 ? 1 : normalized;
-}
-
-function deriveStrategySeed(seed: number | undefined, strategyKey: string): number {
-    let hash = 2166136261 >>> 0;
-    for (let i = 0; i < strategyKey.length; i++) {
-        hash ^= strategyKey.charCodeAt(i);
-        hash = Math.imul(hash, 16777619);
-    }
-    return (normalizeSeed(seed) ^ hash) >>> 0;
-}
-
-function hasHeavySnapshotFilters(settings: BacktestSettings): boolean {
-    return hasNonZeroSnapshotFilter(settings);
-}
-
-function computeDatasetFlags(
-    dataSize: number,
-    settings: BacktestSettings,
-    options: FinderOptions,
-    hasConfirmationStrategies: boolean
-): FinderDatasetFlags {
-    const isLargeDataset = dataSize > 500_000;
-    const isVeryLargeDataset = dataSize > 2_000_000;
-    const isExtremeDataset = dataSize > 4_000_000;
-    const hasSnapshotFilters = hasHeavySnapshotFilters(settings);
-    const hasHeavyTradeFiltering = options.tradeFilterEnabled && options.minTrades >= 1_000;
-    const isHeavyFinderConfig = hasSnapshotFilters || hasHeavyTradeFiltering || hasConfirmationStrategies;
-    const compactBacktestThreshold = options.mode === "random"
-        ? (isHeavyFinderConfig ? 50_000 : 100_000)
-        : (isHeavyFinderConfig ? 50_000 : 500_000);
-    const shouldUseCompactBacktest = dataSize >= compactBacktestThreshold;
-
-    const batchSize = isExtremeDataset
-        ? 1
-        : isVeryLargeDataset
-            ? 2
-            : isLargeDataset
-                ? 8
-                : isHeavyFinderConfig
-                    ? 12
-                    : 64;
-
-    return {
-        dataSize,
-        isLargeDataset,
-        isVeryLargeDataset,
-        isExtremeDataset,
-        compactBacktestThreshold,
-        shouldUseCompactBacktest,
-        rustCompactMode: shouldUseCompactBacktest,
-        batchSize,
-        isHeavyFinderConfig,
-    };
-}
-
-function normalizeResultSharpe(result: BacktestResult, _initialCapital: number): BacktestResult {
-    if (Array.isArray(result.equityCurve) && result.equityCurve.length > 1) {
-        return {
-            ...result,
-            sharpeRatio: calculateSharpeRatioFromEquityCurve(result.equityCurve),
-        };
-    }
-
-    if (Array.isArray(result.trades) && result.trades.length > 0) {
-        return {
-            ...result,
-            sharpeRatio: calculateSharpeRatioFromReturns(result.trades.map((trade) => trade.pnlPercent)),
-        };
-    }
-
-    return result;
-}
-
-function isBacktestResultConsistent(result: BacktestResult): boolean {
-    const totalTrades = result.totalTrades;
-    if (totalTrades !== result.winningTrades + result.losingTrades) return false;
-    if (totalTrades <= 0) return true;
-
-    const expectedWinRate = (result.winningTrades / totalTrades) * 100;
-    if (Math.abs(expectedWinRate - result.winRate) > 1) return false;
-
-    const expectedAvgTrade = result.netProfit / totalTrades;
-    const tolerance = Math.max(0.01, Math.abs(expectedAvgTrade) * 0.15);
-    if (Math.abs(expectedAvgTrade - result.avgTrade) > tolerance) return false;
-
-    if (!Number.isFinite(result.sharpeRatio)) return false;
-    if (Math.abs(result.sharpeRatio) > 8) return false;
-
-    return true;
-}
-
-function buildSelection(
-    raw: BacktestResult,
-    lastDataTime: Time | null,
-    initialCapital: number
-): EndpointSelectionAdjustment {
-    return buildSelectionResult(raw, lastDataTime, initialCapital);
 }

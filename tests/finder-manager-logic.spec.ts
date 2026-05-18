@@ -112,6 +112,15 @@ describe("Finder manager logic", () => {
             primarySort: "expectancy",
             secondarySort: "profitFactor",
             polymarketScoringEnabled: true,
+            polymarketRankMode: "accuracyTrades",
+        })).to.deep.equal(["polyWinRate", "totalTrades", "polyPredictions", "polyCoverage"]);
+
+        expect(resolveFinderSortPriority({
+            useAdvancedSort: false,
+            advancedSortValues: [],
+            primarySort: "expectancy",
+            secondarySort: "profitFactor",
+            polymarketScoringEnabled: true,
             polymarketRankMode: "volume",
         })).to.deep.equal(["polyWins", "polyPredictions", "polyWinRate"]);
 

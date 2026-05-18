@@ -63,6 +63,25 @@ type FinderPersistedUiState = {
 	scope: FinderScope;
 	currentChartSelectedStrategyKeys: string[];
 	universeSelectedStrategyKeys: string[];
+	sortPrimary: FinderMetric;
+	sortSecondary: FinderMetric;
+	useAdvancedSort: boolean;
+	advancedSortOrder: FinderMetric[];
+	advancedTimingSortEnabled: FinderMetric[];
+	mode: FinderMode;
+	topN: number;
+	maxRuns: number;
+	rangePercent: number;
+	steps: number;
+	freezeRiskManagement: boolean;
+	tradeFilterEnabled: boolean;
+	minTrades: number;
+	maxTradesText: string;
+	polymarketScoringEnabled: boolean;
+	polymarketRankMode: PolymarketFinderRankMode;
+	polymarketMinScoredPredictions: number;
+	polymarketLockOffset: boolean;
+	polymarketAfterTakeProfitOnly: boolean;
 	universeSymbolsText: string;
 	universeMinActiveSymbols: number;
 	universeMinTotalTrades: number;
@@ -81,6 +100,25 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	scope: "current_chart",
 	currentChartSelectedStrategyKeys: [],
 	universeSelectedStrategyKeys: [],
+	sortPrimary: "expectancy",
+	sortSecondary: "profitFactor",
+	useAdvancedSort: false,
+	advancedSortOrder: [...FINDER_SORT_OPTIONS],
+	advancedTimingSortEnabled: [],
+	mode: "random",
+	topN: 10,
+	maxRuns: 120,
+	rangePercent: 555,
+	steps: 3,
+	freezeRiskManagement: false,
+	tradeFilterEnabled: true,
+	minTrades: 40,
+	maxTradesText: "",
+	polymarketScoringEnabled: false,
+	polymarketRankMode: "balanced",
+	polymarketMinScoredPredictions: 100,
+	polymarketLockOffset: false,
+	polymarketAfterTakeProfitOnly: false,
 	universeSymbolsText: "",
 	universeMinActiveSymbols: 2,
 	universeMinTotalTrades: 40,
@@ -132,6 +170,71 @@ function normalizeFinderUniverseMetric(
 		: fallback;
 }
 
+function normalizeFinderMetric(value: unknown, fallback: FinderMetric): FinderMetric {
+	return FINDER_SORT_OPTIONS.includes(value as FinderMetric)
+		? value as FinderMetric
+		: fallback;
+}
+
+function normalizeFinderMode(value: unknown): FinderMode {
+	return value === "grid" || value === "genetic" ? value : "random";
+}
+
+function normalizePolymarketRankMode(value: unknown): PolymarketFinderRankMode {
+	return value === "accuracy"
+		|| value === "accuracyTrades"
+		|| value === "expectancy"
+		|| value === "expectancyTrades"
+		|| value === "profitFactor"
+		|| value === "profitFactorTrades"
+		|| value === "sizedNet"
+		|| value === "volume"
+		? value
+		: "balanced";
+}
+
+function normalizeNumber(value: unknown, fallback: number, min: number): number {
+	if (typeof value !== "number" && typeof value !== "string") {
+		return fallback;
+	}
+	if (typeof value === "string" && value.trim() === "") {
+		return fallback;
+	}
+	const numeric = Number(value);
+	return Number.isFinite(numeric) ? Math.max(min, numeric) : fallback;
+}
+
+function normalizeOptionalNumberText(value: unknown): string {
+	if (typeof value !== "string") {
+		return "";
+	}
+	const trimmed = value.trim();
+	if (!trimmed) {
+		return "";
+	}
+	const numeric = Number(trimmed);
+	return Number.isFinite(numeric) && numeric >= 0 ? trimmed : "";
+}
+
+function normalizeAdvancedSortOrder(value: unknown): FinderMetric[] {
+	const order = Array.isArray(value)
+		? value
+			.filter((entry): entry is FinderMetric => FINDER_SORT_OPTIONS.includes(entry as FinderMetric))
+			.filter((entry, index, entries) => entries.indexOf(entry) === index)
+		: [];
+	const missing = FINDER_SORT_OPTIONS.filter((metric) => !order.includes(metric));
+	return [...order, ...missing];
+}
+
+function normalizeTimingSortMetrics(value: unknown): FinderMetric[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	return value
+		.filter((metric): metric is FinderMetric => isTimingSortMetric(metric))
+		.filter((metric, index, metrics) => metrics.indexOf(metric) === index);
+}
+
 function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 	const source = raw && typeof raw === "object" && !Array.isArray(raw)
 		? raw as Record<string, unknown>
@@ -159,6 +262,25 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 			}
 			return [];
 		})(),
+		sortPrimary: normalizeFinderMetric(source.sortPrimary, DEFAULT_FINDER_UI_STATE.sortPrimary),
+		sortSecondary: normalizeFinderMetric(source.sortSecondary, DEFAULT_FINDER_UI_STATE.sortSecondary),
+		useAdvancedSort: source.useAdvancedSort === true,
+		advancedSortOrder: normalizeAdvancedSortOrder(source.advancedSortOrder),
+		advancedTimingSortEnabled: normalizeTimingSortMetrics(source.advancedTimingSortEnabled),
+		mode: normalizeFinderMode(source.mode),
+		topN: Math.round(normalizeNumber(source.topN, DEFAULT_FINDER_UI_STATE.topN, 1)),
+		maxRuns: Math.round(normalizeNumber(source.maxRuns, DEFAULT_FINDER_UI_STATE.maxRuns, 1)),
+		rangePercent: normalizeNumber(source.rangePercent, DEFAULT_FINDER_UI_STATE.rangePercent, 0),
+		steps: Math.round(normalizeNumber(source.steps, DEFAULT_FINDER_UI_STATE.steps, 2)),
+		freezeRiskManagement: source.freezeRiskManagement === true,
+		tradeFilterEnabled: source.tradeFilterEnabled !== false,
+		minTrades: Math.round(normalizeNumber(source.minTrades, DEFAULT_FINDER_UI_STATE.minTrades, 0)),
+		maxTradesText: normalizeOptionalNumberText(source.maxTradesText),
+		polymarketScoringEnabled: source.polymarketScoringEnabled === true,
+		polymarketRankMode: normalizePolymarketRankMode(source.polymarketRankMode),
+		polymarketMinScoredPredictions: Math.round(normalizeNumber(source.polymarketMinScoredPredictions, DEFAULT_FINDER_UI_STATE.polymarketMinScoredPredictions, 0)),
+		polymarketLockOffset: source.polymarketLockOffset === true,
+		polymarketAfterTakeProfitOnly: source.polymarketAfterTakeProfitOnly === true,
 		universeSymbolsText: typeof source.universeSymbolsText === "string" ? source.universeSymbolsText : "",
 		universeMinActiveSymbols: minActiveSymbols,
 		universeMinTotalTrades: minTotalTrades,
@@ -323,6 +445,26 @@ export class FinderManager {
 	private applyPersistedUiStateToDom(): void {
 		const dom = this.getDom();
 		dom.finderScope.value = this.uiState.scope;
+		dom.finderSort.value = this.uiState.sortPrimary;
+		dom.finderSortSecondary.value = this.uiState.sortSecondary;
+		dom.finderAdvancedToggle.checked = this.uiState.useAdvancedSort;
+		setVisible(dom.finderSimpleSort, !this.uiState.useAdvancedSort);
+		setVisible(dom.finderSortList, this.uiState.useAdvancedSort);
+		this.applyAdvancedSortStateToDom();
+		dom.finderMode.value = this.uiState.mode;
+		dom.finderTopN.value = String(this.uiState.topN);
+		dom.finderMaxRuns.value = String(this.uiState.maxRuns);
+		dom.finderRange.value = String(this.uiState.rangePercent);
+		dom.finderSteps.value = String(this.uiState.steps);
+		dom.finderFreezeRiskManagementToggle.checked = this.uiState.freezeRiskManagement;
+		dom.finderTradesToggle.checked = this.uiState.tradeFilterEnabled;
+		dom.finderTradesMin.value = String(this.uiState.minTrades);
+		dom.finderTradesMax.value = this.uiState.maxTradesText;
+		dom.finderPolymarketToggle.checked = this.uiState.polymarketScoringEnabled;
+		dom.finderPolymarketRankMode.value = this.uiState.polymarketRankMode;
+		dom.finderPolymarketMinScored.value = String(this.uiState.polymarketMinScoredPredictions);
+		dom.finderPolymarketLockOffset.checked = this.uiState.polymarketLockOffset;
+		dom.finderPolymarketAfterTakeProfitOnly.checked = this.uiState.polymarketAfterTakeProfitOnly;
 		dom.finderUniverseSymbols.value = this.uiState.universeSymbolsText;
 		dom.finderUniverseMinActiveSymbols.value = String(this.uiState.universeMinActiveSymbols);
 		dom.finderUniverseMinTotalTrades.value = String(this.uiState.universeMinTotalTrades);
@@ -333,13 +475,16 @@ export class FinderManager {
 	public init() {
 		this.loadUiState();
 		const dom = this.getDom();
-		this.applyPersistedUiStateToDom();
 		dom.runFinder.addEventListener('click', () => {
 			void this.runFinder();
 		});
 
 		dom.stopFinder.addEventListener('click', () => {
 			this.isCancelled = true;
+		});
+
+		dom.resetFinderSettings.addEventListener('click', () => {
+			this.resetFinderSettings();
 		});
 
 		const copyTopButton = dom.finderCopyTopResults;
@@ -370,9 +515,11 @@ export class FinderManager {
 		this.initStrategySelectionUI();
 
 		this.initSortingUI();
+		this.applyPersistedUiStateToDom();
 		this.initUniverseUI();
 		this.initTradeFilterUI();
 		this.initPolymarketUI();
+		this.initFinderSettingsPersistenceUI();
 		this.applyScopeUi();
 	}
 
@@ -442,6 +589,13 @@ export class FinderManager {
 					item.parentElement?.insertBefore(item.nextElementSibling, item);
 				}
 			}
+			this.captureFinderUiState();
+		});
+
+		list.addEventListener('change', (event) => {
+			if ((event.target as HTMLElement | null)?.classList.contains("finder-sort-enabled")) {
+				this.captureFinderUiState();
+			}
 		});
 
 		this.renderSortList();
@@ -451,7 +605,7 @@ export class FinderManager {
 		const { finderSortList: container } = this.getDom();
 		container.innerHTML = '';
 
-		FINDER_SORT_OPTIONS.forEach(metric => {
+		this.uiState.advancedSortOrder.forEach(metric => {
 			const isTimingMetric = isTimingSortMetric(metric);
 			const div = document.createElement('div');
 			div.className = isTimingMetric ? 'finder-sort-item finder-sort-item--optional' : 'finder-sort-item';
@@ -468,6 +622,22 @@ export class FinderManager {
 			`;
 			container.appendChild(div);
 		});
+		this.applyAdvancedSortStateToDom();
+	}
+
+	private applyAdvancedSortStateToDom(): void {
+		const { finderSortList: container } = this.getDom();
+		const enabledTimingMetrics = new Set(this.uiState.advancedTimingSortEnabled);
+		for (const item of Array.from(container.querySelectorAll<HTMLElement>(".finder-sort-item"))) {
+			const metric = item.dataset.value as FinderMetric | undefined;
+			if (!metric || !isTimingSortMetric(metric)) {
+				continue;
+			}
+			const checkbox = item.querySelector<HTMLInputElement>(".finder-sort-enabled");
+			if (checkbox) {
+				checkbox.checked = enabledTimingMetrics.has(metric);
+			}
+		}
 	}
 
 	private initStrategySelectionUI(): void {
@@ -626,6 +796,88 @@ export class FinderManager {
 		toggle.addEventListener('change', refreshControls);
 		document.getElementById('polymarketOutcomeInterval')?.addEventListener('change', refreshControls);
 		document.getElementById('polymarketExitMode')?.addEventListener('change', refreshControls);
+	}
+
+	private initFinderSettingsPersistenceUI(): void {
+		const dom = this.getDom();
+		const persist = () => {
+			this.captureFinderUiState();
+		};
+		[
+			dom.finderSort,
+			dom.finderSortSecondary,
+			dom.finderAdvancedToggle,
+			dom.finderMode,
+			dom.finderTopN,
+			dom.finderMaxRuns,
+			dom.finderRange,
+			dom.finderSteps,
+			dom.finderFreezeRiskManagementToggle,
+			dom.finderTradesToggle,
+			dom.finderTradesMin,
+			dom.finderTradesMax,
+			dom.finderPolymarketToggle,
+			dom.finderPolymarketRankMode,
+			dom.finderPolymarketMinScored,
+			dom.finderPolymarketLockOffset,
+			dom.finderPolymarketAfterTakeProfitOnly,
+		].forEach((element) => {
+			element.addEventListener("input", persist);
+			element.addEventListener("change", persist);
+		});
+	}
+
+	private captureFinderUiState(): void {
+		const dom = this.getDom();
+		const sortItems = Array.from(dom.finderSortList.querySelectorAll<HTMLElement>(".finder-sort-item"));
+		this.uiState.sortPrimary = normalizeFinderMetric(dom.finderSort.value, DEFAULT_FINDER_UI_STATE.sortPrimary);
+		this.uiState.sortSecondary = normalizeFinderMetric(dom.finderSortSecondary.value, DEFAULT_FINDER_UI_STATE.sortSecondary);
+		this.uiState.useAdvancedSort = dom.finderAdvancedToggle.checked;
+		this.uiState.advancedSortOrder = normalizeAdvancedSortOrder(sortItems.map((item) => item.dataset.value));
+		this.uiState.advancedTimingSortEnabled = sortItems
+			.filter((item) => item.querySelector<HTMLInputElement>(".finder-sort-enabled")?.checked === true)
+			.map((item) => item.dataset.value)
+			.filter((metric): metric is FinderMetric => isTimingSortMetric(metric));
+		this.uiState.mode = normalizeFinderMode(dom.finderMode.value);
+		this.uiState.topN = Math.round(this.readFinderNumberInput(dom.finderTopN, DEFAULT_FINDER_UI_STATE.topN, 1));
+		this.uiState.maxRuns = Math.round(this.readFinderNumberInput(dom.finderMaxRuns, DEFAULT_FINDER_UI_STATE.maxRuns, 1));
+		this.uiState.rangePercent = this.readFinderNumberInput(dom.finderRange, DEFAULT_FINDER_UI_STATE.rangePercent, 0);
+		this.uiState.steps = Math.round(this.readFinderNumberInput(dom.finderSteps, DEFAULT_FINDER_UI_STATE.steps, 2));
+		this.uiState.freezeRiskManagement = dom.finderFreezeRiskManagementToggle.checked;
+		this.uiState.tradeFilterEnabled = dom.finderTradesToggle.checked;
+		this.uiState.minTrades = Math.round(this.readFinderNumberInput(dom.finderTradesMin, DEFAULT_FINDER_UI_STATE.minTrades, 0));
+		this.uiState.maxTradesText = dom.finderTradesMax.value.trim();
+		this.uiState.polymarketScoringEnabled = dom.finderPolymarketToggle.checked;
+		this.uiState.polymarketRankMode = normalizePolymarketRankMode(dom.finderPolymarketRankMode.value);
+		this.uiState.polymarketMinScoredPredictions = Math.round(this.readFinderNumberInput(
+			dom.finderPolymarketMinScored,
+			DEFAULT_FINDER_UI_STATE.polymarketMinScoredPredictions,
+			0
+		));
+		this.uiState.polymarketLockOffset = dom.finderPolymarketLockOffset.checked;
+		this.uiState.polymarketAfterTakeProfitOnly = dom.finderPolymarketAfterTakeProfitOnly.checked;
+		this.saveUiState();
+	}
+
+	private resetFinderSettings(): void {
+		const {
+			currentChartSelectedStrategyKeys,
+			universeSelectedStrategyKeys,
+		} = this.uiState;
+		this.uiState = {
+			...DEFAULT_FINDER_UI_STATE,
+			currentChartSelectedStrategyKeys: [...currentChartSelectedStrategyKeys],
+			universeSelectedStrategyKeys: [...universeSelectedStrategyKeys],
+		};
+		this.renderSortList();
+		this.applyPersistedUiStateToDom();
+		this.syncStrategyToggleInputsFromState();
+		this.syncStrategySelectionUi();
+		this.setTradeFilterControlsEnabled(this.isTradeFilterControlsEnabled());
+		this.setPolymarketControlsEnabled(this.uiState.polymarketScoringEnabled);
+		this.applyScopeUi();
+		this.saveUiState();
+		this.setStatus("Finder settings reset.");
 	}
 
 	private setPolymarketControlsEnabled(enabled: boolean): void {
@@ -1177,12 +1429,12 @@ export class FinderManager {
 			})
 			.map(el => (el as HTMLElement).dataset.value as FinderMetric | undefined);
 		const mode = scope === 'symbol_universe' ? 'random' : dom.finderMode.value as FinderMode;
-		const topN = Math.round(this.readFinderNumberInput(dom.finderTopN, 10, 1));
-		const steps = Math.round(this.readFinderNumberInput(dom.finderSteps, 3, 2));
-		const rangePercent = this.readFinderNumberInput(dom.finderRange, 35, 0);
-		const maxRuns = Math.round(this.readFinderNumberInput(dom.finderMaxRuns, 120, 1));
+		const topN = Math.round(this.readFinderNumberInput(dom.finderTopN, DEFAULT_FINDER_UI_STATE.topN, 1));
+		const steps = Math.round(this.readFinderNumberInput(dom.finderSteps, DEFAULT_FINDER_UI_STATE.steps, 2));
+		const rangePercent = this.readFinderNumberInput(dom.finderRange, DEFAULT_FINDER_UI_STATE.rangePercent, 0);
+		const maxRuns = Math.round(this.readFinderNumberInput(dom.finderMaxRuns, DEFAULT_FINDER_UI_STATE.maxRuns, 1));
 		const tradeFilterEnabled = scope === 'current_chart' && dom.finderTradesToggle.checked;
-		const minTrades = tradeFilterEnabled ? Math.round(this.readFinderNumberInput(dom.finderTradesMin, 40, 0)) : 0;
+		const minTrades = tradeFilterEnabled ? Math.round(this.readFinderNumberInput(dom.finderTradesMin, DEFAULT_FINDER_UI_STATE.minTrades, 0)) : 0;
 		const maxTrades = tradeFilterEnabled
 			? Math.round(this.readFinderNumberInput(dom.finderTradesMax, Number.POSITIVE_INFINITY, 0))
 			: Number.POSITIVE_INFINITY;

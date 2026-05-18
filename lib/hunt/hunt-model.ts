@@ -321,6 +321,7 @@ export function normalizeStoredHuntRunSettings(raw: unknown): HuntRunSettings {
     const polymarketRankMode = source.polymarketRankMode;
     const normalizedRankMode: PolymarketFinderRankMode =
         polymarketRankMode === "accuracy"
+        || polymarketRankMode === "accuracyTrades"
         || polymarketRankMode === "expectancy"
         || polymarketRankMode === "expectancyTrades"
         || polymarketRankMode === "profitFactor"
