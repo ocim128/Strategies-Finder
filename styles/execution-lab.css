@@ -27,6 +27,23 @@
     width: 132px;
 }
 
+.execution-lab-live-config-grid {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(96px, 1fr));
+    gap: 8px;
+    align-items: end;
+}
+
+.execution-lab-check {
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.execution-lab-check input {
+    width: 18px;
+    height: 18px;
+}
+
 .execution-lab-status {
     border: 1px solid var(--border-color);
     border-radius: 6px;
@@ -318,6 +335,7 @@
     }
 
     .execution-lab-metrics,
+    .execution-lab-live-config-grid,
     .execution-lab-compare-controls {
         grid-template-columns: 1fr;
     }

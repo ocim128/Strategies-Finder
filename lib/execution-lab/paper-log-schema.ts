@@ -8,6 +8,8 @@ const VALID_RECORD_TYPES = new Set([
     "live_trade_result",
     "live_exit_request",
     "live_exit_result",
+    "live_cancel_all_request",
+    "live_cancel_all_result",
     "paper_unfilled",
     "paper_exit",
     "paper_resolution_pending",
@@ -48,6 +50,35 @@ function isLiveTradeStatus(value: unknown): boolean {
 
 function isLiveSizingMode(value: unknown): boolean {
     return value === "fixed" || value === "exchange_min";
+}
+
+function isLiveOrderMode(value: unknown): boolean {
+    return value === "taker" || value === "limit";
+}
+
+function isLiveTakerOrderType(value: unknown): boolean {
+    return value === "FOK" || value === "FAK";
+}
+
+function isLiveLimitOrderType(value: unknown): boolean {
+    return value === "GTC";
+}
+
+function isLiveCancelScope(value: unknown): boolean {
+    return value === "account"
+        || value === "market"
+        || value === "token"
+        || value === "session"
+        || value === "unknown";
+}
+
+function isLiveCancelStatus(value: unknown): boolean {
+    return value === "dry_run"
+        || value === "submitted"
+        || value === "partial"
+        || value === "duplicate"
+        || value === "rejected"
+        || value === "failed";
 }
 
 function validateOptionalLiveMeta(value: Record<string, unknown>): { ok: true } | { ok: false; error: string } {
@@ -111,9 +142,25 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
             if (!isNonEmptyString(value.conditionId)) return { ok: false, error: "conditionId is required" };
             if (!isNonEmptyString(value.tokenId)) return { ok: false, error: "tokenId is required" };
             if (value.side !== "yes" && value.side !== "no") return { ok: false, error: "invalid side" };
-            if (value.orderType !== "FOK" && value.orderType !== "FAK") return { ok: false, error: "invalid orderType" };
+            if (!isLiveOrderMode(value.orderMode)) return { ok: false, error: "invalid orderMode" };
+            if (value.orderMode === "taker" && !isLiveTakerOrderType(value.orderType)) return { ok: false, error: "invalid orderType" };
+            if (value.orderMode === "limit" && !isLiveLimitOrderType(value.orderType)) return { ok: false, error: "invalid orderType" };
             if (!isFiniteNumber(value.stakeUsd) || value.stakeUsd <= 0) return { ok: false, error: "stakeUsd is required" };
-            if (!isPriceInRange(value.maxPrice, 0.000000001)) return { ok: false, error: "maxPrice is required" };
+            if (value.orderMode === "taker" && !isPriceInRange(value.maxPrice, 0.000000001)) {
+                return { ok: false, error: "maxPrice is required" };
+            }
+            if (value.orderMode === "limit" && !isPriceInRange(value.limitPrice, 0.000000001)) {
+                return { ok: false, error: "limitPrice is required" };
+            }
+            if (value.orderMode === "limit" && !isPriceInRange(value.limitReferencePrice, 0.000000001)) {
+                return { ok: false, error: "limitReferencePrice is required" };
+            }
+            if (value.limitOffsetEnabled !== undefined && typeof value.limitOffsetEnabled !== "boolean") {
+                return { ok: false, error: "limitOffsetEnabled is invalid" };
+            }
+            if (value.limitOffsetCents !== undefined && (!isFiniteNumber(value.limitOffsetCents) || value.limitOffsetCents < 0)) {
+                return { ok: false, error: "limitOffsetCents is invalid" };
+            }
             break;
         case "live_trade_result":
             {
@@ -130,6 +177,18 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
             if (value.currentAsk !== undefined && !isPriceInRange(value.currentAsk, 0.000000001)) {
                 return { ok: false, error: "currentAsk is invalid" };
             }
+            if (value.limitPrice !== undefined && !isPriceInRange(value.limitPrice, 0.000000001)) {
+                return { ok: false, error: "limitPrice is invalid" };
+            }
+            if (value.limitReferencePrice !== undefined && !isPriceInRange(value.limitReferencePrice, 0.000000001)) {
+                return { ok: false, error: "limitReferencePrice is invalid" };
+            }
+            if (value.limitOffsetEnabled !== undefined && typeof value.limitOffsetEnabled !== "boolean") {
+                return { ok: false, error: "limitOffsetEnabled is invalid" };
+            }
+            if (value.limitOffsetCents !== undefined && (!isFiniteNumber(value.limitOffsetCents) || value.limitOffsetCents < 0)) {
+                return { ok: false, error: "limitOffsetCents is invalid" };
+            }
             break;
         case "live_exit_request":
             {
@@ -143,7 +202,8 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
             if (!isNonEmptyString(value.conditionId)) return { ok: false, error: "conditionId is required" };
             if (!isNonEmptyString(value.tokenId)) return { ok: false, error: "tokenId is required" };
             if (value.side !== "yes" && value.side !== "no") return { ok: false, error: "invalid side" };
-            if (value.orderType !== "FOK" && value.orderType !== "FAK") return { ok: false, error: "invalid orderType" };
+            if (value.orderMode !== "taker") return { ok: false, error: "invalid orderMode" };
+            if (!isLiveTakerOrderType(value.orderType)) return { ok: false, error: "invalid orderType" };
             if (!isFiniteNumber(value.shares) || value.shares <= 0) return { ok: false, error: "shares is required" };
             if (!isPriceInRange(value.minPrice, 0.000000001)) return { ok: false, error: "minPrice is required" };
             break;
@@ -162,6 +222,47 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
             }
             if (value.currentBid !== undefined && !isPriceInRange(value.currentBid, 0.000000001)) {
                 return { ok: false, error: "currentBid is invalid" };
+            }
+            break;
+        case "live_cancel_all_request":
+            {
+                const liveMeta = validateOptionalLiveMeta(value);
+                if (!liveMeta.ok) return liveMeta;
+            }
+            if (!isNonEmptyString(value.requestId)) return { ok: false, error: "requestId is required" };
+            if (!isNonEmptyString(value.exitTriggerKey)) return { ok: false, error: "exitTriggerKey is required" };
+            if (value.paperTradeId !== undefined && typeof value.paperTradeId !== "string") return { ok: false, error: "paperTradeId is invalid" };
+            if (value.marketSlug !== undefined && typeof value.marketSlug !== "string") return { ok: false, error: "marketSlug is invalid" };
+            if (value.conditionId !== undefined && typeof value.conditionId !== "string") return { ok: false, error: "conditionId is invalid" };
+            if (value.tokenId !== undefined && typeof value.tokenId !== "string") return { ok: false, error: "tokenId is invalid" };
+            if (
+                value.orderIds !== undefined
+                && (
+                    !Array.isArray(value.orderIds)
+                    || value.orderIds.some((item) => typeof item !== "string" || item.length === 0)
+                )
+            ) {
+                return { ok: false, error: "orderIds is invalid" };
+            }
+            if (!isLiveCancelScope(value.scope)) return { ok: false, error: "scope is invalid" };
+            if (value.reason !== "limit_exit_signal") return { ok: false, error: "reason is invalid" };
+            if (value.orderMode !== "limit") return { ok: false, error: "orderMode is invalid" };
+            break;
+        case "live_cancel_all_result":
+            {
+                const liveMeta = validateOptionalLiveMeta(value);
+                if (!liveMeta.ok) return liveMeta;
+            }
+            if (!isNonEmptyString(value.requestId)) return { ok: false, error: "requestId is required" };
+            if (value.paperTradeId !== undefined && typeof value.paperTradeId !== "string") return { ok: false, error: "paperTradeId is invalid" };
+            if (!isLiveCancelStatus(value.status)) return { ok: false, error: "invalid cancel status" };
+            if (value.reason !== undefined && typeof value.reason !== "string") return { ok: false, error: "invalid cancel reason" };
+            if (!isLiveCancelScope(value.scope)) return { ok: false, error: "scope is invalid" };
+            if (value.canceledOrderIds !== undefined && !Array.isArray(value.canceledOrderIds)) {
+                return { ok: false, error: "canceledOrderIds is invalid" };
+            }
+            if (value.canceledCount !== undefined && (!isFiniteNumber(value.canceledCount) || value.canceledCount < 0)) {
+                return { ok: false, error: "canceledCount is invalid" };
             }
             break;
         case "paper_unfilled":

@@ -5,9 +5,11 @@ import {
     buildLiveExitSubmitRequest,
     buildLiveTradeSubmitRequest,
     normalizeLiveTradeSubmitResponse,
+    resolveLiveLimitEntryPrice,
     resolveLiveExitFloorPreflight,
     resolveLiveExitShareUpdate,
     resolveLiveTradeFilledShares,
+    validateLiveCancelAllSubmitRequest,
     validateLiveTradeSubmitRequest,
 } from "../lib/execution-lab/live-trade-request";
 import { resolvePolymarketEntryCutoff } from "../lib/polymarket-entry-cutoff";
@@ -105,6 +107,7 @@ describe("Execution Lab live trade request", () => {
         expect(yes.action).to.equal("entry");
         expect(yes.tokenId).to.equal("yes-token");
         expect(no.tokenId).to.equal("no-token");
+        expect(yes.orderMode).to.equal("taker");
         expect(yes.maxPrice).to.equal(0.58);
         expect(yes.orderType).to.equal("FAK");
         expect(no.orderType).to.equal("FOK");
@@ -132,6 +135,42 @@ describe("Execution Lab live trade request", () => {
         expect(clamped.maxPrice).to.equal(1);
     });
 
+    it("builds limit entries with explicit price offset and executor-compatible max price", () => {
+        const request = buildLiveTradeSubmitRequest({
+            snapshot: snapshot(),
+            position: { ...position("yes"), entryPrice: 0.25 },
+            liveConfig: {
+                orderMode: "limit",
+                takerOrderType: "FAK",
+                sizingMode: "fixed",
+                maxStakeUsd: 100,
+                entryMaxSlippageCents: 1,
+                exitMaxSlippageCents: 5,
+                limitOffsetEnabled: true,
+                limitOffsetCents: 6,
+                limitCancelAllOnExitEnabled: true,
+            },
+            createdAtIso: "2026-01-01T00:00:01.000Z",
+            nowSec: EVENT_START + 11,
+        });
+
+        expect(request.orderMode).to.equal("limit");
+        if (request.orderMode === "limit") {
+            expect(request.orderType).to.equal("GTC");
+            expect(request.limitReferencePrice).to.equal(0.25);
+            expect(request.limitPrice).to.equal(0.19);
+            expect(request.maxPrice).to.equal(request.limitPrice);
+        }
+        expect(resolveLiveLimitEntryPrice({
+            referencePrice: 0.03,
+            offsetEnabled: true,
+            offsetCents: 6,
+        })).to.equal(0.01);
+        expect(resolveLiveLimitEntryPrice({
+            referencePrice: 0.256,
+        })).to.equal(0.25);
+    });
+
     it("builds and validates live exit requests with a floor below paper exit price", () => {
         const exitArgs = {
             snapshot: snapshot(),
@@ -155,6 +194,7 @@ describe("Execution Lab live trade request", () => {
         const request = buildLiveExitSubmitRequest(exitArgs);
 
         expect(request.action).to.equal("exit");
+        expect(request.orderMode).to.equal("taker");
         expect(request.attempt).to.equal(1);
         expect(request.minPrice).to.be.closeTo(0.49, 1e-12);
         expect(request.maxPrice).to.be.closeTo(0.49, 1e-12);
@@ -261,6 +301,36 @@ describe("Execution Lab live trade request", () => {
             nowSec: EVENT_START + 11,
             maxStakeUsd: 10,
         }).ok).to.equal(false);
+        expect(validateLiveTradeSubmitRequest({
+            ...request,
+            orderMode: "limit",
+            orderType: "GTC",
+            maxPrice: 0.51,
+            limitPrice: 0.51,
+            limitReferencePrice: 0.57,
+            limitOffsetEnabled: true,
+            limitOffsetCents: 6,
+        }, {
+            nowSec: EVENT_START + 11,
+            maxStakeUsd: 10,
+            orderMode: "limit",
+            supportedLimitOrderType: "GTC",
+        }).ok).to.equal(true);
+        expect(validateLiveTradeSubmitRequest({
+            ...request,
+            orderMode: "limit",
+            orderType: "GTC",
+            maxPrice: undefined,
+            limitPrice: 0.51,
+            limitReferencePrice: 0.57,
+            limitOffsetEnabled: true,
+            limitOffsetCents: 6,
+        }, {
+            nowSec: EVENT_START + 11,
+            maxStakeUsd: 10,
+            orderMode: "limit",
+            supportedLimitOrderType: "GTC",
+        }).ok).to.equal(false);
         expect(validateLiveTradeSubmitRequest({ ...request, entryTimeSec: EVENT_END }, {
             nowSec: EVENT_START + 11,
             maxStakeUsd: 10,
@@ -268,6 +338,44 @@ describe("Execution Lab live trade request", () => {
         expect(validateLiveTradeSubmitRequest({ ...request, expiresAtSec: EVENT_START + 42 }, {
             nowSec: EVENT_START + 11,
             maxStakeUsd: 10,
+        }).ok).to.equal(false);
+    });
+
+    it("validates targeted session cancel requests with explicit order ids", () => {
+        const request = {
+            action: "cancel_all",
+            requestId: "cancel-1",
+            sessionId: "session-1",
+            paperTradeId: "paper-1",
+            exitTriggerKey: "session-1|event|yes|paper-1|exit",
+            createdAtIso: "2026-01-01T00:00:01.000Z",
+            symbol: "BTCUSDT",
+            strategyKey: "test_strategy",
+            marketSlug: "btc-event",
+            conditionId: "condition",
+            tokenId: "yes-token",
+            orderIds: [" 0xabc "],
+            scope: "session",
+            reason: "limit_exit_signal",
+            orderMode: "limit",
+        };
+
+        const valid = validateLiveCancelAllSubmitRequest(request, {
+            resolvedConfig: {
+                orderMode: "limit",
+                cancelScope: "session",
+                limitCancelAllOnExitEnabled: true,
+            },
+        });
+
+        expect(valid.ok).to.equal(true);
+        if (valid.ok) expect(valid.request.orderIds).to.deep.equal(["0xabc"]);
+        expect(validateLiveCancelAllSubmitRequest({ ...request, orderIds: [] }, {
+            resolvedConfig: {
+                orderMode: "limit",
+                cancelScope: "session",
+                limitCancelAllOnExitEnabled: true,
+            },
         }).ok).to.equal(false);
     });
 

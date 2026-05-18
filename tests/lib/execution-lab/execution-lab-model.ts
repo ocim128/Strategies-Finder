@@ -162,10 +162,25 @@ export type PaperEntryRecord = ExecutionLabBaseRecord & {
     quoteAgeMs: number | null;
 };
 
-export type LiveTradeOrderType = "FOK" | "FAK";
+export type LiveOrderMode = "taker" | "limit";
+export type LiveTakerOrderType = "FOK" | "FAK";
+export type LiveLimitOrderType = "GTC";
 export type LiveTradeSizingMode = "fixed" | "exchange_min";
+export type LiveCancelScope = "account" | "market" | "token" | "session" | "unknown";
 
-export interface LiveExecutorStatus {
+export interface ExecutionLabLiveUiConfig {
+    orderMode: LiveOrderMode;
+    takerOrderType: LiveTakerOrderType;
+    sizingMode: LiveTradeSizingMode;
+    maxStakeUsd: number;
+    entryMaxSlippageCents: number;
+    exitMaxSlippageCents: number;
+    limitOffsetEnabled: boolean;
+    limitOffsetCents: number;
+    limitCancelAllOnExitEnabled: boolean;
+}
+
+export type ExecutionLabResolvedLiveConfig = ExecutionLabLiveUiConfig & {
     ok: true;
     configured: boolean;
     available: boolean;
@@ -173,14 +188,15 @@ export interface LiveExecutorStatus {
     dryRun: boolean;
     executorKind: "cli";
     geoblockAllowed: boolean | null;
-    maxStakeUsd: number;
-    sizingMode: LiveTradeSizingMode;
-    orderType: LiveTradeOrderType;
-    entryMaxSlippageCents: number;
-    exitMaxSlippageCents: number;
-    supportedOrderTypes: LiveTradeOrderType[];
+    orderType: LiveTakerOrderType;
+    supportedOrderTypes: LiveTakerOrderType[];
+    supportedTakerOrderTypes: LiveTakerOrderType[];
+    supportedLimitOrderType: LiveLimitOrderType | null;
+    cancelScope: LiveCancelScope;
     message: string;
-}
+};
+
+export type LiveExecutorStatus = ExecutionLabResolvedLiveConfig;
 
 export type LiveTradeSubmitStatus =
     | "dry_run"
@@ -209,17 +225,34 @@ export type LiveTradeSubmitRequestBase = {
     stakeUsd: number;
     signalTimeSec: number;
     entryTimeSec: number;
-    maxPrice: number;
-    orderType: LiveTradeOrderType;
 };
 
-export type LiveEntrySubmitRequest = LiveTradeSubmitRequestBase & {
+export type LiveTakerEntrySubmitRequest = LiveTradeSubmitRequestBase & {
     action: "entry";
+    orderMode: "taker";
+    orderType: LiveTakerOrderType;
+    maxPrice: number;
 };
+
+export type LiveLimitEntrySubmitRequest = LiveTradeSubmitRequestBase & {
+    action: "entry";
+    orderMode: "limit";
+    orderType: LiveLimitOrderType;
+    maxPrice: number;
+    limitPrice: number;
+    limitReferencePrice: number;
+    limitOffsetEnabled: boolean;
+    limitOffsetCents: number;
+};
+
+export type LiveEntrySubmitRequest = LiveTakerEntrySubmitRequest | LiveLimitEntrySubmitRequest;
 
 export type LiveExitSubmitRequest = LiveTradeSubmitRequestBase & {
     action: "exit";
     entryRequestId: string;
+    orderMode: "taker";
+    orderType: LiveTakerOrderType;
+    maxPrice: number;
     shares: number;
     exitTimeSec: number;
     minPrice: number;
@@ -242,6 +275,10 @@ export type LiveTradeSubmitResponse = {
     filledShares?: number;
     maxPrice?: number;
     currentAsk?: number;
+    limitPrice?: number;
+    limitReferencePrice?: number;
+    limitOffsetEnabled?: boolean;
+    limitOffsetCents?: number;
     minPrice?: number;
     currentBid?: number;
     minOrderSize?: number;
@@ -262,8 +299,13 @@ export type LiveTradeRequestRecord = ExecutionLabBaseRecord & {
     stakeUsd: number;
     signalTimeSec: number;
     entryTimeSec: number;
-    maxPrice: number;
-    orderType: LiveTradeOrderType;
+    orderMode: LiveOrderMode;
+    orderType: LiveTakerOrderType | LiveLimitOrderType;
+    maxPrice?: number;
+    limitPrice?: number;
+    limitReferencePrice?: number;
+    limitOffsetEnabled?: boolean;
+    limitOffsetCents?: number;
     sizingMode?: LiveTradeSizingMode;
     dryRun?: boolean;
 };
@@ -283,6 +325,10 @@ export type LiveTradeResultRecord = ExecutionLabBaseRecord & {
     filledShares?: number;
     currentAsk?: number;
     maxPrice?: number;
+    limitPrice?: number;
+    limitReferencePrice?: number;
+    limitOffsetEnabled?: boolean;
+    limitOffsetCents?: number;
     latencyMs?: number;
 };
 
@@ -300,7 +346,8 @@ export type LiveExitRequestRecord = ExecutionLabBaseRecord & {
     shares: number;
     exitTimeSec: number;
     minPrice: number;
-    orderType: LiveTradeOrderType;
+    orderMode: "taker";
+    orderType: LiveTakerOrderType;
     expiresAtSec?: number;
     attempt?: number;
     sizingMode?: LiveTradeSizingMode;
@@ -323,6 +370,69 @@ export type LiveExitResultRecord = ExecutionLabBaseRecord & {
     filledShares?: number;
     currentBid?: number;
     minPrice?: number;
+    latencyMs?: number;
+};
+
+export type LiveCancelAllSubmitStatus =
+    | "dry_run"
+    | "submitted"
+    | "partial"
+    | "duplicate"
+    | "rejected"
+    | "failed";
+
+export type LiveCancelAllSubmitRequest = {
+    action: "cancel_all";
+    requestId: string;
+    sessionId: string;
+    paperTradeId?: string;
+    exitTriggerKey: string;
+    createdAtIso: string;
+    symbol: string;
+    strategyKey: string;
+    marketSlug?: string;
+    conditionId?: string;
+    tokenId?: string;
+    orderIds?: string[];
+    scope: LiveCancelScope;
+    reason: "limit_exit_signal";
+    orderMode: "limit";
+};
+
+export type LiveCancelAllSubmitResponse = {
+    ok: true;
+    requestId: string;
+    status: LiveCancelAllSubmitStatus;
+    reason?: string;
+    scope: LiveCancelScope;
+    canceledOrderIds?: string[];
+    canceledCount?: number;
+};
+
+export type LiveCancelAllRequestRecord = ExecutionLabBaseRecord & {
+    recordType: "live_cancel_all_request";
+    requestId: string;
+    paperTradeId?: string;
+    exitTriggerKey: string;
+    marketSlug?: string;
+    conditionId?: string;
+    tokenId?: string;
+    orderIds?: string[];
+    scope: LiveCancelScope;
+    reason: "limit_exit_signal";
+    orderMode: "limit";
+    dryRun?: boolean;
+};
+
+export type LiveCancelAllResultRecord = ExecutionLabBaseRecord & {
+    recordType: "live_cancel_all_result";
+    requestId: string;
+    paperTradeId?: string;
+    status: LiveCancelAllSubmitStatus;
+    reason?: string;
+    scope: LiveCancelScope;
+    canceledOrderIds?: string[];
+    canceledCount?: number;
     latencyMs?: number;
 };
 
@@ -392,6 +502,8 @@ export type ExecutionLabRecord =
     | LiveTradeResultRecord
     | LiveExitRequestRecord
     | LiveExitResultRecord
+    | LiveCancelAllRequestRecord
+    | LiveCancelAllResultRecord
     | PaperUnfilledRecord
     | PaperExitRecord
     | PaperResolutionPendingRecord

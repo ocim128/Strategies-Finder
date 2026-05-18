@@ -74,15 +74,21 @@ V1 is working only when all of these are true:
 
 - Live Trade targets Polymarket crypto outcome markets, not Binance spot/futures execution.
 - Existing Strategy Finder settings remain the source of truth for signal validity, direction, entry price filtering, Polymarket symbol/session settings, and stake input.
-- The first implementation places live entry orders. The first exit implementation sells the same filled token when the matching paper trade emits `paper_exit`.
-- With `EXECUTION_LAB_LIVE_SIZING_MODE=fixed`, `stakeUsd` is a hard notional cap. The executor may submit less after tick/lot/depth/min-size checks, but it must never submit more.
-- With `EXECUTION_LAB_LIVE_SIZING_MODE=exchange_min`, live entries may auto-size above `stakeUsd` to the minimum valid Polymarket order, but never above `EXECUTION_LAB_LIVE_MAX_STAKE_USD` or `MAX_ORDER_SIZE_USDC`.
+- Live entries can run in taker mode or limit mode. Filled live exits still sell the same filled token through the existing taker exit flow.
+- With live UI sizing mode `fixed`, `stakeUsd` is a hard notional cap. The executor may submit less after tick/lot/depth/min-size checks, but it must never submit more.
+- With live UI sizing mode `exchange_min`, live entries may auto-size above `stakeUsd` to the minimum valid Polymarket order, but never above the effective UI/Strategy Finder cap or `MAX_ORDER_SIZE_USDC`.
 - The executor may reject small stakes in fixed mode or reject exchange-min sizing with `min_size_exceeds_cap` when the minimum valid order is above the configured caps.
-- Strategy Finder controls the live order type with `EXECUTION_LAB_LIVE_ORDER_TYPE=FAK|FOK`; if it is unset, `ARBITRAGE_ORDER_TYPE` is accepted as a compatibility fallback, then `FAK`.
+- Strategy Finder `.env` still owns executor path, cwd, args, hard live enablement, timeout/output limits, geoblock display state, fallback taker order type, fallback sizing/cap/slippage values, limit order type, and optional broad cancel scope.
+- The Execution Lab UI owns non-secret per-browser live behavior: `orderMode`, `takerOrderType`, sizing mode, max stake cap, entry/exit slippage, limit offset, and limit cancel-on-exit. UI values override `.env` fallbacks for those non-secret runtime fields.
+- The default taker order type is `FAK`; `.env` accepts `EXECUTION_LAB_LIVE_TAKER_ORDER_TYPE`, `EXECUTION_LAB_LIVE_ORDER_TYPE`, or compatibility `ARBITRAGE_ORDER_TYPE`.
+- Limit entry order type defaults to `GTC` through `EXECUTION_LAB_LIVE_LIMIT_ORDER_TYPE=GTC`.
 - Strategy Finder runs the executor from the inferred side-repo root when the binary is under `target/debug` or `target/release`; set `EXECUTION_LAB_LIVE_EXECUTOR_CWD` when that inference is wrong.
 - Strategy Finder applies the Backtest Realism `Polymarket Entry Cutoff` toggle before paper entries are accepted. The toggle defaults off; when enabled, `Polymarket Entry Cutoff (sec)` defaults to `15`.
 - Live entry submission also rejects as `event_too_close_to_close` if the toggle is enabled and the current clock has crossed the same configured cutoff before the executor call.
 - Live entry `maxPrice` adds `EXECUTION_LAB_LIVE_ENTRY_MAX_SLIPPAGE_CENTS` to the paper entry price, clamped to `1.00`; the default is `1` cent.
+- Limit mode submits a buy limit immediately after an accepted paper entry, using the paper entry price as `limitReferencePrice` and optional UI offset as `limitPrice = reference - offsetCents / 100`, rounded/clamped by Strategy Finder before executor submission. For executor schema compatibility, limit requests also carry `maxPrice = limitPrice`; `limitPrice` remains the explicit resting-order price.
+- Posted or delayed limit entries are tracked as pending limit submissions, not live positions. They become tracked live positions only when the executor response reports filled or partial filled shares.
+- Limit cancel-on-exit is limit-mode only. When Strategy Finder has a posted GTC order id, it sends a targeted `session` cancel for that order id; broader configured scopes are fallback-only.
 - Private keys must not be stored in browser state, localStorage, JSONL logs, or this repository.
 - V1 is a local playground feature for `npm run dev`, not production infrastructure.
 - Live mode is never restored automatically on page load. The UI may remember non-secret settings such as stake, but each session starts from Paper until the user explicitly selects Live again.
@@ -93,10 +99,11 @@ V1 is working only when all of these are true:
 - No duplicate risk or signal settings.
 - No new Strategy Finder database.
 - No hedge exits or opposite-side synthetic exits in V1.
-- No order cancellation controls in V1.
 - No Cloudflare Worker live trading.
 - No production deployment claim.
 - No full live-position reconciliation dashboard in V1.
+- No order-status polling or fill reconciliation for resting limit orders in V1.
+- No UI storage for executor path, cwd, args, wallet auth, API keys, private key material, or process timeout/output controls.
 
 ## Current Architecture
 
@@ -266,37 +273,65 @@ export type LiveTradeSubmitRequest = {
     stakeUsd: number;
     signalTimeSec: number;
     entryTimeSec: number;
-    maxPrice: number;
+    orderMode: "taker" | "limit";
+    orderType: "FAK" | "FOK" | "GTC";
+    maxPrice?: number;
+    limitPrice?: number;
+    limitReferencePrice?: number;
+    limitOffsetEnabled?: boolean;
+    limitOffsetCents?: number;
     minPrice?: number;
     shares?: number;
     exitTimeSec?: number;
     entryRequestId?: string;
-    orderType: "FOK" | "FAK";
+};
+
+export type LiveCancelAllSubmitRequest = {
+    action: "cancel_all";
+    requestId: string;
+    sessionId: string;
+    paperTradeId?: string;
+    exitTriggerKey: string;
+    createdAtIso: string;
+    symbol: string;
+    strategyKey: string;
+    marketSlug?: string;
+    conditionId?: string;
+    tokenId?: string;
+    orderIds?: string[];
+    scope: "account" | "market" | "token" | "session" | "unknown";
+    reason: "limit_exit_signal";
+    orderMode: "limit";
 };
 ```
 
 Notes:
 
-- `maxPrice` is the paper entry price plus configured entry slippage, not a claim that live execution will fill at that price.
+- Taker `maxPrice` is the paper entry price plus configured entry slippage, not a claim that live execution will fill at that price.
+- Limit request `maxPrice` is only a backward-compatible executor cap and must equal `limitPrice`.
+- Limit `limitPrice` is a resting buy price. It may remain unfilled; Strategy Finder does not assume a posted limit became an open live position unless the executor response includes filled shares.
 - `stakeUsd` is always the paper-session stake. It is also the live entry cap in `fixed` sizing mode, but not in `exchange_min` sizing mode.
 - For `action: "exit"`, `minPrice` is the live sell floor and `shares` is the tracked filled live-token amount to sell.
-- For V1, only allow `FOK` or `FAK`.
+- Taker entries and exits allow `FOK` or `FAK`; limit entries use the configured resting type, currently `GTC`.
 - Prefer `FAK` for first live smoke if partial fills are acceptable; prefer `FOK` only if all-or-nothing execution is required.
-- Do not allow `GTC` or `GTD` until order status polling and cancellation behavior are implemented.
-- The executor must treat request `orderType` as authoritative. If its local config would use anything else, reject with `reason: "order_type_mismatch"` instead of silently using config.
+- The executor must treat request `orderMode`, `orderType`, cancel `scope`, and cancel `orderIds` as authoritative. If local config would use anything else, reject with a structured mismatch reason instead of silently using config.
+- Cancel-all requests are logged separately as `live_cancel_all_request` and `live_cancel_all_result`; they are not sell exits.
 
 Runtime validation for `/api/execution-lab/live/trade`:
 
 - `requestId`, `sessionId`, `paperTradeId`, `symbol`, `strategyKey`, `marketSlug`, `conditionId`, and `tokenId` must be non-empty strings.
 - `side` must be `yes` or `no`.
-- `orderType` must be `FOK` or `FAK`.
+- `orderMode` must be `taker` or `limit`.
+- Taker `orderType` must be `FOK` or `FAK`; limit `orderType` must match the resolved supported limit order type.
 - `stakeUsd` must be finite, positive, and no larger than the configured Strategy Finder executor cap. In `exchange_min` sizing mode, it is still required for paper-session sizing but no longer caps the live executor order.
-- `maxPrice` must be finite and in `(0, 1]`.
+- Taker `maxPrice` must be finite and in `(0, 1]`; limit `maxPrice`, `limitPrice`, and `limitReferencePrice` must be finite and in `(0, 1]`, with limit `maxPrice` equal to `limitPrice`.
 - `createdAtIso` must parse as an ISO timestamp.
 - `expiresAtSec` must be finite, in the future, and close to current time. Use a short maximum window such as 30 seconds.
 - `eventStartTs`, `eventEndTs`, `signalTimeSec`, and `entryTimeSec` must be finite unix seconds, and the event window must contain the entry time.
 - The submitted `tokenId` must match the selected side after market validation: YES for `side: "yes"`, NO for `side: "no"`.
 - Reject malformed payloads with HTTP 400 before the executor is invoked.
+- `/api/execution-lab/live/config/resolve` validates UI non-secret config and returns the effective live config without exposing executor path, cwd, args, or secrets.
+- `/api/execution-lab/live/cancel-all` validates `cancel_all` requests against resolved limit mode, enabled cancel-on-exit, and either targeted session order ids or a concrete configured broad scope, then uses a separate process-local idempotency ledger.
 
 ## Strategy Finder Records
 
@@ -573,14 +608,14 @@ Scope:
 - Submit one live entry request per accepted paper entry.
 - Display and log executor result.
 - Signal exits use the Live Exit V1.1 path above; no hedge or opposite-side synthetic exits.
-- No `GTC` or `GTD`.
+- Taker entries use `FOK` or `FAK`; limit entries use the configured resting type, currently `GTC`.
 
 Technical tasks:
 
 - Require explicit live-enabled configuration in the executor boundary.
 - Make UI status clearly say entries are real when live-enabled.
 - Add a start-time confirmation gate for Live Trade sessions.
-- Use `FOK` or `FAK` only.
+- Validate request `orderMode` and `orderType` against the resolved live config.
 - Convert all executor responses into `live_trade_result`.
 - Do not summarize `posted_live`, `matched`, `delayed`, `partial`, and `failed` as a single success state.
 
@@ -606,8 +641,8 @@ Only consider after V1 live entries are stable:
 - Live order status polling.
 - Live position reconciliation.
 - Configurable exit retry/cancel controls.
-- Order cancellation controls.
-- `GTC` / `GTD` support.
+- Limit exits and market/token open-order lookup beyond known Strategy Finder order ids.
+- `GTD` support.
 - Loopback HTTP executor service.
 - Live execution summary dashboard.
 - Multi-wallet support.
@@ -622,11 +657,13 @@ Only consider after V1 live entries are stable:
 | Wrong market traded | Timestamp re-resolution can cross event boundaries. | Executor validates submitted `conditionId` and `tokenId`; it does not replace them. |
 | Stale request | Browser delay or paused tab can submit late. | Include expiry and reject stale requests before signing. |
 | Paper quote differs from live book | Paper `entryPrice` is historical decision context. | Treat paper `entryPrice` plus configured entry slippage as `maxPrice`; executor re-fetches current ask and rejects above cap. |
+| Limit order rests unfilled | A posted limit is not the same as a filled live position. | Track posted/delayed limit submissions separately and only create live positions from reported fills. |
 | Duplicate order | Retry/reload can repeat a valid request. | Deterministic `requestId` plus executor idempotency ledger. |
 | Crash during order submission | A process can die after signing/submitting but before returning. | Ledger writes `pending` before signing; duplicate pending returns `prior_attempt_unknown`, never resubmits. |
-| Wrong order type | Side-repo defaults can drift to `GTD`/`GTC`. | Request `orderType` is authoritative; executor rejects config mismatch. |
+| Wrong order type | Side-repo defaults can drift away from the resolved UI mode. | Request `orderMode` and `orderType` are authoritative; executor rejects config mismatch. |
 | Below exchange minimum | Small stakes can fail min shares/notional. | Executor preflight returns min details; UI logs rejection. |
-| Resting unmanaged orders | V1 has no cancellation/reconciliation. | Allow only `FOK`/`FAK` until status/cancel exists. |
+| Broad cancel-all scope | Account-wide cancellation can affect orders outside Strategy Finder. | Resolved config, UI status, logs, and docs expose `cancelScope`; prefer the narrowest executor-supported scope. |
+| Resting unmanaged orders | V1 has cancellation but no polling/reconciliation. | Limit cancel-on-exit targets known posted order ids; posted orders are not treated as positions until fills are reported. |
 | Vite endpoint exposure | Existing plugin registers preview endpoints too. | Guard live submission in dev server only or require explicit env flag. |
 | Ambiguous order result | Posted, matched, delayed, partial, and failed differ materially. | Preserve structured result status and raw order status. |
 | Executor adapter hang or noisy output | A child process can hang or mix logs with JSON. | Adapter uses timeout and output caps; stdout must be a single JSON response and human logs go to stderr. |

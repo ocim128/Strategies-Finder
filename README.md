@@ -281,11 +281,12 @@ Execution Lab is the only browser surface that can dispatch live Polymarket orde
 Operational contract:
 - run it on supported `1s` BTCUSDT/XRPUSDT charts with `signal_close`, `next_open`, or `next_close` Polymarket CLOB timing
 - browser code sends only order intent; wallet secrets stay in the local executor process environment
-- configure Strategy Finder `.env` with `EXECUTION_LAB_LIVE_EXECUTOR_PATH`, `EXECUTION_LAB_LIVE_ENABLED`, `EXECUTION_LAB_LIVE_ORDER_TYPE=FAK|FOK`, and local stake caps
+- configure Strategy Finder `.env` with `EXECUTION_LAB_LIVE_EXECUTOR_PATH`, `EXECUTION_LAB_LIVE_ENABLED`, fallback order settings, optional broad cancel scope, and local stake caps; non-secret order mode, taker type, sizing, slippage, limit offset, and cancel-on-exit can be controlled in the Execution Lab UI
 - if the executor binary is not under the side repo's `target/debug` or `target/release`, also set `EXECUTION_LAB_LIVE_EXECUTOR_CWD` to the side repo root so its `.env` is loaded
-- configure the side executor repo with `POLYMARKET_PRIVATE_KEY`, `MAX_ORDER_SIZE_USDC`, `ARBITRAGE_ORDER_TYPE=FAK` or `FOK`, `DRY_RUN=false`, and `LIVE_TRADE_ONCE_LIVE_ENABLED=1` only after dry-run preflight is correct
-- live entry buys the same YES/NO token accepted by the paper decision path
+- configure the side executor repo with `POLYMARKET_PRIVATE_KEY`, `MAX_ORDER_SIZE_USDC`, `ARBITRAGE_ORDER_TYPE=FAK`, `FOK`, or `GTC`, `DRY_RUN=false`, and `LIVE_TRADE_ONCE_LIVE_ENABLED=1` only after dry-run preflight is correct
+- live entry buys the same YES/NO token accepted by the paper decision path; limit mode submits a resting entry and does not become a tracked live position unless the executor reports filled shares
 - live exit sells the tracked filled token shares when the matching paper trade emits `paper_exit`; it does not buy the opposite outcome as a hedge
+- limit cancel-on-exit targets known posted Strategy Finder order ids by default; broad account cancellation requires explicit scope configuration and is shown in UI status and logs
 - rejected or failed exits can retry with fresh request ids while the event remains tradeable; ambiguous accepted states such as `delayed` or `posted_live` stop blind retries until reconciled
 
 Use [`docs/live-trade-plan.md`](docs/live-trade-plan.md) for the Strategy Finder side and `STRATEGY_FINDER_LIVE_TRADE.md` in the Polymarket bot repo for the executor side.

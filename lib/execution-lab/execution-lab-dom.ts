@@ -8,6 +8,15 @@ export const EXECUTION_LAB_IDS = {
     startMinerButton: "executionLabStartMiner",
     stopMinerButton: "executionLabStopMiner",
     stakeInput: "executionLabStakeUsd",
+    liveOrderMode: "executionLabLiveOrderMode",
+    liveTakerOrderType: "executionLabLiveTakerOrderType",
+    liveSizingMode: "executionLabLiveSizingMode",
+    liveMaxStakeUsd: "executionLabLiveMaxStakeUsd",
+    liveEntrySlippageCents: "executionLabLiveEntrySlippageCents",
+    liveExitSlippageCents: "executionLabLiveExitSlippageCents",
+    liveLimitOffsetEnabled: "executionLabLiveLimitOffsetEnabled",
+    liveLimitOffsetCents: "executionLabLiveLimitOffsetCents",
+    liveLimitCancelAllOnExit: "executionLabLiveLimitCancelAllOnExit",
     status: "executionLabStatus",
     configSnapshot: "executionLabConfigSnapshot",
     latestCandle: "executionLabLatestCandle",
@@ -52,6 +61,15 @@ export interface ExecutionLabDom {
     startMinerButton: HTMLButtonElement;
     stopMinerButton: HTMLButtonElement;
     stakeInput: HTMLInputElement;
+    liveOrderMode: HTMLSelectElement;
+    liveTakerOrderType: HTMLSelectElement;
+    liveSizingMode: HTMLSelectElement;
+    liveMaxStakeUsd: HTMLInputElement;
+    liveEntrySlippageCents: HTMLInputElement;
+    liveExitSlippageCents: HTMLInputElement;
+    liveLimitOffsetEnabled: HTMLInputElement;
+    liveLimitOffsetCents: HTMLInputElement;
+    liveLimitCancelAllOnExit: HTMLInputElement;
     status: HTMLElement;
     configSnapshot: HTMLElement;
     latestCandle: HTMLElement;
@@ -95,6 +113,15 @@ export function queryExecutionLabDom(): ExecutionLabDom {
         startMinerButton: getRequiredElement<HTMLButtonElement>(EXECUTION_LAB_IDS.startMinerButton),
         stopMinerButton: getRequiredElement<HTMLButtonElement>(EXECUTION_LAB_IDS.stopMinerButton),
         stakeInput: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.stakeInput),
+        liveOrderMode: getRequiredElement<HTMLSelectElement>(EXECUTION_LAB_IDS.liveOrderMode),
+        liveTakerOrderType: getRequiredElement<HTMLSelectElement>(EXECUTION_LAB_IDS.liveTakerOrderType),
+        liveSizingMode: getRequiredElement<HTMLSelectElement>(EXECUTION_LAB_IDS.liveSizingMode),
+        liveMaxStakeUsd: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveMaxStakeUsd),
+        liveEntrySlippageCents: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveEntrySlippageCents),
+        liveExitSlippageCents: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveExitSlippageCents),
+        liveLimitOffsetEnabled: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveLimitOffsetEnabled),
+        liveLimitOffsetCents: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveLimitOffsetCents),
+        liveLimitCancelAllOnExit: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveLimitCancelAllOnExit),
         status: getRequiredElement(EXECUTION_LAB_IDS.status),
         configSnapshot: getRequiredElement(EXECUTION_LAB_IDS.configSnapshot),
         latestCandle: getRequiredElement(EXECUTION_LAB_IDS.latestCandle),

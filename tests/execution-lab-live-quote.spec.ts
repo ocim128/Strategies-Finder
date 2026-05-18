@@ -176,6 +176,7 @@ function liveTradeRequest(overrides: Record<string, unknown> = {}): Record<strin
         stakeUsd: 5,
         signalTimeSec: nowSec - 2,
         entryTimeSec: nowSec - 1,
+        orderMode: "taker",
         maxPrice: 0.55,
         orderType: "FAK",
         ...overrides,
@@ -318,6 +319,37 @@ describe("Execution Lab live helpers", () => {
         });
     });
 
+    it("resolves UI live config overrides without exposing executor paths", async () => {
+        await withEnv({
+            EXECUTION_LAB_LIVE_EXECUTOR_PATH: process.execPath,
+            EXECUTION_LAB_LIVE_ENABLED: "0",
+            EXECUTION_LAB_LIVE_ORDER_TYPE: "FAK",
+            EXECUTION_LAB_LIVE_MAX_STAKE_USD: "10",
+        }, async () => {
+            const handler = createDevHandler();
+            const response = await invokePost(handler, "/live/config/resolve", {
+                liveConfig: {
+                    orderMode: "limit",
+                    takerOrderType: "FOK",
+                    sizingMode: "exchange_min",
+                    maxStakeUsd: 7,
+                    entryMaxSlippageCents: 3,
+                    exitMaxSlippageCents: 4,
+                    limitOffsetEnabled: true,
+                    limitOffsetCents: 6,
+                    limitCancelAllOnExitEnabled: true,
+                },
+            });
+
+            expect(response.statusCode).to.equal(200);
+            expect(response.json.orderMode).to.equal("limit");
+            expect(response.json.takerOrderType).to.equal("FOK");
+            expect(response.json.maxStakeUsd).to.equal(7);
+            expect(response.json.liveEnabled).to.equal(false);
+            expect("executorPath" in response.json).to.equal(false);
+        });
+    });
+
     it("does not register live trade submission in preview mode by default", async () => {
         await withEnv({ EXECUTION_LAB_ALLOW_LIVE_TRADE_PREVIEW: undefined }, async () => {
             const handler = createHandler();
@@ -420,6 +452,198 @@ describe("Execution Lab live helpers", () => {
         }
     });
 
+    it("submits limit cancel-all once with a matching UI config", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "execution-lab-cancel-ledger-"));
+        const countPath = join(dir, "cancel-count.txt");
+        const script = [
+            "const fs = require('node:fs');",
+            "let body='';",
+            "process.stdin.on('data', c => body += c);",
+            "process.stdin.on('end', () => {",
+            `fs.appendFileSync(${JSON.stringify(countPath)}, 'x');`,
+            "const req = JSON.parse(body);",
+            "console.log(JSON.stringify({ ok: true, requestId: req.requestId, status: 'submitted', scope: req.scope, canceledCount: 1 }));",
+            "});",
+        ].join("");
+
+        try {
+            await withEnv({
+                EXECUTION_LAB_LIVE_EXECUTOR_PATH: process.execPath,
+                EXECUTION_LAB_LIVE_EXECUTOR_ARGS_JSON: JSON.stringify(["-e", script]),
+                EXECUTION_LAB_LIVE_CANCEL_SCOPE: "token",
+            }, async () => {
+                const handler = createDevHandler();
+                const request = {
+                    action: "cancel_all",
+                    requestId: "cancel-1",
+                    sessionId: "session-1",
+                    paperTradeId: "paper-1",
+                    exitTriggerKey: "session-1|event|yes|paper-1|exit",
+                    createdAtIso: new Date().toISOString(),
+                    symbol: "BTCUSDT",
+                    strategyKey: "test_strategy",
+                    marketSlug: "btc-event",
+                    conditionId: "condition",
+                    tokenId: "yes-token",
+                    scope: "token",
+                    reason: "limit_exit_signal",
+                    orderMode: "limit",
+                    liveConfig: {
+                        orderMode: "limit",
+                        takerOrderType: "FAK",
+                        sizingMode: "fixed",
+                        maxStakeUsd: 10,
+                        entryMaxSlippageCents: 1,
+                        exitMaxSlippageCents: 5,
+                        limitOffsetEnabled: false,
+                        limitOffsetCents: 0,
+                        limitCancelAllOnExitEnabled: true,
+                    },
+                };
+                const first = await invokePost(handler, "/live/cancel-all", request);
+                const second = await invokePost(handler, "/live/cancel-all", request);
+
+                expect(first.statusCode).to.equal(200);
+                expect(second.statusCode).to.equal(200);
+                expect(first.json.status).to.equal("submitted");
+                expect(second.json.status).to.equal("submitted");
+                expect(readFileSync(countPath, "utf8")).to.equal("x");
+            });
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("accepts targeted session cancel-all without a configured broad cancel scope", async () => {
+        const script = [
+            "let body='';",
+            "process.stdin.on('data', c => body += c);",
+            "process.stdin.on('end', () => {",
+            "const req = JSON.parse(body);",
+            "console.log(JSON.stringify({ ok: true, requestId: req.requestId, status: 'submitted', scope: req.scope, canceledOrderIds: req.orderIds, canceledCount: req.orderIds.length }));",
+            "});",
+        ].join("");
+
+        await withEnv({
+            EXECUTION_LAB_LIVE_EXECUTOR_PATH: process.execPath,
+            EXECUTION_LAB_LIVE_EXECUTOR_ARGS_JSON: JSON.stringify(["-e", script]),
+            EXECUTION_LAB_LIVE_CANCEL_SCOPE: undefined,
+        }, async () => {
+            const handler = createDevHandler();
+            const response = await invokePost(handler, "/live/cancel-all", {
+                action: "cancel_all",
+                requestId: "cancel-session-1",
+                sessionId: "session-1",
+                paperTradeId: "paper-1",
+                exitTriggerKey: "session-1|event|yes|paper-1|exit",
+                createdAtIso: new Date().toISOString(),
+                symbol: "BTCUSDT",
+                strategyKey: "test_strategy",
+                marketSlug: "btc-event",
+                conditionId: "condition",
+                tokenId: "yes-token",
+                orderIds: ["0xabc"],
+                scope: "session",
+                reason: "limit_exit_signal",
+                orderMode: "limit",
+                liveConfig: {
+                    orderMode: "limit",
+                    takerOrderType: "FAK",
+                    sizingMode: "fixed",
+                    maxStakeUsd: 10,
+                    entryMaxSlippageCents: 1,
+                    exitMaxSlippageCents: 5,
+                    limitOffsetEnabled: false,
+                    limitOffsetCents: 0,
+                    limitCancelAllOnExitEnabled: true,
+                },
+            });
+
+            expect(response.statusCode).to.equal(200);
+            expect(response.json.status).to.equal("submitted");
+            expect(response.json.scope).to.equal("session");
+            expect(response.json.canceledOrderIds).to.deep.equal(["0xabc"]);
+        });
+    });
+
+    it("rejects limit cancel-all when cancel-on-exit is disabled", async () => {
+        await withEnv({
+            EXECUTION_LAB_LIVE_EXECUTOR_PATH: process.execPath,
+            EXECUTION_LAB_LIVE_CANCEL_SCOPE: "token",
+        }, async () => {
+            const handler = createDevHandler();
+            const response = await invokePost(handler, "/live/cancel-all", {
+                action: "cancel_all",
+                requestId: "cancel-disabled-1",
+                sessionId: "session-1",
+                paperTradeId: "paper-1",
+                exitTriggerKey: "session-1|event|yes|paper-1|exit",
+                createdAtIso: new Date().toISOString(),
+                symbol: "BTCUSDT",
+                strategyKey: "test_strategy",
+                marketSlug: "btc-event",
+                conditionId: "condition",
+                tokenId: "yes-token",
+                scope: "token",
+                reason: "limit_exit_signal",
+                orderMode: "limit",
+                liveConfig: {
+                    orderMode: "limit",
+                    takerOrderType: "FAK",
+                    sizingMode: "fixed",
+                    maxStakeUsd: 10,
+                    entryMaxSlippageCents: 1,
+                    exitMaxSlippageCents: 5,
+                    limitOffsetEnabled: false,
+                    limitOffsetCents: 0,
+                    limitCancelAllOnExitEnabled: false,
+                },
+            });
+
+            expect(response.statusCode).to.equal(400);
+            expect(response.json.error).to.equal("limit cancel-all-on-exit is disabled");
+        });
+    });
+
+    it("rejects limit cancel-all when cancel scope is not configured", async () => {
+        await withEnv({
+            EXECUTION_LAB_LIVE_EXECUTOR_PATH: process.execPath,
+            EXECUTION_LAB_LIVE_CANCEL_SCOPE: undefined,
+        }, async () => {
+            const handler = createDevHandler();
+            const response = await invokePost(handler, "/live/cancel-all", {
+                action: "cancel_all",
+                requestId: "cancel-no-scope-1",
+                sessionId: "session-1",
+                paperTradeId: "paper-1",
+                exitTriggerKey: "session-1|event|yes|paper-1|exit",
+                createdAtIso: new Date().toISOString(),
+                symbol: "BTCUSDT",
+                strategyKey: "test_strategy",
+                marketSlug: "btc-event",
+                conditionId: "condition",
+                tokenId: "yes-token",
+                scope: "unknown",
+                reason: "limit_exit_signal",
+                orderMode: "limit",
+                liveConfig: {
+                    orderMode: "limit",
+                    takerOrderType: "FAK",
+                    sizingMode: "fixed",
+                    maxStakeUsd: 10,
+                    entryMaxSlippageCents: 1,
+                    exitMaxSlippageCents: 5,
+                    limitOffsetEnabled: false,
+                    limitOffsetCents: 0,
+                    limitCancelAllOnExitEnabled: true,
+                },
+            });
+
+            expect(response.statusCode).to.equal(400);
+            expect(response.json.error).to.equal("cancel scope must be configured");
+        });
+    });
+
     it("rejects duplicate live request ids with a different payload hash", async () => {
         await withEnv({
             EXECUTION_LAB_LIVE_EXECUTOR_PATH: process.execPath,
@@ -437,11 +661,28 @@ describe("Execution Lab live helpers", () => {
             const handler = createDevHandler();
             const first = await invokePost(handler, "/live/trade", liveTradeRequest());
             const second = await invokePost(handler, "/live/trade", liveTradeRequest({ stakeUsd: 6 }));
+            const third = await invokePost(handler, "/live/trade", {
+                ...liveTradeRequest(),
+                liveConfig: {
+                    orderMode: "taker",
+                    takerOrderType: "FAK",
+                    sizingMode: "exchange_min",
+                    maxStakeUsd: 10,
+                    entryMaxSlippageCents: 1,
+                    exitMaxSlippageCents: 5,
+                    limitOffsetEnabled: false,
+                    limitOffsetCents: 0,
+                    limitCancelAllOnExitEnabled: false,
+                },
+            });
 
             expect(first.statusCode).to.equal(200);
             expect(second.statusCode).to.equal(200);
             expect(second.json.status).to.equal("rejected");
             expect(second.json.reason).to.equal("request_id_payload_mismatch");
+            expect(third.statusCode).to.equal(200);
+            expect(third.json.status).to.equal("rejected");
+            expect(third.json.reason).to.equal("request_id_payload_mismatch");
         });
     });
 

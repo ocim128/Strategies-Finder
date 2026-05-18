@@ -4,7 +4,11 @@ import type { PolymarketClob1sQuoteRow, SecondMarketPolymarketEvent, SecondMarke
 import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import type { PolymarketOutcomeRow } from "../types/polymarket-outcomes";
 import type {
+    ExecutionLabLiveUiConfig,
     ExecutionLabRecord,
+    ExecutionLabResolvedLiveConfig,
+    LiveCancelAllSubmitRequest,
+    LiveCancelAllSubmitResponse,
     LiveExecutorStatus,
     LiveTradeSubmitRequest,
     LiveTradeSubmitResponse,
@@ -109,8 +113,32 @@ export async function loadExecutionLabLiveExecutorStatus(): Promise<LiveExecutor
     return getJson<LiveExecutorStatus>("/api/execution-lab/live/status");
 }
 
-export async function submitExecutionLabLiveTrade(request: LiveTradeSubmitRequest): Promise<LiveTradeSubmitResponse> {
-    return postJson<LiveTradeSubmitResponse>("/api/execution-lab/live/trade", request, LIVE_TRADE_API_TIMEOUT_MS);
+export async function resolveExecutionLabLiveConfig(
+    liveConfig: ExecutionLabLiveUiConfig
+): Promise<ExecutionLabResolvedLiveConfig> {
+    return postJson<ExecutionLabResolvedLiveConfig>("/api/execution-lab/live/config/resolve", { liveConfig });
+}
+
+export async function submitExecutionLabLiveTrade(
+    request: LiveTradeSubmitRequest,
+    liveConfig?: ExecutionLabLiveUiConfig
+): Promise<LiveTradeSubmitResponse> {
+    return postJson<LiveTradeSubmitResponse>(
+        "/api/execution-lab/live/trade",
+        liveConfig ? { ...request, liveConfig } : request,
+        LIVE_TRADE_API_TIMEOUT_MS
+    );
+}
+
+export async function submitExecutionLabLiveCancelAll(
+    request: LiveCancelAllSubmitRequest,
+    liveConfig?: ExecutionLabLiveUiConfig
+): Promise<LiveCancelAllSubmitResponse> {
+    return postJson<LiveCancelAllSubmitResponse>(
+        "/api/execution-lab/live/cancel-all",
+        liveConfig ? { ...request, liveConfig } : request,
+        LIVE_TRADE_API_TIMEOUT_MS
+    );
 }
 
 export async function loadExecutionLabLiveCandles(args: {

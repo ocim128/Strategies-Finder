@@ -11,15 +11,26 @@ import type {
     SecondMarketPolymarketEvent,
     SecondMarketSymbol,
 } from "../second-market/types";
-import type { ExecutionLabRecord, LiveTradeSubmitRequest, LiveTradeSubmitResponse } from "./execution-lab-model";
+import type {
+    ExecutionLabLiveUiConfig,
+    ExecutionLabRecord,
+    LiveCancelAllSubmitRequest,
+    LiveCancelAllSubmitResponse,
+    LiveTradeSubmitRequest,
+    LiveTradeSubmitResponse,
+} from "./execution-lab-model";
 import {
     loadLiveExecutorStatus,
+    submitLiveCancelAllToExecutor,
     submitLiveTradeToExecutor,
 } from "./live-executor-adapter";
 import { sanitizeExecutionLabPathPart, validateExecutionLabRecord } from "./paper-log-schema";
 import {
     buildLiveTradeFailureResponse,
+    buildLiveCancelAllFailureResponse,
     LIVE_TRADE_MAX_EXPIRY_WINDOW_SEC,
+    normalizeExecutionLabLiveUiConfig,
+    validateLiveCancelAllSubmitRequest,
     validateLiveTradeSubmitRequest,
 } from "./live-trade-request";
 
@@ -75,6 +86,12 @@ type LiveTradeLedgerEntry = {
     pending?: Promise<LiveTradeSubmitResponse>;
     response?: LiveTradeSubmitResponse;
 };
+type LiveCancelLedgerEntry = {
+    payloadHash: string;
+    expiresAtMs: number;
+    pending?: Promise<LiveCancelAllSubmitResponse>;
+    response?: LiveCancelAllSubmitResponse;
+};
 
 function sendJson(res: any, status: number, payload: unknown): void {
     res.statusCode = status;
@@ -109,6 +126,12 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
     if (!text) return {};
     const parsed = JSON.parse(text);
     return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+}
+
+function readLiveUiConfigFromPayload(payload: Record<string, unknown>): ExecutionLabLiveUiConfig | undefined {
+    return payload.liveConfig && typeof payload.liveConfig === "object" && !Array.isArray(payload.liveConfig)
+        ? normalizeExecutionLabLiveUiConfig(payload.liveConfig)
+        : undefined;
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -456,6 +479,7 @@ export function executionLabVitePlugin(): Plugin {
     const liveOutcomeCache = new Map<string, CacheEntry<LiveOutcomeRow[]>>();
     const inFlightFetches = new Map<string, Promise<unknown>>();
     const liveTradeLedger = new Map<string, LiveTradeLedgerEntry>();
+    const liveCancelLedger = new Map<string, LiveCancelLedgerEntry>();
     let minerProcess: ChildProcessWithoutNullStreams | null = null;
     let minerStartedAtIso: string | null = null;
     let minerExitCode: number | null = null;
@@ -469,18 +493,26 @@ export function executionLabVitePlugin(): Plugin {
         }
     }
 
-    function pruneLiveTradeLedger(now: number): void {
+    function pruneLiveLedgers(now: number): void {
         for (const [requestId, entry] of liveTradeLedger.entries()) {
             if (entry.expiresAtMs <= now && !entry.pending) {
                 liveTradeLedger.delete(requestId);
             }
         }
+        for (const [requestId, entry] of liveCancelLedger.entries()) {
+            if (entry.expiresAtMs <= now && !entry.pending) {
+                liveCancelLedger.delete(requestId);
+            }
+        }
     }
 
-    async function submitLiveTradeOnce(request: LiveTradeSubmitRequest): Promise<LiveTradeSubmitResponse> {
+    async function submitLiveTradeOnce(
+        request: LiveTradeSubmitRequest,
+        liveUiConfig?: ExecutionLabLiveUiConfig
+    ): Promise<LiveTradeSubmitResponse> {
         const now = Date.now();
-        pruneLiveTradeLedger(now);
-        const hash = payloadHash(request);
+        pruneLiveLedgers(now);
+        const hash = payloadHash({ request, liveUiConfig: liveUiConfig ?? null });
         const existing = liveTradeLedger.get(request.requestId);
         if (existing) {
             if (existing.payloadHash !== hash) {
@@ -489,6 +521,7 @@ export function executionLabVitePlugin(): Plugin {
                     status: "rejected",
                     reason: "request_id_payload_mismatch",
                     maxPrice: request.maxPrice,
+                    limitPrice: request.action === "entry" && request.orderMode === "limit" ? request.limitPrice : undefined,
                     minPrice: request.action === "exit" ? request.minPrice : undefined,
                 });
             }
@@ -496,13 +529,51 @@ export function executionLabVitePlugin(): Plugin {
             if (existing.pending) return await existing.pending;
         }
 
-        const pending = submitLiveTradeToExecutor(request);
+        const pending = submitLiveTradeToExecutor(request, undefined, liveUiConfig);
         const entry: LiveTradeLedgerEntry = {
             payloadHash: hash,
             expiresAtMs: now + LIVE_TRADE_LEDGER_TTL_MS,
             pending,
         };
         liveTradeLedger.set(request.requestId, entry);
+        try {
+            const response = await pending;
+            entry.response = response;
+            entry.expiresAtMs = Date.now() + LIVE_TRADE_LEDGER_TTL_MS;
+            return response;
+        } finally {
+            entry.pending = undefined;
+        }
+    }
+
+    async function submitLiveCancelOnce(
+        request: LiveCancelAllSubmitRequest,
+        liveUiConfig?: ExecutionLabLiveUiConfig
+    ): Promise<LiveCancelAllSubmitResponse> {
+        const now = Date.now();
+        pruneLiveLedgers(now);
+        const hash = payloadHash({ request, liveUiConfig: liveUiConfig ?? null });
+        const existing = liveCancelLedger.get(request.requestId);
+        if (existing) {
+            if (existing.payloadHash !== hash) {
+                return buildLiveCancelAllFailureResponse({
+                    requestId: request.requestId,
+                    scope: request.scope,
+                    status: "rejected",
+                    reason: "request_id_payload_mismatch",
+                });
+            }
+            if (existing.response) return existing.response;
+            if (existing.pending) return await existing.pending;
+        }
+
+        const pending = submitLiveCancelAllToExecutor(request, undefined, liveUiConfig);
+        const entry: LiveCancelLedgerEntry = {
+            payloadHash: hash,
+            expiresAtMs: now + LIVE_TRADE_LEDGER_TTL_MS,
+            pending,
+        };
+        liveCancelLedger.set(request.requestId, entry);
         try {
             const response = await pending;
             entry.response = response;
@@ -795,33 +866,87 @@ export function executionLabVitePlugin(): Plugin {
                     return;
                 }
 
+                if (path === "/live/config/resolve") {
+                    const payload = await readJsonBody(req as IncomingMessage);
+                    const liveUiConfig = readLiveUiConfigFromPayload(payload)
+                        ?? normalizeExecutionLabLiveUiConfig(payload);
+                    sendJson(res, 200, loadLiveExecutorStatus(undefined, liveUiConfig));
+                    return;
+                }
+
                 if (path === "/live/trade") {
                     if (!allowLiveSubmission) {
                         sendJson(res, 404, { ok: false, error: "Live trade submission is not registered in preview mode." });
                         return;
                     }
-                    const status = loadLiveExecutorStatus();
                     const payload = await readJsonBody(req as IncomingMessage);
+                    const liveUiConfig = readLiveUiConfigFromPayload(payload);
+                    const status = loadLiveExecutorStatus(undefined, liveUiConfig);
                     const validation = validateLiveTradeSubmitRequest(payload, {
                         maxStakeUsd: status.maxStakeUsd,
                         sizingMode: status.sizingMode,
+                        orderMode: status.orderMode,
+                        supportedTakerOrderTypes: status.supportedTakerOrderTypes,
+                        supportedLimitOrderType: status.supportedLimitOrderType,
                         maxExpiryWindowSec: LIVE_TRADE_MAX_EXPIRY_WINDOW_SEC,
                     });
                     if (!validation.ok) {
                         sendJson(res, 400, { ok: false, error: validation.error });
                         return;
                     }
-                    if (validation.request.orderType !== status.orderType) {
+                    if (
+                        validation.request.action === "entry"
+                        && validation.request.orderMode !== status.orderMode
+                    ) {
+                        sendJson(res, 200, buildLiveTradeFailureResponse({
+                            requestId: validation.request.requestId,
+                            status: "rejected",
+                            reason: "order_mode_config_mismatch",
+                            maxPrice: validation.request.maxPrice,
+                            limitPrice: validation.request.orderMode === "limit" ? validation.request.limitPrice : undefined,
+                        }));
+                        return;
+                    }
+                    const expectedOrderType = validation.request.action === "entry" && validation.request.orderMode === "limit"
+                        ? status.supportedLimitOrderType
+                        : status.takerOrderType;
+                    if (validation.request.orderType !== expectedOrderType) {
                         sendJson(res, 200, buildLiveTradeFailureResponse({
                             requestId: validation.request.requestId,
                             status: "rejected",
                             reason: "order_type_config_mismatch",
                             maxPrice: validation.request.maxPrice,
+                            limitPrice: validation.request.action === "entry" && validation.request.orderMode === "limit"
+                                ? validation.request.limitPrice
+                                : undefined,
                             minPrice: validation.request.action === "exit" ? validation.request.minPrice : undefined,
                         }));
                         return;
                     }
-                    sendJson(res, 200, await submitLiveTradeOnce(validation.request));
+                    sendJson(res, 200, await submitLiveTradeOnce(validation.request, liveUiConfig));
+                    return;
+                }
+
+                if (path === "/live/cancel-all") {
+                    if (!allowLiveSubmission) {
+                        sendJson(res, 404, { ok: false, error: "Live cancel-all submission is not registered in preview mode." });
+                        return;
+                    }
+                    const payload = await readJsonBody(req as IncomingMessage);
+                    const liveUiConfig = readLiveUiConfigFromPayload(payload);
+                    const status = loadLiveExecutorStatus(undefined, liveUiConfig);
+                    const validation = validateLiveCancelAllSubmitRequest(payload, {
+                        resolvedConfig: {
+                            orderMode: status.orderMode,
+                            cancelScope: status.cancelScope,
+                            limitCancelAllOnExitEnabled: status.limitCancelAllOnExitEnabled,
+                        },
+                    });
+                    if (!validation.ok) {
+                        sendJson(res, 400, { ok: false, error: validation.error });
+                        return;
+                    }
+                    sendJson(res, 200, await submitLiveCancelOnce(validation.request, liveUiConfig));
                     return;
                 }
 

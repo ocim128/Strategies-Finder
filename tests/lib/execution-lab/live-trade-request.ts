@@ -1,26 +1,45 @@
 import type {
     ExecutionLabBaseRecord,
+    ExecutionLabLiveUiConfig,
     ExecutionLabOpenPaperPosition,
+    ExecutionLabResolvedLiveConfig,
+    LiveCancelAllRequestRecord,
+    LiveCancelAllResultRecord,
+    LiveCancelAllSubmitRequest,
+    LiveCancelAllSubmitResponse,
+    LiveCancelAllSubmitStatus,
+    LiveCancelScope,
     LiveEntrySubmitRequest,
+    LiveLimitOrderType,
     LiveExitRequestRecord,
     LiveExitResultRecord,
     LiveExitSubmitRequest,
     ExecutionLabSessionSnapshot,
-    LiveTradeOrderType,
+    LiveOrderMode,
+    LiveTakerOrderType,
     LiveTradeSizingMode,
     LiveTradeRequestRecord,
     LiveTradeResultRecord,
+    LiveTradeSubmitRequestBase,
     LiveTradeSubmitRequest,
     LiveTradeSubmitResponse,
     LiveTradeSubmitStatus,
 } from "./execution-lab-model";
 
-export const LIVE_TRADE_DEFAULT_ORDER_TYPE: LiveTradeOrderType = "FAK";
+export const LIVE_TRADE_DEFAULT_ORDER_MODE: LiveOrderMode = "taker";
+export const LIVE_TRADE_DEFAULT_ORDER_TYPE: LiveTakerOrderType = "FAK";
+export const LIVE_TRADE_DEFAULT_LIMIT_ORDER_TYPE: LiveLimitOrderType = "GTC";
+export const LIVE_TRADE_DEFAULT_SIZING_MODE: LiveTradeSizingMode = "fixed";
+export const LIVE_TRADE_DEFAULT_MAX_STAKE_USD = 100;
 export const LIVE_TRADE_DEFAULT_ENTRY_MAX_SLIPPAGE_CENTS = 1;
 export const LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS = 5;
+export const LIVE_TRADE_DEFAULT_LIMIT_OFFSET_ENABLED = false;
+export const LIVE_TRADE_DEFAULT_LIMIT_OFFSET_CENTS = 0;
+export const LIVE_TRADE_DEFAULT_LIMIT_CANCEL_ALL_ON_EXIT_ENABLED = false;
 export const LIVE_TRADE_REQUEST_TTL_SEC = 10;
 export const LIVE_TRADE_MAX_EXPIRY_WINDOW_SEC = 30;
 const LIVE_TRADE_SHARE_EPSILON = 0.000001;
+const LIVE_TRADE_DEFAULT_LIMIT_TICK_SIZE = 0.01;
 
 const LIVE_TRADE_STATUSES = new Set<LiveTradeSubmitStatus>([
     "dry_run",
@@ -32,6 +51,27 @@ const LIVE_TRADE_STATUSES = new Set<LiveTradeSubmitStatus>([
     "duplicate",
     "failed",
 ]);
+
+const LIVE_CANCEL_ALL_STATUSES = new Set<LiveCancelAllSubmitStatus>([
+    "dry_run",
+    "submitted",
+    "partial",
+    "duplicate",
+    "rejected",
+    "failed",
+]);
+
+export const EXECUTION_LAB_DEFAULT_LIVE_UI_CONFIG: ExecutionLabLiveUiConfig = {
+    orderMode: LIVE_TRADE_DEFAULT_ORDER_MODE,
+    takerOrderType: LIVE_TRADE_DEFAULT_ORDER_TYPE,
+    sizingMode: LIVE_TRADE_DEFAULT_SIZING_MODE,
+    maxStakeUsd: LIVE_TRADE_DEFAULT_MAX_STAKE_USD,
+    entryMaxSlippageCents: LIVE_TRADE_DEFAULT_ENTRY_MAX_SLIPPAGE_CENTS,
+    exitMaxSlippageCents: LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS,
+    limitOffsetEnabled: LIVE_TRADE_DEFAULT_LIMIT_OFFSET_ENABLED,
+    limitOffsetCents: LIVE_TRADE_DEFAULT_LIMIT_OFFSET_CENTS,
+    limitCancelAllOnExitEnabled: LIVE_TRADE_DEFAULT_LIMIT_CANCEL_ALL_ON_EXIT_ENABLED,
+};
 
 type LiveRecordContext = {
     dryRun?: boolean;
@@ -60,6 +100,61 @@ function finiteNonNegativeNumber(value: unknown): number | null {
 function finitePositiveNumber(value: unknown): number | null {
     const numeric = finiteNumber(value);
     return numeric !== null && numeric > 0 ? numeric : null;
+}
+
+function finiteBoolean(value: unknown, fallback: boolean): boolean {
+    return typeof value === "boolean" ? value : fallback;
+}
+
+function normalizeCents(value: unknown, fallback: number): number {
+    const numeric = finiteNumber(value);
+    return numeric !== null && numeric >= 0 ? Math.round(numeric * 100) / 100 : fallback;
+}
+
+function normalizeUsd(value: unknown, fallback: number): number {
+    const numeric = finiteNumber(value);
+    return numeric !== null && numeric > 0 ? Math.round(numeric * 100) / 100 : fallback;
+}
+
+export function isLiveOrderMode(value: unknown): value is LiveOrderMode {
+    return value === "taker" || value === "limit";
+}
+
+export function isLiveTakerOrderType(value: unknown): value is LiveTakerOrderType {
+    return value === "FOK" || value === "FAK";
+}
+
+export function isLiveSizingMode(value: unknown): value is LiveTradeSizingMode {
+    return value === "fixed" || value === "exchange_min";
+}
+
+export function isLiveCancelScope(value: unknown): value is LiveCancelScope {
+    return value === "account"
+        || value === "market"
+        || value === "token"
+        || value === "session"
+        || value === "unknown";
+}
+
+export function normalizeExecutionLabLiveUiConfig(
+    value: unknown,
+    fallback: ExecutionLabLiveUiConfig = EXECUTION_LAB_DEFAULT_LIVE_UI_CONFIG
+): ExecutionLabLiveUiConfig {
+    const record = isPlainObject(value) ? value : {};
+    return {
+        orderMode: isLiveOrderMode(record.orderMode) ? record.orderMode : fallback.orderMode,
+        takerOrderType: isLiveTakerOrderType(record.takerOrderType) ? record.takerOrderType : fallback.takerOrderType,
+        sizingMode: isLiveSizingMode(record.sizingMode) ? record.sizingMode : fallback.sizingMode,
+        maxStakeUsd: normalizeUsd(record.maxStakeUsd, fallback.maxStakeUsd),
+        entryMaxSlippageCents: normalizeCents(record.entryMaxSlippageCents, fallback.entryMaxSlippageCents),
+        exitMaxSlippageCents: normalizeCents(record.exitMaxSlippageCents, fallback.exitMaxSlippageCents),
+        limitOffsetEnabled: finiteBoolean(record.limitOffsetEnabled, fallback.limitOffsetEnabled),
+        limitOffsetCents: normalizeCents(record.limitOffsetCents, fallback.limitOffsetCents),
+        limitCancelAllOnExitEnabled: finiteBoolean(
+            record.limitCancelAllOnExitEnabled,
+            fallback.limitCancelAllOnExitEnabled
+        ),
+    };
 }
 
 function hasExplicitFilledShares(response: { filledShares?: number }): boolean {
@@ -189,18 +284,38 @@ export function resolveLiveEntryMaxPrice(args: {
     return Math.max(0.01, Math.min(1, Number((entryPrice + (maxEntrySlippageCents / 100)).toFixed(4))));
 }
 
+export function resolveLiveLimitEntryPrice(args: {
+    referencePrice: number;
+    offsetEnabled?: boolean;
+    offsetCents?: number;
+    tickSize?: number;
+}): number {
+    const referencePrice = finitePositiveNumber(args.referencePrice) ?? 0.01;
+    const offsetCents = args.offsetEnabled
+        ? Math.max(0, finiteNumber(args.offsetCents) ?? LIVE_TRADE_DEFAULT_LIMIT_OFFSET_CENTS)
+        : 0;
+    const tickSize = finitePositiveNumber(args.tickSize) ?? LIVE_TRADE_DEFAULT_LIMIT_TICK_SIZE;
+    const rawPrice = Math.max(0.01, Math.min(1, referencePrice - (offsetCents / 100)));
+    const rounded = Math.floor((rawPrice + Number.EPSILON) / tickSize) * tickSize;
+    return Math.max(0.01, Math.min(1, Number(rounded.toFixed(4))));
+}
+
 export function buildLiveTradeSubmitRequest(args: {
     snapshot: ExecutionLabSessionSnapshot;
     position: ExecutionLabOpenPaperPosition;
     createdAtIso: string;
     nowSec: number;
-    orderType?: LiveTradeOrderType;
+    liveConfig?: ExecutionLabLiveUiConfig;
+    orderType?: LiveTakerOrderType;
+    limitOrderType?: LiveLimitOrderType;
+    limitTickSize?: number;
     maxEntrySlippageCents?: number;
 }): LiveEntrySubmitRequest {
+    const liveConfig = normalizeExecutionLabLiveUiConfig(args.liveConfig);
     const tokenId = args.position.side === "yes"
         ? args.position.yesTokenId
         : args.position.noTokenId;
-    return {
+    const common = {
         action: "entry",
         requestId: buildLiveTradeRequestId({
             sessionId: args.snapshot.sessionId,
@@ -223,11 +338,35 @@ export function buildLiveTradeSubmitRequest(args: {
         stakeUsd: args.position.stakeUsd,
         signalTimeSec: args.position.signalTimeSec,
         entryTimeSec: args.position.entryTimeSec,
+    } satisfies LiveTradeSubmitRequestBase & { action: "entry" };
+
+    if (liveConfig.orderMode === "limit") {
+        const limitPrice = resolveLiveLimitEntryPrice({
+            referencePrice: args.position.entryPrice,
+            offsetEnabled: liveConfig.limitOffsetEnabled,
+            offsetCents: liveConfig.limitOffsetCents,
+            tickSize: args.limitTickSize,
+        });
+        return {
+            ...common,
+            orderMode: "limit",
+            orderType: args.limitOrderType ?? LIVE_TRADE_DEFAULT_LIMIT_ORDER_TYPE,
+            limitReferencePrice: args.position.entryPrice,
+            maxPrice: limitPrice,
+            limitPrice,
+            limitOffsetEnabled: liveConfig.limitOffsetEnabled,
+            limitOffsetCents: liveConfig.limitOffsetCents,
+        };
+    }
+
+    return {
+        ...common,
+        orderMode: "taker",
         maxPrice: resolveLiveEntryMaxPrice({
             entryPrice: args.position.entryPrice,
-            maxEntrySlippageCents: args.maxEntrySlippageCents,
+            maxEntrySlippageCents: args.maxEntrySlippageCents ?? liveConfig.entryMaxSlippageCents,
         }),
-        orderType: args.orderType ?? LIVE_TRADE_DEFAULT_ORDER_TYPE,
+        orderType: args.orderType ?? liveConfig.takerOrderType,
     };
 }
 
@@ -266,7 +405,7 @@ export function buildLiveExitSubmitRequest(args: {
     maxExitSlippageCents?: number;
     createdAtIso: string;
     nowSec: number;
-    orderType?: LiveTradeOrderType;
+    orderType?: LiveTakerOrderType;
 }): LiveExitSubmitRequest {
     const maxExitSlippageCents = Number.isFinite(args.maxExitSlippageCents)
         ? Math.max(0, args.maxExitSlippageCents ?? LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS)
@@ -302,6 +441,7 @@ export function buildLiveExitSubmitRequest(args: {
         stakeUsd: Math.max(0.01, shares * minPrice),
         signalTimeSec: args.signalTimeSec,
         entryTimeSec: args.entryTimeSec,
+        orderMode: "taker",
         maxPrice: minPrice,
         orderType: args.orderType ?? LIVE_TRADE_DEFAULT_ORDER_TYPE,
         shares,
@@ -332,8 +472,13 @@ export function buildLiveTradeRequestRecord(
         stakeUsd: request.stakeUsd,
         signalTimeSec: request.signalTimeSec,
         entryTimeSec: request.entryTimeSec,
-        maxPrice: request.maxPrice,
+        orderMode: request.orderMode,
         orderType: request.orderType,
+        maxPrice: request.maxPrice,
+        limitPrice: request.orderMode === "limit" ? request.limitPrice : undefined,
+        limitReferencePrice: request.orderMode === "limit" ? request.limitReferencePrice : undefined,
+        limitOffsetEnabled: request.orderMode === "limit" ? request.limitOffsetEnabled : undefined,
+        limitOffsetCents: request.orderMode === "limit" ? request.limitOffsetCents : undefined,
         dryRun: context.dryRun,
         sizingMode: context.sizingMode,
     };
@@ -362,6 +507,10 @@ export function buildLiveTradeResultRecord(
         filledShares: response.filledShares,
         currentAsk: response.currentAsk,
         maxPrice: response.maxPrice,
+        limitPrice: response.limitPrice,
+        limitReferencePrice: response.limitReferencePrice,
+        limitOffsetEnabled: response.limitOffsetEnabled,
+        limitOffsetCents: response.limitOffsetCents,
         latencyMs: context.latencyMs,
     };
 }
@@ -388,6 +537,7 @@ export function buildLiveExitRequestRecord(
         shares: request.shares,
         exitTimeSec: request.exitTimeSec,
         minPrice: request.minPrice,
+        orderMode: request.orderMode,
         orderType: request.orderType,
         attempt: request.attempt,
         dryRun: context.dryRun,
@@ -423,12 +573,67 @@ export function buildLiveExitResultRecord(
     };
 }
 
+export function buildLiveCancelAllRequestId(args: {
+    sessionId: string;
+    exitTriggerKey: string;
+}): string {
+    return `live-cancel:${args.sessionId}:${hashParts([args.exitTriggerKey])}`;
+}
+
+export function buildLiveCancelAllRequestRecord(
+    snapshot: ExecutionLabSessionSnapshot,
+    request: LiveCancelAllSubmitRequest,
+    recordedAtIso: string,
+    context: LiveRecordContext = {}
+): LiveCancelAllRequestRecord {
+    return {
+        ...baseRecord(snapshot, recordedAtIso),
+        recordType: "live_cancel_all_request",
+        requestId: request.requestId,
+        paperTradeId: request.paperTradeId,
+        exitTriggerKey: request.exitTriggerKey,
+        marketSlug: request.marketSlug,
+        conditionId: request.conditionId,
+        tokenId: request.tokenId,
+        orderIds: request.orderIds,
+        scope: request.scope,
+        reason: request.reason,
+        orderMode: request.orderMode,
+        dryRun: context.dryRun,
+    };
+}
+
+export function buildLiveCancelAllResultRecord(
+    snapshot: ExecutionLabSessionSnapshot,
+    request: Pick<LiveCancelAllSubmitRequest, "requestId" | "paperTradeId">,
+    response: LiveCancelAllSubmitResponse,
+    recordedAtIso: string,
+    context: LiveRecordContext = {}
+): LiveCancelAllResultRecord {
+    return {
+        ...baseRecord(snapshot, recordedAtIso),
+        recordType: "live_cancel_all_result",
+        requestId: request.requestId,
+        paperTradeId: request.paperTradeId,
+        status: response.status,
+        reason: response.reason,
+        scope: response.scope,
+        canceledOrderIds: response.canceledOrderIds,
+        canceledCount: response.canceledCount,
+        latencyMs: context.latencyMs,
+    };
+}
+
 export function buildLiveTradeFailureResponse(args: {
     requestId: string;
     status?: LiveTradeSubmitStatus;
     reason: string;
     maxPrice?: number;
     currentAsk?: number;
+    limitPrice?: number;
+    limitReferencePrice?: number;
+    limitOffsetEnabled?: boolean;
+    limitOffsetCents?: number;
     minPrice?: number;
     currentBid?: number;
 }): LiveTradeSubmitResponse {
@@ -439,8 +644,27 @@ export function buildLiveTradeFailureResponse(args: {
         reason: args.reason,
         maxPrice: args.maxPrice,
         currentAsk: args.currentAsk,
+        limitPrice: args.limitPrice,
+        limitReferencePrice: args.limitReferencePrice,
+        limitOffsetEnabled: args.limitOffsetEnabled,
+        limitOffsetCents: args.limitOffsetCents,
         minPrice: args.minPrice,
         currentBid: args.currentBid,
+    };
+}
+
+export function buildLiveCancelAllFailureResponse(args: {
+    requestId: string;
+    scope: LiveCancelScope;
+    status?: LiveCancelAllSubmitStatus;
+    reason: string;
+}): LiveCancelAllSubmitResponse {
+    return {
+        ok: true,
+        requestId: args.requestId,
+        status: args.status ?? "failed",
+        reason: args.reason,
+        scope: args.scope,
     };
 }
 
@@ -476,6 +700,9 @@ export function normalizeLiveTradeSubmitResponse(
         "filledShares",
         "maxPrice",
         "currentAsk",
+        "limitPrice",
+        "limitReferencePrice",
+        "limitOffsetCents",
         "minPrice",
         "currentBid",
         "minOrderSize",
@@ -484,6 +711,7 @@ export function normalizeLiveTradeSubmitResponse(
         const numeric = finiteNumber(value[key]);
         if (numeric !== null) response[key] = numeric;
     }
+    if (value.limitOffsetEnabled !== undefined) response.limitOffsetEnabled = value.limitOffsetEnabled === true;
     if (
         response.status === "matched"
         && hasExplicitFilledShares(response)
@@ -496,12 +724,46 @@ export function normalizeLiveTradeSubmitResponse(
     return { ok: true, response };
 }
 
+export function normalizeLiveCancelAllSubmitResponse(
+    value: unknown,
+    expectedRequestId?: string
+): { ok: true; response: LiveCancelAllSubmitResponse } | { ok: false; error: string } {
+    if (!isPlainObject(value)) return { ok: false, error: "executor stdout must be a JSON object" };
+    if (value.ok !== true) return { ok: false, error: "executor response ok must be true" };
+    const requestId = nonEmptyString(value.requestId);
+    if (!requestId) return { ok: false, error: "executor response requestId is required" };
+    if (expectedRequestId && requestId !== expectedRequestId) {
+        return { ok: false, error: "executor response requestId mismatch" };
+    }
+    if (typeof value.status !== "string" || !LIVE_CANCEL_ALL_STATUSES.has(value.status as LiveCancelAllSubmitStatus)) {
+        return { ok: false, error: "executor response status is invalid" };
+    }
+    const scope = isLiveCancelScope(value.scope) ? value.scope : "unknown";
+    const response: LiveCancelAllSubmitResponse = {
+        ok: true,
+        requestId,
+        status: value.status as LiveCancelAllSubmitStatus,
+        scope,
+    };
+    if (value.reason !== undefined) response.reason = String(value.reason);
+    if (Array.isArray(value.canceledOrderIds)) {
+        response.canceledOrderIds = value.canceledOrderIds.map((item) => String(item)).filter((item) => item.length > 0);
+    }
+    const canceledCount = finiteNonNegativeNumber(value.canceledCount);
+    if (canceledCount !== null) response.canceledCount = Math.floor(canceledCount);
+    return { ok: true, response };
+}
+
 export function validateLiveTradeSubmitRequest(
     value: unknown,
     options: {
         nowSec?: number;
         maxStakeUsd: number;
         sizingMode?: LiveTradeSizingMode;
+        orderMode?: LiveOrderMode;
+        takerOrderType?: LiveTakerOrderType;
+        supportedTakerOrderTypes?: readonly LiveTakerOrderType[];
+        supportedLimitOrderType?: LiveLimitOrderType | null;
         maxExpiryWindowSec?: number;
     }
 ): { ok: true; request: LiveTradeSubmitRequest } | { ok: false; error: string } {
@@ -525,14 +787,11 @@ export function validateLiveTradeSubmitRequest(
         return { ok: false, error: "createdAtIso is invalid" };
     }
     if (value.side !== "yes" && value.side !== "no") return { ok: false, error: "side must be yes or no" };
-    if (value.orderType !== "FOK" && value.orderType !== "FAK") {
-        return { ok: false, error: "orderType must be FOK or FAK" };
-    }
+    const orderMode = isLiveOrderMode(value.orderMode) ? value.orderMode : "taker";
 
     const nowSec = Math.floor(options.nowSec ?? Date.now() / 1000);
     const maxWindow = options.maxExpiryWindowSec ?? LIVE_TRADE_MAX_EXPIRY_WINDOW_SEC;
     const stakeUsd = finiteNumber(value.stakeUsd);
-    const maxPrice = finiteNumber(value.maxPrice);
     const expiresAtSec = finiteNumber(value.expiresAtSec);
     const eventStartTs = finiteNumber(value.eventStartTs);
     const eventEndTs = finiteNumber(value.eventEndTs);
@@ -546,7 +805,6 @@ export function validateLiveTradeSubmitRequest(
     ) {
         return { ok: false, error: "stakeUsd is outside the configured live cap" };
     }
-    if (maxPrice === null || maxPrice <= 0 || maxPrice > 1) return { ok: false, error: "maxPrice must be in (0, 1]" };
     if (expiresAtSec === null || expiresAtSec <= nowSec || expiresAtSec > nowSec + maxWindow) {
         return { ok: false, error: "expiresAtSec must be in the near future" };
     }
@@ -564,13 +822,22 @@ export function validateLiveTradeSubmitRequest(
     }
 
     if (action === "exit") {
+        if (orderMode !== "taker") return { ok: false, error: "live exits must use taker order mode" };
+        if (!isLiveTakerOrderType(value.orderType)) {
+            return { ok: false, error: "orderType must be FOK or FAK for taker exits" };
+        }
+        if (options.takerOrderType && value.orderType !== options.takerOrderType) {
+            return { ok: false, error: "orderType does not match resolved taker order type" };
+        }
         const entryRequestId = nonEmptyString(value.entryRequestId);
         const shares = finiteNumber(value.shares);
         const exitTimeSec = finiteNumber(value.exitTimeSec);
+        const maxPrice = finiteNumber(value.maxPrice);
         const minPrice = finiteNumber(value.minPrice);
         const attempt = value.attempt === undefined ? undefined : finitePositiveNumber(value.attempt);
         if (!entryRequestId) return { ok: false, error: "entryRequestId is required for exits" };
         if (shares === null || shares <= 0) return { ok: false, error: "shares must be positive for exits" };
+        if (maxPrice === null || maxPrice <= 0 || maxPrice > 1) return { ok: false, error: "maxPrice must be in (0, 1]" };
         if (minPrice === null || minPrice <= 0 || minPrice > 1) return { ok: false, error: "minPrice must be in (0, 1]" };
         if (value.attempt !== undefined && attempt === null) return { ok: false, error: "attempt must be positive for exits" };
         if (exitTimeSec === null || exitTimeSec < eventStartTs || exitTimeSec >= eventEndTs) {
@@ -598,6 +865,7 @@ export function validateLiveTradeSubmitRequest(
                 stakeUsd,
                 signalTimeSec: Math.floor(signalTimeSec),
                 entryTimeSec: Math.floor(entryTimeSec),
+                orderMode: "taker",
                 maxPrice,
                 orderType: value.orderType,
                 shares,
@@ -608,6 +876,77 @@ export function validateLiveTradeSubmitRequest(
         };
     }
 
+    if (options.orderMode && orderMode !== options.orderMode) {
+        return { ok: false, error: "orderMode does not match resolved live config" };
+    }
+
+    if (orderMode === "limit") {
+        if (value.orderType !== (options.supportedLimitOrderType ?? LIVE_TRADE_DEFAULT_LIMIT_ORDER_TYPE)) {
+            return { ok: false, error: "orderType does not match resolved limit order type" };
+        }
+        const maxPrice = finiteNumber(value.maxPrice);
+        const limitPrice = finiteNumber(value.limitPrice);
+        const limitReferencePrice = finiteNumber(value.limitReferencePrice);
+        const limitOffsetEnabled = typeof value.limitOffsetEnabled === "boolean"
+            ? value.limitOffsetEnabled
+            : false;
+        const limitOffsetCents = finiteNonNegativeNumber(value.limitOffsetCents);
+        if (maxPrice === null || maxPrice <= 0 || maxPrice > 1) {
+            return { ok: false, error: "maxPrice must be in (0, 1] for limit entries" };
+        }
+        if (limitPrice === null || limitPrice <= 0 || limitPrice > 1) {
+            return { ok: false, error: "limitPrice must be in (0, 1]" };
+        }
+        if (Math.abs(maxPrice - limitPrice) > 0.000000001) {
+            return { ok: false, error: "maxPrice must match limitPrice for limit entries" };
+        }
+        if (limitReferencePrice === null || limitReferencePrice <= 0 || limitReferencePrice > 1) {
+            return { ok: false, error: "limitReferencePrice must be in (0, 1]" };
+        }
+        if (limitOffsetCents === null) return { ok: false, error: "limitOffsetCents must be non-negative" };
+        return {
+            ok: true,
+            request: {
+                action: "entry",
+                requestId,
+                sessionId,
+                paperTradeId,
+                createdAtIso,
+                expiresAtSec: Math.floor(expiresAtSec),
+                symbol,
+                strategyKey,
+                eventStartTs: Math.floor(eventStartTs),
+                eventEndTs: Math.floor(eventEndTs),
+                marketSlug,
+                conditionId,
+                tokenId,
+                side: value.side,
+                stakeUsd,
+                signalTimeSec: Math.floor(signalTimeSec),
+                entryTimeSec: Math.floor(entryTimeSec),
+                orderMode: "limit",
+                orderType: options.supportedLimitOrderType ?? LIVE_TRADE_DEFAULT_LIMIT_ORDER_TYPE,
+                maxPrice,
+                limitPrice,
+                limitReferencePrice,
+                limitOffsetEnabled,
+                limitOffsetCents,
+            },
+        };
+    }
+
+    if (!isLiveTakerOrderType(value.orderType)) {
+        return { ok: false, error: "orderType must be FOK or FAK for taker entries" };
+    }
+    const supportedTakerOrderTypes = options.supportedTakerOrderTypes ?? ["FOK", "FAK"];
+    if (!supportedTakerOrderTypes.includes(value.orderType)) {
+        return { ok: false, error: "orderType is not supported" };
+    }
+    if (options.takerOrderType && value.orderType !== options.takerOrderType) {
+        return { ok: false, error: "orderType does not match resolved taker order type" };
+    }
+    const maxPrice = finiteNumber(value.maxPrice);
+    if (maxPrice === null || maxPrice <= 0 || maxPrice > 1) return { ok: false, error: "maxPrice must be in (0, 1]" };
     return {
         ok: true,
         request: {
@@ -628,8 +967,75 @@ export function validateLiveTradeSubmitRequest(
             stakeUsd,
             signalTimeSec: Math.floor(signalTimeSec),
             entryTimeSec: Math.floor(entryTimeSec),
+            orderMode: "taker",
             maxPrice,
             orderType: value.orderType,
+        },
+    };
+}
+
+export function validateLiveCancelAllSubmitRequest(
+    value: unknown,
+    options: {
+        resolvedConfig?: Pick<ExecutionLabResolvedLiveConfig, "orderMode" | "cancelScope" | "limitCancelAllOnExitEnabled">;
+    } = {}
+): { ok: true; request: LiveCancelAllSubmitRequest } | { ok: false; error: string } {
+    if (!isPlainObject(value)) return { ok: false, error: "request must be an object" };
+    if (value.action !== "cancel_all") return { ok: false, error: "action must be cancel_all" };
+    const requestId = nonEmptyString(value.requestId);
+    const sessionId = nonEmptyString(value.sessionId);
+    const exitTriggerKey = nonEmptyString(value.exitTriggerKey);
+    const createdAtIso = nonEmptyString(value.createdAtIso);
+    const symbol = nonEmptyString(value.symbol);
+    const strategyKey = nonEmptyString(value.strategyKey);
+    if (!requestId || !sessionId || !exitTriggerKey || !createdAtIso || !symbol || !strategyKey) {
+        return { ok: false, error: "cancel request identity fields are required" };
+    }
+    if (!isIsoTimestamp(createdAtIso)) return { ok: false, error: "createdAtIso is invalid" };
+    if (value.orderMode !== "limit") return { ok: false, error: "cancel-all is limit-mode only" };
+    if (options.resolvedConfig?.orderMode && options.resolvedConfig.orderMode !== "limit") {
+        return { ok: false, error: "resolved live config is not limit mode" };
+    }
+    if (options.resolvedConfig && !options.resolvedConfig.limitCancelAllOnExitEnabled) {
+        return { ok: false, error: "limit cancel-all-on-exit is disabled" };
+    }
+    if (options.resolvedConfig?.cancelScope === "unknown") {
+        return { ok: false, error: "cancel scope must be configured" };
+    }
+    const scope = isLiveCancelScope(value.scope) ? value.scope : "unknown";
+    if (scope === "unknown") return { ok: false, error: "cancel scope must be configured" };
+    if (options.resolvedConfig?.cancelScope && scope !== options.resolvedConfig.cancelScope) {
+        return { ok: false, error: "cancel scope does not match resolved live config" };
+    }
+    if (value.reason !== "limit_exit_signal") return { ok: false, error: "cancel reason is invalid" };
+    const paperTradeId = nonEmptyString(value.paperTradeId);
+    const marketSlug = nonEmptyString(value.marketSlug);
+    const conditionId = nonEmptyString(value.conditionId);
+    const tokenId = nonEmptyString(value.tokenId);
+    const orderIds = Array.isArray(value.orderIds)
+        ? value.orderIds.map((item) => String(item).trim()).filter((item) => item.length > 0)
+        : undefined;
+    if (scope === "session" && (!orderIds || orderIds.length === 0)) {
+        return { ok: false, error: "session cancel requires orderIds" };
+    }
+    return {
+        ok: true,
+        request: {
+            action: "cancel_all",
+            requestId,
+            sessionId,
+            paperTradeId: paperTradeId ?? undefined,
+            exitTriggerKey,
+            createdAtIso,
+            symbol,
+            strategyKey,
+            marketSlug: marketSlug ?? undefined,
+            conditionId: conditionId ?? undefined,
+            tokenId: tokenId ?? undefined,
+            orderIds,
+            scope,
+            reason: "limit_exit_signal",
+            orderMode: "limit",
         },
     };
 }

@@ -3,10 +3,11 @@ import { describe, it } from "node:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { LiveTradeSubmitRequest } from "../lib/execution-lab/execution-lab-model";
+import type { LiveCancelAllSubmitRequest, LiveTradeSubmitRequest } from "../lib/execution-lab/execution-lab-model";
 import {
     loadLiveExecutorStatus,
     readLiveExecutorConfig,
+    submitLiveCancelAllToExecutor,
     submitLiveTradeToExecutor,
 } from "../lib/execution-lab/live-executor-adapter";
 
@@ -29,8 +30,36 @@ function request(): LiveTradeSubmitRequest {
         stakeUsd: 5,
         signalTimeSec: 1_700_000_010,
         entryTimeSec: 1_700_000_011,
+        orderMode: "taker",
         maxPrice: 0.55,
         orderType: "FAK",
+    };
+}
+
+function cancelRequest(): LiveCancelAllSubmitRequest {
+    return {
+        action: "cancel_all",
+        requestId: "live-cancel-1",
+        sessionId: "session-1",
+        paperTradeId: "paper-1",
+        exitTriggerKey: "session-1|event|yes|paper-1|exit",
+        createdAtIso: "2026-01-01T00:00:02.000Z",
+        symbol: "BTCUSDT",
+        strategyKey: "test_strategy",
+        marketSlug: "btc-event",
+        conditionId: "condition",
+        tokenId: "yes-token",
+        scope: "token",
+        reason: "limit_exit_signal",
+        orderMode: "limit",
+    };
+}
+
+function targetedCancelRequest(): LiveCancelAllSubmitRequest {
+    return {
+        ...cancelRequest(),
+        scope: "session",
+        orderIds: ["0xabc"],
     };
 }
 
@@ -73,8 +102,11 @@ describe("Execution Lab live executor adapter", () => {
         expect(status.available).to.equal(true);
         expect(status.dryRun).to.equal(true);
         expect(status.maxStakeUsd).to.equal(12);
+        expect(status.orderMode).to.equal("taker");
         expect(status.sizingMode).to.equal("exchange_min");
         expect(status.orderType).to.equal("FOK");
+        expect(status.takerOrderType).to.equal("FOK");
+        expect(status.supportedLimitOrderType).to.equal("GTC");
         expect(status.entryMaxSlippageCents).to.equal(2);
         expect(status.exitMaxSlippageCents).to.equal(3);
         expect("executorPath" in status).to.equal(false);
@@ -161,6 +193,49 @@ describe("Execution Lab live executor adapter", () => {
         expect(response.currentAsk).to.equal(0.52);
     });
 
+    it("allows UI non-secret config to override env order mode and limit settings", async () => {
+        const script = [
+            "let body='';",
+            "process.stdin.on('data', c => body += c);",
+            "process.stdin.on('end', () => {",
+            "const req = JSON.parse(body);",
+            "const aligned = req.orderMode === 'limit' && req.orderType === 'GTC' && req.maxPrice === req.limitPrice && process.env.EXECUTION_LAB_LIVE_ORDER_MODE === 'limit';",
+            "console.log(JSON.stringify({ ok: true, requestId: req.requestId, status: aligned ? 'posted_live' : 'failed', limitPrice: req.limitPrice }));",
+            "});",
+        ].join("");
+        const response = await submitLiveTradeToExecutor({
+            ...request(),
+            orderMode: "limit",
+            orderType: "GTC",
+            maxPrice: 0.49,
+            limitPrice: 0.49,
+            limitReferencePrice: 0.55,
+            limitOffsetEnabled: true,
+            limitOffsetCents: 6,
+        } as LiveTradeSubmitRequest, {
+            executorPath: process.execPath,
+            executorArgs: ["-e", script],
+            liveEnabled: false,
+            maxStakeUsd: 10,
+            orderMode: "taker",
+            orderType: "FAK",
+            timeoutMs: 1000,
+        }, {
+            orderMode: "limit",
+            takerOrderType: "FAK",
+            sizingMode: "fixed",
+            maxStakeUsd: 10,
+            entryMaxSlippageCents: 1,
+            exitMaxSlippageCents: 5,
+            limitOffsetEnabled: true,
+            limitOffsetCents: 6,
+            limitCancelAllOnExitEnabled: true,
+        });
+
+        expect(response.status).to.equal("posted_live");
+        expect(response.limitPrice).to.equal(0.49);
+    });
+
     it("runs the executor from its configured working directory", async () => {
         const dir = mkdtempSync(join(tmpdir(), "execution-lab-cwd-"));
         const script = [
@@ -209,6 +284,74 @@ describe("Execution Lab live executor adapter", () => {
         });
 
         expect(response.status).to.equal("dry_run");
+    });
+
+    it("forwards cancel-all requests with the configured cancel scope", async () => {
+        const script = [
+            "let body='';",
+            "process.stdin.on('data', c => body += c);",
+            "process.stdin.on('end', () => {",
+            "const req = JSON.parse(body);",
+            "const aligned = req.action === 'cancel_all' && req.scope === 'token' && process.env.EXECUTION_LAB_LIVE_ORDER_MODE === 'limit';",
+            "console.log(JSON.stringify({ ok: true, requestId: req.requestId, status: aligned ? 'submitted' : 'failed', scope: req.scope, canceledCount: 2 }));",
+            "});",
+        ].join("");
+        const response = await submitLiveCancelAllToExecutor(cancelRequest(), {
+            executorPath: process.execPath,
+            executorArgs: ["-e", script],
+            liveEnabled: false,
+            maxStakeUsd: 10,
+            orderMode: "limit",
+            orderType: "FAK",
+            limitCancelAllOnExitEnabled: true,
+            cancelScope: "token",
+            timeoutMs: 1000,
+        });
+
+        expect(response.status).to.equal("submitted");
+        expect(response.scope).to.equal("token");
+        expect(response.canceledCount).to.equal(2);
+    });
+
+    it("defaults cancel-all to targeted session order ids", async () => {
+        const script = [
+            "let body='';",
+            "process.stdin.on('data', c => body += c);",
+            "process.stdin.on('end', () => {",
+            "const req = JSON.parse(body);",
+            "const aligned = req.action === 'cancel_all' && req.scope === 'session' && req.orderIds[0] === '0xabc' && process.env.EXECUTION_LAB_LIVE_CANCEL_SCOPE === 'session';",
+            "console.log(JSON.stringify({ ok: true, requestId: req.requestId, status: aligned ? 'submitted' : 'failed', scope: req.scope, canceledOrderIds: req.orderIds, canceledCount: 1 }));",
+            "});",
+        ].join("");
+        const response = await submitLiveCancelAllToExecutor(targetedCancelRequest(), {
+            executorPath: process.execPath,
+            executorArgs: ["-e", script],
+            liveEnabled: false,
+            maxStakeUsd: 10,
+            orderMode: "limit",
+            limitCancelAllOnExitEnabled: true,
+            timeoutMs: 1000,
+        });
+
+        expect(response.status).to.equal("submitted");
+        expect(response.scope).to.equal("session");
+        expect(response.canceledOrderIds).to.deep.equal(["0xabc"]);
+    });
+
+    it("rejects cancel-all requests without a concrete configured scope", async () => {
+        const response = await submitLiveCancelAllToExecutor(cancelRequest(), {
+            executorPath: process.execPath,
+            executorArgs: ["-e", "throw new Error('should not run')"],
+            liveEnabled: false,
+            maxStakeUsd: 10,
+            orderMode: "limit",
+            limitCancelAllOnExitEnabled: true,
+            cancelScope: "unknown",
+            timeoutMs: 1000,
+        });
+
+        expect(response.status).to.equal("rejected");
+        expect(response.reason).to.equal("cancel_scope_unconfigured");
     });
 
     it("rejects configured order type mismatches before invoking the executor", async () => {

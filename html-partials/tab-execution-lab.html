@@ -24,6 +24,57 @@
 
     <div class="execution-lab-status" id="executionLabStatus">Ready</div>
 
+    <section class="execution-lab-panel execution-lab-live-config">
+        <div class="execution-lab-panel-title">Live Config</div>
+        <div class="execution-lab-live-config-grid">
+            <label class="param-group">
+                <span class="param-label">Order Mode</span>
+                <select class="param-input" id="executionLabLiveOrderMode">
+                    <option value="taker">Taker</option>
+                    <option value="limit">Limit</option>
+                </select>
+            </label>
+            <label class="param-group">
+                <span class="param-label">Taker Type</span>
+                <select class="param-input" id="executionLabLiveTakerOrderType">
+                    <option value="FAK">FAK</option>
+                    <option value="FOK">FOK</option>
+                </select>
+            </label>
+            <label class="param-group">
+                <span class="param-label">Sizing</span>
+                <select class="param-input" id="executionLabLiveSizingMode">
+                    <option value="fixed">Fixed</option>
+                    <option value="exchange_min">Exchange Min</option>
+                </select>
+            </label>
+            <label class="param-group">
+                <span class="param-label">Max Stake</span>
+                <input class="param-input" id="executionLabLiveMaxStakeUsd" type="number" min="1" step="1" value="100">
+            </label>
+            <label class="param-group">
+                <span class="param-label">Entry Slip c</span>
+                <input class="param-input" id="executionLabLiveEntrySlippageCents" type="number" min="0" step="0.1" value="1">
+            </label>
+            <label class="param-group">
+                <span class="param-label">Exit Slip c</span>
+                <input class="param-input" id="executionLabLiveExitSlippageCents" type="number" min="0" step="0.1" value="5">
+            </label>
+            <label class="param-group execution-lab-check">
+                <span class="param-label">Limit Offset</span>
+                <input id="executionLabLiveLimitOffsetEnabled" type="checkbox">
+            </label>
+            <label class="param-group">
+                <span class="param-label">Offset c</span>
+                <input class="param-input" id="executionLabLiveLimitOffsetCents" type="number" min="0" step="0.1" value="0">
+            </label>
+            <label class="param-group execution-lab-check">
+                <span class="param-label">Cancel On Exit</span>
+                <input id="executionLabLiveLimitCancelAllOnExit" type="checkbox">
+            </label>
+        </div>
+    </section>
+
     <div class="execution-lab-grid">
         <section class="execution-lab-panel">
             <div class="execution-lab-panel-title">Session</div>
