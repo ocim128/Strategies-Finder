@@ -135,7 +135,7 @@ Important behavior:
 
 - Quick View, Trades, and the Polymarket tab can rebuild Polymarket annotations lazily
 - when the active result uses `signal_exit_same_event`, the lazy rebuild path also ensures local price points before recomputing
-- when the active result is a supported `1s` BTCUSDT/XRPUSDT run, Quick View can rebuild strict CLOB annotations from the second-market DB
+- when the active result is a supported `1s` BTCUSDT/XRPUSDT spot or futures run, Quick View can rebuild strict CLOB annotations from the second-market DB
 - the Polymarket tab still has its own fillability and deployability analysis path using Polymarket history snapshots
 
 Core files:
@@ -356,7 +356,7 @@ If you add another target, update:
 | Headless `evaluatePolymarketOutcomes(...)` | resolve-hold only | not supported | not supported | caller supplies outcome rows only; no price-point input surface |
 | Finder Polymarket mode | `1m`, `5m`, `15m`, `1h`, `4h`; not exposed on `1s` | `1m` + `next_open`; supported `1s` + `signal_close`, `next_open`, or `next_close` uses exact-second CLOB exits inside the event | native `5m`, including supported `1s` CLOB runs | `grid` and `random` only; no combo; no multi-timeframe |
 | Hunt | same as Finder | same as Finder | same as Finder | preserves Polymarket mode settings in profiles |
-| Quick View / Trades / Polymarket diagnostics reload | can reuse stored summary broadly; native `15m` / `1h` show summary and payout cards; stale `1s` resolve-hold summaries are rebuilt as signal-exit CLOB annotations when execution is `signal_close`, `next_open`, or `next_close` | `1m` when price points are available or can be ensured; supported `1s` + `signal_close`, `next_open`, or `next_close` uses exact-second CLOB rows | reloads `1m` price points or `1s` CLOB quotes for `5m` limit attempts | active consumers, not passive renderers |
+| Quick View / Trades / Polymarket diagnostics reload | can reuse stored summary broadly; native `15m` / `1h` show summary and payout cards; stale `1s` spot/futures resolve-hold summaries are rebuilt as signal-exit CLOB annotations when execution is `signal_close`, `next_open`, or `next_close` | `1m` when price points are available or can be ensured; supported `1s` spot/futures + `signal_close`, `next_open`, or `next_close` uses exact-second CLOB rows | reloads `1m` price points or `1s` CLOB quotes for `5m` limit attempts | active consumers, not passive renderers |
 | Endpoint Preview / Copy / HTTP execution | `resolve_hold` only | not supported | not supported | exit mode and limit-entry settings are stripped |
 | Strategy Ensemble Polymarket | `resolve_hold` only | not supported | not supported | explicit fence in the ensemble path |
 | Bridge export | separate contract | separate contract | separate contract | ignores scoring-mode settings; still chart-symbol `5m` entry-signal export |

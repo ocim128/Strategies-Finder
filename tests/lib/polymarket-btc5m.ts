@@ -7,6 +7,7 @@ import {
     getPolymarketOutcomeIntervalDurationSec,
     type PolymarketOutcomeInterval,
 } from "./polymarket-outcome-interval";
+import { getUnscopedBinanceStorageSymbol } from "./binance-market";
 
 // Deduplicate only concurrent identical requests.
 // Persisting time-based rows across sequential calls can serve stale checkpoint
@@ -48,7 +49,7 @@ export function getSupportedPolymarket5mSymbolsLabel(): string {
 }
 
 export function normalizeSupportedPolymarket5mSymbol(symbol: string): SupportedPolymarket5mSymbol | null {
-    const normalized = symbol.trim().toUpperCase();
+    const normalized = getUnscopedBinanceStorageSymbol(symbol);
     return normalized in POLYMARKET_SERIES_BY_INTERVAL_AND_SYMBOL["5m"]
         ? normalized as SupportedPolymarketSymbol
         : null;

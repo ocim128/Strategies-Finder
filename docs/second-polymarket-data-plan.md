@@ -76,7 +76,7 @@ Use Binance 1-second klines for underlying OHLCV.
 Supported source types:
 
 - spot klines
-- futures klines if selected by current app market type
+- futures 1s candles if selected by current app market type; Binance Futures does not expose a `1s` kline interval here, so the miner builds these rows from `/fapi/v1/aggTrades`
 
 Stored as OHLCV candles.
 
@@ -536,7 +536,7 @@ Purpose: mine underlying 1-second OHLCV data.
 
 Deliverables:
 
-- add Binance 1s REST pagination
+- add Binance 1s REST pagination; futures uses aggregate-trade pagination and compacts trades into 1s OHLCV rows
 - update Binance interval support lists for `1s`
 - support spot/futures market type
 - store OHLCV in `binance_1s_candles`

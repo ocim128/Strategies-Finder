@@ -12,6 +12,7 @@ import type {
     SecondMarketPolymarketEvent,
     SecondMarketSymbol,
 } from "../second-market/types";
+import { fetchBinance1sCandles } from "../second-market/binance-1s-sync";
 import type {
     ExecutionLabLiveUiConfig,
     ExecutionLabRecord,
@@ -53,14 +54,8 @@ const ESNO_BIN = resolve(
     process.platform === "win32" ? "esno.cmd" : "esno"
 );
 const ESNO_SCRIPT = resolve(process.cwd(), "..", "..", "..", "node_modules", "esno", "esno.js");
-const BINANCE_BASES = {
-    spot: "https://api.binance.com",
-    futures: "https://fapi.binance.com",
-} as const;
-const BINANCE_KLINE_PATHS = {
-    spot: "/api/v3/klines",
-    futures: "/fapi/v1/klines",
-} as const;
+const BINANCE_SPOT_BASE = "https://api.binance.com";
+const BINANCE_SPOT_KLINE_PATH = "/api/v3/klines";
 const GAMMA_EVENTS_URL = "https://gamma-api.polymarket.com/events";
 const CLOB_PRICE_URL = "https://clob.polymarket.com/price";
 const SUPPORTED_SYMBOLS = new Set(["BTCUSDT", "XRPUSDT"]);
@@ -95,12 +90,32 @@ type LiveCancelLedgerEntry = {
     pending?: Promise<LiveCancelAllSubmitResponse>;
     response?: LiveCancelAllSubmitResponse;
 };
+type ExecutionLabMinerMarketType = "spot" | "futures";
 
 function sendJson(res: any, status: number, payload: unknown): void {
     res.statusCode = status;
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Cache-Control", "no-store");
     res.end(JSON.stringify(payload));
+}
+
+function parseMinerMarketType(value: unknown): ExecutionLabMinerMarketType {
+    return value === "futures" ? "futures" : "spot";
+}
+
+export function buildExecutionLabMinerProcessArgs(marketType: ExecutionLabMinerMarketType): string[] {
+    return [
+        ESNO_SCRIPT,
+        "scripts/second-market-miner.ts",
+        "--mode",
+        "live",
+        "--symbols",
+        "BTCUSDT,XRPUSDT",
+        "--market-type",
+        marketType,
+        "--db",
+        MINER_DB_PATH,
+    ];
 }
 
 function payloadHash(value: unknown): string {
@@ -296,13 +311,34 @@ async function fetchLiveCandles(args: {
 }): Promise<LiveCandleRow[]> {
     const closedEndTs = Math.min(args.endTs, Math.floor(Date.now() / 1000) - 2);
     if (closedEndTs < args.startTs) return [];
+    if (args.marketType === "futures") {
+        const rows = await fetchBinance1sCandles({
+            symbol: args.symbol,
+            marketType: "futures",
+            startTs: args.startTs,
+            endTs: closedEndTs,
+        });
+        return rows.slice(-args.limit).map((row) => ({
+            symbol: row.symbol,
+            market_type: row.market_type,
+            ts: row.ts,
+            open: row.open,
+            high: row.high,
+            low: row.low,
+            close: row.close,
+            volume: row.volume,
+            trade_count: row.trade_count,
+            updated_at: row.updated_at,
+        }));
+    }
+
     const out: LiveCandleRow[] = [];
     let cursorMs = Math.floor(args.startTs) * 1000;
     const endMs = Math.floor(closedEndTs) * 1000;
 
     while (cursorMs <= endMs && out.length < args.limit) {
         const requestLimit = Math.min(1000, args.limit - out.length);
-        const url = new URL(`${BINANCE_BASES[args.marketType]}${BINANCE_KLINE_PATHS[args.marketType]}`);
+        const url = new URL(`${BINANCE_SPOT_BASE}${BINANCE_SPOT_KLINE_PATH}`);
         url.searchParams.set("symbol", args.symbol);
         url.searchParams.set("interval", "1s");
         url.searchParams.set("startTime", String(cursorMs));
@@ -462,6 +498,7 @@ function loadStoredLiveQuote(event: SecondMarketPolymarketEvent, sampleTs: numbe
     let db: DatabaseSync | null = null;
     try {
         db = new DatabaseSync(MINER_DB_PATH, { readOnly: true });
+        db.exec("PRAGMA busy_timeout = 5000");
         const row = db.prepare(`
             SELECT series_id, symbol, outcome_interval, event_start_ts, event_end_ts,
                    condition_id, market_slug, yes_token_id, no_token_id,
@@ -505,6 +542,7 @@ export function executionLabVitePlugin(): Plugin {
     let minerProcess: ChildProcessWithoutNullStreams | null = null;
     let minerStartedAtIso: string | null = null;
     let minerExitCode: number | null = null;
+    let minerMarketType: ExecutionLabMinerMarketType = "spot";
     let minerMessage = "Idle";
 
     function pruneExpiredCache<T>(cache: Map<string, CacheEntry<T>>, now: number): void {
@@ -667,13 +705,14 @@ export function executionLabVitePlugin(): Plugin {
             logPath: MINER_LOG_PATH,
             dbPath: MINER_DB_PATH,
             exitCode: minerExitCode,
+            marketType: minerMarketType,
             message: minerMessage,
         };
     }
 
-    function startMiner(): ReturnType<typeof minerStatusPayload> {
+    function startMiner(marketType: ExecutionLabMinerMarketType): ReturnType<typeof minerStatusPayload> {
         if (minerProcess && minerProcess.exitCode === null && minerProcess.signalCode === null) {
-            minerMessage = "Already running";
+            minerMessage = `Already running ${minerMarketType}`;
             return minerStatusPayload();
         }
         if (!existsSync(ESNO_BIN) || !existsSync(ESNO_SCRIPT)) {
@@ -682,6 +721,7 @@ export function executionLabVitePlugin(): Plugin {
 
         mkdirSync(dirname(MINER_LOG_PATH), { recursive: true });
         const startedAtIso = new Date().toISOString();
+        const minerArgs = buildExecutionLabMinerProcessArgs(marketType);
         writeFileSync(
             MINER_LOG_PATH,
             [
@@ -691,28 +731,21 @@ export function executionLabVitePlugin(): Plugin {
                 `ESNO_SCRIPT: ${ESNO_SCRIPT}`,
                 `NODE: ${process.execPath}`,
                 `DB: ${MINER_DB_PATH}`,
-                "Args: --mode live --symbols BTCUSDT,XRPUSDT",
+                `Market type: ${marketType}`,
+                `Args: ${minerArgs.slice(1).join(" ")}`,
                 "",
             ].join("\n"),
             "utf8"
         );
 
         const logStream = createWriteStream(MINER_LOG_PATH, { flags: "a" });
-        minerProcess = spawn(process.execPath, [
-            ESNO_SCRIPT,
-            "scripts/second-market-miner.ts",
-            "--mode",
-            "live",
-            "--symbols",
-            "BTCUSDT,XRPUSDT",
-            "--db",
-            MINER_DB_PATH,
-        ], {
+        minerProcess = spawn(process.execPath, minerArgs, {
             cwd: process.cwd(),
             windowsHide: true,
         });
         minerStartedAtIso = startedAtIso;
         minerExitCode = null;
+        minerMarketType = marketType;
         minerMessage = "Running";
         minerProcess.stdout.pipe(logStream, { end: false });
         minerProcess.stderr.pipe(logStream, { end: false });
@@ -885,7 +918,8 @@ export function executionLabVitePlugin(): Plugin {
                 }
 
                 if (path === "/miner/start") {
-                    sendJson(res, 200, startMiner());
+                    const payload = await readJsonBody(req as IncomingMessage);
+                    sendJson(res, 200, startMiner(parseMinerMarketType(payload.marketType)));
                     return;
                 }
 

@@ -6,7 +6,12 @@ import { dirname, join } from "node:path";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { executeBacktest } from "../lib/backtest-executor";
 import { buildExecutionLabStrategyExecutionContext } from "../lib/execution-lab/execution-lab-strategy-context";
-import { executionLabVitePlugin, normalizeExecutionLabClobPrice } from "../lib/execution-lab/execution-lab-vite-plugin";
+import { startExecutionLabMiner } from "../lib/execution-lab/execution-lab-api";
+import {
+    buildExecutionLabMinerProcessArgs,
+    executionLabVitePlugin,
+    normalizeExecutionLabClobPrice,
+} from "../lib/execution-lab/execution-lab-vite-plugin";
 import type { ExecutionLabSessionSnapshot } from "../lib/execution-lab/execution-lab-model";
 import { isExecutionLabTransientPollError } from "../lib/execution-lab/poll-errors";
 import { collectExecutionLabTradeQuoteTimes } from "../lib/execution-lab/trade-quote-times";
@@ -292,6 +297,90 @@ describe("Execution Lab live helpers", () => {
 
         expect(response.statusCode).to.equal(400);
         expect(response.json.error).to.include("symbol");
+    });
+
+    it("builds futures live 1s candles from aggregate trades", async () => {
+        const handler = createHandler();
+        const originalFetch = globalThis.fetch;
+        const requestedPaths: string[] = [];
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url
+            );
+            requestedPaths.push(url.pathname);
+            expect(url.pathname).to.equal("/fapi/v1/aggTrades");
+            expect(url.searchParams.get("interval")).to.equal(null);
+            return new Response(JSON.stringify([
+                { a: 10, p: "100", q: "1.5", f: 100, l: 101, T: 1_700_000_000_100 },
+                { a: 11, p: "102", q: "2", f: 102, l: 102, T: 1_700_000_002_250 },
+                { a: 12, p: "101", q: "0.5", f: 103, l: 103, T: 1_700_000_002_500 },
+            ]), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }) as typeof fetch;
+
+        try {
+            const response = await invoke(
+                handler,
+                "/live-candles?symbol=BTCUSDT&marketType=futures&startTs=1700000000&endTs=1700000002&limit=3"
+            );
+
+            expect(response.statusCode).to.equal(200);
+            expect(response.json.marketType).to.equal("futures");
+            expect(requestedPaths).to.deep.equal(["/fapi/v1/aggTrades"]);
+            expect(response.json.candles.map((row: { ts: number }) => row.ts)).to.deep.equal([
+                1_700_000_000,
+                1_700_000_001,
+                1_700_000_002,
+            ]);
+            expect(response.json.candles[1]).to.include({ close: 100, volume: 0 });
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
+    it("passes the selected market type when starting the 1s miner", async () => {
+        const originalFetch = globalThis.fetch;
+        let requestBody: unknown = null;
+        globalThis.fetch = (async (input, init) => {
+            expect(String(input)).to.include("/api/execution-lab/miner/start");
+            requestBody = JSON.parse(String(init?.body ?? "{}"));
+            return new Response(JSON.stringify({
+                ok: true,
+                running: true,
+                pid: 123,
+                startedAtIso: "2026-05-20T00:00:00.000Z",
+                logPath: "miner.log",
+                dbPath: "second-market-data.sqlite",
+                exitCode: null,
+                marketType: "futures",
+                message: "Running",
+            }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }) as typeof fetch;
+
+        try {
+            const status = await startExecutionLabMiner({ marketType: "futures" });
+            expect(requestBody).to.deep.equal({ marketType: "futures" });
+            expect(status.marketType).to.equal("futures");
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
+    it("includes the selected market type in spawned miner args", () => {
+        const args = buildExecutionLabMinerProcessArgs("futures");
+        const marketTypeIndex = args.indexOf("--market-type");
+
+        expect(marketTypeIndex).to.be.greaterThan(-1);
+        expect(args[marketTypeIndex + 1]).to.equal("futures");
     });
 
     it("reports idle miner status without starting a process", async () => {

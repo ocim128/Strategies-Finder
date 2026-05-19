@@ -66,6 +66,7 @@ import {
     transferBacktestEdgeAnalysisInput,
 } from "./backtest-edge-analysis";
 import { attachTradeTimingQuality } from "./trade-timing-quality";
+import { resolveBinanceMarketType } from "./binance-market";
 
 // ============================================================================
 // Executor request / response
@@ -611,6 +612,7 @@ function finalizeResult(
     result.marketContext = {
         symbol: (settings.symbol as string) ?? "",
         interval: (settings.interval as string) ?? interval,
+        binanceMarketType: resolveBinanceMarketType(settings.binanceMarketType),
         candleCount: backtestData.length,
         firstCandleTime: backtestData[0]?.time ?? null,
         lastCandleTime: backtestData[backtestData.length - 1]?.time ?? null,

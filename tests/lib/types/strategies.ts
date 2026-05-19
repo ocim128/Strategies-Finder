@@ -2,6 +2,7 @@ import type { Time } from "lightweight-charts";
 import type { BacktestPolymarketTradeSummary, TradePolymarketOutcome } from "./polymarket-outcomes";
 import type { PolymarketEntrySelectionMode } from "../polymarket-entry-selection-mode";
 import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
+import type { BinanceMarketType } from "../binance-market";
 export type { Time };
 export type { EdgeStatistics, EdgeRatioHorizon, TTestResult, StreakAnalysis } from '../strategies/backtest/edge-statistics';
 
@@ -42,6 +43,7 @@ export interface Trade {
 export interface BacktestResultMarketContext {
     symbol: string;
     interval: string;
+    binanceMarketType?: BinanceMarketType;
     candleCount: number;
     firstCandleTime: Time | null;
     lastCandleTime: Time | null;

@@ -78,7 +78,9 @@ function toUnixSeconds(value: unknown): number | null {
 export function secondMarketApiPlugin(): Plugin {
     const openReadOnlyDb = (): DatabaseSync | null => {
         if (!existsSync(SECOND_MARKET_DB_PATH)) return null;
-        return new DatabaseSync(SECOND_MARKET_DB_PATH, { readOnly: true });
+        const db = new DatabaseSync(SECOND_MARKET_DB_PATH, { readOnly: true });
+        db.exec("PRAGMA busy_timeout = 5000");
+        return db;
     };
 
     const register = (middlewares: any) => {

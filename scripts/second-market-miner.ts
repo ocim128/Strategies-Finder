@@ -111,6 +111,7 @@ function printUsage(): void {
     console.log([
         "Usage:",
         "  npm run mine:1s -- --mode backfill --symbols BTCUSDT,XRPUSDT --start-date 2026-05-13T00:00:00Z --end-date 2026-05-13T01:00:00Z",
+        "  npm run mine:1s -- backfill BTCUSDT,XRPUSDT futures 2026-05-13T00:00:00Z 2026-05-13T01:00:00Z",
         "  npm run mine:1s -- --mode live --symbols BTCUSDT,XRPUSDT --duration-sec 300",
         "  npm run mine:1s -- --mode verify --symbols BTCUSDT,XRPUSDT --start-date 2026-05-13T00:00:00Z --end-date 2026-05-13T01:00:00Z",
         "",
@@ -148,6 +149,7 @@ function parseArgs(argv: string[]): CliConfig {
     let requestDelayMs = 80;
     let hasDbPath = false;
     let hasSymbols = false;
+    let hasMarketType = false;
     let hasStartTs = false;
     let hasEndTs = false;
     let positionals: string[] = [];
@@ -169,6 +171,7 @@ function parseArgs(argv: string[]): CliConfig {
         if (arg === "--symbols") { symbols = parseSecondMarketSymbolList(next ?? ""); hasSymbols = true; i += 1; continue; }
         if (arg === "--market-type") {
             marketType = String(next ?? "").trim().toLowerCase() === "futures" ? "futures" : "spot";
+            hasMarketType = true;
             i += 1;
             continue;
         }
@@ -213,6 +216,9 @@ function parseArgs(argv: string[]): CliConfig {
     }
     if (!hasDbPath && positionals[0] && looksLikeDbPath(positionals[0])) {
         dbPath = positionals.shift();
+    }
+    if (!hasMarketType && (positionals[0] === "spot" || positionals[0] === "futures")) {
+        marketType = positionals.shift() as "spot" | "futures";
     }
     if (!hasStartTs && positionals[0]) {
         startTs = parseIsoSec(positionals.shift()) ?? startTs;

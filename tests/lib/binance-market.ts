@@ -1,6 +1,8 @@
 export type BinanceMarketType = "spot" | "futures";
 export type BinanceDataProvider = "binance" | "binance-futures";
 
+const BINANCE_FUTURES_STORAGE_PREFIX = "BINANCE-FUTURES:";
+
 export function isBinanceMarketType(value: unknown): value is BinanceMarketType {
     return value === "spot" || value === "futures";
 }
@@ -26,7 +28,19 @@ export function getBinanceMarketLabel(marketType: BinanceMarketType): string {
 }
 
 export function getScopedBinanceStorageSymbol(symbol: string, marketType: BinanceMarketType): string {
-    const normalizedSymbol = symbol.trim().toUpperCase();
+    const normalizedSymbol = getUnscopedBinanceStorageSymbol(symbol);
     if (!normalizedSymbol) return normalizedSymbol;
-    return marketType === "futures" ? `BINANCE-FUTURES:${normalizedSymbol}` : normalizedSymbol;
+    return marketType === "futures" ? `${BINANCE_FUTURES_STORAGE_PREFIX}${normalizedSymbol}` : normalizedSymbol;
+}
+
+export function isScopedBinanceFuturesStorageSymbol(symbol: string): boolean {
+    return symbol.trim().toUpperCase().startsWith(BINANCE_FUTURES_STORAGE_PREFIX);
+}
+
+export function getUnscopedBinanceStorageSymbol(symbol: string): string {
+    let normalizedSymbol = symbol.trim().toUpperCase();
+    while (normalizedSymbol.startsWith(BINANCE_FUTURES_STORAGE_PREFIX)) {
+        normalizedSymbol = normalizedSymbol.slice(BINANCE_FUTURES_STORAGE_PREFIX.length);
+    }
+    return normalizedSymbol;
 }

@@ -621,6 +621,7 @@ export class BacktestService {
         result.marketContext = {
             symbol: state.currentSymbol,
             interval: state.currentInterval,
+            binanceMarketType: state.binanceMarketType,
             candleCount: backtestData.length,
             firstCandleTime: backtestData[0]?.time ?? null,
             lastCandleTime: backtestData[backtestData.length - 1]?.time ?? null,

@@ -664,8 +664,9 @@ export class ExecutionLabService {
             dom.stopMinerButton.disabled = true;
             return;
         }
+        const marketType = status.marketType ?? state.binanceMarketType;
         dom.minerStatus.textContent = status.running
-            ? `running pid ${status.pid ?? "--"} | ${status.logPath}`
+            ? `running ${marketType} pid ${status.pid ?? "--"} | ${status.logPath}`
             : `${status.message ?? "idle"} | ${status.logPath}`;
         dom.startMinerButton.disabled = status.running;
         dom.stopMinerButton.disabled = !status.running;
@@ -728,7 +729,7 @@ export class ExecutionLabService {
 
     private async startMiner(): Promise<void> {
         try {
-            this.renderMinerStatus(await startExecutionLabMiner());
+            this.renderMinerStatus(await startExecutionLabMiner({ marketType: state.binanceMarketType }));
         } catch (error) {
             this.renderMinerStatus(null, executionLabErrorMessage(error));
         }

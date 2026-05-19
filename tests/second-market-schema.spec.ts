@@ -66,10 +66,12 @@ describe("second market schema", () => {
             const count = db.prepare("SELECT COUNT(*) AS count FROM binance_1s_candles").get() as { count: number };
             const row = db.prepare("SELECT close, trade_count FROM binance_1s_candles").get() as { close: number; trade_count: number };
             const clobIndexes = db.prepare("PRAGMA index_list('polymarket_clob_1s_quotes')").all() as Array<{ name: string }>;
+            const busyTimeout = db.prepare("PRAGMA busy_timeout").get() as Record<string, number>;
             expect(count.count).to.equal(1);
             expect(row.close).to.equal(101);
             expect(row.trade_count).to.equal(6);
             expect(clobIndexes.some((index) => index.name === "idx_clob_1s_symbol_series_time")).to.equal(true);
+            expect(Object.values(busyTimeout)[0]).to.equal(5000);
         } finally {
             db.close();
         }

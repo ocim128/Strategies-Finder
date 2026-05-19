@@ -3,6 +3,7 @@ import type { PolymarketClob1sQuoteRow, SecondMarketSymbol } from "./types";
 import { SECOND_MARKET_SYMBOLS } from "./types";
 import { decodeBinaryOhlcvRows } from "../ohlcv-binary";
 import { fetchLocalApi } from "../local-api-transport";
+import { getUnscopedBinanceStorageSymbol } from "../binance-market";
 
 const SECOND_MARKET_REQUEST_TIMEOUT_MS = 8000;
 
@@ -46,7 +47,7 @@ function getBaseUrl(baseUrl?: string): string {
 }
 
 export function normalizeSecondMarketChartSymbol(symbol: string): SecondMarketSymbol | null {
-    const normalized = symbol.trim().toUpperCase();
+    const normalized = getUnscopedBinanceStorageSymbol(symbol);
     return SECOND_MARKET_SYMBOL_SET.has(normalized)
         ? normalized as SecondMarketSymbol
         : null;

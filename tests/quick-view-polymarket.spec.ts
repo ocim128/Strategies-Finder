@@ -1420,7 +1420,7 @@ describe("Quick View Polymarket streak summary", () => {
         expect(content.innerHTML).to.contain("Signal Exit (same event)");
     });
 
-    it("rebuilds 1s CLOB signal-exit annotations before rendering Quick View", async () => {
+    it("rebuilds 1s CLOB signal-exit annotations for a futures-scoped Quick View result", async () => {
         const eventStartTs = 1_700_000_000;
         const tradeEntryTs = eventStartTs + 10;
         const tradeExitTs = eventStartTs + 20;
@@ -1577,8 +1577,9 @@ describe("Quick View Polymarket streak summary", () => {
             sharpeRatio: 0,
             equityCurve: [],
             marketContext: {
-                symbol: "BTCUSDT",
+                symbol: "BINANCE-FUTURES:BTCUSDT",
                 interval: "1s",
+                binanceMarketType: "futures",
                 candleCount: 30,
                 firstCandleTime: eventStartTs,
                 lastCandleTime: eventStartTs + 30,

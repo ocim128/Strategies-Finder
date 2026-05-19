@@ -22,6 +22,7 @@ export function openSecondMarketDb(dbPath?: string): DatabaseSync {
     const resolvedPath = resolveSecondMarketDbPath(dbPath);
     mkdirSync(dirname(resolvedPath), { recursive: true });
     const db = new DatabaseSync(resolvedPath);
+    db.exec("PRAGMA busy_timeout = 5000");
     ensureSecondMarketSchema(db);
     return db;
 }
@@ -323,4 +324,3 @@ export function writeSecondDataSyncState(db: DatabaseSync, row: SecondDataSyncSt
         row.updated_at,
     );
 }
-

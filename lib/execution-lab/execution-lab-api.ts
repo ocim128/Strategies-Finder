@@ -24,6 +24,7 @@ export type ExecutionLabMinerStatus = {
     logPath: string;
     dbPath: string;
     exitCode: number | null;
+    marketType?: "spot" | "futures";
     message?: string;
 };
 type LiveCandlesResponse = {
@@ -97,8 +98,10 @@ export async function appendExecutionLabRecords(records: readonly ExecutionLabRe
     }
 }
 
-export async function startExecutionLabMiner(): Promise<ExecutionLabMinerStatus> {
-    return postJson<ExecutionLabMinerStatus>("/api/execution-lab/miner/start", {});
+export async function startExecutionLabMiner(args: { marketType?: "spot" | "futures" } = {}): Promise<ExecutionLabMinerStatus> {
+    return postJson<ExecutionLabMinerStatus>("/api/execution-lab/miner/start", {
+        marketType: args.marketType ?? "spot",
+    });
 }
 
 export async function stopExecutionLabMiner(): Promise<ExecutionLabMinerStatus> {

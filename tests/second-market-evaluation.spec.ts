@@ -3,6 +3,7 @@ import { expect } from "chai";
 import {
     annotateBacktestResultWithSecondMarketClob,
     evaluateSecondMarketBacktest,
+    isSecondMarketPolymarketSupported,
     isSecondMarketPolymarketScoringSupported,
     type SecondMarketEvaluationContext,
 } from "../lib/second-market/evaluation";
@@ -108,6 +109,15 @@ function context(quotes: PolymarketClob1sQuoteRow[]): SecondMarketEvaluationCont
 }
 
 describe("second market shared evaluation", () => {
+    it("supports futures-scoped Binance storage symbols on 1s CLOB runs", () => {
+        expect(isSecondMarketPolymarketSupported("BINANCE-FUTURES:BTCUSDT", "1s")).to.equal(true);
+        expect(isSecondMarketPolymarketScoringSupported({
+            symbol: "BINANCE-FUTURES:BTCUSDT",
+            interval: "1s",
+            executionModel: "next_open",
+        })).to.equal(true);
+    });
+
     it("supports 1s CLOB scoring for signal-close, next-open, and next-close chart execution", () => {
         expect(isSecondMarketPolymarketScoringSupported({
             symbol: "BTCUSDT",
