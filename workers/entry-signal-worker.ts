@@ -255,6 +255,8 @@ const CORS_HEADERS: Record<string, string> = {
     "access-control-allow-methods": "GET,POST,OPTIONS",
     "access-control-allow-headers": "content-type,authorization",
 };
+const BINANCE_FETCH_TIMEOUT_MS = 10_000;
+const TELEGRAM_FETCH_TIMEOUT_MS = 8_000;
 
 function toJsonResponse(payload: unknown, status = 200): Response {
     return new Response(JSON.stringify(payload), {
@@ -286,6 +288,40 @@ function toUnauthorizedResponse(): Response {
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number): Promise<Response> {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+    }, timeoutMs);
+    const sourceSignal = init.signal;
+    const abortFromSource = () => controller.abort();
+
+    if (sourceSignal) {
+        if (sourceSignal.aborted) {
+            abortFromSource();
+        } else {
+            sourceSignal.addEventListener("abort", abortFromSource, { once: true });
+        }
+    }
+
+    try {
+        return await fetch(input, {
+            ...init,
+            signal: controller.signal,
+        });
+    } catch (error) {
+        if (timedOut && !sourceSignal?.aborted) {
+            throw new Error(`Fetch timed out after ${timeoutMs}ms.`);
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeoutId);
+        sourceSignal?.removeEventListener("abort", abortFromSource);
+    }
 }
 
 function computeScheduleAlignmentDelayMs(
@@ -437,12 +473,12 @@ async function fetchBinanceCandles(
                 const endTimeQuery = typeof endTimeMs === "number" ? `&endTime=${endTimeMs}` : "";
                 const endpoint = `${base}/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(providerInterval)}&limit=${requestLimit}${endTimeQuery}`;
 
-                const res = await fetch(endpoint, {
+                const res = await fetchWithTimeout(endpoint, {
                     headers: {
                         accept: "application/json",
                         "user-agent": "strategy-entry-signal-worker/1.0",
                     },
-                });
+                }, BINANCE_FETCH_TIMEOUT_MS);
 
                 if (!res.ok) {
                     const body = normalizeBinanceResponseSnippet(await res.text());
@@ -568,11 +604,11 @@ async function sendTelegramText(env: Env, text: string): Promise<void> {
         throw new Error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID secret");
     }
 
-    const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const response = await fetchWithTimeout(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ chat_id: chatId, text }),
-    });
+    }, TELEGRAM_FETCH_TIMEOUT_MS);
 
     if (!response.ok) {
         const detail = await response.text();

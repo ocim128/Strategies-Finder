@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 type TestRunStatus = "PASS" | "FAIL";
@@ -55,7 +56,8 @@ const DEFAULT_MAX_JOBS = 6;
 const currentFilePath = fileURLToPath(import.meta.url);
 const scriptDir = path.dirname(currentFilePath);
 const repoRoot = path.resolve(scriptDir, "..");
-const esnoCliPath = path.resolve(repoRoot, "..", "..", "..", "node_modules", "esno", "esno.js");
+const requireFromHere = createRequire(import.meta.url);
+const esnoCliPath = requireFromHere.resolve("esno/esno.js");
 const logsBaseDir = path.join(repoRoot, "artifacts", "test-logs");
 const latestLogsDir = path.join(logsBaseDir, "latest");
 

@@ -6,10 +6,12 @@ describe("second-market API client", () => {
     it("refetches JSON when a binary candle response is malformed", async () => {
         const originalFetch = globalThis.fetch;
         const acceptHeaders: string[] = [];
+        const signals: unknown[] = [];
 
         globalThis.fetch = (async (_input, init) => {
             const headers = init?.headers as Record<string, string> | undefined;
             acceptHeaders.push(String(headers?.Accept ?? ""));
+            signals.push(init?.signal);
             if (acceptHeaders.length === 1) {
                 return new Response(new ArrayBuffer(4), {
                     status: 200,
@@ -44,6 +46,7 @@ describe("second-market API client", () => {
                 volume: 12,
             }]);
             expect(acceptHeaders).to.deep.equal(["application/octet-stream", "application/json"]);
+            expect(signals.every((signal) => signal instanceof AbortSignal)).to.equal(true);
         } finally {
             globalThis.fetch = originalFetch;
         }

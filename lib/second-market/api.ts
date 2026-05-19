@@ -2,6 +2,9 @@ import type { OHLCVData, Polymarket1sGammaContextRow } from "../types/strategies
 import type { PolymarketClob1sQuoteRow, SecondMarketSymbol } from "./types";
 import { SECOND_MARKET_SYMBOLS } from "./types";
 import { decodeBinaryOhlcvRows } from "../ohlcv-binary";
+import { fetchLocalApi } from "../local-api-transport";
+
+const SECOND_MARKET_REQUEST_TIMEOUT_MS = 8000;
 
 const SECOND_MARKET_SYMBOL_SET = new Set<string>(SECOND_MARKET_SYMBOLS);
 
@@ -104,15 +107,18 @@ export async function loadSecondMarketCandles(args: {
         }));
     };
 
-    const response = await fetch(url, {
+    const response = await fetchLocalApi(url, {
         method: "GET",
         headers: { Accept: "application/octet-stream" },
-    });
+    }, SECOND_MARKET_REQUEST_TIMEOUT_MS);
     const contentType = response.headers.get("content-type") ?? "";
     if (response.ok && contentType.includes("application/octet-stream")) {
         const candles = decodeBinaryOhlcvRows(await response.arrayBuffer());
         if (candles) return candles;
-        return parseJsonCandles(await fetch(url, { method: "GET", headers: { Accept: "application/json" } }));
+        return parseJsonCandles(await fetchLocalApi(url, {
+            method: "GET",
+            headers: { Accept: "application/json" },
+        }, SECOND_MARKET_REQUEST_TIMEOUT_MS));
     }
     return parseJsonCandles(response);
 }
@@ -131,7 +137,9 @@ export async function loadSecondMarketClobQuotesWithStats(args: {
     });
     if (args.seriesId) params.set("seriesId", args.seriesId);
 
-    const response = await fetch(`${getBaseUrl(args.baseUrl)}/api/second-market/clob-quotes?${params.toString()}`, { method: "GET" });
+    const response = await fetchLocalApi(`${getBaseUrl(args.baseUrl)}/api/second-market/clob-quotes?${params.toString()}`, {
+        method: "GET",
+    }, SECOND_MARKET_REQUEST_TIMEOUT_MS);
     const payload = await response.json().catch(() => ({})) as SecondMarketClobQuotesResponse | SecondMarketApiError;
     const data = assertOk(response, payload, "/api/second-market/clob-quotes");
     return {
@@ -164,7 +172,9 @@ export async function loadSecondMarketGammaSnapshots(args: {
     });
     if (args.seriesId) params.set("seriesId", args.seriesId);
 
-    const response = await fetch(`${getBaseUrl(args.baseUrl)}/api/second-market/gamma-snapshots?${params.toString()}`, { method: "GET" });
+    const response = await fetchLocalApi(`${getBaseUrl(args.baseUrl)}/api/second-market/gamma-snapshots?${params.toString()}`, {
+        method: "GET",
+    }, SECOND_MARKET_REQUEST_TIMEOUT_MS);
     const payload = await response.json().catch(() => ({})) as SecondMarketGammaSnapshotsResponse | SecondMarketApiError;
     return assertOk(response, payload, "/api/second-market/gamma-snapshots").gammaSnapshots;
 }

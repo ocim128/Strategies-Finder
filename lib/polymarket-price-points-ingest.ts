@@ -1,5 +1,8 @@
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
-import type { PolymarketPricePoint } from "./local-sqlite-polymarket-api";
+import type {
+    EnsurePolymarketPricePointsResult,
+    PolymarketPricePoint,
+} from "./local-sqlite-polymarket-api";
 import {
     ensurePolymarketPricePointsWithMetadata,
     loadPolymarketPricePoints,
@@ -26,6 +29,40 @@ const MAX_PRICE_POINTS_PER_LOAD_REQUEST = 500000;
 // of local SQLite requests. Keep those batched so the browser/dev server does
 // not drop same-origin fetches under a large Promise.all fan-out.
 const MAX_CONCURRENT_LOAD_REQUESTS = 4;
+const inFlightExistingLoads = new Map<string, Promise<PolymarketPricePoint[]>>();
+const inFlightServerEnsures = new Map<string, Promise<EnsurePolymarketPricePointsResult>>();
+
+function runCoalesced<T>(
+    inFlight: Map<string, Promise<T>>,
+    key: string,
+    work: () => Promise<T>
+): Promise<T> {
+    const existing = inFlight.get(key);
+    if (existing) return existing;
+
+    const promise = work().finally(() => {
+        if (inFlight.get(key) === promise) {
+            inFlight.delete(key);
+        }
+    });
+    inFlight.set(key, promise);
+    return promise;
+}
+
+function buildEventStartKey(seriesId: string, eventStartTs: readonly number[]): string {
+    return `${seriesId}:${eventStartTs.join(",")}`;
+}
+
+function buildEnsureKey(seriesId: string, outcomes: readonly PolymarketOutcomeRow[]): string {
+    return `${seriesId}:${outcomes
+        .map((outcome) => [
+            outcome.event_start_ts,
+            outcome.event_end_ts,
+            outcome.yes_token_id,
+        ].join(":"))
+        .sort()
+        .join(",")}`;
+}
 
 async function fetchYesHistory(
     yesTokenId: string,
@@ -120,24 +157,32 @@ async function loadExistingPricePoints(
         return [];
     }
 
-    const chunks: number[][] = [];
-    for (let index = 0; index < eventStartTs.length; index += MAX_EVENT_STARTS_PER_LOAD_REQUEST) {
-        chunks.push(eventStartTs.slice(index, index + MAX_EVENT_STARTS_PER_LOAD_REQUEST));
-    }
+    const rows = await runCoalesced(
+        inFlightExistingLoads,
+        buildEventStartKey(seriesId, eventStartTs),
+        async () => {
+            const chunks: number[][] = [];
+            for (let index = 0; index < eventStartTs.length; index += MAX_EVENT_STARTS_PER_LOAD_REQUEST) {
+                chunks.push(eventStartTs.slice(index, index + MAX_EVENT_STARTS_PER_LOAD_REQUEST));
+            }
 
-    const rows = await mapWithConcurrencyLimit(
-        chunks,
-        MAX_CONCURRENT_LOAD_REQUESTS,
-        (chunk) => loadPolymarketPricePoints({
-            seriesId,
-            eventStartTs: chunk,
-            limit: MAX_PRICE_POINTS_PER_LOAD_REQUEST,
-        })
+            const chunkRows = await mapWithConcurrencyLimit(
+                chunks,
+                MAX_CONCURRENT_LOAD_REQUESTS,
+                (chunk) => loadPolymarketPricePoints({
+                    seriesId,
+                    eventStartTs: chunk,
+                    limit: MAX_PRICE_POINTS_PER_LOAD_REQUEST,
+                })
+            );
+
+            return chunkRows
+                .flat()
+                .sort((left, right) => left.ts - right.ts);
+        }
     );
 
-    return rows
-        .flat()
-        .sort((left, right) => left.ts - right.ts);
+    return rows.slice();
 }
 
 function buildCoveredEventStartSet(
@@ -222,10 +267,14 @@ export async function ensurePricePointsForOutcomes(
     let outcomesToFetch = uncoveredOutcomes;
 
     try {
-        const ensureResult = await ensurePolymarketPricePointsWithMetadata({
-            seriesId,
-            outcomes: uncoveredOutcomes,
-        });
+        const ensureResult = await runCoalesced(
+            inFlightServerEnsures,
+            buildEnsureKey(seriesId, uncoveredOutcomes),
+            () => ensurePolymarketPricePointsWithMetadata({
+                seriesId,
+                outcomes: uncoveredOutcomes,
+            })
+        );
         const ensuredPoints = ensureResult.rows;
         debugLogger.info("polymarket.price_points.ensure_via_api_complete", {
             seriesId,

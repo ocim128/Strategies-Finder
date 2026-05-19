@@ -941,6 +941,18 @@ describe("Polymarket backtest trade annotations", () => {
                 no_price: 0.38,
                 updated_at: 1,
             },
+            {
+                series_id: "10684",
+                event_start_ts: eventStartTs,
+                event_end_ts: eventStartTs + 300,
+                market_slug: "btc-signal-ensure",
+                yes_token_id: "yes-1",
+                no_token_id: "no-1",
+                ts: eventStartTs + 240,
+                yes_price: 0.64,
+                no_price: 0.36,
+                updated_at: 1,
+            },
         ];
 
         globalThis.fetch = (async (input, init) => {
@@ -1333,12 +1345,36 @@ describe("Polymarket backtest trade annotations", () => {
                         },
                         {
                             series_id: "10684",
+                            event_start_ts: firstEventTs,
+                            event_end_ts: firstEventTs + 300,
+                            market_slug: "btc-limit-1",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
+                            ts: firstEventTs + 240,
+                            yes_price: 0.7,
+                            no_price: 0.3,
+                            updated_at: 1,
+                        },
+                        {
+                            series_id: "10684",
                             event_start_ts: secondEventTs,
                             event_end_ts: secondEventTs + 300,
                             market_slug: "btc-limit-2",
                             yes_token_id: "yes-2",
                             no_token_id: "no-2",
                             ts: secondEventTs + 60,
+                            yes_price: 0.7,
+                            no_price: 0.3,
+                            updated_at: 1,
+                        },
+                        {
+                            series_id: "10684",
+                            event_start_ts: secondEventTs,
+                            event_end_ts: secondEventTs + 300,
+                            market_slug: "btc-limit-2",
+                            yes_token_id: "yes-2",
+                            no_token_id: "no-2",
+                            ts: secondEventTs + 240,
                             yes_price: 0.7,
                             no_price: 0.3,
                             updated_at: 1,
@@ -1460,6 +1496,18 @@ describe("Polymarket backtest trade annotations", () => {
                             no_price: 0.18,
                             updated_at: 1,
                         },
+                        {
+                            series_id: "10684",
+                            event_start_ts: eventTs,
+                            event_end_ts: eventTs + 300,
+                            market_slug: "btc-target",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
+                            ts: eventTs + 240,
+                            yes_price: 0.82,
+                            no_price: 0.18,
+                            updated_at: 1,
+                        },
                     ],
                 }), {
                     status: 200,
@@ -1564,6 +1612,18 @@ describe("Polymarket backtest trade annotations", () => {
                             no_price: 0.20,
                             updated_at: 1,
                         },
+                        {
+                            series_id: "10684",
+                            event_start_ts: eventTs,
+                            event_end_ts: eventTs + 300,
+                            market_slug: "btc-unreachable",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
+                            ts: eventTs + 240,
+                            yes_price: 0.90,
+                            no_price: 0.10,
+                            updated_at: 1,
+                        },
                     ],
                 }), {
                     status: 200,
@@ -1638,6 +1698,18 @@ describe("Polymarket backtest trade annotations", () => {
                             market_slug: "btc-event",
                             yes_token_id: "yes-1",
                             no_token_id: "no-1",
+                            ts: 1_700_000_360,
+                            yes_price: 0.55,
+                            no_price: 0.45,
+                            updated_at: 1,
+                        },
+                        {
+                            series_id: "10684",
+                            event_start_ts: 1_700_000_300,
+                            event_end_ts: 1_700_000_600,
+                            market_slug: "btc-event",
+                            yes_token_id: "yes-1",
+                            no_token_id: "no-1",
                             ts: 1_700_000_580,
                             yes_price: 0.61,
                             no_price: 0.39,
@@ -1688,8 +1760,7 @@ describe("Polymarket backtest trade annotations", () => {
             endTs: 1_700_000_360,
         });
 
-        expect(points).to.have.length(1);
-        expect(points[0]?.ts).to.equal(1_700_000_580);
+        expect(points.map((point) => point.ts)).to.deep.equal([1_700_000_360, 1_700_000_580]);
     });
 
     it("chunks large stored price-point lookups so signal-exit runs do not drop coverage", async () => {
@@ -1718,18 +1789,32 @@ describe("Polymarket backtest trade annotations", () => {
                     .split(",")
                     .map((value) => Number(value.trim()))
                     .filter((value) => Number.isFinite(value))
-                    .map((eventStartTs) => ({
-                        series_id: "10684",
-                        event_start_ts: eventStartTs,
-                        event_end_ts: eventStartTs + 300,
-                        market_slug: `btc-${eventStartTs}`,
-                        yes_token_id: `yes-${eventStartTs}`,
-                        no_token_id: `no-${eventStartTs}`,
-                        ts: eventStartTs + 60,
-                        yes_price: 0.55,
-                        no_price: 0.45,
-                        updated_at: 1,
-                    }));
+                    .flatMap((eventStartTs) => [
+                        {
+                            series_id: "10684",
+                            event_start_ts: eventStartTs,
+                            event_end_ts: eventStartTs + 300,
+                            market_slug: `btc-${eventStartTs}`,
+                            yes_token_id: `yes-${eventStartTs}`,
+                            no_token_id: `no-${eventStartTs}`,
+                            ts: eventStartTs + 60,
+                            yes_price: 0.55,
+                            no_price: 0.45,
+                            updated_at: 1,
+                        },
+                        {
+                            series_id: "10684",
+                            event_start_ts: eventStartTs,
+                            event_end_ts: eventStartTs + 300,
+                            market_slug: `btc-${eventStartTs}`,
+                            yes_token_id: `yes-${eventStartTs}`,
+                            no_token_id: `no-${eventStartTs}`,
+                            ts: eventStartTs + 240,
+                            yes_price: 0.57,
+                            no_price: 0.43,
+                            updated_at: 1,
+                        },
+                    ]);
 
                 return new Response(JSON.stringify({
                     ok: true,
@@ -1771,7 +1856,7 @@ describe("Polymarket backtest trade annotations", () => {
 
         const points = await ensurePricePointsForOutcomes(outcomes, "10684");
 
-        expect(points).to.have.length(205);
+        expect(points).to.have.length(410);
         expect(requestedChunks).to.have.length(3);
         expect(requestedChunks.map((chunk) => chunk.split(",").filter(Boolean).length)).to.deep.equal([100, 100, 5]);
     });
@@ -1814,18 +1899,32 @@ describe("Polymarket backtest trade annotations", () => {
                     .split(",")
                     .map((value) => Number(value.trim()))
                     .filter((value) => Number.isFinite(value))
-                    .map((eventStartTs) => ({
-                        series_id: "10684",
-                        event_start_ts: eventStartTs,
-                        event_end_ts: eventStartTs + 300,
-                        market_slug: `btc-${eventStartTs}`,
-                        yes_token_id: `yes-${eventStartTs}`,
-                        no_token_id: `no-${eventStartTs}`,
-                        ts: eventStartTs + 60,
-                        yes_price: 0.55,
-                        no_price: 0.45,
-                        updated_at: 1,
-                    }));
+                    .flatMap((eventStartTs) => [
+                        {
+                            series_id: "10684",
+                            event_start_ts: eventStartTs,
+                            event_end_ts: eventStartTs + 300,
+                            market_slug: `btc-${eventStartTs}`,
+                            yes_token_id: `yes-${eventStartTs}`,
+                            no_token_id: `no-${eventStartTs}`,
+                            ts: eventStartTs + 60,
+                            yes_price: 0.55,
+                            no_price: 0.45,
+                            updated_at: 1,
+                        },
+                        {
+                            series_id: "10684",
+                            event_start_ts: eventStartTs,
+                            event_end_ts: eventStartTs + 300,
+                            market_slug: `btc-${eventStartTs}`,
+                            yes_token_id: `yes-${eventStartTs}`,
+                            no_token_id: `no-${eventStartTs}`,
+                            ts: eventStartTs + 240,
+                            yes_price: 0.57,
+                            no_price: 0.43,
+                            updated_at: 1,
+                        },
+                    ]);
 
                 activeLoadRequests--;
                 return new Response(JSON.stringify({
@@ -1868,7 +1967,7 @@ describe("Polymarket backtest trade annotations", () => {
 
         const points = await ensurePricePointsForOutcomes(outcomes, "10684");
 
-        expect(points).to.have.length(605);
+        expect(points).to.have.length(1210);
         expect(requestedChunks).to.have.length(7);
         expect(peakLoadRequests).to.be.at.most(4);
     });

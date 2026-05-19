@@ -2,8 +2,10 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
     resolveBootstrapFeatureStageOrder,
+    runBootstrapFeatureStage,
     type AppBootstrapFeature,
 } from "../lib/bootstrap-feature-registry";
+import { debugLogger } from "../lib/debug-logger";
 
 describe("App bootstrap registry", () => {
     it("keeps stable dependency order within a stage", () => {
@@ -39,5 +41,26 @@ describe("App bootstrap registry", () => {
 
         expect(() => resolveBootstrapFeatureStageOrder(features, "pre_restore"))
             .to.throw('depends on later-stage feature "settings"');
+    });
+
+    it("does not let bootstrap telemetry listener failures break feature init", async () => {
+        let initialized = false;
+        const unsubscribe = debugLogger.subscribe(() => {
+            throw new Error("debug listener failed");
+        });
+
+        try {
+            await runBootstrapFeatureStage([{
+                id: "safe-feature",
+                stage: "pre_restore",
+                init: () => {
+                    initialized = true;
+                },
+            }], "pre_restore", "init", {});
+        } finally {
+            unsubscribe();
+        }
+
+        expect(initialized).to.equal(true);
     });
 });

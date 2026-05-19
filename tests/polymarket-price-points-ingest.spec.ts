@@ -298,4 +298,70 @@ describe("Polymarket price-point ingestion coverage", () => {
         expect(rows.some((row) => row.event_start_ts === firstStartTs)).to.equal(true);
         expect(rows.some((row) => row.event_start_ts === secondStartTs)).to.equal(true);
     });
+
+    it("coalesces concurrent stored loads and server ensures for identical outcome sets", async () => {
+        const eventStartTs = 1_700_040_000;
+        const eventEndTs = eventStartTs + 900;
+        let loadCalls = 0;
+        let ensureCalls = 0;
+
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-price-points") {
+                loadCalls++;
+                await new Promise((resolve) => setTimeout(resolve, 0));
+                return new Response(JSON.stringify({ ok: true, rows: [] }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/ensure-polymarket-price-points") {
+                ensureCalls++;
+                await new Promise((resolve) => setTimeout(resolve, 0));
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: [
+                        makePoint(eventStartTs, eventEndTs, eventStartTs + 60),
+                        makePoint(eventStartTs, eventEndTs, eventEndTs - 30),
+                    ],
+                    upserted: 2,
+                    fetchedEvents: 1,
+                    failedEvents: 0,
+                    missingTokenEvents: 0,
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            throw new Error(`Unexpected URL ${url.pathname}`);
+        }) as typeof fetch;
+
+        const outcome = makeOutcome("15m", eventStartTs, eventEndTs);
+        const [first, second] = await Promise.all([
+            ensurePricePointsForOutcomes([outcome], "series-test"),
+            ensurePricePointsForOutcomes([outcome], "series-test"),
+        ]);
+
+        expect(loadCalls).to.equal(1);
+        expect(ensureCalls).to.equal(1);
+        expect(first.map((row) => row.ts)).to.deep.equal(second.map((row) => row.ts));
+        expect(first).to.have.length(2);
+    });
 });
