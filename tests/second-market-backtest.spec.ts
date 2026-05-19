@@ -115,6 +115,27 @@ describe("second market backtest evaluator", () => {
         expect(evaluated.summary.scoredTrades).to.equal(1);
     });
 
+    it("matches quotes by YES token when legacy outcome rows do not carry a NO token", () => {
+        const legacyOutcome = {
+            ...outcome(),
+            no_token_id: "",
+        };
+        const evaluated = evaluateSecondMarketTrades({
+            trades: [trade(1_700_000_010, 1_700_000_020)],
+            outcomes: [legacyOutcome],
+            quotes: [
+                quote(1_700_000_010, 0.55, 0.53),
+                quote(1_700_000_020, 0.60, 0.58),
+            ],
+            evaluationMode: "signal_exit_same_event",
+            mode: "strict",
+        });
+
+        expect(evaluated.results[0].entryPrice).to.equal(0.55);
+        expect(evaluated.results[0].exitPrice).to.equal(0.58);
+        expect(evaluated.summary.scoredTrades).to.equal(1);
+    });
+
     it("filters edge-priced CLOB entries before same-event dedupe", () => {
         const secondTrade = trade(1_700_000_030, 1_700_000_040);
         secondTrade.id = 2;

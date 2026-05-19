@@ -37,6 +37,17 @@ interface AlignedQuote {
     quoteTs: number;
 }
 
+type PressureGapCacheEntry = {
+    quotes: readonly Polymarket1sQuoteContextRow[];
+    quoteCount: number;
+    frame: Polymarket1sPressureGapFrame;
+};
+
+const pressureGapCache = new WeakMap<
+    Polymarket1sRuntimeContext,
+    WeakMap<readonly OHLCVData[], Map<string, PressureGapCacheEntry>>
+>();
+
 function emptyPressureGapFrame(length: number): Polymarket1sPressureGapFrame {
     return {
         available: false,
@@ -116,6 +127,51 @@ function sortedQuotes(context: Polymarket1sRuntimeContext): AlignedQuote[] {
         .sort((left, right) => left.quoteTs - right.quoteTs);
 }
 
+function pressureGapOptionsKey(options: Polymarket1sPressureGapOptions): string {
+    return [
+        Math.max(5, Math.round(options.volLookback ?? DEFAULT_VOL_LOOKBACK)),
+        Math.max(0, Math.round(options.maxQuoteAgeSec ?? DEFAULT_MAX_QUOTE_AGE_SEC)),
+        Math.max(1e-9, Number(options.volFloor ?? DEFAULT_VOL_FLOOR)),
+    ].join("|");
+}
+
+function getCachedPressureGapFrame(
+    runtime: Polymarket1sRuntimeContext,
+    data: readonly OHLCVData[],
+    key: string
+): Polymarket1sPressureGapFrame | null {
+    const byData = pressureGapCache.get(runtime);
+    const byOptions = byData?.get(data);
+    const cached = byOptions?.get(key);
+    if (!cached) return null;
+    return cached.quotes === runtime.quotes && cached.quoteCount === runtime.quotes.length
+        ? cached.frame
+        : null;
+}
+
+function setCachedPressureGapFrame(
+    runtime: Polymarket1sRuntimeContext,
+    data: readonly OHLCVData[],
+    key: string,
+    frame: Polymarket1sPressureGapFrame
+): void {
+    let byData = pressureGapCache.get(runtime);
+    if (!byData) {
+        byData = new WeakMap();
+        pressureGapCache.set(runtime, byData);
+    }
+    let byOptions = byData.get(data);
+    if (!byOptions) {
+        byOptions = new Map();
+        byData.set(data, byOptions);
+    }
+    byOptions.set(key, {
+        quotes: runtime.quotes,
+        quoteCount: runtime.quotes.length,
+        frame,
+    });
+}
+
 function activeQuoteAt(
     aligned: readonly AlignedQuote[],
     pointerState: { pointer: number; latest: AlignedQuote | null },
@@ -172,6 +228,10 @@ export function buildPolymarket1sPressureGap(
     if (!runtime || runtime.quotes.length === 0 || length === 0) {
         return emptyPressureGapFrame(length);
     }
+
+    const cacheKey = pressureGapOptionsKey(options);
+    const cached = getCachedPressureGapFrame(runtime, data, cacheKey);
+    if (cached) return cached;
 
     const frame = emptyPressureGapFrame(length);
     const quotes = sortedQuotes(runtime);
@@ -232,6 +292,7 @@ export function buildPolymarket1sPressureGap(
     }
 
     frame.available = populated > 0;
+    setCachedPressureGapFrame(runtime, data, cacheKey, frame);
     return frame;
 }
 

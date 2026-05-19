@@ -39,6 +39,100 @@ type Fill = {
 
 export const SECOND_MARKET_UNRESOLVED_OUTCOME_SOURCE = "second_market_clob_unresolved";
 
+type IndexedQuote = {
+    quote: PolymarketClob1sQuoteRow;
+    quoteTs: number;
+};
+
+type SecondMarketQuoteIndex = {
+    quotesByEvent: Map<string, IndexedQuote[]>;
+    quotesByYesEvent: Map<string, IndexedQuote[]>;
+    pricePointsByKey: Map<string, PolymarketPricePoint[]>;
+};
+
+function quoteEventKey(args: {
+    seriesId: string;
+    eventStartTs: number;
+    yesTokenId: string;
+    noTokenId: string;
+}): string {
+    return `${args.seriesId}|${args.eventStartTs}|${args.yesTokenId}|${args.noTokenId}`;
+}
+
+function quoteYesEventKey(args: {
+    seriesId: string;
+    eventStartTs: number;
+    yesTokenId: string;
+}): string {
+    return `${args.seriesId}|${args.eventStartTs}|${args.yesTokenId}`;
+}
+
+function sortIndexedQuoteBuckets(buckets: Iterable<IndexedQuote[]>): void {
+    for (const bucket of buckets) {
+        bucket.sort((left, right) =>
+            left.quoteTs - right.quoteTs
+            || (left.quote.source_ts_ms ?? 0) - (right.quote.source_ts_ms ?? 0)
+            || left.quote.sample_ts - right.quote.sample_ts
+        );
+    }
+}
+
+function pushIndexedQuote(map: Map<string, IndexedQuote[]>, key: string, quote: IndexedQuote): void {
+    const bucket = map.get(key);
+    if (bucket) {
+        bucket.push(quote);
+    } else {
+        map.set(key, [quote]);
+    }
+}
+
+function buildQuoteIndex(quotes: readonly PolymarketClob1sQuoteRow[]): SecondMarketQuoteIndex {
+    const quotesByEvent = new Map<string, IndexedQuote[]>();
+    const quotesByYesEvent = new Map<string, IndexedQuote[]>();
+    for (const quote of quotes) {
+        const quoteTs = getClobQuoteTimeSec(quote);
+        if (quoteTs === null) continue;
+        const indexed = { quote, quoteTs };
+        const keyParts = {
+            seriesId: quote.series_id,
+            eventStartTs: quote.event_start_ts,
+            yesTokenId: quote.yes_token_id,
+        };
+        pushIndexedQuote(quotesByEvent, quoteEventKey({ ...keyParts, noTokenId: quote.no_token_id }), indexed);
+        pushIndexedQuote(quotesByYesEvent, quoteYesEventKey(keyParts), indexed);
+    }
+
+    sortIndexedQuoteBuckets(quotesByEvent.values());
+    sortIndexedQuoteBuckets(quotesByYesEvent.values());
+
+    return {
+        quotesByEvent,
+        quotesByYesEvent,
+        pricePointsByKey: new Map(),
+    };
+}
+
+function findQuoteBucket(args: {
+    seriesId: string;
+    eventStartTs: number;
+    yesTokenId: string;
+    noTokenId: string;
+    quoteIndex: SecondMarketQuoteIndex;
+}): IndexedQuote[] | undefined {
+    return args.noTokenId
+        ? args.quoteIndex.quotesByEvent.get(quoteEventKey(args))
+        : args.quoteIndex.quotesByYesEvent.get(quoteYesEventKey(args));
+}
+
+function quoteCacheKey(args: {
+    seriesId: string;
+    eventStartTs: number;
+    yesTokenId: string;
+    noTokenId: string;
+}): string {
+    return args.noTokenId ? quoteEventKey(args) : `${quoteYesEventKey(args)}|*`;
+}
+
 function isFillAgeUsable(ageSec: number, mode: SecondMarketAlignmentMode, maxQuoteAgeSec: number): boolean {
     if (ageSec < 0) return false;
     return mode === "strict" ? ageSec === 0 : ageSec <= maxQuoteAgeSec;
@@ -52,26 +146,26 @@ function findQuoteFill(args: {
     fillTs: number;
     side: SecondMarketSide;
     orderSide: "buy" | "sell";
-    quotes: readonly PolymarketClob1sQuoteRow[];
     mode: SecondMarketAlignmentMode;
     maxQuoteAgeSec: number;
     fillSource: SecondMarketFillSource;
+    quoteIndex: SecondMarketQuoteIndex;
 }): Fill | null {
-    let best: { quote: PolymarketClob1sQuoteRow; quoteTs: number } | null = null;
-    for (const quote of args.quotes) {
-        if (quote.series_id !== args.seriesId) continue;
-        if (quote.event_start_ts !== args.eventStartTs) continue;
-        if (quote.yes_token_id !== args.yesTokenId) continue;
-        if (args.noTokenId && quote.no_token_id !== args.noTokenId) continue;
-        const quoteTs = getClobQuoteTimeSec(quote);
-        if (quoteTs === null || quoteTs > args.fillTs) continue;
-        if (!best || quoteTs > best.quoteTs || (
-            quoteTs === best.quoteTs && (quote.source_ts_ms ?? 0) > (best.quote.source_ts_ms ?? 0)
-        )) {
-            best = { quote, quoteTs };
+    const bucket = findQuoteBucket(args);
+    if (!bucket || bucket.length === 0) return null;
+
+    let low = 0;
+    let high = bucket.length;
+    while (low < high) {
+        const mid = Math.floor((low + high) / 2);
+        if (bucket[mid]!.quoteTs <= args.fillTs) {
+            low = mid + 1;
+        } else {
+            high = mid;
         }
     }
 
+    const best = bucket[low - 1] ?? null;
     if (!best) return null;
     const ageSec = args.fillTs - best.quoteTs;
     if (!isFillAgeUsable(ageSec, args.mode, args.maxQuoteAgeSec)) return null;
@@ -84,18 +178,20 @@ function buildClobPricePoints(args: {
     eventStartTs: number;
     yesTokenId: string;
     noTokenId: string;
-    quotes: readonly PolymarketClob1sQuoteRow[];
     orderSide: "buy" | "sell";
     fillSource: SecondMarketFillSource;
+    quoteIndex: SecondMarketQuoteIndex;
 }): PolymarketPricePoint[] {
+    const eventKey = quoteCacheKey(args);
+    const cacheKey = `${eventKey}|${args.orderSide}|${args.fillSource}`;
+    const cached = args.quoteIndex.pricePointsByKey.get(cacheKey);
+    if (cached) return cached;
+
     const pointByTs = new Map<number, { point: PolymarketPricePoint; sourceTsMs: number }>();
-    for (const quote of args.quotes) {
-        if (quote.series_id !== args.seriesId) continue;
-        if (quote.event_start_ts !== args.eventStartTs) continue;
-        if (quote.yes_token_id !== args.yesTokenId) continue;
-        if (args.noTokenId && quote.no_token_id !== args.noTokenId) continue;
-        const quoteTs = getClobQuoteTimeSec(quote);
-        if (quoteTs === null) continue;
+    const bucket = findQuoteBucket(args) ?? [];
+    for (const item of bucket) {
+        const quote = item.quote;
+        const quoteTs = item.quoteTs;
         const sourceTsMs = quote.source_ts_ms ?? 0;
         const existing = pointByTs.get(quoteTs);
         if (existing && existing.sourceTsMs >= sourceTsMs) {
@@ -117,9 +213,11 @@ function buildClobPricePoints(args: {
             },
         });
     }
-    return [...pointByTs.values()]
+    const points = [...pointByTs.values()]
         .map((entry) => entry.point)
         .sort((left, right) => left.ts - right.ts);
+    args.quoteIndex.pricePointsByKey.set(cacheKey, points);
+    return points;
 }
 
 function resolveResolutionExitPrice(outcome: PolymarketOutcomeRow, side: SecondMarketSide): number | null {
@@ -288,6 +386,7 @@ export function evaluateSecondMarketTrades(args: {
     const entryDelayBars = clampPolymarketEntryDelayBars(args.entryDelayBars);
     const results: SecondMarketTradeResult[] = [];
     const seenEvents = new Set<string>();
+    const quoteIndex = buildQuoteIndex(args.quotes);
     const limitEntryEnabled = args.limitEntry?.enabled === true;
     const limitEntryMode = resolvePolymarketPostSignalLimitEntryMode(args.limitEntry?.priceMode);
     const limitEntryOffsetCents = clampPolymarketPostSignalLimitOffsetCents(args.limitEntry?.offsetCents);
@@ -387,9 +486,9 @@ export function evaluateSecondMarketTrades(args: {
                 eventStartTs: outcome.event_start_ts,
                 yesTokenId: outcome.yes_token_id,
                 noTokenId: outcome.no_token_id,
-                quotes: args.quotes,
                 orderSide: "buy",
                 fillSource,
+                quoteIndex,
             });
             const staleSignalEntry = limitEntryMode === "stale_signal_price"
                 ? findQuoteFill({
@@ -400,10 +499,10 @@ export function evaluateSecondMarketTrades(args: {
                     fillTs: entryTs,
                     side,
                     orderSide: "buy",
-                    quotes: args.quotes,
                     mode,
                     maxQuoteAgeSec,
                     fillSource,
+                    quoteIndex,
                 })
                 : null;
             if (limitEntryMode === "stale_signal_price" && staleSignalEntry === null) {
@@ -488,10 +587,10 @@ export function evaluateSecondMarketTrades(args: {
                 fillTs: entryFillTs,
                 side,
                 orderSide: "buy",
-                quotes: args.quotes,
                 mode,
                 maxQuoteAgeSec,
                 fillSource,
+                quoteIndex,
             });
             if (!entry) {
                 results.push({
@@ -541,9 +640,9 @@ export function evaluateSecondMarketTrades(args: {
                     eventStartTs: outcome.event_start_ts,
                     yesTokenId: outcome.yes_token_id,
                     noTokenId: outcome.no_token_id,
-                    quotes: args.quotes,
                     orderSide: "sell",
                     fillSource,
+                    quoteIndex,
                 }), {
                     side,
                     startTs: entry.quoteTs,
@@ -577,10 +676,10 @@ export function evaluateSecondMarketTrades(args: {
                     fillTs: signalExitTs,
                     side,
                     orderSide: "sell",
-                    quotes: args.quotes,
                     mode,
                     maxQuoteAgeSec,
                     fillSource,
+                    quoteIndex,
                 });
                 return fill && fill.quoteTs >= entry.quoteTs
                     ? {

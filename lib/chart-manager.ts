@@ -25,6 +25,7 @@ import { createChartManagerDom } from "./chart-manager-dom";
 
 import { Trade, OHLCVData } from "./strategies/index";
 import { getTimeIndex, timeKey } from "./strategies/backtest/backtest-utils";
+import { parseTimeToUnixSeconds } from "./time-normalization";
 
 type IndicatorTooltipPoint = {
     time: Time;
@@ -71,6 +72,9 @@ export class ChartManager {
     private executionLabYesSeries: ISeriesApi<"Line"> | null = null;
     private executionLabNoSeries: ISeriesApi<"Line"> | null = null;
     private executionLabMarkersPlugin: ISeriesMarkersPluginApi<Time> | null = null;
+    private paperStreamFirstTimeSec: number | null = null;
+    private paperStreamLastTimeSec: number | null = null;
+    private paperStreamDataLength = 0;
     private indicatorDomCache = new Map<string, { node: HTMLElement; valNode: HTMLElement }>();
     private tooltipIndicatorSetRef: typeof state.indicators | null = null;
     private cachedContainerRect: DOMRect | null = null;
@@ -716,6 +720,55 @@ export class ChartManager {
             low: d.low,
             close: d.close,
         })));
+        const first = data[0] ?? null;
+        const last = data[data.length - 1] ?? null;
+        this.paperStreamFirstTimeSec = first ? parseTimeToUnixSeconds(first.time) : null;
+        this.paperStreamLastTimeSec = last ? parseTimeToUnixSeconds(last.time) : null;
+        this.paperStreamDataLength = data.length;
+        state.chart.timeScale().scrollToRealTime();
+    }
+
+    public updatePaperStreamData(data: OHLCVData[], changedCandles: readonly OHLCVData[]): void {
+        if (data.length === 0) return;
+        const nextFirstTimeSec = parseTimeToUnixSeconds(data[0]!.time);
+        if (
+            state.chartMode === 'heikin-ashi'
+            || changedCandles.length === 0
+            || this.paperStreamFirstTimeSec === null
+            || nextFirstTimeSec === null
+            || nextFirstTimeSec !== this.paperStreamFirstTimeSec
+            || this.paperStreamLastTimeSec === null
+            || this.paperStreamDataLength === 0
+            || data.length < this.paperStreamDataLength
+            || data.length > this.paperStreamDataLength + changedCandles.length
+        ) {
+            this.displayPaperStreamData(data);
+            return;
+        }
+
+        for (const candle of changedCandles) {
+            const ts = parseTimeToUnixSeconds(candle.time);
+            if (ts === null || ts < this.paperStreamLastTimeSec) {
+                this.displayPaperStreamData(data);
+                return;
+            }
+        }
+
+        for (const candle of changedCandles) {
+            state._ohlcvTimeMap.set(timeKey(candle.time), candle);
+            state.candlestickSeries.update({
+                time: candle.time,
+                open: candle.open,
+                high: candle.high,
+                low: candle.low,
+                close: candle.close,
+            });
+        }
+
+        const last = data[data.length - 1] ?? null;
+        this.paperStreamFirstTimeSec = nextFirstTimeSec;
+        this.paperStreamLastTimeSec = last ? parseTimeToUnixSeconds(last.time) : null;
+        this.paperStreamDataLength = data.length;
         state.chart.timeScale().scrollToRealTime();
     }
 

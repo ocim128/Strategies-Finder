@@ -440,7 +440,7 @@ async function runLive(config: CliConfig, signal: AbortSignal): Promise<void> {
             allEvents = await syncLiveGammaEventsWithRetry(config, db, signal);
         }
 
-        if (config.includeGamma) {
+        if (config.includeGamma || config.includeClob) {
             tasks.push(runLiveGammaPolling(config, db, signal, (events) => {
                 allEvents = events;
             }));

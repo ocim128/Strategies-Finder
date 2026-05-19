@@ -1138,6 +1138,7 @@ export class ExecutionLabService {
         this.polling = true;
         try {
             this.assertSessionContext(snapshot);
+            let chartChangedCandles: OHLCVData[] = [];
             const latestBatchResult = await this.tryLivePollFetch(() =>
                 loadExecutionLabLiveCandles({ symbol: snapshot.symbol, marketType: state.binanceMarketType, limit: 1 })
             );
@@ -1171,7 +1172,8 @@ export class ExecutionLabService {
                             limit: Math.min(10000, latestTs - lastBufferedTs),
                         }));
                 if (!newCandlesResult.ok) return;
-                this.mergeCandles(newCandlesResult.value);
+                chartChangedCandles = newCandlesResult.value;
+                this.mergeCandles(chartChangedCandles);
             }
 
             const latestBuffered = this.candles[this.candles.length - 1];
@@ -1277,7 +1279,9 @@ export class ExecutionLabService {
             this.latestQuote = liveQuote;
             this.feedLagSec = feedLag;
             this.addMarkers(tickResult.markers);
-            chartManager.displayPaperStreamData(this.candles);
+            if (chartChangedCandles.length > 0) {
+                chartManager.updatePaperStreamData(this.candles, chartChangedCandles);
+            }
             if (liveQuote) {
                 chartManager.displayExecutionLabPolymarketPrices(this.getPolymarketPricePoints());
             }

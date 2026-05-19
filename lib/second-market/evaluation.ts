@@ -14,7 +14,12 @@ import {
 import { buildPolymarketOutcomeBase } from "../polymarket-outcome-annotation";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { evaluateSecondMarketTrades, SECOND_MARKET_UNRESOLVED_OUTCOME_SOURCE } from "./backtest";
-import { loadSecondMarketClobQuotes, loadSecondMarketGammaSnapshots, normalizeSecondMarketChartSymbol } from "./api";
+import {
+    loadSecondMarketClobQuotesWithStats,
+    loadSecondMarketGammaSnapshots,
+    normalizeSecondMarketChartSymbol,
+    type SecondMarketClobQuoteStats,
+} from "./api";
 import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import type { Polymarket1sGammaContextRow } from "../types/strategies";
 import type { PolymarketPostSignalLimitEntrySettings } from "../polymarket-post-signal-limit-entry";
@@ -32,6 +37,7 @@ export type SecondMarketEvaluationContext = {
     outcomeInterval: PolymarketOutcomeInterval;
     outcomes: PolymarketOutcomeRow[];
     quotes: PolymarketClob1sQuoteRow[];
+    quoteStats?: SecondMarketClobQuoteStats;
     gammaSnapshots: Polymarket1sGammaContextRow[];
 };
 
@@ -381,9 +387,9 @@ export async function loadSecondMarketEvaluationContext(args: {
 
     const startTs = Math.floor(args.startTs);
     const endTs = Math.floor(args.endTs);
-    const [outcomes, quotes, gammaSnapshots] = await Promise.all([
+    const [outcomes, quoteResult, gammaSnapshots] = await Promise.all([
         loadPolymarketOutcomesForTimeRange(args.symbol, startTs, endTs, outcomeSymbol, outcomeInterval),
-        loadSecondMarketClobQuotes({
+        loadSecondMarketClobQuotesWithStats({
             symbol: outcomeSymbol,
             seriesId,
             startTs,
@@ -404,8 +410,9 @@ export async function loadSecondMarketEvaluationContext(args: {
         outcomeSymbol,
         seriesId,
         outcomeInterval,
-        outcomes: mergeOutcomeRowsWithClobEvents(outcomes, quotes),
-        quotes,
+        outcomes: mergeOutcomeRowsWithClobEvents(outcomes, quoteResult.quotes),
+        quotes: quoteResult.quotes,
+        quoteStats: quoteResult.stats,
         gammaSnapshots,
     };
 }

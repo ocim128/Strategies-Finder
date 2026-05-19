@@ -7,6 +7,7 @@ import { backtestEndpointPlugin } from './lib/backtest-endpoint-plugin';
 import { strategyLibraryAdminPlugin } from './lib/strategy-library-admin-plugin';
 import { strategyLibraryAuditPlugin } from './lib/strategy-library-audit-plugin';
 import { executionLabVitePlugin } from './lib/execution-lab/execution-lab-vite-plugin';
+import { encodeBinaryOhlcvRows } from './lib/ohlcv-binary';
 import {
     fetchPolymarketHistoryWithFallback,
     normalizePolymarketHistoryPoints,
@@ -761,6 +762,18 @@ function secondMarketApiPlugin(): Plugin {
                                 ORDER BY ts DESC
                                 LIMIT ?
                             `).all(symbol, marketType, endTs, limit) as SecondMarketBinanceDbRow[]).reverse();
+                        const accept = String(req.headers.accept || '');
+                        if (accept.includes('application/octet-stream')) {
+                            sendBinary(res, 200, Buffer.from(encodeBinaryOhlcvRows(candles.map((row) => ({
+                                time: row.ts,
+                                open: row.open,
+                                high: row.high,
+                                low: row.low,
+                                close: row.close,
+                                volume: row.volume,
+                            })))));
+                            return;
+                        }
                         const latestDataTs = maxFinite(candles.map((row) => row.ts));
                         sendJson(res, 200, {
                             ok: true,

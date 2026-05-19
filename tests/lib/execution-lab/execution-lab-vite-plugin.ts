@@ -3,6 +3,7 @@ import { appendFileSync, createWriteStream, existsSync, mkdirSync, writeFileSync
 import type { IncomingMessage } from "node:http";
 import { dirname, resolve } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import type { Plugin } from "vite";
 import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import type { PolymarketOutcomeRow } from "../types/polymarket-outcomes";
@@ -463,6 +464,45 @@ async function buildLiveQuote(event: SecondMarketPolymarketEvent, sampleTs: numb
     };
 }
 
+function loadStoredLiveQuote(event: SecondMarketPolymarketEvent, sampleTs: number): PolymarketClob1sQuoteRow | null {
+    if (!existsSync(MINER_DB_PATH)) return null;
+    const targetTs = Math.floor(sampleTs);
+    let db: DatabaseSync | null = null;
+    try {
+        db = new DatabaseSync(MINER_DB_PATH, { readOnly: true });
+        const row = db.prepare(`
+            SELECT series_id, symbol, outcome_interval, event_start_ts, event_end_ts,
+                   condition_id, market_slug, yes_token_id, no_token_id,
+                   sample_ts, yes_bid, yes_ask, yes_mid, yes_last,
+                   no_bid, no_ask, no_mid, no_last,
+                   source, source_ts_ms, quote_age_ms, quality_flags, updated_at
+            FROM polymarket_clob_1s_quotes
+            WHERE series_id = ?
+              AND symbol = ?
+              AND event_start_ts = ?
+              AND yes_token_id = ?
+              AND no_token_id = ?
+              AND sample_ts = ?
+              AND event_start_ts <= sample_ts
+              AND event_end_ts > sample_ts
+            ORDER BY sample_ts DESC, source_ts_ms DESC, updated_at DESC
+            LIMIT 1
+        `).get(
+            event.seriesId,
+            event.symbol,
+            event.eventStartTs,
+            event.yesTokenId,
+            event.noTokenId,
+            targetTs,
+        ) as PolymarketClob1sQuoteRow | undefined;
+        return row ?? null;
+    } catch {
+        return null;
+    } finally {
+        db?.close();
+    }
+}
+
 export function executionLabVitePlugin(): Plugin {
     const sessions = new Map<string, string>();
     const liveEventCache = new Map<string, CacheEntry<SecondMarketPolymarketEvent[]>>();
@@ -814,7 +854,7 @@ export function executionLabVitePlugin(): Plugin {
                         sendJson(res, 409, { ok: false, error: "Historical CLOB quote requests must use stored second-market quotes." });
                         return;
                     }
-                    const quote = await buildLiveQuote({
+                    const event = {
                         seriesId,
                         symbol,
                         outcomeInterval,
@@ -826,7 +866,13 @@ export function executionLabVitePlugin(): Plugin {
                         eventEndTs,
                         yesTokenId,
                         noTokenId,
-                    }, sampleTs);
+                    };
+                    const storedQuote = loadStoredLiveQuote(event, sampleTs);
+                    if (storedQuote) {
+                        sendJson(res, 200, { ok: true, source: "second_market_db", quote: storedQuote });
+                        return;
+                    }
+                    const quote = await buildLiveQuote(event, sampleTs);
                     sendJson(res, 200, { ok: true, source: "clob_live", quote });
                     return;
                 }

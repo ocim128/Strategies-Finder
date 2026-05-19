@@ -205,6 +205,13 @@ export async function runSecondMarketFinder(
         callbacks.setStatus("No 1s CLOB quote rows found. Keep run-1s-miner.bat running, then reload 1s data.");
         return { results: [] };
     }
+    const quoteCoveragePct = context.quoteStats?.exactSampleCoveragePct;
+    const quoteCoverageText = typeof quoteCoveragePct === "number" && Number.isFinite(quoteCoveragePct)
+        ? `${quoteCoveragePct.toFixed(1)}% exact CLOB coverage`
+        : null;
+    if (quoteCoverageText && typeof quoteCoveragePct === "number" && quoteCoveragePct < 95) {
+        callbacks.setStatus(`Warning: ${quoteCoverageText}; results may under-score missing quote seconds.`);
+    }
 
     const strategyPlans: StrategyPlan[] = [];
     let totalRuns = 0;
@@ -239,7 +246,7 @@ export async function runSecondMarketFinder(
     let lastUiUpdateAt = 0;
     let lastResultsUpdateAt = 0;
 
-    callbacks.setStatus(`Running ${totalRuns} 1s CLOB evaluations...`);
+    callbacks.setStatus(`Running ${totalRuns} 1s CLOB evaluations${quoteCoverageText ? ` (${quoteCoverageText})` : ""}...`);
     callbacks.setProgress(14, `0/${totalRuns} evaluations`);
     await callbacks.yieldControl();
 
@@ -396,6 +403,7 @@ export async function runSecondMarketFinder(
     const statusParts = [`${processedCount} evaluations`, `${filteredCount} matched`, `${results.length} shown`];
     if (failedCount > 0) statusParts.push(`${failedCount} failed`);
     statusParts.push(`${context.quotes.length} CLOB quote rows`);
+    if (quoteCoverageText) statusParts.push(quoteCoverageText);
     callbacks.setStatus(`Complete. ${statusParts.join(", ")}.`);
     callbacks.onResultsUpdate(results);
     return { results };

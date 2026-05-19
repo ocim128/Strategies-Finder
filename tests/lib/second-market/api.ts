@@ -1,6 +1,7 @@
 import type { OHLCVData, Polymarket1sGammaContextRow } from "../types/strategies";
 import type { PolymarketClob1sQuoteRow, SecondMarketSymbol } from "./types";
 import { SECOND_MARKET_SYMBOLS } from "./types";
+import { decodeBinaryOhlcvRows } from "../ohlcv-binary";
 
 const SECOND_MARKET_SYMBOL_SET = new Set<string>(SECOND_MARKET_SYMBOLS);
 
@@ -23,11 +24,7 @@ type SecondMarketCandlesResponse = {
 type SecondMarketClobQuotesResponse = {
     ok: true;
     quotes: PolymarketClob1sQuoteRow[];
-    stats?: {
-        distinctSeconds?: number;
-        missingSeconds?: number;
-        exactSampleCoveragePct?: number;
-    };
+    stats?: SecondMarketClobQuoteStats;
 };
 
 type SecondMarketGammaSnapshotsResponse = {
@@ -56,6 +53,17 @@ export function isSecondMarketChartContext(symbol: string, interval: string): bo
     return interval.trim().toLowerCase() === "1s" && normalizeSecondMarketChartSymbol(symbol) !== null;
 }
 
+export type SecondMarketClobQuoteStats = {
+    distinctSeconds?: number;
+    missingSeconds?: number;
+    exactSampleCoveragePct?: number;
+};
+
+export type SecondMarketClobQuotesResult = {
+    quotes: PolymarketClob1sQuoteRow[];
+    stats?: SecondMarketClobQuoteStats;
+};
+
 function assertOk<T extends { ok: true }>(
     response: Response,
     payload: T | SecondMarketApiError,
@@ -82,26 +90,40 @@ export async function loadSecondMarketCandles(args: {
     if (args.startTs !== undefined) params.set("startTs", String(Math.floor(args.startTs)));
     if (args.endTs !== undefined) params.set("endTs", String(Math.floor(args.endTs)));
 
-    const response = await fetch(`${getBaseUrl()}/api/second-market/candles?${params.toString()}`, { method: "GET" });
-    const payload = await response.json().catch(() => ({})) as SecondMarketCandlesResponse | SecondMarketApiError;
-    const data = assertOk(response, payload, "/api/second-market/candles");
-    return data.candles.map((row) => ({
-        time: row.ts as OHLCVData["time"],
-        open: row.open,
-        high: row.high,
-        low: row.low,
-        close: row.close,
-        volume: row.volume,
-    }));
+    const url = `${getBaseUrl()}/api/second-market/candles?${params.toString()}`;
+    const parseJsonCandles = async (jsonResponse: Response): Promise<OHLCVData[]> => {
+        const payload = await jsonResponse.json().catch(() => ({})) as SecondMarketCandlesResponse | SecondMarketApiError;
+        const data = assertOk(jsonResponse, payload, "/api/second-market/candles");
+        return data.candles.map((row) => ({
+            time: row.ts as OHLCVData["time"],
+            open: row.open,
+            high: row.high,
+            low: row.low,
+            close: row.close,
+            volume: row.volume,
+        }));
+    };
+
+    const response = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/octet-stream" },
+    });
+    const contentType = response.headers.get("content-type") ?? "";
+    if (response.ok && contentType.includes("application/octet-stream")) {
+        const candles = decodeBinaryOhlcvRows(await response.arrayBuffer());
+        if (candles) return candles;
+        return parseJsonCandles(await fetch(url, { method: "GET", headers: { Accept: "application/json" } }));
+    }
+    return parseJsonCandles(response);
 }
 
-export async function loadSecondMarketClobQuotes(args: {
+export async function loadSecondMarketClobQuotesWithStats(args: {
     symbol: SecondMarketSymbol;
     startTs: number;
     endTs: number;
     seriesId?: string;
     baseUrl?: string;
-}): Promise<PolymarketClob1sQuoteRow[]> {
+}): Promise<SecondMarketClobQuotesResult> {
     const params = new URLSearchParams({
         symbol: args.symbol,
         startTs: String(Math.floor(args.startTs)),
@@ -111,7 +133,21 @@ export async function loadSecondMarketClobQuotes(args: {
 
     const response = await fetch(`${getBaseUrl(args.baseUrl)}/api/second-market/clob-quotes?${params.toString()}`, { method: "GET" });
     const payload = await response.json().catch(() => ({})) as SecondMarketClobQuotesResponse | SecondMarketApiError;
-    return assertOk(response, payload, "/api/second-market/clob-quotes").quotes;
+    const data = assertOk(response, payload, "/api/second-market/clob-quotes");
+    return {
+        quotes: data.quotes,
+        stats: data.stats,
+    };
+}
+
+export async function loadSecondMarketClobQuotes(args: {
+    symbol: SecondMarketSymbol;
+    startTs: number;
+    endTs: number;
+    seriesId?: string;
+    baseUrl?: string;
+}): Promise<PolymarketClob1sQuoteRow[]> {
+    return (await loadSecondMarketClobQuotesWithStats(args)).quotes;
 }
 
 export async function loadSecondMarketGammaSnapshots(args: {
