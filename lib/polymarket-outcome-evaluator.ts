@@ -93,39 +93,48 @@ export function evaluatePolymarketOutcomes(
         precomputed
     );
 
-    // Check if 1m bridge evaluation is requested
     const bridgeOptions = options as PolymarketEvalOptions1mBridge;
-    const tradeContext = bridgeOptions.entryOffset !== undefined
-        ? createPolymarketBridgeEvaluationContext(chartData, outcomes)
-        : createPolymarketTradeEvaluationContext(chartData, outcomes);
-    const tradeEval = bridgeOptions.entryOffset !== undefined
-        ? evaluatePolymarketBacktestTrades1mBridge({
+    const ignoredSignals = Math.max(0, signals.length - backtestResult.totalTrades);
+    const entryOffset = bridgeOptions.entryOffset;
+
+    if (entryOffset !== undefined) {
+        const context = createPolymarketBridgeEvaluationContext(chartData, outcomes);
+        const tradeEval = evaluatePolymarketBacktestTrades1mBridge({
             chartData,
             trades: backtestResult.trades,
             outcomes,
             strategyKey,
-            selectedOffset: bridgeOptions.entryOffset,
+            selectedOffset: entryOffset,
             includeRows: true,
-            context: tradeContext,
-            entryPriceFilterCents: options.entryPriceFilterCents,
-        })
-        : evaluatePolymarketBacktestTrades({
-            chartData,
-            trades: backtestResult.trades,
-            outcomes,
-            strategyKey,
-            includeRows: true,
-            context: tradeContext,
+            context,
             entryPriceFilterCents: options.entryPriceFilterCents,
         });
 
-    const ignoredSignals = Math.max(0, signals.length - backtestResult.totalTrades);
+        return {
+            ...tradeEval,
+            evaluatedEvents: context.evaluatedEvents,
+            alwaysYesBaselineWinRate: context.evaluatedEvents > 0 ? context.resolvedUpCount / context.evaluatedEvents : 0,
+            alwaysNoBaselineWinRate: context.evaluatedEvents > 0 ? (context.evaluatedEvents - context.resolvedUpCount) / context.evaluatedEvents : 0,
+            ignoredSignals,
+        };
+    }
+
+    const context = createPolymarketTradeEvaluationContext(chartData, outcomes);
+    const tradeEval = evaluatePolymarketBacktestTrades({
+        chartData,
+        trades: backtestResult.trades,
+        outcomes,
+        strategyKey,
+        includeRows: true,
+        context,
+        entryPriceFilterCents: options.entryPriceFilterCents,
+    });
 
     return {
         ...tradeEval,
-        evaluatedEvents: tradeContext.evaluatedEvents,
-        alwaysYesBaselineWinRate: tradeContext.evaluatedEvents > 0 ? tradeContext.resolvedUpCount / tradeContext.evaluatedEvents : 0,
-        alwaysNoBaselineWinRate: tradeContext.evaluatedEvents > 0 ? (tradeContext.evaluatedEvents - tradeContext.resolvedUpCount) / tradeContext.evaluatedEvents : 0,
+        evaluatedEvents: context.evaluatedEvents,
+        alwaysYesBaselineWinRate: context.evaluatedEvents > 0 ? context.resolvedUpCount / context.evaluatedEvents : 0,
+        alwaysNoBaselineWinRate: context.evaluatedEvents > 0 ? (context.evaluatedEvents - context.resolvedUpCount) / context.evaluatedEvents : 0,
         ignoredSignals,
     };
 }

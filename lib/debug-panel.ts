@@ -10,6 +10,11 @@ type LagSnapshot = {
 const EVENT_LOOP_INTERVAL_MS = 250;
 const LAG_LOG_THRESHOLD_MS = 200;
 const LAG_LOG_THROTTLE_MS = 2000;
+let debugPanelInitialized = false;
+let debugPanelAbortController: AbortController | null = null;
+let lagIntervalId: number | null = null;
+let refreshIntervalId: number | null = null;
+let unsubscribeDebugLogger: (() => void) | null = null;
 
 function safeStringify(value: unknown): string {
     try {
@@ -39,6 +44,10 @@ function buildStateSnapshot(): string {
 }
 
 export function initDebugPanel() {
+    if (debugPanelInitialized) {
+        return;
+    }
+
     const panel = getRequiredElement<HTMLElement>('debugPanel');
     const toggleButton = getRequiredElement<HTMLButtonElement>('debugToggle');
     const closeButton = getRequiredElement<HTMLButtonElement>('debugClose');
@@ -51,8 +60,11 @@ export function initDebugPanel() {
     let lag: LagSnapshot = { lastLagMs: 0, maxLagMs: 0 };
     let lastLagLoggedAt = 0;
     let lastTick = Date.now();
+    debugPanelInitialized = true;
+    debugPanelAbortController = new AbortController();
+    const listenerOptions = { signal: debugPanelAbortController.signal };
 
-    window.setInterval(() => {
+    lagIntervalId = window.setInterval(() => {
         const now = Date.now();
         const drift = now - lastTick - EVENT_LOOP_INTERVAL_MS;
         if (drift > LAG_LOG_THRESHOLD_MS) {
@@ -109,11 +121,11 @@ export function initDebugPanel() {
 
     toggleButton.addEventListener('click', () => {
         setVisible(!isVisible());
-    });
+    }, listenerOptions);
 
-    closeButton.addEventListener('click', () => setVisible(false));
+    closeButton.addEventListener('click', () => setVisible(false), listenerOptions);
 
-    clearButton.addEventListener('click', () => debugLogger.clear());
+    clearButton.addEventListener('click', () => debugLogger.clear(), listenerOptions);
 
     copyButton.addEventListener('click', async () => {
         const entries = debugLogger.getEntries().map(formatEntry);
@@ -135,9 +147,9 @@ export function initDebugPanel() {
         } catch (error) {
             debugLogger.error('debug.copy.failed', { error: safeStringify(error) });
         }
-    });
+    }, listenerOptions);
 
-    debugLogger.subscribe(() => {
+    unsubscribeDebugLogger = debugLogger.subscribe(() => {
         if (isVisible()) {
             renderLogs();
             renderPerf();
@@ -152,9 +164,9 @@ export function initDebugPanel() {
         if (event.key === 'Escape' && isVisible()) {
             setVisible(false);
         }
-    });
+    }, listenerOptions);
 
-    window.setInterval(() => {
+    refreshIntervalId = window.setInterval(() => {
         if (isVisible()) {
             renderState();
             renderPerf();
@@ -162,4 +174,20 @@ export function initDebugPanel() {
     }, 500);
 
     debugLogger.event('debug.ready');
+}
+
+export function disposeDebugPanel(): void {
+    if (lagIntervalId !== null) {
+        window.clearInterval(lagIntervalId);
+        lagIntervalId = null;
+    }
+    if (refreshIntervalId !== null) {
+        window.clearInterval(refreshIntervalId);
+        refreshIntervalId = null;
+    }
+    debugPanelAbortController?.abort();
+    debugPanelAbortController = null;
+    unsubscribeDebugLogger?.();
+    unsubscribeDebugLogger = null;
+    debugPanelInitialized = false;
 }

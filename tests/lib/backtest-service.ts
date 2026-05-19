@@ -46,8 +46,6 @@ import {
     type BacktestRunHandle,
 } from "./backtest-run-presenter";
 import { commitBacktestResult } from "./state-actions";
-import { annotateBacktestResultWithPolymarketOutcomes } from "./polymarket-trade-annotations";
-import { applyPolymarketAlternativeSizing } from "./polymarket-alternative-sizing";
 import { resolveEffectivePolymarketExitMode } from "./polymarket-exit-mode";
 import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import { executeBacktest, executeBacktestFromSignals } from "./backtest-executor";
@@ -72,10 +70,6 @@ import {
     transferBacktestEdgeAnalysisInput,
 } from "./backtest-edge-analysis";
 import { attachTradeTimingQuality } from "./trade-timing-quality";
-import {
-    annotateBacktestResultWithSecondMarketClob,
-    isSecondMarketPolymarketSupported,
-} from "./second-market/evaluation";
 
 type CurrentBacktestExecution = {
     result: BacktestResult;
@@ -163,6 +157,7 @@ export class BacktestService {
             const annotatePolymarket = settings.polymarketAnnotationEnabled ?? false;
             if (annotatePolymarket) {
                 const annotatedResult = await this.annotatePolymarketResult(result, settings, sourceData);
+                const { applyPolymarketAlternativeSizing } = await import("./polymarket-alternative-sizing");
                 const sizedResult = applyPolymarketAlternativeSizing({
                     result: annotatedResult,
                     chartData: this.selectClosedCandleData(
@@ -651,8 +646,9 @@ export class BacktestService {
                 polymarketAnnotationEnabled: settings.polymarketAnnotationEnabled,
             });
             const outcomeInterval = resolvePolymarketOutcomeInterval(settings.polymarketOutcomeInterval);
-            if (isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval)) {
-                return await annotateBacktestResultWithSecondMarketClob({
+            const secondMarketEvaluation = await import("./second-market/evaluation");
+            if (secondMarketEvaluation.isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval)) {
+                return await secondMarketEvaluation.annotateBacktestResultWithSecondMarketClob({
                     result,
                     symbol: state.currentSymbol,
                     interval: state.currentInterval,
@@ -678,6 +674,7 @@ export class BacktestService {
                 });
             }
 
+            const { annotateBacktestResultWithPolymarketOutcomes } = await import("./polymarket-trade-annotations");
             return await annotateBacktestResultWithPolymarketOutcomes(result, {
                 symbol: state.currentSymbol,
                 interval: state.currentInterval,

@@ -70,7 +70,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 ### Strategy and backtest engine
 - Strategy registry and loading: `strategyRegistry.ts`
 - Built-in source of truth: `lib/strategies/lib/*`, with generated metadata/loaders/eager manifests under `lib/strategies/manifest*.ts`
-- Browser built-in loading: metadata and per-key loaders from `lib/strategies/manifest-meta.ts` and `lib/strategies/manifest-loaders.ts`
+- Browser built-in loading: summary metadata and per-key loaders from `lib/strategies/manifest-summary.ts` and `lib/strategies/manifest-loaders.ts`
 - Worker/test eager built-in library: `lib/strategies/library.ts`
 - Backtest orchestration/UI: `lib/backtest-service.ts`
 - Backtest run feedback presenter: `lib/backtest-run-presenter.ts`
@@ -172,7 +172,7 @@ This ordering matters because Finder, Scanner, and repeated backtests depend on 
 ### Strategy registration is split
 - UI and runtime loading use `strategyRegistry`
 - Built-in source of truth is `lib/strategies/lib/*`, with generated metadata, loader, key, and eager manifest files under `lib/strategies/manifest*.ts`
-- Browser UI listing uses `manifest-meta.ts`; browser strategy execution loads code through `manifest-loaders.ts`
+- Browser UI listing uses `manifest-summary.ts`; browser strategy execution loads code through `manifest-loaders.ts`
 - `lib/strategies/library.ts` uses the eager manifest and is what worker-side evaluation imports
 
 If you add or rename a built-in strategy, run `npm run strategies:sync-manifest` or the strategy will not load consistently.

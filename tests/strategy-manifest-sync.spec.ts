@@ -5,11 +5,13 @@ import {
     generateStrategyManifestSource,
     generateStrategyManifestEagerSource,
     generateStrategyMetaSource,
+    generateStrategySummarySource,
     generateStrategyLoadersSource,
     generateStrategyKeysSource,
     getStrategyManifestPath,
     getStrategyManifestEagerPath,
     getStrategyMetaPath,
+    getStrategySummaryPath,
     getStrategyLoadersPath,
     getStrategyKeysPath,
 } from "../scripts/strategy-manifest-generator";
@@ -35,6 +37,10 @@ describe("Strategy manifest sync", () => {
 
     it("keeps the generated meta aligned with strategy files", () => {
         checkSynced(getStrategyMetaPath(), generateStrategyMetaSource, "manifest-meta.ts");
+    });
+
+    it("keeps the generated summary aligned with strategy files", () => {
+        checkSynced(getStrategySummaryPath(), generateStrategySummarySource, "manifest-summary.ts");
     });
 
     it("keeps the generated loaders aligned with strategy files", () => {

@@ -20,6 +20,8 @@
 		"*.tsx",
 		"*.js",
 		"*.jsx",
+		"lib/**/*.ts",
+		"lib/**/*.tsx",
 		"scripts/**/*.ts",
 		"workers/**/*.ts",
 		"workers/**/*.tsx"

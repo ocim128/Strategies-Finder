@@ -2,7 +2,7 @@ import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { DataCache } from "../lib/data/data-cache";
-import { DataFetcher } from "../lib/data/data-fetcher";
+import { DataFetcher, type DataLoadReporter } from "../lib/data/data-fetcher";
 import type { OHLCVData } from "../lib/types/strategies";
 
 const originalFetch = globalThis.fetch;
@@ -30,6 +30,7 @@ function createFetcher(options: {
     importedDataByKey?: Map<string, OHLCVData[]>;
     getLookbackBars: () => number | null;
     provider?: string;
+    reporter?: DataLoadReporter;
 }): DataFetcher {
     const providerRouter = {
         getProvider: () => options.provider ?? "binance",
@@ -43,7 +44,7 @@ function createFetcher(options: {
         {} as any,
         () => options.importedDataByKey ?? new Map<string, OHLCVData[]>(),
         options.getLookbackBars,
-        {}
+        options.reporter ?? {}
     );
 }
 
@@ -133,6 +134,66 @@ describe("DataFetcher chart lookback", () => {
         const url = new URL(requestedUrl);
 
         assert.equal(url.searchParams.get("marketType"), "futures");
+    });
+
+    it("dedupes concurrent supported 1s chart loads", async () => {
+        let requestCount = 0;
+        globalThis.fetch = async () => {
+            requestCount += 1;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            return new Response(JSON.stringify({
+                ok: true,
+                candles: [
+                    { ts: 1_700_000_001, open: 100, high: 101, low: 99, close: 100.5, volume: 10 },
+                    { ts: 1_700_000_002, open: 100.5, high: 102, low: 100, close: 101, volume: 12 },
+                ],
+            }), { status: 200 });
+        };
+
+        const fetcher = createFetcher({
+            getLookbackBars: () => 2,
+        });
+
+        const [left, right] = await Promise.all([
+            fetcher.fetchData("BTCUSDT", "1s"),
+            fetcher.fetchData("BTCUSDT", "1s"),
+        ]);
+
+        assert.equal(requestCount, 1);
+        assert.deepEqual(left, right);
+        assert.deepEqual(left.map((candle) => candle.time), [1_700_000_001, 1_700_000_002]);
+    });
+
+    it("keeps detached chart loads out of the shared in-flight UI load", async () => {
+        let requestCount = 0;
+        let reportCount = 0;
+        globalThis.fetch = async () => {
+            requestCount += 1;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            return new Response(JSON.stringify({
+                ok: true,
+                candles: [
+                    { ts: 1_700_000_001, open: 100, high: 101, low: 99, close: 100.5, volume: 10 },
+                ],
+            }), { status: 200 });
+        };
+
+        const fetcher = createFetcher({
+            getLookbackBars: () => 1,
+            reporter: {
+                updateSymbolDataSource: () => {
+                    reportCount += 1;
+                },
+            },
+        });
+
+        await Promise.all([
+            fetcher.fetchDataDetached("BTCUSDT", "1s"),
+            fetcher.fetchData("BTCUSDT", "1s"),
+        ]);
+
+        assert.equal(requestCount, 2);
+        assert.equal(reportCount, 1);
     });
 
     it("sanitizes unaligned Binance candles from the in-memory cache", async () => {

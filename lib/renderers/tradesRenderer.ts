@@ -11,7 +11,6 @@ import {
     isSupportedPolymarketOutcomeRun,
     loadPolymarketOutcomesForTimeRange,
 } from "../polymarket-btc5m";
-import { annotateTradesWithPolymarketOutcomesForRun } from "../polymarket-trade-annotations";
 import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "../polymarket-exit-mode";
 import {
     evaluateSignalExitTrades,
@@ -347,6 +346,7 @@ export class TradesRenderer {
                 limitEntryPricePoints = [];
             }
         }
+        const { annotateTradesWithPolymarketOutcomesForRun } = await import("../polymarket-trade-annotations");
         return annotateTradesWithPolymarketOutcomesForRun(
             trades,
             outcomes,

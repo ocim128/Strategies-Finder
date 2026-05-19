@@ -47,6 +47,7 @@ const generatedStrategyArtifacts = [
     "manifest.ts",
     "manifest-eager.ts",
     "manifest-meta.ts",
+    "manifest-summary.ts",
     "manifest-loaders.ts",
     "manifest-keys.ts",
 ] as const;

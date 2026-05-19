@@ -1,6 +1,9 @@
 import { AlertSubscription, parseAlertConfigNameFromStreamId } from "./alert-service";
 import { getOptionalElement } from "./dom-utils";
+import { safeJsonParse, stableStringify } from "./json-utils";
 import { settingsManager } from "./settings-manager";
+
+export { safeJsonParse, stableStringify } from "./json-utils";
 
 export type SavedConfig = {
     name: string;
@@ -15,29 +18,6 @@ export type ConfigIndexEntry = {
     paramsKey: string;
     settingsKey: string;
 };
-
-export function safeJsonParse<T>(raw: string, fallback: T): T {
-    try {
-        return JSON.parse(raw);
-    } catch {
-        return fallback;
-    }
-}
-
-function stableNormalize(value: unknown): unknown {
-    if (Array.isArray(value)) return value.map(stableNormalize);
-    if (value && typeof value === "object") {
-        const entries = Object.entries(value as Record<string, unknown>)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([key, item]) => [key, stableNormalize(item)]);
-        return Object.fromEntries(entries);
-    }
-    return value;
-}
-
-export function stableStringify(value: unknown): string {
-    return JSON.stringify(stableNormalize(value));
-}
 
 export function resolveCurrentConfigName(
     strategyKey: string,

@@ -10,6 +10,7 @@ import { settingsManager } from "./settings-manager";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
 import { MAJOR_SYMBOLS } from "./portfolioLab/portfolio-lab-types";
 import { getLocalDailyAssets, type LocalDailyAsset } from "./local-daily-datasets";
+import { cloneJsonCompatible } from "./json-utils";
 
 import { FINDER_SORT_OPTIONS, METRIC_FULL_LABELS, UNIVERSE_METRIC_FULL_LABELS } from "./finder/constants";
 import { buildFinderEvaluationData, runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
@@ -1801,7 +1802,7 @@ export class FinderManager {
 	}
 
 	private cloneBacktestSettings<T>(settings: T): T {
-		return JSON.parse(JSON.stringify(settings)) as T;
+		return cloneJsonCompatible(settings);
 	}
 
 	private cloneOhlcvData(data: OHLCVData[]): OHLCVData[] {

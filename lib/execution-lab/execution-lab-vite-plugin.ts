@@ -25,6 +25,7 @@ import {
     submitLiveCancelAllToExecutor,
     submitLiveTradeToExecutor,
 } from "./live-executor-adapter";
+import { stableStringify } from "../json-utils";
 import { sanitizeExecutionLabPathPart, validateExecutionLabRecord } from "./paper-log-schema";
 import {
     buildLiveTradeFailureResponse,
@@ -102,17 +103,8 @@ function sendJson(res: any, status: number, payload: unknown): void {
     res.end(JSON.stringify(payload));
 }
 
-function stableJson(value: unknown): string {
-    if (value === null || typeof value !== "object") return JSON.stringify(value);
-    if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(",")}]`;
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map((key) =>
-        `${JSON.stringify(key)}:${stableJson(record[key])}`
-    ).join(",")}}`;
-}
-
 function payloadHash(value: unknown): string {
-    return createHash("sha256").update(stableJson(value)).digest("hex");
+    return createHash("sha256").update(stableStringify(value)).digest("hex");
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {

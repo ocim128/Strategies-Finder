@@ -24,6 +24,7 @@ import type { BacktestSettings, Trade } from './strategies/index';
 import type { DataProvider } from './types/data-providers';
 import { resolveSubscriptionExecutionBacktestSettings } from './alert-subscription-utils';
 import { debugLogger } from './debug-logger';
+import { safeJsonParse } from './json-utils';
 import {
     getDefaultAlertMinClosedCandles,
     selectExecutionAwareClosedCandles,
@@ -307,7 +308,7 @@ class LivePositionsService {
     }
 
     private async analyzeSubscription(sub: AlertSubscription, force = false): Promise<AnalysisResult> {
-        const strategyParams = this.safeJsonParse<Record<string, number>>(sub.strategy_params_json, {});
+        const strategyParams = safeJsonParse<Record<string, number>>(sub.strategy_params_json, {});
         const backtestSettings = this.resolveBacktestSettings(sub);
         const configName = parseAlertConfigNameFromStreamId(sub.stream_id);
         const provider = await this.resolveProviderForSymbol(sub.symbol, backtestSettings);
@@ -408,7 +409,7 @@ class LivePositionsService {
         }
 
         const workerPayload = latestWorkerSignal
-            ? this.safeJsonParse<Record<string, unknown>>(latestWorkerSignal.payload_json, {})
+            ? safeJsonParse<Record<string, unknown>>(latestWorkerSignal.payload_json, {})
             : {};
         const tpPrice = typeof workerPayload.takeProfitPrice === 'number'
             ? workerPayload.takeProfitPrice
@@ -621,7 +622,7 @@ class LivePositionsService {
 
     private resolveBacktestSettings(sub: AlertSubscription): BacktestSettings {
         const parsed = resolveSubscriptionExecutionBacktestSettings(
-            this.safeJsonParse<BacktestSettings>(sub.backtest_settings_json, {})
+            safeJsonParse<BacktestSettings>(sub.backtest_settings_json, {})
         );
         if (parseIntervalSeconds(sub.interval) !== 7200) {
             return parsed;
@@ -674,7 +675,7 @@ class LivePositionsService {
         force = false
     ): Promise<Trade[]> {
         try {
-            const resolvedParams = strategyParams ?? this.safeJsonParse<Record<string, number>>(sub.strategy_params_json, {});
+            const resolvedParams = strategyParams ?? safeJsonParse<Record<string, number>>(sub.strategy_params_json, {});
             const resolvedSettings = backtestSettings ?? this.resolveBacktestSettings(sub);
             const cacheKey = this.getLocalBacktestCacheKey(sub);
             const cacheSignature = this.getLocalBacktestCacheSignature(sub);
@@ -841,14 +842,6 @@ class LivePositionsService {
             return subs.find((s) => s.stream_id === streamId) ?? null;
         } catch {
             return null;
-        }
-    }
-
-    private safeJsonParse<T>(raw: string, fallback: T): T {
-        try {
-            return JSON.parse(raw) as T;
-        } catch {
-            return fallback;
         }
     }
 

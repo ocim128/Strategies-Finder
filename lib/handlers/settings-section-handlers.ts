@@ -320,15 +320,6 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     strategyTimeframeMinutes.addEventListener('change', syncStrategyTimeframeState);
     applyStrategyTimeframeMode();
 
-    const finderTradesToggle = dom.finderTradesToggle;
-    const finderTradeFilters = dom.finderTradeFilters;
-    const applyFinderTradeFilterState = () => {
-        finderTradeFilters.classList.toggle('disabled', !finderTradesToggle.checked);
-    };
-
-    finderTradesToggle.addEventListener('change', applyFinderTradeFilterState);
-    applyFinderTradeFilterState();
-
     const fixedTradeToggle = dom.fixedTradeToggle;
     const initialCapitalGroup = dom.initialCapitalGroup;
     const fixedTradeGroup = dom.fixedTradeGroup;

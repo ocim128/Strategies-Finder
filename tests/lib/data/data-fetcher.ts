@@ -78,6 +78,7 @@ type SecondMarketMarketType = "spot" | "futures";
 
 export class DataFetcher {
     private static readonly PRICE_JUMP_GUARD_RATIO = 8;
+    private readonly inFlightLoads = new Map<string, Promise<OHLCVData[]>>();
 
     constructor(
         private providerRouter: DataProviderRouter,
@@ -88,6 +89,25 @@ export class DataFetcher {
         private reporter: DataLoadReporter,
     ) {}
 
+    private runDedupedLoad(key: string, work: () => Promise<OHLCVData[]>): Promise<OHLCVData[]> {
+        const existing = this.inFlightLoads.get(key);
+        if (existing) {
+            return existing;
+        }
+
+        const promise = work().finally(() => {
+            if (this.inFlightLoads.get(key) === promise) {
+                this.inFlightLoads.delete(key);
+            }
+        });
+        this.inFlightLoads.set(key, promise);
+        return promise;
+    }
+
+    private canDedupeHistoricalOptions(options?: HistoricalFetchOptions): boolean {
+        return !options?.signal && typeof options?.onProgress !== "function";
+    }
+
     private getSecondMarketMarketType(symbol: string): SecondMarketMarketType {
         return this.providerRouter.getProvider(symbol) === "binance-futures" ? "futures" : "spot";
     }
@@ -96,17 +116,24 @@ export class DataFetcher {
         const secondMarketSymbol = normalizeSecondMarketChartSymbol(symbol);
         if (secondMarketSymbol && isSecondMarketChartContext(symbol, interval)) {
             if (signal?.aborted) return [];
-            const data = await loadSecondMarketCandles({
-                symbol: secondMarketSymbol,
-                marketType: this.getSecondMarketMarketType(symbol),
-                limit: this.getChartLookbackBars() ?? DATA_CHART_TOTAL_LIMIT,
-            });
-            this.reporter.updateSymbolDataSource?.(
-                "1s miner DB",
-                "seed",
-                "Chart data is loaded from price-data/1second-chart/second-market-data.sqlite."
-            );
-            return data;
+            const marketType = this.getSecondMarketMarketType(symbol);
+            const limit = this.getChartLookbackBars() ?? DATA_CHART_TOTAL_LIMIT;
+            const load = async () => {
+                const data = await loadSecondMarketCandles({
+                    symbol: secondMarketSymbol,
+                    marketType,
+                    limit,
+                });
+                this.reporter.updateSymbolDataSource?.(
+                    "1s miner DB",
+                    "seed",
+                    "Chart data is loaded from price-data/1second-chart/second-market-data.sqlite."
+                );
+                return data;
+            };
+            return signal
+                ? load()
+                : this.runDedupedLoad(`second-market:${secondMarketSymbol}:${marketType}:${limit}`, load);
         }
 
         const provider = this.providerRouter.getProvider(symbol);
@@ -120,18 +147,25 @@ export class DataFetcher {
         });
         if (fastPathCandles) return fastPathCandles;
 
-        const chain = await this.resolveProviderFallbackChain(symbol, interval, signal);
-        return this.fetchDataFromProviderChain(chain, symbol, interval, signal);
+        const load = async () => {
+            const chain = await this.resolveProviderFallbackChain(symbol, interval, signal);
+            return this.fetchDataFromProviderChain(chain, symbol, interval, signal);
+        };
+        return signal
+            ? load()
+            : this.runDedupedLoad(`chart:${provider}:${cacheKey}:${interval}:${lookbackBars ?? "all"}`, load);
     }
 
     async fetchDataDetached(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
-        const saved = this.reporter;
-        this.reporter = {};
-        try {
-            return await this.fetchData(symbol, interval, signal);
-        } finally {
-            this.reporter = saved;
-        }
+        const detachedFetcher = new DataFetcher(
+            this.providerRouter,
+            this.cache,
+            this.persistence,
+            this.getImportedDataByKey,
+            this.getChartLookbackBars,
+            {}
+        );
+        return detachedFetcher.fetchData(symbol, interval, signal);
     }
 
     async fetchDataForScan(
@@ -232,11 +266,15 @@ export class DataFetcher {
         const secondMarketSymbol = normalizeSecondMarketChartSymbol(symbol);
         if (secondMarketSymbol && isSecondMarketChartContext(symbol, interval)) {
             if (options?.signal?.aborted) return [];
-            return loadSecondMarketCandles({
+            const marketType = this.getSecondMarketMarketType(symbol);
+            const load = () => loadSecondMarketCandles({
                 symbol: secondMarketSymbol,
-                marketType: this.getSecondMarketMarketType(symbol),
+                marketType,
                 limit,
             });
+            return this.canDedupeHistoricalOptions(options)
+                ? this.runDedupedLoad(`second-market-limit:${secondMarketSymbol}:${marketType}:${limit}`, load)
+                : load();
         }
 
         if (isMockSymbol(symbol)) {
@@ -253,6 +291,31 @@ export class DataFetcher {
         });
         if (fastPathCandles) return fastPathCandles;
 
+        const load = () => this.fetchDataWithLimitUncached(symbol, interval, limit, provider, options);
+        if (this.canDedupeHistoricalOptions(options)) {
+            return this.runDedupedLoad(
+                [
+                    "limit",
+                    provider,
+                    cacheKey,
+                    interval,
+                    limit,
+                    options?.requestDelayMs ?? "default",
+                    options?.maxRequests ?? "default",
+                ].join(":"),
+                load
+            );
+        }
+        return load();
+    }
+
+    private async fetchDataWithLimitUncached(
+        symbol: string,
+        interval: string,
+        limit: number,
+        provider: DataProvider,
+        options?: HistoricalFetchOptions
+    ): Promise<OHLCVData[]> {
         const resampleOptions = this.getResampleOptions(interval);
         const localNonBinance = !isBinanceDataProvider(provider)
             ? await this.loadNonBinanceLocalData(symbol, interval, limit, options?.signal)

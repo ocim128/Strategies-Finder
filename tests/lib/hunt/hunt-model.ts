@@ -8,6 +8,7 @@ import type { CapitalSettings } from "../types/backtest";
 import type { FinderMetric, FinderResult, PolymarketFinderRankMode } from "../types/finder";
 import { SIGNAL_EXIT_SUPPORTED_RANK_MODES, type PolymarketExitMode } from "../polymarket-exit-mode";
 import type { StrategyParams } from "../types/strategies";
+import { stableStringify } from "../json-utils";
 
 export type HuntProfileSource = "current_ui" | "endpoint_snapshot" | "saved_config_plus_chart";
 export type HuntResultsView = "survivors" | "per_profile";
@@ -498,7 +499,7 @@ export function stableNormalizeParams(params: StrategyParams): StrategyParams {
 }
 
 export function buildStableParamKey(params: StrategyParams): string {
-    return JSON.stringify(stableNormalizeParams(params));
+    return stableStringify(stableNormalizeParams(params));
 }
 
 export function isBetterMetricValue(

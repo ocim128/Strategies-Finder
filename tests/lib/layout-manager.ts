@@ -11,8 +11,6 @@ import tabSettingsEndHtml from '../html-partials/tab-settings-end.html?raw';
 
 import tabResultsHtml from '../html-partials/tab-results.html?raw';
 import tabTradesHtml from '../html-partials/tab-trades.html?raw';
-import tabFinderHtml from '../html-partials/tab-finder.html?raw';
-import tabAlertsHtml from '../html-partials/tab-alerts.html?raw';
 
 import statusBarHtml from '../html-partials/status-bar.html?raw';
 import debugPanelHtml from '../html-partials/debug-panel.html?raw';
@@ -36,8 +34,6 @@ const EAGER_STRATEGY_PANEL_TAB_PARTIALS = [
     SETTINGS_TAB_HTML,
     tabResultsHtml,
     tabTradesHtml,
-    tabFinderHtml,
-    tabAlertsHtml,
 ] as const;
 
 const ROOT_OVERLAY_PARTIALS = [

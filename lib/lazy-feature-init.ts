@@ -14,9 +14,11 @@ const pendingFeatures = new Map<string, LazyFeatureInit>();
 const initializedFeatures = new Set<string>();
 const inFlightFeatures = new Map<string, Promise<void>>();
 let listenerAttached = false;
+let tabLazyListener: EventListener | null = null;
 
 const TAB_TO_FEATURE: Record<string, string> = {
     finder: "finder",
+    alerts: "alerts",
     hunt: "hunt",
     walkforward: "walk-forward",
     montecarlo: "monte-carlo",
@@ -98,12 +100,13 @@ export function attachLazyFeatureTrigger<TEvent extends Event = Event>({
 export function attachTabLazyListener(): void {
     if (listenerAttached) return;
     listenerAttached = true;
-    window.addEventListener("strategy-panel:tab-change", ((event: CustomEvent<{ tabId: string }>) => {
+    tabLazyListener = ((event: CustomEvent<{ tabId: string }>) => {
         const featureId = TAB_TO_FEATURE[event.detail.tabId];
         if (featureId) {
             void activateLazyFeature(featureId).catch(() => {});
         }
-    }) as EventListener);
+    }) as EventListener;
+    window.addEventListener("strategy-panel:tab-change", tabLazyListener);
 }
 
 export function isLazyFeatureInitialized(featureId: string): boolean {
@@ -111,8 +114,12 @@ export function isLazyFeatureInitialized(featureId: string): boolean {
 }
 
 export function resetLazyFeatureInitState(): void {
+    if (tabLazyListener && typeof window !== "undefined") {
+        window.removeEventListener("strategy-panel:tab-change", tabLazyListener);
+    }
     pendingFeatures.clear();
     initializedFeatures.clear();
     inFlightFeatures.clear();
+    tabLazyListener = null;
     listenerAttached = false;
 }

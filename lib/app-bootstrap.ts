@@ -19,7 +19,6 @@ import { setupStateSubscriptions } from "./handlers/state-subscriptions";
 import { setupEventHandlers } from "./handlers/ui-event-handlers";
 import { setupSettingsHandlers } from "./handlers/settings-handlers";
 import { initSettingsUX } from "./handlers/settings-ux-handlers";
-import { initAlertHandlers } from "./handlers/alert-handlers";
 import { initLivePositionsHandlers } from "./handlers/live-positions-handlers";
 import { handleCrosshairMove } from "./app-actions";
 import { initEngineStatusIndicator } from "./engine-status-indicator";
@@ -199,12 +198,6 @@ export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapCo
         init: () => initCrossSymbolUI(),
     },
     {
-        id: "alert-handlers",
-        stage: "pre_restore",
-        dependsOn: ["ui-events"],
-        init: () => initAlertHandlers(),
-    },
-    {
         id: "live-positions-handlers",
         stage: "pre_restore",
         dependsOn: ["ui-events"],
@@ -333,6 +326,7 @@ function registerLazyFeatures(): void {
     registerLazyFeature("debug-panel", async () => (await import("./debug-panel")).initDebugPanel());
     registerLazyFeature("quick-view", async () => (await import("./quick-view")).quickViewManager.init());
     registerLazyFeature("finder", async () => (await import("./finder-manager")).finderManager.init());
+    registerLazyFeature("alerts", async () => (await import("./handlers/alert-handlers")).initAlertHandlers());
     registerLazyFeature("hunt", async () => (await import("./hunt/hunt-service")).huntService.init());
     registerLazyFeature("data-mining", async () => (await import("./data-mining-manager")).dataMiningManager.init());
     registerLazyFeature("walk-forward", async () => (await import("./walk-forward-service")).walkForwardService.initUI());

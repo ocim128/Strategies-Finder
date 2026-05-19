@@ -1,24 +1,24 @@
 import type { Strategy } from "../types/strategies";
-import { builtInStrategyMeta, type BuiltInStrategyMeta } from "./manifest-meta";
+import { builtInStrategySummary, type BuiltInStrategySummary } from "./manifest-summary";
 import { builtInStrategyLoaders } from "./manifest-loaders";
 import { builtInStrategyKeys } from "./manifest-keys";
 
-const metaByKey = new Map<string, BuiltInStrategyMeta>(builtInStrategyMeta.map(m => [m.key, m]));
+const metaByKey = new Map<string, BuiltInStrategySummary>(builtInStrategySummary.map(m => [m.key, m]));
 const loadedStrategies = new Map<string, Strategy>();
 const loadingPromises = new Map<string, Promise<void>>();
 
-export { type BuiltInStrategyMeta };
+export { type BuiltInStrategySummary as BuiltInStrategyMeta };
 
 export function getBuiltInStrategyKeys(): readonly string[] {
     return builtInStrategyKeys;
 }
 
-export function getBuiltInStrategyMeta(key: string): BuiltInStrategyMeta | undefined {
+export function getBuiltInStrategyMeta(key: string): BuiltInStrategySummary | undefined {
     return metaByKey.get(key);
 }
 
-export function getAllBuiltInMeta(): readonly BuiltInStrategyMeta[] {
-    return builtInStrategyMeta;
+export function getAllBuiltInMeta(): readonly BuiltInStrategySummary[] {
+    return builtInStrategySummary;
 }
 
 export function isBuiltInKey(key: string): boolean {

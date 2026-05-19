@@ -359,4 +359,9 @@ export function initAlertHandlers() {
             void refreshSubscriptions();
         }
     }) as EventListener);
+
+    const alertsPanel = getOptionalElement<HTMLElement>('alertsTab');
+    if (alertsPanel && !alertsPanel.hidden && alertsPanel.style.display !== 'none') {
+        void refreshSubscriptions();
+    }
 }

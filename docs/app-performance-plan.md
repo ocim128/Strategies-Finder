@@ -172,15 +172,19 @@ This is the foundation phase. Do this before lazy bootstrap or strategy prepared
 
 Keep the current eager manifest for existing worker/library consumers.
 
-Add two new generated files:
+Add generated browser-facing manifest files:
 
+- `lib/strategies/manifest-summary.ts`
 - `lib/strategies/manifest-meta.ts`
 - `lib/strategies/manifest-loaders.ts`
 
 Recommended contents:
 
+- `manifest-summary.ts`
+  - key, name, description, strategy kind flags, and lightweight metadata for browser listing
+  - no default params or param labels
 - `manifest-meta.ts`
-  - metadata only
+  - full metadata, default params, and param labels for compatibility/admin paths
   - no strategy execute code imported eagerly
 - `manifest-loaders.ts`
   - `key -> () => import("./lib/<key>")`

@@ -49,8 +49,6 @@ const UI_EVENT_HANDLER_DOM_IDS = {
     confirmationCloseLocationLookback: "confirmationCloseLocationLookback",
     strategyTimeframeToggle: "strategyTimeframeToggle",
     strategyTimeframeMinutes: "strategyTimeframeMinutes",
-    finderTradesToggle: "finderTradesToggle",
-    finderTradeFilters: "finderTradeFilters",
     fixedTradeToggle: "fixedTradeToggle",
     initialCapitalGroup: "initialCapitalGroup",
     fixedTradeGroup: "fixedTradeGroup",
@@ -123,7 +121,6 @@ type UiEventTypedControls = {
     confirmationCloseLocationLookback: HTMLInputElement;
     strategyTimeframeToggle: HTMLInputElement;
     strategyTimeframeMinutes: HTMLInputElement;
-    finderTradesToggle: HTMLInputElement;
     fixedTradeToggle: HTMLInputElement;
     initialCapital: HTMLInputElement;
     tradeSizingMode: HTMLSelectElement;
