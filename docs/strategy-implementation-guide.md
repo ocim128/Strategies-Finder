@@ -20,12 +20,15 @@ For repo-level orientation, read [`README.md`](../README.md) first. For the oper
 
 1. Pick a stable key and keep the file name and exported const aligned.
 2. Start from a nearby example:
-   - `lib/strategies/lib/median_deviation_streak.ts`
-   - `lib/strategies/lib/vwap_zscore_reversion.ts`
+   - `lib/strategies/lib/robust_median_channel_breakout.ts` — small strategy with explicit normalization and direct `execute(...)` use
+   - `lib/strategies/lib/rolling_vwap_center.ts` — Finder-safe prepared-data reuse with normalized params
+   - for value-area work:
+     - `lib/strategies/lib/value_area_excess_snapback.ts`
+     - `lib/strategies/lib/value_rotation_divergence_fade.ts`
    - for cross-symbol work:
      - `lib/strategies/lib/relative_strength_mean_reversion.ts`
-     - `lib/strategies/lib/pair_spread_efficiency_break.ts`
-     - `lib/strategies/lib/correlation_volume_fragility.ts`
+     - `lib/strategies/lib/dominance_handoff_exhaustion.ts`
+     - `lib/strategies/lib/correlation_range_fragmentation.ts`
 3. Write `normalizeParams(...)` first if params need any coercion.
 4. Clean the dataset with `ensureCleanData(...)`.
 5. Build your base arrays once outside the signal loop.
@@ -168,6 +171,21 @@ Before reaching for a named indicator, check whether a shared strategy-layer hel
   - `buildRollingEntropy(...)`
   - `buildEfficiencyRatio(...)`
   - `buildStreakCount(...)`
+- `lib/strategies/lib/value-area-acceptance-core.ts`
+  Market-Profile-inspired distribution primitives using only OHLCV data:
+  - `buildRollingValueArea(data, lookback, coveragePct?, numBins?)` — returns `{ vah, val, poc }` as `NullableSeries`. TPO-histogram VA boundaries and Point of Control.
+  - `buildValueAreaAcceptanceRate(closes, vah, val, acceptLookback)` — fraction of recent bars inside [VAL, VAH].
+  - `buildValueAreaWidth(vah, val, closes)` — `(VAH - VAL) / close`, normalized compression gauge.
+  - `buildValueAreaMigrationRate(poc, closes, period)` — normalized POC drift rate.
+  - `buildPricePositionInVA(closes, vah, val, poc)` — distribution-relative position: 0 = POC, ±1 = VA boundary, beyond = excess.
+  - `buildValueAreaRotation(vah, val, closes, period)` — returns `{ shift, spread }`: boundary migration direction and expansion/contraction.
+  - Finder precompute: `prepareValueAreaData(data)`, `getPreparedValueAreaData(prepared, data)`, `getValueAreaSeries(prepared, lookback, coveragePct?, numBins?)`.
+- `lib/strategies/lib/range-conviction-core.ts`
+  Shared ATR/range precompute for Finder hot loops:
+  - `prepareRangeConvictionData(data)` — one-time shared array build.
+  - `getPreparedRangeConvictionData(prepared, data)` — type-guard accessor.
+  - `getAtrSeries(prepared, period)` — memoized ATR by period.
+  - `normalizeIntegerParam(value, fallback, min, max?)` and `normalizeNumberParam(value, fallback, min, max?)` — param clamping utilities reusable by any strategy.
 
 If a prompt or draft strategy references a helper that does not exist in these modules or `strategy-helpers.ts`, do not invent the import path and hope it works. Either map the idea onto existing helpers or add the missing helper first.
 
@@ -187,6 +205,9 @@ Do not assign `(number | null)[]` to `number[]`.
 - `buildEfficiencyRatio(...)` expects `OHLCVData[]`.
 - `buildTrailingHighLow(...)` expects `OHLCVData[]`.
 - `buildRollingCorrelation(...)` expects paired `number[]` inputs.
+- `buildRollingValueArea(...)` expects `OHLCVData[]` (uses closes/highs/lows internally).
+- `buildValueAreaAcceptanceRate(...)` expects `number[]` closes and `NullableSeries` for vah/val.
+- `buildPricePositionInVA(...)` expects `number[]` closes and `NullableSeries` for vah/val/poc.
 
 ### Output shape matters
 
@@ -255,6 +276,7 @@ Good candidates:
 - session VWAP arrays
 - distance series reused across many param combinations
 - cached rolling transforms keyed by lookback
+- value-area series keyed by `(lookback, bins, coverage)` — use `prepareValueAreaData(data)` and `getValueAreaSeries(prepared, lookback, coveragePct?, numBins?)` to memoize VA across param sweeps
 - cross-symbol ratio, spread, or rolling-correlation series reused across many candidate evaluations
 
 Bad candidates:
@@ -325,8 +347,8 @@ Current support:
 Useful real examples:
 
 - `lib/strategies/lib/relative_strength_mean_reversion.ts`
-- `lib/strategies/lib/pair_spread_efficiency_break.ts`
-- `lib/strategies/lib/correlation_volume_fragility.ts`
+- `lib/strategies/lib/dominance_handoff_exhaustion.ts`
+- `lib/strategies/lib/correlation_range_fragmentation.ts`
 
 ### Prompt workflow
 
