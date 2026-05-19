@@ -200,6 +200,90 @@ describe("second market shared evaluation", () => {
         }
     });
 
+    it("delays 1s CLOB entry pricing without moving the chart trade", () => {
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([trade(1, 1_700_000_010, 1_700_000_020)]),
+            context: context([
+                quote(1_700_000_010, 0.20, 0.18),
+                quote(1_700_000_013, 0.70, 0.68),
+            ]),
+            entryDelayBars: 3,
+        });
+
+        expect(evaluated.summary.entryDelayBars).to.equal(3);
+        expect(evaluated.polymarketSummary.entryDelayBars).to.equal(3);
+        expect(evaluated.polymarketEval.entryDelayBars).to.equal(3);
+        expect(evaluated.tradeResults[0]?.trade.entryTime).to.equal(1_700_000_010);
+        expect(evaluated.tradeResults[0]?.entryQuoteTs).to.equal(1_700_000_013);
+        expect(evaluated.annotatedTrades[0]?.entryTime).to.equal(1_700_000_010);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryFillTs).to.equal(1_700_000_013);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.70);
+        expect(evaluated.polymarketSummary.netPnl).to.be.closeTo(0.30, 1e-9);
+    });
+
+    it("adds the entry delay after close-based 1s execution alignment", () => {
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([trade(1, 1_700_000_010, 1_700_000_020)]),
+            context: context([
+                quote(1_700_000_011, 0.40, 0.38),
+                quote(1_700_000_014, 0.65, 0.63),
+            ]),
+            executionModel: "signal_close",
+            entryDelayBars: 3,
+        });
+
+        expect(evaluated.tradeResults[0]?.entryQuoteTs).to.equal(1_700_000_014);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryFillTs).to.equal(1_700_000_014);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.65);
+    });
+
+    it("marks delayed entries after the signal exit as unscored", () => {
+        const signalTrade = trade(1, 1_700_000_010, 1_700_000_012);
+        signalTrade.exitReason = "signal";
+
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([signalTrade]),
+            context: context([
+                quote(1_700_000_013, 0.55, 0.53),
+            ]),
+            polymarketExitMode: "signal_exit_same_event",
+            entryDelayBars: 3,
+        });
+
+        expect(evaluated.polymarketSummary.scoredTrades).to.equal(0);
+        expect(evaluated.polymarketSummary.entryTimeFilteredTrades).to.equal(1);
+        expect(evaluated.polymarketEval.scoredPredictions).to.equal(0);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitSource).to.equal("entry_time_filtered");
+    });
+
+    it("marks delayed entries outside the original Polymarket event as unscored", () => {
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([trade(1, 1_700_000_298, 1_700_000_299)]),
+            context: context([
+                quote(1_700_000_301, 0.55, 0.53),
+            ]),
+            entryDelayBars: 3,
+        });
+
+        expect(evaluated.polymarketSummary.scoredTrades).to.equal(0);
+        expect(evaluated.polymarketSummary.entryTimeFilteredTrades).to.equal(1);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitSource).to.equal("entry_time_filtered");
+    });
+
+    it("keeps delayed entries missing when the exact delayed CLOB quote is absent", () => {
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([trade(1, 1_700_000_010, 1_700_000_020)]),
+            context: context([
+                quote(1_700_000_014, 0.55, 0.53),
+            ]),
+            entryDelayBars: 3,
+        });
+
+        expect(evaluated.polymarketSummary.scoredTrades).to.equal(0);
+        expect(evaluated.polymarketSummary.missingPriceTrades).to.equal(1);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitSource).to.equal("missing");
+    });
+
     it("carries entry price filter counts through 1s CLOB summaries and annotations", () => {
         const evaluated = evaluateSecondMarketBacktest({
             result: result([trade(1, 1_700_000_010, 1_700_000_020)]),
@@ -246,6 +330,73 @@ describe("second market shared evaluation", () => {
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryFillTs).to.equal(1_700_000_020);
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryLimitPrice).to.equal(0.50);
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.50);
+    });
+
+    it("uses the original signal quote as a stale delayed limit for 1s CLOB entries", () => {
+        const signalTrade = trade(1, 1_700_000_010, 1_700_000_040);
+        signalTrade.exitReason = "signal";
+
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([signalTrade]),
+            context: context([
+                quote(1_700_000_010, 0.50, 0.48),
+                quote(1_700_000_013, 0.70, 0.68),
+                quote(1_700_000_020, 0.49, 0.47),
+                quote(1_700_000_040, 0.62, 0.60),
+            ]),
+            polymarketExitMode: "signal_exit_same_event",
+            entryDelayBars: 3,
+            limitEntry: {
+                enabled: true,
+                priceCents: 50,
+                priceMode: "stale_signal_price",
+            },
+        });
+
+        expect(evaluated.polymarketSummary.limitEntryMode).to.equal("stale_signal_price");
+        expect(evaluated.polymarketSummary.limitEntryFilledTrades).to.equal(1);
+        expect(evaluated.polymarketSummary.avgLimitEntryWaitSec).to.equal(10);
+        expect(evaluated.tradeResults[0]?.entryLimitPrice).to.equal(0.50);
+        expect(evaluated.tradeResults[0]?.entryQuoteTs).to.equal(1_700_000_020);
+        expect(evaluated.tradeResults[0]?.entryPrice).to.equal(0.50);
+        expect(evaluated.tradeResults[0]?.exitPrice).to.equal(0.60);
+        expect(evaluated.polymarketSummary.netPnl).to.be.closeTo(0.10, 1e-9);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntrySource).to.equal("limit");
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryStatus).to.equal("filled");
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryFillTs).to.equal(1_700_000_020);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryLimitPrice).to.equal(0.50);
+    });
+
+    it("marks stale delayed limit entries as missed when the old signal price is never reachable", () => {
+        const signalTrade = trade(1, 1_700_000_010, 1_700_000_040);
+        signalTrade.exitReason = "signal";
+
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([signalTrade]),
+            context: context([
+                quote(1_700_000_010, 0.50, 0.48),
+                quote(1_700_000_013, 0.70, 0.68),
+                quote(1_700_000_020, 0.69, 0.67),
+                quote(1_700_000_040, 0.80, 0.78),
+            ]),
+            polymarketExitMode: "signal_exit_same_event",
+            entryDelayBars: 3,
+            limitEntry: {
+                enabled: true,
+                priceCents: 50,
+                priceMode: "stale_signal_price",
+            },
+        });
+
+        expect(evaluated.polymarketSummary.scoredTrades).to.equal(0);
+        expect(evaluated.polymarketSummary.limitEntryAttempts).to.equal(1);
+        expect(evaluated.polymarketSummary.limitEntryFilledTrades).to.equal(0);
+        expect(evaluated.polymarketSummary.limitEntryMissedTrades).to.equal(1);
+        expect(evaluated.polymarketSummary.limitEntryNotTouchedTrades).to.equal(1);
+        expect(evaluated.tradeResults[0]?.entryStatus).to.equal("not_touched");
+        expect(evaluated.tradeResults[0]?.entryLimitPrice).to.equal(0.50);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryStatus).to.equal("not_touched");
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(null);
     });
 
     it("marks missing exact CLOB quotes as unscored instead of forward filling", () => {

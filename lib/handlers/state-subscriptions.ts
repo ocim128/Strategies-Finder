@@ -43,6 +43,7 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
     const isOneSecondInterval = interval === '1s';
     const supportsLimitEntry = annotationEnabled && isNative5mSession;
     const limitEntryEnabled = supportsLimitEntry && polymarketSettings.postSignalLimitEntryEnabled;
+    const usesFixedLimitEntry = polymarketSettings.postSignalLimitEntryMode === 'fixed_price';
     const usesSignalOffsetEntry = polymarketSettings.postSignalLimitEntryMode === 'signal_offset';
     const limitExitEnabled = limitEntryEnabled && polymarketSettings.postSignalLimitExitEnabled;
     const usesFixedLimitExit = polymarketSettings.postSignalLimitExitMode === 'fixed_price';
@@ -59,12 +60,13 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
         [rows.outcomeIntervalRow, annotationEnabled],
         [rows.entrySelectionModeRow, showsEntryBridgeControls],
         [rows.offsetRow, showsEntryBridgeControls && !usesActualEntryMinute],
+        [rows.entryDelayBarsRow, annotationEnabled && isOneSecondInterval && supportsSignalExit],
         [rows.entryPriceFilterCentsRow, annotationEnabled],
         [rows.exitModeRow, annotationEnabled],
         [rows.signalExitAllowMultipleTradesPerEventRow, annotationEnabled && isSignalExit],
         [rows.postSignalLimitEntryEnabledRow, supportsLimitEntry],
         [rows.postSignalLimitEntryModeRow, limitEntryEnabled],
-        [rows.postSignalLimitEntryPriceCentsRow, limitEntryEnabled && !usesSignalOffsetEntry],
+        [rows.postSignalLimitEntryPriceCentsRow, limitEntryEnabled && usesFixedLimitEntry],
         [rows.postSignalLimitEntryOffsetCentsRow, limitEntryEnabled && usesSignalOffsetEntry],
         [rows.postSignalLimitExitEnabledRow, limitEntryEnabled],
         [rows.postSignalLimitExitModeRow, limitExitEnabled],

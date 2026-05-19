@@ -126,6 +126,8 @@ export class TradesRenderer {
             ?? this.resolveSelectedPolymarketEntrySelectionMode();
         const outcomeSymbol = this.resolveActivePolymarketOutcomeSymbol();
         const evaluationMode = state.currentBacktestResult?.polymarketTradeSummary?.evaluationMode ?? "resolve_hold";
+        const entryDelayBars = state.currentBacktestResult?.polymarketTradeSummary?.entryDelayBars
+            ?? (typeof document === "undefined" ? 0 : resolvePolymarketDomSettings().entryDelayBars);
         const firstTrade = trades[0];
         const lastTrade = trades[trades.length - 1];
         return [
@@ -135,6 +137,7 @@ export class TradesRenderer {
             entrySelectionMode,
             typeof summaryOffset === 'number' ? summaryOffset : (isActualPolymarketEntryMinuteMode(entrySelectionMode) ? 'auto' : 'na'),
             evaluationMode,
+            entryDelayBars,
             trades.length,
             parseTimeToUnixSeconds(firstTrade.entryTime) ?? 'na',
             parseTimeToUnixSeconds(lastTrade.entryTime) ?? 'na',

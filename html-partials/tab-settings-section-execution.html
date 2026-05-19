@@ -149,6 +149,13 @@
                     <div class="param-hint">0 disables. Example: 20 skips entries priced at 20c or below and 80c or above.</div>
                 </div>
             </div>
+            <div class="param-row" id="polymarketEntryDelayBarsRow" style="display: none;">
+                <div class="param-group">
+                    <label class="param-label">Polymarket Entry Delay (1s bars)</label>
+                    <input type="number" class="param-input" id="polymarketEntryDelayBars" value="0" min="0" max="300" step="1">
+                    <div class="param-hint">Research-only 1s CLOB scoring delay. 3 prices the Polymarket entry 3 seconds after the chart entry without moving the chart signal.</div>
+                </div>
+            </div>
             <div class="param-row" id="polymarketExitModeRow" style="display: none;">
                 <div class="param-group">
                     <label class="param-label">Polymarket Exit Mode</label>
@@ -196,8 +203,9 @@
                     <select class="param-input" id="polymarketPostSignalLimitEntryMode">
                         <option value="fixed_price" selected>Fixed Price</option>
                         <option value="signal_offset">Signal Price - Offset</option>
+                        <option value="stale_signal_price">Stale Signal Price</option>
                     </select>
-                    <div class="param-hint">Signal-offset mode uses the first local side quote after chart entry, then subtracts the offset.</div>
+                    <div class="param-hint">Signal-offset mode subtracts from the first side quote. Stale-signal mode submits the chart-entry side quote after the configured entry delay.</div>
                 </div>
             </div>
             <div class="param-row" id="polymarketPostSignalLimitEntryOffsetCentsRow" style="display: none;">

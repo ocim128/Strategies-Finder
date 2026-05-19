@@ -102,6 +102,24 @@ describe('Backtest settings compatibility', () => {
         expect('polymarketEntryPriceFilterCents' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
     });
 
+    it('normalizes the 1s Polymarket entry delay as a backtest-only setting', () => {
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryDelayBars).to.equal(0);
+        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketEntryDelayBars')).to.equal(true);
+
+        const contract = getBacktestDomSettingContract('polymarketEntryDelayBars');
+        expect(contract).to.not.equal(undefined);
+        expect(coerceBacktestDomSettingValue(contract!, 3)).to.equal(3);
+        expect(coerceBacktestDomSettingValue(contract!, 3.6)).to.equal(4);
+        expect(coerceBacktestDomSettingValue(contract!, -5)).to.equal(0);
+        expect(coerceBacktestDomSettingValue(contract!, 999)).to.equal(300);
+
+        const resolved = resolveBacktestSettingsFromRaw({
+            polymarketEntryDelayBars: 999,
+        } as unknown as BacktestSettings);
+        expect(resolved.polymarketEntryDelayBars).to.equal(300);
+        expect('polymarketEntryDelayBars' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
+    });
+
     it('normalizes the Polymarket event entry cutoff as a Backtest Realism setting', () => {
         expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffEnabled).to.equal(false);
         expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffSeconds).to.equal(15);
@@ -217,6 +235,7 @@ describe('Backtest settings compatibility', () => {
         const exitModeContract = getBacktestDomSettingContract('polymarketPostSignalLimitExitMode');
         const offsetContract = getBacktestDomSettingContract('polymarketPostSignalLimitEntryOffsetCents');
         expect(coerceBacktestDomSettingValue(entryModeContract!, 'signal_offset')).to.equal('signal_offset');
+        expect(coerceBacktestDomSettingValue(entryModeContract!, 'stale_signal_price')).to.equal('stale_signal_price');
         expect(coerceBacktestDomSettingValue(entryModeContract!, 'bad')).to.equal('fixed_price');
         expect(coerceBacktestDomSettingValue(exitModeContract!, 'fixed_price')).to.equal('fixed_price');
         expect(coerceBacktestDomSettingValue(exitModeContract!, 'bad')).to.equal('entry_offset');
@@ -265,6 +284,7 @@ describe('Backtest settings compatibility', () => {
             tradeFilterMode: 'volume',
             executionModel: 'next_open',
             polymarketOutcomeInterval: '15m',
+            polymarketEntryDelayBars: 3,
             polymarketSignalExitAllowMultipleTradesPerEvent: true,
             polymarketPostSignalLimitEntryEnabled: true,
             polymarketPostSignalLimitEntryMode: 'signal_offset',
@@ -285,6 +305,7 @@ describe('Backtest settings compatibility', () => {
         expect('tradeFilterMode' in sanitized).to.equal(false);
         expect('executionModel' in sanitized).to.equal(false);
         expect('polymarketOutcomeInterval' in sanitized).to.equal(false);
+        expect('polymarketEntryDelayBars' in sanitized).to.equal(false);
         expect('polymarketSignalExitAllowMultipleTradesPerEvent' in sanitized).to.equal(false);
         expect('polymarketPostSignalLimitEntryEnabled' in sanitized).to.equal(false);
         expect('polymarketPostSignalLimitEntryMode' in sanitized).to.equal(false);
@@ -706,6 +727,7 @@ describe('Backtest settings compatibility', () => {
         expect(getBacktestDomSettingContract('polymarketOutcomeSymbol')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('polymarketEntrySelectionMode')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('polymarketEntryOffset')).to.not.equal(undefined);
+        expect(getBacktestDomSettingContract('polymarketEntryDelayBars')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('polymarketEntryPriceFilterCents')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('historicalLevelTakeProfitToggle')?.settingKey).to.equal('historicalLevelTakeProfitEnabled');
         expect(getBacktestDomSettingContract('historicalLevelStopLossToggle')?.settingKey).to.equal('historicalLevelStopLossEnabled');

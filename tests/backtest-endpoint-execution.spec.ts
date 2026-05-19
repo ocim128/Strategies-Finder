@@ -31,6 +31,7 @@ function buildSnapshot(): UiBacktestEndpointSnapshot {
             allowSameBarExit: true,
             slippageBps: 0,
             marketMode: "all",
+            polymarketEntryDelayBars: 3,
             polymarketSignalExitAllowMultipleTradesPerEvent: true,
             polymarketPostSignalLimitEntryEnabled: true,
             polymarketPostSignalLimitEntryMode: "signal_offset",
@@ -76,6 +77,7 @@ describe("backtest endpoint execution helpers", () => {
         assert.ok(!("snapshotRsiMin" in request.backtestSettings));
         assert.ok(!("snapshotRsiMax" in request.backtestSettings));
         assert.ok(!("polymarketExitMode" in request.backtestSettings));
+        assert.ok(!("polymarketEntryDelayBars" in request.backtestSettings));
         assert.ok(!("polymarketSignalExitAllowMultipleTradesPerEvent" in request.backtestSettings));
         assert.ok(!("polymarketPostSignalLimitEntryEnabled" in request.backtestSettings));
         assert.ok(!("polymarketPostSignalLimitEntryMode" in request.backtestSettings));

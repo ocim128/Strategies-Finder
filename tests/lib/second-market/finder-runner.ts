@@ -330,6 +330,7 @@ export async function runSecondMarketFinder(
                     executionModel: settings.executionModel,
                     polymarketExitMode: effectiveExitMode,
                     polymarketSignalExitAllowMultipleTradesPerEvent: options.polymarketSignalExitAllowMultipleTradesPerEvent,
+                    entryDelayBars: options.polymarketEntryDelayBars ?? settings.polymarketEntryDelayBars,
                     entryPriceFilterCents: options.polymarketEntryPriceFilterCents ?? settings.polymarketEntryPriceFilterCents,
                     entryCutoffEnabled: settings.polymarketEntryCutoffEnabled,
                     entryCutoffSeconds: settings.polymarketEntryCutoffSeconds,

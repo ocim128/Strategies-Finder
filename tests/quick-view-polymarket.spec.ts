@@ -1137,6 +1137,7 @@ describe("Quick View Polymarket streak summary", () => {
                 limitEntryNotTouchedTrades: 1,
                 limitEntryLastMinuteOnlyTrades: 1,
                 limitEntryMissingPriceTrades: 1,
+                limitEntryInvalidWindowTrades: 1,
                 limitEntryFillRate: 0.5,
             },
         } satisfies BacktestResult);
@@ -1149,6 +1150,7 @@ describe("Quick View Polymarket streak summary", () => {
         expect(html).to.contain("Not Touched");
         expect(html).to.contain("Last-Min Only");
         expect(html).to.contain("Missing Limit Price");
+        expect(html).to.contain("Invalid Limit Window");
     });
 
     it("renders signal-exit same-event summaries from stored polymarket pricing", () => {

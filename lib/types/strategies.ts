@@ -326,6 +326,8 @@ export interface BacktestSettings {
     polymarketEntrySelectionMode?: PolymarketEntrySelectionMode;
     /** Entry offset minute (0..4) for fixed-offset 1m -> 5m Polymarket bridge scoring */
     polymarketEntryOffset?: number;
+    /** Delay Polymarket 1s CLOB entry pricing by N chart bars after the chart entry. */
+    polymarketEntryDelayBars?: number;
     /** Skip Polymarket entries priced at or below N cents, or at or above 100-N cents. 0 disables. */
     polymarketEntryPriceFilterCents?: number;
     /** Enable skipping Polymarket entries near event close. */
@@ -338,8 +340,8 @@ export interface BacktestSettings {
     polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
     /** Enable post-chart-entry Polymarket limit-entry fill simulation for supported annotated runs. */
     polymarketPostSignalLimitEntryEnabled?: boolean;
-    /** Limit-entry pricing mode: fixed cents or first quote minus offset. */
-    polymarketPostSignalLimitEntryMode?: "fixed_price" | "signal_offset";
+    /** Limit-entry pricing mode: fixed cents, first quote minus offset, or stale signal-time quote. */
+    polymarketPostSignalLimitEntryMode?: "fixed_price" | "signal_offset" | "stale_signal_price";
     /** Limit-entry side price in cents, clamped to 1..99. */
     polymarketPostSignalLimitEntryPriceCents?: number;
     /** Limit-entry discount from the first side quote, in cents. */

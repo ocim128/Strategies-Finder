@@ -96,6 +96,7 @@ export type QuickViewPolymarketSummary = {
     timingProfile?: import("../types/polymarket-outcomes").BacktestPolymarketTimingProfileEntry[];
     bestTimingProfile?: import("../types/polymarket-outcomes").BacktestPolymarketTimingProfileEntry | null;
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+    entryDelayBars?: number;
     missingPriceTrades?: number;
     targetExitedTrades?: number;
     signalExitedTrades?: number;
@@ -110,6 +111,7 @@ export type QuickViewPolymarketSummary = {
     limitEntryNotTouchedTrades?: number;
     limitEntryLastMinuteOnlyTrades?: number;
     limitEntryMissingPriceTrades?: number;
+    limitEntryInvalidWindowTrades?: number;
     limitEntryFillRate?: number;
     avgLimitEntryWaitSec?: number;
     avgLimitEntryImprovement?: number;
@@ -962,6 +964,7 @@ class QuickViewManager {
                     entryPriceFilterCents: this.readCurrentPolymarketEntryPriceFilterCents(),
                     entryCutoffEnabled: currentPolymarketSettings.entryCutoffEnabled,
                     entryCutoffSeconds: currentPolymarketSettings.entryCutoffSeconds,
+                    entryDelayBars: result.polymarketTradeSummary?.entryDelayBars ?? currentPolymarketSettings.entryDelayBars,
                     limitEntry,
                 });
             } catch (error) {
@@ -1466,6 +1469,7 @@ class QuickViewManager {
             outcomeInterval: summary?.outcomeInterval,
             timingProfile, bestTimingProfile,
             evaluationMode: summary?.evaluationMode,
+            entryDelayBars: summary?.entryDelayBars,
             missingPriceTrades: summary?.missingPriceTrades,
             targetExitedTrades: summary?.targetExitedTrades,
             signalExitedTrades: summary?.signalExitedTrades,
@@ -1480,6 +1484,7 @@ class QuickViewManager {
             limitEntryNotTouchedTrades: summary?.limitEntryNotTouchedTrades,
             limitEntryLastMinuteOnlyTrades: summary?.limitEntryLastMinuteOnlyTrades,
             limitEntryMissingPriceTrades: summary?.limitEntryMissingPriceTrades,
+            limitEntryInvalidWindowTrades: summary?.limitEntryInvalidWindowTrades,
             limitEntryFillRate: summary?.limitEntryFillRate,
             avgLimitEntryWaitSec: summary?.avgLimitEntryWaitSec,
             avgLimitEntryImprovement: summary?.avgLimitEntryImprovement,

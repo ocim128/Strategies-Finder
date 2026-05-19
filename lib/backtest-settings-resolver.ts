@@ -13,6 +13,10 @@ import {
 } from "./settings-parse-utils";
 import { resolvePolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 import { DEFAULT_POLYMARKET_ENTRY_CUTOFF_SECONDS, clampPolymarketEntryCutoffSeconds } from "./polymarket-entry-cutoff";
+import {
+    DEFAULT_POLYMARKET_ENTRY_DELAY_BARS,
+    clampPolymarketEntryDelayBars,
+} from "./polymarket-entry-delay";
 import { clampPolymarketEntryPriceFilterCents } from "./polymarket-entry-price-filter";
 import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import {
@@ -86,6 +90,7 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     polymarketOutcomeInterval: "5m" as const,
     polymarketEntrySelectionMode: "fixed_offset" as const,
     polymarketEntryOffset: 0,
+    polymarketEntryDelayBars: DEFAULT_POLYMARKET_ENTRY_DELAY_BARS,
     polymarketEntryPriceFilterCents: 0,
     polymarketEntryCutoffEnabled: false,
     polymarketEntryCutoffSeconds: DEFAULT_POLYMARKET_ENTRY_CUTOFF_SECONDS,
@@ -143,6 +148,7 @@ type NumericResolverKey =
     | "slippageBps"
     | "maxOpenTrades"
     | "strategyTimeframeMinutes"
+    | "polymarketEntryDelayBars"
     | "polymarketEntryCutoffSeconds";
 
 type BooleanResolverKey =
@@ -263,6 +269,10 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
     },
     { key: "strategyTimeframeMinutes" },
     {
+        key: "polymarketEntryDelayBars",
+        resolve: (raw) => clampPolymarketEntryDelayBars(raw["polymarketEntryDelayBars"]),
+    },
+    {
         key: "polymarketEntryCutoffSeconds",
         resolve: (raw) => clampPolymarketEntryCutoffSeconds(raw["polymarketEntryCutoffSeconds"]),
     },
@@ -379,6 +389,7 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "polymarketOutcomeInterval",
     "polymarketEntrySelectionMode",
     "polymarketEntryOffset",
+    "polymarketEntryDelayBars",
     "polymarketEntryPriceFilterCents",
     "polymarketEntryCutoffToggle",
     "polymarketEntryCutoffSeconds",
@@ -568,6 +579,7 @@ export function resolveBacktestSettingsFromRaw(
             coerced.polymarketOutcomeSymbol = coerced.polymarketOutcomeSymbol.trim().toUpperCase();
         }
         coerced.polymarketOutcomeInterval = resolvePolymarketOutcomeInterval(coerced.polymarketOutcomeInterval);
+        coerced.polymarketEntryDelayBars = clampPolymarketEntryDelayBars(coerced.polymarketEntryDelayBars);
         coerced.polymarketEntryPriceFilterCents = clampPolymarketEntryPriceFilterCents(coerced.polymarketEntryPriceFilterCents);
         coerced.polymarketEntryCutoffEnabled = readBooleanAny(raw, ["polymarketEntryCutoffEnabled", "polymarketEntryCutoffToggle"], EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffEnabled);
         coerced.polymarketEntryCutoffSeconds = clampPolymarketEntryCutoffSeconds(raw["polymarketEntryCutoffSeconds"]);
@@ -658,6 +670,7 @@ export function resolveBacktestSettingsFromRaw(
         polymarketOutcomeInterval: resolvePolymarketOutcomeInterval(raw["polymarketOutcomeInterval"]),
         polymarketEntrySelectionMode: resolvePolymarketEntrySelectionMode(raw["polymarketEntrySelectionMode"]),
         polymarketEntryOffset: readNumber(raw, "polymarketEntryOffset", EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryOffset),
+        polymarketEntryDelayBars: numericSettings.polymarketEntryDelayBars,
         polymarketEntryPriceFilterCents: clampPolymarketEntryPriceFilterCents(raw["polymarketEntryPriceFilterCents"]),
         polymarketEntryCutoffEnabled: booleanSettings.polymarketEntryCutoffEnabled,
         polymarketEntryCutoffSeconds: numericSettings.polymarketEntryCutoffSeconds,

@@ -2,7 +2,7 @@ import type { PolymarketPricePoint } from "./local-sqlite-polymarket-api";
 import { getPolymarketSidePrice } from "./polymarket-price-points";
 
 export type PolymarketLimitEntrySide = "yes" | "no";
-export type PolymarketLimitEntryPriceMode = "fixed_price" | "signal_offset";
+export type PolymarketLimitEntryPriceMode = "fixed_price" | "signal_offset" | "stale_signal_price";
 export type PolymarketLimitExitPriceMode = "fixed_price" | "entry_offset";
 
 export type PolymarketLimitEntryStatus =
@@ -117,9 +117,14 @@ export function clampPolymarketPostSignalLimitOffsetCents(value: unknown): numbe
 }
 
 export function resolvePolymarketPostSignalLimitEntryMode(value: unknown): PolymarketLimitEntryPriceMode {
-    return typeof value === "string" && value.trim().toLowerCase() === "signal_offset"
-        ? "signal_offset"
-        : DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_MODE;
+    if (typeof value !== "string") {
+        return DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_MODE;
+    }
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "signal_offset" || normalized === "stale_signal_price") {
+        return normalized;
+    }
+    return DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_MODE;
 }
 
 export function resolvePolymarketPostSignalLimitExitMode(value: unknown): PolymarketLimitExitPriceMode {
@@ -214,6 +219,9 @@ function resolveEntryLimitPrice(input: PolymarketPostSignalLimitEntryInput, firs
     if (mode === "signal_offset") {
         const rawOffsetPrice = Number.isFinite(input.offsetPrice) ? Number(input.offsetPrice) : 0;
         return clampLimitPrice(firstAvailablePrice - Math.max(0, rawOffsetPrice));
+    }
+    if (mode === "stale_signal_price") {
+        return clampLimitPrice(firstAvailablePrice);
     }
 
     return typeof input.limitPrice === "number" && Number.isFinite(input.limitPrice)

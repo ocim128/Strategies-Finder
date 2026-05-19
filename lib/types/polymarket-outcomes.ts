@@ -131,6 +131,7 @@ export interface BacktestPolymarketTradeSummary {
     timingProfile?: BacktestPolymarketTimingProfileEntry[];
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
     signalExitAllowMultipleTradesPerEvent?: boolean;
+    entryDelayBars?: number;
     profitableTrades?: number;
     losingTrades?: number;
     neutralTrades?: number;
@@ -221,6 +222,7 @@ export interface PolymarketEvalResult {
     entryTimeFilteredPredictions?: number;
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
     signalExitAllowMultipleTradesPerEvent?: boolean;
+    entryDelayBars?: number;
     signalExitedTrades?: number;
     targetExitedTrades?: number;
     resolvedTrades?: number;

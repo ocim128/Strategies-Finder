@@ -33,7 +33,7 @@ If you want to score a strategy against resolved Polymarket crypto events:
   - `signal_exit_same_event` is effective on `1m` + `next_open` using locally cached Polymarket price points, and on supported `1s` BTCUSDT/XRPUSDT CLOB runs using `signal_close`, `next_open`, or `next_close` exact-second bid/ask rows
 - optionally set `Polymarket Entry Price Filter`; for example, `20` skips trades whose selected Polymarket entry price is at or below 20c or at or above 80c
 - optionally enable `Polymarket Entry Cutoff` in Backtest Realism; it defaults off, and when enabled the seconds field defaults to `15`
-- optional for native `5m` outcome sessions, including supported `1s` CLOB runs: enable `Post-Signal Limit Entry` to require the selected YES/NO side to trade at or below the configured limit price after the chart entry signal and before the event's final minute
+- optional for native `5m` outcome sessions, including supported `1s` CLOB runs: enable `Post-Signal Limit Entry` to require the selected YES/NO side to trade at or below the configured limit price after the chart entry signal and before the event's final minute; on supported `1s` CLOB runs, `stale_signal_price` uses the original chart-entry quote as the limit and begins checking after `polymarketEntryDelayBars`
 
 If you want to manually paper-trade the latest still-open backtest trade:
 
@@ -247,6 +247,7 @@ Behavior:
 - if `trade.exitReason === "signal"` and the chart exit timestamp is still inside the same event, exit fill uses the latest locally captured side price at or before the chart exit timestamp
 - for `1m` + `next_open`, that exit timestamp is the modeled next bar open from the shared backtest engine, not an intraminute wall-clock guess
 - for supported `1s` CLOB runs, the entry and signal-exit fills use strict exact-second bid/ask quotes from the second-market DB; `next_open` uses the chart trade timestamp directly, while `signal_close` and `next_close` use one second after the chart candle timestamp because Binance `1s` candles are stored by open time
+- `polymarketEntryDelayBars` is a research-only `1s` CLOB annotation delay; when set to `N`, the chart trade stays at the same timestamp but the Polymarket entry quote is priced `N` seconds after the modeled chart entry
 - example: if the opposite chart signal is detected on the `15:02` candle, the modeled chart exit is `15:03:00`, so the Polymarket exit uses the latest local quote at or before `15:03:00`
 - the signal-exit quote must not be earlier than the chosen entry quote
 - if the latest locally captured quote before the chart exit is the same quote that was used for entry, the trade scores as a flat same-event exit instead of being dropped
@@ -306,12 +307,13 @@ Effective gating:
 Behavior:
 
 - long chart trades attempt to buy YES; short chart trades attempt to buy NO
-- the attempt starts at the chart trade entry timestamp
+- the attempt starts at the chart trade entry timestamp; on supported `1s` CLOB runs, `polymarketEntryDelayBars` pushes the start later by that many seconds
 - fixed-price entry mode fills when the side price is at or below `polymarketPostSignalLimitEntryPriceCents` before `event_end_ts - 60`
 - signal-offset entry mode computes the limit from the first available event-side quote after chart entry minus `polymarketPostSignalLimitEntryOffsetCents`; for example, a 60c first YES quote with offset `0.5` becomes a 59.5c entry limit
+- stale-signal entry mode is for supported `1s` CLOB delay research: it reads the selected side ask at the modeled chart-entry second, then starts the limit-fill scan after `polymarketEntryDelayBars`; if the delayed market has already moved away and never revisits that stale limit before the same-event signal exit, the trade is reported as missed instead of scored
 - if the contract touches only during the final minute, the attempt is reported as `last_minute_only` and is not scored
 - if `signal_exit_same_event` has a same-event chart signal exit before the limit touch, the attempt is reported as `invalid_window` and is not scored
-- the first chart attempt claims the event even when it misses; later chart trades in the same event are reported as duplicates
+- filled/scored attempts claim the event when duplicate suppression is active; missed attempts do not block a later same-event attempt from filling
 - filled attempts use the resolved limit price as `marketEntryPrice`, not the first observed quote
 - missed attempts stay visible in Trades, Quick View, and Polymarket diagnostics, but they do not count as scored Polymarket trades
 - when `no_price` is absent from price points, NO can be derived as `1 - yes_price`; explicit `no_price` wins when present
@@ -553,6 +555,7 @@ Current UI rules:
 - on `1s` charts with other execution models, `signal_exit_same_event` is disabled and CLOB scoring is skipped
 - `polymarketSignalExitAllowMultipleTradesPerEvent` only shows when annotation is enabled and signal-exit mode is active
 - `polymarketEntryPriceFilterCents` shows when annotation is enabled
+- `polymarketEntryDelayBars` only shows on `1s` charts with a supported CLOB scoring execution model
 - `polymarketEntrySelectionMode` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, and the selected exit mode is not `signal_exit_same_event`
 - `polymarketEntryOffset` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, the selected exit mode is not `signal_exit_same_event`, and entry selection is `fixed_offset`
 - `polymarketPostSignalLimitEntryEnabled` shows when annotation is enabled and native outcome session is `5m`, including supported `1s` CLOB charts

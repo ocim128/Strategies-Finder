@@ -288,6 +288,7 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
       ...((summary.limitEntryNotTouchedTrades ?? 0) > 0 ? [{ label: 'Not Touched', value: String(summary.limitEntryNotTouchedTrades) }] : []),
       ...((summary.limitEntryLastMinuteOnlyTrades ?? 0) > 0 ? [{ label: 'Last-Min Only', value: String(summary.limitEntryLastMinuteOnlyTrades) }] : []),
       ...((summary.limitEntryMissingPriceTrades ?? 0) > 0 ? [{ label: 'Missing Limit Price', value: String(summary.limitEntryMissingPriceTrades) }] : []),
+      ...((summary.limitEntryInvalidWindowTrades ?? 0) > 0 ? [{ label: 'Invalid Limit Window', value: String(summary.limitEntryInvalidWindowTrades) }] : []),
       ...(summary.limitExitEnabled ? [
         { label: 'Target Filled', value: String(summary.limitExitFilledTrades ?? 0) },
         { label: 'Target Fallback', value: String(summary.limitExitFallbackTrades ?? 0) },
@@ -321,6 +322,7 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
     { label: 'Avg Win', value: summary.avgWin === null ? 'n/a' : formatPolymarketCents(summary.avgWin), toneClass: summary.avgWin === null ? '' : 'positive' },
     { label: 'Avg Loss', value: summary.avgLoss === null ? 'n/a' : formatPolymarketCents(-summary.avgLoss), toneClass: summary.avgLoss === null ? '' : 'negative' },
     { label: 'Avg Entry Price', value: summary.avgEntryPrice === null ? 'n/a' : formatProbabilityCents(summary.avgEntryPrice) },
+    ...((summary.entryDelayBars ?? 0) > 0 ? [{ label: 'Entry Delay', value: `${summary.entryDelayBars} 1s bars` }] : []),
     { label: 'Scored Trade Share', value: `${(summary.coverage * 100).toFixed(1)}%` },
     { label: winCountLabel, value: String(summary.wins), toneClass: 'positive' },
     { label: lossCountLabel, value: String(summary.losses), toneClass: 'negative' },

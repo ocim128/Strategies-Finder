@@ -661,6 +661,7 @@ export class BacktestService {
                     executionModel: settings.executionModel,
                     polymarketExitMode: effectiveExitMode,
                     polymarketSignalExitAllowMultipleTradesPerEvent: settings.polymarketSignalExitAllowMultipleTradesPerEvent,
+                    entryDelayBars: settings.polymarketEntryDelayBars,
                     entryPriceFilterCents: settings.polymarketEntryPriceFilterCents,
                     entryCutoffEnabled: settings.polymarketEntryCutoffEnabled,
                     entryCutoffSeconds: settings.polymarketEntryCutoffSeconds,

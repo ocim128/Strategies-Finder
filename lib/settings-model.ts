@@ -120,6 +120,7 @@ export interface BacktestSettingsData {
     polymarketOutcomeInterval: PolymarketOutcomeInterval;
     polymarketEntrySelectionMode: PolymarketEntrySelectionMode;
     polymarketEntryOffset: number;
+    polymarketEntryDelayBars: number;
     polymarketEntryPriceFilterCents: number;
     polymarketEntryCutoffEnabled: boolean;
     polymarketEntryCutoffSeconds: number;

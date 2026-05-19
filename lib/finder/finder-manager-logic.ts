@@ -8,6 +8,7 @@ import type {
     PolymarketFinderRankMode,
 } from "../types/finder";
 import { resolveEffectivePolymarketExitMode, type PolymarketExitMode } from "../polymarket-exit-mode";
+import { clampPolymarketEntryDelayBars } from "../polymarket-entry-delay";
 import { clampPolymarketEntryPriceFilterCents } from "../polymarket-entry-price-filter";
 
 export interface FinderOptionsInput {
@@ -29,11 +30,12 @@ export interface FinderOptionsInput {
     polymarketMinScoredPredictions: number;
     polymarketLockOffset: boolean;
     polymarketAfterTakeProfitOnly: boolean;
+    polymarketEntryDelayBars?: number;
     polymarketEntryPriceFilterCents?: number;
     polymarketExitMode: PolymarketExitMode;
     polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
     polymarketPostSignalLimitEntryEnabled?: boolean;
-    polymarketPostSignalLimitEntryMode?: "fixed_price" | "signal_offset";
+    polymarketPostSignalLimitEntryMode?: "fixed_price" | "signal_offset" | "stale_signal_price";
     polymarketPostSignalLimitEntryPriceCents?: number;
     polymarketPostSignalLimitEntryOffsetCents?: number;
     polymarketPostSignalLimitExitEnabled?: boolean;
@@ -138,6 +140,9 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
         polymarketMinScoredPredictions: Math.max(0, input.polymarketMinScoredPredictions),
         polymarketLockOffset: input.polymarketScoringEnabled && input.polymarketLockOffset,
         polymarketAfterTakeProfitOnly: input.polymarketScoringEnabled && input.polymarketAfterTakeProfitOnly,
+        polymarketEntryDelayBars: input.polymarketScoringEnabled
+            ? clampPolymarketEntryDelayBars(input.polymarketEntryDelayBars)
+            : 0,
         polymarketEntryPriceFilterCents: input.polymarketScoringEnabled
             ? clampPolymarketEntryPriceFilterCents(input.polymarketEntryPriceFilterCents)
             : 0,

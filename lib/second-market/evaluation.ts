@@ -236,6 +236,7 @@ function summarizePolymarketResult(args: {
         entryTimeFilteredTrades: summary.entryTimeFilteredTrades || undefined,
         evaluationMode,
         signalExitAllowMultipleTradesPerEvent: summary.allowMultipleTradesPerEvent,
+        entryDelayBars: summary.entryDelayBars,
         profitableTrades,
         losingTrades,
         neutralTrades,
@@ -327,6 +328,7 @@ function buildPolymarketEval(args: {
         entryTimeFilteredPredictions: summary.entryTimeFilteredTrades || undefined,
         evaluationMode,
         signalExitAllowMultipleTradesPerEvent: summary.allowMultipleTradesPerEvent,
+        entryDelayBars: summary.entryDelayBars,
         targetExitedTrades: summary.targetExitedTrades,
         signalExitedTrades: summary.signalExitedTrades,
         resolvedTrades: summary.resolvedTrades,
@@ -418,6 +420,7 @@ export function evaluateSecondMarketBacktest(args: {
     entryPriceFilterCents?: number;
     entryCutoffEnabled?: boolean;
     entryCutoffSeconds?: number;
+    entryDelayBars?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }): SecondMarketEvaluationResult {
     const trades = [...(args.trades ?? args.result.trades)];
@@ -437,6 +440,7 @@ export function evaluateSecondMarketBacktest(args: {
         entryPriceFilterCents: args.entryPriceFilterCents,
         entryCutoffEnabled: args.entryCutoffEnabled,
         entryCutoffSeconds: args.entryCutoffSeconds,
+        entryDelayBars: args.entryDelayBars,
         limitEntry: args.limitEntry,
     });
     const tradeResults = evaluated.results.map((result) => ({
@@ -484,6 +488,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
     entryPriceFilterCents?: number;
     entryCutoffEnabled?: boolean;
     entryCutoffSeconds?: number;
+    entryDelayBars?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }): Promise<BacktestResult> {
     if (
@@ -518,6 +523,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
         entryPriceFilterCents: args.entryPriceFilterCents,
         entryCutoffEnabled: args.entryCutoffEnabled,
         entryCutoffSeconds: args.entryCutoffSeconds,
+        entryDelayBars: args.entryDelayBars,
         limitEntry: args.limitEntry,
     });
 

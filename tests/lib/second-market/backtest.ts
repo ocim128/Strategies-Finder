@@ -16,6 +16,7 @@ import type { Trade } from "../types/strategies";
 import type { PolymarketOutcomeRow } from "../types/polymarket-outcomes";
 import type { PolymarketExitMode } from "../polymarket-exit-mode";
 import type { PolymarketPricePoint } from "../local-sqlite-polymarket-api";
+import { clampPolymarketEntryDelayBars } from "../polymarket-entry-delay";
 import {
     DEFAULT_MAX_QUOTE_AGE_SEC,
     findContainingPolymarketEvent,
@@ -135,7 +136,8 @@ function buildSummary(
     results: readonly SecondMarketTradeResult[],
     evaluationMode: PolymarketExitMode,
     settings?: PolymarketPostSignalLimitEntrySettings,
-    allowMultipleTradesPerEvent = false
+    allowMultipleTradesPerEvent = false,
+    entryDelayBars = 0
 ): SecondMarketBacktestSummary {
     const scored = results.filter((result) => result.pnl !== null);
     const grossProfit = scored.reduce((sum, result) => sum + Math.max(0, result.pnl ?? 0), 0);
@@ -144,7 +146,7 @@ function buildSummary(
     const exitPrices = scored.map((result) => result.exitPrice).filter((value): value is number => value !== null);
     const exactEntries = scored.filter((result) => {
         const entryTs = parseTimeToUnixSeconds(result.trade.entryTime);
-        return entryTs !== null && result.entryQuoteTs === entryTs;
+        return entryTs !== null && result.entryQuoteTs === entryTs + entryDelayBars;
     }).length;
     const limitEntryEnabled = results.some((result) => result.entrySource === "limit");
     const limitEntryAttempts = results.filter((result) =>
@@ -190,6 +192,7 @@ function buildSummary(
     return {
         evaluationMode,
         allowMultipleTradesPerEvent: allowMultipleTradesPerEvent || undefined,
+        entryDelayBars: entryDelayBars > 0 ? entryDelayBars : undefined,
         scoredTrades: scored.length,
         duplicateTradesIgnored: results.filter((result) => result.exitSource === "duplicate").length,
         entryPriceFilteredTrades: results.filter((result) => result.exitSource === "entry_price_filtered").length,
@@ -274,6 +277,7 @@ export function evaluateSecondMarketTrades(args: {
     entryPriceFilterCents?: number;
     entryCutoffEnabled?: boolean;
     entryCutoffSeconds?: number;
+    entryDelayBars?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }): { results: SecondMarketTradeResult[]; summary: SecondMarketBacktestSummary } {
     const evaluationMode = args.evaluationMode ?? "resolve_hold";
@@ -281,17 +285,20 @@ export function evaluateSecondMarketTrades(args: {
     const mode = args.mode ?? "strict";
     const maxQuoteAgeSec = Math.max(0, Math.floor(args.maxQuoteAgeSec ?? DEFAULT_MAX_QUOTE_AGE_SEC));
     const fillSource = args.fillSource ?? "bid_ask";
+    const entryDelayBars = clampPolymarketEntryDelayBars(args.entryDelayBars);
     const results: SecondMarketTradeResult[] = [];
     const seenEvents = new Set<string>();
     const limitEntryEnabled = args.limitEntry?.enabled === true;
     const limitEntryMode = resolvePolymarketPostSignalLimitEntryMode(args.limitEntry?.priceMode);
     const limitEntryOffsetCents = clampPolymarketPostSignalLimitOffsetCents(args.limitEntry?.offsetCents);
     const fixedLimitPrice = clampPolymarketPostSignalLimitEntryPriceCents(args.limitEntry?.priceCents) / 100;
+    const configuredLimitPrice = limitEntryMode === "fixed_price" ? fixedLimitPrice : null;
     const limitExitEnabled = limitEntryEnabled && args.limitEntry?.exitEnabled === true;
 
     for (const trade of args.trades) {
         const entryTs = parseTimeToUnixSeconds(trade.entryTime);
         if (entryTs === null) continue;
+        const entryFillTs = entryTs + entryDelayBars;
         const outcome = findContainingPolymarketEvent(entryTs, args.outcomes);
         const side: SecondMarketSide = trade.type === "long" ? "yes" : "no";
         if (!outcome) {
@@ -323,7 +330,7 @@ export function evaluateSecondMarketTrades(args: {
                 entryStatus: limitEntryEnabled ? "duplicate" : undefined,
                 entryMode: limitEntryEnabled ? limitEntryMode : undefined,
                 entryOffsetCents: limitEntryEnabled ? limitEntryOffsetCents : undefined,
-                entryLimitPrice: limitEntryEnabled ? fixedLimitPrice : null,
+                entryLimitPrice: limitEntryEnabled ? configuredLimitPrice : null,
                 entryPrice: null,
                 entryQuoteTs: null,
                 exitPrice: null,
@@ -346,12 +353,12 @@ export function evaluateSecondMarketTrades(args: {
             : null;
 
         const entryCutoff = resolvePolymarketEntryCutoff({
-            entryTimeSec: entryTs,
+            entryTimeSec: entryFillTs,
             eventEndTs: outcome.event_end_ts,
             enabled: args.entryCutoffEnabled,
             cutoffSeconds: args.entryCutoffSeconds,
         });
-        if (!entryCutoff.allowed) {
+        if (!entryCutoff.allowed || entryFillTs >= outcome.event_end_ts) {
             results.push({
                 trade,
                 outcome,
@@ -359,7 +366,7 @@ export function evaluateSecondMarketTrades(args: {
                 entrySource: limitEntryEnabled ? "limit" : "quote",
                 entryMode: limitEntryEnabled ? limitEntryMode : undefined,
                 entryOffsetCents: limitEntryEnabled ? limitEntryOffsetCents : undefined,
-                entryLimitPrice: limitEntryEnabled ? fixedLimitPrice : null,
+                entryLimitPrice: limitEntryEnabled ? configuredLimitPrice : null,
                 entryPrice: null,
                 entryQuoteTs: null,
                 exitPrice: null,
@@ -375,7 +382,7 @@ export function evaluateSecondMarketTrades(args: {
         let entryLimitPrice: number | null = null;
         let entryImprovement: number | null = null;
         if (limitEntryEnabled && args.limitEntry) {
-            const limitFill = findPostSignalLimitEntryFill(buildClobPricePoints({
+            const buyPricePoints = buildClobPricePoints({
                 seriesId: outcome.series_id,
                 eventStartTs: outcome.event_start_ts,
                 yesTokenId: outcome.yes_token_id,
@@ -383,16 +390,53 @@ export function evaluateSecondMarketTrades(args: {
                 quotes: args.quotes,
                 orderSide: "buy",
                 fillSource,
-            }), {
+            });
+            const staleSignalEntry = limitEntryMode === "stale_signal_price"
+                ? findQuoteFill({
+                    seriesId: outcome.series_id,
+                    eventStartTs: outcome.event_start_ts,
+                    yesTokenId: outcome.yes_token_id,
+                    noTokenId: outcome.no_token_id,
+                    fillTs: entryTs,
+                    side,
+                    orderSide: "buy",
+                    quotes: args.quotes,
+                    mode,
+                    maxQuoteAgeSec,
+                    fillSource,
+                })
+                : null;
+            if (limitEntryMode === "stale_signal_price" && staleSignalEntry === null) {
+                results.push({
+                    trade,
+                    outcome,
+                    side,
+                    entrySource: "limit",
+                    entryStatus: "missing_price_points",
+                    entryMode: limitEntryMode,
+                    entryOffsetCents: limitEntryOffsetCents,
+                    entryPrice: null,
+                    entryQuoteTs: null,
+                    entryLimitPrice: null,
+                    entryImprovement: null,
+                    exitPrice: null,
+                    exitQuoteTs: null,
+                    exitSource: "missing",
+                    pnl: null,
+                    isProfitable: null,
+                });
+                continue;
+            }
+            const limitFill = findPostSignalLimitEntryFill(buyPricePoints, {
                 side,
-                startTs: entryTs,
+                startTs: entryFillTs,
                 eventEndTs: outcome.event_end_ts,
-                limitPrice: fixedLimitPrice,
-                priceMode: limitEntryMode,
+                limitPrice: staleSignalEntry?.price ?? fixedLimitPrice,
+                priceMode: limitEntryMode === "stale_signal_price" ? "fixed_price" : limitEntryMode,
                 offsetPrice: limitEntryOffsetCents / 100,
                 latestAllowedTs: signalExitTs,
             });
-            entryLimitPrice = limitFill.limitPrice ?? fixedLimitPrice;
+            entryLimitPrice = limitFill.limitPrice ?? staleSignalEntry?.price ?? configuredLimitPrice;
             if (limitFill.status !== "filled" || limitFill.fillPrice === null || limitFill.fillTs === null) {
                 results.push({
                     trade,
@@ -420,12 +464,28 @@ export function evaluateSecondMarketTrades(args: {
             };
             entryImprovement = limitFill.entryImprovement;
         } else {
+            if (signalExitTs !== null && entryFillTs > signalExitTs) {
+                results.push({
+                    trade,
+                    outcome,
+                    side,
+                    entrySource: "quote",
+                    entryPrice: null,
+                    entryQuoteTs: null,
+                    exitPrice: null,
+                    exitQuoteTs: null,
+                    exitSource: "entry_time_filtered",
+                    pnl: null,
+                    isProfitable: null,
+                });
+                continue;
+            }
             entry = findQuoteFill({
                 seriesId: outcome.series_id,
                 eventStartTs: outcome.event_start_ts,
                 yesTokenId: outcome.yes_token_id,
                 noTokenId: outcome.no_token_id,
-                fillTs: entryTs,
+                fillTs: entryFillTs,
                 side,
                 orderSide: "buy",
                 quotes: args.quotes,
@@ -605,5 +665,5 @@ export function evaluateSecondMarketTrades(args: {
         });
     }
 
-    return { results, summary: buildSummary(results, evaluationMode, args.limitEntry, allowMultipleTradesPerEvent) };
+    return { results, summary: buildSummary(results, evaluationMode, args.limitEntry, allowMultipleTradesPerEvent, entryDelayBars) };
 }

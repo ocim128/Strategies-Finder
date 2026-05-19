@@ -104,6 +104,7 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "polymarketOutcomeSymbol",
     "polymarketOutcomeInterval",
     "polymarketEntrySelectionMode",
+    "polymarketEntryDelayBars",
     "polymarketEntryPriceFilterCents",
     "polymarketEntryCutoffEnabled",
     "polymarketEntryCutoffSeconds",

@@ -19,6 +19,7 @@ import {
     type BacktestSettingsData,
 } from "./settings-model";
 import { resolvePolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
+import { clampPolymarketEntryDelayBars } from "./polymarket-entry-delay";
 import { clampPolymarketEntryPriceFilterCents } from "./polymarket-entry-price-filter";
 import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import {
@@ -41,6 +42,7 @@ export type BacktestDomSettingParser =
     | "confirmationStrategyParams"
     | "polymarketOutcomeInterval"
     | "polymarketEntrySelectionMode"
+    | "polymarketEntryDelayBars"
     | "polymarketEntryPriceFilterCents"
     | "polymarketExitMode"
     | "polymarketLimitEntryPriceCents"
@@ -309,6 +311,7 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("polymarketOutcomeInterval", { rustSupport: "unsupported", parser: "polymarketOutcomeInterval" }),
     createField("polymarketEntrySelectionMode", { rustSupport: "unsupported", parser: "polymarketEntrySelectionMode" }),
     createField("polymarketEntryOffset", { rustSupport: "unsupported" }),
+    createField("polymarketEntryDelayBars", { rustSupport: "unsupported", parser: "polymarketEntryDelayBars" }),
     createField("polymarketEntryPriceFilterCents", { rustSupport: "unsupported", parser: "polymarketEntryPriceFilterCents" }),
     createField("polymarketEntryCutoffToggle", {
         settingKey: "polymarketEntryCutoffEnabled",
@@ -429,6 +432,8 @@ export function coerceBacktestDomSettingValue(
             return resolvePolymarketOutcomeInterval(value);
         case "polymarketEntrySelectionMode":
             return resolvePolymarketEntrySelectionMode(value);
+        case "polymarketEntryDelayBars":
+            return clampPolymarketEntryDelayBars(value);
         case "polymarketEntryPriceFilterCents":
             return clampPolymarketEntryPriceFilterCents(value);
         case "polymarketExitMode":

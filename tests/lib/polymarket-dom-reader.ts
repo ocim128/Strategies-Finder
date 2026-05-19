@@ -1,6 +1,7 @@
 import type { ExecutionModel } from "./types/strategies";
 import { resolvePolymarketEntrySelectionMode, type PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 import { DEFAULT_POLYMARKET_ENTRY_CUTOFF_SECONDS, clampPolymarketEntryCutoffSeconds } from "./polymarket-entry-cutoff";
+import { clampPolymarketEntryDelayBars } from "./polymarket-entry-delay";
 import { clampPolymarketEntryPriceFilterCents } from "./polymarket-entry-price-filter";
 import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import {
@@ -26,6 +27,7 @@ export interface PolymarketDomSettings {
     entrySelectionMode: PolymarketEntrySelectionMode;
     outcomeSymbol: string | null;
     outcomeInterval: PolymarketOutcomeInterval;
+    entryDelayBars: number;
     entryPriceFilterCents: number;
     entryCutoffEnabled: boolean;
     entryCutoffSeconds: number;
@@ -71,6 +73,7 @@ export function resolvePolymarketDomSettings(doc: Document = document): Polymark
     const entrySelectionModeSelect = readSelectElement(doc, "polymarketEntrySelectionMode");
     const outcomeSymbolSelect = readSelectElement(doc, "polymarketOutcomeSymbol");
     const outcomeIntervalSelect = readSelectElement(doc, "polymarketOutcomeInterval");
+    const entryDelayInput = readInputElement(doc, "polymarketEntryDelayBars");
     const entryPriceFilterInput = readInputElement(doc, "polymarketEntryPriceFilterCents");
     const entryCutoffToggle = readInputElement(doc, "polymarketEntryCutoffToggle");
     const entryCutoffInput = readInputElement(doc, "polymarketEntryCutoffSeconds");
@@ -94,6 +97,7 @@ export function resolvePolymarketDomSettings(doc: Document = document): Polymark
         entrySelectionMode: resolvePolymarketEntrySelectionMode(entrySelectionModeSelect?.value),
         outcomeSymbol: outcomeSymbol.length > 0 ? outcomeSymbol : null,
         outcomeInterval: resolvePolymarketOutcomeInterval(outcomeIntervalSelect?.value),
+        entryDelayBars: clampPolymarketEntryDelayBars(entryDelayInput?.value),
         entryPriceFilterCents: clampPolymarketEntryPriceFilterCents(entryPriceFilterInput?.value),
         entryCutoffEnabled: entryCutoffToggle?.checked === true,
         entryCutoffSeconds: clampPolymarketEntryCutoffSeconds(
