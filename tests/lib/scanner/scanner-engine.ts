@@ -6,6 +6,7 @@
 import { binanceSearchService, type BinanceSymbol } from '../binance-search-service';
 import { ensureStrategyKeysLoaded, strategyRegistry } from '../../strategyRegistry';
 import { debugLogger } from '../debug-logger';
+import { mapWithConcurrencyLimit } from '../async-pool';
 
 import type { BacktestSettings, Signal, StrategyParams } from '../types/strategies';
 import { applySignalPolarity, getOpenPositionForScanner } from '../strategies/backtest';
@@ -31,6 +32,7 @@ const BATCH_SIZE = 15;
 const BATCH_DELAY_MS = 300;
 const MIN_DATA_BARS = 200;
 const DEFAULT_SCAN_LOOKBACK_BARS = 300;
+const SCANNER_FETCH_CONCURRENCY = 8;
 // ============================================================================
 // Scan Result Cache
 // ============================================================================
@@ -245,7 +247,7 @@ export class ScannerEngine {
         const { dataManager } = await import('../data-manager');
         let hadNetworkFetch = false;
 
-        const fetchPromises = pairs.map(async (pair) => {
+        await mapWithConcurrencyLimit(pairs, SCANNER_FETCH_CONCURRENCY, async (pair) => {
             if (signal.aborted) return;
 
             try {
@@ -280,7 +282,6 @@ export class ScannerEngine {
             }
         });
 
-        await Promise.all(fetchPromises);
         return { pairDataMap, hadNetworkFetch };
     }
 

@@ -1,17 +1,21 @@
 import type { OHLCVData } from "./types/index";
 import { parseTimeToUnixSeconds } from "./time-normalization";
+import {
+    checkLocalApiAvailable,
+    fetchLocalApi,
+    markLocalApiUnavailable,
+    resetLocalApiAvailability,
+} from "./local-api-transport";
 
 const AVAILABILITY_CACHE_MS = 60000;
 const SQLITE_REQUEST_TIMEOUT_MS = 8000;
 const SQLITE_INGEST_TIMEOUT_MS = 180000;
+const SQLITE_API_AVAILABILITY_KEY = "sqlite";
 const OHLCV_BINARY_MAGIC = 0x4F484C56;
 const OHLCV_BINARY_VERSION = 1;
 const OHLCV_BINARY_FIELD_COUNT = 6;
 const OHLCV_BINARY_HEADER_BYTES = 16;
 const OHLCV_BINARY_STORE_MIN_ROWS = 1024;
-let sqliteApiAvailable: boolean | null = null;
-let sqliteApiCheckedAt = 0;
-let sqliteApiAvailabilityCheckPromise: Promise<boolean> | null = null;
 
 type StoreSqliteResponse = {
     ok: boolean;
@@ -54,16 +58,8 @@ function toStoreRow(candle: OHLCVData): { time: number; open: number; high: numb
     };
 }
 
-function createRequestTimeoutSignal(timeoutMs = SQLITE_REQUEST_TIMEOUT_MS): AbortSignal | undefined {
-    if (typeof AbortSignal === "undefined" || typeof AbortSignal.timeout !== "function") {
-        return undefined;
-    }
-    return AbortSignal.timeout(timeoutMs);
-}
-
 function markSqliteApiUnavailable(): void {
-    sqliteApiAvailable = false;
-    sqliteApiCheckedAt = Date.now();
+    markLocalApiUnavailable(SQLITE_API_AVAILABILITY_KEY);
 }
 
 function handleLoadFailureStatus(response: Response): void {
@@ -175,11 +171,10 @@ async function parseJsonLoadResponse(response: Response): Promise<{ candles: OHL
 }
 
 async function loadSqliteCandlesJson(query: URLSearchParams): Promise<{ candles: OHLCVData[]; trusted: boolean } | null> {
-    const response = await fetch(`/api/sqlite/load-ohlcv?${query.toString()}`, {
+    const response = await fetchLocalApi(`/api/sqlite/load-ohlcv?${query.toString()}`, {
         method: 'GET',
         headers: { Accept: 'application/json' },
-        signal: createRequestTimeoutSignal(),
-    });
+    }, SQLITE_REQUEST_TIMEOUT_MS);
     if (!response.ok) {
         handleLoadFailureStatus(response);
         return null;
@@ -188,38 +183,13 @@ async function loadSqliteCandlesJson(query: URLSearchParams): Promise<{ candles:
 }
 
 async function checkSqliteApiAvailable(force = false): Promise<boolean> {
-    const now = Date.now();
-    const cacheIsFresh = sqliteApiAvailable !== null && now - sqliteApiCheckedAt < AVAILABILITY_CACHE_MS;
-    if (cacheIsFresh && (!force || sqliteApiAvailable === true)) {
-        return sqliteApiAvailable === true;
-    }
-
-    if (sqliteApiAvailabilityCheckPromise) {
-        return await sqliteApiAvailabilityCheckPromise;
-    }
-
-    const availabilityCheck = (async () => {
-        try {
-            const response = await fetch('/api/sqlite/status', {
-                method: 'GET',
-                signal: createRequestTimeoutSignal(),
-            });
-            sqliteApiAvailable = response.ok;
-        } catch {
-            sqliteApiAvailable = false;
-        }
-        sqliteApiCheckedAt = Date.now();
-        return sqliteApiAvailable;
-    })();
-
-    sqliteApiAvailabilityCheckPromise = availabilityCheck;
-    try {
-        return await availabilityCheck;
-    } finally {
-        if (sqliteApiAvailabilityCheckPromise === availabilityCheck) {
-            sqliteApiAvailabilityCheckPromise = null;
-        }
-    }
+    return checkLocalApiAvailable({
+        key: SQLITE_API_AVAILABILITY_KEY,
+        statusUrl: '/api/sqlite/status',
+        force,
+        cacheMs: AVAILABILITY_CACHE_MS,
+        timeoutMs: SQLITE_REQUEST_TIMEOUT_MS,
+    });
 }
 
 export async function loadSqliteCandles(
@@ -240,11 +210,10 @@ export async function loadSqliteCandles(
     });
 
     try {
-        const response = await fetch(`/api/sqlite/load-ohlcv?${query.toString()}`, {
+        const response = await fetchLocalApi(`/api/sqlite/load-ohlcv?${query.toString()}`, {
             method: 'GET',
             headers: { Accept: 'application/octet-stream' },
-            signal: createRequestTimeoutSignal(),
-        });
+        }, SQLITE_REQUEST_TIMEOUT_MS);
         if (!response.ok) {
             handleLoadFailureStatus(response);
             return null;
@@ -292,7 +261,7 @@ export async function storeSqliteCandles(
     }
 
     const postJson = async (): Promise<StoreSqliteResponse | null> => {
-        const response = await fetch('/api/sqlite/store-ohlcv', {
+        const response = await fetchLocalApi('/api/sqlite/store-ohlcv', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -302,8 +271,7 @@ export async function storeSqliteCandles(
                 source,
                 candles: normalizedRows,
             }),
-            signal: createRequestTimeoutSignal(SQLITE_INGEST_TIMEOUT_MS),
-        });
+        }, SQLITE_INGEST_TIMEOUT_MS);
 
         const payload = await response.json() as StoreSqliteResponse;
         if (!response.ok || !payload?.ok) {
@@ -319,12 +287,11 @@ export async function storeSqliteCandles(
             provider,
             source,
         });
-        const response = await fetch(`/api/sqlite/store-ohlcv?${query.toString()}`, {
+        const response = await fetchLocalApi(`/api/sqlite/store-ohlcv?${query.toString()}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/octet-stream' },
             body: encodeBinaryCandles(normalizedRows),
-            signal: createRequestTimeoutSignal(SQLITE_INGEST_TIMEOUT_MS),
-        });
+        }, SQLITE_INGEST_TIMEOUT_MS);
         const payload = await response.json().catch(() => null) as StoreSqliteResponse | null;
         if (!response.ok || !payload?.ok) {
             return { ok: false, error: payload?.error || `Store request failed (${response.status})` };
@@ -347,7 +314,5 @@ export async function storeSqliteCandles(
 }
 
 export function resetLocalSqliteApiAvailabilityForTests(): void {
-    sqliteApiAvailable = null;
-    sqliteApiCheckedAt = 0;
-    sqliteApiAvailabilityCheckPromise = null;
+    resetLocalApiAvailability(SQLITE_API_AVAILABILITY_KEY);
 }

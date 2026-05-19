@@ -72,10 +72,14 @@ import {
 import { state } from "./state";
 import { commitBacktestResult } from "./state-actions";
 import { applySignalPolarity, timeKey, type OHLCVData, type Strategy, type StrategyParams } from "./strategies";
+import { mapWithConcurrencyLimit } from "./async-pool";
 import { getTimeIndex } from "./strategies/backtest/backtest-utils";
 import { strategyPanelController } from "./strategy-panel-controller";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { uiManager } from "./ui-manager";
+
+const PORTFOLIO_DATA_LOAD_CONCURRENCY = 6;
+const PORTFOLIO_BACKTEST_CONCURRENCY = 4;
 
 class PortfolioLabService {
     private dom: PortfolioLabDom | null = null;
@@ -227,8 +231,10 @@ class PortfolioLabService {
             const runCache = new Map<string, PairRunArtifacts>();
             const requiredSymbols = Array.from(new Set<string>([...selectedSymbols, benchmarkSymbol]));
 
-            await Promise.all(
-                requiredSymbols.map((symbol) => this.loadPairData(symbol, lookbackBars, dataCache))
+            await mapWithConcurrencyLimit(
+                requiredSymbols,
+                PORTFOLIO_DATA_LOAD_CONCURRENCY,
+                (symbol) => this.loadPairData(symbol, lookbackBars, dataCache)
             );
             if (anchorSymbol && !requiredSymbols.includes(anchorSymbol)) {
                 try {
@@ -261,8 +267,10 @@ class PortfolioLabService {
                 | { row?: never; skipped: string };
 
             let completedPairs = 0;
-            const pairOutcomes: PairOutcome[] = await Promise.all(
-                selectedSymbols.map(async (symbol): Promise<PairOutcome> => {
+            const pairOutcomes: PairOutcome[] = await mapWithConcurrencyLimit(
+                selectedSymbols,
+                PORTFOLIO_BACKTEST_CONCURRENCY,
+                async (symbol): Promise<PairOutcome> => {
                     try {
                         const pairData = await this.loadPairData(symbol, lookbackBars, dataCache);
                         if (pairData.data.length < MIN_LOOKBACK_BARS) {
@@ -293,7 +301,7 @@ class PortfolioLabService {
                             `(${completedPairs}/${selectedSymbols.length} complete)...`
                         );
                     }
-                })
+                }
             );
 
             for (const outcome of pairOutcomes) {

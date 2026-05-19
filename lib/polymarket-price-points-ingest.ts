@@ -11,6 +11,7 @@ import {
     normalizePolymarketHistoryPoints,
     type PolymarketHistoryPoint,
 } from "./polymarket-history-client";
+import { mapWithConcurrencyLimit } from "./async-pool";
 
 const POLYMARKET_PROXY_HISTORY_URL = "/api/polymarket-history";
 const POLYMARKET_HISTORY_URL = "https://clob.polymarket.com/prices-history";
@@ -99,22 +100,16 @@ async function processBatch(
     seriesId: string,
     onProgress?: (fetched: number, total: number) => void
 ): Promise<PolymarketPricePoint[]> {
-    const allPoints: PolymarketPricePoint[] = [];
     let fetched = 0;
 
-    for (let i = 0; i < outcomes.length; i += MAX_CONCURRENT_FETCHES) {
-        const batch = outcomes.slice(i, i + MAX_CONCURRENT_FETCHES);
-        const batchResults = await Promise.all(
-            batch.map((outcome) => fetchPricePointsForEvent(outcome, seriesId))
-        );
-        for (const points of batchResults) {
-            allPoints.push(...points);
-        }
-        fetched += batch.length;
+    const rows = await mapWithConcurrencyLimit(outcomes, MAX_CONCURRENT_FETCHES, async (outcome) => {
+        const points = await fetchPricePointsForEvent(outcome, seriesId);
+        fetched += 1;
         onProgress?.(fetched, outcomes.length);
-    }
+        return points;
+    });
 
-    return allPoints;
+    return rows.flat();
 }
 
 async function loadExistingPricePoints(
@@ -130,18 +125,15 @@ async function loadExistingPricePoints(
         chunks.push(eventStartTs.slice(index, index + MAX_EVENT_STARTS_PER_LOAD_REQUEST));
     }
 
-    const rows: PolymarketPricePoint[][] = [];
-    for (let index = 0; index < chunks.length; index += MAX_CONCURRENT_LOAD_REQUESTS) {
-        const batch = chunks.slice(index, index + MAX_CONCURRENT_LOAD_REQUESTS);
-        const batchRows = await Promise.all(
-            batch.map((chunk) => loadPolymarketPricePoints({
-                seriesId,
-                eventStartTs: chunk,
-                limit: MAX_PRICE_POINTS_PER_LOAD_REQUEST,
-            }))
-        );
-        rows.push(...batchRows);
-    }
+    const rows = await mapWithConcurrencyLimit(
+        chunks,
+        MAX_CONCURRENT_LOAD_REQUESTS,
+        (chunk) => loadPolymarketPricePoints({
+            seriesId,
+            eventStartTs: chunk,
+            limit: MAX_PRICE_POINTS_PER_LOAD_REQUEST,
+        })
+    );
 
     return rows
         .flat()

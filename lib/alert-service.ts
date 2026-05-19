@@ -7,7 +7,12 @@ import {
     buildStreamId,
     parseConfigNameFromStreamId,
 } from "./alert-stream-id";
-import { readAlertWorkerUrl, writeAlertWorkerUrl } from "./alert-storage";
+import {
+    readAlertWorkerToken,
+    readAlertWorkerUrl,
+    writeAlertWorkerToken,
+    writeAlertWorkerUrl,
+} from "./alert-storage";
 
 export const ALERT_WORKER_URL_CHANGED_EVENT = 'alert-worker-url-changed';
 const API_FETCH_TIMEOUT_MS = 10_000;
@@ -139,6 +144,11 @@ function getWorkerUrl(): string {
     return readAlertWorkerUrl();
 }
 
+function getWorkerToken(): string {
+    return readAlertWorkerToken()
+        || ((import.meta as ImportMeta & { env?: { VITE_ALERT_WORKER_TOKEN?: string } }).env?.VITE_ALERT_WORKER_TOKEN ?? '');
+}
+
 function setWorkerUrl(url: string): void {
     const prev = getWorkerUrl();
     const normalized = writeAlertWorkerUrl(url);
@@ -146,6 +156,10 @@ function setWorkerUrl(url: string): void {
     if (prev !== normalized && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
         window.dispatchEvent(new CustomEvent(ALERT_WORKER_URL_CHANGED_EVENT, { detail: { url: normalized } }));
     }
+}
+
+function setWorkerToken(token: string): void {
+    writeAlertWorkerToken(token);
 }
 
 function requireUrl(): string {
@@ -240,9 +254,14 @@ async function fetchWithTimeout(input: string, options?: RequestInit): Promise<R
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     const base = requireUrl();
+    const token = getWorkerToken();
     const res = await fetchWithTimeout(`${base}${path}`, {
         ...options,
-        headers: { 'content-type': 'application/json', ...(options?.headers ?? {}) },
+        headers: {
+            'content-type': 'application/json',
+            ...(token ? { authorization: `Bearer ${token}` } : {}),
+            ...(options?.headers ?? {}),
+        },
     });
     const body = await readApiBody(res);
 
@@ -261,7 +280,9 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const alertService = {
     getWorkerUrl,
+    getWorkerToken,
     setWorkerUrl,
+    setWorkerToken,
 
     /** Test worker connectivity */
     async healthCheck(): Promise<AlertWorkerHealth> {

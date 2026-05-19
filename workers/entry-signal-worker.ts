@@ -57,6 +57,7 @@ interface Env {
     MARKET_DATA_API_BASES?: string;
     BINANCE_API_BASES?: string;
     MIN_CLOSED_CANDLES?: string;
+    WORKER_API_TOKEN?: string;
 }
 
 interface StreamSignalRequest {
@@ -267,6 +268,20 @@ function toJsonResponse(payload: unknown, status = 200): Response {
 
 function toNoContentResponse(): Response {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
+}
+
+function isAuthRequired(env: Env): boolean {
+    return typeof env.WORKER_API_TOKEN === "string" && env.WORKER_API_TOKEN.trim().length > 0;
+}
+
+function isAuthorizedRequest(request: Request, env: Env): boolean {
+    if (!isAuthRequired(env)) return true;
+    const expected = `Bearer ${env.WORKER_API_TOKEN!.trim()}`;
+    return request.headers.get("authorization") === expected;
+}
+
+function toUnauthorizedResponse(): Response {
+    return toJsonResponse({ ok: false, error: "Unauthorized" }, 401);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -1637,6 +1652,10 @@ export default {
                 now: new Date().toISOString(),
                 ...workerStrategySupport,
             });
+        }
+
+        if (!isAuthorizedRequest(request, env)) {
+            return toUnauthorizedResponse();
         }
 
         if (request.method === "POST" && pathname === "/api/stream/signal") {

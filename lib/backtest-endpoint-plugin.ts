@@ -38,6 +38,7 @@ import { buildBacktestEndpointExecutorRequest } from "./backtest-endpoint-execut
 import { sendJson } from "./http-response-utils";
 import type { OHLCVData, BacktestResult, StrategyParams } from "./types/strategies";
 import { strategies as builtInStrategies } from "./strategies/library";
+import { parseTimeToUnixSeconds } from "./time-normalization";
 
 // ============================================================================
 // Dataset cache
@@ -133,16 +134,7 @@ function computeCandleHash(candles: OHLCVData[]): string {
 }
 
 function toUnixSeconds(t: OHLCVData["time"]): number | null {
-    if (typeof t === "number") return t > 1e12 ? Math.floor(t / 1000) : t;
-    if (typeof t === "string") {
-        const parsed = Date.parse(t);
-        return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
-    }
-    if (t && typeof t === "object" && "year" in t) {
-        const day = t as { year: number; month: number; day: number };
-        return Math.floor(Date.UTC(day.year, day.month - 1, day.day) / 1000);
-    }
-    return null;
+    return parseTimeToUnixSeconds(t);
 }
 
 // ============================================================================

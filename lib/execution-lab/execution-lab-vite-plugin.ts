@@ -33,6 +33,7 @@ import {
     validateLiveCancelAllSubmitRequest,
     validateLiveTradeSubmitRequest,
 } from "./live-trade-request";
+import { parseTimeToUnixSeconds } from "../time-normalization";
 
 const LOG_ROOT = resolve(process.cwd(), "logs", "paper-execution");
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -146,18 +147,7 @@ export function normalizeExecutionLabClobPrice(value: unknown): number | null {
 }
 
 function toUnixSeconds(value: unknown): number | null {
-    if (value === null || value === undefined || value === "") return null;
-    if (typeof value === "number" && Number.isFinite(value)) {
-        return Math.floor(value > 1_000_000_000_000 ? value / 1000 : value);
-    }
-    if (typeof value === "string") {
-        const trimmed = value.trim();
-        const numeric = Number(trimmed);
-        if (Number.isFinite(numeric)) return Math.floor(numeric > 1_000_000_000_000 ? numeric / 1000 : numeric);
-        const parsed = Date.parse(trimmed);
-        if (Number.isFinite(parsed)) return Math.floor(parsed / 1000);
-    }
-    return null;
+    return parseTimeToUnixSeconds(value);
 }
 
 function parseSymbol(raw: string | null): SecondMarketSymbol | null {

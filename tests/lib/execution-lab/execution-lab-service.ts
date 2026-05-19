@@ -325,6 +325,8 @@ export class ExecutionLabService {
     private starting = false;
     private polling = false;
     private timer: ReturnType<typeof setInterval> | null = null;
+    private minerStatusTimer: ReturnType<typeof setInterval> | null = null;
+    private liveExecutorStatusTimer: ReturnType<typeof setInterval> | null = null;
     private snapshot: ExecutionLabSessionSnapshot | null = null;
     private paperState: ExecutionLabPaperState | null = null;
     private strategy: Strategy | null = null;
@@ -380,8 +382,32 @@ export class ExecutionLabService {
         this.renderIdle();
         void this.refreshMinerStatus();
         void this.refreshLiveExecutorStatus();
-        setInterval(() => void this.refreshMinerStatus(), 5000);
-        setInterval(() => void this.refreshLiveExecutorStatus(), 5000);
+        this.startStatusTimers();
+    }
+
+    public dispose(): void {
+        this.stopStatusTimers();
+        if (this.timer) {
+            clearInterval(this.timer);
+            this.timer = null;
+        }
+    }
+
+    private startStatusTimers(): void {
+        this.stopStatusTimers();
+        this.minerStatusTimer = setInterval(() => void this.refreshMinerStatus(), 5000);
+        this.liveExecutorStatusTimer = setInterval(() => void this.refreshLiveExecutorStatus(), 5000);
+    }
+
+    private stopStatusTimers(): void {
+        if (this.minerStatusTimer) {
+            clearInterval(this.minerStatusTimer);
+            this.minerStatusTimer = null;
+        }
+        if (this.liveExecutorStatusTimer) {
+            clearInterval(this.liveExecutorStatusTimer);
+            this.liveExecutorStatusTimer = null;
+        }
     }
 
     async startPaper(): Promise<void> {
@@ -2565,3 +2591,7 @@ export class ExecutionLabService {
 }
 
 export const executionLabService = new ExecutionLabService();
+
+if (import.meta.hot) {
+    import.meta.hot.dispose(() => executionLabService.dispose());
+}

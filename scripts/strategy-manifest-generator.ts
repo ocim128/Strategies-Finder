@@ -315,19 +315,29 @@ function extractBalancedObject(source: string, propName: string): string | null 
     return null;
 }
 
-function extractStrategyMeta(source: string, key: string): StrategyMetaEntry {
-    const name = extractStringProperty(source, "name") ?? `"${key}"`;
-    const description = extractStringProperty(source, "description") ?? `""`;
-    const defaultParams = extractBalancedObject(source, "defaultParams") ?? "{}";
-    const paramLabels = extractBalancedObject(source, "paramLabels") ?? "{}";
-    const metadata = extractBalancedObject(source, "metadata") ?? undefined;
+function requireExtractedValue(value: string | null | undefined, fileName: string, propName: string): string {
+    if (value !== null && value !== undefined) {
+        return value;
+    }
+    throw new Error(`Strategy ${fileName} is missing required "${propName}" metadata for manifest generation.`);
+}
+
+function extractStrategyMeta(source: string, key: string, fileName: string): StrategyMetaEntry {
+    const name = requireExtractedValue(extractStringProperty(source, "name"), fileName, "name");
+    const description = requireExtractedValue(extractStringProperty(source, "description"), fileName, "description");
+    const defaultParams = requireExtractedValue(extractBalancedObject(source, "defaultParams"), fileName, "defaultParams");
+    const paramLabels = requireExtractedValue(extractBalancedObject(source, "paramLabels"), fileName, "paramLabels");
+    const metadata = requireExtractedValue(extractBalancedObject(source, "metadata"), fileName, "metadata");
+    if (!/\brole\s*:/.test(metadata) || !/\bdirection\s*:/.test(metadata)) {
+        throw new Error(`Strategy ${fileName} metadata must include "role" and "direction" for manifest generation.`);
+    }
     return {
         key,
         name,
         description,
         defaultParams,
         paramLabels,
-        metadata: metadata ?? "undefined",
+        metadata,
         crossSymbolConfig: /\bcrossSymbolConfig\s*:/.test(source),
         polymarket1sConfig: /\bpolymarket1sConfig\s*:/.test(source),
     };
@@ -341,7 +351,7 @@ function collectStrategyMeta(
     return definitions.map((def) => {
         const fileName = def.importPath.replace("./lib/", "") + ".ts";
         const source = readFileSync(path.join(paths.strategyLibDir, fileName), "utf8");
-        return extractStrategyMeta(source, def.key);
+        return extractStrategyMeta(source, def.key, fileName);
     });
 }
 

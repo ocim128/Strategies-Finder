@@ -33,6 +33,7 @@ function writeStrategyFile(
             '    description: "test",',
             "    defaultParams: {},",
             "    paramLabels: {},",
+            '    metadata: { role: "entry", direction: "both" },',
             "    execute: () => [],",
             "};",
             "",

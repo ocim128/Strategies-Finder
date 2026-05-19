@@ -1,12 +1,16 @@
 import type { PolymarketOutcomeRow } from './types/polymarket-outcomes';
+import {
+    checkLocalApiAvailable,
+    fetchLocalApi,
+    isAbortLikeError,
+    markLocalApiUnavailable,
+    resetLocalApiAvailability,
+} from './local-api-transport';
 
 const AVAILABILITY_CACHE_MS = 60000;
 const SQLITE_REQUEST_TIMEOUT_MS = 8000;
 const SQLITE_INGEST_TIMEOUT_MS = 180000;
-
-let sqliteApiAvailable: boolean | null = null;
-let sqliteApiCheckedAt = 0;
-let sqliteApiAvailabilityCheckPromise: Promise<boolean> | null = null;
+const SQLITE_POLYMARKET_API_AVAILABILITY_KEY = 'sqlite-polymarket';
 
 export interface LoadPolymarketOutcomesOptions {
     seriesId?: string;
@@ -27,62 +31,22 @@ type StorePolymarketOutcomesResponse = {
     error?: string;
 };
 
-function isAbortLikeError(error: unknown): boolean {
-    if (!(error instanceof Error)) return false;
-    return error.name === 'AbortError' || error.name === 'TimeoutError';
-}
-
-function createRequestTimeoutSignal(): AbortSignal {
-    return AbortSignal.timeout(SQLITE_REQUEST_TIMEOUT_MS);
-}
-
 function getBaseUrl(): string {
     return typeof window === 'undefined' ? 'http://localhost:5173' : '';
 }
 
 async function checkSqliteApiAvailable(force = false): Promise<boolean> {
-    const now = Date.now();
-    const cacheIsFresh = sqliteApiAvailable !== null && now - sqliteApiCheckedAt < AVAILABILITY_CACHE_MS;
-    // A fresh successful probe is good enough for dependent SQLite requests in
-    // the same run; re-probing here can turn a transient status hiccup into a
-    // false failure while the API is otherwise serving data.
-    if (cacheIsFresh && (!force || sqliteApiAvailable === true)) {
-        return sqliteApiAvailable ?? false;
-    }
-
-    if (sqliteApiAvailabilityCheckPromise) {
-        return await sqliteApiAvailabilityCheckPromise;
-    }
-
-    const availabilityCheck = (async () => {
-        try {
-            const response = await fetch(getBaseUrl() + '/api/sqlite/status', {
-                method: 'GET',
-                signal: createRequestTimeoutSignal(),
-            });
-            sqliteApiAvailable = response.ok;
-        } catch {
-            sqliteApiAvailable = false;
-        }
-
-        sqliteApiCheckedAt = Date.now();
-        return sqliteApiAvailable ?? false;
-    })();
-
-    sqliteApiAvailabilityCheckPromise = availabilityCheck;
-    try {
-        return await availabilityCheck;
-    } finally {
-        if (sqliteApiAvailabilityCheckPromise === availabilityCheck) {
-            sqliteApiAvailabilityCheckPromise = null;
-        }
-    }
+    return checkLocalApiAvailable({
+        key: SQLITE_POLYMARKET_API_AVAILABILITY_KEY,
+        statusUrl: getBaseUrl() + '/api/sqlite/status',
+        force,
+        cacheMs: AVAILABILITY_CACHE_MS,
+        timeoutMs: SQLITE_REQUEST_TIMEOUT_MS,
+    });
 }
 
 export function resetLocalSqlitePolymarketApiAvailabilityForTests(): void {
-    sqliteApiAvailable = null;
-    sqliteApiCheckedAt = 0;
-    sqliteApiAvailabilityCheckPromise = null;
+    resetLocalApiAvailability(SQLITE_POLYMARKET_API_AVAILABILITY_KEY);
 }
 
 export async function loadPolymarketOutcomes(
@@ -102,13 +66,11 @@ export async function loadPolymarketOutcomes(
     const url = `${getBaseUrl()}/api/sqlite/load-polymarket-outcomes${params.size ? `?${params.toString()}` : ''}`;
     let res: Response;
     try {
-        res = await fetch(url, {
+        res = await fetchLocalApi(url, {
             method: 'GET',
-            signal: createRequestTimeoutSignal(),
-        });
+        }, SQLITE_REQUEST_TIMEOUT_MS);
     } catch (error) {
-        sqliteApiAvailable = false;
-        sqliteApiCheckedAt = Date.now();
+        markLocalApiUnavailable(SQLITE_POLYMARKET_API_AVAILABILITY_KEY);
         if (isAbortLikeError(error)) {
             throw new Error(`Loading Polymarket outcomes from SQLite timed out after ${Math.round(SQLITE_REQUEST_TIMEOUT_MS / 1000)}s.`);
         }
@@ -119,8 +81,7 @@ export async function loadPolymarketOutcomes(
 
     if (!res.ok) {
         if (res.status === 404 || res.status >= 500) {
-            sqliteApiAvailable = false;
-            sqliteApiCheckedAt = Date.now();
+            markLocalApiUnavailable(SQLITE_POLYMARKET_API_AVAILABILITY_KEY);
         }
         const payload = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(payload.error ?? `load-polymarket-outcomes failed (${res.status})`);
@@ -149,15 +110,13 @@ export async function storePolymarketOutcomes(
 
     let res: Response;
     try {
-        res = await fetch(`${getBaseUrl()}/api/sqlite/store-polymarket-outcomes`, {
+        res = await fetchLocalApi(`${getBaseUrl()}/api/sqlite/store-polymarket-outcomes`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ rows }),
-            signal: createRequestTimeoutSignal(),
-        });
+        }, SQLITE_REQUEST_TIMEOUT_MS);
     } catch (error) {
-        sqliteApiAvailable = false;
-        sqliteApiCheckedAt = Date.now();
+        markLocalApiUnavailable(SQLITE_POLYMARKET_API_AVAILABILITY_KEY);
         if (isAbortLikeError(error)) {
             return { ok: false, error: `Storing Polymarket outcomes timed out after ${Math.round(SQLITE_REQUEST_TIMEOUT_MS / 1000)}s.` };
         }
@@ -225,13 +184,11 @@ export async function loadPolymarketPricePoints(
     const url = `${getBaseUrl()}/api/sqlite/load-polymarket-price-points?${params.toString()}`;
     let res: Response;
     try {
-        res = await fetch(url, {
+        res = await fetchLocalApi(url, {
             method: 'GET',
-            signal: createRequestTimeoutSignal(),
-        });
+        }, SQLITE_REQUEST_TIMEOUT_MS);
     } catch (error) {
-        sqliteApiAvailable = false;
-        sqliteApiCheckedAt = Date.now();
+        markLocalApiUnavailable(SQLITE_POLYMARKET_API_AVAILABILITY_KEY);
         if (isAbortLikeError(error)) {
             throw new Error(`Loading Polymarket price points from SQLite timed out after ${Math.round(SQLITE_REQUEST_TIMEOUT_MS / 1000)}s.`);
         }
@@ -242,8 +199,7 @@ export async function loadPolymarketPricePoints(
 
     if (!res.ok) {
         if (res.status === 404 || res.status >= 500) {
-            sqliteApiAvailable = false;
-            sqliteApiCheckedAt = Date.now();
+            markLocalApiUnavailable(SQLITE_POLYMARKET_API_AVAILABILITY_KEY);
         }
         const payload = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(payload.error ?? `load-polymarket-price-points failed (${res.status})`);
@@ -288,15 +244,13 @@ export async function storePolymarketPricePoints(
 
     let res: Response;
     try {
-        res = await fetch(`${getBaseUrl()}/api/sqlite/store-polymarket-price-points`, {
+        res = await fetchLocalApi(`${getBaseUrl()}/api/sqlite/store-polymarket-price-points`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ rows }),
-            signal: createRequestTimeoutSignal(),
-        });
+        }, SQLITE_REQUEST_TIMEOUT_MS);
     } catch (error) {
-        sqliteApiAvailable = false;
-        sqliteApiCheckedAt = Date.now();
+        markLocalApiUnavailable(SQLITE_POLYMARKET_API_AVAILABILITY_KEY);
         return {
             ok: false,
             error: error instanceof Error
@@ -336,18 +290,16 @@ export async function ensurePolymarketPricePointsWithMetadata(args: {
 
     let res: Response;
     try {
-        res = await fetch(`${getBaseUrl()}/api/sqlite/ensure-polymarket-price-points`, {
+        res = await fetchLocalApi(`${getBaseUrl()}/api/sqlite/ensure-polymarket-price-points`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 seriesId: args.seriesId,
                 outcomes: args.outcomes,
             }),
-            signal: AbortSignal.timeout(SQLITE_INGEST_TIMEOUT_MS),
-        });
+        }, SQLITE_INGEST_TIMEOUT_MS);
     } catch (error) {
-        sqliteApiAvailable = false;
-        sqliteApiCheckedAt = Date.now();
+        markLocalApiUnavailable(SQLITE_POLYMARKET_API_AVAILABILITY_KEY);
         if (isAbortLikeError(error)) {
             throw new Error(`Ensuring Polymarket price points timed out after ${Math.round(SQLITE_INGEST_TIMEOUT_MS / 1000)}s.`);
         }
@@ -358,8 +310,7 @@ export async function ensurePolymarketPricePointsWithMetadata(args: {
 
     if (!res.ok) {
         if (res.status === 404 || res.status >= 500) {
-            sqliteApiAvailable = false;
-            sqliteApiCheckedAt = Date.now();
+            markLocalApiUnavailable(SQLITE_POLYMARKET_API_AVAILABILITY_KEY);
         }
         const payload = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(payload.error ?? `ensure-polymarket-price-points failed (${res.status})`);

@@ -425,17 +425,11 @@ export class DataMiningManager {
     }
 
     private toUnixSeconds(time: Time): number {
-        if (typeof time === 'number') return time;
-        if (typeof time === 'string') {
-            const parsed = Date.parse(time);
-            if (Number.isFinite(parsed)) {
-                return Math.floor(parsed / 1000);
-            }
+        const parsed = parseTimeToUnixSeconds(time);
+        if (parsed === null) {
+            throw new Error(`Cannot export candle with invalid time: ${String(time)}`);
         }
-        if (typeof time === 'object' && time && 'year' in time) {
-            return Math.floor(Date.UTC(time.year, time.month - 1, time.day) / 1000);
-        }
-        return Math.floor(Date.now() / 1000);
+        return parsed;
     }
 
     private triggerDownload(

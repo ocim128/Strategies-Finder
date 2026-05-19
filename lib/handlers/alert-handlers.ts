@@ -315,6 +315,13 @@ export function initAlertHandlers() {
             alertService.setWorkerUrl(urlInput.value.trim());
         });
     }
+    const tokenInput = getOptionalElement<HTMLInputElement>('alertWorkerToken');
+    if (tokenInput) {
+        tokenInput.value = alertService.getWorkerToken();
+        tokenInput.addEventListener('change', () => {
+            alertService.setWorkerToken(tokenInput.value);
+        });
+    }
 
     getOptionalElement('alertTestBtn')?.addEventListener('click', testConnection);
     getOptionalElement('alertQuickSubscribeBtn')?.addEventListener('click', quickSubscribe);

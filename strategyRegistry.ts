@@ -35,6 +35,7 @@ import {
     ensureBuiltInStrategyLoaded,
     type BuiltInStrategyMeta,
 } from "./lib/strategies/built-in-catalog";
+import { parseTimeToUnixSeconds } from "./lib/time-normalization";
 export type { Strategy, OHLCVData, Signal, StrategyParams };
 export type { BuiltInStrategyMeta };
 
@@ -100,16 +101,7 @@ class StrategyRegistryImpl implements StrategyRegistry {
     private readonly wrappedFlag = '__global_timeframe_wrapped__';
 
     private toUnixSeconds(time: Time): number | null {
-        if (typeof time === 'number') return time;
-        if (typeof time === 'string') {
-            const parsed = Date.parse(time);
-            return Number.isNaN(parsed) ? null : Math.floor(parsed / 1000);
-        }
-        if (time && typeof time === 'object' && 'year' in time) {
-            const day = time as { year: number; month: number; day: number };
-            return Math.floor(Date.UTC(day.year, day.month - 1, day.day) / 1000);
-        }
-        return null;
+        return parseTimeToUnixSeconds(time);
     }
 
     private toNumericTimeData(data: OHLCVData[]): OHLCVData[] | null {

@@ -121,6 +121,11 @@ Set worker secrets:
 
 Then send `notifyTelegram: true` in request body.
 
+## Worker API Token (Optional)
+
+Set `WORKER_API_TOKEN` to require `Authorization: Bearer <token>` on all non-health endpoints.
+`GET /health` remains public so the app can verify deployment metadata.
+
 ## Optional Env: Market Endpoint Override
 
 If your Worker region still gets blocked, set a custom CSV of Binance-compatible API bases:

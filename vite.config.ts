@@ -12,6 +12,7 @@ import {
     normalizePolymarketHistoryPoints,
     type PolymarketHistoryPoint,
 } from './lib/polymarket-history-client';
+import { parseTimeToUnixSeconds } from './lib/time-normalization';
 
 const BYBIT_TRADFI_KLINE_URL = 'https://www.bybit.com/x-api/fapi/copymt5/kline';
 const POLYMARKET_GAMMA_EVENT_SLUG_URL = 'https://gamma-api.polymarket.com/events/slug';
@@ -78,18 +79,7 @@ function maxFinite(values: readonly (number | null | undefined)[]): number | nul
 }
 
 function toUnixSeconds(value: unknown): number | null {
-    if (typeof value === 'number') {
-        if (!Number.isFinite(value)) return null;
-        if (value > 1e12) return Math.floor(value / 1000);
-        return Math.floor(value);
-    }
-    if (typeof value === 'string') {
-        const numeric = Number(value);
-        if (Number.isFinite(numeric)) return toUnixSeconds(numeric);
-        const parsed = Date.parse(value);
-        if (Number.isFinite(parsed)) return Math.floor(parsed / 1000);
-    }
-    return null;
+    return parseTimeToUnixSeconds(value);
 }
 
 function normalizeSqliteCandle(raw: unknown): SqliteCandleRow | null {
