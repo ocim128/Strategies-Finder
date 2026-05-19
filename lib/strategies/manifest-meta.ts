@@ -679,30 +679,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "poc_liquidity_rejection_fade",
-        name: "POC Liquidity Rejection Fade",
-        description: "The Volume Profile Point of Control acts as a high-liquidity magnet. When price touches the POC but suffers immediate, severe close rejection, passive liquidity has completely absorbed the directional attempt.",
-        defaultParams: {
-		poc_proximity_pct: 0.002,
-		rejection_threshold: 0.25,
-		profile_period: 30,
-		profile_bins: 20,
-	} as Record<string, number>,
-        paramLabels: {
-		poc_proximity_pct: "POC Proximity %",
-		rejection_threshold: "Rejection Threshold",
-		profile_period: "Profile Period",
-		profile_bins: "Profile Bins",
-	} as Record<string, string>,
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["poc_proximity_pct", "rejection_threshold", "profile_period"],
-	},
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "initiative_crossing_frequency_chop",
         name: "Initiative Crossing Frequency Chop",
         description: "The frequency of initiative pressure zero-crossings measures flow decisiveness. When crossing frequency drops from high to low, the market has committed to a flow direction. The sign of initiative pressure gives the direction.",
@@ -847,28 +823,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "volatility_ratio_overextension",
-        name: "Volatility Ratio Overextension",
-        description: "When short-term volatility spikes far above the baseline ratio and the bar was directional, the volatility overextension created a temporary mispricing. Fade the overextension.",
-        defaultParams: {
-		fast_window: 5,
-		slow_window: 30,
-		ratio_threshold: 2.0,
-	} as Record<string, number>,
-        paramLabels: {
-		fast_window: "Fast Window",
-		slow_window: "Slow Window",
-		ratio_threshold: "Ratio Threshold",
-	} as Record<string, string>,
-        metadata: {
-		role: "entry",
-		direction: "both",
-		walkForwardParams: ["fast_window", "slow_window", "ratio_threshold"],
-	},
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "rolling_vwap_center",
         name: "Rolling VWAP Center",
         description: "A rolling window volume-weighted average price represents the capital-weighted consensus. Closes above indicate value acceptance above where capital was most recently deployed.",
@@ -1008,24 +962,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         role: "entry",
         direction: "both",
         walkForwardParams: ["period", "multiplier", "halfband_frac"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "kurtosis_distribution_alignment",
-        name: "Kurtosis Distribution Alignment",
-        description: "Uses excess kurtosis of daily closes as a higher-moment regime filter and aligns entries with the side of a trailing rolling median only when tails are elevated.",
-        defaultParams: {
-        lookback: 63,
-    } as Record<string, number>,
-        paramLabels: {
-        lookback: "Lookback",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["lookback"],
     },
         crossSymbolConfig: false,
         polymarket1sConfig: false,

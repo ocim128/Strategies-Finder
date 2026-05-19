@@ -241,12 +241,12 @@ Read `lib/strategies/lib/robust_median_channel_breakout.ts` for a simple impleme
 
 Useful helper maps:
 - `lib/strategies/strategy-helpers.ts`: Core signals (`createSignalLoop`, `createBuySignal`, `createSellSignal`) & base OHLCV array extractors (`getCloses`, `getHighs`, `getVolumes`, `ensureCleanData`).
-- `lib/strategies/lib/price-action-frequency-core.ts`: For individual bar geometry (`getPriceActionBarMetrics`) extracting wicks, body, and range metrics seamlessly.
-- `lib/strategies/lib/price-action-statistics-core.ts`: Essential for robustness constraints (`buildRollingEntropy`, `buildEfficiencyRatio`, `buildRollingMedian`, `buildRollingZScore`, `buildRollingKurtosis`, `buildRollingMinMax`, `buildStreakCount`).
-- If you edit `archive/prompt.txt`, only list helpers that already exist as exported strategy-layer utilities. Prefer low-complexity primitives such as price extractors (`getOpens`, `getMidpoints`, `getTypicalPrices`), bar geometry series (`buildRangeSeries`, `buildBodySeries`, `buildCloseLocationSeries`), crossover, pivot, and timeframe-alignment helpers over prompt-only or speculative surfaces.
+- `lib/strategies/lib/price-action-frequency-core.ts`: For individual bar geometry (`computePriceActionBarMetrics`) extracting wicks, body, and range metrics seamlessly.
+- `lib/strategies/lib/price-action-statistics-core.ts`: Essential for robustness constraints (`buildRollingEntropy`, `buildEfficiencyRatio`, `buildRollingMedian`, `buildRollingZScore`, `buildStreakCount`).
+- If you edit `archive/prompt.txt`, only list helpers that already exist as exported strategy-layer utilities. Prefer low-complexity primitives such as price extractors (`getOpens`, `getTypicalPrices`), bar geometry series (`buildRangeSeries`, `buildBodyPctSeries`, `buildCloseLocationSeries`), crossover, pivot-flag, and timeframe-alignment helpers over prompt-only or speculative surfaces.
 
 Important Type and Dependency Gotchas:
-- Keep track of indicator outputs: some like `calculateADX` and `calculateATR` return pure generic arrays `(number | null)[]`, while `calculateMACD` and `calculateKeltnerChannels` return objects nested with arrays (`macd.histogram`, `kc.lower`).
+- Keep track of indicator outputs: some like `calculateADX` and `calculateATR` return pure generic arrays `(number | null)[]`, while `calculateKeltnerChannels` and `calculateDonchianChannels` return objects nested with arrays.
 - Type coercion matters: pass `cleanData` (which is `OHLCVData[]`) to `buildEfficiencyRatio`, but pass `closes` (which is `number[]`) to standard mapping and extraction routines.
 - Array indexing: ensure you loop against generic padding `if (i < lookback || indicator[i] === null) return null;` securely within closures.
 

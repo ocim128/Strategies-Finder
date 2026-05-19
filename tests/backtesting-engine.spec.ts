@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { calculateSMA, calculateRSI, calculateATR, calculateADX, calculateBacktestStats, OHLCVData, Signal, Time, Trade } from './lib/strategies/index';
+import { calculateBacktestStats, OHLCVData, Signal, Time, Trade } from './lib/strategies/index';
 import { calculateSharpeRatioFromEquityCurve } from './lib/strategies/performance-metrics';
 import { calculateEMA } from './lib/strategies/indicators';
 import { runBacktest, runBacktestCompact } from './lib/strategies/index';

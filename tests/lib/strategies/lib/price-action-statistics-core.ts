@@ -1,5 +1,5 @@
 ﻿import { OHLCVData } from "../../types/strategies";
-import { getPriceActionBarMetrics } from "./price-action-frequency-core";
+import { computePriceActionBarMetrics } from "./price-action-frequency-core";
 
 // ============================================================================
 // Statistical Helpers for Strategy Diversity
@@ -276,43 +276,6 @@ export function buildThresholdCrossingCount(
 }
 
 /**
- * Rolling excess kurtosis of a numeric series.
- * Positive = fat tails (leptokurtic), negative = thin tails (platykurtic).
- * Excess kurtosis subtracts 3 so that a normal distribution equals 0.
- */
-export function buildRollingKurtosis(
-	values: number[],
-	lookbackInput: number
-): (number | null)[] {
-	const lookback = Math.max(4, Math.round(lookbackInput));
-	const result: (number | null)[] = new Array(values.length).fill(null);
-
-	for (let i = lookback - 1; i < values.length; i++) {
-		let sum = 0;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			sum += values[j];
-		}
-		const mean = sum / lookback;
-
-		let m2 = 0;
-		let m4 = 0;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			const diff = values[j] - mean;
-			const d2 = diff * diff;
-			m2 += d2;
-			m4 += d2 * d2;
-		}
-		m2 /= lookback;
-		m4 /= lookback;
-
-		if (m2 <= 0) continue;
-		result[i] = (m4 / (m2 * m2)) - 3;
-	}
-
-	return result;
-}
-
-/**
  * Rolling median over a fixed lookback window.
  * Robust to outliers â€” useful as an alternative center-of-gravity to mean.
  * Uses insertion-sort on the window for simplicity at typical lookback sizes.
@@ -479,63 +442,9 @@ export function buildRollingEntropy(
 }
 
 /**
- * Generic dual-timeframe ratio: applies `buildFn` at two window sizes
- * and returns fast / slow. Useful for fractal comparisons of any metric
- * (stddev, skewness, efficiency, etc.).
- * Returns null when either window is null or slow value is zero.
- */
-export function buildDualTimeframeRatio(
-	values: number[],
-	fastWindow: number,
-	slowWindow: number,
-	buildFn: (v: number[], w: number) => (number | null)[]
-): (number | null)[] {
-	const fast = buildFn(values, fastWindow);
-	const slow = buildFn(values, slowWindow);
-	const len = Math.min(fast.length, slow.length);
-	const result: (number | null)[] = new Array(len).fill(null);
-
-	for (let i = 0; i < len; i++) {
-		const f = fast[i];
-		const s = slow[i];
-		if (f === null || s === null || s === 0) continue;
-		result[i] = f / s;
-	}
-
-	return result;
-}
-
-/**
- * Rolling min and max of an arbitrary numeric series.
- * Unlike buildTrailingHighLow which operates on OHLCV high/low,
- * this works on any computed series (z-score, skewness, ER, etc.).
- */
-export function buildRollingMinMax(
-	values: number[],
-	lookbackInput: number
-): { min: (number | null)[]; max: (number | null)[] } {
-	const lookback = Math.max(1, Math.round(lookbackInput));
-	const min: (number | null)[] = new Array(values.length).fill(null);
-	const max: (number | null)[] = new Array(values.length).fill(null);
-
-	for (let i = lookback - 1; i < values.length; i++) {
-		let lo = Infinity;
-		let hi = -Infinity;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			if (values[j] < lo) lo = values[j];
-			if (values[j] > hi) hi = values[j];
-		}
-		min[i] = lo;
-		max[i] = hi;
-	}
-
-	return { min, max };
-}
-
-/**
  * Extracts a per-bar numeric series from OHLCV data using bar metrics.
  * Useful for feeding any metric into statistical helpers without
- * recomputing `getPriceActionBarMetrics` in every strategy.
+ * recomputing bar metrics in every strategy.
  */
 export type BarMetricExtractor =
 	| "bodyPct"
@@ -560,7 +469,7 @@ export function extractBarMetricSeries(
 	const result: number[] = new Array(data.length).fill(0);
 
 	for (let i = 0; i < data.length; i++) {
-		const m = getPriceActionBarMetrics(data[i]);
+		const m = computePriceActionBarMetrics(data[i]);
 
 		switch (metric) {
 			case "bodyPct":
@@ -591,7 +500,7 @@ export function extractBarMetricSeries(
 				if (i === 0) {
 					result[i] = 0;
 				} else {
-					const prevM = getPriceActionBarMetrics(data[i - 1]);
+					const prevM = computePriceActionBarMetrics(data[i - 1]);
 					const avgRange = (m.range + prevM.range) / 2;
 					result[i] = avgRange > 0 ? (m.bodyMid - prevM.bodyMid) / avgRange : 0;
 				}
@@ -634,8 +543,4 @@ export function extractBarMetricSeries(
 
 	return result;
 }
-
-
-
-
 

@@ -154,21 +154,6 @@ export function buildRelativeStrength(
 }
 
 /**
- * Build a pair spread series: `primary[i] - secondary[i]`.
- */
-export function buildPairSpread(
-    primaryCloses: number[],
-    secondaryCloses: number[]
-): number[] {
-    const len = Math.min(primaryCloses.length, secondaryCloses.length);
-    const result = new Array<number>(len);
-    for (let i = 0; i < len; i++) {
-        result[i] = primaryCloses[i] - secondaryCloses[i];
-    }
-    return result;
-}
-
-/**
  * Build a rolling Pearson correlation between two close series.
  * Returns `null` for the first `lookback - 1` bars.
  */
@@ -209,54 +194,6 @@ export function buildRollingPairCorrelation(
     return result;
 }
 
-/**
- * Build a rolling relative volume strength:
- * `(primaryVol / rollingMeanPrimaryVol) / (secondaryVol / rollingMeanSecondaryVol)`.
- * Returns `null` for the first `lookback - 1` bars or when means are zero.
- */
-export function buildRelativeVolumeStrength(
-    primaryVolumes: number[],
-    secondaryVolumes: number[],
-    lookback: number
-): (number | null)[] {
-    const len = Math.min(primaryVolumes.length, secondaryVolumes.length);
-    const result: (number | null)[] = new Array(len);
-
-    // Running sums for efficiency.
-    let sumP = 0;
-    let sumS = 0;
-
-    for (let i = 0; i < len; i++) {
-        sumP += primaryVolumes[i];
-        sumS += secondaryVolumes[i];
-
-        if (i >= lookback) {
-            sumP -= primaryVolumes[i - lookback];
-            sumS -= secondaryVolumes[i - lookback];
-        }
-
-        if (i < lookback - 1) {
-            result[i] = null;
-            continue;
-        }
-
-        const meanP = sumP / lookback;
-        const meanS = sumS / lookback;
-
-        if (meanP === 0 || meanS === 0) {
-            result[i] = null;
-            continue;
-        }
-
-        const relP = primaryVolumes[i] / meanP;
-        const relS = secondaryVolumes[i] / meanS;
-
-        result[i] = relS !== 0 ? relP / relS : null;
-    }
-
-    return result;
-}
-
 // ============================================================================
 // Error type
 // ============================================================================
@@ -267,8 +204,4 @@ export class CrossSymbolAlignmentError extends Error {
         this.name = 'CrossSymbolAlignmentError';
     }
 }
-
-
-
-
 

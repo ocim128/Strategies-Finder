@@ -22,14 +22,6 @@ const CONFIRMATION_STRATEGY_CHECKBOXES = [
         defaultValue: 63,
         minValue: 2,
     },
-    {
-        checkboxKey: "confirmationKurtosisDistributionAlignment",
-        inputKey: "confirmationKurtosisLookback",
-        strategyKey: "kurtosis_distribution_alignment",
-        paramKey: "lookback",
-        defaultValue: 63,
-        minValue: 4,
-    },
 ] as const;
 
 function setDisabledState(

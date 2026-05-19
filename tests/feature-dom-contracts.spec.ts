@@ -20,6 +20,7 @@ import { WALK_FORWARD_SERVICE_REQUIRED_IDS } from "./lib/walk-forward-dom";
 import { ENSEMBLE_LAB_REQUIRED_IDS } from "./lib/strategy-ensemble-dom";
 import { MONTE_CARLO_REQUIRED_IDS } from "../lib/monte-carlo-dom";
 import { STRATEGY_LIBRARY_ADMIN_REQUIRED_IDS } from "../lib/strategy-library-admin-dom";
+import { STRATEGY_LIBRARY_AUDIT_REQUIRED_IDS } from "../lib/strategy-library-audit-dom";
 import { CROSS_SYMBOL_REQUIRED_IDS } from "../lib/cross-symbol-dom";
 import { CHART_MANAGER_REQUIRED_IDS } from "../lib/chart-manager-dom";
 import { STRATEGY_PANEL_REQUIRED_IDS } from "../lib/strategy-panel-dom";
@@ -90,6 +91,7 @@ describe("Feature DOM contracts", () => {
         walkForwardService: [...WALK_FORWARD_SERVICE_REQUIRED_IDS],
         monteCarlo: [...MONTE_CARLO_REQUIRED_IDS],
         strategyLibraryAdmin: [...STRATEGY_LIBRARY_ADMIN_REQUIRED_IDS],
+        strategyLibraryAudit: [...STRATEGY_LIBRARY_AUDIT_REQUIRED_IDS],
         crossSymbol: [...CROSS_SYMBOL_REQUIRED_IDS],
         chartManager: [...CHART_MANAGER_REQUIRED_IDS],
         strategyPanel: [...STRATEGY_PANEL_REQUIRED_IDS],

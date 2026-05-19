@@ -25,6 +25,7 @@ const TAB_TO_FEATURE: Record<string, string> = {
     polymarket: "polymarket-panel",
     executionlab: "execution-lab",
     datamining: "data-mining",
+    libraryaudit: "strategy-library-audit",
 };
 
 const FEATURE_TO_TAB: Record<string, string> = Object.fromEntries(

@@ -148,11 +148,11 @@ describe('Backtest settings compatibility', () => {
         expect(paramsContract).to.not.equal(undefined);
         expect(coerceBacktestDomSettingValue(
             contract!,
-            'entropy_ratio_regime_alignment,close_location_median_alignment,kurtosis_distribution_alignment'
+            'entropy_ratio_regime_alignment,close_location_median_alignment,robust_median_channel_breakout'
         )).to.deep.equal([
             'entropy_ratio_regime_alignment',
             'close_location_median_alignment',
-            'kurtosis_distribution_alignment',
+            'robust_median_channel_breakout',
         ]);
         expect(coerceBacktestDomSettingValue(
             paramsContract!,
@@ -171,7 +171,7 @@ describe('Backtest settings compatibility', () => {
             confirmationStrategyParams: JSON.stringify({
                 entropy_ratio_regime_alignment: { slowWindow: '21' },
                 close_location_median_alignment: { lookback: '34' },
-                kurtosis_distribution_alignment: { lookback: '55' },
+                robust_median_channel_breakout: { lookback: '55' },
             }),
         } as unknown as BacktestSettings);
         expect(resolved.confirmationStrategies).to.deep.equal([

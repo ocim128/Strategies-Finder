@@ -13,11 +13,11 @@ export interface PriceActionBarMetrics {
 	bodyMid: number;
 }
 
-export function clamp(value: number, min: number, max: number): number {
+function clamp(value: number, min: number, max: number): number {
 	return Math.max(min, Math.min(max, value));
 }
 
-export function getPriceActionBarMetrics(bar: OHLCVData): PriceActionBarMetrics {
+export function computePriceActionBarMetrics(bar: OHLCVData): PriceActionBarMetrics {
 	const range = Math.max(0, bar.high - bar.low);
 	const bodyHigh = Math.max(bar.open, bar.close);
 	const bodyLow = Math.min(bar.open, bar.close);
@@ -62,7 +62,7 @@ function buildMetricSeries(
 
 	for (let i = 0; i < data.length; i++) {
 		const bar = data[i];
-		result[i] = getValue(bar, getPriceActionBarMetrics(bar));
+		result[i] = getValue(bar, computePriceActionBarMetrics(bar));
 	}
 
 	return result;
@@ -72,20 +72,8 @@ export function buildRangeSeries(data: OHLCVData[]): number[] {
 	return buildMetricSeries(data, (_bar, metrics) => metrics.range);
 }
 
-export function buildBodySeries(data: OHLCVData[]): number[] {
-	return buildMetricSeries(data, (_bar, metrics) => metrics.body);
-}
-
 export function buildBodyPctSeries(data: OHLCVData[]): number[] {
 	return buildMetricSeries(data, (_bar, metrics) => metrics.bodyPct);
-}
-
-export function buildUpperWickSeries(data: OHLCVData[]): number[] {
-	return buildMetricSeries(data, (_bar, metrics) => metrics.upperWick);
-}
-
-export function buildLowerWickSeries(data: OHLCVData[]): number[] {
-	return buildMetricSeries(data, (_bar, metrics) => metrics.lowerWick);
 }
 
 export function buildCloseLocationSeries(data: OHLCVData[]): number[] {
@@ -171,59 +159,6 @@ export function buildTrailingHighLow(
 	return { highest, lowest };
 }
 
-export function buildSweepReclaimSeries(
-	data: OHLCVData[],
-	lookbackInput: number
-): (number | null)[] {
-	const lookback = Math.max(2, Math.round(lookbackInput));
-	const result: (number | null)[] = new Array(data.length).fill(null);
-	const closeAcceptance = buildCloseAcceptanceSeries(data);
-	const { highest, lowest } = buildTrailingHighLow(data, lookback);
-
-	for (let i = 0; i < data.length; i++) {
-		const priorHigh = highest[i];
-		const priorLow = lowest[i];
-		if (priorHigh === null || priorLow === null) continue;
-
-		const bar = data[i];
-		const range = Math.max(0, bar.high - bar.low);
-		if (range <= 0) {
-			result[i] = 0;
-			continue;
-		}
-
-		const bullishSweepDepth = bar.low < priorLow ? clamp((priorLow - bar.low) / range, 0, 1) : 0;
-		const bearishSweepDepth = bar.high > priorHigh ? clamp((bar.high - priorHigh) / range, 0, 1) : 0;
-		const bullishReclaim = bullishSweepDepth > 0 ? clamp((bar.close - priorLow) / range, 0, 1) : 0;
-		const bearishReclaim = bearishSweepDepth > 0 ? clamp((priorHigh - bar.close) / range, 0, 1) : 0;
-		const acceptance = closeAcceptance[i];
-
-		const bullishScore = bullishSweepDepth * bullishReclaim * (0.5 + 0.5 * Math.max(0, acceptance));
-		const bearishScore = bearishSweepDepth * bearishReclaim * (0.5 + 0.5 * Math.max(0, -acceptance));
-		result[i] = bullishScore - bearishScore;
-	}
-
-	return result;
-}
-
-export function buildTrailingWindowSpan(
-	data: OHLCVData[],
-	lookbackInput: number,
-	includeCurrent = false
-): (number | null)[] {
-	const { highest, lowest } = buildTrailingHighLow(data, lookbackInput, includeCurrent);
-	const result: (number | null)[] = new Array(data.length).fill(null);
-
-	for (let i = 0; i < data.length; i++) {
-		const hi = highest[i];
-		const lo = lowest[i];
-		if (hi === null || lo === null) continue;
-		result[i] = Math.max(0, hi - lo);
-	}
-
-	return result;
-}
-
 export type BarMetricType = 'gapPct' | 'closeReturn' | 'bodyDirection' | 'bodyPct' | 'wickImbalance' | 'bodyMidDelta' | 'closeMidpointDev' | 'trueRange';
 
 export function extractBarMetricSeries(data: OHLCVData[], metricType: BarMetricType): number[] {
@@ -291,8 +226,4 @@ export function extractBarMetricSeries(data: OHLCVData[], metricType: BarMetricT
 	}
 	return result;
 }
-
-
-
-
 

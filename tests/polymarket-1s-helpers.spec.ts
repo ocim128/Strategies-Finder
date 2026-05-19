@@ -1,9 +1,7 @@
 import { describe, it } from "node:test";
 import { expect } from "chai";
 import {
-    buildPolymarket1sGammaAgreement,
     buildPolymarket1sPressureGap,
-    buildPolymarket1sReactionGap,
 } from "../lib/strategies/lib/polymarket-1s-helpers";
 import type { OHLCVData, Polymarket1sRuntimeContext } from "../lib/types/strategies";
 
@@ -60,24 +58,6 @@ describe("Polymarket 1s helper series", () => {
         expect(frame.longEdge[7]).to.equal(frame.pressureGap[7]);
         expect(frame.shortEdge[7]).to.equal(0);
         expect(frame.eventProgress[7]).to.be.greaterThan(0);
-    });
-
-    it("detects positive underreaction when spot probability rises faster than Polymarket probability", () => {
-        const frame = buildPolymarket1sReactionGap(candles(), context(), { volLookback: 5, lagSec: 2 });
-
-        expect(frame.available).to.equal(true);
-        expect(frame.reactionGap[7]).to.be.greaterThan(0);
-        expect(frame.longLagEdge[7]).to.equal(frame.reactionGap[7]);
-        expect(frame.shortLagEdge[7]).to.equal(0);
-    });
-
-    it("uses Gamma only when it agrees with the spot pressure direction", () => {
-        const frame = buildPolymarket1sGammaAgreement(candles(), context(), { volLookback: 5 });
-
-        expect(frame.available).to.equal(true);
-        expect(frame.gammaGap[7]).to.be.greaterThan(0);
-        expect(frame.consensusLongEdge[7]).to.be.greaterThan(0);
-        expect(frame.consensusShortEdge[7]).to.equal(0);
     });
 
     it("uses the charted event open when the first available quote is mid-event", () => {

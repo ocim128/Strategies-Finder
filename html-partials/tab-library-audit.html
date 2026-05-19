@@ -1,0 +1,33 @@
+<!-- Library Audit Tab -->
+<div id="libraryauditTab" class="strategy-library-audit-tab">
+    <div class="section-title">Library Audit</div>
+
+    <div class="section-body strategy-library-audit-panel">
+        <div class="strategy-library-audit-toolbar">
+            <div class="strategy-library-menu-status strategy-library-audit-status" id="strategyLibraryAuditStatus"
+                data-state="muted">
+                Audit not run.
+            </div>
+            <button class="btn btn-secondary btn-compact" id="runStrategyLibraryAuditBtn" type="button">
+                Analyze Helper Usage
+            </button>
+        </div>
+
+        <div class="strategy-library-audit-controls" aria-label="Library audit filters">
+            <label class="strategy-library-audit-toggle" for="strategyLibraryAuditArchiveHeavyOnly">
+                <input type="checkbox" id="strategyLibraryAuditArchiveHeavyOnly">
+                Archive-heavy
+            </label>
+            <label class="strategy-library-audit-toggle" for="strategyLibraryAuditHideCore">
+                <input type="checkbox" id="strategyLibraryAuditHideCore" checked>
+                Hide Core
+            </label>
+            <input type="search" class="param-input strategy-library-audit-search" id="strategyLibraryAuditSearch"
+                placeholder="Filter helpers">
+        </div>
+
+        <div class="strategy-library-audit-summary" id="strategyLibraryAuditSummary"></div>
+        <div class="strategy-library-audit-warnings" id="strategyLibraryAuditWarnings" hidden></div>
+        <div class="strategy-library-audit-results" id="strategyLibraryAuditResults"></div>
+    </div>
+</div>

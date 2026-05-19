@@ -47,8 +47,6 @@ const UI_EVENT_HANDLER_DOM_IDS = {
     confirmationEntropySlowWindow: "confirmationEntropySlowWindow",
     confirmationCloseLocationMedianAlignment: "confirmationCloseLocationMedianAlignment",
     confirmationCloseLocationLookback: "confirmationCloseLocationLookback",
-    confirmationKurtosisDistributionAlignment: "confirmationKurtosisDistributionAlignment",
-    confirmationKurtosisLookback: "confirmationKurtosisLookback",
     strategyTimeframeToggle: "strategyTimeframeToggle",
     strategyTimeframeMinutes: "strategyTimeframeMinutes",
     finderTradesToggle: "finderTradesToggle",
@@ -123,8 +121,6 @@ type UiEventTypedControls = {
     confirmationEntropySlowWindow: HTMLInputElement;
     confirmationCloseLocationMedianAlignment: HTMLInputElement;
     confirmationCloseLocationLookback: HTMLInputElement;
-    confirmationKurtosisDistributionAlignment: HTMLInputElement;
-    confirmationKurtosisLookback: HTMLInputElement;
     strategyTimeframeToggle: HTMLInputElement;
     strategyTimeframeMinutes: HTMLInputElement;
     finderTradesToggle: HTMLInputElement;

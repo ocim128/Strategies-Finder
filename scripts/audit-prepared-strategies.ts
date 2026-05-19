@@ -21,13 +21,12 @@ const strategyLibDir = path.join(repoRoot, "lib", "strategies", "lib");
 
 const HEAVY_FAMILY_PATTERNS: ReadonlyArray<{ family: string; pattern: RegExp }> = [
     { family: "rolling-entropy", pattern: /\bbuildRollingEntropy\b/ },
-    { family: "rolling-skew-kurtosis", pattern: /\b(?:buildRollingSkewness|buildRollingKurtosis)\b/ },
+    { family: "rolling-skewness", pattern: /\bbuildRollingSkewness\b/ },
     { family: "rolling-zscore-median-percentile", pattern: /\b(?:buildRollingZScore|buildRollingMedian|buildPercentileRank)\b/ },
     { family: "correlation-autocorrelation", pattern: /\b(?:buildRollingCorrelation|buildRollingPairCorrelation|buildRollingAutoCorrelation)\b/ },
     { family: "cross-symbol-relative", pattern: /\b(?:buildRelativeStrength|crossSymbolConfig)\b/ },
     { family: "efficiency-ratio", pattern: /\bbuildEfficiencyRatio\b/ },
-    { family: "vwap", pattern: /\b(?:calculateVWAP|calculateSessionVWAP|rolling_vwap|Rolling VWAP|session VWAP)\b/i },
-    { family: "dual-timeframe-ratio", pattern: /\bbuildDualTimeframeRatio\b/ },
+    { family: "vwap", pattern: /\b(?:rolling_vwap|Rolling VWAP|session VWAP)\b/i },
 ];
 
 function readStrategySource(definition: StrategyModuleDefinition): string {

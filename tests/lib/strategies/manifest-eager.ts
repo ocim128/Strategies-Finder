@@ -39,7 +39,6 @@ import { true_range_skewness_initiation } from "./lib/true_range_skewness_initia
 import { body_proportion_entropy_ignition } from "./lib/body_proportion_entropy_ignition";
 import { return_skewness_exhaustion_fade } from "./lib/return_skewness_exhaustion_fade";
 import { volume_weighted_entropy_ignition } from "./lib/volume_weighted_entropy_ignition";
-import { poc_liquidity_rejection_fade } from "./lib/poc_liquidity_rejection_fade";
 import { initiative_crossing_frequency_chop } from "./lib/initiative_crossing_frequency_chop";
 import { relative_strength_mean_reversion } from "./lib/relative_strength_mean_reversion";
 import { cross_pressure_initiative_inversion } from "./lib/cross_pressure_initiative_inversion";
@@ -47,7 +46,6 @@ import { dominance_handoff_exhaustion } from "./lib/dominance_handoff_exhaustion
 import { close_location_correlation_break } from "./lib/close_location_correlation_break";
 import { correlation_range_fragmentation } from "./lib/correlation_range_fragmentation";
 import { correlation_flash_gamma_trigger } from "./lib/correlation_flash_gamma_trigger";
-import { volatility_ratio_overextension } from "./lib/volatility_ratio_overextension";
 import { rolling_vwap_center } from "./lib/rolling_vwap_center";
 import { initiative_pressure_side } from "./lib/initiative_pressure_side";
 import { decay_momentum_alignment } from "./lib/decay_momentum_alignment";
@@ -55,7 +53,6 @@ import { initiative_pressure_gated_median } from "./lib/initiative_pressure_gate
 import { roc_percentile_regime } from "./lib/roc_percentile_regime";
 import { accumulation_persistence_streak_gate } from "./lib/accumulation_persistence_streak_gate";
 import { keltner_halfband_acceptance } from "./lib/keltner_halfband_acceptance";
-import { kurtosis_distribution_alignment } from "./lib/kurtosis_distribution_alignment";
 import { close_location_median_alignment } from "./lib/close_location_median_alignment";
 import { typical_price_percentile_alignment } from "./lib/typical_price_percentile_alignment__20260429T162454Z";
 import { volatility_regime_median_alignment } from "./lib/volatility_regime_median_alignment__20260429T162454Z";
@@ -115,7 +112,6 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "body_proportion_entropy_ignition", strategy: body_proportion_entropy_ignition },
     { key: "return_skewness_exhaustion_fade", strategy: return_skewness_exhaustion_fade },
     { key: "volume_weighted_entropy_ignition", strategy: volume_weighted_entropy_ignition },
-    { key: "poc_liquidity_rejection_fade", strategy: poc_liquidity_rejection_fade },
     { key: "initiative_crossing_frequency_chop", strategy: initiative_crossing_frequency_chop },
     { key: "relative_strength_mean_reversion", strategy: relative_strength_mean_reversion },
     { key: "cross_pressure_initiative_inversion", strategy: cross_pressure_initiative_inversion },
@@ -123,7 +119,6 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "close_location_correlation_break", strategy: close_location_correlation_break },
     { key: "correlation_range_fragmentation", strategy: correlation_range_fragmentation },
     { key: "correlation_flash_gamma_trigger", strategy: correlation_flash_gamma_trigger },
-    { key: "volatility_ratio_overextension", strategy: volatility_ratio_overextension },
     { key: "rolling_vwap_center", strategy: rolling_vwap_center },
     { key: "initiative_pressure_side", strategy: initiative_pressure_side },
     { key: "decay_momentum_alignment", strategy: decay_momentum_alignment },
@@ -131,7 +126,6 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "roc_percentile_regime", strategy: roc_percentile_regime },
     { key: "accumulation_persistence_streak_gate", strategy: accumulation_persistence_streak_gate },
     { key: "keltner_halfband_acceptance", strategy: keltner_halfband_acceptance },
-    { key: "kurtosis_distribution_alignment", strategy: kurtosis_distribution_alignment },
     { key: "close_location_median_alignment", strategy: close_location_median_alignment },
     { key: "typical_price_percentile_alignment", strategy: typical_price_percentile_alignment },
     { key: "volatility_regime_median_alignment", strategy: volatility_regime_median_alignment },

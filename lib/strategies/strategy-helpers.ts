@@ -1,4 +1,4 @@
-import { Signal, OHLCVData, Time } from '../types/strategies';
+import { Signal, OHLCVData } from '../types/strategies';
 
 // ============================================================================
 // Data Mapping & Memoization
@@ -15,7 +15,6 @@ const _l = new WeakMap<OHLCVData[], number[]>();
 const _o = new WeakMap<OHLCVData[], number[]>();
 const _c = new WeakMap<OHLCVData[], number[]>();
 const _v = new WeakMap<OHLCVData[], number[]>();
-const _mid = new WeakMap<OHLCVData[], number[]>();
 const _typical = new WeakMap<OHLCVData[], number[]>();
 const _weightedClose = new WeakMap<OHLCVData[], number[]>();
 const _clean = new WeakMap<OHLCVData[], OHLCVData[]>();
@@ -25,7 +24,6 @@ export const getLows = (data: OHLCVData[]): number[] => getMemoized(_l, data, d 
 export const getOpens = (data: OHLCVData[]): number[] => getMemoized(_o, data, d => d.open);
 export const getCloses = (data: OHLCVData[]): number[] => getMemoized(_c, data, d => d.close);
 export const getVolumes = (data: OHLCVData[]): number[] => getMemoized(_v, data, d => d.volume);
-export const getMidpoints = (data: OHLCVData[]): number[] => getMemoized(_mid, data, d => (d.high + d.low) / 2);
 export const getTypicalPrices = (data: OHLCVData[]): number[] =>
     getMemoized(_typical, data, d => (d.high + d.low + d.close) / 3);
 export const getWeightedClosePrices = (data: OHLCVData[]): number[] =>
@@ -170,39 +168,10 @@ export function createSignalLoop(
 }
 
 // ============================================================================
-// Pivot Detection
+// Pivot Flags
 // ============================================================================
 
-export interface Pivot {
-    index: number;
-    price: number;
-    isHigh: boolean; // true = high, false = low
-    time: Time;
-    /**
-     * Optional bar index when the pivot becomes confirmable without look-ahead.
-     * For centered-window pivots this is typically index + halfDepth.
-     */
-    confirmationIndex?: number;
-}
-
 export type PivotExtremaMode = 'strict' | 'pine';
-
-export interface DetectPivotsOptions {
-    depth: number;
-    deviationThreshold: number | number[];
-    extremaMode?: PivotExtremaMode;
-    includeConfirmationIndex?: boolean;
-    /**
-     * When true, confirmed pivots are never replaced by later same-direction extrema.
-     * This preserves causal/non-repainting behavior for historical signals.
-     */
-    lockConfirmedPivots?: boolean;
-    /**
-     * Inclusive means deviation >= threshold confirms reversal.
-     * Exclusive means deviation > threshold confirms reversal.
-     */
-    deviationInclusive?: boolean;
-}
 
 export function buildPivotFlags(
     highs: number[],
@@ -250,106 +219,3 @@ export function buildPivotFlags(
 
     return { pivotHighs, pivotLows };
 }
-
-export function detectPivots(
-    data: OHLCVData[],
-    options: DetectPivotsOptions
-): Pivot[] {
-    const pivots: Pivot[] = [];
-    if (data.length === 0) return pivots;
-
-    const highs = getHighs(data);
-    const lows = getLows(data);
-    const halfDepth = Math.floor(options.depth / 2);
-    if (halfDepth <= 0 || data.length < (halfDepth * 2 + 1)) return pivots;
-
-    const extremaMode = options.extremaMode ?? 'strict';
-    const includeConfirmationIndex = options.includeConfirmationIndex === true;
-    const lockConfirmedPivots = options.lockConfirmedPivots === true;
-    const deviationInclusive = options.deviationInclusive !== false;
-    const thresholds = options.deviationThreshold;
-    const thresholdAt = (index: number): number => {
-        if (Array.isArray(thresholds)) return thresholds[index] ?? 0;
-        return thresholds;
-    };
-
-    const { pivotHighs, pivotLows } = buildPivotFlags(highs, lows, halfDepth, extremaMode);
-
-    const candidates: Pivot[] = [];
-    for (let i = halfDepth; i < data.length - halfDepth; i++) {
-        if (pivotHighs[i]) {
-            candidates.push({
-                index: i,
-                price: highs[i],
-                isHigh: true,
-                time: data[i].time,
-                confirmationIndex: includeConfirmationIndex ? i + halfDepth : undefined
-            });
-        }
-        if (pivotLows[i]) {
-            candidates.push({
-                index: i,
-                price: lows[i],
-                isHigh: false,
-                time: data[i].time,
-                confirmationIndex: includeConfirmationIndex ? i + halfDepth : undefined
-            });
-        }
-    }
-
-    candidates.sort((a, b) => a.index - b.index);
-    if (candidates.length === 0) return pivots;
-
-    let lastPivot = candidates[0];
-    pivots.push(lastPivot);
-
-    for (const cand of candidates) {
-        if (cand.index <= lastPivot.index) continue;
-
-        const dev = Math.abs((cand.price - lastPivot.price) / lastPivot.price) * 100;
-        const threshold = thresholdAt(cand.index);
-
-        if (lastPivot.isHigh === cand.isHigh) {
-            if (lockConfirmedPivots) {
-                continue;
-            }
-            if ((cand.isHigh && cand.price > lastPivot.price) || (!cand.isHigh && cand.price < lastPivot.price)) {
-                lastPivot = cand;
-                pivots[pivots.length - 1] = lastPivot;
-            }
-            continue;
-        }
-
-        const passesThreshold = deviationInclusive ? dev >= threshold : dev > threshold;
-        if (passesThreshold) {
-            lastPivot = cand;
-            pivots.push(lastPivot);
-        }
-    }
-
-    return pivots;
-}
-
-/**
- * Detects pivots using a combination of local extrema (depth) and price deviation.
- * Matches the logic of "Auto Fib Time Zones" Pine Script.
- * 
- * @param data OHLCV data array
- * @param deviationPercent Minimum percentage change to confirm a new pivot direction
- * @param depth Minimum bars on left/right to be a local candidate (total window ~ depth)
- */
-export function detectPivotsWithDeviation(
-    data: OHLCVData[],
-    deviationPercent: number,
-    depth: number
-): Pivot[] {
-    return detectPivots(data, {
-        depth,
-        deviationThreshold: deviationPercent,
-        extremaMode: 'pine',
-        includeConfirmationIndex: false,
-        deviationInclusive: true
-    });
-}
-
-

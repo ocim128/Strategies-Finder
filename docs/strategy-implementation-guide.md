@@ -153,23 +153,20 @@ Rules that matter:
 Before reaching for a named indicator, check whether a shared strategy-layer helper already expresses the idea more directly.
 
 - `lib/strategies/strategy-helpers.ts`
-  Core signal creation, data extraction, pivot detection, and clean-data guards.
+  Core signal creation, data extraction, pivot flags, and clean-data guards.
 - `lib/strategies/lib/price-action-frequency-core.ts`
   Candle geometry and microstructure primitives such as:
   - `buildRangeSeries(...)`
-  - `buildBodySeries(...)`
+  - `buildBodyPctSeries(...)`
   - `buildCloseLocationSeries(...)`
   - `buildCloseAcceptanceSeries(...)`
   - `buildInitiativePressureSeries(...)`
-  - `buildSweepReclaimSeries(...)`
 - `lib/strategies/lib/price-action-statistics-core.ts`
   Rolling and regime helpers such as:
   - `buildRollingMedian(...)`
   - `buildRollingZScore(...)`
   - `buildRollingEntropy(...)`
-  - `buildRollingKurtosis(...)`
   - `buildEfficiencyRatio(...)`
-  - `buildRollingMinMax(...)`
   - `buildStreakCount(...)`
 
 If a prompt or draft strategy references a helper that does not exist in these modules or `strategy-helpers.ts`, do not invent the import path and hope it works. Either map the idea onto existing helpers or add the missing helper first.
@@ -189,31 +186,28 @@ Do not assign `(number | null)[]` to `number[]`.
 - `buildRollingZScore(...)` expects `number[]`.
 - `buildEfficiencyRatio(...)` expects `OHLCVData[]`.
 - `buildTrailingHighLow(...)` expects `OHLCVData[]`.
-- `buildRollingMinMax(...)` expects `number[]`.
+- `buildRollingCorrelation(...)` expects paired `number[]` inputs.
 
 ### Output shape matters
 
 - `calculateATR(...)` and `calculateADX(...)` return flat arrays.
-- `calculateMACD(...)` returns `{ macd, signal, histogram }`.
 - `calculateKeltnerChannels(...)` returns `{ upper, middle, lower }`.
 - `calculateDonchianChannels(...)` returns `{ upper, lower, middle }`.
-- `calculateSupertrend(...)` returns `{ supertrend, direction }`.
-- `calculateVolumeProfile(...)` returns `{ poc, vah, val }`.
 
 ### Access compound helper results correctly
 
 Correct:
 
 ```ts
-const bands = buildRollingMinMax(values, lookback);
-const upper = bands.max[i];
-const lower = bands.min[i];
+const channel = calculateKeltnerChannels(highs, lows, closes, emaPeriod, atrPeriod, multiplier);
+const upper = channel.upper[i];
+const lower = channel.lower[i];
 ```
 
 Wrong:
 
 ```ts
-const upper = bands[i].max;
+const upper = channel[i].upper;
 ```
 
 ### Guard nulls and warmup periods explicitly
@@ -231,7 +225,7 @@ Do not introduce hidden look-ahead.
 - Safe: current bar values, prior bar values, trailing windows ending at `i`, previously confirmed pivots.
 - Unsafe unless carefully confirmed: centered windows, future bars, pivot logic that treats an unconfirmed swing as already known.
 
-If you use `detectPivots(...)` or `detectPivotsWithDeviation(...)`, be explicit about confirmation timing. A pivot candidate is not automatically a causal signal source unless the confirmation point is already known at the decision bar.
+If you use `buildPivotFlags(...)`, be explicit about confirmation timing. The helper evaluates a centered window, so a pivot flag at index `i` is only causal after the right-side swing window has elapsed.
 
 ## Parameter Normalization and Finder / WFA Parity
 
@@ -398,9 +392,7 @@ The same `context` must be threaded through `prepareFinderData(...)` and `execut
 Import from `lib/strategies/lib/cross-symbol-helpers.ts`:
 
 - `buildRelativeStrength(primaryCloses, secondaryCloses)` - ratio series
-- `buildPairSpread(primaryCloses, secondaryCloses)` - difference series
 - `buildRollingPairCorrelation(primaryCloses, secondaryCloses, lookback)` - rolling Pearson
-- `buildRelativeVolumeStrength(primaryVolumes, secondaryVolumes, lookback)` - relative volume
 
 ### Constraints
 

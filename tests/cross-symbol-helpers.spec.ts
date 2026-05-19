@@ -5,9 +5,7 @@ import {
     alignSecondaryToPrimary,
     trimAlignedPair,
     buildRelativeStrength,
-    buildPairSpread,
     buildRollingPairCorrelation,
-    buildRelativeVolumeStrength,
     CrossSymbolAlignmentError,
 } from '../lib/strategies/lib/cross-symbol-helpers';
 
@@ -172,26 +170,6 @@ describe('buildRelativeStrength', () => {
     });
 });
 
-// ============================================================================
-// buildPairSpread
-// ============================================================================
-
-describe('buildPairSpread', () => {
-    it('computes difference correctly', () => {
-        const result = buildPairSpread([100, 200, 150], [90, 180, 140]);
-        expect(result).to.deep.equal([10, 20, 10]);
-    });
-
-    it('handles negative spreads', () => {
-        const result = buildPairSpread([50], [100]);
-        expect(result[0]).to.equal(-50);
-    });
-});
-
-// ============================================================================
-// buildRollingPairCorrelation
-// ============================================================================
-
 describe('buildRollingPairCorrelation', () => {
     it('returns null for first lookback-1 bars', () => {
         const result = buildRollingPairCorrelation([1, 2, 3, 4, 5], [1, 2, 3, 4, 5], 3);
@@ -217,32 +195,5 @@ describe('buildRollingPairCorrelation', () => {
         for (let i = 4; i < result.length; i++) {
             expect(result[i]).to.be.closeTo(-1, 0.001);
         }
-    });
-});
-
-// ============================================================================
-// buildRelativeVolumeStrength
-// ============================================================================
-
-describe('buildRelativeVolumeStrength', () => {
-    it('returns null for first lookback-1 bars', () => {
-        const result = buildRelativeVolumeStrength([100, 100, 100], [100, 100, 100], 3);
-        expect(result[0]).to.be.null;
-        expect(result[1]).to.be.null;
-        expect(result[2]).to.not.be.null;
-    });
-
-    it('returns 1 for equal volume patterns', () => {
-        const vols = [100, 100, 100, 100, 100];
-        const result = buildRelativeVolumeStrength(vols, vols, 3);
-        // From index 2 onward
-        for (let i = 2; i < result.length; i++) {
-            expect(result[i]).to.be.closeTo(1, 0.001);
-        }
-    });
-
-    it('returns null when mean volumes are zero', () => {
-        const result = buildRelativeVolumeStrength([0, 0, 0], [100, 100, 100], 3);
-        expect(result[2]).to.be.null;
     });
 });

@@ -171,9 +171,7 @@ Do not ship a giant helper library in v1. Start with the minimum set needed to p
 - `alignSecondaryToPrimary(primary, secondary)`
 - `trimAlignedPair(primary, alignedSecondary, minBars?)`
 - `buildRelativeStrength(primaryCloses, secondaryCloses)`
-- `buildPairSpread(primaryCloses, secondaryCloses)`
 - `buildRollingPairCorrelation(primaryCloses, secondaryCloses, lookback)`
-- `buildRelativeVolumeStrength(primaryVolumes, secondaryVolumes, lookback)`
 
 Delay heavier helpers like lead-lag scoring until at least one real strategy proves they are needed.
 

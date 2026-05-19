@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { defineConfig, type Plugin } from 'vite';
 import { backtestEndpointPlugin } from './lib/backtest-endpoint-plugin';
 import { strategyLibraryAdminPlugin } from './lib/strategy-library-admin-plugin';
+import { strategyLibraryAuditPlugin } from './lib/strategy-library-audit-plugin';
 import { executionLabVitePlugin } from './lib/execution-lab/execution-lab-vite-plugin';
 import {
     fetchPolymarketHistoryWithFallback,
@@ -1489,6 +1490,7 @@ export default defineConfig({
         secondMarketApiPlugin(),
         executionLabVitePlugin(),
         localSqlitePlugin(),
+        strategyLibraryAuditPlugin(),
         strategyLibraryAdminPlugin(),
         backtestEndpointPlugin(),
     ],
