@@ -544,3 +544,42 @@ export function extractBarMetricSeries(
 	return result;
 }
 
+/**
+ * Rolling excess kurtosis of a numeric series.
+ * High kurtosis indicates fat tails (extreme outliers).
+ * Returns excess kurtosis: (m4 / (m2 * m2)) - 3.
+ */
+export function buildRollingKurtosis(
+	values: number[],
+	lookbackInput: number
+): (number | null)[] {
+	const lookback = Math.max(4, Math.round(lookbackInput));
+	const result: (number | null)[] = new Array(values.length).fill(null);
+
+	for (let i = lookback - 1; i < values.length; i++) {
+		let sum = 0;
+		for (let j = i - lookback + 1; j <= i; j++) {
+			sum += values[j];
+		}
+		const mean = sum / lookback;
+
+		let m2 = 0;
+		let m4 = 0;
+		for (let j = i - lookback + 1; j <= i; j++) {
+			const diff = values[j] - mean;
+			const diffSq = diff * diff;
+			m2 += diffSq;
+			m4 += diffSq * diffSq;
+		}
+		m2 /= lookback;
+		m4 /= lookback;
+
+		if (m2 <= 0) continue;
+
+		result[i] = m4 / (m2 * m2) - 3;
+	}
+
+	return result;
+}
+
+

@@ -14,24 +14,24 @@ import { buildPolymarket1sPressureGap } from "./polymarket-1s-helpers";
 function normalizeParams(params: StrategyParams): StrategyParams {
   return {
     ...params,
-    keltnerPeriod: Math.max(2, Math.round(params.keltnerPeriod ?? 20)),
-    keltnerMultiplier: Math.max(0.1, Number(params.keltnerMultiplier ?? 2.0)),
-    minPressureEdge: Math.max(0, Number(params.minPressureEdge ?? 0.02)),
+    lookback: Math.max(2, Math.round(params.lookback ?? 20)),
+    atrMultiplier: Math.max(0.1, Number(params.atrMultiplier ?? 2.0)),
+    minEdge: Math.max(0, Number(params.minEdge ?? 0.02)),
   };
 }
 
 export const keltner_boundary_pressure_gap: Strategy = {
   name: "Keltner Boundary Pressure Gap",
-  description: "Trades true boundary expansions when Binance price accepts outside Keltner channels and Polymarket directly agrees the move is underpriced.",
+  description: "Fades overextended price spikes on Binance that push beyond Keltner channel boundaries, entering only when Polymarket underprices the counter-trend contract.",
   defaultParams: {
-    keltnerPeriod: 20,
-    keltnerMultiplier: 2.0,
-    minPressureEdge: 0.02,
+    lookback: 20,
+    atrMultiplier: 2.0,
+    minEdge: 0.02,
   },
   paramLabels: {
-    keltnerPeriod: "Keltner Period",
-    keltnerMultiplier: "Keltner Multiplier",
-    minPressureEdge: "Min Pressure Edge",
+    lookback: "Lookback",
+    atrMultiplier: "ATR Multiplier",
+    minEdge: "Min Edge",
   },
   normalizeParams,
   polymarket1sConfig: {
@@ -41,20 +41,23 @@ export const keltner_boundary_pressure_gap: Strategy = {
     const cleanData = ensureCleanData(data);
     const p = normalizeParams(params);
 
-    if (cleanData.length < p.keltnerPeriod) return [];
+    if (cleanData.length < p.lookback) return [];
+    
+    // #COMPLETION_DRIVE: Assuming Polymarket 1s context is populated when polymarket1sConfig.required is true
+    // #SUGGEST_VERIFY: Ensure the caller executes this strategy only with a valid Polymarket 1s execution context
     if (!context?.polymarket1s) return [];
 
     const highs = getHighs(cleanData);
     const lows = getLows(cleanData);
     const closes = getCloses(cleanData);
 
-    const channels = calculateKeltnerChannels(highs, lows, closes, p.keltnerPeriod, p.keltnerPeriod, p.keltnerMultiplier);
+    const channels = calculateKeltnerChannels(highs, lows, closes, p.lookback, p.lookback, p.atrMultiplier);
     const upper = channels.upper;
     const lower = channels.lower;
     const pressureGap = buildPolymarket1sPressureGap(cleanData, context.polymarket1s);
 
     return createSignalLoop(cleanData, [upper, lower], (i) => {
-      if (i < p.keltnerPeriod) return null;
+      if (i < p.lookback) return null;
       
       const up = upper[i];
       const dn = lower[i];
@@ -67,14 +70,14 @@ export const keltner_boundary_pressure_gap: Strategy = {
 
       if (longEdge === null || shortEdge === null) return null;
 
-      if (close > up) {
-        if (longEdge >= p.minPressureEdge) {
-            return createBuySignal(cleanData, i, "Acceptance above Keltner Channel with pressure edge");
+      if (close < dn) {
+        if (longEdge >= p.minEdge) {
+            return createBuySignal(cleanData, i, "Fade oversold spike below Keltner lower band with same-side long pressure edge");
         }
       }
-      if (close < dn) {
-        if (shortEdge >= p.minPressureEdge) {
-            return createSellSignal(cleanData, i, "Acceptance below Keltner Channel with pressure edge");
+      if (close > up) {
+        if (shortEdge >= p.minEdge) {
+            return createSellSignal(cleanData, i, "Fade overbought spike above Keltner upper band with same-side short pressure edge");
         }
       }
       return null;
@@ -83,7 +86,7 @@ export const keltner_boundary_pressure_gap: Strategy = {
   metadata: {
     role: "entry",
     direction: "both",
-    walkForwardParams: ["keltnerPeriod", "keltnerMultiplier", "minPressureEdge"],
+    walkForwardParams: ["lookback", "atrMultiplier", "minEdge"],
   },
 };
 

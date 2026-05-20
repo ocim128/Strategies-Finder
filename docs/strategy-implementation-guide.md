@@ -187,6 +187,15 @@ Before reaching for a named indicator, check whether a shared strategy-layer hel
   - `getAtrSeries(prepared, period)` — memoized ATR by period.
   - `normalizeIntegerParam(value, fallback, min, max?)` and `normalizeNumberParam(value, fallback, min, max?)` — param clamping utilities reusable by any strategy.
 
+- `lib/strategies/lib/polymarket-1s-helpers.ts`
+  Supported 1s Polymarket helper surface for Binance-chart strategies scored against Polymarket CLOB quotes:
+  - `buildPolymarket1sPressureGap(data, context, { volLookback })`
+  - `buildPolymarket1sExecutableEdge(data, context, { volLookback })`
+  - `buildPolymarket1sActionabilityMask(data, context, { volLookback })`
+  - `buildPolymarket1sEdgePersistence(edgeFrame, { minEdge, ewmaLookback })`
+  - `buildPolymarket1sReactionGap(data, context, { volLookback, lagSec })`
+  - `buildPolymarket1sGammaAgreement(data, context, { volLookback })`
+
 If a prompt or draft strategy references a helper that does not exist in these modules or `strategy-helpers.ts`, do not invent the import path and hope it works. Either map the idea onto existing helpers or add the missing helper first.
 
 ## Type Rules That Cause Most Failures
@@ -333,6 +342,62 @@ Then add focused validation as needed:
 - `prepareFinderData(...)` and `executePrepared(...)` remain in parity when present
 - `npm run strategies:sync-manifest` was run
 - `npm run typecheck` passes
+
+## 1s Polymarket Strategies
+
+Use this path only for strategies that run on supported 1s crypto charts and require second-market CLOB context.
+
+Required strategy contract:
+
+- declare `polymarket1sConfig: { required: true }`
+- accept the optional third `StrategyExecutionContext` argument in `execute(...)`
+- return `[]` when `context?.polymarket1s` is missing
+- call helpers with the runtime context, not with raw quote arrays
+- fail closed when a helper frame has `available === false`
+- keep Binance chart state as the raw signal source; Polymarket helpers may allow, veto, rank, or executable-price that signal
+
+Executable-edge pattern:
+
+```ts
+const edge = buildPolymarket1sExecutableEdge(cleanData, context, { volLookback });
+if (!edge.available) return [];
+
+const actionability = buildPolymarket1sActionabilityMask(cleanData, context, {
+  volLookback,
+  minEventProgress: 0.02,
+  maxEventProgress: 0.96,
+  minSecondsRemaining: 8,
+});
+if (!actionability.available) return [];
+
+const persistence = buildPolymarket1sEdgePersistence(edge, {
+  minEdge,
+  ewmaLookback: persistenceSec,
+});
+```
+
+Current helper meanings that matter for implementation:
+
+- `buyYesEdge = fairYesProbability - yesAskProbability`
+- `buyNoEdge = fairNoProbability - noAskProbability`
+- `yesActionable` / `noActionable` mean the side has a usable ask quote inside quote-age and event-timing constraints
+- `reactionGap` compares recent Binance-implied probability movement against recent Polymarket mid-probability movement
+- Gamma helpers are agreement only, never the primary signal
+
+Do not add spread-based behavior to 1s Polymarket strategies:
+
+- no `maxSpread` params
+- no `yesSpread` / `noSpread` fields
+- no "trade when spread is tight" logic
+- no strategy thesis that treats raw YES/NO price or spread as alpha
+
+When adding a 1s Polymarket built-in, update or add focused tests for:
+
+- missing context returns `[]`
+- missing side ask fails only that side
+- helper unavailability returns `[]`
+- parameter normalization matches Finder and Walk Forward metadata
+- manifest sync removes stale params from generated metadata
 
 ## Cross-Symbol Strategies
 

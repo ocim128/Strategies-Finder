@@ -227,3 +227,39 @@ export function extractBarMetricSeries(data: OHLCVData[], metricType: BarMetricT
 	return result;
 }
 
+export function buildSweepReclaimSeries(
+	data: OHLCVData[],
+	lookbackInput: number
+): { bullish: (number | null)[]; bearish: (number | null)[] } {
+	const lookback = Math.max(2, Math.round(lookbackInput));
+	const len = data.length;
+	const bullish: (number | null)[] = new Array(len).fill(null);
+	const bearish: (number | null)[] = new Array(len).fill(null);
+	if (len < lookback + 1) return { bullish, bearish };
+
+	for (let i = lookback; i < len; i++) {
+		let lowestLow = Infinity;
+		let highestHigh = -Infinity;
+		for (let j = i - lookback; j < i; j++) {
+			if (data[j].low < lowestLow) lowestLow = data[j].low;
+			if (data[j].high > highestHigh) highestHigh = data[j].high;
+		}
+
+		const current = data[i];
+		const range = current.high - current.low;
+		if (range <= 0) continue;
+
+		// Bullish Sweep Reclaim: price dipped below lowestLow but closed above it
+		if (current.low < lowestLow && current.close > lowestLow) {
+			bullish[i] = (current.close - lowestLow) / range;
+		}
+
+		// Bearish Sweep Reclaim: price spiked above highestHigh but closed below it
+		if (current.high > highestHigh && current.close < highestHigh) {
+			bearish[i] = (highestHigh - current.close) / range;
+		}
+	}
+	return { bullish, bearish };
+}
+
+
