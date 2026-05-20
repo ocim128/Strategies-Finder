@@ -3,6 +3,7 @@ import { resolvePolymarketEntrySelectionMode, type PolymarketEntrySelectionMode 
 import { DEFAULT_POLYMARKET_ENTRY_CUTOFF_SECONDS, clampPolymarketEntryCutoffSeconds } from "./polymarket-entry-cutoff";
 import { clampPolymarketEntryDelayBars } from "./polymarket-entry-delay";
 import { clampPolymarketEntryPriceFilterCents } from "./polymarket-entry-price-filter";
+import { clampPolymarketBacktestSlippageCents } from "./polymarket-backtest-slippage";
 import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import {
     DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_ENABLED,
@@ -29,6 +30,7 @@ export interface PolymarketDomSettings {
     outcomeInterval: PolymarketOutcomeInterval;
     entryDelayBars: number;
     entryPriceFilterCents: number;
+    backtestSlippageCents: number;
     entryCutoffEnabled: boolean;
     entryCutoffSeconds: number;
     exitMode: "resolve_hold" | "signal_exit_same_event" | undefined;
@@ -75,6 +77,7 @@ export function resolvePolymarketDomSettings(doc: Document = document): Polymark
     const outcomeIntervalSelect = readSelectElement(doc, "polymarketOutcomeInterval");
     const entryDelayInput = readInputElement(doc, "polymarketEntryDelayBars");
     const entryPriceFilterInput = readInputElement(doc, "polymarketEntryPriceFilterCents");
+    const backtestSlippageInput = readInputElement(doc, "polymarketBacktestSlippageCents");
     const entryCutoffToggle = readInputElement(doc, "polymarketEntryCutoffToggle");
     const entryCutoffInput = readInputElement(doc, "polymarketEntryCutoffSeconds");
     const exitModeSelect = readSelectElement(doc, "polymarketExitMode");
@@ -99,6 +102,7 @@ export function resolvePolymarketDomSettings(doc: Document = document): Polymark
         outcomeInterval: resolvePolymarketOutcomeInterval(outcomeIntervalSelect?.value),
         entryDelayBars: clampPolymarketEntryDelayBars(entryDelayInput?.value),
         entryPriceFilterCents: clampPolymarketEntryPriceFilterCents(entryPriceFilterInput?.value),
+        backtestSlippageCents: clampPolymarketBacktestSlippageCents(backtestSlippageInput?.value),
         entryCutoffEnabled: entryCutoffToggle?.checked === true,
         entryCutoffSeconds: clampPolymarketEntryCutoffSeconds(
             entryCutoffInput?.value ?? DEFAULT_POLYMARKET_ENTRY_CUTOFF_SECONDS

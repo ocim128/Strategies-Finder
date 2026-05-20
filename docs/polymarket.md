@@ -194,11 +194,12 @@ Important behavior:
 - the Backtest Realism `Polymarket Entry Cutoff` toggle is applied before paper entries are accepted, so Execution Lab paper PnL and live eligibility use the same event-close cutoff when the toggle is enabled
 - UI or fallback `exchange_min` sizing allows live entries to auto-size to the minimum valid Polymarket order, still capped by the effective Strategy Finder cap and `MAX_ORDER_SIZE_USDC`
 - exit requests sell the tracked filled shares of the same token with `minPrice` floored by the configured exit slippage against the lower of paper exit price and actual live entry fill
-- posted or delayed limit entries are not treated as live positions unless the executor reports matched or partial filled shares
+- posted or delayed limit entries remain pending until the executor reports matched/partial filled shares, or until an exit-triggered targeted cancel returns `not_canceled`; the latter is promoted to a provisional live position so the normal exit sell is attempted
 - limit cancel-on-exit targets known posted Strategy Finder order ids by default; broad account cancellation requires explicit scope configuration and is shown in UI status and JSONL logs
 - if a paper exit is expected but the exact second-market exit quote is missing, a matching tracked live position still queues an exit using the latest same-event bid as the first floor reference when available
 - while the latest same-event bid is already below the exit floor, Strategy Finder records a local rejected exit attempt every one-second retry cooldown instead of silently hiding the loop
 - rejected or failed live exits can retry with fresh request ids; `delayed` and `posted_live` stop blind retries until reconciliation
+- executor geoblock preflight failures are treated as live safety rejections and block further Strategy Finder live submissions for the current session
 - if a paper entry and paper exit first appear in the same poll batch, the live entry is rejected as `paper_exit_same_tick`
 - live submission is registered only in the Vite dev server path unless preview live trading is explicitly allowed
 - duplicate live request ids are coalesced by a process-local Strategy Finder ledger before invoking the executor; the executor still owns the durable idempotency ledger
@@ -258,9 +259,11 @@ Behavior:
 - for `1m` + `next_open`, that exit timestamp is the modeled next bar open from the shared backtest engine, not an intraminute wall-clock guess
 - for supported `1s` CLOB runs, the entry and signal-exit fills use strict exact-second bid/ask quotes from the second-market DB; `next_open` uses the chart trade timestamp directly, while `signal_close` and `next_close` use one second after the chart candle timestamp because Binance `1s` candles are stored by open time
 - `polymarketEntryDelayBars` is a research-only `1s` CLOB annotation delay; when set to `N`, the chart trade stays at the same timestamp but the Polymarket entry quote is priced `N` seconds after the modeled chart entry
+- `polymarketBacktestSlippageCents` is a backtest-only adverse quote adjustment; quote entries pay that many cents more and signal-exit quote sells receive that many cents less
+- post-signal limit entries keep the filled limit price; the backtest slippage setting only adjusts quote-style Polymarket fills
 - example: if the opposite chart signal is detected on the `15:02` candle, the modeled chart exit is `15:03:00`, so the Polymarket exit uses the latest local quote at or before `15:03:00`
 - the signal-exit quote must not be earlier than the chosen entry quote
-- if the latest locally captured quote before the chart exit is the same quote that was used for entry, the trade scores as a flat same-event exit instead of being dropped
+- with zero backtest slippage, if the latest locally captured quote before the chart exit is the same quote that was used for entry, the trade scores as a flat same-event exit instead of being dropped
 - if no same-event signal exit applies, the Polymarket leg settles to final binary resolution at event end
 - by default, only the first eligible trade per `5m` event is scored; later duplicates in that event are ignored
 - when `polymarketSignalExitAllowMultipleTradesPerEvent` is enabled, every eligible chart trade inside the same event is scored instead of marking later trades as duplicates
@@ -545,6 +548,7 @@ User-facing controls live in the Backtest Realism section:
 - `polymarketEntrySelectionMode`
 - `polymarketEntryOffset`
 - `polymarketEntryPriceFilterCents`
+- `polymarketBacktestSlippageCents`
 - `polymarketExitMode`
 - `polymarketSignalExitAllowMultipleTradesPerEvent`
 - `polymarketPostSignalLimitEntryEnabled`
@@ -565,6 +569,7 @@ Current UI rules:
 - on `1s` charts with other execution models, `signal_exit_same_event` is disabled and CLOB scoring is skipped
 - `polymarketSignalExitAllowMultipleTradesPerEvent` only shows when annotation is enabled and signal-exit mode is active
 - `polymarketEntryPriceFilterCents` shows when annotation is enabled
+- `polymarketBacktestSlippageCents` shows when annotation is enabled
 - `polymarketEntryDelayBars` only shows on `1s` charts with a supported CLOB scoring execution model
 - `polymarketEntrySelectionMode` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, and the selected exit mode is not `signal_exit_same_event`
 - `polymarketEntryOffset` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, the selected exit mode is not `signal_exit_same_event`, and entry selection is `fixed_offset`
@@ -591,6 +596,7 @@ Persistence and compatibility:
 - invalid persisted values normalize back to `fixed_offset`
 - `polymarketEntryOffset` stays persisted for backward compatibility even when ignored by signal-exit mode
 - `polymarketEntryPriceFilterCents` defaults to `0`, disables filtering at `0`, and clamps to `0..49`
+- `polymarketBacktestSlippageCents` defaults to `5` and clamps to `0..99` with 0.1c precision
 - `polymarketSignalExitAllowMultipleTradesPerEvent` defaults to `false`
 - `polymarketPostSignalLimitEntryEnabled` defaults to `false`
 - `polymarketPostSignalLimitEntryMode` defaults to `fixed_price`

@@ -68,6 +68,7 @@ export interface FinderOptions {
     polymarketAfterTakeProfitOnly?: boolean;
     polymarketEntryDelayBars?: number;
     polymarketEntryPriceFilterCents?: number;
+    polymarketBacktestSlippageCents?: number;
     polymarketExitMode?: PolymarketExitMode;
     polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
     polymarketPostSignalLimitEntryEnabled?: boolean;

@@ -61,6 +61,20 @@ const LIVE_CANCEL_ALL_STATUSES = new Set<LiveCancelAllSubmitStatus>([
     "failed",
 ]);
 
+const LIVE_TRADE_GEOBLOCK_REASONS = new Set(["geoblocked", "geoblock_check_failed"]);
+
+export function isLiveTradeGeoblockReason(reason: string | undefined): boolean {
+    return reason !== undefined && LIVE_TRADE_GEOBLOCK_REASONS.has(reason);
+}
+
+export function shouldAttemptLiveExitAfterLimitCancel(
+    response: Pick<LiveCancelAllSubmitResponse, "status" | "reason" | "canceledCount">
+): boolean {
+    return response.status === "rejected"
+        && response.reason === "not_canceled"
+        && (response.canceledCount ?? 0) === 0;
+}
+
 export const EXECUTION_LAB_DEFAULT_LIVE_UI_CONFIG: ExecutionLabLiveUiConfig = {
     orderMode: LIVE_TRADE_DEFAULT_ORDER_MODE,
     takerOrderType: LIVE_TRADE_DEFAULT_ORDER_TYPE,
@@ -683,12 +697,14 @@ export function normalizeLiveTradeSubmitResponse(
         return { ok: false, error: "executor response status is invalid" };
     }
 
+    const reason = value.reason !== undefined ? String(value.reason) : undefined;
+    const status = value.status as LiveTradeSubmitStatus;
     const response: LiveTradeSubmitResponse = {
         ok: true,
         requestId,
-        status: value.status as LiveTradeSubmitStatus,
+        status: status === "failed" && isLiveTradeGeoblockReason(reason) ? "rejected" : status,
     };
-    if (value.reason !== undefined) response.reason = String(value.reason);
+    if (reason !== undefined) response.reason = reason;
     if (value.orderId !== undefined) response.orderId = String(value.orderId);
     if (value.orderStatus !== undefined) response.orderStatus = String(value.orderStatus);
     if (value.orderSuccess !== undefined) response.orderSuccess = value.orderSuccess === true;

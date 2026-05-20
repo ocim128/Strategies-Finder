@@ -120,6 +120,24 @@ describe('Backtest settings compatibility', () => {
         expect('polymarketEntryDelayBars' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
     });
 
+    it('normalizes Polymarket backtest slippage as a cents-only backtest setting', () => {
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketBacktestSlippageCents).to.equal(5);
+        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketBacktestSlippageCents')).to.equal(true);
+
+        const contract = getBacktestDomSettingContract('polymarketBacktestSlippageCents');
+        expect(contract).to.not.equal(undefined);
+        expect(coerceBacktestDomSettingValue(contract!, 7.26)).to.equal(7.3);
+        expect(coerceBacktestDomSettingValue(contract!, -5)).to.equal(0);
+        expect(coerceBacktestDomSettingValue(contract!, 120)).to.equal(99);
+        expect(coerceBacktestDomSettingValue(contract!, 'bad')).to.equal(5);
+
+        const resolved = resolveBacktestSettingsFromRaw({
+            polymarketBacktestSlippageCents: 7.26,
+        } as unknown as BacktestSettings);
+        expect(resolved.polymarketBacktestSlippageCents).to.equal(7.3);
+        expect('polymarketBacktestSlippageCents' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
+    });
+
     it('normalizes the Polymarket event entry cutoff as a Backtest Realism setting', () => {
         expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffEnabled).to.equal(false);
         expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffSeconds).to.equal(15);
@@ -285,6 +303,7 @@ describe('Backtest settings compatibility', () => {
             executionModel: 'next_open',
             polymarketOutcomeInterval: '15m',
             polymarketEntryDelayBars: 3,
+            polymarketBacktestSlippageCents: 5,
             polymarketSignalExitAllowMultipleTradesPerEvent: true,
             polymarketPostSignalLimitEntryEnabled: true,
             polymarketPostSignalLimitEntryMode: 'signal_offset',
@@ -306,6 +325,7 @@ describe('Backtest settings compatibility', () => {
         expect('executionModel' in sanitized).to.equal(false);
         expect('polymarketOutcomeInterval' in sanitized).to.equal(false);
         expect('polymarketEntryDelayBars' in sanitized).to.equal(false);
+        expect('polymarketBacktestSlippageCents' in sanitized).to.equal(false);
         expect('polymarketSignalExitAllowMultipleTradesPerEvent' in sanitized).to.equal(false);
         expect('polymarketPostSignalLimitEntryEnabled' in sanitized).to.equal(false);
         expect('polymarketPostSignalLimitEntryMode' in sanitized).to.equal(false);

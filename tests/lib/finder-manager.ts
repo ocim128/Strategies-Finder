@@ -1414,7 +1414,7 @@ export class FinderManager {
 		return true;
 	}
 
-	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'polymarketExitMode' | 'polymarketSignalExitAllowMultipleTradesPerEvent' | 'executionModel' | 'polymarketEntryDelayBars' | 'polymarketEntryPriceFilterCents' | 'polymarketPostSignalLimitEntryEnabled' | 'polymarketPostSignalLimitEntryMode' | 'polymarketPostSignalLimitEntryPriceCents' | 'polymarketPostSignalLimitEntryOffsetCents' | 'polymarketPostSignalLimitExitEnabled' | 'polymarketPostSignalLimitExitMode' | 'polymarketPostSignalLimitExitPriceCents' | 'polymarketPostSignalLimitExitOffsetCents'>): FinderOptions {
+	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'polymarketExitMode' | 'polymarketSignalExitAllowMultipleTradesPerEvent' | 'executionModel' | 'polymarketEntryDelayBars' | 'polymarketEntryPriceFilterCents' | 'polymarketBacktestSlippageCents' | 'polymarketPostSignalLimitEntryEnabled' | 'polymarketPostSignalLimitEntryMode' | 'polymarketPostSignalLimitEntryPriceCents' | 'polymarketPostSignalLimitEntryOffsetCents' | 'polymarketPostSignalLimitExitEnabled' | 'polymarketPostSignalLimitExitMode' | 'polymarketPostSignalLimitExitPriceCents' | 'polymarketPostSignalLimitExitOffsetCents'>): FinderOptions {
 		const dom = this.getDom();
 		const scope = this.isUniverseScope() ? 'symbol_universe' : 'current_chart';
 		const useAdvancedSort = dom.finderAdvancedToggle.checked;
@@ -1476,6 +1476,7 @@ export class FinderManager {
 			polymarketAfterTakeProfitOnly,
 			polymarketEntryDelayBars: backtestSettings.polymarketEntryDelayBars,
 			polymarketEntryPriceFilterCents: backtestSettings.polymarketEntryPriceFilterCents,
+			polymarketBacktestSlippageCents: backtestSettings.polymarketBacktestSlippageCents,
 			polymarketExitMode: effectiveExitMode,
 			polymarketSignalExitAllowMultipleTradesPerEvent: backtestSettings.polymarketSignalExitAllowMultipleTradesPerEvent,
 			polymarketPostSignalLimitEntryEnabled: backtestSettings.polymarketPostSignalLimitEntryEnabled,

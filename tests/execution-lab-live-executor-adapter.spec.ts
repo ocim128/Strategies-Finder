@@ -236,6 +236,29 @@ describe("Execution Lab live executor adapter", () => {
         expect(response.currentAsk).to.equal(0.52);
     });
 
+    it("normalizes executor geoblock check failures as rejections", async () => {
+        const script = [
+            "let body='';",
+            "process.stdin.on('data', c => body += c);",
+            "process.stdin.on('end', () => {",
+            "const req = JSON.parse(body);",
+            "console.log(JSON.stringify({ ok: true, requestId: req.requestId, status: 'failed', reason: 'geoblock_check_failed', maxPrice: req.maxPrice }));",
+            "});",
+        ].join("");
+        const response = await submitLiveTradeToExecutor(request(), {
+            executorPath: process.execPath,
+            executorArgs: ["-e", script],
+            liveEnabled: true,
+            maxStakeUsd: 10,
+            orderType: "FAK",
+            timeoutMs: 1000,
+        });
+
+        expect(response.status).to.equal("rejected");
+        expect(response.reason).to.equal("geoblock_check_failed");
+        expect(response.maxPrice).to.equal(0.55);
+    });
+
     it("submits live trades to an opt-in HTTP executor", async () => {
         await withJsonServer((payload) => ({
             ok: true,

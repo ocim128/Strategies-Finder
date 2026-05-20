@@ -132,6 +132,7 @@ export interface BacktestPolymarketTradeSummary {
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
     signalExitAllowMultipleTradesPerEvent?: boolean;
     entryDelayBars?: number;
+    backtestSlippageCents?: number;
     profitableTrades?: number;
     losingTrades?: number;
     neutralTrades?: number;
@@ -223,6 +224,7 @@ export interface PolymarketEvalResult {
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
     signalExitAllowMultipleTradesPerEvent?: boolean;
     entryDelayBars?: number;
+    backtestSlippageCents?: number;
     signalExitedTrades?: number;
     targetExitedTrades?: number;
     resolvedTrades?: number;
@@ -264,6 +266,7 @@ export interface PolymarketEvalOptions {
     usePreparedData?: boolean;
     strategyKey?: string;
     entryPriceFilterCents?: number;
+    backtestSlippageCents?: number;
     backtestSettings?: BacktestSettings;
     capitalSettings?: Partial<CapitalSettings>;
 }

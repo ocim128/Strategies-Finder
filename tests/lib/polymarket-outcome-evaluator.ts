@@ -108,6 +108,7 @@ export function evaluatePolymarketOutcomes(
             includeRows: true,
             context,
             entryPriceFilterCents: options.entryPriceFilterCents,
+            backtestSlippageCents: options.backtestSlippageCents,
         });
 
         return {
@@ -128,6 +129,7 @@ export function evaluatePolymarketOutcomes(
         includeRows: true,
         context,
         entryPriceFilterCents: options.entryPriceFilterCents,
+        backtestSlippageCents: options.backtestSlippageCents,
     });
 
     return {

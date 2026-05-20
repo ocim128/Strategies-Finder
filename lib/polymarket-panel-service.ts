@@ -56,6 +56,7 @@ class PolymarketPanelService {
             readCurrentExecutionModel: () => this.readCurrentExecutionModel(),
             readCurrentPolymarketEntryOffset: () => this.readCurrentPolymarketEntryOffset(),
             readCurrentPolymarketEntryPriceFilterCents: () => this.readCurrentPolymarketEntryPriceFilterCents(),
+            readCurrentPolymarketBacktestSlippageCents: () => this.readCurrentPolymarketBacktestSlippageCents(),
             readCurrentPolymarketEntryCutoffEnabled: () => this.readCurrentPolymarketEntryCutoffEnabled(),
             readCurrentPolymarketEntryCutoffSeconds: () => this.readCurrentPolymarketEntryCutoffSeconds(),
             readCurrentPolymarketEntrySelectionMode: () => this.readCurrentPolymarketEntrySelectionMode(),
@@ -135,6 +136,10 @@ class PolymarketPanelService {
 
     private readCurrentPolymarketEntryPriceFilterCents(): number {
         return resolvePolymarketDomSettings().entryPriceFilterCents;
+    }
+
+    private readCurrentPolymarketBacktestSlippageCents(): number {
+        return resolvePolymarketDomSettings().backtestSlippageCents;
     }
 
     private readCurrentPolymarketEntryCutoffEnabled(): boolean {

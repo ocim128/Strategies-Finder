@@ -962,6 +962,7 @@ class QuickViewManager {
                         ? result.polymarketTradeSummary.signalExitAllowMultipleTradesPerEvent === true
                         : this.readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent(),
                     entryPriceFilterCents: this.readCurrentPolymarketEntryPriceFilterCents(),
+                    backtestSlippageCents: currentPolymarketSettings.backtestSlippageCents,
                     entryCutoffEnabled: currentPolymarketSettings.entryCutoffEnabled,
                     entryCutoffSeconds: currentPolymarketSettings.entryCutoffSeconds,
                     entryDelayBars: result.polymarketTradeSummary?.entryDelayBars ?? currentPolymarketSettings.entryDelayBars,
@@ -1068,6 +1069,7 @@ class QuickViewManager {
                     outcomeByEntryTs,
                     allowMultipleTradesPerEvent,
                     entryPriceFilterCents: currentPolymarketSettings.entryPriceFilterCents,
+                    backtestSlippageCents: currentPolymarketSettings.backtestSlippageCents,
                     entryCutoffEnabled: currentPolymarketSettings.entryCutoffEnabled,
                     entryCutoffSeconds: currentPolymarketSettings.entryCutoffSeconds,
                     limitEntry,
@@ -1125,6 +1127,7 @@ class QuickViewManager {
                     outcomeInterval,
                     pricePoints: limitEntryPricePoints,
                     entryPriceFilterCents: currentPolymarketSettings.entryPriceFilterCents,
+                    backtestSlippageCents: currentPolymarketSettings.backtestSlippageCents,
                     entryCutoffEnabled: currentPolymarketSettings.entryCutoffEnabled,
                     entryCutoffSeconds: currentPolymarketSettings.entryCutoffSeconds,
                     limitEntry,
@@ -1137,6 +1140,7 @@ class QuickViewManager {
             selectedOffset,
             entrySelectionMode,
             outcomeInterval,
+            backtestSlippageCents: currentPolymarketSettings.backtestSlippageCents,
             limitEntry,
         });
 

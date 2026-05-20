@@ -96,6 +96,10 @@ import type { BacktestPolymarketTradeSummary, PolymarketEvalResult, TradePolymar
 import { PolymarketEvalAccumulator } from "../polymarket-eval-accumulator";
 import { resolvePolymarketEntryCutoff } from "../polymarket-entry-cutoff";
 import { clampPolymarketEntryPriceFilterCents, isPolymarketEntryPriceFiltered } from "../polymarket-entry-price-filter";
+import {
+    applyPolymarketBacktestEntrySlippage,
+    clampPolymarketBacktestSlippageCents,
+} from "../polymarket-backtest-slippage";
 
 type FinderPolymarketEvaluation = {
     offset?: number;
@@ -125,13 +129,17 @@ function buildMappedTradeOutcome(args: {
     marketPriceOffset?: number;
     eventStartTs?: number;
     eventEndTs?: number;
+    backtestSlippageCents?: number;
 }): TradePolymarketOutcome {
     const { trade, outcome, entryOffset } = args;
     const prediction = trade.type === "long" ? "yes" : "no";
     const isWin = prediction === "yes"
         ? outcome.resolved_outcome_up === 1
         : outcome.resolved_outcome_up === 0;
-    const marketEntryPrice = getTradeMarketEntryPrice(outcome, prediction, args.marketPriceOffset ?? entryOffset);
+    const marketEntryPrice = applyPolymarketBacktestEntrySlippage(
+        getTradeMarketEntryPrice(outcome, prediction, args.marketPriceOffset ?? entryOffset),
+        args.backtestSlippageCents
+    );
 
     return {
         eventStartTs: args.eventStartTs ?? outcome.event_start_ts,
@@ -151,6 +159,7 @@ function buildLegacyBridgeSizedTrades(
     mappedTrades: readonly LegacyMappedPolymarketTrade[],
     selectedOffset: number,
     entryPriceFilterCents?: number,
+    backtestSlippageCents?: number,
     entryCutoffEnabled?: boolean,
     entryCutoffSeconds?: number
 ): Trade[] {
@@ -163,8 +172,12 @@ function buildLegacyBridgeSizedTrades(
             cutoffSeconds: entryCutoffSeconds,
         });
         if (!entryCutoff.allowed) return false;
-        return !isPolymarketEntryPriceFiltered(
+        const marketEntryPrice = applyPolymarketBacktestEntrySlippage(
             getTradeMarketEntryPrice(mapped.outcome, prediction, mapped.entryOffset),
+            backtestSlippageCents
+        );
+        return !isPolymarketEntryPriceFiltered(
+            marketEntryPrice,
             entryPriceFilterCents
         );
     });
@@ -175,6 +188,7 @@ function buildLegacyBridgeSizedTrades(
             trade: mapped.trade,
             outcome: mapped.outcome,
             entryOffset: mapped.entryOffset,
+            backtestSlippageCents,
         });
         return {
             ...mapped.trade,
@@ -187,6 +201,7 @@ function buildMultiIntervalSizedTrades(
     mappedTrades: readonly MappedPolymarketTrade[],
     selectedOffset: number,
     entryPriceFilterCents?: number,
+    backtestSlippageCents?: number,
     entryCutoffEnabled?: boolean,
     entryCutoffSeconds?: number
 ): Trade[] {
@@ -199,8 +214,12 @@ function buildMultiIntervalSizedTrades(
             cutoffSeconds: entryCutoffSeconds,
         });
         if (!entryCutoff.allowed) return false;
-        return !isPolymarketEntryPriceFiltered(
+        const marketEntryPrice = applyPolymarketBacktestEntrySlippage(
             getTradeMarketEntryPrice(mapped.baseOutcome, prediction),
+            backtestSlippageCents
+        );
+        return !isPolymarketEntryPriceFiltered(
+            marketEntryPrice,
             entryPriceFilterCents
         );
     });
@@ -214,6 +233,7 @@ function buildMultiIntervalSizedTrades(
             eventEndTs: mapped.superEventEndTs,
             entryOffset: mapped.entryOffset,
             marketPriceOffset: 0,
+            backtestSlippageCents,
         });
         return {
             ...mapped.trade,
@@ -406,6 +426,7 @@ function buildNativeSessionResolveHoldEvalResult(args: {
             ? missingPriceTrades + (summary.limitEntryMissingPriceTrades ?? 0)
             : undefined,
         evaluationMode: "resolve_hold",
+        backtestSlippageCents: summary.backtestSlippageCents,
         targetExitedTrades: summary.targetExitedTrades,
         limitEntryEnabled: summary.limitEntryEnabled,
         limitEntryMode: summary.limitEntryMode,
@@ -444,6 +465,7 @@ function evaluateMultiIntervalPolymarketTrades(options: {
     predictionsTaken: number;
     context: ReturnType<typeof createPolymarketBridgeEvaluationContext>;
     entryPriceFilterCents?: number;
+    backtestSlippageCents?: number;
     entryCutoffEnabled?: boolean;
     entryCutoffSeconds?: number;
 }): import("../types/polymarket-outcomes").PolymarketEvalResult {
@@ -457,6 +479,7 @@ function evaluateMultiIntervalPolymarketTrades(options: {
     } = options;
 
     const offsetTrades = mappedTrades.filter((mt) => mt.entryOffset === selectedOffset);
+    const backtestSlippageCents = clampPolymarketBacktestSlippageCents(options.backtestSlippageCents, 0);
     const priceEligibleTrades: MappedPolymarketTrade[] = [];
     let entryPriceFilteredPredictions = 0;
     let entryTimeFilteredPredictions = 0;
@@ -472,7 +495,10 @@ function evaluateMultiIntervalPolymarketTrades(options: {
             entryTimeFilteredPredictions++;
             continue;
         }
-        const marketEntryPrice = getTradeMarketEntryPrice(mt.baseOutcome, prediction);
+        const marketEntryPrice = applyPolymarketBacktestEntrySlippage(
+            getTradeMarketEntryPrice(mt.baseOutcome, prediction),
+            backtestSlippageCents
+        );
         if (isPolymarketEntryPriceFiltered(marketEntryPrice, options.entryPriceFilterCents)) {
             entryPriceFilteredPredictions++;
             continue;
@@ -508,7 +534,10 @@ function evaluateMultiIntervalPolymarketTrades(options: {
         const executionBarIndex = context.executionBarIndexByTs.get(mt.entryTs);
         const signalBarIndex = executionBarIndex === undefined ? -1 : Math.max(0, executionBarIndex - 1);
         const prediction = mt.trade.type === "long" ? "yes" : "no";
-        const marketEntryPrice = getTradeMarketEntryPrice(mt.baseOutcome, prediction);
+        const marketEntryPrice = applyPolymarketBacktestEntrySlippage(
+            getTradeMarketEntryPrice(mt.baseOutcome, prediction),
+            backtestSlippageCents
+        );
 
         accumulator.recordPrediction(mt.trade.type);
         accumulator.recordScoredPrediction({
@@ -524,7 +553,10 @@ function evaluateMultiIntervalPolymarketTrades(options: {
         });
     }
 
-    return accumulator.toResult();
+    return {
+        ...accumulator.toResult(),
+        backtestSlippageCents: backtestSlippageCents > 0 ? backtestSlippageCents : undefined,
+    };
 }
 
 export async function runPolymarketFinder(
@@ -539,6 +571,10 @@ export async function runPolymarketFinder(
     const resolvedOutcomeInterval = resolvePolymarketOutcomeInterval(settings.polymarketOutcomeInterval);
     const entryPriceFilterCents = clampPolymarketEntryPriceFilterCents(
         options.polymarketEntryPriceFilterCents ?? settings.polymarketEntryPriceFilterCents
+    );
+    const backtestSlippageCents = clampPolymarketBacktestSlippageCents(
+        options.polymarketBacktestSlippageCents ?? settings.polymarketBacktestSlippageCents,
+        0
     );
     const entryCutoffEnabled = settings.polymarketEntryCutoffEnabled === true;
     const entryCutoffSeconds = settings.polymarketEntryCutoffSeconds;
@@ -852,6 +888,7 @@ export async function runPolymarketFinder(
                         outcomeByEntryTs,
                         allowMultipleTradesPerEvent: options.polymarketSignalExitAllowMultipleTradesPerEvent,
                         entryPriceFilterCents,
+                        backtestSlippageCents,
                         entryCutoffEnabled,
                         entryCutoffSeconds,
                         limitEntry: limitEntrySettings,
@@ -890,6 +927,7 @@ export async function runPolymarketFinder(
                         entryPriceFilteredPredictions: exitSummary.entryPriceFilteredTrades > 0 ? exitSummary.entryPriceFilteredTrades : undefined,
                         evaluationMode: "signal_exit_same_event",
                         signalExitAllowMultipleTradesPerEvent: exitSummary.allowMultipleTradesPerEvent,
+                        backtestSlippageCents: exitSummary.backtestSlippageCents,
                         targetExitedTrades: exitSummary.targetExitedTrades,
                         signalExitedTrades: exitSummary.signalExitedTrades,
                         resolvedTrades: exitSummary.resolvedTrades,
@@ -952,6 +990,7 @@ export async function runPolymarketFinder(
                             missingOutcomeTrades: exitSummary.missingOutcomeTrades,
                             evaluationMode: "signal_exit_same_event",
                             signalExitAllowMultipleTradesPerEvent: exitSummary.allowMultipleTradesPerEvent,
+                            backtestSlippageCents: exitSummary.backtestSlippageCents,
                         },
                     });
 
@@ -996,6 +1035,7 @@ export async function runPolymarketFinder(
                                     outcomeInterval: resolvedOutcomeInterval,
                                     pricePoints,
                                     entryPriceFilterCents,
+                                    backtestSlippageCents,
                                     entryCutoffEnabled,
                                     entryCutoffSeconds,
                                     limitEntry: limitEntrySettings,
@@ -1006,6 +1046,7 @@ export async function runPolymarketFinder(
                                 outcomes,
                                 interval,
                                 outcomeInterval: resolvedOutcomeInterval,
+                                backtestSlippageCents,
                                 limitEntry: limitEntrySettings,
                             });
                             return [{
@@ -1040,6 +1081,7 @@ export async function runPolymarketFinder(
                                             predictionsTaken: tradesForPolymarketEvaluation.length,
                                             context: polymarketBridgeContext,
                                             entryPriceFilterCents,
+                                            backtestSlippageCents,
                                             entryCutoffEnabled,
                                             entryCutoffSeconds,
                                         })
@@ -1051,6 +1093,7 @@ export async function runPolymarketFinder(
                                             predictionsTaken: tradesForPolymarketEvaluation.length,
                                             context: polymarketBridgeContext!,
                                             entryPriceFilterCents,
+                                            backtestSlippageCents,
                                             entryCutoffEnabled,
                                             entryCutoffSeconds,
                                         });
@@ -1059,8 +1102,8 @@ export async function runPolymarketFinder(
                                         evalResult,
                                         buildAnnotatedTrades: computeSizedNet
                                             ? () => interval === "1m"
-                                                ? buildLegacyBridgeSizedTrades(legacyMappedTrades ?? [], offset, entryPriceFilterCents, entryCutoffEnabled, entryCutoffSeconds)
-                                                : buildMultiIntervalSizedTrades(superMappedTrades ?? [], offset, entryPriceFilterCents, entryCutoffEnabled, entryCutoffSeconds)
+                                                ? buildLegacyBridgeSizedTrades(legacyMappedTrades ?? [], offset, entryPriceFilterCents, backtestSlippageCents, entryCutoffEnabled, entryCutoffSeconds)
+                                                : buildMultiIntervalSizedTrades(superMappedTrades ?? [], offset, entryPriceFilterCents, backtestSlippageCents, entryCutoffEnabled, entryCutoffSeconds)
                                             : undefined,
                                     };
                                 })
@@ -1074,6 +1117,7 @@ export async function runPolymarketFinder(
                                         context: polymarketContext,
                                         includeRows: false,
                                         entryPriceFilterCents,
+                                        backtestSlippageCents,
                                         entryCutoffEnabled,
                                         entryCutoffSeconds,
                                     }),
@@ -1084,7 +1128,7 @@ export async function runPolymarketFinder(
                                             interval,
                                             undefined,
                                             "fixed_offset",
-                                            { entryPriceFilterCents, entryCutoffEnabled, entryCutoffSeconds }
+                                            { entryPriceFilterCents, backtestSlippageCents, entryCutoffEnabled, entryCutoffSeconds }
                                         )
                                         : undefined,
                                 }];
@@ -1124,6 +1168,7 @@ export async function runPolymarketFinder(
                                 missingOutcomeTrades: evaluation.evalResult.missingOutcomeRows,
                                 entryOffset: offset,
                                 evaluationMode: evaluation.evalResult.evaluationMode,
+                                backtestSlippageCents: evaluation.evalResult.backtestSlippageCents,
                             },
                         });
 

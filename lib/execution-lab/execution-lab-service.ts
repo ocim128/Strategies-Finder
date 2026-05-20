@@ -54,9 +54,11 @@ import {
     type ExecutionParityMismatchRecord,
     type LiveCancelAllResultRecord,
     type LiveCancelAllSubmitRequest,
+    type LiveCancelAllSubmitResponse,
     type LiveEntrySubmitRequest,
     type LiveExecutorStatus,
     type LiveExitResultRecord,
+    type LiveTradeSubmitResponse,
     type LiveTradeSizingMode,
     type LiveTradeResultRecord,
     type PaperExitRecord,
@@ -78,10 +80,12 @@ import {
     buildLiveTradeRequestRecord,
     buildLiveTradeResultRecord,
     buildLiveTradeSubmitRequest,
+    isLiveTradeGeoblockReason,
     normalizeExecutionLabLiveUiConfig,
     resolveLiveExitFloorPreflight,
     resolveLiveExitShareUpdate,
     resolveLiveTradeFilledShares,
+    shouldAttemptLiveExitAfterLimitCancel,
 } from "./live-trade-request";
 import {
     buildEvaluatedSignals,
@@ -139,10 +143,15 @@ type PendingLimitSubmission = {
     requestId: string;
     paperTradeId: string;
     eventStartTs: number;
+    eventEndTs: number;
     marketSlug: string;
     conditionId: string;
     tokenId: string;
     side: SecondMarketSide;
+    signalTimeSec: number;
+    entryTimeSec: number;
+    entryPrice: number;
+    submittedShares?: number;
     limitPrice: number;
     orderId?: string;
     lastStatus: string;
@@ -380,6 +389,7 @@ export class ExecutionLabService {
     private latestLiveCancelResult: LiveCancelAllResultRecord | null = null;
     private latestLiveExecutorStatus: LiveExecutorStatus | null = null;
     private latestLiveExecutorStatusConfigKey = "";
+    private liveSubmissionBlockedReason: string | null = null;
     private liveStatusRefreshToken = 0;
     private sessionRunToken = 0;
 
@@ -521,6 +531,7 @@ export class ExecutionLabService {
         this.latestLiveTradeResult = null;
         this.latestLiveExitResult = null;
         this.latestLiveCancelResult = null;
+        this.liveSubmissionBlockedReason = null;
         this.sessionLiveUiConfig = this.liveUiConfig;
         this.renderIdle();
     }
@@ -537,6 +548,12 @@ export class ExecutionLabService {
             dryRun: status?.dryRun,
             sizingMode: status?.sizingMode,
         };
+    }
+
+    private maybeBlockLiveSubmissions(response: Pick<LiveTradeSubmitResponse, "reason">): void {
+        if (!isLiveTradeGeoblockReason(response.reason)) return;
+        this.liveSubmissionBlockedReason = response.reason ?? "geoblocked";
+        this.renderLiveExecutorStatus(this.latestLiveExecutorStatus);
     }
 
     private currentLiveExecutorStatus(): LiveExecutorStatus | null {
@@ -708,9 +725,19 @@ export class ExecutionLabService {
             dom.liveExecutorStatus.classList.remove("is-ok", "is-warning");
             return;
         }
+        const geoblockStatus = this.liveSubmissionBlockedReason
+            ? `blocked ${this.liveSubmissionBlockedReason}`
+            : status.geoblockAllowed === true
+                ? "geoblock allowed"
+                : status.geoblockAllowed === false
+                    ? "geoblock blocked"
+                    : status.liveEnabled
+                        ? "geoblock unknown"
+                        : null;
         dom.liveExecutorStatus.textContent = [
             status.available ? "available" : status.configured ? "missing" : "not configured",
             status.liveEnabled ? "live enabled" : "dry-run",
+            geoblockStatus,
             `mode ${status.orderMode}`,
             `cap $${status.maxStakeUsd.toFixed(2)}`,
             `sizing ${status.sizingMode === "exchange_min" ? "exchange min" : "fixed"}`,
@@ -729,7 +756,7 @@ export class ExecutionLabService {
             status.message,
         ].filter(Boolean).join(" | ");
         dom.liveExecutorStatus.classList.toggle("is-ok", status.available && !status.liveEnabled);
-        dom.liveExecutorStatus.classList.toggle("is-warning", status.liveEnabled || !status.available);
+        dom.liveExecutorStatus.classList.toggle("is-warning", status.liveEnabled || !status.available || this.liveSubmissionBlockedReason !== null);
     }
 
     private async refreshMinerStatus(): Promise<void> {
@@ -1497,6 +1524,7 @@ export class ExecutionLabService {
                 const result = buildLiveCancelAllResultRecord(snapshot, request, response, new Date().toISOString(), {
                     latencyMs: Date.now() - startedMs,
                 });
+                this.trackUncanceledLimitAsLivePosition(request, response);
                 this.clearPendingLimitSubmissionsAfterCancel(request, response.status);
                 this.latestLiveCancelResult = result;
                 records.push(result);
@@ -1505,6 +1533,53 @@ export class ExecutionLabService {
             }
         }
         return records;
+    }
+
+    private findPendingLimitForCancelRequest(request: LiveCancelAllSubmitRequest): PendingLimitSubmission | null {
+        if (request.paperTradeId) {
+            const pending = this.pendingLimitSubmissionByPaperTradeId.get(request.paperTradeId);
+            if (pending) return pending;
+        }
+        const orderIds = new Set((request.orderIds ?? []).filter((orderId) => orderId.length > 0));
+        if (orderIds.size > 0) {
+            return Array.from(this.pendingLimitSubmissionByRequestId.values()).find((pending) =>
+                pending.orderId !== undefined && orderIds.has(pending.orderId)
+            ) ?? null;
+        }
+        return null;
+    }
+
+    private trackUncanceledLimitAsLivePosition(
+        request: LiveCancelAllSubmitRequest,
+        response: LiveCancelAllSubmitResponse
+    ): void {
+        if (!shouldAttemptLiveExitAfterLimitCancel(response)) return;
+        const pending = this.findPendingLimitForCancelRequest(request);
+        if (
+            !pending
+            || pending.submittedShares === undefined
+            || pending.submittedShares <= MIN_LIVE_POSITION_SHARES
+            || this.liveOpenPositionByPaperTradeId.has(pending.paperTradeId)
+        ) {
+            return;
+        }
+        this.liveOpenPositionByPaperTradeId.set(pending.paperTradeId, {
+            entryRequestId: pending.requestId,
+            paperTradeId: pending.paperTradeId,
+            eventStartTs: pending.eventStartTs,
+            eventEndTs: pending.eventEndTs,
+            marketSlug: pending.marketSlug,
+            conditionId: pending.conditionId,
+            tokenId: pending.tokenId,
+            side: pending.side,
+            signalTimeSec: pending.signalTimeSec,
+            entryTimeSec: pending.entryTimeSec,
+            entryPrice: pending.entryPrice,
+            remainingShares: pending.submittedShares,
+            entryOrderId: pending.orderId,
+            lastExitStatus: response.status,
+            lastExitReason: response.reason,
+        });
     }
 
     private clearPendingLimitSubmissionsAfterCancel(
@@ -1625,6 +1700,27 @@ export class ExecutionLabService {
                 continue;
             }
 
+            if (this.liveSubmissionBlockedReason) {
+                position.pendingExit = undefined;
+                position.lastExitStatus = "rejected";
+                position.lastExitReason = this.liveSubmissionBlockedReason;
+                const result = buildLiveExitResultRecord(
+                    snapshot,
+                    request,
+                    buildLiveTradeFailureResponse({
+                        requestId: request.requestId,
+                        status: "rejected",
+                        reason: this.liveSubmissionBlockedReason,
+                        minPrice: request.minPrice,
+                        currentBid: currentBid ?? undefined,
+                    }),
+                    new Date().toISOString()
+                );
+                this.latestLiveExitResult = result;
+                records.push(result);
+                continue;
+            }
+
             this.liveExitInFlightByPaperTradeId.add(position.paperTradeId);
             try {
                 if (!this.isSessionActive(sessionToken, snapshot)) return records;
@@ -1641,6 +1737,7 @@ export class ExecutionLabService {
                     latencyMs: Date.now() - startedMs,
                 });
                 this.latestLiveExitResult = result;
+                this.maybeBlockLiveSubmissions(response);
                 this.updateLiveExitPosition(position, response);
                 records.push(result);
             } finally {
@@ -1888,6 +1985,24 @@ export class ExecutionLabService {
                     continue;
                 }
 
+                if (this.liveSubmissionBlockedReason) {
+                    if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return records;
+                    const result = buildLiveTradeResultRecord(
+                        snapshot,
+                        request,
+                        buildLiveTradeFailureResponse({
+                            requestId: request.requestId,
+                            status: "rejected",
+                            reason: this.liveSubmissionBlockedReason,
+                            ...requestPriceFields,
+                        }),
+                        new Date().toISOString()
+                    );
+                    this.latestLiveTradeResult = result;
+                    records.push(result);
+                    continue;
+                }
+
                 if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return records;
                 const startedMs = Date.now();
                 const response = await submitExecutionLabLiveTrade(request, liveConfig).catch(() =>
@@ -1912,6 +2027,7 @@ export class ExecutionLabService {
                     latencyMs: Date.now() - startedMs,
                 });
                 this.latestLiveTradeResult = result;
+                this.maybeBlockLiveSubmissions(response);
                 this.trackPendingLimitSubmission(position, request, response);
                 this.trackLiveEntryPosition(position, request.requestId, response);
                 records.push(result);
@@ -1935,7 +2051,7 @@ export class ExecutionLabService {
     private trackPendingLimitSubmission(
         position: ExecutionLabOpenPaperPosition,
         request: LiveEntrySubmitRequest,
-        response: { status: string; orderId?: string }
+        response: { status: string; orderId?: string; submittedPrice?: number; submittedShares?: number }
     ): void {
         if (request.orderMode !== "limit") return;
         if (
@@ -1949,10 +2065,15 @@ export class ExecutionLabService {
             requestId: request.requestId,
             paperTradeId: position.tradeId,
             eventStartTs: position.eventStartTs,
+            eventEndTs: position.eventEndTs,
             marketSlug: position.marketSlug,
             conditionId: position.conditionId,
             tokenId: request.tokenId,
             side: position.side,
+            signalTimeSec: position.signalTimeSec,
+            entryTimeSec: position.entryTimeSec,
+            entryPrice: response.submittedPrice ?? request.limitPrice,
+            submittedShares: response.submittedShares,
             limitPrice: request.limitPrice,
             orderId: response.orderId,
             lastStatus: response.status,
@@ -1992,6 +2113,10 @@ export class ExecutionLabService {
     ): void {
         position.lastExitStatus = response.status;
         position.lastExitReason = response.reason;
+        if (isLiveTradeGeoblockReason(response.reason)) {
+            position.pendingExit = undefined;
+            return;
+        }
         if (response.status === "delayed" || response.status === "posted_live") {
             position.pendingExit = undefined;
             return;

@@ -149,6 +149,13 @@
                     <div class="param-hint">0 disables. Example: 20 skips entries priced at 20c or below and 80c or above.</div>
                 </div>
             </div>
+            <div class="param-row" id="polymarketBacktestSlippageCentsRow" style="display: none;">
+                <div class="param-group">
+                    <label class="param-label">Polymarket Backtest Slippage (cents)</label>
+                    <input type="number" class="param-input" id="polymarketBacktestSlippageCents" value="5" min="0" max="99" step="0.1">
+                    <div class="param-hint">Backtest-only adverse fill adjustment. Quote entries pay more and signal exits receive less.</div>
+                </div>
+            </div>
             <div class="param-row" id="polymarketEntryDelayBarsRow" style="display: none;">
                 <div class="param-group">
                     <label class="param-label">Polymarket Entry Delay (1s bars)</label>

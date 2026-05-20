@@ -184,6 +184,30 @@ describe("second market shared evaluation", () => {
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.isWin).to.equal(null);
     });
 
+    it("applies backtest-only Polymarket slippage against quote entry and signal exit fills", () => {
+        const signalTrade = trade(1, 1_700_000_010, 1_700_000_020);
+        signalTrade.exitReason = "signal";
+
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([signalTrade]),
+            context: context([
+                quote(1_700_000_010, 0.55, 0.53),
+                quote(1_700_000_020, 0.60, 0.58),
+            ]),
+            polymarketExitMode: "signal_exit_same_event",
+            backtestSlippageCents: 5,
+        });
+
+        expect(evaluated.summary.backtestSlippageCents).to.equal(5);
+        expect(evaluated.polymarketSummary.backtestSlippageCents).to.equal(5);
+        expect(evaluated.polymarketEval.backtestSlippageCents).to.equal(5);
+        expect(evaluated.tradeResults[0]?.entryPrice).to.equal(0.60);
+        expect(evaluated.tradeResults[0]?.exitPrice).to.equal(0.53);
+        expect(evaluated.polymarketSummary.netPnl).to.be.closeTo(-0.07, 1e-9);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.60);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.53);
+    });
+
     it("prices close-based 1s executions at the candle close second", () => {
         for (const executionModel of ["signal_close", "next_close"] as const) {
             const signalTrade = trade(1, 1_700_000_010, 1_700_000_020);

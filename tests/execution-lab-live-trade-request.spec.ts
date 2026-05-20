@@ -4,11 +4,13 @@ import type { ExecutionLabOpenPaperPosition, ExecutionLabSessionSnapshot } from 
 import {
     buildLiveExitSubmitRequest,
     buildLiveTradeSubmitRequest,
+    isLiveTradeGeoblockReason,
     normalizeLiveTradeSubmitResponse,
     resolveLiveLimitEntryPrice,
     resolveLiveExitFloorPreflight,
     resolveLiveExitShareUpdate,
     resolveLiveTradeFilledShares,
+    shouldAttemptLiveExitAfterLimitCancel,
     validateLiveCancelAllSubmitRequest,
     validateLiveTradeSubmitRequest,
 } from "../lib/execution-lab/live-trade-request";
@@ -423,6 +425,55 @@ describe("Execution Lab live trade request", () => {
             expect(normalized.response.submittedShares).to.equal(29.35);
             expect(normalized.response.filledShares).to.equal(8.94);
         }
+    });
+
+    it("treats geoblock preflight failures as live safety rejections", () => {
+        const requestId = "live-entry-geoblock";
+        const normalized = normalizeLiveTradeSubmitResponse({
+            ok: true,
+            requestId,
+            status: "failed",
+            reason: "geoblock_check_failed",
+            maxPrice: 0.57,
+        }, requestId);
+
+        expect(normalized.ok).to.equal(true);
+        if (normalized.ok) {
+            expect(normalized.response.status).to.equal("rejected");
+            expect(normalized.response.reason).to.equal("geoblock_check_failed");
+            expect(normalized.response.maxPrice).to.equal(0.57);
+        }
+        expect(isLiveTradeGeoblockReason("geoblock_check_failed")).to.equal(true);
+        expect(isLiveTradeGeoblockReason("geoblocked")).to.equal(true);
+        expect(isLiveTradeGeoblockReason("executor_unavailable")).to.equal(false);
+    });
+
+    it("only attempts a protective exit when a posted limit entry cannot be canceled", () => {
+        expect(shouldAttemptLiveExitAfterLimitCancel({
+            ok: true,
+            requestId: "cancel-1",
+            status: "rejected",
+            reason: "not_canceled",
+            scope: "session",
+            canceledCount: 0,
+        })).to.equal(true);
+
+        expect(shouldAttemptLiveExitAfterLimitCancel({
+            ok: true,
+            requestId: "cancel-2",
+            status: "submitted",
+            scope: "session",
+            canceledCount: 1,
+        })).to.equal(false);
+
+        expect(shouldAttemptLiveExitAfterLimitCancel({
+            ok: true,
+            requestId: "cancel-3",
+            status: "failed",
+            reason: "executor_unavailable",
+            scope: "session",
+            canceledCount: 0,
+        })).to.equal(false);
     });
 
     it("keeps live exit positions open after explicit partial fills", () => {

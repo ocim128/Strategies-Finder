@@ -1412,11 +1412,12 @@ describe("Quick View Polymarket streak summary", () => {
 
         expect(clobRequests).to.equal(1);
         expect(enriched.polymarketTradeSummary?.evaluationMode).to.equal("signal_exit_same_event");
-        expect(enriched.polymarketTradeSummary?.expectancy).to.be.closeTo(0.03, 1e-9);
-        expect(enriched.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.55);
-        expect(enriched.trades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.58);
+        expect(enriched.polymarketTradeSummary?.backtestSlippageCents).to.equal(5);
+        expect(enriched.polymarketTradeSummary?.expectancy).to.be.closeTo(-0.07, 1e-9);
+        expect(enriched.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.6);
+        expect(enriched.trades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.53);
         expect(content.innerHTML).to.contain("Polymarket Exp / Trade");
-        expect(content.innerHTML).to.contain("+3.0c");
+        expect(content.innerHTML).to.contain("-7.0c");
         expect(content.innerHTML).to.contain("Signal Exit (same event)");
     });
 
@@ -1591,15 +1592,16 @@ describe("Quick View Polymarket streak summary", () => {
         expect(clobRequests).to.equal(1);
         expect(enriched.polymarketTradeSummary?.evaluationMode).to.equal("signal_exit_same_event");
         expect(enriched.polymarketTradeSummary?.scoredTrades).to.equal(1);
-        expect(enriched.polymarketTradeSummary?.expectancy).to.be.closeTo(0.03, 1e-9);
+        expect(enriched.polymarketTradeSummary?.backtestSlippageCents).to.equal(5);
+        expect(enriched.polymarketTradeSummary?.expectancy).to.be.closeTo(-0.07, 1e-9);
         expect(enriched.trades[0]?.polymarketOutcome?.isWin).to.equal(null);
-        expect(enriched.trades[0]?.polymarketOutcome?.isProfitable).to.equal(true);
-        expect(enriched.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.55);
-        expect(enriched.trades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.58);
+        expect(enriched.trades[0]?.polymarketOutcome?.isProfitable).to.equal(false);
+        expect(enriched.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.6);
+        expect(enriched.trades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.53);
         expect(enriched.trades[0]?.polymarketOutcome?.marketExitSource).to.equal("signal");
         expect(html).to.contain("Signal Exit (same event)");
         expect(html).to.contain("Signal Exited");
-        expect(html).to.contain("+3.0c");
+        expect(html).to.contain("-7.0c");
     });
 
     it("preserves native 15m signal-exit outcome intervals when Quick View rebuilds outcomes", async () => {
@@ -1755,9 +1757,10 @@ describe("Quick View Polymarket streak summary", () => {
 
         expect(enriched.polymarketTradeSummary?.outcomeInterval).to.equal("15m");
         expect(enriched.polymarketTradeSummary?.evaluationMode).to.equal("signal_exit_same_event");
+        expect(enriched.polymarketTradeSummary?.backtestSlippageCents).to.equal(5);
         expect(enriched.trades[0]?.polymarketOutcome?.marketExitSource).to.equal("signal");
-        expect(enriched.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.55);
-        expect(enriched.trades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.63);
+        expect(enriched.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.6);
+        expect(enriched.trades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.58);
     });
 
     it("does not render an empty signal-exit section when no trades were actually priced", () => {

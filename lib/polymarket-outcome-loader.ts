@@ -37,6 +37,7 @@ export interface PolymarketOutcomeLoaderDeps {
     readCurrentExecutionModel: () => string | undefined;
     readCurrentPolymarketEntryOffset: () => number | null;
     readCurrentPolymarketEntryPriceFilterCents: () => number;
+    readCurrentPolymarketBacktestSlippageCents: () => number;
     readCurrentPolymarketEntryCutoffEnabled: () => boolean;
     readCurrentPolymarketEntryCutoffSeconds: () => number;
     readCurrentPolymarketEntrySelectionMode: () => PolymarketEntrySelectionMode;
@@ -207,6 +208,7 @@ export class PolymarketOutcomeLoader {
                         outcomeByEntryTs,
                         allowMultipleTradesPerEvent,
                         entryPriceFilterCents: this.deps.readCurrentPolymarketEntryPriceFilterCents(),
+                        backtestSlippageCents: this.deps.readCurrentPolymarketBacktestSlippageCents(),
                         entryCutoffEnabled: this.deps.readCurrentPolymarketEntryCutoffEnabled(),
                         entryCutoffSeconds: this.deps.readCurrentPolymarketEntryCutoffSeconds(),
                         limitEntry,
@@ -265,6 +267,7 @@ export class PolymarketOutcomeLoader {
                 outcomeInterval,
                 pricePoints: limitEntryPricePoints,
                 entryPriceFilterCents: this.deps.readCurrentPolymarketEntryPriceFilterCents(),
+                backtestSlippageCents: this.deps.readCurrentPolymarketBacktestSlippageCents(),
                 entryCutoffEnabled: this.deps.readCurrentPolymarketEntryCutoffEnabled(),
                 entryCutoffSeconds: this.deps.readCurrentPolymarketEntryCutoffSeconds(),
                 limitEntry,
@@ -278,6 +281,7 @@ export class PolymarketOutcomeLoader {
             entrySelectionMode,
             timingProfile: existingSummary?.timingProfile,
             outcomeInterval,
+            backtestSlippageCents: this.deps.readCurrentPolymarketBacktestSlippageCents(),
             limitEntry,
         });
         const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
@@ -302,6 +306,7 @@ export class PolymarketOutcomeLoader {
                 entryOffset: existingSummary?.entryOffset ?? summary.entryOffset,
                 timingProfile: existingSummary?.timingProfile ?? summary.timingProfile,
                 evaluationMode: "resolve_hold",
+                backtestSlippageCents: existingSummary?.backtestSlippageCents ?? summary.backtestSlippageCents,
                 targetExitedTrades: existingSummary?.targetExitedTrades ?? summary.targetExitedTrades,
                 limitEntryEnabled: existingSummary?.limitEntryEnabled ?? summary.limitEntryEnabled,
                 limitEntryMode: existingSummary?.limitEntryMode ?? summary.limitEntryMode,

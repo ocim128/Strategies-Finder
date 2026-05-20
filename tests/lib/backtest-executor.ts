@@ -651,6 +651,7 @@ async function annotatePolymarketResult(
             selectedOffset: settings.polymarketEntryOffset,
             entrySelectionMode: settings.polymarketEntrySelectionMode,
             entryPriceFilterCents: settings.polymarketEntryPriceFilterCents,
+            backtestSlippageCents: settings.polymarketBacktestSlippageCents,
         });
     } catch {
         return result;

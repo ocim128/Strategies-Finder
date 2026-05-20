@@ -215,6 +215,7 @@ export interface SecondMarketBacktestSummary {
     evaluationMode: PolymarketExitMode;
     allowMultipleTradesPerEvent?: boolean;
     entryDelayBars?: number;
+    backtestSlippageCents?: number;
     scoredTrades: number;
     duplicateTradesIgnored: number;
     entryPriceFilteredTrades: number;

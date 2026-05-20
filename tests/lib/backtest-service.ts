@@ -660,6 +660,7 @@ export class BacktestService {
                     polymarketSignalExitAllowMultipleTradesPerEvent: settings.polymarketSignalExitAllowMultipleTradesPerEvent,
                     entryDelayBars: settings.polymarketEntryDelayBars,
                     entryPriceFilterCents: settings.polymarketEntryPriceFilterCents,
+                    backtestSlippageCents: settings.polymarketBacktestSlippageCents,
                     entryCutoffEnabled: settings.polymarketEntryCutoffEnabled,
                     entryCutoffSeconds: settings.polymarketEntryCutoffSeconds,
                     limitEntry: {
@@ -691,6 +692,7 @@ export class BacktestService {
                 selectedOffset: settings.polymarketEntryOffset,
                 entrySelectionMode: settings.polymarketEntrySelectionMode,
                 entryPriceFilterCents: settings.polymarketEntryPriceFilterCents,
+                backtestSlippageCents: settings.polymarketBacktestSlippageCents,
                 limitEntry: {
                     enabled: settings.polymarketPostSignalLimitEntryEnabled === true,
                     priceMode: settings.polymarketPostSignalLimitEntryMode,

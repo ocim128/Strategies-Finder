@@ -751,6 +751,7 @@ async function evaluatePolicyRecipe(args: {
         outcomes: args.outcomes,
         strategyKey: args.anchorArtifact.config.strategyKey,
         context: args.evaluationContext,
+        backtestSlippageCents: args.anchorArtifact.config.backtestSettings.polymarketBacktestSlippageCents,
     });
     const wilsonLowerBound = computeWilsonLowerBound(evalResult.wins, evalResult.scoredPredictions);
 
@@ -1151,6 +1152,7 @@ export async function runEnsemblePolymarket(args: {
             outcomes,
             strategyKey: artifact.config.strategyKey,
             context: evaluationContext,
+            backtestSlippageCents: artifact.config.backtestSettings.polymarketBacktestSlippageCents,
         });
         const wilsonLowerBound = computeWilsonLowerBound(evalResult.wins, evalResult.scoredPredictions);
         const deltaVsBestBaseline = evalResult.winRate - bestBaseline;

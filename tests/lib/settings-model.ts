@@ -10,6 +10,7 @@ import { readBoolean as readBooleanValue, readNumber as readNumberValue } from "
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 import { ADVANCED_SIZING_DEFAULTS, coerceAdvancedSizingFieldValue } from "./advanced-sizing-settings";
 import { coerceAdaptiveTakeProfitFieldValue, resolveTakeProfitMode } from "./take-profit-settings";
+import { clampPolymarketBacktestSlippageCents } from "./polymarket-backtest-slippage";
 import type { PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 import type { PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
 import {
@@ -122,6 +123,7 @@ export interface BacktestSettingsData {
     polymarketEntryOffset: number;
     polymarketEntryDelayBars: number;
     polymarketEntryPriceFilterCents: number;
+    polymarketBacktestSlippageCents: number;
     polymarketEntryCutoffEnabled: boolean;
     polymarketEntryCutoffSeconds: number;
     polymarketExitMode: "resolve_hold" | "signal_exit_same_event";
@@ -381,6 +383,9 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
     normalized.takeProfitAdaptiveIcScale = coerceAdaptiveTakeProfitFieldValue("takeProfitAdaptiveIcScale", source.takeProfitAdaptiveIcScale);
     normalized.useRustEngine = readBoolean(source.useRustEngine, DEFAULT_BACKTEST_SETTINGS.useRustEngine);
     normalized.riskSettingsToggle = readBoolean(source.riskSettingsToggle, DEFAULT_BACKTEST_SETTINGS.riskSettingsToggle);
+    normalized.polymarketBacktestSlippageCents = clampPolymarketBacktestSlippageCents(
+        source.polymarketBacktestSlippageCents
+    );
     normalized.confirmationStrategiesToggle = readBoolean(
         source.confirmationStrategiesToggle,
         Array.isArray(normalized.confirmationStrategies) && normalized.confirmationStrategies.length > 0

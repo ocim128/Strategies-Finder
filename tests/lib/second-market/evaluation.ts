@@ -243,6 +243,7 @@ function summarizePolymarketResult(args: {
         evaluationMode,
         signalExitAllowMultipleTradesPerEvent: summary.allowMultipleTradesPerEvent,
         entryDelayBars: summary.entryDelayBars,
+        backtestSlippageCents: summary.backtestSlippageCents,
         profitableTrades,
         losingTrades,
         neutralTrades,
@@ -335,6 +336,7 @@ function buildPolymarketEval(args: {
         evaluationMode,
         signalExitAllowMultipleTradesPerEvent: summary.allowMultipleTradesPerEvent,
         entryDelayBars: summary.entryDelayBars,
+        backtestSlippageCents: summary.backtestSlippageCents,
         targetExitedTrades: summary.targetExitedTrades,
         signalExitedTrades: summary.signalExitedTrades,
         resolvedTrades: summary.resolvedTrades,
@@ -428,6 +430,7 @@ export function evaluateSecondMarketBacktest(args: {
     entryCutoffEnabled?: boolean;
     entryCutoffSeconds?: number;
     entryDelayBars?: number;
+    backtestSlippageCents?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }): SecondMarketEvaluationResult {
     const trades = [...(args.trades ?? args.result.trades)];
@@ -448,6 +451,7 @@ export function evaluateSecondMarketBacktest(args: {
         entryCutoffEnabled: args.entryCutoffEnabled,
         entryCutoffSeconds: args.entryCutoffSeconds,
         entryDelayBars: args.entryDelayBars,
+        backtestSlippageCents: args.backtestSlippageCents,
         limitEntry: args.limitEntry,
     });
     const tradeResults = evaluated.results.map((result) => ({
@@ -496,6 +500,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
     entryCutoffEnabled?: boolean;
     entryCutoffSeconds?: number;
     entryDelayBars?: number;
+    backtestSlippageCents?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }): Promise<BacktestResult> {
     if (
@@ -531,6 +536,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
         entryCutoffEnabled: args.entryCutoffEnabled,
         entryCutoffSeconds: args.entryCutoffSeconds,
         entryDelayBars: args.entryDelayBars,
+        backtestSlippageCents: args.backtestSlippageCents,
         limitEntry: args.limitEntry,
     });
 

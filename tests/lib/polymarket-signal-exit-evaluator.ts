@@ -10,6 +10,11 @@ import {
 import { resolvePolymarketEntryCutoff } from "./polymarket-entry-cutoff";
 import { isPolymarketEntryPriceFiltered } from "./polymarket-entry-price-filter";
 import {
+    applyPolymarketBacktestEntrySlippage,
+    applyPolymarketBacktestExitSlippage,
+    clampPolymarketBacktestSlippageCents,
+} from "./polymarket-backtest-slippage";
+import {
     clampPolymarketPostSignalLimitEntryPriceCents,
     clampPolymarketPostSignalLimitExitPriceCents,
     clampPolymarketPostSignalLimitOffsetCents,
@@ -38,6 +43,7 @@ export interface SignalExitEvalInput {
     outcomeByEntryTs?: ReadonlyMap<number, PolymarketOutcomeRow | null>;
     allowMultipleTradesPerEvent?: boolean;
     entryPriceFilterCents?: number;
+    backtestSlippageCents?: number;
     entryCutoffEnabled?: boolean;
     entryCutoffSeconds?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
@@ -87,6 +93,7 @@ export interface SignalExitSummary {
     expectancy: number;
     avgEntryPrice: number;
     avgExitPrice: number;
+    backtestSlippageCents?: number;
     totalPnl: number;
     limitEntryEnabled?: boolean;
     allowMultipleTradesPerEvent?: boolean;
@@ -147,6 +154,7 @@ export function buildSignalExitPolymarketTradeSummary(args: {
         expectancy: summary.expectancy,
         avgEntryPrice: summary.avgEntryPrice,
         avgExitPrice: summary.avgExitPrice,
+        backtestSlippageCents: summary.backtestSlippageCents,
         limitEntryEnabled: summary.limitEntryEnabled,
         limitEntryMode: summary.limitEntryMode,
         limitEntryPriceCents: summary.limitEntryPriceCents,
@@ -230,6 +238,7 @@ export function evaluateSignalExitTrades(
     const limitEntryOffsetCents = clampPolymarketPostSignalLimitOffsetCents(input.limitEntry?.offsetCents);
     const limitEntryOffsetPrice = limitEntryOffsetCents / 100;
     const limitExitEnabled = limitEntryEnabled && input.limitEntry?.exitEnabled === true;
+    const backtestSlippageCents = clampPolymarketBacktestSlippageCents(input.backtestSlippageCents, 0);
 
     for (const trade of trades) {
         const entryTs = parseTimeToUnixSeconds(trade.entryTime);
@@ -384,7 +393,7 @@ export function evaluateSignalExitTrades(
                 });
                 continue;
             }
-            entryPrice = quoteEntryFill.price;
+            entryPrice = applyPolymarketBacktestEntrySlippage(quoteEntryFill.price, backtestSlippageCents);
             entryFillTs = quoteEntryFill.ts;
         }
 
@@ -448,9 +457,10 @@ export function evaluateSignalExitTrades(
                     exitSource = "target";
                     exitStatus = targetExit.status;
                 } else if (exitFill && entryFillTs !== null && exitFill.ts >= entryFillTs) {
-                    exitPrice = exitFill.ts === entryFillTs && entryPrice !== null
+                    const rawExitPrice = exitFill.ts === entryFillTs && entryPrice !== null && backtestSlippageCents <= 0
                         ? entryPrice
                         : exitFill.price;
+                    exitPrice = applyPolymarketBacktestExitSlippage(rawExitPrice, backtestSlippageCents);
                     exitTs = exitFill.ts;
                     exitSource = "signal";
                     exitStatus = targetExit?.status;
@@ -545,14 +555,20 @@ export function evaluateSignalExitTrades(
         });
     }
 
-    const summary = buildSignalExitSummary(results, input.limitEntry, allowMultipleTradesPerEvent);
+    const summary = buildSignalExitSummary(
+        results,
+        input.limitEntry,
+        allowMultipleTradesPerEvent,
+        backtestSlippageCents
+    );
     return { results, summary };
 }
 
 function buildSignalExitSummary(
     results: readonly SignalExitTradeResult[],
     settings?: PolymarketPostSignalLimitEntrySettings,
-    allowMultipleTradesPerEvent = false
+    allowMultipleTradesPerEvent = false,
+    backtestSlippageCents = 0
 ): SignalExitSummary {
     let scoredTrades = 0;
     let missingPriceTrades = 0;
@@ -702,6 +718,7 @@ function buildSignalExitSummary(
         expectancy: pricedCount > 0 ? netPnl / pricedCount : 0,
         avgEntryPrice: pricedCount > 0 ? totalEntryPrice / pricedCount : 0,
         avgExitPrice: pricedCount > 0 ? totalExitPrice / pricedCount : 0,
+        backtestSlippageCents: backtestSlippageCents > 0 ? backtestSlippageCents : undefined,
         totalPnl: netPnl,
         limitEntryEnabled: limitEntryEnabled || undefined,
         allowMultipleTradesPerEvent: allowMultipleTradesPerEvent || undefined,

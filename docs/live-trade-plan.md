@@ -87,7 +87,7 @@ V1 is working only when all of these are true:
 - Live entry submission also rejects as `event_too_close_to_close` if the toggle is enabled and the current clock has crossed the same configured cutoff before the executor call.
 - Live entry `maxPrice` adds `EXECUTION_LAB_LIVE_ENTRY_MAX_SLIPPAGE_CENTS` to the paper entry price, clamped to `1.00`; the default is `1` cent.
 - Limit mode submits a buy limit immediately after an accepted paper entry, using the paper entry price as `limitReferencePrice` and optional UI offset as `limitPrice = reference - offsetCents / 100`, rounded/clamped by Strategy Finder before executor submission. For executor schema compatibility, limit requests also carry `maxPrice = limitPrice`; `limitPrice` remains the explicit resting-order price.
-- Posted or delayed limit entries are tracked as pending limit submissions, not live positions. They become tracked live positions only when the executor response reports filled or partial filled shares.
+- Posted or delayed limit entries are tracked as pending limit submissions, not live positions. They become tracked live positions when the executor response reports filled or partial filled shares, or when an exit-triggered targeted cancel returns `not_canceled`, which may mean the resting order already filled.
 - Limit cancel-on-exit is limit-mode only. When Strategy Finder has a posted GTC order id, it sends a targeted `session` cancel for that order id; broader configured scopes are fallback-only.
 - Private keys must not be stored in browser state, localStorage, JSONL logs, or this repository.
 - V1 is a local playground feature for `npm run dev`, not production infrastructure.
@@ -435,6 +435,7 @@ V1 failure behavior should be simple and explicit:
 - If executor is unavailable, log `live_trade_result` with `status: "failed"` and `reason: "executor_unavailable"`.
 - If executor is not live-enabled, return/log `status: "rejected"` and `reason: "live_disabled"`.
 - If geoblock/eligibility fails, return/log `status: "rejected"` and `reason: "geoblocked"`.
+- If the executor cannot complete the geoblock preflight, normalize it to `status: "rejected"` with `reason: "geoblock_check_failed"` and block further Strategy Finder live submissions for the current session.
 - If the same paper trade already dispatched in the current session, do not dispatch again.
 - If the same `requestId` reaches the executor again, executor returns `status: "duplicate"`.
 - If paper entry has no token/market information, do not submit and log `missing_market_identity`.
@@ -449,7 +450,7 @@ V1 failure behavior should be simple and explicit:
 
 Live exit is intentionally conservative:
 
-- Strategy Finder tracks a live position only after an entry result is `matched` or `partial`.
+- Strategy Finder tracks a live position after an entry result is `matched` or `partial`. For limit entries, if an exit-triggered targeted cancel returns `not_canceled`, Strategy Finder promotes the pending limit submission into a provisional live position and submits the normal exit sell.
 - When the matching paper trade emits `paper_exit`, Strategy Finder submits `action: "exit"` for the same `tokenId`.
 - If the paper trade reaches an executable backtest exit but the exact Polymarket exit quote is missing, Strategy Finder still queues a live exit for the matching tracked live position and anchors the first exit floor to the latest same-event bid when available.
 - Exit requests sell the tracked remaining live shares; they do not buy the opposite outcome.

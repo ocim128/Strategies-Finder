@@ -18,6 +18,11 @@ import type { PolymarketExitMode } from "../polymarket-exit-mode";
 import type { PolymarketPricePoint } from "../local-sqlite-polymarket-api";
 import { clampPolymarketEntryDelayBars } from "../polymarket-entry-delay";
 import {
+    applyPolymarketBacktestEntrySlippage,
+    applyPolymarketBacktestExitSlippage,
+    clampPolymarketBacktestSlippageCents,
+} from "../polymarket-backtest-slippage";
+import {
     DEFAULT_MAX_QUOTE_AGE_SEC,
     findContainingPolymarketEvent,
     getClobQuoteTimeSec,
@@ -235,7 +240,8 @@ function buildSummary(
     evaluationMode: PolymarketExitMode,
     settings?: PolymarketPostSignalLimitEntrySettings,
     allowMultipleTradesPerEvent = false,
-    entryDelayBars = 0
+    entryDelayBars = 0,
+    backtestSlippageCents = 0
 ): SecondMarketBacktestSummary {
     const scored = results.filter((result) => result.pnl !== null);
     const grossProfit = scored.reduce((sum, result) => sum + Math.max(0, result.pnl ?? 0), 0);
@@ -291,6 +297,7 @@ function buildSummary(
         evaluationMode,
         allowMultipleTradesPerEvent: allowMultipleTradesPerEvent || undefined,
         entryDelayBars: entryDelayBars > 0 ? entryDelayBars : undefined,
+        backtestSlippageCents: backtestSlippageCents > 0 ? backtestSlippageCents : undefined,
         scoredTrades: scored.length,
         duplicateTradesIgnored: results.filter((result) => result.exitSource === "duplicate").length,
         entryPriceFilteredTrades: results.filter((result) => result.exitSource === "entry_price_filtered").length,
@@ -376,6 +383,7 @@ export function evaluateSecondMarketTrades(args: {
     entryCutoffEnabled?: boolean;
     entryCutoffSeconds?: number;
     entryDelayBars?: number;
+    backtestSlippageCents?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
 }): { results: SecondMarketTradeResult[]; summary: SecondMarketBacktestSummary } {
     const evaluationMode = args.evaluationMode ?? "resolve_hold";
@@ -384,6 +392,7 @@ export function evaluateSecondMarketTrades(args: {
     const maxQuoteAgeSec = Math.max(0, Math.floor(args.maxQuoteAgeSec ?? DEFAULT_MAX_QUOTE_AGE_SEC));
     const fillSource = args.fillSource ?? "bid_ask";
     const entryDelayBars = clampPolymarketEntryDelayBars(args.entryDelayBars);
+    const backtestSlippageCents = clampPolymarketBacktestSlippageCents(args.backtestSlippageCents, 0);
     const results: SecondMarketTradeResult[] = [];
     const seenEvents = new Set<string>();
     const quoteIndex = buildQuoteIndex(args.quotes);
@@ -608,6 +617,10 @@ export function evaluateSecondMarketTrades(args: {
                 });
                 continue;
             }
+            entry = {
+                ...entry,
+                price: applyPolymarketBacktestEntrySlippage(entry.price, backtestSlippageCents)!,
+            };
         }
 
         if (isPolymarketEntryPriceFiltered(entry.price, args.entryPriceFilterCents)) {
@@ -683,7 +696,10 @@ export function evaluateSecondMarketTrades(args: {
                 });
                 return fill && fill.quoteTs >= entry.quoteTs
                     ? {
-                        price: fill.quoteTs === entry.quoteTs ? entry.price : fill.price,
+                        price: applyPolymarketBacktestExitSlippage(
+                            fill.quoteTs === entry.quoteTs && backtestSlippageCents <= 0 ? entry.price : fill.price,
+                            backtestSlippageCents
+                        )!,
                         quoteTs: fill.quoteTs,
                         source: "signal" as const,
                         targetPrice: exitTargetPrice,
@@ -764,5 +780,15 @@ export function evaluateSecondMarketTrades(args: {
         });
     }
 
-    return { results, summary: buildSummary(results, evaluationMode, args.limitEntry, allowMultipleTradesPerEvent, entryDelayBars) };
+    return {
+        results,
+        summary: buildSummary(
+            results,
+            evaluationMode,
+            args.limitEntry,
+            allowMultipleTradesPerEvent,
+            entryDelayBars,
+            backtestSlippageCents
+        ),
+    };
 }
