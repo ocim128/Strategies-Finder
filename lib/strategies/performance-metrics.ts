@@ -30,7 +30,7 @@ function clamp(value: number, min: number, max: number): number {
 function toEpochMilliseconds(time: Time): number | null {
     const numeric = timeToNumber(time);
     if (numeric === null) return null;
-    if (typeof time === "number" && Math.abs(time) < 1e11) {
+    if (Math.abs(numeric) < 1e11) {
         return numeric * 1000;
     }
     return numeric;

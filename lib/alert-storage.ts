@@ -5,6 +5,10 @@ function getLocalStorage(): Storage | null {
     return typeof localStorage === 'undefined' ? null : localStorage;
 }
 
+function getSessionStorage(): Storage | null {
+    return typeof sessionStorage === 'undefined' ? null : sessionStorage;
+}
+
 export function readAlertWorkerUrl(): string {
     try {
         return getLocalStorage()?.getItem(WORKER_URL_KEY) ?? '';
@@ -25,24 +29,51 @@ export function writeAlertWorkerUrl(url: string): string {
 
 export function readAlertWorkerToken(): string {
     try {
-        return getLocalStorage()?.getItem(WORKER_TOKEN_KEY) ?? '';
+        const session = getSessionStorage();
+        const sessionValue = session?.getItem(WORKER_TOKEN_KEY);
+        if (sessionValue) return sessionValue;
+    } catch {
+        // Fall through to one-time legacy localStorage migration if available.
+    }
+
+    let legacyValue = '';
+    try {
+        const local = getLocalStorage();
+        legacyValue = local?.getItem(WORKER_TOKEN_KEY) ?? '';
     } catch {
         return '';
     }
+    if (!legacyValue) return '';
+
+    try {
+        getSessionStorage()?.setItem(WORKER_TOKEN_KEY, legacyValue);
+    } catch {
+        // Session storage may be unavailable; still stop keeping the token durably.
+    }
+    try {
+        getLocalStorage()?.removeItem(WORKER_TOKEN_KEY);
+    } catch {
+        // Storage can be unavailable in private browsing or embedded contexts.
+    }
+    return legacyValue;
 }
 
 export function writeAlertWorkerToken(token: string): string {
     const normalized = token.trim();
     try {
-        const storage = getLocalStorage();
-        if (!storage) return normalized;
+        const session = getSessionStorage();
         if (normalized) {
-            storage.setItem(WORKER_TOKEN_KEY, normalized);
+            session?.setItem(WORKER_TOKEN_KEY, normalized);
         } else {
-            storage.removeItem(WORKER_TOKEN_KEY);
+            session?.removeItem(WORKER_TOKEN_KEY);
         }
     } catch {
         // Storage can be unavailable in private browsing or embedded contexts.
+    }
+    try {
+        getLocalStorage()?.removeItem(WORKER_TOKEN_KEY);
+    } catch {
+        // Best-effort cleanup of the legacy durable token.
     }
     return normalized;
 }

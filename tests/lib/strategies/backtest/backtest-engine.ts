@@ -2,7 +2,7 @@
 import { BacktestResult, BacktestSettings, OHLCVData, Signal, Time, Trade } from '../../types/index';
 import { ensureCleanData } from '../strategy-helpers';
 import { NormalizedSettings, PositionState, PrecomputedIndicators, TradeSizingConfig, TradeSizingMode } from '../../types/backtest';
-import { applySlippage, compareTime, directionFactorFor, exitSideForDirection, getTimeIndex, isLossStreakFlipTradeDirection, normalizeBacktestSettings, normalizeTradeDirection, signalToPositionDirection, timeKey } from './backtest-utils';
+import { applySlippage, compareTime, directionFactorFor, exitSideForDirection, getTimeIndex, getTimeIndexValue, isLossStreakFlipTradeDirection, normalizeBacktestSettings, normalizeTradeDirection, signalToPositionDirection, timeKey } from './backtest-utils';
 import { calculateSharpeRatioFromEquitySamples } from '../performance-metrics';
 
 import { prepareSignals } from './signal-preparation';
@@ -274,7 +274,7 @@ function resolvePreparedSignalBarIndexes(data: OHLCVData[], preparedSignals: Sig
         if (!fallbackTimeIndex) {
             fallbackTimeIndex = getTimeIndex(data);
         }
-        const mappedIndex = fallbackTimeIndex.get(timeKey(signal.time));
+        const mappedIndex = getTimeIndexValue(fallbackTimeIndex, signal.time);
         indexes[i] = mappedIndex === undefined ? -1 : mappedIndex;
     }
 

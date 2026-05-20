@@ -2,6 +2,7 @@
 import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection } from '../../types/index';
 import { NormalizedSettings } from '../../types/backtest';
 import { toTimeKey } from '../../time-key';
+import { parseTimeToUnixSeconds } from '../../time-normalization';
 import { ADAPTIVE_TAKE_PROFIT_DEFAULTS, resolveTakeProfitMode } from '../../take-profit-settings';
 
 export function toNumberOr(value: number | undefined, fallback: number): number {
@@ -78,17 +79,17 @@ export function timeKey(time: Time): string {
     return toTimeKey(time);
 }
 
+export function canonicalTimeKey(time: Time): string {
+    const unixSeconds = parseTimeToUnixSeconds(time);
+    return unixSeconds !== null ? String(unixSeconds) : timeKey(time);
+}
+
 export function timeToNumber(time: Time): number | null {
-    if (typeof time === 'number') return time;
-    if (typeof time === 'string') {
-        const parsed = Date.parse(time);
-        return Number.isNaN(parsed) ? null : parsed;
-    }
-    if (time && typeof time === 'object' && 'year' in time) {
-        const businessDay = time as { year: number; month: number; day: number };
-        return Date.UTC(businessDay.year, businessDay.month - 1, businessDay.day);
-    }
-    return null;
+    return parseTimeToUnixSeconds(time);
+}
+
+export function getTimeIndexValue(index: Map<string, number>, time: Time): number | undefined {
+    return index.get(timeKey(time)) ?? index.get(canonicalTimeKey(time));
 }
 
 export function compareTime(a: Time, b: Time): number {
@@ -200,6 +201,7 @@ export function getTimeIndex(data: OHLCVData[]): Map<string, number> {
         cached = new Map<string, number>();
         data.forEach((candle, index) => {
             cached!.set(timeKey(candle.time), index);
+            cached!.set(canonicalTimeKey(candle.time), index);
         });
         timeIndexCache.set(data, cached);
     }

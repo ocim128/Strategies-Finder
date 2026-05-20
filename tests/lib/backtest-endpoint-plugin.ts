@@ -53,11 +53,21 @@ interface CachedDataset {
     createdAt: number;
 }
 
+interface DatasetCacheError {
+    error: string;
+    status: number;
+    code: string;
+}
+
 const datasetCache = new Map<string, CachedDataset>();
 const DATASET_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const DATASET_CACHE_MAX_ENTRIES = 200;
 
-function cacheDataset(candles: OHLCVData[], keyHint?: string): CachedDataset {
+function createRandomSeed(): number {
+    return Math.floor(Math.random() * 2147483647);
+}
+
+function cacheDataset(candles: OHLCVData[], keyHint?: string): CachedDataset | DatasetCacheError {
     // Evict stale entries periodically
     if (datasetCache.size > DATASET_CACHE_MAX_ENTRIES) {
         evictStaleDatasets();
@@ -68,7 +78,14 @@ function cacheDataset(candles: OHLCVData[], keyHint?: string): CachedDataset {
 
     // If already cached with same ref, return existing
     const existing = datasetCache.get(ref);
-    if (existing && existing.hash === hash) return existing;
+    if (existing) {
+        if (existing.hash === hash) return existing;
+        return {
+            error: `Cached dataset ref conflict: ${ref} already exists with different candle content.`,
+            status: 409,
+            code: "DATASET_REF_CONFLICT",
+        };
+    }
 
     const firstTime = toUnixSeconds(candles[0]?.time) ?? 0;
     const lastTime = toUnixSeconds(candles[candles.length - 1]?.time) ?? 0;
@@ -118,9 +135,7 @@ function computeCandleHash(candles: OHLCVData[]): string {
         return h.digest("hex");
     }
 
-    const stride = Math.max(1, Math.floor(candles.length / 1024));
-    for (let i = 0; i < candles.length; i += stride) {
-        const candle = candles[i];
+    for (const candle of candles) {
         h.update(
             `${toUnixSeconds(candle.time) ?? 0}|${candle.open}|${candle.high}|${candle.low}|${candle.close}|${candle.volume};`
         );
@@ -355,6 +370,7 @@ async function handleSingleBacktest(
 
     let actualStrategyParams = req.strategyParams;
     let didRandomize = false;
+    let randomSeed: number | undefined;
 
     // Fix: Merge requested params with the specific strategy's defaults
     // because standard backtest endpoint payloads might be copied from other strategies.
@@ -378,7 +394,13 @@ async function handleSingleBacktest(
         const rangeStr = randomRangeHeader;
         const rangePercent = parseFloat(rangeStr);
         if (!Number.isNaN(rangePercent)) {
-            const seed = Math.floor(Math.random() * 2147483647);
+            const headerSeed = httpRequest?.headers?.["random-seed"];
+            const rawSeed = Array.isArray(headerSeed) ? headerSeed[0] : headerSeed;
+            const parsedSeed = typeof rawSeed === "string" ? Number(rawSeed) : NaN;
+            const seed = Number.isFinite(parsedSeed)
+                ? Math.floor(parsedSeed)
+                : createRandomSeed();
+            randomSeed = seed;
             const baseForRandom = targetStrategy ? targetStrategy.defaultParams : actualStrategyParams;
             const randomizedParams = generateRandomParams(baseForRandom, 1, rangePercent, seed, [], undefined)[0];
             if (randomizedParams) {
@@ -420,7 +442,8 @@ async function handleSingleBacktest(
             engineUsed: result.engineUsed,
             result: toSlimSingleResult(result.result),
             ...(didRandomize ? { strategyParams: actualStrategyParams } : {}),
-            requestFingerprint: computeRequestFingerprint(req),
+            ...(didRandomize && randomSeed !== undefined ? { randomSeed } : {}),
+            requestFingerprint: computeRequestFingerprint(req, actualStrategyParams),
             strategyManifestFingerprint: {
                 strategyCount: manifest.strategyCount,
                 hash: manifest.hash,
@@ -573,7 +596,7 @@ async function handleRandomSearch(
     settingsRaw.symbol = req.symbol;
     settingsRaw.interval = req.interval;
 
-    const rng = req.randomization.seed ?? Date.now();
+    const rng = req.randomization.seed ?? createRandomSeed();
     const paramsList = generateRandomParams(
         req.baseParams,
         req.randomization.count,
@@ -593,8 +616,10 @@ async function handleRandomSearch(
         metrics: CompactBacktestMetrics;
         result: BacktestResult;
     }> = [];
+    const failures: Array<{ index: number; error: string }> = [];
 
-    for (const params of paramsList) {
+    for (let index = 0; index < paramsList.length; index += 1) {
+        const params = paramsList[index];
         try {
             const executorResult = await executeBacktest(buildBacktestEndpointExecutorRequest(
                 strategyKey,
@@ -615,8 +640,11 @@ async function handleRandomSearch(
                 metrics: toCompactMetrics(executorResult.result),
                 result: executorResult.result,
             });
-        } catch {
-            // Skip failed runs silently
+        } catch (error) {
+            failures.push({
+                index,
+                error: error instanceof Error ? error.message : String(error),
+            });
         }
     }
 
@@ -654,6 +682,8 @@ async function handleRandomSearch(
         strategyKey,
         datasetRef,
         processed: paramsList.length,
+        evaluated: allResults.length,
+        failed: failures.length,
         returned: top.length,
         topN,
         results: top.map((r, i) => ({
@@ -664,10 +694,14 @@ async function handleRandomSearch(
         })),
         totalTimingMs: Date.now() - startTs,
         seed: rng,
+        failureSamples: failures.slice(0, 5),
     };
 }
 
-function computeRequestFingerprint(req: BacktestSingleRequest): string {
+function computeRequestFingerprint(
+    req: BacktestSingleRequest,
+    strategyParams: StrategyParams = req.strategyParams
+): string {
     const h = createHash("md5");
     h.update(`${req.symbol}|${req.interval}|`);
 
@@ -688,7 +722,7 @@ function computeRequestFingerprint(req: BacktestSingleRequest): string {
         }
     }
 
-    h.update(`|params:${JSON.stringify(req.strategyParams)}`);
+    h.update(`|params:${JSON.stringify(strategyParams)}`);
     h.update(`|settings:${JSON.stringify(stripEndpointIgnoredBacktestSettings(req.backtestSettings))}`);
     h.update(`|capital:${JSON.stringify(BACKTEST_ENDPOINT_CAPITAL_SETTINGS)}`);
     h.update(`|context:${JSON.stringify(req.context)}`);
@@ -739,6 +773,10 @@ export function backtestEndpointPlugin(): Plugin {
                     }
 
                     const entry = cacheDataset(uploadReq.candles, uploadReq.keyHint);
+                    if ("error" in entry) {
+                        errorResponse(res, entry.status, entry.error, entry.code);
+                        return;
+                    }
                     const resp: DatasetUploadResponse = {
                         ok: true,
                         datasetRef: entry.ref,

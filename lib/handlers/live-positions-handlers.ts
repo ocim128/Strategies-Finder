@@ -28,6 +28,7 @@ import {
     readLivePositionsEnabled,
     writeLivePositionsEnabled,
 } from '../live-positions-storage';
+import { escapeHtml } from '../html-escape';
 
 
 // DOM element references
@@ -196,6 +197,7 @@ function updateLastUpdated(timestamp: number | null): void {
 function createPositionCard(position: LivePosition | ClosedTrade): HTMLElement {
     const isClosed = !position.isOpen;
     const isMismatch = position.mismatch;
+    const direction = position.direction === 'short' ? 'short' : 'long';
     
     const card = document.createElement('div');
     card.className = `lp-position${isMismatch ? ' mismatch' : ''}${isClosed ? ' closed' : ''}`;
@@ -210,6 +212,10 @@ function createPositionCard(position: LivePosition | ClosedTrade): HTMLElement {
     const displayName = position.configName 
         ? `${position.symbol} (${position.configName})`
         : position.symbol;
+    const displayNameText = escapeHtml(displayName);
+    const directionText = escapeHtml(direction.toUpperCase());
+    const strategyText = escapeHtml(position.strategyKey);
+    const mismatchReasonText = escapeHtml(position.mismatchReason || '');
     
     const duration = position.isOpen
         ? formatDuration(Math.floor(Date.now() / 1000) - position.entryTime)
@@ -217,8 +223,8 @@ function createPositionCard(position: LivePosition | ClosedTrade): HTMLElement {
     
     card.innerHTML = `
         <div class="lp-pos-header">
-            <span class="lp-pos-symbol">${displayName}</span>
-            <span class="lp-pos-direction ${position.direction}">${position.direction.toUpperCase()}</span>
+            <span class="lp-pos-symbol">${displayNameText}</span>
+            <span class="lp-pos-direction ${direction}">${directionText}</span>
         </div>
         <div class="lp-pos-details">
             <span class="lp-pos-label">Entry</span>
@@ -243,13 +249,13 @@ function createPositionCard(position: LivePosition | ClosedTrade): HTMLElement {
         <div class="lp-pos-footer">
             <span class="lp-pos-time">${formatTime(position.entryTime)}</span>
             ${isMismatch ? `
-                <span class="lp-pos-mismatch-badge" title="${position.mismatchReason || ''}">
+                <span class="lp-pos-mismatch-badge" title="${mismatchReasonText}">
                     <svg viewBox="0 0 24 24" fill="currentColor" width="10" height="10">
                         <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
                     </svg>
                     Mismatch
                 </span>
-            ` : `<span class="lp-pos-strategy">${position.strategyKey}</span>`}
+            ` : `<span class="lp-pos-strategy">${strategyText}</span>`}
         </div>
     `;
     
@@ -419,6 +425,13 @@ async function openDetailModal(streamId: string): Promise<void> {
         const pnlClass = isClosed 
             ? (closedPos?.realizedPnl || 0) >= 0 ? 'positive' : 'negative'
             : (pos.unrealizedPnl || 0) >= 0 ? 'positive' : 'negative';
+        const direction = pos.direction === 'short' ? 'short' : 'long';
+        const symbolText = escapeHtml(pos.symbol);
+        const intervalText = escapeHtml(pos.interval);
+        const directionText = escapeHtml(direction.toUpperCase());
+        const strategyText = escapeHtml(pos.strategyKey);
+        const exitReasonText = escapeHtml(closedPos?.exitReason || 'unknown');
+        const mismatchReasonText = escapeHtml(pos.mismatchReason || 'Mismatch detected between worker and local backtest');
         
         detailContent.innerHTML = `
             <div class="lp-detail-section">
@@ -426,19 +439,19 @@ async function openDetailModal(streamId: string): Promise<void> {
                 <div class="lp-detail-grid">
                     <div class="lp-detail-row">
                         <span class="label">Symbol</span>
-                        <span class="value">${pos.symbol}</span>
+                        <span class="value">${symbolText}</span>
                     </div>
                     <div class="lp-detail-row">
                         <span class="label">Interval</span>
-                        <span class="value">${pos.interval}</span>
+                        <span class="value">${intervalText}</span>
                     </div>
                     <div class="lp-detail-row">
                         <span class="label">Direction</span>
-                        <span class="value">${pos.direction.toUpperCase()}</span>
+                        <span class="value">${directionText}</span>
                     </div>
                     <div class="lp-detail-row">
                         <span class="label">Strategy</span>
-                        <span class="value">${pos.strategyKey}</span>
+                        <span class="value">${strategyText}</span>
                     </div>
                 </div>
             </div>
@@ -471,7 +484,7 @@ async function openDetailModal(streamId: string): Promise<void> {
                         </div>
                         <div class="lp-detail-row">
                             <span class="label">Reason</span>
-                            <span class="value">${closedPos?.exitReason || 'unknown'}</span>
+                            <span class="value">${exitReasonText}</span>
                         </div>
                     </div>
                 </div>
@@ -518,7 +531,7 @@ async function openDetailModal(streamId: string): Promise<void> {
                     <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
                         <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
                     </svg>
-                    <span>${pos.mismatchReason || 'Mismatch detected between worker and local backtest'}</span>
+                    <span>${mismatchReasonText}</span>
                 </div>
                 
                 <div class="lp-detail-section">
@@ -541,9 +554,10 @@ async function openDetailModal(streamId: string): Promise<void> {
                 <div class="lp-detail-grid">
                     ${details.workerSignals.slice(0, 5).map((sig, i) => {
                         const displayPrice = resolveAlertSignalEntryPrice(sig);
+                        const signalDirection = escapeHtml(String(sig.direction ?? '').toUpperCase());
                         return `
                         <div class="lp-detail-row" style="grid-column: 1 / -1;">
-                            <span class="label">#${i + 1} ${sig.direction.toUpperCase()}</span>
+                            <span class="label">#${i + 1} ${signalDirection}</span>
                             <span class="value">${formatPrice(displayPrice ?? sig.signal_price)} @ ${formatTime(sig.signal_time)}</span>
                         </div>
                     `;

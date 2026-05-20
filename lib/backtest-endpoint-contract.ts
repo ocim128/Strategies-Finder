@@ -274,6 +274,8 @@ export interface BacktestSingleResponse {
     result: SlimBacktestSingleResult;
     /** Output only if randomized via random-parameter-range header */
     strategyParams?: StrategyParams;
+    /** Output only if randomized via random-parameter-range header */
+    randomSeed?: number;
     /** Hex hash of the effective inputs (symbol + interval + dataset + params + settings + fixed endpoint capital profile + context). */
     requestFingerprint: string;
     strategyManifestFingerprint: StrategyManifestFingerprint;
@@ -344,6 +346,8 @@ export interface BacktestRandomSearchResponse {
     strategyKey: string;
     datasetRef?: string;
     processed: number;
+    evaluated: number;
+    failed: number;
     returned: number;
     topN: number;
     results: Array<{
@@ -355,6 +359,10 @@ export interface BacktestRandomSearchResponse {
     }>;
     totalTimingMs: number;
     seed?: number;
+    failureSamples?: Array<{
+        index: number;
+        error: string;
+    }>;
 }
 
 export interface BacktestHealthResponse {

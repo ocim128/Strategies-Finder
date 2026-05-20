@@ -20,7 +20,27 @@ import {
     takeLastCandles as trimToLastCandles,
 } from "./data-interval-utils";
 
-type NonBinanceLocalSource = 'imported' | 'sqlite' | 'cache' | 'seed';
+export type NonBinanceLocalSource = 'imported' | 'sqlite' | 'cache' | 'seed';
+export type NonBinanceLocalCandidate = { candles: OHLCVData[]; source: NonBinanceLocalSource };
+
+const NON_BINANCE_LOCAL_SOURCE_PRIORITY: Record<NonBinanceLocalSource, number> = {
+    imported: 4,
+    sqlite: 3,
+    cache: 2,
+    seed: 1,
+};
+
+export function selectBestNonBinanceLocalCandidate(
+    candidates: NonBinanceLocalCandidate[]
+): NonBinanceLocalCandidate | null {
+    if (candidates.length === 0) return null;
+    const sorted = [...candidates].sort((a, b) => {
+        const priorityDelta = NON_BINANCE_LOCAL_SOURCE_PRIORITY[b.source] - NON_BINANCE_LOCAL_SOURCE_PRIORITY[a.source];
+        if (priorityDelta !== 0) return priorityDelta;
+        return b.candles.length - a.candles.length;
+    });
+    return sorted[0] ?? null;
+}
 
 export interface PersistenceContext {
     syncAtByKey: Map<string, number>;
@@ -69,7 +89,7 @@ export class DataPersistence {
         } = deps;
 
         const normalizedLimit = Math.max(1, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(maxBars)));
-        const candidates: Array<{ candles: OHLCVData[]; source: NonBinanceLocalSource }> = [];
+        const candidates: NonBinanceLocalCandidate[] = [];
 
         if (importedCandles && importedCandles.length > 0) {
             candidates.push({
@@ -109,21 +129,7 @@ export class DataPersistence {
             return null;
         }
 
-        const priority: Record<NonBinanceLocalSource, number> = {
-            imported: 4,
-            cache: 3,
-            sqlite: 2,
-            seed: 1,
-        };
-
-        candidates.sort((a, b) => {
-            if (b.candles.length !== a.candles.length) {
-                return b.candles.length - a.candles.length;
-            }
-            return priority[b.source] - priority[a.source];
-        });
-
-        const best = candidates[0];
+        const best = selectBestNonBinanceLocalCandidate(candidates);
         if (best) {
             ctx.setCachedCandles(cacheKey, best.candles, best.source);
         }

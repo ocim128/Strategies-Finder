@@ -1,7 +1,7 @@
 
 import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection } from '../../types/index';
 import { IndicatorSeries, NormalizedSettings, PreparedSignal } from '../../types/backtest';
-import { getTimeIndex, getExecutionShift, resolveExecutionPrice, compareTime, isBothLikeTradeDirection, normalizeBacktestSettings, normalizeTradeDirection, timeToNumber, timeKey, signalToPositionDirection } from './backtest-utils';
+import { getTimeIndex, getExecutionShift, resolveExecutionPrice, compareTime, isBothLikeTradeDirection, normalizeBacktestSettings, normalizeTradeDirection, timeToNumber, signalToPositionDirection, getTimeIndexValue } from './backtest-utils';
 import { passesRegimeFilters } from './regime-filters';
 import { resolveIndicators } from './indicator-precompute';
 import { runBacktest } from './backtest-engine';
@@ -23,7 +23,7 @@ export function prepareSignals(
     signals.forEach((signal, order) => {
         const signalIndex = Number.isFinite(signal.barIndex)
             ? Math.trunc(signal.barIndex as number)
-            : timeIndex.get(timeKey(signal.time));
+            : getTimeIndexValue(timeIndex, signal.time);
         if (signalIndex === undefined || signalIndex < 0 || signalIndex >= data.length) return;
 
         if (!isBothLikeTradeDirection(tradeDirection)) {
@@ -188,16 +188,12 @@ export function getOpenPositionForScanner(
         return null;
     }
 
-    const toEpochMs = (rawTime: Time, numericTime: number): number => {
-        if (typeof rawTime === 'number') {
-            // Numeric lightweight-charts timestamps are usually seconds.
-            return numericTime > 1_000_000_000_000 ? numericTime : numericTime * 1000;
-        }
-        return numericTime;
+    const toEpochMs = (numericTime: number): number => {
+        return Math.abs(numericTime) < 1e11 ? numericTime * 1000 : numericTime;
     };
 
-    const exitTimeMs = toEpochMs(lastTrade.exitTime, exitTimeNum);
-    const lastBarTimeMs = toEpochMs(lastBar.time, lastBarTimeNum);
+    const exitTimeMs = toEpochMs(exitTimeNum);
+    const lastBarTimeMs = toEpochMs(lastBarTimeNum);
     if (Math.abs(exitTimeMs - lastBarTimeMs) > 60000) { // 60 seconds
         return null; // Exit wasn't at last bar, position was closed before
     }
