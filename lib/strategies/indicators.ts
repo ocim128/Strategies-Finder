@@ -331,25 +331,3 @@ export function calculateIchimoku(
     return { conversion, base, spanA, spanB, lagging };
 }
 
-export function calculateDonchianChannels(
-    high: number[],
-    low: number[],
-    period: number
-): {
-    upper: (number | null)[];
-    lower: (number | null)[];
-    middle: (number | null)[];
-} {
-    const { upper, lower } = calculateRollingHighLow(high, low, period);
-    const middle: (number | null)[] = new Array(high.length).fill(null);
-
-    for (let i = period - 1; i < high.length; i++) {
-        const upperValue = upper[i];
-        const lowerValue = lower[i];
-        if (upperValue !== null && lowerValue !== null) {
-            middle[i] = (upperValue + lowerValue) / 2;
-        }
-    }
-    return { upper, lower, middle };
-}
-

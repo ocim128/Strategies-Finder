@@ -246,7 +246,7 @@ Useful helper maps:
 - If you edit `archive/prompt.txt`, only list helpers that already exist as exported strategy-layer utilities. Prefer low-complexity primitives such as price extractors (`getOpens`, `getTypicalPrices`), bar geometry series (`buildRangeSeries`, `buildBodyPctSeries`, `buildCloseLocationSeries`), crossover, pivot-flag, and timeframe-alignment helpers over prompt-only or speculative surfaces.
 
 Important Type and Dependency Gotchas:
-- Keep track of indicator outputs: some like `calculateADX` and `calculateATR` return pure generic arrays `(number | null)[]`, while `calculateKeltnerChannels` and `calculateDonchianChannels` return objects nested with arrays.
+- Keep track of indicator outputs: some like `calculateADX` and `calculateATR` return pure generic arrays `(number | null)[]`, while `calculateKeltnerChannels` returns objects nested with arrays.
 - Type coercion matters: pass `cleanData` (which is `OHLCVData[]`) to `buildEfficiencyRatio`, but pass `closes` (which is `number[]`) to standard mapping and extraction routines.
 - Array indexing: ensure you loop against generic padding `if (i < lookback || indicator[i] === null) return null;` securely within closures.
 

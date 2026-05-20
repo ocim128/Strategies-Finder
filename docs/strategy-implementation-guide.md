@@ -213,7 +213,6 @@ Do not assign `(number | null)[]` to `number[]`.
 
 - `calculateATR(...)` and `calculateADX(...)` return flat arrays.
 - `calculateKeltnerChannels(...)` returns `{ upper, middle, lower }`.
-- `calculateDonchianChannels(...)` returns `{ upper, lower, middle }`.
 
 ### Access compound helper results correctly
 

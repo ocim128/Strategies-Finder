@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { calculateSMA, calculateDonchianChannels, calculateATR, calculateADX, calculateKeltnerChannels, calculateCMF, calculateIchimoku, OHLCVData, Time } from './lib/strategies/index';
+import { calculateSMA, calculateATR, calculateADX, calculateKeltnerChannels, calculateCMF, calculateIchimoku, OHLCVData, Time } from './lib/strategies/index';
 import { precomputeIndicators, resolveIndicators } from './lib/strategies/backtest';
 describe('Strategy Calculations', () => {
     it('should calculate SMA correctly', () => {
@@ -15,24 +15,6 @@ describe('Strategy Calculations', () => {
         const data = [1, 2, 3, 4, 5];
         const sma = calculateSMA(data, 5);
         expect(sma).to.deep.equal([null, null, null, null, 3]);
-    });
-
-    it('should calculate Donchian Channels correctly', () => {
-        const high = [10, 12, 11, 13, 15];
-        const low = [8, 9, 8, 10, 12];
-        const period = 3;
-        // i=0,1: null
-        // i=2: window 0,1,2. MaxHigh(10,12,11)=12. MinLow(8,9,8)=8.
-        // i=3: window 1,2,3. MaxHigh(12,11,13)=13. MinLow(9,8,10)=8.
-        // i=4: window 2,3,4. MaxHigh(11,13,15)=15. MinLow(8,10,12)=8.
-        const { upper, lower, middle } = calculateDonchianChannels(high, low, period);
-
-        expect(upper[2]).to.equal(12);
-        expect(lower[2]).to.equal(8);
-        expect(middle[2]).to.equal(10);
-
-        expect(upper[3]).to.equal(13);
-        expect(lower[3]).to.equal(8);
     });
 
     it('should calculate ADX within expected bounds', () => {

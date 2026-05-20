@@ -110,7 +110,7 @@ Add `normalizeParams(...)` when execution rounds, clamps, coerces sign, snaps to
 - Guard padded indicator arrays.
   Use checks like `if (i < lookback || indicator[i] === null) return null;`.
 - Track indicator output shape precisely.
-  `calculateATR()` and `calculateADX()` return arrays; `calculateKeltnerChannels()` and `calculateDonchianChannels()` return objects containing arrays.
+  `calculateATR()` and `calculateADX()` return arrays; `calculateKeltnerChannels()` returns an object containing arrays.
 
 ## Finder / Walk Forward Rules
 
