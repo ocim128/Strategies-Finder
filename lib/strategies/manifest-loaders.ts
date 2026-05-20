@@ -76,4 +76,5 @@ export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {
     "structural_rotation_shock": () => import("./lib/structural_rotation_shock").then(m => m.structural_rotation_shock),
     "width_expansion_zscore_router": () => import("./lib/width_expansion_zscore_router").then(m => m.width_expansion_zscore_router),
     "efficiency_keltner_router": () => import("./lib/efficiency_keltner_router").then(m => m.efficiency_keltner_router),
+    "polymarket_executable_edge_persistence": () => import("./lib/polymarket_executable_edge_persistence").then(m => m.polymarket_executable_edge_persistence),
 };

@@ -1421,4 +1421,28 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "polymarket_executable_edge_persistence",
+        name: "Polymarket Executable Edge Persistence",
+        description: "Uses Binance-implied event probability as the fair side and enters only when the executable Polymarket ask stays mispriced for multiple 1s bars.",
+        defaultParams: {
+        volLookback: 45,
+        minEdge: 0.04,
+        persistenceSec: 2,
+        maxSpread: 0.04,
+    } as Record<string, number>,
+        paramLabels: {
+        volLookback: "Fair Probability Vol Lookback",
+        minEdge: "Minimum Executable Edge",
+        persistenceSec: "Edge Persistence Seconds",
+        maxSpread: "Maximum Side Spread",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["volLookback", "minEdge", "persistenceSec", "maxSpread"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
+    },
 ];

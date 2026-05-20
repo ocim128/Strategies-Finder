@@ -82,4 +82,5 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     builtInStrategyMetaByKey["structural_rotation_shock"],
     builtInStrategyMetaByKey["width_expansion_zscore_router"],
     builtInStrategyMetaByKey["efficiency_keltner_router"],
+    builtInStrategyMetaByKey["polymarket_executable_edge_persistence"],
 ];

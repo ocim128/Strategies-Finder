@@ -66,6 +66,14 @@ If you want Execution Lab live trading:
 - live exits sell tracked filled shares for the same token when the matching paper trade emits `paper_exit`
 - browser code must never receive private keys; it sends only request intent to the local executor endpoint
 
+If you want to author 1s Polymarket-aware strategies:
+
+- declare `polymarket1sConfig: { required: true }`
+- use helpers from `lib/strategies/lib/polymarket-1s-helpers.ts`
+- prefer executable ask-side edge, actionability, and persistence checks when the goal is live/paper deployability
+- treat Gamma as secondary agreement only; Execution Lab live context may not provide Gamma snapshots
+- fail closed when the helper frame is unavailable
+
 ## The Five Polymarket Contracts
 
 ### 1. Direct Polymarket market charting

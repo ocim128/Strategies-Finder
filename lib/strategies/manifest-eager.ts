@@ -75,6 +75,7 @@ import { acceptance_sourced_momentum_quorum } from "./lib/acceptance_sourced_mom
 import { structural_rotation_shock } from "./lib/structural_rotation_shock";
 import { width_expansion_zscore_router } from "./lib/width_expansion_zscore_router";
 import { efficiency_keltner_router } from "./lib/efficiency_keltner_router";
+import { polymarket_executable_edge_persistence } from "./lib/polymarket_executable_edge_persistence";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -155,6 +156,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "structural_rotation_shock", strategy: structural_rotation_shock },
     { key: "width_expansion_zscore_router", strategy: width_expansion_zscore_router },
     { key: "efficiency_keltner_router", strategy: efficiency_keltner_router },
+    { key: "polymarket_executable_edge_persistence", strategy: polymarket_executable_edge_persistence },
 ];
 
 export function createStrategiesRecordFromManifest(

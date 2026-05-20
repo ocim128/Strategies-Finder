@@ -74,4 +74,5 @@ export const builtInStrategyKeys: readonly string[] = [
     "structural_rotation_shock",
     "width_expansion_zscore_router",
     "efficiency_keltner_router",
+    "polymarket_executable_edge_persistence",
 ];

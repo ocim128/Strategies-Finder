@@ -102,6 +102,8 @@ Add `normalizeParams(...)` when execution rounds, clamps, coerces sign, snaps to
   Candle geometry helpers plus microstructure-oriented primitives such as close acceptance, initiative pressure, and sweep-reclaim scoring.
 - `lib/strategies/lib/price-action-statistics-core.ts`
   Rolling entropy, efficiency ratio, rolling medians, z-scores, and streak counters.
+- `lib/strategies/lib/polymarket-1s-helpers.ts`
+  For supported 1s Polymarket strategies only. Declare `polymarket1sConfig: { required: true }`, use causal runtime context, and fail closed when helper frames are unavailable. Executable-edge strategies should prefer ask-side edge plus actionability/persistence over mid-price-only pressure.
 
 ## Type Rules That Matter
 

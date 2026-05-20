@@ -849,4 +849,16 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "polymarket_executable_edge_persistence",
+        name: "Polymarket Executable Edge Persistence",
+        description: "Uses Binance-implied event probability as the fair side and enters only when the executable Polymarket ask stays mispriced for multiple 1s bars.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["volLookback", "minEdge", "persistenceSec", "maxSpread"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
+    },
 ];
