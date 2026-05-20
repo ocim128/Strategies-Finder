@@ -186,7 +186,7 @@ export type ExecutionLabResolvedLiveConfig = ExecutionLabLiveUiConfig & {
     available: boolean;
     liveEnabled: boolean;
     dryRun: boolean;
-    executorKind: "cli";
+    executorKind: "cli" | "http";
     geoblockAllowed: boolean | null;
     orderType: LiveTakerOrderType;
     supportedOrderTypes: LiveTakerOrderType[];

@@ -78,7 +78,7 @@ V1 is working only when all of these are true:
 - With live UI sizing mode `fixed`, `stakeUsd` is a hard notional cap. The executor may submit less after tick/lot/depth/min-size checks, but it must never submit more.
 - With live UI sizing mode `exchange_min`, live entries may auto-size above `stakeUsd` to the minimum valid Polymarket order, but never above the effective UI/Strategy Finder cap or `MAX_ORDER_SIZE_USDC`.
 - The executor may reject small stakes in fixed mode or reject exchange-min sizing with `min_size_exceeds_cap` when the minimum valid order is above the configured caps.
-- Strategy Finder `.env` still owns executor path, cwd, args, hard live enablement, timeout/output limits, geoblock display state, fallback taker order type, fallback sizing/cap/slippage values, limit order type, and optional broad cancel scope.
+- Strategy Finder `.env` still owns executor path, optional loopback executor URL, cwd, args, hard live enablement, timeout/output limits, geoblock display state, fallback taker order type, fallback sizing/cap/slippage values, limit order type, and optional broad cancel scope.
 - The Execution Lab UI owns non-secret per-browser live behavior: `orderMode`, `takerOrderType`, sizing mode, max stake cap, entry/exit slippage, limit offset, and limit cancel-on-exit. UI values override `.env` fallbacks for those non-secret runtime fields.
 - The default taker order type is `FAK`; `.env` accepts `EXECUTION_LAB_LIVE_TAKER_ORDER_TYPE`, `EXECUTION_LAB_LIVE_ORDER_TYPE`, or compatibility `ARBITRAGE_ORDER_TYPE`.
 - Limit entry order type defaults to `GTC` through `EXECUTION_LAB_LIVE_LIMIT_ORDER_TYPE=GTC`.
@@ -139,7 +139,7 @@ Execution Lab UI
   -> LiveTradeSubmitRequest
   -> Vite local endpoint
   -> local executor adapter
-  -> side-repo one-shot executor command
+  -> side-repo one-shot executor command or opt-in loopback HTTP executor
   -> Polymarket CLOB preflight and optional submit
   -> LiveTradeSubmitResponse
   -> JSONL records + UI status
@@ -149,7 +149,7 @@ Start with a one-shot CLI executor, not a localhost HTTP service.
 
 Reason: the side repo already has long-running dashboard/slot machinery, but this feature needs a narrow callable boundary. A CLI that reads JSON and writes one JSON response is simpler, easier to test, and avoids adding another local server until process startup cost is proven to matter.
 
-If the CLI is too slow later, replace the adapter implementation with a loopback HTTP executor without changing the browser contract.
+The adapter now also supports an opt-in persistent loopback executor through `EXECUTION_LAB_LIVE_EXECUTOR_URL`. CLI remains the default. When the URL is set, Strategy Finder posts the same non-secret request schema and expects the same structured response schema; the browser contract and Vite endpoint stay unchanged.
 
 ## Boundary Ownership
 
@@ -424,6 +424,10 @@ Executor-side state:
 
 Strategy Finder also keeps a non-durable Vite-process duplicate ledger for the local endpoint. It coalesces in-flight duplicate submissions, reuses the first result for an identical payload, and rejects the same `requestId` with a different payload hash as `request_id_payload_mismatch`.
 
+Before invoking the executor, Strategy Finder appends the matching `live_*_request` JSONL record. This keeps an audit trail for real side effects even if the executor call, browser session, or local process fails before the result record is written.
+
+Live polling uses the local second-market SQLite DB for complete recent candle ranges when available, then falls back to upstream Binance. Live quotes prefer exact stored second-market CLOB quotes; if the exact latest quote is missing, a same-event local quote up to two seconds old may be used with `recent_local_fallback` quality flags before falling back to live CLOB REST. The executor current-book preflight remains authoritative for real order submission.
+
 ## Failure Handling
 
 V1 failure behavior should be simple and explicit:
@@ -564,7 +568,7 @@ Technical tasks:
 - Add `/api/execution-lab/live/status`.
 - Add `/api/execution-lab/live/trade`.
 - Configure executor path through env, not a hardcoded absolute path.
-- Adapter shells out to one-shot executor and parses structured stdout.
+- Adapter shells out to one-shot executor and parses structured stdout, or posts the same request to `EXECUTION_LAB_LIVE_EXECUTOR_URL` when that opt-in URL is configured.
 - Adapter enforces a process timeout, stdout byte cap, stderr byte cap, and JSON-only stdout parsing.
 - Map adapter response to `LiveTradeResultRecord`.
 - Ensure all call errors become structured result records.
@@ -573,7 +577,7 @@ Technical tasks:
   - `available`
   - `liveEnabled`
   - `dryRun`
-  - `executorKind`
+  - `executorKind` (`cli` or `http`)
   - `geoblockAllowed`
   - `maxStakeUsd`
   - `orderType`

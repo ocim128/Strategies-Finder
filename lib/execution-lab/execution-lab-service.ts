@@ -4,6 +4,7 @@ import { getBacktestSettings, getCapitalSettings } from "../backtest-settings-re
 import { executeBacktest } from "../backtest-executor";
 import { chartManager, type ExecutionLabPolymarketPricePoint } from "../chart-manager";
 import { ENHANCED_CANDLE_COLORS } from "../constants";
+import { debugLogger } from "../debug-logger";
 import { paramManager } from "../param-manager";
 import { readPersistedJson, writePersistedJson } from "../persisted-json";
 import { getEffectivePolymarketSeriesId, resolvePolymarketOutcomeSymbol } from "../polymarket-btc5m";
@@ -151,6 +152,7 @@ type LiveResultView =
     | { action: "entry"; record: LiveTradeResultRecord }
     | { action: "exit"; record: LiveExitResultRecord }
     | { action: "cancel"; record: LiveCancelAllResultRecord };
+type ExecutionLabPollTiming = Record<string, number>;
 type ComparisonCandidate = {
     label: string;
     strategyKey: string;
@@ -266,6 +268,20 @@ function formatLiveStatus(status: string): string {
     return status.replace(/_/g, " ");
 }
 
+function liveUiConfigKey(config: ExecutionLabLiveUiConfig): string {
+    return [
+        config.orderMode,
+        config.takerOrderType,
+        config.sizingMode,
+        config.maxStakeUsd,
+        config.entryMaxSlippageCents,
+        config.exitMaxSlippageCents,
+        config.limitOffsetEnabled ? 1 : 0,
+        config.limitOffsetCents,
+        config.limitCancelAllOnExitEnabled ? 1 : 0,
+    ].join("|");
+}
+
 function formatCents(value: number): string {
     return `${(value * 100).toFixed(1)}c`;
 }
@@ -363,6 +379,7 @@ export class ExecutionLabService {
     private latestLiveExitResult: LiveExitResultRecord | null = null;
     private latestLiveCancelResult: LiveCancelAllResultRecord | null = null;
     private latestLiveExecutorStatus: LiveExecutorStatus | null = null;
+    private latestLiveExecutorStatusConfigKey = "";
     private liveStatusRefreshToken = 0;
     private sessionRunToken = 0;
 
@@ -425,6 +442,9 @@ export class ExecutionLabService {
             }
             this.resetSessionState();
             this.setStatus(mode === "live" ? "Starting Live Trade" : "Starting");
+            if (mode === "live") {
+                await this.refreshLiveExecutorStatus();
+            }
             const prepared = await this.prepareSession();
             this.snapshot = prepared.snapshot;
             this.paperState = createExecutionLabPaperState(prepared.snapshot);
@@ -512,10 +532,18 @@ export class ExecutionLabService {
     }
 
     private liveRecordContext(): { dryRun?: boolean; sizingMode?: LiveTradeSizingMode } {
+        const status = this.currentLiveExecutorStatus();
         return {
-            dryRun: this.latestLiveExecutorStatus?.dryRun,
-            sizingMode: this.latestLiveExecutorStatus?.sizingMode,
+            dryRun: status?.dryRun,
+            sizingMode: status?.sizingMode,
         };
+    }
+
+    private currentLiveExecutorStatus(): LiveExecutorStatus | null {
+        return this.latestLiveExecutorStatus
+            && this.latestLiveExecutorStatusConfigKey === liveUiConfigKey(this.activeLiveUiConfig())
+            ? this.latestLiveExecutorStatus
+            : null;
     }
 
     private bindEvents(): void {
@@ -712,18 +740,25 @@ export class ExecutionLabService {
         }
     }
 
-    private async refreshLiveExecutorStatus(): Promise<void> {
+    private async refreshLiveExecutorStatus(): Promise<LiveExecutorStatus | null> {
         const refreshToken = ++this.liveStatusRefreshToken;
+        const liveConfig = this.activeLiveUiConfig();
+        const configKey = liveUiConfigKey(liveConfig);
         try {
-            const status = await resolveExecutionLabLiveConfig(this.activeLiveUiConfig())
+            const status = await resolveExecutionLabLiveConfig(liveConfig)
                 .catch(() => loadExecutionLabLiveExecutorStatus());
-            if (refreshToken !== this.liveStatusRefreshToken) return;
+            if (refreshToken !== this.liveStatusRefreshToken) return null;
+            if (configKey !== liveUiConfigKey(this.activeLiveUiConfig())) return null;
             this.latestLiveExecutorStatus = status;
+            this.latestLiveExecutorStatusConfigKey = configKey;
             this.renderLiveExecutorStatus(this.latestLiveExecutorStatus);
+            return status;
         } catch (error) {
-            if (refreshToken !== this.liveStatusRefreshToken) return;
+            if (refreshToken !== this.liveStatusRefreshToken) return null;
             this.latestLiveExecutorStatus = null;
+            this.latestLiveExecutorStatusConfigKey = "";
             this.renderLiveExecutorStatus(null, executionLabErrorMessage(error));
+            return null;
         }
     }
 
@@ -1035,6 +1070,26 @@ export class ExecutionLabService {
         });
     }
 
+    private loadNextCandleBatch(snapshot: ExecutionLabSessionSnapshot): Promise<OHLCVData[]> {
+        const lastBufferedTs = this.getLastBufferedTs();
+        if (lastBufferedTs === null) {
+            return loadExecutionLabLiveCandles({
+                symbol: snapshot.symbol,
+                marketType: state.binanceMarketType,
+                limit: 1,
+            });
+        }
+        const endTs = Math.floor(Date.now() / 1000) - 2;
+        if (endTs < lastBufferedTs) return Promise.resolve([]);
+        return loadExecutionLabLiveCandles({
+            symbol: snapshot.symbol,
+            marketType: state.binanceMarketType,
+            startTs: lastBufferedTs,
+            endTs,
+            limit: Math.min(10000, Math.max(1, endTs - lastBufferedTs + 1)),
+        });
+    }
+
     private async getLiveEventForTime(snapshot: ExecutionLabSessionSnapshot, ts: number): Promise<SecondMarketPolymarketEvent | null> {
         let event = this.liveEvents.find((candidate) =>
             candidate.seriesId === snapshot.seriesId
@@ -1137,66 +1192,59 @@ export class ExecutionLabService {
         const sessionToken = this.sessionRunToken;
 
         this.polling = true;
+        const pollStartedMs = Date.now();
+        const pollTiming: ExecutionLabPollTiming = {};
         try {
             this.assertSessionContext(snapshot);
             let chartChangedCandles: OHLCVData[] = [];
+            const candleStartedMs = Date.now();
             const latestBatchResult = await this.tryLivePollFetch(() =>
-                loadExecutionLabLiveCandles({ symbol: snapshot.symbol, marketType: state.binanceMarketType, limit: 1 })
+                this.loadNextCandleBatch(snapshot)
             );
+            pollTiming.candlesMs = Date.now() - candleStartedMs;
             if (!latestBatchResult.ok) return;
             const latestBatch = latestBatchResult.value;
-            const latestCandle = latestBatch[latestBatch.length - 1];
-            const latestTs = latestCandle ? finiteUnixSeconds(latestCandle.time) : null;
-            if (!latestCandle || latestTs === null) {
-                this.setStatus("Waiting for latest 1s candle", "warning");
-                return;
-            }
-            const lagSec = liveCandleLagSec(latestTs);
-            if (lagSec > MAX_LIVE_CANDLE_LAG_SEC) {
-                this.feedLagSec = lagSec;
-                this.setStatus(liveLagMessage(latestTs, lagSec), "warning");
-                this.render();
-                return;
-            }
-
-            const lastBufferedTs = this.getLastBufferedTs();
-            if (lastBufferedTs === null || latestTs >= lastBufferedTs) {
-                const newCandlesResult = lastBufferedTs === null
-                    ? { ok: true as const, value: latestBatch }
-                    : latestTs === lastBufferedTs
-                        ? { ok: true as const, value: latestBatch }
-                        : await this.tryLivePollFetch(() => loadExecutionLabLiveCandles({
-                            symbol: snapshot.symbol,
-                            marketType: state.binanceMarketType,
-                            startTs: lastBufferedTs + 1,
-                            endTs: latestTs,
-                            limit: Math.min(10000, latestTs - lastBufferedTs),
-                        }));
-                if (!newCandlesResult.ok) return;
-                chartChangedCandles = newCandlesResult.value;
+            if (latestBatch.length > 0) {
+                chartChangedCandles = latestBatch;
                 this.mergeCandles(chartChangedCandles);
             }
 
             const latestBuffered = this.candles[this.candles.length - 1];
             const latestBufferedTs = latestBuffered ? finiteUnixSeconds(latestBuffered.time) : null;
-            if (!latestBuffered || latestBufferedTs === null) return;
+            if (!latestBuffered || latestBufferedTs === null) {
+                this.setStatus("Waiting for latest 1s candle", "warning");
+                return;
+            }
+            const lagSec = liveCandleLagSec(latestBufferedTs);
+            if (lagSec > MAX_LIVE_CANDLE_LAG_SEC) {
+                this.feedLagSec = lagSec;
+                this.setStatus(liveLagMessage(latestBufferedTs, lagSec), "warning");
+                this.render();
+                return;
+            }
 
+            const eventStartedMs = Date.now();
             const activeEventResult = await this.tryLivePollFetch(() => this.getLiveEventForTime(snapshot, latestBufferedTs));
+            pollTiming.eventMs = Date.now() - eventStartedMs;
             if (!this.isSessionActive(sessionToken, snapshot)) return;
             if (!activeEventResult.ok) return;
             const activeEvent = activeEventResult.value;
             const previousPaperTs = paperState.lastProcessedCandleTimeSec;
+            const liveQuoteStartedMs = Date.now();
             const liveQuoteResult = activeEvent
                 ? await this.tryLivePollFetch(() => loadExecutionLabLiveQuote({ event: activeEvent, sampleTs: latestBufferedTs }))
                 : { ok: true as const, value: null };
+            pollTiming.liveQuoteMs = Date.now() - liveQuoteStartedMs;
             if (!this.isSessionActive(sessionToken, snapshot)) return;
             if (!liveQuoteResult.ok) return;
             const liveQuote = liveQuoteResult.value;
             if (liveQuote) this.addPolymarketQuote(liveQuote);
             const storedQuoteStart = previousPaperTs === null ? latestBufferedTs : previousPaperTs + 1;
+            const storedQuotesStartedMs = Date.now();
             const storedQuotesResult = await this.tryLivePollFetch(() =>
                 this.addStoredQuoteRange(snapshot, storedQuoteStart, latestBufferedTs, true)
             );
+            pollTiming.storedQuotesMs = Date.now() - storedQuotesStartedMs;
             if (!this.isSessionActive(sessionToken, snapshot)) return;
             if (!storedQuotesResult.ok) return;
             const strategyQuotes = this.getStrategyQuoteBuffer();
@@ -1216,6 +1264,7 @@ export class ExecutionLabService {
                 return;
             }
 
+            const backtestStartedMs = Date.now();
             const backtestPromise = executeBacktest({
                 ohlcvData: this.candles,
                 interval: "1s",
@@ -1236,8 +1285,14 @@ export class ExecutionLabService {
                     quotes: strategyQuotes,
                 }),
                 polymarket1sContextMode: "provided",
+            }).finally(() => {
+                pollTiming.backtestMs = Date.now() - backtestStartedMs;
             });
-            const outcomesPromise = this.tryLivePollFetch(() => this.loadLiveOutcomesForOpenPositions(snapshot, latestBufferedTs));
+            const outcomesStartedMs = Date.now();
+            const outcomesPromise = this.tryLivePollFetch(() => this.loadLiveOutcomesForOpenPositions(snapshot, latestBufferedTs))
+                .finally(() => {
+                    pollTiming.outcomesMs = Date.now() - outcomesStartedMs;
+                });
             const [backtestResult, outcomesResult] = await Promise.all([backtestPromise, outcomesPromise]);
             if (!this.isSessionActive(sessionToken, snapshot)) return;
             if (!outcomesResult.ok) return;
@@ -1245,13 +1300,16 @@ export class ExecutionLabService {
 
             const backtestSignals = buildEvaluatedSignals(backtestResult.signals)
                 .filter((signal) => signal.signalTimeSec <= latestBufferedTs);
+            const missingQuotesStartedMs = Date.now();
             const missingTradeQuotesResult = await this.tryLivePollFetch(() =>
                 this.loadMissingTradeQuotes(snapshot, backtestResult.result.trades, latestBufferedTs, previousPaperTs)
             );
+            pollTiming.missingTradeQuotesMs = Date.now() - missingQuotesStartedMs;
             if (!this.isSessionActive(sessionToken, snapshot)) return;
             if (!missingTradeQuotesResult.ok) return;
             const liveQuotes = this.getLiveQuoteBuffer();
             const recordedAtIso = new Date().toISOString();
+            const paperEvalStartedMs = Date.now();
             const tickResult = evaluateExecutionLabPaperTick(paperState, {
                 latestCandleTimeSec: latestBufferedTs,
                 latestCandle: latestBuffered,
@@ -1262,18 +1320,32 @@ export class ExecutionLabService {
                 recordedAtIso,
                 feedLagSec: feedLag,
             });
+            pollTiming.paperEvalMs = Date.now() - paperEvalStartedMs;
             const parityMismatches = this.collectExecutionParityMismatches(backtestResult.result.trades, tickResult.records, latestBufferedTs);
             const parityRecords = this.buildExecutionMismatchRecords(parityMismatches, recordedAtIso);
+            const paperLogRecords = [...parityRecords, ...tickResult.records];
+            if (paperLogRecords.length > 0) {
+                const paperLogStartedMs = Date.now();
+                await this.appendRecords(paperLogRecords);
+                pollTiming.paperLogMs = Date.now() - paperLogStartedMs;
+                if (!this.isSessionActive(sessionToken, snapshot)) return;
+            }
+            const liveStartedMs = Date.now();
             const liveExecutionRecords = await this.buildLiveExecutionRecords(
                 tickResult.records,
                 tickResult.acceptedEntries,
                 recordedAtIso,
                 sessionToken
             );
+            pollTiming.liveExecutionMs = Date.now() - liveStartedMs;
             if (!this.isSessionActive(sessionToken, snapshot)) return;
 
-            await this.appendRecords([...parityRecords, ...tickResult.records, ...liveExecutionRecords]);
-            if (!this.isSessionActive(sessionToken, snapshot)) return;
+            if (liveExecutionRecords.length > 0) {
+                const liveLogStartedMs = Date.now();
+                await this.appendRecords(liveExecutionRecords);
+                pollTiming.liveResultLogMs = Date.now() - liveLogStartedMs;
+                if (!this.isSessionActive(sessionToken, snapshot)) return;
+            }
             this.updateExecutionParityState(parityMismatches);
             this.updateLatestPaperDecision(tickResult.records);
             this.appendLatestLoggedSignals(tickResult.records, backtestSignals);
@@ -1299,11 +1371,30 @@ export class ExecutionLabService {
                     ? "live"
                     : this.executionMismatchTotal === 0 && hasActiveEvent ? "running" : "warning"
             );
+            this.logPollTiming(snapshot, latestBufferedTs, pollStartedMs, pollTiming);
         } catch (error) {
             await this.stop("error", executionLabErrorMessage(error));
         } finally {
             this.polling = false;
         }
+    }
+
+    private logPollTiming(
+        snapshot: ExecutionLabSessionSnapshot,
+        latestCandleTimeSec: number,
+        startedMs: number,
+        timing: ExecutionLabPollTiming
+    ): void {
+        const totalMs = Date.now() - startedMs;
+        if (this.executionMode !== "live" && totalMs < 500) return;
+        debugLogger.event("execution_lab.poll_timing", {
+            sessionId: snapshot.sessionId,
+            symbol: snapshot.symbol,
+            latestCandleTimeSec,
+            mode: this.executionMode,
+            totalMs,
+            ...timing,
+        });
     }
 
     private assertSessionContext(snapshot: ExecutionLabSessionSnapshot): void {
@@ -1323,6 +1414,16 @@ export class ExecutionLabService {
 
     private async appendRecords(records: readonly ExecutionLabRecord[]): Promise<void> {
         await appendExecutionLabRecords(records);
+    }
+
+    private async appendLiveRequestRecord(
+        record: ExecutionLabRecord,
+        sessionToken: number,
+        snapshot: ExecutionLabSessionSnapshot
+    ): Promise<boolean> {
+        if (!this.isSessionActive(sessionToken, snapshot)) return false;
+        await this.appendRecords([record]);
+        return this.isSessionActive(sessionToken, snapshot);
     }
 
     private async buildLiveExecutionRecords(
@@ -1356,12 +1457,13 @@ export class ExecutionLabService {
     ): Promise<ExecutionLabRecord[]> {
         const snapshot = this.snapshot;
         const liveConfig = this.activeLiveUiConfig();
+        const liveStatus = this.currentLiveExecutorStatus();
         if (
             !snapshot
             || this.executionMode !== "live"
             || liveConfig.orderMode !== "limit"
             || !liveConfig.limitCancelAllOnExitEnabled
-            || !this.latestLiveExecutorStatus
+            || !liveStatus
         ) {
             return [];
         }
@@ -1377,12 +1479,12 @@ export class ExecutionLabService {
                 continue;
             }
             const recordContext = this.liveRecordContext();
-            records.push(buildLiveCancelAllRequestRecord(snapshot, request, recordedAtIso, recordContext));
+            const requestRecord = buildLiveCancelAllRequestRecord(snapshot, request, recordedAtIso, recordContext);
 
             this.liveCancelSubmittedByKey.add(request.exitTriggerKey);
             this.liveCancelInFlightByKey.add(request.exitTriggerKey);
             try {
-                if (!this.isSessionActive(sessionToken, snapshot)) return records;
+                if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return records;
                 const startedMs = Date.now();
                 const response = await submitExecutionLabLiveCancelAll(request, liveConfig).catch(() =>
                     buildLiveCancelAllFailureResponse({
@@ -1471,6 +1573,7 @@ export class ExecutionLabService {
             const exitReferencePrice = nextAttempt > 1 && typeof currentBid === "number" && Number.isFinite(currentBid)
                 ? currentBid
                 : plan.paperExitPrice;
+            const liveStatus = this.currentLiveExecutorStatus();
             const request = buildLiveExitSubmitRequest({
                 snapshot,
                 entryRequestId: position.entryRequestId,
@@ -1488,8 +1591,8 @@ export class ExecutionLabService {
                 paperExitPrice: exitReferencePrice,
                 liveEntryPrice: position.entryPrice,
                 attempt: nextAttempt,
-                orderType: this.latestLiveExecutorStatus?.takerOrderType ?? LIVE_TRADE_DEFAULT_ORDER_TYPE,
-                maxExitSlippageCents: this.latestLiveExecutorStatus?.exitMaxSlippageCents ?? LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS,
+                orderType: liveStatus?.takerOrderType ?? LIVE_TRADE_DEFAULT_ORDER_TYPE,
+                maxExitSlippageCents: liveStatus?.exitMaxSlippageCents ?? LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS,
                 createdAtIso: recordedAtIso,
                 nowSec,
             });
@@ -1498,9 +1601,10 @@ export class ExecutionLabService {
                 minPrice: request.minPrice,
             });
             const recordContext = this.liveRecordContext();
-            records.push(buildLiveExitRequestRecord(snapshot, request, recordedAtIso, recordContext));
+            const requestRecord = buildLiveExitRequestRecord(snapshot, request, recordedAtIso, recordContext);
             plan.attempts = nextAttempt;
             plan.nextAttemptAtSec = nowSec + LIVE_EXIT_RETRY_COOLDOWN_SEC;
+            if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return records;
             if (!floorPreflight.shouldSubmit) {
                 position.lastExitStatus = "waiting_floor";
                 position.lastExitReason = floorPreflight.reason;
@@ -1635,7 +1739,7 @@ export class ExecutionLabService {
         const conditionId = pending?.conditionId ?? livePosition?.conditionId;
         const tokenId = pending?.tokenId ?? livePosition?.tokenId;
         const orderIds = pending?.orderId ? [pending.orderId] : undefined;
-        const scope = orderIds ? "session" : this.latestLiveExecutorStatus?.cancelScope ?? "unknown";
+        const scope = orderIds ? "session" : this.currentLiveExecutorStatus()?.cancelScope ?? "unknown";
         return {
             action: "cancel_all",
             requestId: buildLiveCancelAllRequestId({
@@ -1680,15 +1784,16 @@ export class ExecutionLabService {
             this.liveTradeInFlightByPaperTradeId.add(position.tradeId);
             this.liveTradeSubmittedByPaperTradeId.add(position.tradeId);
             const nowSec = Math.floor(Date.now() / 1000);
+            const liveStatus = this.currentLiveExecutorStatus();
             const request = buildLiveTradeSubmitRequest({
                 snapshot,
                 position,
                 createdAtIso: recordedAtIso,
                 nowSec,
                 liveConfig,
-                orderType: this.latestLiveExecutorStatus?.takerOrderType ?? liveConfig.takerOrderType,
-                limitOrderType: this.latestLiveExecutorStatus?.supportedLimitOrderType ?? LIVE_TRADE_DEFAULT_LIMIT_ORDER_TYPE,
-                maxEntrySlippageCents: this.latestLiveExecutorStatus?.entryMaxSlippageCents
+                orderType: liveStatus?.takerOrderType ?? liveConfig.takerOrderType,
+                limitOrderType: liveStatus?.supportedLimitOrderType ?? LIVE_TRADE_DEFAULT_LIMIT_ORDER_TYPE,
+                maxEntrySlippageCents: liveStatus?.entryMaxSlippageCents
                     ?? LIVE_TRADE_DEFAULT_ENTRY_MAX_SLIPPAGE_CENTS,
             });
             const requestPriceFields = {
@@ -1702,8 +1807,9 @@ export class ExecutionLabService {
             try {
                 if (!this.isSessionActive(sessionToken, snapshot)) return records;
                 const recordContext = this.liveRecordContext();
+                const requestRecord = buildLiveTradeRequestRecord(snapshot, request, recordedAtIso, recordContext);
                 if (sameBatchExitedTradeIds.has(position.tradeId)) {
-                    records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso, recordContext));
+                    if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return records;
                     const result = buildLiveTradeResultRecord(
                         snapshot,
                         request,
@@ -1728,7 +1834,7 @@ export class ExecutionLabService {
                     cutoffSeconds: snapshot.backtestSettings.polymarketEntryCutoffSeconds,
                 });
                 if (!timingPreflight.allowed) {
-                    records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso, recordContext));
+                    if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return records;
                     const result = buildLiveTradeResultRecord(
                         snapshot,
                         request,
@@ -1747,7 +1853,7 @@ export class ExecutionLabService {
 
                 const blockingPosition = this.findOpenLivePositionForEvent(position.eventStartTs);
                 if (blockingPosition && blockingPosition.paperTradeId !== position.tradeId) {
-                    records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso, recordContext));
+                    if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return records;
                     const result = buildLiveTradeResultRecord(
                         snapshot,
                         request,
@@ -1765,6 +1871,7 @@ export class ExecutionLabService {
                 }
 
                 if (!request.marketSlug || !request.conditionId || !request.tokenId) {
+                    if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return records;
                     const result = buildLiveTradeResultRecord(
                         snapshot,
                         request,
@@ -1781,8 +1888,7 @@ export class ExecutionLabService {
                     continue;
                 }
 
-                records.push(buildLiveTradeRequestRecord(snapshot, request, recordedAtIso, recordContext));
-                if (!this.isSessionActive(sessionToken, snapshot)) return records;
+                if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return records;
                 const startedMs = Date.now();
                 const response = await submitExecutionLabLiveTrade(request, liveConfig).catch(() =>
                     buildLiveTradeFailureResponse({

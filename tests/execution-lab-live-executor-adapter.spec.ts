@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LiveCancelAllSubmitRequest, LiveTradeSubmitRequest } from "../lib/execution-lab/execution-lab-model";
@@ -86,6 +87,33 @@ async function withEnv<T>(updates: Record<string, string | undefined>, run: () =
     }
 }
 
+async function withJsonServer<T>(
+    handler: (body: any) => unknown,
+    run: (url: string) => Promise<T>
+): Promise<T> {
+    const server = createServer((req, res) => {
+        let body = "";
+        req.on("data", (chunk) => { body += chunk; });
+        req.on("end", () => {
+            const payload = body ? JSON.parse(body) : {};
+            const response = handler(payload);
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify(response));
+        });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected local server address");
+    try {
+        return await run(`http://127.0.0.1:${address.port}/trade`);
+    } finally {
+        await new Promise<void>((resolve, reject) => {
+            server.close((error) => error ? reject(error) : resolve());
+        });
+    }
+}
+
 describe("Execution Lab live executor adapter", () => {
     it("reports configured executor status without exposing secrets", () => {
         const status = loadLiveExecutorStatus({
@@ -110,6 +138,21 @@ describe("Execution Lab live executor adapter", () => {
         expect(status.entryMaxSlippageCents).to.equal(2);
         expect(status.exitMaxSlippageCents).to.equal(3);
         expect("executorPath" in status).to.equal(false);
+    });
+
+    it("reports an opt-in HTTP executor without exposing its URL", () => {
+        const status = loadLiveExecutorStatus({
+            executorUrl: "http://127.0.0.1:9123/trade",
+            liveEnabled: false,
+            maxStakeUsd: 12,
+            sizingMode: "fixed",
+            orderType: "FAK",
+        });
+
+        expect(status.configured).to.equal(true);
+        expect(status.available).to.equal(true);
+        expect(status.executorKind).to.equal("http");
+        expect("executorUrl" in status).to.equal(false);
     });
 
     it("loads non-VITE live executor settings from repo .env", () => {
@@ -191,6 +234,27 @@ describe("Execution Lab live executor adapter", () => {
 
         expect(response.status).to.equal("dry_run");
         expect(response.currentAsk).to.equal(0.52);
+    });
+
+    it("submits live trades to an opt-in HTTP executor", async () => {
+        await withJsonServer((payload) => ({
+            ok: true,
+            requestId: payload.requestId,
+            status: "dry_run",
+            currentAsk: 0.51,
+            maxPrice: payload.maxPrice,
+        }), async (executorUrl) => {
+            const response = await submitLiveTradeToExecutor(request(), {
+                executorUrl,
+                liveEnabled: false,
+                maxStakeUsd: 10,
+                orderType: "FAK",
+                timeoutMs: 1000,
+            });
+
+            expect(response.status).to.equal("dry_run");
+            expect(response.currentAsk).to.equal(0.51);
+        });
     });
 
     it("allows UI non-secret config to override env order mode and limit settings", async () => {

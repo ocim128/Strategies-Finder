@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, createWriteStream, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { dirname, resolve } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -59,6 +60,7 @@ const BINANCE_SPOT_KLINE_PATH = "/api/v3/klines";
 const GAMMA_EVENTS_URL = "https://gamma-api.polymarket.com/events";
 const CLOB_PRICE_URL = "https://clob.polymarket.com/price";
 const SUPPORTED_SYMBOLS = new Set(["BTCUSDT", "XRPUSDT"]);
+const RECENT_LOCAL_QUOTE_FALLBACK_SEC = 2;
 
 type LiveCandleRow = {
     symbol: SecondMarketSymbol;
@@ -302,6 +304,68 @@ function normalizeBinanceKline(symbol: SecondMarketSymbol, marketType: "spot" | 
     };
 }
 
+let executionLabReadDb: DatabaseSync | null = null;
+let exactLiveQuoteStmt: ReturnType<DatabaseSync["prepare"]> | null = null;
+let recentLiveQuoteStmt: ReturnType<DatabaseSync["prepare"]> | null = null;
+let executionLabReadDbExitHookRegistered = false;
+
+function resetExecutionLabReadDb(): void {
+    exactLiveQuoteStmt = null;
+    recentLiveQuoteStmt = null;
+    executionLabReadDb?.close();
+    executionLabReadDb = null;
+}
+
+function getExecutionLabReadDb(): DatabaseSync | null {
+    if (!existsSync(MINER_DB_PATH)) {
+        resetExecutionLabReadDb();
+        return null;
+    }
+    if (executionLabReadDb) return executionLabReadDb;
+    try {
+        executionLabReadDb = new DatabaseSync(MINER_DB_PATH, { readOnly: true });
+        executionLabReadDb.exec("PRAGMA busy_timeout = 5000");
+        if (!executionLabReadDbExitHookRegistered) {
+            executionLabReadDbExitHookRegistered = true;
+            process.once("exit", resetExecutionLabReadDb);
+        }
+        return executionLabReadDb;
+    } catch {
+        resetExecutionLabReadDb();
+        return null;
+    }
+}
+
+function loadStoredLiveCandles(args: {
+    symbol: SecondMarketSymbol;
+    marketType: "spot" | "futures";
+    startTs: number;
+    endTs: number;
+    limit: number;
+}): LiveCandleRow[] {
+    const db = getExecutionLabReadDb();
+    if (!db) return [];
+    try {
+        const rows = db.prepare(`
+            SELECT symbol, market_type, ts, open, high, low, close, volume, trade_count, updated_at
+            FROM binance_1s_candles
+            WHERE symbol = ? AND market_type = ? AND ts >= ? AND ts <= ?
+            ORDER BY ts ASC
+            LIMIT ?
+        `).all(
+            args.symbol,
+            args.marketType,
+            Math.floor(args.startTs),
+            Math.floor(args.endTs),
+            Math.max(1, Math.floor(args.limit)),
+        ) as LiveCandleRow[];
+        return rows;
+    } catch {
+        resetExecutionLabReadDb();
+        return [];
+    }
+}
+
 async function fetchLiveCandles(args: {
     symbol: SecondMarketSymbol;
     marketType: "spot" | "futures";
@@ -493,13 +557,11 @@ async function buildLiveQuote(event: SecondMarketPolymarketEvent, sampleTs: numb
 }
 
 function loadStoredLiveQuote(event: SecondMarketPolymarketEvent, sampleTs: number): PolymarketClob1sQuoteRow | null {
-    if (!existsSync(MINER_DB_PATH)) return null;
+    const db = getExecutionLabReadDb();
+    if (!db) return null;
     const targetTs = Math.floor(sampleTs);
-    let db: DatabaseSync | null = null;
     try {
-        db = new DatabaseSync(MINER_DB_PATH, { readOnly: true });
-        db.exec("PRAGMA busy_timeout = 5000");
-        const row = db.prepare(`
+        exactLiveQuoteStmt ??= db.prepare(`
             SELECT series_id, symbol, outcome_interval, event_start_ts, event_end_ts,
                    condition_id, market_slug, yes_token_id, no_token_id,
                    sample_ts, yes_bid, yes_ask, yes_mid, yes_last,
@@ -516,7 +578,8 @@ function loadStoredLiveQuote(event: SecondMarketPolymarketEvent, sampleTs: numbe
               AND event_end_ts > sample_ts
             ORDER BY sample_ts DESC, source_ts_ms DESC, updated_at DESC
             LIMIT 1
-        `).get(
+        `);
+        const row = exactLiveQuoteStmt.get(
             event.seriesId,
             event.symbol,
             event.eventStartTs,
@@ -526,14 +589,72 @@ function loadStoredLiveQuote(event: SecondMarketPolymarketEvent, sampleTs: numbe
         ) as PolymarketClob1sQuoteRow | undefined;
         return row ?? null;
     } catch {
+        resetExecutionLabReadDb();
         return null;
-    } finally {
-        db?.close();
+    }
+}
+
+function withRecentQuoteFallbackFlags(quote: PolymarketClob1sQuoteRow, sampleTs: number): PolymarketClob1sQuoteRow {
+    const targetTs = Math.floor(sampleTs);
+    const lagSec = Math.max(0, targetTs - Math.floor(quote.sample_ts));
+    const existingFlags = quote.quality_flags ? `${quote.quality_flags},` : "";
+    return {
+        ...quote,
+        sample_ts: targetTs,
+        source: "second_market_db_recent",
+        quote_age_ms: quote.source_ts_ms === null ? quote.quote_age_ms : Math.max(0, Date.now() - quote.source_ts_ms),
+        quality_flags: `${existingFlags}recent_local_fallback,source_sample_lag_${lagSec}s`,
+        updated_at: Math.floor(Date.now() / 1000),
+    };
+}
+
+function loadRecentStoredLiveQuote(
+    event: SecondMarketPolymarketEvent,
+    sampleTs: number,
+    maxLagSec: number
+): PolymarketClob1sQuoteRow | null {
+    const db = getExecutionLabReadDb();
+    if (!db) return null;
+    const targetTs = Math.floor(sampleTs);
+    try {
+        recentLiveQuoteStmt ??= db.prepare(`
+            SELECT series_id, symbol, outcome_interval, event_start_ts, event_end_ts,
+                   condition_id, market_slug, yes_token_id, no_token_id,
+                   sample_ts, yes_bid, yes_ask, yes_mid, yes_last,
+                   no_bid, no_ask, no_mid, no_last,
+                   source, source_ts_ms, quote_age_ms, quality_flags, updated_at
+            FROM polymarket_clob_1s_quotes
+            WHERE series_id = ?
+              AND symbol = ?
+              AND event_start_ts = ?
+              AND yes_token_id = ?
+              AND no_token_id = ?
+              AND sample_ts >= ?
+              AND sample_ts <= ?
+              AND event_start_ts <= sample_ts
+              AND event_end_ts > sample_ts
+            ORDER BY sample_ts DESC, source_ts_ms DESC, updated_at DESC
+            LIMIT 1
+        `);
+        const row = recentLiveQuoteStmt.get(
+            event.seriesId,
+            event.symbol,
+            event.eventStartTs,
+            event.yesTokenId,
+            event.noTokenId,
+            targetTs - Math.max(0, Math.floor(maxLagSec)),
+            targetTs - 1,
+        ) as PolymarketClob1sQuoteRow | undefined;
+        return row ? withRecentQuoteFallbackFlags(row, targetTs) : null;
+    } catch {
+        resetExecutionLabReadDb();
+        return null;
     }
 }
 
 export function executionLabVitePlugin(): Plugin {
     const sessions = new Map<string, string>();
+    const sessionLogQueues = new Map<string, Promise<void>>();
     const liveEventCache = new Map<string, CacheEntry<SecondMarketPolymarketEvent[]>>();
     const liveOutcomeCache = new Map<string, CacheEntry<LiveOutcomeRow[]>>();
     const inFlightFetches = new Map<string, Promise<unknown>>();
@@ -670,7 +791,14 @@ export function executionLabVitePlugin(): Plugin {
         return pending;
     }
 
-    function appendValidatedRecords(records: readonly ExecutionLabRecord[]): { ok: true } | { ok: false; status: number; error: string } {
+    async function appendSessionLog(sessionId: string, logPath: string, text: string): Promise<void> {
+        const previous = sessionLogQueues.get(sessionId) ?? Promise.resolve();
+        const write = previous.then(() => appendFile(logPath, text, "utf8"));
+        sessionLogQueues.set(sessionId, write.catch(() => undefined));
+        await write;
+    }
+
+    async function appendValidatedRecords(records: readonly ExecutionLabRecord[]): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
         if (records.length === 0) {
             return { ok: false, status: 400, error: "records must not be empty" };
         }
@@ -688,9 +816,10 @@ export function executionLabVitePlugin(): Plugin {
             return { ok: false, status: 404, error: "Unknown execution lab session" };
         }
 
-        appendFileSync(logPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
+        await appendSessionLog(sessionId, logPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
         if (records.some((record) => record.recordType === "session_stop")) {
             sessions.delete(sessionId);
+            sessionLogQueues.delete(sessionId);
         }
         return { ok: true };
     }
@@ -797,6 +926,23 @@ export function executionLabVitePlugin(): Plugin {
                     const endTs = Math.min(explicitEndTs ?? Math.floor(Date.now() / 1000) - 2, Math.floor(Date.now() / 1000) - 2);
                     const lookbackLimit = Math.min(20000, Math.max(limit + 60, 120));
                     const startTs = explicitStartTs ?? Math.max(0, endTs - lookbackLimit + 1);
+                    const stored = loadStoredLiveCandles({
+                        symbol,
+                        marketType,
+                        startTs,
+                        endTs,
+                        limit: explicitStartTs === null ? lookbackLimit : limit,
+                    });
+                    const latestStoredTs = stored.length > 0 ? stored[stored.length - 1].ts : null;
+                    const requestedSeconds = Math.max(0, endTs - startTs + 1);
+                    const hasExpectedCoverage = stored.length >= Math.min(
+                        explicitStartTs === null ? lookbackLimit : limit,
+                        requestedSeconds
+                    );
+                    if (stored.length > 0 && latestStoredTs !== null && latestStoredTs >= endTs && hasExpectedCoverage) {
+                        sendJson(res, 200, { ok: true, source: "second_market_db", symbol, marketType, candles: stored.slice(-limit) });
+                        return;
+                    }
                     const fetched = await fetchLiveCandles({
                         symbol,
                         marketType,
@@ -895,6 +1041,11 @@ export function executionLabVitePlugin(): Plugin {
                     const storedQuote = loadStoredLiveQuote(event, sampleTs);
                     if (storedQuote) {
                         sendJson(res, 200, { ok: true, source: "second_market_db", quote: storedQuote });
+                        return;
+                    }
+                    const recentStoredQuote = loadRecentStoredLiveQuote(event, sampleTs, RECENT_LOCAL_QUOTE_FALLBACK_SEC);
+                    if (recentStoredQuote) {
+                        sendJson(res, 200, { ok: true, source: "second_market_db_recent", quote: recentStoredQuote });
                         return;
                     }
                     const quote = await buildLiveQuote(event, sampleTs);
@@ -1045,7 +1196,7 @@ export function executionLabVitePlugin(): Plugin {
                         sendJson(res, 400, { ok: false, error: validation.error });
                         return;
                     }
-                    const appendResult = appendValidatedRecords([validation.record]);
+                    const appendResult = await appendValidatedRecords([validation.record]);
                     if (!appendResult.ok) {
                         sendJson(res, appendResult.status, { ok: false, error: appendResult.error });
                         return;
@@ -1074,7 +1225,7 @@ export function executionLabVitePlugin(): Plugin {
                         }
                         records.push(validation.record);
                     }
-                    const appendResult = appendValidatedRecords(records);
+                    const appendResult = await appendValidatedRecords(records);
                     if (!appendResult.ok) {
                         sendJson(res, appendResult.status, { ok: false, error: appendResult.error });
                         return;

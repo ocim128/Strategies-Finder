@@ -64,6 +64,7 @@ const SAFE_PARENT_ENV_KEYS = [
 
 export interface LiveExecutorAdapterConfig {
     executorPath: string;
+    executorUrl: string;
     executorCwd: string;
     executorArgs: string[];
     liveEnabled: boolean;
@@ -141,6 +142,17 @@ function parseArgsJson(value: string | undefined): string[] {
     }
 }
 
+function parseExecutorUrl(value: string | undefined): string {
+    const trimmed = String(value ?? "").trim();
+    if (!trimmed) return "";
+    try {
+        const url = new URL(trimmed);
+        return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
+    } catch {
+        return "";
+    }
+}
+
 function inferExecutorCwd(executorPath: string, configuredCwd: string | undefined): string {
     const trimmedCwd = String(configuredCwd ?? "").trim();
     if (trimmedCwd) return resolve(trimmedCwd);
@@ -198,6 +210,7 @@ export function readLiveExecutorConfig(
 ): LiveExecutorAdapterConfig {
     const mergedEnv = readRepoEnv(env, envDir);
     const executorPath = override?.executorPath ?? String(mergedEnv.EXECUTION_LAB_LIVE_EXECUTOR_PATH ?? "").trim();
+    const executorUrl = override?.executorUrl ?? parseExecutorUrl(mergedEnv.EXECUTION_LAB_LIVE_EXECUTOR_URL);
     const takerOrderType = override?.takerOrderType
         ?? override?.orderType
         ?? parseTakerOrderType(
@@ -207,6 +220,7 @@ export function readLiveExecutorConfig(
         );
     return {
         executorPath,
+        executorUrl,
         executorCwd: override?.executorCwd ?? inferExecutorCwd(executorPath, mergedEnv.EXECUTION_LAB_LIVE_EXECUTOR_CWD),
         executorArgs: override?.executorArgs ?? parseArgsJson(mergedEnv.EXECUTION_LAB_LIVE_EXECUTOR_ARGS_JSON),
         liveEnabled: override?.liveEnabled ?? parseBool(mergedEnv.EXECUTION_LAB_LIVE_ENABLED),
@@ -273,12 +287,15 @@ export function loadLiveExecutorStatus(
     liveUiConfig?: ExecutionLabLiveUiConfig
 ): LiveExecutorStatus {
     const config = resolveLiveExecutorConfig(liveUiConfig, configOverride);
-    const configured = config.executorPath.length > 0;
+    const configured = config.executorUrl.length > 0 || config.executorPath.length > 0;
+    const usesHttpExecutor = config.executorUrl.length > 0;
     const executorExists = configured && existsSync(config.executorPath);
     const cwdExists = existsSync(config.executorCwd);
-    const available = executorExists && cwdExists;
+    const available = usesHttpExecutor || (executorExists && cwdExists);
     const message = !configured
         ? "Executor path not configured."
+        : usesHttpExecutor
+            ? (config.liveEnabled ? "HTTP executor configured for live submission." : "HTTP executor configured for dry-run submission.")
         : !executorExists
             ? "Executor path does not exist."
             : !cwdExists
@@ -290,7 +307,7 @@ export function loadLiveExecutorStatus(
         available,
         liveEnabled: config.liveEnabled,
         dryRun: !config.liveEnabled,
-        executorKind: "cli",
+        executorKind: usesHttpExecutor ? "http" : "cli",
         geoblockAllowed: config.geoblockAllowed,
         maxStakeUsd: config.maxStakeUsd,
         sizingMode: config.sizingMode,
@@ -310,6 +327,48 @@ export function loadLiveExecutorStatus(
     };
 }
 
+async function postExecutorJson(args: {
+    url: string;
+    body: LiveTradeSubmitRequest | LiveCancelAllSubmitRequest;
+    timeoutMs: number;
+    byteLimit: number;
+}): Promise<{ ok: true; payload: unknown } | { ok: false; reason: "executor_timeout" | "executor_unavailable" | "executor_invalid_stdout" }> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), args.timeoutMs);
+    try {
+        const response = await fetch(args.url, {
+            method: "POST",
+            headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(args.body),
+            signal: controller.signal,
+        });
+        const text = await response.text();
+        if (Buffer.byteLength(text, "utf8") > args.byteLimit) {
+            return { ok: false, reason: "executor_invalid_stdout" };
+        }
+        if (!response.ok) {
+            return { ok: false, reason: "executor_unavailable" };
+        }
+        try {
+            return { ok: true, payload: JSON.parse(text) as unknown };
+        } catch {
+            return { ok: false, reason: "executor_invalid_stdout" };
+        }
+    } catch (error) {
+        return {
+            ok: false,
+            reason: error instanceof Error && error.name === "AbortError"
+                ? "executor_timeout"
+                : "executor_unavailable",
+        };
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 export async function submitLiveTradeToExecutor(
     request: LiveTradeSubmitRequest,
     configOverride?: Partial<LiveExecutorAdapterConfig>,
@@ -321,14 +380,6 @@ export async function submitLiveTradeToExecutor(
         limitPrice: request.action === "entry" && request.orderMode === "limit" ? request.limitPrice : undefined,
         minPrice: request.action === "exit" ? request.minPrice : undefined,
     };
-    if (!config.executorPath || !existsSync(config.executorPath)) {
-        return buildLiveTradeFailureResponse({
-            requestId: request.requestId,
-            reason: "executor_unavailable",
-            ...failurePriceFields,
-        });
-    }
-
     const expectedOrderMode = request.action === "exit" ? "taker" : config.orderMode;
     const expectedOrderType = request.action === "entry" && request.orderMode === "limit"
         ? config.limitOrderType
@@ -355,6 +406,38 @@ export async function submitLiveTradeToExecutor(
             requestId: request.requestId,
             status: "rejected",
             reason: "stake_above_executor_cap",
+            ...failurePriceFields,
+        });
+    }
+
+    if (config.executorUrl) {
+        const result = await postExecutorJson({
+            url: config.executorUrl,
+            body: request,
+            timeoutMs: config.timeoutMs,
+            byteLimit: config.stdoutByteLimit,
+        });
+        if (!result.ok) {
+            return buildLiveTradeFailureResponse({
+                requestId: request.requestId,
+                reason: result.reason,
+                ...failurePriceFields,
+            });
+        }
+        const normalized = normalizeLiveTradeSubmitResponse(result.payload, request.requestId);
+        return normalized.ok
+            ? normalized.response
+            : buildLiveTradeFailureResponse({
+                requestId: request.requestId,
+                reason: "executor_invalid_stdout",
+                ...failurePriceFields,
+            });
+    }
+
+    if (!config.executorPath || !existsSync(config.executorPath)) {
+        return buildLiveTradeFailureResponse({
+            requestId: request.requestId,
+            reason: "executor_unavailable",
             ...failurePriceFields,
         });
     }
@@ -467,13 +550,6 @@ export async function submitLiveCancelAllToExecutor(
     liveUiConfig?: ExecutionLabLiveUiConfig
 ): Promise<LiveCancelAllSubmitResponse> {
     const config = resolveLiveExecutorConfig(liveUiConfig, configOverride);
-    if (!config.executorPath || !existsSync(config.executorPath)) {
-        return buildLiveCancelAllFailureResponse({
-            requestId: request.requestId,
-            scope: request.scope,
-            reason: "executor_unavailable",
-        });
-    }
     if (config.orderMode !== "limit") {
         return buildLiveCancelAllFailureResponse({
             requestId: request.requestId,
@@ -512,6 +588,38 @@ export async function submitLiveCancelAllToExecutor(
             scope: request.scope,
             status: "rejected",
             reason: "cancel_scope_config_mismatch",
+        });
+    }
+
+    if (config.executorUrl) {
+        const result = await postExecutorJson({
+            url: config.executorUrl,
+            body: request,
+            timeoutMs: config.timeoutMs,
+            byteLimit: config.stdoutByteLimit,
+        });
+        if (!result.ok) {
+            return buildLiveCancelAllFailureResponse({
+                requestId: request.requestId,
+                scope: request.scope,
+                reason: result.reason,
+            });
+        }
+        const normalized = normalizeLiveCancelAllSubmitResponse(result.payload, request.requestId);
+        return normalized.ok
+            ? normalized.response
+            : buildLiveCancelAllFailureResponse({
+                requestId: request.requestId,
+                scope: request.scope,
+                reason: "executor_invalid_stdout",
+            });
+    }
+
+    if (!config.executorPath || !existsSync(config.executorPath)) {
+        return buildLiveCancelAllFailureResponse({
+            requestId: request.requestId,
+            scope: request.scope,
+            reason: "executor_unavailable",
         });
     }
 

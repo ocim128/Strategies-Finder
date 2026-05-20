@@ -66,85 +66,15 @@ import { weighted_price_roc_veto } from "./lib/weighted_price_roc_veto";
 import { micro_level_ping_adverse_veto } from "./lib/micro_level_ping_adverse_veto";
 import { chop_breakout_adverse_veto } from "./lib/chop_breakout_adverse_veto";
 import { efficiency_median_adverse_veto } from "./lib/efficiency_median_adverse_veto";
-import { donchian_midpoint_median_trend } from "./lib/donchian_midpoint_median_trend";
-import { robust_median_channel_breakout } from "./lib/robust_median_channel_breakout";
-import { acceptance_gated_reversion_router } from "./lib/acceptance_gated_reversion_router";
-import { expanded_value_compression_fade } from "./lib/expanded_value_compression_fade";
-import { high_acceptance_boundary_fade } from "./lib/high_acceptance_boundary_fade";
-import { migrational_climax_reversion } from "./lib/migrational_climax_reversion";
-import { nested_value_exhaustion_fade } from "./lib/nested_value_exhaustion_fade";
-import { static_value_false_breakout } from "./lib/static_value_false_breakout";
-import { value_area_excess_snapback } from "./lib/value_area_excess_snapback";
-import { value_boundary_rejection } from "./lib/value_boundary_rejection";
-import { value_rotation_divergence_fade } from "./lib/value_rotation_divergence_fade";
-import { value_stretch_composite_fade } from "./lib/value_stretch_composite_fade";
 import { acceptance_flash_crash } from "./lib/acceptance_flash_crash";
-import { algorithmic_vacuum_fade } from "./lib/algorithmic_vacuum_fade";
-import { hft_ping_pong_rotation_flip } from "./lib/hft_ping_pong_rotation_flip";
-import { high_efficiency_stop_run } from "./lib/high_efficiency_stop_run";
-import { inventory_exhaustion_fade } from "./lib/inventory_exhaustion_fade";
-import { micro_gap_toxic_sweep } from "./lib/micro_gap_toxic_sweep";
-import { spoofed_median_divergence } from "./lib/spoofed_median_divergence";
-import { toxic_sweep_quorum } from "./lib/toxic_sweep_quorum";
-import { wick_imbalance_volatility_crush } from "./lib/wick_imbalance_volatility_crush";
-import { width_fragmentation_router } from "./lib/width_fragmentation_router";
-import { acceptance_phi_boundary_fade } from "./lib/acceptance_phi_boundary_fade";
-import { efficiency_phi_exhaustion_fade } from "./lib/efficiency_phi_exhaustion_fade";
-import { entropy_phi_crowd_implosion } from "./lib/entropy_phi_crowd_implosion";
-import { golden_extreme_composite_fade } from "./lib/golden_extreme_composite_fade";
-import { migration_phi_overextension_fade } from "./lib/migration_phi_overextension_fade";
-import { range_zscore_phi_snapback } from "./lib/range_zscore_phi_snapback";
-import { rotation_phi_divergence_trap } from "./lib/rotation_phi_divergence_trap";
-import { value_area_phi_stretch_reversion } from "./lib/value_area_phi_stretch_reversion";
-import { value_width_phi_climax_fade } from "./lib/value_width_phi_climax_fade";
-import { volume_zscore_phi_exhaustion } from "./lib/volume_zscore_phi_exhaustion";
-import { acceptance_phi_expansion_divergence } from "./lib/acceptance_phi_expansion_divergence";
-import { dual_horizon_golden_excess } from "./lib/dual_horizon_golden_excess";
 import { golden_conjugate_initiative_trend } from "./lib/golden_conjugate_initiative_trend";
-import { golden_core_pullback } from "./lib/golden_core_pullback";
 import { golden_initiative_quorum } from "./lib/golden_initiative_quorum";
 import { golden_squeeze_rotation_composite } from "./lib/golden_squeeze_rotation_composite";
-import { phi_position_exhaustion_veto } from "./lib/phi_position_exhaustion_veto";
-import { rotation_phi_thrust_quorum } from "./lib/rotation_phi_thrust_quorum";
-import { value_migration_golden_trap } from "./lib/value_migration_golden_trap";
 import { width_compression_golden_breakout } from "./lib/width_compression_golden_breakout";
 import { acceptance_sourced_momentum_quorum } from "./lib/acceptance_sourced_momentum_quorum";
-import { algorithmic_persistence_trap } from "./lib/algorithmic_persistence_trap";
-import { body_proportion_climax_fade } from "./lib/body_proportion_climax_fade";
-import { compression_initiative_squeeze } from "./lib/compression_initiative_squeeze";
-import { distribution_skew_breakout_router } from "./lib/distribution_skew_breakout_router";
-import { efficiency_regime_router_hft } from "./lib/efficiency_regime_router_hft";
-import { excess_entropy_implosion } from "./lib/excess_entropy_implosion";
-import { flash_compression_velocity_shock } from "./lib/flash_compression_velocity_shock";
-import { hft_micro_structure_sweep_fade } from "./lib/hft_micro_structure_sweep_fade";
-import { micro_value_acceptance_rejection } from "./lib/micro_value_acceptance_rejection";
-import { micro_vwap_dislocation_snap } from "./lib/micro_vwap_dislocation_snap";
-import { migration_efficiency_divergence } from "./lib/migration_efficiency_divergence";
-import { migration_position_composite } from "./lib/migration_position_composite";
-import { orderbook_exhaustion_divergence } from "./lib/orderbook_exhaustion_divergence";
-import { positional_capitulation_trap } from "./lib/positional_capitulation_trap";
 import { structural_rotation_shock } from "./lib/structural_rotation_shock";
-import { thin_liquidity_air_pocket_fade } from "./lib/thin_liquidity_air_pocket_fade";
-import { tick_entropy_ignition_chase } from "./lib/tick_entropy_ignition_chase";
 import { width_expansion_zscore_router } from "./lib/width_expansion_zscore_router";
-import { micro_value_migration_chase } from "./lib/micro_value_migration_chase";
-import { consecutive_streak_exhaustion } from "./lib/consecutive_streak_exhaustion";
-import { dual_speed_momentum_composite } from "./lib/dual_speed_momentum_composite";
-import { efficiency_blowoff_reversion } from "./lib/efficiency_blowoff_reversion";
 import { efficiency_keltner_router } from "./lib/efficiency_keltner_router";
-import { efficiency_persistence_quorum } from "./lib/efficiency_persistence_quorum";
-import { entropy_exhaustion_fade } from "./lib/entropy_exhaustion_fade";
-import { entropy_streak_composite } from "./lib/entropy_streak_composite";
-import { extreme_displacement_reversion } from "./lib/extreme_displacement_reversion";
-import { high_entropy_boundary_fade } from "./lib/high_entropy_boundary_fade";
-import { multi_horizon_value_disagreement } from "./lib/multi_horizon_value_disagreement";
-import { value_acceptance_quorum } from "./lib/value_acceptance_quorum";
-import { value_area_rotation_drift } from "./lib/value_area_rotation_drift";
-import { value_boundary_wick_rejection } from "./lib/value_boundary_wick_rejection";
-import { volume_climax_exhaustion } from "./lib/volume_climax_exhaustion";
-import { volume_gated_median_cross } from "./lib/volume_gated_median_cross";
-import { zscore_exhaustion_snap } from "./lib/zscore_exhaustion_snap";
-import { compressed_boundary_reversion } from "./lib/compressed_boundary_reversion";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -216,85 +146,15 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "micro_level_ping_adverse_veto", strategy: micro_level_ping_adverse_veto },
     { key: "chop_breakout_adverse_veto", strategy: chop_breakout_adverse_veto },
     { key: "efficiency_median_adverse_veto", strategy: efficiency_median_adverse_veto },
-    { key: "donchian_midpoint_median_trend", strategy: donchian_midpoint_median_trend },
-    { key: "robust_median_channel_breakout", strategy: robust_median_channel_breakout },
-    { key: "acceptance_gated_reversion_router", strategy: acceptance_gated_reversion_router },
-    { key: "expanded_value_compression_fade", strategy: expanded_value_compression_fade },
-    { key: "high_acceptance_boundary_fade", strategy: high_acceptance_boundary_fade },
-    { key: "migrational_climax_reversion", strategy: migrational_climax_reversion },
-    { key: "nested_value_exhaustion_fade", strategy: nested_value_exhaustion_fade },
-    { key: "static_value_false_breakout", strategy: static_value_false_breakout },
-    { key: "value_area_excess_snapback", strategy: value_area_excess_snapback },
-    { key: "value_boundary_rejection", strategy: value_boundary_rejection },
-    { key: "value_rotation_divergence_fade", strategy: value_rotation_divergence_fade },
-    { key: "value_stretch_composite_fade", strategy: value_stretch_composite_fade },
     { key: "acceptance_flash_crash", strategy: acceptance_flash_crash },
-    { key: "algorithmic_vacuum_fade", strategy: algorithmic_vacuum_fade },
-    { key: "hft_ping_pong_rotation_flip", strategy: hft_ping_pong_rotation_flip },
-    { key: "high_efficiency_stop_run", strategy: high_efficiency_stop_run },
-    { key: "inventory_exhaustion_fade", strategy: inventory_exhaustion_fade },
-    { key: "micro_gap_toxic_sweep", strategy: micro_gap_toxic_sweep },
-    { key: "spoofed_median_divergence", strategy: spoofed_median_divergence },
-    { key: "toxic_sweep_quorum", strategy: toxic_sweep_quorum },
-    { key: "wick_imbalance_volatility_crush", strategy: wick_imbalance_volatility_crush },
-    { key: "width_fragmentation_router", strategy: width_fragmentation_router },
-    { key: "acceptance_phi_boundary_fade", strategy: acceptance_phi_boundary_fade },
-    { key: "efficiency_phi_exhaustion_fade", strategy: efficiency_phi_exhaustion_fade },
-    { key: "entropy_phi_crowd_implosion", strategy: entropy_phi_crowd_implosion },
-    { key: "golden_extreme_composite_fade", strategy: golden_extreme_composite_fade },
-    { key: "migration_phi_overextension_fade", strategy: migration_phi_overextension_fade },
-    { key: "range_zscore_phi_snapback", strategy: range_zscore_phi_snapback },
-    { key: "rotation_phi_divergence_trap", strategy: rotation_phi_divergence_trap },
-    { key: "value_area_phi_stretch_reversion", strategy: value_area_phi_stretch_reversion },
-    { key: "value_width_phi_climax_fade", strategy: value_width_phi_climax_fade },
-    { key: "volume_zscore_phi_exhaustion", strategy: volume_zscore_phi_exhaustion },
-    { key: "acceptance_phi_expansion_divergence", strategy: acceptance_phi_expansion_divergence },
-    { key: "dual_horizon_golden_excess", strategy: dual_horizon_golden_excess },
     { key: "golden_conjugate_initiative_trend", strategy: golden_conjugate_initiative_trend },
-    { key: "golden_core_pullback", strategy: golden_core_pullback },
     { key: "golden_initiative_quorum", strategy: golden_initiative_quorum },
     { key: "golden_squeeze_rotation_composite", strategy: golden_squeeze_rotation_composite },
-    { key: "phi_position_exhaustion_veto", strategy: phi_position_exhaustion_veto },
-    { key: "rotation_phi_thrust_quorum", strategy: rotation_phi_thrust_quorum },
-    { key: "value_migration_golden_trap", strategy: value_migration_golden_trap },
     { key: "width_compression_golden_breakout", strategy: width_compression_golden_breakout },
     { key: "acceptance_sourced_momentum_quorum", strategy: acceptance_sourced_momentum_quorum },
-    { key: "algorithmic_persistence_trap", strategy: algorithmic_persistence_trap },
-    { key: "body_proportion_climax_fade", strategy: body_proportion_climax_fade },
-    { key: "compression_initiative_squeeze", strategy: compression_initiative_squeeze },
-    { key: "distribution_skew_breakout_router", strategy: distribution_skew_breakout_router },
-    { key: "efficiency_regime_router_hft", strategy: efficiency_regime_router_hft },
-    { key: "excess_entropy_implosion", strategy: excess_entropy_implosion },
-    { key: "flash_compression_velocity_shock", strategy: flash_compression_velocity_shock },
-    { key: "hft_micro_structure_sweep_fade", strategy: hft_micro_structure_sweep_fade },
-    { key: "micro_value_acceptance_rejection", strategy: micro_value_acceptance_rejection },
-    { key: "micro_vwap_dislocation_snap", strategy: micro_vwap_dislocation_snap },
-    { key: "migration_efficiency_divergence", strategy: migration_efficiency_divergence },
-    { key: "migration_position_composite", strategy: migration_position_composite },
-    { key: "orderbook_exhaustion_divergence", strategy: orderbook_exhaustion_divergence },
-    { key: "positional_capitulation_trap", strategy: positional_capitulation_trap },
     { key: "structural_rotation_shock", strategy: structural_rotation_shock },
-    { key: "thin_liquidity_air_pocket_fade", strategy: thin_liquidity_air_pocket_fade },
-    { key: "tick_entropy_ignition_chase", strategy: tick_entropy_ignition_chase },
     { key: "width_expansion_zscore_router", strategy: width_expansion_zscore_router },
-    { key: "micro_value_migration_chase", strategy: micro_value_migration_chase },
-    { key: "consecutive_streak_exhaustion", strategy: consecutive_streak_exhaustion },
-    { key: "dual_speed_momentum_composite", strategy: dual_speed_momentum_composite },
-    { key: "efficiency_blowoff_reversion", strategy: efficiency_blowoff_reversion },
     { key: "efficiency_keltner_router", strategy: efficiency_keltner_router },
-    { key: "efficiency_persistence_quorum", strategy: efficiency_persistence_quorum },
-    { key: "entropy_exhaustion_fade", strategy: entropy_exhaustion_fade },
-    { key: "entropy_streak_composite", strategy: entropy_streak_composite },
-    { key: "extreme_displacement_reversion", strategy: extreme_displacement_reversion },
-    { key: "high_entropy_boundary_fade", strategy: high_entropy_boundary_fade },
-    { key: "multi_horizon_value_disagreement", strategy: multi_horizon_value_disagreement },
-    { key: "value_acceptance_quorum", strategy: value_acceptance_quorum },
-    { key: "value_area_rotation_drift", strategy: value_area_rotation_drift },
-    { key: "value_boundary_wick_rejection", strategy: value_boundary_wick_rejection },
-    { key: "volume_climax_exhaustion", strategy: volume_climax_exhaustion },
-    { key: "volume_gated_median_cross", strategy: volume_gated_median_cross },
-    { key: "zscore_exhaustion_snap", strategy: zscore_exhaustion_snap },
-    { key: "compressed_boundary_reversion", strategy: compressed_boundary_reversion },
 ];
 
 export function createStrategiesRecordFromManifest(
