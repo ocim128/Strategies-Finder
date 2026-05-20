@@ -39,7 +39,7 @@ This plan does not implement helpers. It defines phases, contracts, validation, 
 - Live entry mode decision: taker-style buy at ask versus posted limit order. This changes whether helpers should optimize ask-edge only or limit-fill probability.
 - Whether Execution Lab should pass Gamma snapshots into live strategy context. It currently passes `gammaSnapshots: []`.
 - Whether edge should include fees/slippage in helper output or leave that to strategy params and Execution Lab settings.
-- Minimum acceptable quote freshness and spread thresholds for live use need empirical calibration.
+- Minimum acceptable quote freshness and event-progress boundaries for live use need empirical calibration.
 - Whether helper outputs should be displayed in UI diagnostics immediately or remain strategy-internal first.
 - Whether the current fair-probability model is calibrated enough by event progress, volatility regime, and symbol. A large model-vs-market gap can mean model error, not Polymarket inefficiency.
 - Whether the strategy decision timestamp and the actual paper/live fill timestamp use the same quote. If they differ, edge thresholds need a timing/slippage margin.
@@ -148,8 +148,6 @@ Expected outputs:
 - `noAskProbability`
 - `buyYesEdge`
 - `buyNoEdge`
-- `yesSpread`
-- `noSpread`
 - `quoteAgeSec`
 - `eventProgress`
 - `secondsRemaining`
@@ -182,7 +180,6 @@ Expected outputs:
 Initial filters:
 
 - max quote age
-- max spread
 - min/max event progress
 - min seconds remaining
 
@@ -222,7 +219,7 @@ Existing evidence:
 
 Likely type-only change:
 
-- Extend `Polymarket1sQuoteContextRow` in `lib/types/strategies.ts` with optional bid/ask fields so strategy helpers can use executable prices without casting.
+- Extend `Polymarket1sQuoteContextRow` in `lib/types/strategies.ts` with optional ask fields so strategy helpers can use executable prices without casting.
 
 ## State Management
 
@@ -408,14 +405,13 @@ Implement the first useful live-trading helper: fair probability versus executab
 - Normalize ask-side prices for YES and NO.
 - Compute `buyYesEdge = fairYesProbability - yesAsk`.
 - Compute `buyNoEdge = fairNoProbability - noAsk`.
-- Compute spreads from ask/bid when available.
 - Include quote age, event progress, and seconds remaining.
 - Cache frames by context, data, and options.
 
 ### Dependencies
 
 - Phase 1 helper interfaces.
-- Optional bid/ask fields available in strategy context rows.
+- Optional ask fields available in strategy context rows.
 
 ### Risks/Blockers
 
@@ -432,7 +428,7 @@ Implement the first useful live-trading helper: fair probability versus executab
 
 - Causal quote alignment test: future quote must not affect current bar.
 - Missing ask test: side edge is null.
-- Wide spread test: spread output is correct.
+- Missing ask test: affected side fails closed without blocking the other side.
 - Event boundary test: no output outside active event.
 - Existing tests still pass.
 
@@ -456,7 +452,7 @@ Prove the fair-probability edge is directionally useful before adding more helpe
 
 - Build a small validation harness or focused tests that bucket `buyYesEdge` and `buyNoEdge` by size.
 - Compare edge buckets against realized Polymarket priced-trade behavior where scoring data is available.
-- Measure helper availability, stale quote rate, missing ask rate, and spread distribution.
+- Measure helper availability, stale quote rate, and missing ask rate.
 - Compare decision-time ask versus modeled Polymarket entry quote under supported execution models.
 - Check calibration by event progress buckets so final-seconds behavior does not dominate results.
 - Document whether the initial fair-probability model needs a conservative minimum edge or timing margin before strategy use.
@@ -475,7 +471,7 @@ Prove the fair-probability edge is directionally useful before adding more helpe
 ### Deliverables
 
 - Calibration note with symbol, date range, event count, helper coverage, edge buckets, and timing drift.
-- Recommended conservative defaults for `minEdge`, quote age, spread, and event-progress filters.
+- Recommended conservative defaults for `minEdge`, quote age, and event-progress filters.
 
 ### Validation/Testing Criteria
 
@@ -502,7 +498,7 @@ Add timing-sensitive helpers that distinguish real underreaction from stale/nois
 
 - Implement `buildPolymarket1sReactionGap(...)` using configurable `lagSec`.
 - Compute fair-probability impulse and market-probability impulse over the lag.
-- Implement actionability filtering for quote age, spread, event progress, and seconds remaining.
+- Implement actionability filtering for quote age, event progress, seconds remaining, and side ask availability.
 - Implement edge persistence using consecutive seconds and/or EWMA.
 - Ensure helpers return null/false when base frame values are unavailable.
 - Share cache and alignment code where practical without creating broad abstractions.
@@ -608,7 +604,6 @@ Implement one simple built-in strategy to prove the helper surface.
   - `volLookback`
   - `minEdge`
   - `persistenceSec` or `lagSec`
-  - optional `maxSpread`
 - Implement `normalizeParams`.
 - Declare `polymarket1sConfig: { required: true }`.
 - Ensure unavailable helper frames return `[]`.

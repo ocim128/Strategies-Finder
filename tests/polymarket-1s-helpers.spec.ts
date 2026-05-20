@@ -44,10 +44,8 @@ function quote(offsetSec: number, overrides: Partial<Polymarket1sQuoteContextRow
         event_start_ts: EVENT_START,
         event_end_ts: EVENT_END,
         sample_ts: EVENT_START + offsetSec,
-        yes_bid: 0.58,
         yes_ask: 0.61,
         yes_mid: 0.595,
-        no_bid: 0.38,
         no_ask: 0.41,
         no_mid: 0.395,
         ...overrides,
@@ -83,10 +81,8 @@ function runtime(
 
 function quoteEverySecond(): Polymarket1sQuoteContextRow[] {
     return Array.from({ length: 10 }, (_, index) => quote(index, {
-        yes_bid: 0.49,
         yes_ask: 0.51,
         yes_mid: 0.5,
-        no_bid: 0.49,
         no_ask: 0.51,
         no_mid: 0.5,
     }));
@@ -146,20 +142,18 @@ describe("Polymarket 1s helpers", () => {
         expect(frame.buyNoEdge[6]).to.be.a("number");
     });
 
-    it("marks wide or crossed executable quotes as not actionable", () => {
+    it("marks only sides with executable asks as actionable", () => {
         const actionability = buildPolymarket1sActionabilityMask(candles(), runtime([
             quote(6, {
-                yes_bid: 0.50,
-                yes_ask: 0.57,
-                no_bid: 0.40,
+                yes_ask: null,
                 no_ask: 0.48,
             }),
-        ]), { volLookback: 5, maxQuoteAgeSec: 2, maxSpread: 0.02 });
+        ]), { volLookback: 5, maxQuoteAgeSec: 2 });
 
-        expect(actionability.actionable[6]).to.equal(false);
+        expect(actionability.actionable[6]).to.equal(true);
         expect(actionability.yesActionable[6]).to.equal(false);
-        expect(actionability.noActionable[6]).to.equal(false);
-        expect(actionability.reason[6]).to.equal("spread_too_wide");
+        expect(actionability.noActionable[6]).to.equal(true);
+        expect(actionability.reason[6]).to.equal(null);
     });
 
     it("tracks positive edge persistence and resets when edge disappears", () => {
@@ -172,8 +166,6 @@ describe("Polymarket 1s helpers", () => {
             noAskProbability: new Array(5).fill(null),
             buyYesEdge: [null, 0.03, 0.04, 0.01, 0.05],
             buyNoEdge: [null, null, null, null, null],
-            yesSpread: new Array(5).fill(null),
-            noSpread: new Array(5).fill(null),
             quoteAgeSec: new Array(5).fill(0),
             eventProgress: [null, 0.1, 0.2, 0.3, 0.4],
             secondsRemaining: new Array(5).fill(100),
@@ -238,10 +230,8 @@ describe("Polymarket 1s helpers", () => {
         const data = [100, 100, 100, 100, 100, 100.5, 101, 101.5, 102, 102.5]
             .map((close, index) => candle(index, close));
         const quotes = Array.from({ length: 10 }, (_, index) => quote(index, {
-            yes_bid: 0.38,
             yes_ask: 0.40,
             yes_mid: 0.39,
-            no_bid: 0.58,
             no_ask: 0.60,
             no_mid: 0.59,
         }));
@@ -250,7 +240,6 @@ describe("Polymarket 1s helpers", () => {
             volLookback: 5,
             minEdge: 0.05,
             persistenceSec: 2,
-            maxSpread: 0.05,
         }, { polymarket1s: runtime(quotes) });
 
         expect(signals.some((signal) => signal.type === "buy")).to.equal(true);
@@ -258,7 +247,6 @@ describe("Polymarket 1s helpers", () => {
             volLookback: 5,
             minEdge: 0.05,
             persistenceSec: 2,
-            maxSpread: 0.05,
         })).to.deep.equal([]);
     });
 
@@ -267,14 +255,12 @@ describe("Polymarket 1s helpers", () => {
             volLookback: Number.NaN,
             minEdge: Number.NaN,
             persistenceSec: Number.NaN,
-            maxSpread: Number.NaN,
         });
 
         expect(normalized).to.deep.include({
             volLookback: 45,
             minEdge: 0.04,
             persistenceSec: 2,
-            maxSpread: 0.04,
         });
     });
 });

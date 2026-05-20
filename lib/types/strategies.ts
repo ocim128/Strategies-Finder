@@ -492,10 +492,8 @@ export interface Polymarket1sQuoteContextRow {
     event_start_ts: number;
     event_end_ts: number;
     sample_ts: number;
-    yes_bid?: number | null;
     yes_ask?: number | null;
     yes_mid: number | null;
-    no_bid?: number | null;
     no_ask?: number | null;
     no_mid: number | null;
 }

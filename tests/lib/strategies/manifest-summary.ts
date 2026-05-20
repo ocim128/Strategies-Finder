@@ -856,7 +856,7 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["volLookback", "minEdge", "persistenceSec", "maxSpread"],
+        walkForwardParams: ["volLookback", "minEdge", "persistenceSec"],
     },
         crossSymbolConfig: false,
         polymarket1sConfig: true,

@@ -42,8 +42,6 @@ export interface Polymarket1sExecutableEdgeFrame {
     noAskProbability: (number | null)[];
     buyYesEdge: (number | null)[];
     buyNoEdge: (number | null)[];
-    yesSpread: (number | null)[];
-    noSpread: (number | null)[];
     quoteAgeSec: (number | null)[];
     eventProgress: (number | null)[];
     secondsRemaining: (number | null)[];
@@ -63,7 +61,6 @@ export interface Polymarket1sReactionGapFrame {
 }
 
 export interface Polymarket1sActionabilityOptions extends Polymarket1sExecutableEdgeOptions {
-    maxSpread?: number;
     minEventProgress?: number;
     maxEventProgress?: number;
     minSecondsRemaining?: number;
@@ -75,8 +72,7 @@ export type Polymarket1sActionabilityReason =
     | "event_too_early"
     | "event_too_late"
     | "event_too_close"
-    | "event_too_far"
-    | "spread_too_wide";
+    | "event_too_far";
 
 export interface Polymarket1sActionabilityFrame {
     available: boolean;
@@ -178,8 +174,6 @@ function emptyExecutableEdgeFrame(length: number): Polymarket1sExecutableEdgeFra
         noAskProbability: new Array(length).fill(null),
         buyYesEdge: new Array(length).fill(null),
         buyNoEdge: new Array(length).fill(null),
-        yesSpread: new Array(length).fill(null),
-        noSpread: new Array(length).fill(null),
         quoteAgeSec: new Array(length).fill(null),
         eventProgress: new Array(length).fill(null),
         secondsRemaining: new Array(length).fill(null),
@@ -269,13 +263,6 @@ function normalizeYesProbability(yes: number | null, no: number | null): number 
     return yesProb;
 }
 
-function normalizeSpread(bid: unknown, ask: unknown): number | null {
-    const bidProb = normalizePrice(bid);
-    const askProb = normalizePrice(ask);
-    if (bidProb === null || askProb === null || askProb < bidProb) return null;
-    return askProb - bidProb;
-}
-
 function normalCdf(value: number): number {
     if (!Number.isFinite(value)) return 0.5;
     const x = value / Math.SQRT2;
@@ -335,7 +322,6 @@ function reactionGapOptionsKey(options: Polymarket1sReactionGapOptions): string 
 function actionabilityOptionsKey(options: Polymarket1sActionabilityOptions): string {
     return [
         pressureGapOptionsKey(options),
-        numberAtLeast(options.maxSpread, 0.05, 0),
         clampFinite(options.minEventProgress, 0, 0, 1),
         clampFinite(options.maxEventProgress, 1, 0, 1),
         roundedAtLeast(options.minSecondsRemaining, 0, 0),
@@ -622,8 +608,6 @@ export function buildPolymarket1sExecutableEdge(
         const fairNo = 1 - fairYes;
         const yesAsk = normalizePrice(quote.yes_ask);
         const noAsk = normalizePrice(quote.no_ask);
-        const yesSpread = normalizeSpread(quote.yes_bid, quote.yes_ask);
-        const noSpread = normalizeSpread(quote.no_bid, quote.no_ask);
         const secondsRemaining = Math.max(0, quote.event_end_ts - ts);
 
         frame.fairYesProbability[i] = fairYes;
@@ -631,8 +615,6 @@ export function buildPolymarket1sExecutableEdge(
         frame.marketYesProbability[i] = marketYes;
         frame.yesAskProbability[i] = yesAsk;
         frame.noAskProbability[i] = noAsk;
-        frame.yesSpread[i] = yesSpread;
-        frame.noSpread[i] = noSpread;
         frame.quoteAgeSec[i] = ts - alignedQuote.quoteTs;
         frame.eventProgress[i] = eventProgress;
         frame.secondsRemaining[i] = secondsRemaining;
@@ -745,7 +727,6 @@ export function buildPolymarket1sActionabilityMask(
 
     const edge = buildPolymarket1sExecutableEdge(data, runtime, options);
     const frame = emptyActionabilityFrame(length);
-    const maxSpread = numberAtLeast(options.maxSpread, 0.05, 0);
     const minEventProgress = clampFinite(options.minEventProgress, 0, 0, 1);
     const maxEventProgress = clampFinite(options.maxEventProgress, 1, 0, 1);
     const minSecondsRemaining = roundedAtLeast(options.minSecondsRemaining, 0, 0);
@@ -779,14 +760,12 @@ export function buildPolymarket1sActionabilityMask(
             continue;
         }
 
-        const yesSpread = edge.yesSpread[i];
-        const noSpread = edge.noSpread[i];
-        const yesActionable = yesSpread !== null && yesSpread <= maxSpread;
-        const noActionable = noSpread !== null && noSpread <= maxSpread;
+        const yesActionable = edge.yesAskProbability[i] !== null;
+        const noActionable = edge.noAskProbability[i] !== null;
         frame.yesActionable[i] = yesActionable;
         frame.noActionable[i] = noActionable;
         frame.actionable[i] = yesActionable || noActionable;
-        frame.reason[i] = frame.actionable[i] ? null : "spread_too_wide";
+        frame.reason[i] = frame.actionable[i] ? null : "missing_quote";
         if (frame.actionable[i]) populated++;
     }
 
