@@ -259,8 +259,8 @@ Behavior:
 - for `1m` + `next_open`, that exit timestamp is the modeled next bar open from the shared backtest engine, not an intraminute wall-clock guess
 - for supported `1s` CLOB runs, the entry and signal-exit fills use strict exact-second bid/ask quotes from the second-market DB; `next_open` uses the chart trade timestamp directly, while `signal_close` and `next_close` use one second after the chart candle timestamp because Binance `1s` candles are stored by open time
 - `polymarketEntryDelayBars` is a research-only `1s` CLOB annotation delay; when set to `N`, the chart trade stays at the same timestamp but the Polymarket entry quote is priced `N` seconds after the modeled chart entry
-- `polymarketBacktestSlippageCents` is a backtest-only adverse quote adjustment; quote entries pay that many cents more and signal-exit quote sells receive that many cents less
-- post-signal limit entries keep the filled limit price; the backtest slippage setting only adjusts quote-style Polymarket fills
+- `polymarketBacktestSlippageCents` is a backtest-only adverse fill adjustment; entries pay that many cents more and modeled exits receive that many cents less
+- post-signal limit entries keep the filled limit price, and filled target exits keep the target price; quote-style signal exits and resolve-hold settlement exits apply the backtest slippage adjustment
 - example: if the opposite chart signal is detected on the `15:02` candle, the modeled chart exit is `15:03:00`, so the Polymarket exit uses the latest local quote at or before `15:03:00`
 - the signal-exit quote must not be earlier than the chosen entry quote
 - with zero backtest slippage, if the latest locally captured quote before the chart exit is the same quote that was used for entry, the trade scores as a flat same-event exit instead of being dropped

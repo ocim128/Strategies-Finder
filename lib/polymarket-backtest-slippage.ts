@@ -40,3 +40,10 @@ export function applyPolymarketBacktestExitSlippage(
     const slippage = resolvePolymarketBacktestSlippagePrice(slippageCents, 0);
     return clampPolymarketPrice(price - slippage);
 }
+
+export function resolvePolymarketBacktestResolutionExitPrice(
+    isWin: boolean,
+    slippageCents: unknown
+): number {
+    return applyPolymarketBacktestExitSlippage(isWin ? 1 : 0, slippageCents) ?? (isWin ? 1 : 0);
+}

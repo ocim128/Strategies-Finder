@@ -24,6 +24,7 @@ import type {
     PolymarketOutcomeRow,
     BacktestPolymarketTradeSummary,
     PolymarketMarketEntryStatus,
+    TradePolymarketOutcome,
 } from "./types/polymarket-outcomes";
 import type { PolymarketPricePoint } from "./local-sqlite-polymarket-api";
 import { ensurePricePointsForOutcomes } from "./polymarket-price-points-ingest";
@@ -43,6 +44,7 @@ import { clampPolymarketEntryPriceFilterCents, isPolymarketEntryPriceFiltered } 
 import {
     applyPolymarketBacktestEntrySlippage,
     clampPolymarketBacktestSlippageCents,
+    resolvePolymarketBacktestResolutionExitPrice,
 } from "./polymarket-backtest-slippage";
 import {
     clampPolymarketPostSignalLimitEntryPriceCents,
@@ -309,6 +311,28 @@ function buildEntryTimeFilteredAnnotatedTrade(args: {
     };
 }
 
+function buildResolveHoldExitSlippageFields(args: {
+    outcome: PolymarketOutcomeRow;
+    isWin: boolean;
+    marketEntryPrice: number | null;
+    backtestSlippageCents?: number;
+}): Partial<TradePolymarketOutcome> {
+    const backtestSlippageCents = clampPolymarketBacktestSlippageCents(args.backtestSlippageCents, 0);
+    if (backtestSlippageCents <= 0) {
+        return {};
+    }
+
+    const marketExitPrice = resolvePolymarketBacktestResolutionExitPrice(args.isWin, backtestSlippageCents);
+    const marketPnl = args.marketEntryPrice !== null ? marketExitPrice - args.marketEntryPrice : null;
+    return {
+        marketExitPrice,
+        marketExitTs: args.outcome.event_end_ts,
+        marketExitSource: "resolution",
+        marketPnl,
+        isProfitable: marketPnl === null ? null : marketPnl > 0 ? true : marketPnl < 0 ? false : null,
+    };
+}
+
 function buildAnnotatedTrade(
     trade: Trade,
     outcomeByStartTs: Map<number, PolymarketOutcomeRow>,
@@ -361,6 +385,7 @@ function buildAnnotatedTrade(
             ...buildPolymarketOutcomeBase({ outcome, prediction, isWin }),
             ...sidePrices,
             marketEntryPrice,
+            ...buildResolveHoldExitSlippageFields({ outcome, isWin, marketEntryPrice, backtestSlippageCents }),
         },
     };
 }
@@ -440,6 +465,7 @@ function buildAnnotatedTradeForBridge(
             ...sidePrices,
             marketEntryPrice,
             entryOffset,
+            ...buildResolveHoldExitSlippageFields({ outcome, isWin, marketEntryPrice, backtestSlippageCents }),
         },
     };
 }
@@ -574,6 +600,7 @@ function buildAnnotatedTradeForNativeSession(
             marketNoPrice,
             marketEntryPrice,
             entryOffset: entryOffset >= 0 ? entryOffset : undefined,
+            ...buildResolveHoldExitSlippageFields({ outcome, isWin, marketEntryPrice, backtestSlippageCents }),
         },
     };
 }
@@ -625,13 +652,14 @@ function buildLimitEntryAnnotatedTrade(args: {
     exitTs?: number | null;
     exitSource?: NonNullable<Trade["polymarketOutcome"]>["marketExitSource"];
     entryPriceFilterCents?: number;
+    backtestSlippageCents?: number;
 }): Trade {
     const { trade, outcome, status, limitPrice } = args;
     const prediction = getPolymarketPredictionForTrade(trade);
     const isFilled = status === "filled";
     const isWin = isPolymarketPredictionWin(prediction, outcome);
     const fallbackExitPrice = isFilled
-        ? isWin ? 1 : 0
+        ? resolvePolymarketBacktestResolutionExitPrice(isWin, args.backtestSlippageCents ?? 0)
         : null;
     const marketExitPrice = isFilled
         ? args.exitPrice ?? fallbackExitPrice
@@ -683,6 +711,7 @@ function annotateTradesWithLimitEntryForRun(
     pricePointsByEventStart: Map<number, PolymarketPricePoint[]>,
     settings: PolymarketPostSignalLimitEntrySettings,
     entryPriceFilterCents?: number,
+    backtestSlippageCents?: number,
     entryCutoffEnabled?: boolean,
     entryCutoffSeconds?: number
 ): Trade[] {
@@ -710,6 +739,7 @@ function annotateTradesWithLimitEntryForRun(
                 outcome,
                 status: "duplicate",
                 limitPrice: limitPriceByEventStart.get(outcome.event_start_ts) ?? fixedLimitPrice,
+                backtestSlippageCents,
             });
         }
 
@@ -772,6 +802,7 @@ function annotateTradesWithLimitEntryForRun(
             exitTs: exitFill?.status === "filled" ? exitFill.fillTs : undefined,
             exitSource: exitFill?.status === "filled" ? "target" : undefined,
             entryPriceFilterCents,
+            backtestSlippageCents,
         });
     });
 }
@@ -943,6 +974,7 @@ export function annotateTradesWithPolymarketOutcomesForRun(
             pricePointsByEventStart,
             options.limitEntry,
             entryPriceFilterCents,
+            backtestSlippageCents,
             options.entryCutoffEnabled,
             options.entryCutoffSeconds
         );
@@ -1050,6 +1082,7 @@ export function evaluatePolymarketBacktestTrades(args: {
         evaluatedEvents: context.evaluatedEvents,
         predictionsTaken: trades.length,
         resolvedUpCount: context.resolvedUpCount,
+        backtestSlippageCents,
         includeRows,
         strategyKey,
     });
@@ -1212,6 +1245,7 @@ export function evaluateMappedPolymarketBacktestTrades1mBridge(args: {
         evaluatedEvents: context.evaluatedEvents,
         predictionsTaken,
         resolvedUpCount: context.resolvedUpCount,
+        backtestSlippageCents,
         includeRows,
         strategyKey,
         entryOffset: selectedOffset,

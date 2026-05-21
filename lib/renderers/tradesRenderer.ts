@@ -533,12 +533,14 @@ export class TradesRenderer {
         const paidPrice = typeof outcome.marketEntryPrice === 'number' && Number.isFinite(outcome.marketEntryPrice)
             ? this.formatPolymarketEntryPrice(outcome.marketEntryPrice)
             : 'n/a';
-        const resolvedExitPrice = isTargetExit && typeof outcome.marketExitPrice === "number" && Number.isFinite(outcome.marketExitPrice)
+        const resolvedExitPrice = typeof outcome.marketExitPrice === "number" && Number.isFinite(outcome.marketExitPrice)
             ? this.formatPolymarketEntryPrice(outcome.marketExitPrice)
             : typeof outcome.isWin === 'boolean'
             ? this.formatPolymarketEntryPrice(outcome.isWin ? 1 : 0)
             : null;
         const payout = isTargetExit
+            ? realizedPnl
+            : realizedPnl !== null
             ? realizedPnl
             : typeof outcome.marketEntryPrice === 'number' && Number.isFinite(outcome.marketEntryPrice) && typeof outcome.isWin === 'boolean'
             ? (outcome.isWin ? (1 - outcome.marketEntryPrice) : -outcome.marketEntryPrice)

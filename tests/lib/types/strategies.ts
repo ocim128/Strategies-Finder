@@ -332,7 +332,7 @@ export interface BacktestSettings {
     polymarketEntryDelayBars?: number;
     /** Skip Polymarket entries priced at or below N cents, or at or above 100-N cents. 0 disables. */
     polymarketEntryPriceFilterCents?: number;
-    /** Backtest-only Polymarket adverse quote slippage in cents. Quote buys pay more and quote sells receive less. */
+    /** Backtest-only Polymarket adverse slippage in cents. Entries pay more and modeled exits receive less. */
     polymarketBacktestSlippageCents?: number;
     /** Enable skipping Polymarket entries near event close. */
     polymarketEntryCutoffEnabled?: boolean;

@@ -1,7 +1,10 @@
 import { expect } from "chai";
 import { afterEach, describe, it } from "node:test";
 import { resetLocalSqlitePolymarketApiAvailabilityForTests } from "../lib/local-sqlite-polymarket-api";
-import { annotateBacktestResultWithPolymarketOutcomes } from "../lib/polymarket-trade-annotations";
+import {
+    annotateBacktestResultWithPolymarketOutcomes,
+    evaluatePolymarketBacktestTrades,
+} from "../lib/polymarket-trade-annotations";
 import { TradesRenderer } from "../lib/renderers/tradesRenderer";
 import { ensurePricePointsForOutcomes } from "../lib/polymarket-price-points-ingest";
 import type { BacktestResult, OHLCVData, Trade } from "../lib/types/strategies";
@@ -311,6 +314,69 @@ describe("Polymarket backtest trade annotations", () => {
         expect(html).to.include("YES 50.0c->100.0c (+50.0c)");
         expect(html).to.include("YES 50.0c / NO 50.0c");
         expect(html).to.include('data-polymarket-url="https://polymarket.com/event/btc-1"');
+    });
+
+    it("applies Polymarket backtest slippage to resolve-hold entry and exit prices", async () => {
+        const bars = makeBars(4);
+        const eventTs = Number(bars[1]!.time);
+        const outcomeRow = {
+            series_id: "10684",
+            event_slug: "btc-slippage-1",
+            market_slug: "btc-slippage-1",
+            interval: "5m",
+            event_start_ts: eventTs,
+            event_end_ts: eventTs + 300,
+            yes_token_id: "yes-1",
+            no_token_id: "no-1",
+            yes_open_price: 0.55,
+            yes_entry_minute_1_price: 0.55,
+            yes_entry_minute_2_price: 0.55,
+            yes_entry_minute_3_price: 0.55,
+            yes_entry_minute_4_price: 0.55,
+            resolved_outcome_up: 1 as const,
+            resolution_source: "test",
+            updated_at: 1,
+        };
+        const trade = makeTrade(1, "long", eventTs, 10);
+        installOutcomeFetch([outcomeRow]);
+
+        const result = await annotateBacktestResultWithPolymarketOutcomes(
+            makeBacktestResult([trade]),
+            {
+                symbol: "BTCUSDT",
+                interval: "5m",
+                executionModel: "next_open",
+                chartData: bars,
+            },
+            { backtestSlippageCents: 5 }
+        );
+
+        const outcome = result.trades[0]?.polymarketOutcome;
+        expect(result.polymarketTradeSummary?.backtestSlippageCents).to.equal(5);
+        expect(outcome?.marketEntryPrice).to.equal(0.6);
+        expect(outcome?.marketExitPrice).to.equal(0.95);
+        expect(outcome?.marketPnl).to.be.closeTo(0.35, 1e-12);
+
+        const evaluation = evaluatePolymarketBacktestTrades({
+            chartData: bars,
+            trades: [trade],
+            outcomes: [outcomeRow],
+            backtestSlippageCents: 5,
+        });
+        expect(evaluation.avgEntryPrice).to.equal(0.6);
+        expect(evaluation.expectancy).to.be.closeTo(0.35, 1e-12);
+        expect(evaluation.breakEvenWinRate).to.be.closeTo(0.6 / 0.95, 1e-12);
+
+        const renderer = new TradesRenderer() as unknown as {
+            renderTradeItem: (trade: Trade, formatPrice: (price: number) => string, formatDate: (time: Trade["entryTime"]) => string) => string;
+        };
+        const html = renderer.renderTradeItem(
+            result.trades[0]!,
+            (price) => price.toFixed(2),
+            (time) => String(time)
+        );
+
+        expect(html).to.include("YES 60.0c->95.0c (+35.0c)");
     });
 
     it("annotates supported ETH 5m runs with the ETH Polymarket series", async () => {

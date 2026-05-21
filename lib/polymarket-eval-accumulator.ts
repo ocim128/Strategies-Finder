@@ -1,5 +1,6 @@
 import type { Trade } from "./types/strategies";
 import type { PolymarketEvalResult, PolymarketEvalRow } from "./types/polymarket-outcomes";
+import { resolvePolymarketBacktestResolutionExitPrice } from "./polymarket-backtest-slippage";
 
 type Prediction = "yes" | "no";
 type SkipBasis = "evaluatedEvents" | "predictionsTaken";
@@ -20,6 +21,7 @@ export type PolymarketEvalAccumulatorOptions = {
     evaluatedEvents: number;
     resolvedUpCount: number;
     predictionsTaken: number;
+    backtestSlippageCents?: number;
     includeRows?: boolean;
     strategyKey?: string;
     entryOffset?: number;
@@ -34,11 +36,6 @@ function predictionForTradeType(tradeType: Trade["type"]): Prediction {
 
 function isWinningPrediction(prediction: Prediction, actualOutcomeUp: 0 | 1): boolean {
     return prediction === "yes" ? actualOutcomeUp === 1 : actualOutcomeUp === 0;
-}
-
-function payoutFromPrice(marketEntryPrice: number | null, isWin: boolean): number | null {
-    if (marketEntryPrice === null || !Number.isFinite(marketEntryPrice)) return null;
-    return isWin ? 1 - marketEntryPrice : -marketEntryPrice;
 }
 
 function profitFactor(grossProfit: number, grossLoss: number): number {
@@ -62,6 +59,7 @@ export class PolymarketEvalAccumulator {
     private entryTimeFilteredPredictions = 0;
     private pricedPredictions = 0;
     private totalEntryPrice = 0;
+    private totalWinningExitPrice = 0;
     private totalPayout = 0;
     private grossProfit = 0;
     private grossLoss = 0;
@@ -91,7 +89,13 @@ export class PolymarketEvalAccumulator {
     recordScoredPrediction(input: PolymarketScoredPrediction): void {
         const prediction = predictionForTradeType(input.tradeType);
         const isWin = isWinningPrediction(prediction, input.actualOutcomeUp);
-        const payout = payoutFromPrice(input.marketEntryPrice, isWin);
+        const marketExitPrice = resolvePolymarketBacktestResolutionExitPrice(
+            isWin,
+            this.options.backtestSlippageCents ?? 0
+        );
+        const payout = input.marketEntryPrice === null || !Number.isFinite(input.marketEntryPrice)
+            ? null
+            : marketExitPrice - input.marketEntryPrice;
 
         if (input.tradeType === "long") {
             this.scoredLongPredictions++;
@@ -113,6 +117,10 @@ export class PolymarketEvalAccumulator {
         if (input.marketEntryPrice !== null && payout !== null) {
             this.pricedPredictions++;
             this.totalEntryPrice += input.marketEntryPrice;
+            this.totalWinningExitPrice += resolvePolymarketBacktestResolutionExitPrice(
+                true,
+                this.options.backtestSlippageCents ?? 0
+            );
             this.totalPayout += payout;
             if (payout > 0) {
                 this.grossProfit += payout;
@@ -141,7 +149,7 @@ export class PolymarketEvalAccumulator {
     toResult(): PolymarketEvalResult {
         const scoredPredictions = this.wins + this.losses;
         const avgEntryPrice = this.pricedPredictions > 0 ? this.totalEntryPrice / this.pricedPredictions : 0;
-        const breakEvenWinRate = avgEntryPrice;
+        const breakEvenWinRate = this.totalWinningExitPrice > 0 ? this.totalEntryPrice / this.totalWinningExitPrice : 0;
         const expectancy = this.pricedPredictions > 0 ? this.totalPayout / this.pricedPredictions : 0;
         const skipBasis = this.options.skipBasis === "predictionsTaken"
             ? this.options.predictionsTaken

@@ -99,6 +99,7 @@ import { clampPolymarketEntryPriceFilterCents, isPolymarketEntryPriceFiltered } 
 import {
     applyPolymarketBacktestEntrySlippage,
     clampPolymarketBacktestSlippageCents,
+    resolvePolymarketBacktestResolutionExitPrice,
 } from "../polymarket-backtest-slippage";
 
 type FinderPolymarketEvaluation = {
@@ -140,6 +141,13 @@ function buildMappedTradeOutcome(args: {
         getTradeMarketEntryPrice(outcome, prediction, args.marketPriceOffset ?? entryOffset),
         args.backtestSlippageCents
     );
+    const backtestSlippageCents = clampPolymarketBacktestSlippageCents(args.backtestSlippageCents, 0);
+    const marketExitPrice = backtestSlippageCents > 0
+        ? resolvePolymarketBacktestResolutionExitPrice(isWin, backtestSlippageCents)
+        : undefined;
+    const marketPnl = marketExitPrice !== undefined && marketEntryPrice !== null
+        ? marketExitPrice - marketEntryPrice
+        : undefined;
 
     return {
         eventStartTs: args.eventStartTs ?? outcome.event_start_ts,
@@ -152,6 +160,11 @@ function buildMappedTradeOutcome(args: {
         marketEntryPrice,
         entryOffset,
         evaluationMode: "resolve_hold",
+        marketExitPrice,
+        marketExitTs: marketExitPrice !== undefined ? args.eventEndTs ?? outcome.event_end_ts : undefined,
+        marketExitSource: marketExitPrice !== undefined ? "resolution" : undefined,
+        marketPnl,
+        isProfitable: marketPnl === undefined ? undefined : marketPnl > 0 ? true : marketPnl < 0 ? false : null,
     };
 }
 
@@ -320,7 +333,6 @@ function buildNativeSessionResolveHoldEvalResult(args: {
     let missingPriceTrades = 0;
     let entryPriceFilteredPredictions = 0;
     let entryTimeFilteredPredictions = 0;
-    const useRealizedPnl = summary.limitExitEnabled === true;
 
     for (let index = 0; index < annotatedTrades.length; index += 1) {
         const trade = trades[index];
@@ -360,10 +372,10 @@ function buildNativeSessionResolveHoldEvalResult(args: {
 
         pricedPredictions++;
         totalEntryPrice += marketEntryPrice;
-        const payout = useRealizedPnl && typeof outcome.marketPnl === "number" && Number.isFinite(outcome.marketPnl)
+        const payout = typeof outcome.marketPnl === "number" && Number.isFinite(outcome.marketPnl)
             ? outcome.marketPnl
             : outcome.isWin ? (1 - marketEntryPrice) : -marketEntryPrice;
-        const isProfitable = useRealizedPnl
+        const isProfitable = typeof outcome.marketPnl === "number" && Number.isFinite(outcome.marketPnl)
             ? payout > 0
                 ? true
                 : payout < 0
@@ -390,7 +402,8 @@ function buildNativeSessionResolveHoldEvalResult(args: {
 
     const scoredPredictions = summary.scoredTrades;
     const avgEntryPrice = pricedPredictions > 0 ? totalEntryPrice / pricedPredictions : 0;
-    const breakEvenWinRate = avgEntryPrice;
+    const winningExitPrice = resolvePolymarketBacktestResolutionExitPrice(true, summary.backtestSlippageCents ?? 0);
+    const breakEvenWinRate = winningExitPrice > 0 ? avgEntryPrice / winningExitPrice : 0;
 
     return {
         evaluatedEvents: context.evaluatedEvents,
@@ -518,6 +531,7 @@ function evaluateMultiIntervalPolymarketTrades(options: {
         evaluatedEvents: context.evaluatedEvents,
         predictionsTaken,
         resolvedUpCount: context.resolvedUpCount,
+        backtestSlippageCents,
         includeRows,
         strategyKey,
         entryOffset: selectedOffset,
