@@ -96,6 +96,7 @@ export type QuickViewPolymarketSummary = {
     timingProfile?: import("../types/polymarket-outcomes").BacktestPolymarketTimingProfileEntry[];
     bestTimingProfile?: import("../types/polymarket-outcomes").BacktestPolymarketTimingProfileEntry | null;
     evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+    usesRealizedPnl?: boolean;
     entryDelayBars?: number;
     missingPriceTrades?: number;
     targetExitedTrades?: number;
@@ -886,13 +887,11 @@ class QuickViewManager {
         const shouldRetryEmptySignalExitSummary = result.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event"
             && (result.polymarketTradeSummary.scoredTrades ?? 0) === 0
             && result.trades.length > 0;
+        const hasPolymarketPerformance = summarizePolymarketPerformanceForResult(result) !== null;
         const isSecondMarketRun = isSecondMarketPolymarketSupported(resultContext.symbol, resultContext.interval);
         const shouldRefreshSecondMarketPricing = isSecondMarketRun
             && result.polymarketTradeSummary !== undefined
-            && (
-                result.polymarketTradeSummary.evaluationMode !== "signal_exit_same_event"
-                || summarizePolymarketPerformanceForResult(result) === null
-            );
+            && !hasPolymarketPerformance;
         const shouldRepairFilteredActualMode = resultContext.interval === "1m"
             && outcomeInterval === "5m"
             && isActualPolymarketEntryMinuteMode(this.resolveSelectedPolymarketEntrySelectionMode(result))
@@ -1414,7 +1413,11 @@ class QuickViewManager {
     private getPolymarketSummary(result: BacktestResult): QuickViewPolymarketSummary | null {
         const summary = result.polymarketTradeSummary;
         const isSignalExit = summary?.evaluationMode === "signal_exit_same_event";
-        const usesRealizedPnl = isSignalExit || summary?.limitExitEnabled === true;
+        const hasSummaryPnlCounts =
+            typeof summary?.profitableTrades === "number"
+            || typeof summary?.losingTrades === "number"
+            || typeof summary?.neutralTrades === "number";
+        const usesRealizedPnl = isSignalExit || summary?.limitExitEnabled === true || hasSummaryPnlCounts;
         const hasLimitEntrySummary = summary?.limitEntryEnabled === true
             && (summary.limitEntryAttempts ?? 0) > 0;
 
@@ -1460,13 +1463,13 @@ class QuickViewManager {
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
             expectancy: isSignalExit
                 ? (summary?.expectancy ?? payoutSummary?.expectancy ?? null)
-                : payoutSummary?.expectancy ?? null,
+                : payoutSummary?.expectancy ?? summary?.expectancy ?? null,
             profitFactor: isSignalExit
                 ? (summary?.profitFactor ?? payoutSummary?.profitFactor ?? null)
-                : payoutSummary?.profitFactor ?? null,
+                : payoutSummary?.profitFactor ?? summary?.profitFactor ?? null,
             avgWin: payoutSummary?.avgWin ?? null,
             avgLoss: payoutSummary?.avgLoss ?? null,
-            avgEntryPrice: payoutSummary?.avgEntryPrice ?? null,
+            avgEntryPrice: payoutSummary?.avgEntryPrice ?? summary?.avgEntryPrice ?? null,
             outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
             bestBaselineWinRate: usesRealizedPnl ? 0 : bestBaselineWinRate,
             baselineDelta: usesRealizedPnl ? 0 : (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
@@ -1483,6 +1486,7 @@ class QuickViewManager {
             outcomeInterval: summary?.outcomeInterval,
             timingProfile, bestTimingProfile,
             evaluationMode: summary?.evaluationMode,
+            usesRealizedPnl,
             entryDelayBars: summary?.entryDelayBars,
             missingPriceTrades: summary?.missingPriceTrades,
             targetExitedTrades: summary?.targetExitedTrades,

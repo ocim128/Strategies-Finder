@@ -71,7 +71,10 @@ import {
 } from "./backtest-edge-analysis";
 import { attachTradeTimingQuality } from "./trade-timing-quality";
 import { parseTimeToUnixSeconds } from "./time-normalization";
-import { hasActivePolymarketProtection } from "./polymarket-protection-settings";
+import {
+    hasActivePolymarketProtection,
+    resolveEffectivePolymarketProtectionSettings,
+} from "./polymarket-protection-settings";
 
 type CurrentBacktestExecution = {
     result: BacktestResult;
@@ -747,7 +750,17 @@ export class BacktestService {
         capitalSettings: CapitalSettings,
         requestContext: CurrentBacktestExecution["requestContext"]
     ): Promise<BacktestResult | null> {
-        if (!hasActivePolymarketProtection(settings) || state.currentInterval !== "1s") {
+        if (state.currentInterval !== "1s") {
+            return null;
+        }
+        const effectiveExitMode = resolveEffectivePolymarketExitMode({
+            requestedMode: settings.polymarketExitMode,
+            interval: state.currentInterval,
+            executionModel: settings.executionModel,
+            polymarketAnnotationEnabled: settings.polymarketAnnotationEnabled,
+        });
+        const protectionSettings = resolveEffectivePolymarketProtectionSettings(effectiveExitMode, settings);
+        if (!hasActivePolymarketProtection(protectionSettings ?? {})) {
             return null;
         }
 

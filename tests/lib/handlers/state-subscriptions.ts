@@ -50,9 +50,8 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
     const supportsSignalExit = interval === '1m'
         ? polymarketSettings.executionModel === 'next_open'
         : isOneSecondInterval && isPolymarketOneSecondSignalExitExecutionModel(polymarketSettings.executionModel);
-    const forcesOneSecondSignalExit = isOneSecondInterval && supportsSignalExit;
     const isSignalExit = supportsSignalExit
-        && (polymarketSettings.exitMode === 'signal_exit_same_event' || forcesOneSecondSignalExit);
+        && polymarketSettings.exitMode === 'signal_exit_same_event';
     const usesActualEntryMinute = polymarketSettings.entrySelectionMode === 'actual_entry_minute';
     const showsEntryBridgeControls = interval === '1m' && isNative5mSession && annotationEnabled && !isSignalExit;
 
@@ -89,16 +88,14 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
         ? Array.from(exitModeSelect.options).find((option) => option.value === 'signal_exit_same_event')
         : undefined;
     if (resolveHoldOption) {
-        resolveHoldOption.disabled = forcesOneSecondSignalExit;
-        resolveHoldOption.hidden = forcesOneSecondSignalExit;
+        resolveHoldOption.disabled = false;
+        resolveHoldOption.hidden = false;
     }
     if (signalExitOption) {
         signalExitOption.disabled = !supportsSignalExit;
     }
     if (exitModeSelect) {
-        if (forcesOneSecondSignalExit) {
-            exitModeSelect.value = 'signal_exit_same_event';
-        } else if (exitModeSelect.value === 'signal_exit_same_event' && !supportsSignalExit) {
+        if (exitModeSelect.value === 'signal_exit_same_event' && !supportsSignalExit) {
             exitModeSelect.value = 'resolve_hold';
         }
     }

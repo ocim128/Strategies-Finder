@@ -447,6 +447,7 @@ describe("Quick View Polymarket streak summary", () => {
             },
             polymarketTradeSummary: {
                 seriesId: "10684",
+                outcomeSymbol: "BTCUSDT",
                 outcomeInterval: "5m",
                 outcomeRowsLoaded: 1,
                 scoredTrades: 1,
@@ -498,6 +499,7 @@ describe("Quick View Polymarket streak summary", () => {
             },
             polymarketTradeSummary: {
                 seriesId: "10684",
+                outcomeSymbol: "BTCUSDT",
                 outcomeInterval: "5m",
                 outcomeRowsLoaded: 1,
                 scoredTrades: 1,
@@ -512,6 +514,134 @@ describe("Quick View Polymarket streak summary", () => {
 
         expect(content.innerHTML).to.contain("Polymarket Exp / Trade");
         expect(content.innerHTML).to.contain("+45.0c");
+    });
+
+    it("renders 1s resolve-hold summary performance when trade payout rows are not derivable", () => {
+        const html = (quickViewManager as any).buildPolymarketSection({
+            trades: [
+                makeTrade(1, null, {
+                    polymarketOutcome: {
+                        ...makeTrade(1, true).polymarketOutcome!,
+                        evaluationMode: "resolve_hold",
+                        isWin: null,
+                        isProfitable: true,
+                        marketEntryPrice: null,
+                        marketExitPrice: null,
+                        marketPnl: null,
+                        marketExitSource: "resolution",
+                    },
+                }),
+            ],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            marketContext: {
+                symbol: "BTCUSDT",
+                interval: "1s",
+            },
+            polymarketTradeSummary: {
+                seriesId: "10684",
+                outcomeSymbol: "BTCUSDT",
+                outcomeInterval: "5m",
+                outcomeRowsLoaded: 1,
+                scoredTrades: 1,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 0,
+                evaluationMode: "resolve_hold",
+                profitableTrades: 1,
+                losingTrades: 0,
+                neutralTrades: 0,
+                resolvedTrades: 1,
+                netPnl: 0.40,
+                expectancy: 0.40,
+                profitFactor: Infinity,
+                avgEntryPrice: 0.60,
+            },
+        } satisfies BacktestResult);
+
+        expect(html).to.contain("Resolve Hold (final outcome)");
+        expect(html).to.contain("Poly Profitable");
+        expect(html).to.contain("Poly Exp / Trade");
+        expect(html).to.contain("+40.0c");
+    });
+
+    it("does not refetch 1s resolve-hold pricing when summary performance already exists", async () => {
+        let fetchCount = 0;
+        globalThis.fetch = (async () => {
+            fetchCount++;
+            throw new Error("Quick View should reuse existing resolve-hold performance.");
+        }) as typeof fetch;
+
+        const enriched = await (quickViewManager as any).ensurePolymarketOutcomes({
+            trades: [
+                makeTrade(1, null, {
+                    polymarketOutcome: {
+                        ...makeTrade(1, true).polymarketOutcome!,
+                        evaluationMode: "resolve_hold",
+                        isWin: null,
+                        isProfitable: true,
+                        marketEntryPrice: null,
+                        marketExitPrice: null,
+                        marketPnl: null,
+                        marketExitSource: "resolution",
+                    },
+                }),
+            ],
+            netProfit: 0,
+            netProfitPercent: 0,
+            winRate: 0,
+            expectancy: 0,
+            avgTrade: 0,
+            profitFactor: 0,
+            maxDrawdown: 0,
+            maxDrawdownPercent: 0,
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            sharpeRatio: 0,
+            equityCurve: [],
+            marketContext: {
+                symbol: "BTCUSDT",
+                interval: "1s",
+            },
+            polymarketTradeSummary: {
+                seriesId: "10684",
+                outcomeSymbol: "BTCUSDT",
+                outcomeInterval: "5m",
+                outcomeRowsLoaded: 1,
+                scoredTrades: 1,
+                missingOutcomeTrades: 0,
+                unscoredTrades: 0,
+                evaluationMode: "resolve_hold",
+                profitableTrades: 1,
+                losingTrades: 0,
+                neutralTrades: 0,
+                resolvedTrades: 1,
+                netPnl: 0.40,
+                expectancy: 0.40,
+                profitFactor: Infinity,
+                avgEntryPrice: 0.60,
+            },
+        } satisfies BacktestResult);
+
+        expect(fetchCount).to.equal(0);
+        expect(enriched.polymarketTradeSummary?.evaluationMode).to.equal("resolve_hold");
+        expect(enriched.polymarketTradeSummary?.expectancy).to.equal(0.40);
+        expect(enriched.polymarketTradeSummary?.profitableTrades).to.equal(1);
     });
 
     it("labels native 5m runs as observed minute buckets instead of selected offsets", () => {
@@ -1226,7 +1356,7 @@ describe("Quick View Polymarket streak summary", () => {
         expect(html).to.contain("Entry Profit % | After Signal");
     });
 
-    it("coerces stale 1s resolve-hold annotations to signal-exit before rendering performance cards", async () => {
+    it("rebuilds stale 1s resolve-hold annotations without changing exit mode", async () => {
         const eventStartTs = 1_700_000_000;
         const tradeEntryTs = eventStartTs + 10;
         const tradeExitTs = eventStartTs + 20;
@@ -1411,14 +1541,14 @@ describe("Quick View Polymarket streak summary", () => {
         (quickViewManager as any).renderResults(enriched);
 
         expect(clobRequests).to.equal(1);
-        expect(enriched.polymarketTradeSummary?.evaluationMode).to.equal("signal_exit_same_event");
+        expect(enriched.polymarketTradeSummary?.evaluationMode).to.equal("resolve_hold");
         expect(enriched.polymarketTradeSummary?.backtestSlippageCents).to.equal(5);
-        expect(enriched.polymarketTradeSummary?.expectancy).to.be.closeTo(-0.07, 1e-9);
+        expect(enriched.polymarketTradeSummary?.expectancy).to.be.closeTo(0.40, 1e-9);
         expect(enriched.trades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.6);
-        expect(enriched.trades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.53);
+        expect(enriched.trades[0]?.polymarketOutcome?.marketExitPrice).to.equal(1);
         expect(content.innerHTML).to.contain("Polymarket Exp / Trade");
-        expect(content.innerHTML).to.contain("-7.0c");
-        expect(content.innerHTML).to.contain("Signal Exit (same event)");
+        expect(content.innerHTML).to.contain("+40.0c");
+        expect(content.innerHTML).to.contain("Resolve Hold (final outcome)");
     });
 
     it("rebuilds 1s CLOB signal-exit annotations for a futures-scoped Quick View result", async () => {
@@ -1436,10 +1566,13 @@ describe("Quick View Polymarket streak summary", () => {
         }
         (globalThis as { HTMLSelectElement?: typeof HTMLSelectElement }).HTMLSelectElement = FakeSelectElement as unknown as typeof HTMLSelectElement;
         const executionModelSelect = new FakeSelectElement("next_open");
+        const exitModeSelect = new FakeSelectElement("signal_exit_same_event");
         (globalThis as { document?: Document }).document = {
-            getElementById: (id: string) => id === "executionModel"
-                ? (executionModelSelect as unknown as HTMLElement)
-                : null,
+            getElementById: (id: string) => {
+                if (id === "executionModel") return executionModelSelect as unknown as HTMLElement;
+                if (id === "polymarketExitMode") return exitModeSelect as unknown as HTMLElement;
+                return null;
+            },
         } as Document;
 
         globalThis.fetch = (async (input) => {

@@ -31,6 +31,7 @@ import {
 import {
     clampPolymarketProtectionCents,
     hasActivePolymarketProtection,
+    resolveEffectivePolymarketProtectionSettings,
     type PolymarketProtectionSettingFields,
 } from "../polymarket-protection-settings";
 import { getPolymarketSidePrice } from "../polymarket-price-points";
@@ -524,6 +525,7 @@ export function evaluateSecondMarketTrades(args: {
     const fillSource = args.fillSource ?? "bid_ask";
     const entryDelayBars = clampPolymarketEntryDelayBars(args.entryDelayBars);
     const backtestSlippageCents = clampPolymarketBacktestSlippageCents(args.backtestSlippageCents, 0);
+    const protectionSettings = resolveEffectivePolymarketProtectionSettings(evaluationMode, args.protection);
     const results: SecondMarketTradeResult[] = [];
     const seenEvents = new Set<string>();
     const quoteIndex = buildQuoteIndex(args.quotes);
@@ -533,7 +535,7 @@ export function evaluateSecondMarketTrades(args: {
     const fixedLimitPrice = clampPolymarketPostSignalLimitEntryPriceCents(args.limitEntry?.priceCents) / 100;
     const configuredLimitPrice = limitEntryMode === "fixed_price" ? fixedLimitPrice : null;
     const limitExitEnabled = limitEntryEnabled && args.limitEntry?.exitEnabled === true;
-    const protectionEnabled = hasActivePolymarketProtection(args.protection ?? {});
+    const protectionEnabled = hasActivePolymarketProtection(protectionSettings ?? {});
 
     for (const trade of args.trades) {
         const entryTs = parseTimeToUnixSeconds(trade.entryTime);
@@ -809,7 +811,7 @@ export function evaluateSecondMarketTrades(args: {
                 entryPrice: entry.price,
                 startTs: entry.quoteTs,
                 eventEndTs: outcome.event_end_ts,
-                settings: args.protection,
+                settings: protectionSettings,
                 backtestSlippageCents,
                 latestAllowedTs: protectionLatestAllowedTs,
             })
@@ -944,7 +946,7 @@ export function evaluateSecondMarketTrades(args: {
             results,
             evaluationMode,
             args.limitEntry,
-            args.protection,
+            protectionSettings,
             allowMultipleTradesPerEvent,
             entryDelayBars,
             backtestSlippageCents

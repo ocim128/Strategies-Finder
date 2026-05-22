@@ -1,5 +1,6 @@
 import { parseInputNumber } from "./dom-input-readers";
 import { readBoolean, readNumber } from "./settings-parse-utils";
+import type { PolymarketExitMode } from "./polymarket-exit-mode";
 
 export const DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_ENABLED = false;
 export const DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_CENTS = 20;
@@ -59,4 +60,17 @@ export function hasActivePolymarketProtection(settings: Partial<PolymarketProtec
         settings.polymarketProtectionStopLossEnabled === true
         && stopLossCents > 0
     );
+}
+
+export function resolveEffectivePolymarketProtectionSettings(
+    exitMode: PolymarketExitMode,
+    settings: Partial<PolymarketProtectionSettingFields> | undefined
+): Partial<PolymarketProtectionSettingFields> | undefined {
+    if (exitMode !== "resolve_hold" || !settings) {
+        return settings;
+    }
+    return {
+        ...settings,
+        polymarketProtectionTakeProfitEnabled: false,
+    };
 }

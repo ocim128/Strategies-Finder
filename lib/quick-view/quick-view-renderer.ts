@@ -195,7 +195,7 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
   if (!summary) return '';
   const isSignalExit = summary.evaluationMode === "signal_exit_same_event";
   const isResolveHold = summary.evaluationMode === "resolve_hold";
-  const usesRealizedPnl = isSignalExit || summary.limitExitEnabled === true;
+  const usesRealizedPnl = summary.usesRealizedPnl === true || isSignalExit || summary.limitExitEnabled === true;
   const usesActualEntryMinute = summary.entrySelectionMode === "actual_entry_minute";
   const outcomeInterval = summary.outcomeInterval ?? "5m";
   const usesNativeLongSession = outcomeInterval !== "5m";

@@ -119,8 +119,8 @@ eq(
         polymarketAnnotationEnabled: true,
         requestedMode: "resolve_hold",
     }),
-    "signal_exit_same_event",
-    "1s + signal_close + requested resolve_hold \u2192 signal_exit_same_event"
+    "resolve_hold",
+    "1s + signal_close + requested resolve_hold \u2192 resolve_hold"
 );
 
 eq(
@@ -130,8 +130,8 @@ eq(
         polymarketAnnotationEnabled: true,
         requestedMode: "resolve_hold",
     }),
-    "signal_exit_same_event",
-    "1s + next_open + requested resolve_hold \u2192 signal_exit_same_event"
+    "resolve_hold",
+    "1s + next_open + requested resolve_hold \u2192 resolve_hold"
 );
 
 eq(
@@ -141,8 +141,8 @@ eq(
         polymarketAnnotationEnabled: true,
         requestedMode: "resolve_hold",
     }),
-    "signal_exit_same_event",
-    "1s + next_close + requested resolve_hold \u2192 signal_exit_same_event"
+    "resolve_hold",
+    "1s + next_close + requested resolve_hold \u2192 resolve_hold"
 );
 
 eq(

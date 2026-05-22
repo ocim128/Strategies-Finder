@@ -18,7 +18,8 @@ export function resolveEffectivePolymarketExitMode(args: {
     }
 
     if (normalizedInterval === "1s") {
-        return isPolymarketOneSecondSignalExitExecutionModel(executionModel)
+        return requestedMode === "signal_exit_same_event"
+            && isPolymarketOneSecondSignalExitExecutionModel(executionModel)
             ? "signal_exit_same_event"
             : "resolve_hold";
     }

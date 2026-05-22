@@ -179,6 +179,15 @@ describe("Finder manager logic", () => {
         })).to.equal("signal_exit_same_event");
     });
 
+    it("keeps finder polymarket exit mode on resolve_hold for supported 1s CLOB runs", () => {
+        expect(resolveFinderPolymarketExitMode({
+            requestedMode: "resolve_hold",
+            interval: "1s",
+            executionModel: "next_open",
+            polymarketAnnotationEnabled: true,
+        })).to.equal("resolve_hold");
+    });
+
     it("builds symbol-universe sort priority with deterministic fallbacks", () => {
         expect(resolveFinderUniverseSortPriority({
             primarySort: "profitableActiveRatio",

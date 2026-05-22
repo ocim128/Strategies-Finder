@@ -186,6 +186,89 @@ describe("second market shared evaluation", () => {
         expect(gammaRequests).to.equal(0);
     });
 
+    it("infers missing 1s resolve-hold outcomes from the final exact CLOB quote", async () => {
+        globalThis.fetch = (async (input) => {
+            const url = new URL(String(input), "http://localhost");
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), { status: 200 });
+            }
+            if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+                return new Response(JSON.stringify({ ok: true, rows: [] }), { status: 200 });
+            }
+            if (url.pathname === "/api/second-market/clob-quotes") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    quotes: [
+                        quote(1_700_000_010, 0.55, 0.53),
+                        quote(1_700_000_299, 0.99, 0.98),
+                    ],
+                }), { status: 200 });
+            }
+            throw new Error(`Unexpected fetch ${url.pathname}`);
+        }) as typeof fetch;
+
+        const loaded = await loadSecondMarketEvaluationContext({
+            symbol: "BTCUSDT",
+            startTs: 1_700_000_000,
+            endTs: 1_700_000_300,
+            includeGammaSnapshots: false,
+        });
+
+        expect(loaded?.outcomes[0]?.resolution_source).to.equal("second_market_clob_final_quote");
+
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([trade(1, 1_700_000_010, 1_700_000_020)]),
+            context: loaded!,
+            polymarketExitMode: "resolve_hold",
+        });
+
+        expect(evaluated.polymarketSummary.evaluationMode).to.equal("resolve_hold");
+        expect(evaluated.polymarketSummary.scoredTrades).to.equal(1);
+        expect(evaluated.polymarketSummary.netPnl).to.be.closeTo(0.45, 1e-9);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitSource).to.equal("resolution");
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.isWin).to.equal(true);
+    });
+
+    it("does not infer a final outcome from an ambiguous latest final CLOB quote", async () => {
+        globalThis.fetch = (async (input) => {
+            const url = new URL(String(input), "http://localhost");
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), { status: 200 });
+            }
+            if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+                return new Response(JSON.stringify({ ok: true, rows: [] }), { status: 200 });
+            }
+            if (url.pathname === "/api/second-market/clob-quotes") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    quotes: [
+                        quote(1_700_000_299, 0.99, 0.97),
+                        quote(1_700_000_300, 0.51, 0.49),
+                    ],
+                }), { status: 200 });
+            }
+            throw new Error(`Unexpected fetch ${url.pathname}`);
+        }) as typeof fetch;
+
+        const loaded = await loadSecondMarketEvaluationContext({
+            symbol: "BTCUSDT",
+            startTs: 1_700_000_000,
+            endTs: 1_700_000_300,
+            includeGammaSnapshots: false,
+        });
+
+        expect(loaded?.outcomes[0]?.resolution_source).to.equal("second_market_clob_unresolved");
+
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([trade(1, 1_700_000_010, 1_700_000_020)]),
+            context: loaded!,
+            polymarketExitMode: "resolve_hold",
+        });
+
+        expect(evaluated.polymarketSummary.scoredTrades).to.equal(0);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitSource).to.equal("missing");
+    });
+
     it("defaults reusable 1s annotations to signal-exit mode", () => {
         const evaluated = evaluateSecondMarketBacktest({
             result: result([trade(1, 1_700_000_010, 1_700_000_020)]),
@@ -227,6 +310,78 @@ describe("second market shared evaluation", () => {
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitSource).to.equal("signal");
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.58);
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.isWin).to.equal(null);
+    });
+
+    it("holds supported 1s CLOB trades to resolution when resolve-hold mode is selected", () => {
+        const signalTrade = trade(1, 1_700_000_010, 1_700_000_020);
+        signalTrade.exitReason = "signal";
+
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([signalTrade]),
+            context: context([
+                quote(1_700_000_010, 0.55, 0.53),
+                quote(1_700_000_020, 0.60, 0.58),
+            ]),
+            polymarketExitMode: "resolve_hold",
+        });
+
+        expect(evaluated.polymarketSummary.evaluationMode).to.equal("resolve_hold");
+        expect(evaluated.polymarketSummary.netPnl).to.be.closeTo(0.45, 1e-9);
+        expect(evaluated.polymarketEval.evaluationMode).to.equal("resolve_hold");
+        expect(evaluated.polymarketEval.breakEvenWinRate).to.equal(0.55);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitSource).to.equal("resolution");
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitPrice).to.equal(1);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.isWin).to.equal(true);
+    });
+
+    it("ignores Polymarket take-profit protection in 1s resolve-hold mode", () => {
+        const downOutcome = outcome();
+        downOutcome.resolved_outcome_up = 0;
+
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([trade(1, 1_700_000_010, 1_700_000_020)]),
+            context: {
+                ...context([
+                    quote(1_700_000_010, 0.55, 0.53),
+                    quote(1_700_000_020, 0.82, 0.80),
+                ]),
+                outcomes: [downOutcome],
+            },
+            polymarketExitMode: "resolve_hold",
+            protection: {
+                polymarketProtectionTakeProfitEnabled: true,
+                polymarketProtectionTakeProfitCents: 20,
+            },
+        });
+
+        expect(evaluated.polymarketSummary.evaluationMode).to.equal("resolve_hold");
+        expect(evaluated.polymarketSummary.protectionTakeProfitEnabled).to.equal(undefined);
+        expect(evaluated.polymarketSummary.protectionTakeProfitExitedTrades).to.equal(0);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitSource).to.equal("resolution");
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0);
+        expect(evaluated.polymarketSummary.netPnl).to.be.closeTo(-0.55, 1e-9);
+    });
+
+    it("keeps Polymarket stop-loss protection active in 1s resolve-hold mode", () => {
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([trade(1, 1_700_000_010, 1_700_000_020)]),
+            context: context([
+                quote(1_700_000_010, 0.55, 0.53),
+                quote(1_700_000_020, 0.32, 0.30),
+            ]),
+            polymarketExitMode: "resolve_hold",
+            protection: {
+                polymarketProtectionStopLossEnabled: true,
+                polymarketProtectionStopLossCents: 20,
+            },
+        });
+
+        expect(evaluated.polymarketSummary.evaluationMode).to.equal("resolve_hold");
+        expect(evaluated.polymarketSummary.protectionStopLossEnabled).to.equal(true);
+        expect(evaluated.polymarketSummary.protectionStopLossExitedTrades).to.equal(1);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitSource).to.equal("protection_stop_loss");
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketExitPrice).to.equal(0.30);
+        expect(evaluated.polymarketSummary.netPnl).to.be.closeTo(-0.25, 1e-9);
     });
 
     it("applies backtest-only Polymarket slippage against quote entry and signal exit fills", () => {

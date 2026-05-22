@@ -14,6 +14,7 @@ import {
 import { buildPolymarketOutcomeBase } from "../polymarket-outcome-annotation";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { evaluateSecondMarketTrades, SECOND_MARKET_UNRESOLVED_OUTCOME_SOURCE } from "./backtest";
+import { getClobQuoteTimeSec } from "./alignment";
 import {
     loadSecondMarketClobQuotesWithStats,
     loadSecondMarketGammaSnapshots,
@@ -121,12 +122,74 @@ function hasResolvedOutcome(outcome: PolymarketOutcomeRow): boolean {
     return outcome.resolution_source !== SECOND_MARKET_UNRESOLVED_OUTCOME_SOURCE;
 }
 
+function getFiniteProbability(value: number | null | undefined): number | null {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1
+        ? value
+        : null;
+}
+
+function inferYesProbabilityFromQuote(quote: PolymarketClob1sQuoteRow): number | null {
+    const yesMid = getFiniteProbability(quote.yes_mid);
+    if (yesMid !== null) return yesMid;
+    const yesBid = getFiniteProbability(quote.yes_bid);
+    const yesAsk = getFiniteProbability(quote.yes_ask);
+    if (yesBid !== null && yesAsk !== null) return (yesBid + yesAsk) / 2;
+    const noMid = getFiniteProbability(quote.no_mid);
+    if (noMid !== null) return 1 - noMid;
+    const noBid = getFiniteProbability(quote.no_bid);
+    const noAsk = getFiniteProbability(quote.no_ask);
+    if (noBid !== null && noAsk !== null) return 1 - ((noBid + noAsk) / 2);
+    return null;
+}
+
+function maybeApplyInferredFinalOutcome(
+    outcome: PolymarketOutcomeRow,
+    quote: PolymarketClob1sQuoteRow,
+    latestByKey: Map<string, { quoteTs: number; sourceTsMs: number }>
+): void {
+    const quoteTs = getClobQuoteTimeSec(quote);
+    if (quoteTs === null) return;
+    const ageSec = quote.event_end_ts - quoteTs;
+    if (ageSec < 0 || ageSec > 1) return;
+
+    const key = `${quote.series_id}:${quote.event_start_ts}:${quote.yes_token_id}`;
+    const sourceTsMs = quote.source_ts_ms ?? 0;
+    const latest = latestByKey.get(key);
+    if (latest && (
+        latest.quoteTs > quoteTs
+        || (latest.quoteTs === quoteTs && latest.sourceTsMs >= sourceTsMs)
+    )) {
+        return;
+    }
+
+    latestByKey.set(key, { quoteTs, sourceTsMs });
+    outcome.updated_at = Math.max(outcome.updated_at, quote.updated_at);
+
+    const yesProbability = inferYesProbabilityFromQuote(quote);
+    const resolvedOutcomeUp = yesProbability === null
+        ? null
+        : yesProbability > 0.5
+            ? 1
+            : yesProbability < 0.5
+                ? 0
+                : null;
+    if (resolvedOutcomeUp === null) {
+        outcome.resolved_outcome_up = 0;
+        outcome.resolution_source = SECOND_MARKET_UNRESOLVED_OUTCOME_SOURCE;
+        return;
+    }
+
+    outcome.resolved_outcome_up = resolvedOutcomeUp;
+    outcome.resolution_source = "second_market_clob_final_quote";
+}
+
 function buildOutcomeRowsFromClobQuotes(quotes: readonly PolymarketClob1sQuoteRow[]): PolymarketOutcomeRow[] {
     const rows = new Map<string, PolymarketOutcomeRow>();
+    const latestInferredFinalQuoteByKey = new Map<string, { quoteTs: number; sourceTsMs: number }>();
     for (const quote of quotes) {
         const key = `${quote.series_id}:${quote.event_start_ts}:${quote.yes_token_id}`;
-        if (rows.has(key)) continue;
-        rows.set(key, {
+        const existing = rows.get(key);
+        const outcome = existing ?? {
             series_id: quote.series_id,
             event_slug: quote.market_slug,
             market_slug: quote.market_slug,
@@ -143,7 +206,9 @@ function buildOutcomeRowsFromClobQuotes(quotes: readonly PolymarketClob1sQuoteRo
             resolved_outcome_up: 0,
             resolution_source: SECOND_MARKET_UNRESOLVED_OUTCOME_SOURCE,
             updated_at: quote.updated_at,
-        });
+        };
+        if (!existing) rows.set(key, outcome);
+        maybeApplyInferredFinalOutcome(outcome, quote, latestInferredFinalQuoteByKey);
     }
     return [...rows.values()].sort((left, right) => left.event_start_ts - right.event_start_ts);
 }
@@ -456,13 +521,15 @@ export function evaluateSecondMarketBacktest(args: {
     const scoredToOriginal = new Map<Trade, Trade>(
         tradePairs.map((pair) => [pair.scored, pair.original] as const)
     );
-    const evaluationMode = "signal_exit_same_event";
+    const evaluationMode = args.polymarketExitMode ?? "signal_exit_same_event";
     const evaluated = evaluateSecondMarketTrades({
         trades: tradePairs.map((pair) => pair.scored),
         outcomes: args.context.outcomes,
         quotes: args.context.quotes,
         evaluationMode,
-        allowMultipleTradesPerEvent: args.polymarketSignalExitAllowMultipleTradesPerEvent,
+        allowMultipleTradesPerEvent: evaluationMode === "signal_exit_same_event"
+            ? args.polymarketSignalExitAllowMultipleTradesPerEvent
+            : false,
         mode: "strict",
         fillSource: "bid_ask",
         entryPriceFilterCents: args.entryPriceFilterCents,
