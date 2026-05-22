@@ -22,6 +22,13 @@ import {
     type PolymarketLimitEntryPriceMode,
     type PolymarketLimitExitPriceMode,
 } from "./polymarket-post-signal-limit-entry";
+import {
+    DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_CENTS,
+    DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_ENABLED,
+    DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_CENTS,
+    DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_ENABLED,
+    clampPolymarketProtectionCents,
+} from "./polymarket-protection-settings";
 
 export interface PolymarketDomSettings {
     entryOffset: number | null;
@@ -43,6 +50,10 @@ export interface PolymarketDomSettings {
     postSignalLimitExitMode: PolymarketLimitExitPriceMode;
     postSignalLimitExitPriceCents: number;
     postSignalLimitExitOffsetCents: number;
+    protectionTakeProfitEnabled: boolean;
+    protectionTakeProfitCents: number;
+    protectionStopLossEnabled: boolean;
+    protectionStopLossCents: number;
     executionModel: ExecutionModel | undefined;
 }
 
@@ -90,6 +101,10 @@ export function resolvePolymarketDomSettings(doc: Document = document): Polymark
     const limitExitModeSelect = readSelectElement(doc, "polymarketPostSignalLimitExitMode");
     const limitExitPriceInput = readInputElement(doc, "polymarketPostSignalLimitExitPriceCents");
     const limitExitOffsetInput = readInputElement(doc, "polymarketPostSignalLimitExitOffsetCents");
+    const protectionTakeProfitToggle = readInputElement(doc, "polymarketProtectionTakeProfitEnabled");
+    const protectionTakeProfitInput = readInputElement(doc, "polymarketProtectionTakeProfitCents");
+    const protectionStopLossToggle = readInputElement(doc, "polymarketProtectionStopLossEnabled");
+    const protectionStopLossInput = readInputElement(doc, "polymarketProtectionStopLossCents");
     const executionModelSelect = readSelectElement(doc, "executionModel");
 
     const rawEntryOffset = entryOffsetSelect ? Number(entryOffsetSelect.value) : null;
@@ -134,6 +149,20 @@ export function resolvePolymarketDomSettings(doc: Document = document): Polymark
         ),
         postSignalLimitExitOffsetCents: clampPolymarketPostSignalLimitOffsetCents(
             limitExitOffsetInput?.value ?? DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_OFFSET_CENTS
+        ),
+        protectionTakeProfitEnabled: protectionTakeProfitToggle
+            ? protectionTakeProfitToggle.checked
+            : DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_ENABLED,
+        protectionTakeProfitCents: clampPolymarketProtectionCents(
+            protectionTakeProfitInput?.value ?? DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_CENTS,
+            DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_CENTS
+        ),
+        protectionStopLossEnabled: protectionStopLossToggle
+            ? protectionStopLossToggle.checked
+            : DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_ENABLED,
+        protectionStopLossCents: clampPolymarketProtectionCents(
+            protectionStopLossInput?.value ?? DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_CENTS,
+            DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_CENTS
         ),
         executionModel: executionModelSelect ? parseExecutionModel(executionModelSelect.value) : undefined,
     };

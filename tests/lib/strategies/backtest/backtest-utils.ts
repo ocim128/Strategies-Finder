@@ -13,6 +13,31 @@ export function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
 }
 
+function hasActiveChartTakeProfitOrStopLoss(config: Pick<NormalizedSettings,
+    'riskMode'
+    | 'stopLossAtr'
+    | 'takeProfitAtr'
+    | 'stopLossEnabled'
+    | 'stopLossPercent'
+    | 'takeProfitEnabled'
+    | 'takeProfitPercent'
+    | 'historicalLevelTakeProfitEnabled'
+    | 'historicalLevelStopLossEnabled'
+    | 'historicalLevelLookbackBars'
+>): boolean {
+    if (
+        (config.historicalLevelTakeProfitEnabled || config.historicalLevelStopLossEnabled)
+        && config.historicalLevelLookbackBars > 0
+    ) {
+        return true;
+    }
+    if (config.riskMode === 'percentage') {
+        return (config.stopLossEnabled && config.stopLossPercent > 0)
+            || (config.takeProfitEnabled && config.takeProfitPercent > 0);
+    }
+    return config.stopLossAtr > 0 || config.takeProfitAtr > 0;
+}
+
 export function normalizeBacktestSettings(settings?: BacktestSettings): NormalizedSettings {
     const rawExecutionModel = settings?.executionModel;
     const executionModel = rawExecutionModel === 'next_open' || rawExecutionModel === 'next_close' || rawExecutionModel === 'signal_close'
@@ -20,7 +45,7 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         : 'signal_close';
     const riskMode = settings?.riskMode === 'percentage' ? 'percentage' : 'simple';
 
-    return {
+    const config: NormalizedSettings = {
         atrPeriod: Math.max(1, toNumberOr(settings?.atrPeriod, 14)),
         stopLossAtr: Math.max(0, toNumberOr(settings?.stopLossAtr, 0)),
         takeProfitAtr: Math.max(0, toNumberOr(settings?.takeProfitAtr, 0)),
@@ -55,6 +80,7 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         riskWinStreakStopLossEnabled: false,
         riskWinStreakStopLossAfterWins: 3,
         riskWinStreakStopLossPercent: 0,
+        disableSignalExits: false,
         flipAfterConsecutiveLosses: Math.max(1, Math.round(toNumberOr(settings?.flipAfterConsecutiveLosses, 2))),
         flipCooldownTrades: Math.max(0, Math.round(toNumberOr(settings?.flipCooldownTrades, 0))),
         minTradesBeforeFirstFlip: Math.max(0, Math.round(toNumberOr(settings?.minTradesBeforeFirstFlip, 0))),
@@ -73,6 +99,8 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         slippageBps: Math.max(0, toNumberOr(settings?.slippageBps, 0)),
         maxOpenTrades: clamp(Math.round(toNumberOr(settings?.maxOpenTrades, 1)), 1, 2),
     };
+    config.disableSignalExits = settings?.disableSignalExits === true && hasActiveChartTakeProfitOrStopLoss(config);
+    return config;
 }
 
 export function timeKey(time: Time): string {

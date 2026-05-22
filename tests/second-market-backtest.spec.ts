@@ -115,6 +115,74 @@ describe("second market backtest evaluator", () => {
         expect(evaluated.summary.scoredTrades).to.equal(1);
     });
 
+    it("exits at Polymarket take-profit before the chart signal exit", () => {
+        const evaluated = evaluateSecondMarketTrades({
+            trades: [trade(1_700_000_010, 1_700_000_040)],
+            outcomes: [outcome()],
+            quotes: [
+                quote(1_700_000_010, 0.50, 0.49),
+                quote(1_700_000_020, 0.58, 0.56),
+                quote(1_700_000_040, 0.60, 0.59),
+            ],
+            evaluationMode: "signal_exit_same_event",
+            mode: "strict",
+            protection: {
+                polymarketProtectionTakeProfitEnabled: true,
+                polymarketProtectionTakeProfitCents: 5,
+            },
+        });
+
+        expect(evaluated.results[0].exitSource).to.equal("protection_take_profit");
+        expect(evaluated.results[0].exitPrice).to.equal(0.55);
+        expect(evaluated.summary.protectionTakeProfitExitedTrades).to.equal(1);
+        expect(evaluated.summary.signalExitedTrades).to.equal(0);
+    });
+
+    it("does not count Polymarket protection exits after the chart trade already closed", () => {
+        const closedBeforeProtection = trade(1_700_000_010, 1_700_000_020);
+        closedBeforeProtection.exitReason = "take_profit";
+        const evaluated = evaluateSecondMarketTrades({
+            trades: [closedBeforeProtection],
+            outcomes: [outcome()],
+            quotes: [
+                quote(1_700_000_010, 0.50, 0.49),
+                quote(1_700_000_020, 0.53, 0.52),
+                quote(1_700_000_030, 0.58, 0.56),
+            ],
+            evaluationMode: "signal_exit_same_event",
+            mode: "strict",
+            protection: {
+                polymarketProtectionTakeProfitEnabled: true,
+                polymarketProtectionTakeProfitCents: 5,
+            },
+        });
+
+        expect(evaluated.results[0].exitSource).to.equal("resolution");
+        expect(evaluated.summary.protectionTakeProfitExitedTrades).to.equal(0);
+    });
+
+    it("exits at Polymarket stop-loss using the sell-side quote", () => {
+        const evaluated = evaluateSecondMarketTrades({
+            trades: [trade(1_700_000_010, 1_700_000_040)],
+            outcomes: [outcome()],
+            quotes: [
+                quote(1_700_000_010, 0.50, 0.49),
+                quote(1_700_000_020, 0.45, 0.43),
+                quote(1_700_000_040, 0.60, 0.59),
+            ],
+            evaluationMode: "signal_exit_same_event",
+            mode: "strict",
+            protection: {
+                polymarketProtectionStopLossEnabled: true,
+                polymarketProtectionStopLossCents: 5,
+            },
+        });
+
+        expect(evaluated.results[0].exitSource).to.equal("protection_stop_loss");
+        expect(evaluated.results[0].exitPrice).to.equal(0.43);
+        expect(evaluated.summary.protectionStopLossExitedTrades).to.equal(1);
+    });
+
     it("matches quotes by YES token when legacy outcome rows do not carry a NO token", () => {
         const legacyOutcome = {
             ...outcome(),

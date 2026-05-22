@@ -31,7 +31,7 @@ export interface Trade {
     size: number;
     fees?: number;
     /** Exit reason: how the trade was closed */
-    exitReason?: 'signal' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'time_stop' | 'partial' | 'probation_fail' | 'end_of_data';
+    exitReason?: 'signal' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'time_stop' | 'partial' | 'probation_fail' | 'end_of_data' | 'polymarket_take_profit' | 'polymarket_stop_loss';
     /** Stop-loss price level for the active position targets when available */
     stopLossPrice?: number | null;
     /** Take-profit price level for the active position targets when available */
@@ -281,6 +281,8 @@ export interface BacktestSettings {
     riskWinStreakStopLossAfterWins?: number;
     /** Override stop loss % applied after the configured win streak. 0 disables the feature. */
     riskWinStreakStopLossPercent?: number;
+    /** Ignore opposite strategy signals as exits when chart TP or SL risk exits are active. */
+    disableSignalExits?: boolean;
 
     trendEmaPeriod?: number;
     trendEmaSlopeBars?: number;
@@ -358,6 +360,14 @@ export interface BacktestSettings {
     polymarketPostSignalLimitExitPriceCents?: number;
     /** Target-exit offset above the filled entry price, in cents. */
     polymarketPostSignalLimitExitOffsetCents?: number;
+    /** Backtest/live Polymarket side-price take-profit trigger. */
+    polymarketProtectionTakeProfitEnabled?: boolean;
+    /** Side-price cents above Polymarket entry used for the take-profit trigger. */
+    polymarketProtectionTakeProfitCents?: number;
+    /** Backtest/live Polymarket side-price stop-loss trigger. */
+    polymarketProtectionStopLossEnabled?: boolean;
+    /** Side-price cents below Polymarket entry used for the stop-loss trigger. */
+    polymarketProtectionStopLossCents?: number;
     /** Resolved secondary symbol for cross-symbol strategies. */
     crossSymbolSecondary?: string;
 }

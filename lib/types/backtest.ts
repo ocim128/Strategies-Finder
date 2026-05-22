@@ -36,6 +36,7 @@ export interface NormalizedSettings {
     riskWinStreakStopLossEnabled: boolean;
     riskWinStreakStopLossAfterWins: number;
     riskWinStreakStopLossPercent: number;
+    disableSignalExits: boolean;
     flipAfterConsecutiveLosses: number;
     flipCooldownTrades: number;
     minTradesBeforeFirstFlip: number;

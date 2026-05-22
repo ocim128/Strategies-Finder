@@ -357,6 +357,12 @@ export async function runSecondMarketFinder(
                     entryCutoffEnabled: settings.polymarketEntryCutoffEnabled,
                     entryCutoffSeconds: settings.polymarketEntryCutoffSeconds,
                     limitEntry,
+                    protection: {
+                        polymarketProtectionTakeProfitEnabled: settings.polymarketProtectionTakeProfitEnabled,
+                        polymarketProtectionTakeProfitCents: settings.polymarketProtectionTakeProfitCents,
+                        polymarketProtectionStopLossEnabled: settings.polymarketProtectionStopLossEnabled,
+                        polymarketProtectionStopLossCents: settings.polymarketProtectionStopLossCents,
+                    },
                 });
 
                 processedCount++;

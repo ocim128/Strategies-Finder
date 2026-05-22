@@ -33,7 +33,9 @@ If you want to score a strategy against resolved Polymarket crypto events:
   - `signal_exit_same_event` is effective on `1m` + `next_open` using locally cached Polymarket price points, and on supported `1s` BTCUSDT/XRPUSDT CLOB runs using `signal_close`, `next_open`, or `next_close` exact-second bid/ask rows
 - optionally set `Polymarket Entry Price Filter`; for example, `20` skips trades whose selected Polymarket entry price is at or below 20c or at or above 80c
 - optionally enable `Polymarket Entry Cutoff` in Backtest Realism; it defaults off, and when enabled the seconds field defaults to `15`
+- on supported `1s` CLOB runs, optionally enable Polymarket Take Profit and/or Stop Loss. These are cent offsets from the bought YES/NO side entry price; TP fills at the target limit price, SL fills at the first sell-side quote after entry that reaches the stop threshold.
 - optional for native `5m` outcome sessions, including supported `1s` CLOB runs: enable `Post-Signal Limit Entry` to require the selected YES/NO side to trade at or below the configured limit price after the chart entry signal and before the event's final minute; on supported `1s` CLOB runs, `stale_signal_price` uses the original chart-entry quote as the limit and begins checking after `polymarketEntryDelayBars`
+- `Disable Exit Signal` lives in Risk Management, not Polymarket. It is effective only when chart TP or SL is active and lets chart entries continue to be signal-based while exits come from chart risk exits or forced Polymarket protective exits.
 
 If you want to manually paper-trade the latest still-open backtest trade:
 
@@ -63,7 +65,9 @@ If you want Execution Lab live trading:
 - live entries buy the same YES/NO side accepted by the paper decision path
 - paper/live entries use the Backtest Realism `Polymarket Entry Cutoff` toggle; when enabled, entries inside that event-close window are skipped in paper and rejected as `event_too_close_to_close` in live if the current clock has crossed the same cutoff
 - for `signal_close` and `next_close` 1s runs, Execution Lab paper fills use the quote one second after the chart candle timestamp, matching the close-based CLOB scoring contract
+- Execution Lab paper applies the same Polymarket TP/SL settings to open paper positions. A TP/SL paper exit queues the normal tracked-share live exit when Live Trade is active.
 - live exits sell tracked filled shares for the same token when the matching paper trade emits `paper_exit`
+- current live exits are taker sells through the existing executor request. A resting sell-limit TP and order-status polling are not implemented in this repo until the local executor boundary exposes that capability.
 - browser code must never receive private keys; it sends only request intent to the local executor endpoint
 
 If you want to author 1s Polymarket-aware strategies:
@@ -113,6 +117,8 @@ Important behavior:
 - stores the applied evaluation mode on `BacktestResult.polymarketTradeSummary.evaluationMode`
 - stores the applied native session on `BacktestResult.polymarketTradeSummary.outcomeInterval`
 - stores post-signal limit-entry attempts, fills, misses, duplicate attempts, fill rate, wait time, average entry improvement, and optional target-exit counts when the overlay is enabled
+- stores Polymarket protective TP/SL exits as `marketExitSource = protection_take_profit` or `protection_stop_loss`, with summary counts on `protectionTakeProfitExitedTrades` and `protectionStopLossExitedTrades`
+- manual supported `1s` backtests replay Polymarket protective exits as chart trade exits with `exitReason = polymarket_take_profit` or `polymarket_stop_loss`, so later chart entries can occur after the Polymarket leg has exited
 
 Core files:
 
@@ -194,6 +200,7 @@ Important behavior:
 - the Backtest Realism `Polymarket Entry Cutoff` toggle is applied before paper entries are accepted, so Execution Lab paper PnL and live eligibility use the same event-close cutoff when the toggle is enabled
 - UI or fallback `exchange_min` sizing allows live entries to auto-size to the minimum valid Polymarket order, still capped by the effective Strategy Finder cap and `MAX_ORDER_SIZE_USDC`
 - exit requests sell the tracked filled shares of the same token with `minPrice` floored by the configured exit slippage against the lower of paper exit price and actual live entry fill
+- Polymarket TP/SL paper exits use the same tracked-share taker exit request path. This is intentionally not a resting sell-limit TP until the local executor supports sell-limit placement and fill reconciliation.
 - posted or delayed limit entries remain pending until the executor reports matched/partial filled shares, or until an exit-triggered targeted cancel returns `not_canceled`; the latter is promoted to a provisional live position so the normal exit sell is attempted
 - limit cancel-on-exit targets known posted Strategy Finder order ids by default; broad account cancellation requires explicit scope configuration and is shown in UI status and JSONL logs
 - if a paper exit is expected but the exact second-market exit quote is missing, a matching tracked live position still queues an exit using the latest same-event bid as the first floor reference when available
@@ -260,6 +267,8 @@ Behavior:
 - for supported `1s` CLOB runs, the entry and signal-exit fills use strict exact-second bid/ask quotes from the second-market DB; `next_open` uses the chart trade timestamp directly, while `signal_close` and `next_close` use one second after the chart candle timestamp because Binance `1s` candles are stored by open time
 - supported `1s` Finder runs surface local CLOB quote truncation separately from low exact-second quote coverage
 - `polymarketEntryDelayBars` is a research-only `1s` CLOB annotation delay; when set to `N`, the chart trade stays at the same timestamp but the Polymarket entry quote is priced `N` seconds after the modeled chart entry
+- Polymarket protective TP/SL applies after the entry quote and before the modeled chart trade exit or event resolution. If TP and SL both appear on the same quote timestamp, SL wins because the local data cannot prove intrasecond ordering.
+- TP protection fills at `entryPrice + polymarketProtectionTakeProfitCents / 100`, capped below `1.00`; SL protection fills at the observed sell-side quote when it reaches `entryPrice - polymarketProtectionStopLossCents / 100`.
 - `polymarketBacktestSlippageCents` is a backtest-only adverse fill adjustment; entries pay that many cents more and modeled exits receive that many cents less
 - post-signal limit entries keep the filled limit price, and filled target exits keep the target price; quote-style signal exits and resolve-hold settlement exits apply the backtest slippage adjustment
 - example: if the opposite chart signal is detected on the `15:02` candle, the modeled chart exit is `15:03:00`, so the Polymarket exit uses the latest local quote at or before `15:03:00`
@@ -563,6 +572,10 @@ User-facing controls live in the Backtest Realism section:
 - `polymarketPostSignalLimitExitMode`
 - `polymarketPostSignalLimitExitPriceCents`
 - `polymarketPostSignalLimitExitOffsetCents`
+- `polymarketProtectionTakeProfitEnabled`
+- `polymarketProtectionTakeProfitCents`
+- `polymarketProtectionStopLossEnabled`
+- `polymarketProtectionStopLossCents`
 
 Current UI rules:
 
@@ -574,6 +587,7 @@ Current UI rules:
 - `polymarketSignalExitAllowMultipleTradesPerEvent` only shows when annotation is enabled and signal-exit mode is active
 - `polymarketEntryPriceFilterCents` shows when annotation is enabled
 - `polymarketBacktestSlippageCents` shows when annotation is enabled
+- `polymarketProtectionTakeProfit*` and `polymarketProtectionStopLoss*` rows show when annotation is enabled on a `1s` chart
 - `polymarketEntryDelayBars` only shows on `1s` charts with a supported CLOB scoring execution model
 - `polymarketEntrySelectionMode` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, and the selected exit mode is not `signal_exit_same_event`
 - `polymarketEntryOffset` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, the selected exit mode is not `signal_exit_same_event`, and entry selection is `fixed_offset`
@@ -630,6 +644,7 @@ Endpoint behavior:
 - endpoint Preview / Copy auto-enable Polymarket annotation for supported runs
 - endpoint request building strips `polymarketExitMode`
 - endpoint request building strips post-signal limit-entry and target-exit settings
+- endpoint request building strips Polymarket protective TP/SL settings
 - endpoint execution therefore stays on `resolve_hold`
 
 Relevant files:

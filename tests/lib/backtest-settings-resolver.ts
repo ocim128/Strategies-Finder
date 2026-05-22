@@ -34,6 +34,14 @@ import {
     DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_OFFSET_CENTS,
     resolvePolymarketPostSignalLimitSettingFields,
 } from "./polymarket-post-signal-limit-entry";
+import {
+    DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_CENTS,
+    DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_ENABLED,
+    DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_CENTS,
+    DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_ENABLED,
+    clampPolymarketProtectionCents,
+    resolvePolymarketProtectionSettingFields,
+} from "./polymarket-protection-settings";
 import { ADAPTIVE_TAKE_PROFIT_DEFAULTS, resolveTakeProfitMode } from "./take-profit-settings";
 
 export const CAPITAL_DEFAULTS = Object.freeze({
@@ -77,6 +85,7 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     riskWinStreakStopLossEnabled: false,
     riskWinStreakStopLossAfterWins: 3,
     riskWinStreakStopLossPercent: 0,
+    disableSignalExits: false,
     marketMode: "all" as MarketMode,
     tradeDirection: "short" as TradeDirection,
     invertSignals: false,
@@ -109,6 +118,10 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     polymarketPostSignalLimitExitMode: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_MODE,
     polymarketPostSignalLimitExitPriceCents: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_PRICE_CENTS,
     polymarketPostSignalLimitExitOffsetCents: DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_EXIT_OFFSET_CENTS,
+    polymarketProtectionTakeProfitEnabled: DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_ENABLED,
+    polymarketProtectionTakeProfitCents: DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_CENTS,
+    polymarketProtectionStopLossEnabled: DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_ENABLED,
+    polymarketProtectionStopLossCents: DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_CENTS,
     crossSymbolSecondary: "",
 });
 
@@ -155,7 +168,9 @@ type NumericResolverKey =
     | "strategyTimeframeMinutes"
     | "polymarketEntryDelayBars"
     | "polymarketBacktestSlippageCents"
-    | "polymarketEntryCutoffSeconds";
+    | "polymarketEntryCutoffSeconds"
+    | "polymarketProtectionTakeProfitCents"
+    | "polymarketProtectionStopLossCents";
 
 type BooleanResolverKey =
     | "stopLossEnabled"
@@ -168,7 +183,10 @@ type BooleanResolverKey =
     | "invertSignals"
     | "allowSameBarExit"
     | "strategyTimeframeEnabled"
-    | "polymarketEntryCutoffEnabled";
+    | "polymarketEntryCutoffEnabled"
+    | "disableSignalExits"
+    | "polymarketProtectionTakeProfitEnabled"
+    | "polymarketProtectionStopLossEnabled";
 
 type NumericResolverRule = {
     key: NumericResolverKey;
@@ -286,6 +304,20 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
         key: "polymarketEntryCutoffSeconds",
         resolve: (raw) => clampPolymarketEntryCutoffSeconds(raw["polymarketEntryCutoffSeconds"]),
     },
+    {
+        key: "polymarketProtectionTakeProfitCents",
+        resolve: (raw) => clampPolymarketProtectionCents(
+            raw["polymarketProtectionTakeProfitCents"],
+            EFFECTIVE_BACKTEST_DEFAULTS.polymarketProtectionTakeProfitCents
+        ),
+    },
+    {
+        key: "polymarketProtectionStopLossCents",
+        resolve: (raw) => clampPolymarketProtectionCents(
+            raw["polymarketProtectionStopLossCents"],
+            EFFECTIVE_BACKTEST_DEFAULTS.polymarketProtectionStopLossCents
+        ),
+    },
 ] as const;
 
 const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
@@ -315,6 +347,9 @@ const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
     { key: "allowSameBarExit", keys: ["allowSameBarExit", "allowSameBarExitToggle"] },
     { key: "strategyTimeframeEnabled", keys: ["strategyTimeframeEnabled", "strategyTimeframeToggle"] },
     { key: "polymarketEntryCutoffEnabled", keys: ["polymarketEntryCutoffEnabled", "polymarketEntryCutoffToggle"] },
+    { key: "disableSignalExits", keys: ["disableSignalExits"] },
+    { key: "polymarketProtectionTakeProfitEnabled", keys: ["polymarketProtectionTakeProfitEnabled"] },
+    { key: "polymarketProtectionStopLossEnabled", keys: ["polymarketProtectionStopLossEnabled"] },
 ] as const;
 
 function resolveNumericSettingRules(
@@ -381,6 +416,7 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "riskMinHoldToggle",
     "riskMaxHoldBars",
     "riskMaxHoldToggle",
+    "disableSignalExits",
     "tradeDirection",
     "invertSignalsToggle",
     "flipAfterConsecutiveLosses",
@@ -414,6 +450,10 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "polymarketPostSignalLimitExitMode",
     "polymarketPostSignalLimitExitPriceCents",
     "polymarketPostSignalLimitExitOffsetCents",
+    "polymarketProtectionTakeProfitEnabled",
+    "polymarketProtectionTakeProfitCents",
+    "polymarketProtectionStopLossEnabled",
+    "polymarketProtectionStopLossCents",
     "crossSymbolSecondary",
 ]);
 
@@ -533,6 +573,34 @@ function readConfirmationStrategyParams(
     return result;
 }
 
+function hasActiveChartTakeProfitOrStopLoss(settings: Record<string, unknown>): boolean {
+    const riskMode = settings.riskMode === "percentage" ? "percentage" : "simple";
+    const historicalLevelTakeProfitEnabled = settings.historicalLevelTakeProfitEnabled === true
+        && toFiniteNumber(settings.historicalLevelLookbackBars) !== null
+        && (toFiniteNumber(settings.historicalLevelLookbackBars) ?? 0) > 0;
+    const historicalLevelStopLossEnabled = settings.historicalLevelStopLossEnabled === true
+        && toFiniteNumber(settings.historicalLevelLookbackBars) !== null
+        && (toFiniteNumber(settings.historicalLevelLookbackBars) ?? 0) > 0;
+    if (historicalLevelTakeProfitEnabled || historicalLevelStopLossEnabled) {
+        return true;
+    }
+    if (riskMode === "percentage") {
+        const stopLossPercent = toFiniteNumber(settings.stopLossPercent) ?? 0;
+        const takeProfitPercent = toFiniteNumber(settings.takeProfitPercent) ?? 0;
+        return (settings.stopLossEnabled === true && stopLossPercent > 0)
+            || (settings.takeProfitEnabled === true && takeProfitPercent > 0);
+    }
+    return (toFiniteNumber(settings.stopLossAtr) ?? 0) > 0
+        || (toFiniteNumber(settings.takeProfitAtr) ?? 0) > 0;
+}
+
+function applyDerivedBacktestSettingGuards(settings: Record<string, unknown>): Record<string, unknown> {
+    if (settings.disableSignalExits === true && !hasActiveChartTakeProfitOrStopLoss(settings)) {
+        settings.disableSignalExits = false;
+    }
+    return settings;
+}
+
 export function hasUiToggleSettings(raw: Record<string, unknown>): boolean {
     return [
         "riskSettingsToggle",
@@ -595,7 +663,12 @@ export function resolveBacktestSettingsFromRaw(
         coerced.polymarketBacktestSlippageCents = clampPolymarketBacktestSlippageCents(coerced.polymarketBacktestSlippageCents);
         coerced.polymarketEntryCutoffEnabled = readBooleanAny(raw, ["polymarketEntryCutoffEnabled", "polymarketEntryCutoffToggle"], EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffEnabled);
         coerced.polymarketEntryCutoffSeconds = clampPolymarketEntryCutoffSeconds(raw["polymarketEntryCutoffSeconds"]);
+        coerced.disableSignalExits = readBoolean(raw, "disableSignalExits", EFFECTIVE_BACKTEST_DEFAULTS.disableSignalExits);
         Object.assign(coerced, resolvePolymarketPostSignalLimitSettingFields(
+            raw,
+            (key, fallback) => readBoolean(raw, key, fallback)
+        ));
+        Object.assign(coerced, resolvePolymarketProtectionSettingFields(
             raw,
             (key, fallback) => readBoolean(raw, key, fallback)
         ));
@@ -612,7 +685,9 @@ export function resolveBacktestSettingsFromRaw(
                 ? readConfirmationStrategyParams(raw["confirmationStrategyParams"], new Set(confirmationStrategies))
                 : {};
         }
-        return applyRemovedBacktestSettingDefaults(coerced as Record<string, unknown>) as BacktestSettings;
+        return applyDerivedBacktestSettingGuards(
+            applyRemovedBacktestSettingDefaults(coerced as Record<string, unknown>)
+        ) as BacktestSettings;
     }
 
     const riskEnabled = readBoolean(raw, "riskSettingsToggle", false);
@@ -700,8 +775,14 @@ export function resolveBacktestSettingsFromRaw(
             raw,
             (key, fallback) => readBoolean(raw, key, fallback)
         ),
+        ...resolvePolymarketProtectionSettingFields(
+            raw,
+            (key, fallback) => readBoolean(raw, key, fallback)
+        ),
         crossSymbolSecondary: readString(raw, "crossSymbolSecondary", EFFECTIVE_BACKTEST_DEFAULTS.crossSymbolSecondary),
     };
 
-    return applyRemovedBacktestSettingDefaults(resolved as Record<string, unknown>) as BacktestSettings;
+    return applyDerivedBacktestSettingGuards(
+        applyRemovedBacktestSettingDefaults(resolved as Record<string, unknown>)
+    ) as BacktestSettings;
 }

@@ -70,10 +70,13 @@ import {
     transferBacktestEdgeAnalysisInput,
 } from "./backtest-edge-analysis";
 import { attachTradeTimingQuality } from "./trade-timing-quality";
+import { parseTimeToUnixSeconds } from "./time-normalization";
+import { hasActivePolymarketProtection } from "./polymarket-protection-settings";
 
 type CurrentBacktestExecution = {
     result: BacktestResult;
     engineUsed: 'rust' | 'typescript';
+    signals: Signal[];
     requestContext: {
         nowSec: number;
         blockRange: { from: number; to: number } | null;
@@ -143,7 +146,7 @@ export class BacktestService {
             const requiresTsEngine = this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode);
             await updateDomBacktestRunProgress(runUi, '40%', 'Generating signals...', 100);
 
-            let { result, engineUsed, requestContext } = await this.executeBacktest(
+            let { result, engineUsed, signals, requestContext } = await this.executeBacktest(
                 runUi,
                 strategy,
                 params,
@@ -157,9 +160,23 @@ export class BacktestService {
             const annotatePolymarket = settings.polymarketAnnotationEnabled ?? false;
             if (annotatePolymarket) {
                 const annotatedResult = await this.annotatePolymarketResult(result, settings, sourceData);
+                const protectionReplay = await this.replayBacktestWithPolymarketProtectionExits(
+                    annotatedResult,
+                    signals,
+                    sourceData,
+                    settings,
+                    capitalSettings,
+                    requestContext
+                );
+                if (protectionReplay) {
+                    result = protectionReplay;
+                    engineUsed = 'typescript';
+                } else {
+                    result = annotatedResult;
+                }
                 const { applyPolymarketAlternativeSizing } = await import("./polymarket-alternative-sizing");
                 const sizedResult = applyPolymarketAlternativeSizing({
-                    result: annotatedResult,
+                    result,
                     chartData: this.selectClosedCandleData(
                         sourceData,
                         state.currentInterval,
@@ -296,6 +313,7 @@ export class BacktestService {
         return {
             result: singleRun.result,
             engineUsed: singleRun.engineUsed,
+            signals: singleRun.signals,
             requestContext: singleRun.requestContext,
         };
     }
@@ -475,6 +493,7 @@ export class BacktestService {
     ): Promise<{
         result: BacktestResult;
         engineUsed: 'rust' | 'typescript';
+        signals: Signal[];
         requestContext: {
             nowSec: number;
             blockRange: { from: number; to: number } | null;
@@ -673,6 +692,12 @@ export class BacktestService {
                         exitPriceCents: settings.polymarketPostSignalLimitExitPriceCents,
                         exitOffsetCents: settings.polymarketPostSignalLimitExitOffsetCents,
                     },
+                    protection: {
+                        polymarketProtectionTakeProfitEnabled: settings.polymarketProtectionTakeProfitEnabled,
+                        polymarketProtectionTakeProfitCents: settings.polymarketProtectionTakeProfitCents,
+                        polymarketProtectionStopLossEnabled: settings.polymarketProtectionStopLossEnabled,
+                        polymarketProtectionStopLossCents: settings.polymarketProtectionStopLossCents,
+                    },
                 });
             }
 
@@ -712,6 +737,124 @@ export class BacktestService {
             });
             return result;
         }
+    }
+
+    private async replayBacktestWithPolymarketProtectionExits(
+        annotatedResult: BacktestResult,
+        baseSignals: Signal[],
+        sourceData: OHLCVData[],
+        settings: BacktestSettings,
+        capitalSettings: CapitalSettings,
+        requestContext: CurrentBacktestExecution["requestContext"]
+    ): Promise<BacktestResult | null> {
+        if (!hasActivePolymarketProtection(settings) || state.currentInterval !== "1s") {
+            return null;
+        }
+
+        const backtestData = this.selectClosedCandleData(
+            sourceData,
+            state.currentInterval,
+            settings,
+            requestContext.nowSec,
+            requestContext.blockRange
+        );
+        let latestAnnotated = annotatedResult;
+        let latestReplay: BacktestResult | null = null;
+        let lastForcedKey = "";
+        let lastForcedCount = 0;
+        let stabilized = false;
+        const maxReplayPasses = Math.min(Math.max(baseSignals.length, 1), 100);
+
+        for (let pass = 0; pass < maxReplayPasses; pass++) {
+            const forcedSignals = this.buildPolymarketProtectionExitSignals(latestAnnotated, backtestData, settings);
+            lastForcedCount = forcedSignals.length;
+            const forcedKey = forcedSignals
+                .map((signal) => `${signal.reason}:${String(signal.time)}:${signal.type}`)
+                .sort()
+                .join("|");
+            if (!forcedSignals.length || forcedKey === lastForcedKey) {
+                stabilized = true;
+                break;
+            }
+            lastForcedKey = forcedKey;
+
+            const replay = runBacktest(
+                backtestData,
+                [...baseSignals, ...forcedSignals],
+                capitalSettings.initialCapital,
+                capitalSettings.positionSize,
+                capitalSettings.commission,
+                settings,
+                {
+                    mode: capitalSettings.sizingMode,
+                    fixedTradeAmount: capitalSettings.fixedTradeAmount,
+                    advancedSizing: capitalSettings.advancedSizing,
+                }
+            );
+            this.finalizeBacktestResult(replay, capitalSettings.initialCapital, backtestData);
+            latestAnnotated = await this.annotatePolymarketResult(replay, settings, sourceData);
+            latestReplay = latestAnnotated;
+        }
+        if (!stabilized && latestReplay) {
+            debugLogger.warn("backtest.polymarket_protection_replay_not_stabilized", {
+                maxReplayPasses,
+                forcedExitSignals: lastForcedCount,
+            });
+        }
+
+        return latestReplay;
+    }
+
+    private buildPolymarketProtectionExitSignals(
+        result: BacktestResult,
+        backtestData: OHLCVData[],
+        settings: BacktestSettings
+    ): Signal[] {
+        const dataIndexByTs = new Map<number, number>();
+        backtestData.forEach((candle, index) => {
+            const ts = parseTimeToUnixSeconds(candle.time);
+            if (ts !== null && !dataIndexByTs.has(ts)) {
+                dataIndexByTs.set(ts, index);
+            }
+        });
+        const executionShift = settings.executionModel === "signal_close" ? 0 : 1;
+        const forcedByKey = new Map<string, Signal>();
+
+        for (const trade of result.trades) {
+            const source = trade.polymarketOutcome?.marketExitSource;
+            if (source !== "protection_take_profit" && source !== "protection_stop_loss") {
+                continue;
+            }
+            const marketExitTs = trade.polymarketOutcome?.marketExitTs;
+            if (typeof marketExitTs !== "number" || !Number.isFinite(marketExitTs)) {
+                continue;
+            }
+            const chartExitTs = parseTimeToUnixSeconds(trade.exitTime);
+            if (chartExitTs !== null && marketExitTs > chartExitTs) {
+                continue;
+            }
+
+            const exitBarIndex = dataIndexByTs.get(marketExitTs);
+            if (exitBarIndex === undefined) {
+                continue;
+            }
+            const signalBarIndex = exitBarIndex - executionShift;
+            if (signalBarIndex < 0) {
+                continue;
+            }
+            const reason = source === "protection_take_profit" ? "polymarket_take_profit" : "polymarket_stop_loss";
+            const signal: Signal = {
+                time: backtestData[signalBarIndex]!.time,
+                type: trade.type === "long" ? "sell" : "buy",
+                price: backtestData[exitBarIndex]!.close,
+                triggerPrice: backtestData[exitBarIndex]!.close,
+                reason,
+                barIndex: signalBarIndex,
+            };
+            forcedByKey.set(`${reason}:${marketExitTs}:${trade.type}:${trade.entryTime}`, signal);
+        }
+
+        return [...forcedByKey.values()];
     }
 
     private selectClosedCandleData(

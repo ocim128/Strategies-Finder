@@ -38,6 +38,10 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     const usesMultiPosition = (settings.maxOpenTrades ?? 1) > 1;
 
     const usesSignalExitMode = settings.polymarketExitMode === "signal_exit_same_event";
+    const usesDisableSignalExits = settings.disableSignalExits === true;
+    const usesPolymarketProtection =
+        (settings.polymarketProtectionTakeProfitEnabled === true && (settings.polymarketProtectionTakeProfitCents ?? 0) > 0)
+        || (settings.polymarketProtectionStopLossEnabled === true && (settings.polymarketProtectionStopLossCents ?? 0) > 0);
 
     return usesRealismConstraints
         || usesCombinedDirection
@@ -48,7 +52,9 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         || usesPercentageWinStreakStopLoss
         || usesAdaptivePercentageTakeProfit
         || usesMultiPosition
-        || usesSignalExitMode;
+        || usesSignalExitMode
+        || usesDisableSignalExits
+        || usesPolymarketProtection;
 }
 
 export const SNAPSHOT_FILTER_SETTING_KEYS = [] as const;
@@ -69,6 +75,7 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "riskWinStreakStopLossEnabled",
     "riskWinStreakStopLossAfterWins",
     "riskWinStreakStopLossPercent",
+    "disableSignalExits",
     "takeProfitMfeBootstrapPercentile",
     "takeProfitAdaptiveLookbackTrades",
     "takeProfitAdaptiveRecentWindow",
@@ -119,6 +126,10 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "polymarketPostSignalLimitExitMode",
     "polymarketPostSignalLimitExitPriceCents",
     "polymarketPostSignalLimitExitOffsetCents",
+    "polymarketProtectionTakeProfitEnabled",
+    "polymarketProtectionTakeProfitCents",
+    "polymarketProtectionStopLossEnabled",
+    "polymarketProtectionStopLossCents",
     "crossSymbolSecondary",
 ] as const;
 

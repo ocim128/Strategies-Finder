@@ -24,6 +24,10 @@ export const ENDPOINT_IGNORED_BACKTEST_SETTING_KEYS = [
     "polymarketPostSignalLimitExitMode",
     "polymarketPostSignalLimitExitPriceCents",
     "polymarketPostSignalLimitExitOffsetCents",
+    "polymarketProtectionTakeProfitEnabled",
+    "polymarketProtectionTakeProfitCents",
+    "polymarketProtectionStopLossEnabled",
+    "polymarketProtectionStopLossCents",
 ] as const;
 
 const ENDPOINT_IGNORED_BACKTEST_SETTING_KEY_SET = new Set<string>(ENDPOINT_IGNORED_BACKTEST_SETTING_KEYS);

@@ -228,6 +228,135 @@ describe("Execution Lab paper session", () => {
         expect(exit?.exitPrice).to.equal(0.62);
     });
 
+    it("exits open paper positions at the configured Polymarket take-profit target", () => {
+        const protectedSnapshot = snapshot();
+        protectedSnapshot.backtestSettings.polymarketProtectionTakeProfitEnabled = true;
+        protectedSnapshot.backtestSettings.polymarketProtectionTakeProfitCents = 5;
+        const state = createExecutionLabPaperState(protectedSnapshot);
+        tick({
+            state,
+            latestTs: EVENT_START + 10,
+            trades: [trade(1, "long", EVENT_START + 10)],
+            signals: [signal("buy", EVENT_START + 9)],
+            quotes: [quote(EVENT_START + 10, 0.50, 0.48)],
+        });
+
+        const protectedExit = tick({
+            state,
+            latestTs: EVENT_START + 12,
+            trades: [trade(1, "long", EVENT_START + 10)],
+            signals: [signal("buy", EVENT_START + 9)],
+            quotes: [
+                quote(EVENT_START + 10, 0.50, 0.48),
+                quote(EVENT_START + 12, 0.58, 0.56),
+            ],
+        });
+        const exit = protectedExit.records.find((record): record is PaperExitRecord => record.recordType === "paper_exit");
+
+        expect(exit?.exitReason).to.equal("polymarket_take_profit");
+        expect(exit?.exitTimeSec).to.equal(EVENT_START + 12);
+        expect(exit?.exitPrice).to.equal(0.55);
+        expect(exit?.pnlUsd).to.be.closeTo(0.5, 1e-12);
+        expect(state.openPositions.size).to.equal(0);
+    });
+
+    it("exits open paper positions at the observed sell quote when Polymarket stop-loss triggers", () => {
+        const protectedSnapshot = snapshot();
+        protectedSnapshot.backtestSettings.polymarketProtectionStopLossEnabled = true;
+        protectedSnapshot.backtestSettings.polymarketProtectionStopLossCents = 5;
+        const state = createExecutionLabPaperState(protectedSnapshot);
+        tick({
+            state,
+            latestTs: EVENT_START + 10,
+            trades: [trade(1, "long", EVENT_START + 10)],
+            signals: [signal("buy", EVENT_START + 9)],
+            quotes: [quote(EVENT_START + 10, 0.50, 0.48)],
+        });
+
+        const protectedExit = tick({
+            state,
+            latestTs: EVENT_START + 12,
+            trades: [trade(1, "long", EVENT_START + 10)],
+            signals: [signal("buy", EVENT_START + 9)],
+            quotes: [
+                quote(EVENT_START + 10, 0.50, 0.48),
+                quote(EVENT_START + 12, 0.46, 0.44),
+            ],
+        });
+        const exit = protectedExit.records.find((record): record is PaperExitRecord => record.recordType === "paper_exit");
+
+        expect(exit?.exitReason).to.equal("polymarket_stop_loss");
+        expect(exit?.exitTimeSec).to.equal(EVENT_START + 12);
+        expect(exit?.exitPrice).to.equal(0.44);
+        expect(exit?.pnlUsd).to.be.closeTo(-0.6, 1e-12);
+        expect(state.openPositions.size).to.equal(0);
+    });
+
+    it("scans loaded quote ranges for paper Polymarket protection exits between polls", () => {
+        const protectedSnapshot = snapshot();
+        protectedSnapshot.backtestSettings.polymarketProtectionTakeProfitEnabled = true;
+        protectedSnapshot.backtestSettings.polymarketProtectionTakeProfitCents = 5;
+        const state = createExecutionLabPaperState(protectedSnapshot);
+        tick({
+            state,
+            latestTs: EVENT_START + 10,
+            trades: [trade(1, "long", EVENT_START + 10)],
+            signals: [signal("buy", EVENT_START + 9)],
+            quotes: [quote(EVENT_START + 10, 0.50, 0.48)],
+        });
+
+        const protectedExit = tick({
+            state,
+            latestTs: EVENT_START + 13,
+            trades: [trade(1, "long", EVENT_START + 10)],
+            signals: [signal("buy", EVENT_START + 9)],
+            quotes: [
+                quote(EVENT_START + 10, 0.50, 0.48),
+                quote(EVENT_START + 11, 0.53, 0.52),
+                quote(EVENT_START + 12, 0.58, 0.56),
+                quote(EVENT_START + 13, 0.54, 0.53),
+            ],
+        });
+        const exit = protectedExit.records.find((record): record is PaperExitRecord => record.recordType === "paper_exit");
+
+        expect(exit?.exitReason).to.equal("polymarket_take_profit");
+        expect(exit?.exitTimeSec).to.equal(EVENT_START + 12);
+        expect(exit?.exitPrice).to.equal(0.55);
+    });
+
+    it("does not let a later paper protection quote override an earlier chart exit", () => {
+        const protectedSnapshot = snapshot();
+        protectedSnapshot.backtestSettings.polymarketProtectionTakeProfitEnabled = true;
+        protectedSnapshot.backtestSettings.polymarketProtectionTakeProfitCents = 5;
+        const state = createExecutionLabPaperState(protectedSnapshot);
+        tick({
+            state,
+            latestTs: EVENT_START + 10,
+            trades: [trade(1, "long", EVENT_START + 10, EVENT_START + 12)],
+            signals: [signal("buy", EVENT_START + 9)],
+            quotes: [quote(EVENT_START + 10, 0.50, 0.48)],
+        });
+        const closedTrade = trade(1, "long", EVENT_START + 10, EVENT_START + 12);
+        closedTrade.exitReason = "signal";
+
+        const closed = tick({
+            state,
+            latestTs: EVENT_START + 13,
+            trades: [closedTrade],
+            signals: [signal("buy", EVENT_START + 9)],
+            quotes: [
+                quote(EVENT_START + 10, 0.50, 0.48),
+                quote(EVENT_START + 12, 0.54, 0.52),
+                quote(EVENT_START + 13, 0.58, 0.56),
+            ],
+        });
+        const exit = closed.records.find((record): record is PaperExitRecord => record.recordType === "paper_exit");
+
+        expect(exit?.exitReason).to.equal("signal");
+        expect(exit?.exitTimeSec).to.equal(EVENT_START + 12);
+        expect(exit?.exitPrice).to.equal(0.52);
+    });
+
     it("requires exact outcome symbol, series, token, and timestamp quote matches", () => {
         const state = createExecutionLabPaperState(snapshot());
         const result = tick({

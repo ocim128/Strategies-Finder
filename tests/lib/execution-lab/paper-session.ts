@@ -1,6 +1,7 @@
 import type { Time } from "lightweight-charts";
 import { resolvePolymarketEntryCutoff } from "../polymarket-entry-cutoff";
 import { isPolymarketEntryPriceFiltered } from "../polymarket-entry-price-filter";
+import { clampPolymarketProtectionCents } from "../polymarket-protection-settings";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { Trade } from "../types/strategies";
 import type { PolymarketOutcomeRow } from "../types/polymarket-outcomes";
@@ -154,6 +155,40 @@ function findExactFill(args: {
     return price === null ? null : { quote: best, quoteTs: best.sample_ts, price };
 }
 
+function findFillsInRange(args: {
+    event: EventRef;
+    symbol: string;
+    afterTs: number;
+    throughTs: number;
+    side: SecondMarketSide;
+    orderSide: "buy" | "sell";
+    quotes: readonly PolymarketClob1sQuoteRow[];
+}): FillRef[] {
+    const bestByTs = new Map<number, PolymarketClob1sQuoteRow>();
+    for (const quote of args.quotes) {
+        if (quote.series_id !== args.event.seriesId) continue;
+        if (quote.symbol !== args.symbol) continue;
+        if (quote.event_start_ts !== args.event.eventStartTs) continue;
+        if (quote.yes_token_id !== args.event.yesTokenId) continue;
+        if (args.event.noTokenId && quote.no_token_id !== args.event.noTokenId) continue;
+        if (quote.sample_ts <= args.afterTs || quote.sample_ts > args.throughTs) continue;
+        if (quote.sample_ts >= args.event.eventEndTs) continue;
+        const existing = bestByTs.get(quote.sample_ts);
+        if (!existing || (quote.source_ts_ms ?? 0) > (existing.source_ts_ms ?? 0)) {
+            bestByTs.set(quote.sample_ts, quote);
+        }
+    }
+
+    const fills: FillRef[] = [];
+    const sortedTs = [...bestByTs.keys()].sort((left, right) => left - right);
+    for (const ts of sortedTs) {
+        const quote = bestByTs.get(ts)!;
+        const price = priceForSide(quote, args.side, args.orderSide);
+        if (price !== null) fills.push({ quote, quoteTs: quote.sample_ts, price });
+    }
+    return fills;
+}
+
 function findResolvedOutcome(event: EventRef, outcomes: readonly PolymarketOutcomeRow[]): PolymarketOutcomeRow | null {
     return outcomes.find((row) =>
         row.series_id === event.seriesId
@@ -167,6 +202,57 @@ function findResolvedOutcome(event: EventRef, outcomes: readonly PolymarketOutco
 function resolutionExitPrice(outcome: PolymarketOutcomeRow, side: SecondMarketSide): number {
     if (outcome.resolved_outcome_up === 1) return side === "yes" ? 1 : 0;
     return side === "yes" ? 0 : 1;
+}
+
+function findProtectionExitForPosition(
+    state: ExecutionLabPaperState,
+    input: ExecutionLabPaperTickInput,
+    position: ExecutionLabOpenPaperPosition,
+    latestAllowedTs: number | null
+): { reason: Extract<ExecutionLabPaperExitReason, "polymarket_take_profit" | "polymarket_stop_loss">; fill: FillRef; exitPrice: number } | null {
+    const throughTs = latestAllowedTs === null
+        ? input.latestCandleTimeSec
+        : Math.min(input.latestCandleTimeSec, latestAllowedTs);
+    if (throughTs <= position.entryQuoteTs) {
+        return null;
+    }
+    const settings = state.snapshot.backtestSettings;
+    const takeProfitCents = clampPolymarketProtectionCents(settings.polymarketProtectionTakeProfitCents);
+    const stopLossCents = clampPolymarketProtectionCents(settings.polymarketProtectionStopLossCents);
+    const takeProfitTarget = settings.polymarketProtectionTakeProfitEnabled === true && takeProfitCents > 0
+        ? position.entryPrice + takeProfitCents / 100
+        : null;
+    const stopLossTrigger = settings.polymarketProtectionStopLossEnabled === true && stopLossCents > 0
+        ? position.entryPrice - stopLossCents / 100
+        : null;
+    const normalizedTakeProfitTarget = takeProfitTarget !== null && takeProfitTarget < 1
+        ? Math.round(takeProfitTarget * 1_000_000_000) / 1_000_000_000
+        : null;
+    const normalizedStopLossTrigger = stopLossTrigger !== null && stopLossTrigger > 0
+        ? Math.round(stopLossTrigger * 1_000_000_000) / 1_000_000_000
+        : null;
+    if (normalizedTakeProfitTarget === null && normalizedStopLossTrigger === null) {
+        return null;
+    }
+
+    const fills = findFillsInRange({
+        event: eventFromPosition(position),
+        symbol: state.snapshot.outcomeSymbol,
+        afterTs: position.entryQuoteTs,
+        throughTs,
+        side: position.side,
+        orderSide: "sell",
+        quotes: input.quotes,
+    });
+    for (const fill of fills) {
+        if (normalizedStopLossTrigger !== null && fill.price <= normalizedStopLossTrigger) {
+            return { reason: "polymarket_stop_loss", fill, exitPrice: fill.price };
+        }
+        if (normalizedTakeProfitTarget !== null && fill.price >= normalizedTakeProfitTarget) {
+            return { reason: "polymarket_take_profit", fill, exitPrice: normalizedTakeProfitTarget };
+        }
+    }
+    return null;
 }
 
 function isExecutableBacktestExit(reason: Trade["exitReason"]): reason is ExecutionLabBacktestExitReason {
@@ -475,6 +561,24 @@ function advanceOpenPosition(
     const exitReason = isExecutableBacktestExit(trade.exitReason) ? trade.exitReason : null;
     const exitTimeSec = exitReason === null ? null : tradeExecutionTimeSec(state.snapshot, trade.exitTime);
     const positionEvent = eventFromPosition(position);
+    const protectionLatestTs = exitTimeSec !== null && exitTimeSec < position.eventEndTs ? exitTimeSec : null;
+    const protectionExit = findProtectionExitForPosition(state, input, position, protectionLatestTs);
+
+    if (protectionExit) {
+        const exitRecord = buildExitRecord(
+            state,
+            input,
+            position,
+            protectionExit.reason,
+            protectionExit.fill.quoteTs,
+            protectionExit.fill.quoteTs,
+            protectionExit.exitPrice
+        );
+        logOnce(state, `exit:${position.tradeId}:${protectionExit.reason}:${protectionExit.fill.quoteTs}`, records, exitRecord);
+        closePositionFromRecord(state, position, exitRecord);
+        markers.push(exitMarker(exitRecord, position.side));
+        return;
+    }
 
     if (exitReason !== null && exitTimeSec !== null && exitTimeSec <= input.latestCandleTimeSec && exitTimeSec < position.eventEndTs) {
         const exitFill = findExactFill({

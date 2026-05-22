@@ -99,6 +99,8 @@ export type QuickViewPolymarketSummary = {
     entryDelayBars?: number;
     missingPriceTrades?: number;
     targetExitedTrades?: number;
+    protectionTakeProfitExitedTrades?: number;
+    protectionStopLossExitedTrades?: number;
     signalExitedTrades?: number;
     resolvedTrades?: number;
     limitEntryEnabled?: boolean;
@@ -753,6 +755,8 @@ class QuickViewManager {
                 losingTrades: existingSummary?.losingTrades,
                 neutralTrades: existingSummary?.neutralTrades,
                 targetExitedTrades: existingSummary?.targetExitedTrades ?? options.summary?.targetExitedTrades,
+                protectionTakeProfitExitedTrades: existingSummary?.protectionTakeProfitExitedTrades ?? options.summary?.protectionTakeProfitExitedTrades,
+                protectionStopLossExitedTrades: existingSummary?.protectionStopLossExitedTrades ?? options.summary?.protectionStopLossExitedTrades,
                 signalExitedTrades: existingSummary?.signalExitedTrades,
                 resolvedTrades: existingSummary?.resolvedTrades,
                 missingPriceTrades: existingSummary?.missingPriceTrades,
@@ -967,6 +971,12 @@ class QuickViewManager {
                     entryCutoffSeconds: currentPolymarketSettings.entryCutoffSeconds,
                     entryDelayBars: result.polymarketTradeSummary?.entryDelayBars ?? currentPolymarketSettings.entryDelayBars,
                     limitEntry,
+                    protection: {
+                        polymarketProtectionTakeProfitEnabled: currentPolymarketSettings.protectionTakeProfitEnabled,
+                        polymarketProtectionTakeProfitCents: currentPolymarketSettings.protectionTakeProfitCents,
+                        polymarketProtectionStopLossEnabled: currentPolymarketSettings.protectionStopLossEnabled,
+                        polymarketProtectionStopLossCents: currentPolymarketSettings.protectionStopLossCents,
+                    },
                 });
             } catch (error) {
                 debugLogger.warn("quick_view.second_market_polymarket_annotation_failed", {
@@ -1476,6 +1486,8 @@ class QuickViewManager {
             entryDelayBars: summary?.entryDelayBars,
             missingPriceTrades: summary?.missingPriceTrades,
             targetExitedTrades: summary?.targetExitedTrades,
+            protectionTakeProfitExitedTrades: summary?.protectionTakeProfitExitedTrades,
+            protectionStopLossExitedTrades: summary?.protectionStopLossExitedTrades,
             signalExitedTrades: summary?.signalExitedTrades,
             resolvedTrades: summary?.resolvedTrades,
             limitEntryEnabled: summary?.limitEntryEnabled,

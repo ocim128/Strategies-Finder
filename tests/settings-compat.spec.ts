@@ -30,6 +30,7 @@ import {
 import { strategyManifest } from '../lib/strategies/manifest';
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from '../lib/strategy-defaults';
 import { resolvePolymarketEntrySelectionModeForDisplay } from '../lib/polymarket-entry-selection-mode';
+import { hasActivePolymarketProtection } from '../lib/polymarket-protection-settings';
 
 describe('Backtest settings compatibility', () => {
     it('ignores removed tradeFilterMode when provided', () => {
@@ -136,6 +137,58 @@ describe('Backtest settings compatibility', () => {
         } as unknown as BacktestSettings);
         expect(resolved.polymarketBacktestSlippageCents).to.equal(7.3);
         expect('polymarketBacktestSlippageCents' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
+    });
+
+    it('normalizes Polymarket protective TP/SL settings and strips them from Rust', () => {
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketProtectionTakeProfitEnabled).to.equal(false);
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketProtectionStopLossEnabled).to.equal(false);
+        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketProtectionTakeProfitEnabled')).to.equal(true);
+        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketProtectionTakeProfitCents')).to.equal(true);
+        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketProtectionStopLossEnabled')).to.equal(true);
+        expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketProtectionStopLossCents')).to.equal(true);
+
+        const centsContract = getBacktestDomSettingContract('polymarketProtectionTakeProfitCents');
+        expect(centsContract).to.not.equal(undefined);
+        expect(coerceBacktestDomSettingValue(centsContract!, 7.26)).to.equal(7.3);
+        expect(coerceBacktestDomSettingValue(centsContract!, -5)).to.equal(0);
+        expect(coerceBacktestDomSettingValue(centsContract!, 120)).to.equal(99);
+
+        const resolved = resolveBacktestSettingsFromRaw({
+            polymarketProtectionTakeProfitEnabled: true,
+            polymarketProtectionTakeProfitCents: 120,
+            polymarketProtectionStopLossEnabled: true,
+            polymarketProtectionStopLossCents: -2,
+        } as unknown as BacktestSettings);
+        expect(resolved.polymarketProtectionTakeProfitEnabled).to.equal(true);
+        expect(resolved.polymarketProtectionTakeProfitCents).to.equal(99);
+        expect(resolved.polymarketProtectionStopLossEnabled).to.equal(true);
+        expect(resolved.polymarketProtectionStopLossCents).to.equal(0);
+        expect(requiresTypescriptEngine(resolved)).to.equal(true);
+        const sanitized = sanitizeBacktestSettingsForRust(resolved);
+        expect('polymarketProtectionTakeProfitEnabled' in sanitized).to.equal(false);
+        expect('polymarketProtectionStopLossCents' in sanitized).to.equal(false);
+        expect(hasActivePolymarketProtection({ polymarketProtectionTakeProfitEnabled: true })).to.equal(true);
+    });
+
+    it('only enables disableSignalExits when a chart TP or SL is active', () => {
+        const inactive = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            disableSignalExits: true,
+            stopLossToggle: false,
+            takeProfitToggle: false,
+        } as unknown as BacktestSettings);
+        expect(inactive.disableSignalExits).to.equal(false);
+
+        const active = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            disableSignalExits: true,
+            takeProfitToggle: true,
+            takeProfitPercent: 10,
+        } as unknown as BacktestSettings);
+        expect(active.disableSignalExits).to.equal(true);
+        expect(requiresTypescriptEngine(active)).to.equal(true);
     });
 
     it('normalizes the Polymarket event entry cutoff as a Backtest Realism setting', () => {

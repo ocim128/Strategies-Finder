@@ -30,6 +30,7 @@ import {
     resolvePolymarketPostSignalLimitEntryMode,
     resolvePolymarketPostSignalLimitExitMode,
 } from "./polymarket-post-signal-limit-entry";
+import { clampPolymarketProtectionCents } from "./polymarket-protection-settings";
 import { RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS } from "./rust-settings-sanitizer";
 import { resolveTakeProfitMode } from "./take-profit-settings";
 import type { BacktestSettings, StrategyParams } from "./types/strategies";
@@ -52,6 +53,7 @@ export type BacktestDomSettingParser =
     | "polymarketLimitOffsetCents"
     | "polymarketLimitEntryMode"
     | "polymarketLimitExitMode"
+    | "polymarketProtectionCents"
     | "riskMode"
     | "takeProfitMode"
     | "tradeDirection"
@@ -266,6 +268,7 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         legacyAliases: ["riskMaxHoldEnabled"],
         rustSupport: "unsupported",
     }),
+    createField("disableSignalExits", { rustSupport: "unsupported" }),
     createField("tradeDirection", {
         parser: "tradeDirection",
         rustSupport: "conditional",
@@ -333,6 +336,10 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("polymarketPostSignalLimitExitMode", { rustSupport: "unsupported", parser: "polymarketLimitExitMode" }),
     createField("polymarketPostSignalLimitExitPriceCents", { rustSupport: "unsupported", parser: "polymarketLimitExitPriceCents" }),
     createField("polymarketPostSignalLimitExitOffsetCents", { rustSupport: "unsupported", parser: "polymarketLimitOffsetCents" }),
+    createField("polymarketProtectionTakeProfitEnabled", { rustSupport: "unsupported" }),
+    createField("polymarketProtectionTakeProfitCents", { rustSupport: "unsupported", parser: "polymarketProtectionCents" }),
+    createField("polymarketProtectionStopLossEnabled", { rustSupport: "unsupported" }),
+    createField("polymarketProtectionStopLossCents", { rustSupport: "unsupported", parser: "polymarketProtectionCents" }),
     createField("crossSymbolSecondary", {
         parser: "string",
         rustSupport: "unsupported",
@@ -455,6 +462,8 @@ export function coerceBacktestDomSettingValue(
             return resolvePolymarketPostSignalLimitEntryMode(value);
         case "polymarketLimitExitMode":
             return resolvePolymarketPostSignalLimitExitMode(value);
+        case "polymarketProtectionCents":
+            return clampPolymarketProtectionCents(value);
         case "kellyFraction":
             return resolveKellyFraction(value);
         case "volScalingMethod":

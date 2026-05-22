@@ -156,6 +156,32 @@
                     <div class="param-hint">Backtest-only adverse fill adjustment. Entries pay more and modeled exits receive less.</div>
                 </div>
             </div>
+            <div class="param-row" id="polymarketProtectionTakeProfitRow" style="display: none;">
+                <div class="param-group">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Polymarket Take Profit</label>
+                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle Polymarket take profit">
+                            <input type="checkbox" id="polymarketProtectionTakeProfitEnabled">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <input type="number" class="param-input" id="polymarketProtectionTakeProfitCents" value="20" min="0" max="99" step="0.1">
+                    <div class="param-hint">1s CLOB only. Exit when the bought YES/NO side rises by this many cents from entry.</div>
+                </div>
+            </div>
+            <div class="param-row" id="polymarketProtectionStopLossRow" style="display: none;">
+                <div class="param-group">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Polymarket Stop Loss</label>
+                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle Polymarket stop loss">
+                            <input type="checkbox" id="polymarketProtectionStopLossEnabled">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <input type="number" class="param-input" id="polymarketProtectionStopLossCents" value="20" min="0" max="99" step="0.1">
+                    <div class="param-hint">1s CLOB only. Exit when the bought YES/NO side falls by this many cents from entry.</div>
+                </div>
+            </div>
             <div class="param-row" id="polymarketEntryDelayBarsRow" style="display: none;">
                 <div class="param-group">
                     <label class="param-label">Polymarket Entry Delay (1s bars)</label>

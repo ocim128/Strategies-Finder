@@ -28,6 +28,12 @@ import {
     getClobQuoteTimeSec,
     getClobSidePrice,
 } from "./alignment";
+import {
+    clampPolymarketProtectionCents,
+    hasActivePolymarketProtection,
+    type PolymarketProtectionSettingFields,
+} from "../polymarket-protection-settings";
+import { getPolymarketSidePrice } from "../polymarket-price-points";
 import type {
     PolymarketClob1sQuoteRow,
     SecondMarketAlignmentMode,
@@ -40,6 +46,21 @@ import type {
 type Fill = {
     price: number;
     quoteTs: number;
+};
+
+type ProtectionExitFill = {
+    price: number;
+    quoteTs: number;
+    source: "protection_take_profit" | "protection_stop_loss";
+    targetPrice: number | null;
+};
+
+type TimedMarketExitFill = {
+    price: number;
+    quoteTs: number;
+    source: "target" | "protection_take_profit" | "protection_stop_loss";
+    targetPrice: number | null;
+    status?: SecondMarketTradeResult["exitStatus"];
 };
 
 export const SECOND_MARKET_UNRESOLVED_OUTCOME_SOURCE = "second_market_clob_unresolved";
@@ -235,10 +256,107 @@ function resolveResolutionExitPrice(outcome: PolymarketOutcomeRow, side: SecondM
     return side === "yes" ? 0 : 1;
 }
 
+function isProtectionTakeProfitEnabled(settings: Partial<PolymarketProtectionSettingFields> | undefined): boolean {
+    return settings?.polymarketProtectionTakeProfitEnabled === true
+        && clampPolymarketProtectionCents(settings.polymarketProtectionTakeProfitCents) > 0;
+}
+
+function isProtectionStopLossEnabled(settings: Partial<PolymarketProtectionSettingFields> | undefined): boolean {
+    return settings?.polymarketProtectionStopLossEnabled === true
+        && clampPolymarketProtectionCents(settings.polymarketProtectionStopLossCents) > 0;
+}
+
+function findProtectionExitFill(args: {
+    eventPoints: readonly PolymarketPricePoint[];
+    side: SecondMarketSide;
+    entryPrice: number;
+    startTs: number;
+    eventEndTs: number;
+    settings?: Partial<PolymarketProtectionSettingFields>;
+    backtestSlippageCents: number;
+    latestAllowedTs?: number | null;
+}): ProtectionExitFill | null {
+    const takeProfitEnabled = isProtectionTakeProfitEnabled(args.settings);
+    const stopLossEnabled = isProtectionStopLossEnabled(args.settings);
+    if (!takeProfitEnabled && !stopLossEnabled) {
+        return null;
+    }
+
+    const takeProfitTarget = takeProfitEnabled
+        ? args.entryPrice + clampPolymarketProtectionCents(args.settings?.polymarketProtectionTakeProfitCents) / 100
+        : null;
+    const stopLossTrigger = stopLossEnabled
+        ? args.entryPrice - clampPolymarketProtectionCents(args.settings?.polymarketProtectionStopLossCents) / 100
+        : null;
+    const normalizedTakeProfitTarget = takeProfitTarget !== null && takeProfitTarget < 1
+        ? Math.round(takeProfitTarget * 1_000_000_000) / 1_000_000_000
+        : null;
+    const normalizedStopLossTrigger = stopLossTrigger !== null && stopLossTrigger > 0
+        ? Math.round(stopLossTrigger * 1_000_000_000) / 1_000_000_000
+        : null;
+    if (normalizedTakeProfitTarget === null && normalizedStopLossTrigger === null) {
+        return null;
+    }
+
+    const latestAllowedTs = typeof args.latestAllowedTs === "number" && Number.isFinite(args.latestAllowedTs)
+        ? args.latestAllowedTs
+        : null;
+    for (const point of args.eventPoints) {
+        if (point.ts <= args.startTs) {
+            continue;
+        }
+        if (point.ts >= args.eventEndTs || (latestAllowedTs !== null && point.ts > latestAllowedTs)) {
+            break;
+        }
+
+        const price = getPolymarketSidePrice(point, args.side);
+        if (price === null) {
+            continue;
+        }
+
+        if (normalizedStopLossTrigger !== null && price <= normalizedStopLossTrigger) {
+            return {
+                price: applyPolymarketBacktestExitSlippage(price, args.backtestSlippageCents)!,
+                quoteTs: point.ts,
+                source: "protection_stop_loss",
+                targetPrice: normalizedStopLossTrigger,
+            };
+        }
+        if (normalizedTakeProfitTarget !== null && price >= normalizedTakeProfitTarget) {
+            return {
+                price: normalizedTakeProfitTarget,
+                quoteTs: point.ts,
+                source: "protection_take_profit",
+                targetPrice: normalizedTakeProfitTarget,
+            };
+        }
+    }
+    return null;
+}
+
+function exitPriority(source: TimedMarketExitFill["source"]): number {
+    if (source === "protection_stop_loss") return 0;
+    if (source === "protection_take_profit") return 1;
+    return 2;
+}
+
+function chooseEarlierTimedExit(
+    left: TimedMarketExitFill | null,
+    right: TimedMarketExitFill | null
+): TimedMarketExitFill | null {
+    if (!left) return right;
+    if (!right) return left;
+    if (left.quoteTs !== right.quoteTs) {
+        return left.quoteTs < right.quoteTs ? left : right;
+    }
+    return exitPriority(left.source) <= exitPriority(right.source) ? left : right;
+}
+
 function buildSummary(
     results: readonly SecondMarketTradeResult[],
     evaluationMode: PolymarketExitMode,
     settings?: PolymarketPostSignalLimitEntrySettings,
+    protectionSettings?: Partial<PolymarketProtectionSettingFields>,
     allowMultipleTradesPerEvent = false,
     entryDelayBars = 0,
     backtestSlippageCents = 0
@@ -280,6 +398,8 @@ function buildSummary(
         .map((result) => result.entryImprovement)
         .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
     const limitExitEnabled = limitEntryEnabled && settings?.exitEnabled === true;
+    const protectionTakeProfitEnabled = isProtectionTakeProfitEnabled(protectionSettings);
+    const protectionStopLossEnabled = isProtectionStopLossEnabled(protectionSettings);
     const limitExitFilledTrades = results.filter((result) =>
         result.entrySource === "limit"
         && result.entryStatus === "filled"
@@ -314,6 +434,8 @@ function buildSummary(
         ).length,
         signalExitedTrades: scored.filter((result) => result.exitSource === "signal").length,
         targetExitedTrades: scored.filter((result) => result.exitSource === "target").length,
+        protectionTakeProfitExitedTrades: scored.filter((result) => result.exitSource === "protection_take_profit").length,
+        protectionStopLossExitedTrades: scored.filter((result) => result.exitSource === "protection_stop_loss").length,
         resolvedTrades: scored.filter((result) => result.exitSource === "resolution").length,
         netPnl: scored.reduce((sum, result) => sum + (result.pnl ?? 0), 0),
         grossProfit,
@@ -367,6 +489,14 @@ function buildSummary(
         limitExitUnreachableTrades: limitExitEnabled
             ? results.filter((result) => result.entrySource === "limit" && result.exitStatus === "unreachable").length
             : undefined,
+        protectionTakeProfitEnabled: protectionTakeProfitEnabled || undefined,
+        protectionTakeProfitCents: protectionTakeProfitEnabled
+            ? clampPolymarketProtectionCents(protectionSettings?.polymarketProtectionTakeProfitCents)
+            : undefined,
+        protectionStopLossEnabled: protectionStopLossEnabled || undefined,
+        protectionStopLossCents: protectionStopLossEnabled
+            ? clampPolymarketProtectionCents(protectionSettings?.polymarketProtectionStopLossCents)
+            : undefined,
     };
 }
 
@@ -385,6 +515,7 @@ export function evaluateSecondMarketTrades(args: {
     entryDelayBars?: number;
     backtestSlippageCents?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
+    protection?: Partial<PolymarketProtectionSettingFields>;
 }): { results: SecondMarketTradeResult[]; summary: SecondMarketBacktestSummary } {
     const evaluationMode = args.evaluationMode ?? "resolve_hold";
     const allowMultipleTradesPerEvent = args.allowMultipleTradesPerEvent === true;
@@ -402,6 +533,7 @@ export function evaluateSecondMarketTrades(args: {
     const fixedLimitPrice = clampPolymarketPostSignalLimitEntryPriceCents(args.limitEntry?.priceCents) / 100;
     const configuredLimitPrice = limitEntryMode === "fixed_price" ? fixedLimitPrice : null;
     const limitExitEnabled = limitEntryEnabled && args.limitEntry?.exitEnabled === true;
+    const protectionEnabled = hasActivePolymarketProtection(args.protection ?? {});
 
     for (const trade of args.trades) {
         const entryTs = parseTimeToUnixSeconds(trade.entryTime);
@@ -457,6 +589,9 @@ export function evaluateSecondMarketTrades(args: {
             && trade.exitReason === "signal"
             && rawExitTs !== null
             && rawExitTs < outcome.event_end_ts
+            ? rawExitTs
+            : null;
+        const protectionLatestAllowedTs = rawExitTs !== null && rawExitTs < outcome.event_end_ts
             ? rawExitTs
             : null;
 
@@ -645,18 +780,21 @@ export function evaluateSecondMarketTrades(args: {
             continue;
         }
         let exitTargetPrice: number | null = null;
+        const sellPricePoints = limitExitEnabled || protectionEnabled
+            ? buildClobPricePoints({
+                seriesId: outcome.series_id,
+                eventStartTs: outcome.event_start_ts,
+                yesTokenId: outcome.yes_token_id,
+                noTokenId: outcome.no_token_id,
+                orderSide: "sell",
+                fillSource,
+                quoteIndex,
+            })
+            : [];
         const targetExit = limitExitEnabled && args.limitEntry
             ? (() => {
                 exitTargetPrice = resolvePolymarketLimitExitTargetPrice(entry.price, args.limitEntry);
-                return findPostSignalLimitExitFill(buildClobPricePoints({
-                    seriesId: outcome.series_id,
-                    eventStartTs: outcome.event_start_ts,
-                    yesTokenId: outcome.yes_token_id,
-                    noTokenId: outcome.no_token_id,
-                    orderSide: "sell",
-                    fillSource,
-                    quoteIndex,
-                }), {
+                return findPostSignalLimitExitFill(sellPricePoints, {
                     side,
                     startTs: entry.quoteTs,
                     eventEndTs: outcome.event_end_ts,
@@ -664,20 +802,40 @@ export function evaluateSecondMarketTrades(args: {
                 });
             })()
             : null;
+        const protectionExit = protectionEnabled
+            ? findProtectionExitFill({
+                eventPoints: sellPricePoints,
+                side,
+                entryPrice: entry.price,
+                startTs: entry.quoteTs,
+                eventEndTs: outcome.event_end_ts,
+                settings: args.protection,
+                backtestSlippageCents,
+                latestAllowedTs: protectionLatestAllowedTs,
+            })
+            : null;
+        const targetExitCandidate: TimedMarketExitFill | null = targetExit?.status === "filled"
+            && targetExit.fillTs !== null
+            && targetExit.fillPrice !== null
+            ? {
+                price: targetExit.fillPrice,
+                quoteTs: targetExit.fillTs,
+                source: "target",
+                targetPrice: exitTargetPrice,
+                status: targetExit.status,
+            }
+            : null;
+        const timedExit = chooseEarlierTimedExit(protectionExit, targetExitCandidate);
 
         const exit = (() => {
             if (signalExitTs !== null) {
-                const targetFillsFirst = targetExit?.status === "filled"
-                    && targetExit.fillTs !== null
-                    && targetExit.fillPrice !== null
-                    && targetExit.fillTs <= signalExitTs;
-                if (targetFillsFirst) {
+                if (timedExit && timedExit.quoteTs <= signalExitTs) {
                     return {
-                        price: targetExit.fillPrice,
-                        quoteTs: targetExit.fillTs,
-                        source: "target" as const,
-                        targetPrice: exitTargetPrice,
-                        status: targetExit.status,
+                        price: timedExit.price,
+                        quoteTs: timedExit.quoteTs,
+                        source: timedExit.source,
+                        targetPrice: timedExit.targetPrice,
+                        status: timedExit.status,
                     };
                 }
 
@@ -708,13 +866,13 @@ export function evaluateSecondMarketTrades(args: {
                     : null;
             }
 
-            if (targetExit?.status === "filled" && targetExit.fillPrice !== null) {
+            if (timedExit) {
                 return {
-                    price: targetExit.fillPrice,
-                    quoteTs: targetExit.fillTs,
-                    source: "target" as const,
-                    targetPrice: exitTargetPrice,
-                    status: targetExit.status,
+                    price: timedExit.price,
+                    quoteTs: timedExit.quoteTs,
+                    source: timedExit.source,
+                    targetPrice: timedExit.targetPrice,
+                    status: timedExit.status,
                 };
             }
 
@@ -786,6 +944,7 @@ export function evaluateSecondMarketTrades(args: {
             results,
             evaluationMode,
             args.limitEntry,
+            args.protection,
             allowMultipleTradesPerEvent,
             entryDelayBars,
             backtestSlippageCents

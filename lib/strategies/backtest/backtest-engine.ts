@@ -176,6 +176,18 @@ function findSignalExitTarget(
     );
 }
 
+function hasOppositePositionForSignal(positions: PositionState[], signal: Signal): boolean {
+    const signalDir = signalToPositionDirection(signal.type);
+    const oppositeDir = getOppositeDirection(signalDir);
+    return positions.some((position) => position.direction === oppositeDir);
+}
+
+function getForcedPolymarketSignalExitReason(signal: Signal): Extract<NonNullable<Trade["exitReason"]>, "polymarket_take_profit" | "polymarket_stop_loss"> | null {
+    return signal.reason === "polymarket_take_profit" || signal.reason === "polymarket_stop_loss"
+        ? signal.reason
+        : null;
+}
+
 function canImmediatelyReenterAfterSignalExit(args: {
     fullyClosed: boolean;
     wasPartial: boolean;
@@ -982,9 +994,18 @@ export function runBacktestCompact(
                     continue;
                 }
 
-                const exitTarget = findSignalExitTarget(positions, signal, config.allowSameBarExit);
+                const forcedExitReason = getForcedPolymarketSignalExitReason(signal);
+                const exitTarget = config.disableSignalExits && forcedExitReason === null
+                    ? undefined
+                    : findSignalExitTarget(positions, signal, config.allowSameBarExit);
 
                 if (!exitTarget && positions.length < maxOpenTrades) {
+                    if (forcedExitReason !== null) {
+                        continue;
+                    }
+                    if (config.disableSignalExits && hasOppositePositionForSignal(positions, signal)) {
+                        continue;
+                    }
                     if (isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i)) {
                         continue;
                     }
@@ -1001,12 +1022,12 @@ export function runBacktestCompact(
 
                     const { fullyClosed } = recordExit(exitTarget, signal.price, exitOrder.exitSize);
                     if (fullyClosed) {
-                        finalizeClosedPosition(exitTarget, candle, signal.price, 'signal');
+                        finalizeClosedPosition(exitTarget, candle, signal.price, forcedExitReason ?? 'signal');
                         if (!exitOrder.wasPartial) {
                             signalExitReentryCooldownUntilBarIndex = armSignalExitReentryCooldown(i);
                         }
                     }
-                    if (canImmediatelyReenterAfterSignalExit({
+                    if (forcedExitReason === null && canImmediatelyReenterAfterSignalExit({
                         fullyClosed,
                         wasPartial: exitOrder.wasPartial,
                         tradeDirection,
@@ -1063,10 +1084,19 @@ export function runBacktestCompact(
                 const signal = preparedSignals[signalIdx++];
                 if (signalBarIndex === i) {
                     // Check for signal exit: does this signal close an existing opposite-direction position?
-                    const exitTarget = findSignalExitTarget(positions, signal, config.allowSameBarExit);
+                    const forcedExitReason = getForcedPolymarketSignalExitReason(signal);
+                    const exitTarget = config.disableSignalExits && forcedExitReason === null
+                        ? undefined
+                        : findSignalExitTarget(positions, signal, config.allowSameBarExit);
 
                     if (!exitTarget && positions.length < maxOpenTrades) {
                         // New entry (no opposite position to close, and we have room)
+                        if (forcedExitReason !== null) {
+                            continue;
+                        }
+                        if (config.disableSignalExits && hasOppositePositionForSignal(positions, signal)) {
+                            continue;
+                        }
                         if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
                             continue;
                         }
@@ -1084,9 +1114,9 @@ export function runBacktestCompact(
 
                         const { fullyClosed } = recordExit(exitTarget, signal.price, exitOrder.exitSize);
                         if (fullyClosed) {
-                            finalizeClosedPosition(exitTarget, candle, signal.price, 'signal');
+                            finalizeClosedPosition(exitTarget, candle, signal.price, forcedExitReason ?? 'signal');
                         }
-                        if (canImmediatelyReenterAfterSignalExit({
+                        if (forcedExitReason === null && canImmediatelyReenterAfterSignalExit({
                             fullyClosed,
                             wasPartial: exitOrder.wasPartial,
                             tradeDirection,
@@ -1395,10 +1425,19 @@ export function runBacktest(
                     continue;
                 }
 
-                const exitTarget = findSignalExitTarget(positions, signal, config.allowSameBarExit);
+                const forcedExitReason = getForcedPolymarketSignalExitReason(signal);
+                const exitTarget = config.disableSignalExits && forcedExitReason === null
+                    ? undefined
+                    : findSignalExitTarget(positions, signal, config.allowSameBarExit);
 
                 if (!exitTarget && positions.length < maxOpenTrades) {
                     // New entry
+                    if (forcedExitReason !== null) {
+                        continue;
+                    }
+                    if (config.disableSignalExits && hasOppositePositionForSignal(positions, signal)) {
+                        continue;
+                    }
                     if (isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i)) {
                         continue;
                     }
@@ -1414,14 +1453,14 @@ export function runBacktest(
                     const exitOrder = resolveSignalExitOrder(exitTarget, signal);
                     if (!exitOrder) continue;
 
-                    const { fullyClosed } = recordExitFull(exitTarget, candle, signal.price, exitOrder.exitSize, 'signal');
+                    const { fullyClosed } = recordExitFull(exitTarget, candle, signal.price, exitOrder.exitSize, forcedExitReason ?? 'signal');
                     if (fullyClosed) {
-                        finalizeClosedPositionFull(exitTarget, candle, signal.price, 'signal');
+                        finalizeClosedPositionFull(exitTarget, candle, signal.price, forcedExitReason ?? 'signal');
                         if (!exitOrder.wasPartial) {
                             signalExitReentryCooldownUntilBarIndex = armSignalExitReentryCooldown(i);
                         }
                     }
-                    if (canImmediatelyReenterAfterSignalExit({
+                    if (forcedExitReason === null && canImmediatelyReenterAfterSignalExit({
                         fullyClosed,
                         wasPartial: exitOrder.wasPartial,
                         tradeDirection,
@@ -1477,10 +1516,19 @@ export function runBacktest(
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
                 const signal = preparedSignals[signalIdx++];
                 if (signalBarIndex === i) {
-                    const exitTarget = findSignalExitTarget(positions, signal, config.allowSameBarExit);
+                    const forcedExitReason = getForcedPolymarketSignalExitReason(signal);
+                    const exitTarget = config.disableSignalExits && forcedExitReason === null
+                        ? undefined
+                        : findSignalExitTarget(positions, signal, config.allowSameBarExit);
 
                     if (!exitTarget && positions.length < maxOpenTrades) {
                         // New entry
+                        if (forcedExitReason !== null) {
+                            continue;
+                        }
+                        if (config.disableSignalExits && hasOppositePositionForSignal(positions, signal)) {
+                            continue;
+                        }
                         if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
                             continue;
                         }
@@ -1496,11 +1544,11 @@ export function runBacktest(
                         const exitOrder = resolveSignalExitOrder(exitTarget, signal);
                         if (!exitOrder) continue;
 
-                        const { fullyClosed } = recordExitFull(exitTarget, candle, signal.price, exitOrder.exitSize, 'signal');
+                        const { fullyClosed } = recordExitFull(exitTarget, candle, signal.price, exitOrder.exitSize, forcedExitReason ?? 'signal');
                         if (fullyClosed) {
-                            finalizeClosedPositionFull(exitTarget, candle, signal.price, 'signal');
+                            finalizeClosedPositionFull(exitTarget, candle, signal.price, forcedExitReason ?? 'signal');
                         }
-                        if (canImmediatelyReenterAfterSignalExit({
+                        if (forcedExitReason === null && canImmediatelyReenterAfterSignalExit({
                             fullyClosed,
                             wasPartial: exitOrder.wasPartial,
                             tradeDirection,

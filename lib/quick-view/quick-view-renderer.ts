@@ -265,6 +265,8 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
 
   const exitModeCards = (
     (summary.targetExitedTrades ?? 0) > 0
+    || (summary.protectionTakeProfitExitedTrades ?? 0) > 0
+    || (summary.protectionStopLossExitedTrades ?? 0) > 0
     || summary.signalExitedTrades !== undefined
     || summary.resolvedTrades !== undefined
     || summary.neutralTrades > 0
@@ -272,6 +274,8 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
   )
     ? renderQvStatCards([
       ...((summary.targetExitedTrades ?? 0) > 0 ? [{ label: 'Target Exited', value: String(summary.targetExitedTrades) }] : []),
+      ...((summary.protectionTakeProfitExitedTrades ?? 0) > 0 ? [{ label: 'Poly TP Exited', value: String(summary.protectionTakeProfitExitedTrades) }] : []),
+      ...((summary.protectionStopLossExitedTrades ?? 0) > 0 ? [{ label: 'Poly SL Exited', value: String(summary.protectionStopLossExitedTrades) }] : []),
       ...(summary.signalExitedTrades !== undefined ? [{ label: 'Signal Exited', value: String(summary.signalExitedTrades) }] : []),
       ...(summary.resolvedTrades !== undefined ? [{ label: 'Resolved (Held)', value: String(summary.resolvedTrades) }] : []),
       ...(summary.neutralTrades > 0 ? [{ label: 'Neutral Trades', value: String(summary.neutralTrades) }] : []),

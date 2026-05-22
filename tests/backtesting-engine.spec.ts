@@ -69,6 +69,55 @@ describe('Backtesting Engine', () => {
         expect(result.profitFactor).to.equal(Infinity); // No losses
     });
 
+    it('can ignore strategy exit signals until chart TP or SL closes the trade', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 },
+            { time: 3 as Time, open: 101, high: 106, low: 100, close: 105, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 1 as Time, type: 'buy', price: 100 },
+            { time: 2 as Time, type: 'sell', price: 101 },
+        ];
+
+        const normal = runBacktest(data, signals, 1000, 100, 0, {
+            tradeDirection: 'long',
+            executionModel: 'signal_close',
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitPercent: 5,
+        });
+        const disabled = runBacktest(data, signals, 1000, 100, 0, {
+            tradeDirection: 'long',
+            executionModel: 'signal_close',
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitPercent: 5,
+            disableSignalExits: true,
+        });
+
+        expect(normal.trades[0].exitReason).to.equal('signal');
+        expect(disabled.trades[0].exitReason).to.equal('take_profit');
+        expect(disabled.trades[0].exitTime).to.equal(3 as Time);
+    });
+
+    it('does not treat forced Polymarket exit signals as entries without a matching open trade', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 1 as Time, type: 'sell', price: 100, reason: 'polymarket_take_profit' },
+        ];
+
+        const result = runBacktest(data, signals, 1000, 100, 0, {
+            tradeDirection: 'both',
+            executionModel: 'signal_close',
+        });
+
+        expect(result.totalTrades).to.equal(0);
+    });
+
     it('should execute short trades when trade direction is short', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 105, low: 95, close: 100, volume: 1000 },

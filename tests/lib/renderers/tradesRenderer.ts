@@ -391,6 +391,8 @@ export class TradesRenderer {
             partial: { label: 'Partial', className: 'exit-reason-badge--partial', icon: '1/2' },
             probation_fail: { label: 'Guard', className: 'exit-reason-badge--probation-fail', icon: 'GRD' },
             end_of_data: { label: 'EOD', className: 'exit-reason-badge--end-of-data', icon: 'EOD' },
+            polymarket_take_profit: { label: 'Poly TP', className: 'exit-reason-badge--take-profit', icon: 'PTP' },
+            polymarket_stop_loss: { label: 'Poly SL', className: 'exit-reason-badge--stop-loss', icon: 'PSL' },
         };
 
         const info = reasonMap[exitReason];
@@ -477,6 +479,10 @@ export class TradesRenderer {
                 : null;
             const exitBadgeLabel = outcome.marketExitSource === 'target'
                 ? 'Poly target'
+                : outcome.marketExitSource === 'protection_take_profit'
+                ? 'Poly TP'
+                : outcome.marketExitSource === 'protection_stop_loss'
+                ? 'Poly SL'
                 : outcome.marketExitSource === 'signal'
                 ? (outcome.marketEntrySource === "limit" ? 'Poly limit fill' : 'Poly Exit')
                 : (outcome.marketEntrySource === "limit" ? 'Poly limit fill' : 'Poly Settle');
@@ -504,6 +510,8 @@ export class TradesRenderer {
             const marketUrl = escapeHtml(this.buildPolymarketMarketUrl(outcome.marketSlug));
             const title = outcome.marketExitSource === 'target'
                 ? `Signal-exit mode. ${exitBadgeLabel}. Predicted ${prediction}, entry ${entryPrice}, target exited at ${exitPrice} (${exitTimeLabel}). Chart exit: ${chartExitLabel}. Click to copy ${marketSlug}.`
+                : outcome.marketExitSource === 'protection_take_profit' || outcome.marketExitSource === 'protection_stop_loss'
+                    ? `Signal-exit mode. ${exitBadgeLabel}. Predicted ${prediction}, entry ${entryPrice}, protection exited at ${exitPrice} (${exitTimeLabel}). Chart exit: ${chartExitLabel}. Click to copy ${marketSlug}.`
                 : outcome.marketExitSource === 'signal'
                     ? `Signal-exit mode. ${exitBadgeLabel}. Predicted ${prediction}, entry ${entryPrice}, exited same-event at ${exitPrice} (${exitTimeLabel}). Chart exit: ${chartExitLabel}. Click to copy ${marketSlug}.`
                     : `Signal-exit mode. ${exitBadgeLabel}. Predicted ${prediction}, entry ${entryPrice}, settled at event end at ${exitPrice} (${exitTimeLabel}) after chart exit: ${chartExitLabel}. Click to copy ${marketSlug}.`;
@@ -511,11 +519,18 @@ export class TradesRenderer {
         }
 
         const isTargetExit = outcome.marketExitSource === "target";
-        const label = isTargetExit ? "Poly target" : outcome.marketEntrySource === "limit" ? 'Poly limit fill' : outcome.isWin ? 'Poly Win' : 'Poly Lose';
+        const isProtectionExit = outcome.marketExitSource === "protection_take_profit" || outcome.marketExitSource === "protection_stop_loss";
+        const label = isTargetExit
+            ? "Poly target"
+            : outcome.marketExitSource === "protection_take_profit"
+            ? "Poly TP"
+            : outcome.marketExitSource === "protection_stop_loss"
+            ? "Poly SL"
+            : outcome.marketEntrySource === "limit" ? 'Poly limit fill' : outcome.isWin ? 'Poly Win' : 'Poly Lose';
         const realizedPnl = typeof outcome.marketPnl === "number" && Number.isFinite(outcome.marketPnl)
             ? outcome.marketPnl
             : null;
-        const className = isTargetExit && realizedPnl !== null
+        const className = (isTargetExit || isProtectionExit) && realizedPnl !== null
             ? realizedPnl >= 0
                 ? 'exit-reason-badge--polymarket-win'
                 : 'exit-reason-badge--polymarket-lose'
@@ -555,6 +570,8 @@ export class TradesRenderer {
         const marketUrl = escapeHtml(this.buildPolymarketMarketUrl(outcome.marketSlug));
         const title = isTargetExit
             ? `Polymarket ${label}. Predicted ${prediction}, paid ${paidPrice}, target exited at ${resolvedExitPrice}${payoutLabel ? ` (${payoutLabel})` : ''}. YES ${yesPrice} / NO ${noPrice}. Click to copy ${marketSlug}.`
+            : isProtectionExit
+            ? `Polymarket ${label}. Predicted ${prediction}, paid ${paidPrice}, protection exited at ${resolvedExitPrice}${payoutLabel ? ` (${payoutLabel})` : ''}. YES ${yesPrice} / NO ${noPrice}. Click to copy ${marketSlug}.`
             : `Polymarket ${label}. Predicted ${prediction}, resolved ${actual}, paid ${paidPrice}${resolvedExitPrice ? `, settled at ${resolvedExitPrice}` : ''}${payoutLabel ? ` (${payoutLabel})` : ''}. YES ${yesPrice} / NO ${noPrice}. Click to copy ${marketSlug}.`;
         return `<span class="exit-reason-badge trade-polymarket-link ${className}" role="button" tabindex="0" data-polymarket-url="${marketUrl}" title="${escapeHtml(title)}">${label} ${priceLabel}</span>`;
     }

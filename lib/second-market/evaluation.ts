@@ -23,6 +23,7 @@ import {
 import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import type { Polymarket1sGammaContextRow } from "../types/strategies";
 import type { PolymarketPostSignalLimitEntrySettings } from "../polymarket-post-signal-limit-entry";
+import type { PolymarketProtectionSettingFields } from "../polymarket-protection-settings";
 import type {
     PolymarketClob1sQuoteRow,
     SecondMarketBacktestSummary,
@@ -248,6 +249,8 @@ function summarizePolymarketResult(args: {
         losingTrades,
         neutralTrades,
         targetExitedTrades: summary.targetExitedTrades,
+        protectionTakeProfitExitedTrades: summary.protectionTakeProfitExitedTrades,
+        protectionStopLossExitedTrades: summary.protectionStopLossExitedTrades,
         signalExitedTrades: summary.signalExitedTrades,
         resolvedTrades: summary.resolvedTrades,
         missingPriceTrades: summary.missingQuoteTrades || undefined,
@@ -279,6 +282,10 @@ function summarizePolymarketResult(args: {
         limitExitFilledTrades: summary.limitExitFilledTrades,
         limitExitFallbackTrades: summary.limitExitFallbackTrades,
         limitExitUnreachableTrades: summary.limitExitUnreachableTrades,
+        protectionTakeProfitEnabled: summary.protectionTakeProfitEnabled,
+        protectionTakeProfitCents: summary.protectionTakeProfitCents,
+        protectionStopLossEnabled: summary.protectionStopLossEnabled,
+        protectionStopLossCents: summary.protectionStopLossCents,
     };
 }
 
@@ -338,6 +345,8 @@ function buildPolymarketEval(args: {
         entryDelayBars: summary.entryDelayBars,
         backtestSlippageCents: summary.backtestSlippageCents,
         targetExitedTrades: summary.targetExitedTrades,
+        protectionTakeProfitExitedTrades: summary.protectionTakeProfitExitedTrades,
+        protectionStopLossExitedTrades: summary.protectionStopLossExitedTrades,
         signalExitedTrades: summary.signalExitedTrades,
         resolvedTrades: summary.resolvedTrades,
         missingPriceTrades: summary.missingQuoteTrades,
@@ -362,6 +371,10 @@ function buildPolymarketEval(args: {
         limitExitFilledTrades: summary.limitExitFilledTrades,
         limitExitFallbackTrades: summary.limitExitFallbackTrades,
         limitExitUnreachableTrades: summary.limitExitUnreachableTrades,
+        protectionTakeProfitEnabled: summary.protectionTakeProfitEnabled,
+        protectionTakeProfitCents: summary.protectionTakeProfitCents,
+        protectionStopLossEnabled: summary.protectionStopLossEnabled,
+        protectionStopLossCents: summary.protectionStopLossCents,
         netPnl: summary.netPnl,
         avgExitPrice: summary.avgExitPrice ?? undefined,
         rows: [],
@@ -436,6 +449,7 @@ export function evaluateSecondMarketBacktest(args: {
     entryDelayBars?: number;
     backtestSlippageCents?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
+    protection?: Partial<PolymarketProtectionSettingFields>;
 }): SecondMarketEvaluationResult {
     const trades = [...(args.trades ?? args.result.trades)];
     const tradePairs = buildScoredTradePairs(trades, args.executionModel);
@@ -457,6 +471,7 @@ export function evaluateSecondMarketBacktest(args: {
         entryDelayBars: args.entryDelayBars,
         backtestSlippageCents: args.backtestSlippageCents,
         limitEntry: args.limitEntry,
+        protection: args.protection,
     });
     const tradeResults = evaluated.results.map((result) => ({
         ...result,
@@ -506,6 +521,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
     entryDelayBars?: number;
     backtestSlippageCents?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
+    protection?: Partial<PolymarketProtectionSettingFields>;
 }): Promise<BacktestResult> {
     if (
         !isSecondMarketPolymarketScoringSupported({
@@ -543,6 +559,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
         entryDelayBars: args.entryDelayBars,
         backtestSlippageCents: args.backtestSlippageCents,
         limitEntry: args.limitEntry,
+        protection: args.protection,
     });
 
     return {

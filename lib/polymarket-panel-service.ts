@@ -248,6 +248,8 @@ class PolymarketPanelService {
         signalExitAllowMultipleTradesPerEvent?: boolean;
         missingPriceTrades?: number;
         targetExitedTrades?: number;
+        protectionTakeProfitExitedTrades?: number;
+        protectionStopLossExitedTrades?: number;
         signalExitedTrades?: number;
         resolvedTrades?: number;
         limitEntryEnabled?: boolean;
@@ -354,6 +356,8 @@ class PolymarketPanelService {
             signalExitAllowMultipleTradesPerEvent: summary?.signalExitAllowMultipleTradesPerEvent,
             missingPriceTrades: isSignalExit ? (summary?.missingPriceTrades ?? 0) : undefined,
             targetExitedTrades: summary?.targetExitedTrades,
+            protectionTakeProfitExitedTrades: summary?.protectionTakeProfitExitedTrades,
+            protectionStopLossExitedTrades: summary?.protectionStopLossExitedTrades,
             signalExitedTrades: isSignalExit ? (summary?.signalExitedTrades ?? 0) : undefined,
             resolvedTrades: isSignalExit ? (summary?.resolvedTrades ?? 0) : undefined,
             limitEntryEnabled: summary?.limitEntryEnabled,
@@ -450,6 +454,8 @@ class PolymarketPanelService {
 
         const signalExitCards = isSignalExit ? `
                     ${(summary.targetExitedTrades ?? 0) > 0 ? this.renderStatCard("Target Exited", String(summary.targetExitedTrades)) : ""}
+                    ${(summary.protectionTakeProfitExitedTrades ?? 0) > 0 ? this.renderStatCard("Poly TP Exited", String(summary.protectionTakeProfitExitedTrades)) : ""}
+                    ${(summary.protectionStopLossExitedTrades ?? 0) > 0 ? this.renderStatCard("Poly SL Exited", String(summary.protectionStopLossExitedTrades)) : ""}
                     ${this.renderStatCard("Signal Exited", String(summary.signalExitedTrades ?? 0))}
                     ${this.renderStatCard("Resolved (Held)", String(summary.resolvedTrades ?? 0))}
                     ${summary.neutralTrades > 0 ? this.renderStatCard("Neutral Trades", String(summary.neutralTrades)) : ""}

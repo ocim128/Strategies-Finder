@@ -95,6 +95,7 @@ export interface BacktestSettingsData {
     riskWinStreakStopLossEnabled: boolean;
     riskWinStreakStopLossAfterWins: number;
     riskWinStreakStopLossPercent: number;
+    disableSignalExits: boolean;
     marketMode: MarketMode;
 
     // Trade direction
@@ -136,6 +137,10 @@ export interface BacktestSettingsData {
     polymarketPostSignalLimitExitMode: PolymarketLimitExitPriceMode;
     polymarketPostSignalLimitExitPriceCents: number;
     polymarketPostSignalLimitExitOffsetCents: number;
+    polymarketProtectionTakeProfitEnabled: boolean;
+    polymarketProtectionTakeProfitCents: number;
+    polymarketProtectionStopLossEnabled: boolean;
+    polymarketProtectionStopLossCents: number;
     /** Resolved secondary symbol for cross-symbol strategies. Empty string means use strategy default. */
     crossSymbolSecondary: string;
 }

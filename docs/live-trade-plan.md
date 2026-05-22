@@ -75,6 +75,8 @@ V1 is working only when all of these are true:
 - Live Trade targets Polymarket crypto outcome markets, not Binance spot/futures execution.
 - Existing Strategy Finder settings remain the source of truth for signal validity, direction, entry price filtering, Polymarket symbol/session settings, and stake input.
 - Live entries can run in taker mode or limit mode. Filled live exits still sell the same filled token through the existing taker exit flow.
+- Polymarket protective TP/SL in Execution Lab is driven by paper exits. The current live boundary converts those paper exits to the existing taker sell flow for tracked filled shares.
+- Resting sell-limit TP submission and order-status polling are not part of the current Strategy Finder live boundary. Add them only after the local executor exposes an explicit sell-limit request/response and reconciliation contract.
 - With live UI sizing mode `fixed`, `stakeUsd` is a hard notional cap. The executor may submit less after tick/lot/depth/min-size checks, but it must never submit more.
 - With live UI sizing mode `exchange_min`, live entries may auto-size above `stakeUsd` to the minimum valid Polymarket order, but never above the effective UI/Strategy Finder cap or `MAX_ORDER_SIZE_USDC`.
 - The executor may reject small stakes in fixed mode or reject exchange-min sizing with `min_size_exceeds_cap` when the minimum valid order is above the configured caps.
@@ -103,6 +105,7 @@ V1 is working only when all of these are true:
 - No production deployment claim.
 - No full live-position reconciliation dashboard in V1.
 - No order-status polling or fill reconciliation for resting limit orders in V1.
+- No resting sell-limit take-profit for live exits in V1; protective TP exits use the same taker exit path as signal exits.
 - No UI storage for executor path, cwd, args, wallet auth, API keys, private key material, or process timeout/output controls.
 
 ## Current Architecture

@@ -18,6 +18,8 @@ export const POLYMARKET_SETTINGS_IDS = {
   entryDelayBarsRow: 'polymarketEntryDelayBarsRow',
   entryPriceFilterCentsRow: 'polymarketEntryPriceFilterCentsRow',
   backtestSlippageCentsRow: 'polymarketBacktestSlippageCentsRow',
+  protectionTakeProfitRow: 'polymarketProtectionTakeProfitRow',
+  protectionStopLossRow: 'polymarketProtectionStopLossRow',
   exitModeRow: 'polymarketExitModeRow',
   signalExitAllowMultipleTradesPerEventRow: 'polymarketSignalExitAllowMultipleTradesPerEventRow',
   postSignalLimitEntryEnabledRow: 'polymarketPostSignalLimitEntryEnabledRow',
@@ -52,6 +54,8 @@ const POLYMARKET_SETTINGS_ROW_IDS = {
   entryDelayBarsRow: POLYMARKET_SETTINGS_IDS.entryDelayBarsRow,
   entryPriceFilterCentsRow: POLYMARKET_SETTINGS_IDS.entryPriceFilterCentsRow,
   backtestSlippageCentsRow: POLYMARKET_SETTINGS_IDS.backtestSlippageCentsRow,
+  protectionTakeProfitRow: POLYMARKET_SETTINGS_IDS.protectionTakeProfitRow,
+  protectionStopLossRow: POLYMARKET_SETTINGS_IDS.protectionStopLossRow,
   exitModeRow: POLYMARKET_SETTINGS_IDS.exitModeRow,
   signalExitAllowMultipleTradesPerEventRow: POLYMARKET_SETTINGS_IDS.signalExitAllowMultipleTradesPerEventRow,
   postSignalLimitEntryEnabledRow: POLYMARKET_SETTINGS_IDS.postSignalLimitEntryEnabledRow,
@@ -136,6 +140,8 @@ export function getPolymarketSettingsRows(): {
   entryDelayBarsRow: HTMLElement | null;
   entryPriceFilterCentsRow: HTMLElement | null;
   backtestSlippageCentsRow: HTMLElement | null;
+  protectionTakeProfitRow: HTMLElement | null;
+  protectionStopLossRow: HTMLElement | null;
   exitModeRow: HTMLElement | null;
   signalExitAllowMultipleTradesPerEventRow: HTMLElement | null;
   postSignalLimitEntryEnabledRow: HTMLElement | null;

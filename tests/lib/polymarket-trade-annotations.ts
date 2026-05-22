@@ -1419,6 +1419,8 @@ export function summarizePolymarketTradesForRun(args: {
     | "timingProfile"
     | "backtestSlippageCents"
     | "targetExitedTrades"
+    | "protectionTakeProfitExitedTrades"
+    | "protectionStopLossExitedTrades"
     | "limitEntryEnabled"
     | "limitEntryMode"
     | "limitEntryPriceCents"
@@ -1446,6 +1448,14 @@ export function summarizePolymarketTradesForRun(args: {
     const backtestSlippageCents = clampPolymarketBacktestSlippageCents(args.backtestSlippageCents, 0);
     const slippageSummary = {
         backtestSlippageCents: backtestSlippageCents > 0 ? backtestSlippageCents : undefined,
+    };
+    const protectionSummary = {
+        protectionTakeProfitExitedTrades: args.trades.filter(
+            (trade) => trade.polymarketOutcome?.marketExitSource === "protection_take_profit"
+        ).length || undefined,
+        protectionStopLossExitedTrades: args.trades.filter(
+            (trade) => trade.polymarketOutcome?.marketExitSource === "protection_stop_loss"
+        ).length || undefined,
     };
     const hasLimitEntryAnnotations = args.trades.some(
         (trade) => trade.polymarketOutcome?.marketEntrySource === "limit"
@@ -1475,6 +1485,7 @@ export function summarizePolymarketTradesForRun(args: {
             entryOffset: undefined,
             timingProfile: args.timingProfile,
             ...slippageSummary,
+            ...protectionSummary,
             ...summarizeLimitEntryTrades(args.trades, args.limitEntry),
         };
     }
@@ -1509,6 +1520,7 @@ export function summarizePolymarketTradesForRun(args: {
             entryOffset: uniqueEntryOffsets.size === 1 ? [...uniqueEntryOffsets][0] : undefined,
             timingProfile: args.timingProfile ?? buildPolymarketTimingProfileForNativeSession(args.trades, resolvedOutcomeInterval),
             ...slippageSummary,
+            ...protectionSummary,
         };
     }
 
@@ -1539,6 +1551,7 @@ export function summarizePolymarketTradesForRun(args: {
             entrySelectionMode,
             timingProfile: args.timingProfile,
             ...slippageSummary,
+            ...protectionSummary,
         };
     }
 
@@ -1571,6 +1584,7 @@ export function summarizePolymarketTradesForRun(args: {
         entryOffset: undefined,
         timingProfile: args.timingProfile,
         ...slippageSummary,
+        ...protectionSummary,
     };
 }
 
