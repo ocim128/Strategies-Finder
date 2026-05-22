@@ -1299,10 +1299,7 @@ export class FinderManager {
 				requiresTsEngine,
 				selectedStrategies,
 				capitalSettings,
-				getFinderTimeframesForRun: () => [state.currentInterval],
-				loadMultiTimeframeDatasets: async () => [],
 				generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),
-				buildRandomConfirmationParams: (strategyKeys, finderOptions) => this.buildRandomConfirmationParams(strategyKeys, finderOptions),
 			},
 			{
 				setProgress: (percent, text) => this.setProgress(true, percent, text),
@@ -1510,10 +1507,6 @@ export class FinderManager {
 
 	private generateParamSets(defaultParams: StrategyParams, options: FinderOptions): StrategyParams[] {
 		return this.paramSpace.generateParamSets(defaultParams, options);
-	}
-
-	private buildRandomConfirmationParams(strategyKeys: string[], options: FinderOptions): Record<string, StrategyParams> {
-		return this.paramSpace.buildRandomConfirmationParams(strategyKeys, options);
 	}
 
 	private setLatestResults(results: FinderLatestResults): void {

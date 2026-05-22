@@ -189,10 +189,7 @@ function makeInput(
             },
         ],
         capitalSettings,
-        getFinderTimeframesForRun: () => [],
-        loadMultiTimeframeDatasets: async () => [],
         generateParamSets: () => paramSets.map((params) => ({ ...params })),
-        buildRandomConfirmationParams: () => ({}),
     };
 }
 

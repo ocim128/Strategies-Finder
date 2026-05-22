@@ -462,15 +462,18 @@ function selectClosedCandleData(
 }
 
 function getDataTimeRange(data: readonly OHLCVData[]): { startTs: number; endTs: number } | null {
-    const times: number[] = [];
+    let startTs = Number.POSITIVE_INFINITY;
+    let endTs = Number.NEGATIVE_INFINITY;
     for (const bar of data) {
         const ts = parseTimeToUnixSeconds(bar.time);
-        if (ts !== null) times.push(ts);
+        if (ts === null) continue;
+        if (ts < startTs) startTs = ts;
+        if (ts > endTs) endTs = ts;
     }
-    if (times.length === 0) return null;
+    if (!Number.isFinite(startTs) || !Number.isFinite(endTs)) return null;
     return {
-        startTs: Math.min(...times),
-        endTs: Math.max(...times),
+        startTs,
+        endTs,
     };
 }
 

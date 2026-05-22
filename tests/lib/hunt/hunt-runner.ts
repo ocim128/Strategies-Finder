@@ -218,10 +218,7 @@ export function createHuntRunController(
                             requiresTsEngine,
                             selectedStrategies,
                             capitalSettings,
-                            getFinderTimeframesForRun: () => [profile.interval],
-                            loadMultiTimeframeDatasets: async () => [],
                             generateParamSets: (defaultParams, options) => paramSpace.generateParamSets(defaultParams, options),
-                            buildRandomConfirmationParams: (strategyKeys, options) => paramSpace.buildRandomConfirmationParams(strategyKeys, options),
                         },
                         {
                             setProgress: (percent, text) => {

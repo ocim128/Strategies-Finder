@@ -1,4 +1,5 @@
 import { OHLCVData } from "./strategies/index";
+import { parseTimeToUnixSeconds } from "./time-normalization";
 
 /**
  * Slices an OHLCV array to the given block range (inclusive).
@@ -11,5 +12,8 @@ export function sliceOhlcvByBlock(
 ): OHLCVData[] {
     if (!block) return data;
     const { from, to } = block;
-    return data.filter(c => (c.time as number) >= from && (c.time as number) <= to);
+    return data.filter((candle) => {
+        const time = parseTimeToUnixSeconds(candle.time);
+        return time !== null && time >= from && time <= to;
+    });
 }

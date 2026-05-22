@@ -36,11 +36,6 @@ export async function runGeneticFinder(params: GeneticFinderRunParams): Promise<
     const { input, callbacks, capitalSettings } = params;
     const { initialCapital } = capitalSettings;
 
-    if (input.options.multiTimeframeEnabled) {
-        callbacks.setStatus("Genetic search is currently single-timeframe only.");
-        return { results: [] };
-    }
-
     if (input.comboPrimarySignals) {
         callbacks.setStatus("Genetic search is currently unavailable in combo mode.");
         return { results: [] };

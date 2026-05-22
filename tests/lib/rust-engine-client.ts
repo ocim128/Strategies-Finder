@@ -120,8 +120,8 @@ export class RustEngineClient {
     private ws: WebSocket | null = null;
 
     // Data caching for large datasets
-    private cachedDataId: string | null = null;
-    private cachedDataHash: string | null = null;
+    private readonly maxCachedDataEntries = 4;
+    private readonly cachedDataIdsByHash = new Map<string, string>();
 
     constructor(baseUrl: string = 'http://127.0.0.1:3030') {
         this.baseUrl = baseUrl;
@@ -187,6 +187,33 @@ export class RustEngineClient {
         const normalized = Number.isFinite(value) ? Math.round(value * 1_000_000) : 0;
         const mixed = hash ^ (normalized + 0x9e3779b9 + ((hash << 6) >>> 0) + (hash >>> 2));
         return mixed >>> 0;
+    }
+
+    private getCachedDataId(dataHash: string): string | null {
+        const cacheId = this.cachedDataIdsByHash.get(dataHash);
+        if (!cacheId) return null;
+        this.cachedDataIdsByHash.delete(dataHash);
+        this.cachedDataIdsByHash.set(dataHash, cacheId);
+        return cacheId;
+    }
+
+    private rememberCachedDataId(dataHash: string, cacheId: string): void {
+        this.cachedDataIdsByHash.delete(dataHash);
+        this.cachedDataIdsByHash.set(dataHash, cacheId);
+        while (this.cachedDataIdsByHash.size > this.maxCachedDataEntries) {
+            const oldestHash = this.cachedDataIdsByHash.keys().next().value;
+            if (oldestHash === undefined) break;
+            this.cachedDataIdsByHash.delete(oldestHash);
+        }
+    }
+
+    private forgetCachedDataId(cacheId: string): void {
+        for (const [dataHash, cachedId] of this.cachedDataIdsByHash) {
+            if (cachedId === cacheId) {
+                this.cachedDataIdsByHash.delete(dataHash);
+                return;
+            }
+        }
     }
 
     // ========================================================================
@@ -401,9 +428,10 @@ export class RustEngineClient {
         const dataHash = this.generateDataHash(data);
 
         // If we already have this data cached, return existing ID
-        if (this.cachedDataHash === dataHash && this.cachedDataId) {
-            rustLog.info(`[RustEngine] Using existing cache ID: ${this.cachedDataId}`);
-            return this.cachedDataId;
+        const cachedDataId = this.getCachedDataId(dataHash);
+        if (cachedDataId) {
+            rustLog.info(`[RustEngine] Using existing cache ID: ${cachedDataId}`);
+            return cachedDataId;
         }
 
         try {
@@ -424,13 +452,20 @@ export class RustEngineClient {
 
             const result = await response.json();
             const elapsed = performance.now() - startTime;
+            const cacheId = typeof result?.cacheId === "string" && result.cacheId.length > 0
+                ? result.cacheId
+                : null;
+            if (!cacheId) {
+                rustLog.error('[RustEngine] Cache data returned an invalid cache ID');
+                return null;
+            }
+            const barCount = Number.isFinite(result?.barCount) ? result.barCount : data.length;
 
-            this.cachedDataId = result.cacheId;
-            this.cachedDataHash = dataHash;
+            this.rememberCachedDataId(dataHash, cacheId);
 
-            rustLog.info(`[RustEngine] Cached ${result.barCount} bars in ${elapsed.toFixed(2)}ms, ID: ${result.cacheId}`);
+            rustLog.info(`[RustEngine] Cached ${barCount} bars in ${elapsed.toFixed(2)}ms, ID: ${cacheId}`);
 
-            return result.cacheId;
+            return cacheId;
         } catch (error) {
             rustLog.error('[RustEngine] Cache data error:', error);
             return null;
@@ -487,6 +522,7 @@ export class RustEngineClient {
             if (!response.ok) {
                 const errorText = await response.text();
                 rustLog.error('[RustEngine] Cached batch backtest failed:', response.statusText, errorText);
+                this.forgetCachedDataId(cacheId);
                 return null;
             }
 
@@ -498,6 +534,7 @@ export class RustEngineClient {
             return result;
         } catch (error) {
             rustLog.error('[RustEngine] Cached batch backtest error:', error);
+            this.forgetCachedDataId(cacheId);
             return null;
         }
     }
@@ -506,8 +543,7 @@ export class RustEngineClient {
      * Clear the local cache tracking (server cache is managed automatically)
      */
     clearLocalCache(): void {
-        this.cachedDataId = null;
-        this.cachedDataHash = null;
+        this.cachedDataIdsByHash.clear();
     }
 
     // ========================================================================

@@ -1,10 +1,6 @@
 import {
-    BacktestResult,
     BacktestSettings,
     OHLCVData,
-    Signal,
-    Strategy,
-    StrategyParams,
     Time,
     buildEntryBacktestResult,
     precomputeIndicators,
@@ -19,20 +15,12 @@ import { debugLogger } from "../debug-logger";
 import { isBuiltInKey } from "../strategies/built-in-catalog";
 import { isCrossSymbolStrategy, resolveCrossSymbolExecution } from "../cross-symbol-runtime";
 
-import { buildSelectionResult } from "./endpoint";
-import { aggregateFinderBacktestResults, compareFinderResults } from "./finder-engine";
+import { compareFinderResults } from "./finder-engine";
 import { FinderResultRanker } from "./finder-result-ranker";
 import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
-import type { FinderDataset } from "./finder-timeframe-loader";
-import type { FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
+import type { FinderRandomBenchmark, FinderResult } from "../types/finder";
 import type { CapitalSettings } from "../types/backtest";
-import { trimToClosedCandles } from "../closed-candle-utils";
-import { mergeStrategySignals } from "../signal-merge";
-import {
-    applyConfirmationStrategiesToSignals,
-    ensureConfirmationStrategiesLoaded,
-} from "../confirmation-signal-filter";
-import { runGeneticOptimization } from "./genetic-optimizer";
+import { applyConfirmationStrategiesToSignals } from "../confirmation-signal-filter";
 import {
     attachTradeTimingQuality,
     finderSortRequiresTradeTimingQuality,
@@ -42,12 +30,10 @@ import {
     buildComparableFinderResult,
     compactSignalsForRust,
     computeFinderCompositeEdgeRatio,
-    computeAverageCompositeEdgeRatio,
     extractRustFinderCandidates,
     finderSortRequiresCompositeEdgeRatio,
     getPreparedFinderData,
     normalizeFinderCandidateParams,
-    normalizeFinderCandidateParamSets,
     resolveFinderCandidateBacktestSettings,
     resolveFinderRiskOverrides,
     resolveQuickFunnelShortlistCount,
@@ -63,8 +49,6 @@ import {
     buildFinderEvaluationData,
     buildFinderResult,
     buildSelection,
-    computeDatasetFlags,
-    deriveStrategySeed,
     generateSignalsForJob,
     isBacktestResultConsistent,
     normalizeResultSharpe,
@@ -74,8 +58,8 @@ import {
     type FinderDatasetFlags,
     type ParamJob,
     type PreparedRun,
-    type StrategyPlan,
 } from "./finder-runner-shared";
+import type { FinderRunCallbacks, FinderRunInput, FinderRunOutput } from "./finder-runner";
 
 export { buildFinderEvaluationData } from "./finder-runner-shared";
 export { resolveFinderCandidateBacktestSettings, shouldUseRustCachedMode } from "./finder-runner-core";
@@ -87,46 +71,6 @@ let dataManagerModulePromise: Promise<typeof import("../data-manager")> | null =
 async function getDataManager() {
     dataManagerModulePromise ??= import("../data-manager");
     return (await dataManagerModulePromise).dataManager;
-}
-
-export interface FinderSelectedStrategy {
-    key: string;
-    name: string;
-    strategy: Strategy;
-}
-
-export interface FinderRunInput {
-    ohlcvData: OHLCVData[];
-    symbol: string;
-    interval: string;
-    options: FinderOptions;
-    settings: BacktestSettings;
-    requiresTsEngine: boolean;
-    selectedStrategies: FinderSelectedStrategy[];
-    capitalSettings: CapitalSettings;
-    getFinderTimeframesForRun: (options: FinderOptions) => string[];
-    loadMultiTimeframeDatasets: (symbol: string, intervals: string[]) => Promise<FinderDataset[]>;
-    generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[];
-    buildRandomConfirmationParams: (strategyKeys: string[], options: FinderOptions) => Record<string, StrategyParams>;
-    /** Combo Finder: cached primary signals (generated once from locked primary config). */
-    comboPrimarySignals?: Signal[];
-    /** Combo Finder: primary config's resolved backtest settings for the merged run. */
-    comboPrimarySettings?: BacktestSettings;
-    /** Combo Finder: primary config's capital settings for the merged run. */
-    comboPrimaryCapital?: CapitalSettings;
-}
-
-export interface FinderRunCallbacks {
-    setProgress: (percent: number, text: string) => void;
-    setStatus: (text: string) => void;
-    yieldControl: () => Promise<void>;
-    isCancelled: () => boolean;
-    onResultsUpdate: (results: FinderResult[]) => void;
-}
-
-export interface FinderRunOutput {
-    results: FinderResult[];
-    randomBenchmark?: FinderRandomBenchmark;
 }
 
 type FinderCandidateForEnrichment = Pick<FinderResult, "key" | "name" | "params" | "result">
@@ -171,506 +115,6 @@ function enrichFinderCandidate(args: {
         endpointAdjusted: adjustment.adjusted,
         endpointRemovedTrades: adjustment.removedTrades,
     });
-}
-
-export async function runFinderExecution(input: FinderRunInput, callbacks: FinderRunCallbacks): Promise<FinderRunOutput> {
-    const {
-        options,
-        settings,
-        selectedStrategies,
-        capitalSettings,
-    } = input;
-
-    const rustSettings = sanitizeBacktestSettingsForRust(settings);
-    await ensureConfirmationStrategiesLoaded(settings);
-    const runTimeframes = input.getFinderTimeframesForRun(options);
-    const usingMultiTimeframe = options.multiTimeframeEnabled === true;
-
-    if (usingMultiTimeframe) {
-        const crossSymbolStrategies = selectedStrategies.filter(s => isCrossSymbolStrategy(s.strategy));
-        if (crossSymbolStrategies.length > 0) {
-            const names = crossSymbolStrategies.map(s => s.name).join(', ');
-            callbacks.setStatus(`Cross-symbol strategies (${names}) are not supported with multi-timeframe Finder.`);
-            callbacks.setProgress(100, 'Unsupported configuration');
-            return { results: [] };
-        }
-    }
-
-    const flags = computeDatasetFlags(input.ohlcvData.length, settings, options, false);
-    if (flags.isExtremeDataset) {
-        debugLogger.warn(`[Finder] EXTREME dataset detected (${flags.dataSize} bars). Using ultra-memory-efficient mode.`);
-        callbacks.setStatus(`Ultra-memory mode: ${(flags.dataSize / 1_000_000).toFixed(1)}M bars`);
-    } else if (flags.isVeryLargeDataset) {
-        debugLogger.warn(`[Finder] Very large dataset detected (${flags.dataSize} bars). Using memory-efficient mode.`);
-    }
-
-    if (options.mode === "genetic") {
-        return runGeneticFinder({
-            input,
-            callbacks,
-            flags,
-            runTimeframes,
-            capitalSettings,
-        });
-    }
-
-    callbacks.setProgress(5, "Preparing parameter combinations...");
-
-    const strategyPlans: StrategyPlan[] = [];
-    let totalRuns = 0;
-    for (const selection of selectedStrategies) {
-        const extendedDefaults = buildFinderSearchBaseParams(selection.strategy, settings, options);
-        const paramSets = normalizeFinderCandidateParamSets(
-            selection.strategy,
-            input.generateParamSets(extendedDefaults, options)
-        );
-        if (paramSets.length === 0) continue;
-        totalRuns += paramSets.length;
-        strategyPlans.push({
-            key: selection.key,
-            name: selection.name,
-            strategy: selection.strategy,
-            paramSets,
-        });
-    }
-
-    if (totalRuns === 0) {
-        callbacks.setStatus("No valid parameter combinations generated.");
-        return { results: [] };
-    }
-
-    let planIndex = 0;
-    let paramIndex = 0;
-    let nextJobId = 0;
-    const nextJobBatch = (batchSize: number): ParamJob[] => {
-        const batch: ParamJob[] = [];
-        while (batch.length < batchSize && planIndex < strategyPlans.length) {
-            const plan = strategyPlans[planIndex];
-            if (paramIndex >= plan.paramSets.length) {
-                planIndex++;
-                paramIndex = 0;
-                continue;
-            }
-
-            const params = plan.paramSets[paramIndex++];
-            const { backtestSettings, rustBacktestSettings } = resolveFinderRiskOverrides(settings, rustSettings, params, options);
-
-            batch.push({
-                id: nextJobId++,
-                key: plan.key,
-                name: plan.name,
-                params,
-                backtestSettings,
-                rustBacktestSettings,
-                strategy: plan.strategy,
-            });
-        }
-        return batch;
-    };
-
-    let lastUiUpdateAt = 0;
-    const shouldUpdateUi = (force = false): boolean => {
-        const now = performance.now();
-        if (!force && (now - lastUiUpdateAt) < 250) return false;
-        lastUiUpdateAt = now;
-        return true;
-    };
-
-    const yieldBudgetMs = flags.isHeavyFinderConfig ? 32 : 50;
-    let sliceStart = performance.now();
-    const maybeYieldByBudget = async (force = false): Promise<void> => {
-        const now = performance.now();
-        if (!force && (now - sliceStart) < yieldBudgetMs) return;
-        await callbacks.yieldControl();
-        sliceStart = performance.now();
-    };
-
-    if (usingMultiTimeframe) {
-        return runMultiTimeframe({
-            input,
-            callbacks,
-            flags,
-            totalRuns,
-            nextJobBatch,
-            shouldUpdateUi,
-            maybeYieldByBudget,
-            capitalSettings,
-            runTimeframes,
-        });
-    }
-
-    return runSingleTimeframe({
-        input,
-        callbacks,
-        flags,
-        totalRuns,
-        nextJobBatch,
-        shouldUpdateUi,
-        maybeYieldByBudget,
-        capitalSettings,
-        rustSettings,
-    });
-}
-
-interface MultiTimeframeRunParams {
-    input: FinderRunInput;
-    callbacks: FinderRunCallbacks;
-    flags: FinderDatasetFlags;
-    totalRuns: number;
-    nextJobBatch: (batchSize: number) => ParamJob[];
-    shouldUpdateUi: (force?: boolean) => boolean;
-    maybeYieldByBudget: (force?: boolean) => Promise<void>;
-    capitalSettings: CapitalSettings;
-    runTimeframes: string[];
-}
-
-async function runMultiTimeframe(params: MultiTimeframeRunParams): Promise<FinderRunOutput> {
-    const {
-        input,
-        callbacks,
-        flags,
-        totalRuns,
-        nextJobBatch,
-        shouldUpdateUi,
-        maybeYieldByBudget,
-        runTimeframes,
-    } = params;
-    const effectiveCapitalSettings = resolveEffectiveCapitalSettings(input);
-    const {
-        initialCapital: effectiveInitialCapital,
-    } = effectiveCapitalSettings;
-    const effectiveBacktestSettings = input.comboPrimarySettings ?? input.settings;
-
-    callbacks.setProgress(8, `Loading ${runTimeframes.length} timeframe datasets...`);
-    callbacks.setStatus(`Loading timeframe datasets (${runTimeframes.length})...`);
-    const datasets = await input.loadMultiTimeframeDatasets(input.symbol, runTimeframes);
-    const activeDatasets = datasets
-        .map((dataset) => ({
-            ...dataset,
-            data: buildFinderEvaluationData(dataset.data, dataset.interval, effectiveBacktestSettings),
-        }))
-        .filter((dataset) => dataset.data.length > 0);
-
-    if (activeDatasets.length === 0) {
-        callbacks.setStatus("No data available for selected timeframes.");
-        return { results: [] };
-    }
-
-    callbacks.setProgress(12, `Running ${totalRuns} runs across ${activeDatasets.length} timeframes...`);
-
-    const precomputedByInterval = new Map<string, ReturnType<typeof precomputeIndicators>>();
-    for (const dataset of activeDatasets) {
-        precomputedByInterval.set(dataset.interval, precomputeIndicators(dataset.data, effectiveBacktestSettings));
-    }
-
-    // Combo mode: pre-generate primary signals per timeframe
-    const comboPrimarySignalsByInterval = new Map<string, Signal[]>();
-    if (input.comboPrimarySignals) {
-        // For multi-timeframe combo, we need primary signals from each TF's data.
-        // The primary strategy must be re-executed per timeframe.
-        const { loadBuiltInStrategyByKey, strategyRegistry } = await import('../../strategyRegistry');
-        const { settingsManager } = await import('../settings-manager');
-        const { resolveBacktestSettingsFromRaw } = await import('../backtest-settings-resolver');
-        const primaryConfigName = input.options.comboPrimaryConfigName;
-        if (primaryConfigName) {
-            const primaryConfig = settingsManager.loadStrategyConfig(primaryConfigName);
-            if (primaryConfig) {
-                const primaryStrategy = strategyRegistry.get(primaryConfig.strategyKey)
-                    ?? await loadBuiltInStrategyByKey(primaryConfig.strategyKey);
-                if (primaryStrategy) {
-                    const primarySettings = resolveBacktestSettingsFromRaw(
-                        primaryConfig.backtestSettings,
-                        { coerceWithoutUiToggles: true }
-                    );
-                    await ensureConfirmationStrategiesLoaded(primarySettings);
-                    for (const dataset of activeDatasets) {
-                        const primarySigs = applyConfirmationStrategiesToSignals({
-                            data: dataset.data,
-                            baseSignals: applySignalPolarity(
-                                primaryStrategy.execute(dataset.data, primaryConfig.strategyParams),
-                                primarySettings
-                            ),
-                            settings: primarySettings,
-                        });
-                        comboPrimarySignalsByInterval.set(dataset.interval, primarySigs);
-                    }
-                }
-            }
-        }
-    }
-
-
-    const ranker = new FinderResultRanker(Math.max(input.options.topN, 50), input.options.sortPriority);
-    const preparedDataCache: FinderPreparedDataCache = new WeakMap();
-    const requiresCompositeEdgeRatioSort = finderSortRequiresCompositeEdgeRatio(input.options.sortPriority);
-    let processedCount = 0;
-    let filteredCount = 0;
-    let endpointAdjustedCount = 0;
-    const timeframeLabels = activeDatasets.map((dataset) => dataset.interval);
-
-    while (processedCount < totalRuns) {
-        if (callbacks.isCancelled()) {
-            callbacks.setStatus("Finder stopped by user.");
-            const trimmed = ranker.toSortedArray(input.options.topN);
-            callbacks.onResultsUpdate(trimmed);
-            return { results: trimmed };
-        }
-
-        const batchJobs = nextJobBatch(flags.batchSize);
-        if (batchJobs.length === 0) break;
-
-        for (const job of batchJobs) {
-            const timeframeResults: Array<{ result: BacktestResult; data: OHLCVData[] }> = [];
-            for (const dataset of activeDatasets) {
-                try {
-                    let signals = generateSignalsForJob(
-                        job,
-                        dataset.data,
-                        preparedDataCache,
-                        effectiveBacktestSettings
-                    );
-                    // Combo mode: AND-merge with primary signals for this timeframe
-                    const tfPrimarySignals = comboPrimarySignalsByInterval.get(dataset.interval);
-                    if (tfPrimarySignals) {
-                        signals = mergeStrategySignals(tfPrimarySignals, signals, 'and') as Signal[];
-                    }
-                    const datasetUseCompact = !requiresCompositeEdgeRatioSort && dataset.data.length >= flags.compactBacktestThreshold;
-                    const timeframeBacktestFn = datasetUseCompact ? runBacktestCompact : runBacktest;
-                    const result = runStrategyBacktest({
-                        strategy: job.strategy,
-                        data: dataset.data,
-                        signals,
-                        params: job.params,
-                        capitalSettings: effectiveCapitalSettings,
-                        backtestSettings: resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
-                        backtestFn: timeframeBacktestFn,
-                        precomputed: precomputedByInterval.get(dataset.interval),
-                    });
-
-                    timeframeResults.push({ result, data: dataset.data });
-                    signals.length = 0;
-                } catch (error) {
-                    debugLogger.warn(`[Finder] Multi timeframe run failed for ${job.key} @ ${dataset.interval}`, {
-                        error: error instanceof Error ? error.message : String(error),
-                    });
-                }
-            }
-
-            if (timeframeResults.length > 0) {
-                const aggregatedResult = aggregateFinderBacktestResults(
-                    timeframeResults.map((entry) => entry.result),
-                    effectiveInitialCapital
-                );
-                if (input.options.tradeFilterEnabled && aggregatedResult.totalTrades < input.options.minTrades) {
-                    processedCount++;
-                    await maybeYieldByBudget(processedCount === totalRuns);
-                    continue;
-                }
-
-                const lastDataTime = activeDatasets.length === 1
-                    ? activeDatasets[0].data[activeDatasets[0].data.length - 1]?.time ?? null
-                    : null;
-                const adjustment = buildSelectionResult(aggregatedResult, lastDataTime, effectiveInitialCapital);
-                const enriched: FinderResult = buildFinderResult({
-                    key: job.key,
-                    name: job.name,
-                    comboMode: Boolean(input.comboPrimarySignals),
-                    comboPrimaryConfigName: input.options.comboPrimaryConfigName,
-                    timeframes: timeframeLabels,
-                    params: job.params,
-                    result: aggregatedResult,
-                    selectionResult: adjustment.result,
-                    compositeEdgeRatio: requiresCompositeEdgeRatioSort
-                        ? computeAverageCompositeEdgeRatio(timeframeResults)
-                        : undefined,
-                    endpointAdjusted: adjustment.adjusted,
-                    endpointRemovedTrades: adjustment.removedTrades,
-                });
-
-                if (!input.options.tradeFilterEnabled ||
-                    (enriched.result.totalTrades >= input.options.minTrades &&
-                        enriched.result.totalTrades <= input.options.maxTrades)) {
-                    filteredCount++;
-                    if (enriched.endpointAdjusted) {
-                        endpointAdjustedCount++;
-                    }
-                    ranker.offer(enriched);
-                }
-            }
-
-            processedCount++;
-            if (processedCount % 16 === 0 || processedCount === totalRuns) {
-                const updateUi = shouldUpdateUi(processedCount === totalRuns);
-                if (updateUi) {
-                    const progress = 12 + (processedCount / totalRuns) * 84;
-                    callbacks.setProgress(progress, `${processedCount}/${totalRuns} runs (${activeDatasets.length} TF)`);
-                    callbacks.setStatus(`Processing ${processedCount}/${totalRuns} runs across ${activeDatasets.length} timeframes...`);
-                    callbacks.onResultsUpdate(ranker.toSortedArray(input.options.topN));
-                }
-            }
-            await maybeYieldByBudget(processedCount === totalRuns);
-        }
-    }
-
-    const trimmed = ranker.toSortedArray(input.options.topN);
-    const statusParts = [
-        `${processedCount} runs`,
-        `${activeDatasets.length} timeframes`,
-    ];
-    if (input.options.tradeFilterEnabled) {
-        statusParts.push(`${filteredCount} matched`);
-    }
-    if (endpointAdjustedCount > 0) {
-        statusParts.push(`${endpointAdjustedCount} endpoint-adjusted`);
-    }
-    statusParts.push(`${trimmed.length} shown`);
-
-    callbacks.setProgress(100, `${totalRuns}/${totalRuns} runs`);
-    callbacks.setStatus(`Complete. ${statusParts.join(", ")}.`);
-    return { results: trimmed };
-}
-
-interface GeneticFinderRunParams {
-    input: FinderRunInput;
-    callbacks: FinderRunCallbacks;
-    flags: FinderDatasetFlags;
-    runTimeframes: string[];
-    capitalSettings: CapitalSettings;
-}
-
-async function runGeneticFinder(params: GeneticFinderRunParams): Promise<FinderRunOutput> {
-    const { input, callbacks, capitalSettings } = params;
-    const { initialCapital } = capitalSettings;
-
-    if (input.options.multiTimeframeEnabled) {
-        callbacks.setStatus("Genetic search is currently single-timeframe only.");
-        return { results: [] };
-    }
-
-    if (input.comboPrimarySignals) {
-        callbacks.setStatus("Genetic search is currently unavailable in combo mode.");
-        return { results: [] };
-    }
-
-    const closedData = trimToClosedCandles(input.ohlcvData, input.interval);
-    if (closedData.length === 0) {
-        callbacks.setStatus("No closed candles available for genetic finder run.");
-        return { results: [] };
-    }
-
-    const lastDataTime = closedData[closedData.length - 1]?.time ?? null;
-    const ranker = new FinderResultRanker(Math.max(input.options.topN, 50), input.options.sortPriority);
-    let filteredCount = 0;
-    let endpointAdjustedCount = 0;
-
-    const populationSize = Math.max(16, Math.min(48, Math.round(Math.sqrt(Math.max(1, input.options.maxRuns)) * 4)));
-    const generations = Math.max(2, Math.floor(Math.max(1, input.options.maxRuns) / populationSize));
-
-    for (let index = 0; index < input.selectedStrategies.length; index++) {
-        const selection = input.selectedStrategies[index];
-        const progressBase = (index / Math.max(1, input.selectedStrategies.length)) * 90;
-        callbacks.setProgress(progressBase, `Genetic ${selection.name}: preparing...`);
-
-        // Resolve cross-symbol context for this strategy
-        let geneticData = closedData;
-        let geneticCtx: StrategyExecutionContext | undefined;
-        if (isCrossSymbolStrategy(selection.strategy)) {
-            try {
-                const dataManager = await getDataManager();
-                const resolved = await resolveCrossSymbolExecution({
-                    strategy: selection.strategy,
-                    primarySymbol: input.symbol,
-                    interval: input.interval,
-                    primaryData: closedData,
-                    settings: input.settings,
-                    dataFetcher: dataManager,
-                });
-                geneticData = resolved.primaryData;
-                geneticCtx = resolved.context;
-            } catch (error) {
-                debugLogger.warn(`[Finder] Genetic cross-symbol resolution failed for ${selection.key}`, error);
-                continue;
-            }
-        }
-
-        let optimization;
-        try {
-            optimization = await runGeneticOptimization({
-                strategyKey: selection.key,
-                strategy: selection.strategy,
-                data: geneticData,
-                backtestSettings: input.settings,
-                executionContext: geneticCtx,
-                config: {
-                    populationSize,
-                    generations,
-                    eliteCount: Math.max(1, Math.floor(populationSize * 0.15)),
-                    mutationRate: 0.2,
-                    mutationSigma: 0.18,
-                    rangePercent: input.options.rangePercent,
-                    seed: deriveStrategySeed(1337, selection.key),
-                    tournamentSize: 4,
-                    adaptiveMutation: {
-                        enabled: true,
-                        stagnationGenerations: 2,
-                        increaseFactor: 1.3,
-                        decayFactor: 0.92,
-                        minRate: 0.08,
-                        maxRate: 0.45,
-                    },
-                    backtest: {
-                        ...capitalSettings,
-                        minTrades: input.options.tradeFilterEnabled ? input.options.minTrades : 0,
-                    },
-                },
-                onGeneration: (stats) => {
-                    const perStrategyProgress = ((stats.generation + 1) / Math.max(1, generations)) * (90 / Math.max(1, input.selectedStrategies.length));
-                    callbacks.setProgress(
-                        Math.min(95, progressBase + perStrategyProgress),
-                        `Genetic ${selection.name}: gen ${stats.generation + 1}/${generations}`
-                    );
-                    callbacks.setStatus(
-                        `Genetic ${selection.name}: best ${stats.bestNetProfitPercent.toFixed(2)}%, Sharpe ${stats.bestSharpeRatio.toFixed(2)}, DD ${stats.bestDrawdownPercent.toFixed(2)}%`
-                    );
-                },
-            });
-        } catch (error) {
-            debugLogger.warn(`[Finder] Genetic optimization skipped for ${selection.key}`, error);
-            continue;
-        }
-
-        const candidate = enrichFinderCandidate({
-            candidate: {
-                key: selection.key,
-                name: selection.name,
-                params: normalizeFinderCandidateParams(selection.strategy, optimization.bestGenome.params),
-                result: optimization.bestGenome.result,
-            },
-            candidateData: closedData,
-            lastDataTime,
-            initialCapital,
-            requiresCompositeEdgeRatioSort: finderSortRequiresCompositeEdgeRatio(input.options.sortPriority),
-            requiresTradeTimingQualitySort: finderSortRequiresTradeTimingQuality(input.options.sortPriority),
-        });
-
-        if (input.options.tradeFilterEnabled) {
-            if (candidate.result.totalTrades < input.options.minTrades || candidate.result.totalTrades > input.options.maxTrades) {
-                continue;
-            }
-        }
-
-        filteredCount++;
-        if (candidate.endpointAdjusted) {
-            endpointAdjustedCount++;
-        }
-        ranker.offer(candidate);
-        await callbacks.yieldControl();
-    }
-
-    const results = ranker.toSortedArray(input.options.topN);
-    callbacks.setProgress(100, "Genetic search complete");
-    callbacks.setStatus(`Complete. ${input.selectedStrategies.length} strategies searched, ${filteredCount} matched, ${endpointAdjustedCount} endpoint-adjusted, ${results.length} shown.`);
-    return { results };
 }
 
 interface SingleTimeframeRunParams {
@@ -960,7 +404,6 @@ async function resolveFinderEngineDecision(args: {
         RUST_NATIVE_FINDER_ENDPOINT_ENABLED &&
         !comboActive &&
         input.options.mode === "random" &&
-        !input.options.multiTimeframeEnabled &&
         rustHealthy &&
         input.selectedStrategies.length === 1 &&
         isBuiltInKey(input.selectedStrategies[0]?.key ?? "");
@@ -1337,7 +780,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         !requiresCompositeEdgeRatioSort &&
         !requiresTradeTimingQualitySort &&
         input.options.mode === "random" &&
-        !input.options.multiTimeframeEnabled &&
         (
             (!useRustForFinder && totalRuns >= 220) ||
             (useRustForFinder && totalRuns >= 900 && flags.isLargeDataset)

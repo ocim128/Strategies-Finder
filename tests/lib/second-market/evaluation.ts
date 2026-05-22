@@ -94,17 +94,24 @@ export function isSecondMarketPolymarketScoringSupported(args: {
 }
 
 function getTradeTimeRange(trades: readonly Trade[]): { startTs: number; endTs: number } | null {
-    const times: number[] = [];
+    let startTs = Number.POSITIVE_INFINITY;
+    let endTs = Number.NEGATIVE_INFINITY;
     for (const trade of trades) {
         const entryTs = parseTimeToUnixSeconds(trade.entryTime);
         const exitTs = parseTimeToUnixSeconds(trade.exitTime);
-        if (entryTs !== null) times.push(entryTs);
-        if (exitTs !== null) times.push(exitTs);
+        if (entryTs !== null) {
+            if (entryTs < startTs) startTs = entryTs;
+            if (entryTs > endTs) endTs = entryTs;
+        }
+        if (exitTs !== null) {
+            if (exitTs < startTs) startTs = exitTs;
+            if (exitTs > endTs) endTs = exitTs;
+        }
     }
-    if (times.length === 0) return null;
+    if (!Number.isFinite(startTs) || !Number.isFinite(endTs)) return null;
     return {
-        startTs: Math.min(...times),
-        endTs: Math.max(...times),
+        startTs,
+        endTs,
     };
 }
 

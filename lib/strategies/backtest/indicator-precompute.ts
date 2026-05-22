@@ -49,6 +49,31 @@ function precomputeIndicatorsFromConfig(
     };
 }
 
+function getOrCreatePrecomputedIndicators(
+    data: OHLCVData[],
+    config: NormalizedSettings
+): PrecomputedIndicators {
+    const cacheKey = buildIndicatorCacheKey(config);
+    let datasetCache = indicatorCache.get(data);
+    if (!datasetCache) {
+        datasetCache = new Map<string, PrecomputedIndicators>();
+        indicatorCache.set(data, datasetCache);
+    }
+
+    let computed = datasetCache.get(cacheKey);
+    if (!computed || computed.dataLength !== data.length) {
+        computed = precomputeIndicatorsFromConfig(data, config);
+        if (datasetCache.size >= MAX_SETTINGS_CACHE_PER_DATASET) {
+            const oldestKey = datasetCache.keys().next().value;
+            if (oldestKey !== undefined) {
+                datasetCache.delete(oldestKey);
+            }
+        }
+        datasetCache.set(cacheKey, computed);
+    }
+    return computed;
+}
+
 /**
  * Pre-computes all indicators needed for backtesting based on settings.
  * Call this ONCE before running multiple backtests with the same settings.
@@ -64,7 +89,7 @@ export function precomputeIndicators(
     settings: BacktestSettings = {}
 ): PrecomputedIndicators {
     const config = normalizeBacktestSettings(settings);
-    return precomputeIndicatorsFromConfig(data, config);
+    return getOrCreatePrecomputedIndicators(data, config);
 }
 
 /**
@@ -85,23 +110,7 @@ export function resolveIndicators(
     ) {
         computed = precomputed;
     } else {
-        let datasetCache = indicatorCache.get(data);
-        if (!datasetCache) {
-            datasetCache = new Map<string, PrecomputedIndicators>();
-            indicatorCache.set(data, datasetCache);
-        }
-
-        computed = datasetCache.get(cacheKey);
-        if (!computed || computed.dataLength !== data.length) {
-            computed = precomputeIndicatorsFromConfig(data, config);
-            if (datasetCache.size >= MAX_SETTINGS_CACHE_PER_DATASET) {
-                const oldestKey = datasetCache.keys().next().value;
-                if (oldestKey !== undefined) {
-                    datasetCache.delete(oldestKey);
-                }
-            }
-            datasetCache.set(cacheKey, computed);
-        }
+        computed = getOrCreatePrecomputedIndicators(data, config);
     }
 
     return {

@@ -20,10 +20,13 @@ import {
     resolveFinderRiskOverrides,
 } from "./finder-runner-core";
 import { finderSortRequiresTradeTimingQuality } from "../trade-timing-quality";
-import type { FinderDataset } from "./finder-timeframe-loader";
 import type { CapitalSettings } from "../types/backtest";
 import type { FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
 import { isSecondMarketPolymarketSupported } from "../second-market/evaluation";
+import {
+    ensureConfirmationStrategiesLoaded,
+    readConfirmationStrategyKeys,
+} from "../confirmation-signal-filter";
 
 export { buildFinderEvaluationData, resolveFinderCandidateBacktestSettings, shouldUseRustCachedMode };
 
@@ -42,10 +45,7 @@ export interface FinderRunInput {
     requiresTsEngine: boolean;
     selectedStrategies: FinderSelectedStrategy[];
     capitalSettings: CapitalSettings;
-    getFinderTimeframesForRun: (options: FinderOptions) => string[];
-    loadMultiTimeframeDatasets: (symbol: string, intervals: string[]) => Promise<FinderDataset[]>;
     generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[];
-    buildRandomConfirmationParams: (strategyKeys: string[], options: FinderOptions) => Record<string, StrategyParams>;
     comboPrimarySignals?: Signal[];
     comboPrimarySettings?: BacktestSettings;
     comboPrimaryCapital?: CapitalSettings;
@@ -75,8 +75,6 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
     const rustSettings = sanitizeBacktestSettingsForRust(settings);
     const hasPolymarket1sStrategy = selectedStrategies.some((selection) => selection.strategy.polymarket1sConfig);
 
-    const flags = computeDatasetFlags(input.ohlcvData.length, settings, options, false);
-
     // Polymarket classification mode intercepts before any backtest logic
     if (options.polymarketScoringEnabled) {
         if (isSecondMarketPolymarketSupported(input.symbol, input.interval)) {
@@ -96,6 +94,12 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
         return { results: [] };
     }
 
+    if (options.multiTimeframeEnabled) {
+        callbacks.setStatus("Multi-timeframe Finder is no longer supported.");
+        callbacks.setProgress(100, "Unsupported configuration");
+        return { results: [] };
+    }
+
     if (options.mode === "genetic") {
         if (finderSortRequiresTradeTimingQuality(options.sortPriority)) {
             callbacks.setStatus("Entry Score and Exit Score sorting are supported in grid and random modes only.");
@@ -109,6 +113,10 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
             capitalSettings,
         });
     }
+
+    const confirmationStrategyKeys = readConfirmationStrategyKeys(settings.confirmationStrategies);
+    await ensureConfirmationStrategiesLoaded(settings);
+    const flags = computeDatasetFlags(input.ohlcvData.length, settings, options, confirmationStrategyKeys.length > 0);
 
     callbacks.setProgress(5, "Preparing parameter combinations...");
 

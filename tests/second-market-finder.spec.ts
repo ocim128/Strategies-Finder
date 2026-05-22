@@ -101,10 +101,7 @@ function makeInput(): FinderRunInput {
             sizingMode: "fixed",
             fixedTradeAmount: 1000,
         },
-        getFinderTimeframesForRun: () => ["1s"],
-        loadMultiTimeframeDatasets: async () => [],
         generateParamSets: () => [{ threshold: 1 }],
-        buildRandomConfirmationParams: () => ({}),
     };
 }
 

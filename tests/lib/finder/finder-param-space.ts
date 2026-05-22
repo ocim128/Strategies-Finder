@@ -1,4 +1,3 @@
-import { strategyRegistry } from "../../strategyRegistry";
 import type { StrategyParams } from "../types/strategies";
 import type { FinderOptions } from "../types/finder";
 import {
@@ -33,17 +32,6 @@ export class FinderParamSpace {
         }
 
         return this.generateRandomCombos(keys, defaultParams, options, this.resolveRandom(options));
-    }
-
-    public buildRandomConfirmationParams(strategyKeys: string[], options: FinderOptions): Record<string, StrategyParams> {
-        const paramsByKey: Record<string, StrategyParams> = {};
-        const rand = this.resolveRandom(options);
-        for (const key of strategyKeys) {
-            const strategy = strategyRegistry.get(key);
-            if (!strategy) continue;
-            paramsByKey[key] = this.generateRandomParams(strategy.defaultParams, options, rand);
-        }
-        return paramsByKey;
     }
 
     private buildRangeValues(key: string, baseValue: number, options: FinderOptions): number[] {
@@ -256,46 +244,6 @@ export class FinderParamSpace {
         }
 
         return Math.max(1, Math.floor(total));
-    }
-
-    private generateRandomParams(defaultParams: StrategyParams, options: FinderOptions, rand: () => number): StrategyParams {
-        const keys = Object.keys(defaultParams);
-        if (keys.length === 0) return {};
-
-        // Separate toggle params from numeric params
-        const toggleKeys: string[] = [];
-        const numericRanges: { key: string; baseValue: number; min: number; max: number }[] = [];
-
-        for (const key of keys) {
-            const baseValue = defaultParams[key];
-            if (isToggleParam(key, baseValue)) {
-                toggleKeys.push(key);
-                continue;
-            }
-
-            const { min, max } = computeParamRange(key, baseValue, options.rangePercent, FINDER_PARAM_MATH_OPTIONS);
-            numericRanges.push({ key, baseValue, min, max });
-        }
-
-        const maxAttempts = Math.max(10, keys.length * 5);
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-            const params: StrategyParams = {};
-
-            for (const key of toggleKeys) {
-                params[key] = rand() < 0.5 ? 0 : 1;
-            }
-
-            for (const range of numericRanges) {
-                const raw = range.min + rand() * (range.max - range.min);
-                params[range.key] = normalizeParamValue(range.key, raw, range.baseValue, FINDER_PARAM_MATH_OPTIONS);
-            }
-
-            if (validateParams(params)) {
-                return params;
-            }
-        }
-
-        return this.normalizeParams(defaultParams);
     }
 
     private resolveRandom(options: FinderOptions): () => number {

@@ -15,7 +15,7 @@ export function prepareSignals(
     tradeDirection: TradeDirection
 ): Signal[] {
     if (signals.length === 0) return [];
-    const timeIndex = getTimeIndex(data);
+    let timeIndex: Map<string, number> | null = null;
 
     const prepared: PreparedSignal[] = [];
     const executionShift = getExecutionShift(config);
@@ -23,7 +23,7 @@ export function prepareSignals(
     signals.forEach((signal, order) => {
         const signalIndex = Number.isFinite(signal.barIndex)
             ? Math.trunc(signal.barIndex as number)
-            : getTimeIndexValue(timeIndex, signal.time);
+            : getTimeIndexValue(timeIndex ??= getTimeIndex(data), signal.time);
         if (signalIndex === undefined || signalIndex < 0 || signalIndex >= data.length) return;
 
         if (!isBothLikeTradeDirection(tradeDirection)) {
