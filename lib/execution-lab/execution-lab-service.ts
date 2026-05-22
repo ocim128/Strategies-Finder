@@ -12,6 +12,15 @@ import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
 import { getPolymarketEntryPriceFilterBounds } from "../polymarket-entry-price-filter";
 import { resolvePolymarketEntryCutoff } from "../polymarket-entry-cutoff";
 import { resolveEffectivePolymarketExitMode } from "../polymarket-exit-mode";
+import {
+    DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_CENTS,
+    DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_ENABLED,
+    DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_CENTS,
+    DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_ENABLED,
+    clampPolymarketProtectionCents,
+    resolvePolymarketProtectionSettingFields,
+    type PolymarketProtectionSettingFields,
+} from "../polymarket-protection-settings";
 import { normalizeSecondMarketChartSymbol } from "../second-market/api";
 import type { PolymarketClob1sQuoteRow, SecondMarketPolymarketEvent, SecondMarketSide, SecondMarketSymbol } from "../second-market/types";
 import { state } from "../state";
@@ -58,6 +67,7 @@ import {
     type LiveEntrySubmitRequest,
     type LiveExecutorStatus,
     type LiveExitResultRecord,
+    type LiveTakeProfitSubmitRequest,
     type LiveTradeSubmitResponse,
     type LiveTradeSizingMode,
     type LiveTradeResultRecord,
@@ -76,6 +86,7 @@ import {
     buildLiveExitRequestRecord,
     buildLiveExitResultRecord,
     buildLiveExitSubmitRequest,
+    buildLiveTakeProfitSubmitRequest,
     buildLiveTradeFailureResponse,
     buildLiveTradeRequestRecord,
     buildLiveTradeResultRecord,
@@ -135,6 +146,10 @@ type LiveOpenExecutionPosition = {
     entryPrice: number;
     remainingShares: number;
     entryOrderId?: string;
+    takeProfitRequestId?: string;
+    takeProfitOrderId?: string;
+    takeProfitPrice?: number;
+    takeProfitStatus?: string;
     lastExitStatus?: string;
     lastExitReason?: string;
     pendingExit?: LiveExitPlan;
@@ -156,9 +171,29 @@ type PendingLimitSubmission = {
     orderId?: string;
     lastStatus: string;
 };
+type PendingTakeProfitSubmission = {
+    requestId: string;
+    entryRequestId: string;
+    paperTradeId: string;
+    eventStartTs: number;
+    eventEndTs: number;
+    marketSlug: string;
+    conditionId: string;
+    tokenId: string;
+    side: SecondMarketSide;
+    signalTimeSec: number;
+    entryTimeSec: number;
+    entryPrice: number;
+    shares: number;
+    limitPrice: number;
+    orderId?: string;
+    lastStatus: string;
+};
+type PendingRestingSubmission = PendingLimitSubmission | PendingTakeProfitSubmission;
 type LiveExitTriggerRecord = PaperExitRecord | PaperUnfilledRecord;
 type LiveResultView =
     | { action: "entry"; record: LiveTradeResultRecord }
+    | { action: "take_profit"; record: LiveTradeResultRecord }
     | { action: "exit"; record: LiveExitResultRecord }
     | { action: "cancel"; record: LiveCancelAllResultRecord };
 type ExecutionLabPollTiming = Record<string, number>;
@@ -189,6 +224,14 @@ type ExecutionLabExecutionMode = "paper" | "live";
 type ExecutionLabPersistedSettings = {
     stakeUsd: number;
     liveConfig: ExecutionLabLiveUiConfig;
+    protectionConfig: PolymarketProtectionSettingFields;
+};
+
+const DEFAULT_EXECUTION_LAB_PROTECTION_CONFIG: PolymarketProtectionSettingFields = {
+    polymarketProtectionTakeProfitEnabled: DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_ENABLED,
+    polymarketProtectionTakeProfitCents: DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_CENTS,
+    polymarketProtectionStopLossEnabled: DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_ENABLED,
+    polymarketProtectionStopLossCents: DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_CENTS,
 };
 
 function finiteUnixSeconds(time: OHLCVData["time"]): number | null {
@@ -295,6 +338,21 @@ function formatCents(value: number): string {
     return `${(value * 100).toFixed(1)}c`;
 }
 
+function formatConfiguredCents(value: unknown): string {
+    return `${clampPolymarketProtectionCents(value).toFixed(1)}c`;
+}
+
+function formatProtectionSummary(settings: Partial<PolymarketProtectionSettingFields>): string | null {
+    const parts: string[] = [];
+    if (settings.polymarketProtectionTakeProfitEnabled === true) {
+        parts.push(`TP ${formatConfiguredCents(settings.polymarketProtectionTakeProfitCents)}`);
+    }
+    if (settings.polymarketProtectionStopLossEnabled === true) {
+        parts.push(`SL ${formatConfiguredCents(settings.polymarketProtectionStopLossCents)}`);
+    }
+    return parts.length > 0 ? parts.join("/") : null;
+}
+
 function quotePriceForSide(
     quote: PolymarketClob1sQuoteRow | null,
     side: SecondMarketSide | null,
@@ -314,6 +372,21 @@ function normalizeStake(value: unknown): number {
         : EXECUTION_LAB_DEFAULT_STAKE_USD;
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeExecutionLabProtectionConfig(
+    value: unknown,
+    fallback: PolymarketProtectionSettingFields = DEFAULT_EXECUTION_LAB_PROTECTION_CONFIG
+): PolymarketProtectionSettingFields {
+    const raw = isPlainRecord(value) ? value : {};
+    return resolvePolymarketProtectionSettingFields({
+        ...fallback,
+        ...raw,
+    });
+}
+
 function readPersistedSettings(): ExecutionLabPersistedSettings {
     return readPersistedJson({
         key: EXECUTION_LAB_SETTINGS_STORAGE_KEY,
@@ -322,13 +395,15 @@ function readPersistedSettings(): ExecutionLabPersistedSettings {
         fallback: {
             stakeUsd: EXECUTION_LAB_DEFAULT_STAKE_USD,
             liveConfig: EXECUTION_LAB_DEFAULT_LIVE_UI_CONFIG,
+            protectionConfig: DEFAULT_EXECUTION_LAB_PROTECTION_CONFIG,
         },
         migrate: ({ data }) => {
             if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-            const record = data as { stakeUsd?: unknown; liveConfig?: unknown };
+            const record = data as { stakeUsd?: unknown; liveConfig?: unknown; protectionConfig?: unknown };
             return {
                 stakeUsd: normalizeStake(record.stakeUsd),
                 liveConfig: normalizeExecutionLabLiveUiConfig(record.liveConfig),
+                protectionConfig: normalizeExecutionLabProtectionConfig(record.protectionConfig),
             };
         },
     });
@@ -375,6 +450,7 @@ export class ExecutionLabService {
     private sessionStartCandleTimeSec: number | null = null;
     private executionMode: ExecutionLabExecutionMode = "paper";
     private liveUiConfig: ExecutionLabLiveUiConfig = EXECUTION_LAB_DEFAULT_LIVE_UI_CONFIG;
+    private protectionUiConfig: PolymarketProtectionSettingFields = DEFAULT_EXECUTION_LAB_PROTECTION_CONFIG;
     private sessionLiveUiConfig: ExecutionLabLiveUiConfig | null = null;
     private liveTradeInFlightByPaperTradeId = new Set<string>();
     private liveTradeSubmittedByPaperTradeId = new Set<string>();
@@ -382,6 +458,8 @@ export class ExecutionLabService {
     private liveOpenPositionByPaperTradeId = new Map<string, LiveOpenExecutionPosition>();
     private pendingLimitSubmissionByRequestId = new Map<string, PendingLimitSubmission>();
     private pendingLimitSubmissionByPaperTradeId = new Map<string, PendingLimitSubmission>();
+    private pendingTakeProfitSubmissionByRequestId = new Map<string, PendingTakeProfitSubmission>();
+    private pendingTakeProfitSubmissionByPaperTradeId = new Map<string, PendingTakeProfitSubmission>();
     private liveCancelInFlightByKey = new Set<string>();
     private liveCancelSubmittedByKey = new Set<string>();
     private latestLiveTradeResult: LiveTradeResultRecord | null = null;
@@ -399,11 +477,14 @@ export class ExecutionLabService {
         this.dom = queryExecutionLabDom();
         const settings = readPersistedSettings();
         this.liveUiConfig = settings.liveConfig;
+        this.protectionUiConfig = settings.protectionConfig;
         this.dom.stakeInput.value = String(settings.stakeUsd);
         this.applyLiveUiConfigToDom(this.liveUiConfig);
+        this.applyProtectionUiConfigToDom(this.protectionUiConfig);
         this.dom.executionMode.value = "paper";
         this.syncExecutionMode();
         this.syncLiveConfigControls();
+        this.syncProtectionConfigControls();
         this.syncSavedConfigOptions();
         this.bindEvents();
         this.renderIdle();
@@ -526,6 +607,8 @@ export class ExecutionLabService {
         this.liveOpenPositionByPaperTradeId.clear();
         this.pendingLimitSubmissionByRequestId.clear();
         this.pendingLimitSubmissionByPaperTradeId.clear();
+        this.pendingTakeProfitSubmissionByRequestId.clear();
+        this.pendingTakeProfitSubmissionByPaperTradeId.clear();
         this.liveCancelInFlightByKey.clear();
         this.liveCancelSubmittedByKey.clear();
         this.latestLiveTradeResult = null;
@@ -593,6 +676,16 @@ export class ExecutionLabService {
         dom.liveLimitOffsetEnabled.addEventListener("change", syncLiveConfig);
         dom.liveLimitOffsetCents.addEventListener("change", syncLiveConfig);
         dom.liveLimitCancelAllOnExit.addEventListener("change", syncLiveConfig);
+        const syncProtectionConfig = () => {
+            this.protectionUiConfig = this.readProtectionUiConfigFromDom();
+            this.applyProtectionUiConfigToDom(this.protectionUiConfig);
+            this.syncProtectionConfigControls();
+            this.persistSettingsFromDom();
+        };
+        dom.protectionTakeProfitEnabled.addEventListener("change", syncProtectionConfig);
+        dom.protectionTakeProfitCents.addEventListener("change", syncProtectionConfig);
+        dom.protectionStopLossEnabled.addEventListener("change", syncProtectionConfig);
+        dom.protectionStopLossCents.addEventListener("change", syncProtectionConfig);
     }
 
     private activeLiveUiConfig(): ExecutionLabLiveUiConfig {
@@ -629,12 +722,33 @@ export class ExecutionLabService {
         dom.liveLimitCancelAllOnExit.checked = config.limitCancelAllOnExitEnabled;
     }
 
+    private readProtectionUiConfigFromDom(): PolymarketProtectionSettingFields {
+        const dom = this.dom;
+        if (!dom) return this.protectionUiConfig;
+        return normalizeExecutionLabProtectionConfig({
+            polymarketProtectionTakeProfitEnabled: dom.protectionTakeProfitEnabled.checked,
+            polymarketProtectionTakeProfitCents: dom.protectionTakeProfitCents.value,
+            polymarketProtectionStopLossEnabled: dom.protectionStopLossEnabled.checked,
+            polymarketProtectionStopLossCents: dom.protectionStopLossCents.value,
+        });
+    }
+
+    private applyProtectionUiConfigToDom(config: PolymarketProtectionSettingFields): void {
+        const dom = this.dom;
+        if (!dom) return;
+        dom.protectionTakeProfitEnabled.checked = config.polymarketProtectionTakeProfitEnabled;
+        dom.protectionTakeProfitCents.value = String(config.polymarketProtectionTakeProfitCents);
+        dom.protectionStopLossEnabled.checked = config.polymarketProtectionStopLossEnabled;
+        dom.protectionStopLossCents.value = String(config.polymarketProtectionStopLossCents);
+    }
+
     private persistSettingsFromDom(): void {
         const dom = this.dom;
         if (!dom) return;
         writePersistedSettings({
             stakeUsd: normalizeStake(dom.stakeInput.value),
             liveConfig: this.liveUiConfig,
+            protectionConfig: this.protectionUiConfig,
         });
     }
 
@@ -651,6 +765,15 @@ export class ExecutionLabService {
         dom.liveSizingMode.disabled = this.running;
         dom.liveMaxStakeUsd.disabled = this.running;
         dom.liveExitSlippageCents.disabled = this.running;
+    }
+
+    private syncProtectionConfigControls(): void {
+        const dom = this.dom;
+        if (!dom) return;
+        dom.protectionTakeProfitEnabled.disabled = this.running;
+        dom.protectionTakeProfitCents.disabled = this.running || !this.protectionUiConfig.polymarketProtectionTakeProfitEnabled;
+        dom.protectionStopLossEnabled.disabled = this.running;
+        dom.protectionStopLossCents.disabled = this.running || !this.protectionUiConfig.polymarketProtectionStopLossEnabled;
     }
 
     private syncExecutionMode(): void {
@@ -689,6 +812,7 @@ export class ExecutionLabService {
         dom.stakeInput.disabled = running;
         dom.executionMode.disabled = running;
         this.syncLiveConfigControls();
+        this.syncProtectionConfigControls();
     }
 
     private setComparisonStatus(text: string, tone: "neutral" | "running" | "warning" | "error" = "neutral"): void {
@@ -1043,6 +1167,8 @@ export class ExecutionLabService {
             ? strategy.normalizeParams(paramManager.getValues(strategy))
             : paramManager.getValues(strategy);
         const stakeUsd = normalizeStake(this.dom?.stakeInput.value);
+        const protectionSettings = this.readProtectionUiConfigFromDom();
+        this.protectionUiConfig = protectionSettings;
         const startedAtIso = new Date().toISOString();
         const session = await startExecutionLabSession({ strategyKey: state.currentStrategyKey, symbol: chartSymbol, startedAtIso });
         const exitMode = resolveEffectivePolymarketExitMode({
@@ -1056,6 +1182,7 @@ export class ExecutionLabService {
                 ?? polymarketDom.signalExitAllowMultipleTradesPerEvent) === true;
         const snapshotBacktestSettings = {
             ...backtestSettings,
+            ...protectionSettings,
             symbol: chartSymbol,
             interval: "1s",
             polymarketAnnotationEnabled: true,
@@ -1485,13 +1612,15 @@ export class ExecutionLabService {
         const snapshot = this.snapshot;
         const liveConfig = this.activeLiveUiConfig();
         const liveStatus = this.currentLiveExecutorStatus();
+        const hasPendingTakeProfitToCancel = exits.some((exit) => this.findPendingTakeProfitForExitTrigger(exit) !== null);
         if (
             !snapshot
             || this.executionMode !== "live"
-            || liveConfig.orderMode !== "limit"
-            || !liveConfig.limitCancelAllOnExitEnabled
             || !liveStatus
         ) {
+            return [];
+        }
+        if (!hasPendingTakeProfitToCancel && (liveConfig.orderMode !== "limit" || !liveConfig.limitCancelAllOnExitEnabled)) {
             return [];
         }
 
@@ -1513,7 +1642,10 @@ export class ExecutionLabService {
             try {
                 if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return records;
                 const startedMs = Date.now();
-                const response = await submitExecutionLabLiveCancelAll(request, liveConfig).catch(() =>
+                const response = await submitExecutionLabLiveCancelAll(
+                    request,
+                    this.cancelLiveUiConfigForRequest(request)
+                ).catch(() =>
                     buildLiveCancelAllFailureResponse({
                         requestId: request.requestId,
                         scope: request.scope,
@@ -1526,6 +1658,7 @@ export class ExecutionLabService {
                 });
                 this.trackUncanceledLimitAsLivePosition(request, response);
                 this.clearPendingLimitSubmissionsAfterCancel(request, response.status);
+                this.clearPendingTakeProfitAfterCancel(request, response);
                 this.latestLiveCancelResult = result;
                 records.push(result);
             } finally {
@@ -1533,6 +1666,15 @@ export class ExecutionLabService {
             }
         }
         return records;
+    }
+
+    private cancelLiveUiConfigForRequest(request: LiveCancelAllSubmitRequest): ExecutionLabLiveUiConfig {
+        if (!this.findPendingTakeProfitForCancelRequest(request)) return this.activeLiveUiConfig();
+        return {
+            ...this.activeLiveUiConfig(),
+            orderMode: "limit",
+            limitCancelAllOnExitEnabled: true,
+        };
     }
 
     private findPendingLimitForCancelRequest(request: LiveCancelAllSubmitRequest): PendingLimitSubmission | null {
@@ -1547,6 +1689,43 @@ export class ExecutionLabService {
             ) ?? null;
         }
         return null;
+    }
+
+    private findPendingTakeProfitForCancelRequest(request: LiveCancelAllSubmitRequest): PendingTakeProfitSubmission | null {
+        if (request.paperTradeId) {
+            const pending = this.pendingTakeProfitSubmissionByPaperTradeId.get(request.paperTradeId);
+            if (pending) return pending;
+        }
+        const orderIds = new Set((request.orderIds ?? []).filter((orderId) => orderId.length > 0));
+        if (orderIds.size > 0) {
+            return Array.from(this.pendingTakeProfitSubmissionByRequestId.values()).find((pending) =>
+                pending.orderId !== undefined && orderIds.has(pending.orderId)
+            ) ?? null;
+        }
+        return null;
+    }
+
+    private clearPendingTakeProfitAfterCancel(
+        request: LiveCancelAllSubmitRequest,
+        response: LiveCancelAllSubmitResponse
+    ): void {
+        const pending = this.findPendingTakeProfitForCancelRequest(request);
+        if (!pending) return;
+        if (shouldAttemptLiveExitAfterLimitCancel(response)) {
+            this.pendingTakeProfitSubmissionByRequestId.delete(pending.requestId);
+            this.pendingTakeProfitSubmissionByPaperTradeId.delete(pending.paperTradeId);
+            this.liveOpenPositionByPaperTradeId.delete(pending.paperTradeId);
+            return;
+        }
+        if (response.status !== "submitted" && response.status !== "dry_run" && response.status !== "duplicate") return;
+        this.pendingTakeProfitSubmissionByRequestId.delete(pending.requestId);
+        this.pendingTakeProfitSubmissionByPaperTradeId.delete(pending.paperTradeId);
+        const position = this.liveOpenPositionByPaperTradeId.get(pending.paperTradeId);
+        if (position) {
+            position.takeProfitRequestId = undefined;
+            position.takeProfitOrderId = undefined;
+            position.takeProfitStatus = undefined;
+        }
     }
 
     private trackUncanceledLimitAsLivePosition(
@@ -1630,6 +1809,11 @@ export class ExecutionLabService {
                 || this.liveExitInFlightByPaperTradeId.has(position.paperTradeId)
                 || nowSec < plan.nextAttemptAtSec
             ) {
+                continue;
+            }
+            if (this.pendingTakeProfitSubmissionByPaperTradeId.has(position.paperTradeId)) {
+                position.lastExitStatus = "waiting_take_profit_cancel";
+                position.lastExitReason = "take_profit_order_still_resting";
                 continue;
             }
             if (nowSec >= position.eventEndTs) {
@@ -1787,6 +1971,13 @@ export class ExecutionLabService {
     private queueLiveExit(exit: LiveExitTriggerRecord): void {
         const position = this.findLivePositionForExitTrigger(exit);
         if (!position || position.pendingExit) return;
+        if (
+            exit.recordType === "paper_exit"
+            && exit.exitReason === "polymarket_take_profit"
+            && this.resolvePendingTakeProfitFill(exit)
+        ) {
+            return;
+        }
         const plan = this.resolveLiveExitTriggerPlan(exit, position);
         if (!plan) return;
         position.pendingExit = plan;
@@ -1804,7 +1995,29 @@ export class ExecutionLabService {
         ) ?? null;
     }
 
-    private buildCancelExitTriggerKey(exit: LiveExitTriggerRecord, pending: PendingLimitSubmission | null): string {
+    private findPendingTakeProfitForExitTrigger(exit: LiveExitTriggerRecord): PendingTakeProfitSubmission | null {
+        if (exit.recordType === "paper_exit" && exit.exitReason === "polymarket_take_profit") return null;
+        if (exit.tradeId) {
+            const pending = this.pendingTakeProfitSubmissionByPaperTradeId.get(exit.tradeId);
+            if (pending) return pending;
+        }
+        if (exit.recordType !== "paper_unfilled" || exit.eventStartTs === undefined || !exit.side) return null;
+        return Array.from(this.pendingTakeProfitSubmissionByRequestId.values()).find((pending) =>
+            pending.eventStartTs === exit.eventStartTs
+            && pending.side === exit.side
+        ) ?? null;
+    }
+
+    private resolvePendingTakeProfitFill(exit: PaperExitRecord): boolean {
+        const pending = this.pendingTakeProfitSubmissionByPaperTradeId.get(exit.tradeId);
+        if (!pending) return false;
+        this.pendingTakeProfitSubmissionByRequestId.delete(pending.requestId);
+        this.pendingTakeProfitSubmissionByPaperTradeId.delete(pending.paperTradeId);
+        this.liveOpenPositionByPaperTradeId.delete(pending.paperTradeId);
+        return true;
+    }
+
+    private buildCancelExitTriggerKey(exit: LiveExitTriggerRecord, pending: PendingRestingSubmission | null): string {
         const exitTime = exit.recordType === "paper_exit"
             ? exit.exitTimeSec
             : exit.expectedExitTimeSec ?? "";
@@ -1828,7 +2041,7 @@ export class ExecutionLabService {
     private buildLiveCancelAllRequest(exit: LiveExitTriggerRecord, recordedAtIso: string): LiveCancelAllSubmitRequest | null {
         const snapshot = this.snapshot;
         if (!snapshot) return null;
-        const pending = this.findPendingLimitForExitTrigger(exit);
+        const pending = this.findPendingLimitForExitTrigger(exit) ?? this.findPendingTakeProfitForExitTrigger(exit);
         const livePosition = this.findLivePositionForExitTrigger(exit);
         const exitTriggerKey = this.buildCancelExitTriggerKey(exit, pending);
         const paperTradeId = exit.tradeId ?? pending?.paperTradeId ?? livePosition?.paperTradeId;
@@ -2028,15 +2241,97 @@ export class ExecutionLabService {
                 });
                 this.latestLiveTradeResult = result;
                 this.maybeBlockLiveSubmissions(response);
-                this.trackPendingLimitSubmission(position, request, response);
-                this.trackLiveEntryPosition(position, request.requestId, response);
                 records.push(result);
+                this.trackPendingLimitSubmission(position, request, response);
+                const livePosition = this.trackLiveEntryPosition(position, request.requestId, response);
+                if (livePosition) {
+                    records.push(...await this.buildLiveTakeProfitRecords(livePosition, recordedAtIso, sessionToken));
+                }
             } finally {
                 this.liveTradeInFlightByPaperTradeId.delete(position.tradeId);
             }
         }
 
         return records;
+    }
+
+    private liveTakeProfitCents(): number | null {
+        const settings = this.snapshot?.backtestSettings;
+        if (!settings?.polymarketProtectionTakeProfitEnabled) return null;
+        const cents = clampPolymarketProtectionCents(settings.polymarketProtectionTakeProfitCents);
+        return cents > 0 ? cents : null;
+    }
+
+    private async buildLiveTakeProfitRecords(
+        position: LiveOpenExecutionPosition,
+        recordedAtIso: string,
+        sessionToken: number
+    ): Promise<ExecutionLabRecord[]> {
+        const snapshot = this.snapshot;
+        if (!snapshot || this.executionMode !== "live") return [];
+        if (this.pendingTakeProfitSubmissionByPaperTradeId.has(position.paperTradeId)) return [];
+        const takeProfitCents = this.liveTakeProfitCents();
+        if (takeProfitCents === null || position.remainingShares <= MIN_LIVE_POSITION_SHARES) return [];
+        const nowSec = Math.floor(Date.now() / 1000);
+        if (nowSec >= position.eventEndTs) return [];
+        const liveStatus = this.currentLiveExecutorStatus();
+        const request = buildLiveTakeProfitSubmitRequest({
+            snapshot,
+            entryRequestId: position.entryRequestId,
+            paperTradeId: position.paperTradeId,
+            eventStartTs: position.eventStartTs,
+            eventEndTs: position.eventEndTs,
+            marketSlug: position.marketSlug,
+            conditionId: position.conditionId,
+            tokenId: position.tokenId,
+            side: position.side,
+            shares: position.remainingShares,
+            signalTimeSec: position.signalTimeSec,
+            entryTimeSec: position.entryTimeSec,
+            entryPrice: position.entryPrice,
+            takeProfitCents,
+            orderType: liveStatus?.supportedLimitOrderType ?? LIVE_TRADE_DEFAULT_LIMIT_ORDER_TYPE,
+            createdAtIso: recordedAtIso,
+            nowSec,
+        });
+        if (!request) {
+            position.takeProfitStatus = "rejected";
+            position.lastExitStatus = "rejected";
+            position.lastExitReason = "take_profit_price_out_of_range";
+            return [];
+        }
+
+        const requestRecord = buildLiveTradeRequestRecord(snapshot, request, recordedAtIso, this.liveRecordContext());
+        if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return [];
+        const startedMs = Date.now();
+        const response = await submitExecutionLabLiveTrade(request, {
+            ...this.activeLiveUiConfig(),
+            orderMode: "limit",
+        }).catch(() =>
+            buildLiveTradeFailureResponse({
+                requestId: request.requestId,
+                reason: "executor_unavailable",
+                maxPrice: request.maxPrice,
+                limitPrice: request.limitPrice,
+                limitReferencePrice: request.limitReferencePrice,
+                minPrice: request.minPrice,
+            })
+        );
+        if (!this.isSessionActive(sessionToken, snapshot)) return [];
+        const resultResponse = {
+            ...response,
+            maxPrice: response.maxPrice ?? request.maxPrice,
+            limitPrice: response.limitPrice ?? request.limitPrice,
+            limitReferencePrice: response.limitReferencePrice ?? request.limitReferencePrice,
+            minPrice: response.minPrice ?? request.minPrice,
+        };
+        const result = buildLiveTradeResultRecord(snapshot, request, resultResponse, new Date().toISOString(), {
+            latencyMs: Date.now() - startedMs,
+        });
+        this.latestLiveTradeResult = result;
+        this.maybeBlockLiveSubmissions(response);
+        this.trackTakeProfitSubmission(position, request, response);
+        return [result];
     }
 
     private findOpenLivePositionForEvent(eventStartTs: number): LiveOpenExecutionPosition | null {
@@ -2082,15 +2377,67 @@ export class ExecutionLabService {
         this.pendingLimitSubmissionByPaperTradeId.set(position.tradeId, pending);
     }
 
+    private trackTakeProfitSubmission(
+        position: LiveOpenExecutionPosition,
+        request: LiveTakeProfitSubmitRequest,
+        response: { status: string; reason?: string; orderId?: string; submittedShares?: number; filledShares?: number }
+    ): void {
+        position.takeProfitRequestId = request.requestId;
+        position.takeProfitPrice = request.limitPrice;
+        position.takeProfitStatus = response.status;
+        position.takeProfitOrderId = response.orderId;
+        if (
+            response.status === "posted_live"
+            || response.status === "delayed"
+            || (response.status === "duplicate" && response.orderId)
+        ) {
+            const pending: PendingTakeProfitSubmission = {
+                requestId: request.requestId,
+                entryRequestId: request.entryRequestId,
+                paperTradeId: position.paperTradeId,
+                eventStartTs: position.eventStartTs,
+                eventEndTs: position.eventEndTs,
+                marketSlug: position.marketSlug,
+                conditionId: position.conditionId,
+                tokenId: position.tokenId,
+                side: position.side,
+                signalTimeSec: position.signalTimeSec,
+                entryTimeSec: position.entryTimeSec,
+                entryPrice: position.entryPrice,
+                shares: response.submittedShares ?? request.shares,
+                limitPrice: request.limitPrice,
+                orderId: response.orderId,
+                lastStatus: response.status,
+            };
+            this.pendingTakeProfitSubmissionByRequestId.set(request.requestId, pending);
+            this.pendingTakeProfitSubmissionByPaperTradeId.set(position.paperTradeId, pending);
+            return;
+        }
+        if (response.status !== "matched" && response.status !== "partial") return;
+        const update = resolveLiveExitShareUpdate({
+            remainingShares: position.remainingShares,
+            response,
+            minRemainingShares: MIN_LIVE_POSITION_SHARES,
+        });
+        if (update.filledShares === null) {
+            if (update.closePosition) this.liveOpenPositionByPaperTradeId.delete(position.paperTradeId);
+            return;
+        }
+        position.remainingShares = update.remainingShares;
+        if (update.closePosition) {
+            this.liveOpenPositionByPaperTradeId.delete(position.paperTradeId);
+        }
+    }
+
     private trackLiveEntryPosition(
         position: ExecutionLabOpenPaperPosition,
         entryRequestId: string,
         response: { status: string; submittedPrice?: number; submittedShares?: number; filledShares?: number; orderId?: string }
-    ): void {
-        if (response.status !== "matched" && response.status !== "partial") return;
+    ): LiveOpenExecutionPosition | null {
+        if (response.status !== "matched" && response.status !== "partial") return null;
         const filledShares = resolveLiveTradeFilledShares(response);
-        if (filledShares === null || filledShares <= MIN_LIVE_POSITION_SHARES) return;
-        this.liveOpenPositionByPaperTradeId.set(position.tradeId, {
+        if (filledShares === null || filledShares <= MIN_LIVE_POSITION_SHARES) return null;
+        const livePosition: LiveOpenExecutionPosition = {
             entryRequestId,
             paperTradeId: position.tradeId,
             eventStartTs: position.eventStartTs,
@@ -2104,7 +2451,9 @@ export class ExecutionLabService {
             entryPrice: response.submittedPrice ?? position.entryPrice,
             remainingShares: filledShares,
             entryOrderId: response.orderId,
-        });
+        };
+        this.liveOpenPositionByPaperTradeId.set(position.tradeId, livePosition);
+        return livePosition;
     }
 
     private updateLiveExitPosition(
@@ -2309,7 +2658,7 @@ export class ExecutionLabService {
             case "entry_too_close_to_close":
                 return "Rejected because the event is too close to close";
             case "missing_entry_quote":
-                return "Rejected because the exact entry quote is missing";
+                return `Rejected because the exact entry quote at ${formatDateTime(record.entryTimeSec)} is missing`;
             case "missing_event":
                 return "Rejected because no active event matched the signal";
             case "duplicate_event":
@@ -2319,7 +2668,9 @@ export class ExecutionLabService {
             case "invalid_price":
                 return "Rejected because the entry price is invalid";
             case "missing_exit_quote":
-                return "Rejected because the expected exit quote is missing";
+                return record.expectedExitTimeSec === undefined
+                    ? "Rejected because the expected exit quote is missing"
+                    : `Rejected because the expected exit quote at ${formatDateTime(record.expectedExitTimeSec)} is missing`;
         }
     }
 
@@ -2397,6 +2748,7 @@ export class ExecutionLabService {
         previousProcessedCandleTimeSec: number | null
     ): Promise<void> {
         const quoteTimes = collectExecutionLabTradeQuoteTimes({
+            backtestSettings: snapshot.backtestSettings,
             trades,
             latestCandleTimeSec,
             previousProcessedCandleTimeSec,
@@ -2643,6 +2995,7 @@ export class ExecutionLabService {
             `${snapshot.symbol}->${snapshot.outcomeSymbol}`,
             `$${snapshot.stakeUsd.toFixed(2)}`,
             this.executionMode === "live" ? this.activeLiveUiConfig().orderMode : null,
+            formatProtectionSummary(snapshot.backtestSettings),
             snapshot.exitMode,
             snapshot.allowMultipleTradesPerEvent ? "multi-event on" : "one/event",
         ].filter(Boolean).join(" | ");
@@ -2696,6 +3049,8 @@ export class ExecutionLabService {
                 livePosition.side.toUpperCase(),
                 `shares ${livePosition.remainingShares.toFixed(4)}`,
                 `entry ${formatPolyPrice(livePosition.entryPrice)}`,
+                livePosition.takeProfitPrice ? `tp ${formatPolyPrice(livePosition.takeProfitPrice)}` : null,
+                livePosition.takeProfitStatus ? `tp ${formatLiveStatus(livePosition.takeProfitStatus)}` : null,
                 livePosition.lastExitStatus ? `exit ${formatLiveStatus(livePosition.lastExitStatus)}` : null,
                 livePosition.lastExitReason,
             ].filter(Boolean).join(" | ")
@@ -2718,7 +3073,9 @@ export class ExecutionLabService {
                 liveResult.action !== "cancel" && liveResult.record.orderId ? `order ${liveResult.record.orderId}` : null,
                 liveResult.action === "entry" && liveResult.record.currentAsk !== undefined ? `ask ${formatPolyPrice(liveResult.record.currentAsk)}` : null,
                 liveResult.action === "entry" && liveResult.record.maxPrice !== undefined && liveResult.record.limitPrice === undefined ? `cap ${formatPolyPrice(liveResult.record.maxPrice)}` : null,
-                liveResult.action === "entry" && liveResult.record.limitPrice !== undefined ? `limit ${formatPolyPrice(liveResult.record.limitPrice)}` : null,
+                (liveResult.action === "entry" || liveResult.action === "take_profit") && liveResult.record.limitPrice !== undefined
+                    ? `limit ${formatPolyPrice(liveResult.record.limitPrice)}`
+                    : null,
                 liveResult.action === "exit" && liveResult.record.currentBid !== undefined ? `bid ${formatPolyPrice(liveResult.record.currentBid)}` : null,
                 liveResult.action === "exit" && liveResult.record.minPrice !== undefined ? `floor ${formatPolyPrice(liveResult.record.minPrice)}` : null,
                 liveResult.action === "cancel" ? `scope ${liveResult.record.scope}` : null,
@@ -2743,7 +3100,10 @@ export class ExecutionLabService {
 
     private latestLiveResult(): LiveResultView | null {
         const entry = this.latestLiveTradeResult
-            ? { action: "entry" as const, record: this.latestLiveTradeResult }
+            ? {
+                action: this.latestLiveTradeResult.action === "take_profit" ? "take_profit" as const : "entry" as const,
+                record: this.latestLiveTradeResult,
+            }
             : null;
         const exit = this.latestLiveExitResult
             ? { action: "exit" as const, record: this.latestLiveExitResult }
@@ -2770,7 +3130,9 @@ export class ExecutionLabService {
             side.className = "execution-lab-trade-side";
             side.textContent = liveResult.action === "entry"
                 ? "LIVE ENTRY"
-                : liveResult.action === "exit"
+                : liveResult.action === "take_profit"
+                    ? "LIVE TP"
+                    : liveResult.action === "exit"
                     ? "LIVE EXIT"
                     : "LIVE CANCEL";
             const meta = document.createElement("div");

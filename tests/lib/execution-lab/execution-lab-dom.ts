@@ -14,6 +14,10 @@ export const EXECUTION_LAB_IDS = {
     liveMaxStakeUsd: "executionLabLiveMaxStakeUsd",
     liveEntrySlippageCents: "executionLabLiveEntrySlippageCents",
     liveExitSlippageCents: "executionLabLiveExitSlippageCents",
+    protectionTakeProfitEnabled: "executionLabPolymarketTakeProfitEnabled",
+    protectionTakeProfitCents: "executionLabPolymarketTakeProfitCents",
+    protectionStopLossEnabled: "executionLabPolymarketStopLossEnabled",
+    protectionStopLossCents: "executionLabPolymarketStopLossCents",
     liveLimitOffsetEnabled: "executionLabLiveLimitOffsetEnabled",
     liveLimitOffsetCents: "executionLabLiveLimitOffsetCents",
     liveLimitCancelAllOnExit: "executionLabLiveLimitCancelAllOnExit",
@@ -67,6 +71,10 @@ export interface ExecutionLabDom {
     liveMaxStakeUsd: HTMLInputElement;
     liveEntrySlippageCents: HTMLInputElement;
     liveExitSlippageCents: HTMLInputElement;
+    protectionTakeProfitEnabled: HTMLInputElement;
+    protectionTakeProfitCents: HTMLInputElement;
+    protectionStopLossEnabled: HTMLInputElement;
+    protectionStopLossCents: HTMLInputElement;
     liveLimitOffsetEnabled: HTMLInputElement;
     liveLimitOffsetCents: HTMLInputElement;
     liveLimitCancelAllOnExit: HTMLInputElement;
@@ -119,6 +127,10 @@ export function queryExecutionLabDom(): ExecutionLabDom {
         liveMaxStakeUsd: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveMaxStakeUsd),
         liveEntrySlippageCents: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveEntrySlippageCents),
         liveExitSlippageCents: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveExitSlippageCents),
+        protectionTakeProfitEnabled: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.protectionTakeProfitEnabled),
+        protectionTakeProfitCents: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.protectionTakeProfitCents),
+        protectionStopLossEnabled: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.protectionStopLossEnabled),
+        protectionStopLossCents: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.protectionStopLossCents),
         liveLimitOffsetEnabled: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveLimitOffsetEnabled),
         liveLimitOffsetCents: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveLimitOffsetCents),
         liveLimitCancelAllOnExit: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveLimitCancelAllOnExit),

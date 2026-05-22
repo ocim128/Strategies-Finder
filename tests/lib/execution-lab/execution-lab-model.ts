@@ -247,6 +247,19 @@ export type LiveLimitEntrySubmitRequest = LiveTradeSubmitRequestBase & {
 
 export type LiveEntrySubmitRequest = LiveTakerEntrySubmitRequest | LiveLimitEntrySubmitRequest;
 
+export type LiveTakeProfitSubmitRequest = LiveTradeSubmitRequestBase & {
+    action: "take_profit";
+    entryRequestId: string;
+    orderMode: "limit";
+    orderType: LiveLimitOrderType;
+    maxPrice: number;
+    limitPrice: number;
+    limitReferencePrice: number;
+    shares: number;
+    exitTimeSec: number;
+    minPrice: number;
+};
+
 export type LiveExitSubmitRequest = LiveTradeSubmitRequestBase & {
     action: "exit";
     entryRequestId: string;
@@ -259,7 +272,7 @@ export type LiveExitSubmitRequest = LiveTradeSubmitRequestBase & {
     attempt?: number;
 };
 
-export type LiveTradeSubmitRequest = LiveEntrySubmitRequest | LiveExitSubmitRequest;
+export type LiveTradeSubmitRequest = LiveEntrySubmitRequest | LiveTakeProfitSubmitRequest | LiveExitSubmitRequest;
 
 export type LiveTradeSubmitResponse = {
     ok: true;
@@ -287,8 +300,10 @@ export type LiveTradeSubmitResponse = {
 
 export type LiveTradeRequestRecord = ExecutionLabBaseRecord & {
     recordType: "live_trade_request";
+    action?: "entry" | "take_profit";
     requestId: string;
     paperTradeId: string;
+    entryRequestId?: string;
     expiresAtSec?: number;
     eventStartTs: number;
     eventEndTs: number;
@@ -299,9 +314,12 @@ export type LiveTradeRequestRecord = ExecutionLabBaseRecord & {
     stakeUsd: number;
     signalTimeSec: number;
     entryTimeSec: number;
+    shares?: number;
+    exitTimeSec?: number;
     orderMode: LiveOrderMode;
     orderType: LiveTakerOrderType | LiveLimitOrderType;
     maxPrice?: number;
+    minPrice?: number;
     limitPrice?: number;
     limitReferencePrice?: number;
     limitOffsetEnabled?: boolean;
@@ -312,6 +330,7 @@ export type LiveTradeRequestRecord = ExecutionLabBaseRecord & {
 
 export type LiveTradeResultRecord = ExecutionLabBaseRecord & {
     recordType: "live_trade_result";
+    action?: "entry" | "take_profit";
     requestId: string;
     paperTradeId: string;
     status: LiveTradeSubmitStatus;
@@ -329,6 +348,8 @@ export type LiveTradeResultRecord = ExecutionLabBaseRecord & {
     limitReferencePrice?: number;
     limitOffsetEnabled?: boolean;
     limitOffsetCents?: number;
+    minPrice?: number;
+    currentBid?: number;
     latencyMs?: number;
 };
 

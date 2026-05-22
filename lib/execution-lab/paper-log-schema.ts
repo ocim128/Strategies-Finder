@@ -136,6 +136,9 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
                 const liveMeta = validateOptionalLiveMeta(value);
                 if (!liveMeta.ok) return liveMeta;
             }
+            if (value.action !== undefined && value.action !== "entry" && value.action !== "take_profit") {
+                return { ok: false, error: "invalid live trade action" };
+            }
             if (!isNonEmptyString(value.requestId)) return { ok: false, error: "requestId is required" };
             if (!isNonEmptyString(value.paperTradeId)) return { ok: false, error: "paperTradeId is required" };
             if (!isNonEmptyString(value.marketSlug)) return { ok: false, error: "marketSlug is required" };
@@ -161,11 +164,19 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
             if (value.limitOffsetCents !== undefined && (!isFiniteNumber(value.limitOffsetCents) || value.limitOffsetCents < 0)) {
                 return { ok: false, error: "limitOffsetCents is invalid" };
             }
+            if (value.action === "take_profit") {
+                if (!isNonEmptyString(value.entryRequestId)) return { ok: false, error: "entryRequestId is required" };
+                if (!isFiniteNumber(value.shares) || value.shares <= 0) return { ok: false, error: "shares is required" };
+                if (!isPriceInRange(value.minPrice, 0.000000001)) return { ok: false, error: "minPrice is required" };
+            }
             break;
         case "live_trade_result":
             {
                 const liveMeta = validateOptionalLiveMeta(value);
                 if (!liveMeta.ok) return liveMeta;
+            }
+            if (value.action !== undefined && value.action !== "entry" && value.action !== "take_profit") {
+                return { ok: false, error: "invalid live trade action" };
             }
             if (!isNonEmptyString(value.requestId)) return { ok: false, error: "requestId is required" };
             if (!isNonEmptyString(value.paperTradeId)) return { ok: false, error: "paperTradeId is required" };
@@ -188,6 +199,12 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
             }
             if (value.limitOffsetCents !== undefined && (!isFiniteNumber(value.limitOffsetCents) || value.limitOffsetCents < 0)) {
                 return { ok: false, error: "limitOffsetCents is invalid" };
+            }
+            if (value.minPrice !== undefined && !isPriceInRange(value.minPrice, 0.000000001)) {
+                return { ok: false, error: "minPrice is invalid" };
+            }
+            if (value.currentBid !== undefined && !isPriceInRange(value.currentBid, 0.000000001)) {
+                return { ok: false, error: "currentBid is invalid" };
             }
             break;
         case "live_exit_request":
@@ -280,6 +297,8 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
                 && value.exitReason !== "trailing_stop"
                 && value.exitReason !== "time_stop"
                 && value.exitReason !== "probation_fail"
+                && value.exitReason !== "polymarket_take_profit"
+                && value.exitReason !== "polymarket_stop_loss"
                 && value.exitReason !== "resolution"
             ) {
                 return { ok: false, error: "invalid exitReason" };

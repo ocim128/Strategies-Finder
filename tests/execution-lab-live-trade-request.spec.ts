@@ -3,10 +3,12 @@ import { describe, it } from "node:test";
 import type { ExecutionLabOpenPaperPosition, ExecutionLabSessionSnapshot } from "../lib/execution-lab/execution-lab-model";
 import {
     buildLiveExitSubmitRequest,
+    buildLiveTakeProfitSubmitRequest,
     buildLiveTradeSubmitRequest,
     isLiveTradeGeoblockReason,
     normalizeLiveTradeSubmitResponse,
     resolveLiveLimitEntryPrice,
+    resolveLiveTakeProfitLimitPrice,
     resolveLiveExitFloorPreflight,
     resolveLiveExitShareUpdate,
     resolveLiveTradeFilledShares,
@@ -171,6 +173,62 @@ describe("Execution Lab live trade request", () => {
         expect(resolveLiveLimitEntryPrice({
             referencePrice: 0.256,
         })).to.equal(0.25);
+    });
+
+    it("builds and validates resting take-profit sell limits from confirmed entry fills", () => {
+        const request = buildLiveTakeProfitSubmitRequest({
+            snapshot: snapshot(),
+            entryRequestId: "live-entry-1",
+            paperTradeId: "paper-yes",
+            eventStartTs: EVENT_START,
+            eventEndTs: EVENT_END,
+            marketSlug: "btc-event",
+            conditionId: "condition",
+            tokenId: "yes-token",
+            side: "yes",
+            shares: 8.5,
+            signalTimeSec: EVENT_START + 9,
+            entryTimeSec: EVENT_START + 10,
+            entryPrice: 0.57,
+            takeProfitCents: 5,
+            createdAtIso: "2026-01-01T00:00:12.000Z",
+            nowSec: EVENT_START + 12,
+        });
+
+        expect(request).to.not.equal(null);
+        if (!request) return;
+        expect(request.action).to.equal("take_profit");
+        expect(request.orderMode).to.equal("limit");
+        expect(request.orderType).to.equal("GTC");
+        expect(request.limitPrice).to.equal(0.62);
+        expect(request.minPrice).to.equal(request.limitPrice);
+        expect(request.maxPrice).to.equal(request.limitPrice);
+        expect(request.shares).to.equal(8.5);
+        expect(resolveLiveTakeProfitLimitPrice({
+            entryPrice: 0.575,
+            takeProfitCents: 5,
+        })).to.equal(0.63);
+        expect(buildLiveTakeProfitSubmitRequest({
+            ...request,
+            snapshot: snapshot(),
+            entryRequestId: "live-entry-1",
+            paperTradeId: "paper-yes",
+            entryPrice: 0.98,
+            takeProfitCents: 5,
+            createdAtIso: "2026-01-01T00:00:12.000Z",
+            nowSec: EVENT_START + 12,
+        })).to.equal(null);
+        expect(validateLiveTradeSubmitRequest(request, {
+            nowSec: EVENT_START + 12,
+            maxStakeUsd: 1,
+            orderMode: "taker",
+            supportedLimitOrderType: "GTC",
+        }).ok).to.equal(true);
+        expect(validateLiveTradeSubmitRequest({ ...request, orderMode: "taker" }, {
+            nowSec: EVENT_START + 12,
+            maxStakeUsd: 100,
+            supportedLimitOrderType: "GTC",
+        }).ok).to.equal(false);
     });
 
     it("builds and validates live exit requests with a floor below paper exit price", () => {

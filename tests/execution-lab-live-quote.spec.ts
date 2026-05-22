@@ -878,6 +878,7 @@ describe("Execution Lab live helpers", () => {
 
     it("requests quotes for backtest trade seconds missed by the latest quote", () => {
         const times = collectExecutionLabTradeQuoteTimes({
+            backtestSettings: { executionModel: "next_open" },
             previousProcessedCandleTimeSec: 1_700_000_101,
             latestCandleTimeSec: 1_700_000_104,
             trades: [
@@ -888,6 +889,20 @@ describe("Execution Lab live helpers", () => {
         });
 
         expect(times).to.deep.equal([1_700_000_102, 1_700_000_103, 1_700_000_104]);
+    });
+
+    it("requests shifted quote seconds for close-based paper execution fills", () => {
+        const times = collectExecutionLabTradeQuoteTimes({
+            backtestSettings: { executionModel: "signal_close" },
+            previousProcessedCandleTimeSec: 1_700_000_100,
+            latestCandleTimeSec: 1_700_000_104,
+            trades: [
+                trade(1, 1_700_000_101, 1_700_000_103, "signal"),
+                trade(2, 1_700_000_104, 1_700_000_105, "signal"),
+            ],
+        });
+
+        expect(times).to.deep.equal([1_700_000_102, 1_700_000_104]);
     });
 
     it("passes live CLOB quotes into Polymarket-1s helper strategy execution", async () => {

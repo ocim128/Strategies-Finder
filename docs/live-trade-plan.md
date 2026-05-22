@@ -73,15 +73,15 @@ V1 is working only when all of these are true:
 ## Assumptions
 
 - Live Trade targets Polymarket crypto outcome markets, not Binance spot/futures execution.
-- Existing Strategy Finder settings remain the source of truth for signal validity, direction, entry price filtering, Polymarket symbol/session settings, and stake input.
-- Live entries can run in taker mode or limit mode. Filled live exits still sell the same filled token through the existing taker exit flow.
-- Polymarket protective TP/SL in Execution Lab is driven by paper exits. The current live boundary converts those paper exits to the existing taker sell flow for tracked filled shares.
-- Resting sell-limit TP submission and order-status polling are not part of the current Strategy Finder live boundary. Add them only after the local executor exposes an explicit sell-limit request/response and reconciliation contract.
+- Existing Strategy Finder settings remain the source of truth for signal validity, direction, entry price filtering, and Polymarket symbol/session settings. Execution Lab owns its own stake input and protective Polymarket TP/SL controls.
+- Live entries can run in taker mode or limit mode. Filled live exits sell the same filled token; TP uses an immediate resting sell-limit and SL/signal exits use the taker exit flow.
+- Polymarket protective TP/SL in Execution Lab is driven by its Live Config controls. TP is submitted after confirmed live entry fill; SL is submitted when the paper SL trigger fires.
+- Order-status polling is not part of the current Strategy Finder live boundary. Resting TP reconciliation is local and request/order-id based until the executor exposes polling.
 - With live UI sizing mode `fixed`, `stakeUsd` is a hard notional cap. The executor may submit less after tick/lot/depth/min-size checks, but it must never submit more.
 - With live UI sizing mode `exchange_min`, live entries may auto-size above `stakeUsd` to the minimum valid Polymarket order, but never above the effective UI/Strategy Finder cap or `MAX_ORDER_SIZE_USDC`.
 - The executor may reject small stakes in fixed mode or reject exchange-min sizing with `min_size_exceeds_cap` when the minimum valid order is above the configured caps.
 - Strategy Finder `.env` still owns executor path, optional loopback executor URL, cwd, args, hard live enablement, timeout/output limits, geoblock display state, fallback taker order type, fallback sizing/cap/slippage values, limit order type, and optional broad cancel scope.
-- The Execution Lab UI owns non-secret per-browser live behavior: `orderMode`, `takerOrderType`, sizing mode, max stake cap, entry/exit slippage, limit offset, and limit cancel-on-exit. UI values override `.env` fallbacks for those non-secret runtime fields.
+- The Execution Lab UI owns non-secret per-browser live behavior: `orderMode`, `takerOrderType`, sizing mode, max stake cap, entry/exit slippage, protective TP/SL toggles and cent offsets, limit offset, and limit cancel-on-exit. Order, sizing, slippage, and limit UI values override `.env` fallbacks; protective TP/SL currently has no `.env` fallback.
 - The default taker order type is `FAK`; `.env` accepts `EXECUTION_LAB_LIVE_TAKER_ORDER_TYPE`, `EXECUTION_LAB_LIVE_ORDER_TYPE`, or compatibility `ARBITRAGE_ORDER_TYPE`.
 - Limit entry order type defaults to `GTC` through `EXECUTION_LAB_LIVE_LIMIT_ORDER_TYPE=GTC`.
 - Strategy Finder runs the executor from the inferred side-repo root when the binary is under `target/debug` or `target/release`; set `EXECUTION_LAB_LIVE_EXECUTOR_CWD` when that inference is wrong.
@@ -90,7 +90,7 @@ V1 is working only when all of these are true:
 - Live entry `maxPrice` adds `EXECUTION_LAB_LIVE_ENTRY_MAX_SLIPPAGE_CENTS` to the paper entry price, clamped to `1.00`; the default is `1` cent.
 - Limit mode submits a buy limit immediately after an accepted paper entry, using the paper entry price as `limitReferencePrice` and optional UI offset as `limitPrice = reference - offsetCents / 100`, rounded/clamped by Strategy Finder before executor submission. For executor schema compatibility, limit requests also carry `maxPrice = limitPrice`; `limitPrice` remains the explicit resting-order price.
 - Posted or delayed limit entries are tracked as pending limit submissions, not live positions. They become tracked live positions when the executor response reports filled or partial filled shares, or when an exit-triggered targeted cancel returns `not_canceled`, which may mean the resting order already filled.
-- Limit cancel-on-exit is limit-mode only. When Strategy Finder has a posted GTC order id, it sends a targeted `session` cancel for that order id; broader configured scopes are fallback-only.
+- Limit cancel-on-exit is limit-mode only for pending limit entries. Resting TP cancellation is targeted by order id before a non-TP taker exit to avoid duplicate sells.
 - Private keys must not be stored in browser state, localStorage, JSONL logs, or this repository.
 - V1 is a local playground feature for `npm run dev`, not production infrastructure.
 - Live mode is never restored automatically on page load. The UI may remember non-secret settings such as stake, but each session starts from Paper until the user explicitly selects Live again.
@@ -104,8 +104,7 @@ V1 is working only when all of these are true:
 - No Cloudflare Worker live trading.
 - No production deployment claim.
 - No full live-position reconciliation dashboard in V1.
-- No order-status polling or fill reconciliation for resting limit orders in V1.
-- No resting sell-limit take-profit for live exits in V1; protective TP exits use the same taker exit path as signal exits.
+- No order-status polling for resting limit orders in V1.
 - No UI storage for executor path, cwd, args, wallet auth, API keys, private key material, or process timeout/output controls.
 
 ## Current Architecture
@@ -259,7 +258,7 @@ Keep the browser request small. Execution-critical normalization belongs to the 
 
 ```ts
 export type LiveTradeSubmitRequest = {
-    action: "entry" | "exit";
+    action: "entry" | "take_profit" | "exit";
     requestId: string;
     sessionId: string;
     paperTradeId: string;
@@ -312,10 +311,10 @@ Notes:
 
 - Taker `maxPrice` is the paper entry price plus configured entry slippage, not a claim that live execution will fill at that price.
 - Limit request `maxPrice` is only a backward-compatible executor cap and must equal `limitPrice`.
-- Limit `limitPrice` is a resting buy price. It may remain unfilled; Strategy Finder does not assume a posted limit became an open live position unless the executor response includes filled shares.
-- `stakeUsd` is always the paper-session stake. It is also the live entry cap in `fixed` sizing mode, but not in `exchange_min` sizing mode.
-- For `action: "exit"`, `minPrice` is the live sell floor and `shares` is the tracked filled live-token amount to sell.
-- Taker entries and exits allow `FOK` or `FAK`; limit entries use the configured resting type, currently `GTC`.
+- Limit-entry `limitPrice` is a resting buy price. TP `limitPrice` is a resting sell price. Posted limit entries do not become live positions unless the executor response includes filled shares.
+- `stakeUsd` is always required for paper-session sizing. It caps live entry exposure in `fixed` sizing mode; it does not cap TP or taker exits because they reduce an existing position.
+- For `action: "take_profit"` and `action: "exit"`, `shares` is the tracked filled live-token amount to sell. TP uses `limitPrice`; taker exit uses `minPrice`.
+- Taker entries and exits allow `FOK` or `FAK`; limit entries and TP use the configured resting type, currently `GTC`.
 - Prefer `FAK` for first live smoke if partial fills are acceptable; prefer `FOK` only if all-or-nothing execution is required.
 - The executor must treat request `orderMode`, `orderType`, cancel `scope`, and cancel `orderIds` as authoritative. If local config would use anything else, reject with a structured mismatch reason instead of silently using config.
 - Cancel-all requests are logged separately as `live_cancel_all_request` and `live_cancel_all_result`; they are not sell exits.
@@ -326,7 +325,7 @@ Runtime validation for `/api/execution-lab/live/trade`:
 - `side` must be `yes` or `no`.
 - `orderMode` must be `taker` or `limit`.
 - Taker `orderType` must be `FOK` or `FAK`; limit `orderType` must match the resolved supported limit order type.
-- `stakeUsd` must be finite, positive, and no larger than the configured Strategy Finder executor cap. In `exchange_min` sizing mode, it is still required for paper-session sizing but no longer caps the live executor order.
+- `stakeUsd` must be finite and positive. Entry requests must not exceed the configured Strategy Finder executor cap unless sizing mode is `exchange_min`; TP and exit requests are not capped by stake because they sell tracked shares.
 - Taker `maxPrice` must be finite and in `(0, 1]`; limit `maxPrice`, `limitPrice`, and `limitReferencePrice` must be finite and in `(0, 1]`, with limit `maxPrice` equal to `limitPrice`.
 - `createdAtIso` must parse as an ISO timestamp.
 - `expiresAtSec` must be finite, in the future, and close to current time. Use a short maximum window such as 30 seconds.
@@ -334,7 +333,7 @@ Runtime validation for `/api/execution-lab/live/trade`:
 - The submitted `tokenId` must match the selected side after market validation: YES for `side: "yes"`, NO for `side: "no"`.
 - Reject malformed payloads with HTTP 400 before the executor is invoked.
 - `/api/execution-lab/live/config/resolve` validates UI non-secret config and returns the effective live config without exposing executor path, cwd, args, or secrets.
-- `/api/execution-lab/live/cancel-all` validates `cancel_all` requests against resolved limit mode, enabled cancel-on-exit, and either targeted session order ids or a concrete configured broad scope, then uses a separate process-local idempotency ledger.
+- `/api/execution-lab/live/cancel-all` validates `cancel_all` requests against either limit-entry cancel-on-exit or a targeted TP order-id cancel, then uses a separate process-local idempotency ledger.
 
 ## Strategy Finder Records
 
@@ -461,7 +460,7 @@ Live exit is intentionally conservative:
 - Strategy Finder preflights the latest same-event bid against that floor and records a local rejected exit attempt every one-second retry cooldown while the bid is already below `minPrice`.
 - The executor re-fetches the current book and rejects with `price_moved_below_floor` if best bid is below `minPrice`.
 - Exit sizing submits the tracked remaining shares at the lowest valid limit price: `max(minPrice, exchangeMinNotional / shares)`, rounded to tick size. If best bid cannot support that minimum executable price, the executor rejects with `below_exchange_min` and Strategy Finder may retry.
-- The executor submits the sell using the configured `FAK`/`FOK` order type. Existing side-repo GTC wind-down logic remains unchanged.
+- The executor submits taker exits using the configured `FAK`/`FOK` order type. TP uses a separate `take_profit` GTC sell-limit request immediately after entry fill.
 - If a live position remains open after an exit rejection or partial fill, Strategy Finder blocks new same-event live entries with `live_position_open`.
 - Exit retries use a 1-second cooldown and a new request id per attempt. Retries stop when the position is closed, the event window is no longer tradeable, or the executor reports an ambiguous accepted state (`delayed`/`posted_live`) that needs reconciliation before another sell attempt is safe.
 - If a paper entry and its paper exit are first observed in the same poll batch, Strategy Finder rejects the live entry with `paper_exit_same_tick`; it must not enter live after the paper exit already happened.
@@ -616,7 +615,7 @@ Scope:
 - Submit one live entry request per accepted paper entry.
 - Display and log executor result.
 - Signal exits use the Live Exit V1.1 path above; no hedge or opposite-side synthetic exits.
-- Taker entries use `FOK` or `FAK`; limit entries use the configured resting type, currently `GTC`.
+- Taker entries use `FOK` or `FAK`; limit entries and TP use the configured resting type, currently `GTC`.
 
 Technical tasks:
 

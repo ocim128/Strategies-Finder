@@ -1120,7 +1120,8 @@ export function executionLabVitePlugin(): Plugin {
                         }));
                         return;
                     }
-                    const expectedOrderType = validation.request.action === "entry" && validation.request.orderMode === "limit"
+                    const expectedOrderType = validation.request.action === "take_profit"
+                        || (validation.request.action === "entry" && validation.request.orderMode === "limit")
                         ? status.supportedLimitOrderType
                         : status.takerOrderType;
                     if (validation.request.orderType !== expectedOrderType) {
@@ -1129,10 +1130,12 @@ export function executionLabVitePlugin(): Plugin {
                             status: "rejected",
                             reason: "order_type_config_mismatch",
                             maxPrice: validation.request.maxPrice,
-                            limitPrice: validation.request.action === "entry" && validation.request.orderMode === "limit"
+                            limitPrice: validation.request.orderMode === "limit"
                                 ? validation.request.limitPrice
                                 : undefined,
-                            minPrice: validation.request.action === "exit" ? validation.request.minPrice : undefined,
+                            minPrice: validation.request.action === "exit" || validation.request.action === "take_profit"
+                                ? validation.request.minPrice
+                                : undefined,
                         }));
                         return;
                     }

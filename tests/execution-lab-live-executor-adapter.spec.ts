@@ -56,6 +56,24 @@ function cancelRequest(): LiveCancelAllSubmitRequest {
     };
 }
 
+function takeProfitRequest(): LiveTradeSubmitRequest {
+    return {
+        ...request(),
+        action: "take_profit",
+        requestId: "live-tp-1",
+        entryRequestId: "live-request-1",
+        orderMode: "limit",
+        orderType: "GTC",
+        maxPrice: 0.62,
+        limitPrice: 0.62,
+        limitReferencePrice: 0.57,
+        shares: 8.5,
+        exitTimeSec: 1_700_000_020,
+        minPrice: 0.62,
+        stakeUsd: 5.27,
+    };
+}
+
 function targetedCancelRequest(): LiveCancelAllSubmitRequest {
     return {
         ...cancelRequest(),
@@ -371,6 +389,31 @@ describe("Execution Lab live executor adapter", () => {
         });
 
         expect(response.status).to.equal("dry_run");
+    });
+
+    it("forces take-profit requests through the limit order environment", async () => {
+        const script = [
+            "let body='';",
+            "process.stdin.on('data', c => body += c);",
+            "process.stdin.on('end', () => {",
+            "const req = JSON.parse(body);",
+            "const aligned = req.action === 'take_profit' && req.orderMode === 'limit' && req.orderType === 'GTC' && process.env.EXECUTION_LAB_LIVE_ORDER_MODE === 'limit' && process.env.ARBITRAGE_ORDER_TYPE === 'GTC';",
+            "console.log(JSON.stringify({ ok: true, requestId: req.requestId, status: aligned ? 'posted_live' : 'failed', limitPrice: req.limitPrice, minPrice: req.minPrice }));",
+            "});",
+        ].join("");
+        const response = await submitLiveTradeToExecutor(takeProfitRequest(), {
+            executorPath: process.execPath,
+            executorArgs: ["-e", script],
+            liveEnabled: false,
+            maxStakeUsd: 1,
+            orderMode: "taker",
+            orderType: "FAK",
+            timeoutMs: 1000,
+        });
+
+        expect(response.status).to.equal("posted_live");
+        expect(response.limitPrice).to.equal(0.62);
+        expect(response.minPrice).to.equal(0.62);
     });
 
     it("forwards cancel-all requests with the configured cancel scope", async () => {

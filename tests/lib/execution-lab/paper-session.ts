@@ -27,6 +27,7 @@ import {
     type SessionStopRecord,
     type SignalSeenRecord,
 } from "./execution-lab-model";
+import { executionLabTradeExecutionTimeSec } from "./trade-quote-times";
 
 type EventRef = {
     seriesId: string;
@@ -59,14 +60,11 @@ function toSec(time: Trade["entryTime"]): number | null {
     return parseTimeToUnixSeconds(time);
 }
 
-function closeExecutionTimestampShiftSec(snapshot: ExecutionLabSessionSnapshot): number {
-    const executionModel = snapshot.backtestSettings.executionModel;
-    return executionModel === "signal_close" || executionModel === "next_close" ? 1 : 0;
-}
-
 function tradeExecutionTimeSec(snapshot: ExecutionLabSessionSnapshot, time: Trade["entryTime"]): number | null {
-    const rawTimeSec = toSec(time);
-    return rawTimeSec === null ? null : rawTimeSec + closeExecutionTimestampShiftSec(snapshot);
+    return executionLabTradeExecutionTimeSec({
+        backtestSettings: snapshot.backtestSettings,
+        time,
+    });
 }
 
 function eventKey(event: EventRef): string {

@@ -108,6 +108,20 @@ describe("Execution Lab JSONL schema", () => {
             ...baseRecord,
             recordType: "paper_exit",
             tradeId: "trade-1",
+            exitReason: "polymarket_take_profit",
+            exitPrice: 0.66,
+        }).ok).to.equal(true);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "paper_exit",
+            tradeId: "trade-1",
+            exitReason: "polymarket_stop_loss",
+            exitPrice: 0.42,
+        }).ok).to.equal(true);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "paper_exit",
+            tradeId: "trade-1",
             exitReason: "resolution",
             exitPrice: 1.01,
         }).ok).to.equal(false);
@@ -145,6 +159,42 @@ describe("Execution Lab JSONL schema", () => {
             currentAsk: 0.53,
             maxPrice: 0.54,
             latencyMs: 25,
+        }).ok).to.equal(true);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "live_trade_request",
+            action: "take_profit",
+            requestId: "live-tp-1",
+            entryRequestId: "live-1",
+            paperTradeId: "paper-1",
+            eventStartTs: 1_700_000_000,
+            eventEndTs: 1_700_000_300,
+            marketSlug: "btc-event",
+            conditionId: "condition",
+            tokenId: "yes-token",
+            side: "yes",
+            stakeUsd: 5,
+            signalTimeSec: 1_700_000_010,
+            entryTimeSec: 1_700_000_011,
+            shares: 8.5,
+            exitTimeSec: 1_700_000_020,
+            orderMode: "limit",
+            orderType: "GTC",
+            maxPrice: 0.62,
+            minPrice: 0.62,
+            limitPrice: 0.62,
+            limitReferencePrice: 0.57,
+        }).ok).to.equal(true);
+        expect(validateExecutionLabRecord({
+            ...baseRecord,
+            recordType: "live_trade_result",
+            action: "take_profit",
+            requestId: "live-tp-1",
+            paperTradeId: "paper-1",
+            status: "posted_live",
+            limitPrice: 0.62,
+            minPrice: 0.62,
+            currentBid: 0.60,
         }).ok).to.equal(true);
         expect(validateExecutionLabRecord({
             ...baseRecord,

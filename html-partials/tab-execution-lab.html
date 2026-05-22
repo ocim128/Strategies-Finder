@@ -60,6 +60,22 @@
                 <span class="param-label">Exit Slip c</span>
                 <input class="param-input" id="executionLabLiveExitSlippageCents" type="number" min="0" step="0.1" value="5">
             </label>
+            <label class="param-group execution-lab-check" title="Polymarket take-profit trigger for Execution Lab paper/live sessions. Live exits use the current tracked-share taker exit path.">
+                <span class="param-label">Poly TP</span>
+                <input id="executionLabPolymarketTakeProfitEnabled" type="checkbox">
+            </label>
+            <label class="param-group" title="Cent offset above the bought YES/NO entry price.">
+                <span class="param-label">TP c</span>
+                <input class="param-input" id="executionLabPolymarketTakeProfitCents" type="number" min="0" max="99" step="0.1" value="20">
+            </label>
+            <label class="param-group execution-lab-check" title="Polymarket stop-loss trigger for Execution Lab paper/live sessions.">
+                <span class="param-label">Poly SL</span>
+                <input id="executionLabPolymarketStopLossEnabled" type="checkbox">
+            </label>
+            <label class="param-group" title="Cent offset below the bought YES/NO entry price.">
+                <span class="param-label">SL c</span>
+                <input class="param-input" id="executionLabPolymarketStopLossCents" type="number" min="0" max="99" step="0.1" value="20">
+            </label>
             <label class="param-group execution-lab-check">
                 <span class="param-label">Limit Offset</span>
                 <input id="executionLabLiveLimitOffsetEnabled" type="checkbox">

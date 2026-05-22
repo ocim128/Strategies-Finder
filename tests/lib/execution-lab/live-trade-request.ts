@@ -14,6 +14,7 @@ import type {
     LiveExitRequestRecord,
     LiveExitResultRecord,
     LiveExitSubmitRequest,
+    LiveTakeProfitSubmitRequest,
     ExecutionLabSessionSnapshot,
     LiveOrderMode,
     LiveTakerOrderType,
@@ -314,6 +315,21 @@ export function resolveLiveLimitEntryPrice(args: {
     return Math.max(0.01, Math.min(1, Number(rounded.toFixed(4))));
 }
 
+export function resolveLiveTakeProfitLimitPrice(args: {
+    entryPrice: number;
+    takeProfitCents: number;
+    tickSize?: number;
+}): number | null {
+    const entryPrice = finitePositiveNumber(args.entryPrice);
+    const takeProfitCents = finitePositiveNumber(args.takeProfitCents);
+    if (entryPrice === null || takeProfitCents === null) return null;
+    const tickSize = finitePositiveNumber(args.tickSize) ?? LIVE_TRADE_DEFAULT_LIMIT_TICK_SIZE;
+    const rawPrice = entryPrice + (takeProfitCents / 100);
+    if (rawPrice > 1) return null;
+    const rounded = Math.ceil((rawPrice - Number.EPSILON) / tickSize) * tickSize;
+    return Math.max(0.01, Math.min(1, Number(rounded.toFixed(4))));
+}
+
 export function buildLiveTradeSubmitRequest(args: {
     snapshot: ExecutionLabSessionSnapshot;
     position: ExecutionLabOpenPaperPosition;
@@ -381,6 +397,82 @@ export function buildLiveTradeSubmitRequest(args: {
             maxEntrySlippageCents: args.maxEntrySlippageCents ?? liveConfig.entryMaxSlippageCents,
         }),
         orderType: args.orderType ?? liveConfig.takerOrderType,
+    };
+}
+
+export function buildLiveTakeProfitRequestId(args: {
+    sessionId: string;
+    entryRequestId: string;
+    paperTradeId: string;
+    limitPrice: number;
+}): string {
+    return `live-tp:${args.sessionId}:${hashParts([
+        args.entryRequestId,
+        args.paperTradeId,
+        String(Number(args.limitPrice).toFixed(4)),
+    ])}`;
+}
+
+export function buildLiveTakeProfitSubmitRequest(args: {
+    snapshot: ExecutionLabSessionSnapshot;
+    entryRequestId: string;
+    paperTradeId: string;
+    eventStartTs: number;
+    eventEndTs: number;
+    marketSlug: string;
+    conditionId: string;
+    tokenId: string;
+    side: "yes" | "no";
+    shares: number;
+    signalTimeSec: number;
+    entryTimeSec: number;
+    entryPrice: number;
+    takeProfitCents: number;
+    createdAtIso: string;
+    nowSec: number;
+    orderType?: LiveLimitOrderType;
+    limitTickSize?: number;
+}): LiveTakeProfitSubmitRequest | null {
+    const limitPrice = resolveLiveTakeProfitLimitPrice({
+        entryPrice: args.entryPrice,
+        takeProfitCents: args.takeProfitCents,
+        tickSize: args.limitTickSize,
+    });
+    const shares = finitePositiveNumber(args.shares);
+    if (limitPrice === null || shares === null) return null;
+    const exitTimeSec = Math.floor(args.nowSec);
+    return {
+        action: "take_profit",
+        requestId: buildLiveTakeProfitRequestId({
+            sessionId: args.snapshot.sessionId,
+            entryRequestId: args.entryRequestId,
+            paperTradeId: args.paperTradeId,
+            limitPrice,
+        }),
+        sessionId: args.snapshot.sessionId,
+        paperTradeId: args.paperTradeId,
+        entryRequestId: args.entryRequestId,
+        createdAtIso: args.createdAtIso,
+        expiresAtSec: exitTimeSec + LIVE_TRADE_REQUEST_TTL_SEC,
+        symbol: args.snapshot.outcomeSymbol,
+        strategyKey: args.snapshot.strategyKey,
+        eventStartTs: args.eventStartTs,
+        eventEndTs: args.eventEndTs,
+        marketSlug: args.marketSlug,
+        conditionId: args.conditionId,
+        tokenId: args.tokenId,
+        side: args.side,
+        stakeUsd: Math.max(0.01, shares * limitPrice),
+        signalTimeSec: args.signalTimeSec,
+        entryTimeSec: args.entryTimeSec,
+        orderMode: "limit",
+        orderType: args.orderType ?? LIVE_TRADE_DEFAULT_LIMIT_ORDER_TYPE,
+        maxPrice: limitPrice,
+        limitPrice,
+        limitReferencePrice: args.entryPrice,
+        shares,
+        exitTimeSec,
+        minPrice: limitPrice,
     };
 }
 
@@ -467,15 +559,17 @@ export function buildLiveExitSubmitRequest(args: {
 
 export function buildLiveTradeRequestRecord(
     snapshot: ExecutionLabSessionSnapshot,
-    request: LiveEntrySubmitRequest,
+    request: LiveEntrySubmitRequest | LiveTakeProfitSubmitRequest,
     recordedAtIso: string,
     context: LiveRecordContext = {}
 ): LiveTradeRequestRecord {
     return {
         ...baseRecord(snapshot, recordedAtIso),
         recordType: "live_trade_request",
+        action: request.action,
         requestId: request.requestId,
         paperTradeId: request.paperTradeId,
+        entryRequestId: request.action === "take_profit" ? request.entryRequestId : undefined,
         expiresAtSec: request.expiresAtSec,
         eventStartTs: request.eventStartTs,
         eventEndTs: request.eventEndTs,
@@ -486,13 +580,16 @@ export function buildLiveTradeRequestRecord(
         stakeUsd: request.stakeUsd,
         signalTimeSec: request.signalTimeSec,
         entryTimeSec: request.entryTimeSec,
+        shares: request.action === "take_profit" ? request.shares : undefined,
+        exitTimeSec: request.action === "take_profit" ? request.exitTimeSec : undefined,
         orderMode: request.orderMode,
         orderType: request.orderType,
         maxPrice: request.maxPrice,
+        minPrice: request.action === "take_profit" ? request.minPrice : undefined,
         limitPrice: request.orderMode === "limit" ? request.limitPrice : undefined,
         limitReferencePrice: request.orderMode === "limit" ? request.limitReferencePrice : undefined,
-        limitOffsetEnabled: request.orderMode === "limit" ? request.limitOffsetEnabled : undefined,
-        limitOffsetCents: request.orderMode === "limit" ? request.limitOffsetCents : undefined,
+        limitOffsetEnabled: request.action === "entry" && request.orderMode === "limit" ? request.limitOffsetEnabled : undefined,
+        limitOffsetCents: request.action === "entry" && request.orderMode === "limit" ? request.limitOffsetCents : undefined,
         dryRun: context.dryRun,
         sizingMode: context.sizingMode,
     };
@@ -500,7 +597,7 @@ export function buildLiveTradeRequestRecord(
 
 export function buildLiveTradeResultRecord(
     snapshot: ExecutionLabSessionSnapshot,
-    request: Pick<LiveTradeSubmitRequest, "requestId" | "paperTradeId">,
+    request: Pick<LiveTradeSubmitRequest, "requestId" | "paperTradeId" | "action">,
     response: LiveTradeSubmitResponse,
     recordedAtIso: string,
     context: LiveRecordContext = {}
@@ -508,6 +605,7 @@ export function buildLiveTradeResultRecord(
     return {
         ...baseRecord(snapshot, recordedAtIso),
         recordType: "live_trade_result",
+        action: request.action === "take_profit" ? "take_profit" : "entry",
         requestId: request.requestId,
         paperTradeId: request.paperTradeId,
         status: response.status,
@@ -525,6 +623,8 @@ export function buildLiveTradeResultRecord(
         limitReferencePrice: response.limitReferencePrice,
         limitOffsetEnabled: response.limitOffsetEnabled,
         limitOffsetCents: response.limitOffsetCents,
+        minPrice: response.minPrice,
+        currentBid: response.currentBid,
         latencyMs: context.latencyMs,
     };
 }
@@ -785,7 +885,9 @@ export function validateLiveTradeSubmitRequest(
 ): { ok: true; request: LiveTradeSubmitRequest } | { ok: false; error: string } {
     if (!isPlainObject(value)) return { ok: false, error: "request must be an object" };
     const action = value.action === undefined ? "entry" : value.action;
-    if (action !== "entry" && action !== "exit") return { ok: false, error: "action must be entry or exit" };
+    if (action !== "entry" && action !== "exit" && action !== "take_profit") {
+        return { ok: false, error: "action must be entry, take_profit, or exit" };
+    }
     const requestId = nonEmptyString(value.requestId);
     const sessionId = nonEmptyString(value.sessionId);
     const paperTradeId = nonEmptyString(value.paperTradeId);
@@ -835,6 +937,70 @@ export function validateLiveTradeSubmitRequest(
     }
     if (entryTimeSec < eventStartTs || entryTimeSec >= eventEndTs) {
         return { ok: false, error: "entryTimeSec must be inside the event window" };
+    }
+
+    if (action === "take_profit") {
+        if (orderMode !== "limit") return { ok: false, error: "take-profit must use limit order mode" };
+        if (value.orderType !== (options.supportedLimitOrderType ?? LIVE_TRADE_DEFAULT_LIMIT_ORDER_TYPE)) {
+            return { ok: false, error: "orderType does not match resolved limit order type" };
+        }
+        const entryRequestId = nonEmptyString(value.entryRequestId);
+        const shares = finiteNumber(value.shares);
+        const exitTimeSec = finiteNumber(value.exitTimeSec);
+        const maxPrice = finiteNumber(value.maxPrice);
+        const minPrice = finiteNumber(value.minPrice);
+        const limitPrice = finiteNumber(value.limitPrice);
+        const limitReferencePrice = finiteNumber(value.limitReferencePrice);
+        if (!entryRequestId) return { ok: false, error: "entryRequestId is required for take-profit" };
+        if (shares === null || shares <= 0) return { ok: false, error: "shares must be positive for take-profit" };
+        if (maxPrice === null || maxPrice <= 0 || maxPrice > 1) return { ok: false, error: "maxPrice must be in (0, 1]" };
+        if (minPrice === null || minPrice <= 0 || minPrice > 1) return { ok: false, error: "minPrice must be in (0, 1]" };
+        if (limitPrice === null || limitPrice <= 0 || limitPrice > 1) {
+            return { ok: false, error: "limitPrice must be in (0, 1]" };
+        }
+        if (Math.abs(maxPrice - limitPrice) > 0.000000001) {
+            return { ok: false, error: "maxPrice must match limitPrice for take-profit" };
+        }
+        if (Math.abs(minPrice - limitPrice) > 0.000000001) {
+            return { ok: false, error: "minPrice must match limitPrice for take-profit" };
+        }
+        if (limitReferencePrice === null || limitReferencePrice <= 0 || limitReferencePrice > 1) {
+            return { ok: false, error: "limitReferencePrice must be in (0, 1]" };
+        }
+        if (exitTimeSec === null || exitTimeSec < eventStartTs || exitTimeSec >= eventEndTs) {
+            return { ok: false, error: "exitTimeSec must be inside the event window" };
+        }
+        return {
+            ok: true,
+            request: {
+                action: "take_profit",
+                requestId,
+                sessionId,
+                paperTradeId,
+                entryRequestId,
+                createdAtIso,
+                expiresAtSec: Math.floor(expiresAtSec),
+                symbol,
+                strategyKey,
+                eventStartTs: Math.floor(eventStartTs),
+                eventEndTs: Math.floor(eventEndTs),
+                marketSlug,
+                conditionId,
+                tokenId,
+                side: value.side,
+                stakeUsd,
+                signalTimeSec: Math.floor(signalTimeSec),
+                entryTimeSec: Math.floor(entryTimeSec),
+                orderMode: "limit",
+                orderType: options.supportedLimitOrderType ?? LIVE_TRADE_DEFAULT_LIMIT_ORDER_TYPE,
+                maxPrice,
+                limitPrice,
+                limitReferencePrice,
+                shares,
+                exitTimeSec: Math.floor(exitTimeSec),
+                minPrice,
+            },
+        };
     }
 
     if (action === "exit") {

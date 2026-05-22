@@ -178,7 +178,9 @@ function effectiveExecutorOrderType(
     config: LiveExecutorAdapterConfig
 ): string {
     if (request.action === "cancel_all") return config.limitOrderType;
-    if (request.action === "entry" && request.orderMode === "limit") return config.limitOrderType;
+    if (request.action === "take_profit" || (request.action === "entry" && request.orderMode === "limit")) {
+        return config.limitOrderType;
+    }
     return config.takerOrderType;
 }
 
@@ -377,11 +379,15 @@ export async function submitLiveTradeToExecutor(
     const config = resolveLiveExecutorConfig(liveUiConfig, configOverride);
     const failurePriceFields = {
         maxPrice: request.maxPrice,
-        limitPrice: request.action === "entry" && request.orderMode === "limit" ? request.limitPrice : undefined,
-        minPrice: request.action === "exit" ? request.minPrice : undefined,
+        limitPrice: request.orderMode === "limit" ? request.limitPrice : undefined,
+        minPrice: request.action === "exit" || request.action === "take_profit" ? request.minPrice : undefined,
     };
-    const expectedOrderMode = request.action === "exit" ? "taker" : config.orderMode;
-    const expectedOrderType = request.action === "entry" && request.orderMode === "limit"
+    const expectedOrderMode = request.action === "exit"
+        ? "taker"
+        : request.action === "take_profit"
+            ? "limit"
+            : config.orderMode;
+    const expectedOrderType = request.action === "take_profit" || (request.action === "entry" && request.orderMode === "limit")
         ? config.limitOrderType
         : config.takerOrderType;
     if (request.orderMode !== expectedOrderMode) {

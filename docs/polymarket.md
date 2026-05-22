@@ -61,13 +61,13 @@ If you want Execution Lab live trading:
 - use the Execution Lab tab on supported `1s` BTCUSDT/XRPUSDT `signal_close`, `next_open`, or `next_close` runs
 - keep Paper Trade as the default until dry-run executor preflight is clean
 - configure Strategy Finder `.env` with the local executor path or optional `EXECUTION_LAB_LIVE_EXECUTOR_URL`, plus the live-enabled flag
-- configure the side executor repo with the private key, signature mode, stake cap, `FAK`/`FOK`, and `LIVE_TRADE_ONCE_LIVE_ENABLED`
+- configure the side executor repo with the private key, signature mode, stake cap, `FAK`/`FOK` taker order type, `GTC` limit order type, and `LIVE_TRADE_ONCE_LIVE_ENABLED`
 - live entries buy the same YES/NO side accepted by the paper decision path
 - paper/live entries use the Backtest Realism `Polymarket Entry Cutoff` toggle; when enabled, entries inside that event-close window are skipped in paper and rejected as `event_too_close_to_close` in live if the current clock has crossed the same cutoff
 - for `signal_close` and `next_close` 1s runs, Execution Lab paper fills use the quote one second after the chart candle timestamp, matching the close-based CLOB scoring contract
-- Execution Lab paper applies the same Polymarket TP/SL settings to open paper positions. A TP/SL paper exit queues the normal tracked-share live exit when Live Trade is active.
+- Execution Lab has separate `Poly TP` and `Poly SL` controls in its Live Config panel. These controls apply to open paper positions. When Live Trade is active, a confirmed live entry with TP enabled immediately submits a resting GTC sell-limit for the filled shares; SL remains a tracked-share taker exit when the paper SL trigger fires.
 - live exits sell tracked filled shares for the same token when the matching paper trade emits `paper_exit`
-- current live exits are taker sells through the existing executor request. A resting sell-limit TP and order-status polling are not implemented in this repo until the local executor boundary exposes that capability.
+- order-status polling is still not implemented. A posted TP is tracked locally by request/order id; when the paper TP trigger appears, Strategy Finder treats the resting TP as the intended live exit.
 - browser code must never receive private keys; it sends only request intent to the local executor endpoint
 
 If you want to author 1s Polymarket-aware strategies:
@@ -190,7 +190,7 @@ Important behavior:
 - Paper Trade remains the startup default and writes JSONL paper records only
 - Live Trade requires an explicit UI mode switch and confirmation
 - Strategy Finder reads local executor path/cwd/args or optional `EXECUTION_LAB_LIVE_EXECUTOR_URL`, hard live enablement, timeout/output limits, geoblock display state, fallback order settings, and optional broad cancel scope from `.env`
-- Execution Lab UI owns non-secret per-browser live behavior: order mode, taker order type, live sizing mode, max stake cap, entry/exit slippage, limit offset, and limit cancel-on-exit
+- Execution Lab UI owns non-secret per-browser live behavior: order mode, taker order type, live sizing mode, max stake cap, entry/exit slippage, protective TP/SL toggles and cent offsets, limit offset, and limit cancel-on-exit
 - the local executor process reads wallet secrets from its own server-side `.env`
 - taker mode uses `FAK` or `FOK`; `.env` fallback accepts `EXECUTION_LAB_LIVE_TAKER_ORDER_TYPE`, `EXECUTION_LAB_LIVE_ORDER_TYPE`, or `ARBITRAGE_ORDER_TYPE` before falling back to `FAK`
 - limit mode uses `EXECUTION_LAB_LIVE_LIMIT_ORDER_TYPE=GTC` as the current resting order type
@@ -200,7 +200,7 @@ Important behavior:
 - the Backtest Realism `Polymarket Entry Cutoff` toggle is applied before paper entries are accepted, so Execution Lab paper PnL and live eligibility use the same event-close cutoff when the toggle is enabled
 - UI or fallback `exchange_min` sizing allows live entries to auto-size to the minimum valid Polymarket order, still capped by the effective Strategy Finder cap and `MAX_ORDER_SIZE_USDC`
 - exit requests sell the tracked filled shares of the same token with `minPrice` floored by the configured exit slippage against the lower of paper exit price and actual live entry fill
-- Polymarket TP/SL paper exits use the same tracked-share taker exit request path. This is intentionally not a resting sell-limit TP until the local executor supports sell-limit placement and fill reconciliation.
+- Polymarket TP submits an immediate resting GTC sell-limit after a confirmed live entry fill. Polymarket SL and non-TP signal exits use the tracked-share taker exit request path.
 - posted or delayed limit entries remain pending until the executor reports matched/partial filled shares, or until an exit-triggered targeted cancel returns `not_canceled`; the latter is promoted to a provisional live position so the normal exit sell is attempted
 - limit cancel-on-exit targets known posted Strategy Finder order ids by default; broad account cancellation requires explicit scope configuration and is shown in UI status and JSONL logs
 - if a paper exit is expected but the exact second-market exit quote is missing, a matching tracked live position still queues an exit using the latest same-event bid as the first floor reference when available
@@ -576,6 +576,8 @@ User-facing controls live in the Backtest Realism section:
 - `polymarketProtectionTakeProfitCents`
 - `polymarketProtectionStopLossEnabled`
 - `polymarketProtectionStopLossCents`
+
+Execution Lab has separate `Poly TP`, `TP c`, `Poly SL`, and `SL c` controls in `html-partials/tab-execution-lab.html`. Those values are stored in `executionLabSettings` and override the Backtest Realism Polymarket protection settings for Execution Lab sessions only.
 
 Current UI rules:
 
