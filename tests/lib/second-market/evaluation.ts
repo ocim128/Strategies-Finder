@@ -375,6 +375,7 @@ export async function loadSecondMarketEvaluationContext(args: {
     startTs: number;
     endTs: number;
     apiBaseUrl?: string;
+    includeGammaSnapshots?: boolean;
 }): Promise<SecondMarketEvaluationContext | null> {
     const symbol = normalizeSecondMarketChartSymbol(args.symbol);
     const outcomeInterval = resolvePolymarketOutcomeInterval(args.outcomeInterval);
@@ -389,6 +390,7 @@ export async function loadSecondMarketEvaluationContext(args: {
 
     const startTs = Math.floor(args.startTs);
     const endTs = Math.floor(args.endTs);
+    const includeGammaSnapshots = args.includeGammaSnapshots !== false;
     const [outcomes, quoteResult, gammaSnapshots] = await Promise.all([
         loadPolymarketOutcomesForTimeRange(args.symbol, startTs, endTs, outcomeSymbol, outcomeInterval),
         loadSecondMarketClobQuotesWithStats({
@@ -398,13 +400,15 @@ export async function loadSecondMarketEvaluationContext(args: {
             endTs,
             baseUrl: args.apiBaseUrl,
         }),
-        loadSecondMarketGammaSnapshots({
-            symbol: outcomeSymbol,
-            seriesId,
-            startTs,
-            endTs,
-            baseUrl: args.apiBaseUrl,
-        }).catch(() => []),
+        includeGammaSnapshots
+            ? loadSecondMarketGammaSnapshots({
+                symbol: outcomeSymbol,
+                seriesId,
+                startTs,
+                endTs,
+                baseUrl: args.apiBaseUrl,
+            }).catch(() => [])
+            : Promise.resolve([]),
     ]);
 
     return {
@@ -523,6 +527,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
         outcomeInterval: args.outcomeInterval,
         startTs: range.startTs - 300,
         endTs: range.endTs + 300,
+        includeGammaSnapshots: false,
     });
     if (!context) return args.result;
 

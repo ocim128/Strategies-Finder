@@ -17,12 +17,28 @@ export interface LoadPolymarketOutcomesOptions {
     startTs?: number;
     endTs?: number;
     limit?: number;
+    afterStartTs?: number;
+    afterEventSlug?: string;
 }
 
 type LoadPolymarketOutcomesResponse = {
     ok: boolean;
     rows?: PolymarketOutcomeRow[];
+    count?: number;
+    limit?: number;
+    truncated?: boolean;
+    nextAfterStartTs?: number;
+    nextAfterEventSlug?: string;
     error?: string;
+};
+
+export type LoadPolymarketOutcomesResult = {
+    rows: PolymarketOutcomeRow[];
+    count: number;
+    limit?: number;
+    truncated: boolean;
+    nextAfterStartTs?: number;
+    nextAfterEventSlug?: string;
 };
 
 type StorePolymarketOutcomesResponse = {
@@ -52,7 +68,13 @@ export function resetLocalSqlitePolymarketApiAvailabilityForTests(): void {
 export async function loadPolymarketOutcomes(
     options: LoadPolymarketOutcomesOptions = {}
 ): Promise<PolymarketOutcomeRow[]> {
-    const available = await checkSqliteApiAvailable(true);
+    return (await loadPolymarketOutcomesWithMetadata(options)).rows;
+}
+
+export async function loadPolymarketOutcomesWithMetadata(
+    options: LoadPolymarketOutcomesOptions = {}
+): Promise<LoadPolymarketOutcomesResult> {
+    const available = await checkSqliteApiAvailable();
     if (!available) {
         throw new Error('Local SQLite API is unavailable. Start the Vite dev server and verify /api/sqlite/status.');
     }
@@ -62,6 +84,8 @@ export async function loadPolymarketOutcomes(
     if (options.startTs != null) params.set('startTs', String(Math.floor(options.startTs)));
     if (options.endTs != null) params.set('endTs', String(Math.floor(options.endTs)));
     if (options.limit != null) params.set('limit', String(Math.max(1, Math.floor(options.limit))));
+    if (options.afterStartTs != null) params.set('afterStartTs', String(Math.floor(options.afterStartTs)));
+    if (options.afterEventSlug) params.set('afterEventSlug', options.afterEventSlug);
 
     const url = `${getBaseUrl()}/api/sqlite/load-polymarket-outcomes${params.size ? `?${params.toString()}` : ''}`;
     let res: Response;
@@ -80,7 +104,7 @@ export async function loadPolymarketOutcomes(
     }
 
     if (!res.ok) {
-        if (res.status === 404 || res.status >= 500) {
+        if (res.status === 404) {
             markLocalApiUnavailable(SQLITE_POLYMARKET_API_AVAILABILITY_KEY);
         }
         const payload = await res.json().catch(() => ({})) as { error?: string };
@@ -92,7 +116,15 @@ export async function loadPolymarketOutcomes(
         throw new Error(payload.error ?? 'load-polymarket-outcomes: ok=false');
     }
 
-    return payload.rows ?? [];
+    const rows = payload.rows ?? [];
+    return {
+        rows,
+        count: payload.count ?? rows.length,
+        limit: payload.limit,
+        truncated: payload.truncated === true,
+        nextAfterStartTs: payload.nextAfterStartTs,
+        nextAfterEventSlug: payload.nextAfterEventSlug,
+    };
 }
 
 export async function storePolymarketOutcomes(
@@ -100,7 +132,7 @@ export async function storePolymarketOutcomes(
 ): Promise<StorePolymarketOutcomesResponse> {
     if (!rows.length) return { ok: true, upserted: 0 };
 
-    const available = await checkSqliteApiAvailable(true);
+    const available = await checkSqliteApiAvailable();
     if (!available) {
         return {
             ok: false,
@@ -167,7 +199,7 @@ type LoadPolymarketPricePointsResponse = {
 export async function loadPolymarketPricePoints(
     options: LoadPolymarketPricePointsOptions
 ): Promise<PolymarketPricePoint[]> {
-    const available = await checkSqliteApiAvailable(true);
+    const available = await checkSqliteApiAvailable();
     if (!available) {
         throw new Error('Local SQLite API is unavailable. Start the Vite dev server and verify /api/sqlite/status.');
     }
@@ -198,7 +230,7 @@ export async function loadPolymarketPricePoints(
     }
 
     if (!res.ok) {
-        if (res.status === 404 || res.status >= 500) {
+        if (res.status === 404) {
             markLocalApiUnavailable(SQLITE_POLYMARKET_API_AVAILABILITY_KEY);
         }
         const payload = await res.json().catch(() => ({})) as { error?: string };
@@ -234,7 +266,7 @@ export async function storePolymarketPricePoints(
 ): Promise<StorePolymarketPricePointsResponse> {
     if (!rows.length) return { ok: true, upserted: 0 };
 
-    const available = await checkSqliteApiAvailable(true);
+    const available = await checkSqliteApiAvailable();
     if (!available) {
         return {
             ok: false,
@@ -283,7 +315,7 @@ export async function ensurePolymarketPricePointsWithMetadata(args: {
         return { rows: [], upserted: 0, fetchedEvents: 0, failedEvents: 0, missingTokenEvents: 0 };
     }
 
-    const available = await checkSqliteApiAvailable(true);
+    const available = await checkSqliteApiAvailable();
     if (!available) {
         throw new Error('Local SQLite API is unavailable. Start the Vite dev server and verify /api/sqlite/status.');
     }
@@ -309,7 +341,7 @@ export async function ensurePolymarketPricePointsWithMetadata(args: {
     }
 
     if (!res.ok) {
-        if (res.status === 404 || res.status >= 500) {
+        if (res.status === 404) {
             markLocalApiUnavailable(SQLITE_POLYMARKET_API_AVAILABILITY_KEY);
         }
         const payload = await res.json().catch(() => ({})) as { error?: string };

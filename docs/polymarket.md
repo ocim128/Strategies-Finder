@@ -6,7 +6,7 @@ Keep these paths separate:
 
 - direct Polymarket market charting
 - Polymarket outcome scoring for backtests, Finder, and Hunt
-- diagnostics and deployability analysis on scored trades
+- diagnostics on scored trades and deployability analysis helpers
 - bridge export for downstream `external_signal` bots
 - Execution Lab live trade through a local executor
 
@@ -128,7 +128,7 @@ Core files:
 - `lib/second-market/evaluation.ts`
 - `lib/second-market/finder-runner.ts`
 
-### 3. Diagnostics and deployability analysis
+### 3. Diagnostics and analysis helpers
 
 This is the read and analysis layer on top of scored trades.
 
@@ -137,14 +137,14 @@ It powers:
 - Quick View payout diagnostics
 - Trades panel outcome badges
 - the `Polymarket` strategy-panel diagnostics tab
-- fillability and deployability analysis in the Polymarket tab
+- headless fillability and deployability analysis helpers
 
 Important behavior:
 
 - Quick View, Trades, and the Polymarket tab can rebuild Polymarket annotations lazily
 - when the active result uses `signal_exit_same_event`, the lazy rebuild path also ensures local price points before recomputing
 - when the active result is a supported `1s` BTCUSDT/XRPUSDT spot or futures run, Quick View can rebuild strict CLOB annotations from the second-market DB
-- the Polymarket tab still has its own fillability and deployability analysis path using Polymarket history snapshots
+- the Polymarket tab renders diagnostics only; `lib/polymarket-deployability-analysis.ts` remains a headless analysis module and is not wired into the visible tab UI
 
 Core files:
 
@@ -258,6 +258,7 @@ Behavior:
 - if `trade.exitReason === "signal"` and the chart exit timestamp is still inside the same event, exit fill uses the latest locally captured side price at or before the chart exit timestamp
 - for `1m` + `next_open`, that exit timestamp is the modeled next bar open from the shared backtest engine, not an intraminute wall-clock guess
 - for supported `1s` CLOB runs, the entry and signal-exit fills use strict exact-second bid/ask quotes from the second-market DB; `next_open` uses the chart trade timestamp directly, while `signal_close` and `next_close` use one second after the chart candle timestamp because Binance `1s` candles are stored by open time
+- supported `1s` Finder runs surface local CLOB quote truncation separately from low exact-second quote coverage
 - `polymarketEntryDelayBars` is a research-only `1s` CLOB annotation delay; when set to `N`, the chart trade stays at the same timestamp but the Polymarket entry quote is priced `N` seconds after the modeled chart entry
 - `polymarketBacktestSlippageCents` is a backtest-only adverse fill adjustment; entries pay that many cents more and modeled exits receive that many cents less
 - post-signal limit entries keep the filled limit price, and filled target exits keep the target price; quote-style signal exits and resolve-hold settlement exits apply the backtest slippage adjustment
@@ -432,11 +433,14 @@ Relevant Vite SQLite routes:
 
 Important behavior:
 
+- long outcome-row ranges are loaded in pages from `/api/sqlite/load-polymarket-outcomes`; response metadata can include `limit`, `truncated`, `nextAfterStartTs`, and `nextAfterEventSlug`
 - price points are event-keyed, not treated as one continuous market series
 - `ensurePricePointsForOutcomes(...)` loads existing local rows by event start, treats a session as covered only when local quotes reach near `event_end_ts`, then fetches missing event histories and stores the missing rows locally
+- price-point ensure calls are chunked client-side, and `/api/sqlite/ensure-polymarket-price-points` rejects requests above its per-request outcome cap
 - first-run signal-exit or post-signal limit-entry backtests or Finder runs may trigger on-demand price-point ingestion
 - there is no separate manual sync command required for price points
 - outcome rows still require the normal `poly:sync-outcomes` flow
+- direct Polymarket proxy routes use bounded upstream timeouts and return `504` on proxy timeout
 
 ## Sync Workflow
 
@@ -665,7 +669,6 @@ Diagnostics focuses on scored historical trades and includes:
 - signal-exit counts and realized PnL metrics in `signal_exit_same_event`
 - timing buckets
 - snapshot profile diagnostics
-- fill-adjusted deployability analysis
 
 Bridge Export focuses on downstream automation and includes:
 
@@ -689,7 +692,7 @@ If you touch Polymarket code, first decide which contract you are editing:
 - local price-point storage or ingestion
 - Finder or Hunt Polymarket ranking
 - diagnostics rendering
-- fillability or deployability analysis
+- headless fillability or deployability analysis
 - endpoint parity fences
 - bridge export
 

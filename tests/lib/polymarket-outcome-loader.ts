@@ -1,6 +1,4 @@
 import type { PolymarketPanelDom } from "./polymarket-panel-dom";
-import type { PolymarketFillHistorySummary } from "./polymarket-fill-history";
-import { loadPolymarketFillHistorySummary } from "./polymarket-fill-history";
 import {
     getEffectivePolymarketSeriesId,
     isSupportedPolymarketOutcomeRun,
@@ -47,16 +45,12 @@ export interface PolymarketOutcomeLoaderDeps {
     readCurrentPolymarketOutcomeInterval: () => PolymarketOutcomeInterval;
     isPanelVisible: () => boolean;
     scheduleRender: (delayMs?: number) => void;
-    invalidateDeployabilityCache: () => void;
 }
 
 export class PolymarketOutcomeLoader {
     loadedOutcomeRows: PolymarketOutcomeRow[] = [];
-    outcomeByStartTs = new Map<number, PolymarketOutcomeRow>();
-    historySummaryByStartTs = new Map<number, PolymarketFillHistorySummary>();
     lastResult: BacktestResult | null = null;
     isLoading = false;
-    isEnrichingHistory = false;
     loadError: string | null = null;
     loadNonce = 0;
     loadedResultSignature = "";
@@ -333,60 +327,12 @@ export class PolymarketOutcomeLoader {
         };
     }
 
-    async enrichHistoryInBackground(requestId: number, rows: PolymarketOutcomeRow[]): Promise<void> {
-        if (rows.length === 0) {
-            this.isEnrichingHistory = false;
-            this.deps.scheduleRender();
-            return;
-        }
-
-        this.isEnrichingHistory = true;
-        this.deps.scheduleRender();
-
-        const pendingRows = [...rows];
-        const concurrency = 6;
-        const workers = Array.from({ length: Math.min(concurrency, pendingRows.length) }, async () => {
-            while (pendingRows.length > 0) {
-                const row = pendingRows.shift();
-                if (!row) {
-                    return;
-                }
-
-                try {
-                    const summary = await loadPolymarketFillHistorySummary(row);
-                    if (requestId !== this.loadNonce) {
-                        return;
-                    }
-                    this.historySummaryByStartTs.set(row.event_start_ts, summary);
-                    this.deps.invalidateDeployabilityCache();
-                    this.deps.scheduleRender(120);
-                } catch {
-                    if (requestId !== this.loadNonce) {
-                        return;
-                    }
-                }
-            }
-        });
-
-        await Promise.allSettled(workers);
-        if (requestId !== this.loadNonce) {
-            return;
-        }
-
-        this.isEnrichingHistory = false;
-        this.deps.scheduleRender();
-    }
-
     resetLoadedRows(clearResult = true): void {
         this.loadNonce++;
         this.loadedOutcomeRows = [];
-        this.outcomeByStartTs.clear();
-        this.historySummaryByStartTs.clear();
         this.isLoading = false;
-        this.isEnrichingHistory = false;
         this.loadError = null;
         this.loadedResultSignature = "";
-        this.deps.invalidateDeployabilityCache();
         if (clearResult) {
             this.lastResult = null;
         }
@@ -402,6 +348,15 @@ export class PolymarketOutcomeLoader {
         const selectedOffset = isActualPolymarketEntryMinuteMode(entrySelectionMode)
             ? "auto"
             : (result.polymarketTradeSummary?.entryOffset ?? this.deps.readCurrentPolymarketEntryOffset() ?? "na");
+        const evaluationMode = result.polymarketTradeSummary?.evaluationMode
+            ?? this.deps.readCurrentPolymarketExitMode()
+            ?? "resolve_hold";
+        const executionModel = result.polymarketTradeSummary?.evaluationMode
+            ? "stored"
+            : (this.deps.readCurrentExecutionModel() ?? "na");
+        const allowMultipleTradesPerEvent = result.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event"
+            ? result.polymarketTradeSummary.signalExitAllowMultipleTradesPerEvent === true
+            : this.deps.readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent();
         return [
             resultContext?.symbol ?? state.currentSymbol,
             resultContext?.interval ?? state.currentInterval,
@@ -409,7 +364,13 @@ export class PolymarketOutcomeLoader {
             outcomeInterval,
             entrySelectionMode,
             selectedOffset,
+            executionModel,
+            evaluationMode,
+            allowMultipleTradesPerEvent ? "multi" : "single",
             this.deps.readCurrentPolymarketEntryPriceFilterCents(),
+            this.deps.readCurrentPolymarketBacktestSlippageCents(),
+            this.deps.readCurrentPolymarketEntryCutoffEnabled() ? "cutoff" : "no-cutoff",
+            this.deps.readCurrentPolymarketEntryCutoffSeconds(),
             result.polymarketTradeSummary?.limitEntryEnabled ? "limit" : "quote",
             result.polymarketTradeSummary?.limitEntryMode ?? "fixed_price",
             result.polymarketTradeSummary?.limitEntryPriceCents ?? "na",

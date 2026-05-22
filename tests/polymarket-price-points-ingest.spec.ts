@@ -364,4 +364,65 @@ describe("Polymarket price-point ingestion coverage", () => {
         expect(first.map((row) => row.ts)).to.deep.equal(second.map((row) => row.ts));
         expect(first).to.have.length(2);
     });
+
+    it("chunks large server ensure requests before posting to local SQLite", async () => {
+        const baseStartTs = 1_700_050_000;
+        const outcomes = Array.from({ length: 205 }, (_, index) => {
+            const startTs = baseStartTs + index * 900;
+            return makeOutcome("15m", startTs, startTs + 900);
+        });
+        const ensureChunkSizes: number[] = [];
+
+        globalThis.fetch = (async (input, init) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/load-polymarket-price-points") {
+                return new Response(JSON.stringify({ ok: true, rows: [] }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname === "/api/sqlite/ensure-polymarket-price-points") {
+                const body = JSON.parse(String(init?.body ?? "{}")) as { outcomes?: PolymarketOutcomeRow[] };
+                const chunk = body.outcomes ?? [];
+                ensureChunkSizes.push(chunk.length);
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: chunk.flatMap((outcome) => [
+                        makePoint(outcome.event_start_ts, outcome.event_end_ts, outcome.event_start_ts),
+                        makePoint(outcome.event_start_ts, outcome.event_end_ts, outcome.event_end_ts - 30),
+                    ]),
+                    upserted: chunk.length * 2,
+                    fetchedEvents: chunk.length,
+                    failedEvents: 0,
+                    missingTokenEvents: 0,
+                }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            throw new Error(`Unexpected URL ${url.pathname}`);
+        }) as typeof fetch;
+
+        const rows = await ensurePricePointsForOutcomes(outcomes, "series-test");
+
+        expect(ensureChunkSizes).to.deep.equal([100, 100, 5]);
+        expect(rows).to.have.length(410);
+    });
 });

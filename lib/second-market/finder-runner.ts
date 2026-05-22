@@ -209,8 +209,18 @@ export async function runSecondMarketFinder(
     const quoteCoverageText = typeof quoteCoveragePct === "number" && Number.isFinite(quoteCoveragePct)
         ? `${quoteCoveragePct.toFixed(1)}% exact CLOB coverage`
         : null;
+    const quoteWarnings: string[] = [];
+    if (context.quoteStats?.truncated) {
+        const limitText = typeof context.quoteStats.limit === "number"
+            ? `${context.quoteStats.limit} quote rows`
+            : "the local quote row limit";
+        quoteWarnings.push(`range truncated at ${limitText}`);
+    }
     if (quoteCoverageText && typeof quoteCoveragePct === "number" && quoteCoveragePct < 95) {
-        callbacks.setStatus(`Warning: ${quoteCoverageText}; results may under-score missing quote seconds.`);
+        quoteWarnings.push(`${quoteCoverageText}; results may under-score missing quote seconds`);
+    }
+    if (quoteWarnings.length > 0) {
+        callbacks.setStatus(`Warning: ${quoteWarnings.join("; ")}.`);
     }
 
     const strategyPlans: StrategyPlan[] = [];
@@ -246,7 +256,11 @@ export async function runSecondMarketFinder(
     let lastUiUpdateAt = 0;
     let lastResultsUpdateAt = 0;
 
-    callbacks.setStatus(`Running ${totalRuns} 1s CLOB evaluations${quoteCoverageText ? ` (${quoteCoverageText})` : ""}...`);
+    const quoteContextText = [
+        quoteCoverageText,
+        context.quoteStats?.truncated ? "truncated quote range" : null,
+    ].filter(Boolean).join(", ");
+    callbacks.setStatus(`Running ${totalRuns} 1s CLOB evaluations${quoteContextText ? ` (${quoteContextText})` : ""}...`);
     callbacks.setProgress(14, `0/${totalRuns} evaluations`);
     await callbacks.yieldControl();
 

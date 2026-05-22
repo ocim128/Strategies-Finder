@@ -11,6 +11,7 @@ import {
     loadPolymarket5mOutcomesForTimeRange,
     loadPolymarketOutcomesForTimeRange,
 } from "../lib/polymarket-btc5m";
+import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -18,6 +19,27 @@ afterEach(() => {
     globalThis.fetch = ORIGINAL_FETCH;
     resetLocalSqlitePolymarketApiAvailabilityForTests();
 });
+
+function makeOutcome(eventStartTs: number, eventSlug: string): PolymarketOutcomeRow {
+    return {
+        series_id: "10684",
+        event_slug: eventSlug,
+        market_slug: eventSlug,
+        interval: "5m",
+        event_start_ts: eventStartTs,
+        event_end_ts: eventStartTs + 300,
+        yes_token_id: `yes-${eventSlug}`,
+        no_token_id: `no-${eventSlug}`,
+        yes_open_price: 0.5,
+        yes_entry_minute_1_price: 0.5,
+        yes_entry_minute_2_price: 0.5,
+        yes_entry_minute_3_price: 0.5,
+        yes_entry_minute_4_price: 0.5,
+        resolved_outcome_up: 1,
+        resolution_source: "test",
+        updated_at: 1,
+    };
+}
 
 describe("Polymarket outcome loading", () => {
     it("resolves native 15m and 1h series ids for supported symbols", () => {
@@ -246,5 +268,109 @@ describe("Polymarket outcome loading", () => {
 
         expect(requestedSeriesIds).to.deep.equal(["10192"]);
         expect(outcomes[0]?.interval).to.equal("15m");
+    });
+
+    it("continues paginated outcome loads with a stable tie-safe cursor", async () => {
+        const outcomeCalls: URL[] = [];
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname !== "/api/sqlite/load-polymarket-outcomes") {
+                throw new Error(`Unexpected URL ${url.pathname}`);
+            }
+
+            outcomeCalls.push(url);
+            const afterStartTs = url.searchParams.get("afterStartTs");
+            const rows = afterStartTs === null
+                ? [
+                    makeOutcome(1_700_000_000, "event-a"),
+                    makeOutcome(1_700_000_000, "event-b"),
+                ]
+                : [makeOutcome(1_700_000_300, "event-c")];
+
+            return new Response(JSON.stringify({
+                ok: true,
+                rows,
+                count: rows.length,
+                limit: 100000,
+                truncated: afterStartTs === null,
+                nextAfterStartTs: afterStartTs === null ? 1_700_000_000 : undefined,
+                nextAfterEventSlug: afterStartTs === null ? "event-b" : undefined,
+            }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }) as typeof fetch;
+
+        const outcomes = await loadPolymarketOutcomesForTimeRange("BTCUSDT", 1_700_000_000, 1_700_000_300);
+
+        expect(outcomes.map((row) => row.event_slug)).to.deep.equal(["event-a", "event-b", "event-c"]);
+        expect(outcomeCalls).to.have.length(2);
+        expect(outcomeCalls[1].searchParams.get("afterStartTs")).to.equal("1700000000");
+        expect(outcomeCalls[1].searchParams.get("afterEventSlug")).to.equal("event-b");
+    });
+
+    it("fails loud when outcome pagination returns a non-advancing cursor", async () => {
+        let loadCalls = 0;
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url,
+                "http://localhost"
+            );
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (url.pathname !== "/api/sqlite/load-polymarket-outcomes") {
+                throw new Error(`Unexpected URL ${url.pathname}`);
+            }
+
+            loadCalls++;
+            return new Response(JSON.stringify({
+                ok: true,
+                rows: [makeOutcome(1_700_000_000, `event-${loadCalls}`)],
+                count: 1,
+                limit: 100000,
+                truncated: true,
+                nextAfterStartTs: 1_700_000_000,
+                nextAfterEventSlug: "event-a",
+            }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }) as typeof fetch;
+
+        let thrown: Error | null = null;
+        try {
+            await loadPolymarketOutcomesForTimeRange("BTCUSDT", 1_700_000_000, 1_700_000_300);
+        } catch (error) {
+            thrown = error instanceof Error ? error : new Error(String(error));
+        }
+
+        expect(thrown).to.be.instanceOf(Error);
+        expect(thrown?.message).to.contain("pagination cursor did not advance");
+        expect(loadCalls).to.equal(2);
     });
 });

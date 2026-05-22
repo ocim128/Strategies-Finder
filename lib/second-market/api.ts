@@ -61,6 +61,8 @@ export type SecondMarketClobQuoteStats = {
     distinctSeconds?: number;
     missingSeconds?: number;
     exactSampleCoveragePct?: number;
+    limit?: number;
+    truncated?: boolean;
 };
 
 export type SecondMarketClobQuotesResult = {

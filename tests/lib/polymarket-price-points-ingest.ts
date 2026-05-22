@@ -25,10 +25,12 @@ const HISTORY_REQUEST_TIMEOUT_MS = 6000;
 const MAX_CONCURRENT_FETCHES = 24;
 const MAX_EVENT_STARTS_PER_LOAD_REQUEST = 100;
 const MAX_PRICE_POINTS_PER_LOAD_REQUEST = 500000;
+const MAX_OUTCOMES_PER_SERVER_ENSURE = 100;
 // Finder can span long 1m ranges, which turns stored-price lookup into dozens
 // of local SQLite requests. Keep those batched so the browser/dev server does
 // not drop same-origin fetches under a large Promise.all fan-out.
 const MAX_CONCURRENT_LOAD_REQUESTS = 4;
+const MAX_CONCURRENT_ENSURE_REQUESTS = 2;
 const inFlightExistingLoads = new Map<string, Promise<PolymarketPricePoint[]>>();
 const inFlightServerEnsures = new Map<string, Promise<EnsurePolymarketPricePointsResult>>();
 
@@ -230,6 +232,37 @@ function mergePricePoints(
     return Array.from(mergedByKey.values()).sort((a, b) => a.ts - b.ts);
 }
 
+async function ensurePricePointsViaApi(
+    seriesId: string,
+    outcomes: readonly PolymarketOutcomeRow[]
+): Promise<EnsurePolymarketPricePointsResult> {
+    const chunks: PolymarketOutcomeRow[][] = [];
+    for (let index = 0; index < outcomes.length; index += MAX_OUTCOMES_PER_SERVER_ENSURE) {
+        chunks.push(outcomes.slice(index, index + MAX_OUTCOMES_PER_SERVER_ENSURE));
+    }
+
+    const results = await mapWithConcurrencyLimit(
+        chunks,
+        MAX_CONCURRENT_ENSURE_REQUESTS,
+        (chunk) => runCoalesced(
+            inFlightServerEnsures,
+            buildEnsureKey(seriesId, chunk),
+            () => ensurePolymarketPricePointsWithMetadata({
+                seriesId,
+                outcomes: chunk,
+            })
+        )
+    );
+
+    return {
+        rows: mergePricePoints([], results.flatMap((result) => result.rows)),
+        upserted: results.reduce((sum, result) => sum + result.upserted, 0),
+        fetchedEvents: results.reduce((sum, result) => sum + result.fetchedEvents, 0),
+        failedEvents: results.reduce((sum, result) => sum + result.failedEvents, 0),
+        missingTokenEvents: results.reduce((sum, result) => sum + result.missingTokenEvents, 0),
+    };
+}
+
 export async function ensurePricePointsForOutcomes(
     outcomes: readonly PolymarketOutcomeRow[],
     seriesId: string,
@@ -267,14 +300,7 @@ export async function ensurePricePointsForOutcomes(
     let outcomesToFetch = uncoveredOutcomes;
 
     try {
-        const ensureResult = await runCoalesced(
-            inFlightServerEnsures,
-            buildEnsureKey(seriesId, uncoveredOutcomes),
-            () => ensurePolymarketPricePointsWithMetadata({
-                seriesId,
-                outcomes: uncoveredOutcomes,
-            })
-        );
+        const ensureResult = await ensurePricePointsViaApi(seriesId, uncoveredOutcomes);
         const ensuredPoints = ensureResult.rows;
         debugLogger.info("polymarket.price_points.ensure_via_api_complete", {
             seriesId,

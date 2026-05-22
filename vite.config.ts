@@ -12,6 +12,7 @@ import { sendCaughtErrorJson, sendJson } from './lib/vite-http-utils';
 const BYBIT_TRADFI_KLINE_URL = 'https://www.bybit.com/x-api/fapi/copymt5/kline';
 const POLYMARKET_GAMMA_EVENT_SLUG_URL = 'https://gamma-api.polymarket.com/events/slug';
 const POLYMARKET_CLOB_HISTORY_URL = 'https://clob.polymarket.com/prices-history';
+const POLYMARKET_PROXY_TIMEOUT_MS = 8000;
 const INDONESIAN_STOCK_PRICE_DATA_DIR = resolve(process.cwd(), 'price-data', 'indonesian-stock');
 const WATCH_STRATEGIES = process.env.WATCH_STRATEGIES === '1';
 const WATCH_IGNORED_GLOBS = [
@@ -39,6 +40,16 @@ function readIndonesianStockCatalog(): Array<{ symbol: string; name: string }> {
         })
         .filter((entry): entry is { symbol: string; name: string } => entry !== null)
         .sort((a, b) => a.symbol.localeCompare(b.symbol));
+}
+
+function createPolymarketProxyTimeoutSignal(): AbortSignal | undefined {
+    return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+        ? AbortSignal.timeout(POLYMARKET_PROXY_TIMEOUT_MS)
+        : undefined;
+}
+
+function isAbortLikeError(error: unknown): boolean {
+    return error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError');
 }
 
 function tradFiKlineProxyPlugin(): Plugin {
@@ -108,14 +119,21 @@ function polymarketProxyPlugin(): Plugin {
 
                 const upstream = await fetch(`${POLYMARKET_GAMMA_EVENT_SLUG_URL}/${encodeURIComponent(slug)}`, {
                     headers: { Accept: 'application/json' },
+                    signal: createPolymarketProxyTimeoutSignal(),
                 });
                 const body = await upstream.text();
                 res.statusCode = upstream.status;
                 res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
                 res.setHeader('Cache-Control', 'no-store');
                 res.end(body);
-            } catch {
-                sendJson(res, 500, { ok: false, error: 'Polymarket event proxy request failed' });
+            } catch (error) {
+                const timedOut = isAbortLikeError(error);
+                sendJson(res, timedOut ? 504 : 500, {
+                    ok: false,
+                    error: timedOut
+                        ? 'Polymarket event proxy request timed out'
+                        : 'Polymarket event proxy request failed',
+                });
             }
         });
 
@@ -146,14 +164,21 @@ function polymarketProxyPlugin(): Plugin {
 
                 const upstream = await fetch(`${POLYMARKET_CLOB_HISTORY_URL}?${upstreamParams.toString()}`, {
                     headers: { Accept: 'application/json' },
+                    signal: createPolymarketProxyTimeoutSignal(),
                 });
                 const body = await upstream.text();
                 res.statusCode = upstream.status;
                 res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
                 res.setHeader('Cache-Control', 'no-store');
                 res.end(body);
-            } catch {
-                sendJson(res, 500, { ok: false, error: 'Polymarket history proxy request failed' });
+            } catch (error) {
+                const timedOut = isAbortLikeError(error);
+                sendJson(res, timedOut ? 504 : 500, {
+                    ok: false,
+                    error: timedOut
+                        ? 'Polymarket history proxy request timed out'
+                        : 'Polymarket history proxy request failed',
+                });
             }
         });
     };

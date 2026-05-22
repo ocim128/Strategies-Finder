@@ -98,6 +98,7 @@ const POLYMARKET_PRICE_HISTORY_TIMEOUT_MS = 8000;
 // First-run signal-exit scoring can touch many distinct 5m events. Fetch in a
 // wider batch so server-side ensure can populate the local cache in one pass.
 const POLYMARKET_PRICE_POINT_BATCH_SIZE = 24;
+const MAX_POLYMARKET_PRICE_POINT_ENSURE_OUTCOMES = 100;
 
 async function fetchPolymarketYesHistory(outcome: PolymarketOutcomeDbRow): Promise<PolymarketHistoryPoint[]> {
     if (!outcome.yes_token_id) {
@@ -612,10 +613,13 @@ export function localSqlitePlugin(): Plugin {
                     const startTsRaw = requestUrl.searchParams.get('startTs');
                     const endTsRaw = requestUrl.searchParams.get('endTs');
                     const limitRaw = requestUrl.searchParams.get('limit');
+                    const afterStartTsRaw = requestUrl.searchParams.get('afterStartTs');
+                    const afterEventSlug = (requestUrl.searchParams.get('afterEventSlug') || '').trim();
 
                     const startTs = startTsRaw !== null ? Number(startTsRaw) : null;
                     const endTs = endTsRaw !== null ? Number(endTsRaw) : null;
                     const limit = limitRaw !== null ? Math.max(1, Math.min(100000, Math.floor(Number(limitRaw) || 10000))) : 10000;
+                    const afterStartTs = afterStartTsRaw !== null ? Number(afterStartTsRaw) : null;
 
                     if (startTs !== null && !Number.isFinite(startTs)) {
                         sendJson(res, 400, { ok: false, error: 'startTs must be a finite number' });
@@ -623,6 +627,14 @@ export function localSqlitePlugin(): Plugin {
                     }
                     if (endTs !== null && !Number.isFinite(endTs)) {
                         sendJson(res, 400, { ok: false, error: 'endTs must be a finite number' });
+                        return;
+                    }
+                    if (afterStartTs !== null && !Number.isFinite(afterStartTs)) {
+                        sendJson(res, 400, { ok: false, error: 'afterStartTs must be a finite number' });
+                        return;
+                    }
+                    if (afterStartTs !== null && !seriesId) {
+                        sendJson(res, 400, { ok: false, error: 'seriesId is required when using pagination cursor' });
                         return;
                     }
 
@@ -633,11 +645,16 @@ export function localSqlitePlugin(): Plugin {
                     if (seriesId) { conditions.push('series_id = ?'); bindings.push(seriesId); }
                     if (startTs !== null) { conditions.push('event_start_ts >= ?'); bindings.push(Math.floor(startTs)); }
                     if (endTs !== null) { conditions.push('event_start_ts <= ?'); bindings.push(Math.floor(endTs)); }
+                    if (afterStartTs !== null) {
+                        conditions.push('(event_start_ts > ? OR (event_start_ts = ? AND event_slug > ?))');
+                        bindings.push(Math.floor(afterStartTs), Math.floor(afterStartTs), afterEventSlug);
+                    }
 
                     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-                    bindings.push(limit);
+                    const queryLimit = limit + 1;
+                    bindings.push(queryLimit);
 
-                    const rows = db.prepare(`
+                    const queryRows = db.prepare(`
                         SELECT series_id, event_slug, market_slug, interval,
                                event_start_ts, event_end_ts, yes_token_id, no_token_id,
                                yes_open_price, yes_entry_minute_1_price, yes_entry_minute_2_price,
@@ -645,11 +662,22 @@ export function localSqlitePlugin(): Plugin {
                                resolved_outcome_up, resolution_source, updated_at
                         FROM polymarket_outcomes
                         ${where}
-                        ORDER BY event_start_ts ASC
+                        ORDER BY event_start_ts ASC, event_slug ASC
                         LIMIT ?
                     `).all(...bindings) as PolymarketOutcomeDbRow[];
+                    const truncated = queryRows.length > limit;
+                    const rows = truncated ? queryRows.slice(0, limit) : queryRows;
+                    const lastRow = truncated ? rows[rows.length - 1] : null;
 
-                    sendJson(res, 200, { ok: true, rows, count: rows.length });
+                    sendJson(res, 200, {
+                        ok: true,
+                        rows,
+                        count: rows.length,
+                        limit,
+                        truncated,
+                        nextAfterStartTs: lastRow?.event_start_ts,
+                        nextAfterEventSlug: lastRow?.event_slug,
+                    });
                     return;
                 }
 
@@ -736,6 +764,13 @@ export function localSqlitePlugin(): Plugin {
 
                     if (rawOutcomes.length === 0) {
                         sendJson(res, 200, { ok: true, rows: [], upserted: 0, fetchedEvents: 0 });
+                        return;
+                    }
+                    if (rawOutcomes.length > MAX_POLYMARKET_PRICE_POINT_ENSURE_OUTCOMES) {
+                        sendJson(res, 413, {
+                            ok: false,
+                            error: `Too many outcomes. Maximum is ${MAX_POLYMARKET_PRICE_POINT_ENSURE_OUTCOMES} per request.`,
+                        });
                         return;
                     }
 

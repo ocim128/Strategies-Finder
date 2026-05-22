@@ -3,19 +3,12 @@ import {
     getSupportedPolymarket5mSymbolsLabel,
     isSupportedPolymarketOutcomeRun,
 } from "./polymarket-btc5m";
-import type { PolymarketFillScope } from "./polymarket-fill-analysis";
-import { parseTimeToUnixSeconds } from "./time-normalization";
 import { state } from "./state";
 import { setVisible } from "./dom-utils";
 import type { BacktestResult, ExpectancyBreakdownSection } from "./types/strategies";
-import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 import { resolveBacktestResultMarketContext } from "./backtest-result-context";
 import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
 import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
-import {
-    analyzePolymarketDeployability,
-    extractScoredTrades,
-} from "./polymarket-deployability-analysis";
 import {
     computePolymarketBestBaselineWinRate,
     countDistinctPolymarketOutcomeRows,
@@ -23,7 +16,6 @@ import {
     summarizePolymarketPayoutDiagnostics,
 } from "./quick-view";
 import {
-    formatScopeLabel,
     formatPercent,
     formatProbability,
     formatPolymarketCents,
@@ -41,8 +33,6 @@ class PolymarketPanelService {
     private bridgeExport: PolymarketBridgeExport | null = null;
     private renderFrameId: number | null = null;
     private renderTimeoutId: number | null = null;
-    private deployabilityCacheKey = "";
-    private deployabilityCache: ReturnType<typeof analyzePolymarketDeployability> | null = null;
 
     public init(): void {
         if (this.initialized) {
@@ -66,16 +56,8 @@ class PolymarketPanelService {
             readCurrentPolymarketOutcomeInterval: () => this.readCurrentPolymarketOutcomeInterval(),
             isPanelVisible: () => this.isPanelVisible(),
             scheduleRender: (delayMs?: number) => this.scheduleRender(delayMs),
-            invalidateDeployabilityCache: () => {
-                this.deployabilityCacheKey = "";
-                this.deployabilityCache = null;
-            },
         });
         this.outcomeLoader.lastResult = state.currentBacktestResult;
-        void this.outcomeLoader.isEnrichingHistory;
-        void this.outcomeLoader.enrichHistoryInBackground;
-        void this.renderDeployabilityAnalysis;
-        void formatScopeLabel;
         this.bindEvents();
         this.bindState();
         this.render();
@@ -607,177 +589,6 @@ class PolymarketPanelService {
         `;
     }
 
-    private renderDeployabilityAnalysis(result: BacktestResult): void {
-        const dom = this.getDom();
-        const outcomeByStartTs = this.outcomeLoader!.outcomeByStartTs;
-        const scoredTrades = extractScoredTrades(result.trades, outcomeByStartTs);
-        const evaluationRows = this.getEvaluatedOutcomeRows();
-
-        if (scoredTrades.length === 0) {
-            dom.deployabilitySupport.textContent = "No scored Polymarket trades matched the current backtest. Run a supported 5m backtest with synced outcome rows first.";
-            setVisible(dom.deployabilityEmpty, true);
-            setVisible(dom.deployabilityContent, false);
-            return;
-        }
-
-        const fillScope = this.readScope();
-        const fillTargetPriceCents = this.readEntryPriceCents();
-        const analysis = this.getDeployabilityAnalysis(
-            result,
-            scoredTrades,
-            evaluationRows,
-            fillScope,
-            fillTargetPriceCents
-        );
-
-        // Render verdict
-        const verdictBadge = dom.deployabilityVerdictBadge;
-        const verdictText = dom.deployabilityVerdictText;
-        verdictBadge.textContent = analysis.verdict.verdict;
-        verdictBadge.className = `verdict-badge verdict-badge--${analysis.verdict.verdict.toLowerCase()}`;
-        verdictText.textContent = this.getVerdictDescription(analysis.verdict.verdict);
-
-        // Render confidence summary
-        dom.deployWinRate.textContent = formatPercent(analysis.confidence.winRate);
-        dom.deployWins.textContent = String(analysis.confidence.wins);
-        dom.deployLosses.textContent = String(analysis.confidence.losses);
-        dom.deployScoredTrades.textContent = String(analysis.confidence.scoredTrades);
-        dom.deployCoverage.textContent = formatPercent(analysis.confidence.coverage);
-        dom.deployWilsonLB.textContent = analysis.confidence.wilsonLowerBound.toFixed(3);
-        dom.deployAlwaysYes.textContent = formatPercent(analysis.confidence.alwaysYesBaseline);
-        dom.deployAlwaysNo.textContent = formatPercent(analysis.confidence.alwaysNoBaseline);
-
-        const deltaYesPrefix = analysis.confidence.deltaVsAlwaysYes >= 0 ? "+" : "";
-        const deltaNoPrefix = analysis.confidence.deltaVsAlwaysNo >= 0 ? "+" : "";
-        dom.deployDeltaYes.textContent = `${deltaYesPrefix}${formatPercent(analysis.confidence.deltaVsAlwaysYes)}`;
-        dom.deployDeltaNo.textContent = `${deltaNoPrefix}${formatPercent(analysis.confidence.deltaVsAlwaysNo)}`;
-
-        // Render chronological blocks
-        dom.deployBlocksBody.innerHTML = analysis.chronologicalBlocks.map((block) => `
-            <tr>
-                <td>${block.label}</td>
-                <td>${block.scoredTrades}</td>
-                <td>${block.wins}</td>
-                <td>${block.losses}</td>
-                <td>${formatPercent(block.winRate)}</td>
-                <td>${block.wilsonLowerBound.toFixed(3)}</td>
-            </tr>
-        `).join("");
-
-        // Render long/short breakdown
-        dom.deployLongShortBody.innerHTML = analysis.regimeBreakdown.longShort.map((regime) => `
-            <tr>
-                <td>${regime.label}</td>
-                <td>${regime.scoredTrades}</td>
-                <td>${regime.wins}</td>
-                <td>${regime.losses}</td>
-                <td>${formatPercent(regime.winRate)}</td>
-                <td>${regime.wilsonLowerBound.toFixed(3)}</td>
-            </tr>
-        `).join("");
-
-        // Render entry price buckets (if available)
-        const entryBucketsBody = analysis.regimeBreakdown.entryPriceBuckets ?? [];
-        dom.deployEntryBucketsBody.innerHTML = entryBucketsBody.map((regime) => `
-            <tr>
-                <td>${regime.label}</td>
-                <td>${regime.scoredTrades}</td>
-                <td>${regime.wins}</td>
-                <td>${regime.losses}</td>
-                <td>${formatPercent(regime.winRate)}</td>
-                <td>${regime.wilsonLowerBound.toFixed(3)}</td>
-            </tr>
-        `).join("");
-        if (entryBucketsBody.length === 0) {
-            dom.deployEntryBucketsBody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:#888;">No entry price data available</td></tr>`;
-        }
-
-        // Render shuffle test
-        dom.deployShuffleHint.textContent = analysis.significanceTest.hint;
-        dom.deployShuffleSims.textContent = analysis.significanceTest.methodValue;
-        dom.deployShuffleObserved.textContent = formatPercent(analysis.significanceTest.observedWinRate);
-        dom.deployShuffleExceed.textContent = analysis.significanceTest.baselineValue;
-        dom.deployShufflePValue.textContent = analysis.significanceTest.pValue.toFixed(3);
-        dom.deployShuffleMean.textContent = formatPercent(analysis.significanceTest.expectedWinRate);
-        dom.deployShuffleP95.textContent = analysis.significanceTest.diagnosticValue;
-
-        // Render fill-adjusted metrics
-        if (analysis.fillAdjusted) {
-            dom.deployFillScored.textContent = String(analysis.fillAdjusted.scoredTrades);
-            dom.deployFillWins.textContent = String(analysis.fillAdjusted.wins);
-            dom.deployFillLosses.textContent = String(analysis.fillAdjusted.losses);
-            dom.deployFillWinRate.textContent = formatPercent(analysis.fillAdjusted.winRate);
-            dom.deployFillWilsonLB.textContent = analysis.fillAdjusted.wilsonLowerBound.toFixed(3);
-            dom.deployFillRate.textContent = formatPercent(analysis.fillAdjusted.fillRate);
-            if (analysis.significanceTest.mode === "one_sided_binomial" && analysis.significanceTest.constantPrediction) {
-                const predictionLabel = analysis.significanceTest.constantPrediction.toUpperCase();
-                const predictionBaseline = analysis.significanceTest.constantPrediction === "yes"
-                    ? analysis.fillAdjusted.alwaysYesBaseline
-                    : analysis.fillAdjusted.alwaysNoBaseline;
-                dom.deployFillBestBaselineLabel.textContent = `Fill-Subset ${predictionLabel} Base`;
-                dom.deployFillBestBaseline.textContent = `${predictionLabel} ${formatPercent(predictionBaseline)}`;
-                dom.deployFillDeltaBaselineLabel.textContent = "Base Comparison";
-                dom.deployFillDeltaBaseline.textContent = "One-sided: not informative";
-            } else {
-                dom.deployFillBestBaselineLabel.textContent = "Fill-Subset Best Base";
-                dom.deployFillBestBaseline.textContent = `${analysis.fillAdjusted.bestBaselineLabel} ${formatPercent(analysis.fillAdjusted.bestBaseline)}`;
-                dom.deployFillDeltaBaselineLabel.textContent = "Delta vs Best Base";
-                dom.deployFillDeltaBaseline.textContent = `${analysis.fillAdjusted.deltaVsBestBaseline >= 0 ? "+" : ""}${formatPercent(analysis.fillAdjusted.deltaVsBestBaseline)}`;
-            }
-            dom.deployFillBreakEven.textContent = formatPercent(analysis.fillAdjusted.breakEvenWinRate);
-            dom.deployFillEdgeBreakEven.textContent = `${analysis.fillAdjusted.edgeVsBreakEven >= 0 ? "+" : ""}${formatPercent(analysis.fillAdjusted.edgeVsBreakEven)}`;
-        } else {
-            dom.deployFillScored.textContent = "0";
-            dom.deployFillWins.textContent = "0";
-            dom.deployFillLosses.textContent = "0";
-            dom.deployFillWinRate.textContent = "0.0%";
-            dom.deployFillWilsonLB.textContent = "0.000";
-            dom.deployFillRate.textContent = "0.0%";
-            dom.deployFillBestBaselineLabel.textContent = "Fill-Subset Best Base";
-            dom.deployFillBestBaseline.textContent = "N/A";
-            dom.deployFillDeltaBaselineLabel.textContent = "Delta vs Best Base";
-            dom.deployFillDeltaBaseline.textContent = "+0.0%";
-            dom.deployFillBreakEven.textContent = "0.0%";
-            dom.deployFillEdgeBreakEven.textContent = "+0.0%";
-        }
-
-        // Show deployability content, hide empty state
-        setVisible(dom.deployabilityEmpty, false);
-        setVisible(dom.deployabilityContent, true);
-    }
-
-    private getEvaluatedOutcomeRows(): PolymarketOutcomeRow[] {
-        const loader = this.outcomeLoader!;
-        if (loader.loadedOutcomeRows.length === 0) {
-            return [];
-        }
-
-        const validTargetTs = new Set<number>();
-        for (let index = 1; index < state.ohlcvData.length; index++) {
-            const ts = parseTimeToUnixSeconds(state.ohlcvData[index]?.time);
-            if (ts !== null) {
-                validTargetTs.add(ts);
-            }
-        }
-
-        if (validTargetTs.size === 0) {
-            return [...loader.loadedOutcomeRows];
-        }
-
-        return loader.loadedOutcomeRows.filter((row) => validTargetTs.has(row.event_start_ts));
-    }
-
-    private getVerdictDescription(verdict: "Robust" | "Borderline" | "Weak"): string {
-        switch (verdict) {
-            case "Robust":
-                return "Edge appears statistically credible and stable across time, regimes, and fill constraints.";
-            case "Borderline":
-                return "Some evidence of edge, but with caveats. Review details before deploying.";
-            case "Weak":
-                return "Edge is not statistically credible or collapses under scrutiny. Likely overfit or lucky.";
-        }
-    }
-
     private showEmpty(message: string): void {
         const dom = this.getDom();
         dom.polymarketDiagnosticsSupport.textContent = message;
@@ -819,53 +630,6 @@ class PolymarketPanelService {
         }
 
         queueFrame();
-    }
-
-    private getDeployabilityAnalysis(
-        result: BacktestResult,
-        scoredTrades: ReturnType<typeof extractScoredTrades>,
-        evaluationRows: PolymarketOutcomeRow[],
-        fillScope: PolymarketFillScope,
-        fillTargetPriceCents: number
-    ): ReturnType<typeof analyzePolymarketDeployability> {
-        const loader = this.outcomeLoader!;
-        const cacheKey = [
-            loader.getResultSignature(result),
-            scoredTrades.length,
-            evaluationRows.length,
-            loader.historySummaryByStartTs.size,
-            fillScope,
-            fillTargetPriceCents,
-        ].join("|");
-
-        if (this.deployabilityCacheKey === cacheKey && this.deployabilityCache) {
-            return this.deployabilityCache;
-        }
-
-        const analysis = analyzePolymarketDeployability(scoredTrades, evaluationRows, {
-            blockSize: 250,
-            shuffleSimulations: 1000,
-            shuffleSeed: 42,
-            fillScope,
-            fillTargetPriceCents,
-            historySummaryByStartTs: loader.historySummaryByStartTs,
-        });
-        this.deployabilityCacheKey = cacheKey;
-        this.deployabilityCache = analysis;
-        return analysis;
-    }
-
-    private readEntryPriceCents(): number {
-        const raw = Number(this.getDom().polymarketEntryPriceCents.value);
-        if (!Number.isFinite(raw)) {
-            return 40;
-        }
-        return Math.max(0, Math.min(100, raw));
-    }
-
-    private readScope(): PolymarketFillScope {
-        const value = this.getDom().polymarketScope.value;
-        return value === "long" || value === "short" ? value : "all";
     }
 
     private getDom(): PolymarketPanelDom {

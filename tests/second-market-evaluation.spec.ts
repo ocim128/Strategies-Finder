@@ -1,15 +1,24 @@
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import { expect } from "chai";
 import {
     annotateBacktestResultWithSecondMarketClob,
     evaluateSecondMarketBacktest,
     isSecondMarketPolymarketSupported,
     isSecondMarketPolymarketScoringSupported,
+    loadSecondMarketEvaluationContext,
     type SecondMarketEvaluationContext,
 } from "../lib/second-market/evaluation";
+import { resetLocalSqlitePolymarketApiAvailabilityForTests } from "../lib/local-sqlite-polymarket-api";
 import type { PolymarketClob1sQuoteRow } from "../lib/second-market/types";
 import type { BacktestResult, Trade } from "../lib/types/strategies";
 import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+    globalThis.fetch = originalFetch;
+    resetLocalSqlitePolymarketApiAvailabilityForTests();
+});
 
 function outcome(): PolymarketOutcomeRow {
     return {
@@ -139,6 +148,42 @@ describe("second market shared evaluation", () => {
             interval: "1s",
             executionModel: "same_bar_open",
         })).to.equal(false);
+    });
+
+    it("can skip gamma snapshot loading for annotation-only context", async () => {
+        let gammaRequests = 0;
+        globalThis.fetch = (async (input) => {
+            const url = new URL(String(input), "http://localhost");
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), { status: 200 });
+            }
+            if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+                return new Response(JSON.stringify({ ok: true, rows: [outcome()] }), { status: 200 });
+            }
+            if (url.pathname === "/api/second-market/clob-quotes") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    quotes: [quote(1_700_000_010, 0.55, 0.53)],
+                    stats: { truncated: true, limit: 250000 },
+                }), { status: 200 });
+            }
+            if (url.pathname === "/api/second-market/gamma-snapshots") {
+                gammaRequests++;
+                return new Response(JSON.stringify({ ok: true, gammaSnapshots: [] }), { status: 200 });
+            }
+            throw new Error(`Unexpected fetch ${url.pathname}`);
+        }) as typeof fetch;
+
+        const loaded = await loadSecondMarketEvaluationContext({
+            symbol: "BTCUSDT",
+            startTs: 1_700_000_000,
+            endTs: 1_700_000_020,
+            includeGammaSnapshots: false,
+        });
+
+        expect(loaded?.quotes).to.have.length(1);
+        expect(loaded?.quoteStats?.truncated).to.equal(true);
+        expect(gammaRequests).to.equal(0);
     });
 
     it("defaults reusable 1s annotations to signal-exit mode", () => {

@@ -1,5 +1,5 @@
 import type { OHLCVData } from "./strategies";
-import { loadPolymarketOutcomes } from "./local-sqlite-polymarket-api";
+import { loadPolymarketOutcomesWithMetadata } from "./local-sqlite-polymarket-api";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 import {
@@ -13,6 +13,7 @@ import { getUnscopedBinanceStorageSymbol } from "./binance-market";
 // Persisting time-based rows across sequential calls can serve stale checkpoint
 // prices after a sync updates the local SQLite data.
 const pendingOutcomeRequests = new Map<string, Promise<PolymarketOutcomeRow[]>>();
+const OUTCOME_PAGE_LIMIT = 100000;
 
 export const POLYMARKET_5M_SERIES_BY_SYMBOL = {
     BTCUSDT: "10684",
@@ -202,12 +203,40 @@ async function loadPolymarketOutcomesForExpandedRange(
         return await pending;
     }
 
-    const request = loadPolymarketOutcomes({
-        seriesId,
-        startTs,
-        endTs,
-        limit: 100000, // Explicitly request max rows to prevent default 10k truncation on long charts
-    });
+    const request = (async () => {
+        const rows: PolymarketOutcomeRow[] = [];
+        let afterStartTs: number | undefined;
+        let afterEventSlug: string | undefined;
+
+        while (true) {
+            const page = await loadPolymarketOutcomesWithMetadata({
+                seriesId,
+                startTs,
+                endTs,
+                limit: OUTCOME_PAGE_LIMIT,
+                afterStartTs,
+                afterEventSlug,
+            });
+            rows.push(...page.rows);
+
+            if (!page.truncated || page.nextAfterStartTs === undefined || !page.nextAfterEventSlug) {
+                return rows;
+            }
+
+            if (
+                afterStartTs !== undefined
+                && (
+                    page.nextAfterStartTs < afterStartTs
+                    || (page.nextAfterStartTs === afterStartTs && page.nextAfterEventSlug <= (afterEventSlug ?? ""))
+                )
+            ) {
+                throw new Error("Polymarket outcome pagination cursor did not advance.");
+            }
+
+            afterStartTs = page.nextAfterStartTs;
+            afterEventSlug = page.nextAfterEventSlug;
+        }
+    })();
     pendingOutcomeRequests.set(requestKey, request);
 
     try {

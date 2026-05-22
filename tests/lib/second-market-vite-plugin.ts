@@ -8,6 +8,7 @@ import { sendBinary, sendCaughtErrorJson, sendJson } from "./vite-http-utils";
 
 const SECOND_MARKET_DB_PATH = resolve(process.cwd(), "price-data", "1second-chart", "second-market-data.sqlite");
 const SECOND_MARKET_SYMBOLS = new Set(["BTCUSDT", "XRPUSDT"]);
+const SECOND_MARKET_CLOB_QUOTE_LIMIT = 250000;
 
 type SecondMarketBinanceDbRow = {
     symbol: string;
@@ -221,7 +222,9 @@ export function secondMarketApiPlugin(): Plugin {
                     const bindings: Array<string | number> = [symbol, startTs, endTs];
                     const seriesFilter = seriesId ? "AND series_id = ?" : "";
                     if (seriesId) bindings.push(seriesId);
-                    const quotes = db.prepare(`
+                    const queryLimit = SECOND_MARKET_CLOB_QUOTE_LIMIT + 1;
+                    bindings.push(queryLimit);
+                    const queryRows = db.prepare(`
                             SELECT series_id, symbol, outcome_interval, event_start_ts, event_end_ts,
                                    condition_id, market_slug, yes_token_id, no_token_id,
                                    sample_ts, yes_bid, yes_ask, yes_mid, yes_last,
@@ -235,8 +238,10 @@ export function secondMarketApiPlugin(): Plugin {
                               AND event_end_ts > sample_ts
                               ${seriesFilter}
                             ORDER BY sample_ts ASC, updated_at ASC
-                            LIMIT 250000
+                            LIMIT ?
                         `).all(...bindings) as SecondMarketClobDbRow[];
+                    const truncated = queryRows.length > SECOND_MARKET_CLOB_QUOTE_LIMIT;
+                    const quotes = truncated ? queryRows.slice(0, SECOND_MARKET_CLOB_QUOTE_LIMIT) : queryRows;
                     const quoteTimes = quotes.map((row) => row.sample_ts);
                     const requestedSeconds = endTs - startTs + 1;
                     const distinctSeconds = distinctCount(quoteTimes);
@@ -252,6 +257,8 @@ export function secondMarketApiPlugin(): Plugin {
                             distinctSeconds,
                             missingSeconds: Math.max(0, requestedSeconds - distinctSeconds),
                             exactSampleCoveragePct: requestedSeconds > 0 ? (distinctSeconds / requestedSeconds) * 100 : 0,
+                            limit: SECOND_MARKET_CLOB_QUOTE_LIMIT,
+                            truncated,
                         },
                     });
                     return;

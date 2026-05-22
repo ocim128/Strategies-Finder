@@ -150,6 +150,13 @@ describe("second market Finder runner", () => {
                         quote(1_700_000_021, 0.60, 0.58),
                         quote(1_700_000_030, 0.65, 0.63),
                     ],
+                    stats: {
+                        distinctSeconds: 5,
+                        missingSeconds: 0,
+                        exactSampleCoveragePct: 100,
+                        limit: 250000,
+                        truncated: true,
+                    },
                 }), { status: 200 });
             }
             throw new Error(`Unexpected fetch ${url.pathname}`);
@@ -172,6 +179,8 @@ describe("second market Finder runner", () => {
         expect(output.results[0]?.polymarketEval?.scoredPredictions).to.equal(1);
         expect(output.results[0]?.polymarketEval?.evaluationMode).to.equal("signal_exit_same_event");
         expect(output.results[0]?.polymarketEval?.expectancy).to.be.closeTo(0.03, 1e-9);
+        expect(statuses.some((status) => status.includes("range truncated at 250000 quote rows"))).to.equal(true);
+        expect(statuses.some((status) => status.includes("truncated quote range"))).to.equal(true);
         expect(statuses.at(-1)).to.contain("CLOB quote rows");
     });
 
