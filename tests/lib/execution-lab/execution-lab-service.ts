@@ -111,6 +111,15 @@ import { buildExecutionLabStrategyExecutionContext } from "./execution-lab-strat
 import { collectExecutionLabTradeQuoteTimes } from "./trade-quote-times";
 import { mergeExecutionLabCandles, mergeExecutionLabQuotes, sortedMapValues } from "./execution-lab-buffers";
 import { computeExecutionLabPerformanceMetrics, type ExecutionLabPerformanceMetrics } from "./execution-lab-metrics";
+import {
+    buildExecutionLabDiagnostics,
+    createExecutionLabDiagnosticAccumulator,
+    recordExecutionLabDiagnosticStats,
+    resolveExecutionLabCandleSequenceWarning,
+    type ExecutionLabDiagnosticAccumulator,
+    type ExecutionLabDiagnostics,
+    type ExecutionLabDiagnosticSample,
+} from "./execution-lab-diagnostics";
 import { settingsManager, sortStrategyConfigsNewestFirst } from "../settings-manager";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import type { CapitalSettings } from "../types/backtest";
@@ -123,6 +132,7 @@ const MAX_STREAM_CANDLES = 20000;
 const MAX_LIVE_CANDLE_LAG_SEC = 10;
 const MAX_POLYMARKET_PRICE_POINTS = 3600;
 const MAX_EXECUTION_LAB_DIAGNOSTIC_SAMPLES = 300;
+const MAX_EXECUTION_LAB_DIAGNOSTIC_EXPORT_SEGMENTS = 12;
 const MIN_LIVE_POSITION_SHARES = 0.000001;
 const LIVE_EXIT_RETRY_COOLDOWN_SEC = 1;
 
@@ -234,58 +244,6 @@ type ExecutionLabPersistedSettings = {
     stakeUsd: number;
     liveConfig: ExecutionLabLiveUiConfig;
     protectionConfig: PolymarketProtectionSettingFields;
-};
-type ExecutionLabDiagnosticSample = {
-    recordedAtIso: string;
-    mode: "miner" | "paper" | "live";
-    symbol: SecondMarketSymbol;
-    marketType: "spot" | "futures";
-    candle: {
-        timeSec: number;
-        open: number;
-        high: number;
-        low: number;
-        close: number;
-        volume: number;
-        tradeCount: number | null;
-        source: string | null;
-        updatedAtIso: string | null;
-    };
-    feedLagSec: number | null;
-    quote: {
-        sampleTs: number;
-        sampleMinusCandleSec: number;
-        quoteAgeSec: number | null;
-        source: string;
-        sourceAgeSec: number | null;
-        yesBid: number | null;
-        yesAsk: number | null;
-        yesMid: number | null;
-        noBid: number | null;
-        noAsk: number | null;
-        noMid: number | null;
-        qualityFlags: string[];
-    } | null;
-    event: {
-        marketSlug: string;
-        eventStartTs: number;
-        eventEndTs: number;
-        secondsToEnd: number;
-        startClose: number | null;
-        moveFromStart: number | null;
-        moveFromStartPct: number | null;
-    } | null;
-    warnings: string[];
-};
-type ExecutionLabDiagnostics = {
-    schema: "execution_lab.price_alignment.v1";
-    generatedAtIso: string;
-    latest: ExecutionLabDiagnosticSample | null;
-    samples: ExecutionLabDiagnosticSample[];
-    summary: {
-        sampleCount: number;
-        warningCounts: Record<string, number>;
-    };
 };
 
 const DEFAULT_EXECUTION_LAB_PROTECTION_CONFIG: PolymarketProtectionSettingFields = {
@@ -519,6 +477,7 @@ export class ExecutionLabService {
     private latestExecutionMismatch: ExecutionParityMismatch | null = null;
     private loggedExecutionMismatchKeys = new Set<string>();
     private diagnosticSamples: ExecutionLabDiagnosticSample[] = [];
+    private diagnosticStats: ExecutionLabDiagnosticAccumulator = createExecutionLabDiagnosticAccumulator();
     private comparisonRunning = false;
     private latestComparison: ComparisonResult | null = null;
     private sessionStartCandleTimeSec: number | null = null;
@@ -682,6 +641,7 @@ export class ExecutionLabService {
         this.latestExecutionMismatch = null;
         this.loggedExecutionMismatchKeys.clear();
         this.diagnosticSamples = [];
+        this.diagnosticStats = createExecutionLabDiagnosticAccumulator();
         this.latestComparison = null;
         this.sessionStartCandleTimeSec = null;
         this.liveTradeInFlightByPaperTradeId.clear();
@@ -1145,6 +1105,7 @@ export class ExecutionLabService {
         this.strategyQuoteByTime.clear();
         this.polymarketPriceByTime.clear();
         this.diagnosticSamples = [];
+        this.diagnosticStats = createExecutionLabDiagnosticAccumulator();
         try {
             this.setStatus(`1s miner streaming ${context.symbol} ${context.marketType}`, "running");
             const initialCandles = await this.loadInitialCandles(context.symbol, context.marketType);
@@ -3286,19 +3247,24 @@ export class ExecutionLabService {
             : [];
         warnings.push(...qualityFlags.map((flag) => `quote_${flag}`));
 
-        if ((args.latestCandle.volume ?? 0) === 0 && (candleTradeCount === null || candleTradeCount === 0)) {
+        const candleHasNoTrades = (args.latestCandle.volume ?? 0) === 0 && (candleTradeCount === null || candleTradeCount === 0);
+        const candleIsFill = candleSource?.includes("fill") ?? false;
+        if (candleHasNoTrades) {
             warnings.push("binance_zero_volume_candle");
         }
-        if (candleSource?.includes("fill")) {
+        if (candleIsFill) {
             warnings.push("binance_fill_candle");
         }
         const previousSample = this.diagnosticSamples[this.diagnosticSamples.length - 1] ?? null;
         if (previousSample?.symbol === args.symbol && previousSample.marketType === args.marketType) {
-            const candleDeltaSec = args.latestCandleTimeSec - previousSample.candle.timeSec;
-            if (candleDeltaSec === 0) {
-                warnings.push("binance_repeated_candle");
-            } else if (candleDeltaSec > 1) {
-                warnings.push("binance_candle_gap");
+            const candleSequenceWarning = resolveExecutionLabCandleSequenceWarning({
+                currentTimeSec: args.latestCandleTimeSec,
+                previousTimeSec: previousSample.candle.timeSec,
+                currentHasNoTrades: candleHasNoTrades,
+                currentIsFill: candleIsFill,
+            });
+            if (candleSequenceWarning) {
+                warnings.push(candleSequenceWarning);
             }
         }
 
@@ -3355,6 +3321,7 @@ export class ExecutionLabService {
             warnings: Array.from(new Set(warnings)),
         };
 
+        recordExecutionLabDiagnosticStats(this.diagnosticStats, sample);
         this.diagnosticSamples.push(sample);
         if (this.diagnosticSamples.length > MAX_EXECUTION_LAB_DIAGNOSTIC_SAMPLES) {
             this.diagnosticSamples.splice(0, this.diagnosticSamples.length - MAX_EXECUTION_LAB_DIAGNOSTIC_SAMPLES);
@@ -3363,23 +3330,11 @@ export class ExecutionLabService {
     }
 
     private buildDiagnostics(): ExecutionLabDiagnostics | null {
-        if (this.diagnosticSamples.length === 0) return null;
-        const warningCounts: Record<string, number> = {};
-        for (const sample of this.diagnosticSamples) {
-            for (const warning of sample.warnings) {
-                warningCounts[warning] = (warningCounts[warning] ?? 0) + 1;
-            }
-        }
-        return {
-            schema: "execution_lab.price_alignment.v1",
-            generatedAtIso: new Date().toISOString(),
-            latest: this.diagnosticSamples[this.diagnosticSamples.length - 1] ?? null,
-            samples: [...this.diagnosticSamples],
-            summary: {
-                sampleCount: this.diagnosticSamples.length,
-                warningCounts,
-            },
-        };
+        return buildExecutionLabDiagnostics(this.diagnosticSamples, this.diagnosticStats, {
+            retainedSampleLimit: MAX_EXECUTION_LAB_DIAGNOSTIC_SAMPLES,
+            segmentLimit: MAX_EXECUTION_LAB_DIAGNOSTIC_EXPORT_SEGMENTS,
+            maxLiveCandleLagSec: MAX_LIVE_CANDLE_LAG_SEC,
+        });
     }
 
     private async stop(reason: "user_stop" | "error", message?: string): Promise<void> {

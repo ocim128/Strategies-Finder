@@ -146,9 +146,14 @@ function buildFuturesCandlesFromAggTrades(args: {
         bucket.tradeCount += trade.tradeCount;
     }
 
+    const observedSeconds = [...bySecond.keys()].sort((left, right) => left - right);
+    const firstObservedTs = observedSeconds[0] ?? null;
+    const lastObservedTs = observedSeconds[observedSeconds.length - 1] ?? null;
+    if (firstObservedTs === null || lastObservedTs === null) return [];
+
     const rows: Binance1sCandleRow[] = [];
     let lastClose: number | null = null;
-    for (let ts = args.startTs; ts <= args.endTs; ts += 1) {
+    for (let ts = Math.max(args.startTs, firstObservedTs); ts <= Math.min(args.endTs, lastObservedTs); ts += 1) {
         const bucket = bySecond.get(ts);
         if (bucket) {
             lastClose = bucket.close;

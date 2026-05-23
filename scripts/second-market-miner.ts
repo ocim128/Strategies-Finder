@@ -42,6 +42,7 @@ const BINANCE_LIVE_POLL_MS = 2_000;
 const BINANCE_LIVE_MAX_LOOKBACK_SEC = 120;
 const BINANCE_LIVE_OVERLAP_SEC = 2;
 const BINANCE_RATE_LIMIT_BACKOFF_MS = 60_000;
+const LIVE_ROW_COUNT_LOG_INTERVAL_MS = 30_000;
 
 type CliConfig = {
     mode: MinerMode;
@@ -131,6 +132,27 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
         }, ms);
         signal?.addEventListener("abort", abort, { once: true });
     });
+}
+
+function createLiveRowCountLogger(label: string): (rowCount: number) => void {
+    let sampleCount = 0;
+    let rowCountTotal = 0;
+    let lastRowCount = 0;
+    let lastLogAtMs = 0;
+
+    return (rowCount: number) => {
+        sampleCount += 1;
+        rowCountTotal += rowCount;
+        lastRowCount = rowCount;
+
+        const nowMs = Date.now();
+        if (lastLogAtMs !== 0 && nowMs - lastLogAtMs < LIVE_ROW_COUNT_LOG_INTERVAL_MS) return;
+
+        console.log(`[mine:1s] ${label} samples=${sampleCount} rows=${rowCountTotal} lastRows=${lastRowCount}`);
+        sampleCount = 0;
+        rowCountTotal = 0;
+        lastLogAtMs = nowMs;
+    };
 }
 
 function binanceRateLimitBackoffMs(error: unknown): number {
@@ -437,22 +459,26 @@ async function runLiveBinanceWebSocket(
             const rows: Binance1sCandleRow[] = [];
             const updatedAt = nowSec();
             for (const symbol of config.symbols) {
+                const observedBucketTimes = Array.from(buckets.keys())
+                    .filter((key) => key.startsWith(`${symbol}:`))
+                    .map((key) => Number(key.split(":")[1]))
+                    .filter((ts) => Number.isFinite(ts) && ts <= targetTs)
+                    .sort((left, right) => left - right);
+                const latestObservedBucketTs = observedBucketTimes[observedBucketTimes.length - 1] ?? null;
+                if (latestObservedBucketTs === null) continue;
+
                 const lastFlushedTs = lastFlushedTsBySymbol.get(symbol);
-                let startTs = lastFlushedTs === undefined ? targetTs : lastFlushedTs + 1;
+                let startTs = lastFlushedTs === undefined ? latestObservedBucketTs : lastFlushedTs + 1;
                 if (lastFlushedTs === undefined) {
-                    const firstBucketTs = Array.from(buckets.keys())
-                        .filter((key) => key.startsWith(`${symbol}:`))
-                        .map((key) => Number(key.split(":")[1]))
-                        .filter(Number.isFinite)
-                        .sort((left, right) => left - right)[0];
+                    const firstBucketTs = observedBucketTimes[0];
                     if (firstBucketTs === undefined) continue;
                     startTs = firstBucketTs;
                 }
-                if (startTs > targetTs) continue;
+                if (startTs > latestObservedBucketTs) continue;
 
                 let lastClose = lastCloseBySymbol.get(symbol) ?? null;
                 let latestWrittenTs: number | null = null;
-                for (let ts = startTs; ts <= targetTs; ts += 1) {
+                for (let ts = startTs; ts <= latestObservedBucketTs; ts += 1) {
                     const key = liveAggBucketKey(symbol, ts);
                     const bucket = buckets.get(key);
                     if (bucket) {
@@ -752,6 +778,8 @@ async function runLive(config: CliConfig, signal: AbortSignal): Promise<void> {
     const db = openSecondMarketDb(config.dbPath);
     try {
         const tasks: Promise<void>[] = [];
+        const logReferenceRows = createLiveRowCountLogger("reference");
+        const logClobRows = createLiveRowCountLogger("clob sample");
         let allEvents: SecondMarketPolymarketEvent[] = [];
         if (config.includeGamma || config.includeClob) {
             allEvents = await syncLiveGammaEventsWithRetry(config, db, signal);
@@ -774,7 +802,7 @@ async function runLive(config: CliConfig, signal: AbortSignal): Promise<void> {
                     durationSec,
                     signal,
                     onRows: (rows) => {
-                        console.log(`[mine:1s] reference rows=${rows.length}`);
+                        logReferenceRows(rows.length);
                     },
                 }),
             }));
@@ -826,7 +854,7 @@ async function runLive(config: CliConfig, signal: AbortSignal): Promise<void> {
                         durationSec: cycleDurationSec,
                         signal,
                         onSample: (rows) => {
-                            console.log(`[mine:1s] clob sample rows=${rows.length}`);
+                            logClobRows(rows.length);
                         },
                     });
                 },

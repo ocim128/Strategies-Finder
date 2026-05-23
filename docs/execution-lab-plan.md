@@ -160,6 +160,7 @@ Show:
 - alternative view metrics for original paper trade, current settings, or a saved configuration
 - recent closed paper trades
 - JSONL path
+- compact copied diagnostics with cumulative alignment stats, stream-health issues, and bounded flat segment rows with quote ranges
 
 Alternative views reuse the active session candles, start scoring after the `Start Paper` baseline candle, merge local second-market DB quotes with captured live quotes, and run an in-memory comparison only. They must not append `paper_*`, parity, or session records to the JSONL log.
 

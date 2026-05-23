@@ -93,6 +93,34 @@ describe("second market Binance 1s sync", () => {
         });
     });
 
+    it("does not fill futures candles past the latest aggregate trade", async () => {
+        globalThis.fetch = (async () => new Response(JSON.stringify([
+            { a: 10, p: "100", q: "1", f: 100, l: 100, T: 1_700_000_000_100 },
+            { a: 11, p: "102", q: "2", f: 101, l: 101, T: 1_700_000_002_250 },
+        ]), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+        })) as typeof fetch;
+
+        const rows = await fetchBinance1sCandles({
+            symbol: "BTCUSDT",
+            marketType: "futures",
+            startTs: 1_700_000_000,
+            endTs: 1_700_000_005,
+        });
+
+        expect(rows.map((row) => row.ts)).to.deep.equal([
+            1_700_000_000,
+            1_700_000_001,
+            1_700_000_002,
+        ]);
+        expect(rows.map((row) => row.source)).to.deep.equal([
+            "binance_1s",
+            "binance_1s_fill",
+            "binance_1s",
+        ]);
+    });
+
     it("preserves the cursor when a too-recent futures fetch returns no rows", async () => {
         const db = openSecondMarketDb(makeDbPath());
         const cursorTs = Math.floor(Date.now() / 1000) - 30;
