@@ -1,6 +1,6 @@
 
 import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection } from '../../types/index';
-import { IndicatorSeries, NormalizedSettings, PreparedSignal } from '../../types/backtest';
+import { IndicatorSeries, NormalizedSettings } from '../../types/backtest';
 import { getTimeIndex, getExecutionShift, resolveExecutionPrice, compareTime, isBothLikeTradeDirection, normalizeBacktestSettings, normalizeTradeDirection, timeToNumber, signalToPositionDirection, getTimeIndexValue } from './backtest-utils';
 import { passesRegimeFilters } from './regime-filters';
 import { resolveIndicators } from './indicator-precompute';
@@ -17,96 +17,105 @@ export function prepareSignals(
     if (signals.length === 0) return [];
     let timeIndex: Map<string, number> | null = null;
 
-    const prepared: PreparedSignal[] = [];
+    const prepared: Signal[] = [];
+    let isPreparedOrderSorted = true;
+    let lastPreparedBarIndex = -1;
     const executionShift = getExecutionShift(config);
+    const isBothLikeDirection = isBothLikeTradeDirection(tradeDirection);
+    const entryType: Signal['type'] = tradeDirection === 'short' ? 'sell' : 'buy';
+    const exitType: Signal['type'] = tradeDirection === 'short' ? 'buy' : 'sell';
+    const hasRegimeFilters = config.marketMode !== 'all'
+        || config.trendEmaPeriod > 0
+        || config.atrPercentMin > 0
+        || config.atrPercentMax > 0
+        || config.adxMin > 0
+        || config.adxMax > 0;
 
-    signals.forEach((signal, order) => {
+    const pushPreparedSignal = (
+        barIndex: number,
+        signal: Signal,
+        type: Signal['type'],
+        price: number
+    ): void => {
+        if (barIndex < lastPreparedBarIndex) {
+            isPreparedOrderSorted = false;
+        }
+        lastPreparedBarIndex = barIndex;
+        prepared.push({
+            barIndex,
+            time: data[barIndex].time,
+            type,
+            price,
+            triggerPrice: signal.price,
+            reason: signal.reason,
+            sizeFraction: signal.sizeFraction
+        });
+    };
+
+    for (let order = 0; order < signals.length; order++) {
+        const signal = signals[order];
         const signalIndex = Number.isFinite(signal.barIndex)
             ? Math.trunc(signal.barIndex as number)
             : getTimeIndexValue(timeIndex ??= getTimeIndex(data), signal.time);
-        if (signalIndex === undefined || signalIndex < 0 || signalIndex >= data.length) return;
+        if (signalIndex === undefined || signalIndex < 0 || signalIndex >= data.length) continue;
 
-        if (!isBothLikeTradeDirection(tradeDirection)) {
-            const entryType: Signal['type'] = tradeDirection === 'short' ? 'sell' : 'buy';
-            const exitType: Signal['type'] = tradeDirection === 'short' ? 'buy' : 'sell';
-
+        if (!isBothLikeDirection) {
             if (signal.type === exitType) {
                 const exitIndex = signalIndex + executionShift;
-                if (exitIndex < 0 || exitIndex >= data.length) return;
+                if (exitIndex < 0 || exitIndex >= data.length) continue;
                 const exitPrice = resolveExecutionPrice(data, signal, signalIndex, exitIndex, config);
-                prepared.push({
-                    barIndex: exitIndex,
-                    time: data[exitIndex].time,
-                    type: exitType,
-                    price: exitPrice,
-                    triggerPrice: signal.price,
-                    reason: signal.reason,
-                    sizeFraction: signal.sizeFraction,
-                    order
-                });
-                return;
+                pushPreparedSignal(exitIndex, signal, exitType, exitPrice);
+                continue;
             }
 
-            if (signal.type !== entryType) return;
+            if (signal.type !== entryType) continue;
 
             const decisionIndex = signalIndex;
-            if (decisionIndex >= data.length) return;
+            if (decisionIndex >= data.length) continue;
 
             const executionIndex = decisionIndex + executionShift;
-            if (executionIndex >= data.length) return;
+            if (executionIndex >= data.length) continue;
 
-            if (!passesRegimeFilters(data, decisionIndex, config, indicators, tradeDirection)) return;
+            if (hasRegimeFilters && !passesRegimeFilters(data, decisionIndex, config, indicators, tradeDirection)) continue;
 
             const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
 
-            prepared.push({
-                barIndex: executionIndex,
-                time: data[executionIndex].time,
-                type: entryType,
-                price: entryPrice,
-                triggerPrice: signal.price,
-                reason: signal.reason,
-                sizeFraction: signal.sizeFraction,
-                order
-            });
-            return;
+            pushPreparedSignal(executionIndex, signal, entryType, entryPrice);
+            continue;
         }
 
-        if (signal.type !== 'buy' && signal.type !== 'sell') return;
+        if (signal.type !== 'buy' && signal.type !== 'sell') continue;
 
         const decisionIndex = signalIndex;
-        if (decisionIndex >= data.length) return;
+        if (decisionIndex >= data.length) continue;
 
         const executionIndex = decisionIndex + executionShift;
-        if (executionIndex >= data.length) return;
+        if (executionIndex >= data.length) continue;
 
-        const signalDirection = signalToPositionDirection(signal.type);
-        if (!passesRegimeFilters(data, decisionIndex, config, indicators, signalDirection)) return;
+        if (hasRegimeFilters) {
+            const signalDirection = signalToPositionDirection(signal.type);
+            if (!passesRegimeFilters(data, decisionIndex, config, indicators, signalDirection)) continue;
+        }
 
         const entryPrice = resolveExecutionPrice(data, signal, signalIndex, executionIndex, config);
 
-        prepared.push({
-            barIndex: executionIndex,
-            time: data[executionIndex].time,
-            type: signal.type,
-            price: entryPrice,
-            triggerPrice: signal.price,
-            reason: signal.reason,
-            sizeFraction: signal.sizeFraction,
-            order
-        });
-    });
+        pushPreparedSignal(executionIndex, signal, signal.type, entryPrice);
+    }
 
-    prepared.sort((a, b) => {
-        const aBarIndex = Number.isFinite(a.barIndex as number) ? Math.trunc(a.barIndex as number) : null;
-        const bBarIndex = Number.isFinite(b.barIndex as number) ? Math.trunc(b.barIndex as number) : null;
+    if (isPreparedOrderSorted) {
+        return prepared;
+    }
+
+    return prepared.map((signal, index) => ({ signal, index })).sort((a, b) => {
+        const aSignal = a.signal;
+        const bSignal = b.signal;
+        const aBarIndex = Number.isFinite(aSignal.barIndex as number) ? Math.trunc(aSignal.barIndex as number) : null;
+        const bBarIndex = Number.isFinite(bSignal.barIndex as number) ? Math.trunc(bSignal.barIndex as number) : null;
         if (aBarIndex !== null && bBarIndex !== null && aBarIndex !== bBarIndex) {
             return aBarIndex - bBarIndex;
         }
-        return compareTime(a.time, b.time) || a.order - b.order;
-    });
-
-    return prepared.map(({ order, ...signal }) => signal);
+        return compareTime(aSignal.time, bSignal.time) || a.index - b.index;
+    }).map(({ signal }) => signal);
 }
 
 /**

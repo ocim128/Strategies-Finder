@@ -21,6 +21,7 @@ export function calculateSMA(data: number[], period: number): (number | null)[] 
 const __emaCache: WeakMap<number[], Map<number, (number | null)[]>> = new WeakMap();
 const __atrCache: WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<number, (number | null)[]>>>> = new WeakMap();
 const __adxCache: WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<number, (number | null)[]>>>> = new WeakMap();
+const __vwapCache: WeakMap<number[], WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<number, (number | null)[]>>>>> = new WeakMap();
 
 function getOrCompute<D extends object, K, V>(cache: WeakMap<D, Map<K, V>>, data: D, key: K, compute: () => V): V {
     let m = cache.get(data);
@@ -56,6 +57,47 @@ function getOrComputeOHLC(
     if (!byPeriod) {
         byPeriod = new Map();
         byClose.set(close, byPeriod);
+    }
+
+    const cached = byPeriod.get(period);
+    if (cached) return cached;
+
+    const result = compute();
+    byPeriod.set(period, result);
+    return result;
+}
+
+function getOrComputeOHLCV(
+    cache: WeakMap<number[], WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<number, (number | null)[]>>>>>,
+    high: number[],
+    low: number[],
+    close: number[],
+    volume: number[],
+    period: number,
+    compute: () => (number | null)[]
+): (number | null)[] {
+    let byLow = cache.get(high);
+    if (!byLow) {
+        byLow = new WeakMap();
+        cache.set(high, byLow);
+    }
+
+    let byClose = byLow.get(low);
+    if (!byClose) {
+        byClose = new WeakMap();
+        byLow.set(low, byClose);
+    }
+
+    let byVolume = byClose.get(close);
+    if (!byVolume) {
+        byVolume = new WeakMap();
+        byClose.set(close, byVolume);
+    }
+
+    let byPeriod = byVolume.get(volume);
+    if (!byPeriod) {
+        byPeriod = new Map();
+        byVolume.set(volume, byPeriod);
     }
 
     const cached = byPeriod.get(period);
@@ -413,30 +455,32 @@ export function calculateVWAP(
     volume: number[],
     period: number
 ): (number | null)[] {
-    const length = close.length;
-    const vwap: (number | null)[] = new Array(length).fill(null);
-    if (length < period || period < 1) return vwap;
+    return getOrComputeOHLCV(__vwapCache, high, low, close, volume, period, () => {
+        const length = close.length;
+        const vwap: (number | null)[] = new Array(length).fill(null);
+        if (length < period || period < 1) return vwap;
 
-    let sumTypicalVolume = 0;
-    let sumVolume = 0;
+        let sumTypicalVolume = 0;
+        let sumVolume = 0;
 
-    for (let i = 0; i < length; i++) {
-        const typical = (high[i] + low[i] + close[i]) / 3;
-        sumTypicalVolume += typical * volume[i];
-        sumVolume += volume[i];
+        for (let i = 0; i < length; i++) {
+            const typical = (high[i] + low[i] + close[i]) / 3;
+            sumTypicalVolume += typical * volume[i];
+            sumVolume += volume[i];
 
-        if (i >= period) {
-            const oldTypical = (high[i - period] + low[i - period] + close[i - period]) / 3;
-            sumTypicalVolume -= oldTypical * volume[i - period];
-            sumVolume -= volume[i - period];
+            if (i >= period) {
+                const oldTypical = (high[i - period] + low[i - period] + close[i - period]) / 3;
+                sumTypicalVolume -= oldTypical * volume[i - period];
+                sumVolume -= volume[i - period];
+            }
+
+            if (i >= period - 1) {
+                vwap[i] = sumVolume > 0 ? sumTypicalVolume / sumVolume : typical;
+            }
         }
 
-        if (i >= period - 1) {
-            vwap[i] = sumVolume > 0 ? sumTypicalVolume / sumVolume : typical;
-        }
-    }
-
-    return vwap;
+        return vwap;
+    });
 }
 
 export function calculateParabolicSAR(

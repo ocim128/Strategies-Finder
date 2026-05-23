@@ -49,6 +49,44 @@ export interface BacktestResultMarketContext {
     lastCandleTime: Time | null;
 }
 
+export interface BacktestDiagnosticsTimings {
+    total: number;
+    dataClean: number;
+    indicatorResolution: number;
+    signalPreparation: number;
+    signalIndexing: number;
+    entryEvaluation: number;
+    tradeSimulation: number;
+    forcedClose: number;
+    drawdown: number;
+    metrics: number;
+}
+
+export interface BacktestDiagnosticsCounts {
+    inputBars: number;
+    evaluationBars: number;
+    inputSignals: number;
+    preparedSignals: number;
+    barsScanned: number;
+    barsWithPosition: number;
+    entriesAttempted: number;
+    tradesOpened: number;
+    tradesClosed: number;
+    signalExitOrders: number;
+    forcedEndOfDataExits: number;
+    fastPathRuns: number;
+    maxOpenPositions: number;
+}
+
+export interface BacktestDiagnostics {
+    counts: BacktestDiagnosticsCounts;
+    timingsMs: BacktestDiagnosticsTimings;
+    fastPath?: {
+        used: boolean;
+        blockers: string[];
+    };
+}
+
 export interface AdvancedPerformanceAnalytics {
     sortinoRatio: number;
     calmarRatio: number;
@@ -121,6 +159,7 @@ export interface BacktestResult {
     edgeStatistics?: import('../strategies/backtest/edge-statistics').EdgeStatistics;
     polymarketTradeSummary?: BacktestPolymarketTradeSummary;
     marketContext?: BacktestResultMarketContext;
+    diagnostics?: BacktestDiagnostics;
 }
 
 export interface TradeTimingEntryHorizon {

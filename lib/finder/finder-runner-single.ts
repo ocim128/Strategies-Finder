@@ -8,7 +8,7 @@ import {
     runBacktestCompact,
     applySignalPolarity,
 } from "../strategies/index";
-import type { StrategyExecutionContext } from "../types/strategies";
+import type { BacktestResult, StrategyExecutionContext } from "../types/strategies";
 import { rustEngine } from "../rust-engine-client";
 import { shouldUseRustEngine } from "../engine-preferences";
 import { debugLogger } from "../debug-logger";
@@ -63,9 +63,14 @@ import {
 } from "./finder-runner-shared";
 import {
     buildFinderDiagnostics,
+    createEmptyFinderBacktestDiagnosticsStats,
     createEmptyFinderDiagnosticsTimings,
     createFinderRunId,
     getFinderStrategyDiagnosticsStats,
+    recordFinderBacktestDiagnostics,
+    recordFinderStrategyFailure,
+    toFinderBacktestDiagnostics,
+    toFinderFailureDiagnostics,
     toFinderStrategyDiagnostics,
     type FinderDiagnosticsTimings,
     type FinderStrategyDiagnosticsStats,
@@ -179,14 +184,15 @@ type BacktestFallbackRunnerOptions = {
     defaultPrecomputed: ReturnType<typeof precomputeIndicators>;
     insertResult: (candidate: CandidateResult) => void;
     timing: FinderDiagnosticsTimings;
-    onFailure?: (job: ParamJob) => void;
+    onBacktestResult?: (job: ParamJob, result: BacktestResult) => void;
+    onFailure?: (job: ParamJob, error?: unknown) => void;
 };
 
 function createBacktestFallbackRunner(options: BacktestFallbackRunnerOptions): (run: PreparedRun) => void {
     return (run: PreparedRun): void => {
         const tTsStart = performance.now();
         const jobData = options.getJobData(run.job, options.closedData);
-        const succeeded = runBacktestAndInsert(
+        runBacktestAndInsert(
             jobData,
             run.signals,
             run.job,
@@ -194,11 +200,10 @@ function createBacktestFallbackRunner(options: BacktestFallbackRunnerOptions): (
             options.capitalSettings,
             options.resolveBacktestSettings(run.job),
             options.getJobPrecomputed(run.job, options.defaultPrecomputed),
-            options.insertResult
+            options.insertResult,
+            (result) => options.onBacktestResult?.(run.job, result),
+            (error) => options.onFailure?.(run.job, error)
         );
-        if (!succeeded) {
-            options.onFailure?.(run.job);
-        }
         options.timing.backtest += performance.now() - tTsStart;
     };
 }
@@ -217,7 +222,7 @@ type RustRunPreparationOptions = {
     mergeComboSignals: boolean;
     failureContext: string;
     onSignalTiming?: (job: ParamJob, timing: FinderSignalTiming) => void;
-    onJobFailure?: (job: ParamJob) => void;
+    onJobFailure?: (job: ParamJob, error?: unknown) => void;
 };
 
 function prepareRustBatchRuns(options: RustRunPreparationOptions): PreparedRun[] {
@@ -260,7 +265,7 @@ function prepareRustBatchRuns(options: RustRunPreparationOptions): PreparedRun[]
                 signals,
             });
         } catch (error) {
-            options.onJobFailure?.(job);
+            options.onJobFailure?.(job, error);
             debugLogger.warn(`[Finder] ${options.failureContext} failed for ${job.key}`, {
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -501,6 +506,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
     const runId = createFinderRunId("finder");
     const runStart = performance.now();
     const strategyStatsByKey = new Map<string, FinderStrategyDiagnosticsStats>();
+    const backtestStats = createEmptyFinderBacktestDiagnosticsStats();
     let failedRuns = 0;
 
     const closedDataStartedAt = performance.now();
@@ -593,14 +599,21 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
     const recordBacktestTiming = (job: ParamJob, durationMs: number): void => {
         getFinderStrategyDiagnosticsStats(strategyStatsByKey, job).backtestMs += durationMs;
     };
+    const recordBacktestResult = (job: ParamJob, result: BacktestResult): void => {
+        const stats = getFinderStrategyDiagnosticsStats(strategyStatsByKey, job);
+        recordFinderBacktestDiagnostics(stats.backtest, result.diagnostics);
+        recordFinderBacktestDiagnostics(backtestStats, result.diagnostics);
+    };
     const recordRunTiming = (job: ParamJob, durationMs: number): void => {
         const stats = getFinderStrategyDiagnosticsStats(strategyStatsByKey, job);
         stats.runs++;
         stats.totalMs += durationMs;
     };
-    const recordFailure = (job: Pick<ParamJob, "key" | "name">): void => {
+    const recordFailure = (job: Pick<ParamJob, "key" | "name">, error?: unknown): void => {
         failedRuns++;
-        getFinderStrategyDiagnosticsStats(strategyStatsByKey, job).failedRuns++;
+        const stats = getFinderStrategyDiagnosticsStats(strategyStatsByKey, job);
+        stats.failedRuns++;
+        recordFinderStrategyFailure(stats, error);
     };
 
     const comboActive = !!input.comboPrimarySignals;
@@ -777,6 +790,8 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             failedRuns,
             timings: timing,
             strategyBreakdown: toFinderStrategyDiagnostics(strategyStatsByKey),
+            backtestDiagnostics: toFinderBacktestDiagnostics(backtestStats),
+            failureBreakdown: toFinderFailureDiagnostics(strategyStatsByKey),
         });
         debugLogger.event("finder.diagnostics", diagnostics);
 
@@ -908,7 +923,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     backtestSettings: resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
                     backtestFn: quickBacktestFn,
                     precomputed: getJobPrecomputed(job, shortPrecomputed),
+                    backtestOptions: { collectDiagnostics: true },
                 });
+                recordBacktestResult(job, quickRawResult);
                 const quickBacktestMs = performance.now() - tQuickStart;
                 timing.backtest += quickBacktestMs;
                 recordBacktestTiming(job, quickBacktestMs);
@@ -921,7 +938,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 quickCandidates.push({ job, result: quickResult, comparable: buildComparableFinderResult(job.key, job.name, job.params, quickResult) });
                 signals.length = 0;
             } catch (error) {
-                recordFailure(job);
+                recordFailure(job, error);
                 debugLogger.warn(`[Finder] Random funnel prescreen failed for ${job.key}`, {
                     error: error instanceof Error ? error.message : String(error),
                 });
@@ -962,6 +979,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 defaultPrecomputed: singleTfPrecomputed,
                 insertResult,
                 timing,
+                onBacktestResult: recordBacktestResult,
                 onFailure: recordFailure,
             });
 
@@ -991,7 +1009,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     });
                     recordBacktestTiming(job, performance.now() - backtestStartedAt);
                 } catch (error) {
-                    recordFailure(job);
+                    recordFailure(job, error);
                     debugLogger.warn(`[Finder] Random funnel full run failed for ${job.key}`, {
                         error: error instanceof Error ? error.message : String(error),
                     });
@@ -1035,6 +1053,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             defaultPrecomputed: singleTfPrecomputed,
             insertResult,
             timing,
+            onBacktestResult: recordBacktestResult,
             onFailure: recordFailure,
         });
 
@@ -1110,6 +1129,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         defaultPrecomputed: singleTfPrecomputed,
         insertResult,
         timing,
+        onBacktestResult: recordBacktestResult,
         onFailure: recordFailure,
     });
     const rustRunBacktestFallback = createBacktestFallbackRunner({
@@ -1122,6 +1142,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         defaultPrecomputed: singleTfPrecomputed,
         insertResult,
         timing,
+        onBacktestResult: recordBacktestResult,
         onFailure: recordFailure,
     });
 
@@ -1162,7 +1183,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     });
                     recordBacktestTiming(job, performance.now() - backtestStartedAt);
                 } catch (error) {
-                    recordFailure(job);
+                    recordFailure(job, error);
                     debugLogger.warn(`[Finder] Backtest failed for ${job.key}`, {
                         error: error instanceof Error ? error.message : String(error),
                     });
@@ -1230,7 +1251,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 debugLogger.warn("[Finder] Rust batch returned unknown run id", { id });
             },
             onInconsistentResult: (run) => {
-                recordFailure(run.job);
+                recordFailure(run.job, "inconsistent Rust batch result");
                 debugLogger.warn(`[Finder] Rust batch result inconsistent for ${run.job.key}, using TypeScript fallback.`);
             },
         });

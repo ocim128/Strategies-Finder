@@ -1,4 +1,4 @@
-import { Signal, Time, MarketMode, PercentageTakeProfitMode } from './strategies';
+import { Time, MarketMode, PercentageTakeProfitMode } from './strategies';
 
 export interface NormalizedSettings {
     atrPeriod: number;
@@ -163,8 +163,4 @@ export interface TradeSizingConfig {
     mode: TradeSizingMode;
     fixedTradeAmount: number;
     advancedSizing?: AdvancedSizingSettings;
-}
-
-export interface PreparedSignal extends Signal {
-    order: number;
 }

@@ -27,9 +27,14 @@ import {
 import {
     addElapsed,
     buildFinderDiagnostics,
+    createEmptyFinderBacktestDiagnosticsStats,
     createEmptyFinderDiagnosticsTimings,
     createFinderRunId,
     getFinderStrategyDiagnosticsStats,
+    recordFinderBacktestDiagnostics,
+    recordFinderStrategyFailure,
+    toFinderBacktestDiagnostics,
+    toFinderFailureDiagnostics,
     toFinderStrategyDiagnostics,
     type FinderStrategyDiagnosticsStats,
 } from "../finder/finder-diagnostics";
@@ -59,7 +64,8 @@ const runFinderCandidateBacktest: typeof runBacktest = (
     commissionPercent,
     settings,
     sizing,
-    precomputed
+    precomputed,
+    options
 ) => runBacktest(
     data,
     signals,
@@ -69,7 +75,12 @@ const runFinderCandidateBacktest: typeof runBacktest = (
     settings,
     sizing,
     precomputed,
-    { includeAdvancedAnalytics: false }
+    {
+        includeAdvancedAnalytics: false,
+        includeSharpeRatio: options?.includeSharpeRatio,
+        collectDiagnostics: options?.collectDiagnostics,
+        omitEquityCurve: options?.omitEquityCurve,
+    }
 );
 
 function getDataRange(data: readonly OHLCVData[]): { startTs: number; endTs: number } | null {
@@ -148,6 +159,7 @@ export async function runSecondMarketFinder(
     const runId = createFinderRunId("finder-second-market");
     const timings = createEmptyFinderDiagnosticsTimings();
     const strategyStatsByKey = new Map<string, FinderStrategyDiagnosticsStats>();
+    const backtestStats = createEmptyFinderBacktestDiagnosticsStats();
     await ensureConfirmationStrategiesLoaded(settings);
     const rustSettings = sanitizeBacktestSettingsForRust(settings);
 
@@ -176,6 +188,7 @@ export async function runSecondMarketFinder(
     }
 
     const requiresSizedNetRank = options.sortPriority.includes("polySizedNet");
+    const requiresSharpeRatio = options.sortPriority.includes("sharpeRatio");
     if (requiresSizedNetRank && !isAlternativeSizingMode(input.capitalSettings)) {
         callbacks.setStatus("Sized Net rank mode requires Alternative Sizing mode other than percent.");
         return { results: [] };
@@ -334,6 +347,10 @@ export async function runSecondMarketFinder(
                 });
                 failedCount += plan.paramSets.length;
                 processedCount += plan.paramSets.length;
+                const strategyStats = getFinderStrategyDiagnosticsStats(strategyStatsByKey, plan);
+                strategyStats.runs += plan.paramSets.length;
+                strategyStats.failedRuns += plan.paramSets.length;
+                recordFinderStrategyFailure(strategyStats, error, plan.paramSets.length);
                 continue;
             }
         }
@@ -348,6 +365,7 @@ export async function runSecondMarketFinder(
             }
 
             const candidateStartedAt = performance.now();
+            const processedBeforeCandidate = processedCount;
             const strategyStats = getFinderStrategyDiagnosticsStats(strategyStatsByKey, plan);
             try {
                 const normalizedParams = plan.strategy.normalizeParams ? plan.strategy.normalizeParams(params) : { ...params };
@@ -389,7 +407,14 @@ export async function runSecondMarketFinder(
                     backtestSettings,
                     backtestFn: runFinderCandidateBacktest,
                     precomputed: candidatePrecomputed,
+                    backtestOptions: {
+                        collectDiagnostics: true,
+                        includeSharpeRatio: requiresSharpeRatio,
+                        omitEquityCurve: !requiresSharpeRatio,
+                    },
                 });
+                recordFinderBacktestDiagnostics(strategyStats.backtest, backtestResult.diagnostics);
+                recordFinderBacktestDiagnostics(backtestStats, backtestResult.diagnostics);
                 const backtestMs = performance.now() - backtestStartedAt;
                 timings.backtest += backtestMs;
                 strategyStats.backtestMs += backtestMs;
@@ -476,9 +501,13 @@ export async function runSecondMarketFinder(
                     addElapsed(timings, "yielding", yieldStartedAt);
                 }
             } catch (error) {
+                const processedDuringCandidate = Math.max(0, processedCount - processedBeforeCandidate);
                 failedCount++;
-                processedCount++;
+                if (processedDuringCandidate === 0) {
+                    processedCount++;
+                }
                 strategyStats.failedRuns++;
+                recordFinderStrategyFailure(strategyStats, error);
                 const detail = error instanceof Error ? error.message : String(error);
                 debugLogger.warn("[Finder][second-market] Candidate evaluation failed", {
                     strategyKey: plan.key,
@@ -523,6 +552,8 @@ export async function runSecondMarketFinder(
         failedRuns: failedCount,
         timings,
         strategyBreakdown: toFinderStrategyDiagnostics(strategyStatsByKey),
+        backtestDiagnostics: toFinderBacktestDiagnostics(backtestStats),
+        failureBreakdown: toFinderFailureDiagnostics(strategyStatsByKey),
     });
     debugLogger.event("finder.diagnostics", diagnostics);
     return { results, diagnostics };

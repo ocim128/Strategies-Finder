@@ -77,6 +77,8 @@ type SecondMarketQuoteIndex = {
     pricePointsByKey: Map<string, PolymarketPricePoint[]>;
 };
 
+const quoteIndexCache = new WeakMap<readonly PolymarketClob1sQuoteRow[], SecondMarketQuoteIndex>();
+
 function quoteEventKey(args: {
     seriesId: string;
     eventStartTs: number;
@@ -137,6 +139,14 @@ function buildQuoteIndex(quotes: readonly PolymarketClob1sQuoteRow[]): SecondMar
         quotesByYesEvent,
         pricePointsByKey: new Map(),
     };
+}
+
+function getQuoteIndex(quotes: readonly PolymarketClob1sQuoteRow[]): SecondMarketQuoteIndex {
+    const cached = quoteIndexCache.get(quotes);
+    if (cached) return cached;
+    const index = buildQuoteIndex(quotes);
+    quoteIndexCache.set(quotes, index);
+    return index;
 }
 
 function findQuoteBucket(args: {
@@ -528,7 +538,7 @@ export function evaluateSecondMarketTrades(args: {
     const protectionSettings = resolveEffectivePolymarketProtectionSettings(evaluationMode, args.protection);
     const results: SecondMarketTradeResult[] = [];
     const seenEvents = new Set<string>();
-    const quoteIndex = buildQuoteIndex(args.quotes);
+    const quoteIndex = getQuoteIndex(args.quotes);
     const limitEntryEnabled = args.limitEntry?.enabled === true;
     const limitEntryMode = resolvePolymarketPostSignalLimitEntryMode(args.limitEntry?.priceMode);
     const limitEntryOffsetCents = clampPolymarketPostSignalLimitOffsetCents(args.limitEntry?.offsetCents);

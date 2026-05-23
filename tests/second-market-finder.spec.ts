@@ -237,6 +237,103 @@ describe("second market Finder runner", () => {
         expect(output.results[0]?.polymarketEval?.breakEvenWinRate).to.equal(0.30);
     });
 
+    it("includes backtest diagnostics for entry-strategy second-market Finder runs", async () => {
+        globalThis.fetch = async (input) => {
+            const url = new URL(String(input));
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response(JSON.stringify({ ok: true }), { status: 200 });
+            }
+            if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    rows: [{
+                        series_id: "10684",
+                        event_slug: "btc-event",
+                        market_slug: "btc-event",
+                        interval: "5m",
+                        event_start_ts: 1_700_000_000,
+                        event_end_ts: 1_700_000_300,
+                        yes_token_id: "yes",
+                        no_token_id: "no",
+                        yes_open_price: 0.5,
+                        yes_entry_minute_1_price: null,
+                        yes_entry_minute_2_price: null,
+                        yes_entry_minute_3_price: null,
+                        yes_entry_minute_4_price: null,
+                        resolved_outcome_up: 1,
+                        resolution_source: "test",
+                        updated_at: 1,
+                    }],
+                }), { status: 200 });
+            }
+            if (url.pathname === "/api/second-market/clob-quotes") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    quotes: [
+                        quote(1_700_000_020, 0.30, 0.28),
+                        quote(1_700_000_030, 0.60, 0.58),
+                    ],
+                }), { status: 200 });
+            }
+            throw new Error(`Unexpected fetch ${url.pathname}`);
+        };
+
+        const entryStrategy: Strategy = {
+            name: "Entry Diagnostics Fixture",
+            description: "fixture",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            metadata: { role: "entry", direction: "both" },
+            execute(data) {
+                return [
+                    { time: data[0]!.time, type: "buy", price: data[0]!.close },
+                    { time: data[1]!.time, type: "sell", price: data[1]!.close },
+                ];
+            },
+            evaluate(_data, _params, signals = []) {
+                return {
+                    signals,
+                    entryStats: {
+                        mode: "fan_retest",
+                        winDefinition: "target",
+                        targetPct: 1,
+                        totalEntries: signals.length,
+                        wins: 1,
+                        losses: 1,
+                        winRate: 50,
+                        avgRetestBars: 1,
+                        avgRetests: 1,
+                        maxBars: 3,
+                        maxRetests: 1,
+                        minRetestsForWin: 1,
+                        entryMode: 1,
+                        retestMode: 1,
+                        useWick: false,
+                        touchTolerancePct: 0,
+                    },
+                };
+            },
+        };
+        const input = makeInput();
+        input.selectedStrategies = [{ key: "entry_fixture", name: entryStrategy.name, strategy: entryStrategy }];
+
+        const output = await runSecondMarketFinder(input, {
+            setProgress: () => undefined,
+            setStatus: () => undefined,
+            yieldControl: async () => undefined,
+            isCancelled: () => false,
+            onResultsUpdate: () => undefined,
+        });
+
+        expect(output.diagnostics?.backtest?.runs).to.equal(1);
+        expect(output.diagnostics?.backtest?.avgInputSignals).to.equal(2);
+        expect(output.diagnostics?.backtest?.totals.entriesAttempted).to.equal(2);
+        expect(Number.isFinite(output.diagnostics?.backtest?.fastPathRuns)).to.equal(true);
+        expect(Number.isFinite(output.diagnostics?.backtest?.totals.fastPathRuns)).to.equal(true);
+        expect(output.diagnostics?.backtest?.timingsMs).to.have.property("entryEvaluation");
+        expect(output.diagnostics?.strategyBreakdown[0]?.backtest?.runs).to.equal(1);
+    });
+
     it("rejects 1s CLOB scoring for unsupported execution models", async () => {
         let fetchCount = 0;
         globalThis.fetch = async () => {

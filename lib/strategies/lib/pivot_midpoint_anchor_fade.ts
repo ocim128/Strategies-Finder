@@ -29,15 +29,24 @@ export const pivot_midpoint_anchor_fade: Strategy = {
 		const lows = getLows(cleanData);
 		const closes = getCloses(cleanData);
 		const { pivotHighs, pivotLows } = buildPivotFlags(highs, lows, swingLen);
+		const lastPivotHighIndexes: number[] = new Array(cleanData.length).fill(-1);
+		const lastPivotLowIndexes: number[] = new Array(cleanData.length).fill(-1);
+		let lastPivotHigh = -1;
+		let lastPivotLow = -1;
+
+		for (let i = 0; i < cleanData.length; i++) {
+			const maturedIndex = i - swingLen;
+			if (maturedIndex >= 0) {
+				if (pivotHighs[maturedIndex]) lastPivotHigh = maturedIndex;
+				if (pivotLows[maturedIndex]) lastPivotLow = maturedIndex;
+			}
+			lastPivotHighIndexes[i] = lastPivotHigh;
+			lastPivotLowIndexes[i] = lastPivotLow;
+		}
 
 		return createSignalLoop(cleanData, [], (i) => {
-			let lastPivHigh = -1;
-			let lastPivLow = -1;
-			for (let j = i - swingLen; j >= 0; j--) {
-				if (lastPivHigh < 0 && pivotHighs[j]) lastPivHigh = j;
-				if (lastPivLow < 0 && pivotLows[j]) lastPivLow = j;
-				if (lastPivHigh >= 0 && lastPivLow >= 0) break;
-			}
+			const lastPivHigh = lastPivotHighIndexes[i];
+			const lastPivLow = lastPivotLowIndexes[i];
 			if (lastPivHigh < 0 || lastPivLow < 0) return null;
 
 			const pivHigh = highs[lastPivHigh];

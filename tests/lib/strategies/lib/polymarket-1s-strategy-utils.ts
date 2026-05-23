@@ -3,6 +3,10 @@ import { computePriceActionBarMetrics } from "./price-action-frequency-core";
 
 export type NullableSeries = (number | null)[];
 
+type RollingMinMaxFrame = { min: NullableSeries; max: NullableSeries };
+
+const rollingMinMaxCache = new WeakMap<number[], Map<string, RollingMinMaxFrame>>();
+
 export function nullsToZero(values: NullableSeries): number[] {
     return values.map((value) => value ?? 0);
 }
@@ -23,26 +27,49 @@ export function buildRollingMinMax(
     includeCurrent = false
 ): { min: NullableSeries; max: NullableSeries } {
     const lookback = Math.max(1, Math.round(lookbackInput));
+    const cacheKey = `${lookback}|${includeCurrent ? 1 : 0}`;
+    let byKey = rollingMinMaxCache.get(values);
+    if (!byKey) {
+        byKey = new Map<string, RollingMinMaxFrame>();
+        rollingMinMaxCache.set(values, byKey);
+    }
+    const cached = byKey.get(cacheKey);
+    if (cached) return cached;
+
     const min: NullableSeries = new Array(values.length).fill(null);
     const max: NullableSeries = new Array(values.length).fill(null);
+    const maxDeque: number[] = [];
+    const minDeque: number[] = [];
+    let maxHead = 0;
+    let minHead = 0;
 
     for (let i = 0; i < values.length; i++) {
         const end = includeCurrent ? i : i - 1;
         const start = end - lookback + 1;
-        if (start < 0 || end < 0) continue;
-
-        let lo = Infinity;
-        let hi = -Infinity;
-        for (let j = start; j <= end; j++) {
-            const value = values[j];
-            if (value < lo) lo = value;
-            if (value > hi) hi = value;
+        if (end >= 0) {
+            const value = values[end];
+            while (maxDeque.length > maxHead && values[maxDeque[maxDeque.length - 1]] <= value) {
+                maxDeque.pop();
+            }
+            maxDeque.push(end);
+            while (minDeque.length > minHead && values[minDeque[minDeque.length - 1]] >= value) {
+                minDeque.pop();
+            }
+            minDeque.push(end);
         }
-        min[i] = lo;
-        max[i] = hi;
+
+        while (maxDeque.length > maxHead && maxDeque[maxHead] < start) maxHead++;
+        while (minDeque.length > minHead && minDeque[minHead] < start) minHead++;
+
+        if (start >= 0 && end >= 0) {
+            min[i] = values[minDeque[minHead]];
+            max[i] = values[maxDeque[maxHead]];
+        }
     }
 
-    return { min, max };
+    const result = { min, max };
+    byKey.set(cacheKey, result);
+    return result;
 }
 
 export function buildTrailingWindowSpan(values: number[], lookbackInput: number): NullableSeries {

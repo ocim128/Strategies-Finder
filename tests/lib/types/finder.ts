@@ -1,4 +1,4 @@
-import type { BacktestResult, StrategyParams, Time } from "../types/strategies";
+import type { BacktestDiagnosticsCounts, BacktestDiagnosticsTimings, BacktestResult, StrategyParams, Time } from "../types/strategies";
 import type { PolymarketEvalResult } from "../types/polymarket-outcomes";
 import type { PolymarketExitMode } from "../polymarket-exit-mode";
 
@@ -194,6 +194,33 @@ export interface FinderStrategyDiagnostics {
     avgBacktestMs: number;
     avgTotalMs: number;
     usedPreparedData: boolean;
+    backtest?: FinderBacktestDiagnostics;
+    failureReasons?: FinderFailureReasonDiagnostics[];
+}
+
+export interface FinderBacktestDiagnostics {
+    runs: number;
+    avgInputSignals: number;
+    avgPreparedSignals: number;
+    avgBarsScanned: number;
+    avgBarsWithPosition: number;
+    avgEntriesAttempted: number;
+    avgTradesOpened: number;
+    avgTradesClosed: number;
+    fastPathRuns: number;
+    fastPathBlockers?: FinderFailureReasonDiagnostics[];
+    maxOpenPositions: number;
+    totals: BacktestDiagnosticsCounts;
+    timingsMs: BacktestDiagnosticsTimings;
+}
+
+export interface FinderFailureReasonDiagnostics {
+    reason: string;
+    runs: number;
+}
+
+export interface FinderFailureDiagnostics extends FinderFailureReasonDiagnostics {
+    strategyKeys: string[];
 }
 
 export interface FinderDiagnostics {
@@ -218,6 +245,8 @@ export interface FinderDiagnostics {
         endpointAdjusted: number;
         failedRuns: number;
     };
+    backtest?: FinderBacktestDiagnostics;
+    failureBreakdown?: FinderFailureDiagnostics[];
     timingsMs: {
         total: number;
         paramGeneration: number;

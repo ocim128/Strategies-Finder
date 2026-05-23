@@ -68,9 +68,14 @@ import {
 import {
     addElapsed,
     buildFinderDiagnostics,
+    createEmptyFinderBacktestDiagnosticsStats,
     createEmptyFinderDiagnosticsTimings,
     createFinderRunId,
     getFinderStrategyDiagnosticsStats,
+    recordFinderBacktestDiagnostics,
+    recordFinderStrategyFailure,
+    toFinderBacktestDiagnostics,
+    toFinderFailureDiagnostics,
     toFinderStrategyDiagnostics,
     type FinderStrategyDiagnosticsStats,
 } from "./finder-diagnostics";
@@ -140,7 +145,8 @@ const runFinderCandidateBacktest: typeof runBacktest = (
     commissionPercent,
     settings,
     sizing,
-    precomputed
+    precomputed,
+    options
 ) => runBacktest(
     data,
     signals,
@@ -150,7 +156,12 @@ const runFinderCandidateBacktest: typeof runBacktest = (
     settings,
     sizing,
     precomputed,
-    { includeAdvancedAnalytics: false }
+    {
+        includeAdvancedAnalytics: false,
+        includeSharpeRatio: options?.includeSharpeRatio,
+        collectDiagnostics: options?.collectDiagnostics,
+        omitEquityCurve: options?.omitEquityCurve,
+    }
 );
 
 function buildMappedTradeOutcome(args: {
@@ -612,6 +623,7 @@ export async function runPolymarketFinder(
     const runId = createFinderRunId("finder-polymarket");
     const timings = createEmptyFinderDiagnosticsTimings();
     const strategyStatsByKey = new Map<string, FinderStrategyDiagnosticsStats>();
+    const backtestStats = createEmptyFinderBacktestDiagnosticsStats();
     await ensureConfirmationStrategiesLoaded(settings);
     const interval = input.interval as PolymarketInterval;
     const intervalConfig = getIntervalConfig(interval);
@@ -698,6 +710,7 @@ export async function runPolymarketFinder(
     const isLimitEntryMode = limitEntrySettings?.enabled === true;
     const isMultiSubEventRun = !isNativeOutcomeSession && !is5mRun && !isSignalExitMode && !isLimitEntryMode;
     const requiresSizedNetRank = options.sortPriority.includes("polySizedNet");
+    const requiresSharpeRatio = options.sortPriority.includes("sharpeRatio");
     if (requiresSizedNetRank && !isAlternativeSizingMode(input.capitalSettings)) {
         callbacks.setStatus("Sized Net rank mode requires Alternative Sizing mode other than percent.");
         return { results: [] };
@@ -898,6 +911,10 @@ export async function runPolymarketFinder(
                 });
                 processedCount += plan.paramSets.length * evaluationCountPerParamSet;
                 failedCount += plan.paramSets.length * evaluationCountPerParamSet;
+                const strategyStats = getFinderStrategyDiagnosticsStats(strategyStatsByKey, plan);
+                strategyStats.runs += plan.paramSets.length * evaluationCountPerParamSet;
+                strategyStats.failedRuns += plan.paramSets.length * evaluationCountPerParamSet;
+                recordFinderStrategyFailure(strategyStats, error, plan.paramSets.length * evaluationCountPerParamSet);
                 continue;
             }
         }
@@ -911,6 +928,7 @@ export async function runPolymarketFinder(
             }
 
             const candidateStartedAt = performance.now();
+            const processedBeforeCandidate = processedCount;
             const strategyStats = getFinderStrategyDiagnosticsStats(strategyStatsByKey, plan);
             try {
                 const normalizedParams = plan.strategy.normalizeParams ? plan.strategy.normalizeParams(params) : { ...params };
@@ -948,7 +966,14 @@ export async function runPolymarketFinder(
                     backtestSettings: settings,
                     backtestFn: runFinderCandidateBacktest,
                     precomputed,
+                    backtestOptions: {
+                        collectDiagnostics: true,
+                        includeSharpeRatio: requiresSharpeRatio,
+                        omitEquityCurve: !requiresSharpeRatio,
+                    },
                 });
+                recordFinderBacktestDiagnostics(strategyStats.backtest, backtestResult.diagnostics);
+                recordFinderBacktestDiagnostics(backtestStats, backtestResult.diagnostics);
                 const backtestMs = performance.now() - backtestStartedAt;
                 timings.backtest += backtestMs;
                 strategyStats.backtestMs += backtestMs;
@@ -1302,9 +1327,12 @@ export async function runPolymarketFinder(
                     }
                 }
             } catch (error) {
-                failedCount += evaluationCountPerParamSet;
-                processedCount += evaluationCountPerParamSet;
-                strategyStats.failedRuns++;
+                const processedDuringCandidate = Math.max(0, processedCount - processedBeforeCandidate);
+                const failedEvaluations = Math.max(1, evaluationCountPerParamSet - processedDuringCandidate);
+                failedCount += failedEvaluations;
+                processedCount += Math.max(0, evaluationCountPerParamSet - processedDuringCandidate);
+                strategyStats.failedRuns += failedEvaluations;
+                recordFinderStrategyFailure(strategyStats, error, failedEvaluations);
                 const detail = error instanceof Error ? error.message : String(error);
                 debugLogger.warn("[Finder][polymarket] Candidate evaluation failed", {
                     strategyKey: plan.key,
@@ -1370,6 +1398,8 @@ export async function runPolymarketFinder(
         failedRuns: failedCount,
         timings,
         strategyBreakdown: toFinderStrategyDiagnostics(strategyStatsByKey),
+        backtestDiagnostics: toFinderBacktestDiagnostics(backtestStats),
+        failureBreakdown: toFinderFailureDiagnostics(strategyStatsByKey),
     });
     debugLogger.event("finder.diagnostics", diagnostics);
 

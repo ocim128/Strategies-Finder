@@ -69,6 +69,226 @@ describe('Backtesting Engine', () => {
         expect(result.profitFactor).to.equal(Infinity); // No losses
     });
 
+    it('preserves chronological execution for out-of-order raw signals', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 103, low: 99, close: 102, volume: 1000 },
+            { time: 3 as Time, open: 102, high: 106, low: 101, close: 105, volume: 1000 },
+            { time: 4 as Time, open: 105, high: 106, low: 103, close: 104, volume: 1000 },
+            { time: 5 as Time, open: 104, high: 109, low: 103, close: 108, volume: 1000 },
+        ];
+        const sortedSignals: Signal[] = [
+            { time: 1 as Time, type: 'buy', price: 100 },
+            { time: 3 as Time, type: 'sell', price: 105 },
+            { time: 4 as Time, type: 'buy', price: 104 },
+            { time: 5 as Time, type: 'sell', price: 108 },
+        ];
+        const unsortedSignals = [
+            sortedSignals[2],
+            sortedSignals[3],
+            sortedSignals[0],
+            sortedSignals[1],
+        ];
+        const settings = { tradeDirection: 'long' as const, executionModel: 'signal_close' as const };
+
+        const expected = runBacktest(data, sortedSignals, 1000, 100, 0, settings);
+        const actual = runBacktest(data, unsortedSignals, 1000, 100, 0, settings);
+
+        expect(actual.trades).to.deep.equal(expected.trades);
+        expect(actual.netProfit).to.equal(expected.netProfit);
+    });
+
+    it('collects opt-in backtest diagnostics for Finder profiling', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 103, low: 99, close: 102, volume: 1000 },
+            { time: 3 as Time, open: 102, high: 106, low: 101, close: 105, volume: 1000 },
+            { time: 4 as Time, open: 105, high: 106, low: 102, close: 103, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 1 as Time, type: 'buy', price: 100 },
+            { time: 4 as Time, type: 'sell', price: 103 },
+        ];
+
+        const plainResult = runBacktest(data, signals, 1000, 100, 0);
+        const profiledResult = runBacktest(data, signals, 1000, 100, 0, {}, undefined, undefined, {
+            collectDiagnostics: true,
+        });
+
+        expect(plainResult.diagnostics).to.equal(undefined);
+        expect(profiledResult.diagnostics?.counts.inputSignals).to.equal(2);
+        expect(profiledResult.diagnostics?.counts.preparedSignals).to.equal(2);
+        expect(profiledResult.diagnostics?.counts.barsScanned).to.equal(data.length);
+        expect(profiledResult.diagnostics?.counts.tradesOpened).to.equal(1);
+        expect(profiledResult.diagnostics?.counts.tradesClosed).to.equal(1);
+        expect(profiledResult.diagnostics?.counts.fastPathRuns).to.equal(0);
+        expect(profiledResult.diagnostics?.fastPath?.blockers).to.include('equity_curve_required');
+        expect(profiledResult.diagnostics?.timingsMs.total).to.be.greaterThan(0);
+        expect(profiledResult.diagnostics?.timingsMs.tradeSimulation).to.be.greaterThan(0);
+    });
+
+    it('can omit the equity curve for non-Sharpe Finder candidate runs', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 3 as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 },
+            { time: 4 as Time, open: 101, high: 104, low: 100, close: 103, volume: 1000 },
+            { time: 5 as Time, open: 103, high: 105, low: 102, close: 104, volume: 1000 },
+            { time: 6 as Time, open: 104, high: 105, low: 103, close: 104, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 3 as Time, type: 'buy', price: 101 },
+            { time: 5 as Time, type: 'sell', price: 104 },
+        ];
+        const settings = { tradeDirection: 'long' as const, executionModel: 'signal_close' as const };
+
+        const baseline = runBacktest(data, signals, 1000, 100, 0, settings, undefined, undefined, {
+            includeSharpeRatio: false,
+        });
+        const omitted = runBacktest(data, signals, 1000, 100, 0, settings, undefined, undefined, {
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+            collectDiagnostics: true,
+        });
+
+        expect(omitted.equityCurve).to.deep.equal([]);
+        expect(omitted.totalTrades).to.equal(baseline.totalTrades);
+        expect(omitted.netProfit).to.equal(baseline.netProfit);
+        expect(omitted.maxDrawdown).to.equal(baseline.maxDrawdown);
+        expect(omitted.diagnostics?.counts.barsScanned).to.be.lessThan(data.length);
+    });
+
+    it('honors disabled Sharpe calculation in compact backtests', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 103, low: 99, close: 102, volume: 1000 },
+            { time: 3 as Time, open: 102, high: 106, low: 101, close: 105, volume: 1000 },
+            { time: 4 as Time, open: 105, high: 106, low: 102, close: 103, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 1 as Time, type: 'buy', price: 100 },
+            { time: 4 as Time, type: 'sell', price: 103 },
+        ];
+
+        const result = runBacktestCompact(data, signals, 1000, 100, 0, {}, undefined, undefined, {
+            includeSharpeRatio: false,
+            collectDiagnostics: true,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.sharpeRatio).to.equal(0);
+        expect(result.diagnostics?.counts.preparedSignals).to.equal(2);
+    });
+
+    it('preserves trade history when Finder uses the single-position fast path', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 101, low: 99.5, close: 100, volume: 1000 },
+            { time: 3 as Time, open: 100, high: 102.5, low: 99.5, close: 102, volume: 1000 },
+            { time: 4 as Time, open: 102, high: 103, low: 101, close: 101, volume: 1000 },
+            { time: 5 as Time, open: 101, high: 101.5, low: 100.5, close: 101, volume: 1000 },
+            { time: 6 as Time, open: 101, high: 101.5, low: 99, close: 99.5, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 2 as Time, type: 'buy', price: 100 },
+            { time: 4 as Time, type: 'sell', price: 101 },
+            { time: 5 as Time, type: 'buy', price: 101 },
+        ];
+        const settings = {
+            tradeDirection: 'long' as const,
+            executionModel: 'signal_close' as const,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: true,
+            stopLossPercent: 1,
+            takeProfitEnabled: true,
+            takeProfitPercent: 2,
+            disableSignalExits: true,
+        };
+
+        const baseline = runBacktest(data, signals, 1000, 100, 0, settings, undefined, undefined, {
+            includeSharpeRatio: false,
+        });
+        const fast = runBacktest(data, signals, 1000, 100, 0, settings, undefined, undefined, {
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+            collectDiagnostics: true,
+        });
+
+        expect(fast.equityCurve).to.deep.equal([]);
+        expect(fast.trades).to.deep.equal(baseline.trades);
+        expect(fast.netProfit).to.equal(baseline.netProfit);
+        expect(fast.maxDrawdown).to.equal(baseline.maxDrawdown);
+        expect(fast.diagnostics?.counts.fastPathRuns).to.equal(1);
+        expect(fast.diagnostics?.fastPath?.used).to.equal(true);
+        expect(fast.diagnostics?.timingsMs.tradeSimulation).to.be.greaterThan(0);
+    });
+
+    it('preserves next-open entry-bar stop behavior on the Finder fast path', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 100.5, low: 99.5, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 101, low: 98, close: 99, volume: 1000 },
+            { time: 3 as Time, open: 99, high: 100, low: 98, close: 99, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 1 as Time, type: 'buy', price: 100 },
+        ];
+        const settings = {
+            tradeDirection: 'long' as const,
+            executionModel: 'next_open' as const,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: true,
+            stopLossPercent: 1,
+            takeProfitEnabled: true,
+            takeProfitPercent: 5,
+            disableSignalExits: true,
+        };
+
+        const baseline = runBacktest(data, signals, 1000, 100, 0, settings, undefined, undefined, {
+            includeSharpeRatio: false,
+        });
+        const fast = runBacktest(data, signals, 1000, 100, 0, settings, undefined, undefined, {
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+        });
+
+        expect(fast.trades).to.deep.equal(baseline.trades);
+        expect(fast.trades[0]?.exitReason).to.equal('stop_loss');
+        expect(fast.trades[0]?.exitTime).to.equal(2);
+        expect(fast.trades[0]?.exitPrice).to.equal(99);
+    });
+
+    it('preserves both-direction signal-close flips on the Finder fast path', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 103, low: 99, close: 102, volume: 1000 },
+            { time: 3 as Time, open: 102, high: 103, low: 98, close: 99, volume: 1000 },
+            { time: 4 as Time, open: 99, high: 100, low: 95, close: 96, volume: 1000 },
+            { time: 5 as Time, open: 96, high: 99, low: 95, close: 98, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 1 as Time, type: 'buy', price: 100 },
+            { time: 3 as Time, type: 'sell', price: 99 },
+            { time: 5 as Time, type: 'buy', price: 98 },
+        ];
+        const settings = {
+            tradeDirection: 'both' as const,
+            executionModel: 'signal_close' as const,
+        };
+
+        const baseline = runBacktest(data, signals, 1000, 100, 0, settings, undefined, undefined, {
+            includeSharpeRatio: false,
+        });
+        const fast = runBacktest(data, signals, 1000, 100, 0, settings, undefined, undefined, {
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+            collectDiagnostics: true,
+        });
+
+        expect(fast.diagnostics?.counts.fastPathRuns).to.equal(1);
+        expect(fast.trades).to.deep.equal(baseline.trades);
+        expect(fast.trades.map((trade) => trade.type)).to.deep.equal(['long', 'short', 'long']);
+    });
+
     it('can ignore strategy exit signals until chart TP or SL closes the trade', () => {
         const data: OHLCVData[] = [
             { time: 1 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },

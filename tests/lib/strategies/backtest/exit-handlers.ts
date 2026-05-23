@@ -14,6 +14,10 @@ export interface PositionExitOptions {
     openOnly?: boolean;
 }
 
+const DEFAULT_POSITION_EXIT_OPTIONS: PositionExitOptions = {};
+export const OPEN_ONLY_POSITION_EXIT_OPTIONS: PositionExitOptions = { openOnly: true };
+export const STOP_LOSS_ONLY_POSITION_EXIT_OPTIONS: PositionExitOptions = { stopLossOnly: true };
+
 export function canExitAfterMinimumHold(position: PositionState, config: NormalizedSettings): boolean {
     return !config.riskMinHoldEnabled
         || config.riskMinHoldBars <= 0
@@ -95,7 +99,7 @@ export function processPositionExits(
     position: PositionState,
     config: NormalizedSettings,
     slippageRate: number,
-    options: PositionExitOptions = {}
+    options: PositionExitOptions = DEFAULT_POSITION_EXIT_OPTIONS
 ): PositionExitTrigger | null {
     const isShortPosition = position.direction === 'short';
     const exitSide = exitSideForDirection(position.direction);

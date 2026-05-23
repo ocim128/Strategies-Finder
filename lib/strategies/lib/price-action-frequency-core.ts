@@ -1,5 +1,14 @@
 ﻿import { OHLCVData } from "../../types/strategies";
 
+type NullableSeries = (number | null)[];
+
+const rangeSeriesCache = new WeakMap<OHLCVData[], number[]>();
+const bodyPctSeriesCache = new WeakMap<OHLCVData[], number[]>();
+const closeLocationSeriesCache = new WeakMap<OHLCVData[], number[]>();
+const closeAcceptanceSeriesCache = new WeakMap<OHLCVData[], number[]>();
+const initiativePressureCache = new WeakMap<OHLCVData[], Map<number, NullableSeries>>();
+const trailingHighLowCache = new WeakMap<OHLCVData[], Map<string, { highest: NullableSeries; lowest: NullableSeries }>>();
+
 export interface PriceActionBarMetrics {
 	range: number;
 	body: number;
@@ -68,25 +77,45 @@ function buildMetricSeries(
 	return result;
 }
 
+function getCachedMetricSeries(
+	cache: WeakMap<OHLCVData[], number[]>,
+	data: OHLCVData[],
+	build: () => number[]
+): number[] {
+	const cached = cache.get(data);
+	if (cached) return cached;
+	const result = build();
+	cache.set(data, result);
+	return result;
+}
+
 export function buildRangeSeries(data: OHLCVData[]): number[] {
-	return buildMetricSeries(data, (_bar, metrics) => metrics.range);
+	return getCachedMetricSeries(rangeSeriesCache, data, () =>
+		buildMetricSeries(data, (_bar, metrics) => metrics.range)
+	);
 }
 
 export function buildBodyPctSeries(data: OHLCVData[]): number[] {
-	return buildMetricSeries(data, (_bar, metrics) => metrics.bodyPct);
+	return getCachedMetricSeries(bodyPctSeriesCache, data, () =>
+		buildMetricSeries(data, (_bar, metrics) => metrics.bodyPct)
+	);
 }
 
 export function buildCloseLocationSeries(data: OHLCVData[]): number[] {
-	return buildMetricSeries(data, (_bar, metrics) => metrics.closeLocation);
+	return getCachedMetricSeries(closeLocationSeriesCache, data, () =>
+		buildMetricSeries(data, (_bar, metrics) => metrics.closeLocation)
+	);
 }
 
 export function buildCloseAcceptanceSeries(data: OHLCVData[]): number[] {
-	return buildMetricSeries(data, (bar, metrics) => {
-		if (metrics.range <= 0) return 0;
-		const closeBias = metrics.closeLocation * 2 - 1;
-		const directionalBody = (bar.close - bar.open) / metrics.range;
-		return clamp((closeBias + directionalBody) / 2, -1, 1);
-	});
+	return getCachedMetricSeries(closeAcceptanceSeriesCache, data, () =>
+		buildMetricSeries(data, (bar, metrics) => {
+			if (metrics.range <= 0) return 0;
+			const closeBias = metrics.closeLocation * 2 - 1;
+			const directionalBody = (bar.close - bar.open) / metrics.range;
+			return clamp((closeBias + directionalBody) / 2, -1, 1);
+		})
+	);
 }
 
 export function buildRollingAverage(
@@ -115,7 +144,15 @@ export function buildInitiativePressureSeries(
 	lookbackInput: number
 ): (number | null)[] {
 	const lookback = Math.max(2, Math.round(lookbackInput));
-	const result: (number | null)[] = new Array(data.length).fill(null);
+	let byLookback = initiativePressureCache.get(data);
+	if (!byLookback) {
+		byLookback = new Map<number, NullableSeries>();
+		initiativePressureCache.set(data, byLookback);
+	}
+	const cached = byLookback.get(lookback);
+	if (cached) return cached;
+
+	const result: NullableSeries = new Array(data.length).fill(null);
 	const closeAcceptance = buildCloseAcceptanceSeries(data);
 	const avgVolumes = buildRollingAverage(data.map((bar) => Math.max(0, bar.volume)), lookback);
 
@@ -126,6 +163,7 @@ export function buildInitiativePressureSeries(
 		result[i] = closeAcceptance[i] * relativeVolume;
 	}
 
+	byLookback.set(lookback, result);
 	return result;
 }
 
@@ -135,28 +173,54 @@ export function buildTrailingHighLow(
 	includeCurrent = false
 ): { highest: (number | null)[]; lowest: (number | null)[] } {
 	const lookback = Math.max(1, Math.round(lookbackInput));
-	const highest: (number | null)[] = new Array(data.length).fill(null);
-	const lowest: (number | null)[] = new Array(data.length).fill(null);
+	const cacheKey = `${lookback}|${includeCurrent ? 1 : 0}`;
+	let byKey = trailingHighLowCache.get(data);
+	if (!byKey) {
+		byKey = new Map<string, { highest: NullableSeries; lowest: NullableSeries }>();
+		trailingHighLowCache.set(data, byKey);
+	}
+	const cached = byKey.get(cacheKey);
+	if (cached) return cached;
+
+	const highest: NullableSeries = new Array(data.length).fill(null);
+	const lowest: NullableSeries = new Array(data.length).fill(null);
+	const highDeque: number[] = [];
+	const lowDeque: number[] = [];
+	let nextIndexToAdd = 0;
+
+	const addIndex = (index: number): void => {
+		const high = data[index].high;
+		const low = data[index].low;
+		while (highDeque.length > 0 && data[highDeque[highDeque.length - 1]].high <= high) {
+			highDeque.pop();
+		}
+		highDeque.push(index);
+		while (lowDeque.length > 0 && data[lowDeque[lowDeque.length - 1]].low >= low) {
+			lowDeque.pop();
+		}
+		lowDeque.push(index);
+	};
 
 	for (let i = 0; i < data.length; i++) {
 		const end = includeCurrent ? i : i - 1;
+		while (nextIndexToAdd <= end) {
+			addIndex(nextIndexToAdd);
+			nextIndexToAdd++;
+		}
+
 		const start = end - lookback + 1;
-		if (start < 0 || end < 0) {
-			continue;
-		}
+		while (highDeque.length > 0 && highDeque[0] < start) highDeque.shift();
+		while (lowDeque.length > 0 && lowDeque[0] < start) lowDeque.shift();
 
-		let hi = -Infinity;
-		let lo = Infinity;
-		for (let j = start; j <= end; j++) {
-			if (data[j].high > hi) hi = data[j].high;
-			if (data[j].low < lo) lo = data[j].low;
-		}
-
-		highest[i] = hi;
-		lowest[i] = lo;
+		if (start < 0 || end < 0 || highDeque.length === 0 || lowDeque.length === 0) continue;
+		highest[i] = data[highDeque[0]].high;
+		lowest[i] = data[lowDeque[0]].low;
 	}
 
-	return { highest, lowest };
+	const result = { highest, lowest };
+	byKey.set(cacheKey, result);
+
+	return result;
 }
 
 export type BarMetricType = 'gapPct' | 'closeReturn' | 'bodyDirection' | 'bodyPct' | 'wickImbalance' | 'bodyMidDelta' | 'closeMidpointDev' | 'trueRange';

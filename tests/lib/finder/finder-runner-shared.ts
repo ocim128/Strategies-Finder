@@ -6,6 +6,7 @@ import {
     Strategy,
     StrategyParams,
     Time,
+    buildEntryBacktestDiagnostics,
     buildEntryBacktestResult,
     precomputeIndicators,
     runBacktest,
@@ -88,7 +89,8 @@ export type FinderBacktestFn = (
     commissionPercent: number,
     settings?: BacktestSettings,
     sizing?: Parameters<typeof runBacktest>[6],
-    precomputed?: ReturnType<typeof precomputeIndicators>
+    precomputed?: ReturnType<typeof precomputeIndicators>,
+    options?: Parameters<typeof runBacktest>[8]
 ) => BacktestResult;
 
 export type FinderSignalTiming = {
@@ -163,6 +165,7 @@ export function runStrategyBacktest(args: {
     backtestSettings: BacktestSettings;
     backtestFn: FinderBacktestFn;
     precomputed?: ReturnType<typeof precomputeIndicators>;
+    backtestOptions?: Parameters<typeof runBacktest>[8];
 }): BacktestResult {
     const {
         strategy,
@@ -175,10 +178,22 @@ export function runStrategyBacktest(args: {
         precomputed,
     } = args;
     const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount, advancedSizing } = capitalSettings;
+    const evaluationStartedAt = performance.now();
     const evaluation = strategy.evaluate?.(data, params, signals);
+    const evaluationMs = performance.now() - evaluationStartedAt;
     const entryStats = evaluation?.entryStats;
     return strategy.metadata?.role === "entry" && entryStats
-        ? buildEntryBacktestResult(entryStats)
+        ? buildEntryBacktestResult(
+            entryStats,
+            args.backtestOptions?.collectDiagnostics
+                ? buildEntryBacktestDiagnostics({
+                    entryStats,
+                    inputBars: data.length,
+                    inputSignals: signals.length,
+                    elapsedMs: evaluationMs,
+                })
+                : undefined
+        )
         : backtestFn(
             data,
             signals,
@@ -187,7 +202,8 @@ export function runStrategyBacktest(args: {
             commission,
             backtestSettings,
             { mode: sizingMode, fixedTradeAmount, advancedSizing },
-            precomputed
+            precomputed,
+            args.backtestOptions
         );
 }
 
@@ -240,7 +256,9 @@ export function runBacktestAndInsert(
     capitalSettings: CapitalSettings,
     backtestSettings: BacktestSettings,
     precomputed: ReturnType<typeof precomputeIndicators>,
-    insertResult: (candidate: CandidateResult) => void
+    insertResult: (candidate: CandidateResult) => void,
+    onResult?: (result: BacktestResult) => void,
+    onFailure?: (error: unknown) => void
 ): boolean {
     try {
         const result = runStrategyBacktest({
@@ -252,7 +270,9 @@ export function runBacktestAndInsert(
             backtestSettings,
             backtestFn,
             precomputed,
+            backtestOptions: { collectDiagnostics: true },
         });
+        onResult?.(result);
         insertResult({
             key: job.key,
             name: job.name,
@@ -264,6 +284,7 @@ export function runBacktestAndInsert(
         debugLogger.warn(`[Finder] Backtest failed for ${job.key}`, {
             error: error instanceof Error ? error.message : String(error),
         });
+        onFailure?.(error);
         return false;
     }
 }

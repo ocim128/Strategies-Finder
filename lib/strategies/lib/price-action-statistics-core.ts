@@ -1,6 +1,32 @@
 ﻿import { OHLCVData } from "../../types/strategies";
 import { computePriceActionBarMetrics } from "./price-action-frequency-core";
 
+type NullableSeries = (number | null)[];
+
+const rollingStdDevCache = new WeakMap<number[], Map<number, NullableSeries>>();
+const rollingZScoreCache = new WeakMap<number[], Map<string, NullableSeries>>();
+const rollingMedianCache = new WeakMap<number[], Map<number, NullableSeries>>();
+const rollingEntropyCache = new WeakMap<number[], Map<string, NullableSeries>>();
+const percentileRankCache = new WeakMap<number[], Map<number, NullableSeries>>();
+
+function getCachedSeries<K>(
+	cache: WeakMap<number[], Map<K, NullableSeries>>,
+	values: number[],
+	key: K,
+	build: () => NullableSeries
+): NullableSeries {
+	let byKey = cache.get(values);
+	if (!byKey) {
+		byKey = new Map<K, NullableSeries>();
+		cache.set(values, byKey);
+	}
+	const cached = byKey.get(key);
+	if (cached) return cached;
+	const result = build();
+	byKey.set(key, result);
+	return result;
+}
+
 // ============================================================================
 // Statistical Helpers for Strategy Diversity
 // ============================================================================
@@ -15,24 +41,29 @@ export function buildRollingStdDev(
 	lookbackInput: number
 ): (number | null)[] {
 	const lookback = Math.max(2, Math.round(lookbackInput));
-	const result: (number | null)[] = new Array(values.length).fill(null);
-
-	for (let i = lookback - 1; i < values.length; i++) {
+	return getCachedSeries(rollingStdDevCache, values, lookback, () => {
+		const result: NullableSeries = new Array(values.length).fill(null);
 		let sum = 0;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			sum += values[j];
-		}
-		const mean = sum / lookback;
+		let sumSquares = 0;
 
-		let sumSqDiff = 0;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			const diff = values[j] - mean;
-			sumSqDiff += diff * diff;
-		}
-		result[i] = Math.sqrt(sumSqDiff / lookback);
-	}
+		for (let i = 0; i < values.length; i++) {
+			const value = values[i];
+			sum += value;
+			sumSquares += value * value;
 
-	return result;
+			if (i >= lookback) {
+				const removed = values[i - lookback];
+				sum -= removed;
+				sumSquares -= removed * removed;
+			}
+			if (i < lookback - 1) continue;
+			const mean = sum / lookback;
+			const variance = Math.max(0, (sumSquares / lookback) - (mean * mean));
+			result[i] = Math.sqrt(variance);
+		}
+
+		return result;
+	});
 }
 
 /**
@@ -45,26 +76,31 @@ export function buildRollingZScore(
 	minStdDev = 1e-9
 ): (number | null)[] {
 	const lookback = Math.max(2, Math.round(lookbackInput));
-	const result: (number | null)[] = new Array(values.length).fill(null);
-	const varianceFloor = Math.max(minStdDev, 1e-12);
-
-	for (let i = lookback - 1; i < values.length; i++) {
+	const stdDevFloor = Math.max(minStdDev, 1e-12);
+	return getCachedSeries(rollingZScoreCache, values, `${lookback}|${stdDevFloor}`, () => {
+		const result: NullableSeries = new Array(values.length).fill(null);
 		let sum = 0;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			sum += values[j];
-		}
-		const mean = sum / lookback;
+		let sumSquares = 0;
 
-		let sumSqDiff = 0;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			const diff = values[j] - mean;
-			sumSqDiff += diff * diff;
-		}
-		const stddev = Math.max(Math.sqrt(sumSqDiff / lookback), varianceFloor);
-		result[i] = (values[i] - mean) / stddev;
-	}
+		for (let i = 0; i < values.length; i++) {
+			const value = values[i];
+			sum += value;
+			sumSquares += value * value;
 
-	return result;
+			if (i >= lookback) {
+				const removed = values[i - lookback];
+				sum -= removed;
+				sumSquares -= removed * removed;
+			}
+			if (i < lookback - 1) continue;
+			const mean = sum / lookback;
+			const variance = Math.max(0, (sumSquares / lookback) - (mean * mean));
+			const stddev = Math.max(Math.sqrt(variance), stdDevFloor);
+			result[i] = (value - mean) / stddev;
+		}
+
+		return result;
+	});
 }
 
 /**
@@ -77,24 +113,39 @@ export function buildPercentileRank(
 	lookbackInput: number
 ): (number | null)[] {
 	const lookback = Math.max(2, Math.round(lookbackInput));
-	const result: (number | null)[] = new Array(values.length).fill(null);
+	return getCachedSeries(percentileRankCache, values, lookback, () => {
+		const result: NullableSeries = new Array(values.length).fill(null);
+		const window: number[] = [];
+		const lowerBound = (value: number): number => {
+			let low = 0;
+			let high = window.length;
+			while (low < high) {
+				const mid = (low + high) >> 1;
+				if (window[mid] < value) low = mid + 1;
+				else high = mid;
+			}
+			return low;
+		};
 
-	for (let i = lookback - 1; i < values.length; i++) {
-		const current = values[i];
-		if (!Number.isFinite(current)) continue;
-		let countBelow = 0;
-		let validCount = 0;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			const sample = values[j];
-			if (!Number.isFinite(sample)) continue;
-			validCount++;
-			if (sample < current) countBelow++;
+		for (let i = 0; i < values.length; i++) {
+			const current = values[i];
+			if (Number.isFinite(current)) {
+				window.splice(lowerBound(current), 0, current);
+			}
+
+			if (i >= lookback) {
+				const removed = values[i - lookback];
+				if (Number.isFinite(removed)) {
+					window.splice(lowerBound(removed), 1);
+				}
+			}
+
+			if (i < lookback - 1 || !Number.isFinite(current) || window.length < 2) continue;
+			result[i] = lowerBound(current) / (window.length - 1);
 		}
-		if (validCount < 2) continue;
-		result[i] = countBelow / (validCount - 1);
-	}
 
-	return result;
+		return result;
+	});
 }
 
 /**
@@ -278,27 +329,43 @@ export function buildThresholdCrossingCount(
 /**
  * Rolling median over a fixed lookback window.
  * Robust to outliers â€” useful as an alternative center-of-gravity to mean.
- * Uses insertion-sort on the window for simplicity at typical lookback sizes.
+ * Maintains a sorted sliding window to avoid rebuilding the full window per bar.
  */
 export function buildRollingMedian(
 	values: number[],
 	lookbackInput: number
 ): (number | null)[] {
 	const lookback = Math.max(1, Math.round(lookbackInput));
-	const result: (number | null)[] = new Array(values.length).fill(null);
-
-	for (let i = lookback - 1; i < values.length; i++) {
+	return getCachedSeries(rollingMedianCache, values, lookback, () => {
+		const result: NullableSeries = new Array(values.length).fill(null);
 		const window: number[] = [];
-		for (let j = i - lookback + 1; j <= i; j++) {
-			window.push(values[j]);
+		const lowerBound = (value: number): number => {
+			let low = 0;
+			let high = window.length;
+			while (low < high) {
+				const mid = (low + high) >> 1;
+				if (window[mid] < value) low = mid + 1;
+				else high = mid;
+			}
+			return low;
+		};
+
+		for (let i = 0; i < values.length; i++) {
+			const value = values[i];
+			window.splice(lowerBound(value), 0, value);
+
+			if (i >= lookback) {
+				const removed = values[i - lookback];
+				window.splice(lowerBound(removed), 1);
+			}
+			if (i < lookback - 1) continue;
+
+			const mid = lookback >> 1;
+			result[i] = (lookback & 1) ? window[mid] : (window[mid - 1] + window[mid]) / 2;
 		}
-		window.sort((a, b) => a - b);
 
-		const mid = lookback >> 1;
-		result[i] = (lookback & 1) ? window[mid] : (window[mid - 1] + window[mid]) / 2;
-	}
-
-	return result;
+		return result;
+	});
 }
 
 /**
@@ -406,39 +473,41 @@ export function buildRollingEntropy(
 ): (number | null)[] {
 	const lookback = Math.max(3, Math.round(lookbackInput));
 	const bins = Math.max(2, Math.round(numBins));
-	const result: (number | null)[] = new Array(values.length).fill(null);
+	return getCachedSeries(rollingEntropyCache, values, `${lookback}|${bins}`, () => {
+		const result: NullableSeries = new Array(values.length).fill(null);
 
-	for (let i = lookback - 1; i < values.length; i++) {
-		let wMin = Infinity;
-		let wMax = -Infinity;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			if (values[j] < wMin) wMin = values[j];
-			if (values[j] > wMax) wMax = values[j];
+		for (let i = lookback - 1; i < values.length; i++) {
+			let wMin = Infinity;
+			let wMax = -Infinity;
+			for (let j = i - lookback + 1; j <= i; j++) {
+				if (values[j] < wMin) wMin = values[j];
+				if (values[j] > wMax) wMax = values[j];
+			}
+
+			const wRange = wMax - wMin;
+			if (wRange <= 0) {
+				result[i] = 0; // all identical â†’ zero entropy
+				continue;
+			}
+
+			const counts = new Array(bins).fill(0);
+			for (let j = i - lookback + 1; j <= i; j++) {
+				let bin = Math.floor(((values[j] - wMin) / wRange) * bins);
+				if (bin >= bins) bin = bins - 1; // clamp max edge
+				counts[bin]++;
+			}
+
+			let entropy = 0;
+			for (let b = 0; b < bins; b++) {
+				if (counts[b] === 0) continue;
+				const p = counts[b] / lookback;
+				entropy -= p * Math.log2(p);
+			}
+			result[i] = entropy;
 		}
 
-		const wRange = wMax - wMin;
-		if (wRange <= 0) {
-			result[i] = 0; // all identical â†’ zero entropy
-			continue;
-		}
-
-		const counts = new Array(bins).fill(0);
-		for (let j = i - lookback + 1; j <= i; j++) {
-			let bin = Math.floor(((values[j] - wMin) / wRange) * bins);
-			if (bin >= bins) bin = bins - 1; // clamp max edge
-			counts[bin]++;
-		}
-
-		let entropy = 0;
-		for (let b = 0; b < bins; b++) {
-			if (counts[b] === 0) continue;
-			const p = counts[b] / lookback;
-			entropy -= p * Math.log2(p);
-		}
-		result[i] = entropy;
-	}
-
-	return result;
+		return result;
+	});
 }
 
 /**

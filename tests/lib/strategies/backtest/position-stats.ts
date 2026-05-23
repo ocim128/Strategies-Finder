@@ -38,29 +38,40 @@ export function calculateBacktestStats(
     finalCapital: number,
     maxDrawdown: number,
     maxDrawdownPercent: number,
-    options?: { includeAdvancedAnalytics?: boolean }
+    options?: { includeAdvancedAnalytics?: boolean; includeSharpeRatio?: boolean }
 ): BacktestResult {
-    const winningTrades = trades.filter(t => t.pnl > 0);
-    const totalProfit = winningTrades.reduce((sum, t) => sum + t.pnl, 0);
-    const totalLoss = Math.abs(trades.filter(t => t.pnl <= 0).reduce((sum, t) => sum + t.pnl, 0));
+    let winningCount = 0;
+    let totalProfit = 0;
+    let totalLoss = 0;
+    for (const trade of trades) {
+        if (trade.pnl > 0) {
+            winningCount++;
+            totalProfit += trade.pnl;
+        } else {
+            totalLoss += Math.abs(trade.pnl);
+        }
+    }
 
-    const avgWin = winningTrades.length > 0 ? totalProfit / winningTrades.length : 0;
-    const losingCount = trades.length - winningTrades.length;
+    const avgWin = winningCount > 0 ? totalProfit / winningCount : 0;
+    const losingCount = trades.length - winningCount;
     const avgLoss = losingCount > 0 ? totalLoss / losingCount : 0;
 
     const netProfit = finalCapital - initialCapital;
     const netProfitPercent = initialCapital > 0 ? (netProfit / initialCapital) * 100 : 0;
-    const winRate = trades.length > 0 ? (winningTrades.length / trades.length) : 0;
+    const winRate = trades.length > 0 ? (winningCount / trades.length) : 0;
     const lossRate = 1 - winRate;
     const expectancy = (winRate * avgWin) - (lossRate * avgLoss);
     const avgTrade = trades.length > 0 ? netProfit / trades.length : 0;
     const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
 
+    const includeSharpeRatio = options?.includeSharpeRatio !== false;
     const includeAdvancedAnalytics = options?.includeAdvancedAnalytics !== false;
-    const sharpeRatio = equityCurve.length > 1
+    const sharpeRatio = includeSharpeRatio && equityCurve.length > 1
         ? calculateSharpeRatioFromEquityCurve(equityCurve)
-        : calculateSharpeRatioFromReturns(trades.map(t => t.pnlPercent));
-    const performanceAnalytics = includeAdvancedAnalytics && equityCurve.length > 1
+        : includeSharpeRatio
+            ? calculateSharpeRatioFromReturns(trades.map(t => t.pnlPercent))
+            : 0;
+    const performanceAnalytics = includeSharpeRatio && includeAdvancedAnalytics && equityCurve.length > 1
         ? calculateAdvancedPerformanceAnalyticsFromEquityCurve(equityCurve)
         : undefined;
 
@@ -75,7 +86,7 @@ export function calculateBacktestStats(
         maxDrawdown,
         maxDrawdownPercent,
         totalTrades: trades.length,
-        winningTrades: winningTrades.length,
+        winningTrades: winningCount,
         losingTrades: losingCount,
         avgWin,
         avgLoss,

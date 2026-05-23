@@ -4,7 +4,9 @@ import { OHLCVData, Time } from './lib/strategies/index';
 import {
     buildCloseAcceptanceSeries,
     buildInitiativePressureSeries,
+    buildTrailingHighLow,
 } from './lib/strategies/lib/price-action-frequency-core';
+import { buildPercentileRank } from './lib/strategies/lib/price-action-statistics-core';
 
 describe('Price Action Microstructure Helpers', () => {
     it('should score close acceptance by settlement quality', () => {
@@ -36,6 +38,37 @@ describe('Price Action Microstructure Helpers', () => {
         expect(pressure[1]).to.be.a('number');
         expect(pressure[2]).to.be.greaterThan(1);
         expect(pressure[3]).to.be.lessThan(-0.8);
+    });
+
+    it('should rank percentile windows with duplicates and non-finite samples', () => {
+        const values = [1, 2, 2, 4, Number.NaN, 3];
+        const rank = buildPercentileRank(values, 3);
+        const cachedRank = buildPercentileRank(values, 3);
+
+        expect(cachedRank).to.equal(rank);
+        expect(rank[0]).to.equal(null);
+        expect(rank[1]).to.equal(null);
+        expect(rank[2]).to.equal(0.5);
+        expect(rank[3]).to.equal(1);
+        expect(rank[4]).to.equal(null);
+        expect(rank[5]).to.equal(0);
+    });
+
+    it('should build trailing high and low windows without leaking the current bar by default', () => {
+        const data: OHLCVData[] = [
+            { time: '1' as Time, open: 7, high: 10, low: 5, close: 8, volume: 100 },
+            { time: '2' as Time, open: 8, high: 12, low: 6, close: 9, volume: 100 },
+            { time: '3' as Time, open: 9, high: 11, low: 4, close: 7, volume: 100 },
+            { time: '4' as Time, open: 7, high: 14, low: 7, close: 13, volume: 100 },
+        ];
+
+        const trailing = buildTrailingHighLow(data, 2);
+        const inclusive = buildTrailingHighLow(data, 2, true);
+
+        expect(trailing.highest).to.deep.equal([null, null, 12, 12]);
+        expect(trailing.lowest).to.deep.equal([null, null, 5, 4]);
+        expect(inclusive.highest).to.deep.equal([null, 12, 12, 14]);
+        expect(inclusive.lowest).to.deep.equal([null, 5, 4, 4]);
     });
 
 });
