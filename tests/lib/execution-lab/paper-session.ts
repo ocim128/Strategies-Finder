@@ -257,6 +257,10 @@ function isExecutableBacktestExit(reason: Trade["exitReason"]): reason is Execut
     return Boolean(reason) && reason !== "end_of_data" && reason !== "partial";
 }
 
+function shouldHoldPolymarketLegToResolution(snapshot: ExecutionLabSessionSnapshot): boolean {
+    return snapshot.exitMode === "resolve_hold";
+}
+
 function findSignalForTrade(trade: Trade, signals: readonly ExecutionLabEvaluatedSignal[]): ExecutionLabEvaluatedSignal | null {
     const entryTs = toSec(trade.entryTime);
     if (entryTs === null) return null;
@@ -559,8 +563,11 @@ function advanceOpenPosition(
     const exitReason = isExecutableBacktestExit(trade.exitReason) ? trade.exitReason : null;
     const exitTimeSec = exitReason === null ? null : tradeExecutionTimeSec(state.snapshot, trade.exitTime);
     const positionEvent = eventFromPosition(position);
+    const holdToResolution = shouldHoldPolymarketLegToResolution(state.snapshot);
     const protectionLatestTs = exitTimeSec !== null && exitTimeSec < position.eventEndTs ? exitTimeSec : null;
-    const protectionExit = findProtectionExitForPosition(state, input, position, protectionLatestTs);
+    const protectionExit = holdToResolution
+        ? null
+        : findProtectionExitForPosition(state, input, position, protectionLatestTs);
 
     if (protectionExit) {
         const exitRecord = buildExitRecord(
@@ -578,7 +585,7 @@ function advanceOpenPosition(
         return;
     }
 
-    if (exitReason !== null && exitTimeSec !== null && exitTimeSec <= input.latestCandleTimeSec && exitTimeSec < position.eventEndTs) {
+    if (!holdToResolution && exitReason !== null && exitTimeSec !== null && exitTimeSec <= input.latestCandleTimeSec && exitTimeSec < position.eventEndTs) {
         const exitFill = findExactFill({
             event: positionEvent,
             symbol: state.snapshot.outcomeSymbol,

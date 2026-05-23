@@ -179,7 +179,7 @@ function buildFuturesCandlesFromAggTrades(args: {
             close: lastClose,
             volume: 0,
             trade_count: 0,
-            source: "binance_1s",
+            source: "binance_1s_fill",
             updated_at: args.updatedAt,
         });
     }
@@ -352,15 +352,17 @@ export async function syncBinance1sRange(db: DatabaseSync, args: {
     const upserted = upsertBinance1sCandles(db, candles);
     const firstTs = candles[0]?.ts ?? null;
     const lastTs = candles[candles.length - 1]?.ts ?? null;
-    writeSecondDataSyncState(db, {
-        source: "binance_1s",
-        symbol: args.symbol,
-        series_id: marketType,
-        cursor_ts: lastTs,
-        cursor_id: "",
-        status: "ok",
-        updated_at: nowSec(),
-    });
+    if (lastTs !== null) {
+        writeSecondDataSyncState(db, {
+            source: "binance_1s",
+            symbol: args.symbol,
+            series_id: marketType,
+            cursor_ts: lastTs,
+            cursor_id: "",
+            status: "ok",
+            updated_at: nowSec(),
+        });
+    }
     return {
         fetched: candles.length,
         upserted,

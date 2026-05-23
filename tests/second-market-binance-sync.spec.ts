@@ -1,11 +1,30 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { expect } from "chai";
-import { fetchBinance1sCandles } from "../lib/second-market/binance-1s-sync";
+import {
+    loadSecondDataSyncState,
+    openSecondMarketDb,
+    writeSecondDataSyncState,
+} from "../lib/second-market/db";
+import { fetchBinance1sCandles, syncBinance1sRange } from "../lib/second-market/binance-1s-sync";
 
 const ORIGINAL_FETCH = globalThis.fetch;
+let tempDirs: string[] = [];
+
+function makeDbPath(): string {
+    const dir = mkdtempSync(join(tmpdir(), "second-market-binance-sync-"));
+    tempDirs.push(dir);
+    return join(dir, "second-market-data.sqlite");
+}
 
 afterEach(() => {
     globalThis.fetch = ORIGINAL_FETCH;
+    for (const dir of tempDirs) {
+        rmSync(dir, { recursive: true, force: true });
+    }
+    tempDirs = [];
 });
 
 describe("second market Binance 1s sync", () => {
@@ -62,6 +81,7 @@ describe("second market Binance 1s sync", () => {
             close: 100,
             volume: 0,
             trade_count: 0,
+            source: "binance_1s_fill",
         });
         expect(rows[2]).to.include({
             open: 102,
@@ -71,5 +91,40 @@ describe("second market Binance 1s sync", () => {
             volume: 2.75,
             trade_count: 3,
         });
+    });
+
+    it("preserves the cursor when a too-recent futures fetch returns no rows", async () => {
+        const db = openSecondMarketDb(makeDbPath());
+        const cursorTs = Math.floor(Date.now() / 1000) - 30;
+        try {
+            writeSecondDataSyncState(db, {
+                source: "binance_1s",
+                symbol: "BTCUSDT",
+                series_id: "futures",
+                cursor_ts: cursorTs,
+                cursor_id: "",
+                status: "ok",
+                updated_at: cursorTs,
+            });
+            globalThis.fetch = (async () => new Response("[]", {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            })) as typeof fetch;
+
+            const endTs = Math.floor(Date.now() / 1000) - 2;
+            const summary = await syncBinance1sRange(db, {
+                symbol: "BTCUSDT",
+                marketType: "futures",
+                startTs: endTs - 2,
+                endTs,
+            });
+
+            const state = loadSecondDataSyncState(db, "binance_1s", "BTCUSDT", "futures");
+            expect(summary.fetched).to.equal(0);
+            expect(summary.lastTs).to.equal(null);
+            expect(state?.cursor_ts).to.equal(cursorTs);
+        } finally {
+            db.close();
+        }
     });
 });

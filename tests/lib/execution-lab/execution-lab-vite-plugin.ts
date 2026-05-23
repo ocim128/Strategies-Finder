@@ -61,6 +61,10 @@ const GAMMA_EVENTS_URL = "https://gamma-api.polymarket.com/events";
 const CLOB_PRICE_URL = "https://clob.polymarket.com/price";
 const SUPPORTED_SYMBOLS = new Set(["BTCUSDT", "XRPUSDT"]);
 const RECENT_LOCAL_QUOTE_FALLBACK_SEC = 2;
+const MAX_STORED_LIVE_QUOTE_AGE_MS = 3_000;
+const LIVE_CANDLE_RATE_LIMIT_BACKOFF_MS = 60_000;
+const LIVE_CANDLE_TRANSIENT_BACKOFF_MS = 5_000;
+const FUTURES_STORED_ZERO_TAIL_REFETCH_SEC = 8;
 
 type LiveCandleRow = {
     symbol: SecondMarketSymbol;
@@ -72,6 +76,7 @@ type LiveCandleRow = {
     close: number;
     volume: number;
     trade_count: number | null;
+    source: string;
     updated_at: number;
 };
 
@@ -148,6 +153,19 @@ function readLiveUiConfigFromPayload(payload: Record<string, unknown>): Executio
 function finiteNumber(value: unknown): number | null {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : null;
+}
+
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+function liveCandleFetchBackoffMs(error: unknown): number {
+    const message = errorMessage(error);
+    if (/HTTP\s*(418|429)\b/i.test(message)) return LIVE_CANDLE_RATE_LIMIT_BACKOFF_MS;
+    if (/HTTP\s*5\d\d\b/i.test(message) || /fetch failed|network|timeout/i.test(message)) {
+        return LIVE_CANDLE_TRANSIENT_BACKOFF_MS;
+    }
+    return 0;
 }
 
 export function normalizeExecutionLabClobPrice(value: unknown): number | null {
@@ -300,8 +318,13 @@ function normalizeBinanceKline(symbol: SecondMarketSymbol, marketType: "spot" | 
         close,
         volume,
         trade_count: tradeCount === null ? null : Math.floor(tradeCount),
+        source: "binance_1s",
         updated_at: Math.floor(Date.now() / 1000),
     };
+}
+
+function hasTradeActivity(row: Pick<LiveCandleRow, "volume" | "trade_count">): boolean {
+    return row.volume > 0 || (row.trade_count ?? 0) > 0;
 }
 
 let executionLabReadDb: DatabaseSync | null = null;
@@ -347,7 +370,7 @@ function loadStoredLiveCandles(args: {
     if (!db) return [];
     try {
         const rows = db.prepare(`
-            SELECT symbol, market_type, ts, open, high, low, close, volume, trade_count, updated_at
+            SELECT symbol, market_type, ts, open, high, low, close, volume, trade_count, source, updated_at
             FROM binance_1s_candles
             WHERE symbol = ? AND market_type = ? AND ts >= ? AND ts <= ?
             ORDER BY ts ASC
@@ -392,6 +415,7 @@ async function fetchLiveCandles(args: {
             close: row.close,
             volume: row.volume,
             trade_count: row.trade_count,
+            source: row.source,
             updated_at: row.updated_at,
         }));
     }
@@ -594,6 +618,18 @@ function loadStoredLiveQuote(event: SecondMarketPolymarketEvent, sampleTs: numbe
     }
 }
 
+function splitQuoteQualityFlags(qualityFlags: string | null | undefined): string[] {
+    return qualityFlags ? qualityFlags.split(",").map((flag) => flag.trim()).filter(Boolean) : [];
+}
+
+export function isFreshStoredLiveQuote(quote: PolymarketClob1sQuoteRow): boolean {
+    const flags = splitQuoteQualityFlags(quote.quality_flags);
+    if (flags.includes("carried_forward") || flags.includes("recent_local_fallback")) return false;
+    if (quote.quote_age_ms !== null && quote.quote_age_ms > MAX_STORED_LIVE_QUOTE_AGE_MS) return false;
+    if (quote.source_ts_ms !== null && Date.now() - quote.source_ts_ms > MAX_STORED_LIVE_QUOTE_AGE_MS) return false;
+    return true;
+}
+
 function withRecentQuoteFallbackFlags(quote: PolymarketClob1sQuoteRow, sampleTs: number): PolymarketClob1sQuoteRow {
     const targetTs = Math.floor(sampleTs);
     const lagSec = Math.max(0, targetTs - Math.floor(quote.sample_ts));
@@ -658,6 +694,7 @@ export function executionLabVitePlugin(): Plugin {
     const liveEventCache = new Map<string, CacheEntry<SecondMarketPolymarketEvent[]>>();
     const liveOutcomeCache = new Map<string, CacheEntry<LiveOutcomeRow[]>>();
     const inFlightFetches = new Map<string, Promise<unknown>>();
+    const liveCandleFetchBackoffUntil = new Map<string, number>();
     const liveTradeLedger = new Map<string, LiveTradeLedgerEntry>();
     const liveCancelLedger = new Map<string, LiveCancelLedgerEntry>();
     let minerProcess: ChildProcessWithoutNullStreams | null = null;
@@ -921,6 +958,7 @@ export function executionLabVitePlugin(): Plugin {
                     }
                     const marketType = requestUrl.searchParams.get("marketType") === "futures" ? "futures" : "spot";
                     const limit = parseLimit(requestUrl.searchParams.get("limit"));
+                    const fetchKey = `${symbol}|${marketType}`;
                     const explicitEndTs = toUnixSeconds(requestUrl.searchParams.get("endTs"));
                     const explicitStartTs = toUnixSeconds(requestUrl.searchParams.get("startTs"));
                     const endTs = Math.min(explicitEndTs ?? Math.floor(Date.now() / 1000) - 2, Math.floor(Date.now() / 1000) - 2);
@@ -939,18 +977,60 @@ export function executionLabVitePlugin(): Plugin {
                         explicitStartTs === null ? lookbackLimit : limit,
                         requestedSeconds
                     );
-                    if (stored.length > 0 && latestStoredTs !== null && latestStoredTs >= endTs && hasExpectedCoverage) {
+                    const storedTail = stored.slice(-Math.min(FUTURES_STORED_ZERO_TAIL_REFETCH_SEC, stored.length));
+                    const hasUsableStoredTail = marketType !== "futures"
+                        || storedTail.length === 0
+                        || storedTail.some(hasTradeActivity);
+                    if (
+                        stored.length > 0
+                        && latestStoredTs !== null
+                        && latestStoredTs >= endTs
+                        && hasExpectedCoverage
+                        && hasUsableStoredTail
+                    ) {
                         sendJson(res, 200, { ok: true, source: "second_market_db", symbol, marketType, candles: stored.slice(-limit) });
                         return;
                     }
-                    const fetched = await fetchLiveCandles({
-                        symbol,
-                        marketType,
-                        startTs,
-                        endTs,
-                        limit: explicitStartTs === null ? lookbackLimit : limit,
-                    });
-                    sendJson(res, 200, { ok: true, source: "binance_live", symbol, marketType, candles: fetched.slice(-limit) });
+                    const backoffUntilMs = liveCandleFetchBackoffUntil.get(fetchKey) ?? 0;
+                    if (backoffUntilMs > Date.now() && stored.length > 0) {
+                        sendJson(res, 200, {
+                            ok: true,
+                            source: "second_market_db_backoff",
+                            symbol,
+                            marketType,
+                            backoffUntilIso: new Date(backoffUntilMs).toISOString(),
+                            candles: stored.slice(-limit),
+                        });
+                        return;
+                    }
+                    try {
+                        const fetched = await fetchLiveCandles({
+                            symbol,
+                            marketType,
+                            startTs,
+                            endTs,
+                            limit: explicitStartTs === null ? lookbackLimit : limit,
+                        });
+                        liveCandleFetchBackoffUntil.delete(fetchKey);
+                        sendJson(res, 200, { ok: true, source: "binance_live", symbol, marketType, candles: fetched.slice(-limit) });
+                    } catch (error) {
+                        const backoffMs = liveCandleFetchBackoffMs(error);
+                        if (backoffMs > 0) {
+                            liveCandleFetchBackoffUntil.set(fetchKey, Date.now() + backoffMs);
+                        }
+                        if (stored.length > 0) {
+                            sendJson(res, 200, {
+                                ok: true,
+                                source: "second_market_db_stale",
+                                symbol,
+                                marketType,
+                                warning: errorMessage(error),
+                                candles: stored.slice(-limit),
+                            });
+                            return;
+                        }
+                        throw error;
+                    }
                     return;
                 }
 
@@ -1039,18 +1119,26 @@ export function executionLabVitePlugin(): Plugin {
                         noTokenId,
                     };
                     const storedQuote = loadStoredLiveQuote(event, sampleTs);
-                    if (storedQuote) {
+                    if (storedQuote && isFreshStoredLiveQuote(storedQuote)) {
                         sendJson(res, 200, { ok: true, source: "second_market_db", quote: storedQuote });
                         return;
                     }
-                    const recentStoredQuote = loadRecentStoredLiveQuote(event, sampleTs, RECENT_LOCAL_QUOTE_FALLBACK_SEC);
-                    if (recentStoredQuote) {
-                        sendJson(res, 200, { ok: true, source: "second_market_db_recent", quote: recentStoredQuote });
+                    try {
+                        const quote = await buildLiveQuote(event, sampleTs);
+                        sendJson(res, 200, { ok: true, source: "clob_live", quote });
                         return;
+                    } catch (liveQuoteError) {
+                        const recentStoredQuote = loadRecentStoredLiveQuote(event, sampleTs, RECENT_LOCAL_QUOTE_FALLBACK_SEC);
+                        if (recentStoredQuote) {
+                            sendJson(res, 200, { ok: true, source: "second_market_db_recent", quote: recentStoredQuote });
+                            return;
+                        }
+                        if (storedQuote) {
+                            sendJson(res, 200, { ok: true, source: "second_market_db_stale", quote: storedQuote });
+                            return;
+                        }
+                        throw liveQuoteError;
                     }
-                    const quote = await buildLiveQuote(event, sampleTs);
-                    sendJson(res, 200, { ok: true, source: "clob_live", quote });
-                    return;
                 }
 
                 if (method === "GET" && path === "/miner/status") {

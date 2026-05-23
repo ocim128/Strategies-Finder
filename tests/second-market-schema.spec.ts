@@ -77,6 +77,53 @@ describe("second market schema", () => {
         }
     });
 
+    it("does not replace a real Binance candle with a later fill row", () => {
+        const db = openSecondMarketDb(makeDbPath());
+        try {
+            upsertBinance1sCandles(db, [{
+                symbol: "BTCUSDT",
+                market_type: "futures",
+                ts: 1_700_000_000,
+                open: 100,
+                high: 101,
+                low: 99,
+                close: 100.5,
+                volume: 10,
+                trade_count: 5,
+                source: "binance_1s",
+                updated_at: 1_700_000_010,
+            }]);
+            upsertBinance1sCandles(db, [{
+                symbol: "BTCUSDT",
+                market_type: "futures",
+                ts: 1_700_000_000,
+                open: 100.5,
+                high: 100.5,
+                low: 100.5,
+                close: 100.5,
+                volume: 0,
+                trade_count: 0,
+                source: "binance_1s_fill",
+                updated_at: 1_700_000_020,
+            }]);
+
+            const row = db.prepare("SELECT close, volume, trade_count, source, updated_at FROM binance_1s_candles").get() as {
+                close: number;
+                volume: number;
+                trade_count: number;
+                source: string;
+                updated_at: number;
+            };
+            expect(row.close).to.equal(100.5);
+            expect(row.volume).to.equal(10);
+            expect(row.trade_count).to.equal(5);
+            expect(row.source).to.equal("binance_1s");
+            expect(row.updated_at).to.equal(1_700_000_010);
+        } finally {
+            db.close();
+        }
+    });
+
     it("stores Polymarket reference prices by source timestamp", () => {
         const db = openSecondMarketDb(makeDbPath());
         try {

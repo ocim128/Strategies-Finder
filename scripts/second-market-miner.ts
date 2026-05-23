@@ -1,4 +1,10 @@
-import { openSecondMarketDb, upsertSecondDataQualityRun } from "../lib/second-market/db";
+import {
+    loadSecondDataSyncState,
+    openSecondMarketDb,
+    upsertBinance1sCandles,
+    upsertSecondDataQualityRun,
+    writeSecondDataSyncState,
+} from "../lib/second-market/db";
 import {
     loadBinance1sCandles,
     loadPolymarketClob1sQuotes,
@@ -21,6 +27,7 @@ import {
 } from "../lib/polymarket-outcome-interval";
 import { parseSecondMarketSymbolList } from "../lib/second-market/symbols";
 import type {
+    Binance1sCandleRow,
     SecondMarketPolymarketEvent,
     SecondMarketReferenceSource,
     SecondMarketSymbol,
@@ -31,6 +38,10 @@ type MinerMode = "backfill" | "live" | "verify";
 const GAMMA_LIVE_POLL_MS = 30_000;
 const CLOB_SUBSCRIPTION_REFRESH_SEC = 60;
 const CLOB_SUBSCRIPTION_HORIZON_MULTIPLIER = 3;
+const BINANCE_LIVE_POLL_MS = 2_000;
+const BINANCE_LIVE_MAX_LOOKBACK_SEC = 120;
+const BINANCE_LIVE_OVERLAP_SEC = 2;
+const BINANCE_RATE_LIMIT_BACKOFF_MS = 60_000;
 
 type CliConfig = {
     mode: MinerMode;
@@ -47,6 +58,21 @@ type CliConfig = {
     includeGamma: boolean;
     referenceSources: SecondMarketReferenceSource[];
     requestDelayMs: number;
+};
+type LiveAggTrade = {
+    symbol: SecondMarketSymbol;
+    tsMs: number;
+    price: number;
+    quantity: number;
+    tradeCount: number;
+};
+type LiveCandleBucket = {
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+    tradeCount: number;
 };
 
 function nowSec(): number {
@@ -105,6 +131,68 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
         }, ms);
         signal?.addEventListener("abort", abort, { once: true });
     });
+}
+
+function binanceRateLimitBackoffMs(error: unknown): number {
+    const message = error instanceof Error ? error.message : String(error);
+    return /HTTP\s*(418|429)\b/i.test(message) ? BINANCE_RATE_LIMIT_BACKOFF_MS : 0;
+}
+
+function liveAggBucketKey(symbol: SecondMarketSymbol, ts: number): string {
+    return `${symbol}:${ts}`;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+}
+
+function normalizeLiveAggTrade(payload: unknown, symbols: ReadonlySet<SecondMarketSymbol>): LiveAggTrade | null {
+    if (!payload || typeof payload !== "object") return null;
+    const row = payload as Record<string, unknown>;
+    const symbolRaw = String(row.s ?? "").toUpperCase();
+    if (!symbols.has(symbolRaw as SecondMarketSymbol)) return null;
+    const tsMs = toFiniteNumber(row.T);
+    const price = toFiniteNumber(row.p);
+    const quantity = toFiniteNumber(row.q);
+    if (tsMs === null || price === null || quantity === null || price <= 0 || quantity < 0) return null;
+
+    const firstTradeId = toFiniteNumber(row.f);
+    const lastTradeId = toFiniteNumber(row.l);
+    const tradeCount = firstTradeId !== null && lastTradeId !== null && lastTradeId >= firstTradeId
+        ? Math.max(1, Math.floor(lastTradeId - firstTradeId + 1))
+        : 1;
+
+    return {
+        symbol: symbolRaw as SecondMarketSymbol,
+        tsMs,
+        price,
+        quantity,
+        tradeCount,
+    };
+}
+
+function addLiveAggTradeToBucket(buckets: Map<string, LiveCandleBucket>, trade: LiveAggTrade): void {
+    const ts = Math.floor(trade.tsMs / 1000);
+    const key = liveAggBucketKey(trade.symbol, ts);
+    const bucket = buckets.get(key);
+    if (!bucket) {
+        buckets.set(key, {
+            open: trade.price,
+            high: trade.price,
+            low: trade.price,
+            close: trade.price,
+            volume: trade.quantity,
+            tradeCount: trade.tradeCount,
+        });
+        return;
+    }
+
+    bucket.high = Math.max(bucket.high, trade.price);
+    bucket.low = Math.min(bucket.low, trade.price);
+    bucket.close = trade.price;
+    bucket.volume += trade.quantity;
+    bucket.tradeCount += trade.tradeCount;
 }
 
 function printUsage(): void {
@@ -297,20 +385,215 @@ async function runBackfill(config: CliConfig, signal: AbortSignal): Promise<void
     }
 }
 
-async function runLiveBinancePolling(config: CliConfig, db: ReturnType<typeof openSecondMarketDb>, signal: AbortSignal): Promise<void> {
+async function runLiveBinanceWebSocket(
+    config: CliConfig,
+    db: ReturnType<typeof openSecondMarketDb>,
+    signal: AbortSignal,
+    durationSec: number | undefined
+): Promise<void> {
+    const baseUrl = config.marketType === "futures"
+        ? "wss://fstream.binance.com/stream"
+        : "wss://stream.binance.com:9443/stream";
+    const streams = config.symbols.map((symbol) => `${symbol.toLowerCase()}@aggTrade`).join("/");
+    const wsUrl = `${baseUrl}?streams=${streams}`;
+    const symbolSet = new Set(config.symbols);
+    const buckets = new Map<string, LiveCandleBucket>();
+    const lastCloseBySymbol = new Map<SecondMarketSymbol, number>();
+    const lastFlushedTsBySymbol = new Map<SecondMarketSymbol, number>();
+    let lastLogAtMs = 0;
+
+    await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(wsUrl);
+        let flushInterval: ReturnType<typeof setInterval> | null = null;
+        let durationTimer: ReturnType<typeof setTimeout> | null = null;
+        let firstMessageTimer: ReturnType<typeof setTimeout> | null = null;
+        let settled = false;
+        const abort = () => stop();
+        const cleanup = () => {
+            if (flushInterval) clearInterval(flushInterval);
+            if (durationTimer) clearTimeout(durationTimer);
+            if (firstMessageTimer) clearTimeout(firstMessageTimer);
+            signal.removeEventListener("abort", abort);
+            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+                ws.close();
+            }
+        };
+        const stop = () => {
+            if (settled) return;
+            settled = true;
+            flushClosedCandles(nowSec() - 1);
+            cleanup();
+            resolve();
+        };
+        const fail = (error: Error) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+        };
+        const flushClosedCandles = (targetTsRaw: number) => {
+            const targetTs = Math.floor(targetTsRaw);
+            if (!Number.isFinite(targetTs) || targetTs < 0) return;
+            const rows: Binance1sCandleRow[] = [];
+            const updatedAt = nowSec();
+            for (const symbol of config.symbols) {
+                const lastFlushedTs = lastFlushedTsBySymbol.get(symbol);
+                let startTs = lastFlushedTs === undefined ? targetTs : lastFlushedTs + 1;
+                if (lastFlushedTs === undefined) {
+                    const firstBucketTs = Array.from(buckets.keys())
+                        .filter((key) => key.startsWith(`${symbol}:`))
+                        .map((key) => Number(key.split(":")[1]))
+                        .filter(Number.isFinite)
+                        .sort((left, right) => left - right)[0];
+                    if (firstBucketTs === undefined) continue;
+                    startTs = firstBucketTs;
+                }
+                if (startTs > targetTs) continue;
+
+                let lastClose = lastCloseBySymbol.get(symbol) ?? null;
+                let latestWrittenTs: number | null = null;
+                for (let ts = startTs; ts <= targetTs; ts += 1) {
+                    const key = liveAggBucketKey(symbol, ts);
+                    const bucket = buckets.get(key);
+                    if (bucket) {
+                        rows.push({
+                            symbol,
+                            market_type: config.marketType,
+                            ts,
+                            open: bucket.open,
+                            high: bucket.high,
+                            low: bucket.low,
+                            close: bucket.close,
+                            volume: bucket.volume,
+                            trade_count: bucket.tradeCount,
+                            source: "binance_1s_ws",
+                            updated_at: updatedAt,
+                        });
+                        lastClose = bucket.close;
+                        buckets.delete(key);
+                        latestWrittenTs = ts;
+                        continue;
+                    }
+                    if (lastClose === null) continue;
+                    rows.push({
+                        symbol,
+                        market_type: config.marketType,
+                        ts,
+                        open: lastClose,
+                        high: lastClose,
+                        low: lastClose,
+                        close: lastClose,
+                        volume: 0,
+                        trade_count: 0,
+                        source: "binance_1s_ws_fill",
+                        updated_at: updatedAt,
+                    });
+                    latestWrittenTs = ts;
+                }
+
+                if (lastClose !== null) {
+                    lastCloseBySymbol.set(symbol, lastClose);
+                }
+                if (latestWrittenTs !== null) {
+                    lastFlushedTsBySymbol.set(symbol, latestWrittenTs);
+                    writeSecondDataSyncState(db, {
+                        source: "binance_1s",
+                        symbol,
+                        series_id: config.marketType,
+                        cursor_ts: latestWrittenTs,
+                        cursor_id: "",
+                        status: "ok",
+                        updated_at: updatedAt,
+                    });
+                }
+            }
+
+            const upserted = upsertBinance1sCandles(db, rows);
+            if (upserted > 0 && Date.now() - lastLogAtMs >= 5_000) {
+                const lastTs = rows.reduce((max, row) => Math.max(max, row.ts), 0);
+                console.log(`[mine:1s] binance ws ${config.marketType} upserted=${upserted} last=${lastTs || "none"}`);
+                lastLogAtMs = Date.now();
+            }
+        };
+
+        signal.addEventListener("abort", abort, { once: true });
+        if (durationSec !== undefined) {
+            durationTimer = setTimeout(stop, Math.max(1, durationSec) * 1000);
+        }
+
+        ws.onopen = () => {
+            console.log(`[mine:1s] binance ws connected ${config.marketType} streams=${config.symbols.join(",")}`);
+            flushInterval = setInterval(() => flushClosedCandles(nowSec() - 1), 1000);
+            firstMessageTimer = setTimeout(() => {
+                fail(new Error("Binance live websocket opened but produced no aggTrade messages."));
+            }, 5_000);
+        };
+        ws.onmessage = (messageEvent) => {
+            if (firstMessageTimer) {
+                clearTimeout(firstMessageTimer);
+                firstMessageTimer = null;
+            }
+            let payload: unknown = messageEvent.data;
+            if (typeof payload === "string") {
+                try {
+                    payload = JSON.parse(payload);
+                } catch {
+                    return;
+                }
+            }
+            const row = payload && typeof payload === "object" && "data" in payload
+                ? (payload as { data?: unknown }).data
+                : payload;
+            const trade = normalizeLiveAggTrade(row, symbolSet);
+            if (trade) addLiveAggTradeToBucket(buckets, trade);
+        };
+        ws.onerror = () => {
+            fail(new Error("Binance live websocket error."));
+        };
+        ws.onclose = (event: CloseEvent) => {
+            if (signal.aborted || settled) return;
+            const reason = event.reason ? ` reason=${event.reason}` : "";
+            fail(new Error(`Binance live websocket closed code=${event.code}${reason}.`));
+        };
+    });
+}
+
+async function runLiveBinancePolling(
+    config: CliConfig,
+    db: ReturnType<typeof openSecondMarketDb>,
+    signal: AbortSignal,
+    durationSec: number | null = config.durationSec
+): Promise<void> {
     const startedAt = Date.now();
-    const liveLookbackSec = 120;
-    const pollMs = 15_000;
+    let backoffUntilMs = 0;
 
     while (!signal.aborted) {
-        const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
-        if (config.durationSec !== null && elapsedSec >= config.durationSec) break;
+        const nowMs = Date.now();
+        const elapsedSec = Math.floor((nowMs - startedAt) / 1000);
+        if (durationSec !== null && elapsedSec >= durationSec) break;
 
+        if (nowMs < backoffUntilMs) {
+            const remainingMs = durationSec === null
+                ? backoffUntilMs - nowMs
+                : Math.min(backoffUntilMs - nowMs, Math.max(0, durationSec * 1000 - (nowMs - startedAt)));
+            await delay(remainingMs, signal);
+            continue;
+        }
+
+        const cycleStartedAt = Date.now();
         const endTs = nowSec() - 2;
-        const startTs = Math.max(0, endTs - liveLookbackSec);
         for (const symbol of config.symbols) {
             if (signal.aborted) break;
             try {
+                const syncState = loadSecondDataSyncState(db, "binance_1s", symbol, config.marketType);
+                const cursorTs = Number(syncState?.cursor_ts);
+                const cursorStartTs = Number.isFinite(cursorTs) && cursorTs > 0
+                    ? Math.floor(cursorTs) - BINANCE_LIVE_OVERLAP_SEC
+                    : endTs - BINANCE_LIVE_MAX_LOOKBACK_SEC;
+                const startTs = Math.max(
+                    0,
+                    Math.max(endTs - BINANCE_LIVE_MAX_LOOKBACK_SEC, Math.min(endTs, cursorStartTs))
+                );
                 const summary = await syncBinance1sRange(db, {
                     symbol,
                     marketType: config.marketType,
@@ -323,14 +606,42 @@ async function runLiveBinancePolling(config: CliConfig, db: ReturnType<typeof op
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 console.warn(`[mine:1s] binance live ${symbol} failed: ${message}`);
+                const backoffMs = binanceRateLimitBackoffMs(error);
+                if (backoffMs > 0) {
+                    backoffUntilMs = Date.now() + backoffMs;
+                    console.warn(`[mine:1s] binance live rate limited; backing off for ${Math.ceil(backoffMs / 1000)}s`);
+                    break;
+                }
             }
         }
 
-        const remainingMs = config.durationSec === null
-            ? pollMs
-            : Math.min(pollMs, Math.max(0, config.durationSec * 1000 - (Date.now() - startedAt)));
+        const remainingMs = durationSec === null
+            ? Math.max(0, BINANCE_LIVE_POLL_MS - (Date.now() - cycleStartedAt))
+            : Math.min(
+                Math.max(0, BINANCE_LIVE_POLL_MS - (Date.now() - cycleStartedAt)),
+                Math.max(0, durationSec * 1000 - (Date.now() - startedAt))
+            );
         await delay(remainingMs, signal);
     }
+}
+
+async function runLiveBinanceCapture(
+    config: CliConfig,
+    db: ReturnType<typeof openSecondMarketDb>,
+    signal: AbortSignal,
+    durationSec: number | undefined
+): Promise<void> {
+    if (typeof WebSocket === "function") {
+        try {
+            await runLiveBinanceWebSocket(config, db, signal, durationSec);
+            return;
+        } catch (error) {
+            if (signal.aborted) return;
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn(`[mine:1s] binance websocket unavailable; falling back to REST polling: ${message}`);
+        }
+    }
+    await runLiveBinancePolling(config, db, signal, durationSec ?? null);
 }
 
 async function runRestartingLiveCapture(args: {
@@ -470,7 +781,12 @@ async function runLive(config: CliConfig, signal: AbortSignal): Promise<void> {
         }
 
         if (config.includeBinance) {
-            tasks.push(runLiveBinancePolling(config, db, signal));
+            tasks.push(runRestartingLiveCapture({
+                label: "binance",
+                durationSec: config.durationSec,
+                signal,
+                runOnce: (durationSec) => runLiveBinanceCapture(config, db, signal, durationSec),
+            }));
         }
 
         if (config.includeClob) {

@@ -98,6 +98,18 @@
     margin-bottom: 8px;
 }
 
+.execution-lab-panel-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.execution-lab-panel-heading .execution-lab-panel-title {
+    margin-bottom: 0;
+}
+
 .execution-lab-kv {
     display: grid;
     grid-template-columns: minmax(96px, 0.42fr) minmax(0, 1fr);
@@ -338,6 +350,11 @@
     .execution-lab-live-config-grid,
     .execution-lab-compare-controls {
         grid-template-columns: 1fr;
+    }
+
+    .execution-lab-panel-heading {
+        align-items: stretch;
+        flex-direction: column;
     }
 
     .execution-lab-stake {

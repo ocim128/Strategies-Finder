@@ -42,6 +42,7 @@ import {
     stopExecutionLabMiner,
     submitExecutionLabLiveCancelAll,
     submitExecutionLabLiveTrade,
+    type ExecutionLabLiveCandle,
     type ExecutionLabMinerStatus,
 } from "./execution-lab-api";
 import { queryExecutionLabDom, type ExecutionLabDom } from "./execution-lab-dom";
@@ -121,6 +122,7 @@ const INITIAL_CANDLE_LIMIT = 900;
 const MAX_STREAM_CANDLES = 20000;
 const MAX_LIVE_CANDLE_LAG_SEC = 10;
 const MAX_POLYMARKET_PRICE_POINTS = 3600;
+const MAX_EXECUTION_LAB_DIAGNOSTIC_SAMPLES = 300;
 const MIN_LIVE_POSITION_SHARES = 0.000001;
 const LIVE_EXIT_RETRY_COOLDOWN_SEC = 1;
 
@@ -210,6 +212,13 @@ type ComparisonResult = {
     metrics: ExecutionLabPerformanceMetrics;
     totalEntries: number;
 };
+type ExecutionLabStreamContext = {
+    symbol: SecondMarketSymbol;
+    outcomeSymbol: SecondMarketSymbol | null;
+    outcomeInterval: ExecutionLabSessionSnapshot["outcomeInterval"];
+    seriesId: string | null;
+    marketType: "spot" | "futures";
+};
 type ExecutionLabSignalState = "buy-up" | "neutral" | "buy-down";
 type ExecutionLabPaperDecision = {
     kind: "accepted" | "rejected";
@@ -225,6 +234,58 @@ type ExecutionLabPersistedSettings = {
     stakeUsd: number;
     liveConfig: ExecutionLabLiveUiConfig;
     protectionConfig: PolymarketProtectionSettingFields;
+};
+type ExecutionLabDiagnosticSample = {
+    recordedAtIso: string;
+    mode: "miner" | "paper" | "live";
+    symbol: SecondMarketSymbol;
+    marketType: "spot" | "futures";
+    candle: {
+        timeSec: number;
+        open: number;
+        high: number;
+        low: number;
+        close: number;
+        volume: number;
+        tradeCount: number | null;
+        source: string | null;
+        updatedAtIso: string | null;
+    };
+    feedLagSec: number | null;
+    quote: {
+        sampleTs: number;
+        sampleMinusCandleSec: number;
+        quoteAgeSec: number | null;
+        source: string;
+        sourceAgeSec: number | null;
+        yesBid: number | null;
+        yesAsk: number | null;
+        yesMid: number | null;
+        noBid: number | null;
+        noAsk: number | null;
+        noMid: number | null;
+        qualityFlags: string[];
+    } | null;
+    event: {
+        marketSlug: string;
+        eventStartTs: number;
+        eventEndTs: number;
+        secondsToEnd: number;
+        startClose: number | null;
+        moveFromStart: number | null;
+        moveFromStartPct: number | null;
+    } | null;
+    warnings: string[];
+};
+type ExecutionLabDiagnostics = {
+    schema: "execution_lab.price_alignment.v1";
+    generatedAtIso: string;
+    latest: ExecutionLabDiagnosticSample | null;
+    samples: ExecutionLabDiagnosticSample[];
+    summary: {
+        sampleCount: number;
+        warningCounts: Record<string, number>;
+    };
 };
 
 const DEFAULT_EXECUTION_LAB_PROTECTION_CONFIG: PolymarketProtectionSettingFields = {
@@ -282,6 +343,12 @@ function formatRatioNullable(value: number | null): string {
 
 function formatSeconds(value: number | null | undefined): string {
     return value === null || value === undefined || !Number.isFinite(value) ? "--" : `${Math.floor(value)}s`;
+}
+
+function formatSignedSeconds(value: number | null | undefined): string {
+    if (value === null || value === undefined || !Number.isFinite(value)) return "--";
+    if (value > 0) return `+${Math.floor(value)}s`;
+    return `${Math.floor(value)}s`;
 }
 
 function liveCandleLagSec(latestTs: number): number {
@@ -425,6 +492,12 @@ export class ExecutionLabService {
     private starting = false;
     private polling = false;
     private timer: ReturnType<typeof setInterval> | null = null;
+    private streamTimer: ReturnType<typeof setInterval> | null = null;
+    private candleRefreshPromise: Promise<OHLCVData[]> | null = null;
+    private minerChartTimer: ReturnType<typeof setInterval> | null = null;
+    private minerChartStarting = false;
+    private minerChartRefreshPromise: Promise<void> | null = null;
+    private minerChartContext: ExecutionLabStreamContext | null = null;
     private minerStatusTimer: ReturnType<typeof setInterval> | null = null;
     private liveExecutorStatusTimer: ReturnType<typeof setInterval> | null = null;
     private snapshot: ExecutionLabSessionSnapshot | null = null;
@@ -445,6 +518,7 @@ export class ExecutionLabService {
     private executionMismatchTotal = 0;
     private latestExecutionMismatch: ExecutionParityMismatch | null = null;
     private loggedExecutionMismatchKeys = new Set<string>();
+    private diagnosticSamples: ExecutionLabDiagnosticSample[] = [];
     private comparisonRunning = false;
     private latestComparison: ComparisonResult | null = null;
     private sessionStartCandleTimeSec: number | null = null;
@@ -499,6 +573,9 @@ export class ExecutionLabService {
             clearInterval(this.timer);
             this.timer = null;
         }
+        this.stopStreamTimer();
+        this.stopMinerChartStream(false);
+        this.candleRefreshPromise = null;
     }
 
     private startStatusTimers(): void {
@@ -531,6 +608,7 @@ export class ExecutionLabService {
             if (mode === "live" && !this.confirmLiveStart()) {
                 return;
             }
+            this.stopMinerChartStream(false);
             this.resetSessionState();
             this.setStatus(mode === "live" ? "Starting Live Trade" : "Starting");
             if (mode === "live") {
@@ -561,6 +639,7 @@ export class ExecutionLabService {
             this.render();
             chartManager.clearTradeMarkers();
             chartManager.displayPaperStreamData(this.candles);
+            this.startStreamTimer();
             this.timer = setInterval(() => void this.poll(), POLL_MS);
             await this.poll();
         } catch (error) {
@@ -570,7 +649,9 @@ export class ExecutionLabService {
             } else {
                 this.setRunningState(false);
                 this.sessionLiveUiConfig = null;
+                this.restoreStateChart();
                 this.setStatus(message, "error");
+                this.renderIdle();
             }
         } finally {
             this.starting = false;
@@ -583,6 +664,7 @@ export class ExecutionLabService {
         this.paperState = null;
         this.strategy = null;
         this.candles = [];
+        this.candleRefreshPromise = null;
         this.logPath = null;
         this.liveEvents = [];
         chartManager.clearExecutionLabMarkers();
@@ -599,6 +681,7 @@ export class ExecutionLabService {
         this.executionMismatchTotal = 0;
         this.latestExecutionMismatch = null;
         this.loggedExecutionMismatchKeys.clear();
+        this.diagnosticSamples = [];
         this.latestComparison = null;
         this.sessionStartCandleTimeSec = null;
         this.liveTradeInFlightByPaperTradeId.clear();
@@ -623,6 +706,55 @@ export class ExecutionLabService {
         return this.running
             && this.sessionRunToken === sessionToken
             && this.snapshot?.sessionId === snapshot.sessionId;
+    }
+
+    private startStreamTimer(): void {
+        this.stopStreamTimer();
+        this.streamTimer = setInterval(() => void this.refreshCandleStreamInBackground(), POLL_MS);
+    }
+
+    private stopStreamTimer(): void {
+        if (this.streamTimer) {
+            clearInterval(this.streamTimer);
+            this.streamTimer = null;
+        }
+    }
+
+    private stopMinerChartStream(restoreChart = true): void {
+        const wasStreaming = this.minerChartTimer !== null
+            || this.minerChartContext !== null
+            || this.minerChartStarting
+            || this.minerChartRefreshPromise !== null;
+        if (this.minerChartTimer) {
+            clearInterval(this.minerChartTimer);
+            this.minerChartTimer = null;
+        }
+        this.minerChartRefreshPromise = null;
+        this.minerChartStarting = false;
+        this.minerChartContext = null;
+        if (!restoreChart || !wasStreaming) return;
+        this.restoreStateChart();
+        this.renderIdle();
+    }
+
+    private restoreStateChart(): void {
+        chartManager.clearExecutionLabMarkers();
+        chartManager.clearExecutionLabPolymarketPrices();
+        chartManager.restoreStateChartData();
+        if (state.currentBacktestResult) {
+            chartManager.displayTradeMarkers(state.currentBacktestResult.trades, uiManager.formatPrice);
+        }
+    }
+
+    private refreshCandleStreamInBackground(): void {
+        void this.refreshCandleStream().catch((error: unknown) => {
+            if (isExecutionLabTransientPollError(error)) {
+                this.setStatus(`Live candle refresh skipped: ${executionLabErrorMessage(error)}`, "warning");
+                this.render();
+                return;
+            }
+            void this.stop("error", executionLabErrorMessage(error));
+        });
     }
 
     private liveRecordContext(): { dryRun?: boolean; sizingMode?: LiveTradeSizingMode } {
@@ -653,6 +785,7 @@ export class ExecutionLabService {
         dom.stopButton.addEventListener("click", () => void this.stop("user_stop"));
         dom.startMinerButton.addEventListener("click", () => void this.startMiner());
         dom.stopMinerButton.addEventListener("click", () => void this.stopMiner());
+        dom.copyDiagnosticsButton.addEventListener("click", () => void this.copyDiagnostics());
         dom.executionMode.addEventListener("change", () => this.syncExecutionMode());
         dom.comparisonSource.addEventListener("change", () => this.syncComparisonControls());
         dom.runComparisonButton.addEventListener("click", () => void this.runComparison());
@@ -885,7 +1018,9 @@ export class ExecutionLabService {
 
     private async refreshMinerStatus(): Promise<void> {
         try {
-            this.renderMinerStatus(await loadExecutionLabMinerStatus());
+            const status = await loadExecutionLabMinerStatus();
+            this.renderMinerStatus(status);
+            this.syncMinerChartStream(status);
         } catch (error) {
             this.renderMinerStatus(null, executionLabErrorMessage(error));
         }
@@ -915,7 +1050,9 @@ export class ExecutionLabService {
 
     private async startMiner(): Promise<void> {
         try {
-            this.renderMinerStatus(await startExecutionLabMiner({ marketType: state.binanceMarketType }));
+            const status = await startExecutionLabMiner({ marketType: state.binanceMarketType });
+            this.renderMinerStatus(status);
+            this.syncMinerChartStream(status);
         } catch (error) {
             this.renderMinerStatus(null, executionLabErrorMessage(error));
         }
@@ -923,9 +1060,109 @@ export class ExecutionLabService {
 
     private async stopMiner(): Promise<void> {
         try {
-            this.renderMinerStatus(await stopExecutionLabMiner());
+            const status = await stopExecutionLabMiner();
+            this.renderMinerStatus(status);
+            this.syncMinerChartStream(status);
         } catch (error) {
             this.renderMinerStatus(null, executionLabErrorMessage(error));
+        }
+    }
+
+    private syncMinerChartStream(status: ExecutionLabMinerStatus): void {
+        if (!status.running) {
+            this.stopMinerChartStream(!this.running && !this.starting);
+            return;
+        }
+        if (this.running || this.starting) return;
+        void this.ensureMinerChartStream();
+    }
+
+    private streamContextKey(context: ExecutionLabStreamContext): string {
+        return [
+            context.symbol,
+            context.marketType,
+            context.outcomeSymbol ?? "",
+            context.outcomeInterval,
+            context.seriesId ?? "",
+        ].join("|");
+    }
+
+    private isMinerChartContextActive(context: ExecutionLabStreamContext): boolean {
+        return !this.running
+            && !this.starting
+            && this.minerChartContext !== null
+            && this.streamContextKey(this.minerChartContext) === this.streamContextKey(context);
+    }
+
+    private resolveMinerStreamContext(): ExecutionLabStreamContext | null {
+        const chartSymbol = normalizeSecondMarketChartSymbol(state.currentSymbol);
+        if (state.currentInterval !== "1s" || !chartSymbol) return null;
+
+        const backtestSettings = getBacktestSettings();
+        const polymarketDom = resolvePolymarketDomSettings();
+        const outcomeSymbolRaw = resolvePolymarketOutcomeSymbol(
+            chartSymbol,
+            backtestSettings.polymarketOutcomeSymbol ?? polymarketDom.outcomeSymbol,
+        );
+        const outcomeSymbol = outcomeSymbolRaw ? normalizeSecondMarketChartSymbol(outcomeSymbolRaw) : null;
+        const outcomeInterval = backtestSettings.polymarketOutcomeInterval ?? polymarketDom.outcomeInterval;
+        const seriesId = outcomeSymbol
+            ? getEffectivePolymarketSeriesId(chartSymbol, outcomeInterval, outcomeSymbol)
+            : null;
+
+        return {
+            symbol: chartSymbol,
+            outcomeSymbol,
+            outcomeInterval,
+            seriesId,
+            marketType: state.binanceMarketType,
+        };
+    }
+
+    private async ensureMinerChartStream(): Promise<void> {
+        if (this.running || this.starting || this.minerChartStarting) return;
+        const context = this.resolveMinerStreamContext();
+        if (!context) {
+            this.setStatus("1s miner running | switch to a supported BTCUSDT/XRPUSDT 1s chart to stream candles.", "warning");
+            return;
+        }
+        if (
+            this.minerChartTimer
+            && this.minerChartContext
+            && this.streamContextKey(this.minerChartContext) === this.streamContextKey(context)
+        ) {
+            return;
+        }
+
+        this.stopMinerChartStream(false);
+        this.minerChartStarting = true;
+        this.minerChartContext = context;
+        this.candles = [];
+        this.liveEvents = [];
+        this.latestQuote = null;
+        this.feedLagSec = null;
+        this.liveQuoteByTime.clear();
+        this.strategyQuoteByTime.clear();
+        this.polymarketPriceByTime.clear();
+        this.diagnosticSamples = [];
+        try {
+            this.setStatus(`1s miner streaming ${context.symbol} ${context.marketType}`, "running");
+            const initialCandles = await this.loadInitialCandles(context.symbol, context.marketType);
+            if (!this.isMinerChartContextActive(context)) return;
+            this.candles = initialCandles;
+            chartManager.clearTradeMarkers();
+            chartManager.clearExecutionLabMarkers();
+            chartManager.clearExecutionLabPolymarketPrices();
+            if (this.candles.length > 0) {
+                chartManager.displayPaperStreamData(this.candles);
+            }
+            await this.refreshMinerChartStream();
+            if (!this.isMinerChartContextActive(context)) return;
+            this.minerChartTimer = setInterval(() => void this.refreshMinerChartStreamInBackground(), POLL_MS);
+        } catch (error) {
+            this.setStatus(executionLabErrorMessage(error), "warning");
+        } finally {
+            this.minerChartStarting = false;
         }
     }
 
@@ -956,6 +1193,50 @@ export class ExecutionLabService {
     private currentComparisonSource(): ComparisonSource {
         const value = this.dom?.comparisonSource.value;
         return value === "current" || value === "saved" ? value : "original";
+    }
+
+    private async copyTextToClipboard(text: string): Promise<void> {
+        if (navigator.clipboard?.writeText) {
+            try {
+                await navigator.clipboard.writeText(text);
+                return;
+            } catch {
+                // Fall through to the textarea path for browsers that reject clipboard writes without focus.
+            }
+        }
+
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "true");
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        textarea.style.top = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        try {
+            if (!document.execCommand("copy")) {
+                throw new Error("Fallback clipboard copy returned false");
+            }
+        } finally {
+            textarea.remove();
+        }
+    }
+
+    private async copyDiagnostics(): Promise<void> {
+        const diagnostics = this.buildDiagnostics();
+        if (!diagnostics) {
+            uiManager.showToast("No Execution Lab diagnostics to copy", "info");
+            return;
+        }
+
+        try {
+            await this.copyTextToClipboard(JSON.stringify(diagnostics, null, 2));
+            uiManager.showToast("Execution Lab diagnostics copied", "success");
+        } catch (error) {
+            debugLogger.error("execution_lab.copy_diagnostics_failed", { error: executionLabErrorMessage(error) });
+            uiManager.showToast("Copy failed - check browser permissions", "error");
+        }
     }
 
     private async resolveStrategyForKey(strategyKey: string): Promise<Strategy> {
@@ -1216,32 +1497,145 @@ export class ExecutionLabService {
         };
     }
 
-    private loadInitialCandles(symbol: SecondMarketSymbol): Promise<OHLCVData[]> {
+    private loadInitialCandles(symbol: SecondMarketSymbol, marketType = state.binanceMarketType): Promise<OHLCVData[]> {
         return loadExecutionLabLiveCandles({
             symbol,
-            marketType: state.binanceMarketType,
+            marketType,
             limit: INITIAL_CANDLE_LIMIT,
         });
     }
 
-    private loadNextCandleBatch(snapshot: ExecutionLabSessionSnapshot): Promise<OHLCVData[]> {
+    private loadNextCandleBatch(symbol: SecondMarketSymbol, marketType = state.binanceMarketType): Promise<OHLCVData[]> {
         const lastBufferedTs = this.getLastBufferedTs();
         if (lastBufferedTs === null) {
             return loadExecutionLabLiveCandles({
-                symbol: snapshot.symbol,
-                marketType: state.binanceMarketType,
+                symbol,
+                marketType,
                 limit: 1,
             });
         }
         const endTs = Math.floor(Date.now() / 1000) - 2;
         if (endTs < lastBufferedTs) return Promise.resolve([]);
         return loadExecutionLabLiveCandles({
-            symbol: snapshot.symbol,
-            marketType: state.binanceMarketType,
+            symbol,
+            marketType,
             startTs: lastBufferedTs,
             endTs,
             limit: Math.min(10000, Math.max(1, endTs - lastBufferedTs + 1)),
         });
+    }
+
+    private refreshCandleStream(): Promise<OHLCVData[]> {
+        const snapshot = this.snapshot;
+        if (!this.running || !snapshot) return Promise.resolve([]);
+        if (this.candleRefreshPromise) return this.candleRefreshPromise;
+
+        const sessionToken = this.sessionRunToken;
+        let promise: Promise<OHLCVData[]>;
+        promise = this.loadNextCandleBatch(snapshot.symbol)
+            .then((latestBatch) => {
+                if (!this.isSessionActive(sessionToken, snapshot)) return [];
+
+                if (latestBatch.length > 0) {
+                    this.mergeCandles(latestBatch);
+                    chartManager.updatePaperStreamData(this.candles, latestBatch);
+                }
+
+                const latestBufferedTs = this.getLastBufferedTs();
+                if (latestBufferedTs !== null) {
+                    this.feedLagSec = liveCandleLagSec(latestBufferedTs);
+                }
+                this.render();
+                return latestBatch;
+            })
+            .finally(() => {
+                if (this.candleRefreshPromise === promise) {
+                    this.candleRefreshPromise = null;
+                }
+            });
+
+        this.candleRefreshPromise = promise;
+        return promise;
+    }
+
+    private refreshMinerChartStreamInBackground(): void {
+        void this.refreshMinerChartStream().catch((error: unknown) => {
+            if (isExecutionLabTransientPollError(error)) {
+                this.setStatus(`1s miner chart refresh skipped: ${executionLabErrorMessage(error)}`, "warning");
+                this.renderMinerChart();
+                return;
+            }
+            this.setStatus(executionLabErrorMessage(error), "warning");
+        });
+    }
+
+    private async refreshMinerChartStream(): Promise<void> {
+        const context = this.minerChartContext;
+        if (!context || this.running || this.starting) return;
+        const nextContext = this.resolveMinerStreamContext();
+        if (!nextContext) {
+            this.setStatus("1s miner running | switch to a supported BTCUSDT/XRPUSDT 1s chart to stream candles.", "warning");
+            return;
+        }
+        if (this.streamContextKey(nextContext) !== this.streamContextKey(context)) {
+            this.stopMinerChartStream(false);
+            await this.ensureMinerChartStream();
+            return;
+        }
+        if (this.minerChartRefreshPromise) return this.minerChartRefreshPromise;
+
+        let promise: Promise<void>;
+        promise = (async () => {
+            const latestBatch = await this.loadNextCandleBatch(context.symbol, context.marketType);
+            if (!this.isMinerChartContextActive(context)) return;
+            if (latestBatch.length > 0) {
+                const hadCandles = this.candles.length > 0;
+                this.mergeCandles(latestBatch);
+                if (hadCandles) {
+                    chartManager.updatePaperStreamData(this.candles, latestBatch);
+                } else {
+                    chartManager.displayPaperStreamData(this.candles);
+                }
+            }
+
+            const latestBuffered = this.candles[this.candles.length - 1] ?? null;
+            const latestBufferedTs = latestBuffered ? finiteUnixSeconds(latestBuffered.time) : null;
+            if (!latestBuffered || latestBufferedTs === null) {
+                this.renderMinerChart();
+                return;
+            }
+
+            this.feedLagSec = liveCandleLagSec(latestBufferedTs);
+            const activeEvent = await this.getLiveEventForStreamContext(context, latestBufferedTs);
+            if (!this.isMinerChartContextActive(context)) return;
+            const liveQuote = activeEvent
+                ? await loadExecutionLabLiveQuote({ event: activeEvent, sampleTs: latestBufferedTs }).catch(() => null)
+                : null;
+            if (!this.isMinerChartContextActive(context)) return;
+            this.latestQuote = liveQuote;
+            if (liveQuote) {
+                this.addPolymarketQuote(liveQuote, false);
+                chartManager.displayExecutionLabPolymarketPrices(this.getPolymarketPricePoints());
+            }
+            this.recordPriceDiagnostic({
+                mode: "miner",
+                symbol: context.symbol,
+                marketType: context.marketType,
+                latestCandleTimeSec: latestBufferedTs,
+                latestCandle: latestBuffered,
+                quote: liveQuote,
+                feedLagSec: this.feedLagSec,
+            });
+            this.renderMinerChart();
+            this.setStatus(`1s miner streaming ${context.symbol} ${context.marketType} | latest ${formatDateTime(latestBufferedTs)}`, "running");
+        })().finally(() => {
+            if (this.minerChartRefreshPromise === promise) {
+                this.minerChartRefreshPromise = null;
+            }
+        });
+
+        this.minerChartRefreshPromise = promise;
+        return promise;
     }
 
     private async getLiveEventForTime(snapshot: ExecutionLabSessionSnapshot, ts: number): Promise<SecondMarketPolymarketEvent | null> {
@@ -1260,6 +1654,32 @@ export class ExecutionLabService {
         event = this.liveEvents.find((candidate) =>
             candidate.seriesId === snapshot.seriesId
             && candidate.symbol === snapshot.outcomeSymbol
+            && candidate.eventStartTs <= ts
+            && ts < candidate.eventEndTs
+        ) ?? null;
+        return event;
+    }
+
+    private async getLiveEventForStreamContext(
+        context: ExecutionLabStreamContext,
+        ts: number
+    ): Promise<SecondMarketPolymarketEvent | null> {
+        if (!context.outcomeSymbol || !context.seriesId) return null;
+        let event = this.liveEvents.find((candidate) =>
+            candidate.seriesId === context.seriesId
+            && candidate.symbol === context.outcomeSymbol
+            && candidate.eventStartTs <= ts
+            && ts < candidate.eventEndTs
+        ) ?? null;
+        if (event) return event;
+        this.liveEvents = await loadExecutionLabLiveEvents({
+            symbol: context.outcomeSymbol,
+            outcomeInterval: context.outcomeInterval,
+            seriesId: context.seriesId,
+        });
+        event = this.liveEvents.find((candidate) =>
+            candidate.seriesId === context.seriesId
+            && candidate.symbol === context.outcomeSymbol
             && candidate.eventStartTs <= ts
             && ts < candidate.eventEndTs
         ) ?? null;
@@ -1350,18 +1770,12 @@ export class ExecutionLabService {
         const pollTiming: ExecutionLabPollTiming = {};
         try {
             this.assertSessionContext(snapshot);
-            let chartChangedCandles: OHLCVData[] = [];
             const candleStartedMs = Date.now();
             const latestBatchResult = await this.tryLivePollFetch(() =>
-                this.loadNextCandleBatch(snapshot)
+                this.refreshCandleStream()
             );
             pollTiming.candlesMs = Date.now() - candleStartedMs;
             if (!latestBatchResult.ok) return;
-            const latestBatch = latestBatchResult.value;
-            if (latestBatch.length > 0) {
-                chartChangedCandles = latestBatch;
-                this.mergeCandles(chartChangedCandles);
-            }
 
             const latestBuffered = this.candles[this.candles.length - 1];
             const latestBufferedTs = latestBuffered ? finiteUnixSeconds(latestBuffered.time) : null;
@@ -1505,10 +1919,16 @@ export class ExecutionLabService {
             this.appendLatestLoggedSignals(tickResult.records, backtestSignals);
             this.latestQuote = liveQuote;
             this.feedLagSec = feedLag;
+            this.recordPriceDiagnostic({
+                mode: this.executionMode,
+                symbol: snapshot.symbol,
+                marketType: state.binanceMarketType,
+                latestCandleTimeSec: latestBufferedTs,
+                latestCandle: latestBuffered,
+                quote: liveQuote,
+                feedLagSec: feedLag,
+            });
             this.addMarkers(tickResult.markers);
-            if (chartChangedCandles.length > 0) {
-                chartManager.updatePaperStreamData(this.candles, chartChangedCandles);
-            }
             if (liveQuote) {
                 chartManager.displayExecutionLabPolymarketPrices(this.getPolymarketPricePoints());
             }
@@ -1587,21 +2007,43 @@ export class ExecutionLabService {
         sessionToken: number
     ): Promise<ExecutionLabRecord[]> {
         if (this.executionMode !== "live") return [];
+        const snapshot = this.snapshot;
         const exitRecords = paperRecords.filter((record): record is PaperExitRecord => record.recordType === "paper_exit");
         const missingExitRecords = paperRecords.filter((record): record is PaperUnfilledRecord =>
             record.recordType === "paper_unfilled"
             && record.reason === "missing_exit_quote"
             && record.expectedExitTimeSec !== undefined
         );
+        if (snapshot?.exitMode === "resolve_hold") {
+            this.retireResolvedLivePositions(exitRecords);
+        }
+        const liveExitTriggers = snapshot?.exitMode === "resolve_hold"
+            ? []
+            : [...exitRecords, ...missingExitRecords];
         const sameBatchExitedTradeIds = new Set([
-            ...exitRecords.map((record) => record.tradeId),
-            ...missingExitRecords.map((record) => this.findLivePositionForExitTrigger(record)?.paperTradeId ?? record.tradeId ?? ""),
+            ...[...exitRecords, ...missingExitRecords].map((record) =>
+                record.recordType === "paper_exit"
+                    ? record.tradeId
+                    : this.findLivePositionForExitTrigger(record)?.paperTradeId ?? record.tradeId ?? ""
+            ),
         ].filter((tradeId) => tradeId.length > 0));
         return [
-            ...await this.buildLiveCancelRecords([...exitRecords, ...missingExitRecords], recordedAtIso, sessionToken),
-            ...await this.buildLiveExitRecords(exitRecords, missingExitRecords, recordedAtIso, sessionToken),
+            ...await this.buildLiveCancelRecords(liveExitTriggers, recordedAtIso, sessionToken),
+            ...await this.buildLiveExitRecords(
+                snapshot?.exitMode === "resolve_hold" ? [] : exitRecords,
+                snapshot?.exitMode === "resolve_hold" ? [] : missingExitRecords,
+                recordedAtIso,
+                sessionToken
+            ),
             ...await this.buildLiveTradeRecords(acceptedEntries, recordedAtIso, sameBatchExitedTradeIds, sessionToken),
         ];
+    }
+
+    private retireResolvedLivePositions(exitRecords: readonly PaperExitRecord[]): void {
+        for (const exit of exitRecords) {
+            if (exit.exitReason !== "resolution") continue;
+            this.liveOpenPositionByPaperTradeId.delete(exit.tradeId);
+        }
     }
 
     private async buildLiveCancelRecords(
@@ -2143,6 +2585,23 @@ export class ExecutionLabService {
                     enabled: snapshot.backtestSettings.polymarketEntryCutoffEnabled,
                     cutoffSeconds: snapshot.backtestSettings.polymarketEntryCutoffSeconds,
                 });
+                if (nowSec >= position.eventEndTs) {
+                    if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return records;
+                    const result = buildLiveTradeResultRecord(
+                        snapshot,
+                        request,
+                        buildLiveTradeFailureResponse({
+                            requestId: request.requestId,
+                            status: "rejected",
+                            reason: "event_already_closed",
+                            ...requestPriceFields,
+                        }),
+                        new Date().toISOString()
+                    );
+                    this.latestLiveTradeResult = result;
+                    records.push(result);
+                    continue;
+                }
                 if (!timingPreflight.allowed) {
                     if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return records;
                     const result = buildLiveTradeResultRecord(
@@ -2256,6 +2715,7 @@ export class ExecutionLabService {
     }
 
     private liveTakeProfitCents(): number | null {
+        if (this.snapshot?.exitMode === "resolve_hold") return null;
         const settings = this.snapshot?.backtestSettings;
         if (!settings?.polymarketProtectionTakeProfitEnabled) return null;
         const cents = clampPolymarketProtectionCents(settings.polymarketProtectionTakeProfitCents);
@@ -2538,6 +2998,7 @@ export class ExecutionLabService {
                 : null;
             if (
                 trade
+                && this.snapshot?.exitMode !== "resolve_hold"
                 && expectedExitTimeSec !== null
                 && expectedExitTimeSec <= latestCandleTimeSec
                 && expectedExitTimeSec < position.eventEndTs
@@ -2767,12 +3228,168 @@ export class ExecutionLabService {
         return sortedMapValues(this.polymarketPriceByTime);
     }
 
+    private findCandleCloseAt(ts: number): number | null {
+        for (let index = this.candles.length - 1; index >= 0; index -= 1) {
+            const candleTs = finiteUnixSeconds(this.candles[index]!.time);
+            if (candleTs === ts) return this.candles[index]!.close;
+            if (candleTs !== null && candleTs < ts) return null;
+        }
+        return null;
+    }
+
+    private recordPriceDiagnostic(args: {
+        mode: "miner" | "paper" | "live";
+        symbol: SecondMarketSymbol;
+        marketType: "spot" | "futures";
+        latestCandleTimeSec: number;
+        latestCandle: OHLCVData;
+        quote: PolymarketClob1sQuoteRow | null;
+        feedLagSec: number | null;
+    }): void {
+        const warnings: string[] = [];
+        const liveCandle = args.latestCandle as ExecutionLabLiveCandle;
+        const candleTradeCount = Number.isFinite(Number(liveCandle.tradeCount))
+            ? Math.floor(Number(liveCandle.tradeCount))
+            : null;
+        const candleSource = typeof liveCandle.source === "string" && liveCandle.source.trim()
+            ? liveCandle.source.trim()
+            : null;
+        const candleUpdatedAtSec = Number.isFinite(Number(liveCandle.updatedAt))
+            ? Math.floor(Number(liveCandle.updatedAt))
+            : null;
+        if (args.feedLagSec !== null && args.feedLagSec > MAX_LIVE_CANDLE_LAG_SEC) {
+            warnings.push("binance_feed_lag");
+        }
+        if (!args.quote) {
+            warnings.push("missing_polymarket_quote");
+        }
+
+        const quoteAgeSec = args.quote?.quote_age_ms === null || args.quote?.quote_age_ms === undefined
+            ? null
+            : args.quote.quote_age_ms / 1000;
+        const sourceAgeSec = args.quote?.source_ts_ms
+            ? Math.max(0, (Date.now() - args.quote.source_ts_ms) / 1000)
+            : null;
+        const sampleMinusCandleSec = args.quote ? args.quote.sample_ts - args.latestCandleTimeSec : null;
+        if (sampleMinusCandleSec !== null && Math.abs(sampleMinusCandleSec) > 1) {
+            warnings.push(sampleMinusCandleSec < 0 ? "polymarket_quote_stale_vs_candle" : "polymarket_quote_ahead_of_candle");
+        }
+        if (quoteAgeSec !== null && quoteAgeSec > MAX_LIVE_CANDLE_LAG_SEC) {
+            warnings.push("polymarket_quote_age");
+        }
+        if (sourceAgeSec !== null && sourceAgeSec > MAX_LIVE_CANDLE_LAG_SEC) {
+            warnings.push("polymarket_source_age");
+        }
+
+        const qualityFlags = args.quote?.quality_flags
+            ? args.quote.quality_flags.split(",").map((flag) => flag.trim()).filter(Boolean)
+            : [];
+        warnings.push(...qualityFlags.map((flag) => `quote_${flag}`));
+
+        if ((args.latestCandle.volume ?? 0) === 0 && (candleTradeCount === null || candleTradeCount === 0)) {
+            warnings.push("binance_zero_volume_candle");
+        }
+        if (candleSource?.includes("fill")) {
+            warnings.push("binance_fill_candle");
+        }
+        const previousSample = this.diagnosticSamples[this.diagnosticSamples.length - 1] ?? null;
+        if (previousSample?.symbol === args.symbol && previousSample.marketType === args.marketType) {
+            const candleDeltaSec = args.latestCandleTimeSec - previousSample.candle.timeSec;
+            if (candleDeltaSec === 0) {
+                warnings.push("binance_repeated_candle");
+            } else if (candleDeltaSec > 1) {
+                warnings.push("binance_candle_gap");
+            }
+        }
+
+        const eventStartClose = args.quote ? this.findCandleCloseAt(args.quote.event_start_ts) : null;
+        const moveFromStart = eventStartClose === null ? null : args.latestCandle.close - eventStartClose;
+        const moveFromStartPct = eventStartClose === null || eventStartClose === 0
+            ? null
+            : (moveFromStart as number) / eventStartClose * 100;
+
+        const sample: ExecutionLabDiagnosticSample = {
+            recordedAtIso: new Date().toISOString(),
+            mode: args.mode,
+            symbol: args.symbol,
+            marketType: args.marketType,
+            candle: {
+                timeSec: args.latestCandleTimeSec,
+                open: args.latestCandle.open,
+                high: args.latestCandle.high,
+                low: args.latestCandle.low,
+                close: args.latestCandle.close,
+                volume: args.latestCandle.volume ?? 0,
+                tradeCount: candleTradeCount,
+                source: candleSource,
+                updatedAtIso: candleUpdatedAtSec === null ? null : new Date(candleUpdatedAtSec * 1000).toISOString(),
+            },
+            feedLagSec: args.feedLagSec,
+            quote: args.quote
+                ? {
+                    sampleTs: args.quote.sample_ts,
+                    sampleMinusCandleSec: sampleMinusCandleSec ?? 0,
+                    quoteAgeSec,
+                    source: args.quote.source,
+                    sourceAgeSec,
+                    yesBid: args.quote.yes_bid,
+                    yesAsk: args.quote.yes_ask,
+                    yesMid: quoteMid(args.quote.yes_bid, args.quote.yes_ask, args.quote.yes_mid),
+                    noBid: args.quote.no_bid,
+                    noAsk: args.quote.no_ask,
+                    noMid: quoteMid(args.quote.no_bid, args.quote.no_ask, args.quote.no_mid),
+                    qualityFlags,
+                }
+                : null,
+            event: args.quote
+                ? {
+                    marketSlug: args.quote.market_slug,
+                    eventStartTs: args.quote.event_start_ts,
+                    eventEndTs: args.quote.event_end_ts,
+                    secondsToEnd: args.quote.event_end_ts - args.latestCandleTimeSec,
+                    startClose: eventStartClose,
+                    moveFromStart,
+                    moveFromStartPct,
+                }
+                : null,
+            warnings: Array.from(new Set(warnings)),
+        };
+
+        this.diagnosticSamples.push(sample);
+        if (this.diagnosticSamples.length > MAX_EXECUTION_LAB_DIAGNOSTIC_SAMPLES) {
+            this.diagnosticSamples.splice(0, this.diagnosticSamples.length - MAX_EXECUTION_LAB_DIAGNOSTIC_SAMPLES);
+        }
+        this.renderDiagnostics();
+    }
+
+    private buildDiagnostics(): ExecutionLabDiagnostics | null {
+        if (this.diagnosticSamples.length === 0) return null;
+        const warningCounts: Record<string, number> = {};
+        for (const sample of this.diagnosticSamples) {
+            for (const warning of sample.warnings) {
+                warningCounts[warning] = (warningCounts[warning] ?? 0) + 1;
+            }
+        }
+        return {
+            schema: "execution_lab.price_alignment.v1",
+            generatedAtIso: new Date().toISOString(),
+            latest: this.diagnosticSamples[this.diagnosticSamples.length - 1] ?? null,
+            samples: [...this.diagnosticSamples],
+            summary: {
+                sampleCount: this.diagnosticSamples.length,
+                warningCounts,
+            },
+        };
+    }
+
     private async stop(reason: "user_stop" | "error", message?: string): Promise<void> {
         this.sessionRunToken += 1;
         if (this.timer) {
             clearInterval(this.timer);
             this.timer = null;
         }
+        this.stopStreamTimer();
+        this.candleRefreshPromise = null;
         const paperState = this.paperState;
         this.setRunningState(false);
         this.sessionLiveUiConfig = null;
@@ -2783,12 +3400,7 @@ export class ExecutionLabService {
                 // Chart restore should not depend on the final log append.
             }
         }
-        chartManager.clearExecutionLabMarkers();
-        chartManager.clearExecutionLabPolymarketPrices();
-        chartManager.restoreStateChartData();
-        if (state.currentBacktestResult) {
-            chartManager.displayTradeMarkers(state.currentBacktestResult.trades, uiManager.formatPrice);
-        }
+        this.restoreStateChart();
         this.setStatus(message ?? "Stopped", reason === "error" ? "error" : "neutral");
         this.render();
     }
@@ -2893,6 +3505,35 @@ export class ExecutionLabService {
         );
     }
 
+    private renderDiagnostics(): void {
+        const dom = this.dom;
+        if (!dom) return;
+        const latest = this.diagnosticSamples[this.diagnosticSamples.length - 1] ?? null;
+        dom.copyDiagnosticsButton.disabled = !latest;
+        if (!latest) {
+            dom.diagnosticsSummary.textContent = "No diagnostics yet.";
+            dom.diagnosticsSummary.classList.remove("is-warning", "is-running");
+            return;
+        }
+
+        const quoteLag = latest.quote ? latest.quote.sampleMinusCandleSec : null;
+        const parts = [
+            `${latest.mode.toUpperCase()} ${latest.symbol} ${latest.marketType}`,
+            `candle ${formatDateTime(latest.candle.timeSec)} close ${latest.candle.close.toFixed(2)}`,
+            `feed lag ${formatSeconds(latest.feedLagSec)}`,
+            latest.quote
+                ? `quote lag ${formatSignedSeconds(quoteLag)} age ${formatSeconds(latest.quote.quoteAgeSec)}`
+                : "quote --",
+            latest.event?.moveFromStartPct !== null && latest.event?.moveFromStartPct !== undefined
+                ? `event move ${latest.event.moveFromStartPct >= 0 ? "+" : ""}${latest.event.moveFromStartPct.toFixed(3)}%`
+                : null,
+            latest.warnings.length > 0 ? `warnings ${latest.warnings.join(", ")}` : "OK",
+        ].filter(Boolean);
+        dom.diagnosticsSummary.textContent = parts.join(" | ");
+        dom.diagnosticsSummary.classList.toggle("is-warning", latest.warnings.length > 0);
+        dom.diagnosticsSummary.classList.toggle("is-running", latest.warnings.length === 0);
+    }
+
     private renderDecision(
         latestSignal: ExecutionLabEvaluatedSignal | null,
         openPosition: ExecutionLabOpenPaperPosition | null
@@ -2974,7 +3615,52 @@ export class ExecutionLabService {
         this.renderDecision(null, null);
         this.renderPaperMetrics();
         this.renderComparisonMetrics();
+        this.renderDiagnostics();
         this.setComparisonStatus("No comparison run.");
+        dom.recentTrades.innerHTML = '<div class="execution-lab-empty">No paper trades yet.</div>';
+    }
+
+    private renderMinerChart(): void {
+        const dom = this.dom;
+        const context = this.minerChartContext;
+        if (!dom || !context || this.running) return;
+        const latestCandle = this.candles[this.candles.length - 1] ?? null;
+        const latestTs = latestCandle ? finiteUnixSeconds(latestCandle.time) : null;
+        const quoteAgeSec = this.latestQuote?.quote_age_ms === null || this.latestQuote?.quote_age_ms === undefined
+            ? null
+            : this.latestQuote.quote_age_ms / 1000;
+
+        dom.configSnapshot.textContent = [
+            "1s Miner",
+            context.symbol,
+            context.marketType,
+            context.outcomeSymbol ? `${context.symbol}->${context.outcomeSymbol}` : null,
+        ].filter(Boolean).join(" | ");
+        dom.latestCandle.textContent = latestCandle && latestTs !== null ? formatDateTime(latestTs) : "--";
+        dom.quoteSnapshot.textContent = this.latestQuote
+            ? [
+                `YES bid ${formatPolyPrice(this.latestQuote.yes_bid)} ask ${formatPolyPrice(this.latestQuote.yes_ask)} mid ${formatPolyPrice(this.latestQuote.yes_mid)}`,
+                `NO bid ${formatPolyPrice(this.latestQuote.no_bid)} ask ${formatPolyPrice(this.latestQuote.no_ask)} mid ${formatPolyPrice(this.latestQuote.no_mid)}`,
+            ].join(" | ")
+            : "--";
+        dom.feedLag.textContent = formatSeconds(this.feedLagSec);
+        dom.quoteAge.textContent = formatSeconds(quoteAgeSec);
+        dom.activeEvent.textContent = this.latestQuote
+            ? `${this.latestQuote.market_slug} ends ${formatDateTime(this.latestQuote.event_end_ts)}`
+            : "--";
+        dom.logPath.textContent = "--";
+        dom.latestSignal.textContent = "--";
+        dom.signalParity.classList.remove("is-ok", "is-warning");
+        dom.signalParity.textContent = "--";
+        dom.signalMismatch.textContent = "--";
+        dom.openPosition.textContent = "--";
+        dom.livePosition.textContent = "--";
+        dom.liveResult.textContent = "--";
+        dom.sessionPnl.textContent = "--";
+        this.renderDecision(null, null);
+        this.renderPaperMetrics();
+        this.renderComparisonMetrics();
+        this.renderDiagnostics();
         dom.recentTrades.innerHTML = '<div class="execution-lab-empty">No paper trades yet.</div>';
     }
 
@@ -3086,6 +3772,7 @@ export class ExecutionLabService {
         const realized = this.paperState?.realizedPnlUsd ?? 0;
         dom.sessionPnl.textContent = `realized ${formatMoney(realized)} | entries ${this.paperState?.totalEntries ?? 0} | open ${openPositions.length} | pending ${pendingSettlements.length} | closed ${this.paperState?.totalClosed ?? 0}`;
         this.renderPaperMetrics();
+        this.renderDiagnostics();
         this.renderRecentTrades();
     }
 

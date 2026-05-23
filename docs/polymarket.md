@@ -33,7 +33,7 @@ If you want to score a strategy against resolved Polymarket crypto events:
   - `signal_exit_same_event` is effective on `1m` + `next_open` using locally cached Polymarket price points, and on supported `1s` BTCUSDT/XRPUSDT CLOB runs using `signal_close`, `next_open`, or `next_close` exact-second bid/ask rows
 - optionally set `Polymarket Entry Price Filter`; for example, `20` skips trades whose selected Polymarket entry price is at or below 20c or at or above 80c
 - optionally enable `Polymarket Entry Cutoff` in Backtest Realism; it defaults off, and when enabled the seconds field defaults to `15`
-- on supported `1s` CLOB runs, optionally enable Polymarket Take Profit and/or Stop Loss. In `signal_exit_same_event`, TP fills at the target limit price and SL fills at the first sell-side quote after entry that reaches the stop threshold. In `resolve_hold`, TP is ignored and SL can still close the Polymarket leg before final resolution.
+- on supported `1s` CLOB runs, optionally enable Polymarket Take Profit and/or Stop Loss. In `signal_exit_same_event`, TP fills at the target limit price and SL fills at the first sell-side quote after entry that reaches the stop threshold. In `resolve_hold`, Execution Lab holds the Polymarket leg to final resolution and ignores chart exits, signal exits, TP, and SL.
 - optional for native `5m` outcome sessions, including supported `1s` CLOB runs: enable `Post-Signal Limit Entry` to require the selected YES/NO side to trade at or below the configured limit price after the chart entry signal and before the event's final minute; on supported `1s` CLOB runs, `stale_signal_price` uses the original chart-entry quote as the limit and begins checking after `polymarketEntryDelayBars`
 - `Disable Exit Signal` lives in Risk Management, not Polymarket. It is effective only when chart TP or SL is active and lets chart entries continue to be signal-based while exits come from chart risk exits or forced Polymarket protective exits.
 
@@ -239,7 +239,7 @@ Behavior:
   - `actual_entry_minute` scores the first eligible trade per `5m` event and uses that trade's real minute for entry pricing while still holding to final resolution
 - supported `1s` BTCUSDT/XRPUSDT charts use exact-second CLOB entry pricing under `signal_close`, `next_open`, or `next_close`; other execution models keep `resolve_hold` selected but skip the CLOB annotation pass
 - if a synced local outcome row is missing for a supported `1s` run, a decisive final CLOB quote at the event close can infer the final binary outcome for resolve-hold scoring
-- Polymarket Take Profit is ignored in `resolve_hold`; Polymarket Stop Loss remains active because it is a protective failure exit before final resolution
+- for regular backtest annotation, Polymarket Take Profit is ignored in `resolve_hold`; Polymarket Stop Loss remains active because it is a protective failure exit before final resolution
 - native `15m` and `1h` use the first local price point at or after the chart trade entry when payout diagnostics need an entry price
 - Quick View uses annotated Polymarket payout data for its Performance expectancy card when resolve-hold trades have priced Polymarket outcomes
 - the Trades panel now keeps row-level skip context on `1m` resolve-hold runs:
@@ -580,6 +580,10 @@ User-facing controls live in the Backtest Realism section:
 - `polymarketProtectionStopLossCents`
 
 Execution Lab has separate `Poly TP`, `TP c`, `Poly SL`, and `SL c` controls in `html-partials/tab-execution-lab.html`. Those values are stored in `executionLabSettings` and override the Backtest Realism Polymarket protection settings for Execution Lab sessions only.
+
+`Start 1s Miner` is also a chart-stream action when the current chart is a supported `1s` BTCUSDT/XRPUSDT chart. It starts the local miner and refreshes the chart, latest candle, live quote, and price-alignment diagnostics even before a Paper Trade or Live Trade session is started. Execution Lab diagnostics can be copied as JSON for later feedback-loop analysis; they include candle timing, source, trade count, market type, feed lag, CLOB quote timing, quote age, active event, and warning flags for stale/carry-forward quotes, fill-derived Binance candles, and repeated or zero-volume Binance candles. Fresh CLOB quotes are preferred over stale exact-second local quote rows during live monitoring.
+
+Execution Lab live sessions treat `resolve_hold` as a strict hold-to-resolution contract: after an entry, chart exits, time stops, signal exits, and Execution Lab Poly TP/SL controls do not submit a live sell. The position remains open until the Polymarket event resolves, and with `one/event` enabled the next entry can only claim a later Polymarket event.
 
 Current UI rules:
 

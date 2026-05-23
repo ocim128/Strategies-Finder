@@ -58,6 +58,22 @@ function snapshot(
     };
 }
 
+function signalExitSnapshot(
+    allowMultipleTradesPerEvent = false,
+    entryPriceFilterCents = 0,
+    entryCutoffEnabled = false,
+    entryCutoffSeconds = 15
+): ExecutionLabSessionSnapshot {
+    const result = snapshot(
+        allowMultipleTradesPerEvent,
+        entryPriceFilterCents,
+        entryCutoffEnabled,
+        entryCutoffSeconds
+    );
+    result.exitMode = "signal_exit_same_event";
+    return result;
+}
+
 function outcome(resolvedUp: 0 | 1, resolutionSource = "test"): PolymarketOutcomeRow {
     return {
         series_id: "10684",
@@ -200,7 +216,7 @@ describe("Execution Lab paper session", () => {
     });
 
     it("prices close-based 1s executions at the candle close second", () => {
-        const closeSnapshot = snapshot();
+        const closeSnapshot = signalExitSnapshot();
         closeSnapshot.backtestSettings.executionModel = "signal_close";
         const state = createExecutionLabPaperState(closeSnapshot);
         const closedTrade = trade(1, "long", EVENT_START + 10, EVENT_START + 12);
@@ -229,7 +245,7 @@ describe("Execution Lab paper session", () => {
     });
 
     it("exits open paper positions at the configured Polymarket take-profit target", () => {
-        const protectedSnapshot = snapshot();
+        const protectedSnapshot = signalExitSnapshot();
         protectedSnapshot.backtestSettings.polymarketProtectionTakeProfitEnabled = true;
         protectedSnapshot.backtestSettings.polymarketProtectionTakeProfitCents = 5;
         const state = createExecutionLabPaperState(protectedSnapshot);
@@ -261,7 +277,7 @@ describe("Execution Lab paper session", () => {
     });
 
     it("exits open paper positions at the observed sell quote when Polymarket stop-loss triggers", () => {
-        const protectedSnapshot = snapshot();
+        const protectedSnapshot = signalExitSnapshot();
         protectedSnapshot.backtestSettings.polymarketProtectionStopLossEnabled = true;
         protectedSnapshot.backtestSettings.polymarketProtectionStopLossCents = 5;
         const state = createExecutionLabPaperState(protectedSnapshot);
@@ -292,8 +308,53 @@ describe("Execution Lab paper session", () => {
         expect(state.openPositions.size).to.equal(0);
     });
 
-    it("scans loaded quote ranges for paper Polymarket protection exits between polls", () => {
+    it("ignores Polymarket protection triggers in resolve-hold until final outcome", () => {
         const protectedSnapshot = snapshot();
+        protectedSnapshot.backtestSettings.polymarketProtectionStopLossEnabled = true;
+        protectedSnapshot.backtestSettings.polymarketProtectionStopLossCents = 5;
+        const state = createExecutionLabPaperState(protectedSnapshot);
+        tick({
+            state,
+            latestTs: EVENT_START + 10,
+            trades: [trade(1, "long", EVENT_START + 10)],
+            signals: [signal("buy", EVENT_START + 9)],
+            quotes: [quote(EVENT_START + 10, 0.50, 0.48)],
+        });
+
+        const beforeResolution = tick({
+            state,
+            latestTs: EVENT_START + 12,
+            trades: [trade(1, "long", EVENT_START + 10)],
+            signals: [signal("buy", EVENT_START + 9)],
+            quotes: [
+                quote(EVENT_START + 10, 0.50, 0.48),
+                quote(EVENT_START + 12, 0.46, 0.44),
+            ],
+        });
+
+        expect(beforeResolution.records.some((record) => record.recordType === "paper_exit")).to.equal(false);
+        expect(state.openPositions.size).to.equal(1);
+
+        const resolved = tick({
+            state,
+            latestTs: EVENT_END + 1,
+            trades: [trade(1, "long", EVENT_START + 10)],
+            signals: [signal("buy", EVENT_START + 9)],
+            quotes: [
+                quote(EVENT_START + 10, 0.50, 0.48),
+                quote(EVENT_START + 12, 0.46, 0.44),
+            ],
+            outcomes: [outcome(0)],
+        });
+        const exit = resolved.records.find((record): record is PaperExitRecord => record.recordType === "paper_exit");
+
+        expect(exit?.exitReason).to.equal("resolution");
+        expect(exit?.exitPrice).to.equal(0);
+        expect(state.openPositions.size).to.equal(0);
+    });
+
+    it("scans loaded quote ranges for paper Polymarket protection exits between polls", () => {
+        const protectedSnapshot = signalExitSnapshot();
         protectedSnapshot.backtestSettings.polymarketProtectionTakeProfitEnabled = true;
         protectedSnapshot.backtestSettings.polymarketProtectionTakeProfitCents = 5;
         const state = createExecutionLabPaperState(protectedSnapshot);
@@ -325,7 +386,7 @@ describe("Execution Lab paper session", () => {
     });
 
     it("does not let a later paper protection quote override an earlier chart exit", () => {
-        const protectedSnapshot = snapshot();
+        const protectedSnapshot = signalExitSnapshot();
         protectedSnapshot.backtestSettings.polymarketProtectionTakeProfitEnabled = true;
         protectedSnapshot.backtestSettings.polymarketProtectionTakeProfitCents = 5;
         const state = createExecutionLabPaperState(protectedSnapshot);
@@ -627,8 +688,54 @@ describe("Execution Lab paper session", () => {
         expect(state.openPositions.size).to.equal(0);
     });
 
-    it("closes paper trades when the backtest closes by max-hold or risk exit before event end", () => {
+    it("keeps resolve-hold trades open through chart exits and settles at final outcome", () => {
         const state = createExecutionLabPaperState(snapshot());
+        tick({
+            state,
+            latestTs: EVENT_START + 10,
+            trades: [trade(1, "long", EVENT_START + 10, EVENT_START + 13)],
+            signals: [signal("buy", EVENT_START + 9)],
+            quotes: [quote(EVENT_START + 10, 0.5, 0.48)],
+        });
+        const closedTrade = trade(1, "long", EVENT_START + 10, EVENT_START + 13);
+        closedTrade.exitReason = "time_stop";
+        const beforeResolution = tick({
+            state,
+            latestTs: EVENT_START + 13,
+            trades: [closedTrade],
+            signals: [signal("buy", EVENT_START + 9)],
+            quotes: [
+                quote(EVENT_START + 10, 0.5, 0.48),
+                quote(EVENT_START + 13, 0.72, 0.7),
+            ],
+        });
+
+        expect(beforeResolution.records.some((record) => record.recordType === "paper_exit")).to.equal(false);
+        expect(state.openPositions.size).to.equal(1);
+        expect(state.totalClosed).to.equal(0);
+
+        const resolved = tick({
+            state,
+            latestTs: EVENT_END + 1,
+            trades: [closedTrade],
+            signals: [signal("buy", EVENT_START + 9)],
+            quotes: [
+                quote(EVENT_START + 10, 0.5, 0.48),
+                quote(EVENT_START + 13, 0.72, 0.7),
+            ],
+            outcomes: [outcome(1)],
+        });
+        const exit = resolved.records.find((record): record is PaperExitRecord => record.recordType === "paper_exit");
+
+        expect(exit?.exitReason).to.equal("resolution");
+        expect(exit?.exitTimeSec).to.equal(EVENT_END);
+        expect(exit?.exitPrice).to.equal(1);
+        expect(state.openPositions.size).to.equal(0);
+        expect(state.totalClosed).to.equal(1);
+    });
+
+    it("closes paper trades when the backtest closes by max-hold or risk exit before event end", () => {
+        const state = createExecutionLabPaperState(signalExitSnapshot());
         tick({
             state,
             latestTs: EVENT_START + 10,
@@ -658,7 +765,7 @@ describe("Execution Lab paper session", () => {
     });
 
     it("allows zero bid exits when an outcome is effectively worthless", () => {
-        const state = createExecutionLabPaperState(snapshot());
+        const state = createExecutionLabPaperState(signalExitSnapshot());
         tick({
             state,
             latestTs: EVENT_START + 10,
@@ -687,7 +794,7 @@ describe("Execution Lab paper session", () => {
     });
 
     it("does not use a later quote for a missed backtest exit second", () => {
-        const state = createExecutionLabPaperState(snapshot());
+        const state = createExecutionLabPaperState(signalExitSnapshot());
         tick({
             state,
             latestTs: EVENT_START + 10,
@@ -719,7 +826,7 @@ describe("Execution Lab paper session", () => {
     });
 
     it("logs missing exit quotes when a backtest exit cannot be priced", () => {
-        const state = createExecutionLabPaperState(snapshot());
+        const state = createExecutionLabPaperState(signalExitSnapshot());
         tick({
             state,
             latestTs: EVENT_START + 10,

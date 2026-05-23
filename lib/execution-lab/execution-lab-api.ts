@@ -29,11 +29,26 @@ export type ExecutionLabMinerStatus = {
 };
 type LiveCandlesResponse = {
     ok: true;
-    candles: Array<{ ts: number; open: number; high: number; low: number; close: number; volume: number }>;
+    candles: Array<{
+        ts: number;
+        open: number;
+        high: number;
+        low: number;
+        close: number;
+        volume: number;
+        trade_count?: number | null;
+        source?: string;
+        updated_at?: number;
+    }>;
 };
 type LiveEventsResponse = { ok: true; events: SecondMarketPolymarketEvent[] };
 type LiveQuoteResponse = { ok: true; quote: PolymarketClob1sQuoteRow };
 type LiveOutcomesResponse = { ok: true; outcomes: PolymarketOutcomeRow[] };
+export type ExecutionLabLiveCandle = OHLCVData & {
+    tradeCount?: number | null;
+    source?: string;
+    updatedAt?: number;
+};
 const MAX_EXECUTION_LAB_LOG_BATCH_RECORDS = 100;
 const DEFAULT_API_TIMEOUT_MS = 10000;
 const LIVE_TRADE_API_TIMEOUT_MS = 30000;
@@ -150,7 +165,7 @@ export async function loadExecutionLabLiveCandles(args: {
     limit?: number;
     startTs?: number;
     endTs?: number;
-}): Promise<OHLCVData[]> {
+}): Promise<ExecutionLabLiveCandle[]> {
     const params = new URLSearchParams({ symbol: args.symbol, marketType: args.marketType ?? "spot" });
     if (args.limit !== undefined) params.set("limit", String(Math.max(1, Math.floor(args.limit))));
     if (args.startTs !== undefined) params.set("startTs", String(Math.floor(args.startTs)));
@@ -163,6 +178,9 @@ export async function loadExecutionLabLiveCandles(args: {
         low: row.low,
         close: row.close,
         volume: row.volume,
+        tradeCount: row.trade_count,
+        source: row.source,
+        updatedAt: row.updated_at,
     }));
 }
 

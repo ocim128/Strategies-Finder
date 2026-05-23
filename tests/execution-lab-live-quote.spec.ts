@@ -10,6 +10,7 @@ import { startExecutionLabMiner } from "../lib/execution-lab/execution-lab-api";
 import {
     buildExecutionLabMinerProcessArgs,
     executionLabVitePlugin,
+    isFreshStoredLiveQuote,
     normalizeExecutionLabClobPrice,
 } from "../lib/execution-lab/execution-lab-vite-plugin";
 import type { ExecutionLabSessionSnapshot } from "../lib/execution-lab/execution-lab-model";
@@ -220,6 +221,28 @@ describe("Execution Lab live helpers", () => {
         expect(normalizeExecutionLabClobPrice(-0.01)).to.equal(null);
         expect(normalizeExecutionLabClobPrice(1.01)).to.equal(null);
         expect(normalizeExecutionLabClobPrice("")).to.equal(null);
+    });
+
+    it("rejects carried-forward and old stored live quotes as fresh quotes", () => {
+        const nowSec = Math.floor(Date.now() / 1000);
+        expect(isFreshStoredLiveQuote({
+            ...clobQuote(nowSec),
+            source_ts_ms: Date.now(),
+            quote_age_ms: 0,
+            quality_flags: "",
+        })).to.equal(true);
+        expect(isFreshStoredLiveQuote({
+            ...clobQuote(nowSec),
+            source_ts_ms: Date.now(),
+            quote_age_ms: 0,
+            quality_flags: "carried_forward",
+        })).to.equal(false);
+        expect(isFreshStoredLiveQuote({
+            ...clobQuote(nowSec),
+            source_ts_ms: Date.now() - 5_000,
+            quote_age_ms: 5_000,
+            quality_flags: "",
+        })).to.equal(false);
     });
 
     it("loads closed outcomes by event end date", async () => {

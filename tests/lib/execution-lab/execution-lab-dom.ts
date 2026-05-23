@@ -22,6 +22,8 @@ export const EXECUTION_LAB_IDS = {
     liveLimitOffsetCents: "executionLabLiveLimitOffsetCents",
     liveLimitCancelAllOnExit: "executionLabLiveLimitCancelAllOnExit",
     status: "executionLabStatus",
+    copyDiagnosticsButton: "executionLabCopyDiagnostics",
+    diagnosticsSummary: "executionLabDiagnosticsSummary",
     configSnapshot: "executionLabConfigSnapshot",
     latestCandle: "executionLabLatestCandle",
     quoteSnapshot: "executionLabQuoteSnapshot",
@@ -79,6 +81,8 @@ export interface ExecutionLabDom {
     liveLimitOffsetCents: HTMLInputElement;
     liveLimitCancelAllOnExit: HTMLInputElement;
     status: HTMLElement;
+    copyDiagnosticsButton: HTMLButtonElement;
+    diagnosticsSummary: HTMLElement;
     configSnapshot: HTMLElement;
     latestCandle: HTMLElement;
     quoteSnapshot: HTMLElement;
@@ -135,6 +139,8 @@ export function queryExecutionLabDom(): ExecutionLabDom {
         liveLimitOffsetCents: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveLimitOffsetCents),
         liveLimitCancelAllOnExit: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveLimitCancelAllOnExit),
         status: getRequiredElement(EXECUTION_LAB_IDS.status),
+        copyDiagnosticsButton: getRequiredElement<HTMLButtonElement>(EXECUTION_LAB_IDS.copyDiagnosticsButton),
+        diagnosticsSummary: getRequiredElement(EXECUTION_LAB_IDS.diagnosticsSummary),
         configSnapshot: getRequiredElement(EXECUTION_LAB_IDS.configSnapshot),
         latestCandle: getRequiredElement(EXECUTION_LAB_IDS.latestCandle),
         quoteSnapshot: getRequiredElement(EXECUTION_LAB_IDS.quoteSnapshot),

@@ -54,6 +54,11 @@ export function upsertBinance1sCandles(db: DatabaseSync, rows: readonly Binance1
             trade_count = excluded.trade_count,
             source = excluded.source,
             updated_at = excluded.updated_at
+        WHERE NOT (
+            excluded.volume = 0
+            AND COALESCE(excluded.trade_count, 0) = 0
+            AND (binance_1s_candles.volume > 0 OR COALESCE(binance_1s_candles.trade_count, 0) > 0)
+        )
     `);
 
     return runTransaction(db, () => {
