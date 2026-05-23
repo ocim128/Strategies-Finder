@@ -2,6 +2,8 @@
 // Indicator Calculations
 // ============================================================================
 
+import { parseTimeToUnixSeconds } from "../time-normalization";
+
 export function calculateSMA(data: number[], period: number): (number | null)[] {
     const result: (number | null)[] = new Array(data.length).fill(null);
     let sum = 0;
@@ -421,8 +423,6 @@ export function calculateSessionVWAP(
     const length = close.length;
     const vwap: (number | null)[] = new Array(length).fill(null);
     if (length === 0) return vwap;
-
-    const { parseTimeToUnixSeconds } = require("../time-normalization");
 
     let sumPV = 0;
     let sumV = 0;

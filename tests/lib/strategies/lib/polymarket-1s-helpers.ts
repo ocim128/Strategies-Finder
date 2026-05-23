@@ -146,6 +146,15 @@ const executableEdgeCache: RuntimeFrameCache<Polymarket1sExecutableEdgeFrame> = 
 const reactionGapCache: RuntimeFrameCache<Polymarket1sReactionGapFrame> = new WeakMap();
 const actionabilityCache: RuntimeFrameCache<Polymarket1sActionabilityFrame> = new WeakMap();
 const gammaAgreementCache: RuntimeFrameCache<Polymarket1sGammaAgreementFrame> = new WeakMap();
+const timestampSecondsCache = new WeakMap<readonly OHLCVData[], (number | null)[]>();
+const sortedQuoteCache = new WeakMap<
+    Polymarket1sRuntimeContext,
+    { quotes: readonly Polymarket1sQuoteContextRow[]; quoteCount: number; aligned: AlignedQuote[] }
+>();
+const sortedGammaCache = new WeakMap<
+    Polymarket1sRuntimeContext,
+    { gammaSnapshots: readonly Polymarket1sGammaContextRow[]; gammaCount: number; aligned: AlignedGamma[] }
+>();
 
 const EMPTY_GAMMA_SNAPSHOTS: readonly Polymarket1sGammaContextRow[] = [];
 
@@ -290,18 +299,47 @@ function buildLogReturns(data: readonly OHLCVData[]): number[] {
     return returns;
 }
 
+function getTimestampSeconds(data: readonly OHLCVData[]): (number | null)[] {
+    const cached = timestampSecondsCache.get(data);
+    if (cached) return cached;
+    const timestamps = data.map((bar) => parseTimeToUnixSeconds(bar.time));
+    timestampSecondsCache.set(data, timestamps);
+    return timestamps;
+}
+
 function sortedQuotes(context: Polymarket1sRuntimeContext): AlignedQuote[] {
-    return context.quotes
+    const cached = sortedQuoteCache.get(context);
+    if (cached && cached.quotes === context.quotes && cached.quoteCount === context.quotes.length) {
+        return cached.aligned;
+    }
+    const aligned = context.quotes
         .map((quote) => ({ quote, quoteTs: finiteNumber(quote.sample_ts) }))
         .filter((item): item is AlignedQuote => item.quoteTs !== null)
         .sort((left, right) => left.quoteTs - right.quoteTs);
+    sortedQuoteCache.set(context, {
+        quotes: context.quotes,
+        quoteCount: context.quotes.length,
+        aligned,
+    });
+    return aligned;
 }
 
 function sortedGammaSnapshots(context: Polymarket1sRuntimeContext): AlignedGamma[] {
-    return (context.gammaSnapshots ?? EMPTY_GAMMA_SNAPSHOTS)
+    const gammaSnapshots = context.gammaSnapshots ?? EMPTY_GAMMA_SNAPSHOTS;
+    const cached = sortedGammaCache.get(context);
+    if (cached && cached.gammaSnapshots === gammaSnapshots && cached.gammaCount === gammaSnapshots.length) {
+        return cached.aligned;
+    }
+    const aligned = gammaSnapshots
         .map((gamma) => ({ gamma, gammaTs: finiteNumber(gamma.snapshot_ts) }))
         .filter((item): item is AlignedGamma => item.gammaTs !== null)
         .sort((left, right) => left.gammaTs - right.gammaTs);
+    sortedGammaCache.set(context, {
+        gammaSnapshots,
+        gammaCount: gammaSnapshots.length,
+        aligned,
+    });
+    return aligned;
 }
 
 function pressureGapOptionsKey(options: Polymarket1sPressureGapOptions): string {
@@ -469,11 +507,12 @@ function eventKey(row: Pick<Polymarket1sQuoteContextRow, "series_id" | "event_st
 function resolveEventOpenPrice(
     data: readonly OHLCVData[],
     index: number,
-    eventStartTs: number
+    eventStartTs: number,
+    timestamps: readonly (number | null)[] = getTimestampSeconds(data)
 ): number | null {
     let firstCloseAfterStart: number | null = null;
     for (let cursor = index; cursor >= 0; cursor--) {
-        const ts = parseTimeToUnixSeconds(data[cursor].time);
+        const ts = timestamps[cursor];
         if (ts === null) continue;
         if (ts === eventStartTs) return data[cursor].close;
         if (ts < eventStartTs) return firstCloseAfterStart;
@@ -507,6 +546,7 @@ export function buildPolymarket1sPressureGap(
     const quotes = sortedQuotes(runtime);
     const quoteState = { pointer: 0, latest: null as AlignedQuote | null };
     const logReturns = buildLogReturns(data);
+    const timestamps = getTimestampSeconds(data);
     const volLookback = roundedAtLeast(options.volLookback, DEFAULT_VOL_LOOKBACK, 5);
     const rollingVol = buildRollingStdDev(logReturns, volLookback);
     const maxQuoteAgeSec = roundedAtLeast(options.maxQuoteAgeSec, DEFAULT_MAX_QUOTE_AGE_SEC, 0);
@@ -515,7 +555,7 @@ export function buildPolymarket1sPressureGap(
     let populated = 0;
 
     for (let i = 0; i < length; i++) {
-        const ts = parseTimeToUnixSeconds(data[i].time);
+        const ts = timestamps[i];
         if (ts === null) continue;
 
         const alignedQuote = activeQuoteAt(quotes, quoteState, ts, maxQuoteAgeSec);
@@ -524,7 +564,7 @@ export function buildPolymarket1sPressureGap(
         const quote = alignedQuote.quote;
         const key = eventKey(quote);
         if (!eventOpenByKey.has(key)) {
-            const eventOpen = resolveEventOpenPrice(data, i, quote.event_start_ts);
+            const eventOpen = resolveEventOpenPrice(data, i, quote.event_start_ts, timestamps);
             if (eventOpen === null || eventOpen <= 0) continue;
             eventOpenByKey.set(key, eventOpen);
         }
@@ -591,11 +631,12 @@ export function buildPolymarket1sExecutableEdge(
     const frame = emptyExecutableEdgeFrame(length);
     const quotes = sortedQuotes(runtime);
     const quoteState = { pointer: 0, latest: null as AlignedQuote | null };
+    const timestamps = getTimestampSeconds(data);
     const maxQuoteAgeSec = roundedAtLeast(options.maxQuoteAgeSec, DEFAULT_MAX_QUOTE_AGE_SEC, 0);
     let populated = 0;
 
     for (let i = 0; i < length; i++) {
-        const ts = parseTimeToUnixSeconds(data[i].time);
+        const ts = timestamps[i];
         if (ts === null) continue;
 
         const alignedQuote = activeQuoteAt(quotes, quoteState, ts, maxQuoteAgeSec);
@@ -650,7 +691,7 @@ export function buildPolymarket1sReactionGap(
     const pressure = buildPolymarket1sPressureGap(data, runtime, options);
     const frame = emptyReactionGapFrame(length);
     const lagSec = roundedAtLeast(options.lagSec, 3, 1);
-    const timestamps = data.map((bar) => parseTimeToUnixSeconds(bar.time));
+    const timestamps = getTimestampSeconds(data);
     let scanIndex = 0;
     let lagIndex = -1;
     let populated = 0;
@@ -844,11 +885,12 @@ export function buildPolymarket1sGammaAgreement(
     const frame = emptyGammaAgreementFrame(length);
     const gamma = sortedGammaSnapshots(runtime);
     const gammaState = { pointer: 0, latest: null as AlignedGamma | null };
+    const timestamps = getTimestampSeconds(data);
     const maxGammaAgeSec = roundedAtLeast(options.maxGammaAgeSec, 60, 0);
     let populated = 0;
 
     for (let i = 0; i < length; i++) {
-        const ts = parseTimeToUnixSeconds(data[i].time);
+        const ts = timestamps[i];
         if (ts === null) continue;
 
         const alignedGamma = activeGammaAt(gamma, gammaState, ts, maxGammaAgeSec);

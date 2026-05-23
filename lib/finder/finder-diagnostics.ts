@@ -15,6 +15,8 @@ export type FinderStrategyDiagnosticsStats = {
     name: string;
     runs: number;
     failedRuns: number;
+    skippedRuns: number;
+    zeroSignalRuns: number;
     signalMs: number;
     backtestMs: number;
     totalMs: number;
@@ -116,6 +118,8 @@ export function getFinderStrategyDiagnosticsStats(
             name: item.name,
             runs: 0,
             failedRuns: 0,
+            skippedRuns: 0,
+            zeroSignalRuns: 0,
             signalMs: 0,
             backtestMs: 0,
             totalMs: 0,
@@ -140,6 +144,30 @@ export function recordFinderStrategyFailure(
 ): void {
     const reason = normalizeFailureReason(error);
     stats.failureReasons.set(reason, (stats.failureReasons.get(reason) ?? 0) + Math.max(1, Math.round(count)));
+}
+
+export function recordFinderStrategyNoSignals(
+    stats: FinderStrategyDiagnosticsStats,
+    count = 1
+): void {
+    stats.zeroSignalRuns += Math.max(1, Math.round(count));
+}
+
+export function recordFinderStrategySkipped(
+    stats: FinderStrategyDiagnosticsStats,
+    count = 1
+): void {
+    stats.skippedRuns += Math.max(1, Math.round(count));
+}
+
+export function isFinderFatalStrategyFailure(error: unknown): boolean {
+    const reason = normalizeFailureReason(error).toLowerCase();
+    return reason.includes("check dependency list")
+        || reason.includes("cannot resolve module")
+        || reason.includes("cannot find module")
+        || reason.includes("module not found")
+        || reason.includes("failed to fetch dynamically imported module")
+        || reason.includes("synchronous require");
 }
 
 export function recordFinderBacktestDiagnostics(
@@ -226,19 +254,27 @@ export function toFinderBacktestDiagnostics(
 export function toFinderStrategyDiagnostics(
     statsByKey: Map<string, FinderStrategyDiagnosticsStats>
 ): FinderStrategyDiagnostics[] {
+    const totalMeasuredMs = [...statsByKey.values()].reduce((sum, stats) => sum + stats.totalMs, 0);
     return [...statsByKey.values()]
-        .map((stats) => ({
-            key: stats.key,
-            name: stats.name,
-            runs: stats.runs,
-            failedRuns: stats.failedRuns,
-            avgSignalMs: roundFinderMs(stats.signalMs / Math.max(1, stats.runs)),
-            avgBacktestMs: roundFinderMs(stats.backtestMs / Math.max(1, stats.runs)),
-            avgTotalMs: roundFinderMs(stats.totalMs / Math.max(1, stats.runs)),
-            usedPreparedData: stats.usedPreparedData,
-            backtest: toFinderBacktestDiagnostics(stats.backtest),
-            failureReasons: toFailureReasonDiagnostics(stats.failureReasons),
-        }))
+        .map((stats) => {
+            const avgTotalMs = roundFinderMs(stats.totalMs / Math.max(1, stats.runs));
+            return {
+                key: stats.key,
+                name: stats.name,
+                runs: stats.runs,
+                failedRuns: stats.failedRuns,
+                skippedRuns: stats.skippedRuns,
+                zeroSignalRuns: stats.zeroSignalRuns,
+                avgSignalMs: roundFinderMs(stats.signalMs / Math.max(1, stats.runs)),
+                avgBacktestMs: roundFinderMs(stats.backtestMs / Math.max(1, stats.runs)),
+                avgTotalMs,
+                totalMs: roundFinderMs(stats.totalMs),
+                runtimePct: roundFinderCount(totalMeasuredMs > 0 ? (stats.totalMs / totalMeasuredMs) * 100 : 0),
+                usedPreparedData: stats.usedPreparedData,
+                backtest: toFinderBacktestDiagnostics(stats.backtest),
+                failureReasons: toFailureReasonDiagnostics(stats.failureReasons),
+            };
+        })
         .sort((a, b) => b.avgTotalMs - a.avgTotalMs);
 }
 
@@ -246,6 +282,7 @@ export function buildFinderDiagnosticsBottlenecks(args: {
     timingsMs: FinderDiagnosticsTimings;
     strategyBreakdown: FinderStrategyDiagnostics[];
     failedRuns: number;
+    skippedRuns?: number;
     rustFallbackRuns?: number;
     backtest?: FinderBacktestDiagnostics;
 }): string[] {
@@ -274,6 +311,17 @@ export function buildFinderDiagnosticsBottlenecks(args: {
     const slowestStrategy = args.strategyBreakdown[0];
     if (slowestStrategy && slowestStrategy.avgTotalMs >= 5) {
         notes.push(`${slowestStrategy.key} was the slowest strategy at ${slowestStrategy.avgTotalMs.toFixed(2)} ms/run`);
+    }
+    const topRuntimeStrategy = [...args.strategyBreakdown]
+        .sort((a, b) => b.totalMs - a.totalMs)[0];
+    if (topRuntimeStrategy && topRuntimeStrategy.totalMs > 0 && topRuntimeStrategy.runtimePct >= 10) {
+        notes.push(`${topRuntimeStrategy.key} consumed ${topRuntimeStrategy.runtimePct.toFixed(1)}% of measured candidate runtime`);
+    }
+    const topZeroSignalStrategy = [...args.strategyBreakdown]
+        .filter((strategy) => strategy.zeroSignalRuns > 0)
+        .sort((a, b) => b.zeroSignalRuns - a.zeroSignalRuns || a.key.localeCompare(b.key))[0];
+    if (topZeroSignalStrategy) {
+        notes.push(`${topZeroSignalStrategy.zeroSignalRuns} run${topZeroSignalStrategy.zeroSignalRuns === 1 ? "" : "s"} produced zero signals for ${topZeroSignalStrategy.key}`);
     }
     if ((args.rustFallbackRuns ?? 0) > 0) {
         notes.push(`${args.rustFallbackRuns} Rust run${args.rustFallbackRuns === 1 ? "" : "s"} fell back to TypeScript`);
@@ -305,7 +353,31 @@ export function buildFinderDiagnosticsBottlenecks(args: {
     if (args.failedRuns > 0) {
         notes.push(`${args.failedRuns} candidate run${args.failedRuns === 1 ? "" : "s"} failed`);
     }
+    if ((args.skippedRuns ?? 0) > 0) {
+        notes.push(`${args.skippedRuns} candidate run${args.skippedRuns === 1 ? "" : "s"} skipped after fatal strategy failure`);
+    }
     return notes.length > 0 ? notes : ["No single phase exceeded 10% of total runtime"];
+}
+
+function buildTimingPercentages(timingsMs: FinderDiagnosticsTimings): FinderDiagnostics["timingPct"] {
+    const total = Math.max(1, timingsMs.total);
+    return {
+        paramGeneration: roundFinderCount((timingsMs.paramGeneration / total) * 100),
+        dataLoading: roundFinderCount((timingsMs.dataLoading / total) * 100),
+        pricePointLoading: roundFinderCount((timingsMs.pricePointLoading / total) * 100),
+        closedDataSelection: roundFinderCount((timingsMs.closedDataSelection / total) * 100),
+        indicatorPrecompute: roundFinderCount((timingsMs.indicatorPrecompute / total) * 100),
+        preparedData: roundFinderCount((timingsMs.preparedData / total) * 100),
+        signalGeneration: roundFinderCount((timingsMs.signalGeneration / total) * 100),
+        backtest: roundFinderCount((timingsMs.backtest / total) * 100),
+        polymarketEvaluation: roundFinderCount((timingsMs.polymarketEvaluation / total) * 100),
+        rustRequest: roundFinderCount((timingsMs.rustRequest / total) * 100),
+        resultEnrichment: roundFinderCount((timingsMs.resultEnrichment / total) * 100),
+        resultRanking: roundFinderCount((timingsMs.resultRanking / total) * 100),
+        reconciliation: roundFinderCount((timingsMs.reconciliation / total) * 100),
+        uiUpdates: roundFinderCount((timingsMs.uiUpdates / total) * 100),
+        yielding: roundFinderCount((timingsMs.yielding / total) * 100),
+    };
 }
 
 export function buildFinderDiagnostics(args: {
@@ -324,6 +396,7 @@ export function buildFinderDiagnostics(args: {
     shownResults: number;
     endpointAdjusted: number;
     failedRuns: number;
+    skippedRuns?: number;
     timings: FinderDiagnosticsTimings;
     strategyBreakdown: FinderStrategyDiagnostics[];
     backtestDiagnostics?: FinderBacktestDiagnostics;
@@ -370,15 +443,18 @@ export function buildFinderDiagnostics(args: {
             rustFallbackRuns: args.rustFallbackRuns ?? 0,
             endpointAdjusted: args.endpointAdjusted,
             failedRuns: args.failedRuns,
+            skippedRuns: args.skippedRuns ?? 0,
         },
         backtest: args.backtestDiagnostics,
         failureBreakdown: args.failureBreakdown,
         timingsMs,
+        timingPct: buildTimingPercentages(timingsMs),
         strategyBreakdown: args.strategyBreakdown,
         bottlenecks: buildFinderDiagnosticsBottlenecks({
             timingsMs,
             strategyBreakdown: args.strategyBreakdown,
             failedRuns: args.failedRuns,
+            skippedRuns: args.skippedRuns,
             rustFallbackRuns: args.rustFallbackRuns,
             backtest: args.backtestDiagnostics,
         }),

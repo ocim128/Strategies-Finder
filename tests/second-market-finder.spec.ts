@@ -105,6 +105,42 @@ function makeInput(): FinderRunInput {
     };
 }
 
+function stubSecondMarketFetch(rows = [quote(1_700_000_020, 0.30, 0.28), quote(1_700_000_030, 0.60, 0.58)]): void {
+    globalThis.fetch = async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/api/sqlite/status") {
+            return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        }
+        if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+            return new Response(JSON.stringify({
+                ok: true,
+                rows: [{
+                    series_id: "10684",
+                    event_slug: "btc-event",
+                    market_slug: "btc-event",
+                    interval: "5m",
+                    event_start_ts: 1_700_000_000,
+                    event_end_ts: 1_700_000_300,
+                    yes_token_id: "yes",
+                    no_token_id: "no",
+                    yes_open_price: 0.5,
+                    yes_entry_minute_1_price: null,
+                    yes_entry_minute_2_price: null,
+                    yes_entry_minute_3_price: null,
+                    yes_entry_minute_4_price: null,
+                    resolved_outcome_up: 1,
+                    resolution_source: "test",
+                    updated_at: 1,
+                }],
+            }), { status: 200 });
+        }
+        if (url.pathname === "/api/second-market/clob-quotes") {
+            return new Response(JSON.stringify({ ok: true, quotes: rows }), { status: 200 });
+        }
+        throw new Error(`Unexpected fetch ${url.pathname}`);
+    };
+}
+
 describe("second market Finder runner", () => {
     it("loads 1s CLOB context once and supports signal-close signal-exit fills", async () => {
         let clobLoadCount = 0;
@@ -332,6 +368,73 @@ describe("second market Finder runner", () => {
         expect(Number.isFinite(output.diagnostics?.backtest?.totals.fastPathRuns)).to.equal(true);
         expect(output.diagnostics?.backtest?.timingsMs).to.have.property("entryEvaluation");
         expect(output.diagnostics?.strategyBreakdown[0]?.backtest?.runs).to.equal(1);
+    });
+
+    it("reports zero-signal second-market Finder runs", async () => {
+        stubSecondMarketFetch();
+        const noSignalStrategy: Strategy = {
+            name: "No Signal Fixture",
+            description: "fixture",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute: () => [],
+        };
+        const input = makeInput();
+        input.selectedStrategies = [{ key: "no_signal_fixture", name: noSignalStrategy.name, strategy: noSignalStrategy }];
+
+        const output = await runSecondMarketFinder(input, {
+            setProgress: () => undefined,
+            setStatus: () => undefined,
+            yieldControl: async () => undefined,
+            isCancelled: () => false,
+            onResultsUpdate: () => undefined,
+        });
+
+        const diagnostics = output.diagnostics;
+        const strategyDiagnostics = diagnostics?.strategyBreakdown.find((item) => item.key === "no_signal_fixture");
+        expect(strategyDiagnostics?.zeroSignalRuns).to.equal(1);
+        expect(strategyDiagnostics?.totalMs).to.be.greaterThanOrEqual(0);
+        expect(strategyDiagnostics?.runtimePct).to.be.greaterThanOrEqual(0);
+        expect(diagnostics?.timingPct.signalGeneration).to.be.greaterThanOrEqual(0);
+        expect(diagnostics?.bottlenecks.some((item) => item.includes("produced zero signals"))).to.equal(true);
+    });
+
+    it("skips remaining params after a fatal strategy dependency failure", async () => {
+        stubSecondMarketFetch();
+        const failingStrategy: Strategy = {
+            name: "Fatal Import Fixture",
+            description: "fixture",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute: () => {
+                throw new Error("Check dependency list! Synchronous require cannot resolve module '../time-normalization'.");
+            },
+        };
+        const input = makeInput();
+        input.selectedStrategies = [{ key: "fatal_import_fixture", name: failingStrategy.name, strategy: failingStrategy }];
+        input.generateParamSets = () => [{ threshold: 1 }, { threshold: 2 }, { threshold: 3 }];
+        const statuses: string[] = [];
+
+        const output = await runSecondMarketFinder(input, {
+            setProgress: () => undefined,
+            setStatus: (text) => statuses.push(text),
+            yieldControl: async () => undefined,
+            isCancelled: () => false,
+            onResultsUpdate: () => undefined,
+        });
+
+        const diagnostics = output.diagnostics;
+        const strategyDiagnostics = diagnostics?.strategyBreakdown.find((item) => item.key === "fatal_import_fixture");
+        expect(output.results).to.deep.equal([]);
+        expect(diagnostics?.counts.processedRuns).to.equal(3);
+        expect(diagnostics?.counts.failedRuns).to.equal(1);
+        expect(diagnostics?.counts.skippedRuns).to.equal(2);
+        expect(strategyDiagnostics?.runs).to.equal(1);
+        expect(strategyDiagnostics?.failedRuns).to.equal(1);
+        expect(strategyDiagnostics?.skippedRuns).to.equal(2);
+        expect(diagnostics?.failureBreakdown?.[0]?.runs).to.equal(1);
+        expect(statuses.at(-1)).to.contain("2 skipped");
+        expect(diagnostics?.bottlenecks.some((item) => item.includes("skipped after fatal strategy failure"))).to.equal(true);
     });
 
     it("rejects 1s CLOB scoring for unsupported execution models", async () => {

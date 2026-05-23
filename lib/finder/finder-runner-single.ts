@@ -68,6 +68,7 @@ import {
     createFinderRunId,
     getFinderStrategyDiagnosticsStats,
     recordFinderBacktestDiagnostics,
+    recordFinderStrategyNoSignals,
     recordFinderStrategyFailure,
     toFinderBacktestDiagnostics,
     toFinderFailureDiagnostics,
@@ -595,6 +596,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         const stats = getFinderStrategyDiagnosticsStats(strategyStatsByKey, job);
         stats.signalMs += signalTiming.totalMs;
         stats.usedPreparedData = stats.usedPreparedData || signalTiming.usedPreparedData;
+        if (signalTiming.signalCount === 0) {
+            recordFinderStrategyNoSignals(stats);
+        }
     };
     const recordBacktestTiming = (job: ParamJob, durationMs: number): void => {
         getFinderStrategyDiagnosticsStats(strategyStatsByKey, job).backtestMs += durationMs;

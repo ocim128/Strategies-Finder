@@ -98,6 +98,7 @@ export type FinderSignalTiming = {
     signalExecutionMs: number;
     confirmationMs: number;
     totalMs: number;
+    signalCount: number;
     usedPreparedData: boolean;
 };
 
@@ -143,6 +144,7 @@ export function generateSignalsForJob(
         signalExecutionMs,
         confirmationMs,
         totalMs: performance.now() - startedAt,
+        signalCount: signals.length,
         usedPreparedData: canUsePreparedData,
     });
     return signals;

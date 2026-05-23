@@ -190,9 +190,13 @@ export interface FinderStrategyDiagnostics {
     name: string;
     runs: number;
     failedRuns: number;
+    skippedRuns: number;
+    zeroSignalRuns: number;
     avgSignalMs: number;
     avgBacktestMs: number;
     avgTotalMs: number;
+    totalMs: number;
+    runtimePct: number;
     usedPreparedData: boolean;
     backtest?: FinderBacktestDiagnostics;
     failureReasons?: FinderFailureReasonDiagnostics[];
@@ -244,11 +248,29 @@ export interface FinderDiagnostics {
         rustFallbackRuns: number;
         endpointAdjusted: number;
         failedRuns: number;
+        skippedRuns: number;
     };
     backtest?: FinderBacktestDiagnostics;
     failureBreakdown?: FinderFailureDiagnostics[];
     timingsMs: {
         total: number;
+        paramGeneration: number;
+        dataLoading: number;
+        pricePointLoading: number;
+        closedDataSelection: number;
+        indicatorPrecompute: number;
+        preparedData: number;
+        signalGeneration: number;
+        backtest: number;
+        polymarketEvaluation: number;
+        rustRequest: number;
+        resultEnrichment: number;
+        resultRanking: number;
+        reconciliation: number;
+        uiUpdates: number;
+        yielding: number;
+    };
+    timingPct: {
         paramGeneration: number;
         dataLoading: number;
         pricePointLoading: number;

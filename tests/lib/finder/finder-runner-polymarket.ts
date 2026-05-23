@@ -72,8 +72,11 @@ import {
     createEmptyFinderDiagnosticsTimings,
     createFinderRunId,
     getFinderStrategyDiagnosticsStats,
+    isFinderFatalStrategyFailure,
     recordFinderBacktestDiagnostics,
     recordFinderStrategyFailure,
+    recordFinderStrategyNoSignals,
+    recordFinderStrategySkipped,
     toFinderBacktestDiagnostics,
     toFinderFailureDiagnostics,
     toFinderStrategyDiagnostics,
@@ -877,6 +880,7 @@ export async function runPolymarketFinder(
     let processedCount = 0;
     let filteredCount = 0;
     let failedCount = 0;
+    let skippedCount = 0;
     let lastUiUpdateAt = 0;
     let lastResultsUpdateAt = 0;
 
@@ -919,7 +923,9 @@ export async function runPolymarketFinder(
             }
         }
 
-        for (const params of plan.paramSets) {
+        let skipRemainingPlan = false;
+        for (let paramIndex = 0; paramIndex < plan.paramSets.length; paramIndex++) {
+            const params = plan.paramSets[paramIndex]!;
             if (callbacks.isCancelled()) {
                 callbacks.setStatus("Finder stopped by user.");
                 const results = ranker.toSortedArray(options.topN);
@@ -953,6 +959,9 @@ export async function runPolymarketFinder(
                     baseSignals: applySignalPolarity(rawSignals, settings),
                     settings,
                 });
+                if (signals.length === 0) {
+                    recordFinderStrategyNoSignals(strategyStats);
+                }
                 const signalMs = performance.now() - signalStartedAt;
                 timings.signalGeneration += signalMs;
                 strategyStats.signalMs += signalMs;
@@ -1339,9 +1348,28 @@ export async function runPolymarketFinder(
                     params,
                     error: detail,
                 });
+                if (isFinderFatalStrategyFailure(error)) {
+                    const skippedParamSets = plan.paramSets.length - paramIndex - 1;
+                    const skippedEvaluations = skippedParamSets * evaluationCountPerParamSet;
+                    if (skippedEvaluations > 0) {
+                        skippedCount += skippedEvaluations;
+                        processedCount += skippedEvaluations;
+                        recordFinderStrategySkipped(strategyStats, skippedEvaluations);
+                        debugLogger.warn("[Finder][polymarket] Skipping remaining strategy params after fatal failure", {
+                            strategyKey: plan.key,
+                            skippedRuns: skippedEvaluations,
+                            error: detail,
+                        });
+                    }
+                    skipRemainingPlan = true;
+                }
             } finally {
                 strategyStats.runs++;
                 strategyStats.totalMs += performance.now() - candidateStartedAt;
+            }
+
+            if (skipRemainingPlan) {
+                break;
             }
 
             const now = performance.now();
@@ -1371,6 +1399,9 @@ export async function runPolymarketFinder(
     if (failedCount > 0) {
         statusParts.push(`${failedCount} failed`);
     }
+    if (skippedCount > 0) {
+        statusParts.push(`${skippedCount} skipped`);
+    }
     statusParts.push(`${results.length} shown`);
     statusParts.push(`${outcomes.length} outcome rows`);
     callbacks.setStatus(`Complete. ${statusParts.join(", ")}.`);
@@ -1396,6 +1427,7 @@ export async function runPolymarketFinder(
         shownResults: results.length,
         endpointAdjusted: 0,
         failedRuns: failedCount,
+        skippedRuns: skippedCount,
         timings,
         strategyBreakdown: toFinderStrategyDiagnostics(strategyStatsByKey),
         backtestDiagnostics: toFinderBacktestDiagnostics(backtestStats),

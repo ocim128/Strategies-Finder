@@ -562,6 +562,51 @@ describe('Finder Polymarket runner', () => {
         expect(statuses.at(-1)).to.equal('Complete. 2 evaluations, 1 failed, 1 shown, 2 outcome rows.');
     });
 
+    it('skips remaining Polymarket params after a fatal strategy dependency failure', async () => {
+        const bars = makeBars(4);
+        installOutcomeFetch([
+            makeOutcomeRow(Number(bars[1].time), 1),
+            makeOutcomeRow(Number(bars[2].time), 1),
+        ]);
+
+        const fatalStrategy: Strategy = {
+            ...fixtureStrategy,
+            name: 'Fatal Fixture Strategy',
+            prepareFinderData: undefined,
+            executePrepared: undefined,
+            execute(data: OHLCVData[], params: StrategyParams): Signal[] {
+                if (params.variant === 99) {
+                    throw new Error("Check dependency list! Synchronous require cannot resolve module '../time-normalization'.");
+                }
+                return buildFixtureSignals(data, params);
+            },
+        };
+
+        const { callbacks, statuses } = makeCallbacks();
+        const output = await runPolymarketFinder(
+            makeInput(
+                bars,
+                [{ variant: 1 }, { variant: 99 }, { variant: 2 }],
+                {},
+                '5m',
+                'BTCUSDT',
+                fatalStrategy
+            ),
+            callbacks
+        );
+
+        const diagnostics = output.diagnostics;
+        const strategyDiagnostics = diagnostics?.strategyBreakdown.find((item) => item.key === 'fixture_strategy');
+        expect(output.results).to.have.length(1);
+        expect(output.results[0]?.params.variant).to.equal(1);
+        expect(diagnostics?.counts.processedRuns).to.equal(3);
+        expect(diagnostics?.counts.failedRuns).to.equal(1);
+        expect(diagnostics?.counts.skippedRuns).to.equal(1);
+        expect(strategyDiagnostics?.failedRuns).to.equal(1);
+        expect(strategyDiagnostics?.skippedRuns).to.equal(1);
+        expect(statuses.at(-1)).to.equal('Complete. 3 evaluations, 1 failed, 1 skipped, 1 shown, 2 outcome rows.');
+    });
+
     it('uses the provided polymarket sort priority instead of a hard-coded ranking', async () => {
         const bars = makeBars(5);
         installOutcomeFetch([

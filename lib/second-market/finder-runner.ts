@@ -31,8 +31,11 @@ import {
     createEmptyFinderDiagnosticsTimings,
     createFinderRunId,
     getFinderStrategyDiagnosticsStats,
+    isFinderFatalStrategyFailure,
     recordFinderBacktestDiagnostics,
     recordFinderStrategyFailure,
+    recordFinderStrategyNoSignals,
+    recordFinderStrategySkipped,
     toFinderBacktestDiagnostics,
     toFinderFailureDiagnostics,
     toFinderStrategyDiagnostics,
@@ -308,6 +311,7 @@ export async function runSecondMarketFinder(
     let processedCount = 0;
     let filteredCount = 0;
     let failedCount = 0;
+    let skippedCount = 0;
     let lastUiUpdateAt = 0;
     let lastResultsUpdateAt = 0;
 
@@ -356,7 +360,9 @@ export async function runSecondMarketFinder(
         }
         executionContext = withSecondMarketStrategyContext(executionContext, context);
 
-        for (const params of plan.paramSets) {
+        let skipRemainingPlan = false;
+        for (let paramIndex = 0; paramIndex < plan.paramSets.length; paramIndex++) {
+            const params = plan.paramSets[paramIndex]!;
             if (callbacks.isCancelled()) {
                 callbacks.setStatus("Finder stopped by user.");
                 const results = ranker.toSortedArray(options.topN);
@@ -394,6 +400,9 @@ export async function runSecondMarketFinder(
                     baseSignals: applySignalPolarity(rawSignals, backtestSettings),
                     settings: backtestSettings,
                 });
+                if (signals.length === 0) {
+                    recordFinderStrategyNoSignals(strategyStats);
+                }
                 const signalMs = performance.now() - signalStartedAt;
                 timings.signalGeneration += signalMs;
                 strategyStats.signalMs += signalMs;
@@ -514,9 +523,26 @@ export async function runSecondMarketFinder(
                     params,
                     error: detail,
                 });
+                if (isFinderFatalStrategyFailure(error)) {
+                    const remaining = plan.paramSets.length - paramIndex - 1;
+                    if (remaining > 0) {
+                        skippedCount += remaining;
+                        processedCount += remaining;
+                        recordFinderStrategySkipped(strategyStats, remaining);
+                        debugLogger.warn("[Finder][second-market] Skipping remaining strategy params after fatal failure", {
+                            strategyKey: plan.key,
+                            skippedRuns: remaining,
+                            error: detail,
+                        });
+                    }
+                    skipRemainingPlan = true;
+                }
             } finally {
                 strategyStats.runs++;
                 strategyStats.totalMs += performance.now() - candidateStartedAt;
+            }
+            if (skipRemainingPlan) {
+                break;
             }
         }
     }
@@ -527,6 +553,7 @@ export async function runSecondMarketFinder(
     callbacks.setProgress(100, `${processedCount}/${totalRuns} evaluations`);
     const statusParts = [`${processedCount} evaluations`, `${filteredCount} matched`, `${results.length} shown`];
     if (failedCount > 0) statusParts.push(`${failedCount} failed`);
+    if (skippedCount > 0) statusParts.push(`${skippedCount} skipped`);
     statusParts.push(`${context.quotes.length} CLOB quote rows`);
     if (quoteCoverageText) statusParts.push(quoteCoverageText);
     callbacks.setStatus(`Complete. ${statusParts.join(", ")}.`);
@@ -550,6 +577,7 @@ export async function runSecondMarketFinder(
         shownResults: results.length,
         endpointAdjusted: 0,
         failedRuns: failedCount,
+        skippedRuns: skippedCount,
         timings,
         strategyBreakdown: toFinderStrategyDiagnostics(strategyStatsByKey),
         backtestDiagnostics: toFinderBacktestDiagnostics(backtestStats),
