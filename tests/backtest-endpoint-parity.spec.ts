@@ -106,6 +106,107 @@ describe("backtest executor", () => {
         assert.strictEqual(run1.engineUsed, run2.engineUsed);
     });
 
+    it("keeps bulk compact backtest summary metrics aligned while omitting chart artifacts", async () => {
+        const candles: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 103, low: 99, close: 102, volume: 1000 },
+            { time: 3 as Time, open: 102, high: 104, low: 101, close: 103, volume: 1000 },
+            { time: 4 as Time, open: 103, high: 104, low: 100, close: 101, volume: 1000 },
+            { time: 5 as Time, open: 101, high: 102, low: 98, close: 99, volume: 1000 },
+            { time: 6 as Time, open: 99, high: 100, low: 97, close: 98, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 1 as Time, type: "buy", price: 100, barIndex: 0 },
+            { time: 4 as Time, type: "sell", price: 101, barIndex: 3 },
+            { time: 5 as Time, type: "buy", price: 99, barIndex: 4 },
+        ];
+        const strategy: Strategy = {
+            name: "Bulk Compact Executor Test",
+            description: "Emits deterministic signals for compact bulk executor parity.",
+            defaultParams: {},
+            paramLabels: {},
+            execute: () => signals,
+        };
+        const request = {
+            ohlcvData: candles,
+            interval: "1d",
+            strategyKey: "bulk_compact_executor_test",
+            strategy,
+            strategyParams: {},
+            backtestSettings: {
+                executionModel: "signal_close" as const,
+                tradeDirection: "combined" as const,
+                allowSameBarExit: true,
+                slippageBps: 0,
+            },
+            capitalSettings: defaultCapital,
+            context: {
+                nowSec: 9999999999,
+                blockRange: null,
+                annotatePolymarket: false,
+                engineMode: "typescript" as const,
+            },
+            backtestRunOptions: {
+                includeAdvancedAnalytics: false,
+                includeSharpeRatio: false,
+            },
+        };
+
+        const full = await executeBacktest(request);
+        const compact = await executeBacktest({
+            ...request,
+            backtestRunOptions: {
+                ...request.backtestRunOptions,
+                omitEquityCurve: true,
+                skipResultPostProcessing: true,
+            },
+        });
+
+        assert.strictEqual(compact.result.totalTrades, full.result.totalTrades);
+        assert.ok(Math.abs(compact.result.netProfit - full.result.netProfit) < 1e-9);
+        assert.ok(Math.abs(compact.result.maxDrawdown - full.result.maxDrawdown) < 1e-6);
+        assert.strictEqual(compact.result.sharpeRatio, 0);
+        assert.deepStrictEqual(compact.result.equityCurve, []);
+        assert.deepStrictEqual(compact.result.trades, []);
+    });
+
+    it("returns an empty bulk result without chart artifacts when a strategy emits no signals", async () => {
+        const strategy: Strategy = {
+            name: "No Signal Bulk Executor Test",
+            description: "Confirms bulk no-signal runs stay lightweight.",
+            defaultParams: {},
+            paramLabels: {},
+            execute: () => [],
+        };
+
+        const run = await executeBacktest({
+            ohlcvData: sampleCandles,
+            interval: "5m",
+            strategyKey: "no_signal_bulk_executor_test",
+            strategy,
+            strategyParams: {},
+            backtestSettings: defaultSettings,
+            capitalSettings: defaultCapital,
+            context: {
+                nowSec: 9999999999,
+                blockRange: null,
+                annotatePolymarket: false,
+                engineMode: "typescript",
+            },
+            backtestRunOptions: {
+                includeAdvancedAnalytics: false,
+                includeSharpeRatio: false,
+                omitEquityCurve: true,
+                skipResultPostProcessing: true,
+            },
+        });
+
+        assert.deepStrictEqual(run.signals, []);
+        assert.strictEqual(run.result.totalTrades, 0);
+        assert.deepStrictEqual(run.result.equityCurve, []);
+        assert.deepStrictEqual(run.result.trades, []);
+    });
+
     it("requires confirmation strategies to agree with both entry and exit signals", async () => {
         const candles: OHLCVData[] = [
             { time: 1 as Time, open: 10, high: 11, low: 9, close: 10, volume: 1000 },

@@ -42,6 +42,7 @@ type BacktestRunOptions = {
     includeSharpeRatio?: boolean;
     collectDiagnostics?: boolean;
     omitEquityCurve?: boolean;
+    skipDrawdown?: boolean;
 };
 
 function createBacktestDiagnostics(inputBars: number, inputSignals: number): BacktestDiagnostics {
@@ -377,7 +378,7 @@ function getSinglePositionFinderFastPathBlockers(
     if (config.maxOpenTrades !== 1) blockers.push("max_open_trades");
     if (tradeDirection !== "long" && tradeDirection !== "short" && tradeDirection !== "both") blockers.push(`trade_direction_${tradeDirection}`);
     if (sizingMode !== "percent" && sizingMode !== "fixed") blockers.push(`sizing_${sizingMode}`);
-    if (config.takeProfitMode !== "fixed") blockers.push(`take_profit_mode_${config.takeProfitMode}`);
+    if (hasActivePercentageTakeProfit(config) && config.takeProfitMode !== "fixed") blockers.push(`take_profit_mode_${config.takeProfitMode}`);
     if (config.trailingAtr !== 0) blockers.push("trailing_atr");
     if (config.partialTakeProfitAtR !== 0) blockers.push("partial_take_profit");
     if (config.breakEvenAtR !== 0) blockers.push("break_even_atr");
@@ -386,6 +387,39 @@ function getSinglePositionFinderFastPathBlockers(
     if (config.historicalLevelStopLossEnabled) blockers.push("historical_stop_loss");
     if (config.riskWinStreakStopLossEnabled) blockers.push("win_streak_stop_loss");
     return blockers;
+}
+
+function hasActivePercentageTakeProfit(config: NormalizedSettings): boolean {
+    return config.riskMode === "percentage"
+        && config.takeProfitEnabled
+        && config.takeProfitPercent > 0;
+}
+
+function hasBarBasedExitRules(config: NormalizedSettings): boolean {
+    const hasPercentageStopLoss = config.riskMode === "percentage"
+        && config.stopLossEnabled
+        && config.stopLossPercent > 0;
+    const hasRiskMaxHold = config.riskMaxHoldEnabled
+        && config.riskMaxHoldBars > 0;
+    return config.stopLossAtr > 0
+        || config.takeProfitAtr > 0
+        || hasPercentageStopLoss
+        || hasActivePercentageTakeProfit(config)
+        || config.trailingAtr > 0
+        || config.partialTakeProfitAtR > 0
+        || config.breakEvenAtR > 0
+        || config.breakEvenPercent > 0
+        || config.historicalLevelTakeProfitEnabled
+        || config.historicalLevelStopLossEnabled
+        || hasRiskMaxHold
+        || config.timeStopBars > 0;
+}
+
+function canUseSignalOnlyFinderFastPath(
+    config: NormalizedSettings,
+    options: BacktestRunOptions | undefined
+): boolean {
+    return options?.skipDrawdown === true && !hasBarBasedExitRules(config);
 }
 
 function runSinglePositionFinderFastPath(args: {
@@ -403,6 +437,7 @@ function runSinglePositionFinderFastPath(args: {
     indicatorSeries: IndicatorSeries;
     diagnostics?: BacktestDiagnostics;
     options?: BacktestRunOptions;
+    equityOut?: Float64Array;
 }): BacktestResult {
     const {
         data,
@@ -419,6 +454,7 @@ function runSinglePositionFinderFastPath(args: {
         indicatorSeries,
         diagnostics,
         options,
+        equityOut,
     } = args;
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
@@ -431,7 +467,9 @@ function runSinglePositionFinderFastPath(args: {
     let tradeId = 0;
     let signalIdx = 0;
     let position = null as PositionState | null;
+    let positionEntryBarIndex = -1;
     let signalExitReentryCooldownUntilBarIndex = -1;
+    const skipDrawdown = options?.skipDrawdown === true;
 
     const recordExit = (
         pos: PositionState,
@@ -463,6 +501,7 @@ function runSinglePositionFinderFastPath(args: {
         const fullyClosed = pos.size <= 0;
         if (fullyClosed && position === pos) {
             position = null;
+            positionEntryBarIndex = -1;
         }
         return { fullyClosed };
     };
@@ -487,6 +526,7 @@ function runSinglePositionFinderFastPath(args: {
         });
         if (!opened) return null;
         position = opened.nextPosition;
+        positionEntryBarIndex = barIndex;
         capital -= opened.entryCommission;
         if (diagnostics) {
             diagnostics.counts.tradesOpened++;
@@ -555,11 +595,20 @@ function runSinglePositionFinderFastPath(args: {
         return null;
     };
 
-    const updateDrawdown = (candle: OHLCVData): void => {
+    const updateDrawdown = (candle: OHLCVData, barIndex: number): void => {
+        if (skipDrawdown && !equityOut) {
+            return;
+        }
         const unrealizedPnl = position
             ? (candle.close - position.entryPrice) * position.size * directionFactorFor(position.direction)
             : 0;
         const equity = capital + unrealizedPnl;
+        if (equityOut) {
+            equityOut[barIndex] = equity;
+        }
+        if (skipDrawdown) {
+            return;
+        }
         if (equity > peakEquity) {
             peakEquity = equity;
             return;
@@ -571,14 +620,56 @@ function runSinglePositionFinderFastPath(args: {
         }
     };
 
+    const syncSparseBarsInTrade = (barIndex: number): void => {
+        if (!position || positionEntryBarIndex < 0) return;
+        position.barsInTrade = Math.max(position.barsInTrade, barIndex - positionEntryBarIndex);
+    };
+
     const tradeSimulationStartedAt = performance.now();
+    if (canUseSignalOnlyFinderFastPath(config, options)) {
+        for (let i = 0; i < preparedSignals.length; i++) {
+            const barIndex = preparedSignalBarIndexes[i];
+            if (barIndex < 0 || barIndex >= data.length) continue;
+            const candle = data[barIndex];
+            if (!candle) continue;
+
+            syncSparseBarsInTrade(barIndex);
+            diagnostics && diagnostics.counts.barsScanned++;
+            handleSignal(preparedSignals[i], barIndex, candle);
+            if (diagnostics && position) {
+                diagnostics.counts.barsWithPosition++;
+                diagnostics.counts.maxOpenPositions = 1;
+            }
+        }
+        addBacktestDiagnosticElapsed(diagnostics, "tradeSimulation", tradeSimulationStartedAt);
+
+        const forcedCloseStartedAt = performance.now();
+        if (position && data.length > 0) {
+            const candle = data[data.length - 1];
+            recordExit(position, candle, candle.close, position.size, "end_of_data");
+            diagnostics && diagnostics.counts.forcedEndOfDataExits++;
+        }
+        addBacktestDiagnosticElapsed(diagnostics, "forcedClose", forcedCloseStartedAt);
+
+        const metricsStartedAt = performance.now();
+        const result = calculateBacktestStats(trades, [], initialCapital, capital, 0, 0, options);
+        addBacktestDiagnosticElapsed(diagnostics, "metrics", metricsStartedAt);
+        return result;
+    }
+
     for (let i = 0; i < data.length; i++) {
         if (!position) {
             const nextSignalBarIndex = preparedSignalBarIndexes[signalIdx];
             if (nextSignalBarIndex === undefined) {
+                if (equityOut) {
+                    equityOut.fill(capital, i);
+                }
                 break;
             }
             if (nextSignalBarIndex > i) {
+                if (equityOut) {
+                    equityOut.fill(capital, i, nextSignalBarIndex);
+                }
                 i = nextSignalBarIndex - 1;
                 continue;
             }
@@ -623,7 +714,7 @@ function runSinglePositionFinderFastPath(args: {
             diagnostics.counts.barsWithPosition++;
             diagnostics.counts.maxOpenPositions = 1;
         }
-        updateDrawdown(candle);
+        updateDrawdown(candle, i);
     }
     addBacktestDiagnosticElapsed(diagnostics, "tradeSimulation", tradeSimulationStartedAt);
 
@@ -631,21 +722,34 @@ function runSinglePositionFinderFastPath(args: {
     if (position && data.length > 0) {
         const candle = data[data.length - 1];
         recordExit(position, candle, candle.close, position.size, "end_of_data");
+        if (equityOut) {
+            equityOut[data.length - 1] = capital;
+        }
         diagnostics && diagnostics.counts.forcedEndOfDataExits++;
-        if (capital > peakEquity) {
-            peakEquity = capital;
-        } else {
-            const drawdown = peakEquity - capital;
-            if (drawdown > maxDrawdown) {
-                maxDrawdown = drawdown;
-                maxDrawdownPercent = peakEquity > 0 ? (drawdown / peakEquity) * 100 : 0;
+        if (!skipDrawdown) {
+            if (capital > peakEquity) {
+                peakEquity = capital;
+            } else {
+                const drawdown = peakEquity - capital;
+                if (drawdown > maxDrawdown) {
+                    maxDrawdown = drawdown;
+                    maxDrawdownPercent = peakEquity > 0 ? (drawdown / peakEquity) * 100 : 0;
+                }
             }
         }
     }
     addBacktestDiagnosticElapsed(diagnostics, "forcedClose", forcedCloseStartedAt);
 
     const metricsStartedAt = performance.now();
-    const result = calculateBacktestStats(trades, [], initialCapital, capital, maxDrawdown, maxDrawdownPercent, options);
+    const result = calculateBacktestStats(
+        trades,
+        [],
+        initialCapital,
+        capital,
+        skipDrawdown ? 0 : maxDrawdown,
+        skipDrawdown ? 0 : maxDrawdownPercent,
+        options
+    );
     addBacktestDiagnosticElapsed(diagnostics, "metrics", metricsStartedAt);
     return result;
 }
@@ -916,8 +1020,9 @@ function combineCompactResults(
     initialCapital: number,
     longResult: BacktestResult,
     shortResult: BacktestResult,
-    longEquity: Float64Array,
-    shortEquity: Float64Array,
+    longEquity?: Float64Array,
+    shortEquity?: Float64Array,
+    options?: BacktestRunOptions,
 ): BacktestResult {
     const totalTrades = longResult.totalTrades + shortResult.totalTrades;
     const winningTrades = longResult.winningTrades + shortResult.winningTrades;
@@ -944,24 +1049,29 @@ function combineCompactResults(
     let peakEquity = initialCapital;
     let maxDrawdown = 0;
     let maxDrawdownPercent = 0;
-    const len = Math.min(longEquity.length, shortEquity.length);
-    const combinedEquity = new Float64Array(len);
+    const skipDrawdown = options?.skipDrawdown === true;
+    const len = longEquity && shortEquity ? Math.min(longEquity.length, shortEquity.length) : 0;
+    const combinedEquity = skipDrawdown || !longEquity || !shortEquity ? undefined : new Float64Array(len);
 
-    for (let i = 0; i < len; i++) {
-        const combined = longEquity[i] + shortEquity[i];
-        combinedEquity[i] = combined;
-        if (combined > peakEquity) {
-            peakEquity = combined;
-        } else {
-            const dd = peakEquity - combined;
-            if (dd > maxDrawdown) {
-                maxDrawdown = dd;
-                maxDrawdownPercent = peakEquity > 0 ? (dd / peakEquity) * 100 : 0;
+    if (combinedEquity && longEquity && shortEquity) {
+        for (let i = 0; i < len; i++) {
+            const combined = longEquity[i] + shortEquity[i];
+            combinedEquity[i] = combined;
+            if (combined > peakEquity) {
+                peakEquity = combined;
+            } else {
+                const dd = peakEquity - combined;
+                if (dd > maxDrawdown) {
+                    maxDrawdown = dd;
+                    maxDrawdownPercent = peakEquity > 0 ? (dd / peakEquity) * 100 : 0;
+                }
             }
         }
     }
 
-    const sharpeRatio = calculateSharpeRatioFromEquitySamples(data, combinedEquity, len);
+    const sharpeRatio = options?.includeSharpeRatio === false || !combinedEquity
+        ? 0
+        : calculateSharpeRatioFromEquitySamples(data, combinedEquity, len);
 
     return {
         trades: [],
@@ -991,7 +1101,8 @@ function runCombinedBacktestCompact(
     commissionPercent: number,
     settings: BacktestSettings = {},
     sizing?: Partial<TradeSizingConfig>,
-    precomputed?: PrecomputedIndicators
+    precomputed?: PrecomputedIndicators,
+    options?: BacktestRunOptions
 ): BacktestResult {
     // "Combined" runs long/short books independently and skips bars where both entry directions fire.
     const conflictTimes = getConflictingEntryTimes(signals);
@@ -1007,33 +1118,43 @@ function runCombinedBacktestCompact(
         advancedSizing: sizing?.advancedSizing,
     };
 
-    // Allocate per-bar equity buffers for proper combined drawdown calculation
-    const longEquity = new Float64Array(data.length);
-    const shortEquity = new Float64Array(data.length);
-    const longResult = runBacktestCompact(
-        data,
-        longSignals,
-        longInitialCapital,
-        positionSizePercent,
-        commissionPercent,
-        { ...settings, tradeDirection: 'long' },
-        splitSizing,
-        precomputed,
-        longEquity
-    );
-    const shortResult = runBacktestCompact(
-        data,
-        shortSignals,
-        shortInitialCapital,
-        positionSizePercent,
-        commissionPercent,
-        { ...settings, tradeDirection: 'short' },
-        splitSizing,
-        precomputed,
-        shortEquity
-    );
+    // Allocate per-bar equity buffers only when combined drawdown/Sharpe needs them.
+    const needsEquity = options?.skipDrawdown !== true;
+    const longEquity = needsEquity ? new Float64Array(data.length) : undefined;
+    const shortEquity = needsEquity ? new Float64Array(data.length) : undefined;
+    const runSide = (
+        sideSignals: Signal[],
+        sideInitialCapital: number,
+        side: 'long' | 'short',
+        equity?: Float64Array
+    ) => equity
+        ? runBacktestCompact(
+            data,
+            sideSignals,
+            sideInitialCapital,
+            positionSizePercent,
+            commissionPercent,
+            { ...settings, tradeDirection: side },
+            splitSizing,
+            precomputed,
+            equity,
+            options
+        )
+        : runBacktestCompact(
+            data,
+            sideSignals,
+            sideInitialCapital,
+            positionSizePercent,
+            commissionPercent,
+            { ...settings, tradeDirection: side },
+            splitSizing,
+            precomputed,
+            options
+        );
+    const longResult = runSide(longSignals, longInitialCapital, 'long', longEquity);
+    const shortResult = runSide(shortSignals, shortInitialCapital, 'short', shortEquity);
 
-    return combineCompactResults(data, initialCapital, longResult, shortResult, longEquity, shortEquity);
+    return combineCompactResults(data, initialCapital, longResult, shortResult, longEquity, shortEquity, options);
 }
 
 function runCombinedBacktest(
@@ -1127,6 +1248,9 @@ export function runBacktestCompact(
         ? createBacktestDiagnostics(data.length, signals.length)
         : undefined;
     if (signals.length === 0) {
+        if (equityOut && options?.skipDrawdown !== true) {
+            equityOut.fill(initialCapital);
+        }
         return finalizeBacktestDiagnostics(diagnostics, createEmptyBacktestResult(), runStartedAt);
     }
 
@@ -1140,12 +1264,15 @@ export function runBacktestCompact(
             commissionPercent,
             settings,
             sizing,
-            precomputed
+            precomputed,
+            options
         ), runStartedAt);
     }
 
     const config = normalizeBacktestSettings(settings);
     const omitEquityCurve = options?.omitEquityCurve === true && options?.includeSharpeRatio === false;
+    const skipDrawdown = options?.skipDrawdown === true;
+    const shouldTrackEquity = !skipDrawdown;
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
     const advancedSizing = sizing?.advancedSizing;
@@ -1161,6 +1288,36 @@ export function runBacktestCompact(
     const preparedSignalBarIndexes = resolvePreparedSignalBarIndexes(data, preparedSignals);
     addBacktestDiagnosticElapsed(diagnostics, "signalIndexing", signalIndexingStartedAt);
 
+    const fastPathBlockers = getSinglePositionFinderFastPathBlockers(config, tradeDirection, sizingMode, options);
+    if (diagnostics) {
+        diagnostics.fastPath = {
+            used: fastPathBlockers.length === 0,
+            blockers: fastPathBlockers,
+        };
+    }
+
+    if (fastPathBlockers.length === 0) {
+        const result = runSinglePositionFinderFastPath({
+            data,
+            preparedSignals,
+            preparedSignalBarIndexes,
+            initialCapital,
+            positionSizePercent,
+            commissionPercent,
+            config,
+            tradeDirection,
+            sizingMode,
+            fixedTradeAmount,
+            advancedSizing,
+            indicatorSeries,
+            diagnostics,
+            options,
+            equityOut,
+        });
+        result.trades = [];
+        return finalizeBacktestDiagnostics(diagnostics, result, runStartedAt);
+    }
+
     let capital = initialCapital;
     const positions: PositionState[] = [];
     const maxOpenTrades = config.maxOpenTrades;
@@ -1168,7 +1325,7 @@ export function runBacktestCompact(
     let peakEquity = initialCapital, maxDrawdown = 0, maxDrawdownPercent = 0;
     let signalIdx = 0;
     let signalExitReentryCooldownUntilBarIndex = -1;
-    const compactEquity = equityOut ?? new Float64Array(data.length);
+    const compactEquity = shouldTrackEquity ? (equityOut ?? new Float64Array(data.length)) : undefined;
 
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
@@ -1343,9 +1500,15 @@ export function runBacktestCompact(
         if (omitEquityCurve && positions.length === 0 && pendingAdaptiveTakeProfitExits.size === 0) {
             const nextSignalBarIndex = preparedSignalBarIndexes[signalIdx];
             if (nextSignalBarIndex === undefined) {
+                if (equityOut && compactEquity) {
+                    compactEquity.fill(capital, i);
+                }
                 break;
             }
             if (nextSignalBarIndex > i) {
+                if (equityOut && compactEquity) {
+                    compactEquity.fill(capital, i, nextSignalBarIndex);
+                }
                 i = nextSignalBarIndex - 1;
                 continue;
             }
@@ -1537,16 +1700,18 @@ export function runBacktestCompact(
             diagnostics.counts.barsWithPosition++;
             diagnostics.counts.maxOpenPositions = Math.max(diagnostics.counts.maxOpenPositions, positions.length);
         }
-        // Equity: capital + sum of unrealized PnL across all open positions
-        let unrealizedPnl = 0;
-        for (let p = 0; p < positions.length; p++) {
-            unrealizedPnl += (candle.close - positions[p].entryPrice) * positions[p].size * directionFactorFor(positions[p].direction);
-        }
-        const equity = capital + unrealizedPnl;
-        compactEquity[i] = equity;
-        if (equity > peakEquity) peakEquity = equity; else {
-            const dd = peakEquity - equity;
-            if (dd > maxDrawdown) { maxDrawdown = dd; maxDrawdownPercent = (dd / peakEquity) * 100; }
+        if (compactEquity) {
+            // Equity: capital + sum of unrealized PnL across all open positions
+            let unrealizedPnl = 0;
+            for (let p = 0; p < positions.length; p++) {
+                unrealizedPnl += (candle.close - positions[p].entryPrice) * positions[p].size * directionFactorFor(positions[p].direction);
+            }
+            const equity = capital + unrealizedPnl;
+            compactEquity[i] = equity;
+            if (equity > peakEquity) peakEquity = equity; else {
+                const dd = peakEquity - equity;
+                if (dd > maxDrawdown) { maxDrawdown = dd; maxDrawdownPercent = (dd / peakEquity) * 100; }
+            }
         }
     }
     addBacktestDiagnosticElapsed(diagnostics, "tradeSimulation", tradeSimulationStartedAt);
@@ -1559,20 +1724,32 @@ export function runBacktestCompact(
             diagnostics && diagnostics.counts.forcedEndOfDataExits++;
             recordExit(positions[0], finalCandle.close, positions[0].size);
         }
-        const finalEquity = capital;
-        compactEquity[data.length - 1] = finalEquity;
-        if (finalEquity > peakEquity) peakEquity = finalEquity; else {
-            const dd = peakEquity - finalEquity;
-            if (dd > maxDrawdown) { maxDrawdown = dd; maxDrawdownPercent = (dd / peakEquity) * 100; }
+        if (compactEquity) {
+            const finalEquity = capital;
+            compactEquity[data.length - 1] = finalEquity;
+            if (finalEquity > peakEquity) peakEquity = finalEquity; else {
+                const dd = peakEquity - finalEquity;
+                if (dd > maxDrawdown) { maxDrawdown = dd; maxDrawdownPercent = (dd / peakEquity) * 100; }
+            }
         }
     }
     addBacktestDiagnosticElapsed(diagnostics, "forcedClose", forcedCloseStartedAt);
 
     const metricsStartedAt = performance.now();
-    const sharpeRatio = options?.includeSharpeRatio === false
+    const sharpeRatio = options?.includeSharpeRatio === false || !compactEquity
         ? 0
         : calculateSharpeRatioFromEquitySamples(data, compactEquity, data.length);
-    const result = finalizeBacktestMetrics(initialCapital, capital, totalTrades, winningTrades, totalProfit, totalLoss, sharpeRatio, maxDrawdown, maxDrawdownPercent) as BacktestResult;
+    const result = finalizeBacktestMetrics(
+        initialCapital,
+        capital,
+        totalTrades,
+        winningTrades,
+        totalProfit,
+        totalLoss,
+        sharpeRatio,
+        skipDrawdown ? 0 : maxDrawdown,
+        skipDrawdown ? 0 : maxDrawdownPercent
+    ) as BacktestResult;
     diagnostics && (diagnostics.counts.tradesClosed = totalTrades);
     addBacktestDiagnosticElapsed(diagnostics, "metrics", metricsStartedAt);
     return finalizeBacktestDiagnostics(diagnostics, result, runStartedAt);

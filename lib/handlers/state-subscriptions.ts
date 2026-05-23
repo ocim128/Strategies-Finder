@@ -17,6 +17,10 @@ import { SIGNAL_EXIT_SUPPORTED_RANK_MODES, isPolymarketOneSecondSignalExitExecut
 import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
 import { activateLazyFeature } from "../lazy-feature-init";
 import {
+    logBacktestResultUiFailure,
+    runBacktestResultUiSteps,
+} from "./backtest-result-ui-steps";
+import {
     getPolymarketAnnotationToggle,
     getPolymarketEntrySelectionModeSelect,
     getPolymarketOutcomeIntervalSelect,
@@ -273,14 +277,31 @@ export function setupStateSubscriptions() {
             const strategy = strategyRegistry.get(state.currentStrategyKey);
             const params = strategy ? paramManager.getValues(strategy) : {};
 
-            backtestService.addStrategyIndicators(params);
-            chartManager.displayEquityCurve(result.equityCurve);
-            uiManager.updateResultsUI(result);
-            if (isPanelVisible('trades')) {
-                void uiManager.updateTradesList(result.trades, jumpToTrade);
-            } else {
-                uiManager.updateTradeBadge(result.trades.length);
-            }
+            runBacktestResultUiSteps([
+                {
+                    step: "strategy_indicators",
+                    run: () => backtestService.addStrategyIndicators(params),
+                },
+                {
+                    step: "equity_curve",
+                    run: () => chartManager.displayEquityCurve(result.equityCurve),
+                },
+                {
+                    step: "results_panel",
+                    run: () => uiManager.updateResultsUI(result),
+                },
+                {
+                    step: "trades_panel",
+                    run: () => {
+                        if (isPanelVisible('trades')) {
+                            void uiManager.updateTradesList(result.trades, jumpToTrade)
+                                .catch((error) => logBacktestResultUiFailure("trades_list", error));
+                        } else {
+                            uiManager.updateTradeBadge(result.trades.length);
+                        }
+                    },
+                },
+            ]);
 
             deferredBacktestUiFrame = requestAnimationFrame(() => {
                 deferredBacktestUiFrame = null;
@@ -288,7 +309,12 @@ export function setupStateSubscriptions() {
                     return;
                 }
 
-                chartManager.displayTradeMarkers(result.trades, uiManager.formatPrice);
+                runBacktestResultUiSteps([
+                    {
+                        step: "trade_markers",
+                        run: () => chartManager.displayTradeMarkers(result.trades, uiManager.formatPrice),
+                    },
+                ]);
                 void activateLazyFeature("quick-view")
                     .then(async () => {
                         if (state.currentBacktestResult !== result) {

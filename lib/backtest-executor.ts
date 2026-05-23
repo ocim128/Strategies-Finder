@@ -38,7 +38,9 @@ import { sanitizeBacktestSettingsForRust, requiresTypescriptEngine } from "./rus
 import {
     applySignalPolarity,
     buildEntryBacktestResult,
+    createEmptyBacktestResult,
     runBacktest,
+    runBacktestCompact,
 } from "./strategies/index";
 import {
     ensureBuiltInStrategyLoaded,
@@ -89,6 +91,15 @@ export interface BacktestExecutorRequest {
     strategyExecutionContext?: StrategyExecutionContext;
     /** Use "provided" when a caller must not augment Polymarket 1s helpers from local historical quote storage. */
     polymarket1sContextMode?: "auto" | "provided";
+    /** Optional low-level run controls for bulk research callers that do not need full chart artifacts. */
+    backtestRunOptions?: {
+        includeAdvancedAnalytics?: boolean;
+        includeSharpeRatio?: boolean;
+        collectDiagnostics?: boolean;
+        omitEquityCurve?: boolean;
+        skipDrawdown?: boolean;
+        skipResultPostProcessing?: boolean;
+    };
     dataFetcher?: CrossSymbolDataFetcher;
     secondMarketApiBaseUrl?: string;
     crossSymbolInput?: {
@@ -148,8 +159,6 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     } as BacktestSettings;
     const resolvedSettings = resolveExecutorBacktestSettings(settingsWithMeta, interval);
     await ensureConfirmationStrategiesLoaded(resolvedSettings);
-
-    const resolvedCapital = resolveCapitalSettingsFromRaw(capitalSettings as Record<string, unknown>);
 
     // --- Cross-symbol resolution ---
     const primarySymbol = req.primarySymbol ?? (settingsWithMeta as Record<string, unknown>).symbol as string ?? "";
@@ -252,7 +261,9 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
 
     if (strategy.metadata?.role === "entry" && entryStats) {
         let result = buildEntryBacktestResult(entryStats);
-        finalizeResult(result, backtestData, interval, settingsWithMeta);
+        if (!shouldSkipResultPostProcessing(req)) {
+            finalizeResult(result, backtestData, interval, settingsWithMeta);
+        }
         if (annotatePolymarket) {
             const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
             transferBacktestEdgeAnalysisInput(result, annotatedResult);
@@ -262,12 +273,22 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         return { result, engineUsed: "typescript", signals };
     }
 
+    if (signals.length === 0 && shouldSkipResultPostProcessing(req)) {
+        const result = createEmptyBacktestResult();
+        registerBacktestEdgeAnalysisInput(result, backtestData);
+        return { result, engineUsed: "typescript", signals };
+    }
+
+    const resolvedCapital = resolveCapitalSettingsFromRaw(capitalSettings as Record<string, unknown>);
+
     const requireTs = requiresTypescriptEngine(resolvedSettings) || isSmartTradeSizingMode(resolvedCapital.sizingMode);
     if (shouldAttemptRust(req.context.engineMode ?? "auto", requireTs)) {
         const rustResult = await tryRustBacktest(backtestData, signals, resolvedCapital, resolvedSettings);
         if (rustResult && isResultConsistent(rustResult)) {
             let result = rustResult;
-            finalizeResult(result, backtestData, interval, settingsWithMeta);
+            if (!shouldSkipResultPostProcessing(req)) {
+                finalizeResult(result, backtestData, interval, settingsWithMeta);
+            }
             if (annotatePolymarket) {
                 const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
                 transferBacktestEdgeAnalysisInput(result, annotatedResult);
@@ -278,7 +299,10 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         }
     }
 
-    let result = runBacktest(
+    const runBacktestImpl = shouldUseCompactBacktest(req)
+        ? runBacktestCompact
+        : runBacktest;
+    let result = runBacktestImpl(
         backtestData,
         signals,
         resolvedCapital.initialCapital,
@@ -289,9 +313,13 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             mode: resolvedCapital.sizingMode,
             fixedTradeAmount: resolvedCapital.fixedTradeAmount,
             advancedSizing: resolvedCapital.advancedSizing,
-        }
+        },
+        undefined,
+        req.backtestRunOptions
     );
-    finalizeResult(result, backtestData, interval, settingsWithMeta);
+    if (!shouldSkipResultPostProcessing(req)) {
+        finalizeResult(result, backtestData, interval, settingsWithMeta);
+    }
     if (annotatePolymarket) {
         const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
         transferBacktestEdgeAnalysisInput(result, annotatedResult);
@@ -371,6 +399,17 @@ export async function executeBacktestFromSignals(
 // ============================================================================
 // Internal helpers
 // ============================================================================
+
+function shouldSkipResultPostProcessing(req: BacktestExecutorRequest): boolean {
+    return req.backtestRunOptions?.skipResultPostProcessing === true
+        && req.context.annotatePolymarket !== true;
+}
+
+function shouldUseCompactBacktest(req: BacktestExecutorRequest): boolean {
+    return shouldSkipResultPostProcessing(req)
+        && req.backtestRunOptions?.omitEquityCurve === true
+        && req.backtestRunOptions?.includeSharpeRatio === false;
+}
 
 function isBrowser(): boolean {
     return typeof document !== "undefined";

@@ -129,6 +129,24 @@ describe('strategy prepared execution parity', () => {
                 threshold: 0.7,
                 maxAdverse: 1,
             },
+            adx_skewness_drift: {
+                adxPeriod: 18,
+                adxThresh: 22,
+                skewThreshold: 0.35,
+            },
+            close_acceptance_volume_conviction: {
+                lookback: 18,
+                convictionRank: 82,
+            },
+            velocity_percentile_phi_snap: {
+                velocityWindow: 4,
+                erLookback: 11,
+                phiInefficiency: 0.45,
+            },
+            entropy_acceleration_transition: {
+                entropyWindow: 16,
+                rocPeriod: 4,
+            },
         };
 
         for (const { key, strategy } of strategyManifest) {

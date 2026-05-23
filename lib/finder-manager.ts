@@ -25,6 +25,11 @@ import {
 import { sortFinderResults } from "./finder/finder-engine";
 import { mergeFinderRiskParamsIntoBacktestSettings } from "./finder/finder-runner-core";
 import { sortFinderUniverseCandidates } from "./finder/finder-universe-metrics";
+import {
+	buildFinderDiagnostics,
+	createEmptyFinderDiagnosticsTimings,
+	createFinderRunId,
+} from "./finder/finder-diagnostics";
 import { debugLogger } from "./debug-logger";
 import { parseInputNumber } from "./dom-input-readers";
 import { sliceOhlcvByBlock } from "./block-selector";
@@ -47,6 +52,8 @@ import type {
 	FinderResult,
 	FinderUniverseCandidate,
 	FinderUniverseMetric,
+	FinderFailureDiagnostics,
+	FinderStrategyDiagnostics,
 } from './types/finder';
 import { isSmartTradeSizingMode } from "./types/backtest";
 import { isSignalExitSameEventMode } from "./polymarket-exit-mode";
@@ -136,6 +143,7 @@ const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
 	"totalTrades",
 	"activeSymbols",
 ] as const;
+const UNIVERSE_DATASET_CACHE_MAX_ENTRIES = 512;
 const TIMING_SORT_METRICS: readonly FinderMetric[] = ["entryScore", "exitScore"];
 
 function isTimingSortMetric(value: unknown): value is FinderMetric {
@@ -310,6 +318,7 @@ export class FinderManager {
 	private readonly taskYielder = createTaskYielder();
 	private dom: FinderManagerDom | null = null;
 	private localDailyAssetMapPromise: Promise<Map<string, LocalDailyAsset>> | null = null;
+	private readonly universeDatasetCache = new Map<string, Promise<OHLCVData[]>>();
 
 	private getDom(): FinderManagerDom {
 		return this.dom ??= createFinderManagerDom();
@@ -392,9 +401,53 @@ export class FinderManager {
 		}
 	}
 
+	private buildUniverseDatasetCacheKey(symbol: string, interval: string): string {
+		const normalizedSymbol = symbol.trim().toUpperCase();
+		const normalizedInterval = interval.trim().toLowerCase();
+		const provider = dataManager.getProvider(normalizedSymbol);
+		const lookbackBars = dataManager.getChartLookbackBars() ?? "all";
+		return `${provider}|${normalizedSymbol}|${normalizedInterval}|${lookbackBars}`;
+	}
+
+	private setUniverseDatasetCache(key: string, promise: Promise<OHLCVData[]>): void {
+		if (this.universeDatasetCache.has(key)) {
+			this.universeDatasetCache.delete(key);
+		}
+		this.universeDatasetCache.set(key, promise);
+		while (this.universeDatasetCache.size > UNIVERSE_DATASET_CACHE_MAX_ENTRIES) {
+			const oldestKey = this.universeDatasetCache.keys().next().value;
+			if (!oldestKey) break;
+			this.universeDatasetCache.delete(oldestKey);
+		}
+	}
+
 	private async loadUniverseDataset(symbol: string, interval: string, signal?: AbortSignal) {
 		await this.prepareUniverseSymbolProvider(symbol);
-		return dataManager.fetchDataDetached(symbol, interval, signal);
+		const cacheKey = this.buildUniverseDatasetCacheKey(symbol, interval);
+		const cached = this.universeDatasetCache.get(cacheKey);
+		if (cached) {
+			this.setUniverseDatasetCache(cacheKey, cached);
+			return cached;
+		}
+
+		let promise: Promise<OHLCVData[]>;
+		promise = dataManager.fetchDataDetached(symbol, interval, signal)
+			.then((data) => {
+				if (signal?.aborted || !Array.isArray(data) || data.length === 0) {
+					if (this.universeDatasetCache.get(cacheKey) === promise) {
+						this.universeDatasetCache.delete(cacheKey);
+					}
+				}
+				return data;
+			})
+			.catch((error) => {
+				if (this.universeDatasetCache.get(cacheKey) === promise) {
+					this.universeDatasetCache.delete(cacheKey);
+				}
+				throw error;
+			});
+		this.setUniverseDatasetCache(cacheKey, promise);
+		return promise;
 	}
 
 	private async prepareUniverseCrossSymbolProvider(
@@ -1355,9 +1408,20 @@ export class FinderManager {
 
 		const allResults: FinderUniverseCandidate[] = [];
 		const failedSymbols = new Set<string>();
+		const diagnosticsParts: FinderDiagnostics[] = [];
+		const datasetCache = new Map<string, Promise<OHLCVData[]>>();
 		let maxLoadedSymbols = 0;
 		const settings = backtestService.getBacktestSettings();
 		const capitalSettings = backtestService.getCapitalSettings();
+		const loadDataset = (symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> => {
+			const key = `${symbol.trim().toUpperCase()}|${interval}`;
+			let promise = datasetCache.get(key);
+			if (!promise) {
+				promise = this.loadUniverseDataset(symbol, interval, signal);
+				datasetCache.set(key, promise);
+			}
+			return promise;
+		};
 
 		for (let strategyIndex = 0; strategyIndex < selectedStrategies.length; strategyIndex += 1) {
 			const selectedStrategy = selectedStrategies[strategyIndex]!;
@@ -1369,7 +1433,7 @@ export class FinderManager {
 					settings,
 					capitalSettings,
 					selectedStrategy,
-					loadDataset: (symbol, interval, signal) => this.loadUniverseDataset(symbol, interval, signal),
+					loadDataset,
 					getProvider: (symbol) => dataManager.getProvider(symbol),
 					generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),
 				},
@@ -1393,6 +1457,9 @@ export class FinderManager {
 			);
 
 			allResults.push(...output.results);
+			if (output.diagnostics) {
+				diagnosticsParts.push(output.diagnostics);
+			}
 			maxLoadedSymbols = Math.max(maxLoadedSymbols, output.loadedSymbols);
 			output.failedSymbols.forEach((symbol) => failedSymbols.add(symbol));
 
@@ -1408,6 +1475,17 @@ export class FinderManager {
 			}
 		}
 
+		this.latestDiagnostics = diagnosticsParts.length === 0
+			? null
+			: diagnosticsParts.length === 1
+				? diagnosticsParts[0]!
+				: this.buildCombinedUniverseDiagnostics({
+					options,
+					parts: diagnosticsParts,
+					shownResults: this.getUniverseResults().length,
+					elapsedMs: performance.now() - startTime,
+				});
+		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics;
 		this.ui.renderRandomBenchmark(options.mode);
 
 		if (!this.isCancelled) {
@@ -1630,6 +1708,77 @@ export class FinderManager {
 				`Total run time was ${Math.round(args.elapsedMs)}ms`,
 			],
 		};
+	}
+
+	private combineFailureBreakdown(parts: FinderDiagnostics[]): FinderFailureDiagnostics[] | undefined {
+		const byReason = new Map<string, { runs: number; strategyKeys: Set<string> }>();
+		for (const part of parts) {
+			for (const failure of part.failureBreakdown ?? []) {
+				let entry = byReason.get(failure.reason);
+				if (!entry) {
+					entry = { runs: 0, strategyKeys: new Set<string>() };
+					byReason.set(failure.reason, entry);
+				}
+				entry.runs += failure.runs;
+				failure.strategyKeys.forEach((key) => entry.strategyKeys.add(key));
+			}
+		}
+		if (byReason.size === 0) return undefined;
+		return [...byReason.entries()]
+			.map(([reason, entry]) => ({
+				reason,
+				runs: entry.runs,
+				strategyKeys: [...entry.strategyKeys].sort(),
+			}))
+			.sort((a, b) => b.runs - a.runs || a.reason.localeCompare(b.reason));
+	}
+
+	private combineUniverseStrategyBreakdown(parts: FinderDiagnostics[]): FinderStrategyDiagnostics[] {
+		const strategyBreakdown = parts.flatMap((part) => part.strategyBreakdown);
+		const totalMs = strategyBreakdown.reduce((sum, strategy) => sum + strategy.totalMs, 0);
+		return strategyBreakdown
+			.map((strategy) => ({
+				...strategy,
+				runtimePct: totalMs > 0 ? Number(((strategy.totalMs / totalMs) * 100).toFixed(2)) : 0,
+			}))
+			.sort((a, b) => b.avgTotalMs - a.avgTotalMs);
+	}
+
+	private buildCombinedUniverseDiagnostics(args: {
+		options: FinderOptions;
+		parts: FinderDiagnostics[];
+		shownResults: number;
+		elapsedMs: number;
+	}): FinderDiagnostics {
+		const timings = createEmptyFinderDiagnosticsTimings();
+		for (const part of args.parts) {
+			for (const key of Object.keys(timings) as Array<keyof typeof timings>) {
+				timings[key] += part.timingsMs[key] ?? 0;
+			}
+		}
+		timings.total = args.elapsedMs;
+
+		return buildFinderDiagnostics({
+			runId: createFinderRunId("finder-universe"),
+			symbol: "SYMBOL_UNIVERSE",
+			interval: state.currentInterval,
+			mode: args.options.mode,
+			engineMode: "symbol_universe",
+			inputBars: Math.max(...args.parts.map((part) => part.data.inputBars)),
+			evaluationBars: Math.max(...args.parts.map((part) => part.data.evaluationBars)),
+			selectedStrategies: args.parts.reduce((sum, part) => sum + part.data.selectedStrategies, 0),
+			totalParamRuns: args.parts.reduce((sum, part) => sum + part.data.totalParamRuns, 0),
+			batchSize: Math.max(...args.parts.map((part) => part.data.batchSize)),
+			processedRuns: args.parts.reduce((sum, part) => sum + part.counts.processedRuns, 0),
+			filteredRuns: args.parts.reduce((sum, part) => sum + part.counts.filteredRuns, 0),
+			shownResults: args.shownResults,
+			endpointAdjusted: args.parts.reduce((sum, part) => sum + part.counts.endpointAdjusted, 0),
+			failedRuns: args.parts.reduce((sum, part) => sum + part.counts.failedRuns, 0),
+			skippedRuns: args.parts.reduce((sum, part) => sum + part.counts.skippedRuns, 0),
+			timings,
+			strategyBreakdown: this.combineUniverseStrategyBreakdown(args.parts),
+			failureBreakdown: this.combineFailureBreakdown(args.parts),
+		});
 	}
 
 	private renderLatestResults(): void {

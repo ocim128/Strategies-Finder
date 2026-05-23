@@ -118,6 +118,13 @@ describe("Finder universe runner", () => {
         expect(output.results[0]!.symbols.find((item) => item.symbol === "MISSING")?.status).to.equal("load_failed");
         expect((output.results[0]!.symbols.find((item) => item.symbol === "UP")?.result as any)?.trades).to.equal(undefined);
         expect((output.results[0]!.symbols.find((item) => item.symbol === "UP")?.result as any)?.equityCurve).to.equal(undefined);
+        expect(output.diagnostics?.engineMode).to.equal("symbol_universe");
+        expect(output.diagnostics?.counts.shownResults).to.equal(1);
+        expect(output.diagnostics?.counts.processedRuns).to.equal(3);
+        expect(output.diagnostics?.counts.failedRuns).to.equal(1);
+        expect(output.diagnostics?.data.totalParamRuns).to.equal(6);
+        expect(output.diagnostics?.timingsMs.dataLoading).to.be.greaterThanOrEqual(0);
+        expect(output.diagnostics?.strategyBreakdown[0]?.key).to.equal("universe_test");
         expect(partialUpdates.length).to.be.greaterThan(0);
     });
 
@@ -171,6 +178,68 @@ describe("Finder universe runner", () => {
 
         expect(output.results).to.have.length(1);
         expect(output.results[0]!.params.threshold).to.equal(1);
+    });
+
+    it("loads universe datasets concurrently so large symbol lists do not serialize I/O", async () => {
+        const datasets = new Map<string, OHLCVData[]>([
+            ["AAA", makeCandles([100, 104, 108, 112, 116])],
+            ["BBB", makeCandles([110, 114, 118, 122, 126])],
+            ["CCC", makeCandles([120, 124, 128, 132, 136])],
+            ["DDD", makeCandles([130, 134, 138, 142, 146])],
+        ]);
+        let inFlightLoads = 0;
+        let maxInFlightLoads = 0;
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 3,
+            rangePercent: 35,
+            maxRuns: 20,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols: ["AAA", "BBB", "CCC", "DDD"],
+                minActiveSymbols: 1,
+                minTotalTrades: 1,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["profitableActiveRatio", "medianExpectancy", "worstNetProfit"],
+            },
+        };
+
+        const output = await runFinderUniverseExecution(
+            {
+                interval: "5m",
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategy: {
+                    key: "universe_test",
+                    name: testStrategy.name,
+                    strategy: testStrategy,
+                },
+                loadDataset: async (symbol) => {
+                    inFlightLoads += 1;
+                    maxInFlightLoads = Math.max(maxInFlightLoads, inFlightLoads);
+                    await Promise.resolve();
+                    inFlightLoads -= 1;
+                    return datasets.get(symbol) ?? [];
+                },
+                generateParamSets: () => [{ threshold: 1 }],
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                yieldControl: async () => {},
+                isCancelled: () => false,
+            }
+        );
+
+        expect(output.loadedSymbols).to.equal(4);
+        expect(maxInFlightLoads).to.be.greaterThan(1);
     });
 
     it("runs cross-symbol strategies in Symbol Universe mode", async () => {

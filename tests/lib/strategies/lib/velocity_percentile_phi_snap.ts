@@ -1,12 +1,160 @@
-﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
-import { createBuySignal, createSellSignal, ensureCleanData } from "../strategy-helpers";
+import { Strategy, OHLCVData, Signal, StrategyParams } from "../../types/strategies";
+import { createBuySignal, createSellSignal, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildRateOfChange, buildPercentileRank, buildEfficiencyRatio, extractBarMetricSeries } from "./price-action-statistics-core";
+
+type VelocityPercentilePhiSnapCandidates = {
+	indexes: number[];
+	directions: number[];
+	efficiency: number[];
+};
+
+type VelocityPercentilePhiSnapPrepared = {
+	cleanData: OHLCVData[];
+	closes: number[];
+	bodyDirection: number[];
+	rocFilledByWindow: Map<number, number[]>;
+	negRocByWindow: Map<number, number[]>;
+	rocRankByKey: Map<string, (number | null)[]>;
+	negRankByKey: Map<string, (number | null)[]>;
+	erByLookback: Map<number, (number | null)[]>;
+	candidateByKey: Map<string, VelocityPercentilePhiSnapCandidates>;
+};
 
 function normalizeVelocityPercentilePhiSnapParams(params: StrategyParams): StrategyParams {
 	const velocityWindow = Math.max(1, Math.round(params.velocityWindow ?? 5));
 	const erLookback = Math.max(3, Math.round(params.erLookback ?? 13));
 	const phiInefficiency = Math.max(0.01, Math.min(0.99, Number(params.phiInefficiency ?? 0.382)));
 	return { ...params, velocityWindow, erLookback, phiInefficiency };
+}
+
+function prepareVelocityPercentilePhiSnapData(data: OHLCVData[]): VelocityPercentilePhiSnapPrepared {
+	const cleanData = ensureCleanData(data);
+	return {
+		cleanData,
+		closes: getCloses(cleanData),
+		bodyDirection: extractBarMetricSeries(cleanData, "bodyDirection"),
+		rocFilledByWindow: new Map<number, number[]>(),
+		negRocByWindow: new Map<number, number[]>(),
+		rocRankByKey: new Map<string, (number | null)[]>(),
+		negRankByKey: new Map<string, (number | null)[]>(),
+		erByLookback: new Map<number, (number | null)[]>(),
+		candidateByKey: new Map<string, VelocityPercentilePhiSnapCandidates>(),
+	};
+}
+
+function getPreparedVelocityPercentilePhiSnapData(
+	preparedData: unknown,
+	data: OHLCVData[]
+): VelocityPercentilePhiSnapPrepared {
+	if (preparedData && typeof preparedData === "object" && "rocFilledByWindow" in preparedData) {
+		return preparedData as VelocityPercentilePhiSnapPrepared;
+	}
+	return prepareVelocityPercentilePhiSnapData(data);
+}
+
+function getRocFilled(prepared: VelocityPercentilePhiSnapPrepared, velocityWindow: number): number[] {
+	let rocFilled = prepared.rocFilledByWindow.get(velocityWindow);
+	if (!rocFilled) {
+		rocFilled = buildRateOfChange(prepared.closes, velocityWindow).map((value) => value ?? 0);
+		prepared.rocFilledByWindow.set(velocityWindow, rocFilled);
+	}
+	return rocFilled;
+}
+
+function getNegRoc(prepared: VelocityPercentilePhiSnapPrepared, velocityWindow: number): number[] {
+	let negRoc = prepared.negRocByWindow.get(velocityWindow);
+	if (!negRoc) {
+		negRoc = getRocFilled(prepared, velocityWindow).map((value) => -value);
+		prepared.negRocByWindow.set(velocityWindow, negRoc);
+	}
+	return negRoc;
+}
+
+function getRocRank(
+	prepared: VelocityPercentilePhiSnapPrepared,
+	velocityWindow: number,
+	rankLookback: number
+): (number | null)[] {
+	const key = `${velocityWindow}|${rankLookback}`;
+	let rank = prepared.rocRankByKey.get(key);
+	if (!rank) {
+		rank = buildPercentileRank(getRocFilled(prepared, velocityWindow), rankLookback);
+		prepared.rocRankByKey.set(key, rank);
+	}
+	return rank;
+}
+
+function getNegRank(
+	prepared: VelocityPercentilePhiSnapPrepared,
+	velocityWindow: number,
+	rankLookback: number
+): (number | null)[] {
+	const key = `${velocityWindow}|${rankLookback}`;
+	let rank = prepared.negRankByKey.get(key);
+	if (!rank) {
+		rank = buildPercentileRank(getNegRoc(prepared, velocityWindow), rankLookback);
+		prepared.negRankByKey.set(key, rank);
+	}
+	return rank;
+}
+
+function getEfficiencyRatio(
+	prepared: VelocityPercentilePhiSnapPrepared,
+	erLookback: number
+): (number | null)[] {
+	let er = prepared.erByLookback.get(erLookback);
+	if (!er) {
+		er = buildEfficiencyRatio(prepared.cleanData, erLookback);
+		prepared.erByLookback.set(erLookback, er);
+	}
+	return er;
+}
+
+function getVelocityCandidates(
+	prepared: VelocityPercentilePhiSnapPrepared,
+	velocityWindow: number,
+	erLookback: number,
+	minBars: number
+): VelocityPercentilePhiSnapCandidates {
+	const key = `${velocityWindow}|${erLookback}`;
+	let candidates = prepared.candidateByKey.get(key);
+	if (candidates) return candidates;
+
+	const rankLookback = erLookback + velocityWindow;
+	const rocRank = getRocRank(prepared, velocityWindow, rankLookback);
+	const negRank = getNegRank(prepared, velocityWindow, rankLookback);
+	const er = getEfficiencyRatio(prepared, erLookback);
+	const indexes: number[] = [];
+	const directions: number[] = [];
+	const efficiency: number[] = [];
+
+	for (let i = minBars; i < prepared.cleanData.length; i++) {
+		const erVal = er[i];
+		if (erVal === null || erVal === undefined) continue;
+
+		if (prepared.bodyDirection[i] === 1) {
+			const rank = rocRank[i];
+			if (rank !== null && rank !== undefined && rank > 0.99) {
+				indexes.push(i);
+				directions.push(1);
+				efficiency.push(erVal);
+			}
+			continue;
+		}
+
+		if (prepared.bodyDirection[i] === -1) {
+			const nr = negRank[i];
+			if (nr !== null && nr !== undefined && nr > 0.99) {
+				indexes.push(i);
+				directions.push(-1);
+				efficiency.push(erVal);
+			}
+		}
+	}
+
+	candidates = { indexes, directions, efficiency };
+	prepared.candidateByKey.set(key, candidates);
+	return candidates;
 }
 
 export const velocity_percentile_phi_snap: Strategy = {
@@ -16,44 +164,30 @@ export const velocity_percentile_phi_snap: Strategy = {
 	defaultParams: { velocityWindow: 5, erLookback: 13, phiInefficiency: 0.382 },
 	paramLabels: { velocityWindow: "Velocity Window", erLookback: "ER Lookback", phiInefficiency: "Phi Inefficiency" },
 	normalizeParams: normalizeVelocityPercentilePhiSnapParams,
-	execute: (data: OHLCVData[], params: StrategyParams) => {
-		const cleanData = ensureCleanData(data);
+	prepareFinderData: (data) => prepareVelocityPercentilePhiSnapData(data),
+	executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
+		const prepared = getPreparedVelocityPercentilePhiSnapData(preparedData, data);
 		const np = normalizeVelocityPercentilePhiSnapParams(params);
 		const minBars = Math.max(np.velocityWindow, np.erLookback) + 20;
-		if (cleanData.length < minBars) return [];
+		if (prepared.cleanData.length < minBars) return [];
 
-		const closes = cleanData.map((d) => d.close);
-		const roc = buildRateOfChange(closes, np.velocityWindow);
-		const rocFilled = roc.map((v) => v ?? 0);
-		const negRoc = rocFilled.map((v) => -v);
-		const rankLookback = np.erLookback + np.velocityWindow;
-		const rocRank = buildPercentileRank(rocFilled, rankLookback);
-		const negRank = buildPercentileRank(negRoc, rankLookback);
-		const er = buildEfficiencyRatio(cleanData, np.erLookback);
-		const bodyDirection = extractBarMetricSeries(cleanData, "bodyDirection");
+		const candidates = getVelocityCandidates(prepared, np.velocityWindow, np.erLookback, minBars);
 
-		const signals = [];
-		for (let i = minBars; i < cleanData.length; i++) {
-			const rank = rocRank[i];
-			const nr = negRank[i];
-			const erVal = er[i];
-			if (erVal === null) continue;
-
-			if (rank !== null && rank > 0.99 && erVal < np.phiInefficiency && bodyDirection[i] === 1) {
-				signals.push(createBuySignal(cleanData, i, `Velocity 99th pctile with ER < ${np.phiInefficiency} & bullish body`));
-			}
-			if (nr !== null && nr > 0.99 && erVal < np.phiInefficiency && bodyDirection[i] === -1) {
-				signals.push(createSellSignal(cleanData, i, `Velocity 99th pctile with ER < ${np.phiInefficiency} & bearish body`));
+		const signals: Signal[] = [];
+		for (let i = 0; i < candidates.indexes.length; i++) {
+			if (candidates.efficiency[i] >= np.phiInefficiency) continue;
+			const barIndex = candidates.indexes[i];
+			if (candidates.directions[i] === 1) {
+				signals.push(createBuySignal(prepared.cleanData, barIndex, `Velocity 99th pctile with ER < ${np.phiInefficiency} & bullish body`));
+			} else {
+				signals.push(createSellSignal(prepared.cleanData, barIndex, `Velocity 99th pctile with ER < ${np.phiInefficiency} & bearish body`));
 			}
 		}
 		return signals;
 	},
+	execute: (data: OHLCVData[], params: StrategyParams) =>
+		velocity_percentile_phi_snap.executePrepared?.(prepareVelocityPercentilePhiSnapData(data), params, data) ?? [],
 	metadata: {
 		role: "entry",
 		direction: "both",
 		walkForwardParams: ["velocityWindow", "erLookback", "phiInefficiency"] } };
-
-
-
-
-

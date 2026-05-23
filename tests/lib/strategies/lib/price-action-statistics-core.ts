@@ -8,6 +8,7 @@ const rollingZScoreCache = new WeakMap<number[], Map<string, NullableSeries>>();
 const rollingMedianCache = new WeakMap<number[], Map<number, NullableSeries>>();
 const rollingEntropyCache = new WeakMap<number[], Map<string, NullableSeries>>();
 const percentileRankCache = new WeakMap<number[], Map<number, NullableSeries>>();
+const efficiencyRatioCache = new WeakMap<OHLCVData[], Map<number, NullableSeries>>();
 
 function getCachedSeries<K>(
 	cache: WeakMap<number[], Map<K, NullableSeries>>,
@@ -19,6 +20,24 @@ function getCachedSeries<K>(
 	if (!byKey) {
 		byKey = new Map<K, NullableSeries>();
 		cache.set(values, byKey);
+	}
+	const cached = byKey.get(key);
+	if (cached) return cached;
+	const result = build();
+	byKey.set(key, result);
+	return result;
+}
+
+function getCachedOhlcvSeries<K>(
+	cache: WeakMap<OHLCVData[], Map<K, NullableSeries>>,
+	data: OHLCVData[],
+	key: K,
+	build: () => NullableSeries
+): NullableSeries {
+	let byKey = cache.get(data);
+	if (!byKey) {
+		byKey = new Map<K, NullableSeries>();
+		cache.set(data, byKey);
 	}
 	const cached = byKey.get(key);
 	if (cached) return cached;
@@ -214,21 +233,23 @@ export function buildEfficiencyRatio(
 	lookbackInput: number
 ): (number | null)[] {
 	const lookback = Math.max(2, Math.round(lookbackInput));
-	const result: (number | null)[] = new Array(data.length).fill(null);
-
-	for (let i = lookback; i < data.length; i++) {
-		const netChange = Math.abs(data[i].close - data[i - lookback].close);
-
+	return getCachedOhlcvSeries(efficiencyRatioCache, data, lookback, () => {
+		const result: NullableSeries = new Array(data.length).fill(null);
 		let sumAbsChanges = 0;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			sumAbsChanges += Math.abs(data[j].close - data[j - 1].close);
+
+		for (let i = 1; i < data.length; i++) {
+			sumAbsChanges += Math.abs(data[i].close - data[i - 1].close);
+			if (i > lookback) {
+				sumAbsChanges -= Math.abs(data[i - lookback].close - data[i - lookback - 1].close);
+			}
+			if (i < lookback || sumAbsChanges <= 0) continue;
+
+			const netChange = Math.abs(data[i].close - data[i - lookback].close);
+			result[i] = netChange / sumAbsChanges;
 		}
 
-		if (sumAbsChanges <= 0) continue;
-		result[i] = netChange / sumAbsChanges;
-	}
-
-	return result;
+		return result;
+	});
 }
 
 /**
@@ -475,22 +496,37 @@ export function buildRollingEntropy(
 	const bins = Math.max(2, Math.round(numBins));
 	return getCachedSeries(rollingEntropyCache, values, `${lookback}|${bins}`, () => {
 		const result: NullableSeries = new Array(values.length).fill(null);
+		const minDeque: number[] = [];
+		const maxDeque: number[] = [];
+		const counts = new Array<number>(bins).fill(0);
+		let minHead = 0;
+		let maxHead = 0;
 
-		for (let i = lookback - 1; i < values.length; i++) {
-			let wMin = Infinity;
-			let wMax = -Infinity;
-			for (let j = i - lookback + 1; j <= i; j++) {
-				if (values[j] < wMin) wMin = values[j];
-				if (values[j] > wMax) wMax = values[j];
+		for (let i = 0; i < values.length; i++) {
+			const value = values[i];
+			while (minDeque.length > minHead && values[minDeque[minDeque.length - 1]] >= value) {
+				minDeque.pop();
 			}
+			minDeque.push(i);
+			while (maxDeque.length > maxHead && values[maxDeque[maxDeque.length - 1]] <= value) {
+				maxDeque.pop();
+			}
+			maxDeque.push(i);
 
+			const windowStart = i - lookback + 1;
+			while (minDeque.length > minHead && minDeque[minHead] < windowStart) minHead++;
+			while (maxDeque.length > maxHead && maxDeque[maxHead] < windowStart) maxHead++;
+
+			if (i < lookback - 1) continue;
+			const wMin = values[minDeque[minHead]];
+			const wMax = values[maxDeque[maxHead]];
 			const wRange = wMax - wMin;
 			if (wRange <= 0) {
-				result[i] = 0; // all identical â†’ zero entropy
+				result[i] = 0; // all identical -> zero entropy
 				continue;
 			}
 
-			const counts = new Array(bins).fill(0);
+			counts.fill(0);
 			for (let j = i - lookback + 1; j <= i; j++) {
 				let bin = Math.floor(((values[j] - wMin) / wRange) * bins);
 				if (bin >= bins) bin = bins - 1; // clamp max edge

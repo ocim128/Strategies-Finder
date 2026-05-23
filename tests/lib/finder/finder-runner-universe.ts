@@ -1,10 +1,12 @@
 import { executeBacktest } from "../backtest-executor";
+import { mapWithConcurrencyLimit } from "../async-pool";
 import type { CrossSymbolDataFetcher } from "../cross-symbol-runtime";
 import { debugLogger } from "../debug-logger";
 import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import type { CapitalSettings } from "../types/backtest";
 import type {
     FinderOptions,
+    FinderDiagnostics,
     FinderUniverseCandidate,
     FinderUniverseEarlyStopReason,
     FinderUniverseOptions,
@@ -24,8 +26,25 @@ import {
     resolveFinderRiskOverrides,
     type FinderPreparedDataCache,
 } from "./finder-runner-core";
+import {
+    addElapsed,
+    buildFinderDiagnostics,
+    createEmptyFinderDiagnosticsTimings,
+    createFinderRunId,
+    getFinderStrategyDiagnosticsStats,
+    recordFinderStrategyFailure,
+    recordFinderStrategyNoSignals,
+    toFinderFailureDiagnostics,
+    toFinderStrategyDiagnostics,
+    type FinderStrategyDiagnosticsStats,
+} from "./finder-diagnostics";
 import { buildFinderUniverseCandidate, passesFinderUniverseFilters, sortFinderUniverseCandidates } from "./finder-universe-metrics";
 import type { FinderSelectedStrategy } from "./finder-runner";
+
+const UNIVERSE_DATA_LOAD_CONCURRENCY = 12;
+const UNIVERSE_DATA_LOAD_YIELD_EVERY = 8;
+const UNIVERSE_EVALUATION_YIELD_EVERY_RUNS = 64;
+const UNIVERSE_EVALUATION_YIELD_MIN_MS = 100;
 
 interface FinderUniverseLoadedSymbol {
     symbol: string;
@@ -59,6 +78,7 @@ export interface FinderUniverseRunOutput {
     results: FinderUniverseCandidate[];
     loadedSymbols: number;
     failedSymbols: string[];
+    diagnostics?: FinderDiagnostics;
 }
 
 type FinderUniverseTimingSummary = {
@@ -77,28 +97,68 @@ type FinderUniversePartialCounts = {
     totalTrades: number;
 };
 
+type FinderUniverseLoadOutcome =
+    | { status: "loaded"; symbol: FinderUniverseLoadedSymbol }
+    | { status: "failed"; symbol: string; result: FinderUniverseSymbolResult }
+    | { status: "cancelled"; symbol: string };
+
 function createPreparedStrategy(
     strategyKey: string,
     strategy: Strategy,
     cache: FinderPreparedDataCache,
-    settings: BacktestSettings
+    settings: BacktestSettings,
+    onTiming?: (timing: { preparedDataMs: number; signalExecutionMs: number; totalMs: number; signalCount: number; usedPreparedData: boolean }) => void
 ): Strategy {
-    if (!strategy.prepareFinderData || !strategy.executePrepared) {
-        return strategy;
-    }
+    const canUsePreparedData = Boolean(strategy.prepareFinderData && strategy.executePrepared);
 
     const wrapped = Object.create(Object.getPrototypeOf(strategy)) as Strategy;
     Object.defineProperties(wrapped, Object.getOwnPropertyDescriptors(strategy));
     wrapped.execute = (data, params, executionContext) => {
-        const prepared = getPreparedFinderData(
-            cache,
-            strategyKey,
-            strategy,
-            data,
-            settings,
-            executionContext
-        );
-        return strategy.executePrepared!(prepared, params, data, executionContext);
+        const startedAt = performance.now();
+        let preparedDataMs = 0;
+        let signalExecutionMs = 0;
+        let signals: ReturnType<Strategy["execute"]> | undefined;
+        try {
+            if (canUsePreparedData) {
+                let prepared: unknown;
+                const preparedStartedAt = performance.now();
+                try {
+                    prepared = getPreparedFinderData(
+                        cache,
+                        strategyKey,
+                        strategy,
+                        data,
+                        settings,
+                        executionContext
+                    );
+                } finally {
+                    preparedDataMs = performance.now() - preparedStartedAt;
+                }
+
+                const signalStartedAt = performance.now();
+                try {
+                    signals = strategy.executePrepared!(prepared, params, data, executionContext);
+                } finally {
+                    signalExecutionMs = performance.now() - signalStartedAt;
+                }
+            } else {
+                const signalStartedAt = performance.now();
+                try {
+                    signals = strategy.execute(data, params, executionContext);
+                } finally {
+                    signalExecutionMs = performance.now() - signalStartedAt;
+                }
+            }
+            return signals ?? [];
+        } finally {
+            onTiming?.({
+                preparedDataMs,
+                signalExecutionMs,
+                totalMs: performance.now() - startedAt,
+                signalCount: signals?.length ?? -1,
+                usedPreparedData: canUsePreparedData,
+            });
+        }
     };
     return wrapped;
 }
@@ -268,6 +328,46 @@ export async function runFinderUniverseExecution(
     }
 
     const totalRunStart = performance.now();
+    const runId = createFinderRunId("finder-universe");
+    const timings = createEmptyFinderDiagnosticsTimings();
+    const strategyStatsByKey = new Map<string, FinderStrategyDiagnosticsStats>();
+    const strategyStats = getFinderStrategyDiagnosticsStats(strategyStatsByKey, input.selectedStrategy);
+    const signalTimingByRun = {
+        preparedDataMs: 0,
+        signalMs: 0,
+        totalMs: 0,
+        observed: false,
+    };
+    let processedRuns = 0;
+    let failedRuns = 0;
+    const measuredYield = async (): Promise<void> => {
+        const startedAt = performance.now();
+        await callbacks.yieldControl();
+        addElapsed(timings, "yielding", startedAt);
+    };
+    let loadYieldCount = 0;
+    const maybeYieldDuringLoad = async (): Promise<void> => {
+        loadYieldCount += 1;
+        if (loadYieldCount % UNIVERSE_DATA_LOAD_YIELD_EVERY === 0) {
+            await measuredYield();
+        }
+    };
+    let evaluationsSinceYield = 0;
+    let lastEvaluationYieldAt = performance.now();
+    const maybeYieldDuringEvaluation = async (): Promise<void> => {
+        evaluationsSinceYield += 1;
+        const now = performance.now();
+        if (
+            evaluationsSinceYield < UNIVERSE_EVALUATION_YIELD_EVERY_RUNS
+            && now - lastEvaluationYieldAt < UNIVERSE_EVALUATION_YIELD_MIN_MS
+        ) {
+            return;
+        }
+
+        evaluationsSinceYield = 0;
+        lastEvaluationYieldAt = now;
+        await measuredYield();
+    };
     const loadStart = performance.now();
     const loadedSymbols: FinderUniverseLoadedSymbol[] = [];
     const loadFailures = new Map<string, FinderUniverseSymbolResult>();
@@ -298,40 +398,61 @@ export async function runFinderUniverseExecution(
     callbacks.setProgress(0, "Preparing symbol universe...");
     callbacks.setStatus("Loading universe symbols...");
 
-    for (let index = 0; index < normalizedSymbols.length; index += 1) {
+    let completedLoads = 0;
+    const loadOutcomes = await mapWithConcurrencyLimit(
+        normalizedSymbols,
+        UNIVERSE_DATA_LOAD_CONCURRENCY,
+        async (symbol, index): Promise<FinderUniverseLoadOutcome> => {
+            if (callbacks.isCancelled()) {
+                datasetAbort.abort();
+                return { status: "cancelled", symbol };
+            }
+
+            callbacks.setProgress((completedLoads / Math.max(1, normalizedSymbols.length)) * 15, `Loading ${symbol} (${index + 1}/${normalizedSymbols.length})...`);
+            callbacks.setStatus(`Loading ${symbol} ${input.interval}...`);
+
+            try {
+                const data = await getOrLoadDataset(symbol, input.interval);
+                if (!Array.isArray(data) || data.length === 0) {
+                    return { status: "failed", symbol, result: buildLoadFailedResult(symbol, "No candles returned.") };
+                }
+
+                return {
+                    status: "loaded",
+                    symbol: {
+                        symbol,
+                        data,
+                        barCount: data.length,
+                        firstTime: data[0]?.time,
+                        lastTime: data[data.length - 1]?.time,
+                        maxPossibleTrades: data.length,
+                    },
+                };
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                return { status: "failed", symbol, result: buildLoadFailedResult(symbol, message) };
+            } finally {
+                completedLoads += 1;
+                callbacks.setProgress((completedLoads / Math.max(1, normalizedSymbols.length)) * 15, `Loaded ${completedLoads}/${normalizedSymbols.length} symbols...`);
+                await maybeYieldDuringLoad();
+            }
+        }
+    );
+
+    for (const outcome of loadOutcomes) {
+        if (outcome.status === "loaded") {
+            loadedSymbols.push(outcome.symbol);
+        } else if (outcome.status === "failed") {
+            loadFailures.set(outcome.symbol, outcome.result);
+        }
         if (callbacks.isCancelled()) {
             datasetAbort.abort();
             break;
         }
-
-        const symbol = normalizedSymbols[index];
-        callbacks.setProgress((index / Math.max(1, normalizedSymbols.length)) * 15, `Loading ${symbol} (${index + 1}/${normalizedSymbols.length})...`);
-        callbacks.setStatus(`Loading ${symbol} ${input.interval}...`);
-
-        try {
-            const data = await getOrLoadDataset(symbol, input.interval);
-            if (!Array.isArray(data) || data.length === 0) {
-                loadFailures.set(symbol, buildLoadFailedResult(symbol, "No candles returned."));
-                continue;
-            }
-
-            loadedSymbols.push({
-                symbol,
-                data,
-                barCount: data.length,
-                firstTime: data[0]?.time,
-                lastTime: data[data.length - 1]?.time,
-                maxPossibleTrades: data.length,
-            });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            loadFailures.set(symbol, buildLoadFailedResult(symbol, message));
-        }
-
-        await callbacks.yieldControl();
     }
 
     const loadMs = performance.now() - loadStart;
+    timings.dataLoading = loadMs;
     if (callbacks.isCancelled()) {
         return {
             results: [],
@@ -345,11 +466,13 @@ export async function runFinderUniverseExecution(
     }
 
     const rustSettings = sanitizeBacktestSettingsForRust(input.settings);
+    const paramGenerationStartedAt = performance.now();
     const baseParams = buildFinderSearchBaseParams(input.selectedStrategy.strategy, input.settings, input.options);
     const paramSets = normalizeFinderCandidateParamSets(
         input.selectedStrategy.strategy,
         input.generateParamSets(baseParams, input.options)
     );
+    addElapsed(timings, "paramGeneration", paramGenerationStartedAt);
     if (paramSets.length === 0) {
         callbacks.setStatus("No valid parameter combinations generated.");
         return {
@@ -378,7 +501,7 @@ export async function runFinderUniverseExecution(
         survivors.push(...trimmed);
     };
     const totalPossibleTrades = loadedSymbols.reduce((sum, item) => sum + item.maxPossibleTrades, 0);
-
+    const totalInputBars = loadedSymbols.reduce((sum, item) => sum + item.barCount, 0);
     for (let candidateIndex = 0; candidateIndex < paramSets.length; candidateIndex += 1) {
         if (callbacks.isCancelled()) {
             break;
@@ -390,7 +513,18 @@ export async function runFinderUniverseExecution(
             input.selectedStrategy.key,
             input.selectedStrategy.strategy,
             preparedDataCache,
-            backtestSettings
+            backtestSettings,
+            (signalTiming) => {
+                signalTimingByRun.observed = true;
+                signalTimingByRun.preparedDataMs += signalTiming.preparedDataMs;
+                signalTimingByRun.signalMs += signalTiming.signalExecutionMs;
+                signalTimingByRun.totalMs += signalTiming.totalMs;
+                strategyStats.signalMs += signalTiming.signalExecutionMs;
+                strategyStats.usedPreparedData = strategyStats.usedPreparedData || signalTiming.usedPreparedData;
+                if (signalTiming.signalCount === 0) {
+                    recordFinderStrategyNoSignals(strategyStats);
+                }
+            }
         );
 
         const symbolResults = new Map<string, FinderUniverseSymbolResult>();
@@ -417,7 +551,12 @@ export async function runFinderUniverseExecution(
             callbacks.setProgress(progress, `Testing ${input.selectedStrategy.name} on ${symbol.symbol} (${candidateIndex + 1}/${paramSets.length})...`);
             callbacks.setStatus(`Evaluating candidate ${candidateIndex + 1}/${paramSets.length} on ${symbol.symbol}...`);
 
+            const runStartedAt = performance.now();
             try {
+                signalTimingByRun.preparedDataMs = 0;
+                signalTimingByRun.signalMs = 0;
+                signalTimingByRun.totalMs = 0;
+                signalTimingByRun.observed = false;
                 const output = await executeBacktest({
                     ohlcvData: symbol.data,
                     interval: input.interval,
@@ -434,12 +573,41 @@ export async function runFinderUniverseExecution(
                         engineMode: "auto",
                         nowSec: Math.floor(Date.now() / 1000),
                     },
+                    backtestRunOptions: {
+                        includeAdvancedAnalytics: false,
+                        includeSharpeRatio: false,
+                        omitEquityCurve: true,
+                        skipDrawdown: true,
+                        skipResultPostProcessing: true,
+                    },
                 });
+                const runMs = performance.now() - runStartedAt;
+                processedRuns += 1;
+                strategyStats.runs += 1;
+                strategyStats.totalMs += runMs;
+                strategyStats.backtestMs += Math.max(0, runMs - signalTimingByRun.totalMs);
+                timings.preparedData += signalTimingByRun.preparedDataMs;
+                timings.signalGeneration += signalTimingByRun.signalMs;
+                timings.backtest += Math.max(0, runMs - signalTimingByRun.totalMs);
+                if (output.signals.length === 0 && !signalTimingByRun.observed) {
+                    recordFinderStrategyNoSignals(strategyStats);
+                }
                 const symbolResult = buildSymbolResult(symbol, output.result);
                 symbolResults.set(symbol.symbol, symbolResult);
                 accumulatePartialCounts(partialCounts, symbolResult);
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
+                const runMs = performance.now() - runStartedAt;
+                processedRuns += 1;
+                failedRuns += 1;
+                strategyStats.runs += 1;
+                strategyStats.failedRuns += 1;
+                strategyStats.totalMs += runMs;
+                strategyStats.backtestMs += Math.max(0, runMs - signalTimingByRun.totalMs);
+                timings.preparedData += signalTimingByRun.preparedDataMs;
+                timings.signalGeneration += signalTimingByRun.signalMs;
+                timings.backtest += Math.max(0, runMs - signalTimingByRun.totalMs);
+                recordFinderStrategyFailure(strategyStats, error);
                 symbolResults.set(symbol.symbol, buildRunFailedResult(symbol, message));
             }
 
@@ -458,7 +626,7 @@ export async function runFinderUniverseExecution(
                 break;
             }
 
-            await callbacks.yieldControl();
+            await maybeYieldDuringEvaluation();
         }
 
         if (callbacks.isCancelled()) {
@@ -466,12 +634,12 @@ export async function runFinderUniverseExecution(
         }
 
         if (evaluationStoppedEarly) {
-            await callbacks.yieldControl();
+            await maybeYieldDuringEvaluation();
             continue;
         }
 
         if (!passesUniverseFiltersFromCounts(partialCounts, universe)) {
-            await callbacks.yieldControl();
+            await maybeYieldDuringEvaluation();
             continue;
         }
 
@@ -489,15 +657,45 @@ export async function runFinderUniverseExecution(
         });
 
         if (passesFinderUniverseFilters(candidate, universe)) {
+            const rankingStartedAt = performance.now();
             offerSurvivor(candidate);
-            callbacks.onResultsUpdate?.(getSortedSurvivors(input.options.topN));
+            const updatedResults = getSortedSurvivors(input.options.topN);
+            addElapsed(timings, "resultRanking", rankingStartedAt);
+            if (callbacks.onResultsUpdate) {
+                const uiStartedAt = performance.now();
+                callbacks.onResultsUpdate(updatedResults);
+                addElapsed(timings, "uiUpdates", uiStartedAt);
+            }
         }
 
-        await callbacks.yieldControl();
+        await maybeYieldDuringEvaluation();
     }
 
+    const finalRankingStartedAt = performance.now();
     const results = getSortedSurvivors(input.options.topN);
+    addElapsed(timings, "resultRanking", finalRankingStartedAt);
     const evaluationMs = performance.now() - evaluationStart;
+    timings.total = performance.now() - totalRunStart;
+    const diagnostics = buildFinderDiagnostics({
+        runId,
+        symbol: "SYMBOL_UNIVERSE",
+        interval: input.interval,
+        mode: input.options.mode,
+        engineMode: "symbol_universe",
+        inputBars: totalInputBars,
+        evaluationBars: totalInputBars,
+        selectedStrategies: 1,
+        totalParamRuns: paramSets.length * normalizedSymbols.length,
+        batchSize: 1,
+        processedRuns,
+        filteredRuns: keptCandidateCount,
+        shownResults: results.length,
+        endpointAdjusted: 0,
+        failedRuns: failedRuns + loadFailures.size,
+        timings,
+        strategyBreakdown: toFinderStrategyDiagnostics(strategyStatsByKey),
+        failureBreakdown: toFinderFailureDiagnostics(strategyStatsByKey),
+    });
     const timingSummary: FinderUniverseTimingSummary = {
         totalRunMs: performance.now() - totalRunStart,
         loadMs,
@@ -508,10 +706,12 @@ export async function runFinderUniverseExecution(
         keptCandidateCount,
     };
     debugLogger.event("finder.universe.timing", timingSummary);
+    debugLogger.event("finder.diagnostics", diagnostics);
 
     return {
         results,
         loadedSymbols: loadedSymbols.length,
         failedSymbols: [...loadFailures.keys()],
+        diagnostics,
     };
 }

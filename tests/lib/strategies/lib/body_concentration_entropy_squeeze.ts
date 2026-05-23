@@ -1,7 +1,13 @@
-﻿import { Strategy, OHLCVData, StrategyParams } from "../../types/strategies";
-import { createBuySignal, createSellSignal, createSignalLoop, ensureCleanData, getCloses } from "../strategy-helpers";
+import { Strategy, OHLCVData, Signal, StrategyParams } from "../../types/strategies";
+import { createBuySignal, createSellSignal, ensureCleanData, getCloses } from "../strategy-helpers";
 import { buildBodyPctSeries, buildRollingAverage } from "./price-action-frequency-core";
 import { buildRollingEntropy, buildPercentileRank } from "./price-action-statistics-core";
+
+type BodyConcentrationEntropySqueezeCandidates = {
+	indexes: number[];
+	ranks: number[];
+	directions: number[];
+};
 
 type BodyConcentrationEntropySqueezePrepared = {
 	cleanData: OHLCVData[];
@@ -9,6 +15,7 @@ type BodyConcentrationEntropySqueezePrepared = {
 	bodyPct: number[];
 	rankByWindow: Map<number, (number | null)[]>;
 	avgCloseByWindow: Map<number, (number | null)[]>;
+	candidateByWindow: Map<number, BodyConcentrationEntropySqueezeCandidates>;
 };
 
 function normalizeBodyConcentrationEntropySqueezeParams(params: StrategyParams): StrategyParams {
@@ -27,6 +34,7 @@ function prepareBodyConcentrationEntropySqueezeData(data: OHLCVData[]): BodyConc
 		bodyPct: buildBodyPctSeries(cleanData),
 		rankByWindow: new Map<number, (number | null)[]>(),
 		avgCloseByWindow: new Map<number, (number | null)[]>(),
+		candidateByWindow: new Map<number, BodyConcentrationEntropySqueezeCandidates>(),
 	};
 }
 
@@ -66,6 +74,39 @@ function getAverageCloseSeries(
 	return avgClose;
 }
 
+function getSqueezeCandidates(
+	prepared: BodyConcentrationEntropySqueezePrepared,
+	window: number
+): BodyConcentrationEntropySqueezeCandidates {
+	let candidates = prepared.candidateByWindow.get(window);
+	if (candidates) return candidates;
+
+	const rank = getEntropyRankSeries(prepared, window);
+	const avgClose = getAverageCloseSeries(prepared, window);
+	const indexes: number[] = [];
+	const ranks: number[] = [];
+	const directions: number[] = [];
+
+	for (let i = window; i < prepared.cleanData.length; i++) {
+		const r = rank[i];
+		const avg = avgClose[i];
+		if (r === null || r === undefined || avg === null || avg === undefined) continue;
+		if (prepared.closes[i] > avg) {
+			indexes.push(i);
+			ranks.push(r);
+			directions.push(1);
+		} else if (prepared.closes[i] < avg) {
+			indexes.push(i);
+			ranks.push(r);
+			directions.push(-1);
+		}
+	}
+
+	candidates = { indexes, ranks, directions };
+	prepared.candidateByWindow.set(window, candidates);
+	return candidates;
+}
+
 export const body_concentration_entropy_squeeze: Strategy = {
 	name: "Body Concentration Entropy Squeeze",
 	description: "When entropy of body percentage drops to a percentile extreme, bars have become highly predictable in directional commitment - a low-disorder conviction state. Enter in the direction of the rolling average close deviation.",
@@ -86,24 +127,20 @@ export const body_concentration_entropy_squeeze: Strategy = {
 		const rankMax = p.compressionRank as number;
 		if (prepared.cleanData.length < window + 2) return [];
 
-		const rank = getEntropyRankSeries(prepared, window);
-		const avgClose = getAverageCloseSeries(prepared, window);
-
-		return createSignalLoop(prepared.cleanData, [rank, avgClose], (i) => {
-			if (i < window) return null;
-			const r = rank[i];
-			const avg = avgClose[i];
-			if (r === null || avg === null) return null;
-			if (r >= rankMax / 100) return null;
-
-			if (prepared.closes[i] > avg) {
-				return createBuySignal(prepared.cleanData, i, `Body entropy squeezed (rank ${(r * 100).toFixed(0)}%), close above avg - low-disorder bullish`);
+		const candidates = getSqueezeCandidates(prepared, window);
+		const threshold = rankMax / 100;
+		const signals: Signal[] = [];
+		for (let i = 0; i < candidates.indexes.length; i++) {
+			const r = candidates.ranks[i];
+			if (r >= threshold) continue;
+			const barIndex = candidates.indexes[i];
+			if (candidates.directions[i] > 0) {
+				signals.push(createBuySignal(prepared.cleanData, barIndex, `Body entropy squeezed (rank ${(r * 100).toFixed(0)}%), close above avg - low-disorder bullish`));
+			} else {
+				signals.push(createSellSignal(prepared.cleanData, barIndex, `Body entropy squeezed (rank ${(r * 100).toFixed(0)}%), close below avg - low-disorder bearish`));
 			}
-			if (prepared.closes[i] < avg) {
-				return createSellSignal(prepared.cleanData, i, `Body entropy squeezed (rank ${(r * 100).toFixed(0)}%), close below avg - low-disorder bearish`);
-			}
-			return null;
-		});
+		}
+		return signals;
 	},
 	execute: (data: OHLCVData[], params: StrategyParams) =>
 		body_concentration_entropy_squeeze.executePrepared?.(prepareBodyConcentrationEntropySqueezeData(data), params, data) ?? [],
@@ -113,8 +150,3 @@ export const body_concentration_entropy_squeeze: Strategy = {
 		walkForwardParams: ["entropyWindow", "compressionRank"],
 	},
 };
-
-
-
-
-
