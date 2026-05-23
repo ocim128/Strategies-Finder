@@ -65,6 +65,15 @@ import {
     normalizeFinderCandidateParamSets,
     type FinderPreparedDataCache,
 } from "./finder-runner-core";
+import {
+    addElapsed,
+    buildFinderDiagnostics,
+    createEmptyFinderDiagnosticsTimings,
+    createFinderRunId,
+    getFinderStrategyDiagnosticsStats,
+    toFinderStrategyDiagnostics,
+    type FinderStrategyDiagnosticsStats,
+} from "./finder-diagnostics";
 import type { FinderRunInput, FinderRunCallbacks, FinderRunOutput } from "./finder-runner";
 import type { BacktestResult, BacktestSettings, OHLCVData, StrategyExecutionContext, Trade } from "../types/strategies";
 import { resolveCrossSymbolExecution, isCrossSymbolStrategy } from "../cross-symbol-runtime";
@@ -122,6 +131,27 @@ function getProfitFactorFromTotals(grossProfit: number, grossLoss: number): numb
 function isAlternativeSizingMode(capitalSettings: CapitalSettings): boolean {
     return capitalSettings.sizingMode !== "percent";
 }
+
+const runFinderCandidateBacktest: typeof runBacktest = (
+    data,
+    signals,
+    initialCapital,
+    positionSizePercent,
+    commissionPercent,
+    settings,
+    sizing,
+    precomputed
+) => runBacktest(
+    data,
+    signals,
+    initialCapital,
+    positionSizePercent,
+    commissionPercent,
+    settings,
+    sizing,
+    precomputed,
+    { includeAdvancedAnalytics: false }
+);
 
 function buildMappedTradeOutcome(args: {
     trade: Trade;
@@ -578,6 +608,10 @@ export async function runPolymarketFinder(
     callbacks: FinderRunCallbacks
 ): Promise<FinderRunOutput> {
     const { options, settings, selectedStrategies } = input;
+    const runStartedAt = performance.now();
+    const runId = createFinderRunId("finder-polymarket");
+    const timings = createEmptyFinderDiagnosticsTimings();
+    const strategyStatsByKey = new Map<string, FinderStrategyDiagnosticsStats>();
     await ensureConfirmationStrategiesLoaded(settings);
     const interval = input.interval as PolymarketInterval;
     const intervalConfig = getIntervalConfig(interval);
@@ -718,7 +752,9 @@ export async function runPolymarketFinder(
     callbacks.setProgress(5, "Loading Polymarket outcome data...");
     callbacks.setStatus("Loading Polymarket outcomes from SQLite...");
 
+    const closedDataStartedAt = performance.now();
     const closedData = buildFinderEvaluationData(input.ohlcvData, input.interval, settings);
+    addElapsed(timings, "closedDataSelection", closedDataStartedAt);
     if (closedData.length < 2) {
         callbacks.setStatus("Not enough chart data for Polymarket evaluation.");
         return { results: [] };
@@ -734,9 +770,11 @@ export async function runPolymarketFinder(
 
     let outcomes: Awaited<ReturnType<typeof loadPolymarketOutcomesForChart>>;
     try {
+        const dataLoadingStartedAt = performance.now();
         outcomes = isNativeOutcomeSession
             ? await loadPolymarketOutcomesForChart(input.symbol, closedData, outcomeSymbol, resolvedOutcomeInterval)
             : await loadPolymarket5mOutcomesForChart(input.symbol, closedData, outcomeSymbol);
+        addElapsed(timings, "dataLoading", dataLoadingStartedAt);
     } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         callbacks.setStatus(`Failed to load Polymarket outcomes from SQLite. ${detail}`);
@@ -758,7 +796,9 @@ export async function runPolymarketFinder(
     if (isSignalExitMode || isNativeOutcomeSession || isLimitEntryMode) {
         try {
             callbacks.setStatus(`Ensuring Polymarket price points for ${outcomes.length} events...`);
+            const pricePointStartedAt = performance.now();
             pricePoints = await ensurePricePointsForOutcomes(outcomes, seriesId);
+            addElapsed(timings, "pricePointLoading", pricePointStartedAt);
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
             callbacks.setStatus(`Failed to ensure Polymarket price points: ${detail}`);
@@ -781,6 +821,7 @@ export async function runPolymarketFinder(
 
     // Build strategy plans from selections
     const baseStrategyPlans: StrategyPlan[] = [];
+    const paramGenerationStartedAt = performance.now();
     for (const selection of selectedStrategies) {
         const extendedDefaults = buildFinderSearchBaseParams(selection.strategy, settings, options);
         const paramSets = normalizeFinderCandidateParamSets(
@@ -795,6 +836,7 @@ export async function runPolymarketFinder(
             paramSets,
         });
     }
+    addElapsed(timings, "paramGeneration", paramGenerationStartedAt);
 
     const totalRuns = baseStrategyPlans.reduce((sum, plan) => (
         sum + plan.paramSets.length * evaluationCountPerParamSet
@@ -810,7 +852,9 @@ export async function runPolymarketFinder(
     await callbacks.yieldControl();
 
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
+    const precomputeStartedAt = performance.now();
     const precomputed = precomputeIndicators(closedData, settings);
+    addElapsed(timings, "indicatorPrecompute", precomputeStartedAt);
     const polymarketContext = createPolymarketTradeEvaluationContext(closedData, outcomes);
     const polymarketBridgeContext = isMultiSubEventRun
         ? createPolymarketBridgeEvaluationContext(closedData, outcomes)
@@ -825,7 +869,9 @@ export async function runPolymarketFinder(
 
     callbacks.setStatus(`Running ${totalRuns} Polymarket evaluations...`);
     callbacks.setProgress(14, `${processedCount}/${totalRuns} evaluations`);
+    const initialYieldStartedAt = performance.now();
     await callbacks.yieldControl();
+    addElapsed(timings, "yielding", initialYieldStartedAt);
 
     for (const plan of baseStrategyPlans) {
         // Resolve cross-symbol context once per strategy plan (not per candidate)
@@ -864,11 +910,21 @@ export async function runPolymarketFinder(
                 return { results };
             }
 
+            const candidateStartedAt = performance.now();
+            const strategyStats = getFinderStrategyDiagnosticsStats(strategyStatsByKey, plan);
             try {
                 const normalizedParams = plan.strategy.normalizeParams ? plan.strategy.normalizeParams(params) : { ...params };
+                let preparedFinderData: unknown;
+                if (plan.strategy.executePrepared && plan.strategy.prepareFinderData) {
+                    const preparedStartedAt = performance.now();
+                    preparedFinderData = getPreparedFinderData(preparedDataCache, plan.key, plan.strategy, strategyData, settings, crossSymbolCtx);
+                    addElapsed(timings, "preparedData", preparedStartedAt);
+                    strategyStats.usedPreparedData = true;
+                }
+                const signalStartedAt = performance.now();
                 const rawSignals = plan.strategy.executePrepared
                     ? plan.strategy.executePrepared(
-                        getPreparedFinderData(preparedDataCache, plan.key, plan.strategy, strategyData, settings, crossSymbolCtx),
+                        preparedFinderData,
                         normalizedParams,
                         strategyData,
                         crossSymbolCtx
@@ -879,6 +935,10 @@ export async function runPolymarketFinder(
                     baseSignals: applySignalPolarity(rawSignals, settings),
                     settings,
                 });
+                const signalMs = performance.now() - signalStartedAt;
+                timings.signalGeneration += signalMs;
+                strategyStats.signalMs += signalMs;
+                const backtestStartedAt = performance.now();
                 const backtestResult = runStrategyBacktest({
                     strategy: plan.strategy,
                     data: strategyData,
@@ -886,15 +946,19 @@ export async function runPolymarketFinder(
                     params: normalizedParams,
                     capitalSettings: input.capitalSettings,
                     backtestSettings: settings,
-                    backtestFn: runBacktest,
+                    backtestFn: runFinderCandidateBacktest,
                     precomputed,
                 });
+                const backtestMs = performance.now() - backtestStartedAt;
+                timings.backtest += backtestMs;
+                strategyStats.backtestMs += backtestMs;
                 signals.length = 0;
                 const tradesForPolymarketEvaluation = options.polymarketAfterTakeProfitOnly
                     ? filterTradesByPreviousClosedTradeExitReason(backtestResult.trades, "take_profit")
                     : backtestResult.trades;
 
                 if (isSignalExitMode) {
+                    const evaluationStartedAt = performance.now();
                     const signalExitEvaluation = evaluateSignalExitTrades({
                         trades: tradesForPolymarketEvaluation,
                         outcomes,
@@ -907,6 +971,7 @@ export async function runPolymarketFinder(
                         entryCutoffSeconds,
                         limitEntry: limitEntrySettings,
                     });
+                    addElapsed(timings, "polymarketEvaluation", evaluationStartedAt);
                     const exitSummary = signalExitEvaluation.summary;
 
                     const evalResultBase: PolymarketEvalResult = {
@@ -982,7 +1047,9 @@ export async function runPolymarketFinder(
                             callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
                         }
                         if (processedCount % 1024 === 0 || processedCount === totalRuns) {
+                            const yieldStartedAt = performance.now();
                             await callbacks.yieldControl();
+                            addElapsed(timings, "yielding", yieldStartedAt);
                         }
                         continue;
                     }
@@ -1020,7 +1087,9 @@ export async function runPolymarketFinder(
                     finderResult.polymarketEval = evalResult;
 
                     filteredCount++;
+                    const rankingStartedAt = performance.now();
                     ranker.offer(finderResult);
+                    addElapsed(timings, "resultRanking", rankingStartedAt);
 
                     const now = performance.now();
                     if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
@@ -1031,12 +1100,17 @@ export async function runPolymarketFinder(
                     }
                     if (now - lastResultsUpdateAt > 750 || processedCount === totalRuns) {
                         lastResultsUpdateAt = now;
+                        const uiStartedAt = performance.now();
                         callbacks.onResultsUpdate(ranker.toSortedArray(options.topN));
+                        addElapsed(timings, "uiUpdates", uiStartedAt);
                     }
                     if (processedCount % 1024 === 0 || processedCount === totalRuns) {
+                        const yieldStartedAt = performance.now();
                         await callbacks.yieldControl();
+                        addElapsed(timings, "yielding", yieldStartedAt);
                     }
                 } else {
+                    const evaluationStartedAt = performance.now();
                     const evaluations: FinderPolymarketEvaluation[] = (isNativeOutcomeSession || isLimitEntryMode)
                         ? (() => {
                             const annotatedTrades = annotateTradesWithPolymarketOutcomesForRun(
@@ -1147,6 +1221,7 @@ export async function runPolymarketFinder(
                                         : undefined,
                                 }];
                         })();
+                    addElapsed(timings, "polymarketEvaluation", evaluationStartedAt);
 
                     for (const evaluation of evaluations) {
                         processedCount++;
@@ -1162,7 +1237,9 @@ export async function runPolymarketFinder(
                             }
 
                             if (processedCount % 1024 === 0 || processedCount === totalRuns) {
+                                const yieldStartedAt = performance.now();
                                 await callbacks.yieldControl();
+                                addElapsed(timings, "yielding", yieldStartedAt);
                             }
                             continue;
                         }
@@ -1198,7 +1275,9 @@ export async function runPolymarketFinder(
                         finderResult.polymarketEval = evalResult;
 
                         filteredCount++;
+                        const rankingStartedAt = performance.now();
                         ranker.offer(finderResult);
+                        addElapsed(timings, "resultRanking", rankingStartedAt);
 
                         const now = performance.now();
                         if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
@@ -1210,23 +1289,31 @@ export async function runPolymarketFinder(
 
                         if (now - lastResultsUpdateAt > 750 || processedCount === totalRuns) {
                             lastResultsUpdateAt = now;
+                            const uiStartedAt = performance.now();
                             callbacks.onResultsUpdate(ranker.toSortedArray(options.topN));
+                            addElapsed(timings, "uiUpdates", uiStartedAt);
                         }
 
                         if (processedCount % 1024 === 0 || processedCount === totalRuns) {
+                            const yieldStartedAt = performance.now();
                             await callbacks.yieldControl();
+                            addElapsed(timings, "yielding", yieldStartedAt);
                         }
                     }
                 }
             } catch (error) {
                 failedCount += evaluationCountPerParamSet;
                 processedCount += evaluationCountPerParamSet;
+                strategyStats.failedRuns++;
                 const detail = error instanceof Error ? error.message : String(error);
                 debugLogger.warn("[Finder][polymarket] Candidate evaluation failed", {
                     strategyKey: plan.key,
                     params,
                     error: detail,
                 });
+            } finally {
+                strategyStats.runs++;
+                strategyStats.totalMs += performance.now() - candidateStartedAt;
             }
 
             const now = performance.now();
@@ -1238,12 +1325,16 @@ export async function runPolymarketFinder(
             }
 
             if (processedCount % 64 === 0 || processedCount === totalRuns) {
+                const yieldStartedAt = performance.now();
                 await callbacks.yieldControl();
+                addElapsed(timings, "yielding", yieldStartedAt);
             }
         }
     }
 
+    const finalRankingStartedAt = performance.now();
     const results = ranker.toSortedArray(options.topN);
+    addElapsed(timings, "resultRanking", finalRankingStartedAt);
     callbacks.setProgress(100, `${totalRuns}/${totalRuns} evaluations`);
     const statusParts = [`${processedCount} evaluations`];
     if (options.tradeFilterEnabled) {
@@ -1256,5 +1347,31 @@ export async function runPolymarketFinder(
     statusParts.push(`${outcomes.length} outcome rows`);
     callbacks.setStatus(`Complete. ${statusParts.join(", ")}.`);
 
-    return { results };
+    timings.total = performance.now() - runStartedAt;
+    const diagnostics = buildFinderDiagnostics({
+        runId,
+        symbol: input.symbol,
+        interval: input.interval,
+        mode: options.mode,
+        engineMode: isSignalExitMode
+            ? "polymarket_signal_exit"
+            : isMultiSubEventRun
+                ? "polymarket_bridge"
+                : "polymarket_resolve_hold",
+        inputBars: input.ohlcvData.length,
+        evaluationBars: closedData.length,
+        selectedStrategies: selectedStrategies.length,
+        totalParamRuns: totalRuns,
+        batchSize: evaluationCountPerParamSet,
+        processedRuns: processedCount,
+        filteredRuns: filteredCount,
+        shownResults: results.length,
+        endpointAdjusted: 0,
+        failedRuns: failedCount,
+        timings,
+        strategyBreakdown: toFinderStrategyDiagnostics(strategyStatsByKey),
+    });
+    debugLogger.event("finder.diagnostics", diagnostics);
+
+    return { results, diagnostics };
 }

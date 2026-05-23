@@ -80,6 +80,25 @@ export type PreparedRun = {
     signals: Signal[];
 };
 
+export type FinderBacktestFn = (
+    data: OHLCVData[],
+    signals: Signal[],
+    initialCapital: number,
+    positionSizePercent: number,
+    commissionPercent: number,
+    settings?: BacktestSettings,
+    sizing?: Parameters<typeof runBacktest>[6],
+    precomputed?: ReturnType<typeof precomputeIndicators>
+) => BacktestResult;
+
+export type FinderSignalTiming = {
+    preparedDataMs: number;
+    signalExecutionMs: number;
+    confirmationMs: number;
+    totalMs: number;
+    usedPreparedData: boolean;
+};
+
 export function resolveEffectiveCapitalSettings(input: FinderRunInput): CapitalSettings {
     return input.comboPrimaryCapital ?? input.capitalSettings;
 }
@@ -89,19 +108,42 @@ export function generateSignalsForJob(
     data: OHLCVData[],
     preparedDataCache?: FinderPreparedDataCache,
     preparedSettings?: BacktestSettings,
-    executionContext?: StrategyExecutionContext
+    executionContext?: StrategyExecutionContext,
+    onTiming?: (timing: FinderSignalTiming) => void
 ): Signal[] {
-    const preparedFinderData = preparedDataCache
-        ? getPreparedFinderData(preparedDataCache, job.key, job.strategy, data, preparedSettings ?? job.backtestSettings, executionContext)
-        : undefined;
+    const startedAt = performance.now();
+    let preparedDataMs = 0;
+    let signalExecutionMs = 0;
+    let confirmationMs = 0;
+    let preparedFinderData: unknown;
+    const canUsePreparedData = preparedDataCache !== undefined
+        && Boolean(job.strategy.executePrepared && job.strategy.prepareFinderData);
+
+    if (canUsePreparedData && preparedDataCache) {
+        const preparedStartedAt = performance.now();
+        preparedFinderData = getPreparedFinderData(preparedDataCache, job.key, job.strategy, data, preparedSettings ?? job.backtestSettings, executionContext);
+        preparedDataMs = performance.now() - preparedStartedAt;
+    }
+    const signalStartedAt = performance.now();
     const rawSignals = job.strategy.executePrepared
         ? job.strategy.executePrepared(preparedFinderData, job.params, data, executionContext)
         : job.strategy.execute(data, job.params, executionContext);
-    return applyConfirmationStrategiesToSignals({
+    signalExecutionMs = performance.now() - signalStartedAt;
+    const confirmationStartedAt = performance.now();
+    const signals = applyConfirmationStrategiesToSignals({
         data,
         baseSignals: applySignalPolarity(rawSignals, job.backtestSettings),
         settings: job.backtestSettings,
     });
+    confirmationMs = performance.now() - confirmationStartedAt;
+    onTiming?.({
+        preparedDataMs,
+        signalExecutionMs,
+        confirmationMs,
+        totalMs: performance.now() - startedAt,
+        usedPreparedData: canUsePreparedData,
+    });
+    return signals;
 }
 
 export function applyComboMerge(
@@ -119,7 +161,7 @@ export function runStrategyBacktest(args: {
     params: StrategyParams;
     capitalSettings: CapitalSettings;
     backtestSettings: BacktestSettings;
-    backtestFn: typeof runBacktest;
+    backtestFn: FinderBacktestFn;
     precomputed?: ReturnType<typeof precomputeIndicators>;
 }): BacktestResult {
     const {
@@ -194,13 +236,12 @@ export function runBacktestAndInsert(
     data: OHLCVData[],
     signals: Signal[],
     job: ParamJob,
-    backtestFn: typeof runBacktest,
+    backtestFn: FinderBacktestFn,
     capitalSettings: CapitalSettings,
     backtestSettings: BacktestSettings,
     precomputed: ReturnType<typeof precomputeIndicators>,
-    insertResult: (candidate: CandidateResult) => void,
-    onInsertTiming?: (durationMs: number) => void
-): void {
+    insertResult: (candidate: CandidateResult) => void
+): boolean {
     try {
         const result = runStrategyBacktest({
             strategy: job.strategy,
@@ -212,18 +253,18 @@ export function runBacktestAndInsert(
             backtestFn,
             precomputed,
         });
-        const insertStartedAt = performance.now();
         insertResult({
             key: job.key,
             name: job.name,
             params: job.params,
             result,
         });
-        onInsertTiming?.(performance.now() - insertStartedAt);
+        return true;
     } catch (error) {
         debugLogger.warn(`[Finder] Backtest failed for ${job.key}`, {
             error: error instanceof Error ? error.message : String(error),
         });
+        return false;
     }
 }
 

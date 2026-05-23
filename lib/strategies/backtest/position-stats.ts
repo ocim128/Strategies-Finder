@@ -37,7 +37,8 @@ export function calculateBacktestStats(
     initialCapital: number,
     finalCapital: number,
     maxDrawdown: number,
-    maxDrawdownPercent: number
+    maxDrawdownPercent: number,
+    options?: { includeAdvancedAnalytics?: boolean }
 ): BacktestResult {
     const winningTrades = trades.filter(t => t.pnl > 0);
     const totalProfit = winningTrades.reduce((sum, t) => sum + t.pnl, 0);
@@ -55,10 +56,11 @@ export function calculateBacktestStats(
     const avgTrade = trades.length > 0 ? netProfit / trades.length : 0;
     const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
 
+    const includeAdvancedAnalytics = options?.includeAdvancedAnalytics !== false;
     const sharpeRatio = equityCurve.length > 1
         ? calculateSharpeRatioFromEquityCurve(equityCurve)
         : calculateSharpeRatioFromReturns(trades.map(t => t.pnlPercent));
-    const performanceAnalytics = equityCurve.length > 1
+    const performanceAnalytics = includeAdvancedAnalytics && equityCurve.length > 1
         ? calculateAdvancedPerformanceAnalyticsFromEquityCurve(equityCurve)
         : undefined;
 

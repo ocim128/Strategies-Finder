@@ -55,10 +55,21 @@ import {
     resolveEffectiveCapitalSettings,
     runBacktestAndInsert,
     runStrategyBacktest,
+    type FinderBacktestFn,
     type FinderDatasetFlags,
+    type FinderSignalTiming,
     type ParamJob,
     type PreparedRun,
 } from "./finder-runner-shared";
+import {
+    buildFinderDiagnostics,
+    createEmptyFinderDiagnosticsTimings,
+    createFinderRunId,
+    getFinderStrategyDiagnosticsStats,
+    toFinderStrategyDiagnostics,
+    type FinderDiagnosticsTimings,
+    type FinderStrategyDiagnosticsStats,
+} from "./finder-diagnostics";
 import type { FinderRunCallbacks, FinderRunInput, FinderRunOutput } from "./finder-runner";
 
 export { buildFinderEvaluationData } from "./finder-runner-shared";
@@ -127,6 +138,7 @@ interface SingleTimeframeRunParams {
     maybeYieldByBudget: (force?: boolean) => Promise<void>;
     capitalSettings: CapitalSettings;
     rustSettings: BacktestSettings;
+    paramGenerationMs?: number;
 }
 
 type FinderEngineDecision = {
@@ -138,14 +150,6 @@ type FinderEngineDecision = {
     cacheRequested: boolean;
 };
 
-type FinderTiming = {
-    signalGeneration: number;
-    rustBatchRequest: number;
-    tsFallback: number;
-    resultInsertion: number;
-    total: number;
-};
-
 type RustBatchDispatchArgs = {
     batchRuns: PreparedRun[];
     closedData: OHLCVData[];
@@ -155,7 +159,7 @@ type RustBatchDispatchArgs = {
     rustCompactMode: boolean;
     insertResult: (candidate: CandidateResult) => void;
     runBacktestFallback: (run: PreparedRun) => void;
-    timing: FinderTiming;
+    timing: FinderDiagnosticsTimings;
     onUnknownRunId?: (id: string) => void;
     onInconsistentResult?: (run: PreparedRun) => void;
 };
@@ -167,21 +171,22 @@ type RustBatchDispatchStats = {
 
 type BacktestFallbackRunnerOptions = {
     closedData: OHLCVData[];
-    backtestFn: typeof runBacktest;
+    backtestFn: FinderBacktestFn;
     capitalSettings: CapitalSettings;
     resolveBacktestSettings: (job: ParamJob) => BacktestSettings;
     getJobData: (job: ParamJob, defaultData: OHLCVData[]) => OHLCVData[];
     getJobPrecomputed: (job: ParamJob, defaultPrecomputed: ReturnType<typeof precomputeIndicators>) => ReturnType<typeof precomputeIndicators>;
     defaultPrecomputed: ReturnType<typeof precomputeIndicators>;
     insertResult: (candidate: CandidateResult) => void;
-    timing: FinderTiming;
+    timing: FinderDiagnosticsTimings;
+    onFailure?: (job: ParamJob) => void;
 };
 
 function createBacktestFallbackRunner(options: BacktestFallbackRunnerOptions): (run: PreparedRun) => void {
     return (run: PreparedRun): void => {
         const tTsStart = performance.now();
         const jobData = options.getJobData(run.job, options.closedData);
-        runBacktestAndInsert(
+        const succeeded = runBacktestAndInsert(
             jobData,
             run.signals,
             run.job,
@@ -189,10 +194,12 @@ function createBacktestFallbackRunner(options: BacktestFallbackRunnerOptions): (
             options.capitalSettings,
             options.resolveBacktestSettings(run.job),
             options.getJobPrecomputed(run.job, options.defaultPrecomputed),
-            options.insertResult,
-            (durationMs) => { options.timing.resultInsertion += durationMs; }
+            options.insertResult
         );
-        options.timing.tsFallback += performance.now() - tTsStart;
+        if (!succeeded) {
+            options.onFailure?.(run.job);
+        }
+        options.timing.backtest += performance.now() - tTsStart;
     };
 }
 type RustRunPreparationOptions = {
@@ -205,10 +212,12 @@ type RustRunPreparationOptions = {
     getJobCtx: (job: ParamJob) => StrategyExecutionContext | undefined;
     isCrossSymbolJobSkipped: (job: ParamJob) => boolean;
     insertResult: (candidate: CandidateResult) => void;
-    timing: FinderTiming;
+    timing: FinderDiagnosticsTimings;
     idForJob: (job: ParamJob) => string;
     mergeComboSignals: boolean;
     failureContext: string;
+    onSignalTiming?: (job: ParamJob, timing: FinderSignalTiming) => void;
+    onJobFailure?: (job: ParamJob) => void;
 };
 
 function prepareRustBatchRuns(options: RustRunPreparationOptions): PreparedRun[] {
@@ -224,7 +233,8 @@ function prepareRustBatchRuns(options: RustRunPreparationOptions): PreparedRun[]
                 jobData,
                 options.preparedDataCache,
                 options.preparedSettings,
-                options.getJobCtx(job)
+                options.getJobCtx(job),
+                (timing) => options.onSignalTiming?.(job, timing)
             );
             if (options.mergeComboSignals) {
                 signals = applyComboMerge(signals, options.input);
@@ -234,14 +244,12 @@ function prepareRustBatchRuns(options: RustRunPreparationOptions): PreparedRun[]
             const entryStats = evaluation?.entryStats;
             if (job.strategy.metadata?.role === "entry" && entryStats) {
                 const result = buildEntryBacktestResult(entryStats);
-                const insertStartedAt = performance.now();
                 options.insertResult({
                     key: job.key,
                     name: job.name,
                     params: job.params,
                     result,
                 });
-                options.timing.resultInsertion += performance.now() - insertStartedAt;
                 signals.length = 0;
                 continue;
             }
@@ -252,6 +260,7 @@ function prepareRustBatchRuns(options: RustRunPreparationOptions): PreparedRun[]
                 signals,
             });
         } catch (error) {
+            options.onJobFailure?.(job);
             debugLogger.warn(`[Finder] ${options.failureContext} failed for ${job.key}`, {
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -344,14 +353,12 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
                     continue;
                 }
 
-                const tInsertStart = performance.now();
                 insertResult({
                     key: run.job.key,
                     name: run.job.name,
                     params: run.job.params,
                     result: batchEntry.result,
                 });
-                timing.resultInsertion += performance.now() - tInsertStart;
                 stats.rustCompletedRuns++;
             }
 
@@ -372,7 +379,7 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
             runFallback(run);
         }
     } finally {
-        timing.rustBatchRequest += performance.now() - tRustStart;
+        timing.rustRequest += performance.now() - tRustStart;
         for (const run of batchRuns) {
             run.signals.length = 0;
         }
@@ -481,6 +488,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         maybeYieldByBudget,
         capitalSettings,
         rustSettings,
+        paramGenerationMs = 0,
     } = params;
     const effectiveCapitalSettings = resolveEffectiveCapitalSettings(input);
     const {
@@ -488,22 +496,23 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
     } = effectiveCapitalSettings;
     const effectiveBacktestSettings = input.comboPrimarySettings ?? input.settings;
 
-    // Timing instrumentation for finder run
-    const timing = {
-        signalGeneration: 0,
-        rustBatchRequest: 0,
-        tsFallback: 0,
-        resultInsertion: 0,
-        total: 0,
-    };
+    const timing = createEmptyFinderDiagnosticsTimings();
+    timing.paramGeneration = paramGenerationMs;
+    const runId = createFinderRunId("finder");
     const runStart = performance.now();
+    const strategyStatsByKey = new Map<string, FinderStrategyDiagnosticsStats>();
+    let failedRuns = 0;
 
+    const closedDataStartedAt = performance.now();
     const closedData = buildFinderEvaluationData(input.ohlcvData, input.interval, effectiveBacktestSettings);
+    timing.closedDataSelection += performance.now() - closedDataStartedAt;
     if (closedData.length === 0) {
         callbacks.setStatus("No closed candles available for finder run.");
         return { results: [] };
     }
+    const indicatorStartedAt = performance.now();
     const singleTfPrecomputed = precomputeIndicators(closedData, effectiveBacktestSettings);
+    timing.indicatorPrecompute += performance.now() - indicatorStartedAt;
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
 
     // --- Cross-symbol resolution: resolve once per unique strategy key ---
@@ -565,6 +574,34 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         rustCompletedRuns += stats.rustCompletedRuns;
         rustFallbackRuns += stats.fallbackRuns;
     };
+    const measuredYield = async (force = false): Promise<void> => {
+        const startedAt = performance.now();
+        await maybeYieldByBudget(force);
+        timing.yielding += performance.now() - startedAt;
+    };
+    const measuredResultsUpdate = (results: FinderResult[]): void => {
+        const startedAt = performance.now();
+        callbacks.onResultsUpdate(results);
+        timing.uiUpdates += performance.now() - startedAt;
+    };
+    const recordSignalTiming = (job: ParamJob, signalTiming: FinderSignalTiming): void => {
+        timing.preparedData += signalTiming.preparedDataMs;
+        const stats = getFinderStrategyDiagnosticsStats(strategyStatsByKey, job);
+        stats.signalMs += signalTiming.totalMs;
+        stats.usedPreparedData = stats.usedPreparedData || signalTiming.usedPreparedData;
+    };
+    const recordBacktestTiming = (job: ParamJob, durationMs: number): void => {
+        getFinderStrategyDiagnosticsStats(strategyStatsByKey, job).backtestMs += durationMs;
+    };
+    const recordRunTiming = (job: ParamJob, durationMs: number): void => {
+        const stats = getFinderStrategyDiagnosticsStats(strategyStatsByKey, job);
+        stats.runs++;
+        stats.totalMs += durationMs;
+    };
+    const recordFailure = (job: Pick<ParamJob, "key" | "name">): void => {
+        failedRuns++;
+        getFinderStrategyDiagnosticsStats(strategyStatsByKey, job).failedRuns++;
+    };
 
     const comboActive = !!input.comboPrimarySignals;
     let { useRustForFinder, canTryNativeFinder, cacheId, cacheRequested } =
@@ -594,6 +631,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         }
 
         const candidateData = crossSymbolContextMap.get(candidate.key)?.data ?? closedData;
+        const enrichmentStartedAt = performance.now();
         const enriched = enrichFinderCandidate({
             candidate,
             candidateData,
@@ -604,6 +642,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             comboMode: Boolean(input.comboPrimarySignals),
             comboPrimaryConfigName: input.options.comboPrimaryConfigName,
         });
+        timing.resultEnrichment += performance.now() - enrichmentStartedAt;
 
         if (input.options.tradeFilterEnabled) {
             if (enriched.result.totalTrades < input.options.minTrades || enriched.result.totalTrades > input.options.maxTrades) {
@@ -615,7 +654,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         if (enriched.endpointAdjusted) {
             endpointAdjustedCount++;
         }
+        const rankingStartedAt = performance.now();
         ranker.offer(enriched);
+        timing.resultRanking += performance.now() - rankingStartedAt;
     };
 
     const finalizeRun = async (
@@ -627,22 +668,26 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         const reportedEngineMode = engineMode.startsWith("rust") && rustFallbackRuns > 0
             ? (rustCompletedRuns > 0 ? `${engineMode}_mixed_fallback` : "typescript_fallback")
             : engineMode;
+        const finalRankingStartedAt = performance.now();
         const fastTop = ranker.toSortedArray(input.options.topN);
+        timing.resultRanking += performance.now() - finalRankingStartedAt;
         let trimmed = fastTop;
         const shouldReconcileTopResults = usingCompactBacktest || useRustForFinder;
         if (shouldReconcileTopResults && fastTop.length > 0) {
             callbacks.setStatus("Reconciling top results with full backtest...");
             callbacks.setProgress(99, "Reconciling top results...");
+            const reconciliationStartedAt = performance.now();
             trimmed = await reconcileSingleTimeframeTopResults(
                 fastTop,
                 input,
                 closedData,
                 effectiveCapitalSettings,
-                maybeYieldByBudget,
+                measuredYield,
                 singleTfPrecomputed,
                 preparedDataCache,
                 crossSymbolContextMap
             );
+            timing.reconciliation += performance.now() - reconciliationStartedAt;
         }
 
         endpointAdjustedCount = trimmed.reduce((count, item) => count + (item.endpointAdjusted ? 1 : 0), 0);
@@ -673,9 +718,8 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             rustFallbackRuns,
             durations: {
                 signalGeneration: timing.signalGeneration,
-                rustBatchRequest: timing.rustBatchRequest,
-                tsFallback: timing.tsFallback,
-                resultInsertion: timing.resultInsertion,
+                rustRequest: timing.rustRequest,
+                backtest: timing.backtest,
                 total: timing.total,
             },
         });
@@ -706,15 +750,37 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 rustFallbackRuns,
                 durations: {
                     signalGeneration: timing.signalGeneration,
-                    rustBatchRequest: timing.rustBatchRequest,
-                    tsFallback: timing.tsFallback,
-                    resultInsertion: timing.resultInsertion,
+                    rustRequest: timing.rustRequest,
+                    backtest: timing.backtest,
                     total: timing.total,
                 },
             });
         }
 
-        return { results: trimmed, randomBenchmark };
+        const diagnostics = buildFinderDiagnostics({
+            runId,
+            symbol: input.symbol,
+            interval: input.interval,
+            mode: input.options.mode,
+            engineMode: reportedEngineMode,
+            inputBars: input.ohlcvData.length,
+            evaluationBars: closedData.length,
+            selectedStrategies: input.selectedStrategies.length,
+            totalParamRuns: totalRuns,
+            batchSize: flags.batchSize,
+            processedRuns: processedRunCount,
+            filteredRuns: filteredCount,
+            shownResults: trimmed.length,
+            rustCompletedRuns,
+            rustFallbackRuns,
+            endpointAdjusted: endpointAdjustedCount,
+            failedRuns,
+            timings: timing,
+            strategyBreakdown: toFinderStrategyDiagnostics(strategyStatsByKey),
+        });
+        debugLogger.event("finder.diagnostics", diagnostics);
+
+        return { results: trimmed, randomBenchmark, diagnostics };
     };
 
     const rustNativeFinderEligible = canTryNativeFinder && useRustForFinder && !comboActive;
@@ -798,7 +864,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         const quickMinTrades = input.options.tradeFilterEnabled
             ? Math.max(1, Math.floor(input.options.minTrades * shortCoverage * 0.35))
             : 0;
+        const shortPrecomputeStartedAt = performance.now();
         const shortPrecomputed = precomputeIndicators(shortData, effectiveBacktestSettings);
+        timing.indicatorPrecompute += performance.now() - shortPrecomputeStartedAt;
         const quickCandidates: QuickFunnelCandidate[] = [];
         const shortlistCount = resolveQuickFunnelShortlistCount(allJobs.length, input.options.topN, {
             rustStage: useRustForFinder,
@@ -811,10 +879,18 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         for (let i = 0; i < allJobs.length; i++) {
             const job = allJobs[i];
             if (isCrossSymbolJobSkipped(job)) continue;
+            const runStartedAt = performance.now();
             try {
                 const jobData = getJobData(job, shortData);
                 const tSignalStart = performance.now();
-                let signals = generateSignalsForJob(job, jobData, preparedDataCache, effectiveBacktestSettings, getJobCtx(job));
+                let signals = generateSignalsForJob(
+                    job,
+                    jobData,
+                    preparedDataCache,
+                    effectiveBacktestSettings,
+                    getJobCtx(job),
+                    (signalTiming) => recordSignalTiming(job, signalTiming)
+                );
                 timing.signalGeneration += performance.now() - tSignalStart;
                 signals = applyComboMerge(signals, input);
 
@@ -833,7 +909,9 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     backtestFn: quickBacktestFn,
                     precomputed: getJobPrecomputed(job, shortPrecomputed),
                 });
-                timing.tsFallback += performance.now() - tQuickStart;
+                const quickBacktestMs = performance.now() - tQuickStart;
+                timing.backtest += quickBacktestMs;
+                recordBacktestTiming(job, quickBacktestMs);
 
                 const quickResult = normalizeResultSharpe(quickRawResult);
                 if (quickMinTrades > 0 && quickResult.totalTrades < quickMinTrades) {
@@ -843,9 +921,12 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 quickCandidates.push({ job, result: quickResult, comparable: buildComparableFinderResult(job.key, job.name, job.params, quickResult) });
                 signals.length = 0;
             } catch (error) {
+                recordFailure(job);
                 debugLogger.warn(`[Finder] Random funnel prescreen failed for ${job.key}`, {
                     error: error instanceof Error ? error.message : String(error),
                 });
+            } finally {
+                recordRunTiming(job, performance.now() - runStartedAt);
             }
 
             if ((i + 1) % 20 === 0 || i + 1 === allJobs.length) {
@@ -854,14 +935,16 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     callbacks.setProgress(progress, `Stage A/B ${i + 1}/${allJobs.length}`);
                 }
             }
-            await maybeYieldByBudget(i + 1 === allJobs.length);
+            await measuredYield(i + 1 === allJobs.length);
         }
 
+        const shortlistRankingStartedAt = performance.now();
         quickCandidates.sort((a, b) => compareFinderResults(
             a.comparable,
             b.comparable,
             input.options.sortPriority
         ));
+        timing.resultRanking += performance.now() - shortlistRankingStartedAt;
         const shortlisted = quickCandidates.slice(0, shortlistCount);
 
         callbacks.setStatus(`Random funnel stage C: full backtest on ${shortlisted.length}/${allJobs.length} survivors...`);
@@ -879,27 +962,41 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 defaultPrecomputed: singleTfPrecomputed,
                 insertResult,
                 timing,
+                onFailure: recordFailure,
             });
 
             for (let i = 0; i < shortlisted.length; i++) {
                 const { job } = shortlisted[i];
                 if (isCrossSymbolJobSkipped(job)) continue;
+                const runStartedAt = performance.now();
                 try {
                     const jobData = getJobData(job, closedData);
                     const tSignalStart = performance.now();
-                    let signals = generateSignalsForJob(job, jobData, preparedDataCache, effectiveBacktestSettings, getJobCtx(job));
+                    let signals = generateSignalsForJob(
+                        job,
+                        jobData,
+                        preparedDataCache,
+                        effectiveBacktestSettings,
+                        getJobCtx(job),
+                        (signalTiming) => recordSignalTiming(job, signalTiming)
+                    );
                     timing.signalGeneration += performance.now() - tSignalStart;
                     signals = applyComboMerge(signals, input);
 
+                    const backtestStartedAt = performance.now();
                     runBacktestFallback({
                         id: `${job.key}-funnel-${job.id}`,
                         job,
                         signals,
                     });
+                    recordBacktestTiming(job, performance.now() - backtestStartedAt);
                 } catch (error) {
+                    recordFailure(job);
                     debugLogger.warn(`[Finder] Random funnel full run failed for ${job.key}`, {
                         error: error instanceof Error ? error.message : String(error),
                     });
+                } finally {
+                    recordRunTiming(job, performance.now() - runStartedAt);
                 }
 
                 processedCount = i + 1;
@@ -910,7 +1007,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                         callbacks.setStatus(`Processing funnel survivors ${i + 1}/${shortlisted.length}...`);
                     }
                 }
-                await maybeYieldByBudget(i + 1 === shortlisted.length);
+                await measuredYield(i + 1 === shortlisted.length);
             }
 
             return finalizeRun(allJobs.length, 1, "typescript_random_funnel", {
@@ -938,6 +1035,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             defaultPrecomputed: singleTfPrecomputed,
             insertResult,
             timing,
+            onFailure: recordFailure,
         });
 
         for (let batchIndex = 0; batchIndex < totalFunnelBatches; batchIndex++) {
@@ -956,9 +1054,12 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 idForJob: (job) => `${job.key}-funnel-${job.id}`,
                 mergeComboSignals: true,
                 failureContext: "Random funnel signal generation",
+                onSignalTiming: recordSignalTiming,
+                onJobFailure: recordFailure,
             });
 
-            recordRustDispatchStats(await dispatchRustBatchWithFallback({
+            const batchStartedAt = performance.now();
+            const dispatchStats = await dispatchRustBatchWithFallback({
                 batchRuns,
                 closedData,
                 cacheId,
@@ -968,7 +1069,12 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 insertResult,
                 runBacktestFallback,
                 timing,
-            }));
+            });
+            recordRustDispatchStats(dispatchStats);
+            const avgBatchMs = (performance.now() - batchStartedAt) / Math.max(1, batchJobs.length);
+            for (const job of batchJobs) {
+                recordRunTiming(job, avgBatchMs);
+            }
 
             processedCount += batchJobs.length;
             const isFinalBatch = batchIndex + 1 === totalFunnelBatches;
@@ -977,7 +1083,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 callbacks.setProgress(progress, `Stage C batch ${batchIndex + 1}/${totalFunnelBatches}`);
                 callbacks.setStatus(`Processing funnel survivors ${processedCount}/${shortlistedJobs.length} with Rust...`);
             }
-            await maybeYieldByBudget(isFinalBatch);
+            await measuredYield(isFinalBatch);
         }
 
         return finalizeRun(allJobs.length, totalFunnelBatches, "rust_random_funnel", {
@@ -1004,6 +1110,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         defaultPrecomputed: singleTfPrecomputed,
         insertResult,
         timing,
+        onFailure: recordFailure,
     });
     const rustRunBacktestFallback = createBacktestFallbackRunner({
         closedData,
@@ -1015,13 +1122,14 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         defaultPrecomputed: singleTfPrecomputed,
         insertResult,
         timing,
+        onFailure: recordFailure,
     });
 
     while (processedCount < totalRuns) {
         if (callbacks.isCancelled()) {
             callbacks.setStatus("Finder stopped by user.");
             const trimmed = ranker.toSortedArray(input.options.topN);
-            callbacks.onResultsUpdate(trimmed);
+            measuredResultsUpdate(trimmed);
             return { results: trimmed };
         }
 
@@ -1032,24 +1140,37 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         if (!useRustForFinder) {
             for (const job of batchJobs) {
                 if (isCrossSymbolJobSkipped(job)) continue;
+                const runStartedAt = performance.now();
                 try {
                     const jobData = getJobData(job, closedData);
                     const tSignalStart = performance.now();
-                    const signals = generateSignalsForJob(job, jobData, preparedDataCache, effectiveBacktestSettings, getJobCtx(job));
+                    const signals = generateSignalsForJob(
+                        job,
+                        jobData,
+                        preparedDataCache,
+                        effectiveBacktestSettings,
+                        getJobCtx(job),
+                        (signalTiming) => recordSignalTiming(job, signalTiming)
+                    );
                     timing.signalGeneration += performance.now() - tSignalStart;
 
+                    const backtestStartedAt = performance.now();
                     tsRunBacktestFallback({
                         id: `${job.key}-${job.id}`,
                         job,
                         signals: applyComboMerge(signals, input),
                     });
+                    recordBacktestTiming(job, performance.now() - backtestStartedAt);
                 } catch (error) {
+                    recordFailure(job);
                     debugLogger.warn(`[Finder] Backtest failed for ${job.key}`, {
                         error: error instanceof Error ? error.message : String(error),
                     });
+                } finally {
+                    recordRunTiming(job, performance.now() - runStartedAt);
                 }
 
-                await maybeYieldByBudget(false);
+                await measuredYield(false);
             }
 
         processedCount += batchJobs.length;
@@ -1064,10 +1185,10 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             const resultsNow = performance.now();
             if (resultsNow - lastResultsUpdateAt > 750 || processedCount === totalRuns) {
                 lastResultsUpdateAt = resultsNow;
-                callbacks.onResultsUpdate(ranker.toSortedArray(input.options.topN));
+                measuredResultsUpdate(ranker.toSortedArray(input.options.topN));
             }
         }
-        await maybeYieldByBudget(true);
+        await measuredYield(true);
             continue;
         }
 
@@ -1085,6 +1206,8 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             idForJob: (job) => `${job.key}-${job.id}`,
             mergeComboSignals: false,
             failureContext: "Signal generation",
+            onSignalTiming: recordSignalTiming,
+            onJobFailure: recordFailure,
         });
 
         if (batchRuns.length === 0) {
@@ -1092,7 +1215,8 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             continue;
         }
 
-        recordRustDispatchStats(await dispatchRustBatchWithFallback({
+        const batchStartedAt = performance.now();
+        const dispatchStats = await dispatchRustBatchWithFallback({
             batchRuns,
             closedData,
             cacheId,
@@ -1106,9 +1230,15 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 debugLogger.warn("[Finder] Rust batch returned unknown run id", { id });
             },
             onInconsistentResult: (run) => {
+                recordFailure(run.job);
                 debugLogger.warn(`[Finder] Rust batch result inconsistent for ${run.job.key}, using TypeScript fallback.`);
             },
-        }));
+        });
+        recordRustDispatchStats(dispatchStats);
+        const avgBatchMs = (performance.now() - batchStartedAt) / Math.max(1, batchJobs.length);
+        for (const job of batchJobs) {
+            recordRunTiming(job, avgBatchMs);
+        }
 
         processedCount += batchJobs.length;
         if (shouldUpdateUi(processedCount === totalRuns)) {
@@ -1122,10 +1252,10 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             const resultsNow = performance.now();
             if (resultsNow - lastResultsUpdateAt > 750 || processedCount === totalRuns) {
                 lastResultsUpdateAt = resultsNow;
-                callbacks.onResultsUpdate(ranker.toSortedArray(input.options.topN));
+                measuredResultsUpdate(ranker.toSortedArray(input.options.topN));
             }
         }
-        await maybeYieldByBudget(true);
+        await measuredYield(true);
     }
 
     return finalizeRun(

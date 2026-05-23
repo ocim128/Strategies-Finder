@@ -38,6 +38,7 @@ import {
 } from "./finder/finder-manager-dom";
 import type {
 	FinderLatestResults,
+	FinderDiagnostics,
 	FinderMetric,
 	FinderMode,
 	FinderOptions,
@@ -295,6 +296,7 @@ export class FinderManager {
 	private isRunning = false;
 	private isCancelled = false;
 	private latestResults: FinderLatestResults = { scope: "current_chart", results: [] };
+	private latestDiagnostics: FinderDiagnostics | null = null;
 	private lastFinderRunBacktestSettings: ReturnType<typeof settingsManager.getBacktestSettings> | null = null;
 	private lastFinderOptions: FinderOptions | null = null;
 	private lastFinderEvaluationData: { interval: string; data: OHLCVData[] } | null = null;
@@ -492,6 +494,10 @@ export class FinderManager {
 		copyTopButton.disabled = true;
 		copyTopButton.addEventListener('click', () => {
 			void this.copyTopResultsMetadata();
+		});
+		dom.finderCopyDiagnostics.disabled = true;
+		dom.finderCopyDiagnostics.addEventListener('click', () => {
+			void this.copyFinderDiagnostics();
 		});
 
 		dom.finderList.addEventListener('click', (event) => {
@@ -1192,6 +1198,7 @@ export class FinderManager {
 		this.lastFinderRunBacktestSettings = null;
 		this.lastFinderOptions = null;
 		this.lastFinderEvaluationData = null;
+		this.latestDiagnostics = null;
 
 		const settingsSnapshot = this.cloneBacktestSettings(settingsManager.getBacktestSettings());
 		this.lastFinderRunBacktestSettings = this.cloneBacktestSettings(settingsSnapshot);
@@ -1201,6 +1208,7 @@ export class FinderManager {
 		const dom = this.getDom();
 		const runButton = dom.runFinder;
 		const stopButton = dom.stopFinder;
+		dom.finderCopyDiagnostics.disabled = true;
 		let progressFinalized = false;
 		const setRunningUI = (running: boolean) => {
 			runButton.disabled = running;
@@ -1316,6 +1324,15 @@ export class FinderManager {
 
 		const sortedResults = sortFinderResults(output.results, options.sortPriority);
 		this.setLatestResults({ scope: 'current_chart', results: sortedResults });
+		this.latestDiagnostics = output.diagnostics ?? this.buildFallbackDiagnostics({
+			options,
+			results: sortedResults,
+			selectedStrategies,
+			ohlcvData,
+			elapsedMs: performance.now() - startTime,
+			requiresTsEngine,
+		});
+		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics;
 		this.renderLatestResults();
 		this.ui.renderRandomBenchmark(options.mode, output.randomBenchmark);
 
@@ -1521,6 +1538,78 @@ export class FinderManager {
 		return this.latestResults.scope === 'symbol_universe' ? this.latestResults.results : [];
 	}
 
+	private buildFallbackDiagnostics(args: {
+		options: FinderOptions;
+		results: FinderResult[];
+		selectedStrategies: FinderSelectedStrategy[];
+		ohlcvData: OHLCVData[];
+		elapsedMs: number;
+		requiresTsEngine: boolean;
+	}): FinderDiagnostics {
+		const engineMode = args.options.polymarketScoringEnabled
+			? (isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval) ? 'second_market_polymarket' : 'polymarket')
+			: args.options.mode === 'genetic'
+				? 'genetic'
+				: args.requiresTsEngine
+					? 'typescript'
+					: 'unknown';
+		return {
+			runId: `finder-fallback-${Date.now().toString(36)}`,
+			symbol: state.currentSymbol,
+			interval: state.currentInterval,
+			mode: args.options.mode,
+			engineMode,
+			data: {
+				inputBars: args.ohlcvData.length,
+				evaluationBars: args.ohlcvData.length,
+				selectedStrategies: args.selectedStrategies.length,
+				totalParamRuns: args.options.maxRuns,
+				batchSize: 0,
+			},
+			counts: {
+				processedRuns: args.options.maxRuns,
+				filteredRuns: args.results.length,
+				shownResults: args.results.length,
+				rustCompletedRuns: 0,
+				rustFallbackRuns: 0,
+				endpointAdjusted: args.results.filter((result) => result.endpointAdjusted).length,
+				failedRuns: 0,
+			},
+			timingsMs: {
+				total: Number(args.elapsedMs.toFixed(2)),
+				paramGeneration: 0,
+				dataLoading: 0,
+				pricePointLoading: 0,
+				closedDataSelection: 0,
+				indicatorPrecompute: 0,
+				preparedData: 0,
+				signalGeneration: 0,
+				backtest: 0,
+				polymarketEvaluation: 0,
+				rustRequest: 0,
+				resultEnrichment: 0,
+				resultRanking: 0,
+				reconciliation: 0,
+				uiUpdates: 0,
+				yielding: 0,
+			},
+			strategyBreakdown: args.selectedStrategies.map((selection) => ({
+				key: selection.key,
+				name: selection.name,
+				runs: 0,
+				failedRuns: 0,
+				avgSignalMs: 0,
+				avgBacktestMs: 0,
+				avgTotalMs: 0,
+				usedPreparedData: Boolean(selection.strategy.prepareFinderData && selection.strategy.executePrepared),
+			})),
+			bottlenecks: [
+				`${engineMode} runner returned path-level diagnostics only`,
+				`Total run time was ${Math.round(args.elapsedMs)}ms`,
+			],
+		};
+	}
+
 	private renderLatestResults(): void {
 		if (this.getScope() === 'symbol_universe') {
 			const results = this.latestResults.scope === 'symbol_universe' ? this.latestResults.results : [];
@@ -1658,10 +1747,53 @@ export class FinderManager {
 			: universeResults.map((result, index) => this.buildUniverseMetadataPayload(result, index + 1));
 
 		try {
-			await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+			await this.copyTextToClipboard(JSON.stringify(payload, null, 2));
 			uiManager.showToast('Top results metadata copied', 'success');
 		} catch (error) {
 			debugLogger.error('finder.copy_metadata_failed', { error: error instanceof Error ? error.message : String(error) });
+			uiManager.showToast('Copy failed - check browser permissions', 'error');
+		}
+	}
+
+	private async copyTextToClipboard(text: string): Promise<void> {
+		try {
+			if (navigator.clipboard?.writeText) {
+				await navigator.clipboard.writeText(text);
+				return;
+			}
+		} catch (_error) {
+			// Fall through to the textarea path for browsers that reject clipboard writes without focus.
+		}
+
+		const textarea = document.createElement('textarea');
+		textarea.value = text;
+		textarea.setAttribute('readonly', 'true');
+		textarea.style.position = 'fixed';
+		textarea.style.left = '-9999px';
+		textarea.style.top = '0';
+		document.body.appendChild(textarea);
+		textarea.focus();
+		textarea.select();
+		try {
+			if (!document.execCommand('copy')) {
+				throw new Error('Fallback clipboard copy returned false');
+			}
+		} finally {
+			textarea.remove();
+		}
+	}
+
+	private async copyFinderDiagnostics(): Promise<void> {
+		if (!this.latestDiagnostics) {
+			uiManager.showToast('No Finder diagnostics to copy', 'info');
+			return;
+		}
+
+		try {
+			await this.copyTextToClipboard(JSON.stringify(this.latestDiagnostics, null, 2));
+			uiManager.showToast('Finder diagnostics copied', 'success');
+		} catch (error) {
+			debugLogger.error('finder.copy_diagnostics_failed', { error: error instanceof Error ? error.message : String(error) });
 			uiManager.showToast('Copy failed - check browser permissions', 'error');
 		}
 	}

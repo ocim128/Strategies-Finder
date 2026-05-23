@@ -184,3 +184,58 @@ export interface FinderRandomBenchmark {
     runsPerSecond: number;
     msPerRun: number;
 }
+
+export interface FinderStrategyDiagnostics {
+    key: string;
+    name: string;
+    runs: number;
+    failedRuns: number;
+    avgSignalMs: number;
+    avgBacktestMs: number;
+    avgTotalMs: number;
+    usedPreparedData: boolean;
+}
+
+export interface FinderDiagnostics {
+    runId: string;
+    symbol: string;
+    interval: string;
+    mode: FinderMode;
+    engineMode: string;
+    data: {
+        inputBars: number;
+        evaluationBars: number;
+        selectedStrategies: number;
+        totalParamRuns: number;
+        batchSize: number;
+    };
+    counts: {
+        processedRuns: number;
+        filteredRuns: number;
+        shownResults: number;
+        rustCompletedRuns: number;
+        rustFallbackRuns: number;
+        endpointAdjusted: number;
+        failedRuns: number;
+    };
+    timingsMs: {
+        total: number;
+        paramGeneration: number;
+        dataLoading: number;
+        pricePointLoading: number;
+        closedDataSelection: number;
+        indicatorPrecompute: number;
+        preparedData: number;
+        signalGeneration: number;
+        backtest: number;
+        polymarketEvaluation: number;
+        rustRequest: number;
+        resultEnrichment: number;
+        resultRanking: number;
+        reconciliation: number;
+        uiUpdates: number;
+        yielding: number;
+    };
+    strategyBreakdown: FinderStrategyDiagnostics[];
+    bottlenecks: string[];
+}

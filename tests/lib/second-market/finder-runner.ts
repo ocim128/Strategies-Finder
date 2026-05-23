@@ -24,6 +24,15 @@ import {
     resolveFinderRiskOverrides,
     type FinderPreparedDataCache,
 } from "../finder/finder-runner-core";
+import {
+    addElapsed,
+    buildFinderDiagnostics,
+    createEmptyFinderDiagnosticsTimings,
+    createFinderRunId,
+    getFinderStrategyDiagnosticsStats,
+    toFinderStrategyDiagnostics,
+    type FinderStrategyDiagnosticsStats,
+} from "../finder/finder-diagnostics";
 import { FinderResultRanker } from "../finder/finder-result-ranker";
 import { isCrossSymbolStrategy, resolveCrossSymbolExecution } from "../cross-symbol-runtime";
 import { debugLogger } from "../debug-logger";
@@ -41,6 +50,27 @@ import { resolvePolymarketOutcomeInterval } from "../polymarket-outcome-interval
 function isAlternativeSizingMode(capitalSettings: CapitalSettings): boolean {
     return capitalSettings.sizingMode !== "percent";
 }
+
+const runFinderCandidateBacktest: typeof runBacktest = (
+    data,
+    signals,
+    initialCapital,
+    positionSizePercent,
+    commissionPercent,
+    settings,
+    sizing,
+    precomputed
+) => runBacktest(
+    data,
+    signals,
+    initialCapital,
+    positionSizePercent,
+    commissionPercent,
+    settings,
+    sizing,
+    precomputed,
+    { includeAdvancedAnalytics: false }
+);
 
 function getDataRange(data: readonly OHLCVData[]): { startTs: number; endTs: number } | null {
     if (data.length === 0) return null;
@@ -114,6 +144,10 @@ export async function runSecondMarketFinder(
     callbacks: FinderRunCallbacks
 ): Promise<FinderRunOutput> {
     const { options, settings, selectedStrategies } = input;
+    const runStartedAt = performance.now();
+    const runId = createFinderRunId("finder-second-market");
+    const timings = createEmptyFinderDiagnosticsTimings();
+    const strategyStatsByKey = new Map<string, FinderStrategyDiagnosticsStats>();
     await ensureConfirmationStrategiesLoaded(settings);
     const rustSettings = sanitizeBacktestSettingsForRust(settings);
 
@@ -168,7 +202,9 @@ export async function runSecondMarketFinder(
         : undefined;
 
     callbacks.setProgress(5, "Preparing 1s chart data...");
+    const closedDataStartedAt = performance.now();
     const closedData = buildFinderEvaluationData(input.ohlcvData, input.interval, settings);
+    addElapsed(timings, "closedDataSelection", closedDataStartedAt);
     if (closedData.length < 2) {
         callbacks.setStatus("Not enough 1s chart data for CLOB Polymarket Finder.");
         return { results: [] };
@@ -184,6 +220,7 @@ export async function runSecondMarketFinder(
     callbacks.setStatus("Loading 1s CLOB quotes and outcomes from local SQLite...");
     let context: Awaited<ReturnType<typeof loadSecondMarketEvaluationContext>>;
     try {
+        const dataLoadingStartedAt = performance.now();
         context = await loadSecondMarketEvaluationContext({
             symbol: input.symbol,
             outcomeSymbol: settings.polymarketOutcomeSymbol,
@@ -191,6 +228,7 @@ export async function runSecondMarketFinder(
             startTs: range.startTs - 300,
             endTs: range.endTs + 300,
         });
+        addElapsed(timings, "dataLoading", dataLoadingStartedAt);
     } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         callbacks.setStatus(`Failed to load 1s CLOB context. ${detail}`);
@@ -225,6 +263,7 @@ export async function runSecondMarketFinder(
 
     const strategyPlans: StrategyPlan[] = [];
     let totalRuns = 0;
+    const paramGenerationStartedAt = performance.now();
     for (const selection of selectedStrategies) {
         const extendedDefaults = buildFinderSearchBaseParams(selection.strategy, settings, options);
         const paramSets = normalizeFinderCandidateParamSets(
@@ -240,6 +279,7 @@ export async function runSecondMarketFinder(
             paramSets,
         });
     }
+    addElapsed(timings, "paramGeneration", paramGenerationStartedAt);
 
     if (totalRuns === 0) {
         callbacks.setStatus("No valid parameter combinations generated.");
@@ -248,7 +288,9 @@ export async function runSecondMarketFinder(
 
     callbacks.setProgress(12, "Precomputing indicators...");
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
+    const precomputeStartedAt = performance.now();
     const basePrecomputed = precomputeIndicators(closedData, settings);
+    addElapsed(timings, "indicatorPrecompute", precomputeStartedAt);
     const ranker = new FinderResultRanker(Math.max(options.topN, 50), options.sortPriority);
     let processedCount = 0;
     let filteredCount = 0;
@@ -262,7 +304,9 @@ export async function runSecondMarketFinder(
     ].filter(Boolean).join(", ");
     callbacks.setStatus(`Running ${totalRuns} 1s CLOB evaluations${quoteContextText ? ` (${quoteContextText})` : ""}...`);
     callbacks.setProgress(14, `0/${totalRuns} evaluations`);
+    const firstYieldStartedAt = performance.now();
     await callbacks.yieldControl();
+    addElapsed(timings, "yielding", firstYieldStartedAt);
 
     for (const plan of strategyPlans) {
         let strategyData = closedData;
@@ -303,15 +347,25 @@ export async function runSecondMarketFinder(
                 return { results };
             }
 
+            const candidateStartedAt = performance.now();
+            const strategyStats = getFinderStrategyDiagnosticsStats(strategyStatsByKey, plan);
             try {
                 const normalizedParams = plan.strategy.normalizeParams ? plan.strategy.normalizeParams(params) : { ...params };
                 const { backtestSettings } = resolveFinderRiskOverrides(settings, rustSettings, normalizedParams, options);
                 const candidatePrecomputed = backtestSettings === settings
                     ? precomputed
                     : precomputeIndicators(strategyData, backtestSettings);
+                let preparedFinderData: unknown;
+                if (plan.strategy.executePrepared && plan.strategy.prepareFinderData) {
+                    const preparedStartedAt = performance.now();
+                    preparedFinderData = getPreparedFinderData(preparedDataCache, plan.key, plan.strategy, strategyData, backtestSettings, executionContext);
+                    addElapsed(timings, "preparedData", preparedStartedAt);
+                    strategyStats.usedPreparedData = true;
+                }
+                const signalStartedAt = performance.now();
                 const rawSignals = plan.strategy.executePrepared
                     ? plan.strategy.executePrepared(
-                        getPreparedFinderData(preparedDataCache, plan.key, plan.strategy, strategyData, backtestSettings, executionContext),
+                        preparedFinderData,
                         normalizedParams,
                         strategyData,
                         executionContext
@@ -322,6 +376,10 @@ export async function runSecondMarketFinder(
                     baseSignals: applySignalPolarity(rawSignals, backtestSettings),
                     settings: backtestSettings,
                 });
+                const signalMs = performance.now() - signalStartedAt;
+                timings.signalGeneration += signalMs;
+                strategyStats.signalMs += signalMs;
+                const backtestStartedAt = performance.now();
                 const backtestResult = runStrategyBacktest({
                     strategy: plan.strategy,
                     data: strategyData,
@@ -329,9 +387,12 @@ export async function runSecondMarketFinder(
                     params: normalizedParams,
                     capitalSettings: input.capitalSettings,
                     backtestSettings,
-                    backtestFn: runBacktest,
+                    backtestFn: runFinderCandidateBacktest,
                     precomputed: candidatePrecomputed,
                 });
+                const backtestMs = performance.now() - backtestStartedAt;
+                timings.backtest += backtestMs;
+                strategyStats.backtestMs += backtestMs;
                 signals.length = 0;
 
                 if (options.tradeFilterEnabled) {
@@ -344,6 +405,7 @@ export async function runSecondMarketFinder(
                 const tradesForPolymarket = options.polymarketAfterTakeProfitOnly
                     ? filterTradesByPreviousClosedTradeExitReason(backtestResult.trades, "take_profit")
                     : backtestResult.trades;
+                const evaluationStartedAt = performance.now();
                 const secondMarket = evaluateSecondMarketBacktest({
                     result: backtestResult,
                     context,
@@ -364,6 +426,7 @@ export async function runSecondMarketFinder(
                         polymarketProtectionStopLossCents: settings.polymarketProtectionStopLossCents,
                     },
                 });
+                addElapsed(timings, "polymarketEvaluation", evaluationStartedAt);
 
                 processedCount++;
                 if (secondMarket.polymarketEval.scoredPredictions < (options.polymarketMinScoredPredictions ?? 0)) {
@@ -390,7 +453,9 @@ export async function runSecondMarketFinder(
                 });
                 finderResult.polymarketEval = evalResult;
                 filteredCount++;
+                const rankingStartedAt = performance.now();
                 ranker.offer(finderResult);
+                addElapsed(timings, "resultRanking", rankingStartedAt);
 
                 const now = performance.now();
                 if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
@@ -401,31 +466,64 @@ export async function runSecondMarketFinder(
                 }
                 if (now - lastResultsUpdateAt > 750 || processedCount === totalRuns) {
                     lastResultsUpdateAt = now;
+                    const uiStartedAt = performance.now();
                     callbacks.onResultsUpdate(ranker.toSortedArray(options.topN));
+                    addElapsed(timings, "uiUpdates", uiStartedAt);
                 }
                 if (processedCount % 128 === 0 || processedCount === totalRuns) {
+                    const yieldStartedAt = performance.now();
                     await callbacks.yieldControl();
+                    addElapsed(timings, "yielding", yieldStartedAt);
                 }
             } catch (error) {
                 failedCount++;
                 processedCount++;
+                strategyStats.failedRuns++;
                 const detail = error instanceof Error ? error.message : String(error);
                 debugLogger.warn("[Finder][second-market] Candidate evaluation failed", {
                     strategyKey: plan.key,
                     params,
                     error: detail,
                 });
+            } finally {
+                strategyStats.runs++;
+                strategyStats.totalMs += performance.now() - candidateStartedAt;
             }
         }
     }
 
+    const finalRankingStartedAt = performance.now();
     const results = ranker.toSortedArray(options.topN);
+    addElapsed(timings, "resultRanking", finalRankingStartedAt);
     callbacks.setProgress(100, `${processedCount}/${totalRuns} evaluations`);
     const statusParts = [`${processedCount} evaluations`, `${filteredCount} matched`, `${results.length} shown`];
     if (failedCount > 0) statusParts.push(`${failedCount} failed`);
     statusParts.push(`${context.quotes.length} CLOB quote rows`);
     if (quoteCoverageText) statusParts.push(quoteCoverageText);
     callbacks.setStatus(`Complete. ${statusParts.join(", ")}.`);
+    const uiStartedAt = performance.now();
     callbacks.onResultsUpdate(results);
-    return { results };
+    addElapsed(timings, "uiUpdates", uiStartedAt);
+    timings.total = performance.now() - runStartedAt;
+    const diagnostics = buildFinderDiagnostics({
+        runId,
+        symbol: input.symbol,
+        interval: input.interval,
+        mode: options.mode,
+        engineMode: "second_market_polymarket",
+        inputBars: input.ohlcvData.length,
+        evaluationBars: closedData.length,
+        selectedStrategies: selectedStrategies.length,
+        totalParamRuns: totalRuns,
+        batchSize: 1,
+        processedRuns: processedCount,
+        filteredRuns: filteredCount,
+        shownResults: results.length,
+        endpointAdjusted: 0,
+        failedRuns: failedCount,
+        timings,
+        strategyBreakdown: toFinderStrategyDiagnostics(strategyStatsByKey),
+    });
+    debugLogger.event("finder.diagnostics", diagnostics);
+    return { results, diagnostics };
 }

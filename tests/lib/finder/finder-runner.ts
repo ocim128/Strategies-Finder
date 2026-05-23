@@ -21,7 +21,7 @@ import {
 } from "./finder-runner-core";
 import { finderSortRequiresTradeTimingQuality } from "../trade-timing-quality";
 import type { CapitalSettings } from "../types/backtest";
-import type { FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
+import type { FinderDiagnostics, FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
 import { isSecondMarketPolymarketSupported } from "../second-market/evaluation";
 import {
     ensureConfirmationStrategiesLoaded,
@@ -68,6 +68,7 @@ export interface FinderRunCallbacks {
 export interface FinderRunOutput {
     results: FinderResult[];
     randomBenchmark?: FinderRandomBenchmark;
+    diagnostics?: FinderDiagnostics;
 }
 
 export async function runFinderExecution(input: FinderRunInput, callbacks: FinderRunCallbacks): Promise<FinderRunOutput> {
@@ -120,6 +121,7 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
 
     callbacks.setProgress(5, "Preparing parameter combinations...");
 
+    const paramGenerationStartedAt = performance.now();
     const strategyPlans: StrategyPlan[] = [];
     let totalRuns = 0;
     for (const selection of selectedStrategies) {
@@ -137,6 +139,7 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
             paramSets,
         });
     }
+    const paramGenerationMs = performance.now() - paramGenerationStartedAt;
 
     if (totalRuns === 0) {
         callbacks.setStatus("No valid parameter combinations generated.");
@@ -209,5 +212,6 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
         maybeYieldByBudget,
         capitalSettings,
         rustSettings,
+        paramGenerationMs,
     });
 }

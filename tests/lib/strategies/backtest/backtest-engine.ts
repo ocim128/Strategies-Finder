@@ -1179,7 +1179,8 @@ export function runBacktest(
     commissionPercent: number,
     settings: BacktestSettings = {},
     sizing?: Partial<TradeSizingConfig>,
-    precomputed?: PrecomputedIndicators
+    precomputed?: PrecomputedIndicators,
+    options?: { includeAdvancedAnalytics?: boolean }
 ): BacktestResult {
     if (signals.length === 0) return createEmptyBacktestResult();
     data = ensureCleanData(data);
@@ -1593,5 +1594,5 @@ export function runBacktest(
 
 
     const { maxDrawdown, maxDrawdownPercent } = calculateMaxDrawdown(equityCurve, initialCapital);
-    return calculateBacktestStats(trades, equityCurve, initialCapital, capital, maxDrawdown, maxDrawdownPercent);
+    return calculateBacktestStats(trades, equityCurve, initialCapital, capital, maxDrawdown, maxDrawdownPercent, options);
 }

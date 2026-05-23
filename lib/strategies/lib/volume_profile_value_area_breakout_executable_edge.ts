@@ -3,15 +3,16 @@ import {
     createBuySignal,
     createSellSignal,
     createSignalLoop,
-    ensureCleanData,
-    getCloses,
 } from "../strategy-helpers";
 import {
     buildPolymarket1sActionabilityMask,
     buildPolymarket1sExecutableEdge,
 } from "./polymarket-1s-helpers";
 import { normalizeIntegerParam, normalizeNumberParam } from "./range-conviction-core";
-import { buildRollingValueArea } from "./value-area-acceptance-core";
+import {
+    getPreparedValueAreaData,
+    getValueAreaSeries,
+} from "./value-area-acceptance-core";
 
 function normalizeVolumeProfileValueAreaBreakoutExecutableEdgeParams(params: StrategyParams): StrategyParams {
     return {
@@ -37,16 +38,18 @@ export const volume_profile_value_area_breakout_executable_edge: Strategy = {
     },
     normalizeParams: normalizeVolumeProfileValueAreaBreakoutExecutableEdgeParams,
     polymarket1sConfig: { required: true },
-    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+    prepareFinderData: (data: OHLCVData[]) => getPreparedValueAreaData(null, data),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[], context?: StrategyExecutionContext) => {
         if (!context?.polymarket1s) return [];
 
-        const cleanData = ensureCleanData(data);
+        const prepared = getPreparedValueAreaData(preparedData, data);
+        const cleanData = prepared.cleanData;
         const p = normalizeVolumeProfileValueAreaBreakoutExecutableEdgeParams(params);
         const lookback = p.lookback;
         if (cleanData.length < lookback + 2) return [];
 
-        const closes = getCloses(cleanData);
-        const valueArea = buildRollingValueArea(cleanData, lookback, p.valueAreaPct / 100);
+        const closes = prepared.closes;
+        const valueArea = getValueAreaSeries(prepared, lookback, p.valueAreaPct / 100);
         const edge = buildPolymarket1sExecutableEdge(cleanData, context, { volLookback: lookback });
         if (!edge.available) return [];
         const actionability = buildPolymarket1sActionabilityMask(cleanData, context, {
@@ -84,6 +87,13 @@ export const volume_profile_value_area_breakout_executable_edge: Strategy = {
             return null;
         });
     },
+    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) =>
+        volume_profile_value_area_breakout_executable_edge.executePrepared!(
+            volume_profile_value_area_breakout_executable_edge.prepareFinderData!(data),
+            params,
+            data,
+            context
+        ),
     metadata: {
         role: "entry",
         direction: "both",
