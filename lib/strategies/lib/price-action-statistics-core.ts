@@ -6,6 +6,7 @@ type NullableSeries = (number | null)[];
 const rollingStdDevCache = new WeakMap<number[], Map<number, NullableSeries>>();
 const rollingZScoreCache = new WeakMap<number[], Map<string, NullableSeries>>();
 const rollingMedianCache = new WeakMap<number[], Map<number, NullableSeries>>();
+const rollingMinMaxCache = new WeakMap<number[], Map<string, { min: NullableSeries; max: NullableSeries }>>();
 const rollingEntropyCache = new WeakMap<number[], Map<string, NullableSeries>>();
 const percentileRankCache = new WeakMap<number[], Map<number, NullableSeries>>();
 const efficiencyRatioCache = new WeakMap<OHLCVData[], Map<number, NullableSeries>>();
@@ -387,6 +388,56 @@ export function buildRollingMedian(
 
 		return result;
 	});
+}
+
+export function buildRollingMinMax(
+	values: number[],
+	lookbackInput: number,
+	includeCurrent = true
+): { min: (number | null)[]; max: (number | null)[] } {
+	const lookback = Math.max(1, Math.round(lookbackInput));
+	const key = `${lookback}|${includeCurrent ? 1 : 0}`;
+	let byKey = rollingMinMaxCache.get(values);
+	if (!byKey) {
+		byKey = new Map();
+		rollingMinMaxCache.set(values, byKey);
+	}
+	const cached = byKey.get(key);
+	if (cached) return cached;
+
+	const min: NullableSeries = new Array(values.length).fill(null);
+	const max: NullableSeries = new Array(values.length).fill(null);
+	const minDeque: number[] = [];
+	const maxDeque: number[] = [];
+	let nextIndexToAdd = 0;
+
+	const addIndex = (index: number): void => {
+		const value = values[index];
+		while (minDeque.length > 0 && values[minDeque[minDeque.length - 1]] >= value) minDeque.pop();
+		minDeque.push(index);
+		while (maxDeque.length > 0 && values[maxDeque[maxDeque.length - 1]] <= value) maxDeque.pop();
+		maxDeque.push(index);
+	};
+
+	for (let i = 0; i < values.length; i++) {
+		const end = includeCurrent ? i : i - 1;
+		while (nextIndexToAdd <= end) {
+			addIndex(nextIndexToAdd);
+			nextIndexToAdd++;
+		}
+
+		const start = end - lookback + 1;
+		while (minDeque.length > 0 && minDeque[0] < start) minDeque.shift();
+		while (maxDeque.length > 0 && maxDeque[0] < start) maxDeque.shift();
+
+		if (start < 0 || end < 0 || minDeque.length === 0 || maxDeque.length === 0) continue;
+		min[i] = values[minDeque[0]];
+		max[i] = values[maxDeque[0]];
+	}
+
+	const result = { min, max };
+	byKey.set(key, result);
+	return result;
 }
 
 /**
