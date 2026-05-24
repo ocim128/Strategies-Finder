@@ -15,16 +15,19 @@ For repo-level orientation, read [`README.md`](../README.md) first. For the oper
 - Entry logic must be causal and non-repainting. Bar `i` may only use information available in `data[0..i]`.
 - If `execute(...)` rounds, clamps, coerces sign, or otherwise sanitizes params, expose the same behavior through `normalizeParams(...)`.
 - If you add `prepareFinderData(...)`, `executePrepared(...)` must stay behaviorally identical to `execute(...)`.
+- If a strategy declares `polymarket1sConfig` or `crossSymbolConfig`, every execution path must receive and respect `StrategyExecutionContext`.
+- Required context means fail closed. Do not let missing helper data become a permissive default such as `0` adverse pressure.
+- Finder performance is a strategy contract. Build reusable arrays once, keep expensive transforms out of the signal loop, and cache param-keyed series in prepared data when Finder will sweep them.
 
 ## Build Order
 
 1. Pick a stable key and keep the file name and exported const aligned.
 2. Start from a nearby example:
-   - `lib/strategies/lib/robust_median_channel_breakout.ts` — small strategy with explicit normalization and direct `execute(...)` use
-   - `lib/strategies/lib/rolling_vwap_center.ts` — Finder-safe prepared-data reuse with normalized params
+   - `lib/strategies/lib/close_location_median_alignment.ts` - small direct `execute(...)` strategy with explicit normalization
+   - `lib/strategies/lib/rolling_vwap_center.ts` - Finder-safe prepared-data reuse with normalized params
    - for value-area work:
-     - `lib/strategies/lib/value_area_excess_snapback.ts`
-     - `lib/strategies/lib/value_rotation_divergence_fade.ts`
+     - `lib/strategies/lib/value-area-acceptance-core.ts`
+     - `lib/strategies/lib/volume_profile_value_area_breakout_executable_edge.ts`
    - for cross-symbol work:
      - `lib/strategies/lib/relative_strength_mean_reversion.ts`
      - `lib/strategies/lib/dominance_handoff_exhaustion.ts`
@@ -34,7 +37,7 @@ For repo-level orientation, read [`README.md`](../README.md) first. For the oper
 5. Build your base arrays once outside the signal loop.
 6. Use `createSignalLoop(...)` and return `createBuySignal(...)`, `createSellSignal(...)`, or `null`.
 7. Add `metadata.walkForwardParams` only for params that genuinely affect entries.
-8. Run `npm run strategies:sync-manifest` and `npm run typecheck`.
+8. Run `npm run strategies:sync-manifest`, `npm run typecheck`, and focused tests for the touched contract.
 
 ## Using Prompt JSON
 
@@ -156,7 +159,7 @@ Rules that matter:
 Before reaching for a named indicator, check whether a shared strategy-layer helper already expresses the idea more directly.
 
 - `lib/strategies/strategy-helpers.ts`
-  Core signal creation, data extraction, pivot flags, and clean-data guards.
+  Core signal creation, memoized OHLCV extraction, pivot flags, and clean-data guards. Prefer `getCloses(...)`, `getHighs(...)`, and related extractors over repeated `data.map(...)`.
 - `lib/strategies/lib/price-action-frequency-core.ts`
   Candle geometry and microstructure primitives such as:
   - `buildRangeSeries(...)`
@@ -200,6 +203,8 @@ Before reaching for a named indicator, check whether a shared strategy-layer hel
   - `buildPolymarket1sReactionAgreementMask(data, context, { volLookback, lagSec })`
   - `buildPolymarket1sGammaConsensusMask(data, context, { volLookback })`
 
+  These helpers cache the heavier base frames by runtime context, data identity, and normalized options. Call the needed helper once before `createSignalLoop(...)`; never call a Polymarket helper inside the per-bar callback.
+
 If a prompt or draft strategy references a helper that does not exist in these modules or `strategy-helpers.ts`, do not invent the import path and hope it works. Either map the idea onto existing helpers or add the missing helper first.
 
 ## Type Rules That Cause Most Failures
@@ -224,8 +229,9 @@ Do not assign `(number | null)[]` to `number[]`.
 
 ### Output shape matters
 
-- `calculateATR(...)` and `calculateADX(...)` return flat arrays.
-- `calculateKeltnerChannels(...)` returns `{ upper, middle, lower }`.
+- `calculateATR(...)` and `calculateADX(...)` return flat `(number | null)[]` arrays.
+- `calculateKeltnerChannels(...)` returns `{ upper, middle, lower }`, where each member is a `(number | null)[]`.
+- Helper objects such as `buildRollingMinMax(...)`, value-area frames, and Keltner channels are object-of-arrays, not array-of-objects.
 
 ### Access compound helper results correctly
 
@@ -258,7 +264,7 @@ Do not introduce hidden look-ahead.
 - Safe: current bar values, prior bar values, trailing windows ending at `i`, previously confirmed pivots.
 - Unsafe unless carefully confirmed: centered windows, future bars, pivot logic that treats an unconfirmed swing as already known.
 
-If you use `buildPivotFlags(...)`, be explicit about confirmation timing. The helper evaluates a centered window, so a pivot flag at index `i` is only causal after the right-side swing window has elapsed.
+If you use `buildPivotFlags(...)`, be explicit about confirmation timing. The helper evaluates a centered window, so a pivot flag at index `i` is only causal after the right-side swing window has elapsed. A live signal must either act at `i + swingLength` or reference only pivots that were already confirmed before the current bar.
 
 ## Parameter Normalization and Finder / WFA Parity
 
@@ -282,7 +288,7 @@ Required parity rules:
 
 ## `prepareFinderData(...)` Guidance
 
-Use `prepareFinderData(...)` by default when the strategy builds reusable rolling, VWAP, percentile, entropy, skewness, or cross-symbol arrays. Skip it only when execution is already cheap enough that the extra seam would not reduce Finder cost.
+Use `prepareFinderData(...)` when Finder will repeatedly evaluate the same dataset across many parameter combinations and the strategy builds reusable rolling, VWAP, percentile, entropy, skewness, value-area, Polymarket, or cross-symbol arrays. Skip it only when execution is already cheap enough that the extra seam would not reduce Finder cost.
 
 Good candidates:
 - session VWAP arrays
@@ -300,6 +306,11 @@ When you do add prepared execution:
 - validate prepared payload shape defensively
 - cache by real param dimension when multiple lookbacks are possible
 - keep the prepared payload small; store raw reusable series plus keyed caches instead of per-run duplicates
+- normalize params before building cache keys
+- do not mutate input `data` or context arrays
+- do not allocate arrays, maps, regexes, or formatted reason strings inside the per-bar callback
+- do not call indicators, rolling helpers, Polymarket helpers, or cross-symbol aligners inside the per-bar callback
+- prefer numeric arrays and nullable arrays over arrays of per-bar objects in Finder hot paths
 - run `npm run strategies:audit-prepared` when the file uses heavy rolling helpers or cross-symbol state
 
 ## Common AI Failure Modes
@@ -313,7 +324,9 @@ When you do add prepared execution:
 - passing `OHLCVData[]` to a helper that expects `number[]`
 - accessing compound helper results with the wrong shape
 - adding expensive per-bar allocations inside Finder hot loops
+- calling rolling, cross-symbol, or Polymarket helper builders inside `createSignalLoop(...)`
 - changing semantics in `executePrepared(...)` versus `execute(...)`
+- declaring required Polymarket or cross-symbol context but producing signals when that context is missing
 - using unconfirmed pivots or future bars in a supposedly causal signal
 
 ## Validation Before You Stop
@@ -329,7 +342,9 @@ Then add focused validation as needed:
 
 - add or update a strategy spec under `tests/strategies-lib/*` when normalization or behavior is non-trivial
 - use `npm run test -- <relevant-fragment>` for targeted coverage
+- run `npm run strategies:audit-prepared` when a strategy uses heavy rolling, VWAP, value-area, Polymarket, or cross-symbol prepared-data paths
 - for cross-symbol strategy work, include `npm run test -- cross-symbol`
+- for 1s Polymarket strategy work, include `npm run test -- polymarket-1s`
 - manually confirm the strategy appears in the dropdown if UI behavior changed
 
 ## Fast Checklist
@@ -344,6 +359,7 @@ Then add focused validation as needed:
 - signal loop returns `createBuySignal(...)`, `createSellSignal(...)`, or `null`
 - null and warmup handling is explicit
 - `prepareFinderData(...)` and `executePrepared(...)` remain in parity when present
+- no expensive helper construction occurs inside the per-bar callback
 - `npm run strategies:sync-manifest` was run
 - `npm run typecheck` passes
 
@@ -356,11 +372,25 @@ Required strategy contract:
 - declare `polymarket1sConfig: { required: true }`
 - accept the optional third `StrategyExecutionContext` argument in `execute(...)`
 - return `[]` when `context?.polymarket1s` is missing
-- call helpers with the runtime context, not with raw quote arrays
+- call helpers with the full strategy context or `context.polymarket1s`, never with raw quote arrays
 - fail closed when a helper frame has `available === false`
 - keep Binance chart state as the raw signal source; Polymarket helpers may allow, veto, rank, or executable-price that signal
 
-Executable-edge pattern:
+Binary agreement pattern:
+
+```ts
+const mask = buildPolymarket1sPressureAgreementMask(cleanData, context, { volLookback });
+if (!mask.available) return [];
+
+return createSignalLoop(cleanData, [rawSignal], (i) => {
+  if (rawSignal[i] === null) return null;
+  if (rawSignal[i] > 0 && mask.longAllowed[i]) return createBuySignal(cleanData, i, "Pressure agreement buy");
+  if (rawSignal[i] < 0 && mask.shortAllowed[i]) return createSellSignal(cleanData, i, "Pressure agreement sell");
+  return null;
+});
+```
+
+Executable-edge magnitude pattern:
 
 ```ts
 const edge = buildPolymarket1sExecutableEdge(cleanData, context, { volLookback });
@@ -374,9 +404,19 @@ const actionability = buildPolymarket1sActionabilityMask(cleanData, context, {
 });
 if (!actionability.available) return [];
 
-const executableMask = buildPolymarket1sExecutableAgreementMask(cleanData, context, { volLookback });
-if (!executableMask.available) return [];
+return createSignalLoop(cleanData, [rawSignal], (i) => {
+  if (rawSignal[i] === null) return null;
+  if (rawSignal[i] > 0 && actionability.yesActionable[i] && (edge.buyYesEdge[i] ?? -Infinity) >= minEdge) {
+    return createBuySignal(cleanData, i, "Executable YES edge buy");
+  }
+  if (rawSignal[i] < 0 && actionability.noActionable[i] && (edge.buyNoEdge[i] ?? -Infinity) >= minEdge) {
+    return createSellSignal(cleanData, i, "Executable NO edge sell");
+  }
+  return null;
+});
 ```
+
+Use the binary mask pattern when the Polymarket rule is only yes/no permission. Use edge magnitude only when `minEdge`, `minLag`, or `maxAdverse` is part of the thesis. Do not stack multiple Polymarket quality overlays unless each one blocks a different real failure mode.
 
 Current helper meanings that matter for implementation:
 
