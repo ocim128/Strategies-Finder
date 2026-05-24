@@ -82,18 +82,6 @@ export interface Polymarket1sActionabilityFrame {
     reason: (Polymarket1sActionabilityReason | null)[];
 }
 
-export interface Polymarket1sEdgePersistenceOptions {
-    minEdge?: number;
-    ewmaLookback?: number;
-}
-
-export interface Polymarket1sEdgePersistenceFrame {
-    yesEdgeEwma: (number | null)[];
-    noEdgeEwma: (number | null)[];
-    yesEdgeSeconds: number[];
-    noEdgeSeconds: number[];
-}
-
 export interface Polymarket1sGammaAgreementOptions extends Polymarket1sPressureGapOptions {
     maxGammaAgeSec?: number;
 }
@@ -104,6 +92,18 @@ export interface Polymarket1sGammaAgreementFrame {
     gammaGap: (number | null)[];
     consensusLongEdge: (number | null)[];
     consensusShortEdge: (number | null)[];
+}
+
+export interface Polymarket1sDirectionalAgreementMaskFrame {
+    available: boolean;
+    longAllowed: boolean[];
+    shortAllowed: boolean[];
+}
+
+export interface Polymarket1sExecutableAgreementMaskFrame {
+    available: boolean;
+    yesAllowed: boolean[];
+    noAllowed: boolean[];
 }
 
 type ContextInput = StrategyExecutionContext | Polymarket1sRuntimeContext | null | undefined;
@@ -217,6 +217,22 @@ function emptyGammaAgreementFrame(length: number): Polymarket1sGammaAgreementFra
         gammaGap: new Array(length).fill(null),
         consensusLongEdge: new Array(length).fill(null),
         consensusShortEdge: new Array(length).fill(null),
+    };
+}
+
+function emptyDirectionalAgreementMaskFrame(length: number): Polymarket1sDirectionalAgreementMaskFrame {
+    return {
+        available: false,
+        longAllowed: new Array(length).fill(false),
+        shortAllowed: new Array(length).fill(false),
+    };
+}
+
+function emptyExecutableAgreementMaskFrame(length: number): Polymarket1sExecutableAgreementMaskFrame {
+    return {
+        available: false,
+        yesAllowed: new Array(length).fill(false),
+        noAllowed: new Array(length).fill(false),
     };
 }
 
@@ -607,6 +623,31 @@ export function buildPolymarket1sPressureGap(
 }
 
 /**
+ * Binary version of pressure-gap agreement.
+ *
+ * Unlike maxAdverse/minEdge thresholds, this helper only answers whether the
+ * current Polymarket state is directionally non-adverse for each side.
+ */
+export function buildPolymarket1sPressureAgreementMask(
+    data: readonly OHLCVData[],
+    context: ContextInput,
+    options: Polymarket1sPressureGapOptions = {}
+): Polymarket1sDirectionalAgreementMaskFrame {
+    const pressure = buildPolymarket1sPressureGap(data, context, options);
+    const frame = emptyDirectionalAgreementMaskFrame(data.length);
+    frame.available = pressure.available;
+
+    for (let i = 0; i < data.length; i++) {
+        const gap = pressure.pressureGap[i];
+        if (gap === null) continue;
+        frame.longAllowed[i] = gap >= 0;
+        frame.shortAllowed[i] = gap <= 0;
+    }
+
+    return frame;
+}
+
+/**
  * Compares Binance-implied event probability against executable CLOB ask prices.
  *
  * Positive buyYesEdge means YES ask is below the model fair YES probability.
@@ -667,6 +708,54 @@ export function buildPolymarket1sExecutableEdge(
 
     frame.available = populated > 0;
     setCachedRuntimeFrame(executableEdgeCache, runtime, data, cacheKey, frame);
+    return frame;
+}
+
+/**
+ * Binary executable-edge agreement. A side is allowed only when its ask exists
+ * and the executable price is favorable versus Binance-implied fair value.
+ */
+export function buildPolymarket1sExecutableAgreementMask(
+    data: readonly OHLCVData[],
+    context: ContextInput,
+    options: Polymarket1sExecutableEdgeOptions = {}
+): Polymarket1sExecutableAgreementMaskFrame {
+    const edge = buildPolymarket1sExecutableEdge(data, context, options);
+    const frame = emptyExecutableAgreementMaskFrame(data.length);
+    frame.available = edge.available;
+
+    for (let i = 0; i < data.length; i++) {
+        const buyYesEdge = edge.buyYesEdge[i];
+        const buyNoEdge = edge.buyNoEdge[i];
+        frame.yesAllowed[i] = buyYesEdge !== null && buyYesEdge > 0;
+        frame.noAllowed[i] = buyNoEdge !== null && buyNoEdge > 0;
+    }
+
+    return frame;
+}
+
+/**
+ * Binary no-adverse + actionability mask. This is the executable-side form of
+ * pressure agreement: the side must have an ask and Polymarket must not oppose
+ * the Binance-implied fair side.
+ */
+export function buildPolymarket1sNoAdverseActionableMask(
+    data: readonly OHLCVData[],
+    context: ContextInput,
+    options: Polymarket1sExecutableEdgeOptions = {}
+): Polymarket1sExecutableAgreementMaskFrame {
+    const edge = buildPolymarket1sExecutableEdge(data, context, options);
+    const frame = emptyExecutableAgreementMaskFrame(data.length);
+    frame.available = edge.available;
+
+    for (let i = 0; i < data.length; i++) {
+        const fairYes = edge.fairYesProbability[i];
+        const marketYes = edge.marketYesProbability[i];
+        if (fairYes === null || marketYes === null) continue;
+        frame.yesAllowed[i] = edge.yesAskProbability[i] !== null && fairYes >= marketYes;
+        frame.noAllowed[i] = edge.noAskProbability[i] !== null && fairYes <= marketYes;
+    }
+
     return frame;
 }
 
@@ -749,6 +838,29 @@ export function buildPolymarket1sReactionGap(
 }
 
 /**
+ * Binary reaction-lag agreement. A side is allowed only when Polymarket has
+ * underreacted in that same direction over the configured lag.
+ */
+export function buildPolymarket1sReactionAgreementMask(
+    data: readonly OHLCVData[],
+    context: ContextInput,
+    options: Polymarket1sReactionGapOptions = {}
+): Polymarket1sDirectionalAgreementMaskFrame {
+    const reaction = buildPolymarket1sReactionGap(data, context, options);
+    const frame = emptyDirectionalAgreementMaskFrame(data.length);
+    frame.available = reaction.available;
+
+    for (let i = 0; i < data.length; i++) {
+        const gap = reaction.reactionGap[i];
+        if (gap === null) continue;
+        frame.longAllowed[i] = gap > 0;
+        frame.shortAllowed[i] = gap < 0;
+    }
+
+    return frame;
+}
+
+/**
  * Marks bars whose CLOB quote state is tradable enough for helper-driven entries.
  */
 export function buildPolymarket1sActionabilityMask(
@@ -816,53 +928,6 @@ export function buildPolymarket1sActionabilityMask(
 }
 
 /**
- * Converts noisy one-second executable edge arrays into side-specific persistence features.
- */
-export function buildPolymarket1sEdgePersistence(
-    edgeFrame: Polymarket1sExecutableEdgeFrame,
-    options: Polymarket1sEdgePersistenceOptions = {}
-): Polymarket1sEdgePersistenceFrame {
-    const length = edgeFrame.buyYesEdge.length;
-    const frame: Polymarket1sEdgePersistenceFrame = {
-        yesEdgeEwma: new Array(length).fill(null),
-        noEdgeEwma: new Array(length).fill(null),
-        yesEdgeSeconds: new Array(length).fill(0),
-        noEdgeSeconds: new Array(length).fill(0),
-    };
-    const minEdge = numberAtLeast(options.minEdge, 0, 0);
-    const ewmaLookback = roundedAtLeast(options.ewmaLookback, 3, 1);
-    const alpha = 2 / (ewmaLookback + 1);
-
-    for (let i = 0; i < length; i++) {
-        const prevProgress = i > 0 ? edgeFrame.eventProgress[i - 1] : null;
-        const currentProgress = edgeFrame.eventProgress[i];
-        const eventChanged = prevProgress !== null && currentProgress !== null && currentProgress < prevProgress;
-        const yesEdge = edgeFrame.buyYesEdge[i];
-        const noEdge = edgeFrame.buyNoEdge[i];
-        const yesPositive = yesEdge === null ? null : Math.max(0, yesEdge);
-        const noPositive = noEdge === null ? null : Math.max(0, noEdge);
-
-        if (yesPositive !== null) {
-            const prevEwma = eventChanged || i === 0 ? null : frame.yesEdgeEwma[i - 1];
-            frame.yesEdgeEwma[i] = prevEwma === null ? yesPositive : alpha * yesPositive + (1 - alpha) * prevEwma;
-            if (yesPositive > 0 && yesPositive >= minEdge) {
-                frame.yesEdgeSeconds[i] = eventChanged ? 1 : (i > 0 ? frame.yesEdgeSeconds[i - 1] : 0) + 1;
-            }
-        }
-
-        if (noPositive !== null) {
-            const prevEwma = eventChanged || i === 0 ? null : frame.noEdgeEwma[i - 1];
-            frame.noEdgeEwma[i] = prevEwma === null ? noPositive : alpha * noPositive + (1 - alpha) * prevEwma;
-            if (noPositive > 0 && noPositive >= minEdge) {
-                frame.noEdgeSeconds[i] = eventChanged ? 1 : (i > 0 ? frame.noEdgeSeconds[i - 1] : 0) + 1;
-            }
-        }
-    }
-
-    return frame;
-}
-
-/**
  * Uses Gamma as secondary agreement when both Binance pressure and Gamma point to the same CLOB mispricing.
  */
 export function buildPolymarket1sGammaAgreement(
@@ -921,3 +986,25 @@ export function buildPolymarket1sGammaAgreement(
     return frame;
 }
 
+/**
+ * Binary Gamma consensus. Gamma remains agreement-only: it can permit a side
+ * only when both Binance pressure and Gamma point to the same underpriced side.
+ */
+export function buildPolymarket1sGammaConsensusMask(
+    data: readonly OHLCVData[],
+    context: ContextInput,
+    options: Polymarket1sGammaAgreementOptions = {}
+): Polymarket1sDirectionalAgreementMaskFrame {
+    const agreement = buildPolymarket1sGammaAgreement(data, context, options);
+    const frame = emptyDirectionalAgreementMaskFrame(data.length);
+    frame.available = agreement.available;
+
+    for (let i = 0; i < data.length; i++) {
+        const longEdge = agreement.consensusLongEdge[i];
+        const shortEdge = agreement.consensusShortEdge[i];
+        frame.longAllowed[i] = longEdge !== null && longEdge > 0;
+        frame.shortAllowed[i] = shortEdge !== null && shortEdge > 0;
+    }
+
+    return frame;
+}

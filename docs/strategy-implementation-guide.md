@@ -192,9 +192,13 @@ Before reaching for a named indicator, check whether a shared strategy-layer hel
   - `buildPolymarket1sPressureGap(data, context, { volLookback })`
   - `buildPolymarket1sExecutableEdge(data, context, { volLookback })`
   - `buildPolymarket1sActionabilityMask(data, context, { volLookback })`
-  - `buildPolymarket1sEdgePersistence(edgeFrame, { minEdge, ewmaLookback })`
   - `buildPolymarket1sReactionGap(data, context, { volLookback, lagSec })`
   - `buildPolymarket1sGammaAgreement(data, context, { volLookback })`
+  - `buildPolymarket1sPressureAgreementMask(data, context, { volLookback })`
+  - `buildPolymarket1sExecutableAgreementMask(data, context, { volLookback })`
+  - `buildPolymarket1sNoAdverseActionableMask(data, context, { volLookback })`
+  - `buildPolymarket1sReactionAgreementMask(data, context, { volLookback, lagSec })`
+  - `buildPolymarket1sGammaConsensusMask(data, context, { volLookback })`
 
 If a prompt or draft strategy references a helper that does not exist in these modules or `strategy-helpers.ts`, do not invent the import path and hope it works. Either map the idea onto existing helpers or add the missing helper first.
 
@@ -370,10 +374,8 @@ const actionability = buildPolymarket1sActionabilityMask(cleanData, context, {
 });
 if (!actionability.available) return [];
 
-const persistence = buildPolymarket1sEdgePersistence(edge, {
-  minEdge,
-  ewmaLookback: persistenceSec,
-});
+const executableMask = buildPolymarket1sExecutableAgreementMask(cleanData, context, { volLookback });
+if (!executableMask.available) return [];
 ```
 
 Current helper meanings that matter for implementation:
@@ -382,6 +384,7 @@ Current helper meanings that matter for implementation:
 - `buyNoEdge = fairNoProbability - noAskProbability`
 - `yesActionable` / `noActionable` mean the side has a usable ask quote inside quote-age and event-timing constraints
 - `reactionGap` compares recent Binance-implied probability movement against recent Polymarket mid-probability movement
+- Binary agreement masks expose side-specific booleans and avoid adding decimal thresholds when the strategy only needs yes/no permission
 - Gamma helpers are agreement only, never the primary signal
 
 Do not add spread-based behavior to 1s Polymarket strategies:

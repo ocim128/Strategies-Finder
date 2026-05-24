@@ -183,17 +183,15 @@ Initial filters:
 - min/max event progress
 - min seconds remaining
 
-4. `buildPolymarket1sEdgePersistence(edgeFrame, options)`
+4. Binary agreement masks
 
 Objective:
-Reduce one-second noise by requiring edge duration or EWMA persistence.
+Expose yes/no side permission without adding magnitude thresholds when the strategy only needs agreement or actionability.
 
 Expected outputs:
 
-- `yesEdgeEwma`
-- `noEdgeEwma`
-- `yesEdgeSeconds`
-- `noEdgeSeconds`
+- `available`
+- `longAllowed` / `shortAllowed` or `yesAllowed` / `noAllowed`
 
 5. `buildPolymarket1sGammaAgreement(data, context, options)`
 
@@ -511,22 +509,21 @@ Add timing-sensitive helpers that distinguish real underreaction from stale/nois
 ### Risks/Blockers
 
 - Reaction gap can become a momentum duplicate if strategy rules ignore executable edge.
-- Persistence can hide real one-second opportunities if defaults are too strict.
 - Actionability criteria could overlap Execution Lab fill rules if not kept descriptive.
 
 ### Deliverables
 
 - `buildPolymarket1sReactionGap(...)`.
 - `buildPolymarket1sActionabilityMask(...)`.
-- `buildPolymarket1sEdgePersistence(...)`.
-- Tests for lag, stale quotes, event-progress fences, and persistence counts.
+- Binary agreement masks for pressure, executable edge, no-adverse actionability, reaction, and Gamma consensus.
+- Tests for lag, stale quotes, event-progress fences, and binary side permission.
 
 ### Validation/Testing Criteria
 
 - Reaction gap uses only values at or before current bar.
 - Lag behavior handles missing intermediate seconds.
 - Actionability fails closed on stale or missing quotes.
-- Persistence resets when edge disappears or event changes.
+- Binary masks fail closed when the underlying frame is unavailable.
 
 ### Exit Criteria
 
@@ -759,7 +756,7 @@ Implement in this order:
 1. `buildPolymarket1sExecutableEdge(...)`
 2. calibration and timing validation against local second-market data
 3. `buildPolymarket1sActionabilityMask(...)`
-4. `buildPolymarket1sEdgePersistence(...)`
+4. binary agreement masks
 5. `buildPolymarket1sReactionGap(...)`
 6. `archive/prompt-1s-polymarket.txt` update using only implemented helpers
 7. one minimal executable-edge strategy

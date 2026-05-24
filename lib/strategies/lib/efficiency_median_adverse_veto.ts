@@ -46,11 +46,10 @@ export const efficiency_median_adverse_veto: Strategy = {
         const erSeries = buildEfficiencyRatio(cleanData, erLookback as number);
         const medianSeries = buildRollingMedian(closes, erLookback as number);
         
-        // #COMPLETION_DRIVE: Using hardcoded volLookback of 60 as per implementation notes
-        // #SUGGEST_VERIFY: Check if volLookback should be parameterized
         const pressureGap = buildPolymarket1sPressureGap(cleanData, context, {
             volLookback: 60
         });
+        if (!pressureGap.available) return [];
 
         return createSignalLoop(
             cleanData,

@@ -8,14 +8,16 @@ import type {
 } from "../lib/types/strategies";
 import {
     buildPolymarket1sActionabilityMask,
-    buildPolymarket1sEdgePersistence,
+    buildPolymarket1sExecutableAgreementMask,
     buildPolymarket1sExecutableEdge,
     buildPolymarket1sGammaAgreement,
+    buildPolymarket1sGammaConsensusMask,
+    buildPolymarket1sNoAdverseActionableMask,
+    buildPolymarket1sPressureAgreementMask,
     buildPolymarket1sPressureGap,
+    buildPolymarket1sReactionAgreementMask,
     buildPolymarket1sReactionGap,
-    type Polymarket1sExecutableEdgeFrame,
 } from "../lib/strategies/lib/polymarket-1s-helpers";
-import { polymarket_executable_edge_persistence } from "../lib/strategies/lib/polymarket_executable_edge_persistence";
 
 const EVENT_START = 1_700_000_000;
 const EVENT_END = EVENT_START + 300;
@@ -99,6 +101,26 @@ describe("Polymarket 1s helpers", () => {
         expect(frame.eventProgress[7]).to.be.greaterThan(0);
     });
 
+    it("builds binary pressure agreement masks from pressure gap sign", () => {
+        const positive = buildPolymarket1sPressureAgreementMask(candles(), runtime(quoteEverySecond()), { volLookback: 5 });
+
+        expect(positive.available).to.equal(true);
+        expect(positive.longAllowed[7]).to.equal(true);
+        expect(positive.shortAllowed[7]).to.equal(false);
+
+        const flatData = Array.from({ length: 10 }, (_unused, index) => candle(index, 100));
+        const negative = buildPolymarket1sPressureAgreementMask(flatData, runtime(
+            Array.from({ length: 10 }, (_unused, index) => quote(index, {
+                yes_mid: 0.99,
+                no_mid: 0.01,
+            }))
+        ), { volLookback: 5 });
+
+        expect(negative.available).to.equal(true);
+        expect(negative.longAllowed[7]).to.equal(false);
+        expect(negative.shortAllowed[7]).to.equal(true);
+    });
+
     it("uses the charted event open when the first available quote is mid-event", () => {
         const frame = buildPolymarket1sPressureGap(candles(), runtime([
             quote(7),
@@ -133,6 +155,27 @@ describe("Polymarket 1s helpers", () => {
         expect(frame.buyYesEdge[6]).to.be.a("number");
     });
 
+    it("builds binary executable and no-adverse actionable masks", () => {
+        const data = [100, 100, 100, 100, 100, 100.5, 101, 101.5, 102, 102.5]
+            .map((close, index) => candle(index, close));
+        const quotes = Array.from({ length: 10 }, (_unused, index) => quote(index, {
+            yes_ask: 0.40,
+            yes_mid: 0.39,
+            no_ask: 0.99,
+            no_mid: 0.61,
+        }));
+
+        const executable = buildPolymarket1sExecutableAgreementMask(data, runtime(quotes), { volLookback: 5 });
+        const noAdverse = buildPolymarket1sNoAdverseActionableMask(data, runtime(quotes), { volLookback: 5 });
+
+        expect(executable.available).to.equal(true);
+        expect(executable.yesAllowed[8]).to.equal(true);
+        expect(executable.noAllowed[8]).to.equal(false);
+        expect(noAdverse.available).to.equal(true);
+        expect(noAdverse.yesAllowed[8]).to.equal(true);
+        expect(noAdverse.noAllowed[8]).to.equal(false);
+    });
+
     it("fails the missing executable side closed without dropping the other side", () => {
         const frame = buildPolymarket1sExecutableEdge(candles(), runtime([
             quote(6, { yes_ask: null }),
@@ -156,27 +199,6 @@ describe("Polymarket 1s helpers", () => {
         expect(actionability.reason[6]).to.equal(null);
     });
 
-    it("tracks positive edge persistence and resets when edge disappears", () => {
-        const edgeFrame: Polymarket1sExecutableEdgeFrame = {
-            available: true,
-            fairYesProbability: new Array(5).fill(null),
-            fairNoProbability: new Array(5).fill(null),
-            marketYesProbability: new Array(5).fill(null),
-            yesAskProbability: new Array(5).fill(null),
-            noAskProbability: new Array(5).fill(null),
-            buyYesEdge: [null, 0.03, 0.04, 0.01, 0.05],
-            buyNoEdge: [null, null, null, null, null],
-            quoteAgeSec: new Array(5).fill(0),
-            eventProgress: [null, 0.1, 0.2, 0.3, 0.4],
-            secondsRemaining: new Array(5).fill(100),
-        };
-
-        const persistence = buildPolymarket1sEdgePersistence(edgeFrame, { minEdge: 0.03 });
-
-        expect(persistence.yesEdgeSeconds).to.deep.equal([0, 1, 2, 0, 1]);
-        expect(persistence.yesEdgeEwma[2]).to.be.a("number");
-    });
-
     it("computes positive reaction lag when Binance fair probability moves faster than market probability", () => {
         const data = [100, 100, 100, 100, 100, 100, 101, 102, 103, 104]
             .map((close, index) => candle(index, close));
@@ -188,6 +210,19 @@ describe("Polymarket 1s helpers", () => {
         expect(reaction.available).to.equal(true);
         expect(reaction.spotImpulse[8]).to.be.greaterThan(0);
         expect(reaction.longLagEdge[8]).to.be.greaterThan(0);
+    });
+
+    it("builds binary reaction agreement masks from reaction gap sign", () => {
+        const data = [100, 100, 100, 100, 100, 100, 101, 102, 103, 104]
+            .map((close, index) => candle(index, close));
+        const mask = buildPolymarket1sReactionAgreementMask(data, runtime(quoteEverySecond()), {
+            volLookback: 5,
+            lagSec: 3,
+        });
+
+        expect(mask.available).to.equal(true);
+        expect(mask.longAllowed[8]).to.equal(true);
+        expect(mask.shortAllowed[8]).to.equal(false);
     });
 
     it("does not compute reaction lag across Polymarket event boundaries", () => {
@@ -226,41 +261,15 @@ describe("Polymarket 1s helpers", () => {
         expect(agreement.consensusLongEdge[7]).to.be.greaterThan(0);
     });
 
-    it("drives the executable-edge strategy from Binance fair probability and ask-side edge", () => {
-        const data = [100, 100, 100, 100, 100, 100.5, 101, 101.5, 102, 102.5]
-            .map((close, index) => candle(index, close));
-        const quotes = Array.from({ length: 10 }, (_, index) => quote(index, {
-            yes_ask: 0.40,
-            yes_mid: 0.39,
-            no_ask: 0.60,
-            no_mid: 0.59,
-        }));
+    it("builds binary Gamma consensus masks from same-side agreement", () => {
+        const mask = buildPolymarket1sGammaConsensusMask(candles(), runtime(quoteEverySecond(), [
+            gamma(5, 0.7, 0.3),
+            gamma(8, 0.2, 0.8),
+        ]), { volLookback: 5, maxGammaAgeSec: 20 });
 
-        const signals = polymarket_executable_edge_persistence.execute(data, {
-            volLookback: 5,
-            minEdge: 0.05,
-            persistenceSec: 2,
-        }, { polymarket1s: runtime(quotes) });
-
-        expect(signals.some((signal) => signal.type === "buy")).to.equal(true);
-        expect(polymarket_executable_edge_persistence.execute(data, {
-            volLookback: 5,
-            minEdge: 0.05,
-            persistenceSec: 2,
-        })).to.deep.equal([]);
+        expect(mask.available).to.equal(true);
+        expect(mask.longAllowed[7]).to.equal(true);
+        expect(mask.shortAllowed[7]).to.equal(false);
     });
 
-    it("normalizes invalid executable-edge strategy params back to safe defaults", () => {
-        const normalized = polymarket_executable_edge_persistence.normalizeParams?.({
-            volLookback: Number.NaN,
-            minEdge: Number.NaN,
-            persistenceSec: Number.NaN,
-        });
-
-        expect(normalized).to.deep.include({
-            volLookback: 45,
-            minEdge: 0.04,
-            persistenceSec: 2,
-        });
-    });
 });
