@@ -90,7 +90,7 @@ V1 is working only when all of these are true:
 - Live entry `maxPrice` adds `EXECUTION_LAB_LIVE_ENTRY_MAX_SLIPPAGE_CENTS` to the paper entry price, clamped to `1.00`; the default is `1` cent.
 - Limit mode submits a buy limit immediately after an accepted paper entry, using the paper entry price as `limitReferencePrice` and optional UI offset as `limitPrice = reference - offsetCents / 100`, rounded/clamped by Strategy Finder before executor submission. For executor schema compatibility, limit requests also carry `maxPrice = limitPrice`; `limitPrice` remains the explicit resting-order price.
 - Posted or delayed limit entries are tracked as pending limit submissions, not live positions. They become tracked live positions when the executor response reports filled or partial filled shares, or when an exit-triggered targeted cancel returns `not_canceled`, which may mean the resting order already filled.
-- Limit cancel-on-exit is limit-mode only for pending limit entries. Resting TP cancellation is targeted by order id before a non-TP taker exit to avoid duplicate sells.
+- Known pending limit-entry order ids are targeted-canceled on paper exit even when broad cancel-on-exit is off. Broad scoped cancellation remains limit-mode only. Resting TP cancellation is targeted by order id before a tracked-share taker exit to avoid duplicate sells.
 - Private keys must not be stored in browser state, localStorage, JSONL logs, or this repository.
 - V1 is a local playground feature for `npm run dev`, not production infrastructure.
 - Live mode is never restored automatically on page load. The UI may remember non-secret settings such as stake, but each session starts from Paper until the user explicitly selects Live again.
@@ -452,8 +452,9 @@ V1 failure behavior should be simple and explicit:
 
 Live exit is intentionally conservative:
 
-- Strategy Finder tracks a live position after an entry result is `matched` or `partial`. For limit entries, if an exit-triggered targeted cancel returns `not_canceled`, Strategy Finder promotes the pending limit submission into a provisional live position and submits the normal exit sell.
+- Strategy Finder tracks a live position after an entry result is `matched` or `partial`. For limit entries, paper exits first target-cancel known pending order ids even when broad cancel-on-exit is off; if that cancel returns `not_canceled`, Strategy Finder promotes the pending limit submission into a provisional live position and submits the normal exit sell.
 - When the matching paper trade emits `paper_exit`, Strategy Finder submits `action: "exit"` for the same `tokenId`.
+- A paper Polymarket TP does not by itself prove the resting live TP order filled. If a TP order is still tracked, Strategy Finder target-cancels that order first. A successful cancel clears the resting order and lets the taker exit retry sell the tracked shares; `not_canceled` is treated as the only local evidence that the resting TP may already have filled.
 - If the paper trade reaches an executable backtest exit but the exact Polymarket exit quote is missing, Strategy Finder still queues a live exit for the matching tracked live position and anchors the first exit floor to the latest same-event bid when available.
 - Exit requests sell the tracked remaining live shares; they do not buy the opposite outcome.
 - The exit floor is `min(paperExitPrice, liveEntryPrice) - EXECUTION_LAB_LIVE_EXIT_MAX_SLIPPAGE_CENTS`, clamped to at least `0.01`. This prevents a favorable live entry fill from making the exit floor impossible to reach.

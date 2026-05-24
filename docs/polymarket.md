@@ -201,9 +201,9 @@ Important behavior:
 - the Backtest Realism `Polymarket Entry Cutoff` toggle is applied before paper entries are accepted, so Execution Lab paper PnL and live eligibility use the same event-close cutoff when the toggle is enabled
 - UI or fallback `exchange_min` sizing allows live entries to auto-size to the minimum valid Polymarket order, still capped by the effective Strategy Finder cap and `MAX_ORDER_SIZE_USDC`
 - exit requests sell the tracked filled shares of the same token with `minPrice` floored by the configured exit slippage against the lower of paper exit price and actual live entry fill
-- Polymarket TP submits an immediate resting GTC sell-limit after a confirmed live entry fill. Polymarket SL and non-TP signal exits use the tracked-share taker exit request path.
+- Polymarket TP submits an immediate resting GTC sell-limit after a confirmed live entry fill. When the paper TP fires while that order is still tracked, Strategy Finder target-cancels the resting TP before using the tracked-share taker exit path; only a `not_canceled` response is treated as local evidence that the resting TP may already have filled.
 - posted or delayed limit entries remain pending until the executor reports matched/partial filled shares, or until an exit-triggered targeted cancel returns `not_canceled`; the latter is promoted to a provisional live position so the normal exit sell is attempted
-- limit cancel-on-exit targets known posted Strategy Finder order ids by default; broad account cancellation requires explicit scope configuration and is shown in UI status and JSONL logs
+- known posted Strategy Finder order ids are targeted-canceled on paper exit by default, even when broad cancel-on-exit is off; broad account cancellation requires explicit scope configuration and is shown in UI status and JSONL logs
 - if a paper exit is expected but the exact second-market exit quote is missing, a matching tracked live position still queues an exit using the latest same-event bid as the first floor reference when available
 - while the latest same-event bid is already below the exit floor, Strategy Finder records a local rejected exit attempt every one-second retry cooldown instead of silently hiding the loop
 - rejected or failed live exits can retry with fresh request ids; `delayed` and `posted_live` stop blind retries until reconciliation

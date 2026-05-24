@@ -9,6 +9,7 @@ import {
     writeSecondDataSyncState,
 } from "../lib/second-market/db";
 import { fetchBinance1sCandles, syncBinance1sRange } from "../lib/second-market/binance-1s-sync";
+import { getBinanceLiveWebSocketStreamName } from "../scripts/second-market-miner";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 let tempDirs: string[] = [];
@@ -28,6 +29,11 @@ afterEach(() => {
 });
 
 describe("second market Binance 1s sync", () => {
+    it("uses the trade websocket stream for futures live mining", () => {
+        expect(getBinanceLiveWebSocketStreamName("BTCUSDT", "futures")).to.equal("btcusdt@trade");
+        expect(getBinanceLiveWebSocketStreamName("BTCUSDT", "spot")).to.equal("btcusdt@aggTrade");
+    });
+
     it("builds futures 1s candles from aggregate trades", async () => {
         const requestedUrls: string[] = [];
         const progressEvents: Array<{ fetched: number; cursorTs: number; requestCount: number }> = [];

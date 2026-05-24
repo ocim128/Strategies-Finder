@@ -439,6 +439,37 @@ describe("Execution Lab live trade request", () => {
         }).ok).to.equal(false);
     });
 
+    it("allows targeted pending-order cancels even when broad cancel-on-exit is off", () => {
+        const request = {
+            action: "cancel_all",
+            requestId: "cancel-targeted-1",
+            sessionId: "session-1",
+            paperTradeId: "paper-1",
+            exitTriggerKey: "session-1|event|yes|paper-1|exit",
+            createdAtIso: "2026-01-01T00:00:01.000Z",
+            symbol: "BTCUSDT",
+            strategyKey: "test_strategy",
+            marketSlug: "btc-event",
+            conditionId: "condition",
+            tokenId: "yes-token",
+            orderIds: ["0xabc"],
+            scope: "session",
+            reason: "limit_exit_signal",
+            orderMode: "limit",
+        };
+
+        const valid = validateLiveCancelAllSubmitRequest(request, {
+            resolvedConfig: {
+                orderMode: "limit",
+                cancelScope: "account",
+                limitCancelAllOnExitEnabled: false,
+            },
+        });
+
+        expect(valid.ok).to.equal(true);
+        if (valid.ok) expect(valid.request.orderIds).to.deep.equal(["0xabc"]);
+    });
+
     it("requires executor responses to be structured and tied to the request id", () => {
         const request = buildLiveTradeSubmitRequest({
             snapshot: snapshot(),

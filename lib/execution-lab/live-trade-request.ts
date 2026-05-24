@@ -1178,15 +1178,19 @@ export function validateLiveCancelAllSubmitRequest(
     if (options.resolvedConfig?.orderMode && options.resolvedConfig.orderMode !== "limit") {
         return { ok: false, error: "resolved live config is not limit mode" };
     }
-    if (options.resolvedConfig && !options.resolvedConfig.limitCancelAllOnExitEnabled) {
+    const scope = isLiveCancelScope(value.scope) ? value.scope : "unknown";
+    const orderIds = Array.isArray(value.orderIds)
+        ? value.orderIds.map((item) => String(item).trim()).filter((item) => item.length > 0)
+        : undefined;
+    const isTargetedSessionCancel = scope === "session" && orderIds !== undefined && orderIds.length > 0;
+    if (options.resolvedConfig && !options.resolvedConfig.limitCancelAllOnExitEnabled && !isTargetedSessionCancel) {
         return { ok: false, error: "limit cancel-all-on-exit is disabled" };
     }
-    if (options.resolvedConfig?.cancelScope === "unknown") {
+    if (options.resolvedConfig?.cancelScope === "unknown" && !isTargetedSessionCancel) {
         return { ok: false, error: "cancel scope must be configured" };
     }
-    const scope = isLiveCancelScope(value.scope) ? value.scope : "unknown";
     if (scope === "unknown") return { ok: false, error: "cancel scope must be configured" };
-    if (options.resolvedConfig?.cancelScope && scope !== options.resolvedConfig.cancelScope) {
+    if (options.resolvedConfig?.cancelScope && !isTargetedSessionCancel && scope !== options.resolvedConfig.cancelScope) {
         return { ok: false, error: "cancel scope does not match resolved live config" };
     }
     if (value.reason !== "limit_exit_signal") return { ok: false, error: "cancel reason is invalid" };
@@ -1194,9 +1198,6 @@ export function validateLiveCancelAllSubmitRequest(
     const marketSlug = nonEmptyString(value.marketSlug);
     const conditionId = nonEmptyString(value.conditionId);
     const tokenId = nonEmptyString(value.tokenId);
-    const orderIds = Array.isArray(value.orderIds)
-        ? value.orderIds.map((item) => String(item).trim()).filter((item) => item.length > 0)
-        : undefined;
     if (scope === "session" && (!orderIds || orderIds.length === 0)) {
         return { ok: false, error: "session cancel requires orderIds" };
     }

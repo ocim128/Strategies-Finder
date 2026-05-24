@@ -2016,6 +2016,11 @@ export class ExecutionLabService {
         const liveConfig = this.activeLiveUiConfig();
         const liveStatus = this.currentLiveExecutorStatus();
         const hasPendingTakeProfitToCancel = exits.some((exit) => this.findPendingTakeProfitForExitTrigger(exit) !== null);
+        const hasTargetedPendingLimitToCancel = exits.some((exit) => {
+            const pending = this.findPendingLimitForExitTrigger(exit);
+            return Boolean(pending?.orderId);
+        });
+        const canUseConfiguredCancel = liveConfig.orderMode === "limit" && liveConfig.limitCancelAllOnExitEnabled;
         if (
             !snapshot
             || this.executionMode !== "live"
@@ -2023,12 +2028,15 @@ export class ExecutionLabService {
         ) {
             return [];
         }
-        if (!hasPendingTakeProfitToCancel && (liveConfig.orderMode !== "limit" || !liveConfig.limitCancelAllOnExitEnabled)) {
+        if (!hasPendingTakeProfitToCancel && !hasTargetedPendingLimitToCancel && !canUseConfiguredCancel) {
             return [];
         }
 
         const records: ExecutionLabRecord[] = [];
         for (const exit of exits) {
+            const pendingTakeProfit = this.findPendingTakeProfitForExitTrigger(exit);
+            const pendingLimit = this.findPendingLimitForExitTrigger(exit);
+            if (!pendingTakeProfit && !pendingLimit?.orderId && !canUseConfiguredCancel) continue;
             const request = this.buildLiveCancelAllRequest(exit, recordedAtIso);
             if (!request) continue;
             if (
@@ -2374,13 +2382,6 @@ export class ExecutionLabService {
     private queueLiveExit(exit: LiveExitTriggerRecord): void {
         const position = this.findLivePositionForExitTrigger(exit);
         if (!position || position.pendingExit) return;
-        if (
-            exit.recordType === "paper_exit"
-            && exit.exitReason === "polymarket_take_profit"
-            && this.resolvePendingTakeProfitFill(exit)
-        ) {
-            return;
-        }
         const plan = this.resolveLiveExitTriggerPlan(exit, position);
         if (!plan) return;
         position.pendingExit = plan;
@@ -2399,7 +2400,6 @@ export class ExecutionLabService {
     }
 
     private findPendingTakeProfitForExitTrigger(exit: LiveExitTriggerRecord): PendingTakeProfitSubmission | null {
-        if (exit.recordType === "paper_exit" && exit.exitReason === "polymarket_take_profit") return null;
         if (exit.tradeId) {
             const pending = this.pendingTakeProfitSubmissionByPaperTradeId.get(exit.tradeId);
             if (pending) return pending;
@@ -2409,15 +2409,6 @@ export class ExecutionLabService {
             pending.eventStartTs === exit.eventStartTs
             && pending.side === exit.side
         ) ?? null;
-    }
-
-    private resolvePendingTakeProfitFill(exit: PaperExitRecord): boolean {
-        const pending = this.pendingTakeProfitSubmissionByPaperTradeId.get(exit.tradeId);
-        if (!pending) return false;
-        this.pendingTakeProfitSubmissionByRequestId.delete(pending.requestId);
-        this.pendingTakeProfitSubmissionByPaperTradeId.delete(pending.paperTradeId);
-        this.liveOpenPositionByPaperTradeId.delete(pending.paperTradeId);
-        return true;
     }
 
     private buildCancelExitTriggerKey(exit: LiveExitTriggerRecord, pending: PendingRestingSubmission | null): string {

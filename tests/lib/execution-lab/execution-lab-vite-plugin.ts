@@ -1101,10 +1101,6 @@ export function executionLabVitePlugin(): Plugin {
                         sendJson(res, 400, { ok: false, error: "seriesId, event time, marketSlug, and yesTokenId are required." });
                         return;
                     }
-                    if (sampleTs < Math.floor(Date.now() / 1000) - 30) {
-                        sendJson(res, 409, { ok: false, error: "Historical CLOB quote requests must use stored second-market quotes." });
-                        return;
-                    }
                     const event = {
                         seriesId,
                         symbol,
@@ -1119,8 +1115,22 @@ export function executionLabVitePlugin(): Plugin {
                         noTokenId,
                     };
                     const storedQuote = loadStoredLiveQuote(event, sampleTs);
+                    const isHistoricalQuoteRequest = sampleTs < Math.floor(Date.now() / 1000) - 30;
+                    if (storedQuote && isHistoricalQuoteRequest) {
+                        sendJson(res, 200, { ok: true, source: "second_market_db", quote: storedQuote });
+                        return;
+                    }
                     if (storedQuote && isFreshStoredLiveQuote(storedQuote)) {
                         sendJson(res, 200, { ok: true, source: "second_market_db", quote: storedQuote });
+                        return;
+                    }
+                    if (isHistoricalQuoteRequest) {
+                        const recentStoredQuote = loadRecentStoredLiveQuote(event, sampleTs, RECENT_LOCAL_QUOTE_FALLBACK_SEC);
+                        if (recentStoredQuote) {
+                            sendJson(res, 200, { ok: true, source: "second_market_db_recent", quote: recentStoredQuote });
+                            return;
+                        }
+                        sendJson(res, 409, { ok: false, error: "Historical CLOB quote requests must use stored second-market quotes." });
                         return;
                     }
                     try {

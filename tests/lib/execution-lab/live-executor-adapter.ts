@@ -564,7 +564,10 @@ export async function submitLiveCancelAllToExecutor(
             reason: "order_mode_config_mismatch",
         });
     }
-    if (!config.limitCancelAllOnExitEnabled) {
+    const isTargetedSessionCancel = request.scope === "session"
+        && request.orderIds !== undefined
+        && request.orderIds.length > 0;
+    if (!config.limitCancelAllOnExitEnabled && !isTargetedSessionCancel) {
         return buildLiveCancelAllFailureResponse({
             requestId: request.requestId,
             scope: request.scope,
@@ -572,7 +575,7 @@ export async function submitLiveCancelAllToExecutor(
             reason: "limit_cancel_all_disabled",
         });
     }
-    if (request.scope === "unknown" || config.cancelScope === "unknown") {
+    if ((request.scope === "unknown" || config.cancelScope === "unknown") && !isTargetedSessionCancel) {
         return buildLiveCancelAllFailureResponse({
             requestId: request.requestId,
             scope: request.scope,
@@ -588,7 +591,7 @@ export async function submitLiveCancelAllToExecutor(
             reason: "session_cancel_missing_order_ids",
         });
     }
-    if (request.scope !== config.cancelScope) {
+    if (request.scope !== config.cancelScope && !isTargetedSessionCancel) {
         return buildLiveCancelAllFailureResponse({
             requestId: request.requestId,
             scope: request.scope,

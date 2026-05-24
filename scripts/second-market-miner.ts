@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import {
     loadSecondDataSyncState,
     openSecondMarketDb,
@@ -192,6 +193,14 @@ function normalizeLiveAggTrade(payload: unknown, symbols: ReadonlySet<SecondMark
         quantity,
         tradeCount,
     };
+}
+
+export function getBinanceLiveWebSocketStreamName(
+    symbol: SecondMarketSymbol,
+    marketType: "spot" | "futures"
+): string {
+    const streamType = marketType === "futures" ? "trade" : "aggTrade";
+    return `${symbol.toLowerCase()}@${streamType}`;
 }
 
 function addLiveAggTradeToBucket(buckets: Map<string, LiveCandleBucket>, trade: LiveAggTrade): void {
@@ -416,7 +425,9 @@ async function runLiveBinanceWebSocket(
     const baseUrl = config.marketType === "futures"
         ? "wss://fstream.binance.com/stream"
         : "wss://stream.binance.com:9443/stream";
-    const streams = config.symbols.map((symbol) => `${symbol.toLowerCase()}@aggTrade`).join("/");
+    const streams = config.symbols
+        .map((symbol) => getBinanceLiveWebSocketStreamName(symbol, config.marketType))
+        .join("/");
     const wsUrl = `${baseUrl}?streams=${streams}`;
     const symbolSet = new Set(config.symbols);
     const buckets = new Map<string, LiveCandleBucket>();
@@ -551,7 +562,7 @@ async function runLiveBinanceWebSocket(
             console.log(`[mine:1s] binance ws connected ${config.marketType} streams=${config.symbols.join(",")}`);
             flushInterval = setInterval(() => flushClosedCandles(nowSec() - 1), 1000);
             firstMessageTimer = setTimeout(() => {
-                fail(new Error("Binance live websocket opened but produced no aggTrade messages."));
+                fail(new Error("Binance live websocket opened but produced no trade messages."));
             }, 5_000);
         };
         ws.onmessage = (messageEvent) => {
@@ -932,7 +943,9 @@ async function main(): Promise<void> {
     await runLive(config, controller.signal);
 }
 
-void main().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    void main().catch((error) => {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
+    });
+}

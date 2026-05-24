@@ -468,6 +468,32 @@ describe("Execution Lab live executor adapter", () => {
         expect(response.canceledOrderIds).to.deep.equal(["0xabc"]);
     });
 
+    it("forwards targeted order-id cancels when broad cancel-on-exit is disabled", async () => {
+        const script = [
+            "let body='';",
+            "process.stdin.on('data', c => body += c);",
+            "process.stdin.on('end', () => {",
+            "const req = JSON.parse(body);",
+            "const aligned = req.action === 'cancel_all' && req.scope === 'session' && req.orderIds[0] === '0xabc';",
+            "console.log(JSON.stringify({ ok: true, requestId: req.requestId, status: aligned ? 'submitted' : 'failed', scope: req.scope, canceledOrderIds: req.orderIds, canceledCount: 1 }));",
+            "});",
+        ].join("");
+        const response = await submitLiveCancelAllToExecutor(targetedCancelRequest(), {
+            executorPath: process.execPath,
+            executorArgs: ["-e", script],
+            liveEnabled: false,
+            maxStakeUsd: 10,
+            orderMode: "limit",
+            limitCancelAllOnExitEnabled: false,
+            cancelScope: "account",
+            timeoutMs: 1000,
+        });
+
+        expect(response.status).to.equal("submitted");
+        expect(response.scope).to.equal("session");
+        expect(response.canceledOrderIds).to.deep.equal(["0xabc"]);
+    });
+
     it("rejects cancel-all requests without a concrete configured scope", async () => {
         const response = await submitLiveCancelAllToExecutor(cancelRequest(), {
             executorPath: process.execPath,
