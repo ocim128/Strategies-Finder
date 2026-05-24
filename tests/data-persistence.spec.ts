@@ -15,14 +15,24 @@ function candles(count: number): OHLCVData[] {
 }
 
 describe("non-Binance local data priority", () => {
-    it("prefers source priority over candle count", () => {
+    it("prefers the longest non-imported candidate so short live overlays do not hide seed history", () => {
         const best = selectBestNonBinanceLocalCandidate([
             { source: "seed", candles: candles(500) },
             { source: "cache", candles: candles(400) },
             { source: "sqlite", candles: candles(50) },
         ]);
 
-        assert.equal(best?.source, "sqlite");
+        assert.equal(best?.source, "seed");
+        assert.equal(best?.candles.length, 500);
+    });
+
+    it("keeps explicit imported data ahead of longer persisted candidates", () => {
+        const best = selectBestNonBinanceLocalCandidate([
+            { source: "seed", candles: candles(500) },
+            { source: "imported", candles: candles(50) },
+        ]);
+
+        assert.equal(best?.source, "imported");
         assert.equal(best?.candles.length, 50);
     });
 

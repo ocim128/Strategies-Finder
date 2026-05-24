@@ -35,6 +35,11 @@ export function selectBestNonBinanceLocalCandidate(
 ): NonBinanceLocalCandidate | null {
     if (candidates.length === 0) return null;
     const sorted = [...candidates].sort((a, b) => {
+        if (a.source !== 'imported' && b.source !== 'imported') {
+            const lengthDelta = b.candles.length - a.candles.length;
+            if (lengthDelta !== 0) return lengthDelta;
+        }
+
         const priorityDelta = NON_BINANCE_LOCAL_SOURCE_PRIORITY[b.source] - NON_BINANCE_LOCAL_SOURCE_PRIORITY[a.source];
         if (priorityDelta !== 0) return priorityDelta;
         return b.candles.length - a.candles.length;

@@ -12,6 +12,7 @@ import {
     fetchBinanceDataWithLimit,
 } from "../dataProviders/binance";
 import {
+    BybitTradFiUnsupportedSymbolError,
     fetchBybitTradFiData,
     fetchBybitTradFiDataWithLimit,
 } from "../dataProviders/bybit";
@@ -702,6 +703,15 @@ export class DataFetcher {
             }
 
             const localSourceMeta = this.describeLocalSource(localNonBinance.source);
+            if (seededWithLatest.unsupported) {
+                this.reporter.updateSymbolDataSource?.(
+                    localSourceMeta.label,
+                    'seed',
+                    `${localSourceMeta.title} Bybit TradFi does not support this symbol.`
+                );
+                return sliceCandlesToLookback(seededWithLatest.candles, lookbackBars);
+            }
+
             this.reporter.updateSymbolDataSource?.(
                 localSourceMeta.label,
                 localNonBinance.source === 'seed' ? 'warning' : 'seed',
@@ -938,7 +948,7 @@ export class DataFetcher {
         seedData: OHLCVData[],
         signal?: AbortSignal,
         options?: ResampleOptions
-    ): Promise<{ candles: OHLCVData[]; liveRefreshed: boolean; refreshedCandles: OHLCVData[] }> {
+    ): Promise<{ candles: OHLCVData[]; liveRefreshed: boolean; refreshedCandles: OHLCVData[]; unsupported?: boolean }> {
         try {
             const overlayBars = this.getBybitSeedOverlayBars(interval, seedData);
             const recent = await fetchBybitTradFiDataWithLimit(symbol, interval, overlayBars, {
@@ -955,6 +965,10 @@ export class DataFetcher {
                 refreshedCandles: recent,
             };
         } catch (error) {
+            if (error instanceof BybitTradFiUnsupportedSymbolError) {
+                debugLogger.info('data.bybit_tradfi.seed_overlay_unsupported', { symbol, interval });
+                return { candles: seedData, liveRefreshed: false, refreshedCandles: [], unsupported: true };
+            }
             debugLogger.warn('data.bybit_tradfi.seed_overlay_failed', {
                 symbol,
                 interval,

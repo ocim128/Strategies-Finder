@@ -16,7 +16,9 @@ import {
     startBinanceStream
 } from "./dataProviders/binance";
 import {
-    fetchBybitTradFiLatest
+    BybitTradFiUnsupportedSymbolError,
+    fetchBybitTradFiLatest,
+    isBybitTradFiSymbolKnownUnsupported,
 } from "./dataProviders/bybit";
 import {
     isMockSymbol
@@ -242,6 +244,10 @@ export class DataManager {
         }
         if (provider === 'local-daily') {
             debugLogger.info('data.stream.skip_local_daily', { symbol, interval });
+            return;
+        }
+        if (provider === 'bybit-tradfi' && isBybitTradFiSymbolKnownUnsupported(symbol)) {
+            debugLogger.info('data.stream.skip_bybit_tradfi_unsupported', { symbol, interval });
             return;
         }
         if (isBinanceDataProvider(provider) && !isBinanceInterval(interval)) {
@@ -535,7 +541,13 @@ export class DataManager {
             }
         } catch (error) {
             debugLogger.warn('data.stream.poll_error', { error: String(error) });
-            if (provider === 'bybit-tradfi') {
+            if (provider === 'bybit-tradfi' && error instanceof BybitTradFiUnsupportedSymbolError) {
+                uiManager.updateSymbolDataSource(
+                    'Bybit unsupported',
+                    'warning',
+                    'Bybit TradFi does not support this symbol. The chart is showing local data.'
+                );
+            } else if (provider === 'bybit-tradfi') {
                 uiManager.updateSymbolDataSource(
                     'Bybit refresh failed',
                     'warning',

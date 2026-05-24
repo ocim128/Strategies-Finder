@@ -25,6 +25,33 @@ const BYBIT_TRADFI_INTERVALS = new Set([
 
 // State for symbol resolution optimization
 const bybitTradFiSymbolOverride = new Map<string, string>();
+const unsupportedBybitTradFiSymbols = new Set<string>();
+
+export class BybitTradFiUnsupportedSymbolError extends Error {
+    constructor(public readonly symbol: string) {
+        super(`Bybit TradFi symbol is invalid: ${symbol}`);
+        this.name = "BybitTradFiUnsupportedSymbolError";
+    }
+}
+
+function markBybitTradFiSymbolUnsupported(symbol: string): void {
+    const normalized = symbol.trim().toUpperCase();
+    if (!normalized) return;
+    unsupportedBybitTradFiSymbols.add(normalized);
+    unsupportedBybitTradFiSymbols.add(getBybitTradFiSymbolKey(normalized));
+}
+
+export function isBybitTradFiSymbolKnownUnsupported(symbol: string): boolean {
+    const normalized = symbol.trim().toUpperCase();
+    if (!normalized) return false;
+    return unsupportedBybitTradFiSymbols.has(normalized)
+        || unsupportedBybitTradFiSymbols.has(getBybitTradFiSymbolKey(normalized));
+}
+
+export function resetBybitTradFiSymbolSupportForTests(): void {
+    bybitTradFiSymbolOverride.clear();
+    unsupportedBybitTradFiSymbols.clear();
+}
 
 function getBybitTradFiSymbolKey(symbol: string): string {
     return symbol.trim().toUpperCase().replace(/(\.S|\+)$/i, '');
@@ -172,6 +199,10 @@ async function fetchBybitTradFiBatch(
     to?: number,
     signal?: AbortSignal
 ): Promise<BybitTradFiKline[]> {
+    if (isBybitTradFiSymbolKnownUnsupported(symbol)) {
+        throw new BybitTradFiUnsupportedSymbolError(symbol);
+    }
+
     const intervalValue = mapToBybitTradFiInterval(interval);
     const intervalMs = Math.max(60_000, getIntervalSeconds(interval) * 1000);
     const effectiveTo = Number.isFinite(to)
@@ -222,14 +253,15 @@ async function fetchBybitTradFiBatch(
         }
 
         // Invalid symbol on one alias -> try next candidate alias.
-        if (retCode === 10001 && resolvedSymbols.length > 1) {
+        if (retCode === 10001) {
             continue;
         }
 
         throw new Error(retMsg || `Bybit TradFi API error (${retCode})`);
     }
 
-    throw new Error(`Bybit TradFi symbol is invalid: ${symbol}`);
+    markBybitTradFiSymbolUnsupported(symbol);
+    throw new BybitTradFiUnsupportedSymbolError(symbol);
 }
 
 export async function fetchBybitTradFiData(
@@ -266,6 +298,9 @@ export async function fetchBybitTradFiData(
         return needsResample ? resampleOHLCV(mapped, interval, options) : mapped;
     } catch (error) {
         if (isAbortError(error)) {
+            return [];
+        }
+        if (error instanceof BybitTradFiUnsupportedSymbolError) {
             return [];
         }
         debugLogger.error('data.bybit_tradfi.error', {
@@ -330,6 +365,9 @@ export async function fetchBybitTradFiDataWithLimit(
     } catch (error) {
         if (isAbortError(error)) {
             return [];
+        }
+        if (error instanceof BybitTradFiUnsupportedSymbolError) {
+            throw error;
         }
         debugLogger.error('data.bybit_tradfi.historical_error', {
             symbol,

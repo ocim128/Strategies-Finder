@@ -3,12 +3,17 @@ import assert from "node:assert/strict";
 
 import { DataCache } from "../lib/data/data-cache";
 import { DataFetcher, type DataLoadReporter } from "../lib/data/data-fetcher";
+import {
+    isBybitTradFiSymbolKnownUnsupported,
+    resetBybitTradFiSymbolSupportForTests,
+} from "../lib/dataProviders/bybit";
 import type { OHLCVData } from "../lib/types/strategies";
 
 const originalFetch = globalThis.fetch;
 
 afterEach(() => {
     globalThis.fetch = originalFetch;
+    resetBybitTradFiSymbolSupportForTests();
 });
 
 function makeCandles(count: number): OHLCVData[] {
@@ -84,6 +89,50 @@ describe("DataFetcher chart lookback", () => {
         const trimmed = await fetcher.fetchData("ETHUSDT", "1m");
         assert.equal(trimmed.length, 300);
         assert.deepEqual(trimmed, candles.slice(-300));
+    });
+
+    it("keeps local daily seed data when Bybit rejects every symbol alias", async () => {
+        const candles = makeCandles(500);
+        let requestCount = 0;
+        let sourceLabel = "";
+        let sourceTone = "";
+
+        globalThis.fetch = async () => {
+            requestCount += 1;
+            return new Response(JSON.stringify({
+                ret_code: 10001,
+                ret_msg: "invalid symbol",
+                result: { list: [] },
+            }), { status: 200, headers: { "content-type": "application/json" } });
+        };
+
+        const fetcher = new DataFetcher(
+            {
+                getProvider: () => "bybit-tradfi",
+                getStorageSymbol: (symbol: string) => symbol,
+                getProviderStorageLabel: () => "Bybit TradFi",
+            } as any,
+            new DataCache(),
+            {
+                loadNonBinanceLocalData: async () => ({ candles, source: "seed" }),
+            } as any,
+            () => new Map<string, OHLCVData[]>(),
+            () => null,
+            {
+                updateSymbolDataSource: (label, tone) => {
+                    sourceLabel = label;
+                    sourceTone = tone;
+                },
+            }
+        );
+
+        const data = await fetcher.fetchData("NOPESTOCK", "1d");
+
+        assert.deepEqual(data, candles);
+        assert.equal(sourceLabel, "Local seed");
+        assert.equal(sourceTone, "seed");
+        assert.equal(isBybitTradFiSymbolKnownUnsupported("NOPESTOCK"), true);
+        assert.equal(requestCount > 0, true);
     });
 
     it("loads supported 1s charts from the second-market SQLite endpoint", async () => {
