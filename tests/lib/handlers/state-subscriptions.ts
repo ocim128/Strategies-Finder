@@ -13,7 +13,11 @@ import { clearAll } from "../app-actions";
 import { formatPolymarketDisplayName } from "../dataProviders/polymarket";
 import { livePositionsService } from "../live-positions-service";
 import { isBinanceDataProvider } from "../binance-market";
-import { SIGNAL_EXIT_SUPPORTED_RANK_MODES, isPolymarketOneSecondSignalExitExecutionModel } from "../polymarket-exit-mode";
+import {
+    SAME_EVENT_SUPPORTED_RANK_MODES,
+    isPolymarketOneSecondSignalExitExecutionModel,
+    isSameEventPolymarketExitMode,
+} from "../polymarket-exit-mode";
 import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
 import { activateLazyFeature } from "../lazy-feature-init";
 import {
@@ -54,10 +58,10 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
     const supportsSignalExit = interval === '1m'
         ? polymarketSettings.executionModel === 'next_open'
         : isOneSecondInterval && isPolymarketOneSecondSignalExitExecutionModel(polymarketSettings.executionModel);
-    const isSignalExit = supportsSignalExit
-        && polymarketSettings.exitMode === 'signal_exit_same_event';
+    const isSameEventExit = supportsSignalExit
+        && isSameEventPolymarketExitMode(polymarketSettings.exitMode);
     const usesActualEntryMinute = polymarketSettings.entrySelectionMode === 'actual_entry_minute';
-    const showsEntryBridgeControls = interval === '1m' && isNative5mSession && annotationEnabled && !isSignalExit;
+    const showsEntryBridgeControls = interval === '1m' && isNative5mSession && annotationEnabled && !isSameEventExit;
 
     const visibilityRules: Array<[HTMLElement | null, boolean]> = [
         [rows.outcomeIntervalRow, annotationEnabled],
@@ -69,7 +73,7 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
         [rows.protectionTakeProfitRow, annotationEnabled && isOneSecondInterval],
         [rows.protectionStopLossRow, annotationEnabled && isOneSecondInterval],
         [rows.exitModeRow, annotationEnabled],
-        [rows.signalExitAllowMultipleTradesPerEventRow, annotationEnabled && isSignalExit],
+        [rows.signalExitAllowMultipleTradesPerEventRow, annotationEnabled && isSameEventExit],
         [rows.postSignalLimitEntryEnabledRow, supportsLimitEntry],
         [rows.postSignalLimitEntryModeRow, limitEntryEnabled],
         [rows.postSignalLimitEntryPriceCentsRow, limitEntryEnabled && usesFixedLimitEntry],
@@ -91,6 +95,9 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
     const signalExitOption = exitModeSelect
         ? Array.from(exitModeSelect.options).find((option) => option.value === 'signal_exit_same_event')
         : undefined;
+    const chartExitOption = exitModeSelect
+        ? Array.from(exitModeSelect.options).find((option) => option.value === 'chart_exit_same_event')
+        : undefined;
     if (resolveHoldOption) {
         resolveHoldOption.disabled = false;
         resolveHoldOption.hidden = false;
@@ -98,8 +105,11 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
     if (signalExitOption) {
         signalExitOption.disabled = !supportsSignalExit;
     }
+    if (chartExitOption) {
+        chartExitOption.disabled = !supportsSignalExit;
+    }
     if (exitModeSelect) {
-        if (exitModeSelect.value === 'signal_exit_same_event' && !supportsSignalExit) {
+        if (isSameEventPolymarketExitMode(exitModeSelect.value as any) && !supportsSignalExit) {
             exitModeSelect.value = 'resolve_hold';
         }
     }
@@ -107,7 +117,7 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
 }
 
 function updateFinderRankModeOptions(): void {
-    const isSignalExit = resolvePolymarketDomSettings().exitMode === 'signal_exit_same_event';
+    const isSameEventExit = isSameEventPolymarketExitMode(resolvePolymarketDomSettings().exitMode);
     const isOneSecondChart = state.currentInterval === "1s";
 
     const select = getFinderPolymarketRankModeSelect();
@@ -116,13 +126,13 @@ function updateFinderRankModeOptions(): void {
     }
 
     for (const option of Array.from(select.options)) {
-        if (!isSignalExit || isOneSecondChart) {
+        if (!isSameEventExit || isOneSecondChart) {
             option.disabled = false;
             continue;
         }
-        option.disabled = !SIGNAL_EXIT_SUPPORTED_RANK_MODES.has(option.value as any);
+        option.disabled = !SAME_EVENT_SUPPORTED_RANK_MODES.has(option.value as any);
     }
-    if (isSignalExit && select.selectedOptions[0]?.disabled) {
+    if (isSameEventExit && select.selectedOptions[0]?.disabled) {
         const firstValid = Array.from(select.options).find(o => !o.disabled);
         if (firstValid) select.value = firstValid.value;
     }
@@ -347,7 +357,7 @@ export function setupStateSubscriptions() {
 
         if (
             state.currentBacktestResultSource !== 'backtest'
-            || state.currentBacktestResult.polymarketTradeSummary?.evaluationMode !== 'signal_exit_same_event'
+            || !isSameEventPolymarketExitMode(state.currentBacktestResult.polymarketTradeSummary?.evaluationMode)
         ) {
             return;
         }

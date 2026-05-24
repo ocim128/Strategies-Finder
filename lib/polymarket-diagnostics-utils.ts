@@ -1,6 +1,7 @@
 import type { BacktestPolymarketTradeSummary } from "./types/polymarket-outcomes";
 import type { BacktestResult, ExpectancyBreakdownRow, Trade } from "./types/strategies";
 import type { PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
+import { isSameEventPolymarketExitMode } from "./polymarket-exit-mode";
 
 interface PolymarketFeatureAnalysis {
     feature: string;
@@ -146,7 +147,7 @@ function getPolymarketTradePayout(trade: Trade): number | null {
         return pm.marketPnl;
     }
 
-    if (pm.evaluationMode === "signal_exit_same_event") {
+    if (isSameEventPolymarketExitMode(pm.evaluationMode)) {
         if (
             typeof pm.marketExitPrice === "number" && Number.isFinite(pm.marketExitPrice)
             && typeof pm.marketEntryPrice === "number" && Number.isFinite(pm.marketEntryPrice)
@@ -322,18 +323,18 @@ export function buildBacktestPolymarketPerformanceSummary(
     result: BacktestResult
 ): BacktestPolymarketPerformanceSummary | undefined {
     const summary = result.polymarketTradeSummary;
-    const isSignalExit = summary?.evaluationMode === "signal_exit_same_event";
+    const isSameEventExit = isSameEventPolymarketExitMode(summary?.evaluationMode);
 
-    const wins = isSignalExit
+    const wins = isSameEventExit
         ? (summary?.profitableTrades ?? result.trades.filter((trade) => trade.polymarketOutcome?.isProfitable === true).length)
         : result.trades.filter((trade) => trade.polymarketOutcome?.isWin === true).length;
-    const losses = isSignalExit
+    const losses = isSameEventExit
         ? (summary?.losingTrades ?? result.trades.filter((trade) => trade.polymarketOutcome?.isProfitable === false).length)
         : result.trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
-    const neutralTrades = isSignalExit
+    const neutralTrades = isSameEventExit
         ? (summary?.neutralTrades ?? result.trades.filter((trade) => getPolymarketTradeOutcomeState(trade) === "neutral").length)
         : 0;
-    const scoredTrades = isSignalExit ? (summary?.scoredTrades ?? wins + losses + neutralTrades) : wins + losses;
+    const scoredTrades = isSameEventExit ? (summary?.scoredTrades ?? wins + losses + neutralTrades) : wins + losses;
 
     if (!summary && scoredTrades === 0) {
         return undefined;
@@ -341,7 +342,7 @@ export function buildBacktestPolymarketPerformanceSummary(
 
     const payoutSummary = summarizePolymarketPayoutDiagnostics(result.trades);
     const streakSummary = summarizePolymarketStreaks(result.trades);
-    const bestBaselineWinRate = isSignalExit ? 0 : computePolymarketBestBaselineWinRate(result.trades);
+    const bestBaselineWinRate = isSameEventExit ? 0 : computePolymarketBestBaselineWinRate(result.trades);
     const coverageSummary = resolvePolymarketCoverageSummary(result, summary, scoredTrades);
 
     const performance: BacktestPolymarketPerformanceSummary = {
@@ -353,17 +354,17 @@ export function buildBacktestPolymarketPerformanceSummary(
         missingOutcomeTrades: coverageSummary.missingOutcomeTrades,
         scoredTradeShare: coverageSummary.scoredTradeShare,
         polymarketWinRate: scoredTrades > 0 ? wins / scoredTrades : 0,
-        polymarketExpectancy: isSignalExit
+        polymarketExpectancy: isSameEventExit
             ? (summary?.expectancy ?? payoutSummary?.expectancy ?? null)
             : payoutSummary?.expectancy ?? null,
-        polymarketProfitFactor: isSignalExit
+        polymarketProfitFactor: isSameEventExit
             ? (summary?.profitFactor ?? payoutSummary?.profitFactor ?? null)
             : payoutSummary?.profitFactor ?? null,
         pricedTrades: payoutSummary?.pricedTrades ?? 0,
         unpricedScoredTrades: payoutSummary?.unpricedScoredTrades ?? 0,
         outcomeRowsLoaded: summary?.outcomeRowsLoaded ?? countDistinctPolymarketOutcomeRows(result.trades),
         bestBaselineWinRate,
-        baselineDelta: isSignalExit ? 0 : (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
+        baselineDelta: isSameEventExit ? 0 : (scoredTrades > 0 ? wins / scoredTrades : 0) - bestBaselineWinRate,
         longestWinStreak: streakSummary.longestWinStreak,
         longestLossStreak: streakSummary.longestLossStreak,
         entryOffset: summary?.entryOffset,

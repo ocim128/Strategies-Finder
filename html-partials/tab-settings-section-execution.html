@@ -195,8 +195,9 @@
                     <select class="param-input" id="polymarketExitMode">
                         <option value="resolve_hold" selected>Resolve Hold (score at final outcome)</option>
                         <option value="signal_exit_same_event">Signal Exit Same Event (exit on chart sell signal)</option>
+                        <option value="chart_exit_same_event">Chart Exit Same Event (exit on chart trade close)</option>
                     </select>
-                    <div class="param-hint">Signal Exit mode uses chart strategy timing for entry/exit inside the same 5m Polymarket event. Requires 1m chart, native 5m session, and next_open execution.</div>
+                    <div class="param-hint">Same-event modes use chart timing and cached Polymarket quotes inside the mapped event. Signal Exit only uses chart signal exits; Chart Exit uses the chart trade close.</div>
                 </div>
             </div>
             <div class="param-row" id="polymarketSignalExitAllowMultipleTradesPerEventRow" style="display: none;">
@@ -208,7 +209,7 @@
                             <span class="section-toggle-track"></span>
                         </label>
                     </div>
-                    <div class="param-hint">When Signal Exit mode is active, score every eligible chart trade in the same Polymarket event instead of marking later trades as duplicates.</div>
+                    <div class="param-hint">When a same-event exit mode is active, score every eligible chart trade in the same Polymarket event instead of marking later trades as duplicates.</div>
                 </div>
             </div>
             <div class="param-row" id="polymarketPostSignalLimitEntryEnabledRow" style="display: none;">

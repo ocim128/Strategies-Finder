@@ -5,6 +5,7 @@ import { clampPolymarketEntryDelayBars } from "./polymarket-entry-delay";
 import { clampPolymarketEntryPriceFilterCents } from "./polymarket-entry-price-filter";
 import { clampPolymarketBacktestSlippageCents } from "./polymarket-backtest-slippage";
 import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
+import { resolvePolymarketExitMode, type PolymarketExitMode } from "./polymarket-exit-mode";
 import {
     DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_ENABLED,
     DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_MODE,
@@ -40,7 +41,7 @@ export interface PolymarketDomSettings {
     backtestSlippageCents: number;
     entryCutoffEnabled: boolean;
     entryCutoffSeconds: number;
-    exitMode: "resolve_hold" | "signal_exit_same_event" | undefined;
+    exitMode: PolymarketExitMode | undefined;
     signalExitAllowMultipleTradesPerEvent: boolean;
     postSignalLimitEntryEnabled: boolean;
     postSignalLimitEntryMode: PolymarketLimitEntryPriceMode;
@@ -122,9 +123,7 @@ export function resolvePolymarketDomSettings(doc: Document = document): Polymark
         entryCutoffSeconds: clampPolymarketEntryCutoffSeconds(
             entryCutoffInput?.value ?? DEFAULT_POLYMARKET_ENTRY_CUTOFF_SECONDS
         ),
-        exitMode: exitModeSelect
-            ? (exitModeSelect.value === "signal_exit_same_event" ? "signal_exit_same_event" : "resolve_hold")
-            : undefined,
+        exitMode: exitModeSelect ? resolvePolymarketExitMode(exitModeSelect.value) : undefined,
         signalExitAllowMultipleTradesPerEvent: signalExitAllowMultipleTradesToggle?.checked === true,
         postSignalLimitEntryEnabled: limitEntryToggle
             ? limitEntryToggle.checked

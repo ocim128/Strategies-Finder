@@ -10,7 +10,7 @@ import { state } from "./state";
 import type { BacktestResult } from "./types/strategies";
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 import { debugLogger } from "./debug-logger";
-import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "./polymarket-exit-mode";
+import { resolveEffectivePolymarketExitMode, isSameEventPolymarketExitMode, type PolymarketExitMode } from "./polymarket-exit-mode";
 import {
     isActualPolymarketEntryMinuteMode,
     resolvePolymarketEntrySelectionModeForDisplay,
@@ -39,7 +39,7 @@ export interface PolymarketOutcomeLoaderDeps {
     readCurrentPolymarketEntryCutoffEnabled: () => boolean;
     readCurrentPolymarketEntryCutoffSeconds: () => number;
     readCurrentPolymarketEntrySelectionMode: () => PolymarketEntrySelectionMode;
-    readCurrentPolymarketExitMode: () => "resolve_hold" | "signal_exit_same_event" | undefined;
+    readCurrentPolymarketExitMode: () => PolymarketExitMode | undefined;
     readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent: () => boolean;
     readCurrentPolymarketOutcomeSymbol: () => string | null;
     readCurrentPolymarketOutcomeInterval: () => PolymarketOutcomeInterval;
@@ -174,11 +174,11 @@ export class PolymarketOutcomeLoader {
                 exitOffsetCents: existingSummary.limitExitOffsetCents,
             }
             : undefined;
-        const allowMultipleTradesPerEvent = existingSummary?.evaluationMode === "signal_exit_same_event"
+        const allowMultipleTradesPerEvent = existingSummary && isSameEventPolymarketExitMode(existingSummary.evaluationMode)
             ? existingSummary.signalExitAllowMultipleTradesPerEvent === true
             : this.deps.readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent();
 
-        if (isSignalExitSameEventMode(effectiveExitMode) && resultContext.interval === "1m") {
+        if (isSameEventPolymarketExitMode(effectiveExitMode) && resultContext.interval === "1m") {
             const targetTimes = result.trades
                 .map((trade) => parseTimeToUnixSeconds(trade.entryTime))
                 .filter((value): value is number => value !== null);
@@ -206,12 +206,13 @@ export class PolymarketOutcomeLoader {
                         entryCutoffEnabled: this.deps.readCurrentPolymarketEntryCutoffEnabled(),
                         entryCutoffSeconds: this.deps.readCurrentPolymarketEntryCutoffSeconds(),
                         limitEntry,
+                        evaluationMode: effectiveExitMode,
                     });
                     const exitResultMap = new Map(exitResults.map((r) => [r.trade, r]));
                     const annotatedTrades = result.trades.map((trade) => {
                         const exitResult = exitResultMap.get(trade);
                         if (!exitResult) return { ...trade, polymarketOutcome: null };
-                        return { ...trade, polymarketOutcome: buildTradeAnnotationFromSignalExitResult(exitResult) };
+                        return { ...trade, polymarketOutcome: buildTradeAnnotationFromSignalExitResult(exitResult, effectiveExitMode) };
                     });
                     return {
                         ...result,
@@ -222,6 +223,7 @@ export class PolymarketOutcomeLoader {
                             outcomeInterval,
                             outcomeRowsLoaded: outcomes.length,
                             summary: exitSummary,
+                            evaluationMode: effectiveExitMode,
                         }),
                     };
                 } catch (error) {
@@ -354,7 +356,7 @@ export class PolymarketOutcomeLoader {
         const executionModel = result.polymarketTradeSummary?.evaluationMode
             ? "stored"
             : (this.deps.readCurrentExecutionModel() ?? "na");
-        const allowMultipleTradesPerEvent = result.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event"
+        const allowMultipleTradesPerEvent = result.polymarketTradeSummary && isSameEventPolymarketExitMode(result.polymarketTradeSummary.evaluationMode)
             ? result.polymarketTradeSummary.signalExitAllowMultipleTradesPerEvent === true
             : this.deps.readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent();
         return [

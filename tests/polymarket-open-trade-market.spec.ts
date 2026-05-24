@@ -4,6 +4,7 @@ import { TradesRenderer } from "../lib/renderers/tradesRenderer";
 import { state } from "../lib/state";
 import { buildAlertStreamId } from "../lib/alert-service";
 import { livePositionsService } from "../lib/live-positions-service";
+import type { PolymarketExitMode } from "../lib/polymarket-exit-mode";
 import type { BacktestResult, Trade } from "../lib/types/strategies";
 
 const PREVIOUS_STATE = {
@@ -33,7 +34,10 @@ function makeTrade(id: number, exitReason: Trade["exitReason"] = "end_of_data"):
     };
 }
 
-function makeBacktestResult(trades: Trade[]): BacktestResult {
+function makeBacktestResult(
+    trades: Trade[],
+    evaluationMode: PolymarketExitMode = "signal_exit_same_event"
+): BacktestResult {
     return {
         trades,
         netProfit: trades.reduce((sum, trade) => sum + trade.pnl, 0),
@@ -56,7 +60,7 @@ function makeBacktestResult(trades: Trade[]): BacktestResult {
             outcomeRowsLoaded: 0,
             scoredTrades: 0,
             missingOutcomeTrades: 0,
-            evaluationMode: "signal_exit_same_event",
+            evaluationMode,
         },
         marketContext: {
             symbol: "BTCUSDT",
@@ -130,6 +134,51 @@ describe("Current-bucket unresolved Polymarket badges", () => {
         state.currentInterval = "1m";
         state.currentStrategyKey = "ema_cross";
         state.currentBacktestResult = makeBacktestResult([latestOpenTrade]);
+        state.currentBacktestResultSource = "backtest";
+        state.ohlcvData = [
+            {
+                time: 1_699_999_999,
+                open: 1,
+                high: 1,
+                low: 1,
+                close: 1,
+                volume: 1,
+            },
+        ];
+        seedWorkerBackedOpenPosition(latestOpenTrade);
+
+        const renderer = new TradesRenderer() as unknown as {
+            renderTradeItem: (trade: Trade, formatPrice: (price: number) => string, formatDate: (time: Trade["entryTime"]) => string) => string;
+        };
+        const html = renderer.renderTradeItem(
+            latestOpenTrade,
+            (price) => price.toFixed(2),
+            (time) => String(time)
+        );
+
+        expect(html).to.include("Poly open");
+        expect(html).to.not.include("Poly no event");
+    });
+
+    it("renders Poly open for chart-exit same-event runs when worker state confirms the trade is still open", () => {
+        const latestOpenTrade = {
+            ...makeTrade(1, "end_of_data"),
+            polymarketOutcome: {
+                eventStartTs: 0,
+                eventEndTs: 0,
+                eventSlug: "",
+                marketSlug: "",
+                prediction: "yes" as const,
+                actualOutcomeUp: 0 as const,
+                isWin: null,
+                evaluationMode: "chart_exit_same_event" as const,
+                marketExitSource: "no_event" as const,
+            },
+        };
+        state.currentSymbol = "BTCUSDT";
+        state.currentInterval = "1m";
+        state.currentStrategyKey = "ema_cross";
+        state.currentBacktestResult = makeBacktestResult([latestOpenTrade], "chart_exit_same_event");
         state.currentBacktestResultSource = "backtest";
         state.ohlcvData = [
             {

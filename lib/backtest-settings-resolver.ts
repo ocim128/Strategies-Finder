@@ -23,6 +23,7 @@ import {
 } from "./polymarket-entry-delay";
 import { clampPolymarketEntryPriceFilterCents } from "./polymarket-entry-price-filter";
 import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
+import { resolvePolymarketExitMode } from "./polymarket-exit-mode";
 import {
     DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_ENABLED,
     DEFAULT_POLYMARKET_POST_SIGNAL_LIMIT_ENTRY_MODE,
@@ -762,10 +763,10 @@ export function resolveBacktestSettingsFromRaw(
         polymarketBacktestSlippageCents: numericSettings.polymarketBacktestSlippageCents,
         polymarketEntryCutoffEnabled: booleanSettings.polymarketEntryCutoffEnabled,
         polymarketEntryCutoffSeconds: numericSettings.polymarketEntryCutoffSeconds,
-        polymarketExitMode: typeof raw["polymarketExitMode"] === "string"
-            && raw["polymarketExitMode"].trim().toLowerCase() === "signal_exit_same_event"
-            ? "signal_exit_same_event"
-            : EFFECTIVE_BACKTEST_DEFAULTS.polymarketExitMode,
+        polymarketExitMode: resolvePolymarketExitMode(
+            raw["polymarketExitMode"],
+            EFFECTIVE_BACKTEST_DEFAULTS.polymarketExitMode
+        ),
         polymarketSignalExitAllowMultipleTradesPerEvent: readBoolean(
             raw,
             "polymarketSignalExitAllowMultipleTradesPerEvent",

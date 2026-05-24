@@ -61,6 +61,7 @@ describe('Backtest settings compatibility', () => {
         expect(contract).to.not.equal(undefined);
         expect(coerceBacktestDomSettingValue(contract!, 'signal_exit_same_event')).to.equal('signal_exit_same_event');
         expect(coerceBacktestDomSettingValue(contract!, 'SIGNAL_EXIT_SAME_EVENT')).to.equal('signal_exit_same_event');
+        expect(coerceBacktestDomSettingValue(contract!, 'CHART_EXIT_SAME_EVENT')).to.equal('chart_exit_same_event');
         expect(coerceBacktestDomSettingValue(contract!, 'resolve_hold')).to.equal('resolve_hold');
     });
 

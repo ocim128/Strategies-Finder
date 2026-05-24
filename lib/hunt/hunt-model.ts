@@ -6,7 +6,12 @@ import {
 } from "../settings-model";
 import type { CapitalSettings } from "../types/backtest";
 import type { FinderMetric, FinderResult, PolymarketFinderRankMode } from "../types/finder";
-import { SIGNAL_EXIT_SUPPORTED_RANK_MODES, type PolymarketExitMode } from "../polymarket-exit-mode";
+import {
+    SAME_EVENT_SUPPORTED_RANK_MODES,
+    isSameEventPolymarketExitMode,
+    resolvePolymarketExitMode,
+    type PolymarketExitMode,
+} from "../polymarket-exit-mode";
 import type { StrategyParams } from "../types/strategies";
 import { stableStringify } from "../json-utils";
 
@@ -126,10 +131,10 @@ export function normalizeHuntPolymarketRankMode(
     rankMode: PolymarketFinderRankMode,
     exitMode: PolymarketExitMode
 ): PolymarketFinderRankMode {
-    if (exitMode !== "signal_exit_same_event") {
+    if (!isSameEventPolymarketExitMode(exitMode)) {
         return rankMode;
     }
-    return SIGNAL_EXIT_SUPPORTED_RANK_MODES.has(rankMode as any) ? rankMode : "expectancy";
+    return SAME_EVENT_SUPPORTED_RANK_MODES.has(rankMode as any) ? rankMode : "expectancy";
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -332,10 +337,7 @@ export function normalizeStoredHuntRunSettings(raw: unknown): HuntRunSettings {
             ? polymarketRankMode
             : DEFAULT_HUNT_RUN_SETTINGS.polymarketRankMode;
 
-    const polymarketExitMode: PolymarketExitMode = typeof source.polymarketExitMode === "string"
-        && source.polymarketExitMode.trim().toLowerCase() === "signal_exit_same_event"
-        ? "signal_exit_same_event"
-        : "resolve_hold";
+    const polymarketExitMode = resolvePolymarketExitMode(source.polymarketExitMode);
 
     return {
         mode: "random",

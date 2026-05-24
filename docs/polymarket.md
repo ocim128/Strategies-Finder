@@ -31,9 +31,10 @@ If you want to score a strategy against resolved Polymarket crypto events:
 - choose `Polymarket Exit Mode`:
   - `resolve_hold` scores at final event resolution on supported chart intervals, including supported `1s` BTCUSDT/XRPUSDT CLOB runs
   - `signal_exit_same_event` is effective on `1m` + `next_open` using locally cached Polymarket price points, and on supported `1s` BTCUSDT/XRPUSDT CLOB runs using `signal_close`, `next_open`, or `next_close` exact-second bid/ask rows
+  - `chart_exit_same_event` uses the same support gates and price sources as `signal_exit_same_event`, but exits the Polymarket leg at the chart trade close timestamp for any non-`end_of_data` chart exit reason
 - optionally set `Polymarket Entry Price Filter`; for example, `20` skips trades whose selected Polymarket entry price is at or below 20c or at or above 80c
 - optionally enable `Polymarket Entry Cutoff` in Backtest Realism; it defaults off, and when enabled the seconds field defaults to `15`
-- on supported `1s` CLOB runs, optionally enable Polymarket Take Profit and/or Stop Loss. In `signal_exit_same_event`, TP fills at the target limit price and SL fills at the first sell-side quote after entry that reaches the stop threshold. In `resolve_hold`, Execution Lab holds the Polymarket leg to final resolution and ignores chart exits, signal exits, TP, and SL.
+- on supported `1s` CLOB runs, optionally enable Polymarket Take Profit and/or Stop Loss. In same-event exit modes, TP fills at the target limit price and SL fills at the first sell-side quote after entry that reaches the stop threshold. In `resolve_hold`, Execution Lab holds the Polymarket leg to final resolution and ignores chart exits, signal exits, TP, and SL.
 - optional for native `5m` outcome sessions, including supported `1s` CLOB runs: enable `Post-Signal Limit Entry` to require the selected YES/NO side to trade at or below the configured limit price after the chart entry signal and before the event's final minute; on supported `1s` CLOB runs, `stale_signal_price` uses the original chart-entry quote as the limit and begins checking after `polymarketEntryDelayBars`
 - `Disable Exit Signal` lives in Risk Management, not Polymarket. It is effective only when chart TP or SL is active and lets chart entries continue to be signal-based while exits come from chart risk exits or forced Polymarket protective exits.
 
@@ -109,7 +110,7 @@ Important behavior:
 - uses local SQLite outcome rows, not live outcome fetches during evaluation
 - `polymarketOutcomeInterval` selects which native outcome session rows to load; default is `5m`
 - native `15m` and `1h` runs match each trade to the containing Polymarket session event
-- `signal_exit_same_event` also uses local SQLite price points for intra-event pricing
+- same-event exit modes also use local SQLite price points for intra-event pricing
 - `1s` BTCUSDT/XRPUSDT runs use the separate second-market SQLite DB and executable CLOB bid/ask quotes sampled by `sample_ts`
 - post-signal limit entry is an optional `5m` outcome-session overlay that uses local SQLite price points to decide whether a chart trade would have filled at a fixed limit price or a signal-quote offset before scoring it
 - `lib/polymarket-outcome-evaluator.ts` remains the headless resolve-hold helper when the caller only supplies outcome rows
@@ -148,7 +149,7 @@ It powers:
 Important behavior:
 
 - Quick View, Trades, and the Polymarket tab can rebuild Polymarket annotations lazily
-- when the active result uses `signal_exit_same_event`, the lazy rebuild path also ensures local price points before recomputing
+- when the active result uses a same-event exit mode, the lazy rebuild path also ensures local price points before recomputing
 - when the active result is a supported `1s` BTCUSDT/XRPUSDT spot or futures run, Quick View can rebuild strict CLOB annotations from the second-market DB
 - the Polymarket tab renders diagnostics only; `lib/polymarket-deployability-analysis.ts` remains a headless analysis module and is not wired into the visible tab UI
 
@@ -248,9 +249,9 @@ Behavior:
 - Finder also supports the existing `15m`, `1h`, and `4h` resolve-hold paths
 - metrics stay classification-first: wins, losses, win rate, baseline delta, break-even style payout diagnostics
 
-### `signal_exit_same_event`
+### Same-Event Exit Modes
 
-This is the new pricing-aware mode.
+`signal_exit_same_event` and `chart_exit_same_event` are pricing-aware modes.
 
 Effective gating:
 
@@ -264,7 +265,8 @@ Behavior:
 - for `1m`, because chart timing comes from the shared `next_open` engine, a full `signal` exit blocks re-entry on that same bar; the earliest new chart entry is the next `1m` bar
 - long trades buy YES; short trades buy NO
 - entry fill uses the first locally captured side price at or after the chart trade entry timestamp inside the containing `5m` event
-- if `trade.exitReason === "signal"` and the chart exit timestamp is still inside the same event, exit fill uses the latest locally captured side price at or before the chart exit timestamp
+- `signal_exit_same_event` exits from cached Polymarket quotes only when `trade.exitReason === "signal"` and the chart exit timestamp is still inside the same event
+- `chart_exit_same_event` exits from cached Polymarket quotes when the chart trade closes for any non-`end_of_data` reason and the chart exit timestamp is still inside the same event
 - for `1m` + `next_open`, that exit timestamp is the modeled next bar open from the shared backtest engine, not an intraminute wall-clock guess
 - for supported `1s` CLOB runs, the entry and signal-exit fills use strict exact-second bid/ask quotes from the second-market DB; `next_open` uses the chart trade timestamp directly, while `signal_close` and `next_close` use one second after the chart candle timestamp because Binance `1s` candles are stored by open time
 - supported `1s` Finder runs surface local CLOB quote truncation separately from low exact-second quote coverage
@@ -276,7 +278,7 @@ Behavior:
 - example: if the opposite chart signal is detected on the `15:02` candle, the modeled chart exit is `15:03:00`, so the Polymarket exit uses the latest local quote at or before `15:03:00`
 - the signal-exit quote must not be earlier than the chosen entry quote
 - with zero backtest slippage, if the latest locally captured quote before the chart exit is the same quote that was used for entry, the trade scores as a flat same-event exit instead of being dropped
-- if no same-event signal exit applies, the Polymarket leg settles to final binary resolution at event end
+- if no eligible same-event chart exit applies, the Polymarket leg settles to final binary resolution at event end
 - by default, only the first eligible trade per `5m` event is scored; later duplicates in that event are ignored
 - when `polymarketSignalExitAllowMultipleTradesPerEvent` is enabled, every eligible chart trade inside the same event is scored instead of marking later trades as duplicates
 - `polymarketEntryPriceFilterCents` skips trades with selected entry prices at or below `N` cents or at or above `100 - N` cents; skipped trades do not claim the same-event slot before duplicate detection
@@ -325,7 +327,7 @@ Effective gating:
 
 - annotation must be enabled
 - `Polymarket Outcome Session` must be `5m`
-- the overlay is available in both `resolve_hold` and `signal_exit_same_event`
+- the overlay is available in `resolve_hold` and same-event exit modes
 - fixed entry limit price is stored as cents and normalized to `1..99`; default is `50`
 - entry offset is stored as cents and normalized to `0..99` with 0.1c precision; default is `20`
 
@@ -337,7 +339,7 @@ Behavior:
 - signal-offset entry mode computes the limit from the first available event-side quote after chart entry minus `polymarketPostSignalLimitEntryOffsetCents`; for example, a 60c first YES quote with offset `0.5` becomes a 59.5c entry limit
 - stale-signal entry mode is for supported `1s` CLOB delay research: it reads the selected side ask at the modeled chart-entry second, then starts the limit-fill scan after `polymarketEntryDelayBars`; if the delayed market has already moved away and never revisits that stale limit before the same-event signal exit, the trade is reported as missed instead of scored
 - if the contract touches only during the final minute, the attempt is reported as `last_minute_only` and is not scored
-- if `signal_exit_same_event` has a same-event chart signal exit before the limit touch, the attempt is reported as `invalid_window` and is not scored
+- if the active same-event exit mode has an eligible chart exit before the limit touch, the attempt is reported as `invalid_window` and is not scored
 - filled/scored attempts claim the event when duplicate suppression is active; missed attempts do not block a later same-event attempt from filling
 - filled attempts use the resolved limit price as `marketEntryPrice`, not the first observed quote
 - missed attempts stay visible in Trades, Quick View, and Polymarket diagnostics, but they do not count as scored Polymarket trades
@@ -350,7 +352,7 @@ Optional target exit:
 - entry-offset target mode exits when the filled entry price plus `polymarketPostSignalLimitExitOffsetCents` is reached; for example, a 60c filled entry with offset `20` targets 80c
 - if the computed target is `>= 100c`, the target is marked `unreachable` and the trade falls back to the active exit model
 - in `resolve_hold`, a target touch exits before final resolution; if target never fills, the trade holds to resolution
-- in `signal_exit_same_event`, target exit and chart signal exit race by timestamp; the first fill executes, and no later exit is applied
+- in same-event exit modes, target exit and the eligible chart exit race by timestamp; the first fill executes, and no later exit is applied
 - target-exited trades use realized `marketPnl = marketExitPrice - marketEntryPrice` in payout diagnostics and Finder ranking
 
 ## Supported Outcome Targets
@@ -374,10 +376,10 @@ If you add another target, update:
 
 ## Support Matrix
 
-| Surface | `resolve_hold` | `signal_exit_same_event` | Post-signal limit entry | Important notes |
+| Surface | `resolve_hold` | Same-event exit modes | Post-signal limit entry | Important notes |
 | --- | --- | --- | --- | --- |
 | Direct Polymarket charting | not applicable | not applicable | not applicable | provider path only |
-| Manual backtest annotation | native `5m` / `15m` / `1h`, existing `1m` / `15m` / `1h` / `4h` bridge paths, and supported `1s` + `signal_close`, `next_open`, or `next_close` CLOB runs | `1m` + `next_open` on the selected native outcome session; supported `1s` + `signal_close`, `next_open`, or `next_close` uses exact-second CLOB exits inside the event | native `5m`, including supported `1s` CLOB runs | same chart backtest, Polymarket post-pass |
+| Manual backtest annotation | native `5m` / `15m` / `1h`, existing `1m` / `15m` / `1h` / `4h` bridge paths, and supported `1s` + `signal_close`, `next_open`, or `next_close` CLOB runs | `1m` + `next_open` on the selected native outcome session; supported `1s` + `signal_close`, `next_open`, or `next_close` uses exact-second CLOB exits inside the event; `signal_exit_same_event` is signal-only and `chart_exit_same_event` uses chart trade close | native `5m`, including supported `1s` CLOB runs | same chart backtest, Polymarket post-pass |
 | Headless `evaluatePolymarketOutcomes(...)` | resolve-hold only | not supported | not supported | caller supplies outcome rows only; no price-point input surface |
 | Finder Polymarket mode | `1m`, `5m`, `15m`, `1h`, `4h`, and supported `1s` + `signal_close`, `next_open`, or `next_close` CLOB runs | `1m` + `next_open`; supported `1s` + `signal_close`, `next_open`, or `next_close` uses exact-second CLOB exits inside the event | native `5m`, including supported `1s` CLOB runs | `grid` and `random` only; no combo; no multi-timeframe |
 | Hunt | same as Finder | same as Finder | same as Finder | preserves Polymarket mode settings in profiles |
@@ -389,7 +391,7 @@ If you add another target, update:
 
 Two important nuances:
 
-- `signal_exit_same_event` is intentionally narrower than general Polymarket scoring.
+- `signal_exit_same_event` is intentionally signal-only; use `chart_exit_same_event` when TP/SL/time-stop chart closes should price the Polymarket exit.
 - endpoint and ensemble surfaces still expose Polymarket annotation, but only in `resolve_hold`.
 - post-signal limit entry is intentionally limited to the native `5m` outcome session because it depends on intra-event price-point replay.
 
@@ -510,11 +512,11 @@ Current behavior:
 - file: `lib/finder/finder-runner-polymarket.ts`
 - loads outcome rows once per run
 - native `15m` and `1h` Finder runs load the selected native session rows, not grouped `5m` rows
-- native `15m` and `1h`, plus `signal_exit_same_event`, ensure price points once per run
+- native `15m` and `1h`, plus same-event exit modes, ensure price points once per run
 - default `5m` keeps the older bridge fan-out for `1m`, `15m`, `1h`, and `4h` resolve-hold runs
 - supports cross-symbol outcome scoring through `backtestSettings.polymarketOutcomeSymbol`
 - reuses normal strategy execution and backtest machinery
-- applies signal-exit evaluation through the shared evaluator, not a Finder-only pricing path
+- applies same-event exit evaluation through the shared evaluator, not a Finder-only pricing path
 - applies post-signal limit entry through the same shared annotation/evaluator paths used by manual backtests
 
 Signal-exit restrictions:
@@ -533,12 +535,12 @@ Signal-exit restrictions:
   - `accuracy`
   - `volume`
 
-Important signal-exit differences versus the old `1m` bridge mode:
+Important same-event exit differences versus the old `1m` bridge mode:
 
 - Finder does not fan out one parameter set into five offset variants
-- `polymarketEntryOffset` is ignored in signal-exit mode
+- `polymarketEntryOffset` is ignored in same-event exit modes
 - `polymarketLockOffset` becomes irrelevant and the UI disables it
-- signal-exit results are per-event by default; when `polymarketSignalExitAllowMultipleTradesPerEvent` is enabled, Finder and Hunt rank the per-chart-trade variant and duplicate counts should be expected to fall
+- same-event exit results are per-event by default; when `polymarketSignalExitAllowMultipleTradesPerEvent` is enabled, Finder and Hunt rank the per-chart-trade variant and duplicate counts should be expected to fall
 - applying a Finder result preserves `polymarketExitMode` and only writes `polymarketEntryOffset` back when the effective mode is still `resolve_hold`
 
 Native-session resolve-hold note:
@@ -590,15 +592,15 @@ Current UI rules:
 - `polymarketOutcomeSymbol` shows when annotation is enabled
 - `polymarketOutcomeInterval` shows when annotation is enabled
 - `polymarketExitMode` shows when annotation is enabled
-- on `1s` + `signal_close`, `next_open`, or `next_close` charts, both `resolve_hold` and `signal_exit_same_event` are available
-- on `1s` charts with other execution models, `signal_exit_same_event` is disabled and CLOB scoring is skipped
-- `polymarketSignalExitAllowMultipleTradesPerEvent` only shows when annotation is enabled and signal-exit mode is active
+- on `1s` + `signal_close`, `next_open`, or `next_close` charts, `resolve_hold`, `signal_exit_same_event`, and `chart_exit_same_event` are available
+- on `1s` charts with other execution models, same-event exit modes are disabled and CLOB scoring is skipped
+- `polymarketSignalExitAllowMultipleTradesPerEvent` only shows when annotation is enabled and a same-event exit mode is active
 - `polymarketEntryPriceFilterCents` shows when annotation is enabled
 - `polymarketBacktestSlippageCents` shows when annotation is enabled
 - `polymarketProtectionTakeProfit*` and `polymarketProtectionStopLoss*` rows show when annotation is enabled on a `1s` chart
 - `polymarketEntryDelayBars` only shows on `1s` charts with a supported CLOB scoring execution model
-- `polymarketEntrySelectionMode` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, and the selected exit mode is not `signal_exit_same_event`
-- `polymarketEntryOffset` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, the selected exit mode is not `signal_exit_same_event`, and entry selection is `fixed_offset`
+- `polymarketEntrySelectionMode` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, and the selected exit mode is not a same-event exit mode
+- `polymarketEntryOffset` only shows when annotation is enabled, chart interval is `1m`, native outcome session is `5m`, the selected exit mode is not a same-event exit mode, and entry selection is `fixed_offset`
 - `polymarketPostSignalLimitEntryEnabled` shows when annotation is enabled and native outcome session is `5m`, including supported `1s` CLOB charts
 - post-signal entry mode and exit toggle only show when post-signal limit entry is enabled
 - fixed entry price only shows when entry mode is `fixed_price`
@@ -606,13 +608,13 @@ Current UI rules:
 - target exit mode only shows when post-signal target exit is enabled
 - fixed target price only shows when target exit mode is `fixed_price`
 - target offset only shows when target exit mode is `entry_offset`
-- Finder and Hunt rank-mode dropdowns disable unsupported rank modes when signal-exit mode is selected
+- Finder and Hunt rank-mode dropdowns disable unsupported rank modes when a same-event exit mode is selected
 
 Persistence and compatibility:
 
 - `polymarketExitMode` defaults to `resolve_hold`
 - on `1s` + `signal_close`, `next_open`, or `next_close` charts, saved `resolve_hold` values stay in `resolve_hold`
-- on `1s` charts with other execution models, saved `signal_exit_same_event` values downgrade to `resolve_hold` and CLOB scoring is skipped
+- on `1s` charts with other execution models, saved same-event exit values downgrade to `resolve_hold` and CLOB scoring is skipped
 - invalid persisted values normalize back to `resolve_hold`
 - Hunt uses the same default and normalization behavior
 - `polymarketOutcomeSymbol` is normalized to uppercase
@@ -620,7 +622,7 @@ Persistence and compatibility:
 - invalid persisted values normalize back to `5m`
 - `polymarketEntrySelectionMode` defaults to `fixed_offset`
 - invalid persisted values normalize back to `fixed_offset`
-- `polymarketEntryOffset` stays persisted for backward compatibility even when ignored by signal-exit mode
+- `polymarketEntryOffset` stays persisted for backward compatibility even when ignored by same-event exit modes
 - `polymarketEntryPriceFilterCents` defaults to `0`, disables filtering at `0`, and clamps to `0..49`
 - `polymarketBacktestSlippageCents` defaults to `5` and clamps to `0..99` with 0.1c precision
 - `polymarketSignalExitAllowMultipleTradesPerEvent` defaults to `false`
@@ -633,7 +635,7 @@ Persistence and compatibility:
 - `polymarketPostSignalLimitExitPriceCents` defaults to `80` and clamps to `1..99`
 - `polymarketPostSignalLimitExitOffsetCents` defaults to `20` and clamps to `0..99`
 - Polymarket settings are Rust-unsupported
-- `signal_exit_same_event` requires the TypeScript engine
+- same-event exit modes require the TypeScript engine
 
 Resolver and compatibility files:
 
@@ -689,7 +691,11 @@ Diagnostics focuses on scored historical trades and includes:
 
 - payout expectancy by event price
 - break-even win rate and edge versus break-even in `resolve_hold`
-- signal-exit counts and realized PnL metrics in `signal_exit_same_event`
+- same-event exit counts and realized PnL metrics in `signal_exit_same_event` and `chart_exit_same_event`
+- Backtest Trades diagnostics report `chart_exit_same_event` quote exits as `chart_exit` and expose `sameEventExitedTrades`; `signalExitedTrades` is reserved for actual chart `signal` exits in the copied diagnostics payload
+- Backtest Trades diagnostics include active Polymarket filters plus capped examples for unscored sources such as `entry_price_filtered`, `entry_time_filtered`, and `missing`
+- Backtest Trades diagnostics include `recommendations` when settings and observed exits conflict, such as selecting `signal_exit_same_event` while all chart trades close through `time_stop`
+- forced `end_of_data` closes in same-event modes can still settle at final resolution, but Trades diagnostics do not warn on those alone
 - timing buckets
 - snapshot profile diagnostics
 
@@ -709,7 +715,7 @@ If you touch Polymarket code, first decide which contract you are editing:
 - provider-side charting
 - outcome-symbol resolution
 - `resolve_hold` scoring semantics
-- `signal_exit_same_event` pricing semantics
+- same-event exit pricing semantics
 - post-signal limit-entry fill semantics
 - Execution Lab live trade request, retry, or executor status semantics
 - local price-point storage or ingestion

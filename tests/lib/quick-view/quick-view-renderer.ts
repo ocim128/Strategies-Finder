@@ -15,6 +15,7 @@ import type {
   QuickViewPolymarketExitReasonSummary,
   QuickViewPolymarketExpectancySummary,
 } from "./quick-view-service";
+import { isSameEventPolymarketExitMode } from "../polymarket-exit-mode";
 
 interface QvStatCard {
   label: string;
@@ -193,14 +194,14 @@ export function renderEmptyTradesHtml(): string {
 
 export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary): string {
   if (!summary) return '';
-  const isSignalExit = summary.evaluationMode === "signal_exit_same_event";
+  const isSameEventExit = isSameEventPolymarketExitMode(summary.evaluationMode);
   const isResolveHold = summary.evaluationMode === "resolve_hold";
-  const usesRealizedPnl = summary.usesRealizedPnl === true || isSignalExit || summary.limitExitEnabled === true;
+  const usesRealizedPnl = summary.usesRealizedPnl === true || isSameEventExit || summary.limitExitEnabled === true;
   const usesActualEntryMinute = summary.entrySelectionMode === "actual_entry_minute";
   const outcomeInterval = summary.outcomeInterval ?? "5m";
   const usesNativeLongSession = outcomeInterval !== "5m";
-  const modeLabel = isSignalExit
-    ? "Signal Exit (same event)"
+  const modeLabel = isSameEventExit
+    ? (summary.evaluationMode === "chart_exit_same_event" ? "Chart Exit (same event)" : "Signal Exit (same event)")
     : isResolveHold
       ? "Resolve Hold (final outcome)"
       : usesActualEntryMinute
@@ -276,7 +277,7 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
       ...((summary.targetExitedTrades ?? 0) > 0 ? [{ label: 'Target Exited', value: String(summary.targetExitedTrades) }] : []),
       ...((summary.protectionTakeProfitExitedTrades ?? 0) > 0 ? [{ label: 'Poly TP Exited', value: String(summary.protectionTakeProfitExitedTrades) }] : []),
       ...((summary.protectionStopLossExitedTrades ?? 0) > 0 ? [{ label: 'Poly SL Exited', value: String(summary.protectionStopLossExitedTrades) }] : []),
-      ...(summary.signalExitedTrades !== undefined ? [{ label: 'Signal Exited', value: String(summary.signalExitedTrades) }] : []),
+      ...(summary.signalExitedTrades !== undefined ? [{ label: summary.evaluationMode === "chart_exit_same_event" ? 'Same-event Exited' : 'Signal Exited', value: String(summary.signalExitedTrades) }] : []),
       ...(summary.resolvedTrades !== undefined ? [{ label: 'Resolved (Held)', value: String(summary.resolvedTrades) }] : []),
       ...(summary.neutralTrades > 0 ? [{ label: 'Neutral Trades', value: String(summary.neutralTrades) }] : []),
       ...((summary.missingPriceTrades ?? 0) > 0 ? [{ label: 'Missing Price Trades', value: String(summary.missingPriceTrades) }] : []),

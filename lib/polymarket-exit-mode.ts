@@ -1,4 +1,14 @@
-export type PolymarketExitMode = "resolve_hold" | "signal_exit_same_event";
+export type PolymarketExitMode = "resolve_hold" | "signal_exit_same_event" | "chart_exit_same_event";
+
+export function resolvePolymarketExitMode(value: unknown, fallback: PolymarketExitMode = "resolve_hold"): PolymarketExitMode {
+    if (typeof value !== "string") {
+        return fallback;
+    }
+    const normalized = value.trim().toLowerCase();
+    return normalized === "signal_exit_same_event" || normalized === "chart_exit_same_event" || normalized === "resolve_hold"
+        ? normalized
+        : fallback;
+}
 
 export function isPolymarketOneSecondSignalExitExecutionModel(executionModel?: string): boolean {
     return executionModel === "signal_close" || executionModel === "next_open" || executionModel === "next_close";
@@ -11,6 +21,7 @@ export function resolveEffectivePolymarketExitMode(args: {
     polymarketAnnotationEnabled?: boolean;
 }): PolymarketExitMode {
     const { requestedMode, interval, executionModel, polymarketAnnotationEnabled } = args;
+    const requested = resolvePolymarketExitMode(requestedMode);
     const normalizedInterval = interval.trim().toLowerCase();
 
     if (!polymarketAnnotationEnabled) {
@@ -18,14 +29,14 @@ export function resolveEffectivePolymarketExitMode(args: {
     }
 
     if (normalizedInterval === "1s") {
-        return requestedMode === "signal_exit_same_event"
+        return isSameEventPolymarketExitMode(requested)
             && isPolymarketOneSecondSignalExitExecutionModel(executionModel)
-            ? "signal_exit_same_event"
+            ? requested
             : "resolve_hold";
     }
 
-    if (requestedMode !== "signal_exit_same_event") {
-        return requestedMode ?? "resolve_hold";
+    if (!isSameEventPolymarketExitMode(requested)) {
+        return requested;
     }
 
     if (normalizedInterval !== "1m") {
@@ -36,14 +47,22 @@ export function resolveEffectivePolymarketExitMode(args: {
         return "resolve_hold";
     }
 
-    return "signal_exit_same_event";
+    return requested;
 }
 
 export function isSignalExitSameEventMode(mode: PolymarketExitMode | undefined): boolean {
     return mode === "signal_exit_same_event";
 }
 
-export const SIGNAL_EXIT_SUPPORTED_RANK_MODES = new Set([
+export function isChartExitSameEventMode(mode: PolymarketExitMode | undefined): boolean {
+    return mode === "chart_exit_same_event";
+}
+
+export function isSameEventPolymarketExitMode(mode: PolymarketExitMode | undefined): boolean {
+    return mode === "signal_exit_same_event" || mode === "chart_exit_same_event";
+}
+
+export const SAME_EVENT_SUPPORTED_RANK_MODES = new Set([
     "expectancy",
     "expectancyTrades",
     "profitFactor",
@@ -51,6 +70,6 @@ export const SIGNAL_EXIT_SUPPORTED_RANK_MODES = new Set([
     "sizedNet",
 ] as const);
 
-export type SignalExitSupportedRankMode = typeof SIGNAL_EXIT_SUPPORTED_RANK_MODES extends Set<infer T>
+export type SameEventSupportedRankMode = typeof SAME_EVENT_SUPPORTED_RANK_MODES extends Set<infer T>
     ? T
     : never;

@@ -1,5 +1,6 @@
 import type { Time } from "lightweight-charts";
 import type { BacktestPolymarketTradeSummary, TradePolymarketOutcome } from "./polymarket-outcomes";
+import type { PolymarketExitMode } from "../polymarket-exit-mode";
 import type { PolymarketEntrySelectionMode } from "../polymarket-entry-selection-mode";
 import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import type { BinanceMarketType } from "../binance-market";
@@ -379,9 +380,9 @@ export interface BacktestSettings {
     polymarketEntryCutoffEnabled?: boolean;
     /** Skip Polymarket entries inside the final N seconds of the event when cutoff is enabled. */
     polymarketEntryCutoffSeconds?: number;
-    /** Polymarket exit evaluation mode: resolve_hold scores at final binary outcome, signal_exit_same_event exits on chart sell signal inside the mapped native outcome session */
-    polymarketExitMode?: "resolve_hold" | "signal_exit_same_event";
-    /** In signal_exit_same_event mode, score every eligible chart trade in the event instead of one trade per Polymarket event. */
+    /** Polymarket exit evaluation mode. Same-event modes exit from cached Polymarket quotes before native resolution. */
+    polymarketExitMode?: PolymarketExitMode;
+    /** In same-event Polymarket exit modes, score every eligible chart trade in the event instead of one trade per Polymarket event. */
     polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
     /** Enable post-chart-entry Polymarket limit-entry fill simulation for supported annotated runs. */
     polymarketPostSignalLimitEntryEnabled?: boolean;

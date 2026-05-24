@@ -1,5 +1,6 @@
 import type { CapitalSettings, TradeSizingMode } from "./backtest";
 import type { BacktestSettings } from "./strategies";
+import type { PolymarketExitMode } from "../polymarket-exit-mode";
 import type { PolymarketEntrySelectionMode } from "../polymarket-entry-selection-mode";
 import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
 import type {
@@ -73,7 +74,7 @@ export interface TradePolymarketOutcome {
     /** Entry offset minute within the selected Polymarket event session. */
     entryOffset?: number;
     /** Which evaluation mode produced this outcome annotation */
-    evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+    evaluationMode?: PolymarketExitMode;
     /** Whether the Polymarket trade was profitable (signal-exit aware, not binary outcome). Null means neutral or unscored. */
     isProfitable?: boolean | null;
     /** Exit price from the Polymarket contract */
@@ -129,7 +130,7 @@ export interface BacktestPolymarketTradeSummary {
     entryPriceFilteredTrades?: number;
     entryTimeFilteredTrades?: number;
     timingProfile?: BacktestPolymarketTimingProfileEntry[];
-    evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+    evaluationMode?: PolymarketExitMode;
     signalExitAllowMultipleTradesPerEvent?: boolean;
     entryDelayBars?: number;
     backtestSlippageCents?: number;
@@ -227,7 +228,7 @@ export interface PolymarketEvalResult {
     duplicateTradesIgnored?: number;
     entryPriceFilteredPredictions?: number;
     entryTimeFilteredPredictions?: number;
-    evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+    evaluationMode?: PolymarketExitMode;
     signalExitAllowMultipleTradesPerEvent?: boolean;
     entryDelayBars?: number;
     backtestSlippageCents?: number;

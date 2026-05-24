@@ -3,15 +3,23 @@ import type { OHLCVData, Trade } from "../strategies/index";
 import { setVisible } from "../dom-utils";
 import { state } from "../state";
 import { debugLogger } from "../debug-logger";
+import { uiManager } from "../ui-manager";
 import { escapeHtml } from "../html-escape";
 import { resolveOpenTradeDisplayMetrics } from "../open-trade-display";
 import { createTradesRendererDom, type TradesRendererDom } from "./trades-renderer-dom";
+import { copyToClipboard } from "../browser-transfer";
+import { getCurrentUiBacktestEndpointSnapshot } from "../backtest-endpoint-copy";
+import {
+    buildBacktestDiagnosticOutput,
+    type BacktestDiagnosticCountRow,
+    type BacktestDiagnosticOutput,
+} from "../backtest-diagnostic-output";
 import {
     getEffectivePolymarketSeriesId,
     isSupportedPolymarketOutcomeRun,
     loadPolymarketOutcomesForTimeRange,
 } from "../polymarket-btc5m";
-import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "../polymarket-exit-mode";
+import { resolveEffectivePolymarketExitMode, isSameEventPolymarketExitMode, type PolymarketExitMode } from "../polymarket-exit-mode";
 import {
     evaluateSignalExitTrades,
     buildTradeAnnotationFromSignalExitResult,
@@ -40,10 +48,12 @@ export class TradesRenderer {
     private dom: TradesRendererDom | null = null;
     private jumpToTrade: ((time: Time) => void) | null = null;
     private jumpHandlersBound = false;
+    private diagnosticsHandlersBound = false;
     private tradeRenderGeneration = 0;
     private pendingDeferredRenderIds: number[] = [];
     private lastPolymarketAnnotationKey = '';
     private lastPolymarketAnnotationPromise: Promise<Trade[]> | null = null;
+    private latestBacktestDiagnostics: BacktestDiagnosticOutput | null = null;
 
     private getDom(): TradesRendererDom {
         return this.dom ??= createTradesRendererDom();
@@ -58,6 +68,7 @@ export class TradesRenderer {
         const container = this.getDom().tradesList;
         this.jumpToTrade = jumpToTrade;
         this.ensureTradeJumpHandlersBound();
+        this.ensureBacktestDiagnosticsHandlersBound();
         this.cancelPendingDeferredRenders();
         const renderGeneration = ++this.tradeRenderGeneration;
         container.classList.remove('trades-list-parity');
@@ -71,6 +82,7 @@ export class TradesRenderer {
         if (annotatedTrades.length === 0) {
             setVisible('emptyTrades', true);
             setVisible('tradesSummary', false);
+            this.hideBacktestDiagnostics();
             container.innerHTML = '';
             return true;
         }
@@ -78,6 +90,7 @@ export class TradesRenderer {
         setVisible('emptyTrades', false);
         setVisible('tradesSummary', true);
         this.updateSummary(annotatedTrades);
+        this.renderBacktestDiagnostics(annotatedTrades);
 
         this.renderTradeItemsProgressively(renderGeneration, container, annotatedTrades, formatPrice, formatDate);
         return true;
@@ -189,7 +202,7 @@ export class TradesRenderer {
             : resolvePolymarketDomSettings().outcomeInterval;
     }
 
-    private readCurrentPolymarketExitMode(): "resolve_hold" | "signal_exit_same_event" | undefined {
+    private readCurrentPolymarketExitMode(): PolymarketExitMode | undefined {
         return typeof document === "undefined"
             ? undefined
             : resolvePolymarketDomSettings().exitMode;
@@ -261,8 +274,9 @@ export class TradesRenderer {
                 polymarketAnnotationEnabled: true,
         });
         const currentPolymarketSettings = resolvePolymarketDomSettings();
-        const allowMultipleTradesPerEvent = state.currentBacktestResult?.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event"
-            ? state.currentBacktestResult.polymarketTradeSummary.signalExitAllowMultipleTradesPerEvent === true
+        const currentSummary = state.currentBacktestResult?.polymarketTradeSummary;
+        const allowMultipleTradesPerEvent = currentSummary && isSameEventPolymarketExitMode(currentSummary.evaluationMode)
+            ? currentSummary.signalExitAllowMultipleTradesPerEvent === true
             : currentPolymarketSettings.signalExitAllowMultipleTradesPerEvent;
         const existingLimitSummary = state.currentBacktestResult?.polymarketTradeSummary?.limitEntryEnabled === true
             ? state.currentBacktestResult.polymarketTradeSummary
@@ -292,7 +306,7 @@ export class TradesRenderer {
             }
             : undefined;
 
-        if (isSignalExitSameEventMode(effectiveExitMode) && resultContext.interval === "1m") {
+        if (isSameEventPolymarketExitMode(effectiveExitMode) && resultContext.interval === "1m") {
             try {
                 const outcomeByEntryTs = indexSignalExitOutcomesForTrades(trades, outcomes);
                 const relevantOutcomeByStart = new Map<number, (typeof outcomes)[number]>();
@@ -316,12 +330,13 @@ export class TradesRenderer {
                     entryCutoffEnabled: currentPolymarketSettings.entryCutoffEnabled,
                     entryCutoffSeconds: currentPolymarketSettings.entryCutoffSeconds,
                     limitEntry,
+                    evaluationMode: effectiveExitMode,
                 });
                 const exitResultMap = new Map(exitResults.map((r) => [r.trade, r]));
                 return trades.map((trade) => {
                     const exitResult = exitResultMap.get(trade);
                     if (!exitResult) return { ...trade, polymarketOutcome: null };
-                    const annotation = buildTradeAnnotationFromSignalExitResult(exitResult);
+                    const annotation = buildTradeAnnotationFromSignalExitResult(exitResult, effectiveExitMode);
                     return { ...trade, polymarketOutcome: annotation };
                 });
             } catch (error) {
@@ -439,7 +454,7 @@ export class TradesRenderer {
             return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly Time Filter: entry is inside the configured event-close cutoff">Poly time</span>`;
         }
         if (outcome.marketExitSource === "no_event") {
-            if (this.isCurrentSignalExitPolymarketTradeInCurrentBucket(trade)) {
+            if (this.isCurrentSameEventPolymarketTradeInCurrentBucket(trade)) {
                 return '';
             }
             return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly No Event: no matching Polymarket session was found for this trade's entry time">Poly no event</span>`;
@@ -467,9 +482,9 @@ export class TradesRenderer {
             return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="${escapeHtml(badge.title)}">${escapeHtml(badge.label)}</span>`;
         }
 
-        const isSignalExit = outcome.evaluationMode === "signal_exit_same_event";
+        const isSameEventExit = isSameEventPolymarketExitMode(outcome.evaluationMode);
 
-        if (isSignalExit) {
+        if (isSameEventExit) {
             if (outcome.marketExitSource === "missing") {
                 return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly n/a: missing price point data for entry or exit">Poly n/a</span>`;
             }
@@ -508,13 +523,14 @@ export class TradesRenderer {
             const priceLabelForDisplay = `${prediction} ${entryPrice}->${exitPrice}${pnlLabel ? ` (${pnlLabel})` : ''}`;
             const marketSlug = escapeHtml(outcome.marketSlug);
             const marketUrl = escapeHtml(this.buildPolymarketMarketUrl(outcome.marketSlug));
+            const modeLabel = outcome.evaluationMode === "chart_exit_same_event" ? "Chart-exit mode" : "Signal-exit mode";
             const title = outcome.marketExitSource === 'target'
-                ? `Signal-exit mode. ${exitBadgeLabel}. Predicted ${prediction}, entry ${entryPrice}, target exited at ${exitPrice} (${exitTimeLabel}). Chart exit: ${chartExitLabel}. Click to copy ${marketSlug}.`
+                ? `${modeLabel}. ${exitBadgeLabel}. Predicted ${prediction}, entry ${entryPrice}, target exited at ${exitPrice} (${exitTimeLabel}). Chart exit: ${chartExitLabel}. Click to copy ${marketSlug}.`
                 : outcome.marketExitSource === 'protection_take_profit' || outcome.marketExitSource === 'protection_stop_loss'
-                    ? `Signal-exit mode. ${exitBadgeLabel}. Predicted ${prediction}, entry ${entryPrice}, protection exited at ${exitPrice} (${exitTimeLabel}). Chart exit: ${chartExitLabel}. Click to copy ${marketSlug}.`
+                    ? `${modeLabel}. ${exitBadgeLabel}. Predicted ${prediction}, entry ${entryPrice}, protection exited at ${exitPrice} (${exitTimeLabel}). Chart exit: ${chartExitLabel}. Click to copy ${marketSlug}.`
                 : outcome.marketExitSource === 'signal'
-                    ? `Signal-exit mode. ${exitBadgeLabel}. Predicted ${prediction}, entry ${entryPrice}, exited same-event at ${exitPrice} (${exitTimeLabel}). Chart exit: ${chartExitLabel}. Click to copy ${marketSlug}.`
-                    : `Signal-exit mode. ${exitBadgeLabel}. Predicted ${prediction}, entry ${entryPrice}, settled at event end at ${exitPrice} (${exitTimeLabel}) after chart exit: ${chartExitLabel}. Click to copy ${marketSlug}.`;
+                    ? `${modeLabel}. ${exitBadgeLabel}. Predicted ${prediction}, entry ${entryPrice}, exited same-event at ${exitPrice} (${exitTimeLabel}). Chart exit: ${chartExitLabel}. Click to copy ${marketSlug}.`
+                    : `${modeLabel}. ${exitBadgeLabel}. Predicted ${prediction}, entry ${entryPrice}, settled at event end at ${exitPrice} (${exitTimeLabel}) after chart exit: ${chartExitLabel}. Click to copy ${marketSlug}.`;
             return `<span class="exit-reason-badge trade-polymarket-link ${className}" role="button" tabindex="0" data-polymarket-url="${marketUrl}" title="${escapeHtml(title)}">${exitBadgeLabel} ${priceLabelForDisplay}</span>`;
         }
 
@@ -596,7 +612,7 @@ export class TradesRenderer {
         }
 
         const summary = state.currentBacktestResult?.polymarketTradeSummary;
-        if (summary?.evaluationMode !== "signal_exit_same_event") {
+        if (!isSameEventPolymarketExitMode(summary?.evaluationMode)) {
             return null;
         }
 
@@ -639,9 +655,9 @@ export class TradesRenderer {
         return Math.abs(expectedOpenTrade.entryPrice - currentTrade.entryPrice) < 1e-9;
     }
 
-    private isCurrentSignalExitPolymarketTradeInCurrentBucket(trade: Trade): boolean {
+    private isCurrentSameEventPolymarketTradeInCurrentBucket(trade: Trade): boolean {
         const result = state.currentBacktestResult;
-        if (!result || result.polymarketTradeSummary?.evaluationMode !== "signal_exit_same_event") {
+        if (!result || !isSameEventPolymarketExitMode(result.polymarketTradeSummary?.evaluationMode)) {
             return false;
         }
 
@@ -983,6 +999,210 @@ export class TradesRenderer {
         }
     }
 
+    private ensureBacktestDiagnosticsHandlersBound(): void {
+        if (this.diagnosticsHandlersBound) {
+            return;
+        }
+
+        this.getDom().copyBacktestDiagnostics.addEventListener("click", () => {
+            void this.copyBacktestDiagnostics();
+        });
+        this.diagnosticsHandlersBound = true;
+    }
+
+    private buildBacktestDiagnosticsForTrades(trades: Trade[]): BacktestDiagnosticOutput | null {
+        const result = state.currentBacktestResult;
+        if (!result) {
+            return null;
+        }
+
+        return buildBacktestDiagnosticOutput({
+            result: {
+                ...result,
+                trades,
+                totalTrades: result.totalTrades > 0 ? result.totalTrades : trades.length,
+            },
+            snapshot: getCurrentUiBacktestEndpointSnapshot(),
+            resultSource: state.currentBacktestResultSource,
+        });
+    }
+
+    private renderBacktestDiagnostics(trades: Trade[]): void {
+        const diagnostics = this.buildBacktestDiagnosticsForTrades(trades);
+        const dom = this.getDom();
+        this.latestBacktestDiagnostics = diagnostics;
+
+        if (!diagnostics) {
+            this.hideBacktestDiagnostics();
+            return;
+        }
+
+        const polymarket = diagnostics.polymarket;
+        const effectiveMode = polymarket?.storedEvaluationMode
+            ?? polymarket?.effectiveExitMode
+            ?? "n/a";
+        const sameEventExited = polymarket?.sameEventExitedTrades ?? polymarket?.signalExitedTrades ?? 0;
+        const resolved = polymarket?.resolvedTrades ?? 0;
+        const missing = polymarket?.missingPriceTrades ?? 0;
+        const chartExitSummary = this.formatDiagnosticCounts(diagnostics.chartExits.top, "none");
+        const polyExitSummary = polymarket
+            ? this.formatDiagnosticCounts(polymarket.exitSourceTop, "none")
+            : "not scored";
+
+        dom.backtestDiagnosticsSummary.textContent =
+            `${effectiveMode} | chart exits ${chartExitSummary} | Poly exits ${polyExitSummary}`;
+        dom.backtestDiagnosticsWarnings.innerHTML = diagnostics.warnings
+            .map((warning) => (
+                `<div class="backtest-diagnostics__warning">${escapeHtml(warning.message)}</div>`
+            ))
+            .join("");
+        setVisible(dom.backtestDiagnosticsWarnings, diagnostics.warnings.length > 0, "flex");
+
+        dom.backtestDiagnosticsContent.innerHTML = [
+            this.renderDiagnosticMetric("Mode", this.formatModeDiagnostic(diagnostics)),
+            this.renderDiagnosticMetric("Chart Exits", chartExitSummary),
+            this.renderDiagnosticMetric("Poly Exits", polyExitSummary),
+            this.renderDiagnosticMetric("Same-event / Settle", `same-event ${sameEventExited} | settle ${resolved} | missing ${missing}`),
+            this.renderDiagnosticMetric("Scored", this.formatScoredDiagnostic(diagnostics)),
+            this.renderDiagnosticMetric("Coverage", this.formatPolymarketCoverageDiagnostic(diagnostics)),
+            this.renderDiagnosticMetric("Filters", this.formatPolymarketFilterDiagnostic(diagnostics)),
+            this.renderDiagnosticMetric("Next", this.formatRecommendationDiagnostic(diagnostics)),
+            this.renderDiagnosticMetric("Engine", this.formatEngineDiagnostic(diagnostics)),
+        ].join("");
+        dom.copyBacktestDiagnostics.disabled = false;
+        setVisible(dom.backtestDiagnostics, true, "block");
+    }
+
+    private hideBacktestDiagnostics(): void {
+        const dom = this.getDom();
+        this.latestBacktestDiagnostics = null;
+        dom.copyBacktestDiagnostics.disabled = true;
+        dom.backtestDiagnosticsSummary.textContent = "No diagnostics yet.";
+        dom.backtestDiagnosticsWarnings.innerHTML = "";
+        dom.backtestDiagnosticsContent.innerHTML = "";
+        setVisible(dom.backtestDiagnostics, false);
+    }
+
+    private formatDiagnosticCounts(rows: readonly BacktestDiagnosticCountRow[], emptyLabel: string): string {
+        if (rows.length === 0) {
+            return emptyLabel;
+        }
+
+        return rows
+            .slice(0, 3)
+            .map((row) => `${row.key} ${row.count}`)
+            .join(" | ");
+    }
+
+    private formatModeDiagnostic(diagnostics: BacktestDiagnosticOutput): string {
+        const polymarket = diagnostics.polymarket;
+        if (!polymarket) {
+            return diagnostics.run.executionModel ?? "n/a";
+        }
+
+        const requested = polymarket.requestedExitMode ?? "n/a";
+        const effective = polymarket.effectiveExitMode ?? "n/a";
+        const stored = polymarket.storedEvaluationMode ?? "n/a";
+        return `requested ${requested} | effective ${effective} | stored ${stored}`;
+    }
+
+    private formatScoredDiagnostic(diagnostics: BacktestDiagnosticOutput): string {
+        const polymarket = diagnostics.polymarket;
+        if (!polymarket) {
+            return `${diagnostics.run.totalTrades} chart trades`;
+        }
+
+        const scored = polymarket.scoredTrades ?? 0;
+        const unscored = polymarket.unscoredTrades ?? 0;
+        const missingOutcome = polymarket.missingOutcomeTrades ?? 0;
+        return `${scored} scored | ${unscored} unscored | ${missingOutcome} no outcome`;
+    }
+
+    private formatPolymarketCoverageDiagnostic(diagnostics: BacktestDiagnosticOutput): string {
+        const polymarket = diagnostics.polymarket;
+        if (!polymarket) {
+            return "n/a";
+        }
+
+        const scoredPct = polymarket.scoredPct !== null ? `${polymarket.scoredPct.toFixed(2)}%` : "n/a";
+        const filtered = polymarket.entryPriceFilteredTrades + polymarket.entryTimeFilteredTrades;
+        return `${scoredPct} scored | filtered ${filtered} | missing price ${polymarket.missingPriceTrades}`;
+    }
+
+    private formatPolymarketFilterDiagnostic(diagnostics: BacktestDiagnosticOutput): string {
+        const filters = diagnostics.polymarket?.filters;
+        if (!filters) {
+            return "n/a";
+        }
+
+        const priceFilter = typeof filters.entryPriceFilterCents === "number" && filters.entryPriceFilterCents > 0
+            ? filters.entryPriceAllowedRange
+                ? `price ${filters.entryPriceFilterCents}c (${this.formatDiagnosticCents(filters.entryPriceAllowedRange.minExclusive)}-${this.formatDiagnosticCents(filters.entryPriceAllowedRange.maxExclusive)})`
+                : `price ${filters.entryPriceFilterCents}c`
+            : "price off";
+        const cutoff = filters.entryCutoffEnabled
+            ? `cutoff ${filters.entryCutoffSeconds ?? "?"}s`
+            : "cutoff off";
+        const slippage = typeof filters.backtestSlippageCents === "number"
+            ? `slip ${filters.backtestSlippageCents}c`
+            : "slip n/a";
+        return `${priceFilter} | ${cutoff} | ${slippage}`;
+    }
+
+    private formatRecommendationDiagnostic(diagnostics: BacktestDiagnosticOutput): string {
+        const firstRecommendation = diagnostics.recommendations[0];
+        if (!firstRecommendation) {
+            return "none";
+        }
+
+        return firstRecommendation.length > 120
+            ? `${firstRecommendation.slice(0, 117)}...`
+            : firstRecommendation;
+    }
+
+    private formatDiagnosticCents(value: number): string {
+        return `${Number((value * 100).toFixed(1))}c`;
+    }
+
+    private formatEngineDiagnostic(diagnostics: BacktestDiagnosticOutput): string {
+        const engine = diagnostics.run.engineUsed ?? "n/a";
+        const counts = diagnostics.engineDiagnostics?.counts;
+        if (!counts) {
+            return engine;
+        }
+
+        return `${engine} | signals ${counts.inputSignals}->${counts.preparedSignals} | orders ${counts.signalExitOrders}`;
+    }
+
+    private renderDiagnosticMetric(label: string, value: string): string {
+        return `
+            <div class="backtest-diagnostics__metric">
+                <div class="backtest-diagnostics__metric-label">${escapeHtml(label)}</div>
+                <div class="backtest-diagnostics__metric-value">${escapeHtml(value)}</div>
+            </div>
+        `;
+    }
+
+    private async copyBacktestDiagnostics(): Promise<void> {
+        if (!this.latestBacktestDiagnostics) {
+            uiManager.showToast("No backtest diagnostics to copy", "info");
+            return;
+        }
+
+        try {
+            const copied = await copyToClipboard(JSON.stringify(this.latestBacktestDiagnostics, null, 2));
+            if (!copied) {
+                throw new Error("Clipboard copy returned false");
+            }
+            uiManager.showToast("Backtest diagnostics copied", "success");
+        } catch (error) {
+            debugLogger.error("trades.copy_backtest_diagnostics_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
+            uiManager.showToast("Copy failed - check browser permissions", "error");
+        }
+    }
+
     private resolveTradeItemTarget(target: EventTarget | null, container: HTMLElement): HTMLElement | null {
         if (!(target instanceof Element)) {
             return null;
@@ -1031,6 +1251,7 @@ export class TradesRenderer {
         this.tradeRenderGeneration += 1;
         setVisible('emptyTrades', true);
         setVisible('tradesSummary', false);
+        this.hideBacktestDiagnostics();
         const container = this.getDom().tradesList;
         container.classList.remove('trades-list-parity');
         container.innerHTML = '';

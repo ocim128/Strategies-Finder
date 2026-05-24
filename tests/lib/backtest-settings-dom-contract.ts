@@ -23,6 +23,7 @@ import { clampPolymarketEntryDelayBars } from "./polymarket-entry-delay";
 import { clampPolymarketEntryPriceFilterCents } from "./polymarket-entry-price-filter";
 import { clampPolymarketBacktestSlippageCents } from "./polymarket-backtest-slippage";
 import { resolvePolymarketOutcomeInterval } from "./polymarket-outcome-interval";
+import { resolvePolymarketExitMode } from "./polymarket-exit-mode";
 import {
     clampPolymarketPostSignalLimitEntryPriceCents,
     clampPolymarketPostSignalLimitExitPriceCents,
@@ -449,9 +450,7 @@ export function coerceBacktestDomSettingValue(
         case "polymarketBacktestSlippageCents":
             return clampPolymarketBacktestSlippageCents(value);
         case "polymarketExitMode":
-            return typeof value === "string" && value.trim().toLowerCase() === "signal_exit_same_event"
-                ? "signal_exit_same_event"
-                : "resolve_hold";
+            return resolvePolymarketExitMode(value);
         case "polymarketLimitEntryPriceCents":
             return clampPolymarketPostSignalLimitEntryPriceCents(value);
         case "polymarketLimitExitPriceCents":

@@ -7,7 +7,7 @@ import type {
     FinderUniverseOptions,
     PolymarketFinderRankMode,
 } from "../types/finder";
-import { resolveEffectivePolymarketExitMode, type PolymarketExitMode } from "../polymarket-exit-mode";
+import { isSameEventPolymarketExitMode, resolveEffectivePolymarketExitMode, type PolymarketExitMode } from "../polymarket-exit-mode";
 import { clampPolymarketEntryDelayBars } from "../polymarket-entry-delay";
 import { clampPolymarketEntryPriceFilterCents } from "../polymarket-entry-price-filter";
 import { clampPolymarketBacktestSlippageCents } from "../polymarket-backtest-slippage";
@@ -153,7 +153,7 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
             : 0,
         polymarketExitMode: input.polymarketExitMode,
         polymarketSignalExitAllowMultipleTradesPerEvent: input.polymarketScoringEnabled
-            && input.polymarketExitMode === "signal_exit_same_event"
+            && isSameEventPolymarketExitMode(input.polymarketExitMode)
             && input.polymarketSignalExitAllowMultipleTradesPerEvent === true,
         polymarketPostSignalLimitEntryEnabled: input.polymarketScoringEnabled && input.polymarketPostSignalLimitEntryEnabled === true,
         polymarketPostSignalLimitEntryMode: input.polymarketPostSignalLimitEntryMode,

@@ -1,4 +1,5 @@
 import type { BacktestSettings } from "./types/strategies";
+import { isSameEventPolymarketExitMode } from "./polymarket-exit-mode";
 
 export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     const executionModel = settings.executionModel ?? 'signal_close';
@@ -37,7 +38,7 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
 
     const usesMultiPosition = (settings.maxOpenTrades ?? 1) > 1;
 
-    const usesSignalExitMode = settings.polymarketExitMode === "signal_exit_same_event";
+    const usesSignalExitMode = isSameEventPolymarketExitMode(settings.polymarketExitMode);
     const usesDisableSignalExits = settings.disableSignalExits === true;
     const usesPolymarketProtection =
         (settings.polymarketProtectionTakeProfitEnabled === true && (settings.polymarketProtectionTakeProfitCents ?? 0) > 0)

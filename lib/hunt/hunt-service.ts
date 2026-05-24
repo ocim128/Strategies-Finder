@@ -21,6 +21,7 @@ import {
     resolvePolymarketPostSignalLimitEntryMode,
     resolvePolymarketPostSignalLimitExitMode,
 } from "../polymarket-post-signal-limit-entry";
+import { isSameEventPolymarketExitMode, resolvePolymarketExitMode } from "../polymarket-exit-mode";
 import { settingsManager, sortStrategyConfigsNewestFirst } from "../settings-manager";
 import { clearBacktestResults, setBlockRange, setCurrentStrategyKey } from "../state-actions";
 import { state } from "../state";
@@ -863,9 +864,7 @@ class HuntService {
         const maxTrades = !tradeCountFilterEnabled || maxTradesInput === null || maxTradesInput <= 0
             ? HUNT_MAX_TRADES_UNBOUNDED
             : Math.max(minTrades, Math.round(maxTradesInput));
-        const polymarketExitMode = dom.huntPolymarketExitMode.value === "signal_exit_same_event"
-            ? "signal_exit_same_event"
-            : "resolve_hold";
+        const polymarketExitMode = resolvePolymarketExitMode(dom.huntPolymarketExitMode.value);
         const polymarketRankMode = normalizeHuntPolymarketRankMode(
             dom.huntPolymarketRankMode.value as HuntRunSettings["polymarketRankMode"],
             polymarketExitMode
@@ -906,7 +905,7 @@ class HuntService {
         this.syncPolymarketRankModeOptions();
 
         const exitMode = this.uiState.runSettings.polymarketExitMode;
-        if (exitMode === "signal_exit_same_event") {
+        if (isSameEventPolymarketExitMode(exitMode)) {
             dom.huntPolymarketLockOffset.disabled = true;
         } else {
             dom.huntPolymarketSignalExitAllowMultipleTradesPerEvent.disabled = true;
@@ -920,11 +919,11 @@ class HuntService {
 
     private syncPolymarketRankModeOptions(): void {
         const dom = this.getDom();
-        const isSignalExit = this.uiState.runSettings.polymarketExitMode === "signal_exit_same_event";
+        const isSameEventExit = isSameEventPolymarketExitMode(this.uiState.runSettings.polymarketExitMode);
         for (const option of Array.from(dom.huntPolymarketRankMode.options)) {
-            option.disabled = isSignalExit && option.value !== normalizeHuntPolymarketRankMode(
+            option.disabled = isSameEventExit && option.value !== normalizeHuntPolymarketRankMode(
                 option.value as HuntRunSettings["polymarketRankMode"],
-                "signal_exit_same_event"
+                this.uiState.runSettings.polymarketExitMode
             );
         }
         const normalizedRankMode = normalizeHuntPolymarketRankMode(
@@ -1244,9 +1243,9 @@ class HuntService {
                 evalSummary.limitExitOffsetCents ?? mergedBacktestSettings.polymarketPostSignalLimitExitOffsetCents
             );
         };
-        if (effectiveExitMode === "signal_exit_same_event") {
+        if (isSameEventPolymarketExitMode(effectiveExitMode)) {
             mergedBacktestSettings.polymarketAnnotationEnabled = true;
-            mergedBacktestSettings.polymarketExitMode = "signal_exit_same_event";
+            mergedBacktestSettings.polymarketExitMode = effectiveExitMode;
             mergedBacktestSettings.polymarketSignalExitAllowMultipleTradesPerEvent = this.runOutput?.finderOptions?.polymarketSignalExitAllowMultipleTradesPerEvent === true;
             if (tagged.result.polymarketEval?.limitEntryEnabled) {
                 applyLimitEntryEvalSettings();

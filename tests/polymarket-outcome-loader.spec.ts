@@ -4,6 +4,7 @@ import { PolymarketOutcomeLoader } from "../lib/polymarket-outcome-loader";
 import type { BacktestResult } from "../lib/types/strategies";
 import type { PolymarketEntrySelectionMode } from "../lib/polymarket-entry-selection-mode";
 import type { PolymarketOutcomeInterval } from "../lib/polymarket-outcome-interval";
+import type { PolymarketExitMode } from "../lib/polymarket-exit-mode";
 
 function makeResult(overrides: Partial<BacktestResult> = {}): BacktestResult {
     return {
@@ -51,7 +52,7 @@ function makeLoader(settings: {
     cutoffEnabled?: boolean;
     cutoffSeconds?: number;
     entrySelectionMode?: PolymarketEntrySelectionMode;
-    exitMode?: "resolve_hold" | "signal_exit_same_event";
+    exitMode?: PolymarketExitMode;
     allowMultiple?: boolean;
     outcomeSymbol?: string | null;
     outcomeInterval?: PolymarketOutcomeInterval;

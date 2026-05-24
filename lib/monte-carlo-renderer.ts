@@ -116,7 +116,9 @@ function buildSourceBadgeText(result: MonteCarloResult): string {
 
     const modeLabel = result.polymarketEvaluationMode === "signal_exit_same_event"
         ? "Signal Exit"
-        : "Resolve Hold";
+        : result.polymarketEvaluationMode === "chart_exit_same_event"
+            ? "Chart Exit"
+            : "Resolve Hold";
     const stakePerTrade = (result.settings as { polymarketStakePerTrade?: number }).polymarketStakePerTrade;
     const stakeLabel = typeof stakePerTrade === "number" && Number.isFinite(stakePerTrade)
         ? `, $${stakePerTrade.toFixed(2)} / trade`

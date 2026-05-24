@@ -5,7 +5,11 @@ import type {
     PolymarketOutcomeRow,
     TradePolymarketOutcome,
 } from "../types/polymarket-outcomes";
-import { isPolymarketOneSecondSignalExitExecutionModel, type PolymarketExitMode } from "../polymarket-exit-mode";
+import {
+    isPolymarketOneSecondSignalExitExecutionModel,
+    isSameEventPolymarketExitMode,
+    type PolymarketExitMode,
+} from "../polymarket-exit-mode";
 import {
     getEffectivePolymarketSeriesId,
     loadPolymarketOutcomesForTimeRange,
@@ -534,7 +538,7 @@ export function evaluateSecondMarketBacktest(args: {
         outcomes: args.context.outcomes,
         quotes: args.context.quotes,
         evaluationMode,
-        allowMultipleTradesPerEvent: evaluationMode === "signal_exit_same_event"
+        allowMultipleTradesPerEvent: isSameEventPolymarketExitMode(evaluationMode)
             ? args.polymarketSignalExitAllowMultipleTradesPerEvent
             : false,
         mode: "strict",

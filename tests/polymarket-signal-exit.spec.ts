@@ -4,7 +4,12 @@ import {
     indexSignalExitOutcomesByEntryTs,
 } from "../lib/polymarket-signal-exit-evaluator";
 import { indexPricePointsByEvent, findEntryFill, findSignalExitFill } from "../lib/polymarket-price-points";
-import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode, SIGNAL_EXIT_SUPPORTED_RANK_MODES } from "../lib/polymarket-exit-mode";
+import {
+    resolveEffectivePolymarketExitMode,
+    isSignalExitSameEventMode,
+    isSameEventPolymarketExitMode,
+    SAME_EVENT_SUPPORTED_RANK_MODES,
+} from "../lib/polymarket-exit-mode";
 import type { PolymarketPricePoint } from "../lib/local-sqlite-polymarket-api";
 import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
 import type { Trade } from "../lib/types/strategies";
@@ -117,6 +122,28 @@ eq(
         interval: "1s",
         executionModel: "signal_close",
         polymarketAnnotationEnabled: true,
+        requestedMode: "chart_exit_same_event",
+    }),
+    "chart_exit_same_event",
+    "1s + signal_close \u2192 chart_exit_same_event"
+);
+
+eq(
+    resolveEffectivePolymarketExitMode({
+        interval: "1m",
+        executionModel: "next_open",
+        polymarketAnnotationEnabled: true,
+        requestedMode: "chart_exit_same_event",
+    }),
+    "chart_exit_same_event",
+    "1m + next_open \u2192 chart_exit_same_event"
+);
+
+eq(
+    resolveEffectivePolymarketExitMode({
+        interval: "1s",
+        executionModel: "signal_close",
+        polymarketAnnotationEnabled: true,
         requestedMode: "resolve_hold",
     }),
     "resolve_hold",
@@ -189,18 +216,32 @@ eq(
     "requested resolve_hold → resolve_hold"
 );
 
+eq(
+    resolveEffectivePolymarketExitMode({
+        interval: "1m",
+        executionModel: "signal_close",
+        polymarketAnnotationEnabled: true,
+        requestedMode: "chart_exit_same_event",
+    }),
+    "resolve_hold",
+    "1m + signal_close chart exit -> downgrade to resolve_hold"
+);
+
 console.log("\n=== isSignalExitSameEventMode ===");
 
 ok(isSignalExitSameEventMode("signal_exit_same_event"), "signal_exit_same_event is signal exit");
+ok(!isSignalExitSameEventMode("chart_exit_same_event"), "chart_exit_same_event is not signal exit");
 ok(!isSignalExitSameEventMode("resolve_hold"), "resolve_hold is not signal exit");
 ok(!isSignalExitSameEventMode(undefined), "undefined is not signal exit");
+ok(isSameEventPolymarketExitMode("chart_exit_same_event"), "chart_exit_same_event is same-event exit");
+ok(isSameEventPolymarketExitMode("signal_exit_same_event"), "signal_exit_same_event is same-event exit");
 
-console.log("\n=== SIGNAL_EXIT_SUPPORTED_RANK_MODES ===");
+console.log("\n=== SAME_EVENT_SUPPORTED_RANK_MODES ===");
 
-ok(SIGNAL_EXIT_SUPPORTED_RANK_MODES.has("expectancy"), "expectancy is supported");
-ok(SIGNAL_EXIT_SUPPORTED_RANK_MODES.has("profitFactor"), "profitFactor is supported");
-ok(!SIGNAL_EXIT_SUPPORTED_RANK_MODES.has("balanced"), "balanced is not supported");
-ok(!SIGNAL_EXIT_SUPPORTED_RANK_MODES.has("accuracy"), "accuracy is not supported");
+ok(SAME_EVENT_SUPPORTED_RANK_MODES.has("expectancy"), "expectancy is supported");
+ok(SAME_EVENT_SUPPORTED_RANK_MODES.has("profitFactor"), "profitFactor is supported");
+ok(!SAME_EVENT_SUPPORTED_RANK_MODES.has("balanced"), "balanced is not supported");
+ok(!SAME_EVENT_SUPPORTED_RANK_MODES.has("accuracy"), "accuracy is not supported");
 
 console.log("\n=== price point indexing ===");
 
@@ -399,6 +440,37 @@ console.log("\n=== evaluateSignalExitTrades: no same-event signal exit → resol
     const r = results[0]!;
     eq(r.exitSource, "resolution", "non-signal exit → resolution");
     approx(r.exitPrice!, 1, 0.001, "YES side, outcome up → 1");
+}
+
+console.log("\n=== evaluateSignalExitTrades: chart-exit mode exits on non-signal chart close ===");
+
+{
+    const trade = makeTrade({
+        entryTime: 1020 as any,
+        exitTime: 1050 as any,
+        exitReason: "time_stop",
+    });
+    const outcome = makeOutcome({ event_start_ts: 1000, event_end_ts: 1300, resolved_outcome_up: 0 });
+    const pricePoints = [
+        makePricePoint({ ts: 1020, yes_price: 0.50, no_price: 0.50 }),
+        makePricePoint({ ts: 1050, yes_price: 0.62, no_price: 0.38 }),
+    ];
+
+    const { results, summary } = evaluateSignalExitTrades({
+        trades: [trade],
+        outcomes: [outcome],
+        pricePoints,
+        evaluationMode: "chart_exit_same_event",
+    });
+
+    const r = results[0]!;
+    eq(r.exitSource, "signal", "chart close uses same-event quote exit source");
+    approx(r.exitPrice!, 0.62, 0.001, "YES side exits at chart close quote");
+    approx(r.pnl!, 0.12, 0.001, "pnl uses chart close quote, not final outcome");
+    eq(summary.signalExitedTrades, 1, "same-event exit counted");
+    eq(summary.resolvedTrades, 0, "resolution fallback not used");
+    const annotation = buildTradeAnnotationFromSignalExitResult(r, "chart_exit_same_event");
+    eq(annotation?.evaluationMode, "chart_exit_same_event", "annotation stores chart-exit mode");
 }
 
 console.log("\n=== evaluateSignalExitTrades: duplicate trades inside one event ===");
@@ -1050,6 +1122,11 @@ console.log("\n=== settings resolver: polymarketExitMode ===");
     } as any);
     eq(withSignalExit.polymarketExitMode, "signal_exit_same_event", "signal_exit_same_event preserved");
     eq(withSignalExit.polymarketSignalExitAllowMultipleTradesPerEvent, true, "multi-trade setting preserved");
+    const withChartExit = resolveBacktestSettingsFromRaw({
+        polymarketExitMode: "chart_exit_same_event",
+        riskSettingsToggle: true,
+    } as any);
+    eq(withChartExit.polymarketExitMode, "chart_exit_same_event", "chart_exit_same_event preserved");
 
     const withDefault = resolveBacktestSettingsFromRaw({
         riskSettingsToggle: true,
@@ -1076,6 +1153,10 @@ console.log("\n=== hunt model: polymarketExitMode ===");
     });
     eq(withSignalExit.polymarketExitMode, "signal_exit_same_event", "hunt preserves signal_exit_same_event");
     eq(withSignalExit.polymarketSignalExitAllowMultipleTradesPerEvent, true, "hunt preserves multi-trade setting");
+    const withChartExit = normalizeStoredHuntRunSettings({
+        polymarketExitMode: "chart_exit_same_event",
+    });
+    eq(withChartExit.polymarketExitMode, "chart_exit_same_event", "hunt preserves chart_exit_same_event");
 
     const withInvalid = normalizeStoredHuntRunSettings({
         polymarketExitMode: "garbage",

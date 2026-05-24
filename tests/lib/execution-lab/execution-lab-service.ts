@@ -11,7 +11,7 @@ import { getEffectivePolymarketSeriesId, resolvePolymarketOutcomeSymbol } from "
 import { resolvePolymarketDomSettings } from "../polymarket-dom-reader";
 import { getPolymarketEntryPriceFilterBounds } from "../polymarket-entry-price-filter";
 import { resolvePolymarketEntryCutoff } from "../polymarket-entry-cutoff";
-import { resolveEffectivePolymarketExitMode } from "../polymarket-exit-mode";
+import { isSameEventPolymarketExitMode, resolveEffectivePolymarketExitMode } from "../polymarket-exit-mode";
 import {
     DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_CENTS,
     DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_ENABLED,
@@ -1277,7 +1277,7 @@ export class ExecutionLabService {
             executionModel: comparisonBacktestSettings.executionModel,
             polymarketAnnotationEnabled: true,
         });
-        const allowMultipleTradesPerEvent = exitMode === "signal_exit_same_event"
+        const allowMultipleTradesPerEvent = isSameEventPolymarketExitMode(exitMode)
             && comparisonBacktestSettings.polymarketSignalExitAllowMultipleTradesPerEvent === true;
         return {
             ...snapshot,
@@ -1419,7 +1419,7 @@ export class ExecutionLabService {
             executionModel: backtestSettings.executionModel,
             polymarketAnnotationEnabled,
         });
-        const allowMultipleTradesPerEvent = exitMode === "signal_exit_same_event"
+        const allowMultipleTradesPerEvent = isSameEventPolymarketExitMode(exitMode)
             && (backtestSettings.polymarketSignalExitAllowMultipleTradesPerEvent
                 ?? polymarketDom.signalExitAllowMultipleTradesPerEvent) === true;
         const snapshotBacktestSettings = {

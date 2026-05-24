@@ -14,7 +14,7 @@ import {
 } from "../polymarket-post-signal-limit-entry";
 import type { Trade } from "../types/strategies";
 import type { PolymarketOutcomeRow } from "../types/polymarket-outcomes";
-import type { PolymarketExitMode } from "../polymarket-exit-mode";
+import { isChartExitSameEventMode, type PolymarketExitMode } from "../polymarket-exit-mode";
 import type { PolymarketPricePoint } from "../local-sqlite-polymarket-api";
 import { clampPolymarketEntryDelayBars } from "../polymarket-entry-delay";
 import {
@@ -597,8 +597,10 @@ export function evaluateSecondMarketTrades(args: {
         const rawExitTs = trade.exitReason === "end_of_data"
             ? null
             : parseTimeToUnixSeconds(trade.exitTime);
-        const signalExitTs = evaluationMode === "signal_exit_same_event"
-            && trade.exitReason === "signal"
+        const shouldUseChartExit = isChartExitSameEventMode(evaluationMode)
+            ? trade.exitReason !== "end_of_data"
+            : evaluationMode === "signal_exit_same_event" && trade.exitReason === "signal";
+        const signalExitTs = shouldUseChartExit
             && rawExitTs !== null
             && rawExitTs < outcome.event_end_ts
             ? rawExitTs

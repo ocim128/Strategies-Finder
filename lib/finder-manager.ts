@@ -56,7 +56,7 @@ import type {
 	FinderStrategyDiagnostics,
 } from './types/finder';
 import { isSmartTradeSizingMode } from "./types/backtest";
-import { isSignalExitSameEventMode } from "./polymarket-exit-mode";
+import { isSameEventPolymarketExitMode } from "./polymarket-exit-mode";
 import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
 import {
 	clampPolymarketPostSignalLimitEntryPriceCents,
@@ -943,7 +943,7 @@ export class FinderManager {
 	private setPolymarketControlsEnabled(enabled: boolean): void {
 		const dom = this.getDom();
 		const polymarketSettings = resolvePolymarketDomSettings();
-		const lockOffsetRelevant = polymarketSettings.exitMode !== 'signal_exit_same_event'
+		const lockOffsetRelevant = !isSameEventPolymarketExitMode(polymarketSettings.exitMode)
 			&& polymarketSettings.outcomeInterval === '5m';
 
 		dom.finderPolymarketSettings.classList.toggle('is-disabled', !enabled);
@@ -2072,9 +2072,9 @@ export class FinderManager {
 			);
 			return true;
 		};
-		if (isSignalExitSameEventMode(effectiveMode)) {
+		if (isSameEventPolymarketExitMode(effectiveMode)) {
 			mergedSettings.polymarketAnnotationEnabled = true;
-			mergedSettings.polymarketExitMode = 'signal_exit_same_event';
+			mergedSettings.polymarketExitMode = effectiveMode;
 			mergedSettings.polymarketSignalExitAllowMultipleTradesPerEvent = this.lastFinderOptions?.polymarketSignalExitAllowMultipleTradesPerEvent === true;
 			applyPolymarketLimitEntrySettings();
 		} else if (polymarketEval && isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval)) {

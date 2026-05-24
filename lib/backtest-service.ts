@@ -530,6 +530,9 @@ export class BacktestService {
                 annotatePolymarket: false,
                 engineMode: requiresTsEngine ? 'typescript' : 'auto',
             },
+            backtestRunOptions: {
+                collectDiagnostics: true,
+            },
             dataFetcher: dataManager,
         });
 

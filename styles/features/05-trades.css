@@ -92,6 +92,146 @@
 
 }
 
+.backtest-diagnostics {
+
+    margin-bottom: var(--space-4);
+
+    padding: var(--space-3);
+
+    border: 1px solid var(--glass-border);
+
+    border-radius: var(--radius-m);
+
+    background: hsl(var(--hsl-surface-2) / 0.55);
+
+}
+
+.backtest-diagnostics__header {
+
+    display: flex;
+
+    align-items: flex-start;
+
+    justify-content: space-between;
+
+    gap: var(--space-3);
+
+}
+
+.backtest-diagnostics__heading {
+
+    min-width: 0;
+
+}
+
+.backtest-diagnostics__title {
+
+    font-size: var(--font-size-xs);
+
+    font-weight: var(--font-weight-semibold);
+
+    color: var(--text-primary);
+
+}
+
+.backtest-diagnostics__summary {
+
+    margin-top: 3px;
+
+    font-size: var(--font-size-xs);
+
+    color: var(--text-secondary);
+
+    line-height: var(--line-height-normal);
+
+}
+
+.backtest-diagnostics__warnings {
+
+    display: flex;
+
+    flex-direction: column;
+
+    gap: var(--space-1);
+
+    margin-top: var(--space-2);
+
+}
+
+.backtest-diagnostics__warning {
+
+    border-radius: var(--radius-s);
+
+    border: 1px solid hsl(var(--hsl-warning) / 0.26);
+
+    background: hsl(var(--hsl-warning) / 0.10);
+
+    color: var(--text-primary);
+
+    padding: var(--space-1-5) var(--space-2);
+
+    font-size: var(--font-size-xs);
+
+    line-height: var(--line-height-normal);
+
+}
+
+.backtest-diagnostics__content {
+
+    display: grid;
+
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+
+    gap: var(--space-2);
+
+    margin-top: var(--space-2);
+
+}
+
+.backtest-diagnostics__metric {
+
+    border: 1px solid var(--border-subtle);
+
+    border-radius: var(--radius-s);
+
+    background: hsl(var(--hsl-surface-3) / 0.48);
+
+    padding: var(--space-2);
+
+    min-width: 0;
+
+}
+
+.backtest-diagnostics__metric-label {
+
+    color: var(--text-secondary);
+
+    font-size: var(--font-size-2xs);
+
+    font-weight: var(--font-weight-bold);
+
+    text-transform: uppercase;
+
+    letter-spacing: var(--tracking-medium);
+
+}
+
+.backtest-diagnostics__metric-value {
+
+    margin-top: 3px;
+
+    color: var(--text-primary);
+
+    font-size: var(--font-size-xs);
+
+    font-family: var(--font-family-mono);
+
+    line-height: var(--line-height-normal);
+
+    overflow-wrap: anywhere;
+
+}
+
 
 
 /* Trades List - Enhanced */

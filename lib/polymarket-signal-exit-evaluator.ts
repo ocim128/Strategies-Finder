@@ -26,6 +26,7 @@ import {
     type PolymarketPostSignalLimitEntrySettings,
 } from "./polymarket-post-signal-limit-entry";
 import type { Trade } from "./types/strategies";
+import { isChartExitSameEventMode, type PolymarketExitMode } from "./polymarket-exit-mode";
 import type {
     BacktestPolymarketTradeSummary,
     PolymarketMarketEntrySource,
@@ -47,6 +48,7 @@ export interface SignalExitEvalInput {
     entryCutoffEnabled?: boolean;
     entryCutoffSeconds?: number;
     limitEntry?: PolymarketPostSignalLimitEntrySettings;
+    evaluationMode?: PolymarketExitMode;
 }
 
 export interface SignalExitTradeResult {
@@ -125,6 +127,7 @@ export function buildSignalExitPolymarketTradeSummary(args: {
     outcomeInterval?: BacktestPolymarketTradeSummary["outcomeInterval"];
     outcomeRowsLoaded: number;
     summary: SignalExitSummary;
+    evaluationMode?: PolymarketExitMode;
 }): BacktestPolymarketTradeSummary {
     const { summary } = args;
     return {
@@ -138,7 +141,7 @@ export function buildSignalExitPolymarketTradeSummary(args: {
         duplicateTradesIgnored: summary.duplicateTradesIgnored > 0 ? summary.duplicateTradesIgnored : undefined,
         entryPriceFilteredTrades: summary.entryPriceFilteredTrades > 0 ? summary.entryPriceFilteredTrades : undefined,
         entryTimeFilteredTrades: summary.entryTimeFilteredTrades > 0 ? summary.entryTimeFilteredTrades : undefined,
-        evaluationMode: "signal_exit_same_event",
+        evaluationMode: args.evaluationMode ?? "signal_exit_same_event",
         signalExitAllowMultipleTradesPerEvent: summary.allowMultipleTradesPerEvent,
         profitableTrades: summary.profitableTrades,
         losingTrades: summary.losingTrades,
@@ -229,6 +232,7 @@ export function evaluateSignalExitTrades(
     const results: SignalExitTradeResult[] = [];
 
     const allowMultipleTradesPerEvent = input.allowMultipleTradesPerEvent === true;
+    const evaluationMode = input.evaluationMode ?? "signal_exit_same_event";
     const seenEvents = new Set<number>();
     const limitPriceByEventStart = new Map<number, number>();
     const limitEntryEnabled = input.limitEntry?.enabled === true;
@@ -326,7 +330,10 @@ export function evaluateSignalExitTrades(
             continue;
         }
 
-        const exitTsRaw = trade.exitReason === "signal"
+        const shouldUseChartExit = isChartExitSameEventMode(evaluationMode)
+            ? trade.exitReason !== "end_of_data"
+            : trade.exitReason === "signal";
+        const exitTsRaw = shouldUseChartExit
             ? parseTimeToUnixSeconds(trade.exitTime)
             : null;
         const signalExitTs = exitTsRaw !== null && exitTsRaw < outcome.event_end_ts
@@ -439,35 +446,33 @@ export function evaluateSignalExitTrades(
             })()
             : null;
 
-        if (trade.exitReason === "signal") {
-            if (exitTsRaw !== null && exitTsRaw < outcome.event_end_ts) {
-                signalExitAttempted = true;
-                const exitFill = findSignalExitFill(eventPoints, exitTsRaw, side);
-                // Sparse event history can legitimately leave one quote as both
-                // the first fill after entry and the latest known quote before
-                // the chart exit. Treat that as a flat same-event exit instead
-                // of dropping the first trade and letting a later trade claim
-                // the event.
-                const targetFillsFirst = targetExit?.status === "filled"
-                    && targetExit.fillTs !== null
-                    && targetExit.fillTs <= exitTsRaw;
-                if (targetFillsFirst) {
-                    exitPrice = targetExit.fillPrice;
-                    exitTs = targetExit.fillTs;
-                    exitSource = "target";
-                    exitStatus = targetExit.status;
-                } else if (exitFill && entryFillTs !== null && exitFill.ts >= entryFillTs) {
-                    const rawExitPrice = exitFill.ts === entryFillTs && entryPrice !== null && backtestSlippageCents <= 0
-                        ? entryPrice
-                        : exitFill.price;
-                    exitPrice = applyPolymarketBacktestExitSlippage(rawExitPrice, backtestSlippageCents);
-                    exitTs = exitFill.ts;
-                    exitSource = "signal";
-                    exitStatus = targetExit?.status;
-                } else {
-                    exitSource = "missing";
-                    exitStatus = targetExit?.status;
-                }
+        if (signalExitTs !== null) {
+            signalExitAttempted = true;
+            const exitFill = findSignalExitFill(eventPoints, signalExitTs, side);
+            // Sparse event history can legitimately leave one quote as both
+            // the first fill after entry and the latest known quote before
+            // the chart exit. Treat that as a flat same-event exit instead
+            // of dropping the first trade and letting a later trade claim
+            // the event.
+            const targetFillsFirst = targetExit?.status === "filled"
+                && targetExit.fillTs !== null
+                && targetExit.fillTs <= signalExitTs;
+            if (targetFillsFirst) {
+                exitPrice = targetExit.fillPrice;
+                exitTs = targetExit.fillTs;
+                exitSource = "target";
+                exitStatus = targetExit.status;
+            } else if (exitFill && entryFillTs !== null && exitFill.ts >= entryFillTs) {
+                const rawExitPrice = exitFill.ts === entryFillTs && entryPrice !== null && backtestSlippageCents <= 0
+                    ? entryPrice
+                    : exitFill.price;
+                exitPrice = applyPolymarketBacktestExitSlippage(rawExitPrice, backtestSlippageCents);
+                exitTs = exitFill.ts;
+                exitSource = "signal";
+                exitStatus = targetExit?.status;
+            } else {
+                exitSource = "missing";
+                exitStatus = targetExit?.status;
             }
         }
 
@@ -751,6 +756,7 @@ function buildSignalExitSummary(
 
 function buildSignalExitOutcomeAnnotation(
     result: SignalExitTradeResult,
+    evaluationMode: PolymarketExitMode,
     overrides: Pick<
         TradePolymarketOutcome,
         | "isWin"
@@ -766,7 +772,7 @@ function buildSignalExitOutcomeAnnotation(
     const prediction = result.side as "yes" | "no";
     return {
         ...buildPolymarketOutcomeBase({ outcome, prediction, isWin: overrides.isWin ?? null }),
-        evaluationMode: "signal_exit_same_event",
+        evaluationMode,
         isProfitable: overrides.isProfitable ?? null,
         marketEntrySource: result.entrySource,
         marketEntryStatus: result.entryStatus,
@@ -784,11 +790,12 @@ function buildSignalExitOutcomeAnnotation(
 }
 
 export function buildTradeAnnotationFromSignalExitResult(
-    result: SignalExitTradeResult
+    result: SignalExitTradeResult,
+    evaluationMode: PolymarketExitMode = "signal_exit_same_event"
 ): TradePolymarketOutcome | null {
     if (result.exitSource === "missing") {
         if (result.entrySource === "limit" && result.outcome && result.entryStatus && result.entryStatus !== "filled") {
-            return buildSignalExitOutcomeAnnotation(result, {
+            return buildSignalExitOutcomeAnnotation(result, evaluationMode, {
                 isWin: null,
                 isProfitable: null,
                 marketEntryPrice: null,
@@ -810,7 +817,7 @@ export function buildTradeAnnotationFromSignalExitResult(
             prediction: (result.side ?? "yes") as "yes" | "no",
             actualOutcomeUp: 0,
             isWin: null,
-            evaluationMode: "signal_exit_same_event",
+            evaluationMode,
             isProfitable: null,
             marketEntrySource: result.entrySource,
             marketEntryStatus: result.entryStatus,
@@ -828,7 +835,7 @@ export function buildTradeAnnotationFromSignalExitResult(
     }
 
     if (result.exitSource === "duplicate") {
-        return buildSignalExitOutcomeAnnotation(result, {
+        return buildSignalExitOutcomeAnnotation(result, evaluationMode, {
             isWin: null,
             isProfitable: null,
             marketEntryPrice: null,
@@ -840,7 +847,7 @@ export function buildTradeAnnotationFromSignalExitResult(
     }
 
     if (result.exitSource === "entry_price_filtered") {
-        return buildSignalExitOutcomeAnnotation(result, {
+        return buildSignalExitOutcomeAnnotation(result, evaluationMode, {
             isWin: null,
             isProfitable: null,
             marketEntryPrice: result.entryPrice,
@@ -852,7 +859,7 @@ export function buildTradeAnnotationFromSignalExitResult(
     }
 
     if (result.exitSource === "entry_time_filtered") {
-        return buildSignalExitOutcomeAnnotation(result, {
+        return buildSignalExitOutcomeAnnotation(result, evaluationMode, {
             isWin: null,
             isProfitable: null,
             marketEntryPrice: null,
@@ -863,7 +870,7 @@ export function buildTradeAnnotationFromSignalExitResult(
         });
     }
 
-    return buildSignalExitOutcomeAnnotation(result, {
+    return buildSignalExitOutcomeAnnotation(result, evaluationMode, {
         isWin: result.isWin,
         isProfitable: result.isProfitable,
         marketEntryPrice: result.entryPrice,

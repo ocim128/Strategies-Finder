@@ -13,7 +13,7 @@ import {
     filterTradesByPreviousClosedTradeExitReason,
     summarizePolymarketTradesForRun,
 } from "../polymarket-trade-annotations";
-import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "../polymarket-exit-mode";
+import { resolveEffectivePolymarketExitMode, isSameEventPolymarketExitMode, type PolymarketExitMode } from "../polymarket-exit-mode";
 import {
     buildSignalExitPolymarketTradeSummary,
     evaluateSignalExitTrades,
@@ -95,7 +95,7 @@ export type QuickViewPolymarketSummary = {
     outcomeInterval?: PolymarketOutcomeInterval;
     timingProfile?: import("../types/polymarket-outcomes").BacktestPolymarketTimingProfileEntry[];
     bestTimingProfile?: import("../types/polymarket-outcomes").BacktestPolymarketTimingProfileEntry | null;
-    evaluationMode?: "resolve_hold" | "signal_exit_same_event";
+    evaluationMode?: PolymarketExitMode;
     usesRealizedPnl?: boolean;
     entryDelayBars?: number;
     missingPriceTrades?: number;
@@ -373,7 +373,7 @@ function inferPolymarketSummaryCounts(
     entryTimeFilteredTrades?: number;
 } {
     const scoredTrades = getScoredPolymarketTrades(trades).length;
-    const hasSignalExitAnnotations = trades.some((trade) => trade.polymarketOutcome?.evaluationMode === "signal_exit_same_event");
+    const hasSignalExitAnnotations = trades.some((trade) => isSameEventPolymarketExitMode(trade.polymarketOutcome?.evaluationMode));
     const duplicateTradesIgnored = hasSignalExitAnnotations
         ? trades.filter((trade) => trade.polymarketOutcome?.marketExitSource === "duplicate").length
         : 0;
@@ -407,7 +407,7 @@ function getPolymarketTradePayout(trade: Trade): number | null {
         return outcome.marketPnl;
     }
 
-    if (outcome.evaluationMode === "signal_exit_same_event") {
+    if (isSameEventPolymarketExitMode(outcome.evaluationMode)) {
         if (
             typeof outcome.marketExitPrice === "number" && Number.isFinite(outcome.marketExitPrice)
             && typeof outcome.marketEntryPrice === "number" && Number.isFinite(outcome.marketEntryPrice)
@@ -843,7 +843,7 @@ class QuickViewManager {
         return resolvePolymarketDomSettings().outcomeInterval;
     }
 
-    private readCurrentPolymarketExitMode(): "resolve_hold" | "signal_exit_same_event" | undefined {
+    private readCurrentPolymarketExitMode(): PolymarketExitMode | undefined {
         return resolvePolymarketDomSettings().exitMode;
     }
 
@@ -884,7 +884,8 @@ class QuickViewManager {
         const outcomeInterval = this.resolveActivePolymarketOutcomeInterval(result);
         const resolvedOutcomeSymbol = resolvePolymarketOutcomeSymbol(resultContext.symbol, outcomeSymbol);
         const seriesId = getEffectivePolymarketSeriesId(resultContext.symbol, outcomeInterval, outcomeSymbol);
-        const shouldRetryEmptySignalExitSummary = result.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event"
+        const shouldRetryEmptySignalExitSummary = result.polymarketTradeSummary
+            && isSameEventPolymarketExitMode(result.polymarketTradeSummary.evaluationMode)
             && (result.polymarketTradeSummary.scoredTrades ?? 0) === 0
             && result.trades.length > 0;
         const hasPolymarketPerformance = summarizePolymarketPerformanceForResult(result) !== null;
@@ -917,7 +918,7 @@ class QuickViewManager {
                 const effectiveExitMode = resolveEffectivePolymarketExitMode({
                     requestedMode: (
                         summaryEvaluationMode === "resolve_hold"
-                        || summaryEvaluationMode === "signal_exit_same_event"
+                        || isSameEventPolymarketExitMode(summaryEvaluationMode)
                     )
                         ? summaryEvaluationMode
                         : this.readCurrentPolymarketExitMode(),
@@ -961,7 +962,8 @@ class QuickViewManager {
                     outcomeInterval,
                     executionModel: this.readCurrentExecutionModel(),
                     polymarketExitMode: effectiveExitMode,
-                    polymarketSignalExitAllowMultipleTradesPerEvent: result.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event"
+                    polymarketSignalExitAllowMultipleTradesPerEvent: result.polymarketTradeSummary
+                        && isSameEventPolymarketExitMode(result.polymarketTradeSummary.evaluationMode)
                         ? result.polymarketTradeSummary.signalExitAllowMultipleTradesPerEvent === true
                         : this.readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent(),
                     entryPriceFilterCents: this.readCurrentPolymarketEntryPriceFilterCents(),
@@ -1027,7 +1029,7 @@ class QuickViewManager {
             polymarketAnnotationEnabled: true,
         });
         const currentPolymarketSettings = resolvePolymarketDomSettings();
-        const allowMultipleTradesPerEvent = result.polymarketTradeSummary?.evaluationMode === "signal_exit_same_event"
+        const allowMultipleTradesPerEvent = result.polymarketTradeSummary && isSameEventPolymarketExitMode(result.polymarketTradeSummary.evaluationMode)
             ? result.polymarketTradeSummary.signalExitAllowMultipleTradesPerEvent === true
             : currentPolymarketSettings.signalExitAllowMultipleTradesPerEvent;
         const existingLimitSummary = result.polymarketTradeSummary?.limitEntryEnabled === true
@@ -1058,7 +1060,7 @@ class QuickViewManager {
             }
             : undefined;
 
-        if (isSignalExitSameEventMode(effectiveExitMode) && resultContext.interval === "1m") {
+        if (isSameEventPolymarketExitMode(effectiveExitMode) && resultContext.interval === "1m") {
             try {
                 const outcomeByEntryTs = indexSignalExitOutcomesForTrades(result.trades, outcomes);
                 const relevantOutcomeByStart = new Map<number, (typeof outcomes)[number]>();
@@ -1082,12 +1084,13 @@ class QuickViewManager {
                     entryCutoffEnabled: currentPolymarketSettings.entryCutoffEnabled,
                     entryCutoffSeconds: currentPolymarketSettings.entryCutoffSeconds,
                     limitEntry,
+                    evaluationMode: effectiveExitMode,
                 });
                 const exitResultByTrade = new Map(exitResults.map((exitResult) => [exitResult.trade, exitResult]));
                 const annotatedTrades = result.trades.map((trade) => {
                     const exitResult = exitResultByTrade.get(trade);
                     if (!exitResult) return { ...trade, polymarketOutcome: null };
-                    return { ...trade, polymarketOutcome: buildTradeAnnotationFromSignalExitResult(exitResult) };
+                    return { ...trade, polymarketOutcome: buildTradeAnnotationFromSignalExitResult(exitResult, effectiveExitMode) };
                 });
 
                 return {
@@ -1099,6 +1102,7 @@ class QuickViewManager {
                         outcomeInterval,
                         outcomeRowsLoaded: outcomes.length,
                         summary: exitSummary,
+                        evaluationMode: effectiveExitMode,
                     }),
                 };
             } catch (error) {
@@ -1412,12 +1416,12 @@ class QuickViewManager {
 
     private getPolymarketSummary(result: BacktestResult): QuickViewPolymarketSummary | null {
         const summary = result.polymarketTradeSummary;
-        const isSignalExit = summary?.evaluationMode === "signal_exit_same_event";
+        const isSameEventExit = isSameEventPolymarketExitMode(summary?.evaluationMode);
         const hasSummaryPnlCounts =
             typeof summary?.profitableTrades === "number"
             || typeof summary?.losingTrades === "number"
             || typeof summary?.neutralTrades === "number";
-        const usesRealizedPnl = isSignalExit || summary?.limitExitEnabled === true || hasSummaryPnlCounts;
+        const usesRealizedPnl = isSameEventExit || summary?.limitExitEnabled === true || hasSummaryPnlCounts;
         const hasLimitEntrySummary = summary?.limitEntryEnabled === true
             && (summary.limitEntryAttempts ?? 0) > 0;
 
@@ -1444,7 +1448,7 @@ class QuickViewManager {
             ?? (derivedDuplicateTradesIgnored > 0 ? derivedDuplicateTradesIgnored : undefined);
         const coverageBase = Math.max(0, scoredTrades + unscoredTrades);
         const coverage = coverageBase > 0 ? scoredTrades / coverageBase : 0;
-        const bestBaselineWinRate = isSignalExit ? 0 : computePolymarketBestBaselineWinRate(result.trades);
+        const bestBaselineWinRate = isSameEventExit ? 0 : computePolymarketBestBaselineWinRate(result.trades);
         const timingProfile = summary?.timingProfile;
         const bestTimingProfile = timingProfile ? this.getBestTimingProfileEntry(timingProfile) : null;
         const payoutSummary = summarizePolymarketPayoutDiagnostics(result.trades);
@@ -1461,10 +1465,10 @@ class QuickViewManager {
             entryPriceFilteredTrades: summary?.entryPriceFilteredTrades,
             entryTimeFilteredTrades: summary?.entryTimeFilteredTrades,
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,
-            expectancy: isSignalExit
+            expectancy: isSameEventExit
                 ? (summary?.expectancy ?? payoutSummary?.expectancy ?? null)
                 : payoutSummary?.expectancy ?? summary?.expectancy ?? null,
-            profitFactor: isSignalExit
+            profitFactor: isSameEventExit
                 ? (summary?.profitFactor ?? payoutSummary?.profitFactor ?? null)
                 : payoutSummary?.profitFactor ?? summary?.profitFactor ?? null,
             avgWin: payoutSummary?.avgWin ?? null,

@@ -6,7 +6,7 @@
  *
  * Supports:
  * - native 5m / 15m / 1h outcome-session runs: direct session scoring
- * - 1m signal-exit runs: same-event Polymarket entry/exit pricing
+ * - 1m same-event exit runs: Polymarket entry/exit pricing inside the matched event
  * - default 5m bridge runs: 1m -> 5m offset scoring
  * - default 5m multi-interval bridge runs: 15m / 1h / 4h group 5m events by offset
  */
@@ -85,7 +85,12 @@ import {
 import type { FinderRunInput, FinderRunCallbacks, FinderRunOutput } from "./finder-runner";
 import type { BacktestResult, BacktestSettings, OHLCVData, StrategyExecutionContext, Trade } from "../types/strategies";
 import { resolveCrossSymbolExecution, isCrossSymbolStrategy } from "../cross-symbol-runtime";
-import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode, SIGNAL_EXIT_SUPPORTED_RANK_MODES } from "../polymarket-exit-mode";
+import {
+    resolveEffectivePolymarketExitMode,
+    isSameEventPolymarketExitMode,
+    SAME_EVENT_SUPPORTED_RANK_MODES,
+    type PolymarketExitMode,
+} from "../polymarket-exit-mode";
 import {
     buildTradeAnnotationFromSignalExitResult,
     evaluateSignalExitTrades,
@@ -300,11 +305,12 @@ function buildMultiIntervalSizedTrades(
 }
 
 function buildSignalExitSizedTrades(
-    results: ReturnType<typeof evaluateSignalExitTrades>["results"]
+    results: ReturnType<typeof evaluateSignalExitTrades>["results"],
+    evaluationMode: PolymarketExitMode
 ): Trade[] {
     return results.map((result) => ({
         ...result.trade,
-        polymarketOutcome: buildTradeAnnotationFromSignalExitResult(result),
+        polymarketOutcome: buildTradeAnnotationFromSignalExitResult(result, evaluationMode),
     }));
 }
 
@@ -708,7 +714,7 @@ export async function runPolymarketFinder(
         executionModel: settings.executionModel,
         polymarketAnnotationEnabled: true,
     });
-    const isSignalExitMode = isSignalExitSameEventMode(effectiveExitMode);
+    const isSignalExitMode = isSameEventPolymarketExitMode(effectiveExitMode);
     const is5mRun = interval === "5m";
     const isLimitEntryMode = limitEntrySettings?.enabled === true;
     const isMultiSubEventRun = !isNativeOutcomeSession && !is5mRun && !isSignalExitMode && !isLimitEntryMode;
@@ -751,16 +757,16 @@ export async function runPolymarketFinder(
 
     if (isSignalExitMode) {
         if (interval !== "1m") {
-            callbacks.setStatus("signal_exit_same_event mode requires 1m interval.");
+            callbacks.setStatus(`${effectiveExitMode} mode requires 1m interval.`);
             return { results: [] };
         }
         if (settings.executionModel !== "next_open") {
-            callbacks.setStatus("signal_exit_same_event mode requires next_open execution model.");
+            callbacks.setStatus(`${effectiveExitMode} mode requires next_open execution model.`);
             return { results: [] };
         }
         const rankMode = options.polymarketRankMode ?? "balanced";
-        if (!SIGNAL_EXIT_SUPPORTED_RANK_MODES.has(rankMode as any)) {
-            callbacks.setStatus(`signal_exit_same_event does not support rank mode "${rankMode}". Use expectancy, profitFactor, or sized net variants.`);
+        if (!SAME_EVENT_SUPPORTED_RANK_MODES.has(rankMode as any)) {
+            callbacks.setStatus(`${effectiveExitMode} does not support rank mode "${rankMode}". Use expectancy, profitFactor, or sized net variants.`);
             return { results: [] };
         }
     }
@@ -1004,6 +1010,7 @@ export async function runPolymarketFinder(
                         entryCutoffEnabled,
                         entryCutoffSeconds,
                         limitEntry: limitEntrySettings,
+                        evaluationMode: effectiveExitMode,
                     });
                     addElapsed(timings, "polymarketEvaluation", evaluationStartedAt);
                     const exitSummary = signalExitEvaluation.summary;
@@ -1038,7 +1045,7 @@ export async function runPolymarketFinder(
                         missingOutcomeRows: exitSummary.missingOutcomeTrades + exitSummary.missingPriceTrades,
                         ignoredSignals: exitSummary.duplicateTradesIgnored,
                         entryPriceFilteredPredictions: exitSummary.entryPriceFilteredTrades > 0 ? exitSummary.entryPriceFilteredTrades : undefined,
-                        evaluationMode: "signal_exit_same_event",
+                        evaluationMode: effectiveExitMode,
                         signalExitAllowMultipleTradesPerEvent: exitSummary.allowMultipleTradesPerEvent,
                         backtestSlippageCents: exitSummary.backtestSlippageCents,
                         targetExitedTrades: exitSummary.targetExitedTrades,
@@ -1093,7 +1100,7 @@ export async function runPolymarketFinder(
                         evalResult: evalResultBase,
                         baseResult: backtestResult,
                         annotatedTrades: computeSizedNet
-                            ? buildSignalExitSizedTrades(signalExitEvaluation.results)
+                            ? buildSignalExitSizedTrades(signalExitEvaluation.results, effectiveExitMode)
                             : undefined,
                         chartData: closedData,
                         backtestSettings: settings,
@@ -1103,7 +1110,7 @@ export async function runPolymarketFinder(
                             outcomeRowsLoaded: outcomes.length,
                             scoredTrades: exitSummary.scoredTrades,
                             missingOutcomeTrades: exitSummary.missingOutcomeTrades,
-                            evaluationMode: "signal_exit_same_event",
+                            evaluationMode: effectiveExitMode,
                             signalExitAllowMultipleTradesPerEvent: exitSummary.allowMultipleTradesPerEvent,
                             backtestSlippageCents: exitSummary.backtestSlippageCents,
                         },

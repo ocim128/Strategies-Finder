@@ -13,6 +13,7 @@ import { coerceAdaptiveTakeProfitFieldValue, resolveTakeProfitMode } from "./tak
 import { clampPolymarketBacktestSlippageCents } from "./polymarket-backtest-slippage";
 import type { PolymarketEntrySelectionMode } from "./polymarket-entry-selection-mode";
 import type { PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
+import type { PolymarketExitMode } from "./polymarket-exit-mode";
 import {
     resolvePolymarketPostSignalLimitSettingFields,
     type PolymarketLimitEntryPriceMode,
@@ -127,7 +128,7 @@ export interface BacktestSettingsData {
     polymarketBacktestSlippageCents: number;
     polymarketEntryCutoffEnabled: boolean;
     polymarketEntryCutoffSeconds: number;
-    polymarketExitMode: "resolve_hold" | "signal_exit_same_event";
+    polymarketExitMode: PolymarketExitMode;
     polymarketSignalExitAllowMultipleTradesPerEvent: boolean;
     polymarketPostSignalLimitEntryEnabled: boolean;
     polymarketPostSignalLimitEntryMode: PolymarketLimitEntryPriceMode;

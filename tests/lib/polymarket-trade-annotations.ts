@@ -28,7 +28,7 @@ import type {
 } from "./types/polymarket-outcomes";
 import type { PolymarketPricePoint } from "./local-sqlite-polymarket-api";
 import { ensurePricePointsForOutcomes } from "./polymarket-price-points-ingest";
-import { resolveEffectivePolymarketExitMode, isSignalExitSameEventMode } from "./polymarket-exit-mode";
+import { resolveEffectivePolymarketExitMode, isSameEventPolymarketExitMode, type PolymarketExitMode } from "./polymarket-exit-mode";
 import {
     isActualPolymarketEntryMinuteMode,
     type PolymarketEntrySelectionMode,
@@ -132,7 +132,7 @@ type AnnotationContext = {
     outcomeSymbol?: string;
     outcomeInterval?: PolymarketOutcomeInterval;
     polymarketEntrySelectionMode?: PolymarketEntrySelectionMode;
-    polymarketExitMode?: "resolve_hold" | "signal_exit_same_event";
+    polymarketExitMode?: PolymarketExitMode;
     polymarketSignalExitAllowMultipleTradesPerEvent?: boolean;
     polymarketEntryCutoffEnabled?: boolean;
     polymarketEntryCutoffSeconds?: number;
@@ -1681,7 +1681,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
         executionModel: context.executionModel,
         polymarketAnnotationEnabled: true,
     });
-    const needsSignalExitPricePoints = isSignalExitSameEventMode(effectiveExitMode) && is1mRun;
+    const needsSignalExitPricePoints = isSameEventPolymarketExitMode(effectiveExitMode) && is1mRun;
     const needsPricePoints = needsSignalExitPricePoints || isNativeOutcomeSession || Boolean(limitEntry);
 
     let resolvedPricePoints = pricePoints;
@@ -1709,6 +1709,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
             entryCutoffEnabled: context.polymarketEntryCutoffEnabled ?? options.entryCutoffEnabled,
             entryCutoffSeconds: context.polymarketEntryCutoffSeconds ?? options.entryCutoffSeconds,
             limitEntry,
+            evaluationMode: effectiveExitMode,
         });
 
         const exitResultMap = new Map(exitResults.map((r) => [r.trade, r]));
@@ -1719,7 +1720,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
             }
             return {
                 ...trade,
-                polymarketOutcome: buildTradeAnnotationFromSignalExitResult(exitResult),
+                polymarketOutcome: buildTradeAnnotationFromSignalExitResult(exitResult, effectiveExitMode),
             };
         });
 
@@ -1732,6 +1733,7 @@ export async function annotateBacktestResultWithPolymarketOutcomes(
                 outcomeInterval: resolvedOutcomeInterval,
                 outcomeRowsLoaded: outcomes.length,
                 summary: exitSummary,
+                evaluationMode: effectiveExitMode,
             }),
         };
     }

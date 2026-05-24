@@ -342,6 +342,30 @@ describe("second market backtest evaluator", () => {
         expect(evaluated.results[0].exitPrice).to.equal(1);
     });
 
+    it("uses the chart close quote for non-signal exits in 1s chart-exit mode", () => {
+        const position = trade(1_700_000_010, 1_700_000_020);
+        position.exitReason = "time_stop";
+        const losingOutcome = { ...outcome(), resolved_outcome_up: 0 as const };
+
+        const evaluated = evaluateSecondMarketTrades({
+            trades: [position],
+            outcomes: [losingOutcome],
+            quotes: [
+                quote(1_700_000_010, 0.55, 0.53),
+                quote(1_700_000_020, 0.60, 0.58),
+            ],
+            evaluationMode: "chart_exit_same_event",
+            mode: "strict",
+        });
+
+        expect(evaluated.results[0].exitSource).to.equal("signal");
+        expect(evaluated.results[0].exitPrice).to.equal(0.58);
+        expect(evaluated.results[0].pnl).to.be.closeTo(0.03, 1e-9);
+        expect(evaluated.summary.evaluationMode).to.equal("chart_exit_same_event");
+        expect(evaluated.summary.resolvedTrades).to.equal(0);
+        expect(evaluated.summary.signalExitedTrades).to.equal(1);
+    });
+
     it("can score multiple signal-exit trades in one event when enabled", () => {
         const secondTrade = trade(1_700_000_030, 1_700_000_040);
         secondTrade.id = 2;
