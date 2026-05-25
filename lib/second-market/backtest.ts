@@ -277,6 +277,10 @@ function isProtectionStopLossEnabled(settings: Partial<PolymarketProtectionSetti
         && clampPolymarketProtectionCents(settings.polymarketProtectionStopLossCents) > 0;
 }
 
+function clampLimitPrice(value: number): number {
+    return Math.round(Math.max(0.01, Math.min(0.99, value)) * 1_000_000) / 1_000_000;
+}
+
 function findProtectionExitFill(args: {
     eventPoints: readonly PolymarketPricePoint[];
     side: SecondMarketSide;
@@ -539,9 +543,10 @@ export function evaluateSecondMarketTrades(args: {
     const results: SecondMarketTradeResult[] = [];
     const seenEvents = new Set<string>();
     const quoteIndex = getQuoteIndex(args.quotes);
-    const limitEntryEnabled = args.limitEntry?.enabled === true;
     const limitEntryMode = resolvePolymarketPostSignalLimitEntryMode(args.limitEntry?.priceMode);
     const limitEntryOffsetCents = clampPolymarketPostSignalLimitOffsetCents(args.limitEntry?.offsetCents);
+    const limitEntryEnabled = args.limitEntry?.enabled === true
+        && !(limitEntryMode === "signal_offset" && limitEntryOffsetCents <= 0);
     const fixedLimitPrice = clampPolymarketPostSignalLimitEntryPriceCents(args.limitEntry?.priceCents) / 100;
     const configuredLimitPrice = limitEntryMode === "fixed_price" ? fixedLimitPrice : null;
     const limitExitEnabled = limitEntryEnabled && args.limitEntry?.exitEnabled === true;
@@ -663,6 +668,21 @@ export function evaluateSecondMarketTrades(args: {
                     quoteIndex,
                 })
                 : null;
+            const signalOffsetEntry = limitEntryMode === "signal_offset"
+                ? findQuoteFill({
+                    seriesId: outcome.series_id,
+                    eventStartTs: outcome.event_start_ts,
+                    yesTokenId: outcome.yes_token_id,
+                    noTokenId: outcome.no_token_id,
+                    fillTs: entryFillTs,
+                    side,
+                    orderSide: "buy",
+                    mode,
+                    maxQuoteAgeSec,
+                    fillSource,
+                    quoteIndex,
+                })
+                : null;
             if (limitEntryMode === "stale_signal_price" && staleSignalEntry === null) {
                 results.push({
                     trade,
@@ -684,16 +704,42 @@ export function evaluateSecondMarketTrades(args: {
                 });
                 continue;
             }
+            if (limitEntryMode === "signal_offset" && signalOffsetEntry === null) {
+                results.push({
+                    trade,
+                    outcome,
+                    side,
+                    entrySource: "limit",
+                    entryStatus: "missing_price_points",
+                    entryMode: limitEntryMode,
+                    entryOffsetCents: limitEntryOffsetCents,
+                    entryPrice: null,
+                    entryQuoteTs: null,
+                    entryLimitPrice: null,
+                    entryImprovement: null,
+                    exitPrice: null,
+                    exitQuoteTs: null,
+                    exitSource: "missing",
+                    pnl: null,
+                    isProfitable: null,
+                });
+                continue;
+            }
+            const signalOffsetLimitPrice = signalOffsetEntry
+                ? clampLimitPrice(signalOffsetEntry.price - limitEntryOffsetCents / 100)
+                : null;
             const limitFill = findPostSignalLimitEntryFill(buyPricePoints, {
                 side,
                 startTs: entryFillTs,
                 eventEndTs: outcome.event_end_ts,
-                limitPrice: staleSignalEntry?.price ?? fixedLimitPrice,
-                priceMode: limitEntryMode === "stale_signal_price" ? "fixed_price" : limitEntryMode,
-                offsetPrice: limitEntryOffsetCents / 100,
+                limitPrice: staleSignalEntry?.price ?? signalOffsetLimitPrice ?? fixedLimitPrice,
+                priceMode: limitEntryMode === "stale_signal_price" || limitEntryMode === "signal_offset"
+                    ? "fixed_price"
+                    : limitEntryMode,
+                offsetPrice: limitEntryMode === "signal_offset" ? 0 : limitEntryOffsetCents / 100,
                 latestAllowedTs: signalExitTs,
             });
-            entryLimitPrice = limitFill.limitPrice ?? staleSignalEntry?.price ?? configuredLimitPrice;
+            entryLimitPrice = limitFill.limitPrice ?? staleSignalEntry?.price ?? signalOffsetLimitPrice ?? configuredLimitPrice;
             if (limitFill.status !== "filled" || limitFill.fillPrice === null || limitFill.fillTs === null) {
                 results.push({
                     trade,

@@ -239,14 +239,14 @@
                         <option value="signal_offset">Signal Price - Offset</option>
                         <option value="stale_signal_price">Stale Signal Price</option>
                     </select>
-                    <div class="param-hint">Signal-offset mode subtracts from the first side quote. Stale-signal mode submits the chart-entry side quote after the configured entry delay.</div>
+                    <div class="param-hint">Signal-offset mode subtracts from the aligned entry side quote. A 0c offset matches normal quote entry on 1s CLOB runs.</div>
                 </div>
             </div>
             <div class="param-row" id="polymarketPostSignalLimitEntryOffsetCentsRow" style="display: none;">
                 <div class="param-group">
                     <label class="param-label">Limit Entry Offset</label>
                     <input type="number" class="param-input" id="polymarketPostSignalLimitEntryOffsetCents" value="20" min="0" max="99" step="0.1">
-                    <div class="param-hint">Cents below the first local side quote. Decimals are supported. Example: 60c signal quote with 0.5c offset attempts 59.5c.</div>
+                    <div class="param-hint">Cents below the aligned entry side quote. Use a positive value to require a better fill. Example: 60c signal quote with 0.5c offset attempts 59.5c.</div>
                 </div>
             </div>
             <div class="param-row" id="polymarketPostSignalLimitExitEnabledRow" style="display: none;">

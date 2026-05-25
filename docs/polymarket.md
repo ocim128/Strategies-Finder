@@ -336,7 +336,9 @@ Behavior:
 - long chart trades attempt to buy YES; short chart trades attempt to buy NO
 - the attempt starts at the chart trade entry timestamp; on supported `1s` CLOB runs, `polymarketEntryDelayBars` pushes the start later by that many seconds
 - fixed-price entry mode fills when the side price is at or below `polymarketPostSignalLimitEntryPriceCents` before `event_end_ts - 60`
-- signal-offset entry mode computes the limit from the first available event-side quote after chart entry minus `polymarketPostSignalLimitEntryOffsetCents`; for example, a 60c first YES quote with offset `0.5` becomes a 59.5c entry limit
+- signal-offset entry mode computes the limit from the aligned entry-side quote minus `polymarketPostSignalLimitEntryOffsetCents`; for example, a 60c first YES quote with offset `0.5` becomes a 59.5c entry limit
+- on supported `1s` CLOB runs, signal-offset mode must have a usable quote at the modeled entry second; it does not look ahead to a future quote to choose the limit price
+- on supported `1s` CLOB runs, signal-offset mode with a `0` cent offset is treated as normal quote entry so it matches disabled limit-entry scoring
 - stale-signal entry mode is for supported `1s` CLOB delay research: it reads the selected side ask at the modeled chart-entry second, then starts the limit-fill scan after `polymarketEntryDelayBars`; if the delayed market has already moved away and never revisits that stale limit before the same-event signal exit, the trade is reported as missed instead of scored
 - if the contract touches only during the final minute, the attempt is reported as `last_minute_only` and is not scored
 - if the active same-event exit mode has an eligible chart exit before the limit touch, the attempt is reported as `invalid_window` and is not scored

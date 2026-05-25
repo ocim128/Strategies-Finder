@@ -279,6 +279,60 @@ describe("second market backtest evaluator", () => {
         expect(evaluated.summary.avgLimitEntryWaitSec).to.equal(10);
     });
 
+    it("treats zero-offset signal-offset entries as normal 1s CLOB quote entries", () => {
+        const evaluated = evaluateSecondMarketTrades({
+            trades: [trade(1_700_000_010, 1_700_000_040)],
+            outcomes: [outcome()],
+            quotes: [
+                quote(1_700_000_010, 0.62, 0.60),
+                quote(1_700_000_040, 0.60, 0.58),
+            ],
+            evaluationMode: "signal_exit_same_event",
+            mode: "strict",
+            limitEntry: {
+                enabled: true,
+                priceMode: "signal_offset",
+                offsetCents: 0,
+                priceCents: 50,
+            },
+        });
+
+        expect(evaluated.results[0].entrySource).to.equal("quote");
+        expect(evaluated.results[0].entryStatus).to.equal(undefined);
+        expect(evaluated.results[0].entryQuoteTs).to.equal(1_700_000_010);
+        expect(evaluated.results[0].entryLimitPrice).to.equal(null);
+        expect(evaluated.results[0].entryPrice).to.equal(0.62);
+        expect(evaluated.results[0].exitPrice).to.equal(0.58);
+        expect(evaluated.results[0].pnl).to.be.closeTo(-0.04, 1e-9);
+        expect(evaluated.summary.limitEntryEnabled).to.equal(undefined);
+    });
+
+    it("keeps zero-offset signal-offset entries missing when the normal quote entry is missing", () => {
+        const evaluated = evaluateSecondMarketTrades({
+            trades: [trade(1_700_000_010, 1_700_000_040)],
+            outcomes: [outcome()],
+            quotes: [
+                quote(1_700_000_020, 0.50, 0.48),
+                quote(1_700_000_040, 0.60, 0.58),
+            ],
+            evaluationMode: "signal_exit_same_event",
+            mode: "strict",
+            limitEntry: {
+                enabled: true,
+                priceMode: "signal_offset",
+                offsetCents: 0,
+                priceCents: 50,
+            },
+        });
+
+        expect(evaluated.results[0].entrySource).to.equal("quote");
+        expect(evaluated.results[0].entryStatus).to.equal(undefined);
+        expect(evaluated.results[0].entryPrice).to.equal(null);
+        expect(evaluated.summary.scoredTrades).to.equal(0);
+        expect(evaluated.summary.missingQuoteTrades).to.equal(1);
+        expect(evaluated.summary.limitEntryAttempts).to.equal(undefined);
+    });
+
     it("skips 1s CLOB limit entries that only touch after the chart signal exit", () => {
         const evaluated = evaluateSecondMarketTrades({
             trades: [trade(1_700_000_010, 1_700_000_020)],
