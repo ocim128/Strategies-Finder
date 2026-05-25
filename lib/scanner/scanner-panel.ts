@@ -138,7 +138,7 @@ export class ScannerPanel {
                 </div>
                 <div class="scanner-panel__control-row">
                     <label>Lookback (bars):</label>
-                    <input type="number" class="scanner-panel__lookback" value="1000" min="200" max="50000">
+                    <input type="number" class="scanner-panel__lookback" value="1000" min="200" max="100000">
                 </div>
                 <button class="scanner-panel__scan-btn">Start Scan</button>
             </div>

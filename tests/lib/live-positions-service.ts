@@ -112,7 +112,7 @@ const PRICE_CACHE_TTL_MS = Math.max(5000, Math.floor(POLL_INTERVAL_MS / 2));
 const LOCAL_BACKTEST_CACHE_GRACE_MS = 5000;
 const SIGNAL_HISTORY_LIMIT = 30;
 const ANALYZE_CONCURRENCY = 4;
-const MAX_LOCAL_COMPARE_CANDLE_LIMIT = 50000;
+const MAX_LOCAL_COMPARE_CANDLE_LIMIT = 100000;
 const PRICE_CACHE: Map<string, PriceCache> = new Map();
 const PRICE_REQUESTS: Map<string, Promise<number | null>> = new Map();
 

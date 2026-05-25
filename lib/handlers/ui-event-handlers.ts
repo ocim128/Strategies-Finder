@@ -71,7 +71,7 @@ export function setupEventHandlers() {
     const visibleCandlesInput = dom.visibleCandlesInput;
     const visibleCandlesApply = dom.visibleCandlesApply;
     const MIN_VISIBLE_CANDLES = 200;
-    const MAX_VISIBLE_CANDLES = 50000;
+    const MAX_VISIBLE_CANDLES = 100000;
 
     const applyCustomMinutes = () => {
         if (!timeframeMinutesInput) return;

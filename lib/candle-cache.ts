@@ -8,7 +8,7 @@ import { LOCAL_DAILY_DATASETS, type LocalDailyDatasetConfig } from "./local-dail
 const DB_NAME = 'strategies-finder-candles';
 const STORE_NAME = 'series';
 const DB_VERSION = 1;
-const MAX_CANDLES_PER_SERIES = 50000;
+const MAX_CANDLES_PER_SERIES = 100000;
 
 type CandleCacheSource =
     | 'seed-file'

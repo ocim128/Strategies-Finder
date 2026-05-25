@@ -179,7 +179,7 @@ async function quickSubscribe() {
 
     try {
         const parsedFreshness = Number.parseInt(freshnessBarsInput?.value ?? '1', 10);
-        const candleLimit = Math.max(200, Math.min(50000, state.ohlcvData.length || 350));
+        const candleLimit = Math.max(200, Math.min(100000, state.ohlcvData.length || 350));
         const basePayload = {
             symbol,
             interval,
@@ -253,7 +253,7 @@ async function handleTableAction(action: string, streamId: string) {
             const currentSettings = collectCurrentAlertSubscriptionBacktestSettings();
             const syncedCandleLimit = Math.max(
                 200,
-                Math.min(50000, state.ohlcvData.length || sub?.candle_limit || 350)
+                Math.min(100000, state.ohlcvData.length || sub?.candle_limit || 350)
             );
             await alertService.upsertSubscription({
                 streamId,

@@ -30,8 +30,8 @@ type SqliteCandleRow = {
 };
 
 function parseSqliteLimit(raw: string | null): number {
-    const parsed = Number(raw || '50000');
-    if (!Number.isFinite(parsed)) return 50000;
+    const parsed = Number(raw || '100000');
+    if (!Number.isFinite(parsed)) return 100000;
     return Math.max(1, Math.min(500000, Math.floor(parsed)));
 }
 

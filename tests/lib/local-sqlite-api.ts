@@ -121,7 +121,7 @@ async function checkSqliteApiAvailable(force = false): Promise<boolean> {
 export async function loadSqliteCandles(
     symbol: string,
     interval: string,
-    limit = 50000
+    limit = 100000
 ): Promise<{ candles: OHLCVData[]; trusted: boolean } | null> {
     const available = await checkSqliteApiAvailable();
     if (!available) return null;
