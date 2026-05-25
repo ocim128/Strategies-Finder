@@ -39,12 +39,22 @@ describe("Strategy panel settings registry", () => {
         expect(STRATEGY_PANEL_SETTINGS_SECTIONS.map((section) => section.id)).to.deep.equal([
             "risk",
             "realism",
+            "polymarket",
             "sizing",
             "direction",
             "confirmation",
             "engine",
             "combiner",
         ]);
+    });
+
+    it("keeps Polymarket controls in their dedicated settings section", () => {
+        const html = readFileSync(resolve(process.cwd(), "html-partials/tab-settings-section-execution.html"), "utf8");
+        const polymarketSectionIndex = html.indexOf('data-section="polymarket"');
+        const annotationToggleIndex = html.indexOf('id="polymarketAnnotationEnabled"');
+
+        expect(polymarketSectionIndex).to.be.greaterThan(-1);
+        expect(annotationToggleIndex).to.be.greaterThan(polymarketSectionIndex);
     });
 
     it("registers every execution settings form control in the backtest settings DOM contract", () => {

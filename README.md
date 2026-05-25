@@ -262,7 +262,7 @@ Automate the inspection of executed chart trades against historical Polymarket c
 Implementation notes live in [`docs/polymarket.md`](docs/polymarket.md).
 1. Sync closed Polymarket matching events to your local SQLite database using `npm run poly:sync-outcomes:all` for every supported 5m symbol, or `npm run poly:sync-outcomes` / the direct `esno` command for a single symbol (requires the Vite server running via `npm run dev`).
 2. Use the normal backtest, Finder, or Hunt surfaces for full Polymarket parity. The older headless helper `evaluatePolymarketOutcomes` in `lib/polymarket-outcome-evaluator.ts` still represents the resolve-hold outcome-only path.
-3. Choose `Polymarket Exit Mode` in Backtest Realism:
+3. Choose `Polymarket Exit Mode` in Polymarket Settings:
    - `Resolve Hold` keeps the original final-outcome scoring path.
    - `Signal Exit Same Event` is available on `1m` + `next_open` runs and on supported `1s` BTCUSDT/XRPUSDT CLOB runs with `signal_close`, `next_open`, or `next_close`.
 4. For `1s` BTCUSDT/XRPUSDT runs, keep `scripts/run-1s-miner.bat` running first. The chart and Finder load Binance candles from `price-data/1second-chart/second-market-data.sqlite`, and Polymarket scoring uses exact-second CLOB bid/ask rows from the same DB.

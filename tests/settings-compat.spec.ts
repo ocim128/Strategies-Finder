@@ -192,7 +192,7 @@ describe('Backtest settings compatibility', () => {
         expect(requiresTypescriptEngine(active)).to.equal(true);
     });
 
-    it('normalizes the Polymarket event entry cutoff as a Backtest Realism setting', () => {
+    it('normalizes the Polymarket event entry cutoff setting', () => {
         expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffEnabled).to.equal(false);
         expect(EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffSeconds).to.equal(15);
         expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketEntryCutoffToggle')).to.equal(true);

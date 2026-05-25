@@ -52,17 +52,6 @@
                     <div class="param-hint">Allow up to 2 concurrent positions when a new signal fires while an existing
                         trade is open.</div>
                 </div>
-                <div class="param-group">
-                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Polymarket Entry Cutoff</label>
-                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle Polymarket entry cutoff">
-                            <input type="checkbox" id="polymarketEntryCutoffToggle">
-                            <span class="section-toggle-track"></span>
-                        </label>
-                    </div>
-                    <input type="number" class="param-input" id="polymarketEntryCutoffSeconds" value="15" min="0" max="300" step="1">
-                    <div class="param-hint">When enabled, skip event entries inside the final seconds before close.</div>
-                </div>
             </div>
             <div class="param-row">
                 <div class="param-group">
@@ -83,6 +72,28 @@
                     <div class="param-hint">Example: chart 5m + strategy 120m.</div>
                 </div>
             </div>
+            <div class="param-hint">Realism settings use the TypeScript engine (Rust skipped for accuracy).</div>
+
+            <!-- Cross-Symbol Secondary -->
+            <div class="param-row" id="crossSymbolRow" style="display: none;">
+                <div class="param-group">
+                    <label class="param-label">Secondary Symbol</label>
+                    <input type="text" class="param-input" id="crossSymbolSecondary" placeholder="e.g. BTCUSDT" autocomplete="off" spellcheck="false" />
+                    <div class="param-hint">Override the default secondary symbol (<span id="crossSymbolDefault"></span>). Leave blank to use the strategy default.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="settings-section" data-complexity="standard" data-section="polymarket">
+        <div class="section-header collapsible collapsed" data-target="polymarketSettingsBody">
+            <div style="display:flex;align-items:center;">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Polymarket Settings</div>
+            </div>
+        </div>
+        <div class="section-body accordion-body collapsed" id="polymarketSettingsBody">
             <div class="param-row">
                 <div class="param-group">
                     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
@@ -93,6 +104,17 @@
                         </label>
                     </div>
                     <div class="param-hint">Score trades against Polymarket crypto outcome events. Default session stays 5m. Use the chart symbol by default, or pick BTCUSDT/ETHUSDT/SOLUSDT/XRPUSDT for cross-symbol evaluation.</div>
+                </div>
+                <div class="param-group">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                        <label class="param-label" style="margin-bottom: 0;">Polymarket Entry Cutoff</label>
+                        <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle Polymarket entry cutoff">
+                            <input type="checkbox" id="polymarketEntryCutoffToggle">
+                            <span class="section-toggle-track"></span>
+                        </label>
+                    </div>
+                    <input type="number" class="param-input" id="polymarketEntryCutoffSeconds" value="15" min="0" max="300" step="1">
+                    <div class="param-hint">When enabled, skip event entries inside the final seconds before close.</div>
                 </div>
             </div>
             <div class="param-row" id="polymarketOutcomeSymbolRow" style="display: none;">
@@ -283,16 +305,6 @@
                     <label class="param-label">Limit Exit Offset</label>
                     <input type="number" class="param-input" id="polymarketPostSignalLimitExitOffsetCents" value="20" min="0" max="99" step="1">
                     <div class="param-hint">Cents above the filled entry price. Targets at 100c or higher fall back to the active exit mode.</div>
-                </div>
-            </div>
-            <div class="param-hint">Realism settings use the TypeScript engine (Rust skipped for accuracy).</div>
-
-            <!-- Cross-Symbol Secondary -->
-            <div class="param-row" id="crossSymbolRow" style="display: none;">
-                <div class="param-group">
-                    <label class="param-label">Secondary Symbol</label>
-                    <input type="text" class="param-input" id="crossSymbolSecondary" placeholder="e.g. BTCUSDT" autocomplete="off" spellcheck="false" />
-                    <div class="param-hint">Override the default secondary symbol (<span id="crossSymbolDefault"></span>). Leave blank to use the strategy default.</div>
                 </div>
             </div>
         </div>

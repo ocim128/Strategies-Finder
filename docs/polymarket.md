@@ -33,7 +33,7 @@ If you want to score a strategy against resolved Polymarket crypto events:
   - `signal_exit_same_event` is effective on `1m` + `next_open` using locally cached Polymarket price points, and on supported `1s` BTCUSDT/XRPUSDT CLOB runs using `signal_close`, `next_open`, or `next_close` exact-second bid/ask rows
   - `chart_exit_same_event` uses the same support gates and price sources as `signal_exit_same_event`, but exits the Polymarket leg at the chart trade close timestamp for any non-`end_of_data` chart exit reason
 - optionally set `Polymarket Entry Price Filter`; for example, `20` skips trades whose selected Polymarket entry price is at or below 20c or at or above 80c
-- optionally enable `Polymarket Entry Cutoff` in Backtest Realism; it defaults off, and when enabled the seconds field defaults to `15`
+- optionally enable `Polymarket Entry Cutoff` in Polymarket Settings; it defaults off, and when enabled the seconds field defaults to `15`
 - on supported `1s` CLOB runs, optionally enable Polymarket Take Profit and/or Stop Loss. In same-event exit modes, TP fills at the target limit price and SL fills at the first sell-side quote after entry that reaches the stop threshold. In `resolve_hold`, Execution Lab holds the Polymarket leg to final resolution and ignores chart exits, signal exits, TP, and SL.
 - optional for native `5m` outcome sessions, including supported `1s` CLOB runs: enable `Post-Signal Limit Entry` to require the selected YES/NO side to trade at or below the configured limit price after the chart entry signal and before the event's final minute; on supported `1s` CLOB runs, `stale_signal_price` uses the original chart-entry quote as the limit and begins checking after `polymarketEntryDelayBars`
 - `Disable Exit Signal` lives in Risk Management, not Polymarket. It is effective only when chart TP or SL is active and lets chart entries continue to be signal-based while exits come from chart risk exits or forced Polymarket protective exits.
@@ -64,7 +64,7 @@ If you want Execution Lab live trading:
 - configure Strategy Finder `.env` with the local executor path or optional `EXECUTION_LAB_LIVE_EXECUTOR_URL`, plus the live-enabled flag
 - configure the side executor repo with the private key, signature mode, stake cap, `FAK`/`FOK` taker order type, `GTC` limit order type, and `LIVE_TRADE_ONCE_LIVE_ENABLED`
 - live entries buy the same YES/NO side accepted by the paper decision path
-- paper/live entries use the Backtest Realism `Polymarket Entry Cutoff` toggle; when enabled, entries inside that event-close window are skipped in paper and rejected as `event_too_close_to_close` in live if the current clock has crossed the same cutoff
+- paper/live entries use the Polymarket Settings `Polymarket Entry Cutoff` toggle; when enabled, entries inside that event-close window are skipped in paper and rejected as `event_too_close_to_close` in live if the current clock has crossed the same cutoff
 - for `signal_close` and `next_close` 1s runs, Execution Lab paper fills use the quote one second after the chart candle timestamp, matching the close-based CLOB scoring contract
 - Execution Lab has separate `Poly TP` and `Poly SL` controls in its Live Config panel. These controls apply to open paper positions. When Live Trade is active, a confirmed live entry with TP enabled immediately submits a resting GTC sell-limit for the filled shares; SL remains a tracked-share taker exit when the paper SL trigger fires.
 - live exits sell tracked filled shares for the same token when the matching paper trade emits `paper_exit`
@@ -198,7 +198,7 @@ Important behavior:
 - Strategy Finder infers the side-repo working directory for `target/debug` and `target/release` executor binaries; otherwise set `EXECUTION_LAB_LIVE_EXECUTOR_CWD` so the executor loads the correct `.env`
 - entry requests buy the paper-selected YES/NO token with `maxPrice` capped at the paper entry price plus configured entry slippage
 - limit entry requests submit immediately with `limitPrice` derived from the paper entry reference price minus optional UI offset; they also include `maxPrice = limitPrice` for executor schema compatibility and may rest unfilled
-- the Backtest Realism `Polymarket Entry Cutoff` toggle is applied before paper entries are accepted, so Execution Lab paper PnL and live eligibility use the same event-close cutoff when the toggle is enabled
+- the Polymarket Settings `Polymarket Entry Cutoff` toggle is applied before paper entries are accepted, so Execution Lab paper PnL and live eligibility use the same event-close cutoff when the toggle is enabled
 - UI or fallback `exchange_min` sizing allows live entries to auto-size to the minimum valid Polymarket order, still capped by the effective Strategy Finder cap and `MAX_ORDER_SIZE_USDC`
 - exit requests sell the tracked filled shares of the same token with `minPrice` floored by the configured exit slippage against the lower of paper exit price and actual live entry fill
 - Polymarket TP submits an immediate resting GTC sell-limit after a confirmed live entry fill. When the paper TP fires while that order is still tracked, Strategy Finder target-cancels the resting TP before using the tracked-share taker exit path; only a `not_canceled` response is treated as local evidence that the resting TP may already have filled.
@@ -559,14 +559,17 @@ Hunt behavior:
 
 ## Settings And Persistence
 
-User-facing controls live in the Backtest Realism section:
+User-facing controls live in the Polymarket Settings section:
 
 - `polymarketAnnotationEnabled`
 - `polymarketOutcomeSymbol`
 - `polymarketOutcomeInterval`
 - `polymarketEntrySelectionMode`
 - `polymarketEntryOffset`
+- `polymarketEntryDelayBars`
 - `polymarketEntryPriceFilterCents`
+- `polymarketEntryCutoffToggle`
+- `polymarketEntryCutoffSeconds`
 - `polymarketBacktestSlippageCents`
 - `polymarketExitMode`
 - `polymarketSignalExitAllowMultipleTradesPerEvent`
@@ -583,7 +586,7 @@ User-facing controls live in the Backtest Realism section:
 - `polymarketProtectionStopLossEnabled`
 - `polymarketProtectionStopLossCents`
 
-Execution Lab has separate `Poly TP`, `TP c`, `Poly SL`, and `SL c` controls in `html-partials/tab-execution-lab.html`. Those values are stored in `executionLabSettings` and override the Backtest Realism Polymarket protection settings for Execution Lab sessions only.
+Execution Lab has separate `Poly TP`, `TP c`, `Poly SL`, and `SL c` controls in `html-partials/tab-execution-lab.html`. Those values are stored in `executionLabSettings` and override the Polymarket Settings protection controls for Execution Lab sessions only.
 
 `Start 1s Miner` is also a chart-stream action when the current chart is a supported `1s` BTCUSDT/XRPUSDT chart. It starts the local miner and refreshes the chart, latest candle, live quote, and price-alignment diagnostics even before a Paper Trade or Live Trade session is started. Execution Lab diagnostics can be copied as compact JSON for later feedback-loop analysis: the payload keeps the latest full sample, bounded flat health/stream segment rows with quote ranges, cumulative summary stats, and a stream-health block for feed lag, fill-only candles, missing quotes, repeated candles, and inverted CLOB spreads. The miner process log reports CLOB/reference row counts as interval summaries instead of one line per sample. Fresh CLOB quotes are preferred over stale exact-second local quote rows during live monitoring.
 

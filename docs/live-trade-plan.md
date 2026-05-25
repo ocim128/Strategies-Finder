@@ -85,7 +85,7 @@ V1 is working only when all of these are true:
 - The default taker order type is `FAK`; `.env` accepts `EXECUTION_LAB_LIVE_TAKER_ORDER_TYPE`, `EXECUTION_LAB_LIVE_ORDER_TYPE`, or compatibility `ARBITRAGE_ORDER_TYPE`.
 - Limit entry order type defaults to `GTC` through `EXECUTION_LAB_LIVE_LIMIT_ORDER_TYPE=GTC`.
 - Strategy Finder runs the executor from the inferred side-repo root when the binary is under `target/debug` or `target/release`; set `EXECUTION_LAB_LIVE_EXECUTOR_CWD` when that inference is wrong.
-- Strategy Finder applies the Backtest Realism `Polymarket Entry Cutoff` toggle before paper entries are accepted. The toggle defaults off; when enabled, `Polymarket Entry Cutoff (sec)` defaults to `15`.
+- Strategy Finder applies the Polymarket Settings `Polymarket Entry Cutoff` toggle before paper entries are accepted. The toggle defaults off; when enabled, `Polymarket Entry Cutoff (sec)` defaults to `15`.
 - Live entry submission also rejects as `event_too_close_to_close` if the toggle is enabled and the current clock has crossed the same configured cutoff before the executor call.
 - Live entry `maxPrice` adds `EXECUTION_LAB_LIVE_ENTRY_MAX_SLIPPAGE_CENTS` to the paper entry price, clamped to `1.00`; the default is `1` cent.
 - Limit mode submits a buy limit immediately after an accepted paper entry, using the paper entry price as `limitReferencePrice` and optional UI offset as `limitPrice = reference - offsetCents / 100`, rounded/clamped by Strategy Finder before executor submission. For executor schema compatibility, limit requests also carry `maxPrice = limitPrice`; `limitPrice` remains the explicit resting-order price.

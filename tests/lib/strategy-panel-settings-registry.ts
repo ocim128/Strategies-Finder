@@ -22,6 +22,11 @@ export const STRATEGY_PANEL_SETTINGS_SECTIONS: readonly StrategyPanelSettingsSec
         accordionBodyId: "realismBody",
     },
     {
+        id: "polymarket",
+        preset: "standard",
+        accordionBodyId: "polymarketSettingsBody",
+    },
+    {
         id: "sizing",
         preset: "simple",
         accordionBodyId: "tradeSizingBody",
