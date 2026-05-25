@@ -17,6 +17,7 @@ import debugPanelHtml from '../html-partials/debug-panel.html?raw';
 import { debugLogger } from './debug-logger';
 import codeEditorHtml from '../html-partials/code-editor.html?raw';
 import { appendLazyStrategyPanelTabPlaceholders } from './strategy-panel-tab-markup';
+import { clearDomElementCache } from './dom-utils';
 
 const MAIN_CONTENT_PARTIALS = [
     toolbarHtml,
@@ -52,6 +53,7 @@ function appendMarkup(target: Element, partials: readonly string[]): void {
  * This reconstructs the original index.html structure using the partials.
  */
 export function injectLayout() {
+    clearDomElementCache();
     const root = document.getElementById('root');
     if (!root) {
         debugLogger.error("layout.root_missing");

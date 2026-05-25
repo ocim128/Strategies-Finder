@@ -1,3 +1,4 @@
+import { ensureLazyStylesheet } from "./lazy-styles";
 import { getBuiltInMeta, strategyRegistry } from "../strategyRegistry";
 import { createEnsembleLabDom, type EnsembleLabDom } from "./strategy-ensemble-dom";
 import {
@@ -127,6 +128,7 @@ class StrategyEnsembleService {
     }
 
     public init(): void {
+        ensureLazyStylesheet("strategy-ensemble-styles", new URL("../styles/strategy-ensemble.css", import.meta.url).href);
         if (this.initialized) {
             return;
         }

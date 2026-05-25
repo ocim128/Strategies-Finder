@@ -160,3 +160,24 @@ export function getPolymarketSettingsRows(): {
 export function getFinderPolymarketRankModeSelect(): HTMLSelectElement | null {
   return getTypedElement(FINDER_POLYMARKET_IDS.finderRankMode, HTMLSelectElement);
 }
+
+export function createStateSubscriptionsDom() {
+  return {
+    chartModeToggle: getChartModeToggle(),
+    chartModeLabel: getChartModeLabel(),
+    polymarketAnnotationToggle: getPolymarketAnnotationToggle(),
+    polymarketExitModeSelect: getPolymarketExitModeSelect(),
+    polymarketSignalExitAllowMultipleTradesToggle: getPolymarketSignalExitAllowMultipleTradesToggle(),
+    polymarketEntrySelectionModeSelect: getPolymarketEntrySelectionModeSelect(),
+    polymarketOutcomeIntervalSelect: getPolymarketOutcomeIntervalSelect(),
+    polymarketPostSignalLimitEntryToggle: getPolymarketPostSignalLimitEntryToggle(),
+    polymarketPostSignalLimitEntryModeSelect: getPolymarketPostSignalLimitEntryModeSelect(),
+    polymarketPostSignalLimitExitToggle: getPolymarketPostSignalLimitExitToggle(),
+    polymarketPostSignalLimitExitModeSelect: getPolymarketPostSignalLimitExitModeSelect(),
+    executionModelSelect: getExecutionModelSelect(),
+    polymarketSettingsRows: getPolymarketSettingsRows(),
+    finderPolymarketRankModeSelect: getFinderPolymarketRankModeSelect(),
+  };
+}
+
+export type StateSubscriptionsDom = ReturnType<typeof createStateSubscriptionsDom>;

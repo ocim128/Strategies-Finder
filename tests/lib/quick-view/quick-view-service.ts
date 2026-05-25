@@ -1,3 +1,4 @@
+import { ensureLazyStylesheet } from "../lazy-styles";
 import { state } from "../state";
 import { debugLogger } from "../debug-logger";
 import type { BacktestResult, ExpectancyBreakdownRow, ExpectancyBreakdownSection, Trade } from "../strategies/index";
@@ -641,6 +642,7 @@ class QuickViewManager {
     private overlayRenderGeneration = 0;
 
     init() {
+        ensureLazyStylesheet("quick-view-styles", new URL("../../styles/quick-view.css", import.meta.url).href);
         this.injectOverlay();
         this.bindToolbarButton();
         this.bindKeyboard();
@@ -1173,15 +1175,9 @@ class QuickViewManager {
         if (!this.overlay) return;
         const renderGeneration = ++this.overlayRenderGeneration;
 
-        const enrichedResult = this.applyCurrentPolymarketAlternativeSizing(
-            await this.ensurePolymarketOutcomes(result)
-        );
-        if (renderGeneration !== this.overlayRenderGeneration) {
-            return;
-        }
-
-        this.renderResults(enrichedResult);
-        this.renderTrades(enrichedResult.trades);
+        const initialResult = this.applyCurrentPolymarketAlternativeSizing(result);
+        this.renderResults(initialResult);
+        this.renderTrades(initialResult.trades);
 
         this.overlay.style.display = 'flex';
         this.overlay.offsetHeight;
@@ -1190,6 +1186,21 @@ class QuickViewManager {
 
         const btn = getQuickViewBtn();
         if (btn) btn.classList.add('qv-active');
+
+        void this.ensurePolymarketOutcomes(result)
+            .then((enrichedResult) => this.applyCurrentPolymarketAlternativeSizing(enrichedResult))
+            .then((enrichedResult) => {
+                if (renderGeneration !== this.overlayRenderGeneration || !this.visible) {
+                    return;
+                }
+                this.renderResults(enrichedResult);
+                this.renderTrades(enrichedResult.trades);
+            })
+            .catch((error: unknown) => {
+                debugLogger.warn("quick_view.polymarket_enrichment_failed", {
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            });
     }
 
     hide() {
@@ -1372,10 +1383,17 @@ class QuickViewManager {
     }
 
     private parseTradeTime(raw: string): Time {
+        let decoded = raw;
         try {
-            return JSON.parse(raw) as Time;
+            decoded = decodeURIComponent(raw);
         } catch {
-            return (isNaN(Number(raw)) ? raw : Number(raw)) as Time;
+            decoded = raw;
+        }
+
+        try {
+            return JSON.parse(decoded) as Time;
+        } catch {
+            return (isNaN(Number(decoded)) ? decoded : Number(decoded)) as Time;
         }
     }
 

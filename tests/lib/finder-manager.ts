@@ -704,6 +704,26 @@ export class FinderManager {
 	private initStrategySelectionUI(): void {
 		const dom = this.getDom();
 
+		dom.finderStrategyList.addEventListener('click', (event) => {
+			const target = event.target as HTMLElement | null;
+			const checkbox = target?.closest<HTMLInputElement>('input[type="checkbox"][data-strategy-key]');
+			const strategyKey = checkbox?.dataset.strategyKey;
+			if (!checkbox || !strategyKey || !dom.finderStrategyList.contains(checkbox)) {
+				return;
+			}
+			this.handleStrategyToggleClick(strategyKey, event as MouseEvent);
+		});
+
+		dom.finderStrategyList.addEventListener('change', (event) => {
+			const target = event.target as HTMLElement | null;
+			const checkbox = target?.closest<HTMLInputElement>('input[type="checkbox"][data-strategy-key]');
+			const strategyKey = checkbox?.dataset.strategyKey;
+			if (!checkbox || !strategyKey || !dom.finderStrategyList.contains(checkbox)) {
+				return;
+			}
+			this.handleStrategyToggleChange(strategyKey);
+		});
+
 		dom.finderStrategiesToggleAll.addEventListener('change', (event) => {
 			this.setStrategySelection(this.strategyOrder, (event.target as HTMLInputElement).checked);
 		});
@@ -1029,12 +1049,7 @@ export class FinderManager {
 			checkbox.type = 'checkbox';
 			checkbox.id = `finder-strategy-${key}`;
 			checkbox.checked = this.isStrategySelected(key);
-			checkbox.addEventListener('click', (event) => {
-				this.handleStrategyToggleClick(key, event as MouseEvent);
-			});
-			checkbox.addEventListener('change', () => {
-				this.handleStrategyToggleChange(key);
-			});
+			checkbox.dataset.strategyKey = key;
 
 			const label = document.createElement('label');
 			label.htmlFor = `finder-strategy-${key}`;

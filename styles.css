@@ -11,27 +11,17 @@
 @import './styles/components.css';
 @import './styles/tab-groups.css';
 @import './styles/features.css';
-@import './styles/data-mining.css';
 
 @import './styles/data-viz.css';
 @import './styles/chart-enhancements.css';
-@import './styles/command-palette.css';
 
 
-@import './styles/scanner-styles.css';
 @import './styles/media-queries.css';
 @import './styles/symbol-search.css';
 @import './styles/engine-status.css';
 @import './styles/onboarding.css';
 @import './styles/analysis-styles.css';
-@import './styles/portfolio-lab.css';
-@import './styles/strategy-ensemble.css';
-@import './styles/alerts.css';
-@import './styles/polymarket.css';
-@import './styles/execution-lab.css';
-@import './styles/hunt.css';
 @import './styles/settings-ux.css';
-@import './styles/quick-view.css';
 @import './styles/live-positions.css';
 
 /* Accessibility must be last to override other styles */

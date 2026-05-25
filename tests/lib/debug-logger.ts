@@ -71,6 +71,9 @@ export class DebugLogger {
             data,
         };
         this.entries.push(entry);
+        if (this.listeners.size === 0) {
+            return;
+        }
         const allEntries = this.entries.getAll();
         this.listeners.forEach(listener => listener(allEntries));
     }

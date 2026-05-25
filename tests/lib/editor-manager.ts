@@ -19,16 +19,29 @@ interface MonacoEditor {
     dispose(): void;
 }
 
-declare const require: {
+type MonacoRequire = {
     config: (config: { paths: Record<string, string> }) => void;
-    (modules: string[], callback: (...args: unknown[]) => void): void;
+    (modules: string[], callback: (...args: unknown[]) => void, errorback?: (error: unknown) => void): void;
 };
+
+declare global {
+    interface Window {
+        require?: MonacoRequire;
+    }
+}
+
+const MONACO_VERSION = "0.45.0";
+const MONACO_CDN_BASE = `https://cdn.jsdelivr.net/npm/monaco-editor@${MONACO_VERSION}/min`;
+const MONACO_LOADER_SRC = `${MONACO_CDN_BASE}/vs/loader.js`;
 
 export class EditorManager {
     private monacoEditor: MonacoEditor | null = null;
+    private monacoEditorLoadPromise: Promise<void> | null = null;
     private customPresets: CustomStrategyConfig[] = [];
     private currentPresetKey: string | null = null;
     private dom: EditorManagerDom | null = null;
+    private initialized = false;
+    private editorCode = "";
 
     private readonly DEFAULT_STRATEGY_CODE = `// Custom Strategy Template
 // The function receives 'data' (OHLCV array), 'params' (your parameters),
@@ -70,6 +83,10 @@ for (let i = 1; i < data.length; i++) {
 
 return signals;`;
 
+    constructor() {
+        this.editorCode = this.DEFAULT_STRATEGY_CODE;
+    }
+
     private getDom(): EditorManagerDom {
         return this.dom ??= createEditorManagerDom();
     }
@@ -89,70 +106,153 @@ return signals;`;
     }
 
     public init(onStrategyUpdated: () => void) {
-        this.initMonacoEditor();
+        if (this.initialized) {
+            return;
+        }
+
         this.loadPresetList();
         this.setupHandlers(onStrategyUpdated);
+        this.initialized = true;
     }
 
-    private initMonacoEditor() {
-        if (typeof require === "undefined") {
+    private ensureMonacoLoader(): Promise<MonacoRequire> {
+        if (typeof window === "undefined" || typeof document === "undefined") {
+            return Promise.reject(new Error("Monaco editor requires a browser environment"));
+        }
+
+        if (window.require) {
+            return Promise.resolve(window.require);
+        }
+
+        return new Promise((resolve, reject) => {
+            const existingScript = document.querySelector<HTMLScriptElement>('script[data-monaco-loader="true"]');
+            const resolveRequire = () => {
+                if (window.require) {
+                    resolve(window.require);
+                    return;
+                }
+                reject(new Error("Monaco loader completed without exposing require"));
+            };
+
+            if (existingScript) {
+                if (existingScript.dataset.monacoLoaded === "true") {
+                    resolveRequire();
+                    return;
+                }
+                existingScript.addEventListener("load", resolveRequire, { once: true });
+                existingScript.addEventListener("error", () => reject(new Error("Failed to load Monaco loader")), { once: true });
+                return;
+            }
+
+            const script = document.createElement("script");
+            script.src = MONACO_LOADER_SRC;
+            script.async = true;
+            script.dataset.monacoLoader = "true";
+            script.addEventListener("load", () => {
+                script.dataset.monacoLoaded = "true";
+                resolveRequire();
+            }, { once: true });
+            script.addEventListener("error", () => reject(new Error("Failed to load Monaco loader")), { once: true });
+            document.head.appendChild(script);
+        });
+    }
+
+    private ensureMonacoEditor(): Promise<void> {
+        if (this.monacoEditor) {
+            return Promise.resolve();
+        }
+
+        if (this.monacoEditorLoadPromise) {
+            return this.monacoEditorLoadPromise;
+        }
+
+        this.monacoEditorLoadPromise = this.ensureMonacoLoader()
+            .then((monacoRequire) => new Promise<void>((resolve, reject) => {
+                monacoRequire.config({ paths: { vs: `${MONACO_CDN_BASE}/vs` } });
+
+                monacoRequire(["vs/editor/editor.main"], (monaco: any) => {
+                    this.createMonacoEditor(monaco);
+                    resolve();
+                }, reject);
+            }))
+            .catch((error: unknown) => {
+                this.monacoEditorLoadPromise = null;
+                debugLogger.error("editor.monaco_load_failed", {
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                throw error;
+            });
+
+        return this.monacoEditorLoadPromise;
+    }
+
+    private createMonacoEditor(monacoNamespace: any): void {
+        if (this.monacoEditor) {
+            return;
+        }
+
+        if (!this.getDom().monacoContainer) {
             debugLogger.warn("editor.monaco_loader_unavailable");
             return;
         }
 
-        require.config({ paths: { vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs" } });
-
-        require(["vs/editor/editor.main"], (monaco: any) => {
-            const monacoNamespace = monaco;
-
-            monacoNamespace.editor.defineTheme("strategyDark", {
-                base: "vs-dark",
-                inherit: true,
-                rules: [
-                    { token: "comment", foreground: "6a737d", fontStyle: "italic" },
-                    { token: "keyword", foreground: "ff7b72" },
-                    { token: "string", foreground: "a5d6ff" },
-                    { token: "number", foreground: "79c0ff" },
-                    { token: "identifier", foreground: "d1d4dc" }
-                ],
-                colors: {
-                    "editor.background": "#131722",
-                    "editor.foreground": "#d1d4dc",
-                    "editorCursor.foreground": "#2962ff",
-                    "editor.lineHighlightBackground": "#1e222d",
-                    "editorLineNumber.foreground": "#787b86",
-                    "editor.selectionBackground": "#2962ff44",
-                    "editor.inactiveSelectionBackground": "#2962ff22"
-                }
-            });
-
-            monacoNamespace.editor.setTheme("strategyDark");
-
-            this.monacoEditor = monacoNamespace.editor.create(this.getDom().monacoContainer, {
-                value: this.DEFAULT_STRATEGY_CODE,
-                language: "javascript",
-                theme: "strategyDark",
-                fontSize: 13,
-                fontFamily: "'JetBrains Mono', 'Consolas', monospace",
-                minimap: { enabled: false },
-                scrollBeyondLastLine: false,
-                lineNumbers: "on",
-                glyphMargin: false,
-                folding: true,
-                lineDecorationsWidth: 10,
-                automaticLayout: true,
-                tabSize: 2,
-                wordWrap: "on",
-                padding: { top: 12, bottom: 12 }
-            });
-
-            const model = this.monacoEditor?.getModel();
-            if (model) {
-                model.onDidChangeContent(() => {
-                    this.updateStatus("Modified", "");
-                });
+        monacoNamespace.editor.defineTheme("strategyDark", {
+            base: "vs-dark",
+            inherit: true,
+            rules: [
+                { token: "comment", foreground: "6a737d", fontStyle: "italic" },
+                { token: "keyword", foreground: "ff7b72" },
+                { token: "string", foreground: "a5d6ff" },
+                { token: "number", foreground: "79c0ff" },
+                { token: "identifier", foreground: "d1d4dc" }
+            ],
+            colors: {
+                "editor.background": "#131722",
+                "editor.foreground": "#d1d4dc",
+                "editorCursor.foreground": "#2962ff",
+                "editor.lineHighlightBackground": "#1e222d",
+                "editorLineNumber.foreground": "#787b86",
+                "editor.selectionBackground": "#2962ff44",
+                "editor.inactiveSelectionBackground": "#2962ff22"
             }
         });
+
+        monacoNamespace.editor.setTheme("strategyDark");
+
+        this.monacoEditor = monacoNamespace.editor.create(this.getDom().monacoContainer, {
+            value: this.editorCode,
+            language: "javascript",
+            theme: "strategyDark",
+            fontSize: 13,
+            fontFamily: "'JetBrains Mono', 'Consolas', monospace",
+            minimap: { enabled: false },
+            scrollBeyondLastLine: false,
+            lineNumbers: "on",
+            glyphMargin: false,
+            folding: true,
+            lineDecorationsWidth: 10,
+            automaticLayout: true,
+            tabSize: 2,
+            wordWrap: "on",
+            padding: { top: 12, bottom: 12 }
+        });
+
+        const model = this.monacoEditor?.getModel();
+        if (model) {
+            model.onDidChangeContent(() => {
+                this.editorCode = this.monacoEditor?.getValue() ?? this.editorCode;
+                this.updateStatus("Modified", "");
+            });
+        }
+    }
+
+    private setEditorCode(code: string): void {
+        this.editorCode = code;
+        this.monacoEditor?.setValue(code);
+    }
+
+    private getEditorCode(): string {
+        return this.monacoEditor?.getValue() ?? this.editorCode;
     }
 
     private setupHandlers(onStrategyUpdated: () => void) {
@@ -160,7 +260,18 @@ return signals;`;
 
         dom.openCodeEditor.addEventListener("click", () => {
             dom.codeEditorModal.classList.add("active");
-            this.monacoEditor?.layout();
+            this.updateStatus(this.monacoEditor ? "Ready" : "Loading editor...", "");
+            void this.ensureMonacoEditor()
+                .then(() => {
+                    this.monacoEditor?.layout();
+                    this.updateStatus("Ready", "");
+                })
+                .catch((error: unknown) => {
+                    this.updateStatus("Editor failed to load", "error");
+                    debugLogger.error("editor.open_failed", {
+                        error: error instanceof Error ? error.message : String(error),
+                    });
+                });
         });
 
         dom.closeCodeEditor.addEventListener("click", () => {
@@ -177,6 +288,14 @@ return signals;`;
             this.applyAndRun();
         });
 
+        dom.presetList.addEventListener("click", (event) => {
+            this.handlePresetListClick(event);
+        });
+
+        dom.presetList.addEventListener("keydown", (event) => {
+            this.handlePresetListKeydown(event);
+        });
+
         dom.strategyName.addEventListener("input", () => {
             if (!dom.strategyKey.value || this.currentPresetKey === null) {
                 dom.strategyKey.value = dom.strategyName.value
@@ -186,6 +305,45 @@ return signals;`;
                     .replace(/^_|_$/g, "");
             }
         });
+    }
+
+    private handlePresetListClick(event: MouseEvent): void {
+        const target = event.target as HTMLElement | null;
+        const presetList = this.getDom().presetList;
+        const deleteButton = target?.closest<HTMLButtonElement>(".preset-delete");
+        if (deleteButton && presetList.contains(deleteButton)) {
+            event.stopPropagation();
+            const index = parseInt(deleteButton.dataset.index || "0", 10);
+            this.deletePreset(index);
+            return;
+        }
+
+        const item = target?.closest<HTMLElement>(".preset-item");
+        if (item && presetList.contains(item)) {
+            this.activatePresetItem(item);
+        }
+    }
+
+    private handlePresetListKeydown(event: KeyboardEvent): void {
+        if (event.key !== "Enter" && event.key !== " ") {
+            return;
+        }
+        const target = event.target as HTMLElement | null;
+        if (target?.closest(".preset-delete")) {
+            return;
+        }
+        const item = target?.closest<HTMLElement>(".preset-item");
+        if (!item || !this.getDom().presetList.contains(item)) {
+            return;
+        }
+        event.preventDefault();
+        this.activatePresetItem(item);
+    }
+
+    private activatePresetItem(item: HTMLElement): void {
+        const key = item.dataset.key;
+        const preset = this.customPresets.find(preset => preset.key === key);
+        if (preset) this.loadPreset(preset);
     }
 
     public loadPresetList() {
@@ -222,40 +380,12 @@ return signals;`;
             fragment.appendChild(item);
         });
         presetList.appendChild(fragment);
-
-        presetList.querySelectorAll(".preset-item").forEach(item => {
-            const activatePreset = (event: Event) => {
-                if ((event.target as HTMLElement).closest(".preset-delete")) return;
-                const key = item.getAttribute("data-key");
-                const preset = this.customPresets.find(p => p.key === key);
-                if (preset) this.loadPreset(preset);
-            };
-
-            item.addEventListener("click", (event) => {
-                activatePreset(event);
-            });
-
-            item.addEventListener("keydown", (event) => {
-                if ((event as KeyboardEvent).key === "Enter" || (event as KeyboardEvent).key === " ") {
-                    event.preventDefault();
-                    activatePreset(event);
-                }
-            });
-        });
-
-        presetList.querySelectorAll(".preset-delete").forEach(button => {
-            button.addEventListener("click", (event) => {
-                event.stopPropagation();
-                const index = parseInt(button.getAttribute("data-index") || "0", 10);
-                this.deletePreset(index);
-            });
-        });
     }
 
     private loadPreset(preset: CustomStrategyConfig) {
         this.currentPresetKey = preset.key;
         this.setDraftIdentity(preset.name, preset.key);
-        this.monacoEditor?.setValue(preset.executeCode);
+        this.setEditorCode(preset.executeCode);
         this.renderPresetList();
         this.updateStatus(`Loaded: ${preset.name}`, "");
     }
@@ -280,14 +410,12 @@ return signals;`;
     private newStrategy() {
         this.currentPresetKey = null;
         this.setDraftIdentity("", "");
-        this.monacoEditor?.setValue(this.DEFAULT_STRATEGY_CODE);
+        this.setEditorCode(this.DEFAULT_STRATEGY_CODE);
         this.renderPresetList();
     }
 
     private validateCode(): boolean {
-        if (!this.monacoEditor) return false;
-
-        const code = this.monacoEditor.getValue();
+        const code = this.getEditorCode();
         const { name, key } = this.getDraftIdentity();
 
         if (!name || !key) {
@@ -306,12 +434,12 @@ return signals;`;
     }
 
     private savePreset(): boolean {
-        if (!this.monacoEditor || !this.validateCode()) {
+        if (!this.validateCode()) {
             return false;
         }
 
         const { name, key } = this.getDraftIdentity();
-        const code = this.monacoEditor.getValue();
+        const code = this.getEditorCode();
 
         const config: CustomStrategyConfig = {
             key,

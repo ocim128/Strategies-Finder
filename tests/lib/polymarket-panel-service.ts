@@ -1,3 +1,4 @@
+import { ensureLazyStylesheet } from "./lazy-styles";
 import { createPolymarketPanelDom, type PolymarketPanelDom } from "./polymarket-panel-dom";
 import {
     getSupportedPolymarket5mSymbolsLabel,
@@ -36,6 +37,7 @@ class PolymarketPanelService {
     private renderTimeoutId: number | null = null;
 
     public init(): void {
+        ensureLazyStylesheet("polymarket-panel-styles", new URL("../styles/polymarket.css", import.meta.url).href);
         if (this.initialized) {
             return;
         }

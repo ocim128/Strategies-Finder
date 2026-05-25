@@ -160,10 +160,13 @@ export class UIManager {
         const badge = document.createElement('div');
         badge.className = 'indicator-badge';
         badge.id = `indicator-${id}`;
-        badge.innerHTML = `
-			<div class="indicator-color" style="background: ${color};"></div>
-			<span class="indicator-name">${type} ${period}</span>
-		`;
+        const colorDot = document.createElement('div');
+        colorDot.className = 'indicator-color';
+        colorDot.style.background = color;
+        const name = document.createElement('span');
+        name.className = 'indicator-name';
+        name.textContent = `${type} ${period}`;
+        badge.append(colorDot, name);
         panel.appendChild(badge);
     }
 

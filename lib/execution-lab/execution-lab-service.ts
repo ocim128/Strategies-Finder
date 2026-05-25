@@ -1,3 +1,4 @@
+import { ensureLazyStylesheet } from "../lazy-styles";
 import type { SeriesMarker, Time } from "lightweight-charts";
 import { loadBuiltInStrategyByKey, strategyRegistry } from "../../strategyRegistry";
 import { getBacktestSettings, getCapitalSettings } from "../backtest-settings-reader";
@@ -514,6 +515,7 @@ export class ExecutionLabService {
     private sessionRunToken = 0;
 
     init(): void {
+        ensureLazyStylesheet("execution-lab-styles", new URL("../../styles/execution-lab.css", import.meta.url).href);
         if (this.initialized) return;
         this.initialized = true;
         this.dom = queryExecutionLabDom();

@@ -1,3 +1,4 @@
+import { ensureLazyStylesheet } from "./lazy-styles";
 import { strategyRegistry } from "../strategyRegistry";
 import { backtestService } from "./backtest-service";
 import { sliceOhlcvByBlock } from "./block-selector";
@@ -92,6 +93,7 @@ class PortfolioLabService {
     }
 
     public init(): void {
+        ensureLazyStylesheet("portfolio-lab-styles", new URL("../styles/portfolio-lab.css", import.meta.url).href);
         if (this.initialized) {
             return;
         }

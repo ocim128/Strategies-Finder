@@ -159,9 +159,10 @@ export function renderTradeItemHtml(trade: Trade): string {
   const pnlSign = isWin ? '+' : '';
   const entryDate = formatTradeTime(trade.entryTime);
   const exitReason = trade.exitReason ? formatExitReason(trade.exitReason) : '';
+  const encodedEntryTime = encodeURIComponent(JSON.stringify(trade.entryTime));
 
   return `
-      <div class="qv-trade-item" data-entry-time="${typeof trade.entryTime === 'object' ? JSON.stringify(trade.entryTime) : trade.entryTime}" role="button" tabindex="0">
+      <div class="qv-trade-item" data-entry-time="${encodedEntryTime}" role="button" tabindex="0">
           <span class="qv-trade-type ${trade.type}">${trade.type}</span>
           <span class="qv-trade-prices">
               ${fmtPrice(trade.entryPrice)} -> ${fmtPrice(trade.exitPrice)}

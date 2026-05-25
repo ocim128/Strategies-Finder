@@ -1,3 +1,4 @@
+import { ensureLazyStylesheet } from "./lazy-styles";
 import { state } from "./state";
 import { strategyRegistry, getStrategyList } from "../strategyRegistry";
 import { backtestService } from "./backtest-service";
@@ -31,6 +32,7 @@ export class CommandPaletteManager {
     private init() {
         if (typeof document === 'undefined') return;
 
+        ensureLazyStylesheet("command-palette-styles", new URL("../styles/command-palette.css", import.meta.url).href);
         this.createElements();
         this.setupListeners();
         this.refreshItems();

@@ -1,13 +1,29 @@
 const elementCache: Map<string, HTMLElement> = new Map();
 
+function getCachedConnectedElement(id: string): HTMLElement | null {
+    const element = elementCache.get(id);
+    if (!element) {
+        return null;
+    }
+    if (element.isConnected) {
+        return element;
+    }
+    elementCache.delete(id);
+    return null;
+}
+
+export function clearDomElementCache(): void {
+    elementCache.clear();
+}
+
 /**
  * Safely get an element by ID and throw an error if not found.
  * Caches the element for future lookups.
  */
 export function getRequiredElement<T extends HTMLElement>(id: string): T {
-    let element = elementCache.get(id);
+    let element = getCachedConnectedElement(id);
     if (!element) {
-        element = document.getElementById(id) || undefined;
+        element = document.getElementById(id);
         if (element) {
             elementCache.set(id, element);
         }
@@ -60,9 +76,9 @@ export function updateTextContent(id: string, text: string, className?: string) 
  * Internal helper for cached lookup
  */
 function getElementByIdCached(id: string): HTMLElement | null {
-    let element = elementCache.get(id);
+    let element = getCachedConnectedElement(id);
     if (!element) {
-        element = document.getElementById(id) || undefined;
+        element = document.getElementById(id);
         if (element) {
             elementCache.set(id, element);
         }

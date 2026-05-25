@@ -25,26 +25,15 @@ import {
     runBacktestResultUiSteps,
 } from "./backtest-result-ui-steps";
 import {
-    getPolymarketAnnotationToggle,
-    getPolymarketEntrySelectionModeSelect,
-    getPolymarketOutcomeIntervalSelect,
-    getPolymarketExitModeSelect,
-    getPolymarketSignalExitAllowMultipleTradesToggle,
-    getPolymarketPostSignalLimitEntryToggle,
-    getPolymarketPostSignalLimitEntryModeSelect,
-    getPolymarketPostSignalLimitExitToggle,
-    getPolymarketPostSignalLimitExitModeSelect,
-    getPolymarketSettingsRows,
+    createStateSubscriptionsDom,
     getFinderPolymarketRankModeSelect,
-    getExecutionModelSelect,
-    getChartModeToggle,
-    getChartModeLabel,
+    type StateSubscriptionsDom,
 } from "./state-subscriptions-dom";
 import type { Time } from "lightweight-charts";
 
-function updatePolymarketEntryOffsetVisibility(interval: string = state.currentInterval): void {
-    const rows = getPolymarketSettingsRows();
-    const annotationToggle = getPolymarketAnnotationToggle();
+function updatePolymarketEntryOffsetVisibility(dom: StateSubscriptionsDom, interval: string = state.currentInterval): void {
+    const rows = dom.polymarketSettingsRows;
+    const annotationToggle = dom.polymarketAnnotationToggle;
     const annotationEnabled = annotationToggle?.checked ?? false;
     const polymarketSettings = resolvePolymarketDomSettings();
     const isNative5mSession = polymarketSettings.outcomeInterval === '5m';
@@ -88,7 +77,7 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
         if (row) row.style.display = visible ? 'block' : 'none';
     }
 
-    const exitModeSelect = getPolymarketExitModeSelect();
+    const exitModeSelect = dom.polymarketExitModeSelect;
     const resolveHoldOption = exitModeSelect
         ? Array.from(exitModeSelect.options).find((option) => option.value === 'resolve_hold')
         : undefined;
@@ -113,14 +102,14 @@ function updatePolymarketEntryOffsetVisibility(interval: string = state.currentI
             exitModeSelect.value = 'resolve_hold';
         }
     }
-    updateFinderRankModeOptions();
+    updateFinderRankModeOptions(dom);
 }
 
-function updateFinderRankModeOptions(): void {
+function updateFinderRankModeOptions(dom: StateSubscriptionsDom): void {
     const isSameEventExit = isSameEventPolymarketExitMode(resolvePolymarketDomSettings().exitMode);
     const isOneSecondChart = state.currentInterval === "1s";
 
-    const select = getFinderPolymarketRankModeSelect();
+    const select = dom.finderPolymarketRankModeSelect;
     if (!select) {
         return;
     }
@@ -139,31 +128,33 @@ function updateFinderRankModeOptions(): void {
 }
 
 export function setupStateSubscriptions() {
-    updatePolymarketEntryOffsetVisibility();
+    const dom = createStateSubscriptionsDom();
+    updatePolymarketEntryOffsetVisibility(dom);
     [
-        { element: getPolymarketAnnotationToggle(), refreshRankModes: false },
-        { element: getPolymarketExitModeSelect(), refreshRankModes: true },
-        { element: getPolymarketSignalExitAllowMultipleTradesToggle(), refreshRankModes: false },
-        { element: getPolymarketEntrySelectionModeSelect(), refreshRankModes: false },
-        { element: getPolymarketOutcomeIntervalSelect(), refreshRankModes: true },
-        { element: getPolymarketPostSignalLimitEntryToggle(), refreshRankModes: false },
-        { element: getPolymarketPostSignalLimitEntryModeSelect(), refreshRankModes: false },
-        { element: getPolymarketPostSignalLimitExitToggle(), refreshRankModes: false },
-        { element: getPolymarketPostSignalLimitExitModeSelect(), refreshRankModes: false },
-        { element: getExecutionModelSelect(), refreshRankModes: true },
+        { element: dom.polymarketAnnotationToggle, refreshRankModes: false },
+        { element: dom.polymarketExitModeSelect, refreshRankModes: true },
+        { element: dom.polymarketSignalExitAllowMultipleTradesToggle, refreshRankModes: false },
+        { element: dom.polymarketEntrySelectionModeSelect, refreshRankModes: false },
+        { element: dom.polymarketOutcomeIntervalSelect, refreshRankModes: true },
+        { element: dom.polymarketPostSignalLimitEntryToggle, refreshRankModes: false },
+        { element: dom.polymarketPostSignalLimitEntryModeSelect, refreshRankModes: false },
+        { element: dom.polymarketPostSignalLimitExitToggle, refreshRankModes: false },
+        { element: dom.polymarketPostSignalLimitExitModeSelect, refreshRankModes: false },
+        { element: dom.executionModelSelect, refreshRankModes: true },
     ].forEach(({ element, refreshRankModes }) => {
         element?.addEventListener('change', () => {
-            updatePolymarketEntryOffsetVisibility();
-            if (refreshRankModes) updateFinderRankModeOptions();
+            updatePolymarketEntryOffsetVisibility(dom);
+            if (refreshRankModes) updateFinderRankModeOptions(dom);
         });
     });
     window.addEventListener("strategy-panel:tab-markup-loaded", ((event: CustomEvent<{ tabId?: string }>) => {
         if (event.detail?.tabId === 'finder') {
-            updateFinderRankModeOptions();
+            dom.finderPolymarketRankModeSelect = getFinderPolymarketRankModeSelect();
+            updateFinderRankModeOptions(dom);
         }
     }) as EventListener);
 
-    updateFinderRankModeOptions();
+    updateFinderRankModeOptions(dom);
 
     const setPriceLoading = () => {
         const priceEl = getRequiredElement('symbolPrice');
@@ -414,8 +405,8 @@ export function setupStateSubscriptions() {
     state.subscribe('currentInterval', (interval) => {
         debugLogger.event('state.currentInterval', { interval });
         uiManager.updateTimeframeUI(interval);
-        updatePolymarketEntryOffsetVisibility(interval);
-        updateFinderRankModeOptions();
+        updatePolymarketEntryOffsetVisibility(dom, interval);
+        updateFinderRankModeOptions(dom);
         scheduleDataReload();
     });
 
@@ -446,8 +437,8 @@ export function setupStateSubscriptions() {
     // Chart mode changes (Candlestick / Heikin Ashi)
     state.subscribe('chartMode', (chartMode) => {
         debugLogger.event('state.chartMode', { chartMode });
-        const toggle = getChartModeToggle();
-        const label = getChartModeLabel();
+        const toggle = dom.chartModeToggle;
+        const label = dom.chartModeLabel;
         if (toggle) {
             const isHA = chartMode === 'heikin-ashi';
             toggle.classList.toggle('active', isHA);

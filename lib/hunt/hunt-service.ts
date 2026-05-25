@@ -1,3 +1,4 @@
+import { ensureLazyStylesheet } from "../lazy-styles";
 import {
     getStrategyList,
     isBuiltInStrategyKey,
@@ -103,6 +104,7 @@ class HuntService {
     }
 
     public init(): void {
+        ensureLazyStylesheet("hunt-styles", new URL("../../styles/hunt.css", import.meta.url).href);
         if (this.initialized) {
             return;
         }
@@ -211,6 +213,24 @@ class HuntService {
 
         dom.huntStrategiesToggleAll.addEventListener("change", (event: Event) => {
             this.setStrategySelection(this.strategyOrder, (event.target as HTMLInputElement).checked);
+        });
+        dom.huntStrategyList.addEventListener("click", (event: MouseEvent) => {
+            const target = event.target as HTMLElement | null;
+            const checkbox = target?.closest<HTMLInputElement>('input[type="checkbox"][data-strategy-key]');
+            const strategyKey = checkbox?.dataset.strategyKey;
+            if (!checkbox || !strategyKey || !dom.huntStrategyList.contains(checkbox)) {
+                return;
+            }
+            this.handleStrategyToggleClick(strategyKey, event);
+        });
+        dom.huntStrategyList.addEventListener("change", (event: Event) => {
+            const target = event.target as HTMLElement | null;
+            const checkbox = target?.closest<HTMLInputElement>('input[type="checkbox"][data-strategy-key]');
+            if (!checkbox?.dataset.strategyKey || !dom.huntStrategyList.contains(checkbox)) {
+                return;
+            }
+            this.syncStrategySelectionUi();
+            this.persistSelectedStrategies();
         });
         dom.huntStrategySearch.addEventListener("input", () => {
             this.applyStrategyFilter();
@@ -683,13 +703,7 @@ class HuntService {
             checkbox.type = "checkbox";
             checkbox.id = `hunt-strategy-${key}`;
             checkbox.checked = selected.has(key);
-            checkbox.addEventListener("click", (event) => {
-                this.handleStrategyToggleClick(key, event as MouseEvent);
-            });
-            checkbox.addEventListener("change", () => {
-                this.syncStrategySelectionUi();
-                this.persistSelectedStrategies();
-            });
+            checkbox.dataset.strategyKey = key;
 
             const label = document.createElement("label");
             label.htmlFor = `hunt-strategy-${key}`;
