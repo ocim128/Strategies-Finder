@@ -14,6 +14,17 @@ import {
 import { buildPolymarket1sNoAdverseActionableMask } from "./polymarket-1s-helpers";
 import { normalizeIntegerParam, normalizeNumberParam } from "./range-conviction-core";
 
+type VwTypicalDispersionNoAdversePrepared = {
+    cleanData: OHLCVData[];
+    highs: number[];
+    lows: number[];
+    closes: number[];
+    volumes: number[];
+    typicals: number[];
+    vwapByLookback: Map<number, (number | null)[]>;
+    dispersionByLookback: Map<number, (number | null)[]>;
+};
+
 function buildVolumeWeightedTypicalDispersion(
     typicals: number[],
     volumes: number[],
@@ -57,6 +68,60 @@ function normalizeVwTypicalDispersionNoAdverseParams(params: StrategyParams): St
     };
 }
 
+function prepareVwTypicalDispersionNoAdverseData(data: OHLCVData[]): VwTypicalDispersionNoAdversePrepared {
+    const cleanData = ensureCleanData(data);
+    return {
+        cleanData,
+        highs: getHighs(cleanData),
+        lows: getLows(cleanData),
+        closes: getCloses(cleanData),
+        volumes: getVolumes(cleanData),
+        typicals: getTypicalPrices(cleanData),
+        vwapByLookback: new Map<number, (number | null)[]>(),
+        dispersionByLookback: new Map<number, (number | null)[]>(),
+    };
+}
+
+function getPreparedVwTypicalDispersionNoAdverseData(
+    preparedData: unknown,
+    data: OHLCVData[]
+): VwTypicalDispersionNoAdversePrepared {
+    if (
+        preparedData
+        && typeof preparedData === "object"
+        && "typicals" in preparedData
+        && "vwapByLookback" in preparedData
+        && "dispersionByLookback" in preparedData
+    ) {
+        return preparedData as VwTypicalDispersionNoAdversePrepared;
+    }
+    return prepareVwTypicalDispersionNoAdverseData(data);
+}
+
+function getPreparedVwap(
+    prepared: VwTypicalDispersionNoAdversePrepared,
+    lookback: number
+): (number | null)[] {
+    let vwap = prepared.vwapByLookback.get(lookback);
+    if (!vwap) {
+        vwap = calculateVWAP(prepared.highs, prepared.lows, prepared.closes, prepared.volumes, lookback);
+        prepared.vwapByLookback.set(lookback, vwap);
+    }
+    return vwap;
+}
+
+function getPreparedDispersion(
+    prepared: VwTypicalDispersionNoAdversePrepared,
+    lookback: number
+): (number | null)[] {
+    let dispersion = prepared.dispersionByLookback.get(lookback);
+    if (!dispersion) {
+        dispersion = buildVolumeWeightedTypicalDispersion(prepared.typicals, prepared.volumes, lookback);
+        prepared.dispersionByLookback.set(lookback, dispersion);
+    }
+    return dispersion;
+}
+
 export const vw_typical_dispersion_no_adverse: Strategy = {
     name: "Volume-Weighted Typical Dispersion with No Adverse Mask",
     description: "Fades typical-price deviations from rolling VWAP only when Polymarket no-adverse actionability allows the side.",
@@ -70,21 +135,18 @@ export const vw_typical_dispersion_no_adverse: Strategy = {
     },
     normalizeParams: normalizeVwTypicalDispersionNoAdverseParams,
     polymarket1sConfig: { required: true },
-    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+    prepareFinderData: (data) => prepareVwTypicalDispersionNoAdverseData(data),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[], context?: StrategyExecutionContext) => {
         if (!context?.polymarket1s) return [];
 
-        const cleanData = ensureCleanData(data);
+        const prepared = getPreparedVwTypicalDispersionNoAdverseData(preparedData, data);
+        const cleanData = prepared.cleanData;
         const p = normalizeVwTypicalDispersionNoAdverseParams(params);
         const lookback = p.lookback;
         if (cleanData.length < lookback + 1) return [];
 
-        const highs = getHighs(cleanData);
-        const lows = getLows(cleanData);
-        const closes = getCloses(cleanData);
-        const volumes = getVolumes(cleanData);
-        const typicals = getTypicalPrices(cleanData);
-        const vwap = calculateVWAP(highs, lows, closes, volumes, lookback);
-        const dispersion = buildVolumeWeightedTypicalDispersion(typicals, volumes, lookback);
+        const vwap = getPreparedVwap(prepared, lookback);
+        const dispersion = getPreparedDispersion(prepared, lookback);
         const mask = buildPolymarket1sNoAdverseActionableMask(cleanData, context, { volLookback: lookback });
         if (!mask.available) return [];
 
@@ -93,14 +155,23 @@ export const vw_typical_dispersion_no_adverse: Strategy = {
             const width = dispersion[i];
             if (center === null || width === null || width <= 0) return null;
 
-            if (typicals[i] <= center - p.threshold * width && mask.yesAllowed[i]) {
+            if (prepared.typicals[i] <= center - p.threshold * width && mask.yesAllowed[i]) {
                 return createBuySignal(cleanData, i, "Typical price below volume-weighted dispersion with no adverse YES mask");
             }
-            if (typicals[i] >= center + p.threshold * width && mask.noAllowed[i]) {
+            if (prepared.typicals[i] >= center + p.threshold * width && mask.noAllowed[i]) {
                 return createSellSignal(cleanData, i, "Typical price above volume-weighted dispersion with no adverse NO mask");
             }
             return null;
         });
+    },
+    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+        if (!context?.polymarket1s) return [];
+        return vw_typical_dispersion_no_adverse.executePrepared?.(
+            prepareVwTypicalDispersionNoAdverseData(data),
+            params,
+            data,
+            context
+        ) ?? [];
     },
     metadata: {
         role: "entry",

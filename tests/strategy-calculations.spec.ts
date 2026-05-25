@@ -2,6 +2,38 @@ import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { calculateSMA, calculateATR, calculateADX, calculateKeltnerChannels, calculateCMF, calculateIchimoku, OHLCVData, Time } from './lib/strategies/index';
 import { precomputeIndicators, resolveIndicators } from './lib/strategies/backtest';
+import { buildRollingSkewness } from './lib/strategies/lib/price-action-statistics-core';
+
+function buildRollingSkewnessWindowed(values: number[], lookbackInput: number): (number | null)[] {
+    const lookback = Math.max(3, Math.round(lookbackInput));
+    const result: (number | null)[] = new Array(values.length).fill(null);
+
+    for (let i = lookback - 1; i < values.length; i++) {
+        let sum = 0;
+        for (let j = i - lookback + 1; j <= i; j++) {
+            sum += values[j];
+        }
+        const mean = sum / lookback;
+
+        let m2 = 0;
+        let m3 = 0;
+        for (let j = i - lookback + 1; j <= i; j++) {
+            const diff = values[j] - mean;
+            m2 += diff * diff;
+            m3 += diff * diff * diff;
+        }
+        m2 /= lookback;
+        m3 /= lookback;
+
+        const stddev = Math.sqrt(m2);
+        if (stddev <= 0) continue;
+
+        result[i] = m3 / (stddev * stddev * stddev);
+    }
+
+    return result;
+}
+
 describe('Strategy Calculations', () => {
     it('should calculate SMA correctly', () => {
         const data = [10, 20, 30, 40, 50];
@@ -51,6 +83,24 @@ describe('Strategy Calculations', () => {
         expect(cmf[5]).to.be.a('number');
         expect(cmf[5]!).to.be.at.least(-1);
         expect(cmf[5]!).to.be.at.most(1);
+    });
+
+    it('should calculate rolling skewness like the windowed formula and cache repeated work', () => {
+        const values = Array.from({ length: 120 }, (_, i) =>
+            100000 + Math.sin(i / 5) * 0.02 + ((i % 7) - 3) * 0.003 + (i % 17 === 0 ? 0.06 : 0)
+        );
+
+        const actual = buildRollingSkewness(values, 12);
+        const expected = buildRollingSkewnessWindowed(values, 12);
+
+        expect(buildRollingSkewness(values, 12)).to.equal(actual);
+        for (let i = 0; i < values.length; i++) {
+            if (expected[i] === null) {
+                expect(actual[i], `index ${i}`).to.equal(null);
+            } else {
+                expect(actual[i]!, `index ${i}`).to.be.closeTo(expected[i]!, 1e-8);
+            }
+        }
     });
 
     it('should calculate Ichimoku components without future leakage in current spans', () => {

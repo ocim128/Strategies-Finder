@@ -15,6 +15,8 @@ import {
     getValueAreaSeries,
 } from "./value-area-acceptance-core";
 
+const pocVolumeConcentrationCache = new WeakMap<(number | null)[], Map<string, (number | null)[]>>();
+
 function buildPocVolumeConcentration(
     data: OHLCVData[],
     poc: (number | null)[],
@@ -23,6 +25,11 @@ function buildPocVolumeConcentration(
 ): (number | null)[] {
     const lookback = Math.max(3, Math.round(lookbackInput));
     const bins = Math.max(3, Math.round(numBins));
+    const cacheKey = `${lookback}|${bins}`;
+    const cachedByPoc = pocVolumeConcentrationCache.get(poc);
+    const cached = cachedByPoc?.get(cacheKey);
+    if (cached) return cached;
+
     const closes = getCloses(data);
     const volumes = getVolumes(data);
     const result: (number | null)[] = new Array(data.length).fill(null);
@@ -52,6 +59,11 @@ function buildPocVolumeConcentration(
         result[i] = pocVolume / totalVolume;
     }
 
+    if (cachedByPoc) {
+        cachedByPoc.set(cacheKey, result);
+    } else {
+        pocVolumeConcentrationCache.set(poc, new Map([[cacheKey, result]]));
+    }
     return result;
 }
 
@@ -108,13 +120,15 @@ export const vw_bid_ask_absorption_gamma_consensus: Strategy = {
             return null;
         });
     },
-    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) =>
-        vw_bid_ask_absorption_gamma_consensus.executePrepared!(
+    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+        if (!context?.polymarket1s) return [];
+        return vw_bid_ask_absorption_gamma_consensus.executePrepared!(
             vw_bid_ask_absorption_gamma_consensus.prepareFinderData!(data),
             params,
             data,
             context
-        ),
+        );
+    },
     metadata: {
         role: "entry",
         direction: "both",

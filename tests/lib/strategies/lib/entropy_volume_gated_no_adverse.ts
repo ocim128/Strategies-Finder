@@ -15,12 +15,98 @@ import { normalizeIntegerParam, normalizeNumberParam } from "./range-conviction-
 const ENTROPY_BINS = 5;
 const MAX_ENTROPY = Math.log2(ENTROPY_BINS);
 
+type EntropyVolumeGatedNoAdversePrepared = {
+    cleanData: OHLCVData[];
+    closes: number[];
+    volumes: number[];
+    returns: number[];
+    entropyByLookback: Map<number, (number | null)[]>;
+    volumeZByLookback: Map<number, (number | null)[]>;
+    averageByLookback: Map<number, (number | null)[]>;
+};
+
 function normalizeEntropyVolumeGatedNoAdverseParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
         lookback: normalizeIntegerParam(params.lookback, 25, 5),
         entropyThreshold: normalizeNumberParam(params.entropyThreshold, 0.45, 0, 1),
     };
+}
+
+function buildLogReturnSeries(closes: number[]): number[] {
+    const returns = new Array<number>(closes.length).fill(0);
+    for (let i = 1; i < closes.length; i++) {
+        if (closes[i - 1] > 0) {
+            returns[i] = Math.log(closes[i] / closes[i - 1]);
+        }
+    }
+    return returns;
+}
+
+function prepareEntropyVolumeGatedNoAdverseData(data: OHLCVData[]): EntropyVolumeGatedNoAdversePrepared {
+    const cleanData = ensureCleanData(data);
+    const closes = getCloses(cleanData);
+    return {
+        cleanData,
+        closes,
+        volumes: getVolumes(cleanData),
+        returns: buildLogReturnSeries(closes),
+        entropyByLookback: new Map<number, (number | null)[]>(),
+        volumeZByLookback: new Map<number, (number | null)[]>(),
+        averageByLookback: new Map<number, (number | null)[]>(),
+    };
+}
+
+function getPreparedEntropyVolumeGatedNoAdverseData(
+    preparedData: unknown,
+    data: OHLCVData[]
+): EntropyVolumeGatedNoAdversePrepared {
+    if (
+        preparedData
+        && typeof preparedData === "object"
+        && "returns" in preparedData
+        && "entropyByLookback" in preparedData
+        && "averageByLookback" in preparedData
+    ) {
+        return preparedData as EntropyVolumeGatedNoAdversePrepared;
+    }
+    return prepareEntropyVolumeGatedNoAdverseData(data);
+}
+
+function getPreparedEntropy(
+    prepared: EntropyVolumeGatedNoAdversePrepared,
+    lookback: number
+): (number | null)[] {
+    let entropy = prepared.entropyByLookback.get(lookback);
+    if (!entropy) {
+        entropy = buildRollingEntropy(prepared.returns, lookback, ENTROPY_BINS);
+        prepared.entropyByLookback.set(lookback, entropy);
+    }
+    return entropy;
+}
+
+function getPreparedVolumeZ(
+    prepared: EntropyVolumeGatedNoAdversePrepared,
+    lookback: number
+): (number | null)[] {
+    let volumeZ = prepared.volumeZByLookback.get(lookback);
+    if (!volumeZ) {
+        volumeZ = buildRollingZScore(prepared.volumes, lookback);
+        prepared.volumeZByLookback.set(lookback, volumeZ);
+    }
+    return volumeZ;
+}
+
+function getPreparedAverage(
+    prepared: EntropyVolumeGatedNoAdversePrepared,
+    lookback: number
+): (number | null)[] {
+    let average = prepared.averageByLookback.get(lookback);
+    if (!average) {
+        average = buildRollingAverage(prepared.closes, lookback);
+        prepared.averageByLookback.set(lookback, average);
+    }
+    return average;
 }
 
 export const entropy_volume_gated_no_adverse: Strategy = {
@@ -36,19 +122,19 @@ export const entropy_volume_gated_no_adverse: Strategy = {
     },
     normalizeParams: normalizeEntropyVolumeGatedNoAdverseParams,
     polymarket1sConfig: { required: true },
-    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+    prepareFinderData: (data) => prepareEntropyVolumeGatedNoAdverseData(data),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[], context?: StrategyExecutionContext) => {
         if (!context?.polymarket1s) return [];
 
-        const cleanData = ensureCleanData(data);
+        const prepared = getPreparedEntropyVolumeGatedNoAdverseData(preparedData, data);
+        const cleanData = prepared.cleanData;
         const p = normalizeEntropyVolumeGatedNoAdverseParams(params);
         const lookback = p.lookback;
         if (cleanData.length < lookback + 1) return [];
 
-        const closes = getCloses(cleanData);
-        const returns = closes.map((close, i) => i === 0 || closes[i - 1] <= 0 ? 0 : Math.log(close / closes[i - 1]));
-        const entropy = buildRollingEntropy(returns, lookback, ENTROPY_BINS);
-        const volumeZ = buildRollingZScore(getVolumes(cleanData), lookback);
-        const average = buildRollingAverage(closes, lookback);
+        const entropy = getPreparedEntropy(prepared, lookback);
+        const volumeZ = getPreparedVolumeZ(prepared, lookback);
+        const average = getPreparedAverage(prepared, lookback);
         const mask = buildPolymarket1sNoAdverseActionableMask(cleanData, context, { volLookback: lookback });
         if (!mask.available) return [];
 
@@ -59,14 +145,23 @@ export const entropy_volume_gated_no_adverse: Strategy = {
             if (entropyValue === null || volumeScore === null || center === null) return null;
             if ((entropyValue / MAX_ENTROPY) > p.entropyThreshold || volumeScore <= 0) return null;
 
-            if (closes[i] > center && mask.yesAllowed[i]) {
+            if (prepared.closes[i] > center && mask.yesAllowed[i]) {
                 return createBuySignal(cleanData, i, "Low entropy high-volume transition above average with no adverse YES mask");
             }
-            if (closes[i] < center && mask.noAllowed[i]) {
+            if (prepared.closes[i] < center && mask.noAllowed[i]) {
                 return createSellSignal(cleanData, i, "Low entropy high-volume transition below average with no adverse NO mask");
             }
             return null;
         });
+    },
+    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+        if (!context?.polymarket1s) return [];
+        return entropy_volume_gated_no_adverse.executePrepared?.(
+            prepareEntropyVolumeGatedNoAdverseData(data),
+            params,
+            data,
+            context
+        ) ?? [];
     },
     metadata: {
         role: "entry",

@@ -6,6 +6,7 @@ type NullableSeries = (number | null)[];
 const rollingStdDevCache = new WeakMap<number[], Map<number, NullableSeries>>();
 const rollingZScoreCache = new WeakMap<number[], Map<string, NullableSeries>>();
 const rollingMedianCache = new WeakMap<number[], Map<number, NullableSeries>>();
+const rollingSkewnessCache = new WeakMap<number[], Map<number, NullableSeries>>();
 const rollingMinMaxCache = new WeakMap<number[], Map<string, { min: NullableSeries; max: NullableSeries }>>();
 const rollingEntropyCache = new WeakMap<number[], Map<string, NullableSeries>>();
 const percentileRankCache = new WeakMap<number[], Map<number, NullableSeries>>();
@@ -263,32 +264,42 @@ export function buildRollingSkewness(
 	lookbackInput: number
 ): (number | null)[] {
 	const lookback = Math.max(3, Math.round(lookbackInput));
-	const result: (number | null)[] = new Array(values.length).fill(null);
-
-	for (let i = lookback - 1; i < values.length; i++) {
+	return getCachedSeries(rollingSkewnessCache, values, lookback, () => {
+		const result: NullableSeries = new Array(values.length).fill(null);
+		const anchor = Number.isFinite(values[0]) ? values[0] : 0;
 		let sum = 0;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			sum += values[j];
+		let sumSquares = 0;
+		let sumCubes = 0;
+
+		for (let i = 0; i < values.length; i++) {
+			const value = values[i] - anchor;
+			const squared = value * value;
+			sum += value;
+			sumSquares += squared;
+			sumCubes += squared * value;
+
+			if (i >= lookback) {
+				const removed = values[i - lookback] - anchor;
+				const removedSquared = removed * removed;
+				sum -= removed;
+				sumSquares -= removedSquared;
+				sumCubes -= removedSquared * removed;
+			}
+
+			if (i < lookback - 1) continue;
+
+			const mean = sum / lookback;
+			const meanSquares = sumSquares / lookback;
+			const variance = meanSquares - mean * mean;
+			if (!Number.isFinite(variance) || variance <= 0) continue;
+
+			const stddev = Math.sqrt(variance);
+			const m3 = (sumCubes / lookback) - (3 * mean * meanSquares) + (2 * mean * mean * mean);
+			result[i] = m3 / (stddev * stddev * stddev);
 		}
-		const mean = sum / lookback;
 
-		let m2 = 0;
-		let m3 = 0;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			const diff = values[j] - mean;
-			m2 += diff * diff;
-			m3 += diff * diff * diff;
-		}
-		m2 /= lookback;
-		m3 /= lookback;
-
-		const stddev = Math.sqrt(m2);
-		if (stddev <= 0) continue;
-
-		result[i] = m3 / (stddev * stddev * stddev);
-	}
-
-	return result;
+		return result;
+	});
 }
 
 /**

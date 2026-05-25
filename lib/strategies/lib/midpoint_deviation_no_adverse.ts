@@ -10,12 +10,62 @@ import { buildRollingZScore } from "./price-action-statistics-core";
 import { buildPolymarket1sNoAdverseActionableMask } from "./polymarket-1s-helpers";
 import { normalizeIntegerParam, normalizeNumberParam } from "./range-conviction-core";
 
+type MidpointDeviationNoAdversePrepared = {
+    cleanData: OHLCVData[];
+    weightedDeviation: number[];
+    deviationZByLookback: Map<number, (number | null)[]>;
+};
+
 function normalizeMidpointDeviationNoAdverseParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
         lookback: normalizeIntegerParam(params.lookback, 20, 5),
         devThreshold: normalizeNumberParam(params.devThreshold, 1.5, 0),
     };
+}
+
+function buildWeightedMidpointDeviation(data: OHLCVData[]): number[] {
+    return data.map((bar) => {
+        const metrics = computePriceActionBarMetrics(bar);
+        if (metrics.range <= 0) return 0;
+        return ((bar.close - metrics.midpoint) / metrics.range) * Math.max(0, bar.volume);
+    });
+}
+
+function prepareMidpointDeviationNoAdverseData(data: OHLCVData[]): MidpointDeviationNoAdversePrepared {
+    const cleanData = ensureCleanData(data);
+    return {
+        cleanData,
+        weightedDeviation: buildWeightedMidpointDeviation(cleanData),
+        deviationZByLookback: new Map<number, (number | null)[]>(),
+    };
+}
+
+function getPreparedMidpointDeviationNoAdverseData(
+    preparedData: unknown,
+    data: OHLCVData[]
+): MidpointDeviationNoAdversePrepared {
+    if (
+        preparedData
+        && typeof preparedData === "object"
+        && "weightedDeviation" in preparedData
+        && "deviationZByLookback" in preparedData
+    ) {
+        return preparedData as MidpointDeviationNoAdversePrepared;
+    }
+    return prepareMidpointDeviationNoAdverseData(data);
+}
+
+function getPreparedDeviationZ(
+    prepared: MidpointDeviationNoAdversePrepared,
+    lookback: number
+): (number | null)[] {
+    let deviationZ = prepared.deviationZByLookback.get(lookback);
+    if (!deviationZ) {
+        deviationZ = buildRollingZScore(prepared.weightedDeviation, lookback);
+        prepared.deviationZByLookback.set(lookback, deviationZ);
+    }
+    return deviationZ;
 }
 
 export const midpoint_deviation_no_adverse: Strategy = {
@@ -31,20 +81,17 @@ export const midpoint_deviation_no_adverse: Strategy = {
     },
     normalizeParams: normalizeMidpointDeviationNoAdverseParams,
     polymarket1sConfig: { required: true },
-    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+    prepareFinderData: (data) => prepareMidpointDeviationNoAdverseData(data),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[], context?: StrategyExecutionContext) => {
         if (!context?.polymarket1s) return [];
 
-        const cleanData = ensureCleanData(data);
+        const prepared = getPreparedMidpointDeviationNoAdverseData(preparedData, data);
+        const cleanData = prepared.cleanData;
         const p = normalizeMidpointDeviationNoAdverseParams(params);
         const lookback = p.lookback;
         if (cleanData.length < lookback + 1) return [];
 
-        const weightedDeviation = cleanData.map((bar) => {
-            const metrics = computePriceActionBarMetrics(bar);
-            if (metrics.range <= 0) return 0;
-            return ((bar.close - metrics.midpoint) / metrics.range) * Math.max(0, bar.volume);
-        });
-        const deviationZ = buildRollingZScore(weightedDeviation, lookback);
+        const deviationZ = getPreparedDeviationZ(prepared, lookback);
         const mask = buildPolymarket1sNoAdverseActionableMask(cleanData, context, { volLookback: lookback });
         if (!mask.available) return [];
 
@@ -60,6 +107,15 @@ export const midpoint_deviation_no_adverse: Strategy = {
             }
             return null;
         });
+    },
+    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+        if (!context?.polymarket1s) return [];
+        return midpoint_deviation_no_adverse.executePrepared?.(
+            prepareMidpointDeviationNoAdverseData(data),
+            params,
+            data,
+            context
+        ) ?? [];
     },
     metadata: {
         role: "entry",
