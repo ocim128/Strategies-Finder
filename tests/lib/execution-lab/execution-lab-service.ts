@@ -68,6 +68,7 @@ import {
     type LiveEntrySubmitRequest,
     type LiveExecutorStatus,
     type LiveExitResultRecord,
+    type LiveExitSubmitRequest,
     type LiveTakeProfitSubmitRequest,
     type LiveTradeSubmitResponse,
     type LiveTradeSizingMode,
@@ -127,6 +128,7 @@ import type { CapitalSettings } from "../types/backtest";
 const SETTINGS_SCHEMA = "execution-lab.settings";
 const SETTINGS_VERSION = 2;
 const POLL_MS = 1000;
+const LIVE_CANDLE_CLOSED_LAG_SEC = 1;
 const INITIAL_CANDLE_LIMIT = 900;
 const MAX_STREAM_CANDLES = 20000;
 const MAX_LIVE_CANDLE_LAG_SEC = 10;
@@ -355,6 +357,8 @@ function liveUiConfigKey(config: ExecutionLabLiveUiConfig): string {
         config.exitMaxSlippageCents,
         config.limitOffsetEnabled ? 1 : 0,
         config.limitOffsetCents,
+        config.limitFixedPriceEnabled ? 1 : 0,
+        config.limitFixedPriceCents,
         config.limitCancelAllOnExitEnabled ? 1 : 0,
     ].join("|");
 }
@@ -491,6 +495,11 @@ export class ExecutionLabService {
     private liveOpenPositionByPaperTradeId = new Map<string, LiveOpenExecutionPosition>();
     private pendingLimitSubmissionByRequestId = new Map<string, PendingLimitSubmission>();
     private pendingLimitSubmissionByPaperTradeId = new Map<string, PendingLimitSubmission>();
+    private queuedTakeProfitSubmissionByPaperTradeId = new Map<string, {
+        position: LiveOpenExecutionPosition;
+        sessionToken: number;
+    }>();
+    private liveTakeProfitInFlightByPaperTradeId = new Set<string>();
     private pendingTakeProfitSubmissionByRequestId = new Map<string, PendingTakeProfitSubmission>();
     private pendingTakeProfitSubmissionByPaperTradeId = new Map<string, PendingTakeProfitSubmission>();
     private liveCancelInFlightByKey = new Set<string>();
@@ -578,7 +587,12 @@ export class ExecutionLabService {
             this.paperState = createExecutionLabPaperState(prepared.snapshot);
             this.strategy = prepared.strategy;
             this.logPath = prepared.logPath;
-            await this.appendRecords([createSessionStartRecord(prepared.snapshot)]);
+            await this.appendRecords([
+                createSessionStartRecord(
+                    prepared.snapshot,
+                    mode === "live" ? this.activeLiveUiConfig() : undefined
+                ),
+            ]);
             this.candles = await this.loadInitialCandles(prepared.snapshot.symbol);
             this.liveEvents = await loadExecutionLabLiveEvents({
                 symbol: prepared.snapshot.outcomeSymbol,
@@ -650,6 +664,8 @@ export class ExecutionLabService {
         this.liveOpenPositionByPaperTradeId.clear();
         this.pendingLimitSubmissionByRequestId.clear();
         this.pendingLimitSubmissionByPaperTradeId.clear();
+        this.queuedTakeProfitSubmissionByPaperTradeId.clear();
+        this.liveTakeProfitInFlightByPaperTradeId.clear();
         this.pendingTakeProfitSubmissionByRequestId.clear();
         this.pendingTakeProfitSubmissionByPaperTradeId.clear();
         this.liveCancelInFlightByKey.clear();
@@ -768,6 +784,8 @@ export class ExecutionLabService {
         dom.liveExitSlippageCents.addEventListener("change", syncLiveConfig);
         dom.liveLimitOffsetEnabled.addEventListener("change", syncLiveConfig);
         dom.liveLimitOffsetCents.addEventListener("change", syncLiveConfig);
+        dom.liveLimitFixedPriceEnabled.addEventListener("change", syncLiveConfig);
+        dom.liveLimitFixedPriceCents.addEventListener("change", syncLiveConfig);
         dom.liveLimitCancelAllOnExit.addEventListener("change", syncLiveConfig);
         const syncProtectionConfig = () => {
             this.protectionUiConfig = this.readProtectionUiConfigFromDom();
@@ -797,6 +815,8 @@ export class ExecutionLabService {
             exitMaxSlippageCents: dom.liveExitSlippageCents.value,
             limitOffsetEnabled: dom.liveLimitOffsetEnabled.checked,
             limitOffsetCents: dom.liveLimitOffsetCents.value,
+            limitFixedPriceEnabled: dom.liveLimitFixedPriceEnabled.checked,
+            limitFixedPriceCents: dom.liveLimitFixedPriceCents.value,
             limitCancelAllOnExitEnabled: dom.liveLimitCancelAllOnExit.checked,
         });
     }
@@ -812,6 +832,8 @@ export class ExecutionLabService {
         dom.liveExitSlippageCents.value = String(config.exitMaxSlippageCents);
         dom.liveLimitOffsetEnabled.checked = config.limitOffsetEnabled;
         dom.liveLimitOffsetCents.value = String(config.limitOffsetCents);
+        dom.liveLimitFixedPriceEnabled.checked = config.limitFixedPriceEnabled;
+        dom.liveLimitFixedPriceCents.value = String(config.limitFixedPriceCents);
         dom.liveLimitCancelAllOnExit.checked = config.limitCancelAllOnExitEnabled;
     }
 
@@ -851,6 +873,8 @@ export class ExecutionLabService {
         const isLimit = this.liveUiConfig.orderMode === "limit";
         dom.liveLimitOffsetEnabled.disabled = this.running || !isLimit;
         dom.liveLimitOffsetCents.disabled = this.running || !isLimit || !this.liveUiConfig.limitOffsetEnabled;
+        dom.liveLimitFixedPriceEnabled.disabled = this.running || !isLimit;
+        dom.liveLimitFixedPriceCents.disabled = this.running || !isLimit || !this.liveUiConfig.limitFixedPriceEnabled;
         dom.liveLimitCancelAllOnExit.disabled = this.running || !isLimit;
         dom.liveTakerOrderType.disabled = this.running || isLimit;
         dom.liveEntrySlippageCents.disabled = this.running || isLimit;
@@ -959,13 +983,18 @@ export class ExecutionLabService {
             `cap $${status.maxStakeUsd.toFixed(2)}`,
             `sizing ${status.sizingMode === "exchange_min" ? "exchange min" : "fixed"}`,
             `taker ${status.takerOrderType ?? LIVE_TRADE_DEFAULT_ORDER_TYPE}`,
-            `entry slip ${(status.entryMaxSlippageCents ?? LIVE_TRADE_DEFAULT_ENTRY_MAX_SLIPPAGE_CENTS).toFixed(0)}c`,
+            status.orderMode === "taker"
+                ? `entry slip ${(status.entryMaxSlippageCents ?? LIVE_TRADE_DEFAULT_ENTRY_MAX_SLIPPAGE_CENTS).toFixed(0)}c`
+                : null,
             `exit slip ${(status.exitMaxSlippageCents ?? LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS).toFixed(0)}c`,
             status.orderMode === "limit"
                 ? `limit ${status.supportedLimitOrderType ?? LIVE_TRADE_DEFAULT_LIMIT_ORDER_TYPE}`
                 : null,
             status.orderMode === "limit"
                 ? `offset ${status.limitOffsetEnabled ? `${status.limitOffsetCents.toFixed(1)}c` : "off"}`
+                : null,
+            status.orderMode === "limit"
+                ? `fixed ${status.limitFixedPriceEnabled ? `${status.limitFixedPriceCents.toFixed(1)}c` : "off"}`
                 : null,
             status.orderMode === "limit"
                 ? `cancel ${status.limitCancelAllOnExitEnabled ? `on exit (${status.cancelScope})` : "off"}`
@@ -1475,7 +1504,7 @@ export class ExecutionLabService {
                 limit: 1,
             });
         }
-        const endTs = Math.floor(Date.now() / 1000) - 2;
+        const endTs = Math.floor(Date.now() / 1000) - LIVE_CANDLE_CLOSED_LAG_SEC;
         if (endTs < lastBufferedTs) return Promise.resolve([]);
         return loadExecutionLabLiveCandles({
             symbol,
@@ -1875,6 +1904,7 @@ export class ExecutionLabService {
                 pollTiming.liveResultLogMs = Date.now() - liveLogStartedMs;
                 if (!this.isSessionActive(sessionToken, snapshot)) return;
             }
+            this.flushLiveTakeProfitSubmissions(sessionToken);
             this.updateExecutionParityState(parityMismatches);
             this.updateLatestPaperDecision(tickResult.records);
             this.appendLatestLoggedSignals(tickResult.records, backtestSignals);
@@ -2317,30 +2347,61 @@ export class ExecutionLabService {
             }
 
             this.liveExitInFlightByPaperTradeId.add(position.paperTradeId);
-            try {
-                if (!this.isSessionActive(sessionToken, snapshot)) return records;
-                const startedMs = Date.now();
-                const response = await submitExecutionLabLiveTrade(request, this.activeLiveUiConfig()).catch(() =>
-                    buildLiveTradeFailureResponse({
-                        requestId: request.requestId,
-                        reason: "executor_unavailable",
-                        minPrice: request.minPrice,
-                    })
-                );
-                if (!this.isSessionActive(sessionToken, snapshot)) return records;
-                const result = buildLiveExitResultRecord(snapshot, request, response, new Date().toISOString(), {
-                    latencyMs: Date.now() - startedMs,
-                });
-                this.latestLiveExitResult = result;
-                this.maybeBlockLiveSubmissions(response);
-                this.updateLiveExitPosition(position, response);
-                records.push(result);
-            } finally {
-                this.liveExitInFlightByPaperTradeId.delete(position.paperTradeId);
-            }
+            this.startLiveExitSubmission(position, request, sessionToken);
         }
 
         return records;
+    }
+
+    private startLiveExitSubmission(
+        position: LiveOpenExecutionPosition,
+        request: LiveExitSubmitRequest,
+        sessionToken: number
+    ): void {
+        const snapshot = this.snapshot;
+        if (!snapshot || this.executionMode !== "live") {
+            this.liveExitInFlightByPaperTradeId.delete(position.paperTradeId);
+            return;
+        }
+        void this.submitLiveExit(position, request, sessionToken, snapshot).catch((error) => {
+            debugLogger.error("execution_lab.live_exit_submission_failed", {
+                sessionId: snapshot.sessionId,
+                paperTradeId: position.paperTradeId,
+                requestId: request.requestId,
+                error: executionLabErrorMessage(error),
+            });
+        });
+    }
+
+    private async submitLiveExit(
+        position: LiveOpenExecutionPosition,
+        request: LiveExitSubmitRequest,
+        sessionToken: number,
+        snapshot: ExecutionLabSessionSnapshot
+    ): Promise<void> {
+        try {
+            if (!this.isSessionActive(sessionToken, snapshot)) return;
+            const startedMs = Date.now();
+            const response = await submitExecutionLabLiveTrade(request, this.activeLiveUiConfig()).catch(() =>
+                buildLiveTradeFailureResponse({
+                    requestId: request.requestId,
+                    reason: "executor_unavailable",
+                    minPrice: request.minPrice,
+                })
+            );
+            if (!this.isSessionActive(sessionToken, snapshot)) return;
+            const result = buildLiveExitResultRecord(snapshot, request, response, new Date().toISOString(), {
+                latencyMs: Date.now() - startedMs,
+            });
+            this.latestLiveExitResult = result;
+            this.maybeBlockLiveSubmissions(response);
+            this.updateLiveExitPosition(position, response);
+            await this.appendRecords([result]);
+            if (!this.isSessionActive(sessionToken, snapshot)) return;
+            this.render();
+        } finally {
+            this.liveExitInFlightByPaperTradeId.delete(position.paperTradeId);
+        }
     }
 
     private findLivePositionForExitTrigger(exit: LiveExitTriggerRecord): LiveOpenExecutionPosition | null {
@@ -2506,6 +2567,8 @@ export class ExecutionLabService {
                 limitReferencePrice: request.orderMode === "limit" ? request.limitReferencePrice : undefined,
                 limitOffsetEnabled: request.orderMode === "limit" ? request.limitOffsetEnabled : undefined,
                 limitOffsetCents: request.orderMode === "limit" ? request.limitOffsetCents : undefined,
+                limitFixedPriceEnabled: request.orderMode === "limit" ? request.limitFixedPriceEnabled : undefined,
+                limitFixedPriceCents: request.orderMode === "limit" ? request.limitFixedPriceCents : undefined,
             };
 
             try {
@@ -2645,6 +2708,8 @@ export class ExecutionLabService {
                         limitReferencePrice: response.limitReferencePrice ?? request.limitReferencePrice,
                         limitOffsetEnabled: response.limitOffsetEnabled ?? request.limitOffsetEnabled,
                         limitOffsetCents: response.limitOffsetCents ?? request.limitOffsetCents,
+                        limitFixedPriceEnabled: response.limitFixedPriceEnabled ?? request.limitFixedPriceEnabled,
+                        limitFixedPriceCents: response.limitFixedPriceCents ?? request.limitFixedPriceCents,
                     }
                     : response;
                 const result = buildLiveTradeResultRecord(snapshot, request, resultResponse, new Date().toISOString(), {
@@ -2656,7 +2721,7 @@ export class ExecutionLabService {
                 this.trackPendingLimitSubmission(position, request, response);
                 const livePosition = this.trackLiveEntryPosition(position, request.requestId, response);
                 if (livePosition) {
-                    records.push(...await this.buildLiveTakeProfitRecords(livePosition, recordedAtIso, sessionToken));
+                    this.queueLiveTakeProfitSubmission(livePosition, sessionToken);
                 }
             } finally {
                 this.liveTradeInFlightByPaperTradeId.delete(position.tradeId);
@@ -2674,76 +2739,136 @@ export class ExecutionLabService {
         return cents > 0 ? cents : null;
     }
 
+    private queueLiveTakeProfitSubmission(
+        position: LiveOpenExecutionPosition,
+        sessionToken: number
+    ): void {
+        if (
+            this.queuedTakeProfitSubmissionByPaperTradeId.has(position.paperTradeId)
+            || this.liveTakeProfitInFlightByPaperTradeId.has(position.paperTradeId)
+            || this.pendingTakeProfitSubmissionByPaperTradeId.has(position.paperTradeId)
+        ) {
+            return;
+        }
+        this.queuedTakeProfitSubmissionByPaperTradeId.set(position.paperTradeId, { position, sessionToken });
+    }
+
+    private flushLiveTakeProfitSubmissions(sessionToken: number): void {
+        for (const [paperTradeId, queued] of this.queuedTakeProfitSubmissionByPaperTradeId) {
+            if (queued.sessionToken !== sessionToken) continue;
+            this.queuedTakeProfitSubmissionByPaperTradeId.delete(paperTradeId);
+            this.startLiveTakeProfitSubmission(queued.position, queued.sessionToken);
+        }
+    }
+
+    private startLiveTakeProfitSubmission(
+        position: LiveOpenExecutionPosition,
+        sessionToken: number
+    ): void {
+        const snapshot = this.snapshot;
+        if (!snapshot || this.executionMode !== "live") return;
+        if (
+            this.liveTakeProfitInFlightByPaperTradeId.has(position.paperTradeId)
+            || this.pendingTakeProfitSubmissionByPaperTradeId.has(position.paperTradeId)
+        ) {
+            return;
+        }
+        void this.buildLiveTakeProfitRecords(position, sessionToken)
+            .then(async (records) => {
+                if (!this.isSessionActive(sessionToken, snapshot) || records.length === 0) return;
+                await this.appendRecords(records);
+                if (!this.isSessionActive(sessionToken, snapshot)) return;
+                this.render();
+            })
+            .catch((error) => {
+                debugLogger.error("execution_lab.live_take_profit_submission_failed", {
+                    sessionId: snapshot.sessionId,
+                    paperTradeId: position.paperTradeId,
+                    error: executionLabErrorMessage(error),
+                });
+            });
+    }
+
     private async buildLiveTakeProfitRecords(
         position: LiveOpenExecutionPosition,
-        recordedAtIso: string,
         sessionToken: number
     ): Promise<ExecutionLabRecord[]> {
         const snapshot = this.snapshot;
         if (!snapshot || this.executionMode !== "live") return [];
-        if (this.pendingTakeProfitSubmissionByPaperTradeId.has(position.paperTradeId)) return [];
+        if (
+            this.liveTakeProfitInFlightByPaperTradeId.has(position.paperTradeId)
+            || this.pendingTakeProfitSubmissionByPaperTradeId.has(position.paperTradeId)
+        ) {
+            return [];
+        }
         const takeProfitCents = this.liveTakeProfitCents();
         if (takeProfitCents === null || position.remainingShares <= MIN_LIVE_POSITION_SHARES) return [];
         const nowSec = Math.floor(Date.now() / 1000);
         if (nowSec >= position.eventEndTs) return [];
-        const liveStatus = this.currentLiveExecutorStatus();
-        const request = buildLiveTakeProfitSubmitRequest({
-            snapshot,
-            entryRequestId: position.entryRequestId,
-            paperTradeId: position.paperTradeId,
-            eventStartTs: position.eventStartTs,
-            eventEndTs: position.eventEndTs,
-            marketSlug: position.marketSlug,
-            conditionId: position.conditionId,
-            tokenId: position.tokenId,
-            side: position.side,
-            shares: position.remainingShares,
-            signalTimeSec: position.signalTimeSec,
-            entryTimeSec: position.entryTimeSec,
-            entryPrice: position.entryPrice,
-            takeProfitCents,
-            orderType: liveStatus?.supportedLimitOrderType ?? LIVE_TRADE_DEFAULT_LIMIT_ORDER_TYPE,
-            createdAtIso: recordedAtIso,
-            nowSec,
-        });
-        if (!request) {
-            position.takeProfitStatus = "rejected";
-            position.lastExitStatus = "rejected";
-            position.lastExitReason = "take_profit_price_out_of_range";
-            return [];
-        }
+        this.liveTakeProfitInFlightByPaperTradeId.add(position.paperTradeId);
+        try {
+            const liveStatus = this.currentLiveExecutorStatus();
+            const recordedAtIso = new Date().toISOString();
+            const request = buildLiveTakeProfitSubmitRequest({
+                snapshot,
+                entryRequestId: position.entryRequestId,
+                paperTradeId: position.paperTradeId,
+                eventStartTs: position.eventStartTs,
+                eventEndTs: position.eventEndTs,
+                marketSlug: position.marketSlug,
+                conditionId: position.conditionId,
+                tokenId: position.tokenId,
+                side: position.side,
+                shares: position.remainingShares,
+                signalTimeSec: position.signalTimeSec,
+                entryTimeSec: position.entryTimeSec,
+                entryPrice: position.entryPrice,
+                takeProfitCents,
+                orderType: liveStatus?.supportedLimitOrderType ?? LIVE_TRADE_DEFAULT_LIMIT_ORDER_TYPE,
+                createdAtIso: recordedAtIso,
+                nowSec,
+            });
+            if (!request) {
+                position.takeProfitStatus = "rejected";
+                position.lastExitStatus = "rejected";
+                position.lastExitReason = "take_profit_price_out_of_range";
+                return [];
+            }
 
-        const requestRecord = buildLiveTradeRequestRecord(snapshot, request, recordedAtIso, this.liveRecordContext());
-        if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return [];
-        const startedMs = Date.now();
-        const response = await submitExecutionLabLiveTrade(request, {
-            ...this.activeLiveUiConfig(),
-            orderMode: "limit",
-        }).catch(() =>
-            buildLiveTradeFailureResponse({
-                requestId: request.requestId,
-                reason: "executor_unavailable",
-                maxPrice: request.maxPrice,
-                limitPrice: request.limitPrice,
-                limitReferencePrice: request.limitReferencePrice,
-                minPrice: request.minPrice,
-            })
-        );
-        if (!this.isSessionActive(sessionToken, snapshot)) return [];
-        const resultResponse = {
-            ...response,
-            maxPrice: response.maxPrice ?? request.maxPrice,
-            limitPrice: response.limitPrice ?? request.limitPrice,
-            limitReferencePrice: response.limitReferencePrice ?? request.limitReferencePrice,
-            minPrice: response.minPrice ?? request.minPrice,
-        };
-        const result = buildLiveTradeResultRecord(snapshot, request, resultResponse, new Date().toISOString(), {
-            latencyMs: Date.now() - startedMs,
-        });
-        this.latestLiveTradeResult = result;
-        this.maybeBlockLiveSubmissions(response);
-        this.trackTakeProfitSubmission(position, request, response);
-        return [result];
+            const requestRecord = buildLiveTradeRequestRecord(snapshot, request, recordedAtIso, this.liveRecordContext());
+            if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return [];
+            const startedMs = Date.now();
+            const response = await submitExecutionLabLiveTrade(request, {
+                ...this.activeLiveUiConfig(),
+                orderMode: "limit",
+            }).catch(() =>
+                buildLiveTradeFailureResponse({
+                    requestId: request.requestId,
+                    reason: "executor_unavailable",
+                    maxPrice: request.maxPrice,
+                    limitPrice: request.limitPrice,
+                    limitReferencePrice: request.limitReferencePrice,
+                    minPrice: request.minPrice,
+                })
+            );
+            if (!this.isSessionActive(sessionToken, snapshot)) return [];
+            const resultResponse = {
+                ...response,
+                maxPrice: response.maxPrice ?? request.maxPrice,
+                limitPrice: response.limitPrice ?? request.limitPrice,
+                limitReferencePrice: response.limitReferencePrice ?? request.limitReferencePrice,
+                minPrice: response.minPrice ?? request.minPrice,
+            };
+            const result = buildLiveTradeResultRecord(snapshot, request, resultResponse, new Date().toISOString(), {
+                latencyMs: Date.now() - startedMs,
+            });
+            this.latestLiveTradeResult = result;
+            this.maybeBlockLiveSubmissions(response);
+            this.trackTakeProfitSubmission(position, request, response);
+            return [result];
+        } finally {
+            this.liveTakeProfitInFlightByPaperTradeId.delete(position.paperTradeId);
+        }
     }
 
     private findOpenLivePositionForEvent(eventStartTs: number): LiveOpenExecutionPosition | null {

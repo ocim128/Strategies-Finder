@@ -36,6 +36,8 @@ export const LIVE_TRADE_DEFAULT_ENTRY_MAX_SLIPPAGE_CENTS = 1;
 export const LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS = 5;
 export const LIVE_TRADE_DEFAULT_LIMIT_OFFSET_ENABLED = false;
 export const LIVE_TRADE_DEFAULT_LIMIT_OFFSET_CENTS = 0;
+export const LIVE_TRADE_DEFAULT_LIMIT_FIXED_PRICE_ENABLED = false;
+export const LIVE_TRADE_DEFAULT_LIMIT_FIXED_PRICE_CENTS = 20;
 export const LIVE_TRADE_DEFAULT_LIMIT_CANCEL_ALL_ON_EXIT_ENABLED = false;
 export const LIVE_TRADE_REQUEST_TTL_SEC = 10;
 export const LIVE_TRADE_MAX_EXPIRY_WINDOW_SEC = 30;
@@ -85,6 +87,8 @@ export const EXECUTION_LAB_DEFAULT_LIVE_UI_CONFIG: ExecutionLabLiveUiConfig = {
     exitMaxSlippageCents: LIVE_TRADE_DEFAULT_EXIT_MAX_SLIPPAGE_CENTS,
     limitOffsetEnabled: LIVE_TRADE_DEFAULT_LIMIT_OFFSET_ENABLED,
     limitOffsetCents: LIVE_TRADE_DEFAULT_LIMIT_OFFSET_CENTS,
+    limitFixedPriceEnabled: LIVE_TRADE_DEFAULT_LIMIT_FIXED_PRICE_ENABLED,
+    limitFixedPriceCents: LIVE_TRADE_DEFAULT_LIMIT_FIXED_PRICE_CENTS,
     limitCancelAllOnExitEnabled: LIVE_TRADE_DEFAULT_LIMIT_CANCEL_ALL_ON_EXIT_ENABLED,
 };
 
@@ -126,6 +130,11 @@ function normalizeCents(value: unknown, fallback: number): number {
     return numeric !== null && numeric >= 0 ? Math.round(numeric * 100) / 100 : fallback;
 }
 
+function normalizePriceCents(value: unknown, fallback: number): number {
+    const numeric = finiteNumber(value);
+    return numeric !== null && numeric > 0 && numeric <= 100 ? Math.round(numeric * 100) / 100 : fallback;
+}
+
 function normalizeUsd(value: unknown, fallback: number): number {
     const numeric = finiteNumber(value);
     return numeric !== null && numeric > 0 ? Math.round(numeric * 100) / 100 : fallback;
@@ -165,6 +174,8 @@ export function normalizeExecutionLabLiveUiConfig(
         exitMaxSlippageCents: normalizeCents(record.exitMaxSlippageCents, fallback.exitMaxSlippageCents),
         limitOffsetEnabled: finiteBoolean(record.limitOffsetEnabled, fallback.limitOffsetEnabled),
         limitOffsetCents: normalizeCents(record.limitOffsetCents, fallback.limitOffsetCents),
+        limitFixedPriceEnabled: finiteBoolean(record.limitFixedPriceEnabled, fallback.limitFixedPriceEnabled),
+        limitFixedPriceCents: normalizePriceCents(record.limitFixedPriceCents, fallback.limitFixedPriceCents),
         limitCancelAllOnExitEnabled: finiteBoolean(
             record.limitCancelAllOnExitEnabled,
             fallback.limitCancelAllOnExitEnabled
@@ -303,6 +314,8 @@ export function resolveLiveLimitEntryPrice(args: {
     referencePrice: number;
     offsetEnabled?: boolean;
     offsetCents?: number;
+    fixedPriceEnabled?: boolean;
+    fixedPriceCents?: number;
     tickSize?: number;
 }): number {
     const referencePrice = finitePositiveNumber(args.referencePrice) ?? 0.01;
@@ -310,7 +323,14 @@ export function resolveLiveLimitEntryPrice(args: {
         ? Math.max(0, finiteNumber(args.offsetCents) ?? LIVE_TRADE_DEFAULT_LIMIT_OFFSET_CENTS)
         : 0;
     const tickSize = finitePositiveNumber(args.tickSize) ?? LIVE_TRADE_DEFAULT_LIMIT_TICK_SIZE;
-    const rawPrice = Math.max(0.01, Math.min(1, referencePrice - (offsetCents / 100)));
+    const basePrice = referencePrice - (offsetCents / 100);
+    const fixedPrice = args.fixedPriceEnabled
+        ? Math.max(0.01, Math.min(1, (normalizePriceCents(
+            args.fixedPriceCents,
+            LIVE_TRADE_DEFAULT_LIMIT_FIXED_PRICE_CENTS
+        ) / 100)))
+        : null;
+    const rawPrice = Math.max(0.01, Math.min(1, fixedPrice === null ? basePrice : Math.min(basePrice, fixedPrice)));
     const rounded = Math.floor((rawPrice + Number.EPSILON) / tickSize) * tickSize;
     return Math.max(0.01, Math.min(1, Number(rounded.toFixed(4))));
 }
@@ -375,6 +395,8 @@ export function buildLiveTradeSubmitRequest(args: {
             referencePrice: args.position.entryPrice,
             offsetEnabled: liveConfig.limitOffsetEnabled,
             offsetCents: liveConfig.limitOffsetCents,
+            fixedPriceEnabled: liveConfig.limitFixedPriceEnabled,
+            fixedPriceCents: liveConfig.limitFixedPriceCents,
             tickSize: args.limitTickSize,
         });
         return {
@@ -386,6 +408,8 @@ export function buildLiveTradeSubmitRequest(args: {
             limitPrice,
             limitOffsetEnabled: liveConfig.limitOffsetEnabled,
             limitOffsetCents: liveConfig.limitOffsetCents,
+            limitFixedPriceEnabled: liveConfig.limitFixedPriceEnabled,
+            limitFixedPriceCents: liveConfig.limitFixedPriceCents,
         };
     }
 
@@ -590,6 +614,8 @@ export function buildLiveTradeRequestRecord(
         limitReferencePrice: request.orderMode === "limit" ? request.limitReferencePrice : undefined,
         limitOffsetEnabled: request.action === "entry" && request.orderMode === "limit" ? request.limitOffsetEnabled : undefined,
         limitOffsetCents: request.action === "entry" && request.orderMode === "limit" ? request.limitOffsetCents : undefined,
+        limitFixedPriceEnabled: request.action === "entry" && request.orderMode === "limit" ? request.limitFixedPriceEnabled : undefined,
+        limitFixedPriceCents: request.action === "entry" && request.orderMode === "limit" ? request.limitFixedPriceCents : undefined,
         dryRun: context.dryRun,
         sizingMode: context.sizingMode,
     };
@@ -623,6 +649,8 @@ export function buildLiveTradeResultRecord(
         limitReferencePrice: response.limitReferencePrice,
         limitOffsetEnabled: response.limitOffsetEnabled,
         limitOffsetCents: response.limitOffsetCents,
+        limitFixedPriceEnabled: response.limitFixedPriceEnabled,
+        limitFixedPriceCents: response.limitFixedPriceCents,
         minPrice: response.minPrice,
         currentBid: response.currentBid,
         latencyMs: context.latencyMs,
@@ -748,6 +776,8 @@ export function buildLiveTradeFailureResponse(args: {
     limitReferencePrice?: number;
     limitOffsetEnabled?: boolean;
     limitOffsetCents?: number;
+    limitFixedPriceEnabled?: boolean;
+    limitFixedPriceCents?: number;
     minPrice?: number;
     currentBid?: number;
 }): LiveTradeSubmitResponse {
@@ -762,6 +792,8 @@ export function buildLiveTradeFailureResponse(args: {
         limitReferencePrice: args.limitReferencePrice,
         limitOffsetEnabled: args.limitOffsetEnabled,
         limitOffsetCents: args.limitOffsetCents,
+        limitFixedPriceEnabled: args.limitFixedPriceEnabled,
+        limitFixedPriceCents: args.limitFixedPriceCents,
         minPrice: args.minPrice,
         currentBid: args.currentBid,
     };
@@ -819,6 +851,7 @@ export function normalizeLiveTradeSubmitResponse(
         "limitPrice",
         "limitReferencePrice",
         "limitOffsetCents",
+        "limitFixedPriceCents",
         "minPrice",
         "currentBid",
         "minOrderSize",
@@ -828,6 +861,7 @@ export function normalizeLiveTradeSubmitResponse(
         if (numeric !== null) response[key] = numeric;
     }
     if (value.limitOffsetEnabled !== undefined) response.limitOffsetEnabled = value.limitOffsetEnabled === true;
+    if (value.limitFixedPriceEnabled !== undefined) response.limitFixedPriceEnabled = value.limitFixedPriceEnabled === true;
     if (
         response.status === "matched"
         && hasExplicitFilledShares(response)
@@ -1073,6 +1107,12 @@ export function validateLiveTradeSubmitRequest(
             ? value.limitOffsetEnabled
             : false;
         const limitOffsetCents = finiteNonNegativeNumber(value.limitOffsetCents);
+        const limitFixedPriceEnabled = typeof value.limitFixedPriceEnabled === "boolean"
+            ? value.limitFixedPriceEnabled
+            : false;
+        const limitFixedPriceCents = value.limitFixedPriceCents === undefined
+            ? LIVE_TRADE_DEFAULT_LIMIT_FIXED_PRICE_CENTS
+            : finitePositiveNumber(value.limitFixedPriceCents);
         if (maxPrice === null || maxPrice <= 0 || maxPrice > 1) {
             return { ok: false, error: "maxPrice must be in (0, 1] for limit entries" };
         }
@@ -1086,6 +1126,19 @@ export function validateLiveTradeSubmitRequest(
             return { ok: false, error: "limitReferencePrice must be in (0, 1]" };
         }
         if (limitOffsetCents === null) return { ok: false, error: "limitOffsetCents must be non-negative" };
+        if (limitFixedPriceCents === null || limitFixedPriceCents > 100) {
+            return { ok: false, error: "limitFixedPriceCents must be in (0, 100]" };
+        }
+        const offsetPriceCap = Math.max(
+            0.01,
+            Math.min(1, limitReferencePrice - (limitOffsetEnabled ? limitOffsetCents / 100 : 0))
+        );
+        const fixedPriceCap = limitFixedPriceEnabled
+            ? Math.max(0.01, Math.min(1, limitFixedPriceCents / 100))
+            : 1;
+        if (limitPrice > Math.min(offsetPriceCap, fixedPriceCap) + 0.000000001) {
+            return { ok: false, error: "limitPrice exceeds resolved limit entry cap" };
+        }
         return {
             ok: true,
             request: {
@@ -1113,6 +1166,8 @@ export function validateLiveTradeSubmitRequest(
                 limitReferencePrice,
                 limitOffsetEnabled,
                 limitOffsetCents,
+                limitFixedPriceEnabled,
+                limitFixedPriceCents,
             },
         };
     }

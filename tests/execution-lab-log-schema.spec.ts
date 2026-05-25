@@ -230,6 +230,8 @@ describe("Execution Lab JSONL schema", () => {
             limitReferencePrice: 0.54,
             limitOffsetEnabled: true,
             limitOffsetCents: 6,
+            limitFixedPriceEnabled: true,
+            limitFixedPriceCents: 20,
         }).ok).to.equal(true);
         expect(validateExecutionLabRecord({
             ...baseRecord,

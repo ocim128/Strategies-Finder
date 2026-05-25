@@ -281,7 +281,8 @@ describe("Execution Lab live executor adapter", () => {
         await withJsonServer((payload) => ({
             ok: true,
             requestId: payload.requestId,
-            status: "dry_run",
+            status: payload.sizingMode === "exchange_min" ? "dry_run" : "failed",
+            reason: payload.sizingMode === "exchange_min" ? undefined : "missing_sizing_mode",
             currentAsk: 0.51,
             maxPrice: payload.maxPrice,
         }), async (executorUrl) => {
@@ -289,6 +290,7 @@ describe("Execution Lab live executor adapter", () => {
                 executorUrl,
                 liveEnabled: false,
                 maxStakeUsd: 10,
+                sizingMode: "exchange_min",
                 orderType: "FAK",
                 timeoutMs: 1000,
             });
@@ -317,6 +319,8 @@ describe("Execution Lab live executor adapter", () => {
             limitReferencePrice: 0.55,
             limitOffsetEnabled: true,
             limitOffsetCents: 6,
+            limitFixedPriceEnabled: false,
+            limitFixedPriceCents: 20,
         } as LiveTradeSubmitRequest, {
             executorPath: process.execPath,
             executorArgs: ["-e", script],
@@ -334,6 +338,8 @@ describe("Execution Lab live executor adapter", () => {
             exitMaxSlippageCents: 5,
             limitOffsetEnabled: true,
             limitOffsetCents: 6,
+            limitFixedPriceEnabled: false,
+            limitFixedPriceCents: 20,
             limitCancelAllOnExitEnabled: true,
         });
 

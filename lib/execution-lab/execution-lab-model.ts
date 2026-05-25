@@ -127,6 +127,7 @@ export type SessionStartRecord = ExecutionLabBaseRecord & {
     params: Record<string, number>;
     backtestSettings: Record<string, unknown>;
     polymarketSettings: Record<string, unknown>;
+    liveConfig?: ExecutionLabLiveUiConfig;
     allowMultipleTradesPerEvent: boolean;
 };
 
@@ -177,6 +178,8 @@ export interface ExecutionLabLiveUiConfig {
     exitMaxSlippageCents: number;
     limitOffsetEnabled: boolean;
     limitOffsetCents: number;
+    limitFixedPriceEnabled: boolean;
+    limitFixedPriceCents: number;
     limitCancelAllOnExitEnabled: boolean;
 }
 
@@ -243,6 +246,8 @@ export type LiveLimitEntrySubmitRequest = LiveTradeSubmitRequestBase & {
     limitReferencePrice: number;
     limitOffsetEnabled: boolean;
     limitOffsetCents: number;
+    limitFixedPriceEnabled: boolean;
+    limitFixedPriceCents: number;
 };
 
 export type LiveEntrySubmitRequest = LiveTakerEntrySubmitRequest | LiveLimitEntrySubmitRequest;
@@ -292,6 +297,8 @@ export type LiveTradeSubmitResponse = {
     limitReferencePrice?: number;
     limitOffsetEnabled?: boolean;
     limitOffsetCents?: number;
+    limitFixedPriceEnabled?: boolean;
+    limitFixedPriceCents?: number;
     minPrice?: number;
     currentBid?: number;
     minOrderSize?: number;
@@ -324,6 +331,8 @@ export type LiveTradeRequestRecord = ExecutionLabBaseRecord & {
     limitReferencePrice?: number;
     limitOffsetEnabled?: boolean;
     limitOffsetCents?: number;
+    limitFixedPriceEnabled?: boolean;
+    limitFixedPriceCents?: number;
     sizingMode?: LiveTradeSizingMode;
     dryRun?: boolean;
 };
@@ -348,6 +357,8 @@ export type LiveTradeResultRecord = ExecutionLabBaseRecord & {
     limitReferencePrice?: number;
     limitOffsetEnabled?: boolean;
     limitOffsetCents?: number;
+    limitFixedPriceEnabled?: boolean;
+    limitFixedPriceCents?: number;
     minPrice?: number;
     currentBid?: number;
     latencyMs?: number;

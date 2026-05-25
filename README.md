@@ -281,7 +281,7 @@ Execution Lab is the only browser surface that can dispatch live Polymarket orde
 Operational contract:
 - run it on supported `1s` BTCUSDT/XRPUSDT charts with `signal_close`, `next_open`, or `next_close` Polymarket CLOB timing
 - browser code sends only order intent; wallet secrets stay in the local executor process environment
-- configure Strategy Finder `.env` with `EXECUTION_LAB_LIVE_EXECUTOR_PATH`, `EXECUTION_LAB_LIVE_ENABLED`, fallback order settings, optional broad cancel scope, and local stake caps; non-secret order mode, taker type, sizing, slippage, limit offset, and cancel-on-exit can be controlled in the Execution Lab UI
+- configure Strategy Finder `.env` with `EXECUTION_LAB_LIVE_EXECUTOR_PATH`, `EXECUTION_LAB_LIVE_ENABLED`, fallback order settings, optional broad cancel scope, and local stake caps; non-secret order mode, taker type, sizing, slippage, limit offset, fixed limit cap, and cancel-on-exit can be controlled in the Execution Lab UI
 - if the executor binary is not under the side repo's `target/debug` or `target/release`, also set `EXECUTION_LAB_LIVE_EXECUTOR_CWD` to the side repo root so its `.env` is loaded
 - configure the side executor repo with `POLYMARKET_PRIVATE_KEY`, `MAX_ORDER_SIZE_USDC`, `ARBITRAGE_ORDER_TYPE=FAK`, `FOK`, or `GTC`, `DRY_RUN=false`, and `LIVE_TRADE_ONCE_LIVE_ENABLED=1` only after dry-run preflight is correct
 - live entry buys the same YES/NO token accepted by the paper decision path; limit mode submits a resting entry and does not become a tracked live position unless the executor reports filled shares

@@ -191,13 +191,13 @@ Important behavior:
 - Paper Trade remains the startup default and writes JSONL paper records only
 - Live Trade requires an explicit UI mode switch and confirmation
 - Strategy Finder reads local executor path/cwd/args or optional `EXECUTION_LAB_LIVE_EXECUTOR_URL`, hard live enablement, timeout/output limits, geoblock display state, fallback order settings, and optional broad cancel scope from `.env`
-- Execution Lab UI owns non-secret per-browser live behavior: order mode, taker order type, live sizing mode, max stake cap, entry/exit slippage, protective TP/SL toggles and cent offsets, limit offset, and limit cancel-on-exit
+- Execution Lab UI owns non-secret per-browser live behavior: order mode, taker order type, live sizing mode, max stake cap, entry/exit slippage, protective TP/SL toggles and cent offsets, limit offset, fixed limit cap, and limit cancel-on-exit
 - the local executor process reads wallet secrets from its own server-side `.env`
 - taker mode uses `FAK` or `FOK`; `.env` fallback accepts `EXECUTION_LAB_LIVE_TAKER_ORDER_TYPE`, `EXECUTION_LAB_LIVE_ORDER_TYPE`, or `ARBITRAGE_ORDER_TYPE` before falling back to `FAK`
 - limit mode uses `EXECUTION_LAB_LIVE_LIMIT_ORDER_TYPE=GTC` as the current resting order type
 - Strategy Finder infers the side-repo working directory for `target/debug` and `target/release` executor binaries; otherwise set `EXECUTION_LAB_LIVE_EXECUTOR_CWD` so the executor loads the correct `.env`
 - entry requests buy the paper-selected YES/NO token with `maxPrice` capped at the paper entry price plus configured entry slippage
-- limit entry requests submit immediately with `limitPrice` derived from the paper entry reference price minus optional UI offset; they also include `maxPrice = limitPrice` for executor schema compatibility and may rest unfilled
+- limit entry requests submit immediately with `limitPrice` derived from the paper entry reference price minus optional UI offset and optional fixed limit cap; they also include `maxPrice = limitPrice` for executor schema compatibility and may rest unfilled
 - the Polymarket Settings `Polymarket Entry Cutoff` toggle is applied before paper entries are accepted, so Execution Lab paper PnL and live eligibility use the same event-close cutoff when the toggle is enabled
 - UI or fallback `exchange_min` sizing allows live entries to auto-size to the minimum valid Polymarket order, still capped by the effective Strategy Finder cap and `MAX_ORDER_SIZE_USDC`
 - exit requests sell the tracked filled shares of the same token with `minPrice` floored by the configured exit slippage against the lower of paper exit price and actual live entry fill

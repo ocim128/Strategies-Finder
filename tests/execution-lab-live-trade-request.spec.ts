@@ -152,6 +152,8 @@ describe("Execution Lab live trade request", () => {
                 exitMaxSlippageCents: 5,
                 limitOffsetEnabled: true,
                 limitOffsetCents: 6,
+                limitFixedPriceEnabled: false,
+                limitFixedPriceCents: 20,
                 limitCancelAllOnExitEnabled: true,
             },
             createdAtIso: "2026-01-01T00:00:01.000Z",
@@ -173,6 +175,58 @@ describe("Execution Lab live trade request", () => {
         expect(resolveLiveLimitEntryPrice({
             referencePrice: 0.256,
         })).to.equal(0.25);
+    });
+
+    it("caps live limit entries at the configured fixed limit price without raising lower signals", () => {
+        const highSignal = buildLiveTradeSubmitRequest({
+            snapshot: snapshot(),
+            position: { ...position("no"), entryPrice: 0.53 },
+            liveConfig: {
+                orderMode: "limit",
+                takerOrderType: "FAK",
+                sizingMode: "exchange_min",
+                maxStakeUsd: 100,
+                entryMaxSlippageCents: 1,
+                exitMaxSlippageCents: 5,
+                limitOffsetEnabled: false,
+                limitOffsetCents: 0,
+                limitFixedPriceEnabled: true,
+                limitFixedPriceCents: 20,
+                limitCancelAllOnExitEnabled: false,
+            },
+            createdAtIso: "2026-01-01T00:00:01.000Z",
+            nowSec: EVENT_START + 11,
+        });
+        const lowerSignal = buildLiveTradeSubmitRequest({
+            snapshot: snapshot(),
+            position: { ...position("no"), entryPrice: 0.17 },
+            liveConfig: {
+                orderMode: "limit",
+                takerOrderType: "FAK",
+                sizingMode: "exchange_min",
+                maxStakeUsd: 100,
+                entryMaxSlippageCents: 1,
+                exitMaxSlippageCents: 5,
+                limitOffsetEnabled: false,
+                limitOffsetCents: 0,
+                limitFixedPriceEnabled: true,
+                limitFixedPriceCents: 20,
+                limitCancelAllOnExitEnabled: false,
+            },
+            createdAtIso: "2026-01-01T00:00:01.000Z",
+            nowSec: EVENT_START + 11,
+        });
+
+        expect(highSignal.orderMode).to.equal("limit");
+        expect(lowerSignal.orderMode).to.equal("limit");
+        if (highSignal.orderMode === "limit") {
+            expect(highSignal.limitPrice).to.equal(0.20);
+            expect(highSignal.maxPrice).to.equal(0.20);
+        }
+        if (lowerSignal.orderMode === "limit") {
+            expect(lowerSignal.limitPrice).to.equal(0.17);
+            expect(lowerSignal.maxPrice).to.equal(0.17);
+        }
     });
 
     it("builds and validates resting take-profit sell limits from confirmed entry fills", () => {
@@ -370,6 +424,8 @@ describe("Execution Lab live trade request", () => {
             limitReferencePrice: 0.57,
             limitOffsetEnabled: true,
             limitOffsetCents: 6,
+            limitFixedPriceEnabled: false,
+            limitFixedPriceCents: 20,
         }, {
             nowSec: EVENT_START + 11,
             maxStakeUsd: 10,
@@ -385,6 +441,25 @@ describe("Execution Lab live trade request", () => {
             limitReferencePrice: 0.57,
             limitOffsetEnabled: true,
             limitOffsetCents: 6,
+            limitFixedPriceEnabled: false,
+            limitFixedPriceCents: 20,
+        }, {
+            nowSec: EVENT_START + 11,
+            maxStakeUsd: 10,
+            orderMode: "limit",
+            supportedLimitOrderType: "GTC",
+        }).ok).to.equal(false);
+        expect(validateLiveTradeSubmitRequest({
+            ...request,
+            orderMode: "limit",
+            orderType: "GTC",
+            maxPrice: 0.51,
+            limitPrice: 0.51,
+            limitReferencePrice: 0.57,
+            limitOffsetEnabled: false,
+            limitOffsetCents: 0,
+            limitFixedPriceEnabled: true,
+            limitFixedPriceCents: 20,
         }, {
             nowSec: EVENT_START + 11,
             maxStakeUsd: 10,

@@ -322,6 +322,46 @@ describe("Execution Lab live helpers", () => {
         expect(response.json.error).to.include("symbol");
     });
 
+    it("requests the latest closed 1s candle without an extra one-second live delay", async () => {
+        const handler = createHandler();
+        const originalFetch = globalThis.fetch;
+        const originalNow = Date.now;
+        const nowSec = 2_100_000_000;
+        let requestedEndTime: string | null = null;
+        Date.now = () => nowSec * 1000;
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url
+            );
+            expect(url.pathname).to.equal("/api/v3/klines");
+            requestedEndTime = url.searchParams.get("endTime");
+            return new Response(JSON.stringify([
+                [(nowSec - 1) * 1000, "100", "101", "99", "100.5", "1", 0, 0, 2],
+            ]), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }) as typeof fetch;
+
+        try {
+            const response = await invoke(
+                handler,
+                `/live-candles?symbol=BTCUSDT&startTs=${nowSec - 1}&limit=1`
+            );
+
+            expect(response.statusCode).to.equal(200);
+            expect(requestedEndTime).to.equal(String((nowSec - 1) * 1000));
+            expect(response.json.candles.map((row: { ts: number }) => row.ts)).to.deep.equal([nowSec - 1]);
+        } finally {
+            Date.now = originalNow;
+            globalThis.fetch = originalFetch;
+        }
+    });
+
     it("builds futures live 1s candles from aggregate trades", async () => {
         const handler = createHandler();
         const originalFetch = globalThis.fetch;
@@ -449,6 +489,8 @@ describe("Execution Lab live helpers", () => {
                     exitMaxSlippageCents: 4,
                     limitOffsetEnabled: true,
                     limitOffsetCents: 6,
+                    limitFixedPriceEnabled: false,
+                    limitFixedPriceCents: 20,
                     limitCancelAllOnExitEnabled: true,
                 },
             });
@@ -609,6 +651,8 @@ describe("Execution Lab live helpers", () => {
                         exitMaxSlippageCents: 5,
                         limitOffsetEnabled: false,
                         limitOffsetCents: 0,
+                        limitFixedPriceEnabled: false,
+                        limitFixedPriceCents: 20,
                         limitCancelAllOnExitEnabled: true,
                     },
                 };
@@ -667,6 +711,8 @@ describe("Execution Lab live helpers", () => {
                     exitMaxSlippageCents: 5,
                     limitOffsetEnabled: false,
                     limitOffsetCents: 0,
+                    limitFixedPriceEnabled: false,
+                    limitFixedPriceCents: 20,
                     limitCancelAllOnExitEnabled: true,
                 },
             });
@@ -708,6 +754,8 @@ describe("Execution Lab live helpers", () => {
                     exitMaxSlippageCents: 5,
                     limitOffsetEnabled: false,
                     limitOffsetCents: 0,
+                    limitFixedPriceEnabled: false,
+                    limitFixedPriceCents: 20,
                     limitCancelAllOnExitEnabled: false,
                 },
             });
@@ -747,6 +795,8 @@ describe("Execution Lab live helpers", () => {
                     exitMaxSlippageCents: 5,
                     limitOffsetEnabled: false,
                     limitOffsetCents: 0,
+                    limitFixedPriceEnabled: false,
+                    limitFixedPriceCents: 20,
                     limitCancelAllOnExitEnabled: true,
                 },
             });
@@ -784,6 +834,8 @@ describe("Execution Lab live helpers", () => {
                     exitMaxSlippageCents: 5,
                     limitOffsetEnabled: false,
                     limitOffsetCents: 0,
+                    limitFixedPriceEnabled: false,
+                    limitFixedPriceCents: 20,
                     limitCancelAllOnExitEnabled: false,
                 },
             });

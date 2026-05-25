@@ -15,6 +15,7 @@ import {
 } from "../lib/execution-lab/execution-parity";
 import {
     buildEvaluatedSignals,
+    createSessionStartRecord,
     createExecutionLabPaperState,
     evaluateExecutionLabPaperTick,
 } from "../lib/execution-lab/paper-session";
@@ -174,6 +175,26 @@ function tick(args: {
 }
 
 describe("Execution Lab paper session", () => {
+    it("snapshots live UI config on live session start records", () => {
+        const record = createSessionStartRecord(snapshot(), {
+            orderMode: "limit",
+            takerOrderType: "FAK",
+            sizingMode: "exchange_min",
+            maxStakeUsd: 5,
+            entryMaxSlippageCents: 1,
+            exitMaxSlippageCents: 10,
+            limitOffsetEnabled: false,
+            limitOffsetCents: 0,
+            limitFixedPriceEnabled: true,
+            limitFixedPriceCents: 20,
+            limitCancelAllOnExitEnabled: false,
+        });
+
+        expect(record.liveConfig?.orderMode).to.equal("limit");
+        expect(record.liveConfig?.limitFixedPriceEnabled).to.equal(true);
+        expect(record.liveConfig?.limitFixedPriceCents).to.equal(20);
+    });
+
     it("fills long trades at YES ask and resolves with fixed stake sizing", () => {
         const state = createExecutionLabPaperState(snapshot());
         const result = tick({

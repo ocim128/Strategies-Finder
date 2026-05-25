@@ -64,6 +64,7 @@ const RECENT_LOCAL_QUOTE_FALLBACK_SEC = 2;
 const MAX_STORED_LIVE_QUOTE_AGE_MS = 3_000;
 const LIVE_CANDLE_RATE_LIMIT_BACKOFF_MS = 60_000;
 const LIVE_CANDLE_TRANSIENT_BACKOFF_MS = 5_000;
+const LIVE_CANDLE_CLOSED_LAG_SEC = 1;
 const FUTURES_STORED_ZERO_TAIL_REFETCH_SEC = 8;
 
 type LiveCandleRow = {
@@ -396,7 +397,7 @@ async function fetchLiveCandles(args: {
     endTs: number;
     limit: number;
 }): Promise<LiveCandleRow[]> {
-    const closedEndTs = Math.min(args.endTs, Math.floor(Date.now() / 1000) - 2);
+    const closedEndTs = Math.min(args.endTs, Math.floor(Date.now() / 1000) - LIVE_CANDLE_CLOSED_LAG_SEC);
     if (closedEndTs < args.startTs) return [];
     if (args.marketType === "futures") {
         const rows = await fetchBinance1sCandles({
@@ -961,7 +962,8 @@ export function executionLabVitePlugin(): Plugin {
                     const fetchKey = `${symbol}|${marketType}`;
                     const explicitEndTs = toUnixSeconds(requestUrl.searchParams.get("endTs"));
                     const explicitStartTs = toUnixSeconds(requestUrl.searchParams.get("startTs"));
-                    const endTs = Math.min(explicitEndTs ?? Math.floor(Date.now() / 1000) - 2, Math.floor(Date.now() / 1000) - 2);
+                    const latestClosedTs = Math.floor(Date.now() / 1000) - LIVE_CANDLE_CLOSED_LAG_SEC;
+                    const endTs = Math.min(explicitEndTs ?? latestClosedTs, latestClosedTs);
                     const lookbackLimit = Math.min(20000, Math.max(limit + 60, 120));
                     const startTs = explicitStartTs ?? Math.max(0, endTs - lookbackLimit + 1);
                     const stored = loadStoredLiveCandles({

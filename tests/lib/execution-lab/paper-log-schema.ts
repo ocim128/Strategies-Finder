@@ -164,6 +164,12 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
             if (value.limitOffsetCents !== undefined && (!isFiniteNumber(value.limitOffsetCents) || value.limitOffsetCents < 0)) {
                 return { ok: false, error: "limitOffsetCents is invalid" };
             }
+            if (value.limitFixedPriceEnabled !== undefined && typeof value.limitFixedPriceEnabled !== "boolean") {
+                return { ok: false, error: "limitFixedPriceEnabled is invalid" };
+            }
+            if (value.limitFixedPriceCents !== undefined && (!isFiniteNumber(value.limitFixedPriceCents) || value.limitFixedPriceCents <= 0 || value.limitFixedPriceCents > 100)) {
+                return { ok: false, error: "limitFixedPriceCents is invalid" };
+            }
             if (value.action === "take_profit") {
                 if (!isNonEmptyString(value.entryRequestId)) return { ok: false, error: "entryRequestId is required" };
                 if (!isFiniteNumber(value.shares) || value.shares <= 0) return { ok: false, error: "shares is required" };
@@ -199,6 +205,12 @@ export function validateExecutionLabRecord(value: unknown): { ok: true; record: 
             }
             if (value.limitOffsetCents !== undefined && (!isFiniteNumber(value.limitOffsetCents) || value.limitOffsetCents < 0)) {
                 return { ok: false, error: "limitOffsetCents is invalid" };
+            }
+            if (value.limitFixedPriceEnabled !== undefined && typeof value.limitFixedPriceEnabled !== "boolean") {
+                return { ok: false, error: "limitFixedPriceEnabled is invalid" };
+            }
+            if (value.limitFixedPriceCents !== undefined && (!isFiniteNumber(value.limitFixedPriceCents) || value.limitFixedPriceCents <= 0 || value.limitFixedPriceCents > 100)) {
+                return { ok: false, error: "limitFixedPriceCents is invalid" };
             }
             if (value.minPrice !== undefined && !isPriceInRange(value.minPrice, 0.000000001)) {
                 return { ok: false, error: "minPrice is invalid" };

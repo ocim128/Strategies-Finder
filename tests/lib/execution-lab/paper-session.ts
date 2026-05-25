@@ -8,6 +8,7 @@ import type { PolymarketOutcomeRow } from "../types/polymarket-outcomes";
 import type { PolymarketClob1sQuoteRow, SecondMarketSide } from "../second-market/types";
 import {
     type ExecutionLabBaseRecord,
+    type ExecutionLabLiveUiConfig,
     type ExecutionLabClosedPaperTrade,
     type ExecutionLabBacktestExitReason,
     type ExecutionLabEvaluatedSignal,
@@ -502,7 +503,10 @@ export function createExecutionLabPaperState(snapshot: ExecutionLabSessionSnapsh
     };
 }
 
-export function createSessionStartRecord(snapshot: ExecutionLabSessionSnapshot): SessionStartRecord {
+export function createSessionStartRecord(
+    snapshot: ExecutionLabSessionSnapshot,
+    liveConfig?: ExecutionLabLiveUiConfig
+): SessionStartRecord {
     return {
         ...baseRecord(snapshot, snapshot.startedAtIso),
         recordType: "session_start",
@@ -511,6 +515,7 @@ export function createSessionStartRecord(snapshot: ExecutionLabSessionSnapshot):
         params: { ...snapshot.params },
         backtestSettings: { ...(snapshot.backtestSettings as Record<string, unknown>) },
         polymarketSettings: { ...snapshot.polymarketSettings },
+        ...(liveConfig ? { liveConfig: { ...liveConfig } } : {}),
         allowMultipleTradesPerEvent: snapshot.allowMultipleTradesPerEvent,
     };
 }

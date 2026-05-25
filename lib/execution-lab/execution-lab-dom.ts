@@ -20,6 +20,8 @@ export const EXECUTION_LAB_IDS = {
     protectionStopLossCents: "executionLabPolymarketStopLossCents",
     liveLimitOffsetEnabled: "executionLabLiveLimitOffsetEnabled",
     liveLimitOffsetCents: "executionLabLiveLimitOffsetCents",
+    liveLimitFixedPriceEnabled: "executionLabLiveLimitFixedPriceEnabled",
+    liveLimitFixedPriceCents: "executionLabLiveLimitFixedPriceCents",
     liveLimitCancelAllOnExit: "executionLabLiveLimitCancelAllOnExit",
     status: "executionLabStatus",
     copyDiagnosticsButton: "executionLabCopyDiagnostics",
@@ -79,6 +81,8 @@ export interface ExecutionLabDom {
     protectionStopLossCents: HTMLInputElement;
     liveLimitOffsetEnabled: HTMLInputElement;
     liveLimitOffsetCents: HTMLInputElement;
+    liveLimitFixedPriceEnabled: HTMLInputElement;
+    liveLimitFixedPriceCents: HTMLInputElement;
     liveLimitCancelAllOnExit: HTMLInputElement;
     status: HTMLElement;
     copyDiagnosticsButton: HTMLButtonElement;
@@ -137,6 +141,8 @@ export function queryExecutionLabDom(): ExecutionLabDom {
         protectionStopLossCents: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.protectionStopLossCents),
         liveLimitOffsetEnabled: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveLimitOffsetEnabled),
         liveLimitOffsetCents: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveLimitOffsetCents),
+        liveLimitFixedPriceEnabled: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveLimitFixedPriceEnabled),
+        liveLimitFixedPriceCents: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveLimitFixedPriceCents),
         liveLimitCancelAllOnExit: getRequiredElement<HTMLInputElement>(EXECUTION_LAB_IDS.liveLimitCancelAllOnExit),
         status: getRequiredElement(EXECUTION_LAB_IDS.status),
         copyDiagnosticsButton: getRequiredElement<HTMLButtonElement>(EXECUTION_LAB_IDS.copyDiagnosticsButton),

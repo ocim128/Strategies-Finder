@@ -82,6 +82,8 @@ export interface LiveExecutorAdapterConfig {
     exitMaxSlippageCents: number;
     limitOffsetEnabled: boolean;
     limitOffsetCents: number;
+    limitFixedPriceEnabled: boolean;
+    limitFixedPriceCents: number;
     limitCancelAllOnExitEnabled: boolean;
     cancelScope: LiveCancelScope;
 }
@@ -205,6 +207,17 @@ function buildExecutorEnv(
     return env;
 }
 
+function buildExecutorTradeRequest(
+    request: LiveTradeSubmitRequest,
+    config: LiveExecutorAdapterConfig
+): LiveTradeSubmitRequest & { sizingMode?: LiveTradeSizingMode } {
+    if (request.action !== "entry") return request;
+    return {
+        ...request,
+        sizingMode: config.sizingMode,
+    };
+}
+
 export function readLiveExecutorConfig(
     env: NodeJS.ProcessEnv = process.env,
     override?: Partial<LiveExecutorAdapterConfig>,
@@ -246,6 +259,8 @@ export function readLiveExecutorConfig(
         geoblockAllowed: override?.geoblockAllowed ?? parseBoolOrNull(mergedEnv.EXECUTION_LAB_LIVE_GEOBLOCK_ALLOWED),
         limitOffsetEnabled: override?.limitOffsetEnabled ?? LIVE_TRADE_DEFAULT_LIMIT_OFFSET_ENABLED,
         limitOffsetCents: override?.limitOffsetCents ?? LIVE_TRADE_DEFAULT_LIMIT_OFFSET_CENTS,
+        limitFixedPriceEnabled: override?.limitFixedPriceEnabled ?? EXECUTION_LAB_DEFAULT_LIVE_UI_CONFIG.limitFixedPriceEnabled,
+        limitFixedPriceCents: override?.limitFixedPriceCents ?? EXECUTION_LAB_DEFAULT_LIVE_UI_CONFIG.limitFixedPriceCents,
         limitCancelAllOnExitEnabled: override?.limitCancelAllOnExitEnabled ?? false,
         cancelScope: override?.cancelScope ?? parseCancelScope(mergedEnv.EXECUTION_LAB_LIVE_CANCEL_SCOPE),
     };
@@ -267,6 +282,8 @@ export function resolveLiveExecutorConfig(
         exitMaxSlippageCents: base.exitMaxSlippageCents,
         limitOffsetEnabled: base.limitOffsetEnabled,
         limitOffsetCents: base.limitOffsetCents,
+        limitFixedPriceEnabled: base.limitFixedPriceEnabled,
+        limitFixedPriceCents: base.limitFixedPriceCents,
         limitCancelAllOnExitEnabled: base.limitCancelAllOnExitEnabled,
     });
     return {
@@ -280,6 +297,8 @@ export function resolveLiveExecutorConfig(
         exitMaxSlippageCents: uiConfig.exitMaxSlippageCents,
         limitOffsetEnabled: uiConfig.limitOffsetEnabled,
         limitOffsetCents: uiConfig.limitOffsetCents,
+        limitFixedPriceEnabled: uiConfig.limitFixedPriceEnabled,
+        limitFixedPriceCents: uiConfig.limitFixedPriceCents,
         limitCancelAllOnExitEnabled: uiConfig.limitCancelAllOnExitEnabled,
     };
 }
@@ -318,6 +337,8 @@ export function loadLiveExecutorStatus(
         orderType: config.takerOrderType,
         limitOffsetEnabled: config.limitOffsetEnabled,
         limitOffsetCents: config.limitOffsetCents,
+        limitFixedPriceEnabled: config.limitFixedPriceEnabled,
+        limitFixedPriceCents: config.limitFixedPriceCents,
         limitCancelAllOnExitEnabled: config.limitCancelAllOnExitEnabled,
         entryMaxSlippageCents: config.entryMaxSlippageCents,
         exitMaxSlippageCents: config.exitMaxSlippageCents,
@@ -417,9 +438,10 @@ export async function submitLiveTradeToExecutor(
     }
 
     if (config.executorUrl) {
+        const executorRequest = buildExecutorTradeRequest(request, config);
         const result = await postExecutorJson({
             url: config.executorUrl,
-            body: request,
+            body: executorRequest,
             timeoutMs: config.timeoutMs,
             byteLimit: config.stdoutByteLimit,
         });
@@ -546,7 +568,7 @@ export async function submitLiveTradeToExecutor(
             }
         });
 
-        child.stdin.end(JSON.stringify(request), "utf8");
+        child.stdin.end(JSON.stringify(buildExecutorTradeRequest(request, config)), "utf8");
     });
 }
 
