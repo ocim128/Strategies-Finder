@@ -29,6 +29,7 @@ import {
 import {
     addElapsed,
     buildFinderDiagnostics,
+    buildCompactFinderDiagnostics,
     createEmptyFinderDiagnosticsTimings,
     createFinderRunId,
     getFinderStrategyDiagnosticsStats,
@@ -706,7 +707,7 @@ export async function runFinderUniverseExecution(
         keptCandidateCount,
     };
     debugLogger.event("finder.universe.timing", timingSummary);
-    debugLogger.event("finder.diagnostics", diagnostics);
+    debugLogger.event("finder.diagnostics", buildCompactFinderDiagnostics(diagnostics));
 
     return {
         results,

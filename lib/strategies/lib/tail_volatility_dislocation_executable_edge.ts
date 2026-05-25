@@ -17,6 +17,16 @@ import {
 } from "./polymarket-1s-helpers";
 import { normalizeIntegerParam, normalizeNumberParam } from "./range-conviction-core";
 
+type TailVolatilityDislocationExecutableEdgePrepared = {
+    cleanData: OHLCVData[];
+    highs: number[];
+    lows: number[];
+    closes: number[];
+    typicals: number[];
+    medianByLookback: Map<number, (number | null)[]>;
+    atrByLookback: Map<number, (number | null)[]>;
+};
+
 function normalizeTailVolatilityDislocationExecutableEdgeParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
@@ -24,6 +34,58 @@ function normalizeTailVolatilityDislocationExecutableEdgeParams(params: Strategy
         atrMultiplier: normalizeNumberParam(params.atrMultiplier, 2.2, 0.1),
         minEdge: normalizeNumberParam(params.minEdge, 0.02, 0),
     };
+}
+
+function prepareTailVolatilityDislocationExecutableEdgeData(data: OHLCVData[]): TailVolatilityDislocationExecutableEdgePrepared {
+    const cleanData = ensureCleanData(data);
+    return {
+        cleanData,
+        highs: getHighs(cleanData),
+        lows: getLows(cleanData),
+        closes: getCloses(cleanData),
+        typicals: getTypicalPrices(cleanData),
+        medianByLookback: new Map(),
+        atrByLookback: new Map(),
+    };
+}
+
+function getPreparedTailVolatilityDislocationExecutableEdgeData(
+    preparedData: unknown,
+    data: OHLCVData[]
+): TailVolatilityDislocationExecutableEdgePrepared {
+    if (
+        preparedData
+        && typeof preparedData === "object"
+        && "medianByLookback" in preparedData
+        && "atrByLookback" in preparedData
+    ) {
+        return preparedData as TailVolatilityDislocationExecutableEdgePrepared;
+    }
+    return prepareTailVolatilityDislocationExecutableEdgeData(data);
+}
+
+function getPreparedMedian(
+    prepared: TailVolatilityDislocationExecutableEdgePrepared,
+    lookback: number
+): (number | null)[] {
+    let median = prepared.medianByLookback.get(lookback);
+    if (!median) {
+        median = buildRollingMedian(prepared.typicals, lookback);
+        prepared.medianByLookback.set(lookback, median);
+    }
+    return median;
+}
+
+function getPreparedAtr(
+    prepared: TailVolatilityDislocationExecutableEdgePrepared,
+    lookback: number
+): (number | null)[] {
+    let atr = prepared.atrByLookback.get(lookback);
+    if (!atr) {
+        atr = calculateATR(prepared.highs, prepared.lows, prepared.closes, lookback);
+        prepared.atrByLookback.set(lookback, atr);
+    }
+    return atr;
 }
 
 export const tail_volatility_dislocation_executable_edge: Strategy = {
@@ -41,22 +103,21 @@ export const tail_volatility_dislocation_executable_edge: Strategy = {
     },
     normalizeParams: normalizeTailVolatilityDislocationExecutableEdgeParams,
     polymarket1sConfig: { required: true },
-    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+    prepareFinderData: (data) => prepareTailVolatilityDislocationExecutableEdgeData(data),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[], context?: StrategyExecutionContext) => {
         if (!context?.polymarket1s) return [];
 
-        const cleanData = ensureCleanData(data);
+        const prepared = getPreparedTailVolatilityDislocationExecutableEdgeData(preparedData, data);
+        const cleanData = prepared.cleanData;
         const p = normalizeTailVolatilityDislocationExecutableEdgeParams(params);
         const lookback = p.lookback;
         const slowLookback = lookback * 3;
         if (cleanData.length < slowLookback + 1) return [];
 
-        const highs = getHighs(cleanData);
-        const lows = getLows(cleanData);
-        const closes = getCloses(cleanData);
-        const typicals = getTypicalPrices(cleanData);
-        const median = buildRollingMedian(typicals, lookback);
-        const fastAtr = calculateATR(highs, lows, closes, lookback);
-        const slowAtr = calculateATR(highs, lows, closes, slowLookback);
+        const typicals = prepared.typicals;
+        const median = getPreparedMedian(prepared, lookback);
+        const fastAtr = getPreparedAtr(prepared, lookback);
+        const slowAtr = getPreparedAtr(prepared, slowLookback);
         const edge = buildPolymarket1sExecutableEdge(cleanData, context, { volLookback: lookback });
         if (!edge.available) return [];
         const actionability = buildPolymarket1sActionabilityMask(cleanData, context, {
@@ -90,6 +151,13 @@ export const tail_volatility_dislocation_executable_edge: Strategy = {
             return null;
         });
     },
+    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) =>
+        tail_volatility_dislocation_executable_edge.executePrepared?.(
+            prepareTailVolatilityDislocationExecutableEdgeData(data),
+            params,
+            data,
+            context
+        ) ?? [],
     metadata: {
         role: "entry",
         direction: "both",

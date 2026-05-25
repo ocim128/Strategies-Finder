@@ -63,6 +63,7 @@ import {
 } from "./finder-runner-shared";
 import {
     buildFinderDiagnostics,
+    buildCompactFinderDiagnostics,
     createEmptyFinderBacktestDiagnosticsStats,
     createEmptyFinderDiagnosticsTimings,
     createFinderRunId,
@@ -797,7 +798,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             backtestDiagnostics: toFinderBacktestDiagnostics(backtestStats),
             failureBreakdown: toFinderFailureDiagnostics(strategyStatsByKey),
         });
-        debugLogger.event("finder.diagnostics", diagnostics);
+        debugLogger.event("finder.diagnostics", buildCompactFinderDiagnostics(diagnostics));
 
         return { results: trimmed, randomBenchmark, diagnostics };
     };

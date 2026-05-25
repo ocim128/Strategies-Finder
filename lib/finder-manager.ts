@@ -27,6 +27,7 @@ import { mergeFinderRiskParamsIntoBacktestSettings } from "./finder/finder-runne
 import { sortFinderUniverseCandidates } from "./finder/finder-universe-metrics";
 import {
 	buildFinderDiagnostics,
+	buildCompactFinderDiagnostics,
 	createEmptyFinderDiagnosticsTimings,
 	createFinderRunId,
 } from "./finder/finder-diagnostics";
@@ -1961,8 +1962,8 @@ export class FinderManager {
 		}
 
 		try {
-			await this.copyTextToClipboard(JSON.stringify(this.latestDiagnostics, null, 2));
-			uiManager.showToast('Finder diagnostics copied', 'success');
+			await this.copyTextToClipboard(JSON.stringify(buildCompactFinderDiagnostics(this.latestDiagnostics), null, 2));
+			uiManager.showToast('Compact Finder diagnostics copied', 'success');
 		} catch (error) {
 			debugLogger.error('finder.copy_diagnostics_failed', { error: error instanceof Error ? error.message : String(error) });
 			uiManager.showToast('Copy failed - check browser permissions', 'error');

@@ -27,6 +27,7 @@ import {
 import {
     addElapsed,
     buildFinderDiagnostics,
+    buildCompactFinderDiagnostics,
     createEmptyFinderBacktestDiagnosticsStats,
     createEmptyFinderDiagnosticsTimings,
     createFinderRunId,
@@ -583,6 +584,6 @@ export async function runSecondMarketFinder(
         backtestDiagnostics: toFinderBacktestDiagnostics(backtestStats),
         failureBreakdown: toFinderFailureDiagnostics(strategyStatsByKey),
     });
-    debugLogger.event("finder.diagnostics", diagnostics);
+    debugLogger.event("finder.diagnostics", buildCompactFinderDiagnostics(diagnostics));
     return { results, diagnostics };
 }

@@ -16,6 +16,18 @@ import { buildRollingZScore } from "./price-action-statistics-core";
 import { buildPolymarket1sReactionAgreementMask } from "./polymarket-1s-helpers";
 import { normalizeIntegerParam, normalizeNumberParam } from "./range-conviction-core";
 
+type VolAdjustedVolumeSurgeReversalReactionPrepared = {
+    cleanData: OHLCVData[];
+    highs: number[];
+    lows: number[];
+    closes: number[];
+    typicals: number[];
+    volumes: number[];
+    averageByLookback: Map<number, (number | null)[]>;
+    atrByLookback: Map<number, (number | null)[]>;
+    volumeZByLookback: Map<number, (number | null)[]>;
+};
+
 function normalizeVolAdjustedVolumeSurgeReversalReactionParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
@@ -24,6 +36,73 @@ function normalizeVolAdjustedVolumeSurgeReversalReactionParams(params: StrategyP
         volZThreshold: normalizeNumberParam(params.volZThreshold, 1.6, 0),
         lagSec: normalizeIntegerParam(params.lagSec, 5, 1),
     };
+}
+
+function prepareVolAdjustedVolumeSurgeReversalReactionData(data: OHLCVData[]): VolAdjustedVolumeSurgeReversalReactionPrepared {
+    const cleanData = ensureCleanData(data);
+    return {
+        cleanData,
+        highs: getHighs(cleanData),
+        lows: getLows(cleanData),
+        closes: getCloses(cleanData),
+        typicals: getTypicalPrices(cleanData),
+        volumes: getVolumes(cleanData),
+        averageByLookback: new Map(),
+        atrByLookback: new Map(),
+        volumeZByLookback: new Map(),
+    };
+}
+
+function getPreparedVolAdjustedVolumeSurgeReversalReactionData(
+    preparedData: unknown,
+    data: OHLCVData[]
+): VolAdjustedVolumeSurgeReversalReactionPrepared {
+    if (
+        preparedData
+        && typeof preparedData === "object"
+        && "averageByLookback" in preparedData
+        && "atrByLookback" in preparedData
+        && "volumeZByLookback" in preparedData
+    ) {
+        return preparedData as VolAdjustedVolumeSurgeReversalReactionPrepared;
+    }
+    return prepareVolAdjustedVolumeSurgeReversalReactionData(data);
+}
+
+function getPreparedAverage(
+    prepared: VolAdjustedVolumeSurgeReversalReactionPrepared,
+    lookback: number
+): (number | null)[] {
+    let average = prepared.averageByLookback.get(lookback);
+    if (!average) {
+        average = buildRollingAverage(prepared.typicals, lookback);
+        prepared.averageByLookback.set(lookback, average);
+    }
+    return average;
+}
+
+function getPreparedAtr(
+    prepared: VolAdjustedVolumeSurgeReversalReactionPrepared,
+    lookback: number
+): (number | null)[] {
+    let atr = prepared.atrByLookback.get(lookback);
+    if (!atr) {
+        atr = calculateATR(prepared.highs, prepared.lows, prepared.closes, lookback);
+        prepared.atrByLookback.set(lookback, atr);
+    }
+    return atr;
+}
+
+function getPreparedVolumeZ(
+    prepared: VolAdjustedVolumeSurgeReversalReactionPrepared,
+    lookback: number
+): (number | null)[] {
+    let volumeZ = prepared.volumeZByLookback.get(lookback);
+    if (!volumeZ) {
+        volumeZ = buildRollingZScore(prepared.volumes, lookback);
+        prepared.volumeZByLookback.set(lookback, volumeZ);
+    }
+    return volumeZ;
 }
 
 export const vol_adjusted_volume_surge_reversal_reaction: Strategy = {
@@ -43,21 +122,20 @@ export const vol_adjusted_volume_surge_reversal_reaction: Strategy = {
     },
     normalizeParams: normalizeVolAdjustedVolumeSurgeReversalReactionParams,
     polymarket1sConfig: { required: true },
-    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+    prepareFinderData: (data) => prepareVolAdjustedVolumeSurgeReversalReactionData(data),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[], context?: StrategyExecutionContext) => {
         if (!context?.polymarket1s) return [];
 
-        const cleanData = ensureCleanData(data);
+        const prepared = getPreparedVolAdjustedVolumeSurgeReversalReactionData(preparedData, data);
+        const cleanData = prepared.cleanData;
         const p = normalizeVolAdjustedVolumeSurgeReversalReactionParams(params);
         const lookback = p.lookback;
         if (cleanData.length < lookback + 1) return [];
 
-        const highs = getHighs(cleanData);
-        const lows = getLows(cleanData);
-        const closes = getCloses(cleanData);
-        const typicals = getTypicalPrices(cleanData);
-        const average = buildRollingAverage(typicals, lookback);
-        const atr = calculateATR(highs, lows, closes, lookback);
-        const volumeZ = buildRollingZScore(getVolumes(cleanData), lookback);
+        const typicals = prepared.typicals;
+        const average = getPreparedAverage(prepared, lookback);
+        const atr = getPreparedAtr(prepared, lookback);
+        const volumeZ = getPreparedVolumeZ(prepared, lookback);
         const mask = buildPolymarket1sReactionAgreementMask(cleanData, context, {
             volLookback: lookback,
             lagSec: p.lagSec,
@@ -79,6 +157,13 @@ export const vol_adjusted_volume_surge_reversal_reaction: Strategy = {
             return null;
         });
     },
+    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) =>
+        vol_adjusted_volume_surge_reversal_reaction.executePrepared?.(
+            prepareVolAdjustedVolumeSurgeReversalReactionData(data),
+            params,
+            data,
+            context
+        ) ?? [],
     metadata: {
         role: "entry",
         direction: "both",

@@ -10,6 +10,13 @@ import { buildEfficiencyRatio, buildRateOfChange } from "./price-action-statisti
 import { buildPolymarket1sPressureGap } from "./polymarket-1s-helpers";
 import { normalizeIntegerParam, normalizeNumberParam } from "./range-conviction-core";
 
+type EfficiencyRatioRegimePressureGapPrepared = {
+    cleanData: OHLCVData[];
+    closes: number[];
+    efficiencyByLookback: Map<number, (number | null)[]>;
+    rocByLookback: Map<number, (number | null)[]>;
+};
+
 function normalizeEfficiencyRatioRegimePressureGapParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
@@ -17,6 +24,55 @@ function normalizeEfficiencyRatioRegimePressureGapParams(params: StrategyParams)
         minEfficiency: normalizeNumberParam(params.minEfficiency, 0.55, 0, 1),
         minEdge: normalizeNumberParam(params.minEdge, 0.025, 0),
     };
+}
+
+function prepareEfficiencyRatioRegimePressureGapData(data: OHLCVData[]): EfficiencyRatioRegimePressureGapPrepared {
+    const cleanData = ensureCleanData(data);
+    return {
+        cleanData,
+        closes: getCloses(cleanData),
+        efficiencyByLookback: new Map(),
+        rocByLookback: new Map(),
+    };
+}
+
+function getPreparedEfficiencyRatioRegimePressureGapData(
+    preparedData: unknown,
+    data: OHLCVData[]
+): EfficiencyRatioRegimePressureGapPrepared {
+    if (
+        preparedData
+        && typeof preparedData === "object"
+        && "efficiencyByLookback" in preparedData
+        && "rocByLookback" in preparedData
+    ) {
+        return preparedData as EfficiencyRatioRegimePressureGapPrepared;
+    }
+    return prepareEfficiencyRatioRegimePressureGapData(data);
+}
+
+function getPreparedEfficiency(
+    prepared: EfficiencyRatioRegimePressureGapPrepared,
+    lookback: number
+): (number | null)[] {
+    let efficiency = prepared.efficiencyByLookback.get(lookback);
+    if (!efficiency) {
+        efficiency = buildEfficiencyRatio(prepared.cleanData, lookback);
+        prepared.efficiencyByLookback.set(lookback, efficiency);
+    }
+    return efficiency;
+}
+
+function getPreparedRoc(
+    prepared: EfficiencyRatioRegimePressureGapPrepared,
+    lookback: number
+): (number | null)[] {
+    let roc = prepared.rocByLookback.get(lookback);
+    if (!roc) {
+        roc = buildRateOfChange(prepared.closes, lookback);
+        prepared.rocByLookback.set(lookback, roc);
+    }
+    return roc;
 }
 
 export const efficiency_ratio_regime_pressure_gap: Strategy = {
@@ -34,17 +90,18 @@ export const efficiency_ratio_regime_pressure_gap: Strategy = {
     },
     normalizeParams: normalizeEfficiencyRatioRegimePressureGapParams,
     polymarket1sConfig: { required: true },
-    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+    prepareFinderData: (data) => prepareEfficiencyRatioRegimePressureGapData(data),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[], context?: StrategyExecutionContext) => {
         if (!context?.polymarket1s) return [];
 
-        const cleanData = ensureCleanData(data);
+        const prepared = getPreparedEfficiencyRatioRegimePressureGapData(preparedData, data);
+        const cleanData = prepared.cleanData;
         const p = normalizeEfficiencyRatioRegimePressureGapParams(params);
         const lookback = p.lookback;
         if (cleanData.length < lookback + 1) return [];
 
-        const closes = getCloses(cleanData);
-        const efficiency = buildEfficiencyRatio(cleanData, lookback);
-        const roc = buildRateOfChange(closes, lookback);
+        const efficiency = getPreparedEfficiency(prepared, lookback);
+        const roc = getPreparedRoc(prepared, lookback);
         const pressure = buildPolymarket1sPressureGap(cleanData, context, { volLookback: lookback });
         if (!pressure.available) return [];
 
@@ -64,6 +121,13 @@ export const efficiency_ratio_regime_pressure_gap: Strategy = {
             return null;
         });
     },
+    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) =>
+        efficiency_ratio_regime_pressure_gap.executePrepared?.(
+            prepareEfficiencyRatioRegimePressureGapData(data),
+            params,
+            data,
+            context
+        ) ?? [],
     metadata: {
         role: "entry",
         direction: "both",

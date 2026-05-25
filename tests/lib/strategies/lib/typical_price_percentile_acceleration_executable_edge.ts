@@ -13,6 +13,12 @@ import {
 } from "./polymarket-1s-helpers";
 import { normalizeIntegerParam, normalizeNumberParam } from "./range-conviction-core";
 
+type TypicalPricePercentileAccelerationExecutableEdgePrepared = {
+    cleanData: OHLCVData[];
+    typicals: number[];
+    percentileByLookback: Map<number, (number | null)[]>;
+};
+
 function hasRecentExtreme(
     percentile: (number | null)[],
     index: number,
@@ -36,6 +42,43 @@ function normalizeTypicalPricePercentileAccelerationExecutableEdgeParams(params:
     };
 }
 
+function prepareTypicalPricePercentileAccelerationExecutableEdgeData(
+    data: OHLCVData[]
+): TypicalPricePercentileAccelerationExecutableEdgePrepared {
+    const cleanData = ensureCleanData(data);
+    return {
+        cleanData,
+        typicals: getTypicalPrices(cleanData),
+        percentileByLookback: new Map(),
+    };
+}
+
+function getPreparedTypicalPricePercentileAccelerationExecutableEdgeData(
+    preparedData: unknown,
+    data: OHLCVData[]
+): TypicalPricePercentileAccelerationExecutableEdgePrepared {
+    if (
+        preparedData
+        && typeof preparedData === "object"
+        && "percentileByLookback" in preparedData
+    ) {
+        return preparedData as TypicalPricePercentileAccelerationExecutableEdgePrepared;
+    }
+    return prepareTypicalPricePercentileAccelerationExecutableEdgeData(data);
+}
+
+function getPreparedPercentile(
+    prepared: TypicalPricePercentileAccelerationExecutableEdgePrepared,
+    lookback: number
+): (number | null)[] {
+    let percentile = prepared.percentileByLookback.get(lookback);
+    if (!percentile) {
+        percentile = buildPercentileRank(prepared.typicals, lookback);
+        prepared.percentileByLookback.set(lookback, percentile);
+    }
+    return percentile;
+}
+
 export const typical_price_percentile_acceleration_executable_edge: Strategy = {
     name: "Typical Price Percentile Acceleration with Executable Edge",
     description: "Trades percentile acceleration out of typical-price extremes only when the matching Polymarket ask is actionable and underpriced.",
@@ -51,15 +94,17 @@ export const typical_price_percentile_acceleration_executable_edge: Strategy = {
     },
     normalizeParams: normalizeTypicalPricePercentileAccelerationExecutableEdgeParams,
     polymarket1sConfig: { required: true },
-    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+    prepareFinderData: (data) => prepareTypicalPricePercentileAccelerationExecutableEdgeData(data),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[], context?: StrategyExecutionContext) => {
         if (!context?.polymarket1s) return [];
 
-        const cleanData = ensureCleanData(data);
+        const prepared = getPreparedTypicalPricePercentileAccelerationExecutableEdgeData(preparedData, data);
+        const cleanData = prepared.cleanData;
         const p = normalizeTypicalPricePercentileAccelerationExecutableEdgeParams(params);
         const lookback = p.lookback;
         if (cleanData.length < lookback + 4) return [];
 
-        const percentile = buildPercentileRank(getTypicalPrices(cleanData), lookback);
+        const percentile = getPreparedPercentile(prepared, lookback);
         const edge = buildPolymarket1sExecutableEdge(cleanData, context, { volLookback: lookback });
         if (!edge.available) return [];
         const actionability = buildPolymarket1sActionabilityMask(cleanData, context, {
@@ -96,6 +141,13 @@ export const typical_price_percentile_acceleration_executable_edge: Strategy = {
             return null;
         });
     },
+    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) =>
+        typical_price_percentile_acceleration_executable_edge.executePrepared?.(
+            prepareTypicalPricePercentileAccelerationExecutableEdgeData(data),
+            params,
+            data,
+            context
+        ) ?? [],
     metadata: {
         role: "entry",
         direction: "both",

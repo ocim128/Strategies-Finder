@@ -147,6 +147,27 @@ describe('strategy prepared execution parity', () => {
                 entropyWindow: 16,
                 rocPeriod: 4,
             },
+            tail_volatility_dislocation_executable_edge: {
+                lookback: 18,
+                atrMultiplier: 1.9,
+                minEdge: 0.01,
+            },
+            typical_price_percentile_acceleration_executable_edge: {
+                lookback: 18,
+                pctThreshold: 0.42,
+                minEdge: 0.01,
+            },
+            vol_adjusted_volume_surge_reversal_reaction: {
+                lookback: 18,
+                atrMultiplier: 1.7,
+                volZThreshold: 1.2,
+                lagSec: 3,
+            },
+            efficiency_ratio_regime_pressure_gap: {
+                lookback: 18,
+                minEfficiency: 0.45,
+                minEdge: 0.01,
+            },
         };
 
         for (const { key, strategy } of strategyManifest) {

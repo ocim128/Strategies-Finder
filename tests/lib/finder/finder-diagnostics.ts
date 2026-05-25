@@ -10,6 +10,78 @@ import type {
 
 export type FinderDiagnosticsTimings = FinderDiagnostics["timingsMs"];
 
+export interface CompactFinderTimingPhase {
+    phase: string;
+    ms: number;
+    pct: number;
+}
+
+export interface CompactFinderStrategySummary {
+    key: string;
+    runs: number;
+    failedRuns: number;
+    skippedRuns: number;
+    zeroSignalRuns: number;
+    avgTotalMs: number;
+    totalMs: number;
+    runtimePct: number;
+    usedPreparedData: boolean;
+}
+
+export interface CompactFinderDiagnostics {
+    schema: "finder.diagnostics.compact.v1";
+    run: {
+        id: string;
+        symbol: string;
+        interval: string;
+        mode: FinderMode;
+        engineMode: string;
+    };
+    data: FinderDiagnostics["data"];
+    counts: FinderDiagnostics["counts"];
+    timings: {
+        totalMs: number;
+        topPhases: CompactFinderTimingPhase[];
+    };
+    bottlenecks: string[];
+    strategies: {
+        totalStrategies: number;
+        omittedFromTopRuntime: number;
+        topRuntime: CompactFinderStrategySummary[];
+        issues: CompactFinderStrategySummary[];
+    };
+    backtest?: {
+        runs: number;
+        averages: {
+            inputSignals: number;
+            preparedSignals: number;
+            barsScanned: number;
+            barsWithPosition: number;
+            entriesAttempted: number;
+            tradesOpened: number;
+            tradesClosed: number;
+        };
+        fastPath: {
+            runs: number;
+            skippedRuns: number;
+            topBlockers?: FinderFailureReasonDiagnostics[];
+        };
+        maxOpenPositions: number;
+        topPhases: CompactFinderTimingPhase[];
+    };
+    failures?: Array<{
+        reason: string;
+        runs: number;
+        strategyKeys: string[];
+        omittedStrategyKeys: number;
+    }>;
+}
+
+const COMPACT_FINDER_PHASE_LIMIT = 4;
+const COMPACT_FINDER_STRATEGY_LIMIT = 3;
+const COMPACT_FINDER_FAILURE_LIMIT = 3;
+const COMPACT_FINDER_FAILURE_STRATEGY_LIMIT = 4;
+
 export type FinderStrategyDiagnosticsStats = {
     key: string;
     name: string;
@@ -459,4 +531,128 @@ export function buildFinderDiagnostics(args: {
             backtest: args.backtestDiagnostics,
         }),
     };
+}
+
+function buildCompactTimingPhases(
+    timingsMs: object,
+    totalMs: number,
+    limit = COMPACT_FINDER_PHASE_LIMIT
+): CompactFinderTimingPhase[] {
+    const total = Math.max(1, totalMs);
+    return Object.entries(timingsMs as Record<string, unknown>)
+        .filter((entry): entry is [string, number] => {
+            const [phase, ms] = entry;
+            return phase !== "total" && typeof ms === "number" && Number.isFinite(ms) && ms > 0;
+        })
+        .map(([phase, ms]) => ({
+            phase,
+            ms: roundFinderMs(ms),
+            pct: roundFinderCount((ms / total) * 100),
+        }))
+        .sort((a, b) => b.ms - a.ms || a.phase.localeCompare(b.phase))
+        .slice(0, limit);
+}
+
+function summarizeCompactFinderStrategy(strategy: FinderStrategyDiagnostics): CompactFinderStrategySummary {
+    return {
+        key: strategy.key,
+        runs: strategy.runs,
+        failedRuns: strategy.failedRuns,
+        skippedRuns: strategy.skippedRuns,
+        zeroSignalRuns: strategy.zeroSignalRuns,
+        avgTotalMs: strategy.avgTotalMs,
+        totalMs: strategy.totalMs,
+        runtimePct: strategy.runtimePct,
+        usedPreparedData: strategy.usedPreparedData,
+    };
+}
+
+function topCompactFinderStrategies(
+    strategies: FinderStrategyDiagnostics[],
+    compare: (a: FinderStrategyDiagnostics, b: FinderStrategyDiagnostics) => number,
+    predicate: (strategy: FinderStrategyDiagnostics) => boolean = () => true
+): CompactFinderStrategySummary[] {
+    return [...strategies]
+        .filter(predicate)
+        .sort(compare)
+        .slice(0, COMPACT_FINDER_STRATEGY_LIMIT)
+        .map(summarizeCompactFinderStrategy);
+}
+
+export function buildCompactFinderDiagnostics(diagnostics: FinderDiagnostics): CompactFinderDiagnostics {
+    const compact: CompactFinderDiagnostics = {
+        schema: "finder.diagnostics.compact.v1",
+        run: {
+            id: diagnostics.runId,
+            symbol: diagnostics.symbol,
+            interval: diagnostics.interval,
+            mode: diagnostics.mode,
+            engineMode: diagnostics.engineMode,
+        },
+        data: diagnostics.data,
+        counts: diagnostics.counts,
+        timings: {
+            totalMs: diagnostics.timingsMs.total,
+            topPhases: buildCompactTimingPhases(diagnostics.timingsMs, diagnostics.timingsMs.total),
+        },
+        bottlenecks: diagnostics.bottlenecks.slice(0, COMPACT_FINDER_FAILURE_LIMIT),
+        strategies: {
+            totalStrategies: diagnostics.strategyBreakdown.length,
+            omittedFromTopRuntime: Math.max(0, diagnostics.strategyBreakdown.length - COMPACT_FINDER_STRATEGY_LIMIT),
+            topRuntime: topCompactFinderStrategies(
+                diagnostics.strategyBreakdown,
+                (a, b) => b.totalMs - a.totalMs || a.key.localeCompare(b.key)
+            ),
+            issues: topCompactFinderStrategies(
+                diagnostics.strategyBreakdown,
+                (a, b) => {
+                    const leftFailures = a.failedRuns + a.skippedRuns;
+                    const rightFailures = b.failedRuns + b.skippedRuns;
+                    return rightFailures - leftFailures
+                        || b.zeroSignalRuns - a.zeroSignalRuns
+                        || b.totalMs - a.totalMs
+                        || a.key.localeCompare(b.key);
+                },
+                (strategy) => strategy.failedRuns > 0 || strategy.skippedRuns > 0 || strategy.zeroSignalRuns > 0
+            ),
+        },
+    };
+
+    if (diagnostics.backtest) {
+        compact.backtest = {
+            runs: diagnostics.backtest.runs,
+            averages: {
+                inputSignals: diagnostics.backtest.avgInputSignals,
+                preparedSignals: diagnostics.backtest.avgPreparedSignals,
+                barsScanned: diagnostics.backtest.avgBarsScanned,
+                barsWithPosition: diagnostics.backtest.avgBarsWithPosition,
+                entriesAttempted: diagnostics.backtest.avgEntriesAttempted,
+                tradesOpened: diagnostics.backtest.avgTradesOpened,
+                tradesClosed: diagnostics.backtest.avgTradesClosed,
+            },
+            fastPath: {
+                runs: diagnostics.backtest.fastPathRuns,
+                skippedRuns: Math.max(0, diagnostics.backtest.runs - diagnostics.backtest.fastPathRuns),
+                topBlockers: diagnostics.backtest.fastPathBlockers?.slice(0, COMPACT_FINDER_FAILURE_LIMIT),
+            },
+            maxOpenPositions: diagnostics.backtest.maxOpenPositions,
+            topPhases: buildCompactTimingPhases(
+                diagnostics.backtest.timingsMs,
+                diagnostics.backtest.timingsMs.total
+            ),
+        };
+    }
+
+    if (diagnostics.failureBreakdown?.length) {
+        compact.failures = diagnostics.failureBreakdown
+            .slice(0, COMPACT_FINDER_FAILURE_LIMIT)
+            .map((failure) => ({
+                reason: failure.reason,
+                runs: failure.runs,
+                strategyKeys: failure.strategyKeys.slice(0, COMPACT_FINDER_FAILURE_STRATEGY_LIMIT),
+                omittedStrategyKeys: Math.max(0, failure.strategyKeys.length - COMPACT_FINDER_FAILURE_STRATEGY_LIMIT),
+            }));
+    }
+
+    return compact;
 }
