@@ -132,6 +132,16 @@ async function withJsonServer<T>(
     }
 }
 
+async function withMockFetch<T>(fetchImpl: typeof fetch, run: () => Promise<T>): Promise<T> {
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = fetchImpl;
+    try {
+        return await run();
+    } finally {
+        globalThis.fetch = previousFetch;
+    }
+}
+
 describe("Execution Lab live executor adapter", () => {
     it("reports configured executor status without exposing secrets", () => {
         const status = loadLiveExecutorStatus({
@@ -365,6 +375,54 @@ describe("Execution Lab live executor adapter", () => {
         });
     });
 
+    it("falls back to the CLI executor when the configured HTTP executor is unreachable", async () => {
+        const script = [
+            "let body='';",
+            "process.stdin.on('data', c => body += c);",
+            "process.stdin.on('end', () => {",
+            "const req = JSON.parse(body);",
+            "console.log(JSON.stringify({ ok: true, requestId: req.requestId, status: 'dry_run', currentAsk: 0.5, maxPrice: req.maxPrice }));",
+            "});",
+        ].join("");
+        const response = await withMockFetch(async () => {
+            throw new TypeError("connect ECONNREFUSED");
+        }, () => submitLiveTradeToExecutor(request(), {
+            executorUrl: "http://127.0.0.1:8787/",
+            executorPath: process.execPath,
+            executorArgs: ["-e", script],
+            liveEnabled: false,
+            maxStakeUsd: 10,
+            orderType: "FAK",
+            timeoutMs: 1000,
+        }));
+
+        expect(response.status).to.equal("dry_run");
+        expect(response.currentAsk).to.equal(0.5);
+    });
+
+    it("does not fall back to CLI after a reached HTTP executor returns an error status", async () => {
+        await withMockFetch(async () => new Response(JSON.stringify({
+            ok: false,
+            error: "not found",
+        }), {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+        }), async () => {
+            const response = await submitLiveTradeToExecutor(request(), {
+                executorUrl: "http://127.0.0.1:8787/",
+                executorPath: process.execPath,
+                executorArgs: ["-e", "throw new Error('should not run')"],
+                liveEnabled: false,
+                maxStakeUsd: 10,
+                orderType: "FAK",
+                timeoutMs: 1000,
+            });
+
+            expect(response.status).to.equal("failed");
+            expect(response.reason).to.equal("executor_unavailable");
+        });
+    });
+
     it("allows UI non-secret config to override env order mode and limit settings", async () => {
         const script = [
             "let body='';",
@@ -563,6 +621,34 @@ describe("Execution Lab live executor adapter", () => {
         expect(response.status).to.equal("submitted");
         expect(response.scope).to.equal("session");
         expect(response.canceledOrderIds).to.deep.equal(["0xabc"]);
+    });
+
+    it("falls back to the CLI executor for cancel-all when the configured HTTP executor is unreachable", async () => {
+        const script = [
+            "let body='';",
+            "process.stdin.on('data', c => body += c);",
+            "process.stdin.on('end', () => {",
+            "const req = JSON.parse(body);",
+            "console.log(JSON.stringify({ ok: true, requestId: req.requestId, status: 'submitted', scope: req.scope, canceledCount: 1 }));",
+            "});",
+        ].join("");
+        const response = await withMockFetch(async () => {
+            throw new TypeError("connect ECONNREFUSED");
+        }, () => submitLiveCancelAllToExecutor(cancelRequest(), {
+            executorUrl: "http://127.0.0.1:8787/",
+            executorPath: process.execPath,
+            executorArgs: ["-e", script],
+            liveEnabled: false,
+            maxStakeUsd: 10,
+            orderMode: "limit",
+            limitCancelAllOnExitEnabled: true,
+            cancelScope: "token",
+            timeoutMs: 1000,
+        }));
+
+        expect(response.status).to.equal("submitted");
+        expect(response.scope).to.equal("token");
+        expect(response.canceledCount).to.equal(1);
     });
 
     it("rejects cancel-all requests without a concrete configured scope", async () => {

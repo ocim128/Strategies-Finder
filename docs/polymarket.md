@@ -61,7 +61,7 @@ If you want Execution Lab live trading:
 
 - use the Execution Lab tab on supported `1s` BTCUSDT/XRPUSDT `signal_close`, `next_open`, or `next_close` runs
 - keep Paper Trade as the default until dry-run executor preflight is clean
-- configure Strategy Finder `.env` with the local executor path or optional `EXECUTION_LAB_LIVE_EXECUTOR_URL`, plus the live-enabled flag
+- configure Strategy Finder `.env` with the local executor path or optional `EXECUTION_LAB_LIVE_EXECUTOR_URL`, plus the live-enabled flag; if the HTTP executor URL is unreachable and the CLI path/cwd are valid, Strategy Finder falls back to the one-shot CLI executor
 - configure the side executor repo with the private key, signature mode, stake cap, `FAK`/`FOK` taker order type, `GTC` limit order type, and `LIVE_TRADE_ONCE_LIVE_ENABLED`
 - live entries buy the same YES/NO side accepted by the paper decision path
 - paper/live entries use the Polymarket Settings `Polymarket Entry Cutoff` toggle; when enabled, entries inside that event-close window are skipped in paper and rejected as `event_too_close_to_close` in live if the current clock has crossed the same cutoff
@@ -191,6 +191,7 @@ Important behavior:
 - Paper Trade remains the startup default and writes JSONL paper records only
 - Live Trade requires an explicit UI mode switch and confirmation
 - Strategy Finder reads local executor path/cwd/args or optional `EXECUTION_LAB_LIVE_EXECUTOR_URL`, hard live enablement, timeout/output limits, geoblock display state, fallback order settings, and optional broad cancel scope from `.env`
+- HTTP executor mode is preferred when `EXECUTION_LAB_LIVE_EXECUTOR_URL` is set. If the connection is unavailable and the CLI path/cwd are valid, Strategy Finder falls back to CLI; reached HTTP errors and timeouts do not fall back because the executor state may be ambiguous.
 - Execution Lab UI owns non-secret per-browser live behavior: order mode, taker order type, live sizing mode, max stake cap, entry/exit slippage, protective TP/SL toggles and cent offsets, limit offset, fixed limit cap, and limit cancel-on-exit
 - the local executor process reads wallet secrets from its own server-side `.env`
 - taker mode uses `FAK` or `FOK`; `.env` fallback accepts `EXECUTION_LAB_LIVE_TAKER_ORDER_TYPE`, `EXECUTION_LAB_LIVE_ORDER_TYPE`, or `ARBITRAGE_ORDER_TYPE` before falling back to `FAK`

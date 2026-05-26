@@ -81,6 +81,7 @@ V1 is working only when all of these are true:
 - With live UI sizing mode `exchange_min`, live entries may auto-size above `stakeUsd` to the minimum valid Polymarket order, but never above the effective UI/Strategy Finder cap or `MAX_ORDER_SIZE_USDC`.
 - The executor may reject small stakes in fixed mode or reject exchange-min sizing with `min_size_exceeds_cap` when the minimum valid order is above the configured caps.
 - Strategy Finder `.env` still owns executor path, optional loopback executor URL, cwd, args, hard live enablement, timeout/output limits, geoblock display state, fallback taker order type, fallback sizing/cap/slippage values, limit order type, and optional broad cancel scope.
+- When both `EXECUTION_LAB_LIVE_EXECUTOR_URL` and a CLI path/cwd are configured, Strategy Finder prefers HTTP but falls back to the one-shot CLI executor only when the HTTP connection cannot be made. Reached HTTP error responses and timeouts remain terminal failures to avoid duplicate live submissions after ambiguous executor-side work.
 - Explicit CLI executor overrides are transport-isolated: when code or tests pass a non-empty `executorPath`, repo `.env` URL, cwd, and args are ignored unless those fields are explicitly overridden too. `EXECUTION_LAB_LIVE_IGNORE_REPO_ENV=1` is reserved for hermetic local diagnostics/tests that must bypass repo `.env` loading.
 - The Execution Lab UI owns non-secret per-browser live behavior: `orderMode`, `takerOrderType`, sizing mode, max stake cap, entry/exit slippage, protective TP/SL toggles and cent offsets, limit offset, fixed limit cap, and limit cancel-on-exit. Order, sizing, slippage, and limit UI values override `.env` fallbacks; protective TP/SL currently has no `.env` fallback.
 - The default taker order type is `FAK`; `.env` accepts `EXECUTION_LAB_LIVE_TAKER_ORDER_TYPE`, `EXECUTION_LAB_LIVE_ORDER_TYPE`, or compatibility `ARBITRAGE_ORDER_TYPE`.
@@ -152,7 +153,7 @@ Start with a one-shot CLI executor, not a localhost HTTP service.
 
 Reason: the side repo already has long-running dashboard/slot machinery, but this feature needs a narrow callable boundary. A CLI that reads JSON and writes one JSON response is simpler, easier to test, and avoids adding another local server until process startup cost is proven to matter.
 
-The adapter now also supports an opt-in persistent loopback executor through `EXECUTION_LAB_LIVE_EXECUTOR_URL`. CLI remains the default. When the URL is set, Strategy Finder posts the same non-secret request schema and expects the same structured response schema; the browser contract and Vite endpoint stay unchanged.
+The adapter now also supports an opt-in persistent loopback executor through `EXECUTION_LAB_LIVE_EXECUTOR_URL`. CLI remains the default. When the URL is set, Strategy Finder posts the same non-secret request schema and expects the same structured response schema; the browser contract and Vite endpoint stay unchanged. If the local HTTP connection is unavailable and the CLI executor path/cwd are valid, the adapter falls back to the one-shot CLI path.
 
 ## Boundary Ownership
 
@@ -573,7 +574,7 @@ Technical tasks:
 - Add `/api/execution-lab/live/status`.
 - Add `/api/execution-lab/live/trade`.
 - Configure executor path through env, not a hardcoded absolute path.
-- Adapter shells out to one-shot executor and parses structured stdout, or posts the same request to `EXECUTION_LAB_LIVE_EXECUTOR_URL` when that opt-in URL is configured.
+- Adapter shells out to one-shot executor and parses structured stdout, or posts the same request to `EXECUTION_LAB_LIVE_EXECUTOR_URL` when that opt-in URL is configured; unreachable HTTP falls back to CLI when CLI is valid, while reached HTTP errors and timeouts do not.
 - Adapter enforces a process timeout, stdout byte cap, stderr byte cap, and JSON-only stdout parsing.
 - Map adapter response to `LiveTradeResultRecord`.
 - Ensure all call errors become structured result records.
@@ -652,7 +653,6 @@ Only consider after V1 live entries are stable:
 - Configurable exit retry/cancel controls.
 - Limit exits and market/token open-order lookup beyond known Strategy Finder order ids.
 - `GTD` support.
-- Loopback HTTP executor service.
 - Live execution summary dashboard.
 - Multi-wallet support.
 - Production deployment docs.
