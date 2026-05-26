@@ -10,6 +10,7 @@ import type {
     LiveCancelAllSubmitStatus,
     LiveCancelScope,
     LiveEntrySubmitRequest,
+    LiveExecutorKind,
     LiveLimitOrderType,
     LiveExitRequestRecord,
     LiveExitResultRecord,
@@ -94,6 +95,8 @@ export const EXECUTION_LAB_DEFAULT_LIVE_UI_CONFIG: ExecutionLabLiveUiConfig = {
 
 type LiveRecordContext = {
     dryRun?: boolean;
+    executorKind?: LiveExecutorKind;
+    liveEnabled?: boolean;
     sizingMode?: LiveTradeSizingMode;
     latencyMs?: number;
 };
@@ -617,6 +620,8 @@ export function buildLiveTradeRequestRecord(
         limitFixedPriceEnabled: request.action === "entry" && request.orderMode === "limit" ? request.limitFixedPriceEnabled : undefined,
         limitFixedPriceCents: request.action === "entry" && request.orderMode === "limit" ? request.limitFixedPriceCents : undefined,
         dryRun: context.dryRun,
+        executorKind: context.executorKind,
+        liveEnabled: context.liveEnabled,
         sizingMode: context.sizingMode,
     };
 }
@@ -654,6 +659,8 @@ export function buildLiveTradeResultRecord(
         minPrice: response.minPrice,
         currentBid: response.currentBid,
         latencyMs: context.latencyMs,
+        executorKind: context.executorKind,
+        liveEnabled: context.liveEnabled,
     };
 }
 
@@ -683,6 +690,8 @@ export function buildLiveExitRequestRecord(
         orderType: request.orderType,
         attempt: request.attempt,
         dryRun: context.dryRun,
+        executorKind: context.executorKind,
+        liveEnabled: context.liveEnabled,
         sizingMode: context.sizingMode,
     };
 }
@@ -712,6 +721,8 @@ export function buildLiveExitResultRecord(
         currentBid: response.currentBid,
         minPrice: response.minPrice,
         latencyMs: context.latencyMs,
+        executorKind: context.executorKind,
+        liveEnabled: context.liveEnabled,
     };
 }
 
@@ -742,6 +753,8 @@ export function buildLiveCancelAllRequestRecord(
         reason: request.reason,
         orderMode: request.orderMode,
         dryRun: context.dryRun,
+        executorKind: context.executorKind,
+        liveEnabled: context.liveEnabled,
     };
 }
 
@@ -763,6 +776,8 @@ export function buildLiveCancelAllResultRecord(
         canceledOrderIds: response.canceledOrderIds,
         canceledCount: response.canceledCount,
         latencyMs: context.latencyMs,
+        executorKind: context.executorKind,
+        liveEnabled: context.liveEnabled,
     };
 }
 

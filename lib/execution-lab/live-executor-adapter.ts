@@ -150,7 +150,13 @@ function parseExecutorUrl(value: string | undefined): string {
     if (!trimmed) return "";
     try {
         const url = new URL(trimmed);
-        return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
+        if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+        if (url.username || url.password) return "";
+        const hostname = url.hostname.toLowerCase();
+        if (hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1" && hostname !== "[::1]") {
+            return "";
+        }
+        return url.toString();
     } catch {
         return "";
     }
@@ -415,6 +421,10 @@ async function postExecutorJson(args: {
             body: JSON.stringify(args.body),
             signal: controller.signal,
         });
+        const contentLength = Number(response.headers.get("content-length"));
+        if (Number.isFinite(contentLength) && contentLength > args.byteLimit) {
+            return { ok: false, reason: "executor_invalid_stdout", fallbackToCli: false };
+        }
         const text = await response.text();
         if (Buffer.byteLength(text, "utf8") > args.byteLimit) {
             return { ok: false, reason: "executor_invalid_stdout", fallbackToCli: false };

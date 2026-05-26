@@ -61,7 +61,7 @@ If you want Execution Lab live trading:
 
 - use the Execution Lab tab on supported `1s` BTCUSDT/XRPUSDT `signal_close`, `next_open`, or `next_close` runs
 - keep Paper Trade as the default until dry-run executor preflight is clean
-- configure Strategy Finder `.env` with the local executor path or optional `EXECUTION_LAB_LIVE_EXECUTOR_URL`, plus the live-enabled flag; if the HTTP executor URL is unreachable and the CLI path/cwd are valid, Strategy Finder falls back to the one-shot CLI executor
+- configure Strategy Finder `.env` with the local executor path or optional loopback-only `EXECUTION_LAB_LIVE_EXECUTOR_URL`, plus the live-enabled flag; if the HTTP executor URL is unreachable and the CLI path/cwd are valid, Strategy Finder falls back to the one-shot CLI executor
 - configure the side executor repo with the private key, signature mode, stake cap, `FAK`/`FOK` taker order type, `GTC` limit order type, and `LIVE_TRADE_ONCE_LIVE_ENABLED`
 - live entries buy the same YES/NO side accepted by the paper decision path
 - paper/live entries use the Polymarket Settings `Polymarket Entry Cutoff` toggle; when enabled, entries inside that event-close window are skipped in paper and rejected as `event_too_close_to_close` in live if the current clock has crossed the same cutoff
@@ -190,8 +190,8 @@ Important behavior:
 
 - Paper Trade remains the startup default and writes JSONL paper records only
 - Live Trade requires an explicit UI mode switch and confirmation
-- Strategy Finder reads local executor path/cwd/args or optional `EXECUTION_LAB_LIVE_EXECUTOR_URL`, hard live enablement, timeout/output limits, geoblock display state, fallback order settings, and optional broad cancel scope from `.env`
-- HTTP executor mode is preferred when `EXECUTION_LAB_LIVE_EXECUTOR_URL` is set. If the connection is unavailable and the CLI path/cwd are valid, Strategy Finder falls back to CLI; reached HTTP errors and timeouts do not fall back because the executor state may be ambiguous.
+- Strategy Finder reads local executor path/cwd/args or optional loopback-only `EXECUTION_LAB_LIVE_EXECUTOR_URL`, hard live enablement, timeout/output limits, geoblock display state, fallback order settings, and optional broad cancel scope from `.env`
+- HTTP executor mode is preferred when `EXECUTION_LAB_LIVE_EXECUTOR_URL` is set. The URL must target `localhost`, `127.0.0.1`, or `::1` without credentials. If the connection is unavailable and the CLI path/cwd are valid, Strategy Finder falls back to CLI; reached HTTP errors and timeouts do not fall back because the executor state may be ambiguous.
 - Execution Lab UI owns non-secret per-browser live behavior: order mode, taker order type, live sizing mode, max stake cap, entry/exit slippage, protective TP/SL toggles and cent offsets, limit offset, fixed limit cap, and limit cancel-on-exit
 - the local executor process reads wallet secrets from its own server-side `.env`
 - taker mode uses `FAK` or `FOK`; `.env` fallback accepts `EXECUTION_LAB_LIVE_TAKER_ORDER_TYPE`, `EXECUTION_LAB_LIVE_ORDER_TYPE`, or `ARBITRAGE_ORDER_TYPE` before falling back to `FAK`
@@ -211,8 +211,9 @@ Important behavior:
 - executor geoblock preflight failures are treated as live safety rejections and block further Strategy Finder live submissions for the current session
 - if a paper entry and paper exit first appear in the same poll batch, the live entry is rejected as `paper_exit_same_tick`
 - live submission is registered only in the Vite dev server path unless preview live trading is explicitly allowed
+- live trade and cancel-all submissions require an active Execution Lab session before executor status/config resolution; unknown sessions are rejected locally
 - duplicate live request ids are coalesced by a process-local Strategy Finder ledger before invoking the executor; the executor still owns the durable idempotency ledger
-- Strategy Finder writes the `live_*_request` JSONL record before invoking the executor, then writes the result record after the adapter returns
+- Strategy Finder writes the `live_*_request` JSONL record before invoking the executor, then writes the result record after the adapter returns. Live request/result records may include `dryRun`, `liveEnabled`, `executorKind`, `sizingMode`, and `latencyMs` from already-resolved local status.
 - the live tick path reuses complete local second-market candle ranges and exact local CLOB quotes when available; if the latest exact quote is missing, a same-event local quote up to two seconds old may be used with `recent_local_fallback` quality flags before live CLOB REST fallback
 
 Core files:

@@ -81,6 +81,10 @@ function isLiveCancelStatus(value: unknown): boolean {
         || value === "failed";
 }
 
+function isLiveExecutorKind(value: unknown): boolean {
+    return value === "cli" || value === "http";
+}
+
 function validateOptionalLiveMeta(value: Record<string, unknown>): { ok: true } | { ok: false; error: string } {
     if (value.expiresAtSec !== undefined && !isFiniteNumber(value.expiresAtSec)) {
         return { ok: false, error: "expiresAtSec is invalid" };
@@ -93,6 +97,12 @@ function validateOptionalLiveMeta(value: Record<string, unknown>): { ok: true } 
     }
     if (value.dryRun !== undefined && typeof value.dryRun !== "boolean") {
         return { ok: false, error: "dryRun is invalid" };
+    }
+    if (value.liveEnabled !== undefined && typeof value.liveEnabled !== "boolean") {
+        return { ok: false, error: "liveEnabled is invalid" };
+    }
+    if (value.executorKind !== undefined && !isLiveExecutorKind(value.executorKind)) {
+        return { ok: false, error: "executorKind is invalid" };
     }
     if (value.latencyMs !== undefined && (!isFiniteNumber(value.latencyMs) || value.latencyMs < 0)) {
         return { ok: false, error: "latencyMs is invalid" };

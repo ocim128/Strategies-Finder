@@ -147,6 +147,8 @@ describe("Execution Lab JSONL schema", () => {
             maxPrice: 0.54,
             orderType: "FAK",
             dryRun: true,
+            executorKind: "cli",
+            liveEnabled: false,
             sizingMode: "fixed",
         }).ok).to.equal(true);
         expect(validateExecutionLabRecord({
@@ -159,6 +161,8 @@ describe("Execution Lab JSONL schema", () => {
             currentAsk: 0.53,
             maxPrice: 0.54,
             latencyMs: 25,
+            executorKind: "cli",
+            liveEnabled: false,
         }).ok).to.equal(true);
         expect(validateExecutionLabRecord({
             ...baseRecord,
@@ -260,6 +264,8 @@ describe("Execution Lab JSONL schema", () => {
             expiresAtSec: 1_700_000_060,
             attempt: 2,
             dryRun: true,
+            executorKind: "http",
+            liveEnabled: false,
             sizingMode: "fixed",
         }).ok).to.equal(true);
         expect(validateExecutionLabRecord({
@@ -273,6 +279,8 @@ describe("Execution Lab JSONL schema", () => {
             currentBid: 0.48,
             minPrice: 0.49,
             latencyMs: 12,
+            executorKind: "http",
+            liveEnabled: false,
         }).ok).to.equal(true);
         expect(validateExecutionLabRecord({
             ...baseRecord,
@@ -305,6 +313,8 @@ describe("Execution Lab JSONL schema", () => {
             reason: "limit_exit_signal",
             orderMode: "limit",
             dryRun: true,
+            executorKind: "cli",
+            liveEnabled: false,
         }).ok).to.equal(true);
         expect(validateExecutionLabRecord({
             ...baseRecord,
@@ -317,6 +327,8 @@ describe("Execution Lab JSONL schema", () => {
             canceledOrderIds: ["a", "b"],
             canceledCount: 2,
             latencyMs: 25,
+            executorKind: "cli",
+            liveEnabled: false,
         }).ok).to.equal(true);
     });
 

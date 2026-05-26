@@ -189,6 +189,16 @@ function liveTradeRequest(overrides: Record<string, unknown> = {}): Record<strin
     };
 }
 
+async function startLiveTestSession(handler: MockHandler): Promise<string> {
+    const response = await invokePost(handler, "/session/start", {
+        strategyKey: "test_strategy",
+        symbol: "BTCUSDT",
+        startedAtIso: new Date().toISOString(),
+    });
+    expect(response.statusCode).to.equal(200);
+    return String(response.json.sessionId);
+}
+
 function withEnv<T>(updates: Record<string, string | undefined>, run: () => Promise<T>): Promise<T> {
     const previous = new Map<string, string | undefined>();
     const isolatedUpdates = {
@@ -519,13 +529,25 @@ describe("Execution Lab live helpers", () => {
 
     it("rejects malformed live trade requests before invoking the executor", async () => {
         const handler = createDevHandler();
+        const sessionId = await startLiveTestSession(handler);
         const response = await invokePost(handler, "/live/trade", {
-            ...liveTradeRequest(),
+            ...liveTradeRequest({ sessionId }),
             orderType: "GTC",
         });
 
         expect(response.statusCode).to.equal(400);
         expect(response.json.error).to.include("orderType");
+    });
+
+    it("rejects live submissions for unknown sessions before executor validation", async () => {
+        const handler = createDevHandler();
+        const response = await invokePost(handler, "/live/trade", {
+            ...liveTradeRequest({ sessionId: "missing-session" }),
+            orderType: "GTC",
+        });
+
+        expect(response.statusCode).to.equal(404);
+        expect(response.json.error).to.equal("Unknown execution lab session");
     });
 
     it("rejects live trade requests that do not match the configured order type", async () => {
@@ -534,7 +556,8 @@ describe("Execution Lab live helpers", () => {
             EXECUTION_LAB_LIVE_MAX_STAKE_USD: "10",
         }, async () => {
             const handler = createDevHandler();
-            const response = await invokePost(handler, "/live/trade", liveTradeRequest());
+            const sessionId = await startLiveTestSession(handler);
+            const response = await invokePost(handler, "/live/trade", liveTradeRequest({ sessionId }));
 
             expect(response.statusCode).to.equal(200);
             expect(response.json.status).to.equal("rejected");
@@ -550,7 +573,8 @@ describe("Execution Lab live helpers", () => {
             EXECUTION_LAB_LIVE_TIMEOUT_MS: "50",
         }, async () => {
             const handler = createDevHandler();
-            const response = await invokePost(handler, "/live/trade", liveTradeRequest());
+            const sessionId = await startLiveTestSession(handler);
+            const response = await invokePost(handler, "/live/trade", liveTradeRequest({ sessionId }));
 
             expect(response.statusCode).to.equal(200);
             expect(response.json.status).to.equal("failed");
@@ -565,7 +589,8 @@ describe("Execution Lab live helpers", () => {
             EXECUTION_LAB_LIVE_TIMEOUT_MS: "50",
         }, async () => {
             const handler = createDevHandler();
-            const response = await invokePost(handler, "/live/trade", liveTradeRequest());
+            const sessionId = await startLiveTestSession(handler);
+            const response = await invokePost(handler, "/live/trade", liveTradeRequest({ sessionId }));
 
             expect(response.statusCode).to.equal(200);
             expect(response.json.status).to.equal("failed");
@@ -595,7 +620,8 @@ describe("Execution Lab live helpers", () => {
                 EXECUTION_LAB_LIVE_ORDER_TYPE: "FAK",
             }, async () => {
                 const handler = createDevHandler();
-                const request = liveTradeRequest();
+                const sessionId = await startLiveTestSession(handler);
+                const request = liveTradeRequest({ sessionId });
                 const first = await invokePost(handler, "/live/trade", request);
                 const second = await invokePost(handler, "/live/trade", request);
 
@@ -631,12 +657,13 @@ describe("Execution Lab live helpers", () => {
                 EXECUTION_LAB_LIVE_CANCEL_SCOPE: "token",
             }, async () => {
                 const handler = createDevHandler();
+                const sessionId = await startLiveTestSession(handler);
                 const request = {
                     action: "cancel_all",
                     requestId: "cancel-1",
-                    sessionId: "session-1",
+                    sessionId,
                     paperTradeId: "paper-1",
-                    exitTriggerKey: "session-1|event|yes|paper-1|exit",
+                    exitTriggerKey: `${sessionId}|event|yes|paper-1|exit`,
                     createdAtIso: new Date().toISOString(),
                     symbol: "BTCUSDT",
                     strategyKey: "test_strategy",
@@ -690,12 +717,13 @@ describe("Execution Lab live helpers", () => {
             EXECUTION_LAB_LIVE_CANCEL_SCOPE: undefined,
         }, async () => {
             const handler = createDevHandler();
+            const sessionId = await startLiveTestSession(handler);
             const response = await invokePost(handler, "/live/cancel-all", {
                 action: "cancel_all",
                 requestId: "cancel-session-1",
-                sessionId: "session-1",
+                sessionId,
                 paperTradeId: "paper-1",
-                exitTriggerKey: "session-1|event|yes|paper-1|exit",
+                exitTriggerKey: `${sessionId}|event|yes|paper-1|exit`,
                 createdAtIso: new Date().toISOString(),
                 symbol: "BTCUSDT",
                 strategyKey: "test_strategy",
@@ -734,12 +762,13 @@ describe("Execution Lab live helpers", () => {
             EXECUTION_LAB_LIVE_CANCEL_SCOPE: "token",
         }, async () => {
             const handler = createDevHandler();
+            const sessionId = await startLiveTestSession(handler);
             const response = await invokePost(handler, "/live/cancel-all", {
                 action: "cancel_all",
                 requestId: "cancel-disabled-1",
-                sessionId: "session-1",
+                sessionId,
                 paperTradeId: "paper-1",
-                exitTriggerKey: "session-1|event|yes|paper-1|exit",
+                exitTriggerKey: `${sessionId}|event|yes|paper-1|exit`,
                 createdAtIso: new Date().toISOString(),
                 symbol: "BTCUSDT",
                 strategyKey: "test_strategy",
@@ -775,12 +804,13 @@ describe("Execution Lab live helpers", () => {
             EXECUTION_LAB_LIVE_CANCEL_SCOPE: undefined,
         }, async () => {
             const handler = createDevHandler();
+            const sessionId = await startLiveTestSession(handler);
             const response = await invokePost(handler, "/live/cancel-all", {
                 action: "cancel_all",
                 requestId: "cancel-no-scope-1",
-                sessionId: "session-1",
+                sessionId,
                 paperTradeId: "paper-1",
-                exitTriggerKey: "session-1|event|yes|paper-1|exit",
+                exitTriggerKey: `${sessionId}|event|yes|paper-1|exit`,
                 createdAtIso: new Date().toISOString(),
                 symbol: "BTCUSDT",
                 strategyKey: "test_strategy",
@@ -825,10 +855,11 @@ describe("Execution Lab live helpers", () => {
             EXECUTION_LAB_LIVE_ORDER_TYPE: "FAK",
         }, async () => {
             const handler = createDevHandler();
-            const first = await invokePost(handler, "/live/trade", liveTradeRequest());
-            const second = await invokePost(handler, "/live/trade", liveTradeRequest({ stakeUsd: 6 }));
+            const sessionId = await startLiveTestSession(handler);
+            const first = await invokePost(handler, "/live/trade", liveTradeRequest({ sessionId }));
+            const second = await invokePost(handler, "/live/trade", liveTradeRequest({ sessionId, stakeUsd: 6 }));
             const third = await invokePost(handler, "/live/trade", {
-                ...liveTradeRequest(),
+                ...liveTradeRequest({ sessionId }),
                 liveConfig: {
                     orderMode: "taker",
                     takerOrderType: "FAK",

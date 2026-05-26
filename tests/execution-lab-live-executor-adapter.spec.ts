@@ -183,6 +183,30 @@ describe("Execution Lab live executor adapter", () => {
         expect("executorUrl" in status).to.equal(false);
     });
 
+    it("rejects non-loopback or credentialed HTTP executor URLs", () => {
+        const localhost = readLiveExecutorConfig({
+            EXECUTION_LAB_LIVE_IGNORE_REPO_ENV: "1",
+            EXECUTION_LAB_LIVE_EXECUTOR_URL: "http://localhost:8787/trade",
+        });
+        const ipv6Loopback = readLiveExecutorConfig({
+            EXECUTION_LAB_LIVE_IGNORE_REPO_ENV: "1",
+            EXECUTION_LAB_LIVE_EXECUTOR_URL: "http://[::1]:8787/trade",
+        });
+        const remote = readLiveExecutorConfig({
+            EXECUTION_LAB_LIVE_IGNORE_REPO_ENV: "1",
+            EXECUTION_LAB_LIVE_EXECUTOR_URL: "https://example.com/trade",
+        });
+        const credentialed = readLiveExecutorConfig({
+            EXECUTION_LAB_LIVE_IGNORE_REPO_ENV: "1",
+            EXECUTION_LAB_LIVE_EXECUTOR_URL: "http://user:pass@127.0.0.1:8787/trade",
+        });
+
+        expect(localhost.executorUrl).to.equal("http://localhost:8787/trade");
+        expect(ipv6Loopback.executorUrl).to.equal("http://[::1]:8787/trade");
+        expect(remote.executorUrl).to.equal("");
+        expect(credentialed.executorUrl).to.equal("");
+    });
+
     it("loads non-VITE live executor settings from repo .env", () => {
         const dir = mkdtempSync(join(tmpdir(), "execution-lab-env-"));
         try {
@@ -762,5 +786,30 @@ describe("Execution Lab live executor adapter", () => {
         expect(unavailable.reason).to.equal("executor_unavailable");
         expect(timeout.reason).to.equal("executor_timeout");
         expect(invalidStdout.reason).to.equal("executor_invalid_stdout");
+    });
+
+    it("rejects oversized HTTP executor responses from content-length before reading", async () => {
+        let bodyRead = false;
+        const response = await withMockFetch(async () => ({
+            ok: true,
+            status: 200,
+            headers: {
+                get(name: string) {
+                    return name.toLowerCase() === "content-length" ? "11" : null;
+                },
+            },
+            async text() {
+                bodyRead = true;
+                return JSON.stringify({ ok: true, requestId: "live-request-1", status: "dry_run" });
+            },
+        } as Response), async () => submitLiveTradeToExecutor(request(), {
+            executorUrl: "http://127.0.0.1:8787/trade",
+            maxStakeUsd: 10,
+            orderType: "FAK",
+            stdoutByteLimit: 10,
+        }));
+
+        expect(response.reason).to.equal("executor_invalid_stdout");
+        expect(bodyRead).to.equal(false);
     });
 });

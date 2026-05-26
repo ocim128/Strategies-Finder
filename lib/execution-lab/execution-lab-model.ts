@@ -183,13 +183,15 @@ export interface ExecutionLabLiveUiConfig {
     limitCancelAllOnExitEnabled: boolean;
 }
 
+export type LiveExecutorKind = "cli" | "http";
+
 export type ExecutionLabResolvedLiveConfig = ExecutionLabLiveUiConfig & {
     ok: true;
     configured: boolean;
     available: boolean;
     liveEnabled: boolean;
     dryRun: boolean;
-    executorKind: "cli" | "http";
+    executorKind: LiveExecutorKind;
     geoblockAllowed: boolean | null;
     orderType: LiveTakerOrderType;
     supportedOrderTypes: LiveTakerOrderType[];
@@ -335,6 +337,8 @@ export type LiveTradeRequestRecord = ExecutionLabBaseRecord & {
     limitFixedPriceCents?: number;
     sizingMode?: LiveTradeSizingMode;
     dryRun?: boolean;
+    liveEnabled?: boolean;
+    executorKind?: LiveExecutorKind;
 };
 
 export type LiveTradeResultRecord = ExecutionLabBaseRecord & {
@@ -362,6 +366,8 @@ export type LiveTradeResultRecord = ExecutionLabBaseRecord & {
     minPrice?: number;
     currentBid?: number;
     latencyMs?: number;
+    liveEnabled?: boolean;
+    executorKind?: LiveExecutorKind;
 };
 
 export type LiveExitRequestRecord = ExecutionLabBaseRecord & {
@@ -384,6 +390,8 @@ export type LiveExitRequestRecord = ExecutionLabBaseRecord & {
     attempt?: number;
     sizingMode?: LiveTradeSizingMode;
     dryRun?: boolean;
+    liveEnabled?: boolean;
+    executorKind?: LiveExecutorKind;
 };
 
 export type LiveExitResultRecord = ExecutionLabBaseRecord & {
@@ -403,6 +411,8 @@ export type LiveExitResultRecord = ExecutionLabBaseRecord & {
     currentBid?: number;
     minPrice?: number;
     latencyMs?: number;
+    liveEnabled?: boolean;
+    executorKind?: LiveExecutorKind;
 };
 
 export type LiveCancelAllSubmitStatus =
@@ -454,6 +464,8 @@ export type LiveCancelAllRequestRecord = ExecutionLabBaseRecord & {
     reason: "limit_exit_signal";
     orderMode: "limit";
     dryRun?: boolean;
+    liveEnabled?: boolean;
+    executorKind?: LiveExecutorKind;
 };
 
 export type LiveCancelAllResultRecord = ExecutionLabBaseRecord & {
@@ -466,6 +478,8 @@ export type LiveCancelAllResultRecord = ExecutionLabBaseRecord & {
     canceledOrderIds?: string[];
     canceledCount?: number;
     latencyMs?: number;
+    liveEnabled?: boolean;
+    executorKind?: LiveExecutorKind;
 };
 
 export type PaperUnfilledRecord = ExecutionLabBaseRecord & {

@@ -80,8 +80,9 @@ V1 is working only when all of these are true:
 - With live UI sizing mode `fixed`, `stakeUsd` is a hard notional cap. The executor may submit less after tick/lot/depth/min-size checks, but it must never submit more.
 - With live UI sizing mode `exchange_min`, live entries may auto-size above `stakeUsd` to the minimum valid Polymarket order, but never above the effective UI/Strategy Finder cap or `MAX_ORDER_SIZE_USDC`.
 - The executor may reject small stakes in fixed mode or reject exchange-min sizing with `min_size_exceeds_cap` when the minimum valid order is above the configured caps.
-- Strategy Finder `.env` still owns executor path, optional loopback executor URL, cwd, args, hard live enablement, timeout/output limits, geoblock display state, fallback taker order type, fallback sizing/cap/slippage values, limit order type, and optional broad cancel scope.
+- Strategy Finder `.env` still owns executor path, optional loopback-only executor URL, cwd, args, hard live enablement, timeout/output limits, geoblock display state, fallback taker order type, fallback sizing/cap/slippage values, limit order type, and optional broad cancel scope.
 - When both `EXECUTION_LAB_LIVE_EXECUTOR_URL` and a CLI path/cwd are configured, Strategy Finder prefers HTTP but falls back to the one-shot CLI executor only when the HTTP connection cannot be made. Reached HTTP error responses and timeouts remain terminal failures to avoid duplicate live submissions after ambiguous executor-side work.
+- HTTP executor URLs must be `http`/`https` on `localhost`, `127.0.0.1`, or `::1`, and must not include credentials. The adapter rejects remote hosts instead of sending live intents off-machine.
 - Explicit CLI executor overrides are transport-isolated: when code or tests pass a non-empty `executorPath`, repo `.env` URL, cwd, and args are ignored unless those fields are explicitly overridden too. `EXECUTION_LAB_LIVE_IGNORE_REPO_ENV=1` is reserved for hermetic local diagnostics/tests that must bypass repo `.env` loading.
 - The Execution Lab UI owns non-secret per-browser live behavior: `orderMode`, `takerOrderType`, sizing mode, max stake cap, entry/exit slippage, protective TP/SL toggles and cent offsets, limit offset, fixed limit cap, and limit cancel-on-exit. Order, sizing, slippage, and limit UI values override `.env` fallbacks; protective TP/SL currently has no `.env` fallback.
 - The default taker order type is `FAK`; `.env` accepts `EXECUTION_LAB_LIVE_TAKER_ORDER_TYPE`, `EXECUTION_LAB_LIVE_ORDER_TYPE`, or compatibility `ARBITRAGE_ORDER_TYPE`.
@@ -153,7 +154,9 @@ Start with a one-shot CLI executor, not a localhost HTTP service.
 
 Reason: the side repo already has long-running dashboard/slot machinery, but this feature needs a narrow callable boundary. A CLI that reads JSON and writes one JSON response is simpler, easier to test, and avoids adding another local server until process startup cost is proven to matter.
 
-The adapter now also supports an opt-in persistent loopback executor through `EXECUTION_LAB_LIVE_EXECUTOR_URL`. CLI remains the default. When the URL is set, Strategy Finder posts the same non-secret request schema and expects the same structured response schema; the browser contract and Vite endpoint stay unchanged. If the local HTTP connection is unavailable and the CLI executor path/cwd are valid, the adapter falls back to the one-shot CLI path.
+The adapter now also supports an opt-in persistent loopback executor through `EXECUTION_LAB_LIVE_EXECUTOR_URL`. CLI remains the default. When the URL is set, Strategy Finder posts the same non-secret request schema and expects the same structured response schema; the browser contract and Vite endpoint stay unchanged. If the local HTTP connection is unavailable and the CLI executor path/cwd are valid, the adapter falls back to the one-shot CLI path. There is no executor health probe on the hot path; failures are handled at submit time.
+
+The HTTP adapter rejects declared response bodies above `EXECUTION_LAB_LIVE_STDOUT_LIMIT_BYTES` from `Content-Length` before reading them, then applies the same byte cap after reading for responses without a usable length header.
 
 ## Boundary Ownership
 
@@ -323,6 +326,7 @@ Notes:
 
 Runtime validation for `/api/execution-lab/live/trade`:
 
+- `sessionId` must refer to an active Execution Lab session before executor status/config resolution or payload validation. Unknown sessions return HTTP 404 with `Unknown execution lab session`.
 - `requestId`, `sessionId`, `paperTradeId`, `symbol`, `strategyKey`, `marketSlug`, `conditionId`, and `tokenId` must be non-empty strings.
 - `side` must be `yes` or `no`.
 - `orderMode` must be `taker` or `limit`.
@@ -335,7 +339,7 @@ Runtime validation for `/api/execution-lab/live/trade`:
 - The submitted `tokenId` must match the selected side after market validation: YES for `side: "yes"`, NO for `side: "no"`.
 - Reject malformed payloads with HTTP 400 before the executor is invoked.
 - `/api/execution-lab/live/config/resolve` validates UI non-secret config and returns the effective live config without exposing executor path, cwd, args, or secrets.
-- `/api/execution-lab/live/cancel-all` validates `cancel_all` requests against either limit-entry cancel-on-exit or a targeted TP order-id cancel, then uses a separate process-local idempotency ledger.
+- `/api/execution-lab/live/cancel-all` uses the same active-session guard, validates `cancel_all` requests against either limit-entry cancel-on-exit or a targeted TP order-id cancel, then uses a separate process-local idempotency ledger.
 
 ## Strategy Finder Records
 
@@ -357,6 +361,9 @@ export type LiveTradeRequestRecord = ExecutionLabBaseRecord & {
     entryTimeSec: number;
     maxPrice: number;
     orderType: "FOK" | "FAK";
+    dryRun?: boolean;
+    liveEnabled?: boolean;
+    executorKind?: "cli" | "http";
 };
 
 export type LiveTradeResultRecord = ExecutionLabBaseRecord & {
@@ -374,6 +381,9 @@ export type LiveTradeResultRecord = ExecutionLabBaseRecord & {
     filledShares?: number;
     currentAsk?: number;
     maxPrice?: number;
+    latencyMs?: number;
+    liveEnabled?: boolean;
+    executorKind?: "cli" | "http";
 };
 ```
 
@@ -428,7 +438,7 @@ Executor-side state:
 
 Strategy Finder also keeps a non-durable Vite-process duplicate ledger for the local endpoint. It coalesces in-flight duplicate submissions, reuses the first result for an identical payload, and rejects the same `requestId` with a different payload hash as `request_id_payload_mismatch`.
 
-Before invoking the executor, Strategy Finder appends the matching `live_*_request` JSONL record. This keeps an audit trail for real side effects even if the executor call, browser session, or local process fails before the result record is written.
+Before invoking the executor, Strategy Finder appends the matching `live_*_request` JSONL record. This keeps an audit trail for real side effects even if the executor call, browser session, or local process fails before the result record is written. Live request/result records may include cheap executor metadata (`dryRun`, `liveEnabled`, `executorKind`, `sizingMode`, `latencyMs`) derived from already-resolved status; no extra status call is made for logging.
 
 Live polling uses the local second-market SQLite DB for complete recent candle ranges when available, then falls back to upstream Binance. Live quotes prefer exact stored second-market CLOB quotes; if the exact latest quote is missing, a same-event local quote up to two seconds old may be used with `recent_local_fallback` quality flags before falling back to live CLOB REST. The executor current-book preflight remains authoritative for real order submission.
 
@@ -437,6 +447,7 @@ Live polling uses the local second-market SQLite DB for complete recent candle r
 V1 failure behavior should be simple and explicit:
 
 - If executor is unavailable, log `live_trade_result` with `status: "failed"` and `reason: "executor_unavailable"`.
+- If the Strategy Finder live endpoint rejects before the executor is reached, preserve that as a live result reason such as `unknown_execution_lab_session`, `live_endpoint_rejected`, `live_endpoint_error`, or `live_endpoint_timeout` instead of collapsing it into executor unavailability.
 - If executor is not live-enabled, return/log `status: "rejected"` and `reason: "live_disabled"`.
 - If geoblock/eligibility fails, return/log `status: "rejected"` and `reason: "geoblocked"`.
 - If the executor cannot complete the geoblock preflight, normalize it to `status: "rejected"` with `reason: "geoblock_check_failed"` and block further Strategy Finder live submissions for the current session.

@@ -30,6 +30,7 @@ import type { BacktestSettings, OHLCVData, Strategy, Trade } from "../types/stra
 import { uiManager } from "../ui-manager";
 import {
     appendExecutionLabRecords,
+    isExecutionLabApiError,
     loadExecutionLabMinerStatus,
     loadExecutionLabLiveCandles,
     loadExecutionLabLiveEvents,
@@ -362,6 +363,19 @@ function liveUiConfigKey(config: ExecutionLabLiveUiConfig): string {
         config.limitFixedPriceCents,
         config.limitCancelAllOnExitEnabled ? 1 : 0,
     ].join("|");
+}
+
+function liveEndpointFailureReason(error: unknown): string {
+    if (isExecutionLabApiError(error)) {
+        if (error.status === 404 && error.apiError === "Unknown execution lab session") {
+            return "unknown_execution_lab_session";
+        }
+        if (error.status === 400) return "live_endpoint_rejected";
+        if (error.status >= 500) return "live_endpoint_error";
+        return "live_endpoint_unavailable";
+    }
+    if (error instanceof Error && error.name === "AbortError") return "live_endpoint_timeout";
+    return "executor_unavailable";
 }
 
 function formatCents(value: number): string {
@@ -735,10 +749,17 @@ export class ExecutionLabService {
         });
     }
 
-    private liveRecordContext(): { dryRun?: boolean; sizingMode?: LiveTradeSizingMode } {
+    private liveRecordContext(): {
+        dryRun?: boolean;
+        executorKind?: LiveExecutorStatus["executorKind"];
+        liveEnabled?: boolean;
+        sizingMode?: LiveTradeSizingMode;
+    } {
         const status = this.currentLiveExecutorStatus();
         return {
             dryRun: status?.dryRun,
+            executorKind: status?.executorKind,
+            liveEnabled: status?.liveEnabled,
             sizingMode: status?.sizingMode,
         };
     }
@@ -2088,15 +2109,16 @@ export class ExecutionLabService {
                 const response = await submitExecutionLabLiveCancelAll(
                     request,
                     this.cancelLiveUiConfigForRequest(request)
-                ).catch(() =>
+                ).catch((error) =>
                     buildLiveCancelAllFailureResponse({
                         requestId: request.requestId,
                         scope: request.scope,
-                        reason: "executor_unavailable",
+                        reason: liveEndpointFailureReason(error),
                     })
                 );
                 if (!this.isSessionActive(sessionToken, snapshot)) return records;
                 const result = buildLiveCancelAllResultRecord(snapshot, request, response, new Date().toISOString(), {
+                    ...recordContext,
                     latencyMs: Date.now() - startedMs,
                 });
                 this.trackUncanceledLimitAsLivePosition(request, response);
@@ -2320,7 +2342,8 @@ export class ExecutionLabService {
                         minPrice: request.minPrice,
                         currentBid: currentBid ?? undefined,
                     }),
-                    new Date().toISOString()
+                    new Date().toISOString(),
+                    recordContext
                 );
                 this.latestLiveExitResult = result;
                 records.push(result);
@@ -2341,7 +2364,8 @@ export class ExecutionLabService {
                         minPrice: request.minPrice,
                         currentBid: currentBid ?? undefined,
                     }),
-                    new Date().toISOString()
+                    new Date().toISOString(),
+                    recordContext
                 );
                 this.latestLiveExitResult = result;
                 records.push(result);
@@ -2383,16 +2407,18 @@ export class ExecutionLabService {
     ): Promise<void> {
         try {
             if (!this.isSessionActive(sessionToken, snapshot)) return;
+            const recordContext = this.liveRecordContext();
             const startedMs = Date.now();
-            const response = await submitExecutionLabLiveTrade(request, this.activeLiveUiConfig()).catch(() =>
+            const response = await submitExecutionLabLiveTrade(request, this.activeLiveUiConfig()).catch((error) =>
                 buildLiveTradeFailureResponse({
                     requestId: request.requestId,
-                    reason: "executor_unavailable",
+                    reason: liveEndpointFailureReason(error),
                     minPrice: request.minPrice,
                 })
             );
             if (!this.isSessionActive(sessionToken, snapshot)) return;
             const result = buildLiveExitResultRecord(snapshot, request, response, new Date().toISOString(), {
+                ...recordContext,
                 latencyMs: Date.now() - startedMs,
             });
             this.latestLiveExitResult = result;
@@ -2588,7 +2614,8 @@ export class ExecutionLabService {
                             reason: "paper_exit_same_tick",
                             ...requestPriceFields,
                         }),
-                        new Date().toISOString()
+                        new Date().toISOString(),
+                        recordContext
                     );
                     this.latestLiveTradeResult = result;
                     records.push(result);
@@ -2613,7 +2640,8 @@ export class ExecutionLabService {
                             reason: "event_already_closed",
                             ...requestPriceFields,
                         }),
-                        new Date().toISOString()
+                        new Date().toISOString(),
+                        recordContext
                     );
                     this.latestLiveTradeResult = result;
                     records.push(result);
@@ -2630,7 +2658,8 @@ export class ExecutionLabService {
                             reason: "event_too_close_to_close",
                             ...requestPriceFields,
                         }),
-                        new Date().toISOString()
+                        new Date().toISOString(),
+                        recordContext
                     );
                     this.latestLiveTradeResult = result;
                     records.push(result);
@@ -2649,7 +2678,8 @@ export class ExecutionLabService {
                             reason: "live_position_open",
                             ...requestPriceFields,
                         }),
-                        new Date().toISOString()
+                        new Date().toISOString(),
+                        recordContext
                     );
                     this.latestLiveTradeResult = result;
                     records.push(result);
@@ -2667,7 +2697,8 @@ export class ExecutionLabService {
                             reason: "missing_market_identity",
                             ...requestPriceFields,
                         }),
-                        new Date().toISOString()
+                        new Date().toISOString(),
+                        recordContext
                     );
                     this.latestLiveTradeResult = result;
                     records.push(result);
@@ -2685,7 +2716,8 @@ export class ExecutionLabService {
                             reason: this.liveSubmissionBlockedReason,
                             ...requestPriceFields,
                         }),
-                        new Date().toISOString()
+                        new Date().toISOString(),
+                        recordContext
                     );
                     this.latestLiveTradeResult = result;
                     records.push(result);
@@ -2694,10 +2726,10 @@ export class ExecutionLabService {
 
                 if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return records;
                 const startedMs = Date.now();
-                const response = await submitExecutionLabLiveTrade(request, liveConfig).catch(() =>
+                const response = await submitExecutionLabLiveTrade(request, liveConfig).catch((error) =>
                     buildLiveTradeFailureResponse({
                         requestId: request.requestId,
-                        reason: "executor_unavailable",
+                        reason: liveEndpointFailureReason(error),
                         ...requestPriceFields,
                     })
                 );
@@ -2715,6 +2747,7 @@ export class ExecutionLabService {
                     }
                     : response;
                 const result = buildLiveTradeResultRecord(snapshot, request, resultResponse, new Date().toISOString(), {
+                    ...recordContext,
                     latencyMs: Date.now() - startedMs,
                 });
                 this.latestLiveTradeResult = result;
@@ -2837,16 +2870,17 @@ export class ExecutionLabService {
                 return [];
             }
 
-            const requestRecord = buildLiveTradeRequestRecord(snapshot, request, recordedAtIso, this.liveRecordContext());
+            const recordContext = this.liveRecordContext();
+            const requestRecord = buildLiveTradeRequestRecord(snapshot, request, recordedAtIso, recordContext);
             if (!await this.appendLiveRequestRecord(requestRecord, sessionToken, snapshot)) return [];
             const startedMs = Date.now();
             const response = await submitExecutionLabLiveTrade(request, {
                 ...this.activeLiveUiConfig(),
                 orderMode: "limit",
-            }).catch(() =>
+            }).catch((error) =>
                 buildLiveTradeFailureResponse({
                     requestId: request.requestId,
-                    reason: "executor_unavailable",
+                    reason: liveEndpointFailureReason(error),
                     maxPrice: request.maxPrice,
                     limitPrice: request.limitPrice,
                     limitReferencePrice: request.limitReferencePrice,
@@ -2862,6 +2896,7 @@ export class ExecutionLabService {
                 minPrice: response.minPrice ?? request.minPrice,
             };
             const result = buildLiveTradeResultRecord(snapshot, request, resultResponse, new Date().toISOString(), {
+                ...recordContext,
                 latencyMs: Date.now() - startedMs,
             });
             this.latestLiveTradeResult = result;

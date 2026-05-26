@@ -53,6 +53,21 @@ const MAX_EXECUTION_LAB_LOG_BATCH_RECORDS = 100;
 const DEFAULT_API_TIMEOUT_MS = 10000;
 const LIVE_TRADE_API_TIMEOUT_MS = 30000;
 
+export class ExecutionLabApiError extends Error {
+    constructor(
+        readonly endpoint: string,
+        readonly status: number,
+        readonly apiError: string | undefined
+    ) {
+        super(apiError ?? `${endpoint} failed (${status})`);
+        this.name = "ExecutionLabApiError";
+    }
+}
+
+export function isExecutionLabApiError(error: unknown): error is ExecutionLabApiError {
+    return error instanceof ExecutionLabApiError;
+}
+
 function baseUrl(): string {
     return typeof window === "undefined" ? "http://localhost:5173" : "";
 }
@@ -71,7 +86,7 @@ async function getJson<T extends { ok: true }>(endpoint: string, timeoutMs = DEF
     const response = await fetchWithTimeout(`${baseUrl()}${endpoint}`, { method: "GET" }, timeoutMs);
     const payload = await response.json().catch(() => ({})) as T | ApiError;
     if (!response.ok || payload.ok !== true) {
-        throw new Error((payload as ApiError).error ?? `${endpoint} failed (${response.status})`);
+        throw new ExecutionLabApiError(endpoint, response.status, (payload as ApiError).error);
     }
     return payload as T;
 }
@@ -84,7 +99,7 @@ async function postJson<T extends { ok: true }>(endpoint: string, body: unknown,
     }, timeoutMs);
     const payload = await response.json().catch(() => ({})) as T | ApiError;
     if (!response.ok || payload.ok !== true) {
-        throw new Error((payload as ApiError).error ?? `${endpoint} failed (${response.status})`);
+        throw new ExecutionLabApiError(endpoint, response.status, (payload as ApiError).error);
     }
     return payload as T;
 }

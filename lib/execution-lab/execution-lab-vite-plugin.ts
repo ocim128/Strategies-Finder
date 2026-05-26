@@ -151,6 +151,11 @@ function readLiveUiConfigFromPayload(payload: Record<string, unknown>): Executio
         : undefined;
 }
 
+function readSessionIdFromPayload(payload: Record<string, unknown>): string | null {
+    const sessionId = typeof payload.sessionId === "string" ? payload.sessionId.trim() : "";
+    return sessionId || null;
+}
+
 function finiteNumber(value: unknown): number | null {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : null;
@@ -1193,6 +1198,11 @@ export function executionLabVitePlugin(): Plugin {
                         return;
                     }
                     const payload = await readJsonBody(req as IncomingMessage);
+                    const sessionId = readSessionIdFromPayload(payload);
+                    if (!sessionId || !sessions.has(sessionId)) {
+                        sendJson(res, 404, { ok: false, error: "Unknown execution lab session" });
+                        return;
+                    }
                     const liveUiConfig = readLiveUiConfigFromPayload(payload);
                     const status = loadLiveExecutorStatus(undefined, liveUiConfig);
                     const validation = validateLiveTradeSubmitRequest(payload, {
@@ -1249,6 +1259,11 @@ export function executionLabVitePlugin(): Plugin {
                         return;
                     }
                     const payload = await readJsonBody(req as IncomingMessage);
+                    const sessionId = readSessionIdFromPayload(payload);
+                    if (!sessionId || !sessions.has(sessionId)) {
+                        sendJson(res, 404, { ok: false, error: "Unknown execution lab session" });
+                        return;
+                    }
                     const liveUiConfig = readLiveUiConfigFromPayload(payload);
                     const status = loadLiveExecutorStatus(undefined, liveUiConfig);
                     const validation = validateLiveCancelAllSubmitRequest(payload, {
