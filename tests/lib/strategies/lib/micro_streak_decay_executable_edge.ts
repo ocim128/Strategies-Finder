@@ -18,6 +18,15 @@ import {
 } from "./polymarket-1s-helpers";
 import { normalizeIntegerParam, normalizeNumberParam } from "./range-conviction-core";
 
+type MicroStreakDecayExecutableEdgePrepared = {
+    cleanData: OHLCVData[];
+    closes: number[];
+    typicalPrices: number[];
+    closeLocation: number[];
+    centerByVolLookback: Map<number, ReturnType<typeof buildRollingAverage>>;
+    streakByVolLookback: Map<number, ReturnType<typeof buildStreakCount>>;
+};
+
 function normalizeMicroStreakDecayExecutableEdgeParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
@@ -25,6 +34,70 @@ function normalizeMicroStreakDecayExecutableEdgeParams(params: StrategyParams): 
         volLookback: normalizeIntegerParam(params.volLookback, 30, 5),
         minEdge: normalizeNumberParam(params.minEdge, 0.02, 0),
     };
+}
+
+function prepareMicroStreakDecayExecutableEdgeData(data: OHLCVData[]): MicroStreakDecayExecutableEdgePrepared {
+    const cleanData = ensureCleanData(data);
+    return {
+        cleanData,
+        closes: getCloses(cleanData),
+        typicalPrices: getTypicalPrices(cleanData),
+        closeLocation: buildCloseLocationSeries(cleanData),
+        centerByVolLookback: new Map(),
+        streakByVolLookback: new Map(),
+    };
+}
+
+function getPreparedMicroStreakDecayExecutableEdgeData(
+    preparedData: unknown,
+    data: OHLCVData[]
+): MicroStreakDecayExecutableEdgePrepared {
+    if (
+        preparedData
+        && typeof preparedData === "object"
+        && "cleanData" in preparedData
+        && "centerByVolLookback" in preparedData
+        && "streakByVolLookback" in preparedData
+    ) {
+        return preparedData as MicroStreakDecayExecutableEdgePrepared;
+    }
+    return prepareMicroStreakDecayExecutableEdgeData(data);
+}
+
+function getPreparedCenter(
+    prepared: MicroStreakDecayExecutableEdgePrepared,
+    volLookback: number
+): ReturnType<typeof buildRollingAverage> {
+    const cached = prepared.centerByVolLookback.get(volLookback);
+    if (cached) return cached;
+    const center = buildRollingAverage(prepared.typicalPrices, volLookback);
+    prepared.centerByVolLookback.set(volLookback, center);
+    return center;
+}
+
+function getPreparedStreak(
+    prepared: MicroStreakDecayExecutableEdgePrepared,
+    volLookback: number
+): ReturnType<typeof buildStreakCount> {
+    const cached = prepared.streakByVolLookback.get(volLookback);
+    if (cached) return cached;
+    const center = getPreparedCenter(prepared, volLookback);
+    const flags: number[] = new Array(prepared.closes.length);
+    for (let i = 0; i < prepared.closes.length; i++) {
+        const midpoint = center[i];
+        if (midpoint === null) {
+            flags[i] = 0;
+        } else if (prepared.closes[i] > midpoint) {
+            flags[i] = 1;
+        } else if (prepared.closes[i] < midpoint) {
+            flags[i] = -1;
+        } else {
+            flags[i] = 0;
+        }
+    }
+    const streak = buildStreakCount(flags);
+    prepared.streakByVolLookback.set(volLookback, streak);
+    return streak;
 }
 
 export const micro_streak_decay_executable_edge: Strategy = {
@@ -42,24 +115,18 @@ export const micro_streak_decay_executable_edge: Strategy = {
     },
     normalizeParams: normalizeMicroStreakDecayExecutableEdgeParams,
     polymarket1sConfig: { required: true },
-    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+    prepareFinderData: (data) => prepareMicroStreakDecayExecutableEdgeData(data),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[], context?: StrategyExecutionContext) => {
         if (!context?.polymarket1s) return [];
 
-        const cleanData = ensureCleanData(data);
+        const prepared = getPreparedMicroStreakDecayExecutableEdgeData(preparedData, data);
+        const cleanData = prepared.cleanData;
         const p = normalizeMicroStreakDecayExecutableEdgeParams(params);
         if (cleanData.length < p.volLookback + p.streakLength + 1) return [];
 
-        const closes = getCloses(cleanData);
-        const center = buildRollingAverage(getTypicalPrices(cleanData), p.volLookback);
-        const flags = closes.map((close, i) => {
-            const midpoint = center[i];
-            if (midpoint === null) return 0;
-            if (close > midpoint) return 1;
-            if (close < midpoint) return -1;
-            return 0;
-        });
-        const streak = buildStreakCount(flags);
-        const closeLocation = buildCloseLocationSeries(cleanData);
+        const center = getPreparedCenter(prepared, p.volLookback);
+        const streak = getPreparedStreak(prepared, p.volLookback);
+        const closeLocation = prepared.closeLocation;
         const edge = buildPolymarket1sExecutableEdge(cleanData, context, { volLookback: p.volLookback });
         if (!edge.available) return [];
         const actionability = buildPolymarket1sActionabilityMask(cleanData, context, {
@@ -91,6 +158,15 @@ export const micro_streak_decay_executable_edge: Strategy = {
             }
             return null;
         });
+    },
+    execute: (data, params, context) => {
+        if (!context?.polymarket1s) return [];
+        return micro_streak_decay_executable_edge.executePrepared?.(
+            prepareMicroStreakDecayExecutableEdgeData(data),
+            params,
+            data,
+            context
+        ) ?? [];
     },
     metadata: {
         role: "entry",

@@ -1698,6 +1698,40 @@ describe('Backtesting Engine', () => {
         expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-8);
     });
 
+    it('should use side fast paths for full combined no-equity Finder runs while preserving trades', () => {
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 110, high: 112, low: 108, close: 110, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 120, high: 121, low: 118, close: 120, volume: 1000 },
+            { time: '2023-01-05' as Time, open: 100, high: 102, low: 98, close: 100, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: '2023-01-02' as Time, type: 'buy', price: 100 },
+            { time: '2023-01-02' as Time, type: 'sell', price: 100 },
+            { time: '2023-01-03' as Time, type: 'buy', price: 110 },
+            { time: '2023-01-04' as Time, type: 'sell', price: 120 },
+            { time: '2023-01-05' as Time, type: 'buy', price: 100 },
+        ];
+        const settings = { tradeDirection: 'combined' as const };
+        const baseline = runBacktest(data, signals, 1000, 100, 0, settings);
+        const fast = runBacktest(data, signals, 1000, 100, 0, settings, undefined, undefined, {
+            collectDiagnostics: true,
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+            skipDrawdown: true,
+        });
+
+        expect(fast.trades).to.deep.equal(baseline.trades);
+        expect(fast.netProfit).to.be.closeTo(baseline.netProfit, 1e-8);
+        expect(fast.equityCurve).to.deep.equal([]);
+        expect(fast.maxDrawdown).to.equal(0);
+        expect(fast.diagnostics?.fastPath?.used).to.equal(true);
+        expect(fast.diagnostics?.counts.fastPathRuns).to.equal(1);
+        expect(fast.diagnostics?.fastPath?.blockers).to.deep.equal([]);
+        expect(fast.diagnostics?.counts.barsScanned).to.be.lessThan(data.length * 2);
+    });
+
     it('should keep combined-mode sharpe consistent between full and compact backtests', () => {
         const data: OHLCVData[] = [];
         for (let i = 0; i < 240; i++) {

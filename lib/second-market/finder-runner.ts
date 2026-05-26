@@ -70,22 +70,26 @@ const runFinderCandidateBacktest: typeof runBacktest = (
     sizing,
     precomputed,
     options
-) => runBacktest(
-    data,
-    signals,
-    initialCapital,
-    positionSizePercent,
-    commissionPercent,
-    settings,
-    sizing,
-    precomputed,
-    {
+) => {
+    const finderOptions = {
         includeAdvancedAnalytics: false,
         includeSharpeRatio: options?.includeSharpeRatio,
         collectDiagnostics: options?.collectDiagnostics,
         omitEquityCurve: options?.omitEquityCurve,
-    }
-);
+        skipDrawdown: options?.skipDrawdown,
+    };
+    return runBacktest(
+        data,
+        signals,
+        initialCapital,
+        positionSizePercent,
+        commissionPercent,
+        settings,
+        sizing,
+        precomputed,
+        finderOptions
+    );
+};
 
 function getDataRange(data: readonly OHLCVData[]): { startTs: number; endTs: number } | null {
     if (data.length === 0) return null;
@@ -193,6 +197,7 @@ export async function runSecondMarketFinder(
 
     const requiresSizedNetRank = options.sortPriority.includes("polySizedNet");
     const requiresSharpeRatio = options.sortPriority.includes("sharpeRatio");
+    const requiresDrawdown = options.sortPriority.includes("maxDrawdownPercent");
     if (requiresSizedNetRank && !isAlternativeSizingMode(input.capitalSettings)) {
         callbacks.setStatus("Sized Net rank mode requires Alternative Sizing mode other than percent.");
         return { results: [] };
@@ -421,6 +426,7 @@ export async function runSecondMarketFinder(
                         collectDiagnostics: true,
                         includeSharpeRatio: requiresSharpeRatio,
                         omitEquityCurve: !requiresSharpeRatio,
+                        skipDrawdown: !requiresSharpeRatio && !requiresDrawdown,
                     },
                 });
                 recordFinderBacktestDiagnostics(strategyStats.backtest, backtestResult.diagnostics);

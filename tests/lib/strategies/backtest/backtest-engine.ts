@@ -1093,6 +1093,53 @@ function combineCompactResults(
     };
 }
 
+function canUseNoEquityCombinedSideFastPath(options?: BacktestRunOptions): boolean {
+    return options?.omitEquityCurve === true
+        && options.includeSharpeRatio === false
+        && options.skipDrawdown === true;
+}
+
+function mergeCombinedSideDiagnostics(
+    target: BacktestDiagnostics | undefined,
+    longDiagnostics: BacktestDiagnostics | undefined,
+    shortDiagnostics: BacktestDiagnostics | undefined,
+    input: {
+        inputBars: number;
+        inputSignals: number;
+    }
+): void {
+    if (!target || !longDiagnostics || !shortDiagnostics) return;
+    target.counts.inputBars = input.inputBars;
+    target.counts.evaluationBars = input.inputBars;
+    target.counts.inputSignals = input.inputSignals;
+    target.counts.preparedSignals = longDiagnostics.counts.preparedSignals + shortDiagnostics.counts.preparedSignals;
+    target.counts.barsScanned = longDiagnostics.counts.barsScanned + shortDiagnostics.counts.barsScanned;
+    target.counts.barsWithPosition = longDiagnostics.counts.barsWithPosition + shortDiagnostics.counts.barsWithPosition;
+    target.counts.entriesAttempted = longDiagnostics.counts.entriesAttempted + shortDiagnostics.counts.entriesAttempted;
+    target.counts.tradesOpened = longDiagnostics.counts.tradesOpened + shortDiagnostics.counts.tradesOpened;
+    target.counts.tradesClosed = longDiagnostics.counts.tradesClosed + shortDiagnostics.counts.tradesClosed;
+    target.counts.signalExitOrders = longDiagnostics.counts.signalExitOrders + shortDiagnostics.counts.signalExitOrders;
+    target.counts.forcedEndOfDataExits = longDiagnostics.counts.forcedEndOfDataExits + shortDiagnostics.counts.forcedEndOfDataExits;
+    target.counts.maxOpenPositions = Math.max(longDiagnostics.counts.maxOpenPositions, shortDiagnostics.counts.maxOpenPositions);
+
+    const longFastPathUsed = longDiagnostics.fastPath?.used === true;
+    const shortFastPathUsed = shortDiagnostics.fastPath?.used === true;
+    target.counts.fastPathRuns = longFastPathUsed && shortFastPathUsed ? 1 : 0;
+    const blockers = [
+        ...(longDiagnostics.fastPath?.blockers ?? []),
+        ...(shortDiagnostics.fastPath?.blockers ?? []),
+    ];
+    target.fastPath = {
+        used: longFastPathUsed && shortFastPathUsed,
+        blockers: [...new Set(blockers)],
+    };
+
+    for (const key of Object.keys(target.timingsMs) as Array<keyof BacktestDiagnostics["timingsMs"]>) {
+        if (key === "total" || key === "dataClean") continue;
+        target.timingsMs[key] += (longDiagnostics.timingsMs[key] ?? 0) + (shortDiagnostics.timingsMs[key] ?? 0);
+    }
+}
+
 function runCombinedBacktestCompact(
     data: OHLCVData[],
     signals: Signal[],
@@ -1165,7 +1212,9 @@ function runCombinedBacktest(
     commissionPercent: number,
     settings: BacktestSettings = {},
     sizing?: Partial<TradeSizingConfig>,
-    precomputed?: PrecomputedIndicators
+    precomputed?: PrecomputedIndicators,
+    options?: BacktestRunOptions,
+    diagnostics?: BacktestDiagnostics
 ): BacktestResult {
     // "Combined" runs long/short books independently and skips bars where both entry directions fire.
     const conflictTimes = getConflictingEntryTimes(signals);
@@ -1180,6 +1229,7 @@ function runCombinedBacktest(
         fixedTradeAmount: sizing?.fixedTradeAmount ?? 0,
         advancedSizing: sizing?.advancedSizing,
     };
+    const sideOptions = canUseNoEquityCombinedSideFastPath(options) ? options : undefined;
 
     const longResult = runBacktest(
         data,
@@ -1189,7 +1239,8 @@ function runCombinedBacktest(
         commissionPercent,
         { ...settings, tradeDirection: 'long' },
         splitSizing,
-        precomputed
+        precomputed,
+        sideOptions
     );
     const shortResult = runBacktest(
         data,
@@ -1199,13 +1250,32 @@ function runCombinedBacktest(
         commissionPercent,
         { ...settings, tradeDirection: 'short' },
         splitSizing,
-        precomputed
+        precomputed,
+        sideOptions
     );
+
+    mergeCombinedSideDiagnostics(diagnostics, longResult.diagnostics, shortResult.diagnostics, {
+        inputBars: data.length,
+        inputSignals: signals.length,
+    });
 
     const mergedTrades = [...longResult.trades, ...shortResult.trades]
         .slice()
         .sort((a, b) => compareTime(a.exitTime, b.exitTime) || compareTime(a.entryTime, b.entryTime))
         .map((trade, index) => ({ ...trade, id: index + 1 }));
+
+    const finalCapital = initialCapital + longResult.netProfit + shortResult.netProfit;
+    if (sideOptions) {
+        return calculateBacktestStats(
+            mergedTrades,
+            [],
+            initialCapital,
+            finalCapital,
+            0,
+            0,
+            options
+        );
+    }
 
     const equityCurve = buildCombinedEquityCurve(
         data,
@@ -1214,7 +1284,6 @@ function runCombinedBacktest(
         longInitialCapital,
         shortInitialCapital
     );
-    const finalCapital = initialCapital + longResult.netProfit + shortResult.netProfit;
     const { maxDrawdown, maxDrawdownPercent } = calculateMaxDrawdown(equityCurve, initialCapital);
     return calculateBacktestStats(
         mergedTrades,
@@ -1799,7 +1868,9 @@ export function runBacktest(
             commissionPercent,
             settings,
             sizing,
-            precomputed
+            precomputed,
+            options,
+            diagnostics
         ), runStartedAt);
     }
 

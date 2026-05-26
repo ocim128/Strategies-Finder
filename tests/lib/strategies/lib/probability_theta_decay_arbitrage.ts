@@ -1,4 +1,11 @@
-import { Strategy, OHLCVData, StrategyExecutionContext, StrategyParams } from "../../types/strategies";
+import type {
+    Strategy,
+    OHLCVData,
+    Polymarket1sQuoteContextRow,
+    Polymarket1sRuntimeContext,
+    StrategyExecutionContext,
+    StrategyParams,
+} from "../../types/strategies";
 import {
     createBuySignal,
     createSellSignal,
@@ -20,6 +27,112 @@ function normalizeParams(params: StrategyParams): StrategyParams {
     };
 }
 
+type ProbabilityThetaDecayArbitragePrepared = {
+    cleanData: OHLCVData[];
+    timestamps: (number | null)[];
+    typicalPrices: number[];
+    runtime: Polymarket1sRuntimeContext | null;
+    quotes: readonly Polymarket1sQuoteContextRow[] | null;
+    quoteCount: number;
+    quoteAtIdx: (Polymarket1sQuoteContextRow | null)[];
+    eventOpenCache: Map<number, number | null>;
+};
+
+type AlignedThetaQuote = {
+    quote: Polymarket1sQuoteContextRow;
+    ts: number;
+};
+
+function prepareProbabilityThetaDecayArbitrageData(
+    data: OHLCVData[],
+    context?: StrategyExecutionContext
+): ProbabilityThetaDecayArbitragePrepared {
+    const cleanData = ensureCleanData(data);
+    const timestamps = cleanData.map((bar) => parseTimeToUnixSeconds(bar.time));
+    const runtime = context?.polymarket1s ?? null;
+    const quoteAtIdx: (Polymarket1sQuoteContextRow | null)[] = new Array(cleanData.length).fill(null);
+
+    if (runtime) {
+        const sortedQuotes = [...runtime.quotes]
+            .map((q) => ({ quote: q, ts: Number(q.sample_ts) }))
+            .filter((q): q is AlignedThetaQuote => !isNaN(q.ts))
+            .sort((a, b) => a.ts - b.ts);
+
+        let qPointer = 0;
+        let latestQuote: Polymarket1sQuoteContextRow | null = null;
+        for (let i = 0; i < cleanData.length; i++) {
+            const barTs = timestamps[i];
+            if (barTs === null) continue;
+            while (qPointer < sortedQuotes.length && sortedQuotes[qPointer].ts <= barTs) {
+                latestQuote = sortedQuotes[qPointer].quote;
+                qPointer++;
+            }
+            quoteAtIdx[i] = latestQuote;
+        }
+    }
+
+    return {
+        cleanData,
+        timestamps,
+        typicalPrices: getTypicalPrices(cleanData),
+        runtime,
+        quotes: runtime?.quotes ?? null,
+        quoteCount: runtime?.quotes.length ?? 0,
+        quoteAtIdx,
+        eventOpenCache: new Map(),
+    };
+}
+
+function getPreparedProbabilityThetaDecayArbitrageData(
+    preparedData: unknown,
+    data: OHLCVData[],
+    context?: StrategyExecutionContext
+): ProbabilityThetaDecayArbitragePrepared {
+    const runtime = context?.polymarket1s ?? null;
+    if (
+        preparedData
+        && typeof preparedData === "object"
+        && "cleanData" in preparedData
+        && "quoteAtIdx" in preparedData
+        && (preparedData as ProbabilityThetaDecayArbitragePrepared).runtime === runtime
+        && (
+            !runtime
+            || (
+                (preparedData as ProbabilityThetaDecayArbitragePrepared).quotes === runtime.quotes
+                && (preparedData as ProbabilityThetaDecayArbitragePrepared).quoteCount === runtime.quotes.length
+            )
+        )
+    ) {
+        return preparedData as ProbabilityThetaDecayArbitragePrepared;
+    }
+    return prepareProbabilityThetaDecayArbitrageData(data, context);
+}
+
+function resolvePreparedOpenPrice(
+    prepared: ProbabilityThetaDecayArbitragePrepared,
+    eventStartTs: number,
+    currentIndex: number
+): number | null {
+    if (prepared.eventOpenCache.has(eventStartTs)) return prepared.eventOpenCache.get(eventStartTs)!;
+
+    let firstCloseAfterStart: number | null = null;
+    for (let cursor = currentIndex; cursor >= 0; cursor--) {
+        const ts = prepared.timestamps[cursor];
+        if (ts === null) continue;
+        if (ts === eventStartTs) {
+            prepared.eventOpenCache.set(eventStartTs, prepared.cleanData[cursor].close);
+            return prepared.cleanData[cursor].close;
+        }
+        if (ts < eventStartTs) {
+            prepared.eventOpenCache.set(eventStartTs, firstCloseAfterStart);
+            return firstCloseAfterStart;
+        }
+        firstCloseAfterStart = prepared.cleanData[cursor].close;
+    }
+    prepared.eventOpenCache.set(eventStartTs, null);
+    return null;
+}
+
 export const probability_theta_decay_arbitrage: Strategy = {
     name: "Probability Theta Decay Arbitrage",
     description: "Arbitrages the slow adjustment of Polymarket options pricing as the event progress approaches maturity (remaining time approaches 0), forcing the probability path to mathematically decay rapidly to 1 or 0.",
@@ -35,10 +148,12 @@ export const probability_theta_decay_arbitrage: Strategy = {
     },
     normalizeParams,
     polymarket1sConfig: { required: true },
-    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+    prepareFinderData: (data, _settings, context) => prepareProbabilityThetaDecayArbitrageData(data, context),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[], context?: StrategyExecutionContext) => {
         if (!context?.polymarket1s) return [];
 
-        const cleanData = ensureCleanData(data);
+        const prepared = getPreparedProbabilityThetaDecayArbitrageData(preparedData, data, context);
+        const cleanData = prepared.cleanData;
         const p = normalizeParams(params);
         const volLookback = p.volLookback as number;
         const progressMin = p.progressMin as number;
@@ -49,50 +164,6 @@ export const probability_theta_decay_arbitrage: Strategy = {
         const pressure = buildPolymarket1sPressureGap(cleanData, context, { volLookback });
         if (!pressure.available) return [];
 
-        const quotes = context.polymarket1s.quotes;
-        const timestamps = cleanData.map((bar) => parseTimeToUnixSeconds(bar.time));
-        const typical = getTypicalPrices(cleanData);
-
-        const eventOpenCache = new Map<number, number | null>();
-        const resolveOpenPrice = (eventStartTs: number, currentIndex: number): number | null => {
-            if (eventOpenCache.has(eventStartTs)) return eventOpenCache.get(eventStartTs)!;
-
-            let firstCloseAfterStart: number | null = null;
-            for (let cursor = currentIndex; cursor >= 0; cursor--) {
-                const ts = timestamps[cursor];
-                if (ts === null) continue;
-                if (ts === eventStartTs) {
-                    eventOpenCache.set(eventStartTs, cleanData[cursor].close);
-                    return cleanData[cursor].close;
-                }
-                if (ts < eventStartTs) {
-                    eventOpenCache.set(eventStartTs, firstCloseAfterStart);
-                    return firstCloseAfterStart;
-                }
-                firstCloseAfterStart = cleanData[cursor].close;
-            }
-            eventOpenCache.set(eventStartTs, null);
-            return null;
-        };
-
-        const sortedQuotes = [...quotes]
-            .map((q) => ({ quote: q, ts: Number(q.sample_ts) }))
-            .filter((q) => !isNaN(q.ts))
-            .sort((a, b) => a.ts - b.ts);
-
-        const quoteAtIdx = new Array(cleanData.length).fill(null);
-        let qPointer = 0;
-        let latestQuote = null;
-        for (let i = 0; i < cleanData.length; i++) {
-            const barTs = timestamps[i];
-            if (barTs === null) continue;
-            while (qPointer < sortedQuotes.length && sortedQuotes[qPointer].ts <= barTs) {
-                latestQuote = sortedQuotes[qPointer].quote;
-                qPointer++;
-            }
-            quoteAtIdx[i] = latestQuote;
-        }
-
         return createSignalLoop(
             cleanData,
             [pressure.eventProgress, pressure.longEdge, pressure.shortEdge],
@@ -100,7 +171,7 @@ export const probability_theta_decay_arbitrage: Strategy = {
                 const eventProgress = pressure.eventProgress[i];
                 const longEdge = pressure.longEdge[i];
                 const shortEdge = pressure.shortEdge[i];
-                const quote = quoteAtIdx[i];
+                const quote = prepared.quoteAtIdx[i];
 
                 if (eventProgress === null || longEdge === null || shortEdge === null || !quote) {
                     return null;
@@ -108,10 +179,10 @@ export const probability_theta_decay_arbitrage: Strategy = {
 
                 if (eventProgress < progressMin) return null;
 
-                const eventOpen = resolveOpenPrice(quote.event_start_ts, i);
+                const eventOpen = resolvePreparedOpenPrice(prepared, quote.event_start_ts, i);
                 if (eventOpen === null || eventOpen <= 0) return null;
 
-                const currentTypical = typical[i];
+                const currentTypical = prepared.typicalPrices[i];
 
                 // Buy YES: typical price is above event-open and longEdge >= minEdge
                 if (currentTypical > eventOpen && longEdge >= minEdge) {
@@ -134,6 +205,15 @@ export const probability_theta_decay_arbitrage: Strategy = {
                 return null;
             }
         );
+    },
+    execute: (data, params, context) => {
+        if (!context?.polymarket1s) return [];
+        return probability_theta_decay_arbitrage.executePrepared?.(
+            prepareProbabilityThetaDecayArbitrageData(data, context),
+            params,
+            data,
+            context
+        ) ?? [];
     },
     metadata: {
         role: "entry",

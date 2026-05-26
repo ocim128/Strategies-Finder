@@ -370,6 +370,26 @@ describe("second market Finder runner", () => {
         expect(output.diagnostics?.strategyBreakdown[0]?.backtest?.runs).to.equal(1);
     });
 
+    it("uses the combined-direction side fast path for 1s CLOB Finder trade scoring", async () => {
+        stubSecondMarketFetch();
+        const input = makeInput();
+        input.settings.tradeDirection = "combined";
+
+        const output = await runSecondMarketFinder(input, {
+            setProgress: () => undefined,
+            setStatus: () => undefined,
+            yieldControl: async () => undefined,
+            isCancelled: () => false,
+            onResultsUpdate: () => undefined,
+        });
+
+        expect(output.results).to.have.length(1);
+        expect(output.diagnostics?.backtest?.fastPathRuns).to.equal(1);
+        expect(output.diagnostics?.backtest?.fastPathBlockers).to.equal(undefined);
+        expect(output.diagnostics?.backtest?.avgBarsScanned).to.be.lessThan(candles().length * 2);
+        expect(output.diagnostics?.backtest?.avgTradesClosed).to.be.greaterThan(0);
+    });
+
     it("reports zero-signal second-market Finder runs", async () => {
         stubSecondMarketFetch();
         const noSignalStrategy: Strategy = {

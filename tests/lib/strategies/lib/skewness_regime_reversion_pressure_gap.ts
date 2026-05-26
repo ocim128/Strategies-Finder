@@ -10,6 +10,12 @@ import { buildRollingSkewness } from "./price-action-statistics-core";
 import { buildPolymarket1sPressureGap } from "./polymarket-1s-helpers";
 import { normalizeIntegerParam, normalizeNumberParam } from "./range-conviction-core";
 
+type SkewnessRegimeReversionPressureGapPrepared = {
+    cleanData: OHLCVData[];
+    returns: number[];
+    skewnessByLookback: Map<number, ReturnType<typeof buildRollingSkewness>>;
+};
+
 function normalizeSkewnessRegimeReversionPressureGapParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
@@ -17,6 +23,44 @@ function normalizeSkewnessRegimeReversionPressureGapParams(params: StrategyParam
         skewThreshold: normalizeNumberParam(params.skewThreshold, 1.5, 0),
         minEdge: normalizeNumberParam(params.minEdge, 0.025, 0),
     };
+}
+
+function prepareSkewnessRegimeReversionPressureGapData(data: OHLCVData[]): SkewnessRegimeReversionPressureGapPrepared {
+    const cleanData = ensureCleanData(data);
+    const closes = getCloses(cleanData);
+    const returns = closes.map((close, i) => i === 0 || closes[i - 1] <= 0 ? 0 : Math.log(close / closes[i - 1]));
+    return {
+        cleanData,
+        returns,
+        skewnessByLookback: new Map(),
+    };
+}
+
+function getPreparedSkewnessRegimeReversionPressureGapData(
+    preparedData: unknown,
+    data: OHLCVData[]
+): SkewnessRegimeReversionPressureGapPrepared {
+    if (
+        preparedData
+        && typeof preparedData === "object"
+        && "cleanData" in preparedData
+        && "returns" in preparedData
+        && "skewnessByLookback" in preparedData
+    ) {
+        return preparedData as SkewnessRegimeReversionPressureGapPrepared;
+    }
+    return prepareSkewnessRegimeReversionPressureGapData(data);
+}
+
+function getPreparedSkewness(
+    prepared: SkewnessRegimeReversionPressureGapPrepared,
+    lookback: number
+): ReturnType<typeof buildRollingSkewness> {
+    const cached = prepared.skewnessByLookback.get(lookback);
+    if (cached) return cached;
+    const skewness = buildRollingSkewness(prepared.returns, lookback);
+    prepared.skewnessByLookback.set(lookback, skewness);
+    return skewness;
 }
 
 export const skewness_regime_reversion_pressure_gap: Strategy = {
@@ -34,17 +78,17 @@ export const skewness_regime_reversion_pressure_gap: Strategy = {
     },
     normalizeParams: normalizeSkewnessRegimeReversionPressureGapParams,
     polymarket1sConfig: { required: true },
-    execute: (data: OHLCVData[], params: StrategyParams, context?: StrategyExecutionContext) => {
+    prepareFinderData: (data) => prepareSkewnessRegimeReversionPressureGapData(data),
+    executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[], context?: StrategyExecutionContext) => {
         if (!context?.polymarket1s) return [];
 
-        const cleanData = ensureCleanData(data);
+        const prepared = getPreparedSkewnessRegimeReversionPressureGapData(preparedData, data);
+        const cleanData = prepared.cleanData;
         const p = normalizeSkewnessRegimeReversionPressureGapParams(params);
         const lookback = p.lookback;
         if (cleanData.length < lookback + 1) return [];
 
-        const closes = getCloses(cleanData);
-        const returns = closes.map((close, i) => i === 0 || closes[i - 1] <= 0 ? 0 : Math.log(close / closes[i - 1]));
-        const skewness = buildRollingSkewness(returns, lookback);
+        const skewness = getPreparedSkewness(prepared, lookback);
         const pressure = buildPolymarket1sPressureGap(cleanData, context, { volLookback: lookback });
         if (!pressure.available) return [];
 
@@ -62,6 +106,15 @@ export const skewness_regime_reversion_pressure_gap: Strategy = {
             }
             return null;
         });
+    },
+    execute: (data, params, context) => {
+        if (!context?.polymarket1s) return [];
+        return skewness_regime_reversion_pressure_gap.executePrepared?.(
+            prepareSkewnessRegimeReversionPressureGapData(data),
+            params,
+            data,
+            context
+        ) ?? [];
     },
     metadata: {
         role: "entry",

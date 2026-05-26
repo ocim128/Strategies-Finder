@@ -168,6 +168,21 @@ describe('strategy prepared execution parity', () => {
                 minEfficiency: 0.45,
                 minEdge: 0.01,
             },
+            skewness_regime_reversion_pressure_gap: {
+                lookback: 18,
+                skewThreshold: 0.75,
+                minEdge: 0.01,
+            },
+            micro_streak_decay_executable_edge: {
+                streakLength: 3,
+                volLookback: 18,
+                minEdge: 0.01,
+            },
+            probability_theta_decay_arbitrage: {
+                volLookback: 18,
+                progressMin: 0.5,
+                minEdge: 0.01,
+            },
         };
 
         for (const { key, strategy } of strategyManifest) {
