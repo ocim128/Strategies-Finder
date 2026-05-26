@@ -59,7 +59,13 @@ export class State {
 
     public emit<K extends StateKey>(key: K, value: this[K]): void {
         const listeners = this.listeners.get(key);
-        listeners?.forEach(cb => cb(value));
+        listeners?.forEach(cb => {
+            try {
+                cb(value);
+            } catch (error) {
+                console.warn("[state] listener failed", { key, error });
+            }
+        });
     }
 
     // Helper to reset trade-related state

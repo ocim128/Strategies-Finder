@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import { backtestEndpointPlugin } from './lib/backtest-endpoint-plugin';
@@ -7,13 +7,20 @@ import { strategyLibraryAuditPlugin } from './lib/strategy-library-audit-plugin'
 import { executionLabVitePlugin } from './lib/execution-lab/execution-lab-vite-plugin';
 import { localSqlitePlugin } from './lib/local-sqlite-vite-plugin';
 import { secondMarketApiPlugin } from './lib/second-market-vite-plugin';
+import { createFetchTimeoutSignal, isAbortError } from './lib/dataProviders/fetch-helpers';
 import { sendCaughtErrorJson, sendJson } from './lib/vite-http-utils';
 
 const BYBIT_TRADFI_KLINE_URL = 'https://www.bybit.com/x-api/fapi/copymt5/kline';
 const POLYMARKET_GAMMA_EVENT_SLUG_URL = 'https://gamma-api.polymarket.com/events/slug';
 const POLYMARKET_CLOB_HISTORY_URL = 'https://clob.polymarket.com/prices-history';
+const BYBIT_TRADFI_PROXY_TIMEOUT_MS = 8000;
 const POLYMARKET_PROXY_TIMEOUT_MS = 8000;
-const INDONESIAN_STOCK_PRICE_DATA_DIR = resolve(process.cwd(), 'price-data', 'indonesian-stock');
+const APP_ROOT = process.cwd();
+const LIGHTWEIGHT_CHARTS_ROOT = resolve(APP_ROOT, '..', '..', '..');
+const LIGHTWEIGHT_CHARTS_DIST_DIR = resolve(LIGHTWEIGHT_CHARTS_ROOT, 'dist');
+const LIGHTWEIGHT_CHARTS_NODE_MODULES_DIR = resolve(LIGHTWEIGHT_CHARTS_ROOT, 'node_modules');
+const INDONESIAN_STOCK_PRICE_DATA_DIR = resolve(APP_ROOT, 'price-data', 'indonesian-stock');
+const INDONESIAN_STOCK_CATALOG_CACHE_TTL_MS = 30_000;
 const WATCH_STRATEGIES = process.env.WATCH_STRATEGIES === '1';
 const WATCH_IGNORED_GLOBS = [
     // Generated artifacts are rewritten in place and can trip Vite's watcher on Windows.
@@ -23,14 +30,34 @@ const WATCH_IGNORED_GLOBS = [
     ...(WATCH_STRATEGIES ? [] : ['**/lib/strategies/**']),
 ];
 
+type LocalPriceDataCatalogAsset = { symbol: string; name: string };
+
+let indonesianStockCatalogCache: {
+    loadedAtMs: number;
+    assets: LocalPriceDataCatalogAsset[];
+} | null = null;
+
 function parseLimit(raw: string | null): number {
     const parsed = Number(raw || '500');
     if (!Number.isFinite(parsed)) return 500;
     return Math.max(1, Math.min(500, Math.floor(parsed)));
 }
 
-function readIndonesianStockCatalog(): Array<{ symbol: string; name: string }> {
-    return readdirSync(INDONESIAN_STOCK_PRICE_DATA_DIR, { withFileTypes: true })
+function readIndonesianStockCatalog(): LocalPriceDataCatalogAsset[] {
+    const now = Date.now();
+    if (
+        indonesianStockCatalogCache
+        && now - indonesianStockCatalogCache.loadedAtMs < INDONESIAN_STOCK_CATALOG_CACHE_TTL_MS
+    ) {
+        return indonesianStockCatalogCache.assets;
+    }
+
+    if (!existsSync(INDONESIAN_STOCK_PRICE_DATA_DIR)) {
+        indonesianStockCatalogCache = { loadedAtMs: now, assets: [] };
+        return indonesianStockCatalogCache.assets;
+    }
+
+    const assets = readdirSync(INDONESIAN_STOCK_PRICE_DATA_DIR, { withFileTypes: true })
         .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.csv'))
         .map((entry) => {
             const symbol = entry.name.slice(0, -4).trim().toUpperCase();
@@ -40,16 +67,19 @@ function readIndonesianStockCatalog(): Array<{ symbol: string; name: string }> {
         })
         .filter((entry): entry is { symbol: string; name: string } => entry !== null)
         .sort((a, b) => a.symbol.localeCompare(b.symbol));
+    indonesianStockCatalogCache = { loadedAtMs: now, assets };
+    return assets;
 }
 
-function createPolymarketProxyTimeoutSignal(): AbortSignal | undefined {
-    return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
-        ? AbortSignal.timeout(POLYMARKET_PROXY_TIMEOUT_MS)
-        : undefined;
-}
-
-function isAbortLikeError(error: unknown): boolean {
-    return error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError');
+function manualChunks(id: string): string | undefined {
+    const normalized = id.replace(/\\/g, '/');
+    if (
+        normalized.includes('/node_modules/fancy-canvas/')
+        || normalized.includes('/dist/lightweight-charts.')
+    ) {
+        return 'vendor-charts';
+    }
+    return undefined;
 }
 
 function tradFiKlineProxyPlugin(): Plugin {
@@ -84,17 +114,27 @@ function tradFiKlineProxyPlugin(): Plugin {
                         upstreamParams.set('to', to);
                     }
 
-                    const upstream = await fetch(`${BYBIT_TRADFI_KLINE_URL}?${upstreamParams.toString()}`, {
-                        headers: { Accept: 'application/json' },
-                    });
+                    const timeout = createFetchTimeoutSignal(undefined, BYBIT_TRADFI_PROXY_TIMEOUT_MS);
+                    try {
+                        const upstream = await fetch(`${BYBIT_TRADFI_KLINE_URL}?${upstreamParams.toString()}`, {
+                            headers: { Accept: 'application/json' },
+                            signal: timeout.signal,
+                        });
 
-                    const body = await upstream.text();
-                    res.statusCode = upstream.status;
-                    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
-                    res.setHeader('Cache-Control', 'no-store');
-                    res.end(body);
-                } catch {
-                    sendJson(res, 500, { ret_code: 10002, ret_msg: 'TradFi proxy request failed' });
+                        const body = await upstream.text();
+                        res.statusCode = upstream.status;
+                        res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
+                        res.setHeader('Cache-Control', 'no-store');
+                        res.end(body);
+                    } finally {
+                        timeout.cleanup();
+                    }
+                } catch (error) {
+                    const timedOut = isAbortError(error);
+                    sendJson(res, timedOut ? 504 : 500, {
+                        ret_code: 10002,
+                        ret_msg: timedOut ? 'TradFi proxy request timed out' : 'TradFi proxy request failed',
+                    });
                 }
             });
         },
@@ -117,17 +157,22 @@ function polymarketProxyPlugin(): Plugin {
                     return;
                 }
 
-                const upstream = await fetch(`${POLYMARKET_GAMMA_EVENT_SLUG_URL}/${encodeURIComponent(slug)}`, {
-                    headers: { Accept: 'application/json' },
-                    signal: createPolymarketProxyTimeoutSignal(),
-                });
-                const body = await upstream.text();
-                res.statusCode = upstream.status;
-                res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
-                res.setHeader('Cache-Control', 'no-store');
-                res.end(body);
+                const timeout = createFetchTimeoutSignal(undefined, POLYMARKET_PROXY_TIMEOUT_MS);
+                try {
+                    const upstream = await fetch(`${POLYMARKET_GAMMA_EVENT_SLUG_URL}/${encodeURIComponent(slug)}`, {
+                        headers: { Accept: 'application/json' },
+                        signal: timeout.signal,
+                    });
+                    const body = await upstream.text();
+                    res.statusCode = upstream.status;
+                    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
+                    res.setHeader('Cache-Control', 'no-store');
+                    res.end(body);
+                } finally {
+                    timeout.cleanup();
+                }
             } catch (error) {
-                const timedOut = isAbortLikeError(error);
+                const timedOut = isAbortError(error);
                 sendJson(res, timedOut ? 504 : 500, {
                     ok: false,
                     error: timedOut
@@ -162,17 +207,22 @@ function polymarketProxyPlugin(): Plugin {
                 if (endTs) upstreamParams.set('endTs', endTs);
                 if (fidelity) upstreamParams.set('fidelity', fidelity);
 
-                const upstream = await fetch(`${POLYMARKET_CLOB_HISTORY_URL}?${upstreamParams.toString()}`, {
-                    headers: { Accept: 'application/json' },
-                    signal: createPolymarketProxyTimeoutSignal(),
-                });
-                const body = await upstream.text();
-                res.statusCode = upstream.status;
-                res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
-                res.setHeader('Cache-Control', 'no-store');
-                res.end(body);
+                const timeout = createFetchTimeoutSignal(undefined, POLYMARKET_PROXY_TIMEOUT_MS);
+                try {
+                    const upstream = await fetch(`${POLYMARKET_CLOB_HISTORY_URL}?${upstreamParams.toString()}`, {
+                        headers: { Accept: 'application/json' },
+                        signal: timeout.signal,
+                    });
+                    const body = await upstream.text();
+                    res.statusCode = upstream.status;
+                    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
+                    res.setHeader('Cache-Control', 'no-store');
+                    res.end(body);
+                } finally {
+                    timeout.cleanup();
+                }
             } catch (error) {
-                const timedOut = isAbortLikeError(error);
+                const timedOut = isAbortError(error);
                 sendJson(res, timedOut ? 504 : 500, {
                     ok: false,
                     error: timedOut
@@ -241,10 +291,21 @@ export default defineConfig({
     ],
     server: {
         fs: {
-            allow: ['../../..']
+            allow: [
+                APP_ROOT,
+                LIGHTWEIGHT_CHARTS_DIST_DIR,
+                LIGHTWEIGHT_CHARTS_NODE_MODULES_DIR,
+            ],
         },
         watch: {
             ignored: WATCH_IGNORED_GLOBS,
         },
-    }
+    },
+    build: {
+        rollupOptions: {
+            output: {
+                manualChunks,
+            },
+        },
+    },
 });

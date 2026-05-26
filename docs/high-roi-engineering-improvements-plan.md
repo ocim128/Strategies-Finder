@@ -2,7 +2,13 @@
 
 ## Goal
 
-Create an implementation-ready plan for the low-risk, high-ROI engineering improvements identified in the repository audit. This document is planning only; implementation should start only after the selected phases are approved.
+Create an implementation-ready plan for the low-risk, high-ROI engineering improvements identified in the repository audit. This document began as planning-only; implementation status is tracked below after approval.
+
+## Implementation Status
+
+- Implemented phases: stale data-load guard, Execution Lab config hermeticity, Vite filesystem hardening, provider/proxy timeouts, staged test type coverage, listener fault isolation, chart-vendor chunking, and local catalog caching.
+- `tsconfig.tests.json` uses staged coverage. A full `tests/**/*.spec.ts` typecheck currently exposes broad pre-existing fixture/type debt, mostly `Time` branding, stale settings fixtures, and mirrored `tests/lib/*` import paths.
+- Build measurement after chart-vendor chunking: main chunk reduced from the baseline `984.06 kB` to about `812 kB`; `vendor-charts` is about `174.92 kB`.
 
 ## Assumptions and Unknowns
 
@@ -583,4 +589,3 @@ Capture behavior changes and finish with a clean, reproducible validation report
 - Implemented phases have passing focused validation.
 - Any remaining failures are identified as baseline or explicitly unresolved.
 - Final summary lists changed files, validation, and follow-up priorities.
-

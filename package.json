@@ -6,6 +6,7 @@
     "test:e2e": "esno tests/e2e.spec.ts",
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
+    "verify": "npm run typecheck && npm run typecheck:tests && npm run test",
     "genetic:hunt": "esno scripts/genetic-hunt.ts",
     "market:load": "esno scripts/universal-market-loader.ts",
     "alpha:sweep": "esno scripts/alpha-sweep.ts",

@@ -9,6 +9,7 @@ import { BinanceKline, HistoricalFetchOptions } from '../types/index';
 import { getIntervalSeconds, wait } from "./utils";
 import { BINANCE_INTERVALS } from "../binance-market-data-utils";
 import {
+    createFetchTimeoutSignal,
     findBestDivisibleInterval,
     formatProviderError,
     isAbortError,
@@ -84,18 +85,23 @@ async function fetchKlinesBatch(
     if (typeof startTime === 'number' && Number.isFinite(startTime)) url += `&startTime=${Math.floor(startTime)}`;
     if (typeof endTime === 'number' && Number.isFinite(endTime)) url += `&endTime=${Math.floor(endTime)}`;
 
-    const response = await fetch(url, { signal: options?.signal });
-    if (!response.ok) {
-        debugLogger.warn('data.fetch.http_error', {
-            symbol,
-            interval,
-            status: response.status,
-        });
-        throw new Error(`HTTP error! status: ${response.status}`);
-    }
+    const timeout = createFetchTimeoutSignal(options?.signal);
+    try {
+        const response = await fetch(url, { signal: timeout.signal });
+        if (!response.ok) {
+            debugLogger.warn('data.fetch.http_error', {
+                symbol,
+                interval,
+                status: response.status,
+            });
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
 
-    const data = await response.json();
-    return Array.isArray(data) ? data : [];
+        const data = await response.json();
+        return Array.isArray(data) ? data : [];
+    } finally {
+        timeout.cleanup();
+    }
 }
 
 function mapToOHLCV(rawData: BinanceKline[]): OHLCVData[] {

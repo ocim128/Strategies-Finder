@@ -43,6 +43,7 @@ import { DataProviderRouter } from "./data/data-provider-router";
 import { DataCache } from "./data/data-cache";
 import { DataPersistence } from "./data/data-persistence";
 import { DataFetcher } from "./data/data-fetcher";
+import { LatestLoadGuard, type LatestLoadTicket } from "./data/latest-load-guard";
 import { isSecondMarketChartContext } from "./second-market/api";
 
 export type { DataLoadReporter } from "./data/data-fetcher";
@@ -71,6 +72,7 @@ export class DataManager {
     public streamInterval: string = '';
     public streamProvider: DataProvider | '' = '';
     private streamSessionId = 0;
+    private setSymbolLoadGuard = new LatestLoadGuard();
 
     // Polling state for non-GS providers
     private isPolling: boolean = false;
@@ -198,6 +200,8 @@ export class DataManager {
     }
 
     public async setSymbol(symbol: string, interval: string): Promise<OHLCVData[]> {
+        const loadTicket = this.setSymbolLoadGuard.start();
+
         this.clearImportedData();
         this.stopStreaming();
         setMarketSelection({ symbol, interval });
@@ -205,15 +209,34 @@ export class DataManager {
         uiManager.clearUI();
         uiManager.updateTimeframeUI(interval);
 
-        const data = await this.fetchData(symbol, interval);
-        commitOhlcvData(data, 'set_symbol_load');
-        this.loadedSymbol = symbol;
-        this.loadedInterval = interval;
-        this.loadedBinanceMarketType = state.binanceMarketType;
+        try {
+            const data = await this.fetchData(symbol, interval, loadTicket.signal);
+            if (!this.isActiveSetSymbolLoad(loadTicket, symbol, interval)) {
+                debugLogger.info('data.load.stale_ignored', { symbol, interval });
+                return [];
+            }
 
-        this.startStreaming(symbol, interval);
+            commitOhlcvData(data, 'set_symbol_load');
+            this.loadedSymbol = symbol;
+            this.loadedInterval = interval;
+            this.loadedBinanceMarketType = state.binanceMarketType;
 
-        return data;
+            this.startStreaming(symbol, interval);
+
+            return data;
+        } catch (error) {
+            if (!this.isActiveSetSymbolLoad(loadTicket, symbol, interval) || loadTicket.signal.aborted) {
+                debugLogger.info('data.load.stale_failed_ignored', {
+                    symbol,
+                    interval,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                return [];
+            }
+            throw error;
+        } finally {
+            loadTicket.finish();
+        }
     }
 
     public async fetchHistoricalData(
@@ -316,6 +339,16 @@ export class DataManager {
             && this.streamSymbol === symbol
             && this.streamInterval === interval
             && this.streamProvider === provider
+            && state.currentSymbol === symbol
+            && state.currentInterval === interval;
+    }
+
+    private isActiveSetSymbolLoad(
+        loadTicket: LatestLoadTicket,
+        symbol: string,
+        interval: string
+    ): boolean {
+        return loadTicket.isActive()
             && state.currentSymbol === symbol
             && state.currentInterval === interval;
     }

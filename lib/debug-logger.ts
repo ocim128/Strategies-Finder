@@ -75,7 +75,7 @@ export class DebugLogger {
             return;
         }
         const allEntries = this.entries.getAll();
-        this.listeners.forEach(listener => listener(allEntries));
+        this.notifyListeners(allEntries);
     }
 
     public info(message: string, data?: unknown) {
@@ -96,7 +96,7 @@ export class DebugLogger {
 
     public clear() {
         this.entries.clear();
-        this.listeners.forEach(listener => listener([]));
+        this.notifyListeners([]);
     }
 
     public getEntries(): DebugEntry[] {
@@ -106,6 +106,16 @@ export class DebugLogger {
     public subscribe(listener: Listener): () => void {
         this.listeners.add(listener);
         return () => this.listeners.delete(listener);
+    }
+
+    private notifyListeners(entries: DebugEntry[]): void {
+        this.listeners.forEach(listener => {
+            try {
+                listener(entries);
+            } catch (error) {
+                console.warn("[debug-logger] listener failed", error);
+            }
+        });
     }
 }
 

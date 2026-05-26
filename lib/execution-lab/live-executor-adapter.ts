@@ -39,6 +39,7 @@ const DEFAULT_STDOUT_BYTE_LIMIT = 64 * 1024;
 const DEFAULT_STDERR_BYTE_LIMIT = 64 * 1024;
 const SUPPORTED_TAKER_ORDER_TYPES: LiveTakerOrderType[] = ["FOK", "FAK"];
 const DEFAULT_ENV_MODE = "development";
+const IGNORE_REPO_ENV_KEY = "EXECUTION_LAB_LIVE_IGNORE_REPO_ENV";
 const SAFE_PARENT_ENV_KEYS = [
     "APPDATA",
     "COMSPEC",
@@ -155,6 +156,13 @@ function parseExecutorUrl(value: string | undefined): string {
     }
 }
 
+function hasConfigOverride<K extends keyof LiveExecutorAdapterConfig>(
+    override: Partial<LiveExecutorAdapterConfig> | undefined,
+    key: K
+): boolean {
+    return override !== undefined && Object.prototype.hasOwnProperty.call(override, key);
+}
+
 function inferExecutorCwd(executorPath: string, configuredCwd: string | undefined): string {
     const trimmedCwd = String(configuredCwd ?? "").trim();
     if (trimmedCwd) return resolve(trimmedCwd);
@@ -171,6 +179,9 @@ function inferExecutorCwd(executorPath: string, configuredCwd: string | undefine
 }
 
 function readRepoEnv(env: NodeJS.ProcessEnv, envDir = process.cwd()): NodeJS.ProcessEnv {
+    if (parseBool(env[IGNORE_REPO_ENV_KEY])) {
+        return { ...env };
+    }
     const mode = String(env.MODE || env.NODE_ENV || DEFAULT_ENV_MODE);
     return { ...loadEnv(mode, envDir, ""), ...env };
 }
@@ -224,8 +235,30 @@ export function readLiveExecutorConfig(
     envDir?: string
 ): LiveExecutorAdapterConfig {
     const mergedEnv = readRepoEnv(env, envDir);
-    const executorPath = override?.executorPath ?? String(mergedEnv.EXECUTION_LAB_LIVE_EXECUTOR_PATH ?? "").trim();
-    const executorUrl = override?.executorUrl ?? parseExecutorUrl(mergedEnv.EXECUTION_LAB_LIVE_EXECUTOR_URL);
+    const hasExecutorPathOverride = hasConfigOverride(override, "executorPath");
+    const hasExecutorUrlOverride = hasConfigOverride(override, "executorUrl");
+    const hasExecutorCwdOverride = hasConfigOverride(override, "executorCwd");
+    const hasExecutorArgsOverride = hasConfigOverride(override, "executorArgs");
+    const executorPath = hasExecutorPathOverride
+        ? String(override?.executorPath ?? "").trim()
+        : String(mergedEnv.EXECUTION_LAB_LIVE_EXECUTOR_PATH ?? "").trim();
+    const hasCliPathOverride = hasExecutorPathOverride && executorPath.length > 0;
+    const executorUrl = hasExecutorUrlOverride
+        ? parseExecutorUrl(override?.executorUrl)
+        : hasCliPathOverride
+            ? ""
+            : parseExecutorUrl(mergedEnv.EXECUTION_LAB_LIVE_EXECUTOR_URL);
+    const executorCwd = hasExecutorCwdOverride
+        ? resolve(String(override?.executorCwd ?? ""))
+        : inferExecutorCwd(
+            executorPath,
+            hasCliPathOverride ? undefined : mergedEnv.EXECUTION_LAB_LIVE_EXECUTOR_CWD
+        );
+    const executorArgs = hasExecutorArgsOverride
+        ? [...(override?.executorArgs ?? [])]
+        : hasCliPathOverride
+            ? []
+            : parseArgsJson(mergedEnv.EXECUTION_LAB_LIVE_EXECUTOR_ARGS_JSON);
     const takerOrderType = override?.takerOrderType
         ?? override?.orderType
         ?? parseTakerOrderType(
@@ -236,8 +269,8 @@ export function readLiveExecutorConfig(
     return {
         executorPath,
         executorUrl,
-        executorCwd: override?.executorCwd ?? inferExecutorCwd(executorPath, mergedEnv.EXECUTION_LAB_LIVE_EXECUTOR_CWD),
-        executorArgs: override?.executorArgs ?? parseArgsJson(mergedEnv.EXECUTION_LAB_LIVE_EXECUTOR_ARGS_JSON),
+        executorCwd,
+        executorArgs,
         liveEnabled: override?.liveEnabled ?? parseBool(mergedEnv.EXECUTION_LAB_LIVE_ENABLED),
         maxStakeUsd: override?.maxStakeUsd ?? parsePositiveNumber(mergedEnv.EXECUTION_LAB_LIVE_MAX_STAKE_USD, LIVE_TRADE_DEFAULT_MAX_STAKE_USD),
         sizingMode: override?.sizingMode ?? parseSizingMode(mergedEnv.EXECUTION_LAB_LIVE_SIZING_MODE),

@@ -214,7 +214,18 @@ export function setupStateSubscriptions() {
             }
             setPriceLoading();
             clearAll();
-            dataManager.loadData(state.currentSymbol, state.currentInterval);
+            void dataManager.loadData(state.currentSymbol, state.currentInterval).catch((error) => {
+                debugLogger.error('data.reload_failed', {
+                    symbol: state.currentSymbol,
+                    interval: state.currentInterval,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                uiManager.updateSymbolDataSource(
+                    'Load failed',
+                    'warning',
+                    'Chart data reload failed. Check the debug log for details.'
+                );
+            });
         }, 0);
     };
 

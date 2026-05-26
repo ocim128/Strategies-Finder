@@ -191,7 +191,11 @@ function liveTradeRequest(overrides: Record<string, unknown> = {}): Record<strin
 
 function withEnv<T>(updates: Record<string, string | undefined>, run: () => Promise<T>): Promise<T> {
     const previous = new Map<string, string | undefined>();
-    for (const [key, value] of Object.entries(updates)) {
+    const isolatedUpdates = {
+        ...updates,
+        EXECUTION_LAB_LIVE_IGNORE_REPO_ENV: "1",
+    };
+    for (const [key, value] of Object.entries(isolatedUpdates)) {
         previous.set(key, process.env[key]);
         if (value === undefined) {
             delete process.env[key];

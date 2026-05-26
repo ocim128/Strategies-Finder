@@ -1,5 +1,7 @@
 import { getIntervalSeconds } from "./utils";
 
+export const DEFAULT_PROVIDER_FETCH_TIMEOUT_MS = 15_000;
+
 export function findBestDivisibleInterval(
     targetSeconds: number,
     candidates: Iterable<string>
@@ -41,10 +43,14 @@ export function resolveRawFetchLimit(
 }
 
 export function isAbortError(error: unknown): boolean {
-    if (error instanceof DOMException) {
-        return error.name === 'AbortError';
+    if (typeof DOMException !== 'undefined' && error instanceof DOMException) {
+        return error.name === 'AbortError' || error.name === 'TimeoutError';
     }
-    return (error as { name?: string }).name === 'AbortError';
+    if (error === null || typeof error !== 'object') {
+        return false;
+    }
+    const name = (error as { name?: string }).name;
+    return name === 'AbortError' || name === 'TimeoutError';
 }
 
 export function formatProviderError(error: unknown): string {
@@ -52,4 +58,50 @@ export function formatProviderError(error: unknown): string {
         return `${error.name}: ${error.message}`;
     }
     return String(error);
+}
+
+function createTimeoutAbortReason(): unknown {
+    if (typeof DOMException !== 'undefined') {
+        return new DOMException('Provider request timed out', 'TimeoutError');
+    }
+    const error = new Error('Provider request timed out');
+    error.name = 'TimeoutError';
+    return error;
+}
+
+export function createFetchTimeoutSignal(
+    parentSignal?: AbortSignal,
+    timeoutMs: number = DEFAULT_PROVIDER_FETCH_TIMEOUT_MS
+): { signal?: AbortSignal; cleanup: () => void } {
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || typeof AbortController === 'undefined') {
+        return { signal: parentSignal, cleanup: () => {} };
+    }
+    if (parentSignal?.aborted) {
+        return { signal: parentSignal, cleanup: () => {} };
+    }
+
+    const controller = new AbortController();
+    const abortFromParent = () => {
+        const reason = (parentSignal as AbortSignal & { reason?: unknown } | undefined)?.reason;
+        if (reason === undefined) {
+            controller.abort();
+        } else {
+            controller.abort(reason);
+        }
+    };
+    parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+
+    const timeout = setTimeout(() => {
+        if (!controller.signal.aborted) {
+            controller.abort(createTimeoutAbortReason());
+        }
+    }, timeoutMs);
+
+    return {
+        signal: controller.signal,
+        cleanup: () => {
+            clearTimeout(timeout);
+            parentSignal?.removeEventListener('abort', abortFromParent);
+        },
+    };
 }

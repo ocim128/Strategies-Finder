@@ -354,11 +354,13 @@ Run from this directory.
 
 ```bash
 npm run typecheck
+npm run typecheck:tests
 npm run test
 npm run test:e2e
 ```
 
 `npm run test` uses a compact wrapper that discovers `tests/**/*.spec.ts`, excludes `tests/e2e.spec.ts`, prints one status line per spec, and writes full per-spec logs to `artifacts/test-logs/latest`. `artifacts/test-logs/latest/summary.json` contains the machine-readable summary for agent or tooling use.
+`npm run verify` runs typecheck, staged test typecheck, and the compact test suite.
 
 Useful variants:
 ```bash

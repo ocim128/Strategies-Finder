@@ -203,6 +203,27 @@ describe("Execution Lab live executor adapter", () => {
         }
     });
 
+    it("can ignore repo .env for hermetic executor config checks", () => {
+        const dir = mkdtempSync(join(tmpdir(), "execution-lab-env-"));
+        try {
+            writeFileSync(join(dir, ".env"), [
+                "EXECUTION_LAB_LIVE_EXECUTOR_URL=http://127.0.0.1:65530/trade",
+                "EXECUTION_LAB_LIVE_EXECUTOR_ARGS_JSON=[\"--env\"]",
+            ].join("\n"));
+
+            const config = readLiveExecutorConfig({
+                EXECUTION_LAB_LIVE_IGNORE_REPO_ENV: "1",
+                EXECUTION_LAB_LIVE_EXECUTOR_PATH: process.execPath,
+            }, undefined, dir);
+
+            expect(config.executorPath).to.equal(process.execPath);
+            expect(config.executorUrl).to.equal("");
+            expect(config.executorArgs).to.deep.equal([]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it("infers the side repo root when the executor lives under target debug or release", () => {
         const dir = mkdtempSync(join(tmpdir(), "execution-lab-cwd-"));
         try {
@@ -213,6 +234,50 @@ describe("Execution Lab live executor adapter", () => {
             }, undefined, dir);
 
             expect(config.executorCwd).to.equal(dir);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("does not mix env executor transport into explicit CLI path overrides", () => {
+        const dir = mkdtempSync(join(tmpdir(), "execution-lab-env-"));
+        try {
+            const envCwd = join(dir, "env-cwd");
+            mkdirSync(envCwd, { recursive: true });
+            const config = readLiveExecutorConfig({
+                EXECUTION_LAB_LIVE_EXECUTOR_URL: "http://127.0.0.1:65530/trade",
+                EXECUTION_LAB_LIVE_EXECUTOR_CWD: envCwd,
+                EXECUTION_LAB_LIVE_EXECUTOR_ARGS_JSON: JSON.stringify(["-e", "console.log('env')"]),
+            }, {
+                executorPath: process.execPath,
+            }, dir);
+
+            expect(config.executorPath).to.equal(process.execPath);
+            expect(config.executorUrl).to.equal("");
+            expect(config.executorCwd).to.equal(process.cwd());
+            expect(config.executorArgs).to.deep.equal([]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("does not treat an empty executor path override as a CLI transport override", () => {
+        const dir = mkdtempSync(join(tmpdir(), "execution-lab-env-"));
+        try {
+            const envCwd = join(dir, "env-cwd");
+            mkdirSync(envCwd, { recursive: true });
+            const config = readLiveExecutorConfig({
+                EXECUTION_LAB_LIVE_EXECUTOR_URL: "http://127.0.0.1:65530/trade",
+                EXECUTION_LAB_LIVE_EXECUTOR_CWD: envCwd,
+                EXECUTION_LAB_LIVE_EXECUTOR_ARGS_JSON: JSON.stringify(["--env"]),
+            }, {
+                executorPath: "",
+            }, dir);
+
+            expect(config.executorPath).to.equal("");
+            expect(config.executorUrl).to.equal("http://127.0.0.1:65530/trade");
+            expect(config.executorCwd).to.equal(envCwd);
+            expect(config.executorArgs).to.deep.equal(["--env"]);
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
