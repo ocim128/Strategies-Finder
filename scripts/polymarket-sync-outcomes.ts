@@ -59,6 +59,7 @@ type CliConfig = {
     seriesId: string;
     symbol?: string;
     allSymbols: boolean;
+    allowNoUsableRows: boolean;
     outcomeInterval: PolymarketOutcomeInterval;
     hasExplicitOutcomeInterval: boolean;
     startDateMin: string;
@@ -366,6 +367,7 @@ export function parseArgs(argv: string[]): CliConfig | null {
         seriesId,
         symbol,
         allSymbols,
+        allowNoUsableRows: false,
         outcomeInterval,
         hasExplicitOutcomeInterval,
         startDateMin,
@@ -760,7 +762,12 @@ async function runSingleSeriesSync(cfg: CliConfig): Promise<OutcomeSyncSummary> 
 
     console.log(`[poly:sync-outcomes] Built ${outcomeRows.length} outcome rows`);
     if (outcomeRows.length === 0) {
-        if (syncEvents.length === 0) {
+        if (syncEvents.length === 0 || cfg.allowNoUsableRows) {
+            if (syncEvents.length > 0) {
+                console.warn(
+                    `[poly:sync-outcomes] No usable outcome rows for ${cfg.symbol ?? cfg.seriesId} ${cfg.outcomeInterval}; continuing.`
+                );
+            }
             return {
                 symbol: cfg.symbol,
                 outcomeInterval: cfg.outcomeInterval,
@@ -837,6 +844,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
             symbol: target.symbol,
             outcomeInterval: target.outcomeInterval,
             seriesId: target.seriesId,
+            allowNoUsableRows: targets.length > 1,
             outPath: resolveTargetOutPath(cfg.outPath, target, targets.length),
         };
 

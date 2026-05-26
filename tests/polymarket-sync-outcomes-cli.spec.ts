@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildOutcomeRow, parseArgs, resolveOutcomeSyncTargets } from "../scripts/polymarket-sync-outcomes";
+import { buildOutcomeRow, main, parseArgs, resolveOutcomeSyncTargets } from "../scripts/polymarket-sync-outcomes";
 
 describe("polymarket sync outcomes CLI", () => {
     it("keeps the default single-target BTC sync", () => {
@@ -85,5 +85,55 @@ describe("polymarket sync outcomes CLI", () => {
         assert.equal(row.yes_entry_minute_2_price, 0.425);
         assert.equal(row.yes_entry_minute_3_price, 0.535);
         assert.equal(row.yes_entry_minute_4_price, 0.645);
+    });
+
+    it("lets --all continue when a target has missing events but no usable history rows", async () => {
+        const originalFetch = globalThis.fetch;
+        const originalLog = console.log;
+        const originalWarn = console.warn;
+        const gammaSeriesIds: string[] = [];
+        let storeCalls = 0;
+
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+            const url = new URL(String(input));
+            if (url.hostname === "gamma-api.polymarket.com") {
+                const seriesId = url.searchParams.get("series_id") ?? "unknown";
+                gammaSeriesIds.push(seriesId);
+                return new Response(JSON.stringify([{
+                    slug: `event-${seriesId}`,
+                    endDate: "2026-05-25T12:00:00.000Z",
+                    markets: [{
+                        slug: `event-${seriesId}`,
+                        outcomes: ["Up", "Down"],
+                        outcomePrices: ["1", "0"],
+                        clobTokenIds: [`yes-${seriesId}`, `no-${seriesId}`],
+                    }],
+                }]), { status: 200 });
+            }
+            if (url.pathname === "/api/sqlite/load-polymarket-outcomes") {
+                return new Response(JSON.stringify({ ok: true, rows: [] }), { status: 200 });
+            }
+            if (url.hostname === "clob.polymarket.com") {
+                return new Response(JSON.stringify({ history: [] }), { status: 200 });
+            }
+            if (url.pathname === "/api/sqlite/store-polymarket-outcomes") {
+                storeCalls++;
+                return new Response(JSON.stringify({ ok: true, upserted: 0 }), { status: 200 });
+            }
+            throw new Error(`Unexpected fetch ${url.toString()}`);
+        }) as typeof fetch;
+        console.log = () => {};
+        console.warn = () => {};
+
+        try {
+            await main(["--all", "--interval", "1h", "--max-events", "1", "--vite-origin", "http://local.test"]);
+        } finally {
+            globalThis.fetch = originalFetch;
+            console.log = originalLog;
+            console.warn = originalWarn;
+        }
+
+        assert.deepEqual(gammaSeriesIds, ["10114", "10117", "10122", "10123"]);
+        assert.equal(storeCalls, 0);
     });
 });
