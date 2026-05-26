@@ -12,7 +12,7 @@
 .strategy-workspace {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--space-3);
     container-type: inline-size;
 }
 
@@ -53,13 +53,13 @@
 .strategy-workspace-card {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2-5);
+    gap: var(--space-3);
     min-width: 0;
     padding: var(--space-3);
-    border-radius: var(--radius-l);
+    border-radius: var(--radius-m);
     border: 1px solid var(--card-border);
     background: var(--card-bg);
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow-xs);
 }
 
 .strategy-workspace-card-top {
@@ -117,9 +117,10 @@
 }
 
 .strategy-workspace-title {
-    font-size: calc(var(--font-size-base) + 4px);
-    font-weight: var(--font-weight-bold);
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
     color: var(--text-primary);
+    line-height: var(--line-height-tight);
 }
 
 .strategy-workspace-title[data-strategy-kind="polymarket-1s"] {
@@ -132,7 +133,7 @@
 
 .strategy-workspace-description {
     font-size: var(--font-size-sm);
-    line-height: var(--line-height-relaxed);
+    line-height: var(--line-height-normal);
     color: var(--text-secondary);
 }
 
@@ -488,7 +489,7 @@
 .settings-preset-bar {
     display: flex;
     gap: 2px;
-    padding: 2px;
+    padding: 3px;
     background: var(--card-bg-muted);
     border-radius: var(--radius-m);
     border: 1px solid var(--card-border);
@@ -496,6 +497,7 @@
 
 .settings-preset-btn {
     flex: 1;
+    min-height: 32px;
     padding: var(--space-1) var(--space-2);
     border: none;
     border-radius: var(--radius-s);
@@ -522,7 +524,7 @@
     background: var(--field-bg);
     color: var(--text-primary);
     font-weight: var(--font-weight-semibold);
-    box-shadow: var(--shadow-xs);
+    box-shadow: var(--shadow-xs), inset 0 0 0 1px hsl(var(--hsl-accent) / 0.08);
 }
 
 .settings-preset-btn .preset-dot {
@@ -558,19 +560,20 @@
     user-select: none;
     -webkit-user-select: none;
     border-radius: var(--radius-m);
+    min-height: 40px;
     padding: var(--space-2) var(--space-2-5);
     margin-left: calc(-1 * var(--space-2));
     margin-right: calc(-1 * var(--space-2));
     margin-bottom: var(--space-2);
     margin-top: var(--space-2);
-    transition: background 0.1s ease, border-color 0.1s ease;
-    border: 1px solid transparent;
-    border-bottom: 1px solid hsl(var(--hsl-border) / 0.45);
+    transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
+    border: 1px solid hsl(var(--hsl-border) / 0.16);
+    border-bottom-color: hsl(var(--hsl-border) / 0.36);
 }
 
 .section-header.collapsible:hover {
     background: var(--card-bg-muted);
-    border-color: hsl(var(--hsl-accent) / 0.12);
+    border-color: hsl(var(--hsl-accent) / 0.18);
 }
 
 /* Chevron indicator */
@@ -621,7 +624,7 @@
 .param-hint {
     margin-top: calc(var(--space-1) * 0.5);
     font-size: var(--font-size-xs);
-    line-height: 1.5;
+    line-height: var(--line-height-normal);
     color: var(--text-tertiary);
     max-width: 320px;
 }

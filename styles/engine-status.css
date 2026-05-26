@@ -5,14 +5,18 @@
 .engine-status {
     display: inline-flex;
     align-items: center;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 11px;
+    justify-content: center;
+    min-height: 28px;
+    padding: 4px 9px;
+    border-radius: var(--radius-m);
+    font-size: var(--font-size-xs);
     font-weight: 600;
     margin-left: 8px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
     user-select: none;
+    border: 1px solid transparent;
+    line-height: 1;
 }
 
 .panel-actions .engine-status {
@@ -20,31 +24,32 @@
 }
 
 .engine-status.engine-rust {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
-    color: white;
-    box-shadow: 0 2px 4px rgba(255, 107, 53, 0.3);
+    background: linear-gradient(135deg, var(--warning), var(--warning-hover));
+    color: var(--text-on-accent);
+    box-shadow: 0 2px 8px hsl(var(--hsl-warning) / 0.24);
 }
 
 .engine-status.engine-rust:hover {
-    box-shadow: 0 4px 8px rgba(255, 107, 53, 0.4);
+    box-shadow: 0 4px 12px hsl(var(--hsl-warning) / 0.30);
     transform: translateY(-1px);
 }
 
 .engine-status.engine-typescript {
-    background: linear-gradient(135deg, #3178c6 0%, #235a97 100%);
-    color: white;
-    box-shadow: 0 2px 4px rgba(49, 120, 198, 0.3);
+    background: var(--gradient-accent);
+    color: var(--text-on-accent);
+    box-shadow: 0 2px 8px hsl(var(--hsl-accent) / 0.24);
 }
 
 .engine-status.engine-typescript:hover {
-    box-shadow: 0 4px 8px rgba(49, 120, 198, 0.4);
+    box-shadow: 0 4px 12px hsl(var(--hsl-accent) / 0.30);
     transform: translateY(-1px);
 }
 
 /* Disconnected/checking state */
 .engine-status.engine-checking {
-    background: #666;
-    color: #ccc;
+    background: var(--card-bg-muted);
+    color: var(--text-secondary);
+    border-color: var(--card-border);
     animation: pulse 1.5s ease-in-out infinite;
 }
 
@@ -55,6 +60,16 @@
 
 /* Performance indicator badge when Rust is used */
 .backtest-status .rust-indicator {
-    color: #ff6b35;
+    color: var(--warning);
     margin-left: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .engine-status.engine-checking {
+        animation: none;
+    }
+
+    .engine-status:hover {
+        transform: none;
+    }
 }

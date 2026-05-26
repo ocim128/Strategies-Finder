@@ -4,8 +4,8 @@
     height: 100%;
     width: 100%;
     min-height: 0;
-    padding: var(--space-3);
-    gap: var(--space-3);
+    padding: clamp(var(--space-2), 1vw, var(--space-3));
+    gap: var(--float-gap);
 }
 
 .main-content {
@@ -24,14 +24,14 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-4);
-    padding: var(--space-2-5) var(--space-4);
+    gap: var(--space-3);
+    padding: var(--space-2-5) var(--space-3-5);
     background: var(--header-bg);
     backdrop-filter: blur(12px) saturate(110%);
     -webkit-backdrop-filter: blur(12px) saturate(110%);
     border: 1px solid var(--header-border);
     border-radius: var(--float-radius);
-    min-height: 56px;
+    min-height: 58px;
     flex-shrink: 0;
     animation: panelEnter 0.4s var(--ease-out-expo) both;
     position: relative;
@@ -47,7 +47,7 @@
     gap: var(--space-3);
     flex: 1;
     min-width: 0;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
 }
 
 .header-group {
@@ -55,15 +55,24 @@
     align-items: center;
     gap: var(--space-2-5);
     min-width: 0;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
 }
 
 .header-group--market {
-    flex: 0 1 auto;
+    flex: 0 0 min(500px, 42vw);
+}
+
+.header-group--market .dropdown {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .header-group--controls {
-    flex: 1 1 520px;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    align-content: center;
+    row-gap: var(--space-1-5);
+    overflow: visible;
 }
 
 .logo {
@@ -73,7 +82,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-1-5);
-    letter-spacing: 0.03em;
+    letter-spacing: 0.02em;
     text-transform: uppercase;
     transition: color 0.15s ease;
     white-space: nowrap;
@@ -148,7 +157,7 @@
     min-width: 0;
     min-height: 0;
     border-radius: var(--float-radius);
-    border: 1px solid var(--card-border);
+    border: 1px solid hsl(var(--hsl-border) / 0.72);
     background: var(--card-bg);
     box-shadow:
         var(--shadow-elevated),
@@ -173,14 +182,14 @@
 
 /* Strategy panel - Floating drawer */
 .strategy-panel {
-    --strategy-panel-default-width: 400px;
+    --strategy-panel-default-width: 410px;
     width: var(--strategy-panel-width, var(--strategy-panel-default-width));
     min-width: 280px;
     max-width: 80vw;
     background: var(--panel-shell-bg);
     backdrop-filter: blur(20px) saturate(130%);
     -webkit-backdrop-filter: blur(20px) saturate(130%);
-    border: 1px solid var(--card-border);
+    border: 1px solid hsl(var(--hsl-border) / 0.72);
     border-radius: var(--float-radius);
     display: flex;
     flex-direction: column;
@@ -227,7 +236,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--space-3) var(--space-4);
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-3-5);
     border-bottom: 1px solid hsl(var(--hsl-border) / 0.2);
     background: var(--panel-header-bg);
     position: relative;
@@ -252,7 +262,30 @@
 .panel-actions {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
+    justify-content: flex-end;
+    gap: var(--space-1-5);
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.panel-actions .btn-secondary.btn-compact {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
+    padding: 0;
+    justify-content: center;
+    gap: 0;
+    font-size: 0;
+}
+
+.panel-actions .btn-secondary.btn-compact svg {
+    margin: 0;
+}
+
+.panel-actions .btn-primary.btn-compact {
+    min-height: 34px;
+    padding-inline: var(--space-3);
 }
 
 .panel-title {
@@ -262,6 +295,8 @@
     align-items: center;
     gap: var(--space-2);
     letter-spacing: 0.01em;
+    min-width: 0;
+    line-height: var(--line-height-tight);
 }
 
 .panel-title svg {
@@ -344,18 +379,20 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--space-1) var(--space-3);
-    background: hsl(var(--hsl-surface-2) / 0.6);
+    gap: var(--space-3);
+    padding: var(--space-1-5) var(--space-3);
+    background: hsl(var(--hsl-surface-2) / 0.78);
     backdrop-filter: blur(10px) saturate(105%);
     -webkit-backdrop-filter: blur(10px) saturate(105%);
     border: 1px solid var(--border-color);
     border-radius: var(--float-radius);
     font-size: var(--font-size-xs);
     color: var(--text-secondary);
-    height: 28px;
+    min-height: 32px;
+    height: auto;
     flex-shrink: 0;
     animation: panelEnter 0.4s var(--ease-out-expo) 0.12s both;
-    box-shadow: none;
+    box-shadow: var(--shadow-xs);
 }
 
 .status-left,
@@ -363,6 +400,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-2-5);
+    min-width: 0;
 }
 
 .status-item {
@@ -383,7 +421,7 @@
 
 .status-viewbars input {
     width: 72px;
-    height: 22px;
+    height: 24px;
     padding: 0 6px;
     border-radius: var(--radius-xs);
     border: 1px solid var(--border-color);
@@ -399,7 +437,7 @@
 }
 
 .status-viewbars button {
-    height: 22px;
+    height: 24px;
     padding: 0 8px;
     border-radius: var(--radius-xs);
     border: 1px solid var(--border-color);

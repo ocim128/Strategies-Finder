@@ -5,7 +5,9 @@
 
 /* Main Dropdown Enhancements */
 .symbol-search-dropdown {
-    min-width: 320px;
+    width: min(440px, calc(100vw - 24px));
+    min-width: min(320px, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
     max-height: min(450px, calc(100vh - 120px));
     padding: 0;
     overflow-x: hidden;
@@ -34,6 +36,7 @@
     position: relative;
     display: flex;
     align-items: center;
+    min-width: 0;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-m);
@@ -65,6 +68,7 @@
 
 .symbol-search-input {
     flex: 1;
+    width: 100%;
     padding: var(--space-2-5) var(--space-2);
     border: none;
     background: transparent;
@@ -136,7 +140,7 @@
     flex: 1;
     overflow-y: auto;
     padding: var(--space-2) 0;
-    min-height: 150px;
+    min-height: 190px;
     max-height: 280px;
     scroll-behavior: smooth;
 }
@@ -448,7 +452,20 @@
 /* Responsive adjustments */
 @media (max-width: 480px) {
     .symbol-search-dropdown {
-        min-width: 280px;
+        width: calc(100vw - 32px);
+        min-width: min(280px, calc(100vw - 32px));
         max-width: calc(100vw - 32px);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .symbol-search-spinner svg,
+    .symbol-search-loading-text,
+    .symbol-search-item {
+        animation: none;
+    }
+
+    .symbol-search-results {
+        scroll-behavior: auto;
     }
 }

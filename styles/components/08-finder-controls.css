@@ -4,6 +4,7 @@
     align-items: center;
     gap: 4px;
     padding: 4px 8px;
+    min-height: 28px;
     border-radius: var(--radius-m);
     border: 1px solid var(--header-control-border);
     background: var(--header-control-bg);
@@ -42,11 +43,12 @@
     display: flex;
     gap: 2px;
     margin-left: 2px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
 }
 
 .block-preset-btn {
     padding: 3px 7px;
+    min-height: 28px;
     border-radius: var(--radius-xs);
     border: 1px solid var(--header-control-border);
     background: transparent;

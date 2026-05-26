@@ -26,7 +26,8 @@
     gap: 4px;
     margin-left: 2px;
     min-width: 0;
-    flex-wrap: wrap;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
 }
 
 .block-selector-divider {

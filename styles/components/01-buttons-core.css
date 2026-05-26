@@ -4,15 +4,19 @@
     border-radius: var(--radius-m);
     font-size: var(--font-size-sm);
     font-weight: var(--font-weight-semibold);
+    line-height: 1;
+    min-height: 36px;
     cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease, color 0.15s ease;
     border: 1px solid transparent;
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: var(--space-1-5);
     letter-spacing: 0.01em;
     position: relative;
     overflow: hidden;
+    user-select: none;
 }
 
 /* Focus-visible for accessibility */
@@ -28,8 +32,9 @@
 }
 
 .btn-primary:hover {
-    background: var(--accent-hover);
+    background: linear-gradient(135deg, var(--accent-hover), var(--accent-color));
     box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
 }
 
 .btn-secondary {
@@ -42,6 +47,7 @@
 .btn-secondary:hover {
     background: var(--field-bg-hover);
     border-color: hsl(var(--hsl-accent) / 0.25);
+    transform: translateY(-1px);
 }
 
 .btn-success {
@@ -52,6 +58,7 @@
 
 .btn-success:hover {
     background: var(--green-hover);
+    transform: translateY(-1px);
 }
 
 .btn-danger {
@@ -62,6 +69,7 @@
 
 .btn-danger:hover {
     background: hsl(2 79% 50%);
+    transform: translateY(-1px);
 }
 
 .btn-warning {
@@ -72,6 +80,7 @@
 
 .btn-warning:hover {
     background: var(--warning-hover);
+    transform: translateY(-1px);
 }
 
 .btn-icon {
@@ -85,6 +94,7 @@
 .btn-compact {
     padding: var(--space-1-5) var(--space-2-5);
     font-size: var(--font-size-sm);
+    min-height: 32px;
 }
 
 .btn-block {
@@ -98,7 +108,7 @@
 }
 
 .btn:active {
-    transform: scale(0.98);
+    transform: translateY(0) scale(0.98);
 }
 
 /* Ripple effect container */
@@ -134,4 +144,11 @@
     border: 2px solid currentColor;
     border-top-color: transparent;
     animation: spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .btn:hover,
+    .btn:active {
+        transform: none;
+    }
 }

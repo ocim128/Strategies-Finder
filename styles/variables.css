@@ -178,8 +178,8 @@
     --space-8: 40px;
 
     /* Floating layout spacing */
-    --float-gap: 8px;
-    --float-radius: 14px;
+    --float-gap: 10px;
+    --float-radius: 12px;
 
     /* Radius tokens */
     --radius-xs: 4px;
@@ -369,8 +369,8 @@
             transparent 50%);
 
     --float-gap: 10px;
-    --float-radius: 18px;
-    --radius-s: 8px;
-    --radius-m: 10px;
-    --radius-l: 14px;
+    --float-radius: 12px;
+    --radius-s: 6px;
+    --radius-m: 8px;
+    --radius-l: 10px;
 }
