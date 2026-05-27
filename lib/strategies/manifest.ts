@@ -182,4 +182,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     builtInStrategyMetaByKey["vw_close_location_acceptance_pressure_mask"],
     builtInStrategyMetaByKey["vwap_deviation_volatility_gated_edge"],
     builtInStrategyMetaByKey["polymarket_event_direction_follow"],
+    builtInStrategyMetaByKey["polymarket_fair_value_mispricing"],
+    builtInStrategyMetaByKey["polymarket_fair_value_catchup_scalper"],
+    builtInStrategyMetaByKey["polymarket_event_direction_gamma_skew_filter"],
 ];

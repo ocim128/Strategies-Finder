@@ -2049,4 +2049,40 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "polymarket_fair_value_mispricing",
+        name: "Polymarket Fair Value Mispricing",
+        description: "Buys the Polymarket YES or NO side when its executable ask is below a Binance-implied fair probability estimate.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["minEdgeCents"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
+    },
+    {
+        key: "polymarket_fair_value_catchup_scalper",
+        name: "Polymarket Fair Value Catch-Up Scalper",
+        description: "Trades executable Polymarket fair-value gaps only when Binance-implied probability is moving faster than the market, then flips on opposite catch-up pressure.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["entryEdgeCents", "exitEdgeCents", "reactionLagSec"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
+    },
+    {
+        key: "polymarket_event_direction_gamma_skew_filter",
+        name: "Polymarket Event Direction Gamma Skew Filter",
+        description: "Trades the 1s Polymarket event-open direction only when event-open distance acceleration, Binance return skew, and Gamma consensus agree.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["volLookback", "skewThreshold", "minEdge"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
+    },
 ];

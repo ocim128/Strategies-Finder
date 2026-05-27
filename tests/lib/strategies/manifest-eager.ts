@@ -175,6 +175,9 @@ import { vw_bid_ask_absorption_gamma_consensus } from "./lib/vw_bid_ask_absorpti
 import { vw_close_location_acceptance_pressure_mask } from "./lib/vw_close_location_acceptance_pressure_mask";
 import { vwap_deviation_volatility_gated_edge } from "./lib/vwap_deviation_volatility_gated_edge";
 import { polymarket_event_direction_follow } from "./lib/polymarket_event_direction_follow";
+import { polymarket_fair_value_mispricing } from "./lib/polymarket_fair_value_mispricing";
+import { polymarket_fair_value_catchup_scalper } from "./lib/polymarket_fair_value_catchup_scalper";
+import { polymarket_event_direction_gamma_skew_filter } from "./lib/polymarket_event_direction_gamma_skew_filter";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -355,6 +358,9 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "vw_close_location_acceptance_pressure_mask", strategy: vw_close_location_acceptance_pressure_mask },
     { key: "vwap_deviation_volatility_gated_edge", strategy: vwap_deviation_volatility_gated_edge },
     { key: "polymarket_event_direction_follow", strategy: polymarket_event_direction_follow },
+    { key: "polymarket_fair_value_mispricing", strategy: polymarket_fair_value_mispricing },
+    { key: "polymarket_fair_value_catchup_scalper", strategy: polymarket_fair_value_catchup_scalper },
+    { key: "polymarket_event_direction_gamma_skew_filter", strategy: polymarket_event_direction_gamma_skew_filter },
 ];
 
 export function createStrategiesRecordFromManifest(

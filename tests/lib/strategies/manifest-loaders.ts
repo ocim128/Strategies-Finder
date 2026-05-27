@@ -176,4 +176,7 @@ export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {
     "vw_close_location_acceptance_pressure_mask": () => import("./lib/vw_close_location_acceptance_pressure_mask").then(m => m.vw_close_location_acceptance_pressure_mask),
     "vwap_deviation_volatility_gated_edge": () => import("./lib/vwap_deviation_volatility_gated_edge").then(m => m.vwap_deviation_volatility_gated_edge),
     "polymarket_event_direction_follow": () => import("./lib/polymarket_event_direction_follow").then(m => m.polymarket_event_direction_follow),
+    "polymarket_fair_value_mispricing": () => import("./lib/polymarket_fair_value_mispricing").then(m => m.polymarket_fair_value_mispricing),
+    "polymarket_fair_value_catchup_scalper": () => import("./lib/polymarket_fair_value_catchup_scalper").then(m => m.polymarket_fair_value_catchup_scalper),
+    "polymarket_event_direction_gamma_skew_filter": () => import("./lib/polymarket_event_direction_gamma_skew_filter").then(m => m.polymarket_event_direction_gamma_skew_filter),
 };

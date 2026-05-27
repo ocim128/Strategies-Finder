@@ -134,9 +134,10 @@ export class BacktestService {
         try {
             await updateDomBacktestRunProgress(runUi, '20%', 'Calculating indicators...', 100);
 
-            const strategy = strategyRegistry.get(state.currentStrategyKey);
+            const sourceStrategyKey = state.currentStrategyKey;
+            const strategy = strategyRegistry.get(sourceStrategyKey);
             if (!strategy) {
-                debugLogger.error("backtest.strategy_not_found", { strategyKey: state.currentStrategyKey });
+                debugLogger.error("backtest.strategy_not_found", { strategyKey: sourceStrategyKey });
                 runUi.setStatus('Strategy not found');
                 return;
             }
@@ -146,6 +147,8 @@ export class BacktestService {
             const alternativeSizingEnabled = this.getAlternativeSizingEnabled();
             const settings = this.getBacktestSettings();
             const sourceData = options.dataOverride ?? state.ohlcvData;
+            const sourceSymbol = state.currentSymbol;
+            const sourceInterval = state.currentInterval;
             const requiresTsEngine = this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode);
             await updateDomBacktestRunProgress(runUi, '40%', 'Generating signals...', 100);
 
@@ -156,20 +159,25 @@ export class BacktestService {
                 settings,
                 capitalSettings,
                 requiresTsEngine,
-                sourceData
+                sourceData,
+                sourceSymbol,
+                sourceInterval,
+                sourceStrategyKey
             );
 
             // Only annotate Polymarket outcomes when explicitly enabled
             const annotatePolymarket = settings.polymarketAnnotationEnabled ?? false;
             if (annotatePolymarket) {
-                const annotatedResult = await this.annotatePolymarketResult(result, settings, sourceData);
+                const annotatedResult = await this.annotatePolymarketResult(result, settings, sourceData, sourceSymbol, sourceInterval);
                 const protectionReplay = await this.replayBacktestWithPolymarketProtectionExits(
                     annotatedResult,
                     signals,
                     sourceData,
                     settings,
                     capitalSettings,
-                    requestContext
+                    requestContext,
+                    sourceSymbol,
+                    sourceInterval
                 );
                 if (protectionReplay) {
                     result = protectionReplay;
@@ -182,7 +190,7 @@ export class BacktestService {
                     result,
                     chartData: this.selectClosedCandleData(
                         sourceData,
-                        state.currentInterval,
+                        sourceInterval,
                         settings,
                         requestContext.nowSec,
                         requestContext.blockRange
@@ -197,7 +205,7 @@ export class BacktestService {
 
             if (!this.isLatestInteractiveRun(runId)) {
                 debugLogger.event('backtest.stale_ignored', {
-                    strategy: state.currentStrategyKey,
+                    strategy: sourceStrategyKey,
                     runId,
                     phase: 'commit',
                 });
@@ -223,7 +231,7 @@ export class BacktestService {
             runUi.setStatus(formatCompletedBacktestStatus(result, engineUsed));
             shouldDelayHide = true;
             debugLogger.event('backtest.success', {
-                strategy: state.currentStrategyKey,
+                strategy: sourceStrategyKey,
                 trades: result.totalTrades,
                 durationMs: Date.now() - startedAt,
                 engine: engineUsed,
@@ -236,14 +244,14 @@ export class BacktestService {
         } catch (error) {
             if (!this.isLatestInteractiveRun(runId)) {
                 debugLogger.event('backtest.stale_ignored', {
-                    strategy: state.currentStrategyKey,
+                    strategy: sourceStrategyKey,
                     runId,
                     phase: 'error',
                 });
                 return;
             }
             debugLogger.error('backtest.error', {
-                strategy: state.currentStrategyKey,
+                strategy: sourceStrategyKey,
                 error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
                 durationMs: Date.now() - startedAt,
             });
@@ -282,7 +290,9 @@ export class BacktestService {
         const requiresTsEngine = this.requiresTypescriptEngine(mergedSettings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode);
         const run = await this.runBacktestForData(
             state.ohlcvData,
+            state.currentSymbol,
             state.currentInterval,
+            state.currentStrategyKey,
             strategy,
             params,
             mergedSettings,
@@ -300,12 +310,17 @@ export class BacktestService {
         settings: BacktestSettings,
         capitalSettings: CapitalSettings,
         requiresTsEngine: boolean,
-        ohlcvData: OHLCVData[] = state.ohlcvData
+        ohlcvData: OHLCVData[] = state.ohlcvData,
+        symbol: string = state.currentSymbol,
+        interval: string = state.currentInterval,
+        strategyKey: string = state.currentStrategyKey
     ): Promise<CurrentBacktestExecution> {
         await updateDomBacktestRunProgress(runUi, '60%', 'Running backtest...', 100);
         const singleRun = await this.runBacktestForData(
             ohlcvData,
-            state.currentInterval,
+            symbol,
+            interval,
+            strategyKey,
             strategy,
             params,
             settings,
@@ -487,7 +502,9 @@ export class BacktestService {
 
     private async runBacktestForData(
         ohlcvData: OHLCVData[],
+        symbol: string,
         interval: string,
+        strategyKey: string,
         strategy: Strategy,
         params: StrategyParams,
         settings: BacktestSettings,
@@ -514,13 +531,13 @@ export class BacktestService {
         const run = await executeBacktest({
             ohlcvData,
             interval,
-            primarySymbol: state.currentSymbol,
-            strategyKey: state.currentStrategyKey,
+            primarySymbol: symbol,
+            strategyKey,
             strategy,
             strategyParams: params,
             backtestSettings: {
                 ...settings,
-                symbol: state.currentSymbol,
+                symbol,
                 interval,
             },
             capitalSettings,
@@ -662,22 +679,24 @@ export class BacktestService {
     private async annotatePolymarketResult(
         result: BacktestResult,
         settings: BacktestSettings,
-        chartData: OHLCVData[]
+        chartData: OHLCVData[],
+        symbol: string = state.currentSymbol,
+        interval: string = state.currentInterval
     ): Promise<BacktestResult> {
         try {
             const effectiveExitMode = resolveEffectivePolymarketExitMode({
                 requestedMode: settings.polymarketExitMode,
-                interval: state.currentInterval,
+                interval,
                 executionModel: settings.executionModel,
                 polymarketAnnotationEnabled: settings.polymarketAnnotationEnabled,
             });
             const outcomeInterval = resolvePolymarketOutcomeInterval(settings.polymarketOutcomeInterval);
             const secondMarketEvaluation = await import("./second-market/evaluation");
-            if (secondMarketEvaluation.isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval)) {
+            if (secondMarketEvaluation.isSecondMarketPolymarketSupported(symbol, interval)) {
                 return await secondMarketEvaluation.annotateBacktestResultWithSecondMarketClob({
                     result,
-                    symbol: state.currentSymbol,
-                    interval: state.currentInterval,
+                    symbol,
+                    interval,
                     outcomeSymbol: settings.polymarketOutcomeSymbol,
                     outcomeInterval,
                     executionModel: settings.executionModel,
@@ -709,8 +728,8 @@ export class BacktestService {
 
             const { annotateBacktestResultWithPolymarketOutcomes } = await import("./polymarket-trade-annotations");
             return await annotateBacktestResultWithPolymarketOutcomes(result, {
-                symbol: state.currentSymbol,
-                interval: state.currentInterval,
+                symbol,
+                interval,
                 executionModel: settings.executionModel,
                 chartData,
                 outcomeSymbol: settings.polymarketOutcomeSymbol,
@@ -737,8 +756,8 @@ export class BacktestService {
             });
         } catch (error) {
             debugLogger.error("backtest.polymarket_annotation_failed", {
-                symbol: state.currentSymbol,
-                interval: state.currentInterval,
+                symbol,
+                interval,
                 error: error instanceof Error ? error.message : String(error),
             });
             return result;
@@ -751,14 +770,16 @@ export class BacktestService {
         sourceData: OHLCVData[],
         settings: BacktestSettings,
         capitalSettings: CapitalSettings,
-        requestContext: CurrentBacktestExecution["requestContext"]
+        requestContext: CurrentBacktestExecution["requestContext"],
+        symbol: string = state.currentSymbol,
+        interval: string = state.currentInterval
     ): Promise<BacktestResult | null> {
-        if (state.currentInterval !== "1s") {
+        if (interval !== "1s") {
             return null;
         }
         const effectiveExitMode = resolveEffectivePolymarketExitMode({
             requestedMode: settings.polymarketExitMode,
-            interval: state.currentInterval,
+            interval,
             executionModel: settings.executionModel,
             polymarketAnnotationEnabled: settings.polymarketAnnotationEnabled,
         });
@@ -769,7 +790,7 @@ export class BacktestService {
 
         const backtestData = this.selectClosedCandleData(
             sourceData,
-            state.currentInterval,
+            interval,
             settings,
             requestContext.nowSec,
             requestContext.blockRange
@@ -808,7 +829,7 @@ export class BacktestService {
                 }
             );
             this.finalizeBacktestResult(replay, capitalSettings.initialCapital, backtestData);
-            latestAnnotated = await this.annotatePolymarketResult(replay, settings, sourceData);
+            latestAnnotated = await this.annotatePolymarketResult(replay, settings, sourceData, symbol, interval);
             latestReplay = latestAnnotated;
         }
         if (!stabilized && latestReplay) {
@@ -982,13 +1003,85 @@ export class BacktestService {
     ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
         return this.runBacktestForData(
             ohlcvData,
+            state.currentSymbol,
             interval,
+            state.currentStrategyKey,
             strategy,
             params,
             settings,
             capitalSettings,
             this.requiresTypescriptEngine(settings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode)
         );
+    }
+
+    public async evaluateStrategyOnDataWithPolymarket(
+        ohlcvData: OHLCVData[],
+        symbol: string,
+        interval: string,
+        strategyKey: string,
+        strategy: Strategy,
+        params: StrategyParams,
+        settings: BacktestSettings = this.getBacktestSettings(),
+        capitalSettings: CapitalSettings = this.getCapitalSettings()
+    ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript'; signals: Signal[] }> {
+        const effectiveSettings = resolveBacktestSettingsFromRaw(
+            {
+                ...settings,
+                polymarketAnnotationEnabled: true,
+            } as BacktestSettings,
+            { coerceWithoutUiToggles: false }
+        );
+        effectiveSettings.tradeDirection = effectiveSettings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
+        effectiveSettings.executionModel = effectiveSettings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
+
+        const run = await this.runBacktestForData(
+            ohlcvData,
+            symbol,
+            interval,
+            strategyKey,
+            strategy,
+            params,
+            effectiveSettings,
+            capitalSettings,
+            this.requiresTypescriptEngine(effectiveSettings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode)
+        );
+
+        let result = await this.annotatePolymarketResult(run.result, effectiveSettings, ohlcvData, symbol, interval);
+        const protectionReplay = await this.replayBacktestWithPolymarketProtectionExits(
+            result,
+            run.signals,
+            ohlcvData,
+            effectiveSettings,
+            capitalSettings,
+            run.requestContext,
+            symbol,
+            interval
+        );
+        if (protectionReplay) {
+            result = protectionReplay;
+        }
+
+        const { applyPolymarketAlternativeSizing } = await import("./polymarket-alternative-sizing");
+        const sizedResult = applyPolymarketAlternativeSizing({
+            result,
+            chartData: this.selectClosedCandleData(
+                ohlcvData,
+                interval,
+                effectiveSettings,
+                run.requestContext.nowSec,
+                run.requestContext.blockRange
+            ),
+            backtestSettings: effectiveSettings,
+            capitalSettings,
+            alternativeSizingEnabled: this.getAlternativeSizingEnabled(),
+        });
+        transferBacktestEdgeAnalysisInput(result, sizedResult);
+
+        return {
+            result: sizedResult,
+            engineUsed: protectionReplay ? 'typescript' : run.engineUsed,
+            signals: run.signals,
+        };
     }
 
     public async evaluateSignalsOnData(
@@ -1036,7 +1129,9 @@ export class BacktestService {
         // Run the backtest
         const runResult = await this.runBacktestForData(
             ohlcvData,
+            state.currentSymbol,
             interval,
+            strategyKey,
             strategy,
             strategyParams,
             effectiveBacktestSettings,

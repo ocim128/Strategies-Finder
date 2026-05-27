@@ -1,0 +1,41 @@
+#strategyDebuggerResults .finder-row {
+    width: 100%;
+    grid-template-columns: 96px 1fr 150px;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+#strategydebuggerTab .finder-header {
+    grid-template-columns: 96px 1fr 150px;
+}
+
+#strategyDebuggerResults .finder-rank {
+    width: auto;
+    min-width: 82px;
+    height: auto;
+    min-height: 30px;
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-s);
+    text-transform: capitalize;
+    font-size: var(--font-size-xs);
+}
+
+#strategyDebuggerResults .finder-row[aria-pressed="true"] {
+    border-color: var(--accent-color);
+    box-shadow: var(--focus-ring);
+}
+
+#strategyDebuggerDiagnosticOutput {
+    max-height: 360px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    padding: var(--space-3);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--glass-border);
+    background: hsl(var(--hsl-surface-3) / 0.55);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+}

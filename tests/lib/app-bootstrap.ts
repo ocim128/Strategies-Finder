@@ -337,6 +337,7 @@ function registerLazyFeatures(): void {
     registerLazyFeature("monte-carlo", async () => (await import("./monte-carlo-service")).initMonteCarloService());
     registerLazyFeature("strategy-library-admin", async () => (await import("./strategy-library-admin-service")).strategyLibraryAdminService.init());
     registerLazyFeature("strategy-library-audit", async () => (await import("./strategy-library-audit-service")).strategyLibraryAuditService.init());
+    registerLazyFeature("strategy-debugger", async () => (await import("./strategy-debugger-service")).strategyDebuggerService.init());
 }
 
 function bindDirectLazyFeatureTriggers(): void {

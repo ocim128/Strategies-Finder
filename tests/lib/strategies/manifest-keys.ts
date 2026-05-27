@@ -174,4 +174,7 @@ export const builtInStrategyKeys: readonly string[] = [
     "vw_close_location_acceptance_pressure_mask",
     "vwap_deviation_volatility_gated_edge",
     "polymarket_event_direction_follow",
+    "polymarket_fair_value_mispricing",
+    "polymarket_fair_value_catchup_scalper",
+    "polymarket_event_direction_gamma_skew_filter",
 ];
