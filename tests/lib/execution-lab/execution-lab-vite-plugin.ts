@@ -410,6 +410,7 @@ async function fetchLiveCandles(args: {
             marketType: "futures",
             startTs: args.startTs,
             endTs: closedEndTs,
+            closedLagSec: LIVE_CANDLE_CLOSED_LAG_SEC,
         });
         return rows.slice(-args.limit).map((row) => ({
             symbol: row.symbol,

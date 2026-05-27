@@ -376,6 +376,49 @@ describe("Execution Lab live helpers", () => {
         }
     });
 
+    it("requests the latest closed futures 1s candle without an extra one-second live delay", async () => {
+        const handler = createHandler();
+        const originalFetch = globalThis.fetch;
+        const originalNow = Date.now;
+        const nowSec = 2_100_000_000;
+        let requestedStartTime: string | null = null;
+        let requestedEndTime: string | null = null;
+        Date.now = () => nowSec * 1000;
+        globalThis.fetch = (async (input) => {
+            const url = new URL(
+                typeof input === "string"
+                    ? input
+                    : input instanceof URL
+                        ? input.toString()
+                        : input.url
+            );
+            expect(url.pathname).to.equal("/fapi/v1/aggTrades");
+            requestedStartTime = url.searchParams.get("startTime");
+            requestedEndTime = url.searchParams.get("endTime");
+            return new Response(JSON.stringify([
+                { a: 10, p: "100.5", q: "1", f: 100, l: 100, T: (nowSec - 1) * 1000 + 100 },
+            ]), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }) as typeof fetch;
+
+        try {
+            const response = await invoke(
+                handler,
+                `/live-candles?symbol=BTCUSDT&marketType=futures&startTs=${nowSec - 1}&limit=1`
+            );
+
+            expect(response.statusCode).to.equal(200);
+            expect(requestedStartTime).to.equal(String((nowSec - 1) * 1000));
+            expect(requestedEndTime).to.equal(String((nowSec - 1) * 1000 + 999));
+            expect(response.json.candles.map((row: { ts: number }) => row.ts)).to.deep.equal([nowSec - 1]);
+        } finally {
+            Date.now = originalNow;
+            globalThis.fetch = originalFetch;
+        }
+    });
+
     it("builds futures live 1s candles from aggregate trades", async () => {
         const handler = createHandler();
         const originalFetch = globalThis.fetch;

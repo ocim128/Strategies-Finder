@@ -25,6 +25,11 @@ function nowSec(): number {
     return Math.floor(Date.now() / 1000);
 }
 
+function normalizeClosedLagSec(value: number | undefined): number {
+    const numeric = Number(value ?? 2);
+    return Number.isFinite(numeric) ? Math.max(1, Math.floor(numeric)) : 2;
+}
+
 function toFiniteNumber(value: unknown): number | null {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : null;
@@ -196,12 +201,14 @@ async function fetchBinanceFutures1sCandlesFromAggTrades(args: {
     symbol: SecondMarketSymbol;
     startTs: number;
     endTs: number;
+    closedLagSec?: number;
     requestDelayMs?: number;
     signal?: AbortSignal;
     onProgress?: (progress: { fetched: number; cursorTs: number; requestCount: number }) => void;
 }): Promise<Binance1sCandleRow[]> {
     const startTs = Math.max(0, Math.floor(args.startTs));
-    const closedEndTs = Math.min(Math.floor(args.endTs), nowSec() - 2);
+    const closedLagSec = normalizeClosedLagSec(args.closedLagSec);
+    const closedEndTs = Math.min(Math.floor(args.endTs), nowSec() - closedLagSec);
     if (closedEndTs < startTs) return [];
 
     const trades: NormalizedFuturesAggTrade[] = [];
@@ -278,6 +285,7 @@ export async function fetchBinance1sCandles(args: {
     marketType?: BinanceMarketType;
     startTs: number;
     endTs: number;
+    closedLagSec?: number;
     requestDelayMs?: number;
     signal?: AbortSignal;
     onProgress?: (progress: { fetched: number; cursorTs: number; requestCount: number }) => void;
@@ -288,7 +296,8 @@ export async function fetchBinance1sCandles(args: {
     }
 
     const startTs = Math.max(0, Math.floor(args.startTs));
-    const closedEndTs = Math.min(Math.floor(args.endTs), nowSec() - 2);
+    const closedLagSec = normalizeClosedLagSec(args.closedLagSec);
+    const closedEndTs = Math.min(Math.floor(args.endTs), nowSec() - closedLagSec);
     if (closedEndTs < startTs) return [];
 
     const rows: Binance1sCandleRow[] = [];
@@ -345,6 +354,7 @@ export async function syncBinance1sRange(db: DatabaseSync, args: {
     marketType?: BinanceMarketType;
     startTs: number;
     endTs: number;
+    closedLagSec?: number;
     requestDelayMs?: number;
     signal?: AbortSignal;
     onProgress?: (progress: { fetched: number; cursorTs: number; requestCount: number }) => void;

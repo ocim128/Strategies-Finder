@@ -8,8 +8,9 @@ import {
     openSecondMarketDb,
     writeSecondDataSyncState,
 } from "../lib/second-market/db";
+import { loadBinance1sCandles } from "../lib/second-market/loaders";
 import { fetchBinance1sCandles, syncBinance1sRange } from "../lib/second-market/binance-1s-sync";
-import { getBinanceLiveWebSocketStreamName } from "../scripts/second-market-miner";
+import { getBinanceLiveWebSocketStreamName, runLiveBinanceWebSocket } from "../scripts/second-market-miner";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 let tempDirs: string[] = [];
@@ -32,6 +33,94 @@ describe("second market Binance 1s sync", () => {
     it("uses the trade websocket stream for futures live mining", () => {
         expect(getBinanceLiveWebSocketStreamName("BTCUSDT", "futures")).to.equal("btcusdt@trade");
         expect(getBinanceLiveWebSocketStreamName("BTCUSDT", "spot")).to.equal("btcusdt@aggTrade");
+    });
+
+    it("flushes websocket-built candles as soon as a next-second trade arrives", async () => {
+        const originalWebSocket = globalThis.WebSocket;
+        const db = openSecondMarketDb(makeDbPath());
+        const controller = new AbortController();
+        let runPromise: Promise<void> | null = null;
+
+        class FakeBinanceWebSocket {
+            static CONNECTING = 0;
+            static OPEN = 1;
+            static CLOSED = 3;
+
+            readyState = FakeBinanceWebSocket.CONNECTING;
+            onopen: ((event: Event) => void) | null = null;
+            onmessage: ((event: MessageEvent) => void) | null = null;
+            onerror: ((event: Event) => void) | null = null;
+            onclose: ((event: CloseEvent) => void) | null = null;
+
+            constructor(_url: string) {
+                queueMicrotask(() => {
+                    this.readyState = FakeBinanceWebSocket.OPEN;
+                    this.onopen?.({} as Event);
+                });
+                sockets.push(this);
+            }
+
+            close(): void {
+                this.readyState = FakeBinanceWebSocket.CLOSED;
+            }
+
+            emitTrade(trade: Record<string, unknown>): void {
+                this.onmessage?.({ data: JSON.stringify({ data: trade }) } as MessageEvent);
+            }
+        }
+
+        const sockets: FakeBinanceWebSocket[] = [];
+        (globalThis as { WebSocket: unknown }).WebSocket = FakeBinanceWebSocket;
+
+        try {
+            runPromise = runLiveBinanceWebSocket({
+                mode: "live",
+                symbols: ["BTCUSDT"],
+                marketType: "futures",
+                outcomeInterval: "5m",
+                startTs: 0,
+                endTs: 0,
+                durationSec: null,
+                includeBinance: true,
+                includeClob: false,
+                includeReference: false,
+                includeGamma: false,
+                referenceSources: ["crypto_prices"],
+                requestDelayMs: 0,
+            }, db, controller.signal, undefined);
+
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            const socket = sockets[0];
+            expect(socket).to.not.equal(undefined);
+
+            socket.emitTrade({ s: "BTCUSDT", T: 1_700_000_000_100, p: "100", q: "1", f: 100, l: 100 });
+            expect(loadBinance1sCandles(db, {
+                symbol: "BTCUSDT",
+                marketType: "futures",
+                startTs: 1_700_000_000,
+                endTs: 1_700_000_000,
+            })).to.have.length(0);
+
+            socket.emitTrade({ s: "BTCUSDT", T: 1_700_000_001_050, p: "101", q: "2", f: 101, l: 102 });
+            const rows = loadBinance1sCandles(db, {
+                symbol: "BTCUSDT",
+                marketType: "futures",
+                startTs: 1_700_000_000,
+                endTs: 1_700_000_000,
+            });
+
+            expect(rows).to.have.length(1);
+            expect(rows[0]).to.include({
+                ts: 1_700_000_000,
+                close: 100,
+                source: "binance_1s_ws",
+            });
+        } finally {
+            controller.abort();
+            await runPromise?.catch(() => undefined);
+            db.close();
+            globalThis.WebSocket = originalWebSocket;
+        }
     });
 
     it("builds futures 1s candles from aggregate trades", async () => {
@@ -97,6 +186,44 @@ describe("second market Binance 1s sync", () => {
             volume: 2.75,
             trade_count: 3,
         });
+    });
+
+    it("keeps the conservative two-second REST cap unless live callers opt in", async () => {
+        const originalNow = Date.now;
+        const nowSec = 2_100_000_000;
+        let fetchCount = 0;
+        Date.now = () => nowSec * 1000;
+        globalThis.fetch = (async () => {
+            fetchCount += 1;
+            return new Response(JSON.stringify([
+                { a: 10, p: "100", q: "1", f: 100, l: 100, T: (nowSec - 1) * 1000 + 100 },
+            ]), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }) as typeof fetch;
+
+        try {
+            const defaultRows = await fetchBinance1sCandles({
+                symbol: "BTCUSDT",
+                marketType: "futures",
+                startTs: nowSec - 1,
+                endTs: nowSec - 1,
+            });
+            const liveRows = await fetchBinance1sCandles({
+                symbol: "BTCUSDT",
+                marketType: "futures",
+                startTs: nowSec - 1,
+                endTs: nowSec - 1,
+                closedLagSec: 1,
+            });
+
+            expect(defaultRows).to.deep.equal([]);
+            expect(liveRows.map((row) => row.ts)).to.deep.equal([nowSec - 1]);
+            expect(fetchCount).to.equal(1);
+        } finally {
+            Date.now = originalNow;
+        }
     });
 
     it("does not fill futures candles past the latest aggregate trade", async () => {

@@ -39,7 +39,9 @@ type MinerMode = "backfill" | "live" | "verify";
 const GAMMA_LIVE_POLL_MS = 30_000;
 const CLOB_SUBSCRIPTION_REFRESH_SEC = 60;
 const CLOB_SUBSCRIPTION_HORIZON_MULTIPLIER = 3;
-const BINANCE_LIVE_POLL_MS = 2_000;
+const BINANCE_LIVE_POLL_MS = 1_000;
+const BINANCE_WS_CATCH_UP_POLL_SEC = 1;
+const BINANCE_WS_RECONNECT_BASE_MS = 500;
 const BINANCE_LIVE_MAX_LOOKBACK_SEC = 120;
 const BINANCE_LIVE_OVERLAP_SEC = 2;
 const BINANCE_RATE_LIMIT_BACKOFF_MS = 60_000;
@@ -75,6 +77,9 @@ type LiveCandleBucket = {
     close: number;
     volume: number;
     tradeCount: number;
+};
+type BinancePollingBackoff = {
+    untilMs: number;
 };
 
 function nowSec(): number {
@@ -416,7 +421,7 @@ async function runBackfill(config: CliConfig, signal: AbortSignal): Promise<void
     }
 }
 
-async function runLiveBinanceWebSocket(
+export async function runLiveBinanceWebSocket(
     config: CliConfig,
     db: ReturnType<typeof openSecondMarketDb>,
     signal: AbortSignal,
@@ -582,7 +587,10 @@ async function runLiveBinanceWebSocket(
                 ? (payload as { data?: unknown }).data
                 : payload;
             const trade = normalizeLiveAggTrade(row, symbolSet);
-            if (trade) addLiveAggTradeToBucket(buckets, trade);
+            if (trade) {
+                addLiveAggTradeToBucket(buckets, trade);
+                flushClosedCandles(Math.floor(trade.tsMs / 1000) - 1);
+            }
         };
         ws.onerror = () => {
             fail(new Error("Binance live websocket error."));
@@ -599,26 +607,26 @@ async function runLiveBinancePolling(
     config: CliConfig,
     db: ReturnType<typeof openSecondMarketDb>,
     signal: AbortSignal,
-    durationSec: number | null = config.durationSec
+    durationSec: number | null = config.durationSec,
+    backoff: BinancePollingBackoff = { untilMs: 0 }
 ): Promise<void> {
     const startedAt = Date.now();
-    let backoffUntilMs = 0;
 
     while (!signal.aborted) {
         const nowMs = Date.now();
         const elapsedSec = Math.floor((nowMs - startedAt) / 1000);
         if (durationSec !== null && elapsedSec >= durationSec) break;
 
-        if (nowMs < backoffUntilMs) {
+        if (nowMs < backoff.untilMs) {
             const remainingMs = durationSec === null
-                ? backoffUntilMs - nowMs
-                : Math.min(backoffUntilMs - nowMs, Math.max(0, durationSec * 1000 - (nowMs - startedAt)));
+                ? backoff.untilMs - nowMs
+                : Math.min(backoff.untilMs - nowMs, Math.max(0, durationSec * 1000 - (nowMs - startedAt)));
             await delay(remainingMs, signal);
             continue;
         }
 
         const cycleStartedAt = Date.now();
-        const endTs = nowSec() - 2;
+        const endTs = nowSec() - 1;
         for (const symbol of config.symbols) {
             if (signal.aborted) break;
             try {
@@ -636,6 +644,7 @@ async function runLiveBinancePolling(
                     marketType: config.marketType,
                     startTs,
                     endTs,
+                    closedLagSec: 1,
                     requestDelayMs: config.requestDelayMs,
                     signal,
                 });
@@ -645,7 +654,7 @@ async function runLiveBinancePolling(
                 console.warn(`[mine:1s] binance live ${symbol} failed: ${message}`);
                 const backoffMs = binanceRateLimitBackoffMs(error);
                 if (backoffMs > 0) {
-                    backoffUntilMs = Date.now() + backoffMs;
+                    backoff.untilMs = Date.now() + backoffMs;
                     console.warn(`[mine:1s] binance live rate limited; backing off for ${Math.ceil(backoffMs / 1000)}s`);
                     break;
                 }
@@ -668,17 +677,34 @@ async function runLiveBinanceCapture(
     signal: AbortSignal,
     durationSec: number | undefined
 ): Promise<void> {
-    if (typeof WebSocket === "function") {
+    if (typeof WebSocket !== "function") {
+        await runLiveBinancePolling(config, db, signal, durationSec ?? null);
+        return;
+    }
+
+    const startedAt = Date.now();
+    const pollingBackoff: BinancePollingBackoff = { untilMs: 0 };
+    let attempt = 0;
+    while (!signal.aborted) {
+        const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+        if (durationSec !== undefined && elapsedSec >= durationSec) break;
+        const remainingDurationSec = durationSec === undefined
+            ? undefined
+            : Math.max(1, durationSec - elapsedSec);
         try {
-            await runLiveBinanceWebSocket(config, db, signal, durationSec);
-            return;
+            await runLiveBinanceWebSocket(config, db, signal, remainingDurationSec);
+            break;
         } catch (error) {
-            if (signal.aborted) return;
+            if (signal.aborted) break;
+            attempt += 1;
             const message = error instanceof Error ? error.message : String(error);
-            console.warn(`[mine:1s] binance websocket unavailable; falling back to REST polling: ${message}`);
+            console.warn(`[mine:1s] binance websocket disconnected: ${message}`);
+            await runLiveBinancePolling(config, db, signal, BINANCE_WS_CATCH_UP_POLL_SEC, pollingBackoff);
+            const retryMs = Math.min(5_000, BINANCE_WS_RECONNECT_BASE_MS * attempt);
+            console.warn(`[mine:1s] binance websocket reconnecting in ${retryMs}ms`);
+            await delay(retryMs, signal);
         }
     }
-    await runLiveBinancePolling(config, db, signal, durationSec ?? null);
 }
 
 async function runRestartingLiveCapture(args: {
@@ -820,12 +846,7 @@ async function runLive(config: CliConfig, signal: AbortSignal): Promise<void> {
         }
 
         if (config.includeBinance) {
-            tasks.push(runRestartingLiveCapture({
-                label: "binance",
-                durationSec: config.durationSec,
-                signal,
-                runOnce: (durationSec) => runLiveBinanceCapture(config, db, signal, durationSec),
-            }));
+            tasks.push(runLiveBinanceCapture(config, db, signal, config.durationSec ?? undefined));
         }
 
         if (config.includeClob) {
