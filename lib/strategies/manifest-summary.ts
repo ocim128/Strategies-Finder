@@ -2037,4 +2037,16 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: true,
     },
+    {
+        key: "polymarket_event_direction_follow",
+        name: "Polymarket Event Direction Follow",
+        description: "Uses closed 1s candles to follow whether the current 5-minute Polymarket event is trading above or below its event-open price.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["minSecondsToEventEnd"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];

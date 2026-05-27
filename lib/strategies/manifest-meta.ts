@@ -3539,4 +3539,22 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: true,
     },
+    {
+        key: "polymarket_event_direction_follow",
+        name: "Polymarket Event Direction Follow",
+        description: "Uses closed 1s candles to follow whether the current 5-minute Polymarket event is trading above or below its event-open price.",
+        defaultParams: {
+        minSecondsToEventEnd: 180,
+    } as Record<string, number>,
+        paramLabels: {
+        minSecondsToEventEnd: "Minimum Seconds To Event End",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["minSecondsToEventEnd"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];

@@ -173,4 +173,5 @@ export const builtInStrategyKeys: readonly string[] = [
     "vw_bid_ask_absorption_gamma_consensus",
     "vw_close_location_acceptance_pressure_mask",
     "vwap_deviation_volatility_gated_edge",
+    "polymarket_event_direction_follow",
 ];

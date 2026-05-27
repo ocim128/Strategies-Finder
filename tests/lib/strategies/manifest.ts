@@ -181,4 +181,5 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     builtInStrategyMetaByKey["vw_bid_ask_absorption_gamma_consensus"],
     builtInStrategyMetaByKey["vw_close_location_acceptance_pressure_mask"],
     builtInStrategyMetaByKey["vwap_deviation_volatility_gated_edge"],
+    builtInStrategyMetaByKey["polymarket_event_direction_follow"],
 ];

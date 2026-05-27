@@ -174,6 +174,7 @@ import { volume_skewness_acceleration_no_adverse } from "./lib/volume_skewness_a
 import { vw_bid_ask_absorption_gamma_consensus } from "./lib/vw_bid_ask_absorption_gamma_consensus";
 import { vw_close_location_acceptance_pressure_mask } from "./lib/vw_close_location_acceptance_pressure_mask";
 import { vwap_deviation_volatility_gated_edge } from "./lib/vwap_deviation_volatility_gated_edge";
+import { polymarket_event_direction_follow } from "./lib/polymarket_event_direction_follow";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -353,6 +354,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "vw_bid_ask_absorption_gamma_consensus", strategy: vw_bid_ask_absorption_gamma_consensus },
     { key: "vw_close_location_acceptance_pressure_mask", strategy: vw_close_location_acceptance_pressure_mask },
     { key: "vwap_deviation_volatility_gated_edge", strategy: vwap_deviation_volatility_gated_edge },
+    { key: "polymarket_event_direction_follow", strategy: polymarket_event_direction_follow },
 ];
 
 export function createStrategiesRecordFromManifest(
