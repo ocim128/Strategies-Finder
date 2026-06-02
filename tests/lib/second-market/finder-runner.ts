@@ -55,6 +55,10 @@ import {
     loadSecondMarketEvaluationContext,
 } from "./evaluation";
 import { resolvePolymarketOutcomeInterval } from "../polymarket-outcome-interval";
+import {
+    executeStrategyAcrossTimeGapSegments,
+    getOneSecondTimeGapSegments,
+} from "../strategy-time-gap-isolation";
 
 function isAlternativeSizingMode(capitalSettings: CapitalSettings): boolean {
     return capitalSettings.sizingMode !== "percent";
@@ -365,6 +369,7 @@ export async function runSecondMarketFinder(
             }
         }
         executionContext = withSecondMarketStrategyContext(executionContext, context);
+        const timeGapSegments = getOneSecondTimeGapSegments(strategyData, input.interval);
 
         let skipRemainingPlan = false;
         for (let paramIndex = 0; paramIndex < plan.paramSets.length; paramIndex++) {
@@ -386,25 +391,44 @@ export async function runSecondMarketFinder(
                     ? precomputed
                     : precomputeIndicators(strategyData, backtestSettings);
                 let preparedFinderData: unknown;
-                if (plan.strategy.executePrepared && plan.strategy.prepareFinderData) {
+                if (!timeGapSegments && plan.strategy.executePrepared && plan.strategy.prepareFinderData) {
                     const preparedStartedAt = performance.now();
                     preparedFinderData = getPreparedFinderData(preparedDataCache, plan.key, plan.strategy, strategyData, backtestSettings, executionContext);
                     addElapsed(timings, "preparedData", preparedStartedAt);
                     strategyStats.usedPreparedData = true;
                 }
                 const signalStartedAt = performance.now();
-                const rawSignals = plan.strategy.executePrepared
-                    ? plan.strategy.executePrepared(
-                        preparedFinderData,
-                        normalizedParams,
-                        strategyData,
-                        executionContext
-                    )
-                    : plan.strategy.execute(strategyData, normalizedParams, executionContext);
+                const rawSignals = timeGapSegments
+                    ? executeStrategyAcrossTimeGapSegments({
+                        segments: timeGapSegments,
+                        executionContext,
+                        executeSegment: (segmentData, segmentContext) =>
+                            plan.strategy.execute(segmentData, normalizedParams, segmentContext),
+                    })
+                    : plan.strategy.executePrepared
+                        ? plan.strategy.executePrepared(
+                            preparedFinderData,
+                            normalizedParams,
+                            strategyData,
+                            executionContext
+                        )
+                        : plan.strategy.execute(strategyData, normalizedParams, executionContext);
                 const signals = applyConfirmationStrategiesToSignals({
                     data: strategyData,
                     baseSignals: applySignalPolarity(rawSignals, backtestSettings),
                     settings: backtestSettings,
+                    ...(timeGapSegments
+                        ? {
+                            executeStrategy: (_key, confirmationStrategy, confirmationParams) => applySignalPolarity(
+                                executeStrategyAcrossTimeGapSegments({
+                                    segments: timeGapSegments,
+                                    executeSegment: (segmentData) =>
+                                        confirmationStrategy.execute(segmentData, confirmationParams),
+                                }),
+                                backtestSettings
+                            ),
+                        }
+                        : {}),
                 });
                 if (signals.length === 0) {
                     recordFinderStrategyNoSignals(strategyStats);

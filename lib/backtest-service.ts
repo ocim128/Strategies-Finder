@@ -130,11 +130,11 @@ export class BacktestService {
         });
         const runUi = createDomBacktestRunHandle('runBacktest', 'Running backtest...', true);
         let shouldDelayHide = false;
+        const sourceStrategyKey = state.currentStrategyKey;
 
         try {
             await updateDomBacktestRunProgress(runUi, '20%', 'Calculating indicators...', 100);
 
-            const sourceStrategyKey = state.currentStrategyKey;
             const strategy = strategyRegistry.get(sourceStrategyKey);
             if (!strategy) {
                 debugLogger.error("backtest.strategy_not_found", { strategyKey: sourceStrategyKey });

@@ -7,6 +7,10 @@ import type { PolymarketClob1sQuoteRow } from "../lib/second-market/types";
 import type { OHLCVData, Strategy } from "../lib/types/strategies";
 
 const originalFetch = globalThis.fetch;
+const FIXTURE_START_TS = 1_700_000_010;
+const FIXTURE_EXIT_SIGNAL_INDEX = 10;
+const FIXTURE_ENTRY_TS = FIXTURE_START_TS + 1;
+const FIXTURE_EXIT_TS = FIXTURE_START_TS + FIXTURE_EXIT_SIGNAL_INDEX + 1;
 
 afterEach(() => {
     globalThis.fetch = originalFetch;
@@ -42,11 +46,17 @@ function quote(ts: number, yesAsk: number, yesBid: number): PolymarketClob1sQuot
 }
 
 function candles(): OHLCVData[] {
-    return [
-        { time: 1_700_000_010 as OHLCVData["time"], open: 100, high: 101, low: 99, close: 100, volume: 1 },
-        { time: 1_700_000_020 as OHLCVData["time"], open: 100, high: 102, low: 100, close: 101, volume: 1 },
-        { time: 1_700_000_030 as OHLCVData["time"], open: 101, high: 102, low: 100, close: 101, volume: 1 },
-    ];
+    return Array.from({ length: 21 }, (_, i) => {
+        const close = 100 + Math.min(i, 2);
+        return {
+            time: (FIXTURE_START_TS + i) as OHLCVData["time"],
+            open: close,
+            high: close + 1,
+            low: close - 1,
+            close,
+            volume: 1,
+        };
+    });
 }
 
 const strategy: Strategy = {
@@ -55,9 +65,10 @@ const strategy: Strategy = {
     defaultParams: { threshold: 1 },
     paramLabels: { threshold: "Threshold" },
     execute(data) {
+        const exitIndex = Math.min(FIXTURE_EXIT_SIGNAL_INDEX, data.length - 1);
         return [
             { time: data[0]!.time, type: "buy", price: data[0]!.close },
-            { time: data[1]!.time, type: "sell", price: data[1]!.close },
+            { time: data[exitIndex]!.time, type: "sell", price: data[exitIndex]!.close },
         ];
     },
 };
@@ -105,7 +116,7 @@ function makeInput(): FinderRunInput {
     };
 }
 
-function stubSecondMarketFetch(rows = [quote(1_700_000_020, 0.30, 0.28), quote(1_700_000_030, 0.60, 0.58)]): void {
+function stubSecondMarketFetch(rows = [quote(FIXTURE_ENTRY_TS, 0.30, 0.28), quote(FIXTURE_EXIT_TS, 0.60, 0.58)]): void {
     globalThis.fetch = async (input) => {
         const url = new URL(String(input));
         if (url.pathname === "/api/sqlite/status") {
@@ -178,10 +189,10 @@ describe("second market Finder runner", () => {
                     ok: true,
                     quotes: [
                         quote(1_700_000_010, 0.20, 0.18),
-                        quote(1_700_000_011, 0.55, 0.53),
-                        quote(1_700_000_020, 0.30, 0.28),
-                        quote(1_700_000_021, 0.60, 0.58),
-                        quote(1_700_000_030, 0.65, 0.63),
+                        quote(FIXTURE_ENTRY_TS, 0.55, 0.53),
+                        quote(FIXTURE_START_TS + FIXTURE_EXIT_SIGNAL_INDEX, 0.30, 0.28),
+                        quote(FIXTURE_EXIT_TS, 0.60, 0.58),
+                        quote(FIXTURE_START_TS + 20, 0.65, 0.63),
                     ],
                     stats: {
                         distinctSeconds: 5,
@@ -251,8 +262,8 @@ describe("second market Finder runner", () => {
                 return new Response(JSON.stringify({
                     ok: true,
                     quotes: [
-                        quote(1_700_000_020, 0.30, 0.28),
-                        quote(1_700_000_030, 0.60, 0.58),
+                        quote(FIXTURE_ENTRY_TS, 0.30, 0.28),
+                        quote(FIXTURE_EXIT_TS, 0.60, 0.58),
                     ],
                 }), { status: 200 });
             }
@@ -306,8 +317,8 @@ describe("second market Finder runner", () => {
                 return new Response(JSON.stringify({
                     ok: true,
                     quotes: [
-                        quote(1_700_000_020, 0.30, 0.28),
-                        quote(1_700_000_030, 0.60, 0.58),
+                        quote(FIXTURE_ENTRY_TS, 0.30, 0.28),
+                        quote(FIXTURE_EXIT_TS, 0.60, 0.58),
                     ],
                 }), { status: 200 });
             }
@@ -321,9 +332,10 @@ describe("second market Finder runner", () => {
             paramLabels: { threshold: "Threshold" },
             metadata: { role: "entry", direction: "both" },
             execute(data) {
+                const exitIndex = Math.min(FIXTURE_EXIT_SIGNAL_INDEX, data.length - 1);
                 return [
                     { time: data[0]!.time, type: "buy", price: data[0]!.close },
-                    { time: data[1]!.time, type: "sell", price: data[1]!.close },
+                    { time: data[exitIndex]!.time, type: "sell", price: data[exitIndex]!.close },
                 ];
             },
             evaluate(_data, _params, signals = []) {
@@ -388,6 +400,49 @@ describe("second market Finder runner", () => {
         expect(output.diagnostics?.backtest?.fastPathBlockers).to.equal(undefined);
         expect(output.diagnostics?.backtest?.avgBarsScanned).to.be.lessThan(candles().length * 2);
         expect(output.diagnostics?.backtest?.avgTradesClosed).to.be.greaterThan(0);
+    });
+
+    it("does not count pre-gap 1s candles toward Finder strategy lookbacks", async () => {
+        stubSecondMarketFetch([quote(FIXTURE_START_TS + 3601, 0.30, 0.28)]);
+        const lookbackStrategy: Strategy = {
+            name: "Gap Lookback Fixture",
+            description: "fixture",
+            defaultParams: { lookback: 4 },
+            paramLabels: { lookback: "Lookback" },
+            execute(data, params) {
+                const lookback = Math.max(1, Math.floor(Number(params.lookback ?? 4)));
+                if (data.length <= lookback) return [];
+                return [
+                    { time: data[lookback - 1]!.time, type: "buy", price: data[lookback - 1]!.close, barIndex: lookback - 1 },
+                    { time: data[lookback]!.time, type: "sell", price: data[lookback]!.close, barIndex: lookback },
+                ];
+            },
+        };
+        const input = makeInput();
+        input.ohlcvData = [
+            { time: FIXTURE_START_TS as OHLCVData["time"], open: 100, high: 101, low: 99, close: 100, volume: 1 },
+            { time: (FIXTURE_START_TS + 1) as OHLCVData["time"], open: 101, high: 102, low: 100, close: 101, volume: 1 },
+            { time: (FIXTURE_START_TS + 2) as OHLCVData["time"], open: 102, high: 103, low: 101, close: 102, volume: 1 },
+            { time: (FIXTURE_START_TS + 3600) as OHLCVData["time"], open: 103, high: 104, low: 102, close: 103, volume: 1 },
+            { time: (FIXTURE_START_TS + 3601) as OHLCVData["time"], open: 104, high: 105, low: 103, close: 104, volume: 1 },
+            { time: (FIXTURE_START_TS + 3602) as OHLCVData["time"], open: 105, high: 106, low: 104, close: 105, volume: 1 },
+        ];
+        input.selectedStrategies = [{ key: "gap_lookback_fixture", name: lookbackStrategy.name, strategy: lookbackStrategy }];
+        input.generateParamSets = () => [{ lookback: 4 }];
+
+        const output = await runSecondMarketFinder(input, {
+            setProgress: () => undefined,
+            setStatus: () => undefined,
+            yieldControl: async () => undefined,
+            isCancelled: () => false,
+            onResultsUpdate: () => undefined,
+        });
+
+        const strategyDiagnostics = output.diagnostics?.strategyBreakdown.find((item) => item.key === "gap_lookback_fixture");
+        expect(output.results[0]?.result.totalTrades).to.equal(0);
+        expect(output.results[0]?.result.diagnostics?.counts.inputSignals).to.equal(0);
+        expect(strategyDiagnostics?.runs).to.equal(1);
+        expect(strategyDiagnostics?.zeroSignalRuns).to.equal(1);
     });
 
     it("reports zero-signal second-market Finder runs", async () => {
@@ -514,10 +569,10 @@ describe("second market Finder runner", () => {
                 return new Response(JSON.stringify({
                     ok: true,
                     quotes: [
-                        quote(1_700_000_010, 0.62, 0.60),
-                        quote(1_700_000_020, 0.62, 0.60),
-                        quote(1_700_000_025, 0.50, 0.48),
-                        quote(1_700_000_030, 0.60, 0.58),
+                        quote(FIXTURE_START_TS, 0.62, 0.60),
+                        quote(FIXTURE_ENTRY_TS, 0.62, 0.60),
+                        quote(FIXTURE_ENTRY_TS + 4, 0.50, 0.48),
+                        quote(FIXTURE_EXIT_TS, 0.60, 0.58),
                     ],
                 }), { status: 200 });
             }

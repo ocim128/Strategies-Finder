@@ -62,6 +62,7 @@ import {
     applyConfirmationStrategiesToSignals,
     ensureConfirmationStrategiesLoaded,
 } from "./confirmation-signal-filter";
+import { executeStrategyWithTimeGapIsolation } from "./strategy-time-gap-isolation";
 import { timeKey } from "./strategies/backtest/backtest-utils";
 import {
     registerBacktestEdgeAnalysisInput,
@@ -249,6 +250,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
 
     const signals = resolveBacktestSignalsForData({
         data: backtestData,
+        interval,
         strategy,
         params: normalizedParams,
         settings: resolvedSettings,
@@ -442,6 +444,7 @@ function resolveExecutorBacktestSettings(
 
 function resolveBacktestSignalsForData(args: {
     data: OHLCVData[];
+    interval: string;
     strategy: Strategy;
     params: StrategyParams;
     settings: BacktestSettings;
@@ -453,15 +456,17 @@ function resolveBacktestSignalsForData(args: {
         args.strategy,
         args.params,
         args.settings,
+        args.interval,
         hasGlobalStrategyTimeframeWrapper(args.strategy),
         args.executionContext
     );
-    const confirmedSignals = applyConfirmationStrategies(args.data, signals, args.settings);
+    const confirmedSignals = applyConfirmationStrategies(args.data, args.interval, signals, args.settings);
     return filterSignalsByBlockRange(confirmedSignals, args.blockRange);
 }
 
 function applyConfirmationStrategies(
     data: OHLCVData[],
+    interval: string,
     baseSignals: Signal[],
     settings: BacktestSettings
 ): Signal[] {
@@ -474,6 +479,7 @@ function applyConfirmationStrategies(
             confirmationStrategy,
             confirmationParams,
             settings,
+            interval,
             hasGlobalStrategyTimeframeWrapper(confirmationStrategy)
         ),
     });
@@ -828,21 +834,25 @@ function executeStrategySignals(
     strategy: Strategy,
     params: StrategyParams,
     settings: BacktestSettings,
+    interval: string,
     strategyAlreadyWrapped: boolean,
     crossSymbolContext?: StrategyExecutionContext
 ): Signal[] {
     if (strategyAlreadyWrapped) {
-        return applySignalPolarity(strategy.execute(data, params, crossSymbolContext), settings);
+        const signals = executeDirectStrategySignals(data, interval, strategy, params, crossSymbolContext);
+        return applySignalPolarity(signals, settings);
     }
 
     const tfConfig = readStrategyTimeframeConfig(settings);
     if (!tfConfig.enabled || data.length === 0) {
-        return applySignalPolarity(strategy.execute(data, params, crossSymbolContext), settings);
+        const signals = executeDirectStrategySignals(data, interval, strategy, params, crossSymbolContext);
+        return applySignalPolarity(signals, settings);
     }
 
     const numericData = toNumericTimeData(data);
     if (!numericData) {
-        return applySignalPolarity(strategy.execute(data, params, crossSymbolContext), settings);
+        const signals = executeDirectStrategySignals(data, interval, strategy, params, crossSymbolContext);
+        return applySignalPolarity(signals, settings);
     }
 
     const higherData = resampleOHLCV(numericData, tfConfig.interval, tfConfig.resampleOptions);
@@ -864,6 +874,21 @@ function executeStrategySignals(
         tfConfig.resampleOptions
     );
     return applySignalPolarity(mappedSignals, settings);
+}
+
+function executeDirectStrategySignals(
+    data: OHLCVData[],
+    interval: string,
+    strategy: Strategy,
+    params: StrategyParams,
+    context?: StrategyExecutionContext
+): Signal[] {
+    return executeStrategyWithTimeGapIsolation({
+        data,
+        interval,
+        executionContext: context,
+        execute: (segmentData, segmentContext) => strategy.execute(segmentData, params, segmentContext),
+    });
 }
 
 // ============================================================================

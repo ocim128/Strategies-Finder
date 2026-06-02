@@ -112,6 +112,7 @@ Important behavior:
 - native `15m` and `1h` runs match each trade to the containing Polymarket session event
 - same-event exit modes also use local SQLite price points for intra-event pricing
 - `1s` BTCUSDT/XRPUSDT runs use the separate second-market SQLite DB and executable CLOB bid/ask quotes sampled by `sample_ts`
+- supported `1s` backtests and Finder runs isolate strategy execution across missing candle gaps; lookback windows restart after any non-consecutive second instead of counting bars from before the gap
 - post-signal limit entry is an optional `5m` outcome-session overlay that uses local SQLite price points to decide whether a chart trade would have filled at a fixed limit price or a signal-quote offset before scoring it
 - `lib/polymarket-outcome-evaluator.ts` remains the headless resolve-hold helper when the caller only supplies outcome rows
 - stores the resolved target on `BacktestResult.polymarketTradeSummary.outcomeSymbol` so later UI reloads do not drift
