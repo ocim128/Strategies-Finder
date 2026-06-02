@@ -1501,4 +1501,1608 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: true,
     },
+    {
+        key: "close_acceptance_streak_ignition",
+        name: "Close Acceptance Streak Ignition",
+        description: "Confirms early trend momentum when price registers consecutive close acceptance above or below the rolling median.",
+        defaultParams: {
+        lookback: 50,
+        streakThreshold: 4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        streakThreshold: "Streak Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "streakThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "compressed_boundary_efficiency_breakout",
+        name: "Compressed Boundary Efficiency Breakout",
+        description: "Captures breakouts from tight trailing boundaries at their earliest moment when confirmed by positive close acceptance and high path efficiency.",
+        defaultParams: {
+        lookback: 30,
+        minEfficiency: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        minEfficiency: "Min Efficiency",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minEfficiency"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "efficiency_ignition_early_continuation",
+        name: "Efficiency Ignition Early Continuation",
+        description: "Captures early momentum ignition when path efficiency surges from a compressed baseline, signaling institutional consolidation breakouts.",
+        defaultParams: {
+        lookback: 30,
+        minEfficiency: 0.65,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        minEfficiency: "Min Efficiency",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minEfficiency"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "event_open_distance_momentum_ignition",
+        name: "Event Open Distance Momentum Ignition",
+        description: "Captures early session momentum when price establishes a clear ATR-normalized distance from the opening anchor, gated by Chaikin Money Flow.",
+        defaultParams: {
+        lookback: 50,
+        distanceThreshold: 2.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback (ATR/CMF)",
+        distanceThreshold: "Distance Threshold (ATR)",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "distanceThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_acceleration_entry",
+        name: "Initiative Pressure Acceleration Entry",
+        description: "Captures aggressive transaction flows exhibiting high acceleration at the onset of a new trend via decayed cumulative initiative pressure crossovers.",
+        defaultParams: {
+        lookback: 40,
+        decay: 0.94,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        decay: "Decay Factor",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "decay"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_regime_ignition",
+        name: "Initiative Pressure Regime Ignition",
+        description: "Captures sudden expansion of initiative pressure relative to its average by standard deviation bands.",
+        defaultParams: {
+        lookback: 30,
+        multiplier: 2.0,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        multiplier: "Std Dev Multiplier",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "multiplier"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "low_entropy_close_location_ignition",
+        name: "Low Entropy Close Location Ignition",
+        description: "Captures low-entropy close-location alignment under extreme return entropy compression, signaling a quiet, highly organized launch.",
+        defaultParams: {
+        lookback: 35,
+        clsLocThreshold: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        clsLocThreshold: "Close Location Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "clsLocThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "streak_gated_volume_acceleration",
+        name: "Streak Gated Volume Acceleration",
+        description: "Filters early-stage high-conviction trends by requiring a persistent return direction streak aligned with an expanding volume Z-score.",
+        defaultParams: {
+        lookback: 30,
+        streakThreshold: 4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Z-score Lookback",
+        streakThreshold: "Streak Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "streakThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_price_asymmetry_ignition",
+        name: "Typical Price Asymmetry Ignition",
+        description: "Captures early momentum by tracking shifts in rolling skewness of typical price returns alongside typical price rate of change.",
+        defaultParams: {
+        lookback: 40,
+        skewThreshold: 1.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        skewThreshold: "Skew Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "skewThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_squeezed_typical_crossover",
+        name: "Volatility Squeezed Typical Crossover",
+        description: "Enters on rolling median crossover when standard deviation of returns resides at a historical percentile low (volatility squeeze).",
+        defaultParams: {
+        lookback: 40,
+        volPercentile: 25,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        volPercentile: "Volatility Percentile Max",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "volPercentile"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "cmf_gated_close_location_alignment",
+        name: "CMF Gated Close Location Alignment",
+        description: "Close-location pressure at range extremes is gated by Chaikin Money Flow to verify volume-backed conviction.",
+        defaultParams: {
+        lookback: 30,
+        clsLocThreshold: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        clsLocThreshold: "Close Location Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "clsLocThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "cmf_persistence_regime_alignment",
+        name: "CMF Persistence Regime Alignment",
+        description: "Signals when Chaikin Money Flow (CMF) remains consecutively positive or negative for a specified streak duration.",
+        defaultParams: {
+        lookback: 30,
+        minStreak: 6,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "CMF Lookback",
+        minStreak: "Min Streak Duration",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minStreak"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "cumulative_initiative_pressure_crossover",
+        name: "Cumulative Initiative Pressure Crossover",
+        description: "Captures critical turning points in buy/sell pressure imbalance when decayed cumulative initiative pressure crosses its rolling average.",
+        defaultParams: {
+        lookback: 40,
+        decay: 0.92,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        decay: "Decay Factor",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "decay"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "event_open_volume_thrust_alignment",
+        name: "Event Open Volume Thrust Alignment",
+        description: "Captures early session breakouts when price departs from the event open anchor on a high volume Z-score thrust.",
+        defaultParams: {
+        lookback: 50,
+        zScoreThreshold: 2.0,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Z-score Lookback",
+        zScoreThreshold: "Z-score Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "zScoreThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "price_volume_divergence_regime",
+        name: "Price Volume Divergence Regime",
+        description: "Detects low-volume exhaustion moves against the VWAP trend followed by a high-volume re-entry in the trend direction.",
+        defaultParams: {
+        lookback: 40,
+        volFactor: 1.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "VWAP & Volume Lookback",
+        volFactor: "Volume Thrust Factor",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "volFactor"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_autocorrelation_regime_breakout",
+        name: "Volume Autocorrelation Regime Breakout",
+        description: "Filters breakout entries from trailing boundaries by demanding high serial correlation of trading volume, showing institutional footprints.",
+        defaultParams: {
+        lookback: 30,
+        minCorrelation: 0.5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minCorrelation: "Min Volume Correlation",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minCorrelation"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_profile_poc_rejection_streak",
+        name: "Volume Profile POC Rejection Streak",
+        description: "Signals after a failed break of the volume profile Point of Control (POC) followed by a persistent streak of close acceptance away from value.",
+        defaultParams: {
+        lookback: 50,
+        minStreak: 4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Profile Lookback",
+        minStreak: "Min Acceptance Streak",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minStreak"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_profile_value_area_reentry",
+        name: "Volume Profile Value Area Reentry",
+        description: "Signals when close price crosses back inside Value Area High (VAH) or Value Area Low (VAL) after spent outside streak conditions are met.",
+        defaultParams: {
+        lookback: 60,
+        minBarsOutside: 5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Profile Lookback",
+        minBarsOutside: "Min Bars Outside",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minBarsOutside"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_band_acceptance_persistence",
+        name: "VWAP Band Acceptance Persistence",
+        description: "Signals when close price accepts outside rolling VWAP standard deviation bands for a consecutive streak.",
+        defaultParams: {
+        lookback: 30,
+        minStreak: 5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "VWAP Lookback",
+        minStreak: "Min Streak Duration",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minStreak"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_deviation_entropy_gated",
+        name: "VWAP Deviation Entropy Gated",
+        description: "Signals when close price crosses above or below VWAP when rolling entropy of returns is below a regime threshold.",
+        defaultParams: {
+        lookback: 30,
+        entropyThreshold: 0.5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        entropyThreshold: "Entropy Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "entropyThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "entropy_gated_cmf_breakout",
+        name: "Entropy Gated CMF Breakout",
+        description: "Signals when Chaikin Money Flow (CMF) reaches extreme thresholds while rolling return entropy is compressed, highlighting coordinated institutional edge.",
+        defaultParams: {
+        lookback: 30,
+        entropyThreshold: 0.45,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        entropyThreshold: "Entropy Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "entropyThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "event_open_distance_vol_volatility",
+        name: "Event Open Distance Vol Volatility Alignment",
+        description: "Captures early session breakouts by double-normalizing price distance from the event open anchor by both rolling average volume and ATR.",
+        defaultParams: {
+        lookback: 60,
+        normDistanceThreshold: 2.5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        normDistanceThreshold: "Normalized Distance Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "normDistanceThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_persistence_volatility_compression",
+        name: "Initiative Persistence Volatility Compression",
+        description: "Signals when highly autocorrelated initiative pressure is observed during a volatility compression phase, capturing highly organized stealth positioning.",
+        defaultParams: {
+        lookback: 30,
+        minAutoCorr: 0.5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minAutoCorr: "Min Autocorrelation",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minAutoCorr"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_volatility_regime_crossover",
+        name: "Initiative Pressure Volatility Regime Crossover",
+        description: "Signals rolling median crossovers only when volatility-normalized initiative pressure confirms aggressive buyer or seller commitment.",
+        defaultParams: {
+        lookback: 40,
+        pressureFactor: 2.0,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        pressureFactor: "Pressure Factor",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "pressureFactor"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "pvv_efficiency_alignment",
+        name: "Price-Volume-Volatility Efficiency Alignment",
+        description: "Signals clean, highly efficient price moves supported by rising volume and ATR expansion.",
+        defaultParams: {
+        lookback: 30,
+        minEfficiency: 0.6,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minEfficiency: "Min Efficiency",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minEfficiency"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "va_squeeze_volume_thrust",
+        name: "Value Area Squeeze Volume Thrust",
+        description: "Signals breakouts from a highly compressed volume Value Area when confirmed by an extreme volume Z-score thrust.",
+        defaultParams: {
+        lookback: 50,
+        squeezeThreshold: 1.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        squeezeThreshold: "Squeeze Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "squeezeThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_volatility_correlation_drift",
+        name: "Volume Volatility Correlation Drift",
+        description: "Detects price-volume correlation alignment under low-volatility compression, highlighting stealth institutional accumulation.",
+        defaultParams: {
+        lookback: 35,
+        minCorr: 0.4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minCorr: "Min Correlation",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minCorr"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_volatility_ratio_boundary_breakout",
+        name: "Volume Volatility Ratio Boundary Breakout",
+        description: "Signals boundary breakouts only when accompanied by a volume surge that scales beyond current background ATR volatility.",
+        defaultParams: {
+        lookback: 30,
+        ratioThreshold: 1.5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        ratioThreshold: "Ratio Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "ratioThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vw_atr_drift_alignment",
+        name: "Volume-Weighted ATR Drift Alignment",
+        description: "Quiet, persistent price drift is captured when it occurs under compressed ATR volatility but with positive or negative volume-weighted CMF flow.",
+        defaultParams: {
+        lookback: 30,
+        clsLocThreshold: 0.65,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        clsLocThreshold: "Close Location Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "clsLocThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_volatility_band_rejection_streak",
+        name: "VWAP Volatility Band Rejection Streak",
+        description: "Signals price extreme rejection from VWAP volatility bands followed by consecutive close acceptance back toward the VWAP center.",
+        defaultParams: {
+        lookback: 40,
+        minStreak: 4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minStreak: "Min Acceptance Streak",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minStreak"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "autocorrelation_streak_regime_alignment",
+        name: "Autocorrelation Streak Regime Alignment",
+        description: "Signals when price develops consecutive directional return streaks within strongly positive autocorrelation regimes.",
+        defaultParams: {
+        lookback: 25,
+        minAutoCorr: 0.3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minAutoCorr: "Min Autocorrelation",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minAutoCorr"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_midpoint_deviation_zscore_reversion",
+        name: "Close-Midpoint Deviation Z-Score Reversion",
+        description: "Reversion signals triggered when the Z-score of close-midpoint deviation reaches extreme levels while Chaikin Money Flow diverges.",
+        defaultParams: {
+        lookback: 35,
+        zThreshold: 2.3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        zThreshold: "Z-Score Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "zThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "dual_timeframe_efficiency_ratio_spread",
+        name: "Dual Timeframe Efficiency Ratio Spread",
+        description: "Captures transitions from high-noise consolidation to explosive momentum breakouts using the ratio of fast to slow path efficiency.",
+        defaultParams: {
+        fastLookback: 20,
+        slowLookback: 80,
+    } as Record<string, number>,
+        paramLabels: {
+        fastLookback: "Fast Lookback",
+        slowLookback: "Slow Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["fastLookback", "slowLookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "event_open_volatility_spread_reversal",
+        name: "Event Open Volatility Spread Reversal",
+        description: "Signals price overextensions from the event open price once ATR compresses and opposite volume accumulation CMF diverges.",
+        defaultParams: {
+        lookback: 50,
+        distThreshold: 2.0,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        distThreshold: "ATR Distance Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "distThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_correlation_reversal",
+        name: "Initiative Pressure Correlation Reversal",
+        description: "Signals reversion when close is near range limits and rolling correlation between price returns and initiative pressure is strongly negative, showing passive absorption.",
+        defaultParams: {
+        lookback: 30,
+        maxCorrelation: -0.5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        maxCorrelation: "Max Correlation",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "maxCorrelation"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_close_autocorrelation_divergence",
+        name: "Typical and Close Autocorrelation Divergence",
+        description: "Exposes micro-structural imbalance where typical price autocorrelation diverges from close price autocorrelation, suggesting near-term statistical reversion.",
+        defaultParams: {
+        lookback: 40,
+        divergenceThreshold: 0.4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Autocorrelation Lookback",
+        divergenceThreshold: "Divergence Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "divergenceThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_price_rolling_skewness_exhaustion",
+        name: "Typical Price Rolling Skewness Exhaustion",
+        description: "Signals reversion when extreme rolling typical price skewness is accompanied by price acceptance back across the rolling median.",
+        defaultParams: {
+        lookback: 45,
+        skewThreshold: 1.3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        skewThreshold: "Skewness Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "skewThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "value_area_density_breakout",
+        name: "Value Area Density Breakout",
+        description: "Signals breakouts from a highly compressed Value Area High/Low region when confirmed by close acceptance outside the range.",
+        defaultParams: {
+        lookback: 60,
+        squeezeRatio: 1.1,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        squeezeRatio: "Squeeze Ratio Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "squeezeRatio"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_correlation_regime_breakout",
+        name: "Volume Correlation Regime Breakout",
+        description: "Signals boundary breakouts only when price-volume return correlation is strongly positive, indicating algorithmic execution.",
+        defaultParams: {
+        lookback: 30,
+        minCorr: 0.45,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minCorr: "Min Correlation",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minCorr"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_weighted_entropy_regime_reversal",
+        name: "Volume Weighted Entropy Regime Reversal",
+        description: "Reversion signals triggered when a trend reaches high return entropy on elevated volume followed by a close acceptance streak in the opposite direction.",
+        defaultParams: {
+        lookback: 30,
+        entropyThreshold: 0.75,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        entropyThreshold: "Entropy Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "entropyThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_location_percentile_reversion",
+        name: "Close Location Percentile Reversion",
+        description: "Reverts overextended rolling close-location levels when short-term volume autocorrelation collapses.",
+        defaultParams: {
+        lookback: 35,
+        percentileLimit: 90,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        percentileLimit: "Percentile Limit",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "percentileLimit"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "dual_timeframe_median_spread_arbitrage",
+        name: "Dual Timeframe Median Spread Arbitrage",
+        description: "Trades short-term temporal median spreads that overextend relative to long-term volatility, suggesting statistical reversion.",
+        defaultParams: {
+        fastLookback: 20,
+        slowLookback: 80,
+    } as Record<string, number>,
+        paramLabels: {
+        fastLookback: "Fast Median Lookback",
+        slowLookback: "Slow Median Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["fastLookback", "slowLookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "entropy_gated_zscore_reversion",
+        name: "Entropy Gated Z-Score Reversion",
+        description: "Volatility-normalized price deviations mean-revert with high reliability when return distribution exhibits high entropy.",
+        defaultParams: {
+        lookback: 40,
+        zThreshold: 2.0,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        zThreshold: "Z-Score Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "zThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_autocorrelation_reversion",
+        name: "Initiative Pressure Autocorrelation Reversion",
+        description: "Signals reversion when highly negatively autocorrelated initiative pressure indicates exhaustion under elevated ATR volatility.",
+        defaultParams: {
+        lookback: 30,
+        minAutoCorr: -0.4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minAutoCorr: "Min Autocorrelation",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minAutoCorr"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_span_volume_dislocation_reversion",
+        name: "Range Span Volume Dislocation Reversion",
+        description: "Signals price overextensions beyond trailing boundaries when volume remains exceptionally low relative to ATR volatility.",
+        defaultParams: {
+        lookback: 30,
+        maxVolRatio: 0.5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        maxVolRatio: "Max Volume Ratio",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "maxVolRatio"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "skewness_gated_percentile_reversion",
+        name: "Skewness Gated Percentile Reversion",
+        description: "Reverts extreme price percentile ranks when return skewness is opposite, indicating a building exhaust block.",
+        defaultParams: {
+        lookback: 50,
+        skewLimit: 1.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        skewLimit: "Skewness Limit",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "skewLimit"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_weighted_zscore_dislocation",
+        name: "Typical Price and Weighted Close Z-Score Dislocation",
+        description: "Signals short-term typical price vs volume-weighted close dislocations that resolve back to fair value.",
+        defaultParams: {
+        lookback: 30,
+        zThreshold: 2.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        zThreshold: "Z-Score Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "zThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "value_area_acceptance_reversion",
+        name: "Value Area Acceptance Reversion",
+        description: "Reverts inefficient price breakouts back to Point of Control (POC) when price is outside VAH/VAL boundaries.",
+        defaultParams: {
+        lookback: 50,
+        maxEfficiency: 0.3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        maxEfficiency: "Max Efficiency",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "maxEfficiency"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_profile_poc_regression",
+        name: "Volume Profile POC Regression",
+        description: "Reverts to POC high-liquidity zones when close is at extreme ATR-normalized distance and efficiency ratio shows lack of trend conviction.",
+        defaultParams: {
+        lookback: 60,
+        distanceThreshold: 2.5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Profile Lookback",
+        distanceThreshold: "POC Distance Threshold (ATR)",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "distanceThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_weighted_close_correlation_reversion",
+        name: "Volume-Weighted Close Correlation Reversion",
+        description: "Reverts range boundary excursions when the rolling correlation between volume changes and returns collapses to extreme negatives.",
+        defaultParams: {
+        lookback: 35,
+        correlationLimit: -0.5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        correlationLimit: "Correlation Limit",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "correlationLimit"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "atr_expansion_close_acceptance",
+        name: "ATR Expansion Close Acceptance",
+        description: "Signals boundary breakouts only when volatility (ATR) is expanding above its rolling average, backed by close acceptance.",
+        defaultParams: {
+        lookback: 30,
+        atrExpansionFactor: 1.1,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        atrExpansionFactor: "ATR Expansion Factor",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "atrExpansionFactor"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "failed_volatility_spike_continuation",
+        name: "Failed Volatility Spike Continuation",
+        description: "Enters on the resumption of the primary trend following a failed, counter-trend ATR volatility spike that immediately contracts.",
+        defaultParams: {
+        lookback: 40,
+        zThreshold: 2.0,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        zThreshold: "Spike Z-Score Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "zThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "true_range_ratio_persistence_streak",
+        name: "True Range Ratio Persistence Streak",
+        description: "Signals when a consecutive streak of expanding true ranges aligns with price return direction, showing persistent trend strength.",
+        defaultParams: {
+        lookback: 30,
+        minStreak: 4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Average TR Lookback",
+        minStreak: "Min Streak Length",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minStreak"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "value_area_squeeze_breakout",
+        name: "Value Area Squeeze Breakout",
+        description: "Signals explosive breakouts from a highly compressed Value Area High/Low consensus normalized by ATR.",
+        defaultParams: {
+        lookback: 60,
+        squeezeThreshold: 1.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Profile Lookback",
+        squeezeThreshold: "Squeeze Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "squeezeThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_adjusted_median_crossover",
+        name: "Volatility Adjusted Median Crossover",
+        description: "Enters on rolling median crossovers when the crossing distance exceeds a standard deviation multiple under high path efficiency.",
+        defaultParams: {
+        lookback: 45,
+        minEfficiency: 0.55,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minEfficiency: "Minimum Efficiency",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minEfficiency"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_compression_entropy_breakout",
+        name: "Volatility Compression Entropy Breakout",
+        description: "Signals breakouts from extreme volatility squeezes under a low-entropy regime, capturing explosive trend launches.",
+        defaultParams: {
+        lookback: 40,
+        entropyMax: 0.45,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        entropyMax: "Maximum Entropy",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "entropyMax"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_gated_event_open_distance",
+        name: "Volatility Gated Event Open Distance",
+        description: "Confirms a clean breakout from the opening session anchor by gating price distance with rolling ATR volatility.",
+        defaultParams: {
+        lookback: 50,
+        distanceThreshold: 3.0,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "ATR Lookback",
+        distanceThreshold: "Distance Threshold (ATR)",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "distanceThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_normalized_initiative_pressure",
+        name: "Volatility Normalized Initiative Pressure",
+        description: "Signals when initiative pressure normalized by rolling standard deviation of returns exceeds a threshold, isolating structural imbalances.",
+        defaultParams: {
+        lookback: 35,
+        pressureThreshold: 2.5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        pressureThreshold: "Pressure Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "pressureThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_regime_boundary_acceptance",
+        name: "Volatility Regime Boundary Acceptance",
+        description: "Signals boundary breakouts under rising volatility regimes confirmed by positive or negative close acceptance.",
+        defaultParams: {
+        lookback: 30,
+        minStdDevRise: 1.05,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minStdDevRise: "Minimum Volatility Rise",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minStdDevRise"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_regime_drift_alignment",
+        name: "Volatility Regime Drift Alignment",
+        description: "Captures steady price drift when it occurs during a low-volatility regime, avoiding counter-trend traps.",
+        defaultParams: {
+        lookback: 30,
+        clsLocThreshold: 0.65,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        clsLocThreshold: "Close Location Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "clsLocThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "autocorrelation_reversion_volatility_gated",
+        name: "Autocorrelation Reversion Volatility Gated",
+        description: "Enters reversion swings when return autocorrelation is strongly negative under high return volatility.",
+        defaultParams: {
+        lookback: 30,
+        maxAutoCorr: -0.3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        maxAutoCorr: "Max Autocorrelation",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "maxAutoCorr"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "boundary_exhaustion_volatility_spread_fade",
+        name: "Boundary Exhaustion Volatility Spread Fade",
+        description: "Fades boundary breakouts when the true range of the breakout bar is below average, showing liquidity exhaustion.",
+        defaultParams: {
+        lookback: 30,
+        rangeThreshold: 0.8,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        rangeThreshold: "Range Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "rangeThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "boundary_position_velocity_gated",
+        name: "Boundary Position Velocity Gated",
+        description: "Signals breakouts when price breaks trailing boundaries at high normalized return velocity.",
+        defaultParams: {
+        lookback: 30,
+        velocityPercentile: 0.85,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        velocityPercentile: "Velocity Percentile",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "velocityPercentile"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_location_distribution_regime",
+        name: "Close Location Distribution Regime",
+        description: "Captures accumulation/distribution by checking extreme rolling average close location when ATR is low.",
+        defaultParams: {
+        lookback: 30,
+        minClsLoc: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        minClsLoc: "Min Close Location",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minClsLoc"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_location_variance_exhaustion_fade",
+        name: "Close Location Variance Exhaustion Fade",
+        description: "Fades closing print variance spikes when price crosses back over the rolling median.",
+        defaultParams: {
+        lookback: 30,
+        stdDevThreshold: 0.25,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        stdDevThreshold: "StdDev Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "stdDevThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "efficiency_gated_center_crossover",
+        name: "Efficiency Gated Center Crossover",
+        description: "Signals crossovers of the rolling median only when path efficiency is high, confirming coordinated drive.",
+        defaultParams: {
+        lookback: 40,
+        minEfficiency: 0.6,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        minEfficiency: "Min Efficiency",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minEfficiency"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "entropy_gated_boundary_acceptance",
+        name: "Entropy Gated Boundary Acceptance",
+        description: "Signals boundary breakouts when rolling return entropy is low, signifying coordinated institutional breakout.",
+        defaultParams: {
+        lookback: 50,
+        entropyThreshold: 0.4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        entropyThreshold: "Entropy Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "entropyThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "entropy_gated_typical_crossover_fade",
+        name: "Entropy Gated Typical Crossover Fade",
+        description: "Fades typical price crossovers of the rolling median when return entropy is high, indicating a noisy mean-reverting regime.",
+        defaultParams: {
+        lookback: 40,
+        minEntropy: 0.65,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        minEntropy: "Min Entropy",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minEntropy"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "event_open_distance_pressure_alignment",
+        name: "Event Open Distance Pressure Alignment",
+        description: "Aligns event-open distance shifts with cumulative initiative volume pressure to capture breakout waves.",
+        defaultParams: {
+        lookback: 100,
+        decay: 0.95,
+        minPressure: 1.0,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        decay: "Decay Factor",
+        minPressure: "Min Pressure",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "decay", "minPressure"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "event_open_efficiency_decay_reversion",
+        name: "Event Open Efficiency Decay Reversion",
+        description: "Fades large extensions from the event open price when price path efficiency decays, predicting a collapse.",
+        defaultParams: {
+        lookback: 50,
+        distanceThreshold: 2.5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        distanceThreshold: "Distance ATR Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "distanceThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "failed_opposite_pressure_reversal",
+        name: "Failed Opposite Pressure Reversal",
+        description: "Captures trend continuation when pullbacks towards the median fail to break it and initiative pressure reverses.",
+        defaultParams: {
+        lookback: 50,
+        pressureReversalLookback: 5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        pressureReversalLookback: "Reversal Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "pressureReversalLookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_distribution_shift",
+        name: "Initiative Pressure Distribution Shift",
+        description: "Identifies momentum breakouts when the rolling percentile rank of initiative pressure exceeds extreme levels.",
+        defaultParams: {
+        lookback: 30,
+        threshold: 0.80,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        threshold: "Percentile Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "threshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_divergent_spread_reversion",
+        name: "Initiative Pressure Divergent Spread Reversion",
+        description: "Fades negative/positive close returns when volume-weighted initiative pressure is strongly divergent, indicating passive absorption.",
+        defaultParams: {
+        lookback: 30,
+        decay: 0.95,
+        pressureThreshold: 1.0,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        decay: "Decay Factor",
+        pressureThreshold: "Pressure Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "decay", "pressureThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "price_volume_agreement_streak",
+        name: "Price Volume Agreement Streak",
+        description: "Enters on strong trend momentum when both price return direction and volume growth consecutively agree.",
+        defaultParams: {
+        lookback: 20,
+        streakThreshold: 4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        streakThreshold: "Streak Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "streakThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "return_skewness_volatility_adjusted_fade",
+        name: "Return Skewness Volatility Adjusted Fade",
+        description: "Fades price extremes when they are accompanied by opposite extreme return skewness, showing exhaustion.",
+        defaultParams: {
+        lookback: 45,
+        skewLimit: 1.3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        skewLimit: "Skew Limit",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "skewLimit"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "rolling_distribution_asymmetry_alignment",
+        name: "Rolling Distribution Asymmetry Alignment",
+        description: "Enters directional breakouts when return skewness and average return align in positive/negative territory.",
+        defaultParams: {
+        lookback: 45,
+        skewThreshold: 1.5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        skewThreshold: "Skew Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "skewThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_midpoint_deviation_drift_reversion",
+        name: "Typical Midpoint Deviation Drift Reversion",
+        description: "Mean-reverts the Z-score of the difference between typical price and bar midpoint once it crosses extreme thresholds.",
+        defaultParams: {
+        lookback: 35,
+        zThreshold: 2.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        zThreshold: "Z-Score Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "zThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "value_area_acceptance_persistence",
+        name: "Value Area Acceptance Persistence",
+        description: "Signals breakouts outside VAH/VAL when price exhibits a persistent close acceptance streak.",
+        defaultParams: {
+        lookback: 60,
+        minStreak: 5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        minStreak: "Min Streak",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minStreak"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "value_area_rejection_streak_reversion",
+        name: "Value Area Rejection Streak Reversion",
+        description: "Reverts to POC when a breakout outside VAH/VAL fails to generate a persistent close acceptance streak and crosses back inside.",
+        defaultParams: {
+        lookback: 60,
+        maxStreak: 3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        maxStreak: "Max Streak",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "maxStreak"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_weighted_spread_efficiency_fade",
+        name: "Volume Weighted Spread Efficiency Fade",
+        description: "Fades value area boundary breakouts when path efficiency is low and price crosses back inside the Value Area.",
+        defaultParams: {
+        lookback: 50,
+        maxEfficiency: 0.35,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        maxEfficiency: "Max Efficiency",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "maxEfficiency"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];

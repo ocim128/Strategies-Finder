@@ -79,6 +79,86 @@ import { polymarket_event_direction_follow } from "./lib/polymarket_event_direct
 import { polymarket_fair_value_mispricing } from "./lib/polymarket_fair_value_mispricing";
 import { polymarket_fair_value_catchup_scalper } from "./lib/polymarket_fair_value_catchup_scalper";
 import { polymarket_event_direction_gamma_skew_filter } from "./lib/polymarket_event_direction_gamma_skew_filter";
+import { close_acceptance_streak_ignition } from "./lib/close_acceptance_streak_ignition";
+import { compressed_boundary_efficiency_breakout } from "./lib/compressed_boundary_efficiency_breakout";
+import { efficiency_ignition_early_continuation } from "./lib/efficiency_ignition_early_continuation";
+import { event_open_distance_momentum_ignition } from "./lib/event_open_distance_momentum_ignition";
+import { initiative_pressure_acceleration_entry } from "./lib/initiative_pressure_acceleration_entry";
+import { initiative_pressure_regime_ignition } from "./lib/initiative_pressure_regime_ignition";
+import { low_entropy_close_location_ignition } from "./lib/low_entropy_close_location_ignition";
+import { streak_gated_volume_acceleration } from "./lib/streak_gated_volume_acceleration";
+import { typical_price_asymmetry_ignition } from "./lib/typical_price_asymmetry_ignition";
+import { volatility_squeezed_typical_crossover } from "./lib/volatility_squeezed_typical_crossover";
+import { cmf_gated_close_location_alignment } from "./lib/cmf_gated_close_location_alignment";
+import { cmf_persistence_regime_alignment } from "./lib/cmf_persistence_regime_alignment";
+import { cumulative_initiative_pressure_crossover } from "./lib/cumulative_initiative_pressure_crossover";
+import { event_open_volume_thrust_alignment } from "./lib/event_open_volume_thrust_alignment";
+import { price_volume_divergence_regime } from "./lib/price_volume_divergence_regime";
+import { volume_autocorrelation_regime_breakout } from "./lib/volume_autocorrelation_regime_breakout";
+import { volume_profile_poc_rejection_streak } from "./lib/volume_profile_poc_rejection_streak";
+import { volume_profile_value_area_reentry } from "./lib/volume_profile_value_area_reentry";
+import { vwap_band_acceptance_persistence } from "./lib/vwap_band_acceptance_persistence";
+import { vwap_deviation_entropy_gated } from "./lib/vwap_deviation_entropy_gated";
+import { entropy_gated_cmf_breakout } from "./lib/entropy_gated_cmf_breakout";
+import { event_open_distance_vol_volatility } from "./lib/event_open_distance_vol_volatility";
+import { initiative_persistence_volatility_compression } from "./lib/initiative_persistence_volatility_compression";
+import { initiative_pressure_volatility_regime_crossover } from "./lib/initiative_pressure_volatility_regime_crossover";
+import { pvv_efficiency_alignment } from "./lib/pvv_efficiency_alignment";
+import { va_squeeze_volume_thrust } from "./lib/va_squeeze_volume_thrust";
+import { volume_volatility_correlation_drift } from "./lib/volume_volatility_correlation_drift";
+import { volume_volatility_ratio_boundary_breakout } from "./lib/volume_volatility_ratio_boundary_breakout";
+import { vw_atr_drift_alignment } from "./lib/vw_atr_drift_alignment";
+import { vwap_volatility_band_rejection_streak } from "./lib/vwap_volatility_band_rejection_streak";
+import { autocorrelation_streak_regime_alignment } from "./lib/autocorrelation_streak_regime_alignment";
+import { close_midpoint_deviation_zscore_reversion } from "./lib/close_midpoint_deviation_zscore_reversion";
+import { dual_timeframe_efficiency_ratio_spread } from "./lib/dual_timeframe_efficiency_ratio_spread";
+import { event_open_volatility_spread_reversal } from "./lib/event_open_volatility_spread_reversal";
+import { initiative_pressure_correlation_reversal } from "./lib/initiative_pressure_correlation_reversal";
+import { typical_close_autocorrelation_divergence } from "./lib/typical_close_autocorrelation_divergence";
+import { typical_price_rolling_skewness_exhaustion } from "./lib/typical_price_rolling_skewness_exhaustion";
+import { value_area_density_breakout } from "./lib/value_area_density_breakout";
+import { volume_correlation_regime_breakout } from "./lib/volume_correlation_regime_breakout";
+import { volume_weighted_entropy_regime_reversal } from "./lib/volume_weighted_entropy_regime_reversal";
+import { close_location_percentile_reversion } from "./lib/close_location_percentile_reversion";
+import { dual_timeframe_median_spread_arbitrage } from "./lib/dual_timeframe_median_spread_arbitrage";
+import { entropy_gated_zscore_reversion } from "./lib/entropy_gated_zscore_reversion";
+import { initiative_pressure_autocorrelation_reversion } from "./lib/initiative_pressure_autocorrelation_reversion";
+import { range_span_volume_dislocation_reversion } from "./lib/range_span_volume_dislocation_reversion";
+import { skewness_gated_percentile_reversion } from "./lib/skewness_gated_percentile_reversion";
+import { typical_weighted_zscore_dislocation } from "./lib/typical_weighted_zscore_dislocation";
+import { value_area_acceptance_reversion } from "./lib/value_area_acceptance_reversion";
+import { volume_profile_poc_regression } from "./lib/volume_profile_poc_regression";
+import { volume_weighted_close_correlation_reversion } from "./lib/volume_weighted_close_correlation_reversion";
+import { atr_expansion_close_acceptance } from "./lib/atr_expansion_close_acceptance";
+import { failed_volatility_spike_continuation } from "./lib/failed_volatility_spike_continuation";
+import { true_range_ratio_persistence_streak } from "./lib/true_range_ratio_persistence_streak";
+import { value_area_squeeze_breakout } from "./lib/value_area_squeeze_breakout";
+import { volatility_adjusted_median_crossover } from "./lib/volatility_adjusted_median_crossover";
+import { volatility_compression_entropy_breakout } from "./lib/volatility_compression_entropy_breakout";
+import { volatility_gated_event_open_distance } from "./lib/volatility_gated_event_open_distance";
+import { volatility_normalized_initiative_pressure } from "./lib/volatility_normalized_initiative_pressure";
+import { volatility_regime_boundary_acceptance } from "./lib/volatility_regime_boundary_acceptance";
+import { volatility_regime_drift_alignment } from "./lib/volatility_regime_drift_alignment";
+import { autocorrelation_reversion_volatility_gated } from "./lib/autocorrelation_reversion_volatility_gated";
+import { boundary_exhaustion_volatility_spread_fade } from "./lib/boundary_exhaustion_volatility_spread_fade";
+import { boundary_position_velocity_gated } from "./lib/boundary_position_velocity_gated";
+import { close_location_distribution_regime } from "./lib/close_location_distribution_regime";
+import { close_location_variance_exhaustion_fade } from "./lib/close_location_variance_exhaustion_fade";
+import { efficiency_gated_center_crossover } from "./lib/efficiency_gated_center_crossover";
+import { entropy_gated_boundary_acceptance } from "./lib/entropy_gated_boundary_acceptance";
+import { entropy_gated_typical_crossover_fade } from "./lib/entropy_gated_typical_crossover_fade";
+import { event_open_distance_pressure_alignment } from "./lib/event_open_distance_pressure_alignment";
+import { event_open_efficiency_decay_reversion } from "./lib/event_open_efficiency_decay_reversion";
+import { failed_opposite_pressure_reversal } from "./lib/failed_opposite_pressure_reversal";
+import { initiative_pressure_distribution_shift } from "./lib/initiative_pressure_distribution_shift";
+import { initiative_pressure_divergent_spread_reversion } from "./lib/initiative_pressure_divergent_spread_reversion";
+import { price_volume_agreement_streak } from "./lib/price_volume_agreement_streak";
+import { return_skewness_volatility_adjusted_fade } from "./lib/return_skewness_volatility_adjusted_fade";
+import { rolling_distribution_asymmetry_alignment } from "./lib/rolling_distribution_asymmetry_alignment";
+import { typical_midpoint_deviation_drift_reversion } from "./lib/typical_midpoint_deviation_drift_reversion";
+import { value_area_acceptance_persistence } from "./lib/value_area_acceptance_persistence";
+import { value_area_rejection_streak_reversion } from "./lib/value_area_rejection_streak_reversion";
+import { volume_weighted_spread_efficiency_fade } from "./lib/volume_weighted_spread_efficiency_fade";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -163,6 +243,86 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "polymarket_fair_value_mispricing", strategy: polymarket_fair_value_mispricing },
     { key: "polymarket_fair_value_catchup_scalper", strategy: polymarket_fair_value_catchup_scalper },
     { key: "polymarket_event_direction_gamma_skew_filter", strategy: polymarket_event_direction_gamma_skew_filter },
+    { key: "close_acceptance_streak_ignition", strategy: close_acceptance_streak_ignition },
+    { key: "compressed_boundary_efficiency_breakout", strategy: compressed_boundary_efficiency_breakout },
+    { key: "efficiency_ignition_early_continuation", strategy: efficiency_ignition_early_continuation },
+    { key: "event_open_distance_momentum_ignition", strategy: event_open_distance_momentum_ignition },
+    { key: "initiative_pressure_acceleration_entry", strategy: initiative_pressure_acceleration_entry },
+    { key: "initiative_pressure_regime_ignition", strategy: initiative_pressure_regime_ignition },
+    { key: "low_entropy_close_location_ignition", strategy: low_entropy_close_location_ignition },
+    { key: "streak_gated_volume_acceleration", strategy: streak_gated_volume_acceleration },
+    { key: "typical_price_asymmetry_ignition", strategy: typical_price_asymmetry_ignition },
+    { key: "volatility_squeezed_typical_crossover", strategy: volatility_squeezed_typical_crossover },
+    { key: "cmf_gated_close_location_alignment", strategy: cmf_gated_close_location_alignment },
+    { key: "cmf_persistence_regime_alignment", strategy: cmf_persistence_regime_alignment },
+    { key: "cumulative_initiative_pressure_crossover", strategy: cumulative_initiative_pressure_crossover },
+    { key: "event_open_volume_thrust_alignment", strategy: event_open_volume_thrust_alignment },
+    { key: "price_volume_divergence_regime", strategy: price_volume_divergence_regime },
+    { key: "volume_autocorrelation_regime_breakout", strategy: volume_autocorrelation_regime_breakout },
+    { key: "volume_profile_poc_rejection_streak", strategy: volume_profile_poc_rejection_streak },
+    { key: "volume_profile_value_area_reentry", strategy: volume_profile_value_area_reentry },
+    { key: "vwap_band_acceptance_persistence", strategy: vwap_band_acceptance_persistence },
+    { key: "vwap_deviation_entropy_gated", strategy: vwap_deviation_entropy_gated },
+    { key: "entropy_gated_cmf_breakout", strategy: entropy_gated_cmf_breakout },
+    { key: "event_open_distance_vol_volatility", strategy: event_open_distance_vol_volatility },
+    { key: "initiative_persistence_volatility_compression", strategy: initiative_persistence_volatility_compression },
+    { key: "initiative_pressure_volatility_regime_crossover", strategy: initiative_pressure_volatility_regime_crossover },
+    { key: "pvv_efficiency_alignment", strategy: pvv_efficiency_alignment },
+    { key: "va_squeeze_volume_thrust", strategy: va_squeeze_volume_thrust },
+    { key: "volume_volatility_correlation_drift", strategy: volume_volatility_correlation_drift },
+    { key: "volume_volatility_ratio_boundary_breakout", strategy: volume_volatility_ratio_boundary_breakout },
+    { key: "vw_atr_drift_alignment", strategy: vw_atr_drift_alignment },
+    { key: "vwap_volatility_band_rejection_streak", strategy: vwap_volatility_band_rejection_streak },
+    { key: "autocorrelation_streak_regime_alignment", strategy: autocorrelation_streak_regime_alignment },
+    { key: "close_midpoint_deviation_zscore_reversion", strategy: close_midpoint_deviation_zscore_reversion },
+    { key: "dual_timeframe_efficiency_ratio_spread", strategy: dual_timeframe_efficiency_ratio_spread },
+    { key: "event_open_volatility_spread_reversal", strategy: event_open_volatility_spread_reversal },
+    { key: "initiative_pressure_correlation_reversal", strategy: initiative_pressure_correlation_reversal },
+    { key: "typical_close_autocorrelation_divergence", strategy: typical_close_autocorrelation_divergence },
+    { key: "typical_price_rolling_skewness_exhaustion", strategy: typical_price_rolling_skewness_exhaustion },
+    { key: "value_area_density_breakout", strategy: value_area_density_breakout },
+    { key: "volume_correlation_regime_breakout", strategy: volume_correlation_regime_breakout },
+    { key: "volume_weighted_entropy_regime_reversal", strategy: volume_weighted_entropy_regime_reversal },
+    { key: "close_location_percentile_reversion", strategy: close_location_percentile_reversion },
+    { key: "dual_timeframe_median_spread_arbitrage", strategy: dual_timeframe_median_spread_arbitrage },
+    { key: "entropy_gated_zscore_reversion", strategy: entropy_gated_zscore_reversion },
+    { key: "initiative_pressure_autocorrelation_reversion", strategy: initiative_pressure_autocorrelation_reversion },
+    { key: "range_span_volume_dislocation_reversion", strategy: range_span_volume_dislocation_reversion },
+    { key: "skewness_gated_percentile_reversion", strategy: skewness_gated_percentile_reversion },
+    { key: "typical_weighted_zscore_dislocation", strategy: typical_weighted_zscore_dislocation },
+    { key: "value_area_acceptance_reversion", strategy: value_area_acceptance_reversion },
+    { key: "volume_profile_poc_regression", strategy: volume_profile_poc_regression },
+    { key: "volume_weighted_close_correlation_reversion", strategy: volume_weighted_close_correlation_reversion },
+    { key: "atr_expansion_close_acceptance", strategy: atr_expansion_close_acceptance },
+    { key: "failed_volatility_spike_continuation", strategy: failed_volatility_spike_continuation },
+    { key: "true_range_ratio_persistence_streak", strategy: true_range_ratio_persistence_streak },
+    { key: "value_area_squeeze_breakout", strategy: value_area_squeeze_breakout },
+    { key: "volatility_adjusted_median_crossover", strategy: volatility_adjusted_median_crossover },
+    { key: "volatility_compression_entropy_breakout", strategy: volatility_compression_entropy_breakout },
+    { key: "volatility_gated_event_open_distance", strategy: volatility_gated_event_open_distance },
+    { key: "volatility_normalized_initiative_pressure", strategy: volatility_normalized_initiative_pressure },
+    { key: "volatility_regime_boundary_acceptance", strategy: volatility_regime_boundary_acceptance },
+    { key: "volatility_regime_drift_alignment", strategy: volatility_regime_drift_alignment },
+    { key: "autocorrelation_reversion_volatility_gated", strategy: autocorrelation_reversion_volatility_gated },
+    { key: "boundary_exhaustion_volatility_spread_fade", strategy: boundary_exhaustion_volatility_spread_fade },
+    { key: "boundary_position_velocity_gated", strategy: boundary_position_velocity_gated },
+    { key: "close_location_distribution_regime", strategy: close_location_distribution_regime },
+    { key: "close_location_variance_exhaustion_fade", strategy: close_location_variance_exhaustion_fade },
+    { key: "efficiency_gated_center_crossover", strategy: efficiency_gated_center_crossover },
+    { key: "entropy_gated_boundary_acceptance", strategy: entropy_gated_boundary_acceptance },
+    { key: "entropy_gated_typical_crossover_fade", strategy: entropy_gated_typical_crossover_fade },
+    { key: "event_open_distance_pressure_alignment", strategy: event_open_distance_pressure_alignment },
+    { key: "event_open_efficiency_decay_reversion", strategy: event_open_efficiency_decay_reversion },
+    { key: "failed_opposite_pressure_reversal", strategy: failed_opposite_pressure_reversal },
+    { key: "initiative_pressure_distribution_shift", strategy: initiative_pressure_distribution_shift },
+    { key: "initiative_pressure_divergent_spread_reversion", strategy: initiative_pressure_divergent_spread_reversion },
+    { key: "price_volume_agreement_streak", strategy: price_volume_agreement_streak },
+    { key: "return_skewness_volatility_adjusted_fade", strategy: return_skewness_volatility_adjusted_fade },
+    { key: "rolling_distribution_asymmetry_alignment", strategy: rolling_distribution_asymmetry_alignment },
+    { key: "typical_midpoint_deviation_drift_reversion", strategy: typical_midpoint_deviation_drift_reversion },
+    { key: "value_area_acceptance_persistence", strategy: value_area_acceptance_persistence },
+    { key: "value_area_rejection_streak_reversion", strategy: value_area_rejection_streak_reversion },
+    { key: "volume_weighted_spread_efficiency_fade", strategy: volume_weighted_spread_efficiency_fade },
 ];
 
 export function createStrategiesRecordFromManifest(
