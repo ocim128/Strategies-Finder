@@ -13,6 +13,7 @@ echo [run-1s-miner] Started %DATE% %TIME% > "%LOG_FILE%"
 echo Repo: %CD% >> "%LOG_FILE%"
 echo ESNO: %ESNO% >> "%LOG_FILE%"
 echo DB: %DB% >> "%LOG_FILE%"
+echo Binance DNS: adguard-doh >> "%LOG_FILE%"
 echo Args: %* >> "%LOG_FILE%"
 
 echo 1s miner launcher
@@ -36,7 +37,7 @@ if not exist "%ESNO%" (
     goto done
 )
 
-call "%ESNO%" scripts\second-market-miner.ts --mode live --symbols "BTCUSDT,XRPUSDT" --db "%DB%" %*
+call "%ESNO%" scripts\second-market-miner.ts --mode live --symbols "BTCUSDT,XRPUSDT" --db "%DB%" --binance-dns adguard-doh %*
 set "EXIT_CODE=%ERRORLEVEL%"
 
 :done

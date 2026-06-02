@@ -38,6 +38,11 @@ import {
     validateLiveTradeSubmitRequest,
 } from "./live-trade-request";
 import { parseTimeToUnixSeconds } from "../time-normalization";
+import {
+    configureBinanceDns,
+    resolveBinanceDnsMode,
+    type BinanceDnsMode,
+} from "../second-market/binance-dns";
 
 const LOG_ROOT = resolve(process.cwd(), "logs", "paper-execution");
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -66,6 +71,7 @@ const LIVE_CANDLE_RATE_LIMIT_BACKOFF_MS = 60_000;
 const LIVE_CANDLE_TRANSIENT_BACKOFF_MS = 5_000;
 const LIVE_CANDLE_CLOSED_LAG_SEC = 1;
 const FUTURES_STORED_ZERO_TAIL_REFETCH_SEC = 8;
+const DEFAULT_EXECUTION_LAB_BINANCE_DNS: BinanceDnsMode = "adguard-doh";
 
 type LiveCandleRow = {
     symbol: SecondMarketSymbol;
@@ -100,6 +106,10 @@ type LiveCancelLedgerEntry = {
 };
 type ExecutionLabMinerMarketType = "spot" | "futures";
 
+function getExecutionLabBinanceDnsMode(): BinanceDnsMode {
+    return resolveBinanceDnsMode(process.env.SECOND_MARKET_BINANCE_DNS, DEFAULT_EXECUTION_LAB_BINANCE_DNS);
+}
+
 function sendJson(res: any, status: number, payload: unknown): void {
     res.statusCode = status;
     res.setHeader("Content-Type", "application/json");
@@ -123,6 +133,8 @@ export function buildExecutionLabMinerProcessArgs(marketType: ExecutionLabMinerM
         marketType,
         "--db",
         MINER_DB_PATH,
+        "--binance-dns",
+        getExecutionLabBinanceDnsMode(),
     ];
 }
 
@@ -696,6 +708,8 @@ function loadRecentStoredLiveQuote(
 }
 
 export function executionLabVitePlugin(): Plugin {
+    configureBinanceDns(getExecutionLabBinanceDnsMode());
+
     const sessions = new Map<string, string>();
     const sessionLogQueues = new Map<string, Promise<void>>();
     const liveEventCache = new Map<string, CacheEntry<SecondMarketPolymarketEvent[]>>();

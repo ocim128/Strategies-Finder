@@ -21,6 +21,11 @@ import {
 import { runPolymarketReferenceCapture } from "../lib/second-market/polymarket-reference-sync";
 import { buildSecondDataQualityRun } from "../lib/second-market/quality-report";
 import {
+    configureBinanceDns,
+    resolveBinanceDnsMode,
+    type BinanceDnsMode,
+} from "../lib/second-market/binance-dns";
+import {
     DEFAULT_POLYMARKET_OUTCOME_INTERVAL,
     getPolymarketOutcomeIntervalDurationSec,
     resolvePolymarketOutcomeInterval,
@@ -62,6 +67,7 @@ type CliConfig = {
     includeGamma: boolean;
     referenceSources: SecondMarketReferenceSource[];
     requestDelayMs: number;
+    binanceDns: BinanceDnsMode;
 };
 type LiveAggTrade = {
     symbol: SecondMarketSymbol;
@@ -253,6 +259,7 @@ function printUsage(): void {
         "  --include-reference",
         "  --include-gamma",
         "  --reference-sources <crypto_prices,crypto_prices_chainlink>",
+        "  --binance-dns <system|adguard-doh>",
     ].join("\n"));
 }
 
@@ -271,6 +278,7 @@ function parseArgs(argv: string[]): CliConfig {
     let includeGamma = false;
     let referenceSources: SecondMarketReferenceSource[] = ["crypto_prices"];
     let requestDelayMs = 80;
+    let binanceDns = resolveBinanceDnsMode(process.env.SECOND_MARKET_BINANCE_DNS);
     let hasDbPath = false;
     let hasSymbols = false;
     let hasMarketType = false;
@@ -308,6 +316,7 @@ function parseArgs(argv: string[]): CliConfig {
         if (arg === "--end-date") { endTs = parseIsoSec(next) ?? endTs; hasEndTs = true; i += 1; continue; }
         if (arg === "--duration-sec") { durationSec = Math.max(1, Math.floor(parseNumber(next, 0))); i += 1; continue; }
         if (arg === "--request-delay-ms") { requestDelayMs = Math.max(0, Math.floor(parseNumber(next, requestDelayMs))); i += 1; continue; }
+        if (arg === "--binance-dns") { binanceDns = resolveBinanceDnsMode(next, binanceDns); i += 1; continue; }
         if (arg === "--include-binance") { includeBinance = true; continue; }
         if (arg === "--include-clob") { includeClob = true; continue; }
         if (arg === "--include-reference") { includeReference = true; continue; }
@@ -383,6 +392,7 @@ function parseArgs(argv: string[]): CliConfig {
         includeGamma,
         referenceSources,
         requestDelayMs,
+        binanceDns,
     };
 }
 
@@ -947,6 +957,10 @@ function runVerify(config: CliConfig): void {
 
 async function main(): Promise<void> {
     const config = parseArgs(process.argv.slice(2));
+    const configuredDns = configureBinanceDns(config.binanceDns);
+    if (configuredDns !== "system") {
+        console.log(`[mine:1s] binance DNS resolver=${configuredDns}`);
+    }
     const controller = new AbortController();
     process.on("SIGINT", () => {
         console.log("[mine:1s] stopping...");
