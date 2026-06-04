@@ -195,7 +195,7 @@ export interface SecondMarketTradeResult {
     outcome: PolymarketOutcomeRow | null;
     side: SecondMarketSide | null;
     entrySource?: "quote" | "limit";
-    entryStatus?: "filled" | "not_touched" | "last_minute_only" | "missing_price_points" | "invalid_window" | "duplicate";
+    entryStatus?: "filled" | "not_touched" | "last_minute_only" | "missing_price_points" | "invalid_window" | "duplicate" | "open_position";
     entryMode?: PolymarketLimitEntryPriceMode;
     entryOffsetCents?: number;
     entryPrice: number | null;
@@ -204,7 +204,7 @@ export interface SecondMarketTradeResult {
     entryImprovement?: number | null;
     exitPrice: number | null;
     exitQuoteTs: number | null;
-    exitSource: "target" | "protection_take_profit" | "protection_stop_loss" | "signal" | "resolution" | "duplicate" | "entry_price_filtered" | "entry_time_filtered" | "no_event" | "missing";
+    exitSource: "target" | "protection_take_profit" | "protection_stop_loss" | "signal" | "resolution" | "duplicate" | "open_position" | "entry_price_filtered" | "entry_time_filtered" | "no_event" | "missing";
     exitTargetPrice?: number | null;
     exitStatus?: PolymarketLimitExitStatus;
     pnl: number | null;

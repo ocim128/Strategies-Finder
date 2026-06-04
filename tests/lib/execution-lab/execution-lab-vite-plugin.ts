@@ -71,7 +71,10 @@ const LIVE_CANDLE_RATE_LIMIT_BACKOFF_MS = 60_000;
 const LIVE_CANDLE_TRANSIENT_BACKOFF_MS = 5_000;
 const LIVE_CANDLE_CLOSED_LAG_SEC = 1;
 const FUTURES_STORED_ZERO_TAIL_REFETCH_SEC = 8;
-const DEFAULT_EXECUTION_LAB_BINANCE_DNS: BinanceDnsMode = "adguard-doh";
+const DEFAULT_EXECUTION_LAB_BINANCE_DNS: BinanceDnsMode = "system";
+const BINANCE_LIVE_FETCH_TIMEOUT_MS = 8000;
+const GAMMA_LIVE_FETCH_TIMEOUT_MS = 8000;
+const CLOB_LIVE_FETCH_TIMEOUT_MS = 5000;
 
 type LiveCandleRow = {
     symbol: SecondMarketSymbol;
@@ -177,10 +180,65 @@ function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
+function errorCauseMessage(error: unknown): string {
+    if (!(error instanceof Error)) return "";
+    const cause = (error as Error & { cause?: unknown }).cause;
+    if (cause instanceof Error) return cause.message;
+    if (cause && typeof cause === "object" && "message" in cause) {
+        return String((cause as { message?: unknown }).message ?? "");
+    }
+    return "";
+}
+
+function errorCode(error: unknown): string {
+    if (error && typeof error === "object" && "code" in error) {
+        return String((error as { code?: unknown }).code ?? "");
+    }
+    if (error instanceof Error) {
+        const cause = (error as Error & { cause?: unknown }).cause;
+        if (cause && typeof cause === "object" && "code" in cause) {
+            return String((cause as { code?: unknown }).code ?? "");
+        }
+    }
+    return "";
+}
+
+function describeExternalFetchError(label: string, error: unknown, timeoutMs: number): string {
+    const message = errorMessage(error);
+    const causeMessage = errorCauseMessage(error);
+    const code = errorCode(error);
+    const combined = `${message} ${causeMessage} ${code}`.toLowerCase();
+    if (/aborted|timeout|timed out/.test(combined)) {
+        return `${label} timed out after ${timeoutMs}ms`;
+    }
+    if (/dns|enotfound|eai_again|eai_nodata/.test(combined)) {
+        return `${label} DNS lookup failed: ${message}`;
+    }
+    if (/fetch failed|network|econnreset|econnrefused|etimedout/.test(combined)) {
+        return `${label} network request failed: ${message}`;
+    }
+    return `${label} failed: ${message}`;
+}
+
+async function fetchExternal(
+    url: URL,
+    label: string,
+    timeoutMs: number
+): Promise<Response> {
+    try {
+        return await fetch(url, {
+            headers: { Accept: "application/json" },
+            signal: AbortSignal.timeout(timeoutMs),
+        });
+    } catch (error) {
+        throw new Error(describeExternalFetchError(label, error, timeoutMs));
+    }
+}
+
 function liveCandleFetchBackoffMs(error: unknown): number {
     const message = errorMessage(error);
     if (/HTTP\s*(418|429)\b/i.test(message)) return LIVE_CANDLE_RATE_LIMIT_BACKOFF_MS;
-    if (/HTTP\s*5\d\d\b/i.test(message) || /fetch failed|network|timeout/i.test(message)) {
+    if (/HTTP\s*5\d\d\b/i.test(message) || /fetch failed|network|timeout|DNS lookup failed/i.test(message)) {
         return LIVE_CANDLE_TRANSIENT_BACKOFF_MS;
     }
     return 0;
@@ -417,12 +475,20 @@ async function fetchLiveCandles(args: {
     const closedEndTs = Math.min(args.endTs, Math.floor(Date.now() / 1000) - LIVE_CANDLE_CLOSED_LAG_SEC);
     if (closedEndTs < args.startTs) return [];
     if (args.marketType === "futures") {
+        const signal = AbortSignal.timeout(BINANCE_LIVE_FETCH_TIMEOUT_MS);
         const rows = await fetchBinance1sCandles({
             symbol: args.symbol,
             marketType: "futures",
             startTs: args.startTs,
             endTs: closedEndTs,
             closedLagSec: LIVE_CANDLE_CLOSED_LAG_SEC,
+            signal,
+        }).catch((error: unknown) => {
+            throw new Error(describeExternalFetchError(
+                "Binance futures live 1s fetch",
+                error,
+                BINANCE_LIVE_FETCH_TIMEOUT_MS
+            ));
         });
         return rows.slice(-args.limit).map((row) => ({
             symbol: row.symbol,
@@ -452,7 +518,7 @@ async function fetchLiveCandles(args: {
         url.searchParams.set("endTime", String(endMs));
         url.searchParams.set("limit", String(requestLimit));
 
-        const response = await fetch(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(8000) });
+        const response = await fetchExternal(url, "Binance spot live 1s fetch", BINANCE_LIVE_FETCH_TIMEOUT_MS);
         if (!response.ok) throw new Error(`Binance live 1s fetch failed: HTTP ${response.status}`);
         const rows = await response.json() as unknown;
         const rawRows = Array.isArray(rows) ? rows : [];
@@ -488,7 +554,7 @@ async function fetchLiveEvents(args: {
     url.searchParams.set("end_date_min", new Date((nowSec - outcomeIntervalDurationSec(args.outcomeInterval)) * 1000).toISOString());
     url.searchParams.set("limit", "100");
 
-    const response = await fetch(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(8000) });
+    const response = await fetchExternal(url, "Gamma live events fetch", GAMMA_LIVE_FETCH_TIMEOUT_MS);
     if (!response.ok) throw new Error(`Gamma live events fetch failed: HTTP ${response.status}`);
     const payload = await response.json() as unknown;
     const events = Array.isArray(payload) ? payload : [];
@@ -526,7 +592,7 @@ async function fetchLiveOutcomes(args: {
     url.searchParams.set("end_date_max", new Date(Math.floor(args.endTs) * 1000).toISOString());
     url.searchParams.set("limit", "100");
 
-    const response = await fetch(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(8000) });
+    const response = await fetchExternal(url, "Gamma live outcomes fetch", GAMMA_LIVE_FETCH_TIMEOUT_MS);
     if (!response.ok) throw new Error(`Gamma live outcomes fetch failed: HTTP ${response.status}`);
     const payload = await response.json() as unknown;
     const events = Array.isArray(payload) ? payload : [];
@@ -555,7 +621,7 @@ async function fetchClobPrice(tokenId: string, side: "BUY" | "SELL"): Promise<nu
     const url = new URL(CLOB_PRICE_URL);
     url.searchParams.set("token_id", tokenId);
     url.searchParams.set("side", side);
-    const response = await fetch(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(5000) });
+    const response = await fetchExternal(url, "CLOB live price fetch", CLOB_LIVE_FETCH_TIMEOUT_MS);
     if (!response.ok) return null;
     const payload = await response.json().catch(() => null) as { price?: unknown } | null;
     return normalizeExecutionLabClobPrice(payload?.price);

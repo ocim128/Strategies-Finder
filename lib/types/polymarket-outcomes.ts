@@ -16,7 +16,8 @@ export type PolymarketMarketEntryStatus =
     | "last_minute_only"
     | "missing_price_points"
     | "invalid_window"
-    | "duplicate";
+    | "duplicate"
+    | "open_position";
 
 export interface PolymarketOutcomeRow {
     series_id: string;
@@ -81,8 +82,8 @@ export interface TradePolymarketOutcome {
     marketExitPrice?: number | null;
     /** Exit timestamp for the Polymarket leg */
     marketExitTs?: number | null;
-    /** How the Polymarket leg exited: target (limit target), protection_take_profit, protection_stop_loss, signal (same-event), resolution (final outcome), duplicate (same-event already scored), filtered (excluded by resolve-hold minute selection), entry_price_filtered (entry price outside the configured band), entry_time_filtered (entry is inside the configured event-close cutoff), no_event (no matching Polymarket event), or missing (price data unavailable) */
-    marketExitSource?: "target" | "protection_take_profit" | "protection_stop_loss" | "signal" | "resolution" | "duplicate" | "filtered" | "entry_price_filtered" | "entry_time_filtered" | "no_event" | "missing";
+    /** How the Polymarket leg exited: target (limit target), protection_take_profit, protection_stop_loss, signal (same-event), resolution (final outcome), duplicate (same-event already scored), open_position (another Polymarket leg was still open), filtered (excluded by resolve-hold minute selection), entry_price_filtered (entry price outside the configured band), entry_time_filtered (entry is inside the configured event-close cutoff), no_event (no matching Polymarket event), or missing (price data unavailable) */
+    marketExitSource?: "target" | "protection_take_profit" | "protection_stop_loss" | "signal" | "resolution" | "duplicate" | "open_position" | "filtered" | "entry_price_filtered" | "entry_time_filtered" | "no_event" | "missing";
     marketExitTargetPrice?: number | null;
     marketExitStatus?: PolymarketLimitExitStatus;
     /** PnL for the Polymarket leg: marketExitPrice - marketEntryPrice */

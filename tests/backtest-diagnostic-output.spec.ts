@@ -362,6 +362,13 @@ describe("Backtest diagnostic output", () => {
                     marketExitSource: "entry_time_filtered",
                 },
             }),
+            makeTrade(5, {
+                polymarketOutcome: {
+                    ...baseOutcome,
+                    marketEntryPrice: null,
+                    marketExitSource: "open_position",
+                },
+            }),
         ];
         const output = buildBacktestDiagnosticOutput({
             result: makeResult({
@@ -373,7 +380,7 @@ describe("Backtest diagnostic output", () => {
                     outcomeRowsLoaded: 1,
                     scoredTrades: 0,
                     missingOutcomeTrades: 0,
-                    unscoredTrades: 4,
+                    unscoredTrades: 5,
                     evaluationMode: "chart_exit_same_event",
                     signalExitedTrades: 0,
                     resolvedTrades: 0,
@@ -428,9 +435,12 @@ describe("Backtest diagnostic output", () => {
         expect(output.polymarket?.unscoredExamplesBySource.entry_price_filtered).to.have.length(2);
         expect(output.polymarket?.unscoredExamplesBySource.missing).to.have.length(1);
         expect(output.polymarket?.unscoredExamplesBySource.entry_time_filtered).to.have.length(1);
+        expect(output.polymarket?.unscoredExamplesBySource.open_position).to.have.length(1);
+        expect(output.polymarket?.openPositionBlockedTrades).to.equal(1);
         expect(output.recommendations).to.deep.equal([
             "Review the 20c entry price filter: it excluded 2 trades, mixed high/low entries (1 high, 1 low). For coverage testing, reduce or disable this filter before comparing strategy quality.",
             "Entry cutoff skipped 1 trades inside the final 15s of the event; lower it only if late-event fills are acceptable.",
+            "Open-position skips (1) mean resolve-hold scoring rejected chart trades while an earlier Polymarket leg was still open; compare against Execution Lab entries, not raw chart trades.",
             "Missing-price trades remain (1); inspect unscoredExamplesBySource.missing and refresh/re-mine local CLOB quotes around those event windows before tuning thresholds.",
         ]);
     });

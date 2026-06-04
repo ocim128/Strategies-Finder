@@ -237,6 +237,7 @@ class PolymarketPanelService {
         missingTrades: number;
         unscoredTrades: number;
         duplicateTradesIgnored?: number;
+        openPositionBlockedTrades?: number;
         entryPriceFilteredTrades?: number;
         entryTimeFilteredTrades?: number;
         coverage: number;
@@ -323,6 +324,9 @@ class PolymarketPanelService {
         ).length;
         const duplicateTradesIgnored = summary?.duplicateTradesIgnored
             ?? (derivedDuplicateTradesIgnored > 0 ? derivedDuplicateTradesIgnored : undefined);
+        const openPositionBlockedTrades = result.trades.filter(
+            (trade) => trade.polymarketOutcome?.marketExitSource === "open_position"
+        ).length;
         const coverageBase = Math.max(0, scoredTrades + unscoredTrades);
         const coverage = coverageBase > 0 ? scoredTrades / coverageBase : 0;
         const baselineWinRate = isSameEventExit ? 0 : computePolymarketBestBaselineWinRate(result.trades);
@@ -345,6 +349,7 @@ class PolymarketPanelService {
             missingTrades,
             unscoredTrades,
             duplicateTradesIgnored,
+            openPositionBlockedTrades: openPositionBlockedTrades > 0 ? openPositionBlockedTrades : undefined,
             entryPriceFilteredTrades: summary?.entryPriceFilteredTrades,
             entryTimeFilteredTrades: summary?.entryTimeFilteredTrades,
             coverage,
@@ -506,6 +511,7 @@ class PolymarketPanelService {
                     ${this.renderStatCard("Scored Trades", String(summary.scoredTrades))}
                     ${this.renderStatCard("Unscored Trades", String(summary.unscoredTrades))}
                     ${summary.duplicateTradesIgnored && summary.duplicateTradesIgnored > 0 ? this.renderStatCard("Duplicate Trades Ignored", String(summary.duplicateTradesIgnored)) : ""}
+                    ${summary.openPositionBlockedTrades && summary.openPositionBlockedTrades > 0 ? this.renderStatCard("Open Position Skipped", String(summary.openPositionBlockedTrades)) : ""}
                     ${summary.entryPriceFilteredTrades && summary.entryPriceFilteredTrades > 0 ? this.renderStatCard("Entry Price Filtered", String(summary.entryPriceFilteredTrades)) : ""}
                     ${summary.entryTimeFilteredTrades && summary.entryTimeFilteredTrades > 0 ? this.renderStatCard("Entry Time Filtered", String(summary.entryTimeFilteredTrades)) : ""}
                     ${summary.missingTrades > 0 ? this.renderStatCard("Missing Outcome Rows", String(summary.missingTrades)) : ""}

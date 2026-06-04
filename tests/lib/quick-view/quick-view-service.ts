@@ -67,6 +67,7 @@ export type QuickViewPolymarketSummary = {
     missingTrades: number;
     unscoredTrades: number;
     duplicateTradesIgnored?: number;
+    openPositionBlockedTrades?: number;
     entryPriceFilteredTrades?: number;
     entryTimeFilteredTrades?: number;
     coverage: number;
@@ -354,6 +355,7 @@ function getScoredPolymarketTrades(trades: readonly Trade[]): Trade[] {
         trade.polymarketOutcome !== null
         && trade.polymarketOutcome !== undefined
         && trade.polymarketOutcome.marketExitSource !== "duplicate"
+        && trade.polymarketOutcome.marketExitSource !== "open_position"
         && trade.polymarketOutcome.marketExitSource !== "filtered"
         && trade.polymarketOutcome.marketExitSource !== "entry_price_filtered"
         && trade.polymarketOutcome.marketExitSource !== "entry_time_filtered"
@@ -1464,6 +1466,9 @@ class QuickViewManager {
         ).length;
         const duplicateTradesIgnored = summary?.duplicateTradesIgnored
             ?? (derivedDuplicateTradesIgnored > 0 ? derivedDuplicateTradesIgnored : undefined);
+        const openPositionBlockedTrades = result.trades.filter(
+            (trade) => trade.polymarketOutcome?.marketExitSource === "open_position"
+        ).length;
         const coverageBase = Math.max(0, scoredTrades + unscoredTrades);
         const coverage = coverageBase > 0 ? scoredTrades / coverageBase : 0;
         const bestBaselineWinRate = isSameEventExit ? 0 : computePolymarketBestBaselineWinRate(result.trades);
@@ -1480,6 +1485,7 @@ class QuickViewManager {
         return {
             wins, losses, neutralTrades, scoredTrades, missingTrades, unscoredTrades, coverage,
             duplicateTradesIgnored,
+            openPositionBlockedTrades: openPositionBlockedTrades > 0 ? openPositionBlockedTrades : undefined,
             entryPriceFilteredTrades: summary?.entryPriceFilteredTrades,
             entryTimeFilteredTrades: summary?.entryTimeFilteredTrades,
             winRate: scoredTrades > 0 ? wins / scoredTrades : 0,

@@ -464,6 +464,31 @@ describe("Execution Lab live helpers", () => {
         }
     });
 
+    it("labels live event DNS failures by upstream source", async () => {
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (async () => {
+            const cause = Object.assign(new Error("getaddrinfo EAI_AGAIN gamma-api.polymarket.com"), {
+                code: "EAI_AGAIN",
+            });
+            const error = new Error("fetch failed") as Error & { cause?: unknown };
+            error.cause = cause;
+            throw error;
+        }) as typeof fetch;
+
+        try {
+            const handler = createHandler();
+            const response = await invoke(
+                handler,
+                "/live-events?symbol=BTCUSDT&outcomeInterval=5m&seriesId=dns-test-series"
+            );
+
+            expect(response.statusCode).to.equal(500);
+            expect(response.json.error).to.include("Gamma live events fetch DNS lookup failed");
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
     it("passes the selected market type when starting the 1s miner", async () => {
         const originalFetch = globalThis.fetch;
         let requestBody: unknown = null;
@@ -495,6 +520,23 @@ describe("Execution Lab live helpers", () => {
         }
     });
 
+    it("reports miner start aborts as endpoint timeouts", async () => {
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (async () => {
+            throw new DOMException("The user aborted a request.", "AbortError");
+        }) as typeof fetch;
+
+        try {
+            await startExecutionLabMiner({ marketType: "futures" });
+            throw new Error("Expected startExecutionLabMiner to fail");
+        } catch (error) {
+            expect(error).to.be.instanceOf(Error);
+            expect((error as Error).message).to.equal("/api/execution-lab/miner/start timed out after 30000ms");
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
     it("includes the selected market type in spawned miner args", () => {
         const args = buildExecutionLabMinerProcessArgs("futures");
         const marketTypeIndex = args.indexOf("--market-type");
@@ -503,7 +545,7 @@ describe("Execution Lab live helpers", () => {
         expect(marketTypeIndex).to.be.greaterThan(-1);
         expect(args[marketTypeIndex + 1]).to.equal("futures");
         expect(binanceDnsIndex).to.be.greaterThan(-1);
-        expect(args[binanceDnsIndex + 1]).to.equal("adguard-doh");
+        expect(args[binanceDnsIndex + 1]).to.equal("system");
     });
 
     it("reports idle miner status without starting a process", async () => {

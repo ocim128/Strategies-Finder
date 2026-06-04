@@ -1066,6 +1066,7 @@ export class ExecutionLabService {
             this.renderMinerStatus(status);
             this.syncMinerChartStream(status);
         } catch (error) {
+            if (await this.recoverMinerStatusAfterTransientControlError(error)) return;
             this.renderMinerStatus(null, executionLabErrorMessage(error));
         }
     }
@@ -1076,7 +1077,23 @@ export class ExecutionLabService {
             this.renderMinerStatus(status);
             this.syncMinerChartStream(status);
         } catch (error) {
+            if (await this.recoverMinerStatusAfterTransientControlError(error)) return;
             this.renderMinerStatus(null, executionLabErrorMessage(error));
+        }
+    }
+
+    private async recoverMinerStatusAfterTransientControlError(error: unknown): Promise<boolean> {
+        if (!isExecutionLabTransientPollError(error)) return false;
+        try {
+            const status = await loadExecutionLabMinerStatus();
+            this.renderMinerStatus(status, executionLabErrorMessage(error));
+            this.syncMinerChartStream(status);
+            if (status.running) {
+                this.setStatus(`1s miner control request timed out, but miner is running pid ${status.pid ?? "--"}.`, "warning");
+            }
+            return true;
+        } catch {
+            return false;
         }
     }
 

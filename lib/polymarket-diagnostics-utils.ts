@@ -131,6 +131,7 @@ function getScoredPolymarketTrades(trades: readonly Trade[]): Trade[] {
         trade.polymarketOutcome !== null
         && trade.polymarketOutcome !== undefined
         && trade.polymarketOutcome.marketExitSource !== "duplicate"
+        && trade.polymarketOutcome.marketExitSource !== "open_position"
         && trade.polymarketOutcome.marketExitSource !== "filtered"
         && trade.polymarketOutcome.marketExitSource !== "entry_price_filtered"
         && trade.polymarketOutcome.marketExitSource !== "entry_time_filtered"

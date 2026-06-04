@@ -51,6 +51,8 @@ export type ExecutionLabLiveCandle = OHLCVData & {
 };
 const MAX_EXECUTION_LAB_LOG_BATCH_RECORDS = 100;
 const DEFAULT_API_TIMEOUT_MS = 10000;
+const MINER_CONTROL_API_TIMEOUT_MS = 30000;
+const LIVE_POLL_API_TIMEOUT_MS = 15000;
 const LIVE_TRADE_API_TIMEOUT_MS = 30000;
 
 export class ExecutionLabApiError extends Error {
@@ -68,22 +70,45 @@ export function isExecutionLabApiError(error: unknown): error is ExecutionLabApi
     return error instanceof ExecutionLabApiError;
 }
 
+function isAbortLikeError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+    const message = error.message.toLowerCase();
+    return error.name === "AbortError"
+        || error.name === "TimeoutError"
+        || message.includes("aborted")
+        || message.includes("timeout");
+}
+
 function baseUrl(): string {
     return typeof window === "undefined" ? "http://localhost:5173" : "";
 }
 
-async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(
+    endpoint: string,
+    input: RequestInfo | URL,
+    init: RequestInit,
+    timeoutMs: number
+): Promise<Response> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+    }, timeoutMs);
     try {
         return await fetch(input, { ...init, signal: controller.signal });
+    } catch (error) {
+        if (timedOut || isAbortLikeError(error)) {
+            throw new Error(`${endpoint} timed out after ${timeoutMs}ms`);
+        }
+        throw error;
     } finally {
         clearTimeout(timer);
     }
 }
 
 async function getJson<T extends { ok: true }>(endpoint: string, timeoutMs = DEFAULT_API_TIMEOUT_MS): Promise<T> {
-    const response = await fetchWithTimeout(`${baseUrl()}${endpoint}`, { method: "GET" }, timeoutMs);
+    const response = await fetchWithTimeout(endpoint, `${baseUrl()}${endpoint}`, { method: "GET" }, timeoutMs);
     const payload = await response.json().catch(() => ({})) as T | ApiError;
     if (!response.ok || payload.ok !== true) {
         throw new ExecutionLabApiError(endpoint, response.status, (payload as ApiError).error);
@@ -92,7 +117,7 @@ async function getJson<T extends { ok: true }>(endpoint: string, timeoutMs = DEF
 }
 
 async function postJson<T extends { ok: true }>(endpoint: string, body: unknown, timeoutMs = DEFAULT_API_TIMEOUT_MS): Promise<T> {
-    const response = await fetchWithTimeout(`${baseUrl()}${endpoint}`, {
+    const response = await fetchWithTimeout(endpoint, `${baseUrl()}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -131,15 +156,15 @@ export async function appendExecutionLabRecords(records: readonly ExecutionLabRe
 export async function startExecutionLabMiner(args: { marketType?: "spot" | "futures" } = {}): Promise<ExecutionLabMinerStatus> {
     return postJson<ExecutionLabMinerStatus>("/api/execution-lab/miner/start", {
         marketType: args.marketType ?? "spot",
-    });
+    }, MINER_CONTROL_API_TIMEOUT_MS);
 }
 
 export async function stopExecutionLabMiner(): Promise<ExecutionLabMinerStatus> {
-    return postJson<ExecutionLabMinerStatus>("/api/execution-lab/miner/stop", {});
+    return postJson<ExecutionLabMinerStatus>("/api/execution-lab/miner/stop", {}, MINER_CONTROL_API_TIMEOUT_MS);
 }
 
 export async function loadExecutionLabMinerStatus(): Promise<ExecutionLabMinerStatus> {
-    return getJson<ExecutionLabMinerStatus>("/api/execution-lab/miner/status");
+    return getJson<ExecutionLabMinerStatus>("/api/execution-lab/miner/status", MINER_CONTROL_API_TIMEOUT_MS);
 }
 
 export async function loadExecutionLabLiveExecutorStatus(): Promise<LiveExecutorStatus> {
@@ -185,7 +210,10 @@ export async function loadExecutionLabLiveCandles(args: {
     if (args.limit !== undefined) params.set("limit", String(Math.max(1, Math.floor(args.limit))));
     if (args.startTs !== undefined) params.set("startTs", String(Math.floor(args.startTs)));
     if (args.endTs !== undefined) params.set("endTs", String(Math.floor(args.endTs)));
-    const data = await getJson<LiveCandlesResponse>(`/api/execution-lab/live-candles?${params.toString()}`);
+    const data = await getJson<LiveCandlesResponse>(
+        `/api/execution-lab/live-candles?${params.toString()}`,
+        LIVE_POLL_API_TIMEOUT_MS
+    );
     return data.candles.map((row) => ({
         time: row.ts as OHLCVData["time"],
         open: row.open,
@@ -209,7 +237,10 @@ export async function loadExecutionLabLiveEvents(args: {
         outcomeInterval: args.outcomeInterval,
         seriesId: args.seriesId,
     });
-    const data = await getJson<LiveEventsResponse>(`/api/execution-lab/live-events?${params.toString()}`);
+    const data = await getJson<LiveEventsResponse>(
+        `/api/execution-lab/live-events?${params.toString()}`,
+        LIVE_POLL_API_TIMEOUT_MS
+    );
     return data.events;
 }
 
@@ -231,7 +262,10 @@ export async function loadExecutionLabLiveQuote(args: {
         noTokenId: args.event.noTokenId,
         sampleTs: String(Math.floor(args.sampleTs)),
     });
-    const data = await getJson<LiveQuoteResponse>(`/api/execution-lab/live-quote?${params.toString()}`);
+    const data = await getJson<LiveQuoteResponse>(
+        `/api/execution-lab/live-quote?${params.toString()}`,
+        LIVE_POLL_API_TIMEOUT_MS
+    );
     return data.quote;
 }
 
@@ -249,7 +283,10 @@ export async function loadExecutionLabLiveOutcomes(args: {
         startTs: String(Math.floor(args.startTs)),
         endTs: String(Math.floor(args.endTs)),
     });
-    const data = await getJson<LiveOutcomesResponse>(`/api/execution-lab/live-outcomes?${params.toString()}`);
+    const data = await getJson<LiveOutcomesResponse>(
+        `/api/execution-lab/live-outcomes?${params.toString()}`,
+        LIVE_POLL_API_TIMEOUT_MS
+    );
     return data.outcomes;
 }
 

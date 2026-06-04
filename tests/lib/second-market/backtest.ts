@@ -543,6 +543,7 @@ export function evaluateSecondMarketTrades(args: {
     const results: SecondMarketTradeResult[] = [];
     const seenEvents = new Set<string>();
     const quoteIndex = getQuoteIndex(args.quotes);
+    let openPositionUntilTs: number | null = null;
     const limitEntryMode = resolvePolymarketPostSignalLimitEntryMode(args.limitEntry?.priceMode);
     const limitEntryOffsetCents = clampPolymarketPostSignalLimitOffsetCents(args.limitEntry?.offsetCents);
     const limitEntryEnabled = args.limitEntry?.enabled === true
@@ -578,6 +579,29 @@ export function evaluateSecondMarketTrades(args: {
         }
 
         const eventKey = `${outcome.series_id}:${outcome.event_start_ts}`;
+        if (openPositionUntilTs !== null && entryFillTs >= openPositionUntilTs) {
+            openPositionUntilTs = null;
+        }
+        if (evaluationMode === "resolve_hold" && openPositionUntilTs !== null && entryFillTs < openPositionUntilTs) {
+            results.push({
+                trade,
+                outcome,
+                side,
+                entrySource: limitEntryEnabled ? "limit" : "quote",
+                entryStatus: limitEntryEnabled ? "open_position" : undefined,
+                entryMode: limitEntryEnabled ? limitEntryMode : undefined,
+                entryOffsetCents: limitEntryEnabled ? limitEntryOffsetCents : undefined,
+                entryLimitPrice: limitEntryEnabled ? configuredLimitPrice : null,
+                entryPrice: null,
+                entryQuoteTs: null,
+                exitPrice: null,
+                exitQuoteTs: null,
+                exitSource: "open_position",
+                pnl: null,
+                isProfitable: null,
+            });
+            continue;
+        }
         if (!allowMultipleTradesPerEvent && seenEvents.has(eventKey)) {
             results.push({
                 trade,
@@ -839,6 +863,9 @@ export function evaluateSecondMarketTrades(args: {
             });
             continue;
         }
+        if (evaluationMode === "resolve_hold") {
+            openPositionUntilTs = outcome.event_end_ts;
+        }
         let exitTargetPrice: number | null = null;
         const sellPricePoints = limitExitEnabled || protectionEnabled
             ? buildClobPricePoints({
@@ -974,6 +1001,9 @@ export function evaluateSecondMarketTrades(args: {
 
         if (!allowMultipleTradesPerEvent) {
             seenEvents.add(eventKey);
+        }
+        if (evaluationMode === "resolve_hold") {
+            openPositionUntilTs = exit.quoteTs ?? outcome.event_end_ts;
         }
         const pnl = exit.price - entry.price;
         results.push({

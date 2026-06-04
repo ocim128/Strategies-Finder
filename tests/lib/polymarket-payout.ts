@@ -4,6 +4,7 @@ import type { TradePolymarketOutcome } from "./types/polymarket-outcomes";
 export type PolymarketPayoutSkipReason =
     | "missing_outcome"
     | "duplicate"
+    | "open_position"
     | "filtered"
     | "entry_price_filtered"
     | "entry_time_filtered"
@@ -60,6 +61,8 @@ export function resolvePolymarketTradePayout(
     switch (outcome.marketExitSource) {
         case "duplicate":
             return { payout: null, skipReason: "duplicate" };
+        case "open_position":
+            return { payout: null, skipReason: "open_position" };
         case "filtered":
             return { payout: null, skipReason: "filtered" };
         case "entry_price_filtered":

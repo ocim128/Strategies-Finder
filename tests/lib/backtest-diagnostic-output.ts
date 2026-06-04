@@ -117,6 +117,7 @@ export interface BacktestDiagnosticOutput {
         resolvedTrades: number;
         missingPriceTrades: number;
         duplicateTradesIgnored: number;
+        openPositionBlockedTrades: number;
         entryPriceFilteredTrades: number;
         entryTimeFilteredTrades: number;
         unscoredExamplesBySource: Record<string, BacktestDiagnosticTradeExample[]>;
@@ -137,6 +138,7 @@ export interface BuildBacktestDiagnosticOutputInput {
 
 const UNSCORED_POLYMARKET_EXIT_SOURCES = new Set([
     "duplicate",
+    "open_position",
     "filtered",
     "entry_price_filtered",
     "entry_time_filtered",
@@ -417,6 +419,7 @@ function buildPolymarketDiagnostics(
         : summary?.signalExitedTrades ?? normalizedSignalExitedTrades;
     const missingPriceTrades = summary?.missingPriceTrades ?? (exitSourceCounts.missing ?? 0);
     const duplicateTradesIgnored = summary?.duplicateTradesIgnored ?? (exitSourceCounts.duplicate ?? 0);
+    const openPositionBlockedTrades = exitSourceCounts.open_position ?? 0;
     const entryPriceFilteredTrades = summary?.entryPriceFilteredTrades ?? (exitSourceCounts.entry_price_filtered ?? 0);
     const entryTimeFilteredTrades = summary?.entryTimeFilteredTrades ?? (exitSourceCounts.entry_time_filtered ?? 0);
     const scoredTrades = summary?.scoredTrades ?? (derivedScoredTrades > 0 ? derivedScoredTrades : null);
@@ -461,6 +464,7 @@ function buildPolymarketDiagnostics(
         resolvedTrades,
         missingPriceTrades,
         duplicateTradesIgnored,
+        openPositionBlockedTrades,
         entryPriceFilteredTrades,
         entryTimeFilteredTrades,
         unscoredExamplesBySource,
@@ -652,9 +656,25 @@ function buildRecommendations(args: {
         );
     }
 
+    if (polymarket.openPositionBlockedTrades > 0) {
+        recommendations.push(
+            `Open-position skips (${polymarket.openPositionBlockedTrades}) mean resolve-hold scoring rejected chart trades while an earlier Polymarket leg was still open; compare against Execution Lab entries, not raw chart trades.`
+        );
+    }
+
     if (polymarket.missingPriceTrades > 0) {
         recommendations.push(
             `Missing-price trades remain (${polymarket.missingPriceTrades}); inspect unscoredExamplesBySource.missing and refresh/re-mine local CLOB quotes around those event windows before tuning thresholds.`
+        );
+    }
+
+    if (
+        polymarket.storedEvaluationMode === "resolve_hold"
+        && polymarket.filters.allowMultipleTradesPerEvent === true
+        && polymarket.openPositionBlockedTrades > 0
+    ) {
+        recommendations.push(
+            "The multi-trade toggle is a same-event exit setting; resolve-hold still allows only one active Polymarket leg at a time."
         );
     }
 

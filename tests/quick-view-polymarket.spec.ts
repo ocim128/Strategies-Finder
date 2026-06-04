@@ -12,6 +12,7 @@ import {
     summarizePolymarketStreaks,
     summarizeRecentPolymarketForm,
 } from "../lib/quick-view";
+import { buildPolymarketSectionHtml } from "../lib/quick-view/quick-view-renderer";
 import { resetLocalSqlitePolymarketApiAvailabilityForTests } from "../lib/local-sqlite-polymarket-api";
 import { state } from "../lib/state";
 import type { BacktestResult, Trade } from "../lib/strategies/index";
@@ -1354,6 +1355,46 @@ describe("Quick View Polymarket streak summary", () => {
         expect(html).to.contain("Entry Profit % | After Max Hold");
         expect(html).to.contain("Entry Profit % | After TP");
         expect(html).to.contain("Entry Profit % | After Signal");
+    });
+
+    it("renders open-position skip counts in Polymarket summaries", () => {
+        const html = buildPolymarketSectionHtml({
+            wins: 1,
+            losses: 0,
+            neutralTrades: 0,
+            scoredTrades: 1,
+            missingTrades: 0,
+            unscoredTrades: 2,
+            openPositionBlockedTrades: 2,
+            coverage: 1 / 3,
+            winRate: 1,
+            expectancy: 0.25,
+            profitFactor: Infinity,
+            avgWin: 0.25,
+            avgLoss: null,
+            avgEntryPrice: 0.75,
+            outcomeRowsLoaded: 1,
+            bestBaselineWinRate: 0,
+            baselineDelta: 0,
+            longestWinStreak: 1,
+            longestLossStreak: 0,
+            recentFormTrades: 1,
+            recentFormWins: 1,
+            recentFormLosses: 0,
+            recentFormFlats: 0,
+            recentFormWinRate: 1,
+            exitReasonWinRates: {
+                maxHold: { trades: 0, wins: 0, losses: 0, neutralTrades: 0, winRate: 0 },
+                takeProfit: { trades: 0, wins: 0, losses: 0, neutralTrades: 0, winRate: 0 },
+                signal: { trades: 0, wins: 0, losses: 0, neutralTrades: 0, winRate: 0 },
+            },
+            afterTakeProfitExpectancy: { pricedTrades: 0, expectancy: null },
+            evaluationMode: "resolve_hold",
+            usesRealizedPnl: true,
+        });
+
+        expect(html).to.contain("Open Position Skipped");
+        expect(html).to.contain(">2<");
     });
 
     it("rebuilds stale 1s resolve-hold annotations without changing exit mode", async () => {

@@ -430,6 +430,9 @@ export class TradesRenderer {
         if (outcome.marketExitSource === "duplicate") {
             return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly Dup: another trade in the same Polymarket session was already scored">Poly dup</span>`;
         }
+        if (outcome.marketExitSource === "open_position") {
+            return `<span class="exit-reason-badge exit-reason-badge--polymarket-skip" title="Poly Open: another Polymarket leg was still open at this trade's entry time">Poly open</span>`;
+        }
         if (outcome.marketExitSource === "filtered") {
             const entryOffset = typeof outcome.entryOffset === "number" && Number.isFinite(outcome.entryOffset)
                 ? Math.max(0, Math.floor(outcome.entryOffset))
@@ -1126,7 +1129,7 @@ export class TradesRenderer {
 
         const scoredPct = polymarket.scoredPct !== null ? `${polymarket.scoredPct.toFixed(2)}%` : "n/a";
         const filtered = polymarket.entryPriceFilteredTrades + polymarket.entryTimeFilteredTrades;
-        return `${scoredPct} scored | filtered ${filtered} | missing price ${polymarket.missingPriceTrades}`;
+        return `${scoredPct} scored | open ${polymarket.openPositionBlockedTrades} | filtered ${filtered} | missing price ${polymarket.missingPriceTrades}`;
     }
 
     private formatPolymarketFilterDiagnostic(diagnostics: BacktestDiagnosticOutput): string {

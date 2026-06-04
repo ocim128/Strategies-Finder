@@ -334,6 +334,68 @@ describe("second market shared evaluation", () => {
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.isWin).to.equal(true);
     });
 
+    it("blocks later resolve-hold entries while the previous Polymarket leg is open", () => {
+        const firstOutcome = outcome();
+        firstOutcome.event_start_ts = 1_700_000_000;
+        firstOutcome.event_end_ts = 1_700_000_300;
+        firstOutcome.market_slug = "btc-event-1";
+        const secondOutcome = outcome();
+        secondOutcome.event_start_ts = 1_700_000_300;
+        secondOutcome.event_end_ts = 1_700_000_600;
+        secondOutcome.market_slug = "btc-event-2";
+
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([
+                trade(1, 1_700_000_010, 1_700_000_020),
+                trade(2, 1_700_000_120, 1_700_000_130, "short"),
+                trade(3, 1_700_000_320, 1_700_000_330),
+            ]),
+            context: {
+                ...context([
+                    quote(1_700_000_010, 0.55, 0.53),
+                    quote(1_700_000_120, 0.40, 0.38),
+                    {
+                        ...quote(1_700_000_320, 0.60, 0.58),
+                        event_start_ts: 1_700_000_300,
+                        event_end_ts: 1_700_000_600,
+                        market_slug: "btc-event-2",
+                    },
+                ]),
+                outcomes: [firstOutcome, secondOutcome],
+            },
+            polymarketExitMode: "resolve_hold",
+        });
+
+        expect(evaluated.polymarketSummary.scoredTrades).to.equal(2);
+        expect(evaluated.tradeResults[1]?.exitSource).to.equal("open_position");
+        expect(evaluated.annotatedTrades[1]?.polymarketOutcome?.marketExitSource).to.equal("open_position");
+        expect(evaluated.tradeResults[2]?.exitSource).to.equal("resolution");
+    });
+
+    it("keeps unresolved resolve-hold entries open for later trade filtering", () => {
+        const unresolvedOutcome = outcome();
+        unresolvedOutcome.resolution_source = "second_market_clob_unresolved";
+
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([
+                trade(1, 1_700_000_010, 1_700_000_020),
+                trade(2, 1_700_000_120, 1_700_000_130, "short"),
+            ]),
+            context: {
+                ...context([
+                    quote(1_700_000_010, 0.55, 0.53),
+                    quote(1_700_000_120, 0.40, 0.38),
+                ]),
+                outcomes: [unresolvedOutcome],
+            },
+            polymarketExitMode: "resolve_hold",
+        });
+
+        expect(evaluated.polymarketSummary.scoredTrades).to.equal(0);
+        expect(evaluated.tradeResults[0]?.exitSource).to.equal("missing");
+        expect(evaluated.tradeResults[1]?.exitSource).to.equal("open_position");
+    });
+
     it("ignores Polymarket take-profit protection in 1s resolve-hold mode", () => {
         const downOutcome = outcome();
         downOutcome.resolved_outcome_up = 0;
