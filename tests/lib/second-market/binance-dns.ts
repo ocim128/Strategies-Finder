@@ -6,6 +6,7 @@ export type BinanceDnsMode = "system" | "adguard-doh";
 
 const ADGUARD_DOH_RESOLVE_URL = "https://dns.adguard-dns.com/resolve";
 const BINANCE_HOST_RE = /(^|\.)binance\.com$/i;
+const POLYMARKET_HOST_RE = /(^|\.)polymarket\.com$/i;
 const DNS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 type LookupCallback = (
@@ -44,8 +45,8 @@ export function resolveBinanceDnsMode(value: unknown, fallback: BinanceDnsMode =
     return fallback;
 }
 
-function isBinanceHost(hostname: string): boolean {
-    return BINANCE_HOST_RE.test(hostname);
+function shouldUseAdguardDoh(hostname: string): boolean {
+    return BINANCE_HOST_RE.test(hostname) || POLYMARKET_HOST_RE.test(hostname);
 }
 
 function isValidAddressForFamily(value: unknown, family: 4 | 6): value is string {
@@ -99,18 +100,18 @@ function fallbackLookup(hostname: string, options: LookupOptions, callback: Look
     (dns.lookup as unknown as ConnectLookup)(hostname, options, callback);
 }
 
-async function lookupBinanceHost(hostname: string, options: LookupOptions): Promise<dns.LookupAddress[]> {
+async function lookupAdguardHost(hostname: string, options: LookupOptions): Promise<dns.LookupAddress[]> {
     const requestedFamily = options.family === 6 ? 6 : 4;
     return resolveAdguardDoh(hostname, requestedFamily);
 }
 
 const adguardLookup: ConnectLookup = (hostname, options, callback) => {
-    if (!isBinanceHost(hostname)) {
+    if (!shouldUseAdguardDoh(hostname)) {
         fallbackLookup(hostname, options, callback);
         return;
     }
 
-    void lookupBinanceHost(hostname, options)
+    void lookupAdguardHost(hostname, options)
         .then((addresses) => {
             if (options.all) {
                 callback(null, addresses);

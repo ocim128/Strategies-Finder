@@ -57,7 +57,7 @@ type CliConfig = {
     dbPath?: string;
     symbols: SecondMarketSymbol[];
     marketType: "spot" | "futures";
-    outcomeInterval: PolymarketOutcomeInterval;
+    outcomeIntervals: PolymarketOutcomeInterval[];
     startTs: number;
     endTs: number;
     durationSec: number | null;
@@ -115,6 +115,15 @@ function parseReferenceSources(value: string | undefined): SecondMarketReference
             item === "crypto_prices" || item === "crypto_prices_chainlink"
         );
     return out.length > 0 ? Array.from(new Set(out)) : ["crypto_prices"];
+}
+
+function parseOutcomeIntervals(value: string | undefined): PolymarketOutcomeInterval[] {
+    if (!value) return [DEFAULT_POLYMARKET_OUTCOME_INTERVAL];
+    const intervals = value
+        .split(",")
+        .map((item) => resolvePolymarketOutcomeInterval(item))
+        .filter((interval, index, all) => all.indexOf(interval) === index);
+    return intervals.length > 0 ? intervals : [DEFAULT_POLYMARKET_OUTCOME_INTERVAL];
 }
 
 function looksLikeDbPath(value: string): boolean {
@@ -251,6 +260,7 @@ function printUsage(): void {
         "  --db <path>",
         "  --market-type <spot|futures>",
         "  --outcome-interval <5m|15m|1h>",
+        "  --outcome-intervals <5m,15m>",
         "  --start-date <iso|unix-sec>",
         "  --end-date <iso|unix-sec>",
         "  --duration-sec <n>",
@@ -268,7 +278,7 @@ function parseArgs(argv: string[]): CliConfig {
     let dbPath: string | undefined;
     let symbols = parseSecondMarketSymbolList("");
     let marketType: "spot" | "futures" = "spot";
-    let outcomeInterval = DEFAULT_POLYMARKET_OUTCOME_INTERVAL;
+    let outcomeIntervals: PolymarketOutcomeInterval[] = [DEFAULT_POLYMARKET_OUTCOME_INTERVAL];
     let startTs = nowSec() - 3600;
     let endTs = nowSec() - 2;
     let durationSec: number | null = null;
@@ -308,7 +318,12 @@ function parseArgs(argv: string[]): CliConfig {
             continue;
         }
         if (arg === "--outcome-interval") {
-            outcomeInterval = resolvePolymarketOutcomeInterval(next);
+            outcomeIntervals = [resolvePolymarketOutcomeInterval(next)];
+            i += 1;
+            continue;
+        }
+        if (arg === "--outcome-intervals") {
+            outcomeIntervals = parseOutcomeIntervals(next);
             i += 1;
             continue;
         }
@@ -382,7 +397,7 @@ function parseArgs(argv: string[]): CliConfig {
         dbPath,
         symbols,
         marketType,
-        outcomeInterval,
+        outcomeIntervals,
         startTs,
         endTs,
         durationSec,
@@ -418,12 +433,14 @@ async function runBackfill(config: CliConfig, signal: AbortSignal): Promise<void
                 console.log(`[mine:1s] binance ${symbol} fetched=${summary.fetched} upserted=${summary.upserted}`);
             }
             if (config.includeGamma) {
-                const gamma = await syncGammaSnapshots(db, {
-                    symbol,
-                    outcomeInterval: config.outcomeInterval,
-                    signal,
-                });
-                console.log(`[mine:1s] gamma ${symbol} events=${gamma.events.length} upserted=${gamma.upserted}`);
+                for (const outcomeInterval of config.outcomeIntervals) {
+                    const gamma = await syncGammaSnapshots(db, {
+                        symbol,
+                        outcomeInterval,
+                        signal,
+                    });
+                    console.log(`[mine:1s] gamma ${symbol} ${outcomeInterval} events=${gamma.events.length} upserted=${gamma.upserted}`);
+                }
             }
         }
     } finally {
@@ -772,13 +789,15 @@ async function syncLiveGammaEventsWithRetry(
         try {
             let allEvents: SecondMarketPolymarketEvent[] = [];
             for (const symbol of config.symbols) {
-                const gamma = await syncGammaSnapshots(db, {
-                    symbol,
-                    outcomeInterval: config.outcomeInterval,
-                    signal,
-                });
-                allEvents = allEvents.concat(gamma.events);
-                console.log(`[mine:1s] gamma ${symbol} events=${gamma.events.length} upserted=${gamma.upserted}`);
+                for (const outcomeInterval of config.outcomeIntervals) {
+                    const gamma = await syncGammaSnapshots(db, {
+                        symbol,
+                        outcomeInterval,
+                        signal,
+                    });
+                    allEvents = allEvents.concat(gamma.events);
+                    console.log(`[mine:1s] gamma ${symbol} ${outcomeInterval} events=${gamma.events.length} upserted=${gamma.upserted}`);
+                }
             }
             return allEvents;
         } catch (error) {
@@ -860,7 +879,7 @@ async function runLive(config: CliConfig, signal: AbortSignal): Promise<void> {
         }
 
         if (config.includeClob) {
-            const intervalSec = getPolymarketOutcomeIntervalDurationSec(config.outcomeInterval);
+            const intervalSec = Math.max(...config.outcomeIntervals.map(getPolymarketOutcomeIntervalDurationSec));
             const clobHorizonSec = intervalSec * CLOB_SUBSCRIPTION_HORIZON_MULTIPLIER;
             let lastSubscriptionKey = "";
             tasks.push(runRestartingLiveCapture({

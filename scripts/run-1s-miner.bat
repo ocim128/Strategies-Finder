@@ -37,7 +37,7 @@ if not exist "%ESNO%" (
     goto done
 )
 
-call "%ESNO%" scripts\second-market-miner.ts --mode live --symbols "BTCUSDT,XRPUSDT" --db "%DB%" --binance-dns adguard-doh %*
+call "%ESNO%" scripts\second-market-miner.ts --mode live --symbols "BTCUSDT,XRPUSDT" --outcome-intervals "5m,15m" --db "%DB%" --binance-dns adguard-doh %*
 set "EXIT_CODE=%ERRORLEVEL%"
 
 :done

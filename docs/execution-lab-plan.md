@@ -64,7 +64,7 @@ Use local Vite APIs:
 - `/api/execution-lab/miner/status`, `/api/execution-lab/miner/start`, and `/api/execution-lab/miner/stop` for local miner lifecycle
 - `/api/execution-lab/session/start`, `/api/execution-lab/log`, and `/api/execution-lab/logs` for JSONL logs
 
-Execution Lab paper sessions must not require the local second-market SQLite DB to start. The miner controls launch `scripts/second-market-miner.ts --mode live --symbols BTCUSDT,XRPUSDT --db price-data/1second-chart/second-market-data.sqlite`, matching `scripts/run-1s-miner.bat`, and write a latest-run log under `price-data/1second-chart/logs/`.
+Execution Lab paper sessions must not require the local second-market SQLite DB to start. The miner controls launch `scripts/second-market-miner.ts --mode live --symbols BTCUSDT,XRPUSDT --outcome-intervals 5m,15m --db price-data/1second-chart/second-market-data.sqlite --binance-dns adguard-doh`, matching `scripts/run-1s-miner.bat`, and write a latest-run log under `price-data/1second-chart/logs/`.
 
 ## Candle Rule
 

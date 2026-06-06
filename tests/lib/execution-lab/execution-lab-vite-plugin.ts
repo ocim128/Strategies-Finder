@@ -71,10 +71,11 @@ const LIVE_CANDLE_RATE_LIMIT_BACKOFF_MS = 60_000;
 const LIVE_CANDLE_TRANSIENT_BACKOFF_MS = 5_000;
 const LIVE_CANDLE_CLOSED_LAG_SEC = 1;
 const FUTURES_STORED_ZERO_TAIL_REFETCH_SEC = 8;
-const DEFAULT_EXECUTION_LAB_BINANCE_DNS: BinanceDnsMode = "system";
-const BINANCE_LIVE_FETCH_TIMEOUT_MS = 8000;
-const GAMMA_LIVE_FETCH_TIMEOUT_MS = 8000;
+const DEFAULT_EXECUTION_LAB_BINANCE_DNS: BinanceDnsMode = "adguard-doh";
+const BINANCE_LIVE_FETCH_TIMEOUT_MS = 15000;
+const GAMMA_LIVE_FETCH_TIMEOUT_MS = 15000;
 const CLOB_LIVE_FETCH_TIMEOUT_MS = 5000;
+const EXECUTION_LAB_MINER_OUTCOME_INTERVALS: readonly PolymarketOutcomeInterval[] = ["5m", "15m"];
 
 type LiveCandleRow = {
     symbol: SecondMarketSymbol;
@@ -134,6 +135,8 @@ export function buildExecutionLabMinerProcessArgs(marketType: ExecutionLabMinerM
         "BTCUSDT,XRPUSDT",
         "--market-type",
         marketType,
+        "--outcome-intervals",
+        EXECUTION_LAB_MINER_OUTCOME_INTERVALS.join(","),
         "--db",
         MINER_DB_PATH,
         "--binance-dns",
@@ -965,7 +968,7 @@ export function executionLabVitePlugin(): Plugin {
 
     function startMiner(marketType: ExecutionLabMinerMarketType): ReturnType<typeof minerStatusPayload> {
         if (minerProcess && minerProcess.exitCode === null && minerProcess.signalCode === null) {
-            minerMessage = `Already running ${minerMarketType}`;
+            minerMessage = `Already running ${minerMarketType} 5m,15m`;
             return minerStatusPayload();
         }
         if (!existsSync(ESNO_BIN) || !existsSync(ESNO_SCRIPT)) {
@@ -985,6 +988,7 @@ export function executionLabVitePlugin(): Plugin {
                 `NODE: ${process.execPath}`,
                 `DB: ${MINER_DB_PATH}`,
                 `Market type: ${marketType}`,
+                `Outcome intervals: ${EXECUTION_LAB_MINER_OUTCOME_INTERVALS.join(",")}`,
                 `Args: ${minerArgs.slice(1).join(" ")}`,
                 "",
             ].join("\n"),

@@ -540,12 +540,15 @@ describe("Execution Lab live helpers", () => {
     it("includes the selected market type in spawned miner args", () => {
         const args = buildExecutionLabMinerProcessArgs("futures");
         const marketTypeIndex = args.indexOf("--market-type");
+        const outcomeIntervalsIndex = args.indexOf("--outcome-intervals");
         const binanceDnsIndex = args.indexOf("--binance-dns");
 
         expect(marketTypeIndex).to.be.greaterThan(-1);
         expect(args[marketTypeIndex + 1]).to.equal("futures");
+        expect(outcomeIntervalsIndex).to.be.greaterThan(-1);
+        expect(args[outcomeIntervalsIndex + 1]).to.equal("5m,15m");
         expect(binanceDnsIndex).to.be.greaterThan(-1);
-        expect(args[binanceDnsIndex + 1]).to.equal("system");
+        expect(args[binanceDnsIndex + 1]).to.equal("adguard-doh");
     });
 
     it("reports idle miner status without starting a process", async () => {
