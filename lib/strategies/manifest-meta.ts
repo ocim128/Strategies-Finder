@@ -3105,4 +3105,124 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "entropy_volume_gated_no_adverse",
+        name: "Entropy Volume Gated with No Adverse Mask",
+        description: "Trades low-entropy high-volume directional transitions only when the Polymarket side is actionable and non-adverse.",
+        defaultParams: {
+        lookback: 25,
+        entropyThreshold: 0.45,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        entropyThreshold: "Maximum Normalized Entropy",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "entropyThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
+    },
+    {
+        key: "micro_wick_exhaustion_executable_agreement",
+        name: "Micro Wick Exhaustion with Executable Agreement",
+        description: "Fades high-volume wick rejections at trailing extremes only when Polymarket executable agreement allows the side.",
+        defaultParams: {
+        lookback: 20,
+        wickRatio: 0.68,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        wickRatio: "Minimum Wick Ratio",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "wickRatio"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
+    },
+    {
+        key: "midpoint_deviation_no_adverse",
+        name: "Midpoint Deviation with No Adverse Mask",
+        description: "Trades volume-weighted close deviations from bar midpoint only when the Polymarket no-adverse mask allows the side.",
+        defaultParams: {
+        lookback: 20,
+        devThreshold: 1.5,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        devThreshold: "Deviation Z-Score Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "devThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
+    },
+    {
+        key: "price_volume_correlation_break_gamma",
+        name: "Price-Volume Correlation Break with Gamma Consensus",
+        description: "Fades high-volume flat-price absorption near trailing boundaries when Polymarket Gamma consensus agrees.",
+        defaultParams: {
+        lookback: 25,
+        volZThreshold: 1.8,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        volZThreshold: "Volume Z-Score Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "volZThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
+    },
+    {
+        key: "volume_skewness_acceleration_no_adverse",
+        name: "Volume Skewness Acceleration with No Adverse Mask",
+        description: "Fades trailing price boundaries when volume-return skewness spikes and Polymarket no-adverse actionability allows the side.",
+        defaultParams: {
+        lookback: 40,
+        skewThreshold: 1.4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        skewThreshold: "Volume Skewness Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "skewThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
+    },
+    {
+        key: "vw_typical_dispersion_no_adverse",
+        name: "Volume-Weighted Typical Dispersion with No Adverse Mask",
+        description: "Fades typical-price deviations from rolling VWAP only when Polymarket no-adverse actionability allows the side.",
+        defaultParams: {
+        lookback: 35,
+        threshold: 2.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        threshold: "Dispersion Multiplier",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "threshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: true,
+    },
 ];

@@ -1,3 +1,11 @@
+const FETCH_TIMEOUT_MS = 20_000;
+
+export {
+    configurePolymarketNodeDns as configurePolymarketDns,
+    resolvePolymarketDnsMode,
+    type PolymarketDnsMode,
+} from "../../lib/polymarket-node-dns";
+
 export function parseIsoSec(value: unknown): number | null {
     if (typeof value !== "string") return null;
     const ms = Date.parse(value);
@@ -69,11 +77,28 @@ export async function runPool<T, R>(
     return out;
 }
 
+function describeFetchError(error: unknown): string {
+    if (!(error instanceof Error)) {
+        return String(error);
+    }
+    const cause = (error as Error & { cause?: unknown }).cause;
+    if (cause instanceof Error) {
+        const code = typeof (cause as Error & { code?: unknown }).code === "string"
+            ? ` ${(cause as Error & { code: string }).code}`
+            : "";
+        return `${error.message}: ${cause.message}${code}`;
+    }
+    return error.message;
+}
+
 export async function fetchJsonWithRetry<T>(url: string, retries = 4): Promise<T> {
     let lastErr: unknown = null;
     for (let attempt = 0; attempt <= retries; attempt++) {
         try {
-            const res = await fetch(url, { headers: { Accept: "application/json" } });
+            const res = await fetch(url, {
+                headers: { Accept: "application/json" },
+                signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+            });
             if (!res.ok) {
                 const body = await res.text().catch(() => "");
                 const err = new Error(`HTTP ${res.status}: ${body.slice(0, 240)}`);
@@ -89,7 +114,7 @@ export async function fetchJsonWithRetry<T>(url: string, retries = 4): Promise<T
             await sleep((attempt + 1) * 250);
         }
     }
-    throw lastErr ?? new Error("Unknown fetch failure");
+    throw new Error(`Fetch failed for ${url} after ${retries + 1} attempts: ${describeFetchError(lastErr)}`);
 }
 
 export function mean(values: readonly number[]): number {

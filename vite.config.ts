@@ -9,6 +9,7 @@ import { localSqlitePlugin } from './lib/local-sqlite-vite-plugin';
 import { secondMarketApiPlugin } from './lib/second-market-vite-plugin';
 import { createFetchTimeoutSignal, isAbortError } from './lib/dataProviders/fetch-helpers';
 import { sendCaughtErrorJson, sendJson } from './lib/vite-http-utils';
+import { configurePolymarketNodeDns } from './lib/polymarket-node-dns';
 
 const BYBIT_TRADFI_KLINE_URL = 'https://www.bybit.com/x-api/fapi/copymt5/kline';
 const POLYMARKET_GAMMA_EVENT_SLUG_URL = 'https://gamma-api.polymarket.com/events/slug';
@@ -29,6 +30,8 @@ const WATCH_IGNORED_GLOBS = [
     // instead of interrupting the current browser session on every change under lib/strategies.
     ...(WATCH_STRATEGIES ? [] : ['**/lib/strategies/**']),
 ];
+
+configurePolymarketNodeDns('adguard-doh');
 
 type LocalPriceDataCatalogAsset = { symbol: string; name: string };
 

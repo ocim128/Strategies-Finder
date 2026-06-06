@@ -160,4 +160,10 @@ export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {
     "value_area_acceptance_persistence": () => import("./lib/value_area_acceptance_persistence").then(m => m.value_area_acceptance_persistence),
     "value_area_rejection_streak_reversion": () => import("./lib/value_area_rejection_streak_reversion").then(m => m.value_area_rejection_streak_reversion),
     "volume_weighted_spread_efficiency_fade": () => import("./lib/volume_weighted_spread_efficiency_fade").then(m => m.volume_weighted_spread_efficiency_fade),
+    "entropy_volume_gated_no_adverse": () => import("./lib/entropy_volume_gated_no_adverse").then(m => m.entropy_volume_gated_no_adverse),
+    "micro_wick_exhaustion_executable_agreement": () => import("./lib/micro_wick_exhaustion_executable_agreement").then(m => m.micro_wick_exhaustion_executable_agreement),
+    "midpoint_deviation_no_adverse": () => import("./lib/midpoint_deviation_no_adverse").then(m => m.midpoint_deviation_no_adverse),
+    "price_volume_correlation_break_gamma": () => import("./lib/price_volume_correlation_break_gamma").then(m => m.price_volume_correlation_break_gamma),
+    "volume_skewness_acceleration_no_adverse": () => import("./lib/volume_skewness_acceleration_no_adverse").then(m => m.volume_skewness_acceleration_no_adverse),
+    "vw_typical_dispersion_no_adverse": () => import("./lib/vw_typical_dispersion_no_adverse").then(m => m.vw_typical_dispersion_no_adverse),
 };

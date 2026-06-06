@@ -158,4 +158,10 @@ export const builtInStrategyKeys: readonly string[] = [
     "value_area_acceptance_persistence",
     "value_area_rejection_streak_reversion",
     "volume_weighted_spread_efficiency_fade",
+    "entropy_volume_gated_no_adverse",
+    "micro_wick_exhaustion_executable_agreement",
+    "midpoint_deviation_no_adverse",
+    "price_volume_correlation_break_gamma",
+    "volume_skewness_acceleration_no_adverse",
+    "vw_typical_dispersion_no_adverse",
 ];

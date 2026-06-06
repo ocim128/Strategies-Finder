@@ -1760,6 +1760,30 @@ export class FinderManager {
 			.sort((a, b) => b.avgTotalMs - a.avgTotalMs);
 	}
 
+	private combineUniverseDiagnostics(parts: FinderDiagnostics[]): FinderDiagnostics["universe"] | undefined {
+		const universeParts = parts
+			.map((part) => part.universe)
+			.filter((universe): universe is NonNullable<FinderDiagnostics["universe"]> => Boolean(universe));
+		if (universeParts.length === 0) return undefined;
+
+		const failedSymbols = new Map<string, string>();
+		for (const universe of universeParts) {
+			for (const failure of universe.failedSymbols) {
+				if (!failedSymbols.has(failure.symbol)) {
+					failedSymbols.set(failure.symbol, failure.reason);
+				}
+			}
+		}
+
+		return {
+			totalSymbols: Math.max(...universeParts.map((universe) => universe.totalSymbols)),
+			loadedSymbols: Math.max(...universeParts.map((universe) => universe.loadedSymbols)),
+			failedSymbols: [...failedSymbols.entries()]
+				.map(([symbol, reason]) => ({ symbol, reason }))
+				.sort((a, b) => a.symbol.localeCompare(b.symbol)),
+		};
+	}
+
 	private buildCombinedUniverseDiagnostics(args: {
 		options: FinderOptions;
 		parts: FinderDiagnostics[];
@@ -1794,6 +1818,7 @@ export class FinderManager {
 			timings,
 			strategyBreakdown: this.combineUniverseStrategyBreakdown(args.parts),
 			failureBreakdown: this.combineFailureBreakdown(args.parts),
+			universeDiagnostics: this.combineUniverseDiagnostics(args.parts),
 		});
 	}
 

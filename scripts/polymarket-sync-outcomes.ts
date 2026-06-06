@@ -48,9 +48,12 @@ import {
     type PolymarketOutcomeInterval,
 } from "../lib/polymarket-outcome-interval";
 import {
+    configurePolymarketDns,
     fetchJsonWithRetry,
     parseIsoSec,
     parseStringArray,
+    resolvePolymarketDnsMode,
+    type PolymarketDnsMode,
 } from "./lib/polymarket-research";
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -69,6 +72,7 @@ type CliConfig = {
     concurrency: number;
     refreshRecent: number;
     viteOrigin: string;
+    polymarketDns: PolymarketDnsMode;
     outPath?: string;
     dryRun: boolean;
 };
@@ -85,6 +89,7 @@ type NpmConfigEnv = {
     concurrency?: number;
     refreshRecent?: number;
     viteOrigin?: string;
+    polymarketDns?: string;
     outPath?: string;
     dryRun?: boolean;
 };
@@ -208,6 +213,7 @@ function readNpmConfigEnv(): NpmConfigEnv {
         concurrency: parseNumber(readString("npm_config_concurrency"), Number.NaN),
         refreshRecent: parseNumber(readString("npm_config_refresh_recent", "npm_config_refreshrecent"), Number.NaN),
         viteOrigin: readString("npm_config_vite_origin", "npm_config_viteorigin"),
+        polymarketDns: readString("npm_config_polymarket_dns", "npm_config_polymarketdns"),
         outPath: readString("npm_config_out"),
         dryRun: readBoolean("npm_config_dry_run", "npm_config_dryrun"),
     };
@@ -234,6 +240,8 @@ function printUsage(): void {
         "  --concurrency <n>      Parallel history fetch workers (default: 8)",
         "  --refresh-recent <n>   Re-fetch the latest N events even if already stored (default: 0)",
         "  --vite-origin <url>    Vite dev server base (default: http://localhost:5173)",
+        "  --polymarket-dns <system|adguard-doh>",
+        "                         DNS mode for Polymarket hosts (default: adguard-doh)",
         "  --out <file>           Optional JSON audit output path",
         "  --dry-run              Fetch and print without writing to SQLite",
         "",
@@ -268,6 +276,7 @@ export function parseArgs(argv: string[]): CliConfig | null {
     let concurrency = Number.isFinite(npmConfig.concurrency) ? Math.max(1, Math.floor(npmConfig.concurrency!)) : 8;
     let refreshRecent = Number.isFinite(npmConfig.refreshRecent) ? Math.max(0, Math.floor(npmConfig.refreshRecent!)) : 0;
     let viteOrigin = npmConfig.viteOrigin ?? "http://localhost:5173";
+    let polymarketDns = resolvePolymarketDnsMode(npmConfig.polymarketDns, "adguard-doh");
     let outPath: string | undefined = npmConfig.outPath;
     let dryRun = npmConfig.dryRun ?? false;
     let hasExplicitSymbol = false;
@@ -342,6 +351,7 @@ export function parseArgs(argv: string[]): CliConfig | null {
         if (arg === "--concurrency") { concurrency = Math.max(1, Math.floor(parseNumber(next, concurrency))); i++; continue; }
         if (arg === "--refresh-recent") { refreshRecent = Math.max(0, Math.floor(parseNumber(next, refreshRecent))); i++; continue; }
         if (arg === "--vite-origin") { viteOrigin = String(next ?? "").trim() || viteOrigin; i++; continue; }
+        if (arg === "--polymarket-dns") { polymarketDns = resolvePolymarketDnsMode(next, polymarketDns); i++; continue; }
         if (arg === "--out") { outPath = String(next ?? "").trim() || undefined; i++; continue; }
         if (arg === "--dry-run") { dryRun = true; continue; }
         if (!arg.startsWith("-")) {
@@ -377,6 +387,7 @@ export function parseArgs(argv: string[]): CliConfig | null {
         concurrency,
         refreshRecent,
         viteOrigin,
+        polymarketDns,
         outPath,
         dryRun,
     };
@@ -462,7 +473,7 @@ async function fetchSeriesEvents(cfg: CliConfig): Promise<SeriesEvent[]> {
     const out: SeriesEvent[] = [];
     let offset = 0;
 
-    while (true) {
+    while (out.length < cfg.maxEvents) {
         const params = new URLSearchParams({
             series_id: cfg.seriesId,
             closed: "true",
@@ -481,7 +492,6 @@ async function fetchSeriesEvents(cfg: CliConfig): Promise<SeriesEvent[]> {
             if (ev) out.push(ev);
         }
 
-        if (payload.length < cfg.pageSize) break;
         offset += payload.length;
     }
 
@@ -833,6 +843,11 @@ async function runSingleSeriesSync(cfg: CliConfig): Promise<OutcomeSyncSummary> 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
     const cfg = parseArgs(argv);
     if (!cfg) return;
+
+    const configuredDns = configurePolymarketDns(cfg.polymarketDns);
+    if (configuredDns !== "system") {
+        console.log(`[poly:sync-outcomes] Polymarket DNS mode: ${configuredDns}`);
+    }
 
     const targets = resolveOutcomeSyncTargets(cfg);
     const summaries: OutcomeSyncSummary[] = [];

@@ -8,6 +8,7 @@ describe("polymarket sync outcomes CLI", () => {
         const config = parseArgs([]);
         assert.ok(config);
         assert.equal(config.allSymbols, false);
+        assert.equal(config.polymarketDns, "adguard-doh");
 
         const targets = resolveOutcomeSyncTargets(config);
         assert.deepEqual(targets, [{
@@ -15,6 +16,12 @@ describe("polymarket sync outcomes CLI", () => {
             outcomeInterval: "5m",
             seriesId: "10684",
         }]);
+    });
+
+    it("allows system DNS override for Polymarket outcome sync", () => {
+        const config = parseArgs(["--polymarket-dns", "system"]);
+        assert.ok(config);
+        assert.equal(config.polymarketDns, "system");
     });
 
     it("expands --all into every supported Polymarket native session target", () => {
@@ -85,6 +92,61 @@ describe("polymarket sync outcomes CLI", () => {
         assert.equal(row.yes_entry_minute_2_price, 0.425);
         assert.equal(row.yes_entry_minute_3_price, 0.535);
         assert.equal(row.yes_entry_minute_4_price, 0.645);
+    });
+
+    it("continues Gamma pagination when the API returns fewer rows than the requested page size", async () => {
+        const originalFetch = globalThis.fetch;
+        const originalLog = console.log;
+        const offsets: string[] = [];
+        let storeCalls = 0;
+
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+            const url = new URL(String(input));
+            if (url.hostname === "gamma-api.polymarket.com") {
+                const offset = Number(url.searchParams.get("offset") ?? 0);
+                offsets.push(String(offset));
+                const rows = offset >= 200
+                    ? []
+                    : Array.from({ length: 100 }, (_, index) => {
+                        const endTs = 1_700_000_300 + offset * 300 + index * 300;
+                        return {
+                            slug: `event-${offset}-${index}`,
+                            endDate: new Date(endTs * 1000).toISOString(),
+                            markets: [{
+                                slug: `event-${offset}-${index}`,
+                                outcomes: ["Up", "Down"],
+                                outcomePrices: ["1", "0"],
+                                clobTokenIds: [`yes-${offset}-${index}`, `no-${offset}-${index}`],
+                            }],
+                        };
+                    });
+                return new Response(JSON.stringify(rows), { status: 200 });
+            }
+            if (url.hostname === "clob.polymarket.com") {
+                return new Response(JSON.stringify({ history: [{ t: 1_700_000_000, p: 0.5 }] }), { status: 200 });
+            }
+            if (url.pathname === "/api/sqlite/store-polymarket-outcomes") {
+                storeCalls++;
+                return new Response(JSON.stringify({ ok: true, upserted: 0 }), { status: 200 });
+            }
+            throw new Error(`Unexpected fetch ${url.toString()}`);
+        }) as typeof fetch;
+        console.log = () => {};
+
+        try {
+            await main([
+                "--series-id", "10684",
+                "--dry-run",
+                "--max-events", "250",
+                "--page-size", "500",
+            ]);
+        } finally {
+            globalThis.fetch = originalFetch;
+            console.log = originalLog;
+        }
+
+        assert.deepEqual(offsets, ["0", "100", "200"]);
+        assert.equal(storeCalls, 0);
     });
 
     it("lets --all continue when a target has missing events but no usable history rows", async () => {

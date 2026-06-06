@@ -159,6 +159,12 @@ import { typical_midpoint_deviation_drift_reversion } from "./lib/typical_midpoi
 import { value_area_acceptance_persistence } from "./lib/value_area_acceptance_persistence";
 import { value_area_rejection_streak_reversion } from "./lib/value_area_rejection_streak_reversion";
 import { volume_weighted_spread_efficiency_fade } from "./lib/volume_weighted_spread_efficiency_fade";
+import { entropy_volume_gated_no_adverse } from "./lib/entropy_volume_gated_no_adverse";
+import { micro_wick_exhaustion_executable_agreement } from "./lib/micro_wick_exhaustion_executable_agreement";
+import { midpoint_deviation_no_adverse } from "./lib/midpoint_deviation_no_adverse";
+import { price_volume_correlation_break_gamma } from "./lib/price_volume_correlation_break_gamma";
+import { volume_skewness_acceleration_no_adverse } from "./lib/volume_skewness_acceleration_no_adverse";
+import { vw_typical_dispersion_no_adverse } from "./lib/vw_typical_dispersion_no_adverse";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -323,6 +329,12 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "value_area_acceptance_persistence", strategy: value_area_acceptance_persistence },
     { key: "value_area_rejection_streak_reversion", strategy: value_area_rejection_streak_reversion },
     { key: "volume_weighted_spread_efficiency_fade", strategy: volume_weighted_spread_efficiency_fade },
+    { key: "entropy_volume_gated_no_adverse", strategy: entropy_volume_gated_no_adverse },
+    { key: "micro_wick_exhaustion_executable_agreement", strategy: micro_wick_exhaustion_executable_agreement },
+    { key: "midpoint_deviation_no_adverse", strategy: midpoint_deviation_no_adverse },
+    { key: "price_volume_correlation_break_gamma", strategy: price_volume_correlation_break_gamma },
+    { key: "volume_skewness_acceleration_no_adverse", strategy: volume_skewness_acceleration_no_adverse },
+    { key: "vw_typical_dispersion_no_adverse", strategy: vw_typical_dispersion_no_adverse },
 ];
 
 export function createStrategiesRecordFromManifest(

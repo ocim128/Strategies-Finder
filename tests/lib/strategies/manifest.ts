@@ -166,4 +166,10 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     builtInStrategyMetaByKey["value_area_acceptance_persistence"],
     builtInStrategyMetaByKey["value_area_rejection_streak_reversion"],
     builtInStrategyMetaByKey["volume_weighted_spread_efficiency_fade"],
+    builtInStrategyMetaByKey["entropy_volume_gated_no_adverse"],
+    builtInStrategyMetaByKey["micro_wick_exhaustion_executable_agreement"],
+    builtInStrategyMetaByKey["midpoint_deviation_no_adverse"],
+    builtInStrategyMetaByKey["price_volume_correlation_break_gamma"],
+    builtInStrategyMetaByKey["volume_skewness_acceleration_no_adverse"],
+    builtInStrategyMetaByKey["vw_typical_dispersion_no_adverse"],
 ];

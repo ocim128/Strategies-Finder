@@ -227,6 +227,15 @@ export interface FinderFailureDiagnostics extends FinderFailureReasonDiagnostics
     strategyKeys: string[];
 }
 
+export interface FinderUniverseDiagnostics {
+    totalSymbols: number;
+    loadedSymbols: number;
+    failedSymbols: Array<{
+        symbol: string;
+        reason: string;
+    }>;
+}
+
 export interface FinderDiagnostics {
     runId: string;
     symbol: string;
@@ -252,6 +261,7 @@ export interface FinderDiagnostics {
     };
     backtest?: FinderBacktestDiagnostics;
     failureBreakdown?: FinderFailureDiagnostics[];
+    universe?: FinderUniverseDiagnostics;
     timingsMs: {
         total: number;
         paramGeneration: number;

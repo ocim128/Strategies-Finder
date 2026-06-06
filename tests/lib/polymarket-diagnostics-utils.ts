@@ -168,15 +168,25 @@ function getPolymarketTradePayout(trade: Trade): number | null {
 
 function getPolymarketTradeOutcomeState(trade: Trade): PolymarketTradeOutcomeState {
     const payout = getPolymarketTradePayout(trade);
-    if (payout === null) {
-        return null;
-    }
-    if (payout > 0) {
+    if (payout !== null && payout > 0) {
         return "positive";
     }
-    if (payout < 0) {
+    if (payout !== null && payout < 0) {
         return "negative";
     }
+    if (payout === 0) {
+        return "neutral";
+    }
+
+    const pm = trade.polymarketOutcome;
+    if (
+        pm
+        && !isSameEventPolymarketExitMode(pm.evaluationMode)
+        && typeof pm.isWin === "boolean"
+    ) {
+        return pm.isWin ? "positive" : "negative";
+    }
+
     return "neutral";
 }
 

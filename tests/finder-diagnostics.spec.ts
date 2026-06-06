@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { buildCompactFinderDiagnostics } from "../lib/finder/finder-diagnostics";
+import { buildCompactFinderDiagnostics, buildFinderDiagnosticsBottlenecks } from "../lib/finder/finder-diagnostics";
 import type { FinderBacktestDiagnostics, FinderDiagnostics, FinderStrategyDiagnostics } from "../lib/types/finder";
 
 function makeBacktestDiagnostics(runs: number): FinderBacktestDiagnostics {
@@ -103,6 +103,21 @@ function makeDiagnostics(): FinderDiagnostics {
                 strategyKeys: ["a", "b", "c", "d", "e", "f", "g", "h"],
             },
         ],
+        universe: {
+            totalSymbols: 12,
+            loadedSymbols: 10,
+            failedSymbols: [
+                { symbol: "MISS_01", reason: "Dataset missing" },
+                { symbol: "MISS_02", reason: "No candles returned." },
+                { symbol: "MISS_03", reason: "No candles returned." },
+                { symbol: "MISS_04", reason: "No candles returned." },
+                { symbol: "MISS_05", reason: "No candles returned." },
+                { symbol: "MISS_06", reason: "No candles returned." },
+                { symbol: "MISS_07", reason: "No candles returned." },
+                { symbol: "MISS_08", reason: "No candles returned." },
+                { symbol: "MISS_09", reason: "No candles returned." },
+            ],
+        },
         timingsMs: {
             total: 1000,
             paramGeneration: 20,
@@ -165,6 +180,18 @@ describe("Finder compact diagnostics", () => {
         expect(compact.backtest?.fastPath.topBlockers).to.have.length(3);
         expect(compact.failures?.[0]?.strategyKeys).to.deep.equal(["a", "b", "c", "d"]);
         expect(compact.failures?.[0]?.omittedStrategyKeys).to.equal(4);
+        expect(compact.universe).to.deep.equal({
+            totalSymbols: 12,
+            loadedSymbols: 10,
+            loadFailures: 9,
+            failedSymbols: [
+                { symbol: "MISS_01", reason: "Dataset missing" },
+                { symbol: "MISS_02", reason: "No candles returned." },
+                { symbol: "MISS_03", reason: "No candles returned." },
+                { symbol: "MISS_04", reason: "No candles returned." },
+            ],
+            omittedFailedSymbols: 5,
+        });
         expect(compact.timings.topPhases.map((phase) => phase.phase)).to.deep.equal([
             "backtest",
             "signalGeneration",
@@ -173,7 +200,27 @@ describe("Finder compact diagnostics", () => {
         ]);
         expect(compactJson).to.not.contain('"strategyBreakdown"');
         expect(compactJson).to.not.contain('"totals"');
-        expect(compactJson.split("\n").length).to.be.lessThan(220);
+        expect(compactJson.split("\n").length).to.be.lessThan(240);
         expect(compactJson.length).to.be.lessThan(fullJson.length / 3);
+    });
+
+    it("prioritizes failure notes before phase bottlenecks in compact output", () => {
+        const full = makeDiagnostics();
+        full.bottlenecks = buildFinderDiagnosticsBottlenecks({
+            timingsMs: full.timingsMs,
+            strategyBreakdown: full.strategyBreakdown,
+            failedRuns: 4,
+            skippedRuns: 2,
+            rustFallbackRuns: 1,
+            backtest: full.backtest,
+        });
+
+        const compact = buildCompactFinderDiagnostics(full);
+
+        expect(compact.bottlenecks).to.deep.equal([
+            "4 candidate runs failed",
+            "2 candidate runs skipped after fatal strategy failure",
+            "1 Rust run fell back to TypeScript",
+        ]);
     });
 });

@@ -121,11 +121,93 @@ describe("Finder universe runner", () => {
         expect(output.diagnostics?.engineMode).to.equal("symbol_universe");
         expect(output.diagnostics?.counts.shownResults).to.equal(1);
         expect(output.diagnostics?.counts.processedRuns).to.equal(3);
-        expect(output.diagnostics?.counts.failedRuns).to.equal(1);
+        expect(output.diagnostics?.counts.failedRuns).to.equal(0);
         expect(output.diagnostics?.data.totalParamRuns).to.equal(6);
+        expect(output.diagnostics?.universe).to.deep.equal({
+            totalSymbols: 3,
+            loadedSymbols: 2,
+            failedSymbols: [{ symbol: "MISSING", reason: "Dataset missing" }],
+        });
         expect(output.diagnostics?.timingsMs.dataLoading).to.be.greaterThanOrEqual(0);
         expect(output.diagnostics?.strategyBreakdown[0]?.key).to.equal("universe_test");
         expect(partialUpdates.length).to.be.greaterThan(0);
+    });
+
+    it("counts backtest execution failures separately from symbol load failures", async () => {
+        const datasets = new Map<string, OHLCVData[]>([
+            ["OK", makeCandles([100, 105, 110, 115, 120])],
+            ["BROKEN", makeCandles([100, 101, 102, 103, 104])],
+        ]);
+        const failingStrategy: Strategy = {
+            name: "Universe Failing Test",
+            description: "Throws on one symbol so diagnostics can classify run failures.",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                if (data[1]?.close === 101) {
+                    throw new Error("Broken symbol execution");
+                }
+                return [
+                    { time: data[0]!.time, type: "buy", price: data[0]!.close },
+                    { time: data[data.length - 1]!.time, type: "sell", price: data[data.length - 1]!.close },
+                ];
+            },
+        };
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 3,
+            rangePercent: 35,
+            maxRuns: 20,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols: ["OK", "BROKEN", "MISSING"],
+                minActiveSymbols: 1,
+                minTotalTrades: 1,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["profitableActiveRatio", "medianExpectancy", "worstNetProfit"],
+            },
+        };
+
+        const output = await runFinderUniverseExecution(
+            {
+                interval: "5m",
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategy: {
+                    key: "universe_failing_test",
+                    name: failingStrategy.name,
+                    strategy: failingStrategy,
+                },
+                loadDataset: async (symbol) => {
+                    const dataset = datasets.get(symbol);
+                    if (!dataset) {
+                        throw new Error("Dataset missing");
+                    }
+                    return dataset;
+                },
+                generateParamSets: () => [{ threshold: 1 }],
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                yieldControl: async () => {},
+                isCancelled: () => false,
+            }
+        );
+
+        expect(output.diagnostics?.counts.processedRuns).to.equal(2);
+        expect(output.diagnostics?.counts.failedRuns).to.equal(1);
+        expect(output.diagnostics?.universe?.failedSymbols).to.deep.equal([
+            { symbol: "MISSING", reason: "Dataset missing" },
+        ]);
+        expect(output.diagnostics?.failureBreakdown?.[0]?.reason).to.equal("Broken symbol execution");
     });
 
     it("keeps only the ranked top N survivors in memory and output", async () => {

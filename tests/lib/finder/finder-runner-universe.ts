@@ -692,10 +692,20 @@ export async function runFinderUniverseExecution(
         filteredRuns: keptCandidateCount,
         shownResults: results.length,
         endpointAdjusted: 0,
-        failedRuns: failedRuns + loadFailures.size,
+        failedRuns,
         timings,
         strategyBreakdown: toFinderStrategyDiagnostics(strategyStatsByKey),
         failureBreakdown: toFinderFailureDiagnostics(strategyStatsByKey),
+        universeDiagnostics: {
+            totalSymbols: normalizedSymbols.length,
+            loadedSymbols: loadedSymbols.length,
+            failedSymbols: [...loadFailures.values()]
+                .map((failure) => ({
+                    symbol: failure.symbol,
+                    reason: failure.error ?? "unknown load failure",
+                }))
+                .sort((a, b) => a.symbol.localeCompare(b.symbol)),
+        },
     });
     const timingSummary: FinderUniverseTimingSummary = {
         totalRunMs: performance.now() - totalRunStart,

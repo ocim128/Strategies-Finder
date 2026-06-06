@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
+    buildBacktestPolymarketPerformanceSummary,
     rankPolymarketFeatureSuggestions,
     resolvePolymarketSelectedEntryOffset,
 } from "../lib/polymarket-diagnostics-utils";
@@ -118,5 +119,58 @@ describe("polymarket diagnostics utils", () => {
             "Higher expectancy",
             "High separation",
         ]);
+    });
+
+    it("uses binary resolve-hold outcomes for streaks when entry prices are unavailable", () => {
+        const result = makeResult([
+            {
+                ...makeTrade(1),
+                polymarketOutcome: {
+                    eventStartTs: 1_700_000_000,
+                    eventEndTs: 1_700_000_900,
+                    eventSlug: "native-15m-1",
+                    marketSlug: "native-15m-1",
+                    prediction: "yes",
+                    actualOutcomeUp: 1,
+                    isWin: true,
+                    marketEntryPrice: null,
+                    evaluationMode: "resolve_hold",
+                },
+            },
+            {
+                ...makeTrade(2),
+                polymarketOutcome: {
+                    eventStartTs: 1_700_000_900,
+                    eventEndTs: 1_700_001_800,
+                    eventSlug: "native-15m-2",
+                    marketSlug: "native-15m-2",
+                    prediction: "yes",
+                    actualOutcomeUp: 1,
+                    isWin: true,
+                    marketEntryPrice: null,
+                    evaluationMode: "resolve_hold",
+                },
+            },
+            {
+                ...makeTrade(3),
+                polymarketOutcome: {
+                    eventStartTs: 1_700_001_800,
+                    eventEndTs: 1_700_002_700,
+                    eventSlug: "native-15m-3",
+                    marketSlug: "native-15m-3",
+                    prediction: "yes",
+                    actualOutcomeUp: 0,
+                    isWin: false,
+                    marketEntryPrice: null,
+                    evaluationMode: "resolve_hold",
+                },
+            },
+        ]);
+
+        const summary = buildBacktestPolymarketPerformanceSummary(result);
+
+        expect(summary?.longestWinStreak).to.equal(2);
+        expect(summary?.longestLossStreak).to.equal(1);
+        expect(summary?.polymarketExpectancy).to.equal(null);
     });
 });

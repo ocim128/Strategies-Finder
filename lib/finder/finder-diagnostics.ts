@@ -39,6 +39,16 @@ export interface CompactFinderDiagnostics {
     };
     data: FinderDiagnostics["data"];
     counts: FinderDiagnostics["counts"];
+    universe?: {
+        totalSymbols: number;
+        loadedSymbols: number;
+        loadFailures: number;
+        failedSymbols: Array<{
+            symbol: string;
+            reason: string;
+        }>;
+        omittedFailedSymbols: number;
+    };
     timings: {
         totalMs: number;
         topPhases: CompactFinderTimingPhase[];
@@ -81,6 +91,7 @@ const COMPACT_FINDER_PHASE_LIMIT = 4;
 const COMPACT_FINDER_STRATEGY_LIMIT = 3;
 const COMPACT_FINDER_FAILURE_LIMIT = 3;
 const COMPACT_FINDER_FAILURE_STRATEGY_LIMIT = 4;
+const COMPACT_FINDER_UNIVERSE_FAILURE_LIMIT = 4;
 
 export type FinderStrategyDiagnosticsStats = {
     key: string;
@@ -372,11 +383,22 @@ export function buildFinderDiagnosticsBottlenecks(args: {
         .sort((a, b) => b.value - a.value);
 
     const notes: string[] = [];
+    if (args.failedRuns > 0) {
+        notes.push(`${args.failedRuns} candidate run${args.failedRuns === 1 ? "" : "s"} failed`);
+    }
+    if ((args.skippedRuns ?? 0) > 0) {
+        notes.push(`${args.skippedRuns} candidate run${args.skippedRuns === 1 ? "" : "s"} skipped after fatal strategy failure`);
+    }
+    if ((args.rustFallbackRuns ?? 0) > 0) {
+        notes.push(`${args.rustFallbackRuns} Rust run${args.rustFallbackRuns === 1 ? "" : "s"} fell back to TypeScript`);
+    }
+
     const total = Math.max(1, args.timingsMs.total);
     for (const phase of phases.slice(0, 3)) {
         const pct = (phase.value / total) * 100;
         if (pct >= 10) {
-            notes.push(`${phase.label} used ${pct.toFixed(1)}% of runtime`);
+            const verb = phase.label === "yielding" ? "accounted for" : "used";
+            notes.push(`${phase.label} ${verb} ${pct.toFixed(1)}% of measured runtime`);
         }
     }
 
@@ -394,9 +416,6 @@ export function buildFinderDiagnosticsBottlenecks(args: {
         .sort((a, b) => b.zeroSignalRuns - a.zeroSignalRuns || a.key.localeCompare(b.key))[0];
     if (topZeroSignalStrategy) {
         notes.push(`${topZeroSignalStrategy.zeroSignalRuns} run${topZeroSignalStrategy.zeroSignalRuns === 1 ? "" : "s"} produced zero signals for ${topZeroSignalStrategy.key}`);
-    }
-    if ((args.rustFallbackRuns ?? 0) > 0) {
-        notes.push(`${args.rustFallbackRuns} Rust run${args.rustFallbackRuns === 1 ? "" : "s"} fell back to TypeScript`);
     }
     if (args.backtest && args.backtest.runs > 0) {
         const backtestPhases = [
@@ -421,12 +440,6 @@ export function buildFinderDiagnosticsBottlenecks(args: {
         if (fastPathRuns < args.backtest.runs && topFastPathBlocker) {
             notes.push(`backtest fast path skipped ${args.backtest.runs - fastPathRuns} run${args.backtest.runs - fastPathRuns === 1 ? "" : "s"}; top reason: ${topFastPathBlocker.reason}`);
         }
-    }
-    if (args.failedRuns > 0) {
-        notes.push(`${args.failedRuns} candidate run${args.failedRuns === 1 ? "" : "s"} failed`);
-    }
-    if ((args.skippedRuns ?? 0) > 0) {
-        notes.push(`${args.skippedRuns} candidate run${args.skippedRuns === 1 ? "" : "s"} skipped after fatal strategy failure`);
     }
     return notes.length > 0 ? notes : ["No single phase exceeded 10% of total runtime"];
 }
@@ -473,6 +486,7 @@ export function buildFinderDiagnostics(args: {
     strategyBreakdown: FinderStrategyDiagnostics[];
     backtestDiagnostics?: FinderBacktestDiagnostics;
     failureBreakdown?: FinderFailureDiagnostics[];
+    universeDiagnostics?: FinderDiagnostics["universe"];
     rustCompletedRuns?: number;
     rustFallbackRuns?: number;
 }): FinderDiagnostics {
@@ -519,6 +533,7 @@ export function buildFinderDiagnostics(args: {
         },
         backtest: args.backtestDiagnostics,
         failureBreakdown: args.failureBreakdown,
+        universe: args.universeDiagnostics,
         timingsMs,
         timingPct: buildTimingPercentages(timingsMs),
         strategyBreakdown: args.strategyBreakdown,
@@ -640,6 +655,16 @@ export function buildCompactFinderDiagnostics(diagnostics: FinderDiagnostics): C
                 diagnostics.backtest.timingsMs,
                 diagnostics.backtest.timingsMs.total
             ),
+        };
+    }
+
+    if (diagnostics.universe) {
+        compact.universe = {
+            totalSymbols: diagnostics.universe.totalSymbols,
+            loadedSymbols: diagnostics.universe.loadedSymbols,
+            loadFailures: diagnostics.universe.failedSymbols.length,
+            failedSymbols: diagnostics.universe.failedSymbols.slice(0, COMPACT_FINDER_UNIVERSE_FAILURE_LIMIT),
+            omittedFailedSymbols: Math.max(0, diagnostics.universe.failedSymbols.length - COMPACT_FINDER_UNIVERSE_FAILURE_LIMIT),
         };
     }
 
