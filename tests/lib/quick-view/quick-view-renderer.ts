@@ -203,13 +203,15 @@ export function buildPolymarketSectionHtml(summary: QuickViewPolymarketSummary):
   const usesNativeLongSession = outcomeInterval !== "5m";
   const modeLabel = isSameEventExit
     ? (summary.evaluationMode === "chart_exit_same_event" ? "Chart Exit (same event)" : "Signal Exit (same event)")
-    : isResolveHold
-      ? "Resolve Hold (final outcome)"
-      : usesActualEntryMinute
-        ? "Entry Selection: Auto (actual trade minute)"
-        : (!usesNativeLongSession && typeof summary.entryOffset === 'number'
-            ? `Selected Offset: Minute ${summary.entryOffset}`
-            : `Run Mode: Native ${outcomeInterval} scoring`);
+    : usesNativeLongSession
+      ? `Run Mode: Native ${outcomeInterval} scoring`
+      : isResolveHold
+        ? "Resolve Hold (final outcome)"
+        : usesActualEntryMinute
+          ? "Entry Selection: Auto (actual trade minute)"
+          : (typeof summary.entryOffset === 'number'
+              ? `Selected Offset: Minute ${summary.entryOffset}`
+              : `Run Mode: Native ${outcomeInterval} scoring`);
   const winCountLabel = usesRealizedPnl ? "Profitable Trades" : "Poly Wins";
   const lossCountLabel = usesRealizedPnl ? "Losing Trades" : "Poly Losses";
   const streakWinLabel = usesRealizedPnl ? "Max Profit Streak" : "Max Win Streak";

@@ -1,34 +1,23 @@
 import type { PolymarketPanelDom } from "./polymarket-panel-dom";
 import {
-    getEffectivePolymarketSeriesId,
     isSupportedPolymarketOutcomeRun,
     loadPolymarketOutcomesForTimeRange,
-    resolvePolymarketOutcomeSymbol,
 } from "./polymarket-btc5m";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { state } from "./state";
 import type { BacktestResult } from "./types/strategies";
 import type { PolymarketOutcomeRow } from "./types/polymarket-outcomes";
 import { debugLogger } from "./debug-logger";
-import { resolveEffectivePolymarketExitMode, isSameEventPolymarketExitMode, type PolymarketExitMode } from "./polymarket-exit-mode";
+import { isSameEventPolymarketExitMode, type PolymarketExitMode } from "./polymarket-exit-mode";
 import {
     isActualPolymarketEntryMinuteMode,
     resolvePolymarketEntrySelectionModeForDisplay,
     type PolymarketEntrySelectionMode,
 } from "./polymarket-entry-selection-mode";
-import {
-    buildSignalExitPolymarketTradeSummary,
-    evaluateSignalExitTrades,
-    buildTradeAnnotationFromSignalExitResult,
-    indexSignalExitOutcomesForTrades,
-} from "./polymarket-signal-exit-evaluator";
-import { ensurePricePointsForOutcomes } from "./polymarket-price-points-ingest";
 import { resolveBacktestResultMarketContext } from "./backtest-result-context";
 import { resolvePolymarketOutcomeInterval, type PolymarketOutcomeInterval } from "./polymarket-outcome-interval";
-import {
-    annotateTradesWithPolymarketOutcomesForRun,
-    summarizePolymarketTradesForRun,
-} from "./polymarket-trade-annotations";
+import { rebuildPolymarketAnnotations } from "./polymarket-annotation-rebuilder";
+import type { PolymarketDomSettings } from "./polymarket-dom-reader";
 
 export interface PolymarketOutcomeLoaderDeps {
     getDom: () => PolymarketPanelDom;
@@ -144,189 +133,67 @@ export class PolymarketOutcomeLoader {
 
     async attachLoadedPolymarketOutcomes(result: BacktestResult, outcomes: readonly PolymarketOutcomeRow[]): Promise<BacktestResult> {
         const resultContext = resolveBacktestResultMarketContext(result);
-        if (!resultContext || outcomes.length === 0) {
+        if (!resultContext) {
             return result;
         }
 
-        const existingSummary = result.polymarketTradeSummary;
-        const outcomeInterval = this.resolveActivePolymarketOutcomeInterval(result);
-        const resolvedOutcomeSymbol = resolvePolymarketOutcomeSymbol(
-            resultContext.symbol,
-            existingSummary?.outcomeSymbol ?? this.deps.readCurrentPolymarketOutcomeSymbol()
-        );
-        const seriesId = existingSummary?.seriesId || getEffectivePolymarketSeriesId(resultContext.symbol, outcomeInterval, resolvedOutcomeSymbol) || outcomes[0]?.series_id || "";
-
-        const effectiveExitMode = existingSummary?.evaluationMode ?? resolveEffectivePolymarketExitMode({
-            requestedMode: this.deps.readCurrentPolymarketExitMode(),
-            interval: resultContext.interval,
-            executionModel: this.deps.readCurrentExecutionModel(),
-            polymarketAnnotationEnabled: true,
-        });
-        const limitEntry = outcomeInterval === "5m" && existingSummary?.limitEntryEnabled === true
-            ? {
-                enabled: true,
-                priceMode: existingSummary.limitEntryMode,
-                priceCents: existingSummary.limitEntryPriceCents ?? 50,
-                offsetCents: existingSummary.limitEntryOffsetCents,
-                exitEnabled: existingSummary.limitExitEnabled === true,
-                exitMode: existingSummary.limitExitMode,
-                exitPriceCents: existingSummary.limitExitPriceCents,
-                exitOffsetCents: existingSummary.limitExitOffsetCents,
-            }
-            : undefined;
-        const allowMultipleTradesPerEvent = existingSummary && isSameEventPolymarketExitMode(existingSummary.evaluationMode)
-            ? existingSummary.signalExitAllowMultipleTradesPerEvent === true
-            : this.deps.readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent();
-
-        if (isSameEventPolymarketExitMode(effectiveExitMode) && resultContext.interval === "1m") {
-            const targetTimes = result.trades
-                .map((trade) => parseTimeToUnixSeconds(trade.entryTime))
-                .filter((value): value is number => value !== null);
-            if (targetTimes.length > 0) {
-                try {
-                    const outcomeByEntryTs = indexSignalExitOutcomesForTrades(result.trades, outcomes);
-                    const relevantOutcomeByStart = new Map<number, (typeof outcomes)[number]>();
-                    for (const outcome of outcomeByEntryTs.values()) {
-                        if (outcome) {
-                            relevantOutcomeByStart.set(outcome.event_start_ts, outcome);
-                        }
-                    }
-                    const pricePoints = await ensurePricePointsForOutcomes(
-                        relevantOutcomeByStart.size > 0 ? [...relevantOutcomeByStart.values()] : outcomes,
-                        seriesId
-                    );
-                    const { results: exitResults, summary: exitSummary } = evaluateSignalExitTrades({
-                        trades: result.trades,
-                        outcomes,
-                        pricePoints,
-                        outcomeByEntryTs,
-                        allowMultipleTradesPerEvent,
-                        entryPriceFilterCents: this.deps.readCurrentPolymarketEntryPriceFilterCents(),
-                        backtestSlippageCents: this.deps.readCurrentPolymarketBacktestSlippageCents(),
-                        entryCutoffEnabled: this.deps.readCurrentPolymarketEntryCutoffEnabled(),
-                        entryCutoffSeconds: this.deps.readCurrentPolymarketEntryCutoffSeconds(),
-                        limitEntry,
-                        evaluationMode: effectiveExitMode,
-                    });
-                    const exitResultMap = new Map(exitResults.map((r) => [r.trade, r]));
-                    const annotatedTrades = result.trades.map((trade) => {
-                        const exitResult = exitResultMap.get(trade);
-                        if (!exitResult) return { ...trade, polymarketOutcome: null };
-                        return { ...trade, polymarketOutcome: buildTradeAnnotationFromSignalExitResult(exitResult, effectiveExitMode) };
-                    });
-                    return {
-                        ...result,
-                        trades: annotatedTrades,
-                        polymarketTradeSummary: buildSignalExitPolymarketTradeSummary({
-                            seriesId,
-                            outcomeSymbol: existingSummary?.outcomeSymbol ?? resolvedOutcomeSymbol,
-                            outcomeInterval,
-                            outcomeRowsLoaded: outcomes.length,
-                            summary: exitSummary,
-                            evaluationMode: effectiveExitMode,
-                        }),
-                    };
-                } catch (error) {
-                    debugLogger.warn("polymarket_panel.signal_exit_annotation_failed", {
-                        error: error instanceof Error ? error.message : String(error),
-                    });
-                }
-            }
-        }
-
-        const entrySelectionMode = resultContext.interval === "1m" && outcomeInterval === "5m"
-            ? this.resolveSelectedPolymarketEntrySelectionMode(result)
-            : undefined;
-        const selectedOffset = resultContext.interval === "1m" && outcomeInterval === "5m" && !isActualPolymarketEntryMinuteMode(entrySelectionMode)
-            ? this.resolveSelectedPolymarketEntryOffset(result)
-            : undefined;
-        let limitEntryPricePoints: Awaited<ReturnType<typeof ensurePricePointsForOutcomes>> | undefined;
-        if (limitEntry) {
-            const targetTimes = result.trades
-                .map((trade) => parseTimeToUnixSeconds(trade.entryTime))
-                .filter((value): value is number => value !== null);
-            if (targetTimes.length > 0) {
-                try {
-                    limitEntryPricePoints = await ensurePricePointsForOutcomes(outcomes, seriesId);
-                } catch {
-                    limitEntryPricePoints = [];
-                }
-            }
-        }
-        const annotatedTrades = annotateTradesWithPolymarketOutcomesForRun(
-            result.trades,
-            outcomes,
-            resultContext.interval,
-            selectedOffset,
-            entrySelectionMode ?? "fixed_offset",
-            {
-                outcomeInterval,
-                pricePoints: limitEntryPricePoints,
-                entryPriceFilterCents: this.deps.readCurrentPolymarketEntryPriceFilterCents(),
-                backtestSlippageCents: this.deps.readCurrentPolymarketBacktestSlippageCents(),
-                entryCutoffEnabled: this.deps.readCurrentPolymarketEntryCutoffEnabled(),
-                entryCutoffSeconds: this.deps.readCurrentPolymarketEntryCutoffSeconds(),
-                limitEntry,
-            }
-        );
-        const summary = summarizePolymarketTradesForRun({
-            trades: annotatedTrades,
-            outcomes,
-            interval: resultContext.interval,
-            selectedOffset,
-            entrySelectionMode,
-            timingProfile: existingSummary?.timingProfile,
-            outcomeInterval,
+        const settingsSnapshot: PolymarketDomSettings = {
+            entryOffset: this.deps.readCurrentPolymarketEntryOffset(),
+            entrySelectionMode: this.deps.readCurrentPolymarketEntrySelectionMode(),
+            outcomeSymbol: this.deps.readCurrentPolymarketOutcomeSymbol(),
+            outcomeInterval: this.deps.readCurrentPolymarketOutcomeInterval(),
+            entryDelayBars: 0,
+            entryPriceFilterCents: this.deps.readCurrentPolymarketEntryPriceFilterCents(),
             backtestSlippageCents: this.deps.readCurrentPolymarketBacktestSlippageCents(),
-            limitEntry,
-        });
-        const totalTrades = result.totalTrades > 0 ? result.totalTrades : result.trades.length;
-
-        return {
-            ...result,
-            trades: annotatedTrades,
-            polymarketTradeSummary: {
-                seriesId,
-                outcomeSymbol: existingSummary?.outcomeSymbol ?? resolvedOutcomeSymbol ?? undefined,
-                outcomeInterval,
-                outcomeRowsLoaded: existingSummary?.outcomeRowsLoaded && existingSummary.outcomeRowsLoaded > 0
-                    ? existingSummary.outcomeRowsLoaded
-                    : outcomes.length,
-                scoredTrades: existingSummary?.scoredTrades ?? summary.scoredTrades,
-                missingOutcomeTrades: existingSummary?.missingOutcomeTrades ?? summary.missingOutcomeTrades,
-                unscoredTrades: existingSummary?.unscoredTrades ?? summary.unscoredTrades ?? Math.max(0, totalTrades - summary.scoredTrades),
-                duplicateTradesIgnored: existingSummary?.duplicateTradesIgnored ?? summary.duplicateTradesIgnored,
-                entryPriceFilteredTrades: existingSummary?.entryPriceFilteredTrades ?? summary.entryPriceFilteredTrades,
-                entryTimeFilteredTrades: existingSummary?.entryTimeFilteredTrades ?? summary.entryTimeFilteredTrades,
-                entrySelectionMode: existingSummary?.entrySelectionMode ?? summary.entrySelectionMode,
-                entryOffset: existingSummary?.entryOffset ?? summary.entryOffset,
-                timingProfile: existingSummary?.timingProfile ?? summary.timingProfile,
-                evaluationMode: "resolve_hold",
-                backtestSlippageCents: existingSummary?.backtestSlippageCents ?? summary.backtestSlippageCents,
-                targetExitedTrades: existingSummary?.targetExitedTrades ?? summary.targetExitedTrades,
-                limitEntryEnabled: existingSummary?.limitEntryEnabled ?? summary.limitEntryEnabled,
-                limitEntryMode: existingSummary?.limitEntryMode ?? summary.limitEntryMode,
-                limitEntryPriceCents: existingSummary?.limitEntryPriceCents ?? summary.limitEntryPriceCents,
-                limitEntryOffsetCents: existingSummary?.limitEntryOffsetCents ?? summary.limitEntryOffsetCents,
-                limitEntryAttempts: existingSummary?.limitEntryAttempts ?? summary.limitEntryAttempts,
-                limitEntryFilledTrades: existingSummary?.limitEntryFilledTrades ?? summary.limitEntryFilledTrades,
-                limitEntryMissedTrades: existingSummary?.limitEntryMissedTrades ?? summary.limitEntryMissedTrades,
-                limitEntryNotTouchedTrades: existingSummary?.limitEntryNotTouchedTrades ?? summary.limitEntryNotTouchedTrades,
-                limitEntryLastMinuteOnlyTrades: existingSummary?.limitEntryLastMinuteOnlyTrades ?? summary.limitEntryLastMinuteOnlyTrades,
-                limitEntryMissingPriceTrades: existingSummary?.limitEntryMissingPriceTrades ?? summary.limitEntryMissingPriceTrades,
-                limitEntryInvalidWindowTrades: existingSummary?.limitEntryInvalidWindowTrades ?? summary.limitEntryInvalidWindowTrades,
-                limitEntryFillRate: existingSummary?.limitEntryFillRate ?? summary.limitEntryFillRate,
-                avgLimitEntryWaitSec: existingSummary?.avgLimitEntryWaitSec ?? summary.avgLimitEntryWaitSec,
-                avgLimitEntryImprovement: existingSummary?.avgLimitEntryImprovement ?? summary.avgLimitEntryImprovement,
-                limitExitEnabled: existingSummary?.limitExitEnabled ?? summary.limitExitEnabled,
-                limitExitMode: existingSummary?.limitExitMode ?? summary.limitExitMode,
-                limitExitPriceCents: existingSummary?.limitExitPriceCents ?? summary.limitExitPriceCents,
-                limitExitOffsetCents: existingSummary?.limitExitOffsetCents ?? summary.limitExitOffsetCents,
-                limitExitFilledTrades: existingSummary?.limitExitFilledTrades ?? summary.limitExitFilledTrades,
-                limitExitFallbackTrades: existingSummary?.limitExitFallbackTrades ?? summary.limitExitFallbackTrades,
-                limitExitUnreachableTrades: existingSummary?.limitExitUnreachableTrades ?? summary.limitExitUnreachableTrades,
-            },
+            entryCutoffEnabled: this.deps.readCurrentPolymarketEntryCutoffEnabled(),
+            entryCutoffSeconds: this.deps.readCurrentPolymarketEntryCutoffSeconds(),
+            exitMode: this.deps.readCurrentPolymarketExitMode(),
+            signalExitAllowMultipleTradesPerEvent: this.deps.readCurrentPolymarketSignalExitAllowMultipleTradesPerEvent(),
+            postSignalLimitEntryEnabled: false,
+            postSignalLimitEntryMode: "fixed_price",
+            postSignalLimitEntryPriceCents: 50,
+            postSignalLimitEntryOffsetCents: 0,
+            postSignalLimitExitEnabled: false,
+            postSignalLimitExitMode: "entry_offset",
+            postSignalLimitExitPriceCents: 0,
+            postSignalLimitExitOffsetCents: 0,
+            protectionTakeProfitEnabled: false,
+            protectionTakeProfitCents: 0,
+            protectionStopLossEnabled: false,
+            protectionStopLossCents: 0,
+            executionModel: this.deps.readCurrentExecutionModel() as any,
         };
+
+        const rebuildResult = await rebuildPolymarketAnnotations({
+            result,
+            marketContext: resultContext,
+            settingsSnapshot,
+            executionModel: this.deps.readCurrentExecutionModel(),
+            preferStoredSummary: true,
+            allowSecondMarket: false,
+            caller: "panel",
+            outcomes,
+        });
+
+        const summary = rebuildResult.result.polymarketTradeSummary;
+        debugLogger.info("polymarket_panel.annotation_success", {
+            path: "outcome_loader",
+            symbol: resultContext.symbol,
+            interval: resultContext.interval,
+            requestedMode: this.deps.readCurrentPolymarketExitMode() ?? "resolve_hold",
+            effectiveMode: rebuildResult.effectiveExitMode,
+            outcomeInterval: this.resolveActivePolymarketOutcomeInterval(result),
+            outcomesLoaded: rebuildResult.outcomesLoaded,
+            pricePointsLoaded: rebuildResult.pricePointsLoaded,
+            missingPriceTrades: summary?.limitEntryMissingPriceTrades ?? 0,
+            duplicateTradesIgnored: summary?.duplicateTradesIgnored ?? 0,
+            durationMs: rebuildResult.durationMs,
+            usedSecondMarket: rebuildResult.usedSecondMarket,
+            usedPricePointEnsure: rebuildResult.usedPricePointEnsure,
+            usedFallback: rebuildResult.usedFallback,
+        });
+
+        return rebuildResult.result;
     }
 
     resetLoadedRows(clearResult = true): void {
@@ -399,10 +266,6 @@ export class PolymarketOutcomeLoader {
         return resolvePolymarketOutcomeInterval(
             result.polymarketTradeSummary?.outcomeInterval ?? this.deps.readCurrentPolymarketOutcomeInterval()
         );
-    }
-
-    private resolveSelectedPolymarketEntryOffset(_result: BacktestResult): number {
-        return this.deps.readCurrentPolymarketEntryOffset() ?? 0;
     }
 
     private resolveSelectedPolymarketEntrySelectionMode(result: BacktestResult): PolymarketEntrySelectionMode {
