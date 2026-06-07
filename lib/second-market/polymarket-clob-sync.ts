@@ -151,6 +151,10 @@ function latestSourceTsMs(state: PolymarketClobBookState): number | null {
     return values.length > 0 ? Math.max(...values) : null;
 }
 
+function hasReceivedAnyBookData(state: PolymarketClobBookState): boolean {
+    return state.yes.sourceTsMs !== null || state.no.sourceTsMs !== null;
+}
+
 function isEventActiveAt(event: SecondMarketPolymarketEvent, sampleTs: number): boolean {
     return event.eventStartTs <= sampleTs && sampleTs < event.eventEndTs;
 }
@@ -284,6 +288,7 @@ export async function runPolymarketClobCapture(db: DatabaseSync, args: {
                 const receivedTsMs = Date.now();
                 const rows = args.events
                     .filter((event) => isEventActiveAt(event, sampleTs))
+                    .filter((event) => hasReceivedAnyBookData(stateByEvent.get(event)!))
                     .map((event) => buildClobQuoteRow(event, stateByEvent.get(event)!, sampleTs, receivedTsMs));
                 if (rows.length > 0) {
                     upsertPolymarketClob1sQuotes(db, rows);

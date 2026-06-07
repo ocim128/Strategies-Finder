@@ -715,6 +715,8 @@ export function isFreshStoredLiveQuote(quote: PolymarketClob1sQuoteRow): boolean
     if (flags.includes("carried_forward") || flags.includes("recent_local_fallback")) return false;
     if (quote.quote_age_ms !== null && quote.quote_age_ms > MAX_STORED_LIVE_QUOTE_AGE_MS) return false;
     if (quote.source_ts_ms !== null && Date.now() - quote.source_ts_ms > MAX_STORED_LIVE_QUOTE_AGE_MS) return false;
+    if (quote.yes_bid === null || quote.yes_ask === null) return false;
+    if (quote.no_bid === null || quote.no_ask === null) return false;
     return true;
 }
 

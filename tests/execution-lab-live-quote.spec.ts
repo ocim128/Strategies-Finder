@@ -259,6 +259,23 @@ describe("Execution Lab live helpers", () => {
         })).to.equal(false);
     });
 
+    it("rejects stored live quotes with null bid/ask as not fresh", () => {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const base = {
+            ...clobQuote(nowSec),
+            source_ts_ms: Date.now(),
+            quote_age_ms: 0,
+            quality_flags: "",
+        };
+        expect(isFreshStoredLiveQuote(base)).to.equal(true);
+        expect(isFreshStoredLiveQuote({ ...base, yes_bid: null, yes_ask: null })).to.equal(false);
+        expect(isFreshStoredLiveQuote({ ...base, yes_bid: null })).to.equal(false);
+        expect(isFreshStoredLiveQuote({ ...base, yes_ask: null })).to.equal(false);
+        expect(isFreshStoredLiveQuote({ ...base, no_bid: null, no_ask: null })).to.equal(false);
+        expect(isFreshStoredLiveQuote({ ...base, no_bid: null })).to.equal(false);
+        expect(isFreshStoredLiveQuote({ ...base, no_ask: null })).to.equal(false);
+    });
+
     it("loads closed outcomes by event end date", async () => {
         const handler = createHandler();
         const originalFetch = globalThis.fetch;

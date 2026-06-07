@@ -175,6 +175,81 @@ describe("Execution Lab diagnostics", () => {
         expect(diagnostics?.summary.health.issues.map((issue) => issue.code)).to.deep.equal(["inverted_yes_spread"]);
     });
 
+    it("flags null bid/ask quotes when above threshold", () => {
+        const nullQuoteSamples = Array.from({ length: 2 }, (_, index) => {
+            const base = healthySample(1_700_000_100 + index, 200 - index);
+            return {
+                ...base,
+                quote: base.quote
+                    ? {
+                        ...base.quote,
+                        yesBid: null,
+                        yesAsk: null,
+                        noBid: null,
+                        noAsk: null,
+                        yesMid: null,
+                        noMid: null,
+                        qualityFlags: ["missing_yes_bid_ask", "missing_no_bid_ask"],
+                    }
+                    : null,
+                warnings: ["quote_missing_yes_bid_ask", "quote_missing_no_bid_ask"],
+            };
+        });
+        const goodSamples = Array.from({ length: 98 }, (_, index) =>
+            healthySample(1_700_000_200 + index, 200 - index)
+        );
+        const samples = [...nullQuoteSamples, ...goodSamples];
+        const stats = createExecutionLabDiagnosticAccumulator();
+        for (const item of samples) recordExecutionLabDiagnosticStats(stats, item);
+
+        const diagnostics = buildExecutionLabDiagnostics(samples, stats, {
+            retainedSampleLimit: 300,
+            segmentLimit: 12,
+            maxLiveCandleLagSec: 10,
+        });
+
+        expect(diagnostics?.summary.health.status).to.equal("warning");
+        expect(diagnostics?.summary.health.issues.map((issue) => issue.code)).to.include("null_bid_ask_quotes");
+        expect(diagnostics?.summary.quoteQualityFlagCounts.missing_yes_bid_ask).to.equal(2);
+    });
+
+    it("keeps health ok when null bid/ask quotes are below threshold", () => {
+        const nullQuoteSample = (() => {
+            const base = healthySample(1_700_000_100, 200);
+            return {
+                ...base,
+                quote: base.quote
+                    ? {
+                        ...base.quote,
+                        yesBid: null,
+                        yesAsk: null,
+                        noBid: null,
+                        noAsk: null,
+                        yesMid: null,
+                        noMid: null,
+                        qualityFlags: ["missing_yes_bid_ask", "missing_no_bid_ask"],
+                    }
+                    : null,
+                warnings: ["quote_missing_yes_bid_ask", "quote_missing_no_bid_ask"],
+            };
+        })();
+        const goodSamples = Array.from({ length: 199 }, (_, index) =>
+            healthySample(1_700_000_200 + index, 200 - index)
+        );
+        const samples = [nullQuoteSample, ...goodSamples];
+        const stats = createExecutionLabDiagnosticAccumulator();
+        for (const item of samples) recordExecutionLabDiagnosticStats(stats, item);
+
+        const diagnostics = buildExecutionLabDiagnostics(samples, stats, {
+            retainedSampleLimit: 300,
+            segmentLimit: 12,
+            maxLiveCandleLagSec: 10,
+        });
+
+        expect(diagnostics?.summary.health.status).to.equal("ok");
+        expect(diagnostics?.summary.health.issues.map((issue) => issue.code)).to.not.include("null_bid_ask_quotes");
+    });
+
     it("copies compact v6 diagnostics with cumulative health instead of raw retained samples", () => {
         const samples = [sample(1_700_000_000, false), sample(1_700_000_000, true)];
         const stats = createExecutionLabDiagnosticAccumulator();

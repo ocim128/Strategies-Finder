@@ -2,6 +2,7 @@ import type { SecondMarketSymbol } from "../second-market/types";
 
 const DIAGNOSTIC_EVENT_PHASE_SEC = 30;
 const DIAGNOSTIC_INVERTED_SPREAD_HEALTH_PCT = 5;
+const DIAGNOSTIC_NULL_QUOTE_HEALTH_PCT = 1;
 
 export type ExecutionLabDiagnosticSample = {
     recordedAtIso: string;
@@ -517,6 +518,13 @@ function buildDiagnosticHealth(
         addIssue("inverted_no_spread", "warning", "latest NO quote had bid greater than ask");
     } else if (invertedNoSpreadPct >= DIAGNOSTIC_INVERTED_SPREAD_HEALTH_PCT) {
         addIssue("inverted_no_spread", "warning", `${stats.invertedNoSpreadCount} NO quotes had bid greater than ask`);
+    }
+
+    const nullYesBidAskCount = stats.quoteQualityFlagCounts.missing_yes_bid_ask ?? 0;
+    const nullNoBidAskCount = stats.quoteQualityFlagCounts.missing_no_bid_ask ?? 0;
+    const nullQuotePct = diagnosticPct(Math.max(nullYesBidAskCount, nullNoBidAskCount), quotedSampleCount) ?? 0;
+    if (nullQuotePct >= DIAGNOSTIC_NULL_QUOTE_HEALTH_PCT) {
+        addIssue("null_bid_ask_quotes", nullQuotePct >= 5 ? "critical" : "warning", `${nullQuotePct}% of CLOB quotes had null bid/ask`);
     }
 
     const status = issues.some((issue) => issue.severity === "critical")
