@@ -36,9 +36,11 @@ function updatePolymarketEntryOffsetVisibility(dom: StateSubscriptionsDom, inter
     const annotationToggle = dom.polymarketAnnotationToggle;
     const annotationEnabled = annotationToggle?.checked ?? false;
     const polymarketSettings = resolvePolymarketDomSettings();
-    const isNative5mSession = polymarketSettings.outcomeInterval === '5m';
+    const supportsNativeBridgeEntry = polymarketSettings.outcomeInterval === '5m';
+    const supportsPostSignalLimitEntry = polymarketSettings.outcomeInterval === '5m'
+        || polymarketSettings.outcomeInterval === '15m';
     const isOneSecondInterval = interval === '1s';
-    const supportsLimitEntry = annotationEnabled && isNative5mSession;
+    const supportsLimitEntry = annotationEnabled && supportsPostSignalLimitEntry;
     const limitEntryEnabled = supportsLimitEntry && polymarketSettings.postSignalLimitEntryEnabled;
     const usesFixedLimitEntry = polymarketSettings.postSignalLimitEntryMode === 'fixed_price';
     const usesSignalOffsetEntry = polymarketSettings.postSignalLimitEntryMode === 'signal_offset';
@@ -50,7 +52,7 @@ function updatePolymarketEntryOffsetVisibility(dom: StateSubscriptionsDom, inter
     const isSameEventExit = supportsSignalExit
         && isSameEventPolymarketExitMode(polymarketSettings.exitMode);
     const usesActualEntryMinute = polymarketSettings.entrySelectionMode === 'actual_entry_minute';
-    const showsEntryBridgeControls = interval === '1m' && isNative5mSession && annotationEnabled && !isSameEventExit;
+    const showsEntryBridgeControls = interval === '1m' && supportsNativeBridgeEntry && annotationEnabled && !isSameEventExit;
 
     const visibilityRules: Array<[HTMLElement | null, boolean]> = [
         [rows.outcomeIntervalRow, annotationEnabled],

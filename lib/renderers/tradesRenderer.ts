@@ -168,7 +168,8 @@ export class TradesRenderer {
     }
 
     private resolveSelectedPolymarketEntryOffset(): number | undefined {
-        if (this.readCurrentPolymarketOutcomeInterval() !== "5m") {
+        const outcomeInterval = this.readCurrentPolymarketOutcomeInterval();
+        if (outcomeInterval !== "5m" && outcomeInterval !== "15m") {
             return undefined;
         }
         const summaryOffset = state.currentBacktestResult?.polymarketTradeSummary?.entryOffset;
@@ -288,7 +289,7 @@ export class TradesRenderer {
         const existingLimitSummary = state.currentBacktestResult?.polymarketTradeSummary?.limitEntryEnabled === true
             ? state.currentBacktestResult.polymarketTradeSummary
             : null;
-        const limitEntry = outcomeInterval === "5m"
+        const limitEntry = (outcomeInterval === "5m" || outcomeInterval === "15m")
             && (
                 existingLimitSummary
                 || (!state.currentBacktestResult?.polymarketTradeSummary && currentPolymarketSettings.postSignalLimitEntryEnabled)

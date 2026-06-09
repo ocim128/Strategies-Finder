@@ -41,6 +41,10 @@ function outcome(): PolymarketOutcomeRow {
     };
 }
 
+type ContextOverrideOptions = {
+    outcomeInterval?: "5m" | "15m";
+};
+
 function trade(id: number, entryTs: number, exitTs: number, type: Trade["type"] = "long"): Trade {
     return {
         id,
@@ -105,14 +109,28 @@ function result(trades: Trade[]): BacktestResult {
     };
 }
 
-function context(quotes: PolymarketClob1sQuoteRow[]): SecondMarketEvaluationContext {
+function context(
+    quotes: PolymarketClob1sQuoteRow[],
+    options: ContextOverrideOptions = {}
+): SecondMarketEvaluationContext {
+    const outcomeInterval = options.outcomeInterval ?? "5m";
     return {
         symbol: "BTCUSDT",
         outcomeSymbol: "BTCUSDT",
-        seriesId: "10684",
-        outcomeInterval: "5m",
-        outcomes: [outcome()],
-        quotes,
+        seriesId: outcomeInterval === "15m" ? "10192" : "10684",
+        outcomeInterval,
+        outcomes: [{
+            ...outcome(),
+            series_id: outcomeInterval === "15m" ? "10192" : "10684",
+            interval: outcomeInterval,
+            event_end_ts: outcomeInterval === "15m" ? 1_700_000_900 : 1_700_000_300,
+        }],
+        quotes: quotes.map((row) => ({
+            ...row,
+            series_id: outcomeInterval === "15m" ? "10192" : "10684",
+            outcome_interval: outcomeInterval,
+            event_end_ts: outcomeInterval === "15m" ? 1_700_000_900 : 1_700_000_300,
+        })),
         gammaSnapshots: [],
     };
 }
@@ -621,6 +639,33 @@ describe("second market shared evaluation", () => {
         expect(evaluated.polymarketSummary.limitEntryFilledTrades).to.equal(1);
         expect(evaluated.polymarketEval.limitEntryEnabled).to.equal(true);
         expect(evaluated.polymarketEval.limitEntryAttempts).to.equal(1);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntrySource).to.equal("limit");
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryStatus).to.equal("filled");
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryFillTs).to.equal(1_700_000_020);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryLimitPrice).to.equal(0.50);
+        expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryPrice).to.equal(0.50);
+    });
+
+    it("carries post-signal limit entry counts through native 15m summaries and annotations", () => {
+        const signalTrade = trade(1, 1_700_000_010, 1_700_000_040);
+        signalTrade.exitReason = "signal";
+        const evaluated = evaluateSecondMarketBacktest({
+            result: result([signalTrade]),
+            context: context([
+                quote(1_700_000_010, 0.62, 0.60),
+                quote(1_700_000_020, 0.50, 0.48),
+                quote(1_700_000_040, 0.60, 0.58),
+            ], { outcomeInterval: "15m" }),
+            polymarketExitMode: "signal_exit_same_event",
+            limitEntry: {
+                enabled: true,
+                priceCents: 50,
+            },
+        });
+
+        expect(evaluated.polymarketSummary.outcomeInterval).to.equal("15m");
+        expect(evaluated.polymarketSummary.limitEntryEnabled).to.equal(true);
+        expect(evaluated.polymarketSummary.limitEntryFilledTrades).to.equal(1);
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntrySource).to.equal("limit");
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryStatus).to.equal("filled");
         expect(evaluated.annotatedTrades[0]?.polymarketOutcome?.marketEntryFillTs).to.equal(1_700_000_020);

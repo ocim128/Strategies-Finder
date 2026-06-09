@@ -167,7 +167,7 @@ export async function rebuildPolymarketAnnotations(input: PolymarketRebuildInput
     if (isSecondMarketRun) {
         try {
             usedSecondMarketVar = true;
-            const limitEntry = outcomeInterval === "5m"
+            const limitEntry = (outcomeInterval === "5m" || outcomeInterval === "15m")
                 && (existingSummary?.limitEntryEnabled === true || (!existingSummary && settingsSnapshot.postSignalLimitEntryEnabled))
                 ? {
                     enabled: true,
@@ -255,7 +255,7 @@ export async function rebuildPolymarketAnnotations(input: PolymarketRebuildInput
                     ? existingSummary.signalExitAllowMultipleTradesPerEvent === true
                     : settingsSnapshot.signalExitAllowMultipleTradesPerEvent;
 
-                const limitEntry = outcomeInterval === "5m"
+                const limitEntry = (outcomeInterval === "5m" || outcomeInterval === "15m")
                     && (existingSummary?.limitEntryEnabled === true || (!existingSummary && settingsSnapshot.postSignalLimitEntryEnabled))
                     ? {
                         enabled: true,
