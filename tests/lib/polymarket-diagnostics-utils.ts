@@ -330,22 +330,55 @@ function resolvePolymarketCoverageSummary(
     };
 }
 
+/**
+ * Resolve the profitability of a single Polymarket trade for win/loss counting.
+ * Prefers isProfitable (PnL-adjusted, accounts for slippage) when available,
+ * falls back to isWin (binary prediction correctness) when entry-price data
+ * is missing.  This keeps the backtest panel consistent with the Finder's
+ * buildNativeSessionResolveHoldEvalResult which uses the same priority.
+ */
+function resolveTradeProfitability(trade: Trade): boolean | null {
+    const pm = trade.polymarketOutcome;
+    if (!pm) return null;
+    if (typeof pm.isProfitable === "boolean") return pm.isProfitable;
+    if (typeof pm.isWin === "boolean") return pm.isWin;
+    return null;
+}
+
 export function buildBacktestPolymarketPerformanceSummary(
     result: BacktestResult
 ): BacktestPolymarketPerformanceSummary | undefined {
     const summary = result.polymarketTradeSummary;
     const isSameEventExit = isSameEventPolymarketExitMode(summary?.evaluationMode);
 
-    const wins = isSameEventExit
-        ? (summary?.profitableTrades ?? result.trades.filter((trade) => trade.polymarketOutcome?.isProfitable === true).length)
-        : result.trades.filter((trade) => trade.polymarketOutcome?.isWin === true).length;
-    const losses = isSameEventExit
-        ? (summary?.losingTrades ?? result.trades.filter((trade) => trade.polymarketOutcome?.isProfitable === false).length)
-        : result.trades.filter((trade) => trade.polymarketOutcome?.isWin === false).length;
-    const neutralTrades = isSameEventExit
-        ? (summary?.neutralTrades ?? result.trades.filter((trade) => getPolymarketTradeOutcomeState(trade) === "neutral").length)
-        : 0;
-    const scoredTrades = isSameEventExit ? (summary?.scoredTrades ?? wins + losses + neutralTrades) : wins + losses;
+    let wins: number;
+    let losses: number;
+    let neutralTrades: number;
+    let scoredTrades: number;
+
+    if (isSameEventExit) {
+        wins = summary?.profitableTrades ?? result.trades.filter((trade) => trade.polymarketOutcome?.isProfitable === true).length;
+        losses = summary?.losingTrades ?? result.trades.filter((trade) => trade.polymarketOutcome?.isProfitable === false).length;
+        neutralTrades = summary?.neutralTrades ?? result.trades.filter((trade) => getPolymarketTradeOutcomeState(trade) === "neutral").length;
+        scoredTrades = summary?.scoredTrades ?? wins + losses + neutralTrades;
+    } else {
+        // resolve_hold: prefer isProfitable (PnL-adjusted) over isWin (binary)
+        // to stay consistent with the Finder's buildNativeSessionResolveHoldEvalResult.
+        wins = 0;
+        losses = 0;
+        neutralTrades = 0;
+        for (const trade of result.trades) {
+            const profitable = resolveTradeProfitability(trade);
+            if (profitable === true) wins++;
+            else if (profitable === false) losses++;
+            else if (profitable === null && trade.polymarketOutcome && typeof trade.polymarketOutcome.isWin === "boolean") {
+                // Trade has isWin but no profitability signal — count via isWin
+                if (trade.polymarketOutcome.isWin) wins++;
+                else losses++;
+            }
+        }
+        scoredTrades = summary?.scoredTrades ?? wins + losses + neutralTrades;
+    }
 
     if (!summary && scoredTrades === 0) {
         return undefined;

@@ -9,6 +9,7 @@ import {
     resolvePolymarketOutcomeSymbol,
 } from "./polymarket-btc5m";
 import {
+    DEFAULT_POLYMARKET_OUTCOME_INTERVAL,
     resolvePolymarketOutcomeInterval,
 } from "./polymarket-outcome-interval";
 import {
@@ -100,6 +101,7 @@ export async function rebuildPolymarketAnnotations(input: PolymarketRebuildInput
     const outcomeInterval = resolvePolymarketOutcomeInterval(
         existingSummary?.outcomeInterval || settingsSnapshot.outcomeInterval
     );
+    const isNativeOutcomeSession = outcomeInterval !== DEFAULT_POLYMARKET_OUTCOME_INTERVAL;
     const resolvedOutcomeSymbol = resolvePolymarketOutcomeSymbol(symbol, outcomeSymbol);
     const seriesId = getEffectivePolymarketSeriesId(symbol, outcomeInterval, outcomeSymbol);
 
@@ -126,12 +128,22 @@ export async function rebuildPolymarketAnnotations(input: PolymarketRebuildInput
         && isActualPolymarketEntryMinuteMode(entrySelectionMode)
         && hasFilteredPolymarketTrades(result.trades);
 
+    // When the stored outcome interval doesn't match the requested one,
+    // force re-annotation to avoid showing stale results from a different
+    // scoring path (e.g. 5m bridge annotations when 15m native is requested).
+    const storedOutcomeInterval = existingSummary?.outcomeInterval
+        ? resolvePolymarketOutcomeInterval(existingSummary.outcomeInterval)
+        : undefined;
+    const shouldRefreshOutcomeIntervalMismatch = storedOutcomeInterval !== undefined
+        && storedOutcomeInterval !== outcomeInterval;
+
     const canUseStored = preferStoredSummary
         && existingSummary
         && hasOutcomes
         && !shouldRetryEmptySignalExitSummary
         && !shouldRepairFilteredActualMode
-        && !shouldRefreshSecondMarketPricing;
+        && !shouldRefreshSecondMarketPricing
+        && !shouldRefreshOutcomeIntervalMismatch;
 
     if (canUseStored && seriesId) {
         const durationMs = performance.now() - startTime;
@@ -213,7 +225,14 @@ export async function rebuildPolymarketAnnotations(input: PolymarketRebuildInput
             usedFallback = true;
             finalResult = result;
         }
-    } else if (!isSupportedPolymarketOutcomeRun(symbol, interval, outcomeInterval, outcomeSymbol) || !seriesId) {
+    } else if (!seriesId) {
+        // No series ID → cannot annotate
+        finalResult = result;
+    } else if (!isNativeOutcomeSession && !isSupportedPolymarketOutcomeRun(symbol, interval, outcomeInterval, outcomeSymbol)) {
+        // For 5m bridge runs, require the chart interval to be in the supported set.
+        // For native outcome sessions (15m, 1h, etc.), any chart interval works
+        // because findContainingEvent matches timestamps to event windows regardless
+        // of chart granularity.
         finalResult = result;
     } else {
         const targetTimes = result.trades
@@ -331,14 +350,18 @@ export async function rebuildPolymarketAnnotations(input: PolymarketRebuildInput
                         ? (existingSummary?.entryOffset ?? settingsSnapshot.entryOffset ?? 0)
                         : undefined;
 
-                    let limitEntryPricePoints: Awaited<ReturnType<typeof ensurePricePointsForOutcomes>> | undefined;
-                    if (limitEntry) {
+                    let resolvedPricePoints: Awaited<ReturnType<typeof ensurePricePointsForOutcomes>> | undefined;
+                    // Load price points for native outcome sessions (15m, 1h, etc.)
+                    // so that buildAnnotatedTradeForNativeSession can populate
+                    // marketEntryPrice.  This keeps the backtest annotation
+                    // consistent with the Finder which always loads price points.
+                    if (isNativeOutcomeSession || limitEntry) {
                         try {
                             usedPricePointEnsure = true;
-                            limitEntryPricePoints = await ensurePricePointsForOutcomes(outcomes, seriesId);
-                            pricePointsLoaded = limitEntryPricePoints.length;
+                            resolvedPricePoints = await ensurePricePointsForOutcomes(outcomes, seriesId);
+                            pricePointsLoaded = resolvedPricePoints.length;
                         } catch {
-                            limitEntryPricePoints = [];
+                            resolvedPricePoints = [];
                             usedFallback = true;
                         }
                     }
@@ -351,7 +374,7 @@ export async function rebuildPolymarketAnnotations(input: PolymarketRebuildInput
                         entrySelectionMode ?? "fixed_offset",
                         {
                             outcomeInterval,
-                            pricePoints: limitEntryPricePoints,
+                            pricePoints: resolvedPricePoints,
                             entryPriceFilterCents: settingsSnapshot.entryPriceFilterCents,
                             backtestSlippageCents: settingsSnapshot.backtestSlippageCents,
                             entryCutoffEnabled: settingsSnapshot.entryCutoffEnabled,
