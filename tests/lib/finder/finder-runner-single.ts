@@ -82,8 +82,6 @@ import type { FinderRunCallbacks, FinderRunInput, FinderRunOutput } from "./find
 export { buildFinderEvaluationData } from "./finder-runner-shared";
 export { resolveFinderCandidateBacktestSettings, shouldUseRustCachedMode } from "./finder-runner-core";
 
-const RUST_NATIVE_FINDER_ENDPOINT_ENABLED = false;
-
 let dataManagerModulePromise: Promise<typeof import("../data-manager")> | null = null;
 
 async function getDataManager() {
@@ -414,13 +412,7 @@ async function resolveFinderEngineDecision(args: {
             : !rustPreferred
                 ? (input.requiresTsEngine ? "current sizing or realism settings require TypeScript" : "engine preference is TypeScript")
                 : "Rust health check failed";
-    const canTryNativeFinder =
-        RUST_NATIVE_FINDER_ENDPOINT_ENABLED &&
-        !comboActive &&
-        input.options.mode === "random" &&
-        rustHealthy &&
-        input.selectedStrategies.length === 1 &&
-        isBuiltInKey(input.selectedStrategies[0]?.key ?? "");
+    const canTryNativeFinder = false;
 
     if (!comboActive && input.requiresTsEngine && !rustHealthy) {
         debugLogger.info("[Finder] TypeScript-only sizing or realism settings enabled - forcing TypeScript engine.");
@@ -802,65 +794,6 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
 
         return { results: trimmed, randomBenchmark, diagnostics };
     };
-
-    const rustNativeFinderEligible = canTryNativeFinder && useRustForFinder && !comboActive;
-
-    if (rustNativeFinderEligible) {
-        const selected = input.selectedStrategies[0];
-        callbacks.setStatus("Using Rust native random finder...");
-        callbacks.setProgress(12, "Rust native finder running...");
-
-        const baseParams = buildFinderSearchBaseParams(selected.strategy, input.settings, input.options);
-        const rustFinderOptions = {
-            mode: "random" as const,
-            sortPriority: input.options.sortPriority,
-            useAdvancedSort: input.options.useAdvancedSort,
-            topN: Math.max(input.options.topN * 3, 30),
-            steps: input.options.steps,
-            rangePercent: input.options.rangePercent,
-            maxRuns: input.options.maxRuns,
-            tradeFilterEnabled: input.options.tradeFilterEnabled,
-            minTrades: input.options.minTrades,
-            maxTrades: input.options.maxTrades,
-        };
-
-        const rustRawResults = await rustEngine.runFinder(
-            closedData,
-            selected.key,
-            baseParams,
-            capitalSettings.initialCapital,
-            capitalSettings.positionSize,
-            capitalSettings.commission,
-            rustSettings,
-            rustFinderOptions,
-            (progress) => {
-                const percent = Number.isFinite(progress.percent) ? Math.max(12, Math.min(97, progress.percent)) : 12;
-                callbacks.setProgress(percent, progress.status || "Rust native finder running...");
-            }
-        );
-
-        const rustCandidates = extractRustFinderCandidates(rustRawResults, selected.key, selected.name, baseParams);
-        if (rustCandidates.length > 0) {
-            for (const candidate of rustCandidates) {
-                insertResult(candidate);
-            }
-            return finalizeRun(totalRuns, 1, "rust_native_finder", {
-                pipeline: "rust_native",
-                prescreenRuns: 0,
-                fullRuns: totalRuns,
-                shortlistRuns: rustCandidates.length,
-                shortBars: closedData.length,
-                shortCoverage: 1,
-                rustCandidateCount: rustCandidates.length,
-            });
-        }
-
-        debugLogger.warn("[Finder] Rust native finder returned no usable candidates. Falling back to batch pipeline.");
-        if (!cacheId && cacheRequested) {
-            callbacks.setStatus("Rust native finder fell back to batch mode; caching data...");
-            cacheId = await rustEngine.cacheData(closedData);
-        }
-    }
 
     const useRandomFunnel =
         !requiresCompositeEdgeRatioSort &&

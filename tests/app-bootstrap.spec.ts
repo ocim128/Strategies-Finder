@@ -1,46 +1,38 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
-    resolveBootstrapFeatureStageOrder,
     runBootstrapFeatureStage,
     type AppBootstrapFeature,
 } from "../lib/bootstrap-feature-registry";
 import { debugLogger } from "../lib/debug-logger";
 
 describe("App bootstrap registry", () => {
-    it("keeps stable dependency order within a stage", () => {
+    it("executes features in array order within a stage", async () => {
+        const order: string[] = [];
         const features: AppBootstrapFeature[] = [
-            { id: "layout", stage: "pre_restore" },
-            { id: "charts", stage: "pre_restore", dependsOn: ["layout"] },
-            { id: "handlers", stage: "pre_restore", dependsOn: ["charts"] },
-            { id: "settings", stage: "post_restore", dependsOn: ["handlers"] },
-            { id: "load-data", stage: "post_restore", dependsOn: ["settings"] },
+            { id: "layout", stage: "pre_restore", init: () => { order.push("layout"); } },
+            { id: "charts", stage: "pre_restore", dependsOn: ["layout"], init: () => { order.push("charts"); } },
+            { id: "handlers", stage: "pre_restore", dependsOn: ["charts"], init: () => { order.push("handlers"); } },
+            { id: "settings", stage: "post_restore", dependsOn: ["handlers"], init: () => { order.push("settings"); } },
+            { id: "load-data", stage: "post_restore", dependsOn: ["settings"], init: () => { order.push("load-data"); } },
         ];
 
-        expect(resolveBootstrapFeatureStageOrder(features, "pre_restore").map((feature) => feature.id))
-            .to.deep.equal(["layout", "charts", "handlers"]);
-        expect(resolveBootstrapFeatureStageOrder(features, "post_restore").map((feature) => feature.id))
-            .to.deep.equal(["settings", "load-data"]);
+        await runBootstrapFeatureStage(features, "pre_restore", "init", {});
+        await runBootstrapFeatureStage(features, "post_restore", "init", {});
+
+        expect(order).to.deep.equal(["layout", "charts", "handlers", "settings", "load-data"]);
     });
 
-    it("rejects missing dependencies", () => {
+    it("skips features whose handler is undefined", async () => {
+        const order: string[] = [];
         const features: AppBootstrapFeature[] = [
-            { id: "layout", stage: "pre_restore" },
-            { id: "finder", stage: "pre_restore", dependsOn: ["missing"] },
+            { id: "a", stage: "pre_restore", init: () => { order.push("a"); } },
+            { id: "b", stage: "pre_restore" /* no init */ },
+            { id: "c", stage: "pre_restore", init: () => { order.push("c"); } },
         ];
 
-        expect(() => resolveBootstrapFeatureStageOrder(features, "pre_restore"))
-            .to.throw('depends on missing feature "missing"');
-    });
-
-    it("rejects dependencies on later stages", () => {
-        const features: AppBootstrapFeature[] = [
-            { id: "settings", stage: "post_restore" },
-            { id: "layout", stage: "pre_restore", dependsOn: ["settings"] },
-        ];
-
-        expect(() => resolveBootstrapFeatureStageOrder(features, "pre_restore"))
-            .to.throw('depends on later-stage feature "settings"');
+        await runBootstrapFeatureStage(features, "pre_restore", "init", {});
+        expect(order).to.deep.equal(["a", "c"]);
     });
 
     it("does not let bootstrap telemetry listener failures break feature init", async () => {
@@ -62,5 +54,29 @@ describe("App bootstrap registry", () => {
         }
 
         expect(initialized).to.equal(true);
+    });
+
+    it("propagates init errors after logging them", async () => {
+        const logged: string[] = [];
+        const unsubscribe = debugLogger.subscribe((event) => {
+            if (event.name === "app.bootstrap.feature_failed") {
+                logged.push(event.data.id as string);
+            }
+        });
+
+        try {
+            await runBootstrapFeatureStage([{
+                id: "failing-feature",
+                stage: "pre_restore",
+                init: () => { throw new Error("boom"); },
+            }], "pre_restore", "init", {});
+            expect.fail("should have thrown");
+        } catch (error) {
+            expect((error as Error).message).to.equal("boom");
+        } finally {
+            unsubscribe();
+        }
+
+        expect(logged).to.deep.equal(["failing-feature"]);
     });
 });

@@ -4,9 +4,6 @@ import { strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
 import { backtestService } from "./backtest-service";
-import { rustEngine } from "./rust-engine-client";
-import { shouldUseRustEngine } from "./engine-preferences";
-import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
 import {
     applyConfirmationStrategiesToSignals,
     ensureConfirmationStrategiesLoaded,
@@ -76,8 +73,6 @@ type PreviousBacktestSnapshot = {
     result: BacktestResult | null;
     source: string | null;
 };
-
-const RUST_WALK_FORWARD_ENDPOINT_ENABLED = false;
 
 // ============================================================================
 // Walk-Forward Service
@@ -470,39 +465,6 @@ class WalkForwardService {
             const progressReporter = this.createProgressReporter();
             const baseConfig = this.getConfigFromUI(parameterRanges, tradeAwareThresholds);
 
-            // Try Rust walk-forward first when compatible, then fallback to TypeScript.
-            // Cross-symbol strategies require TypeScript engine (Rust has no cross-symbol support).
-            if (!useFixedParam && shouldUseRustEngine() && !crossSymbolCtx && RUST_WALK_FORWARD_ENDPOINT_ENABLED) {
-                const requiresTsEngine = backtestService.requiresTypescriptEngine(backtestSettings) || isSmartTradeSizingMode(capitalSettings.sizingMode);
-                if (!requiresTsEngine && await rustEngine.checkHealth()) {
-                    const rustConfig = this.toRustWalkForwardConfig(baseConfig);
-                    const rustSettings = this.toRustBacktestSettings(backtestSettings);
-                    this.updateStatus('Running walk-forward analysis on Rust backend...');
-                    const rustResult = await rustEngine.runWalkForward(
-                        data,
-                        strategyKey,
-                        currentParams,
-                        capitalSettings.initialCapital,
-                        capitalSettings.positionSize,
-                        capitalSettings.commission,
-                        rustSettings,
-                        rustConfig,
-                        (update) => {
-                            const percent = Number.isFinite(update.percent) ? `${Math.round(update.percent)}%` : '';
-                            const status = update.status?.trim() || 'Optimizing';
-                            this.updateStatus(percent ? `[Rust ${percent}] ${status}` : `[Rust] ${status}`, false);
-                        }
-                    );
-                    if (this.isWalkForwardResult(rustResult)) {
-                        result = rustResult;
-                        debugLogger.info('[WalkForward] Rust backend result accepted');
-                    } else {
-                        debugLogger.warn('[WalkForward] Rust walk-forward unavailable or incompatible result; falling back to TypeScript.');
-                    }
-                } else if (requiresTsEngine) {
-                    debugLogger.info('[WalkForward] Realism settings require TypeScript engine.');
-                }
-            }
 
             if (!result && useFixedParam) {
                 // Use fixed-parameter walk-forward (no optimization)
@@ -753,53 +715,6 @@ class WalkForwardService {
         }
 
         return ranges;
-    }
-
-
-    private toRustBacktestSettings(settings: BacktestSettings): BacktestSettings {
-        // Sanitize settings for Rust - do not re-add removed fields
-        // to maintain sanitizer contract consistency.
-        return sanitizeBacktestSettingsForRust(settings);
-    }
-
-    private toRustWalkForwardConfig(config: WalkForwardConfig): {
-        optimizationWindow: number;
-        testWindow: number;
-        stepSize: number;
-        parameterRanges: Array<{ name: string; min: number; max: number; step: number }>;
-        topN?: number;
-        minTrades?: number;
-    } {
-        return {
-            optimizationWindow: config.optimizationWindow,
-            testWindow: config.testWindow,
-            stepSize: config.stepSize,
-            parameterRanges: config.parameterRanges.map(range => ({
-                name: range.name,
-                min: range.min,
-                max: range.max,
-                step: range.step
-            })),
-            topN: config.topN,
-            minTrades: config.minTrades
-        };
-    }
-
-    private isWalkForwardResult(value: unknown): value is WalkForwardResult {
-        if (!value || typeof value !== 'object') return false;
-        const result = value as Partial<WalkForwardResult>;
-        return (
-            typeof result.totalWindows === 'number' &&
-            result.totalWindows > 0 &&
-            typeof result.robustnessScore === 'number' &&
-            typeof result.walkForwardEfficiency === 'number' &&
-            typeof result.parameterStability === 'number' &&
-            typeof result.optimizationTimeMs === 'number' &&
-            Array.isArray(result.windows) &&
-            result.windows.length > 0 &&
-            typeof result.combinedOOSTrades === 'object' &&
-            result.combinedOOSTrades !== null
-        );
     }
 
     /**

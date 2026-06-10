@@ -19,8 +19,6 @@
     "signal:export:ensemble": "esno scripts/export-latest-ensemble-entry-signal.ts",
     "paper:trade": "esno scripts/paper-trader.ts",
     "poly:integrity": "esno scripts/polymarket-universe-integrity.ts",
-    "poly:edge": "esno scripts/polymarket-btc5m-edge.ts",
-    "poly:behavior": "esno scripts/polymarket-btc5m-behavior.ts",
     "poly:sync-outcomes": "esno scripts/polymarket-sync-outcomes.ts",
     "poly:sync-outcomes:all": "esno scripts/polymarket-sync-outcomes.ts --all",
     "poly:sync-outcomes:repair": "esno scripts/polymarket-sync-outcomes.ts --refresh-recent 10000",

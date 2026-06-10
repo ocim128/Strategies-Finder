@@ -385,3 +385,52 @@ export function deriveStrategySeed(seed: number | undefined, strategyKey: string
     }
     return (normalizeSeed(seed) ^ hash) >>> 0;
 }
+
+export interface FinderProgressState {
+    lastUiUpdateAt: number;
+    lastResultsUpdateAt: number;
+}
+
+export async function maybeUpdateFinderProgress(args: {
+    processedCount: number;
+    totalCount: number;
+    filteredCount: number;
+    callbacks: import("./finder-runner").FinderRunCallbacks;
+    ranker: import("./finder-result-ranker").FinderResultRanker;
+    topN: number;
+    timings: import("./finder-diagnostics").FinderDiagnosticsTimings;
+    state: FinderProgressState;
+    label?: string;
+    yieldEveryN?: number;
+}): Promise<void> {
+    const {
+        processedCount,
+        totalCount,
+        filteredCount,
+        callbacks,
+        ranker,
+        topN,
+        timings,
+        state,
+        label = "evaluations",
+        yieldEveryN = 1024,
+    } = args;
+    const now = performance.now();
+    if (now - state.lastUiUpdateAt > 250 || processedCount === totalCount) {
+        state.lastUiUpdateAt = now;
+        const progress = 10 + (processedCount / totalCount) * 85;
+        callbacks.setProgress(progress, `${processedCount}/${totalCount} ${label}`);
+        callbacks.setStatus(`Evaluating ${processedCount}/${totalCount} candidates (${filteredCount} matched)...`);
+    }
+    if (now - state.lastResultsUpdateAt > 750 || processedCount === totalCount) {
+        state.lastResultsUpdateAt = now;
+        const uiStartedAt = performance.now();
+        callbacks.onResultsUpdate(ranker.toSortedArray(topN));
+        timings.uiUpdates += performance.now() - uiStartedAt;
+    }
+    if (processedCount % yieldEveryN === 0 || processedCount === totalCount) {
+        const yieldStartedAt = performance.now();
+        await callbacks.yieldControl();
+        timings.yielding += performance.now() - yieldStartedAt;
+    }
+}

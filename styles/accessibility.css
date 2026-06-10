@@ -170,11 +170,6 @@ textarea:focus-visible {
     }
 
     /* Solid backgrounds for better readability */
-    .glass-panel,
-    .glass-card {
-        background: var(--bg-secondary);
-        backdrop-filter: none;
-    }
 }
 
 /* ----------------------------------------

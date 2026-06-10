@@ -57,6 +57,8 @@ import {
     buildFinderEvaluationData,
     buildFinderResult,
     runStrategyBacktest,
+    maybeUpdateFinderProgress,
+    type FinderProgressState,
     type StrategyPlan,
 } from "./finder-runner-shared";
 import {
@@ -888,8 +890,7 @@ export async function runPolymarketFinder(
     let filteredCount = 0;
     let failedCount = 0;
     let skippedCount = 0;
-    let lastUiUpdateAt = 0;
-    let lastResultsUpdateAt = 0;
+    const progressState: FinderProgressState = { lastUiUpdateAt: 0, lastResultsUpdateAt: 0 };
 
     callbacks.setStatus(`Running ${totalRuns} Polymarket evaluations...`);
     callbacks.setProgress(14, `${processedCount}/${totalRuns} evaluations`);
@@ -1081,18 +1082,7 @@ export async function runPolymarketFinder(
 
                     processedCount++;
                     if (evalResultBase.scoredPredictions < (options.polymarketMinScoredPredictions ?? 0)) {
-                        const now = performance.now();
-                        if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
-                            lastUiUpdateAt = now;
-                            const progress = 10 + (processedCount / totalRuns) * 85;
-                            callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
-                            callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
-                        }
-                        if (processedCount % 1024 === 0 || processedCount === totalRuns) {
-                            const yieldStartedAt = performance.now();
-                            await callbacks.yieldControl();
-                            addElapsed(timings, "yielding", yieldStartedAt);
-                        }
+                        await maybeUpdateFinderProgress({ processedCount, totalCount: totalRuns, filteredCount, callbacks, ranker, topN: options.topN, timings, state: progressState });
                         continue;
                     }
 
@@ -1133,24 +1123,7 @@ export async function runPolymarketFinder(
                     ranker.offer(finderResult);
                     addElapsed(timings, "resultRanking", rankingStartedAt);
 
-                    const now = performance.now();
-                    if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
-                        lastUiUpdateAt = now;
-                        const progress = 10 + (processedCount / totalRuns) * 85;
-                        callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
-                        callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
-                    }
-                    if (now - lastResultsUpdateAt > 750 || processedCount === totalRuns) {
-                        lastResultsUpdateAt = now;
-                        const uiStartedAt = performance.now();
-                        callbacks.onResultsUpdate(ranker.toSortedArray(options.topN));
-                        addElapsed(timings, "uiUpdates", uiStartedAt);
-                    }
-                    if (processedCount % 1024 === 0 || processedCount === totalRuns) {
-                        const yieldStartedAt = performance.now();
-                        await callbacks.yieldControl();
-                        addElapsed(timings, "yielding", yieldStartedAt);
-                    }
+                    await maybeUpdateFinderProgress({ processedCount, totalCount: totalRuns, filteredCount, callbacks, ranker, topN: options.topN, timings, state: progressState });
                 } else {
                     const evaluationStartedAt = performance.now();
                     const evaluations: FinderPolymarketEvaluation[] = (isNativeOutcomeSession || isLimitEntryMode)
@@ -1270,19 +1243,7 @@ export async function runPolymarketFinder(
                         const { offset } = evaluation;
                         const evalResultBase = evaluation.evalResult;
                         if (evalResultBase.scoredPredictions < (options.polymarketMinScoredPredictions ?? 0)) {
-                            const now = performance.now();
-                            if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
-                                lastUiUpdateAt = now;
-                                const progress = 10 + (processedCount / totalRuns) * 85;
-                                callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
-                                callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
-                            }
-
-                            if (processedCount % 1024 === 0 || processedCount === totalRuns) {
-                                const yieldStartedAt = performance.now();
-                                await callbacks.yieldControl();
-                                addElapsed(timings, "yielding", yieldStartedAt);
-                            }
+                            await maybeUpdateFinderProgress({ processedCount, totalCount: totalRuns, filteredCount, callbacks, ranker, topN: options.topN, timings, state: progressState });
                             continue;
                         }
 
@@ -1321,26 +1282,7 @@ export async function runPolymarketFinder(
                         ranker.offer(finderResult);
                         addElapsed(timings, "resultRanking", rankingStartedAt);
 
-                        const now = performance.now();
-                        if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
-                            lastUiUpdateAt = now;
-                            const progress = 10 + (processedCount / totalRuns) * 85;
-                            callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
-                            callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
-                        }
-
-                        if (now - lastResultsUpdateAt > 750 || processedCount === totalRuns) {
-                            lastResultsUpdateAt = now;
-                            const uiStartedAt = performance.now();
-                            callbacks.onResultsUpdate(ranker.toSortedArray(options.topN));
-                            addElapsed(timings, "uiUpdates", uiStartedAt);
-                        }
-
-                        if (processedCount % 1024 === 0 || processedCount === totalRuns) {
-                            const yieldStartedAt = performance.now();
-                            await callbacks.yieldControl();
-                            addElapsed(timings, "yielding", yieldStartedAt);
-                        }
+                        await maybeUpdateFinderProgress({ processedCount, totalCount: totalRuns, filteredCount, callbacks, ranker, topN: options.topN, timings, state: progressState });
                     }
                 }
             } catch (error) {
@@ -1380,19 +1322,7 @@ export async function runPolymarketFinder(
                 break;
             }
 
-            const now = performance.now();
-            if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
-                lastUiUpdateAt = now;
-                const progress = 10 + (processedCount / totalRuns) * 85;
-                callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
-                callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
-            }
-
-            if (processedCount % 64 === 0 || processedCount === totalRuns) {
-                const yieldStartedAt = performance.now();
-                await callbacks.yieldControl();
-                addElapsed(timings, "yielding", yieldStartedAt);
-            }
+            await maybeUpdateFinderProgress({ processedCount, totalCount: totalRuns, filteredCount, callbacks, ranker, topN: options.topN, timings, state: progressState, yieldEveryN: 64 });
         }
     }
 
