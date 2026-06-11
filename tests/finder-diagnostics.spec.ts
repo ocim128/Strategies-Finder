@@ -219,7 +219,7 @@ describe("Finder compact diagnostics", () => {
 
         expect(compact.bottlenecks).to.deep.equal([
             "4 candidate runs failed",
-            "2 candidate runs skipped after fatal strategy failure",
+            "2 candidate runs skipped (zero-signal bail or fatal strategy failure)",
             "1 Rust run fell back to TypeScript",
         ]);
     });

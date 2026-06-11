@@ -172,6 +172,7 @@ const runFinderCandidateBacktest: typeof runBacktest = (
         includeSharpeRatio: options?.includeSharpeRatio,
         collectDiagnostics: options?.collectDiagnostics,
         omitEquityCurve: options?.omitEquityCurve,
+        skipDrawdown: options?.skipDrawdown,
     }
 );
 
@@ -723,6 +724,7 @@ export async function runPolymarketFinder(
     const isMultiSubEventRun = !isNativeOutcomeSession && !is5mRun && !isSignalExitMode && !isLimitEntryMode;
     const requiresSizedNetRank = options.sortPriority.includes("polySizedNet");
     const requiresSharpeRatio = options.sortPriority.includes("sharpeRatio");
+    const requiresDrawdown = options.sortPriority.includes("maxDrawdownPercent");
     if (requiresSizedNetRank && !isAlternativeSizingMode(input.capitalSettings)) {
         callbacks.setStatus("Sized Net rank mode requires Alternative Sizing mode other than percent.");
         return { results: [] };
@@ -932,6 +934,7 @@ export async function runPolymarketFinder(
         }
 
         let skipRemainingPlan = false;
+        let consecutiveZeroSignals = 0;
         for (let paramIndex = 0; paramIndex < plan.paramSets.length; paramIndex++) {
             const params = plan.paramSets[paramIndex]!;
             if (callbacks.isCancelled()) {
@@ -973,6 +976,27 @@ export async function runPolymarketFinder(
                 const signalMs = performance.now() - signalStartedAt;
                 timings.signalGeneration += signalMs;
                 strategyStats.signalMs += signalMs;
+
+                // Early bail: skip backtest + polymarket eval when zero signals,
+                // and bail remaining param sets after consecutive zeros.
+                if (signals.length === 0) {
+                    consecutiveZeroSignals++;
+                    processedCount += evaluationCountPerParamSet;
+                    if (consecutiveZeroSignals >= 3) {
+                        const remaining = plan.paramSets.length - paramIndex - 1;
+                        if (remaining > 0) {
+                            const skippedEvaluations = remaining * evaluationCountPerParamSet;
+                            skippedCount += skippedEvaluations;
+                            processedCount += skippedEvaluations;
+                            recordFinderStrategySkipped(strategyStats, skippedEvaluations);
+                        }
+                        skipRemainingPlan = true;
+                    }
+                    await maybeUpdateFinderProgress({ processedCount, totalCount: totalRuns, filteredCount, callbacks, ranker, topN: options.topN, timings, state: progressState });
+                    continue;
+                }
+                consecutiveZeroSignals = 0;
+
                 const backtestStartedAt = performance.now();
                 const backtestResult = runStrategyBacktest({
                     strategy: plan.strategy,
@@ -987,6 +1011,7 @@ export async function runPolymarketFinder(
                         collectDiagnostics: true,
                         includeSharpeRatio: requiresSharpeRatio,
                         omitEquityCurve: !requiresSharpeRatio,
+                        skipDrawdown: !requiresSharpeRatio && !requiresDrawdown,
                     },
                 });
                 recordFinderBacktestDiagnostics(strategyStats.backtest, backtestResult.diagnostics);

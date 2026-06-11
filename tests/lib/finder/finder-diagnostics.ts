@@ -387,7 +387,7 @@ export function buildFinderDiagnosticsBottlenecks(args: {
         notes.push(`${args.failedRuns} candidate run${args.failedRuns === 1 ? "" : "s"} failed`);
     }
     if ((args.skippedRuns ?? 0) > 0) {
-        notes.push(`${args.skippedRuns} candidate run${args.skippedRuns === 1 ? "" : "s"} skipped after fatal strategy failure`);
+        notes.push(`${args.skippedRuns} candidate run${args.skippedRuns === 1 ? "" : "s"} skipped (zero-signal bail or fatal strategy failure)`);
     }
     if ((args.rustFallbackRuns ?? 0) > 0) {
         notes.push(`${args.rustFallbackRuns} Rust run${args.rustFallbackRuns === 1 ? "" : "s"} fell back to TypeScript`);

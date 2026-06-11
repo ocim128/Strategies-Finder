@@ -372,6 +372,7 @@ export async function runSecondMarketFinder(
         const timeGapSegments = getOneSecondTimeGapSegments(strategyData, input.interval);
 
         let skipRemainingPlan = false;
+        let consecutiveZeroSignals = 0;
         for (let paramIndex = 0; paramIndex < plan.paramSets.length; paramIndex++) {
             const params = plan.paramSets[paramIndex]!;
             if (callbacks.isCancelled()) {
@@ -436,6 +437,35 @@ export async function runSecondMarketFinder(
                 const signalMs = performance.now() - signalStartedAt;
                 timings.signalGeneration += signalMs;
                 strategyStats.signalMs += signalMs;
+
+                // Early bail: skip backtest + polymarket eval when zero signals,
+                // and bail remaining param sets after consecutive zeros.
+                if (signals.length === 0) {
+                    consecutiveZeroSignals++;
+                    processedCount++;
+                    if (consecutiveZeroSignals >= 3) {
+                        const remaining = plan.paramSets.length - paramIndex - 1;
+                        if (remaining > 0) {
+                            skippedCount += remaining;
+                            processedCount += remaining;
+                            recordFinderStrategySkipped(strategyStats, remaining);
+                        }
+                        skipRemainingPlan = true;
+                    }
+                    const now = performance.now();
+                    if (now - lastUiUpdateAt > 250 || processedCount === totalRuns) {
+                        lastUiUpdateAt = now;
+                        const progress = 14 + (processedCount / totalRuns) * 83;
+                        callbacks.setProgress(progress, `${processedCount}/${totalRuns} evaluations`);
+                        callbacks.setStatus(`Evaluating ${processedCount}/${totalRuns} candidates (${filteredCount} matched)...`);
+                    }
+                    if (processedCount % 128 === 0 || processedCount === totalRuns) {
+                        await callbacks.yieldControl();
+                    }
+                    continue;
+                }
+                consecutiveZeroSignals = 0;
+
                 const backtestStartedAt = performance.now();
                 const backtestResult = runStrategyBacktest({
                     strategy: plan.strategy,

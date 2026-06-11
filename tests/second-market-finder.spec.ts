@@ -439,8 +439,8 @@ describe("second market Finder runner", () => {
         });
 
         const strategyDiagnostics = output.diagnostics?.strategyBreakdown.find((item) => item.key === "gap_lookback_fixture");
-        expect(output.results[0]?.result.totalTrades).to.equal(0);
-        expect(output.results[0]?.result.diagnostics?.counts.inputSignals).to.equal(0);
+        // Zero-signal runs skip backtest + evaluation, so no result is produced.
+        expect(output.results.length).to.equal(0);
         expect(strategyDiagnostics?.runs).to.equal(1);
         expect(strategyDiagnostics?.zeroSignalRuns).to.equal(1);
     });
