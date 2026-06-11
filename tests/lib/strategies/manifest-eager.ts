@@ -165,6 +165,7 @@ import { midpoint_deviation_no_adverse } from "./lib/midpoint_deviation_no_adver
 import { price_volume_correlation_break_gamma } from "./lib/price_volume_correlation_break_gamma";
 import { volume_skewness_acceleration_no_adverse } from "./lib/volume_skewness_acceleration_no_adverse";
 import { vw_typical_dispersion_no_adverse } from "./lib/vw_typical_dispersion_no_adverse";
+import { event_direction_1s } from "./lib/event_direction_1s";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -335,6 +336,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "price_volume_correlation_break_gamma", strategy: price_volume_correlation_break_gamma },
     { key: "volume_skewness_acceleration_no_adverse", strategy: volume_skewness_acceleration_no_adverse },
     { key: "vw_typical_dispersion_no_adverse", strategy: vw_typical_dispersion_no_adverse },
+    { key: "event_direction_1s", strategy: event_direction_1s },
 ];
 
 export function createStrategiesRecordFromManifest(

@@ -254,6 +254,7 @@ export interface StrategyParams {
 
 export type TradeDirection = 'long' | 'short' | 'both' | 'both_flip_loss_2' | 'combined';
 export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
+export type ConfirmationMode = 'agree' | 'veto_opposite' | 'confirm_within_window' | 'veto_within_window';
 export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';
 export type PercentageTakeProfitMode =
     | 'fixed'
@@ -336,6 +337,10 @@ export interface BacktestSettings {
     confirmationStrategiesToggle?: boolean;
     /** Optional secondary confirmation strategies. */
     confirmationStrategies?: string[];
+    /** How selected confirmation strategies should interact with base entry signals. */
+    confirmationMode?: ConfirmationMode;
+    /** Symmetric chart-bar radius used by windowed confirmation modes. */
+    confirmationWindowBars?: number;
     /** Optional params keyed by confirmation strategy id. */
     confirmationStrategyParams?: Record<string, StrategyParams>;
     marketMode?: MarketMode;

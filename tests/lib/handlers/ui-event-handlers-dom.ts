@@ -42,11 +42,15 @@ const UI_EVENT_HANDLER_DOM_IDS = {
     confirmationStrategiesToggle: "confirmationStrategiesToggle",
     confirmationStrategiesSettings: "confirmationStrategiesSettings",
     confirmationStrategies: "confirmationStrategies",
+    confirmationMode: "confirmationMode",
+    confirmationWindowBars: "confirmationWindowBars",
     confirmationStrategyParams: "confirmationStrategyParams",
     confirmationEntropyRatioRegimeAlignment: "confirmationEntropyRatioRegimeAlignment",
     confirmationEntropySlowWindow: "confirmationEntropySlowWindow",
     confirmationCloseLocationMedianAlignment: "confirmationCloseLocationMedianAlignment",
     confirmationCloseLocationLookback: "confirmationCloseLocationLookback",
+    confirmationEventDirectionFollow: "confirmationEventDirectionFollow",
+    confirmationEventDirectionMinSeconds: "confirmationEventDirectionMinSeconds",
     strategyTimeframeToggle: "strategyTimeframeToggle",
     strategyTimeframeMinutes: "strategyTimeframeMinutes",
     fixedTradeToggle: "fixedTradeToggle",
@@ -114,11 +118,15 @@ type UiEventTypedControls = {
     minTradesBeforeFirstFlip: HTMLInputElement;
     confirmationStrategiesToggle: HTMLInputElement;
     confirmationStrategies: HTMLInputElement;
+    confirmationMode: HTMLSelectElement;
+    confirmationWindowBars: HTMLInputElement;
     confirmationStrategyParams: HTMLInputElement;
     confirmationEntropyRatioRegimeAlignment: HTMLInputElement;
     confirmationEntropySlowWindow: HTMLInputElement;
     confirmationCloseLocationMedianAlignment: HTMLInputElement;
     confirmationCloseLocationLookback: HTMLInputElement;
+    confirmationEventDirectionFollow: HTMLInputElement;
+    confirmationEventDirectionMinSeconds: HTMLInputElement;
     strategyTimeframeToggle: HTMLInputElement;
     strategyTimeframeMinutes: HTMLInputElement;
     fixedTradeToggle: HTMLInputElement;

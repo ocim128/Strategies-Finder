@@ -128,6 +128,23 @@
                 <input type="hidden" id="confirmationStrategyParams" value="">
                 <div class="param-row">
                     <div class="param-group">
+                        <label class="param-label">Mode</label>
+                        <select class="param-input" id="confirmationMode">
+                            <option value="agree" selected>Agree</option>
+                            <option value="veto_opposite">Veto Opposite</option>
+                            <option value="confirm_within_window">Confirm Within Window</option>
+                            <option value="veto_within_window">Veto Within Window</option>
+                        </select>
+                        <div class="param-hint">`agree` requires matching same-bar direction. `veto_opposite` blocks only same-bar opposite signals. Window modes use the chart-bar radius below.</div>
+                    </div>
+                    <div class="param-group">
+                        <label class="param-label">Window Bars</label>
+                        <input type="number" class="param-input" id="confirmationWindowBars" value="0" min="0" step="1">
+                        <div class="param-hint">Symmetric bar radius for `confirm_within_window` and `veto_within_window`. 0 keeps same-bar behavior.</div>
+                    </div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
                         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
                             <label class="param-label" style="margin-bottom: 0;">Entropy Ratio Regime Alignment</label>
                             <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle entropy ratio regime alignment confirmation">
@@ -152,6 +169,20 @@
                         <div class="param-hint">Requires the confirmation strategy to agree on the same buy or sell bar.</div>
                         <label class="param-label">Lookback</label>
                         <input type="number" class="param-input" id="confirmationCloseLocationLookback" value="63" min="2" step="1">
+                    </div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Event Direction Follow</label>
+                            <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle event direction follow confirmation">
+                                <input type="checkbox" id="confirmationEventDirectionFollow">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">On 1s charts, requires price to be above 5m event-open for buy or below for sell. 0 = entire event window. No Polymarket data needed.</div>
+                        <label class="param-label">Min Seconds To Event End</label>
+                        <input type="number" class="param-input" id="confirmationEventDirectionMinSeconds" value="0" min="0" max="299" step="1">
                     </div>
                 </div>
             </div>

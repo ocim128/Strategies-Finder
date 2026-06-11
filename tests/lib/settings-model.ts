@@ -20,7 +20,7 @@ import {
     type PolymarketLimitExitPriceMode,
 } from "./polymarket-post-signal-limit-entry";
 
-import type { BacktestSettings, ExecutionModel, MarketMode, PercentageTakeProfitMode, StrategyParams, TradeDirection } from "./types/strategies";
+import type { BacktestSettings, ConfirmationMode, ExecutionModel, MarketMode, PercentageTakeProfitMode, StrategyParams, TradeDirection } from "./types/strategies";
 import { isTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from "./types/backtest";
 import {
     CAPITAL_DEFAULTS,
@@ -109,6 +109,8 @@ export interface BacktestSettingsData {
     // Signal confirmation
     confirmationStrategiesToggle: boolean;
     confirmationStrategies: string[];
+    confirmationMode: ConfirmationMode;
+    confirmationWindowBars: number;
     confirmationStrategyParams: Record<string, StrategyParams>;
 
     // Execution realism
@@ -236,6 +238,8 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     // Signal confirmation
     confirmationStrategiesToggle: false,
     confirmationStrategies: [],
+    confirmationMode: EFFECTIVE_BACKTEST_DEFAULTS.confirmationMode,
+    confirmationWindowBars: EFFECTIVE_BACKTEST_DEFAULTS.confirmationWindowBars,
     confirmationStrategyParams: {},
 };
 

@@ -470,6 +470,10 @@ function applyConfirmationStrategies(
     baseSignals: Signal[],
     settings: BacktestSettings
 ): Signal[] {
+    const confirmationSettings: BacktestSettings = {
+        ...settings,
+        strategyTimeframeEnabled: false,
+    };
     return applyConfirmationStrategiesToSignals({
         data,
         baseSignals,
@@ -478,7 +482,7 @@ function applyConfirmationStrategies(
             data,
             confirmationStrategy,
             confirmationParams,
-            settings,
+            confirmationSettings,
             interval,
             hasGlobalStrategyTimeframeWrapper(confirmationStrategy)
         ),

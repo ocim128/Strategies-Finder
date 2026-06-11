@@ -22,6 +22,14 @@ const CONFIRMATION_STRATEGY_CHECKBOXES = [
         defaultValue: 63,
         minValue: 2,
     },
+    {
+        checkboxKey: "confirmationEventDirectionFollow",
+        inputKey: "confirmationEventDirectionMinSeconds",
+        strategyKey: "event_direction_1s",
+        paramKey: "minSecondsToEventEnd",
+        defaultValue: 0,
+        minValue: 0,
+    },
 ] as const;
 
 function setDisabledState(
@@ -200,6 +208,8 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     applyTradeDirectionMode();
 
     const confirmationStrategiesInput = dom.confirmationStrategies;
+    const confirmationModeInput = dom.confirmationMode;
+    const confirmationWindowBarsInput = dom.confirmationWindowBars;
     const confirmationStrategyParamsInput = dom.confirmationStrategyParams;
     const confirmationCheckboxes = CONFIRMATION_STRATEGY_CHECKBOXES.map((definition) => ({
         strategyKey: definition.strategyKey,
@@ -273,6 +283,10 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
         confirmationStrategyParamsInput.value = JSON.stringify(paramsByStrategy);
     };
     function applyConfirmationParameterState(): void {
+        const windowModeEnabled = confirmationModeInput.value === 'confirm_within_window'
+            || confirmationModeInput.value === 'veto_within_window';
+        confirmationWindowBarsInput.disabled = !windowModeEnabled;
+        confirmationWindowBarsInput.closest<HTMLElement>('.param-group')?.classList.toggle('is-disabled', !windowModeEnabled);
         confirmationCheckboxes.forEach(({ checkbox, input }) => {
             input.disabled = !checkbox.checked;
         });
@@ -289,6 +303,7 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     confirmationStrategiesInput.addEventListener('input', syncConfirmationCheckboxesFromInput);
     confirmationStrategyParamsInput.addEventListener('change', syncConfirmationParamsFromInput);
     confirmationStrategyParamsInput.addEventListener('input', syncConfirmationParamsFromInput);
+    confirmationModeInput.addEventListener('change', applyConfirmationParameterState);
     syncConfirmationCheckboxesFromInput();
     syncConfirmationParamsFromInput();
     syncConfirmationParamsInputFromFields();

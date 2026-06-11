@@ -1929,4 +1929,16 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: true,
     },
+    {
+        key: "event_direction_1s",
+        name: "Event Direction 1s",
+        description: "Pure price-based event direction for 1s charts. Buys when close is above 5m event open, sells when below. No Polymarket context required.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["minSecondsToEventEnd"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];

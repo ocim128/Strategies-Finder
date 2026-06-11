@@ -866,6 +866,8 @@ describe('Backtesting Engine', () => {
         expect('rsiBullish' in (resolved as Record<string, unknown>)).to.equal(false);
         expect('rsiBearish' in (resolved as Record<string, unknown>)).to.equal(false);
         expect(resolved.confirmationStrategies).to.deep.equal(['sma_crossover']);
+        expect(resolved.confirmationMode).to.equal('agree');
+        expect(resolved.confirmationWindowBars).to.equal(0);
         expect(resolved.confirmationStrategyParams).to.deep.equal({
             sma_crossover: {
                 fastPeriod: 9,
@@ -909,6 +911,19 @@ describe('Backtesting Engine', () => {
         expect(resolved.slippageBps).to.equal(9);
         expect(resolved.takeProfitAtr).to.equal(2.75);
         expect((resolved.confirmationStrategyParams as any)?.dynamic_vix_regime?.lookback).to.equal(34);
+    });
+
+    it('scanner settings resolver should normalize confirmation mode and window bars', () => {
+        const resolved = resolveScannerBacktestSettings({
+            confirmationStrategiesToggle: 'true',
+            confirmationStrategies: ['event_direction_1s'],
+            confirmationMode: 'confirm_within_window',
+            confirmationWindowBars: '3',
+        } as any);
+
+        expect(resolved.confirmationStrategies).to.deep.equal(['event_direction_1s']);
+        expect(resolved.confirmationMode).to.equal('confirm_within_window');
+        expect(resolved.confirmationWindowBars).to.equal(3);
     });
 
     it('scanner open position should reuse TP/SL from backtest open trade state', () => {

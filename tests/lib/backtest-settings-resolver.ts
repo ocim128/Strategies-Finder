@@ -1,5 +1,6 @@
 import type {
     BacktestSettings,
+    ConfirmationMode,
     ExecutionModel,
     MarketMode,
     StrategyParams,
@@ -93,6 +94,8 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     flipAfterConsecutiveLosses: 2,
     flipCooldownTrades: 0,
     minTradesBeforeFirstFlip: 0,
+    confirmationMode: "agree" as ConfirmationMode,
+    confirmationWindowBars: 0,
     executionModel: "next_open" as ExecutionModel,
     allowSameBarExit: false,
     slippageBps: 5,
@@ -164,6 +167,7 @@ type NumericResolverKey =
     | "flipAfterConsecutiveLosses"
     | "flipCooldownTrades"
     | "minTradesBeforeFirstFlip"
+    | "confirmationWindowBars"
     | "slippageBps"
     | "maxOpenTrades"
     | "strategyTimeframeMinutes"
@@ -425,6 +429,8 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "minTradesBeforeFirstFlip",
     "confirmationStrategiesToggle",
     "confirmationStrategies",
+    "confirmationMode",
+    "confirmationWindowBars",
     "confirmationStrategyParams",
     "executionModel",
     "slippageBps",
@@ -459,6 +465,12 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
 ]);
 
 const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_flip_loss_2", "combined"]);
+const VALID_CONFIRMATION_MODES = new Set<ConfirmationMode>([
+    "agree",
+    "veto_opposite",
+    "confirm_within_window",
+    "veto_within_window",
+]);
 function coerceScalar(rawValue: unknown): unknown {
     if (typeof rawValue === "boolean") return rawValue;
     if (typeof rawValue === "number") return Number.isFinite(rawValue) ? rawValue : rawValue;
@@ -574,6 +586,20 @@ function readConfirmationStrategyParams(
     return result;
 }
 
+function readConfirmationMode(rawValue: unknown, fallback: ConfirmationMode): ConfirmationMode {
+    if (typeof rawValue === "string") {
+        const mode = rawValue.trim().toLowerCase() as ConfirmationMode;
+        if (VALID_CONFIRMATION_MODES.has(mode)) return mode;
+    }
+    return fallback;
+}
+
+function clampConfirmationWindowBars(rawValue: unknown): number {
+    const parsed = toFiniteNumber(rawValue);
+    if (parsed === null) return EFFECTIVE_BACKTEST_DEFAULTS.confirmationWindowBars;
+    return Math.max(0, Math.round(parsed));
+}
+
 function hasActiveChartTakeProfitOrStopLoss(settings: Record<string, unknown>): boolean {
     const riskMode = settings.riskMode === "percentage" ? "percentage" : "simple";
     const historicalLevelTakeProfitEnabled = settings.historicalLevelTakeProfitEnabled === true
@@ -682,6 +708,11 @@ export function resolveBacktestSettingsFromRaw(
             );
             const confirmationStrategies = confirmationStrategiesEnabled ? rawConfirmationStrategies : [];
             coerced.confirmationStrategies = confirmationStrategies;
+            coerced.confirmationMode = readConfirmationMode(
+                raw["confirmationMode"],
+                EFFECTIVE_BACKTEST_DEFAULTS.confirmationMode
+            );
+            coerced.confirmationWindowBars = clampConfirmationWindowBars(raw["confirmationWindowBars"]);
             coerced.confirmationStrategyParams = confirmationStrategiesEnabled
                 ? readConfirmationStrategyParams(raw["confirmationStrategyParams"], new Set(confirmationStrategies))
                 : {};
@@ -711,6 +742,11 @@ export function resolveBacktestSettingsFromRaw(
     );
     const confirmationStrategies = confirmationStrategiesEnabled ? rawConfirmationStrategies : [];
     const allowedConfirmationStrategies = new Set(confirmationStrategies);
+    const confirmationMode = readConfirmationMode(
+        raw["confirmationMode"],
+        EFFECTIVE_BACKTEST_DEFAULTS.confirmationMode
+    );
+    const confirmationWindowBars = clampConfirmationWindowBars(raw["confirmationWindowBars"]);
     const confirmationStrategyParams = confirmationStrategiesEnabled
         ? readConfirmationStrategyParams(raw["confirmationStrategyParams"], allowedConfirmationStrategies)
         : {};
@@ -750,6 +786,8 @@ export function resolveBacktestSettingsFromRaw(
         adxMin: 0,
         adxMax: 0,
         confirmationStrategies,
+        confirmationMode,
+        confirmationWindowBars,
         confirmationStrategyParams,
         tradeDirection,
         executionModel,

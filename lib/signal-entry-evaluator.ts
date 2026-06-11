@@ -256,13 +256,17 @@ function applyConfirmationStrategies(
     baseSignals: Signal[],
     settings: BacktestSettings,
 ): Signal[] {
+    const confirmationSettings: BacktestSettings = {
+        ...settings,
+        strategyTimeframeEnabled: false,
+    };
     return applyConfirmationStrategiesToSignals({
         data: candles,
         baseSignals,
         settings,
         resolveStrategy: (key) => getLoadedBuiltInStrategy(key),
         executeStrategy: (_key, confirmationStrategy, confirmationParams) =>
-            executeStrategyWithSettings(candles, confirmationStrategy, confirmationParams, settings),
+            executeStrategyWithSettings(candles, confirmationStrategy, confirmationParams, confirmationSettings),
     });
 }
 

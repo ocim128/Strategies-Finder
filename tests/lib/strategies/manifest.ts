@@ -172,4 +172,5 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     builtInStrategyMetaByKey["price_volume_correlation_break_gamma"],
     builtInStrategyMetaByKey["volume_skewness_acceleration_no_adverse"],
     builtInStrategyMetaByKey["vw_typical_dispersion_no_adverse"],
+    builtInStrategyMetaByKey["event_direction_1s"],
 ];

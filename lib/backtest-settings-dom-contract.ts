@@ -42,6 +42,7 @@ export type BacktestDomSettingParser =
     | "boolean"
     | "string"
     | "stringArray"
+    | "confirmationMode"
     | "confirmationStrategyParams"
     | "polymarketOutcomeInterval"
     | "polymarketEntrySelectionMode"
@@ -112,6 +113,8 @@ function inferParser(settingKey: BacktestDomSettingKey): BacktestDomSettingParse
             return "tradeSizingMode";
         case "confirmationStrategies":
             return "stringArray";
+        case "confirmationMode":
+            return "confirmationMode";
         case "confirmationStrategyParams":
             return "confirmationStrategyParams";
         case "kellyFraction":
@@ -293,6 +296,11 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         parser: "stringArray",
         rustSupport: "unsupported",
     }),
+    createField("confirmationMode", {
+        parser: "confirmationMode",
+        rustSupport: "unsupported",
+    }),
+    createField("confirmationWindowBars", { rustSupport: "unsupported" }),
     createField("confirmationStrategyParams", {
         parser: "confirmationStrategyParams",
         rustSupport: "unsupported",
@@ -484,6 +492,20 @@ export function coerceBacktestDomSettingValue(
         }
         case "stringArray":
             return readStringArrayValue(value);
+        case "confirmationMode": {
+            if (typeof value === "string") {
+                const normalized = value.trim().toLowerCase();
+                if (
+                    normalized === "agree"
+                    || normalized === "veto_opposite"
+                    || normalized === "confirm_within_window"
+                    || normalized === "veto_within_window"
+                ) {
+                    return normalized;
+                }
+            }
+            return DEFAULT_BACKTEST_SETTINGS.confirmationMode;
+        }
         case "confirmationStrategyParams":
             return readConfirmationStrategyParamsValue(value);
         case "number": {

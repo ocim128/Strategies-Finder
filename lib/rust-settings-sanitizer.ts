@@ -106,6 +106,8 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "rsiBearish",
     "confirmationStrategiesToggle",
     "confirmationStrategies",
+    "confirmationMode",
+    "confirmationWindowBars",
     "confirmationStrategyParams",
     "strategyTimeframeEnabled",
     "strategyTimeframeMinutes",

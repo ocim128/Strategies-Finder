@@ -166,4 +166,5 @@ export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {
     "price_volume_correlation_break_gamma": () => import("./lib/price_volume_correlation_break_gamma").then(m => m.price_volume_correlation_break_gamma),
     "volume_skewness_acceleration_no_adverse": () => import("./lib/volume_skewness_acceleration_no_adverse").then(m => m.volume_skewness_acceleration_no_adverse),
     "vw_typical_dispersion_no_adverse": () => import("./lib/vw_typical_dispersion_no_adverse").then(m => m.vw_typical_dispersion_no_adverse),
+    "event_direction_1s": () => import("./lib/event_direction_1s").then(m => m.event_direction_1s),
 };

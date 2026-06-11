@@ -164,4 +164,5 @@ export const builtInStrategyKeys: readonly string[] = [
     "price_volume_correlation_break_gamma",
     "volume_skewness_acceleration_no_adverse",
     "vw_typical_dispersion_no_adverse",
+    "event_direction_1s",
 ];
