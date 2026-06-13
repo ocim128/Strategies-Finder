@@ -78,7 +78,8 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
 
     // Polymarket classification mode intercepts before any backtest logic
     if (options.polymarketScoringEnabled) {
-        if (isSecondMarketPolymarketSupported(input.symbol, input.interval)) {
+        const symbolForPolymarketCheck = settings.polymarketOutcomeSymbol?.trim() || input.symbol;
+        if (isSecondMarketPolymarketSupported(symbolForPolymarketCheck, input.interval)) {
             const { runSecondMarketFinder } = await import("../second-market/finder-runner");
             return runSecondMarketFinder(input, callbacks);
         }

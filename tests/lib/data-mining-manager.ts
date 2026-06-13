@@ -13,6 +13,7 @@ import { OHLCVData, HistoricalFetchProgress } from "./types/index";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { formatPolymarketDisplayName, parsePolymarketEventInput } from "./dataProviders/polymarket";
 import { queryDataMiningDom, type DataMiningDom } from "./data-mining-dom";
+import { buildSyntheticPairDataset, deriveSyntheticSymbol } from "../scripts/lib/synthetic-pair";
 
 interface NormalizedCandle {
     time: number;
@@ -33,9 +34,25 @@ export class DataMiningManager {
     private isImporting = false;
     private lastSymbolValue: string | null = null;
     private lastIntervalValue: string | null = null;
+    private lastSyntheticPair: { baseSymbol: string; quoteSymbol: string } | null = null;
 
     private isRecord(value: unknown): value is Record<string, unknown> {
         return typeof value === 'object' && value !== null && !Array.isArray(value);
+    }
+
+    public getSyntheticPairMetadata(): { baseSymbol: string; quoteSymbol: string } | null {
+        return this.lastSyntheticPair;
+    }
+
+    public async regenerateSyntheticPair(baseSymbol: string, quoteSymbol: string, interval: string): Promise<void> {
+        // Set the UI inputs if DOM is available
+        if (this.dom?.synthBaseSymbolInput) this.dom.synthBaseSymbolInput.value = baseSymbol;
+        if (this.dom?.synthQuoteSymbolInput) this.dom.synthQuoteSymbolInput.value = quoteSymbol;
+        if (this.dom?.synthIntervalInput) this.dom.synthIntervalInput.value = interval;
+        if (this.dom) this.updateSynthDerivedSymbol();
+
+        // Generate directly — bypasses DOM availability check
+        await this.executeSyntheticPairGeneration(baseSymbol, quoteSymbol, interval);
     }
 
     public init(): void {
@@ -55,6 +72,9 @@ export class DataMiningManager {
         this.dom?.fetchCsvButton?.addEventListener('click', () => this.fetchAndStoreSqlite());
         this.dom?.fetchJsonButton?.addEventListener('click', () => this.fetchHistorical('json'));
         this.dom?.importButton?.addEventListener('click', () => this.importJsonFile());
+        this.dom?.synthGenerateButton?.addEventListener('click', () => this.generateSyntheticPair());
+        this.dom?.synthBaseSymbolInput?.addEventListener('input', () => this.updateSynthDerivedSymbol());
+        this.dom?.synthQuoteSymbolInput?.addEventListener('input', () => this.updateSynthDerivedSymbol());
     }
 
     private subscribeState(): void {
@@ -62,9 +82,20 @@ export class DataMiningManager {
             this.lastUpdatedAt = Date.now();
             this.updateDataset();
         });
-        state.subscribe('currentSymbol', () => this.updateStatic());
+        state.subscribe('currentSymbol', () => {
+            this.updateStatic();
+            this.clearSyntheticPairIfStale();
+        });
         state.subscribe('currentInterval', () => this.updateStatic());
         state.subscribe('chartMode', () => this.updateChartMode());
+    }
+
+    private clearSyntheticPairIfStale(): void {
+        if (!this.lastSyntheticPair) return;
+        const derived = deriveSyntheticSymbol(this.lastSyntheticPair.baseSymbol, this.lastSyntheticPair.quoteSymbol);
+        if (state.currentSymbol !== derived) {
+            this.lastSyntheticPair = null;
+        }
     }
 
     private updateAll(): void {
@@ -542,6 +573,99 @@ export class DataMiningManager {
         if (!this.dom?.statusEl) return;
         this.dom.statusEl.textContent = message;
         this.dom.statusEl.className = `data-mining-status ${type}`;
+    }
+
+    private updateSynthDerivedSymbol(): void {
+        const dom = this.dom;
+        if (!dom?.synthDerivedEl) return;
+        const base = (dom.synthBaseSymbolInput?.value ?? '').trim().toUpperCase();
+        const quote = (dom.synthQuoteSymbolInput?.value ?? '').trim().toUpperCase();
+        if (!base || !quote) {
+            dom.synthDerivedEl.textContent = '—';
+            return;
+        }
+        dom.synthDerivedEl.textContent = deriveSyntheticSymbol(base, quote);
+    }
+
+    private async generateSyntheticPair(): Promise<void> {
+        const dom = this.dom;
+        if (!dom) return;
+
+        const baseSymbol = (dom.synthBaseSymbolInput?.value ?? '').trim().toUpperCase();
+        const quoteSymbol = (dom.synthQuoteSymbolInput?.value ?? '').trim().toUpperCase();
+        const interval = (dom.synthIntervalInput?.value ?? '').trim().toLowerCase() || state.currentInterval;
+
+        if (!baseSymbol) {
+            uiManager.showToast('Enter a base symbol.', 'error');
+            this.setStatus('Enter a base symbol.', 'error');
+            return;
+        }
+        if (!quoteSymbol) {
+            uiManager.showToast('Enter a quote symbol.', 'error');
+            this.setStatus('Enter a quote symbol.', 'error');
+            return;
+        }
+        if (baseSymbol === quoteSymbol) {
+            uiManager.showToast('Base and quote symbols must differ.', 'error');
+            this.setStatus('Base and quote symbols must differ.', 'error');
+            return;
+        }
+
+        await this.executeSyntheticPairGeneration(baseSymbol, quoteSymbol, interval);
+    }
+
+    private async executeSyntheticPairGeneration(baseSymbol: string, quoteSymbol: string, interval: string): Promise<void> {
+        const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
+        this.setStatus(`Fetching ${baseSymbol} and ${quoteSymbol} (${interval})...`, 'info');
+
+        try {
+            const [baseData, quoteData] = await Promise.all([
+                dataManager.fetchDataDetached(baseSymbol, interval),
+                dataManager.fetchDataDetached(quoteSymbol, interval),
+            ]);
+
+            if (baseData.length === 0) {
+                uiManager.showToast(`No data for ${baseSymbol} on ${interval}.`, 'error');
+                this.setStatus(`No data for ${baseSymbol}.`, 'error');
+                return;
+            }
+            if (quoteData.length === 0) {
+                uiManager.showToast(`No data for ${quoteSymbol} on ${interval}.`, 'error');
+                this.setStatus(`No data for ${quoteSymbol}.`, 'error');
+                return;
+            }
+
+            const dataset = buildSyntheticPairDataset({
+                base: baseData,
+                quote: quoteData,
+                interval,
+                minBars: 1,
+            });
+
+            dataManager.stopStreaming();
+            clearAll();
+            dataManager.suppressNextAutoReload();
+
+            if (syntheticSymbol !== state.currentSymbol) {
+                setCurrentSymbol(syntheticSymbol);
+            }
+            if (interval !== state.currentInterval) {
+                setCurrentInterval(interval);
+            }
+
+            commitOhlcvData(dataset.bars, 'synthetic_pair');
+            dataManager.registerImportedData(syntheticSymbol, interval, dataset.bars);
+            this.lastSyntheticPair = { baseSymbol, quoteSymbol };
+
+            this.setStatus(
+                `Loaded ${dataset.bars.length} synthetic bars for ${syntheticSymbol} (dropped ${dataset.meta.droppedBars}).`,
+                'success'
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            uiManager.showToast(`Synthetic pair failed: ${message}`, 'error');
+            this.setStatus(`Synthetic pair failed: ${message}`, 'error');
+        }
     }
 
     private async importJsonFile(): Promise<void> {

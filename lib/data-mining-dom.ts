@@ -18,6 +18,11 @@ export const DATA_MINING_IDS = {
   fetchJson: 'dataMiningFetchJson',
   importFile: 'dataMiningImportFile',
   importBtn: 'dataMiningImportBtn',
+  synthBaseSymbol: 'dataMiningSynthBaseSymbol',
+  synthQuoteSymbol: 'dataMiningSynthQuoteSymbol',
+  synthInterval: 'dataMiningSynthInterval',
+  synthDerived: 'dataMiningSynthDerived',
+  synthGenerateBtn: 'dataMiningSynthGenerateBtn',
 } as const;
 
 export type DataMiningDom = {
@@ -39,6 +44,11 @@ export type DataMiningDom = {
   fetchJsonButton: HTMLButtonElement | null;
   importFileInput: HTMLInputElement | null;
   importButton: HTMLButtonElement | null;
+  synthBaseSymbolInput: HTMLInputElement | null;
+  synthQuoteSymbolInput: HTMLInputElement | null;
+  synthIntervalInput: HTMLInputElement | null;
+  synthDerivedEl: HTMLElement | null;
+  synthGenerateButton: HTMLButtonElement | null;
 };
 
 export function queryDataMiningDom(): DataMiningDom | null {
@@ -64,5 +74,10 @@ export function queryDataMiningDom(): DataMiningDom | null {
     fetchJsonButton: document.getElementById(DATA_MINING_IDS.fetchJson) as HTMLButtonElement | null,
     importFileInput: document.getElementById(DATA_MINING_IDS.importFile) as HTMLInputElement | null,
     importButton: document.getElementById(DATA_MINING_IDS.importBtn) as HTMLButtonElement | null,
+    synthBaseSymbolInput: document.getElementById(DATA_MINING_IDS.synthBaseSymbol) as HTMLInputElement | null,
+    synthQuoteSymbolInput: document.getElementById(DATA_MINING_IDS.synthQuoteSymbol) as HTMLInputElement | null,
+    synthIntervalInput: document.getElementById(DATA_MINING_IDS.synthInterval) as HTMLInputElement | null,
+    synthDerivedEl: document.getElementById(DATA_MINING_IDS.synthDerived),
+    synthGenerateButton: document.getElementById(DATA_MINING_IDS.synthGenerateBtn) as HTMLButtonElement | null,
   };
 }

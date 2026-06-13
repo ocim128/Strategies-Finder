@@ -157,6 +157,10 @@ export interface StrategyConfig {
     strategyKey: string;
     strategyParams: Record<string, number>;
     backtestSettings: BacktestSettingsData;
+    syntheticPair?: {
+        baseSymbol: string;
+        quoteSymbol: string;
+    };
 }
 
 export type EnsembleSignalRecipeMode =

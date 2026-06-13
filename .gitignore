@@ -129,7 +129,8 @@ price-data/
 
 # Generated run artifacts (batch runs, seed logs, hunt outputs)
 batch-runs/
-artifacts/test-logs/
+artifacts/
+.hermes/
 .codegraph/
 run-seed-*.txt
 quality_hunt*.json

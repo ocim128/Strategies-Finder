@@ -191,7 +191,7 @@ export async function runSecondMarketFinder(
     }
 
     if (!isSecondMarketPolymarketScoringSupported({
-        symbol: input.symbol,
+        symbol: settings.polymarketOutcomeSymbol?.trim() || input.symbol,
         interval: input.interval,
         executionModel: settings.executionModel,
     })) {

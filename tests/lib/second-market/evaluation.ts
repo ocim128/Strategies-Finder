@@ -466,12 +466,13 @@ export async function loadSecondMarketEvaluationContext(args: {
     apiBaseUrl?: string;
     includeGammaSnapshots?: boolean;
 }): Promise<SecondMarketEvaluationContext | null> {
-    const symbol = normalizeSecondMarketChartSymbol(args.symbol);
     const outcomeInterval = resolvePolymarketOutcomeInterval(args.outcomeInterval);
     const resolvedOutcomeSymbol = resolvePolymarketOutcomeSymbol(args.symbol, args.outcomeSymbol);
     const outcomeSymbol = resolvedOutcomeSymbol
         ? normalizeSecondMarketChartSymbol(resolvedOutcomeSymbol)
         : null;
+    // For synthetic pairs, the chart symbol may not normalize. Fall back to outcome symbol.
+    const symbol = normalizeSecondMarketChartSymbol(args.symbol) ?? outcomeSymbol;
     if (!symbol || !outcomeSymbol) return null;
 
     const seriesId = getEffectivePolymarketSeriesId(args.symbol, outcomeInterval, outcomeSymbol);
@@ -603,7 +604,7 @@ export async function annotateBacktestResultWithSecondMarketClob(args: {
 }): Promise<BacktestResult> {
     if (
         !isSecondMarketPolymarketScoringSupported({
-            symbol: args.symbol,
+            symbol: args.outcomeSymbol?.trim() || args.symbol,
             interval: args.interval,
             executionModel: args.executionModel,
         })

@@ -13,6 +13,7 @@ import { loadBuiltInStrategyByKey, strategyRegistry } from "../strategyRegistry"
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
 import { uiManager } from "./ui-manager";
+import { dataMiningManager } from "./data-mining-manager";
 import {
     triggerSettingsChangeEvents,
 } from "./settings-dom";
@@ -282,6 +283,7 @@ class SettingsManager {
     public saveStrategyConfig(name: string): StrategyConfig {
         const strategy = strategyRegistry.get(state.currentStrategyKey);
         const strategyParams = strategy ? paramManager.getValues(strategy) : {};
+        const syntheticMetadata = dataMiningManager.getSyntheticPairMetadata();
 
         const config: StrategyConfig = {
             name,
@@ -292,6 +294,7 @@ class SettingsManager {
             strategyKey: state.currentStrategyKey,
             strategyParams,
             backtestSettings: this.getBacktestSettings(),
+            ...(syntheticMetadata ? { syntheticPair: syntheticMetadata } : {}),
         };
 
         const persisted = this.upsertStrategyConfig(config);
@@ -336,6 +339,15 @@ class SettingsManager {
     public async applyStrategyConfig(config: StrategyConfig): Promise<void> {
         this.autoSaveEnabled = false;
         try {
+            // Regenerate synthetic pair first if needed (loads chart data)
+            if (config.syntheticPair && config.interval) {
+                await dataMiningManager.regenerateSyntheticPair(
+                    config.syntheticPair.baseSymbol,
+                    config.syntheticPair.quoteSymbol,
+                    config.interval
+                );
+            }
+
             // Apply backtest settings
             this.applyBacktestSettings(config.backtestSettings);
 

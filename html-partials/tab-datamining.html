@@ -91,5 +91,34 @@
         </div>
     </div>
 
+    <div class="section-header">
+        <div class="section-title">Synthetic Pair</div>
+    </div>
+    <div class="section-body">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Base Symbol</label>
+                <input class="param-input" id="dataMiningSynthBaseSymbol" type="text" placeholder="BNBUSDT">
+            </div>
+            <div class="param-group">
+                <label class="param-label">Quote Symbol</label>
+                <input class="param-input" id="dataMiningSynthQuoteSymbol" type="text" placeholder="PAXGUSDT">
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label">Interval</label>
+                <input class="param-input" id="dataMiningSynthInterval" type="text" placeholder="15m">
+            </div>
+            <div class="param-group">
+                <label class="param-label">Result</label>
+                <div class="param-hint" id="dataMiningSynthDerived">—</div>
+            </div>
+        </div>
+        <div class="data-mining-actions">
+            <button class="btn btn-primary" id="dataMiningSynthGenerateBtn" type="button">Generate &amp; Load</button>
+        </div>
+    </div>
+
     <div class="data-mining-status" id="dataMiningStatus">Ready</div>
 </div>

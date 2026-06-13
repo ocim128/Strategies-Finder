@@ -692,7 +692,8 @@ export class BacktestService {
             });
             const outcomeInterval = resolvePolymarketOutcomeInterval(settings.polymarketOutcomeInterval);
             const secondMarketEvaluation = await import("./second-market/evaluation");
-            if (secondMarketEvaluation.isSecondMarketPolymarketSupported(symbol, interval)) {
+            const symbolForPolymarketCheck = settings.polymarketOutcomeSymbol?.trim() || symbol;
+            if (secondMarketEvaluation.isSecondMarketPolymarketSupported(symbolForPolymarketCheck, interval)) {
                 return await secondMarketEvaluation.annotateBacktestResultWithSecondMarketClob({
                     result,
                     symbol,

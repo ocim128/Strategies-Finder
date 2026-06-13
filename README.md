@@ -207,6 +207,7 @@ Built-in strategy authoring has enough contract surface to deserve its own guide
 Use:
 - [`docs/strategy-authoring.md`](docs/strategy-authoring.md) for the template, normalization rules, and common failure modes
 - [`docs/cross-symbol.md`](docs/cross-symbol.md) for the cross-symbol runtime contract, support matrix, and change map
+- [`docs/synthetic-pairs.md`](docs/synthetic-pairs.md) for generating synthetic pair data (e.g. BNBPAXG) for backtest and Finder research
 - [`docs/backtest-endpoint.md`](docs/backtest-endpoint.md) for local HTTP backtest usage, payload examples, and parity rules
 - [`AGENTS.md`](AGENTS.md) for the operational checklist and validation habits
 

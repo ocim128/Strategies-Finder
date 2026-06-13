@@ -580,7 +580,8 @@ async function resolvePolymarket1sExecutionContext(args: {
     }
 
     const { isSecondMarketPolymarketSupported, loadSecondMarketEvaluationContext } = await import("./second-market/evaluation");
-    if (!isSecondMarketPolymarketSupported(args.primarySymbol, args.interval)) {
+    const symbolForPolymarketCheck = args.settings.polymarketOutcomeSymbol?.trim() || args.primarySymbol;
+    if (!isSecondMarketPolymarketSupported(symbolForPolymarketCheck, args.interval)) {
         if (config.required) {
             throw new Error(`"${args.strategy.name}" requires a supported 1s Polymarket chart context.`);
         }
