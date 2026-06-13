@@ -147,12 +147,21 @@ export function buildSyntheticPairDataset(
     for (const { base: baseBar, quote: quoteBar } of aligned) {
         const open = safeDiv(baseBar.open, quoteBar.open);
         const close = safeDiv(baseBar.close, quoteBar.close);
-        const high = safeDiv(baseBar.high, quoteBar.low);
-        const low = safeDiv(baseBar.low, quoteBar.high);
 
-        if (!Number.isFinite(open) || !Number.isFinite(close) || !Number.isFinite(high) || !Number.isFinite(low)) {
+        if (!Number.isFinite(open) || !Number.isFinite(close)) {
             continue;
         }
+
+        // Compute the ratio at each OHLC point using same-instant prices.
+        // The old formula (base.high/quote.low) conflated extremes from
+        // different moments, inflating the bar range by 3-18× for correlated
+        // legs and creating phantom TP/SL fills in backtests.
+        const rHigh = safeDiv(baseBar.high, quoteBar.high);
+        const rLow = safeDiv(baseBar.low, quoteBar.low);
+        const finiteRatios = [open, close, rHigh, rLow].filter(Number.isFinite);
+
+        const high = Math.max(...finiteRatios);
+        const low = Math.min(...finiteRatios);
 
         syntheticBars.push({
             time: baseBar.time as Time,

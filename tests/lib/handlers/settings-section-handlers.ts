@@ -8,27 +8,33 @@ import type { UiEventHandlersDom } from "./ui-event-handlers-dom";
 const CONFIRMATION_STRATEGY_CHECKBOXES = [
     {
         checkboxKey: "confirmationEntropyRatioRegimeAlignment",
-        inputKey: "confirmationEntropySlowWindow",
         strategyKey: "entropy_ratio_regime_alignment",
-        paramKey: "slowWindow",
-        defaultValue: 30,
-        minValue: 2,
+        params: [
+            { inputKey: "confirmationEntropySlowWindow", paramKey: "slowWindow", defaultValue: 30, minValue: 2 },
+        ],
     },
     {
         checkboxKey: "confirmationCloseLocationMedianAlignment",
-        inputKey: "confirmationCloseLocationLookback",
         strategyKey: "close_location_median_alignment",
-        paramKey: "lookback",
-        defaultValue: 63,
-        minValue: 2,
+        params: [
+            { inputKey: "confirmationCloseLocationLookback", paramKey: "lookback", defaultValue: 63, minValue: 2 },
+        ],
     },
     {
         checkboxKey: "confirmationEventDirectionFollow",
-        inputKey: "confirmationEventDirectionMinSeconds",
         strategyKey: "event_direction_1s",
-        paramKey: "minSecondsToEventEnd",
-        defaultValue: 0,
-        minValue: 0,
+        params: [
+            { inputKey: "confirmationEventDirectionMinSeconds", paramKey: "minSecondsToEventEnd", defaultValue: 0, minValue: 0 },
+        ],
+    },
+    {
+        checkboxKey: "confirmationWidthExpansionZscoreRouter",
+        strategyKey: "width_expansion_zscore_router",
+        params: [
+            { inputKey: "confirmationWidthExpansionVaLookback", paramKey: "va_lookback", defaultValue: 160, minValue: 3 },
+            { inputKey: "confirmationWidthExpansionWidthThreshold", paramKey: "width_threshold", defaultValue: 1, minValue: 0 },
+            { inputKey: "confirmationWidthExpansionZThreshold", paramKey: "z_threshold", defaultValue: 0, minValue: 0 },
+        ],
     },
 ] as const;
 
@@ -213,11 +219,13 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     const confirmationStrategyParamsInput = dom.confirmationStrategyParams;
     const confirmationCheckboxes = CONFIRMATION_STRATEGY_CHECKBOXES.map((definition) => ({
         strategyKey: definition.strategyKey,
-        paramKey: definition.paramKey,
-        defaultValue: definition.defaultValue,
-        minValue: definition.minValue,
         checkbox: dom[definition.checkboxKey],
-        input: dom[definition.inputKey],
+        params: definition.params.map((p) => ({
+            paramKey: p.paramKey,
+            defaultValue: p.defaultValue,
+            minValue: p.minValue,
+            input: dom[p.inputKey],
+        })),
     }));
     const readConfirmationStrategyParams = (): Record<string, Record<string, number>> => {
         try {
@@ -265,20 +273,26 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     };
     const syncConfirmationParamsFromInput = () => {
         const paramsByStrategy = readConfirmationStrategyParams();
-        confirmationCheckboxes.forEach(({ strategyKey, paramKey, defaultValue, input }) => {
-            const rawValue = paramsByStrategy[strategyKey]?.[paramKey];
-            input.value = String(Number.isFinite(rawValue) ? rawValue : defaultValue);
+        confirmationCheckboxes.forEach(({ strategyKey, params }) => {
+            const strategyParams = paramsByStrategy[strategyKey];
+            params.forEach(({ paramKey, defaultValue, input }) => {
+                const rawValue = strategyParams?.[paramKey];
+                input.value = String(Number.isFinite(rawValue) ? rawValue : defaultValue);
+            });
         });
         applyConfirmationParameterState();
     };
     const syncConfirmationParamsInputFromFields = () => {
         const paramsByStrategy: Record<string, Record<string, number>> = {};
-        confirmationCheckboxes.forEach(({ strategyKey, paramKey, defaultValue, minValue, input }) => {
-            const parsedValue = parseInputNumber(input.value);
-            const value = typeof parsedValue === 'number' && Number.isFinite(parsedValue)
-                ? Math.max(minValue, Math.round(parsedValue))
-                : defaultValue;
-            paramsByStrategy[strategyKey] = { [paramKey]: value };
+        confirmationCheckboxes.forEach(({ strategyKey, params }) => {
+            const merged: Record<string, number> = {};
+            params.forEach(({ paramKey, defaultValue, minValue, input }) => {
+                const parsedValue = parseInputNumber(input.value);
+                merged[paramKey] = typeof parsedValue === 'number' && Number.isFinite(parsedValue)
+                    ? Math.max(minValue, parsedValue)
+                    : defaultValue;
+            });
+            paramsByStrategy[strategyKey] = merged;
         });
         confirmationStrategyParamsInput.value = JSON.stringify(paramsByStrategy);
     };
@@ -287,17 +301,22 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
             || confirmationModeInput.value === 'veto_within_window';
         confirmationWindowBarsInput.disabled = !windowModeEnabled;
         confirmationWindowBarsInput.closest<HTMLElement>('.param-group')?.classList.toggle('is-disabled', !windowModeEnabled);
-        confirmationCheckboxes.forEach(({ checkbox, input }) => {
-            input.disabled = !checkbox.checked;
+        confirmationCheckboxes.forEach(({ checkbox, params }) => {
+            params.forEach(({ input }) => {
+                input.disabled = !checkbox.checked;
+                input.closest<HTMLElement>('.param-group')?.classList.toggle('is-disabled', !checkbox.checked);
+            });
         });
     }
 
     confirmationCheckboxes.forEach(({ checkbox }) => {
         checkbox.addEventListener('change', syncConfirmationInputFromCheckboxes);
     });
-    confirmationCheckboxes.forEach(({ input }) => {
-        input.addEventListener('input', syncConfirmationParamsInputFromFields);
-        input.addEventListener('change', syncConfirmationParamsInputFromFields);
+    confirmationCheckboxes.forEach(({ params }) => {
+        params.forEach(({ input }) => {
+            input.addEventListener('input', syncConfirmationParamsInputFromFields);
+            input.addEventListener('change', syncConfirmationParamsInputFromFields);
+        });
     });
     confirmationStrategiesInput.addEventListener('change', syncConfirmationCheckboxesFromInput);
     confirmationStrategiesInput.addEventListener('input', syncConfirmationCheckboxesFromInput);

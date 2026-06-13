@@ -153,8 +153,10 @@
                             </label>
                         </div>
                         <div class="param-hint">Requires the confirmation strategy to agree on the same buy or sell bar.</div>
-                        <label class="param-label">Slow Window</label>
-                        <input type="number" class="param-input" id="confirmationEntropySlowWindow" value="30" min="2" step="1">
+                        <div class="param-group">
+                            <label class="param-label">Slow Window</label>
+                            <input type="number" class="param-input" id="confirmationEntropySlowWindow" value="30" min="2" step="1">
+                        </div>
                     </div>
                 </div>
                 <div class="param-row">
@@ -167,8 +169,10 @@
                             </label>
                         </div>
                         <div class="param-hint">Requires the confirmation strategy to agree on the same buy or sell bar.</div>
-                        <label class="param-label">Lookback</label>
-                        <input type="number" class="param-input" id="confirmationCloseLocationLookback" value="63" min="2" step="1">
+                        <div class="param-group">
+                            <label class="param-label">Lookback</label>
+                            <input type="number" class="param-input" id="confirmationCloseLocationLookback" value="63" min="2" step="1">
+                        </div>
                     </div>
                 </div>
                 <div class="param-row">
@@ -181,8 +185,34 @@
                             </label>
                         </div>
                         <div class="param-hint">On 1s charts, requires price to be above 5m event-open for buy or below for sell. 0 = entire event window. No Polymarket data needed.</div>
-                        <label class="param-label">Min Seconds To Event End</label>
-                        <input type="number" class="param-input" id="confirmationEventDirectionMinSeconds" value="0" min="0" max="299" step="1">
+                        <div class="param-group">
+                            <label class="param-label">Min Seconds To Event End</label>
+                            <input type="number" class="param-input" id="confirmationEventDirectionMinSeconds" value="0" min="0" max="299" step="1">
+                        </div>
+                    </div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Width Expansion ZScore Router</label>
+                            <label class="section-toggle" style="transform: scale(0.8);" aria-label="Toggle width expansion zscore router confirmation">
+                                <input type="checkbox" id="confirmationWidthExpansionZscoreRouter">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">Routes z-score extremes to mean reversion in compressed value and momentum in expanded value. VA Lookback controls the rolling window for value area computation.</div>
+                        <div class="param-group">
+                            <label class="param-label">VA Lookback</label>
+                            <input type="number" class="param-input" id="confirmationWidthExpansionVaLookback" value="160" min="3" step="1">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Width Threshold</label>
+                            <input type="number" class="param-input" id="confirmationWidthExpansionWidthThreshold" value="1" min="0" step="0.0001">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Z-Score Threshold</label>
+                            <input type="number" class="param-input" id="confirmationWidthExpansionZThreshold" value="0" min="0" step="0.0001">
+                        </div>
                     </div>
                 </div>
             </div>

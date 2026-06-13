@@ -40,14 +40,15 @@ describe('synthetic pair dataset builder', () => {
 
         assert.equal(dataset.bars[0].open, 200 / 1000);
         assert.equal(dataset.bars[0].close, 210 / 1005);
-        assert.equal(dataset.bars[0].high, 220 / 990);
-        assert.equal(dataset.bars[0].low, 180 / 1010);
+        // high/low use same-instant ratios: max/min of (open, close, base.high/quote.high, base.low/quote.low)
+        assert.equal(dataset.bars[0].high, 220 / 1010);
+        assert.equal(dataset.bars[0].low, 180 / 990);
         assert.equal(dataset.bars[0].volume, 0);
 
         assert.equal(dataset.bars[1].open, 210 / 1005);
         assert.equal(dataset.bars[1].close, 240 / 1010);
-        assert.equal(dataset.bars[1].high, 250 / 995);
-        assert.equal(dataset.bars[1].low, 190 / 1020);
+        assert.equal(dataset.bars[1].high, 250 / 1020);
+        assert.equal(dataset.bars[1].low, 190 / 995);
 
         assert.equal(dataset.meta.droppedBars, 0);
         assert.equal(dataset.meta.alignedBars, 3);

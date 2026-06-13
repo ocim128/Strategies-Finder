@@ -51,6 +51,10 @@ const UI_EVENT_HANDLER_DOM_IDS = {
     confirmationCloseLocationLookback: "confirmationCloseLocationLookback",
     confirmationEventDirectionFollow: "confirmationEventDirectionFollow",
     confirmationEventDirectionMinSeconds: "confirmationEventDirectionMinSeconds",
+    confirmationWidthExpansionZscoreRouter: "confirmationWidthExpansionZscoreRouter",
+    confirmationWidthExpansionVaLookback: "confirmationWidthExpansionVaLookback",
+    confirmationWidthExpansionWidthThreshold: "confirmationWidthExpansionWidthThreshold",
+    confirmationWidthExpansionZThreshold: "confirmationWidthExpansionZThreshold",
     strategyTimeframeToggle: "strategyTimeframeToggle",
     strategyTimeframeMinutes: "strategyTimeframeMinutes",
     fixedTradeToggle: "fixedTradeToggle",
@@ -127,6 +131,10 @@ type UiEventTypedControls = {
     confirmationCloseLocationLookback: HTMLInputElement;
     confirmationEventDirectionFollow: HTMLInputElement;
     confirmationEventDirectionMinSeconds: HTMLInputElement;
+    confirmationWidthExpansionZscoreRouter: HTMLInputElement;
+    confirmationWidthExpansionVaLookback: HTMLInputElement;
+    confirmationWidthExpansionWidthThreshold: HTMLInputElement;
+    confirmationWidthExpansionZThreshold: HTMLInputElement;
     strategyTimeframeToggle: HTMLInputElement;
     strategyTimeframeMinutes: HTMLInputElement;
     fixedTradeToggle: HTMLInputElement;
