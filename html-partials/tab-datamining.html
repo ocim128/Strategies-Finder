@@ -44,6 +44,7 @@
     <div class="data-mining-actions">
         <button class="btn btn-primary" id="dataMiningDownloadCsv" type="button">Download CSV</button>
         <button class="btn btn-secondary" id="dataMiningDownloadJson" type="button">Download JSON</button>
+        <button class="btn btn-secondary" id="dataMiningClearPriceDb" type="button">Clear Price DB</button>
     </div>
 
     <div class="section-header">
@@ -118,6 +119,16 @@
         <div class="data-mining-actions">
             <button class="btn btn-primary" id="dataMiningSynthGenerateBtn" type="button">Generate &amp; Load</button>
         </div>
+    </div>
+
+    <div class="section-header">
+        <div class="section-title">Diagnostic Output</div>
+    </div>
+    <div class="section-body">
+        <div class="data-mining-actions">
+            <button class="btn btn-secondary" id="dataMiningDiagnosticClear" type="button">Clear Diagnostics</button>
+        </div>
+        <pre class="data-mining-diagnostics" id="dataMiningDiagnosticOutput">Waiting for diagnostic events...</pre>
     </div>
 
     <div class="data-mining-status" id="dataMiningStatus">Ready</div>

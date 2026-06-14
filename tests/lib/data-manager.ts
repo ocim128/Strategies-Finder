@@ -27,6 +27,7 @@ import { getIntervalSeconds } from "./dataProviders/utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { countRealtimeGapBars } from "./realtime-gap-utils";
 import { mergeCandles } from "./candle-cache";
+import { clearCachedCandlesDatabase } from "./candle-cache";
 import type { ResampleOptions } from "./strategies/resample-utils";
 import {
     DATA_CHART_TOTAL_LIMIT,
@@ -141,6 +142,15 @@ export class DataManager {
             this.cache.delete(key);
         }
         this.importedDataByKey.clear();
+    }
+
+    public async clearBrowserPriceData(): Promise<boolean> {
+        this.stopStreaming();
+        this.clearImportedData();
+        this.cache.clear();
+        this.loadedSymbol = null;
+        this.loadedInterval = null;
+        return clearCachedCandlesDatabase();
     }
 
     public getChartLookbackBars(): number | null {

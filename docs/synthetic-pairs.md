@@ -45,11 +45,11 @@ For each aligned timestamp, the synthetic candle is computed as a ratio:
 
 - `open = base.open / quote.open`
 - `close = base.close / quote.close`
-- `high = base.high / quote.low`
-- `low = base.low / quote.high`
-- `volume = 0`
+- `high = max(open, close, base.high / quote.high, base.low / quote.low)`
+- `low = min(open, close, base.high / quote.high, base.low / quote.low)`
+- `volume = min(base.volume, quote.volume)`
 
-The `high` and `low` use the bar extremes from each leg to produce a conservative envelope. This is an approximation, not an exact traded-market candle.
+By default the UI and CLI also try to fetch a finer divisible source interval, build the ratio on those sub-bars, then aggregate back to the target interval. This captures more realistic intrabar extremes than building directly from target-timeframe bars.
 
 ### Alignment
 
@@ -120,11 +120,11 @@ Old configs without `syntheticPair` metadata continue to work normally (backward
 
 ### Execution realism
 
-The `high/low` envelope is a synthetic approximation. Real intrabar extremes of two assets don't occur at the same instant. For strategy research this is acceptable; for execution-grade validation, use lower-timeframe or tick data.
+Sub-bar reconstruction reduces false TP/SL fills materially, but synthetic pairs are still research-grade. They do not model cross-leg latency, spread, borrow, hedge slippage, or partial fills. For execution-grade validation, use lower-timeframe or tick data and treat the synthetic pair as signal research rather than fill-truth.
 
 ### Volume
 
-Synthetic volume is always `0`. Strategies that rely on volume filters, VWAP, or volume-based sizing will behave differently on synthetic pairs.
+Synthetic volume uses the less-liquid leg as a proxy: `min(base.volume, quote.volume)`. This is better than zero for filters and diagnostics, but it is still not tradable market volume.
 
 ### Provider metadata
 
@@ -150,9 +150,10 @@ Synthetic bar count is limited by the overlap between the two input series. If o
 
 1. User provides two symbols + interval (UI or CLI).
 2. Both candle series are fetched via existing `DataManager.fetchDataDetached()` or `fetchBinanceDataWithLimit()`.
-3. `buildSyntheticPairDataset()` aligns, computes ratio bars, drops invalid entries.
-4. Result is loaded via `commitOhlcvData()` + `registerImportedData()`.
-5. Backtest/Finder operate on the synthetic data as if it were a normal market.
+3. `buildSyntheticPairDataset()` aligns, computes ratio bars, and applies the less-liquid-leg volume proxy.
+4. When a finer divisible interval is available, the UI/CLI build sub-bars first and aggregate them back to the requested interval.
+5. Result is loaded via `commitOhlcvData()` + `registerImportedData()`.
+6. Backtest/Finder operate on the synthetic data as if it were a normal market.
 
 ### Tests
 

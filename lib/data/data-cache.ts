@@ -59,6 +59,11 @@ export class DataCache {
         this.removeEntry(cacheKey);
     }
 
+    clear(): void {
+        this.lruCache.clear();
+        this.cacheSyncAtByKey.clear();
+    }
+
     updateCandles(cacheKey: string, candles: OHLCVData[]): void {
         const entry = this.lruCache.get(cacheKey);
         if (entry) {

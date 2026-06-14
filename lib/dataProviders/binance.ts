@@ -17,7 +17,7 @@ import {
 } from "./fetch-helpers";
 
 const LIMIT_PER_REQUEST = 1000;
-const MAX_REQUESTS = 15;
+const MAX_REQUESTS = 70;
 const BINANCE_API_BASES: Record<BinanceMarketType, string> = {
     spot: "https://api.binance.com",
     futures: "https://fapi.binance.com",

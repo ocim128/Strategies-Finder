@@ -7,6 +7,7 @@ import { parseOhlcvDataFile } from "./lib/ohlcv-file";
 import {
     buildSyntheticPairPayload,
     deriveSyntheticSymbol,
+    pickSourceInterval,
     type SyntheticPairPayload,
 } from "./lib/synthetic-pair";
 
@@ -139,26 +140,36 @@ export async function run(argv: string[]): Promise<void> {
         return;
     }
 
+    const source = options.baseFile || options.quoteFile
+        ? null
+        : pickSourceInterval(options.interval);
+    const sourceInterval = source?.sourceInterval ?? options.interval;
+    const fetchBars = source ? options.bars * source.ratio : options.bars;
+
+    if (source) {
+        console.log(`[SyntheticPair] Sub-bar reconstruction: target=${options.interval} source=${sourceInterval} ratio=${source.ratio}x (fetching ${fetchBars} bars/leg)`);
+    }
+
     const baseBars = options.baseFile
         ? loadLocalBars(options.baseFile, "Base")
-        : await fetchBinanceDataWithLimit(options.baseSymbol, options.interval, options.bars, {
+        : await fetchBinanceDataWithLimit(options.baseSymbol, sourceInterval, fetchBars, {
               requestDelayMs: 30,
-              maxRequests: Math.ceil(options.bars / 1000) + 2,
+              maxRequests: Math.ceil(fetchBars / 1000) + 2,
           });
 
     const quoteBars = options.quoteFile
         ? loadLocalBars(options.quoteFile, "Quote")
-        : await fetchBinanceDataWithLimit(options.quoteSymbol, options.interval, options.bars, {
+        : await fetchBinanceDataWithLimit(options.quoteSymbol, sourceInterval, fetchBars, {
               requestDelayMs: 30,
-              maxRequests: Math.ceil(options.bars / 1000) + 2,
+              maxRequests: Math.ceil(fetchBars / 1000) + 2,
           });
 
     if (!Array.isArray(baseBars) || baseBars.length === 0) {
-        fail(`No base data returned for ${options.baseSymbol} on ${options.interval}.`);
+        fail(`No base data returned for ${options.baseSymbol} on ${sourceInterval}.`);
     }
 
     if (!Array.isArray(quoteBars) || quoteBars.length === 0) {
-        fail(`No quote data returned for ${options.quoteSymbol} on ${options.interval}.`);
+        fail(`No quote data returned for ${options.quoteSymbol} on ${sourceInterval}.`);
     }
 
     const payload = buildSyntheticPairPayload({
@@ -169,6 +180,7 @@ export async function run(argv: string[]): Promise<void> {
         base: baseBars,
         quote: quoteBars,
         minBars: 1,
+        sourceInterval: source?.sourceInterval,
     });
 
     fs.mkdirSync(path.dirname(options.outPath), { recursive: true });

@@ -281,6 +281,7 @@ export function setupSettingsHandlers() {
         }
         updateConfigDropdown(imported.name);
         activateSharedLinkViewMode();
+        consumeSharedConfigFromUrl();
         scheduleSharedAutoBacktest({
             expectedSymbol: sharedChartContext.symbol,
             expectedInterval: sharedChartContext.interval,
@@ -370,6 +371,14 @@ function getSharedChartContextFromUrl(): { symbol: string; interval: string } {
     return { symbol, interval };
 }
 
+function consumeSharedConfigFromUrl(): void {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('strategyShare')) return;
+
+    url.searchParams.delete('strategyShare');
+    window.history.replaceState(window.history.state, '', url.toString());
+}
+
 function activateSharedLinkViewMode(): void {
     const allowedTabs = new Set(['results', 'trades']);
     strategyPanelController.setVisibleTabs(allowedTabs);
@@ -446,9 +455,6 @@ function scheduleSharedAutoBacktest(options: SharedBacktestWaitOptions): void {
 
     const runWhenReady = () => {
         attempt += 1;
-        if (attempt === 1 || attempt % 8 === 0) {
-            void settingsManager.applyStrategyConfig(options.expectedConfig);
-        }
 
         const symbolReady = state.currentSymbol === options.expectedSymbol;
         const intervalReady = state.currentInterval === options.expectedInterval;

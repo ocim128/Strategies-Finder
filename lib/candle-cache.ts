@@ -482,6 +482,24 @@ export async function saveCachedCandles(
     });
 }
 
+export async function clearCachedCandlesDatabase(): Promise<boolean> {
+    const factory = getIndexedDbFactory();
+    if (!factory) return false;
+
+    if (dbPromise) {
+        const db = await dbPromise.catch(() => null);
+        db?.close();
+        dbPromise = null;
+    }
+
+    return new Promise((resolve) => {
+        const request = factory.deleteDatabase(DB_NAME);
+        request.onsuccess = () => resolve(true);
+        request.onerror = () => resolve(false);
+        request.onblocked = () => resolve(false);
+    });
+}
+
 export async function loadSeedCandlesFromPriceData(
     symbol: string,
     interval: string,

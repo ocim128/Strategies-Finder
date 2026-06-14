@@ -2,8 +2,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    aggregateSyntheticBars,
     buildSyntheticPairDataset,
     buildSyntheticPairPayload,
+    pickSourceInterval,
     SyntheticAlignmentError,
     SyntheticQuoteError,
 } from '../scripts/lib/synthetic-pair';
@@ -43,7 +45,7 @@ describe('synthetic pair dataset builder', () => {
         // high/low use same-instant ratios: max/min of (open, close, base.high/quote.high, base.low/quote.low)
         assert.equal(dataset.bars[0].high, 220 / 1010);
         assert.equal(dataset.bars[0].low, 180 / 990);
-        assert.equal(dataset.bars[0].volume, 0);
+        assert.equal(dataset.bars[0].volume, 1234);
 
         assert.equal(dataset.bars[1].open, 210 / 1005);
         assert.equal(dataset.bars[1].close, 240 / 1010);
@@ -177,7 +179,7 @@ describe('synthetic pair payload builder', () => {
             assert.ok(Number.isFinite(row.high));
             assert.ok(Number.isFinite(row.low));
             assert.ok(Number.isFinite(row.close));
-            assert.equal(row.volume, 0);
+            assert.equal(row.volume, 1234);
         }
     });
 
@@ -210,5 +212,72 @@ describe('synthetic pair payload builder', () => {
         });
 
         assert.equal(payload.symbol, 'BNBPAXGCUSTOM');
+    });
+
+    it('aggregates finer source bars before writing target payload', () => {
+        const base = [
+            bar(0, { open: 100, high: 104, low: 99, close: 103, volume: 10 }),
+            bar(60, { open: 103, high: 108, low: 102, close: 107, volume: 20 }),
+        ];
+        const quote = [
+            bar(0, { open: 200, high: 202, low: 198, close: 201, volume: 40 }),
+            bar(60, { open: 201, high: 204, low: 200, close: 203, volume: 50 }),
+        ];
+
+        const payload = buildSyntheticPairPayload({
+            baseSymbol: 'BTCUSDT',
+            quoteSymbol: 'ETHUSDT',
+            interval: '2m',
+            base,
+            quote,
+            sourceInterval: '1m',
+        });
+
+        assert.equal(payload.source.sourceInterval, '1m');
+        assert.equal(payload.bars, 1);
+        assert.equal(payload.data[0].open, 100 / 200);
+        assert.equal(payload.data[0].close, 107 / 203);
+        assert.equal(payload.data[0].volume, 30);
+    });
+});
+
+describe('synthetic pair volume proxy', () => {
+    it('uses the less-liquid leg as the synthetic volume proxy', () => {
+        const base = [bar(10, { volume: 5000 })];
+        const quote = [bar(10, { volume: 3000 })];
+
+        const dataset = buildSyntheticPairDataset({ base, quote, interval: '15m' });
+
+        assert.equal(dataset.bars[0].volume, 3000);
+    });
+});
+
+describe('pickSourceInterval', () => {
+    it('picks a finer divisible interval when available', () => {
+        const result = pickSourceInterval('4h');
+        assert.ok(result);
+        assert.equal(result!.sourceInterval, '30m');
+        assert.equal(result!.ratio, 8);
+    });
+
+    it('returns null when the target is already too fine', () => {
+        assert.equal(pickSourceInterval('1m'), null);
+    });
+});
+
+describe('aggregateSyntheticBars', () => {
+    it('aggregates OHLCV from sub-bars into target buckets', () => {
+        const aggregated = aggregateSyntheticBars([
+            { time: 0 as OHLCVData['time'], open: 10, high: 12, low: 9, close: 11, volume: 100 },
+            { time: 60 as OHLCVData['time'], open: 11, high: 15, low: 10, close: 14, volume: 150 },
+        ], '2m');
+
+        assert.equal(aggregated.length, 1);
+        assert.equal(Number(aggregated[0].time), 0);
+        assert.equal(aggregated[0].open, 10);
+        assert.equal(aggregated[0].close, 14);
+        assert.equal(aggregated[0].high, 15);
+        assert.equal(aggregated[0].low, 9);
+        assert.equal(aggregated[0].volume, 250);
     });
 });

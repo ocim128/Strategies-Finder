@@ -5,6 +5,7 @@ import { setCurrentInterval, setCurrentSymbol } from "./state-actions";
 import { uiManager } from "./ui-manager";
 import { dataManager } from "./data-manager";
 import { SYMBOL_MAP } from "./constants";
+import { DATA_CHART_TOTAL_LIMIT, SYNTHETIC_TARGET_BARS } from "./data/constants";
 import { debugLogger } from "./debug-logger";
 import { clearAll } from "./app-actions";
 import { commitOhlcvData } from "./state-actions";
@@ -13,7 +14,7 @@ import { OHLCVData, HistoricalFetchProgress } from "./types/index";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { formatPolymarketDisplayName, parsePolymarketEventInput } from "./dataProviders/polymarket";
 import { queryDataMiningDom, type DataMiningDom } from "./data-mining-dom";
-import { buildSyntheticPairDataset, deriveSyntheticSymbol } from "../scripts/lib/synthetic-pair";
+import { aggregateSyntheticBars, buildSyntheticPairDataset, deriveSyntheticSymbol, pickSourceInterval } from "../scripts/lib/synthetic-pair";
 
 interface NormalizedCandle {
     time: number;
@@ -35,6 +36,8 @@ export class DataMiningManager {
     private lastSymbolValue: string | null = null;
     private lastIntervalValue: string | null = null;
     private lastSyntheticPair: { baseSymbol: string; quoteSymbol: string } | null = null;
+    private diagnosticLog: string[] = [];
+    private readonly DIAGNOSTIC_MAX_ENTRIES = 60;
 
     private isRecord(value: unknown): value is Record<string, unknown> {
         return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -45,6 +48,8 @@ export class DataMiningManager {
     }
 
     public async regenerateSyntheticPair(baseSymbol: string, quoteSymbol: string, interval: string): Promise<void> {
+        this.recordDiagnostic('synth_regenerate_from_config', { base: baseSymbol, quote: quoteSymbol, interval });
+
         // Set the UI inputs if DOM is available
         if (this.dom?.synthBaseSymbolInput) this.dom.synthBaseSymbolInput.value = baseSymbol;
         if (this.dom?.synthQuoteSymbolInput) this.dom.synthQuoteSymbolInput.value = quoteSymbol;
@@ -69,12 +74,14 @@ export class DataMiningManager {
     private bindActions(): void {
         this.dom?.downloadCsvButton?.addEventListener('click', () => this.downloadCsv());
         this.dom?.downloadJsonButton?.addEventListener('click', () => this.downloadJson());
+        this.dom?.clearPriceDbButton?.addEventListener('click', () => void this.clearPriceDb());
         this.dom?.fetchCsvButton?.addEventListener('click', () => this.fetchAndStoreSqlite());
         this.dom?.fetchJsonButton?.addEventListener('click', () => this.fetchHistorical('json'));
         this.dom?.importButton?.addEventListener('click', () => this.importJsonFile());
         this.dom?.synthGenerateButton?.addEventListener('click', () => this.generateSyntheticPair());
         this.dom?.synthBaseSymbolInput?.addEventListener('input', () => this.updateSynthDerivedSymbol());
         this.dom?.synthQuoteSymbolInput?.addEventListener('input', () => this.updateSynthDerivedSymbol());
+        this.dom?.diagnosticClearButton?.addEventListener('click', () => this.clearDiagnostics());
     }
 
     private subscribeState(): void {
@@ -227,6 +234,7 @@ export class DataMiningManager {
         this.isFetching = true;
         this.toggleHistoricalButtons(true);
         this.setStatus(`Fetching ${bars.toLocaleString()} bars (${interval})...`, 'info');
+        this.recordDiagnostic('historical_fetch_start', { symbol, interval, requestedBars: bars, format });
 
         try {
             const data = await dataManager.fetchHistoricalData(symbol, interval, bars, {
@@ -235,6 +243,11 @@ export class DataMiningManager {
                     const pct = total > 0 ? Math.min(100, Math.round((fetched / total) * 100)) : 0;
                     this.setStatus(`Downloading... ${fetched.toLocaleString()} / ${total.toLocaleString()} bars (${pct}%, ${requestCount} requests)`, 'info');
                 },
+            });
+
+            this.recordDiagnostic('historical_fetched', {
+                symbol, interval, requestedBars: bars, returnedBars: data.length,
+                firstTime: data[0]?.time, lastTime: data[data.length - 1]?.time,
             });
 
             if (data.length === 0) {
@@ -273,6 +286,7 @@ export class DataMiningManager {
             debugLogger.error('data_mining.historical_download_failed', {
                 error: error instanceof Error ? error.message : String(error),
             });
+            this.recordDiagnostic('historical_fetch_error', { symbol, interval, error: error instanceof Error ? error.message : String(error) });
             uiManager.showToast('Historical download failed. See console for details.', 'error');
             this.setStatus('Historical download failed.', 'error');
         } finally {
@@ -298,6 +312,7 @@ export class DataMiningManager {
         this.isFetching = true;
         this.toggleHistoricalButtons(true);
         this.setStatus(`Fetching ${bars.toLocaleString()} bars (${interval})...`, 'info');
+        this.recordDiagnostic('sqlite_fetch_start', { symbol, interval, requestedBars: bars });
 
         try {
             const data = await dataManager.fetchHistoricalData(symbol, interval, bars, {
@@ -306,6 +321,11 @@ export class DataMiningManager {
                     const pct = total > 0 ? Math.min(100, Math.round((fetched / total) * 100)) : 0;
                     this.setStatus(`Fetching... ${fetched.toLocaleString()} / ${total.toLocaleString()} bars (${pct}%, ${requestCount} requests)`, 'info');
                 },
+            });
+
+            this.recordDiagnostic('sqlite_fetched', {
+                symbol, interval, returnedBars: data.length,
+                firstTime: data[0]?.time, lastTime: data[data.length - 1]?.time,
             });
 
             if (data.length === 0) {
@@ -337,11 +357,39 @@ export class DataMiningManager {
             debugLogger.error('data_mining.sqlite_sync_failed', {
                 error: error instanceof Error ? error.message : String(error),
             });
+            this.recordDiagnostic('sqlite_sync_error', { symbol, interval, error: error instanceof Error ? error.message : String(error) });
             uiManager.showToast('Historical SQLite sync failed. See console for details.', 'error');
             this.setStatus('Historical SQLite sync failed.', 'error');
         } finally {
             this.isFetching = false;
             this.toggleHistoricalButtons(false);
+        }
+    }
+
+    private async clearPriceDb(): Promise<void> {
+        if (this.isFetching || this.isImporting) return;
+
+        this.recordDiagnostic('clear_price_db_start');
+        this.setStatus('Clearing browser price cache...', 'info');
+        try {
+            const cleared = await dataManager.clearBrowserPriceData();
+            if (!cleared) {
+                uiManager.showToast('Price DB clear was blocked. Close other tabs using this app and try again.', 'error');
+                this.setStatus('Price DB clear was blocked.', 'error');
+                return;
+            }
+
+            clearAll();
+            commitOhlcvData([], 'data_mining_clear_price_db');
+            this.lastUpdatedAt = Date.now();
+            uiManager.showToast('Browser price DB cleared. Reload or fetch data again for a clean cache state.', 'success');
+            this.setStatus('Browser price DB cleared. SQLite history was left untouched.', 'success');
+        } catch (error) {
+            debugLogger.error('data_mining.clear_price_db_failed', {
+                error: error instanceof Error ? error.message : String(error),
+            });
+            uiManager.showToast('Failed to clear browser price DB.', 'error');
+            this.setStatus('Failed to clear browser price DB.', 'error');
         }
     }
 
@@ -575,6 +623,28 @@ export class DataMiningManager {
         this.dom.statusEl.className = `data-mining-status ${type}`;
     }
 
+    private recordDiagnostic(event: string, details?: Record<string, unknown>): void {
+        const now = new Date();
+        const ts = now.toTimeString().slice(0, 8) + '.' + String(now.getMilliseconds()).padStart(3, '0');
+        const detailStr = details ? ' ' + JSON.stringify(details) : '';
+        const entry = `[${ts}] ${event}${detailStr}`;
+        this.diagnosticLog.push(entry);
+        if (this.diagnosticLog.length > this.DIAGNOSTIC_MAX_ENTRIES) {
+            this.diagnosticLog.splice(0, this.diagnosticLog.length - this.DIAGNOSTIC_MAX_ENTRIES);
+        }
+        if (this.dom?.diagnosticOutputEl) {
+            this.dom.diagnosticOutputEl.textContent = this.diagnosticLog.join('\n');
+            this.dom.diagnosticOutputEl.scrollTop = this.dom.diagnosticOutputEl.scrollHeight;
+        }
+    }
+
+    private clearDiagnostics(): void {
+        this.diagnosticLog = [];
+        if (this.dom?.diagnosticOutputEl) {
+            this.dom.diagnosticOutputEl.textContent = 'Diagnostics cleared. Waiting for events...';
+        }
+    }
+
     private updateSynthDerivedSymbol(): void {
         const dom = this.dom;
         if (!dom?.synthDerivedEl) return;
@@ -616,21 +686,43 @@ export class DataMiningManager {
 
     private async executeSyntheticPairGeneration(baseSymbol: string, quoteSymbol: string, interval: string): Promise<void> {
         const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
-        this.setStatus(`Fetching ${baseSymbol} and ${quoteSymbol} (${interval})...`, 'info');
+        const source = pickSourceInterval(interval);
+        const sourceInterval = source?.sourceInterval ?? interval;
+        this.setStatus(
+            source
+                ? `Fetching ${baseSymbol} and ${quoteSymbol} (${sourceInterval}, ${source.ratio}x sub-bars -> ${interval})...`
+                : `Fetching ${baseSymbol} and ${quoteSymbol} (${interval})...`,
+            'info'
+        );
+
+        this.recordDiagnostic('synth_generate_start', {
+            base: baseSymbol, quote: quoteSymbol, target: syntheticSymbol,
+            interval, sourceInterval, subBarRatio: source?.ratio ?? 1,
+            sourceBarsRequested: Math.min(SYNTHETIC_TARGET_BARS * (source?.ratio ?? 1), DATA_CHART_TOTAL_LIMIT),
+        });
 
         try {
+            const sourceBars = Math.min(SYNTHETIC_TARGET_BARS * (source?.ratio ?? 1), DATA_CHART_TOTAL_LIMIT);
             const [baseData, quoteData] = await Promise.all([
-                dataManager.fetchDataDetached(baseSymbol, interval),
-                dataManager.fetchDataDetached(quoteSymbol, interval),
+                dataManager.fetchHistoricalData(baseSymbol, sourceInterval, sourceBars),
+                dataManager.fetchHistoricalData(quoteSymbol, sourceInterval, sourceBars),
             ]);
 
+            this.recordDiagnostic('synth_legs_fetched', {
+                baseBars: baseData.length, quoteBars: quoteData.length, sourceInterval,
+                baseFirst: baseData[0]?.time, baseLast: baseData[baseData.length - 1]?.time,
+                quoteFirst: quoteData[0]?.time, quoteLast: quoteData[quoteData.length - 1]?.time,
+            });
+
             if (baseData.length === 0) {
-                uiManager.showToast(`No data for ${baseSymbol} on ${interval}.`, 'error');
+                this.recordDiagnostic('synth_zero_data', { leg: 'base', symbol: baseSymbol, sourceInterval });
+                uiManager.showToast(`No data for ${baseSymbol} on ${sourceInterval}.`, 'error');
                 this.setStatus(`No data for ${baseSymbol}.`, 'error');
                 return;
             }
             if (quoteData.length === 0) {
-                uiManager.showToast(`No data for ${quoteSymbol} on ${interval}.`, 'error');
+                this.recordDiagnostic('synth_zero_data', { leg: 'quote', symbol: quoteSymbol, sourceInterval });
+                uiManager.showToast(`No data for ${quoteSymbol} on ${sourceInterval}.`, 'error');
                 this.setStatus(`No data for ${quoteSymbol}.`, 'error');
                 return;
             }
@@ -638,8 +730,18 @@ export class DataMiningManager {
             const dataset = buildSyntheticPairDataset({
                 base: baseData,
                 quote: quoteData,
-                interval,
+                interval: sourceInterval,
                 minBars: 1,
+            });
+            const syntheticBars = source
+                ? aggregateSyntheticBars(dataset.bars, interval)
+                : dataset.bars;
+
+            this.recordDiagnostic('synth_dataset_built', {
+                alignedBars: dataset.bars.length,
+                droppedBars: dataset.meta.droppedBars,
+                afterAggregation: syntheticBars.length,
+                aggregated: !!source,
             });
 
             dataManager.stopStreaming();
@@ -653,16 +755,23 @@ export class DataMiningManager {
                 setCurrentInterval(interval);
             }
 
-            commitOhlcvData(dataset.bars, 'synthetic_pair');
-            dataManager.registerImportedData(syntheticSymbol, interval, dataset.bars);
+            commitOhlcvData(syntheticBars, 'synthetic_pair');
+            dataManager.registerImportedData(syntheticSymbol, interval, syntheticBars);
             this.lastSyntheticPair = { baseSymbol, quoteSymbol };
 
+            this.recordDiagnostic('synth_committed', {
+                symbol: syntheticSymbol, finalBars: syntheticBars.length,
+                firstTime: syntheticBars[0]?.time, lastTime: syntheticBars[syntheticBars.length - 1]?.time,
+            });
+
+            const subBarNote = source ? ` (sub-bar: ${sourceInterval}->${interval}, ${source.ratio}x)` : '';
             this.setStatus(
-                `Loaded ${dataset.bars.length} synthetic bars for ${syntheticSymbol} (dropped ${dataset.meta.droppedBars}).`,
+                `Loaded ${syntheticBars.length} synthetic bars for ${syntheticSymbol}${subBarNote} (dropped ${dataset.meta.droppedBars}).`,
                 'success'
             );
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
+            this.recordDiagnostic('synth_error', { error: message });
             uiManager.showToast(`Synthetic pair failed: ${message}`, 'error');
             this.setStatus(`Synthetic pair failed: ${message}`, 'error');
         }
@@ -708,6 +817,11 @@ export class DataMiningManager {
             }
             commitOhlcvData(bars, 'data_mining_import');
             dataManager.registerImportedData(state.currentSymbol, state.currentInterval, bars);
+
+            this.recordDiagnostic('json_imported', {
+                file: file.name, bars: bars.length,
+                symbol: state.currentSymbol, interval: state.currentInterval,
+            });
 
             const metaNote = meta ? ` (${meta})` : '';
             this.setStatus(`Loaded ${bars.length.toLocaleString()} bars from JSON${metaNote}.`, 'success');

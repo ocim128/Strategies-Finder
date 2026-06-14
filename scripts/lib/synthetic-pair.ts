@@ -11,6 +11,7 @@
 import type { Time } from 'lightweight-charts';
 import type { OHLCVData } from '../../lib/types/strategies';
 import { parseOhlcvBars } from './ohlcv-file';
+import { parseIntervalSeconds } from '../../lib/interval-utils';
 
 // ============================================================================
 // Public types
@@ -34,6 +35,7 @@ export interface SyntheticPairPayloadSource {
     baseSymbol: string;
     quoteSymbol: string;
     method: SyntheticMethod;
+    sourceInterval?: string;
 }
 
 export interface SyntheticPairPayload {
@@ -70,6 +72,7 @@ export interface BuildSyntheticPairPayloadOptions {
     quote: unknown;
     minBars?: number;
     generatedAt?: string;
+    sourceInterval?: string;
 }
 
 // ============================================================================
@@ -163,13 +166,18 @@ export function buildSyntheticPairDataset(
         const high = Math.max(...finiteRatios);
         const low = Math.min(...finiteRatios);
 
+        const volume = Math.min(
+            Number.isFinite(baseBar.volume) ? baseBar.volume : 0,
+            Number.isFinite(quoteBar.volume) ? quoteBar.volume : 0,
+        );
+
         syntheticBars.push({
             time: baseBar.time as Time,
             open,
             high,
             low,
             close,
-            volume: 0,
+            volume: Math.max(0, volume),
         });
     }
 
@@ -197,12 +205,16 @@ export function buildSyntheticPairDataset(
 export function buildSyntheticPairPayload(
     options: BuildSyntheticPairPayloadOptions
 ): SyntheticPairPayload {
-    const { baseSymbol, quoteSymbol, interval, base, quote, minBars = 1, generatedAt } = options;
+    const { baseSymbol, quoteSymbol, interval, base, quote, minBars = 1, generatedAt, sourceInterval } = options;
     const normalizedBase = normalizeSymbol(baseSymbol);
     const normalizedQuote = normalizeSymbol(quoteSymbol);
     const symbol = normalizeSymbol(options.symbol ?? deriveSyntheticSymbol(normalizedBase, normalizedQuote));
 
-    const dataset = buildSyntheticPairDataset({ base, quote, interval, minBars });
+    const buildInterval = sourceInterval ?? interval;
+    const dataset = buildSyntheticPairDataset({ base, quote, interval: buildInterval, minBars });
+    const finalBars = sourceInterval
+        ? aggregateSyntheticBars(dataset.bars, interval)
+        : dataset.bars;
 
     return {
         symbol,
@@ -213,9 +225,10 @@ export function buildSyntheticPairPayload(
             baseSymbol: normalizedBase,
             quoteSymbol: normalizedQuote,
             method: 'ratio',
+            sourceInterval,
         },
-        bars: dataset.bars.length,
-        data: dataset.bars.map((bar) => ({
+        bars: finalBars.length,
+        data: finalBars.map((bar) => ({
             time: Number(bar.time),
             datetime: new Date(Number(bar.time) * 1000).toISOString(),
             open: bar.open,
@@ -225,6 +238,83 @@ export function buildSyntheticPairPayload(
             volume: bar.volume,
         })),
     };
+}
+
+const SOURCE_INTERVAL_CANDIDATES = ['1s', '1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d'];
+
+export function pickSourceInterval(
+    targetInterval: string,
+    maxRatio = 12,
+): { sourceInterval: string; ratio: number } | null {
+    const targetSecs = parseIntervalSeconds(targetInterval);
+    if (!targetSecs || targetSecs <= 0) return null;
+
+    for (const candidate of SOURCE_INTERVAL_CANDIDATES) {
+        const candidateSecs = parseIntervalSeconds(candidate);
+        if (!candidateSecs || candidateSecs <= 0) continue;
+        if (candidateSecs >= targetSecs) continue;
+        if (targetSecs % candidateSecs !== 0) continue;
+
+        const ratio = targetSecs / candidateSecs;
+        if (ratio <= maxRatio) {
+            return { sourceInterval: candidate, ratio };
+        }
+    }
+
+    return null;
+}
+
+export function aggregateSyntheticBars(
+    bars: OHLCVData[],
+    targetInterval: string,
+): OHLCVData[] {
+    const targetSecs = parseIntervalSeconds(targetInterval);
+    if (!targetSecs || targetSecs <= 0) return bars;
+    if (bars.length <= 1) return bars;
+
+    const buckets = new Map<number, OHLCVData[]>();
+
+    for (const bar of bars) {
+        const epoch = Number(bar.time);
+        if (!Number.isFinite(epoch)) continue;
+
+        const bucketStart = Math.floor(epoch / targetSecs) * targetSecs;
+        const bucket = buckets.get(bucketStart);
+        if (bucket) {
+            bucket.push(bar);
+            continue;
+        }
+
+        buckets.set(bucketStart, [bar]);
+    }
+
+    const result: OHLCVData[] = [];
+    const sortedBucketStarts = Array.from(buckets.keys()).sort((left, right) => left - right);
+
+    for (const bucketStart of sortedBucketStarts) {
+        const chunk = buckets.get(bucketStart);
+        if (!chunk || chunk.length === 0) continue;
+
+        let high = -Infinity;
+        let low = Infinity;
+        let volume = 0;
+        for (const subBar of chunk) {
+            if (subBar.high > high) high = subBar.high;
+            if (subBar.low < low) low = subBar.low;
+            volume += Number.isFinite(subBar.volume) ? subBar.volume : 0;
+        }
+
+        result.push({
+            time: bucketStart as Time,
+            open: chunk[0].open,
+            close: chunk[chunk.length - 1].close,
+            high,
+            low,
+            volume,
+        });
+    }
+
+    return result;
 }
 
 // ============================================================================
