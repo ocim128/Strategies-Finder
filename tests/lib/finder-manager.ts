@@ -57,6 +57,30 @@ import type {
 	FinderStrategyDiagnostics,
 } from './types/finder';
 import { isSmartTradeSizingMode } from "./types/backtest";
+import { aggregateSyntheticBars, buildSyntheticPairDataset, deriveSyntheticSymbol, pickSourceInterval } from "../scripts/lib/synthetic-pair";
+import { SYNTHETIC_TARGET_BARS, DATA_CHART_TOTAL_LIMIT } from "./data/constants";
+
+const QUOTE_SUFFIXES = ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD', 'BTC', 'ETH', 'BNB', 'EUR', 'TRY', 'BRL'];
+
+function resolveToBinanceSymbol(token: string): string {
+	const upper = token.toUpperCase();
+	if (QUOTE_SUFFIXES.some((s) => upper.endsWith(s) && upper.length > s.length)) {
+		return upper;
+	}
+	return `${upper}USDT`;
+}
+
+export function parseSyntheticPairToken(symbol: string): { baseSymbol: string; quoteSymbol: string } | null {
+	const plusIdx = symbol.indexOf('+');
+	if (plusIdx < 1 || plusIdx === symbol.length - 1) return null;
+	const baseRaw = symbol.slice(0, plusIdx).trim().toUpperCase();
+	const quoteRaw = symbol.slice(plusIdx + 1).trim().toUpperCase();
+	if (!baseRaw || !quoteRaw) return null;
+	return {
+		baseSymbol: resolveToBinanceSymbol(baseRaw),
+		quoteSymbol: resolveToBinanceSymbol(quoteRaw),
+	};
+}
 import { isSameEventPolymarketExitMode } from "./polymarket-exit-mode";
 import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
 import {
@@ -423,6 +447,10 @@ export class FinderManager {
 	}
 
 	private async loadUniverseDataset(symbol: string, interval: string, signal?: AbortSignal) {
+		const synthParts = parseSyntheticPairToken(symbol);
+		if (synthParts) {
+			return this.loadSyntheticPairForUniverse(synthParts.baseSymbol, synthParts.quoteSymbol, interval, signal);
+		}
 		await this.prepareUniverseSymbolProvider(symbol);
 		const cacheKey = this.buildUniverseDatasetCacheKey(symbol, interval);
 		const cached = this.universeDatasetCache.get(cacheKey);
@@ -447,6 +475,51 @@ export class FinderManager {
 				}
 				throw error;
 			});
+		this.setUniverseDatasetCache(cacheKey, promise);
+		return promise;
+	}
+
+	private async loadSyntheticPairForUniverse(
+		baseSymbol: string,
+		quoteSymbol: string,
+		interval: string,
+		signal?: AbortSignal,
+	): Promise<OHLCVData[]> {
+		const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
+		const cacheKey = this.buildUniverseDatasetCacheKey(syntheticSymbol, interval);
+		const cached = this.universeDatasetCache.get(cacheKey);
+		if (cached) {
+			this.setUniverseDatasetCache(cacheKey, cached);
+			return cached;
+		}
+
+		const source = pickSourceInterval(interval);
+		const sourceInterval = source?.sourceInterval ?? interval;
+		const sourceBars = Math.min(SYNTHETIC_TARGET_BARS * (source?.ratio ?? 1), DATA_CHART_TOTAL_LIMIT);
+
+		const promise = (async () => {
+			if (signal?.aborted) return [];
+			const [baseData, quoteData] = await Promise.all([
+				dataManager.fetchHistoricalData(baseSymbol, sourceInterval, sourceBars),
+				dataManager.fetchHistoricalData(quoteSymbol, sourceInterval, sourceBars),
+			]);
+			if (signal?.aborted) return [];
+			if (baseData.length === 0 || quoteData.length === 0) return [];
+
+			const dataset = buildSyntheticPairDataset({
+				base: baseData,
+				quote: quoteData,
+				interval: sourceInterval,
+				minBars: 1,
+			});
+			const syntheticBars = source
+				? aggregateSyntheticBars(dataset.bars, interval)
+				: dataset.bars;
+
+			dataManager.registerImportedData(syntheticSymbol, interval, syntheticBars);
+			return syntheticBars;
+		})();
+
 		this.setUniverseDatasetCache(cacheKey, promise);
 		return promise;
 	}

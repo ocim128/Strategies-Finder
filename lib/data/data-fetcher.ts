@@ -292,7 +292,27 @@ export class DataFetcher {
         });
         if (fastPathCandles) return fastPathCandles;
 
-        const load = () => this.fetchDataWithLimitUncached(symbol, interval, limit, provider, options);
+        // SQLite fallback — survives page refresh, avoids re-fetching from Binance
+        if (isBinanceDataProvider(provider)) {
+            const storageSymbol = this.providerRouter.getStorageSymbol(symbol, provider);
+            const sqliteRaw = await loadSqliteCandles(storageSymbol, storageInterval, limit);
+            if (sqliteRaw) {
+                const sanitized = this.sanitizeBinanceCandles(symbol, storageInterval, sqliteRaw.candles, 'sqlite');
+                if (sanitized.length >= limit) {
+                    this.cache.set(cacheKey, sanitized, 'sqlite');
+                    return sliceCandlesToLookback(sanitized, limit);
+                }
+            }
+        }
+
+        const load = async () => {
+            const data = await this.fetchDataWithLimitUncached(symbol, interval, limit, provider, options);
+            if (data.length > 0) {
+                this.cache.set(cacheKey, data, 'network-historical');
+                this.queuePersistCandles(symbol, interval, data, provider);
+            }
+            return data;
+        };
         if (this.canDedupeHistoricalOptions(options)) {
             return this.runDedupedLoad(
                 [
