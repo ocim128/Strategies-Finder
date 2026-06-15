@@ -480,6 +480,13 @@ export class FinderManager {
 		return promise;
 	}
 
+	private buildSyntheticUniverseCacheKey(syntheticSymbol: string, interval: string): string {
+		const normalizedSymbol = syntheticSymbol.trim().toUpperCase();
+		const normalizedInterval = interval.trim().toLowerCase();
+		const provider = dataManager.getProvider(normalizedSymbol);
+		return `${provider}|${normalizedSymbol}|${normalizedInterval}|synthetic`;
+	}
+
 	private async loadSyntheticPairForUniverse(
 		baseSymbol: string,
 		quoteSymbol: string,
@@ -487,7 +494,7 @@ export class FinderManager {
 		signal?: AbortSignal,
 	): Promise<OHLCVData[]> {
 		const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
-		const cacheKey = this.buildUniverseDatasetCacheKey(syntheticSymbol, interval);
+		const cacheKey = this.buildSyntheticUniverseCacheKey(syntheticSymbol, interval);
 		const cached = this.universeDatasetCache.get(cacheKey);
 		if (cached) {
 			this.setUniverseDatasetCache(cacheKey, cached);
@@ -498,7 +505,8 @@ export class FinderManager {
 		const sourceInterval = source?.sourceInterval ?? interval;
 		const sourceBars = Math.min(SYNTHETIC_TARGET_BARS * (source?.ratio ?? 1), DATA_CHART_TOTAL_LIMIT);
 
-		const promise = (async () => {
+		let promise: Promise<OHLCVData[]>;
+		promise = (async () => {
 			if (signal?.aborted) return [];
 			const [baseData, quoteData] = await Promise.all([
 				dataManager.fetchHistoricalData(baseSymbol, sourceInterval, sourceBars),
@@ -519,7 +527,21 @@ export class FinderManager {
 
 			dataManager.registerImportedData(syntheticSymbol, interval, syntheticBars);
 			return syntheticBars;
-		})();
+		})()
+			.then((data) => {
+				if (signal?.aborted || !Array.isArray(data) || data.length === 0) {
+					if (this.universeDatasetCache.get(cacheKey) === promise) {
+						this.universeDatasetCache.delete(cacheKey);
+					}
+				}
+				return data;
+			})
+			.catch((error) => {
+				if (this.universeDatasetCache.get(cacheKey) === promise) {
+					this.universeDatasetCache.delete(cacheKey);
+				}
+				throw error;
+			});
 
 		this.setUniverseDatasetCache(cacheKey, promise);
 		return promise;
