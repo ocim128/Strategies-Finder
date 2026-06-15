@@ -123,17 +123,19 @@ export function secondMarketApiPlugin(): Plugin {
                         return;
                     }
 
-                    const counts = {
-                        binance: Number((db.prepare("SELECT COUNT(*) AS count FROM binance_1s_candles").get() as { count?: number }).count) || 0,
-                        clob: Number((db.prepare("SELECT COUNT(*) AS count FROM polymarket_clob_1s_quotes").get() as { count?: number }).count) || 0,
-                        reference: Number((db.prepare("SELECT COUNT(*) AS count FROM polymarket_reference_1s_prices").get() as { count?: number }).count) || 0,
-                        gamma: Number((db.prepare("SELECT COUNT(*) AS count FROM polymarket_gamma_snapshots").get() as { count?: number }).count) || 0,
-                    };
-                    sendJson(res, 200, {
+                    const payload: { ok: true; dbPath: string; counts?: Record<string, number> } = {
                         ok: true,
                         dbPath: SECOND_MARKET_DB_PATH,
-                        counts,
-                    });
+                    };
+                    if (requestUrl.searchParams.get("includeCount") === "1") {
+                        payload.counts = {
+                            binance: Number((db.prepare("SELECT COUNT(*) AS count FROM binance_1s_candles").get() as { count?: number }).count) || 0,
+                            clob: Number((db.prepare("SELECT COUNT(*) AS count FROM polymarket_clob_1s_quotes").get() as { count?: number }).count) || 0,
+                            reference: Number((db.prepare("SELECT COUNT(*) AS count FROM polymarket_reference_1s_prices").get() as { count?: number }).count) || 0,
+                            gamma: Number((db.prepare("SELECT COUNT(*) AS count FROM polymarket_gamma_snapshots").get() as { count?: number }).count) || 0,
+                        };
+                    }
+                    sendJson(res, 200, payload);
                     return;
                 }
 

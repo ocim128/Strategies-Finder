@@ -319,6 +319,7 @@ function getSqliteDb(): DatabaseSync {
     db.exec(`
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;
+        PRAGMA busy_timeout = 5000;
         CREATE TABLE IF NOT EXISTS candles (
             symbol TEXT NOT NULL,
             interval TEXT NOT NULL,
@@ -387,6 +388,12 @@ function getSqliteDb(): DatabaseSync {
     sqliteDb = db;
     return db;
 }
+
+function closeSqliteDb(): void {
+    sqliteDb?.close();
+    sqliteDb = null;
+}
+
 export function localSqlitePlugin(): Plugin {
     const register = (middlewares: any) => {
         middlewares.use('/api/sqlite', async (req: any, res: any) => {
@@ -971,9 +978,11 @@ export function localSqlitePlugin(): Plugin {
         name: 'local-sqlite-api',
         configureServer(server) {
             register(server.middlewares);
+            server.httpServer?.once('close', closeSqliteDb);
         },
         configurePreviewServer(server) {
             register(server.middlewares);
+            server.httpServer?.once('close', closeSqliteDb);
         },
     };
 }

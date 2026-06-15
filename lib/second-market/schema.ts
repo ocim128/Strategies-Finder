@@ -26,8 +26,8 @@ CREATE TABLE IF NOT EXISTS binance_1s_candles (
     PRIMARY KEY(symbol, market_type, ts)
 );
 
-CREATE INDEX IF NOT EXISTS idx_binance_1s_symbol_time
-    ON binance_1s_candles(symbol, market_type, ts);
+-- idx_binance_1s_symbol_time removed: identical columns to PRIMARY KEY(symbol, market_type, ts).
+DROP INDEX IF EXISTS idx_binance_1s_symbol_time;
 
 CREATE TABLE IF NOT EXISTS polymarket_clob_1s_quotes (
     series_id TEXT NOT NULL,
@@ -56,14 +56,18 @@ CREATE TABLE IF NOT EXISTS polymarket_clob_1s_quotes (
     PRIMARY KEY(series_id, event_start_ts, yes_token_id, sample_ts)
 );
 
-CREATE INDEX IF NOT EXISTS idx_clob_1s_symbol_time
-    ON polymarket_clob_1s_quotes(symbol, sample_ts);
+-- idx_clob_1s_symbol_time replaced by idx_clob_1s_symbol_time_sts below
+-- (covers same WHERE queries + ORDER BY source_ts_ms without temp sort).
+DROP INDEX IF EXISTS idx_clob_1s_symbol_time;
 
 CREATE INDEX IF NOT EXISTS idx_clob_1s_symbol_series_time
     ON polymarket_clob_1s_quotes(symbol, series_id, sample_ts);
 
 CREATE INDEX IF NOT EXISTS idx_clob_1s_event_time
     ON polymarket_clob_1s_quotes(series_id, event_start_ts, sample_ts);
+
+CREATE INDEX IF NOT EXISTS idx_clob_1s_symbol_time_sts
+    ON polymarket_clob_1s_quotes(symbol, sample_ts, source_ts_ms);
 
 CREATE TABLE IF NOT EXISTS polymarket_reference_1s_prices (
     symbol TEXT NOT NULL,
