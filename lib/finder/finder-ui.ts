@@ -201,6 +201,7 @@ export class FinderUI {
             metrics.appendChild(this.createMetricChip(`Active ${item.activeSymbols}`));
             metrics.appendChild(this.createMetricChip(`No Trade ${item.noTradeSymbols}`));
             metrics.appendChild(this.createMetricChip(`Med Exp ${item.medianExpectancy.toFixed(2)}`));
+            metrics.appendChild(this.createMetricChip(`Med Sharpe ${item.medianSharpe.toFixed(2)}`));
             metrics.appendChild(this.createMetricChip(`Worst ${this.formatCurrency(item.worstNetProfit)}`));
             metrics.appendChild(this.createMetricChip(`Trades ${item.totalTrades}`));
 

@@ -94,6 +94,7 @@ export const UNIVERSE_METRIC_FULL_LABELS: Record<FinderUniverseMetric, string> =
 	profitableActiveRatio: 'Profitable Active Ratio',
 	activeSymbols: 'Active Symbols',
 	medianExpectancy: 'Median Expectancy',
+	medianSharpe: 'Median Sharpe Ratio',
 	worstNetProfit: 'Worst Net Profit',
 	totalTrades: 'Total Trades',
 };

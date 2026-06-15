@@ -1,4 +1,5 @@
-import { executeBacktest } from "../backtest-executor";
+import { executeBacktest, prepareClosedCandleData, resolveExecutorBacktestSettings } from "../backtest-executor";
+import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import { mapWithConcurrencyLimit } from "../async-pool";
 import type { CrossSymbolDataFetcher } from "../cross-symbol-runtime";
 import { debugLogger } from "../debug-logger";
@@ -35,6 +36,7 @@ import {
     getFinderStrategyDiagnosticsStats,
     recordFinderStrategyFailure,
     recordFinderStrategyNoSignals,
+    recordFinderStrategySkipped,
     toFinderFailureDiagnostics,
     toFinderStrategyDiagnostics,
     type FinderStrategyDiagnosticsStats,
@@ -44,8 +46,9 @@ import type { FinderSelectedStrategy } from "./finder-runner";
 
 const UNIVERSE_DATA_LOAD_CONCURRENCY = 12;
 const UNIVERSE_DATA_LOAD_YIELD_EVERY = 8;
-const UNIVERSE_EVALUATION_YIELD_EVERY_RUNS = 64;
-const UNIVERSE_EVALUATION_YIELD_MIN_MS = 100;
+const UNIVERSE_EVALUATION_YIELD_EVERY_RUNS = 256;
+const UNIVERSE_EVALUATION_YIELD_MIN_MS = 250;
+const UNIVERSE_ZERO_SIGNAL_BAIL_THRESHOLD = 5;
 
 interface FinderUniverseLoadedSymbol {
     symbol: string;
@@ -341,6 +344,7 @@ export async function runFinderUniverseExecution(
     };
     let processedRuns = 0;
     let failedRuns = 0;
+    let skippedRuns = 0;
     const measuredYield = async (): Promise<void> => {
         const startedAt = performance.now();
         await callbacks.yieldControl();
@@ -483,8 +487,35 @@ export async function runFinderUniverseExecution(
         };
     }
 
+    const closedDataPrecomputeStart = performance.now();
+    const runNowSec = Math.floor(Date.now() / 1000);
+    const hasCrossSymbol = Boolean(input.selectedStrategy.strategy.crossSymbolConfig);
+    const closedDataBySymbol = new Map<string, OHLCVData[]>();
+    if (!hasCrossSymbol) {
+        for (const sym of loadedSymbols) {
+            closedDataBySymbol.set(
+                sym.symbol,
+                prepareClosedCandleData(sym.data, input.interval, input.settings, runNowSec),
+            );
+        }
+    }
+    addElapsed(timings, "closedDataSelection", closedDataPrecomputeStart);
+
+    const preResolvedCapital = resolveCapitalSettingsFromRaw(input.capitalSettings as unknown as Record<string, unknown>);
+
+    // Warm confirmation strategy cache once so per-run executeBacktest calls can skip it
+    {
+        const warmSettings = resolveExecutorBacktestSettings(
+            { ...(input.settings as Record<string, unknown>), interval: input.interval } as BacktestSettings,
+            input.interval,
+        );
+        const { ensureConfirmationStrategiesLoaded } = await import("../confirmation-signal-filter");
+        await ensureConfirmationStrategiesLoaded(warmSettings);
+    }
+
     const evaluationStart = performance.now();
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
+    const requiresSharpeRatio = universe.sortPriority.includes("medianSharpe");
     const maxStoredSurvivors = Math.max(input.options.topN, 50);
     const survivors: FinderUniverseCandidate[] = [];
     let keptCandidateCount = 0;
@@ -510,6 +541,10 @@ export async function runFinderUniverseExecution(
 
         const params = paramSets[candidateIndex];
         const { backtestSettings } = resolveFinderRiskOverrides(input.settings, rustSettings, params, input.options);
+        const preResolvedSettings = resolveExecutorBacktestSettings(
+            { ...(backtestSettings as Record<string, unknown>), interval: input.interval } as BacktestSettings,
+            input.interval,
+        );
         const preparedStrategy = createPreparedStrategy(
             input.selectedStrategy.key,
             input.selectedStrategy.strategy,
@@ -538,6 +573,7 @@ export async function runFinderUniverseExecution(
         };
         let remainingSymbols = loadedSymbols.length;
         let remainingMaxTrades = totalPossibleTrades;
+        let consecutiveZeroSignalSymbols = 0;
 
         for (let symbolIndex = 0; symbolIndex < loadedSymbols.length; symbolIndex += 1) {
             if (callbacks.isCancelled()) {
@@ -552,6 +588,7 @@ export async function runFinderUniverseExecution(
             callbacks.setProgress(progress, `Testing ${input.selectedStrategy.name} on ${symbol.symbol} (${candidateIndex + 1}/${paramSets.length})...`);
             callbacks.setStatus(`Evaluating candidate ${candidateIndex + 1}/${paramSets.length} on ${symbol.symbol}...`);
 
+            let zeroSignals = false;
             const runStartedAt = performance.now();
             try {
                 signalTimingByRun.preparedDataMs = 0;
@@ -560,6 +597,7 @@ export async function runFinderUniverseExecution(
                 signalTimingByRun.observed = false;
                 const output = await executeBacktest({
                     ohlcvData: symbol.data,
+                    closedCandleDataOverride: hasCrossSymbol ? undefined : closedDataBySymbol.get(symbol.symbol),
                     interval: input.interval,
                     primarySymbol: symbol.symbol,
                     strategyKey: input.selectedStrategy.key,
@@ -567,21 +605,24 @@ export async function runFinderUniverseExecution(
                     strategyParams: params,
                     backtestSettings,
                     capitalSettings: input.capitalSettings,
+                    preResolvedSettings,
+                    preResolvedCapital,
                     dataFetcher: crossSymbolDataFetcher,
                     context: {
                         blockRange: null,
                         annotatePolymarket: false,
                         engineMode: "auto",
-                        nowSec: Math.floor(Date.now() / 1000),
+                        nowSec: runNowSec,
                     },
                     backtestRunOptions: {
                         includeAdvancedAnalytics: false,
-                        includeSharpeRatio: false,
-                        omitEquityCurve: true,
+                        includeSharpeRatio: requiresSharpeRatio,
+                        omitEquityCurve: !requiresSharpeRatio,
                         skipDrawdown: true,
                         skipResultPostProcessing: true,
                     },
                 });
+                zeroSignals = output.signals.length === 0;
                 const runMs = performance.now() - runStartedAt;
                 processedRuns += 1;
                 strategyStats.runs += 1;
@@ -590,7 +631,7 @@ export async function runFinderUniverseExecution(
                 timings.preparedData += signalTimingByRun.preparedDataMs;
                 timings.signalGeneration += signalTimingByRun.signalMs;
                 timings.backtest += Math.max(0, runMs - signalTimingByRun.totalMs);
-                if (output.signals.length === 0 && !signalTimingByRun.observed) {
+                if (zeroSignals && !signalTimingByRun.observed) {
                     recordFinderStrategyNoSignals(strategyStats);
                 }
                 const symbolResult = buildSymbolResult(symbol, output.result);
@@ -610,6 +651,18 @@ export async function runFinderUniverseExecution(
                 timings.backtest += Math.max(0, runMs - signalTimingByRun.totalMs);
                 recordFinderStrategyFailure(strategyStats, error);
                 symbolResults.set(symbol.symbol, buildRunFailedResult(symbol, message));
+            }
+
+            if (zeroSignals) {
+                consecutiveZeroSignalSymbols += 1;
+                if (consecutiveZeroSignalSymbols >= UNIVERSE_ZERO_SIGNAL_BAIL_THRESHOLD) {
+                    const remainingSkipped = loadedSymbols.length - symbolIndex - 1;
+                    skippedRuns += remainingSkipped;
+                    recordFinderStrategySkipped(strategyStats, remainingSkipped);
+                    break;
+                }
+            } else {
+                consecutiveZeroSignalSymbols = 0;
             }
 
             remainingSymbols -= 1;
@@ -693,6 +746,7 @@ export async function runFinderUniverseExecution(
         shownResults: results.length,
         endpointAdjusted: 0,
         failedRuns,
+        skippedRuns,
         timings,
         strategyBreakdown: toFinderStrategyDiagnostics(strategyStatsByKey),
         failureBreakdown: toFinderFailureDiagnostics(strategyStatsByKey),

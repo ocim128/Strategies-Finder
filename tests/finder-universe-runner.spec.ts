@@ -403,4 +403,63 @@ describe("Finder universe runner", () => {
         expect(seenPrimarySymbols).to.deep.equal(new Set(["AAA", "BBB"]));
         expect(seenSecondarySymbols).to.deep.equal(new Set(["HEDGE"]));
     });
+
+    it("skips remaining symbols after consecutive zero-signal runs (early bail)", async () => {
+        const symbols = Array.from({ length: 8 }, (_, i) => `SYM${i}`);
+        const datasets = new Map<string, OHLCVData[]>(
+            symbols.map((sym, i) => [sym, makeCandles([100 + i * 10, 105 + i * 10, 110 + i * 10, 115 + i * 10, 120 + i * 10])]),
+        );
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 3,
+            rangePercent: 35,
+            maxRuns: 20,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols,
+                minActiveSymbols: 0,
+                minTotalTrades: 0,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["profitableActiveRatio", "medianExpectancy", "worstNetProfit"],
+            },
+        };
+
+        const output = await runFinderUniverseExecution(
+            {
+                interval: "5m",
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategy: {
+                    key: "universe_test",
+                    name: testStrategy.name,
+                    strategy: testStrategy,
+                },
+                loadDataset: async (symbol) => {
+                    const dataset = datasets.get(symbol);
+                    if (!dataset) throw new Error(`Missing ${symbol}`);
+                    return dataset;
+                },
+                generateParamSets: () => [{ threshold: 1 }, { threshold: 10 }],
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                yieldControl: async () => {},
+                isCancelled: () => false,
+            }
+        );
+
+        // threshold=1 produces signals; threshold=10 never does.
+        // With 8 symbols and a bail threshold of 5, threshold=10 should bail after 5 symbols
+        // → 5 processed (zero-signal), 3 skipped.
+        expect(output.diagnostics?.counts.processedRuns).to.equal(8 + 5); // 8 for threshold=1, 5 for threshold=10
+        expect(output.diagnostics?.counts.skippedRuns).to.equal(3);
+    });
 });

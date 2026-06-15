@@ -7,7 +7,7 @@ type CacheEntry = {
 };
 
 export class DataCache {
-    private readonly MAX_CACHE_ENTRIES = 15;
+    private readonly MAX_CACHE_ENTRIES = 256;
     private lruCache: Map<string, CacheEntry> = new Map();
     private cacheSyncAtByKey: Map<string, number> = new Map();
 

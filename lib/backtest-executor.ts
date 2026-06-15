@@ -107,6 +107,12 @@ export interface BacktestExecutorRequest {
         secondarySymbol: string;
         secondaryData: OHLCVData[];
     };
+    /** Pre-computed closed candle data. When provided, skips selectClosedCandleData internally. */
+    closedCandleDataOverride?: OHLCVData[];
+    /** Pre-resolved backtest settings. When provided, skips resolveExecutorBacktestSettings. */
+    preResolvedSettings?: BacktestSettings;
+    /** Pre-resolved capital settings. When provided, skips resolveCapitalSettingsFromRaw. */
+    preResolvedCapital?: ReturnType<typeof resolveCapitalSettingsFromRaw>;
 }
 
 export interface BacktestExecutorResult {
@@ -158,8 +164,10 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         ...(backtestSettings as Record<string, unknown>),
         interval,
     } as BacktestSettings;
-    const resolvedSettings = resolveExecutorBacktestSettings(settingsWithMeta, interval);
-    await ensureConfirmationStrategiesLoaded(resolvedSettings);
+    const resolvedSettings = req.preResolvedSettings ?? resolveExecutorBacktestSettings(settingsWithMeta, interval);
+    if (!req.preResolvedSettings) {
+        await ensureConfirmationStrategiesLoaded(resolvedSettings);
+    }
 
     // --- Cross-symbol resolution ---
     const primarySymbol = req.primarySymbol ?? (settingsWithMeta as Record<string, unknown>).symbol as string ?? "";
@@ -200,7 +208,8 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     const effectiveData = crossSymbolResolved.primaryData;
     const crossSymbolContext = mergeStrategyExecutionContext(req.strategyExecutionContext, crossSymbolResolved.context);
 
-    const backtestData = selectClosedCandleData(effectiveData, interval, resolvedSettings, nowSec, blockRange);
+    const backtestData = req.closedCandleDataOverride
+        ?? selectClosedCandleData(effectiveData, interval, resolvedSettings, nowSec, blockRange);
 
     let alignedCrossSymbolContext = crossSymbolContext;
     if (alignedCrossSymbolContext?.crossSymbol && backtestData.length > 0) {
@@ -281,7 +290,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         return { result, engineUsed: "typescript", signals };
     }
 
-    const resolvedCapital = resolveCapitalSettingsFromRaw(capitalSettings as Record<string, unknown>);
+    const resolvedCapital = req.preResolvedCapital ?? resolveCapitalSettingsFromRaw(capitalSettings as Record<string, unknown>);
 
     const requireTs = requiresTypescriptEngine(resolvedSettings) || isSmartTradeSizingMode(resolvedCapital.sizingMode);
     if (shouldAttemptRust(req.context.engineMode ?? "auto", requireTs)) {
@@ -329,6 +338,24 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     }
     registerBacktestEdgeAnalysisInput(result, backtestData);
     return { result, engineUsed: "typescript", signals };
+}
+
+/**
+ * Pre-computes closed-candle-trimmed data for a symbol. When the result is passed
+ * as `closedCandleDataOverride` to `executeBacktest`, it skips the internal
+ * `selectClosedCandleData` call AND stabilizes the array reference for WeakMap
+ * caches (prepared data, precomputed indicators) across multiple paramSet runs
+ * on the same symbol.
+ */
+export function prepareClosedCandleData(
+    data: OHLCVData[],
+    interval: string,
+    settings: BacktestSettings | Record<string, unknown>,
+    nowSec?: number,
+): OHLCVData[] {
+    const settingsWithMeta = { ...(settings as Record<string, unknown>), interval } as BacktestSettings;
+    const resolvedSettings = resolveExecutorBacktestSettings(settingsWithMeta, interval);
+    return selectClosedCandleData(data, interval, resolvedSettings, nowSec ?? Math.floor(Date.now() / 1000), null);
 }
 
 /**
@@ -426,7 +453,7 @@ function shouldAttemptRust(
     return isBrowser() && shouldUseRustEngine();
 }
 
-function resolveExecutorBacktestSettings(
+export function resolveExecutorBacktestSettings(
     settings: BacktestSettings | Record<string, unknown>,
     interval: string
 ): BacktestSettings {

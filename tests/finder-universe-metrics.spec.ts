@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { buildFinderUniverseCandidate, passesFinderUniverseFilters, sortFinderUniverseCandidates } from "../lib/finder/finder-universe-metrics";
 import type { FinderUniverseSymbolMetrics, FinderUniverseSymbolResult } from "../lib/types/finder";
 
-function makeBacktestResult(netProfit: number, expectancy: number, totalTrades: number): FinderUniverseSymbolMetrics {
+function makeBacktestResult(netProfit: number, expectancy: number, totalTrades: number, sharpeRatio = 0): FinderUniverseSymbolMetrics {
     return {
         netProfit,
         netProfitPercent: 0,
@@ -17,7 +17,7 @@ function makeBacktestResult(netProfit: number, expectancy: number, totalTrades: 
         losingTrades: 0,
         avgWin: 0,
         avgLoss: 0,
-        sharpeRatio: 0,
+        sharpeRatio,
     };
 }
 
@@ -110,5 +110,49 @@ describe("Finder universe metrics", () => {
         );
 
         expect(sorted.map((item) => item.strategyKey)).to.deep.equal(["balanced", "weaker"]);
+    });
+
+    it("aggregates median sharpe ratio across active symbols", () => {
+        const candidate = buildFinderUniverseCandidate({
+            strategyKey: "demo",
+            strategyName: "Demo",
+            params: { threshold: 1 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(120, 4, 8, 1.5)),
+                makeSymbol("ETHUSDT", "losing", makeBacktestResult(-40, -2, 4, 0.5)),
+                makeSymbol("SOLUSDT", "no_trades", makeBacktestResult(0, 0, 0, 9)),
+            ],
+        });
+
+        // median of [1.5, 0.5] = 1.0; no_trades symbol excluded
+        expect(candidate.medianSharpe).to.equal(1.0);
+    });
+
+    it("sorts survivors by median sharpe ratio", () => {
+        const sharper = buildFinderUniverseCandidate({
+            strategyKey: "sharper",
+            strategyName: "Sharper",
+            params: { threshold: 1 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(15, 3, 5, 2.0)),
+                makeSymbol("ETHUSDT", "profitable", makeBacktestResult(10, 2, 5, 1.8)),
+            ],
+        });
+        const flatter = buildFinderUniverseCandidate({
+            strategyKey: "flatter",
+            strategyName: "Flatter",
+            params: { threshold: 2 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(5, 1, 4, 0.3)),
+                makeSymbol("ETHUSDT", "losing", makeBacktestResult(-10, -1, 4, 0.1)),
+            ],
+        });
+
+        const sorted = sortFinderUniverseCandidates(
+            [flatter, sharper],
+            ["medianSharpe"]
+        );
+
+        expect(sorted.map((item) => item.strategyKey)).to.deep.equal(["sharper", "flatter"]);
     });
 });

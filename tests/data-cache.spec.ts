@@ -32,13 +32,14 @@ describe("DataCache metadata lifecycle", () => {
     it("removes sync metadata when LRU eviction removes the oldest entry", () => {
         const cache = new DataCache();
 
-        for (let index = 0; index < 16; index += 1) {
+        // Insert MAX_CACHE_ENTRIES + 1 entries to trigger LRU eviction of the oldest.
+        for (let index = 0; index < 257; index += 1) {
             const key = `SYMBOL${index}:1m`;
             cache.set(key, [candle(index)], "test");
             cache.syncAtByKey.set(key, index);
         }
 
-        assert.equal(cache.size, 15);
+        assert.equal(cache.size, 256);
         assert.equal(cache.get("SYMBOL0:1m"), undefined);
         assert.equal(cache.syncAtByKey.has("SYMBOL0:1m"), false);
     });

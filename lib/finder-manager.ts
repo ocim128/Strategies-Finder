@@ -164,6 +164,7 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
 	"profitableActiveRatio",
 	"medianExpectancy",
+	"medianSharpe",
 	"worstNetProfit",
 	"totalTrades",
 	"activeSymbols",
@@ -1498,18 +1499,11 @@ export class FinderManager {
 		const allResults: FinderUniverseCandidate[] = [];
 		const failedSymbols = new Set<string>();
 		const diagnosticsParts: FinderDiagnostics[] = [];
-		const datasetCache = new Map<string, Promise<OHLCVData[]>>();
 		let maxLoadedSymbols = 0;
 		const settings = backtestService.getBacktestSettings();
 		const capitalSettings = backtestService.getCapitalSettings();
 		const loadDataset = (symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> => {
-			const key = `${symbol.trim().toUpperCase()}|${interval}`;
-			let promise = datasetCache.get(key);
-			if (!promise) {
-				promise = this.loadUniverseDataset(symbol, interval, signal);
-				datasetCache.set(key, promise);
-			}
-			return promise;
+			return this.loadUniverseDataset(symbol, interval, signal);
 		};
 
 		for (let strategyIndex = 0; strategyIndex < selectedStrategies.length; strategyIndex += 1) {
@@ -1987,6 +1981,7 @@ export class FinderManager {
 				totalTrades: result.totalTrades,
 				profitableActiveRatio: result.profitableActiveRatio,
 				medianExpectancy: result.medianExpectancy,
+				medianSharpe: result.medianSharpe,
 				medianNetProfit: result.medianNetProfit,
 				worstNetProfit: result.worstNetProfit,
 				bestNetProfit: result.bestNetProfit,
