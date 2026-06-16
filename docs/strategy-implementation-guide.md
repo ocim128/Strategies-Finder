@@ -533,3 +533,50 @@ Import from `lib/strategies/lib/cross-symbol-helpers.ts`:
 6. Endpoint parity paths also support cross-symbol execution, but they only stay correct if the resolved secondary dataset is carried through snapshot and request builders.
 7. If a wrapper, decorator, or registry path calls `strategy.execute(...)`, it must preserve the third `context` argument or the strategy may silently produce zero signals.
 8. If you need the current support matrix, endpoint parity rules, or maintenance gotchas, see [`docs/cross-symbol.md`](./cross-symbol.md).
+
+## Synthetic Pair Strategies
+
+A synthetic pair (`DOGE+ZEC`, `BNB+ZEC`, `BTC+NEAR`) is built upstream in the Data Mining menu or CLI. The `+` is resolved before the strategy runs, so the strategy receives ONE merged OHLCV series and must NOT declare `crossSymbolConfig` or touch `StrategyExecutionContext.crossSymbol`. There is no second leg to decompose at runtime.
+
+This is a different feature from cross-symbol. Cross-symbol keeps both legs live and aligned at runtime; synthetic pair bakes the ratio in upstream and hands the strategy a single series.
+
+### Candle formula (what the strategy actually sees)
+
+Merge logic lives in `scripts/lib/synthetic-pair.ts` (`buildSyntheticPairDataset`, around lines 148-181). Each bar is a RATIO, not a sum or average:
+
+- `open  = base.open  / quote.open`
+- `close = base.close / quote.close`
+- `high  = max(open, close, base.high / quote.high, base.low / quote.low)`
+- `low   = min(open, close, base.high / quote.high, base.low / quote.low)`
+- `volume = min(base.volume, quote.volume)`  // the LESS-LIQUID leg's volume, a proxy only
+
+There is no rebase or normalization step. The same strategy must work on a pair whose ratio sits near 0.02 (`DOGE+ZEC`) and one whose ratio sits near 250 (`BTC+ZEC`).
+
+See [`docs/synthetic-pairs.md`](./synthetic-pairs.md) for the full generation pipeline, alignment rules, and sub-bar reconstruction.
+
+### Implementation contracts specific to synthetic pairs
+
+1. **Scale-invariance is mandatory.** Every trigger must be expressed via rolling z-score, percentile rank, rolling median, rolling min/max, efficiency ratio, or return/range ratios. Absolute price thresholds and raw-level comparisons are invalid because the ratio level is arbitrary. Before accepting a rule, ask: would this fire identically on a ratio at 0.02 and at 250?
+2. **No absolute volume.** `volume` is the binding (illiquid) leg's volume, not tradable market flow. Raw volume, volume sums, and absolute volume thresholds are invalid as triggers. Volume may only enter as `buildPercentileRank(volumes, lookback)` or `buildRollingZScore(volumes, lookback)` to express "the binding leg is healthy vs its own history." Treat `calculateCMF`, `calculateVWAP`, and `buildInitiativePressureSeries(...)` as relative signals here, not absolute-effort triggers.
+3. **Bar range means leg disagreement, not volatility.** Because `high`/`low` are max/min of four ratio snapshots, a wide range means the two legs' intrabar extremes diverged. `buildRangeSeries(data)` is a first-class signal on synthetic pairs, not a noise measure.
+4. **Do not declare `crossSymbolConfig`.** Do not import from `lib/strategies/lib/cross-symbol-helpers.ts`. Do not read `StrategyExecutionContext.crossSymbol`. The pair is already merged.
+5. **Favor mean-reversion baselines.** A ratio of two USDT assets is more mean-reverting than either leg. Reversion-to-center (rolling z-score / percentile / median distance) is a stronger default edge than trend continuation.
+6. **Gate breakouts on hold, not on the breakout bar.** Ratio breakouts are noisy because the illiquid leg twitches. Pair any breakout trigger with a persistence or proxy-volume-health gate.
+
+### Prompt workflow
+
+Use `archive/prompt-1h-synteticpair.txt` for AI-generated synthetic-pair ideas on 1H/2H charts. It encodes the scale-invariance and proxy-volume rules above and restricts mechanisms to three ratio-native families:
+
+- **reversion to center** - fade ratio stretch vs rolling z-score / percentile / median
+- **compression then expansion** - rolling stddev of ratio returns low-percentile then rising = coupling-to-decoupling regime change
+- **leg dislocation via range** - range percentile spike = legs disagreed intrabar; follow or fade based on close location
+
+Translate its output into code the same way as any other prompt JSON (see [Using Prompt JSON](#using-prompt-json)), with the extra checks:
+
+- reject any idea whose trigger is an absolute price or absolute volume level
+- reject any idea that imports a cross-symbol helper or declares `crossSymbolConfig`
+- reject any idea whose `buy_logic` / `sell_logic` would not fire identically across ratio magnitudes
+
+### Validation
+
+The synthetic series is just OHLCV by the time the strategy sees it, so the standard validation applies (`npm run strategies:sync-manifest`, `npm run typecheck`, focused spec under `tests/strategies-lib/*`). Add focused tests when normalization or scale-invariance is non-trivial, especially asserting that the same params produce signals on both a small-magnitude and large-magnitude synthetic fixture.

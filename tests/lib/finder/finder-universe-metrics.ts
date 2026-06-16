@@ -159,3 +159,50 @@ export function passesFinderUniverseFilters(
         && candidate.totalTrades >= universe.minTotalTrades
         && candidate.profitableActiveRatio >= universe.minProfitableActiveRatio;
 }
+
+export interface SymbolVerdict {
+    label: string;
+    cssClass: string;
+    tier: number;
+}
+
+export function computePerformanceVerdict(
+    result: { netProfit: number; profitFactor: number; totalTrades: number; sharpeRatio: number } | undefined,
+    status: string
+): SymbolVerdict {
+    if (!result || result.totalTrades <= 0 ||
+        status === "no_trades" || status === "load_failed" || status === "run_failed") {
+        return { label: "NO SIGNAL", cssClass: "finder-verdict-no-signal", tier: 6 };
+    }
+    if (result.totalTrades < 15) {
+        return { label: "THIN", cssClass: "finder-verdict-thin", tier: 5 };
+    }
+    if (result.netProfit < 0) {
+        return { label: "LOSING", cssClass: "finder-verdict-losing", tier: 4 };
+    }
+    const pf = result.profitFactor;
+    const sharpe = result.sharpeRatio;
+    if (pf >= 1.5 && sharpe >= 1.0) {
+        return { label: "STRONG", cssClass: "finder-verdict-strong", tier: 0 };
+    }
+    if (pf >= 1.2 && sharpe >= 0.5) {
+        return { label: "SOLID", cssClass: "finder-verdict-solid", tier: 1 };
+    }
+    if (pf >= 1.05) {
+        return { label: "MARGINAL", cssClass: "finder-verdict-marginal", tier: 2 };
+    }
+    return { label: "WEAK", cssClass: "finder-verdict-weak", tier: 3 };
+}
+
+export interface StrategyVerdict {
+    label: string;
+    cssClass: string;
+}
+
+export function computeStrategyVerdict(ratio: number): StrategyVerdict {
+    if (ratio >= 1.0) return { label: "UNIFORM — check directional bias", cssClass: "finder-verdict-uniform" };
+    if (ratio >= 0.85) return { label: "BROAD EDGE", cssClass: "finder-verdict-strong" };
+    if (ratio >= 0.65) return { label: "MODERATE", cssClass: "finder-verdict-solid" };
+    if (ratio >= 0.45) return { label: "SELECTIVE", cssClass: "finder-verdict-marginal" };
+    return { label: "NARROW", cssClass: "finder-verdict-weak" };
+}

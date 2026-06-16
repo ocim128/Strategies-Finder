@@ -904,3 +904,159 @@
 
 
 
+.finder-verdict {
+
+    display: inline-block;
+
+    font-size: var(--font-size-xs);
+
+    font-weight: var(--font-weight-semibold);
+
+    font-family: var(--font-family-mono);
+
+    padding: 1px 6px;
+
+    border-radius: var(--radius-xs);
+
+    border: 1px solid transparent;
+
+    margin-right: 6px;
+
+    white-space: nowrap;
+
+    vertical-align: middle;
+
+}
+
+
+
+.finder-verdict-strong {
+
+    color: hsl(142 70% 45%);
+
+    background: hsl(142 70% 45% / 0.12);
+
+    border-color: hsl(142 70% 45% / 0.35);
+
+}
+
+
+
+.finder-verdict-solid {
+
+    color: hsl(142 60% 55%);
+
+    background: hsl(142 60% 55% / 0.08);
+
+    border-color: hsl(142 60% 55% / 0.25);
+
+}
+
+
+
+.finder-verdict-marginal {
+
+    color: hsl(45 90% 55%);
+
+    background: hsl(45 90% 55% / 0.1);
+
+    border-color: hsl(45 90% 55% / 0.3);
+
+}
+
+
+
+.finder-verdict-weak {
+
+    color: hsl(36 100% 64%);
+
+    background: hsl(36 100% 55% / 0.08);
+
+    border-color: hsl(36 100% 55% / 0.25);
+
+}
+
+
+
+.finder-verdict-losing {
+
+    color: hsl(0 80% 65%);
+
+    background: hsl(0 80% 55% / 0.1);
+
+    border-color: hsl(0 80% 55% / 0.3);
+
+}
+
+
+
+.finder-verdict-thin {
+
+    color: hsl(210 60% 65%);
+
+    background: hsl(210 60% 55% / 0.08);
+
+    border-color: hsl(210 60% 55% / 0.25);
+
+}
+
+
+
+.finder-verdict-no-signal {
+
+    color: var(--text-tertiary);
+
+    background: hsl(var(--hsl-surface-3) / 0.3);
+
+    border-color: transparent;
+
+}
+
+
+
+.finder-verdict-uniform {
+
+    color: hsl(36 100% 60%);
+
+    background: hsl(36 100% 55% / 0.12);
+
+    border-color: hsl(36 100% 55% / 0.35);
+
+}
+
+
+
+.finder-symbol-row {
+
+    display: flex;
+
+    align-items: baseline;
+
+    gap: 2px;
+
+    padding: 2px 0;
+
+}
+
+
+
+.finder-universe-summary {
+
+    font-size: var(--font-size-xs);
+
+    color: var(--text-secondary);
+
+    padding: var(--space-1) var(--space-2);
+
+    margin-bottom: 4px;
+
+    background: hsl(var(--hsl-surface-3) / 0.3);
+
+    border-radius: var(--radius-xs);
+
+    font-family: var(--font-family-mono);
+
+}
+
+
+

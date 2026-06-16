@@ -7,6 +7,7 @@ import {
 import type { FinderMode, FinderRandomBenchmark, FinderResult, FinderUniverseCandidate } from "../types/finder";
 import type { BacktestResult, StrategyParams, Time } from "../types/strategies";
 import { getFinderSelectionResult } from "./finder-engine";
+import { computePerformanceVerdict, computeStrategyVerdict } from "./finder-universe-metrics";
 
 export function getFinderDisplayResult(item: FinderResult): BacktestResult {
     return getFinderSelectionResult(item);
@@ -210,21 +211,66 @@ export class FinderUI {
             summary.textContent = `Symbol Breakdown (${item.symbols.length})`;
             details.appendChild(summary);
 
-            item.symbols.forEach((symbolResult) => {
-                const line = document.createElement("div");
-                line.className = "finder-sub";
-                const metricsText = symbolResult.result
-                    ? ` | Net ${this.formatCurrency(symbolResult.result.netProfit)} | Exp ${symbolResult.result.expectancy.toFixed(2)} | Trades ${symbolResult.result.totalTrades}`
-                    : "";
-                const errorText = symbolResult.error ? ` | ${symbolResult.error}` : "";
-                line.textContent = `${symbolResult.symbol} | ${this.formatUniverseStatus(symbolResult.status)} | Bars ${symbolResult.barCount}${metricsText}${errorText}${this.formatUniverseTimeRange(symbolResult.firstTime, symbolResult.lastTime)}`;
-                details.appendChild(line);
+            // Sort symbols: best performers first so hidden green surfaces
+            const sortedSymbols = [...item.symbols].sort((a, b) => {
+                const va = computePerformanceVerdict(a.result, a.status);
+                const vb = computePerformanceVerdict(b.result, b.status);
+                if (va.tier !== vb.tier) return va.tier - vb.tier;
+                return (b.result?.expectancy ?? -Infinity) - (a.result?.expectancy ?? -Infinity);
             });
+
+            // Verdict distribution summary
+            const verdictCounts = new Map<string, number>();
+            for (const s of sortedSymbols) {
+                const v = computePerformanceVerdict(s.result, s.status);
+                verdictCounts.set(v.label, (verdictCounts.get(v.label) ?? 0) + 1);
+            }
+            const summaryLine = document.createElement("div");
+            summaryLine.className = "finder-universe-summary";
+            const summaryParts: string[] = [];
+            for (const label of ["STRONG", "SOLID", "MARGINAL", "WEAK", "LOSING", "THIN", "NO SIGNAL"]) {
+                const count = verdictCounts.get(label);
+                if (count) summaryParts.push(`${count} ${label}`);
+            }
+            summaryLine.textContent = summaryParts.join(" • ");
+            details.appendChild(summaryLine);
+
+            for (const symbolResult of sortedSymbols) {
+                const line = document.createElement("div");
+                line.className = "finder-sub finder-symbol-row";
+                const verdict = computePerformanceVerdict(symbolResult.result, symbolResult.status);
+                const badge = document.createElement("span");
+                badge.className = `finder-verdict ${verdict.cssClass}`;
+                badge.textContent = verdict.label;
+                line.appendChild(badge);
+
+                const textParts: string[] = [symbolResult.symbol];
+                textParts.push(this.formatUniverseStatus(symbolResult.status));
+                textParts.push(`Bars ${symbolResult.barCount}`);
+                if (symbolResult.result) {
+                    const r = symbolResult.result;
+                    textParts.push(`Net ${this.formatCurrency(r.netProfit)}`);
+                    textParts.push(`Exp ${r.expectancy.toFixed(2)}`);
+                    textParts.push(`PF ${formatProfitFactor(r.profitFactor)}`);
+                    textParts.push(`WR ${r.winRate.toFixed(0)}%`);
+                    textParts.push(`Sharpe ${r.sharpeRatio.toFixed(2)}`);
+                    textParts.push(`DD ${r.maxDrawdownPercent.toFixed(2)}%`);
+                    textParts.push(`Trades ${r.totalTrades}`);
+                }
+                if (symbolResult.error) textParts.push(symbolResult.error);
+                const timeRange = this.formatUniverseTimeRange(symbolResult.firstTime, symbolResult.lastTime);
+                if (timeRange) textParts.push(timeRange.replace(/^ \| /, ""));
+
+                const textSpan = document.createElement("span");
+                textSpan.textContent = textParts.join(" | ");
+                line.appendChild(textSpan);
+                details.appendChild(line);
+            }
 
             fragment.appendChild(this.createResultRow({
                 index,
                 title,
-                subText: `${item.strategyKey} | ${item.profitableSymbols}/${item.activeSymbols} profitable active symbols`,
+                subText: `${item.strategyKey} | ${item.profitableSymbols}/${item.activeSymbols} profitable active symbols${this.formatStrategyVerdictSuffix(item.profitableActiveRatio)}`,
                 paramsText: this.formatParams(item.params),
                 metrics,
                 details,
@@ -399,5 +445,10 @@ export class FinderUI {
 
     private formatSelectionSummary(result: BacktestResult): string {
         return `Selection ${this.formatCurrency(result.netProfit)} • ${result.totalTrades} trades`;
+    }
+
+    private formatStrategyVerdictSuffix(ratio: number): string {
+        const verdict = computeStrategyVerdict(ratio);
+        return ` | ${verdict.label}`;
     }
 }
