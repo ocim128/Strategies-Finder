@@ -58,9 +58,10 @@ describe("App bootstrap registry", () => {
 
     it("propagates init errors after logging them", async () => {
         const logged: string[] = [];
-        const unsubscribe = debugLogger.subscribe((event) => {
-            if (event.name === "app.bootstrap.feature_failed") {
-                logged.push(event.data.id as string);
+        const unsubscribe = debugLogger.subscribe((entries) => {
+            const latest = entries.at(-1);
+            if (latest?.message === "app.bootstrap.feature_failed") {
+                logged.push((latest.data as { id: string }).id);
             }
         });
 

@@ -5,25 +5,41 @@
 import { parseTimeToUnixSeconds } from "../time-normalization";
 
 export function calculateSMA(data: number[], period: number): (number | null)[] {
-    const result: (number | null)[] = new Array(data.length).fill(null);
-    let sum = 0;
-    for (let i = 0; i < data.length; i++) {
-        sum += data[i];
-        if (i >= period) {
-            sum -= data[i - period];
+    return getOrCompute(__smaCache, data, period, () => {
+        const result: (number | null)[] = new Array(data.length).fill(null);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) {
+            sum += data[i];
+            if (i >= period) {
+                sum -= data[i - period];
+            }
+            if (i >= period - 1) {
+                result[i] = sum / period;
+            }
         }
-        if (i >= period - 1) {
-            result[i] = sum / period;
-        }
-    }
-    return result;
+        return result;
+    });
 }
 
 // Indicator caches
+const __smaCache: WeakMap<number[], Map<number, (number | null)[]>> = new WeakMap();
 const __emaCache: WeakMap<number[], Map<number, (number | null)[]>> = new WeakMap();
 const __atrCache: WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<number, (number | null)[]>>>> = new WeakMap();
 const __adxCache: WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<number, (number | null)[]>>>> = new WeakMap();
 const __vwapCache: WeakMap<number[], WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<number, (number | null)[]>>>>> = new WeakMap();
+const __cmfCache: WeakMap<number[], WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<number, (number | null)[]>>>>> = new WeakMap();
+const __keltnerCache: WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<string, {
+    upper: (number | null)[];
+    middle: (number | null)[];
+    lower: (number | null)[];
+}>>>> = new WeakMap();
+const __ichimokuCache: WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<string, {
+    conversion: (number | null)[];
+    base: (number | null)[];
+    spanA: (number | null)[];
+    spanB: (number | null)[];
+    lagging: (number | null)[];
+}>>>> = new WeakMap();
 
 function getOrCompute<D extends object, K, V>(cache: WeakMap<D, Map<K, V>>, data: D, key: K, compute: () => V): V {
     let m = cache.get(data);
@@ -107,6 +123,40 @@ function getOrComputeOHLCV(
 
     const result = compute();
     byPeriod.set(period, result);
+    return result;
+}
+
+function getOrComputeOHLCByKey<V>(
+    cache: WeakMap<number[], WeakMap<number[], WeakMap<number[], Map<string, V>>>>,
+    high: number[],
+    low: number[],
+    close: number[],
+    key: string,
+    compute: () => V
+): V {
+    let byLow = cache.get(high);
+    if (!byLow) {
+        byLow = new WeakMap();
+        cache.set(high, byLow);
+    }
+
+    let byClose = byLow.get(low);
+    if (!byClose) {
+        byClose = new WeakMap();
+        byLow.set(low, byClose);
+    }
+
+    let byKey = byClose.get(close);
+    if (!byKey) {
+        byKey = new Map();
+        byClose.set(close, byKey);
+    }
+
+    const cached = byKey.get(key);
+    if (cached) return cached;
+
+    const result = compute();
+    byKey.set(key, result);
     return result;
 }
 
@@ -202,20 +252,23 @@ export function calculateKeltnerChannels(
     middle: (number | null)[];
     lower: (number | null)[];
 } {
-    const middle = calculateEMA(close, emaPeriod);
-    const atr = calculateATR(high, low, close, atrPeriod);
-    const upper: (number | null)[] = new Array(close.length).fill(null);
-    const lower: (number | null)[] = new Array(close.length).fill(null);
+    const key = `${emaPeriod}|${atrPeriod}|${multiplier}`;
+    return getOrComputeOHLCByKey(__keltnerCache, high, low, close, key, () => {
+        const middle = calculateEMA(close, emaPeriod);
+        const atr = calculateATR(high, low, close, atrPeriod);
+        const upper: (number | null)[] = new Array(close.length).fill(null);
+        const lower: (number | null)[] = new Array(close.length).fill(null);
 
-    for (let i = 0; i < close.length; i++) {
-        const mid = middle[i];
-        const atrNow = atr[i];
-        if (mid === null || atrNow === null) continue;
-        upper[i] = mid + multiplier * atrNow;
-        lower[i] = mid - multiplier * atrNow;
-    }
+        for (let i = 0; i < close.length; i++) {
+            const mid = middle[i];
+            const atrNow = atr[i];
+            if (mid === null || atrNow === null) continue;
+            upper[i] = mid + multiplier * atrNow;
+            lower[i] = mid - multiplier * atrNow;
+        }
 
-    return { upper, middle, lower };
+        return { upper, middle, lower };
+    });
 }
 
 export function calculateADX(
@@ -281,38 +334,40 @@ export function calculateCMF(
     volume: number[],
     period: number
 ): (number | null)[] {
-    const length = Math.min(high.length, low.length, close.length, volume.length);
-    const result: (number | null)[] = new Array(length).fill(null);
-    if (length < period || period < 1) return result;
+    return getOrComputeOHLCV(__cmfCache, high, low, close, volume, period, () => {
+        const length = Math.min(high.length, low.length, close.length, volume.length);
+        const result: (number | null)[] = new Array(length).fill(null);
+        if (length < period || period < 1) return result;
 
-    const moneyFlowVolume: number[] = new Array(length).fill(0);
-    for (let i = 0; i < length; i++) {
-        const range = high[i] - low[i];
-        if (range <= 0) {
-            moneyFlowVolume[i] = 0;
-            continue;
-        }
-        const multiplier = ((close[i] - low[i]) - (high[i] - close[i])) / range;
-        moneyFlowVolume[i] = multiplier * volume[i];
-    }
-
-    let mfvSum = 0;
-    let volumeSum = 0;
-    for (let i = 0; i < length; i++) {
-        mfvSum += moneyFlowVolume[i];
-        volumeSum += volume[i];
-
-        if (i >= period) {
-            mfvSum -= moneyFlowVolume[i - period];
-            volumeSum -= volume[i - period];
+        const moneyFlowVolume: number[] = new Array(length).fill(0);
+        for (let i = 0; i < length; i++) {
+            const range = high[i] - low[i];
+            if (range <= 0) {
+                moneyFlowVolume[i] = 0;
+                continue;
+            }
+            const multiplier = ((close[i] - low[i]) - (high[i] - close[i])) / range;
+            moneyFlowVolume[i] = multiplier * volume[i];
         }
 
-        if (i >= period - 1) {
-            result[i] = volumeSum === 0 ? 0 : mfvSum / volumeSum;
-        }
-    }
+        let mfvSum = 0;
+        let volumeSum = 0;
+        for (let i = 0; i < length; i++) {
+            mfvSum += moneyFlowVolume[i];
+            volumeSum += volume[i];
 
-    return result;
+            if (i >= period) {
+                mfvSum -= moneyFlowVolume[i - period];
+                volumeSum -= volume[i - period];
+            }
+
+            if (i >= period - 1) {
+                result[i] = volumeSum === 0 ? 0 : mfvSum / volumeSum;
+            }
+        }
+
+        return result;
+    });
 }
 
 function calculateMidpointChannel(
@@ -349,30 +404,33 @@ export function calculateIchimoku(
     spanB: (number | null)[];
     lagging: (number | null)[];
 } {
-    const conversion = calculateMidpointChannel(high, low, conversionPeriod);
-    const base = calculateMidpointChannel(high, low, basePeriod);
-    const spanBBase = calculateMidpointChannel(high, low, spanBPeriod);
-    const spanA: (number | null)[] = new Array(close.length).fill(null);
-    const spanB: (number | null)[] = new Array(close.length).fill(null);
-    const lagging: (number | null)[] = new Array(close.length).fill(null);
+    const key = `${conversionPeriod}|${basePeriod}|${spanBPeriod}|${displacement}`;
+    return getOrComputeOHLCByKey(__ichimokuCache, high, low, close, key, () => {
+        const conversion = calculateMidpointChannel(high, low, conversionPeriod);
+        const base = calculateMidpointChannel(high, low, basePeriod);
+        const spanBBase = calculateMidpointChannel(high, low, spanBPeriod);
+        const spanA: (number | null)[] = new Array(close.length).fill(null);
+        const spanB: (number | null)[] = new Array(close.length).fill(null);
+        const lagging: (number | null)[] = new Array(close.length).fill(null);
 
-    for (let i = 0; i < close.length; i++) {
-        const conversionNow = conversion[i];
-        const baseNow = base[i];
-        const spanBNow = spanBBase[i];
+        for (let i = 0; i < close.length; i++) {
+            const conversionNow = conversion[i];
+            const baseNow = base[i];
+            const spanBNow = spanBBase[i];
 
-        if (conversionNow !== null && baseNow !== null) {
-            spanA[i] = (conversionNow + baseNow) / 2;
+            if (conversionNow !== null && baseNow !== null) {
+                spanA[i] = (conversionNow + baseNow) / 2;
+            }
+            if (spanBNow !== null) {
+                spanB[i] = spanBNow;
+            }
+            if (i >= displacement) {
+                lagging[i - displacement] = close[i];
+            }
         }
-        if (spanBNow !== null) {
-            spanB[i] = spanBNow;
-        }
-        if (i >= displacement) {
-            lagging[i - displacement] = close[i];
-        }
-    }
 
-	return { conversion, base, spanA, spanB, lagging };
+        return { conversion, base, spanA, spanB, lagging };
+    });
 }
 
 export function calculateMFI(

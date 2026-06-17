@@ -12,7 +12,6 @@ import type { BacktestResult, StrategyExecutionContext } from "../types/strategi
 import { rustEngine } from "../rust-engine-client";
 import { shouldUseRustEngine } from "../engine-preferences";
 import { debugLogger } from "../debug-logger";
-import { isBuiltInKey } from "../strategies/built-in-catalog";
 import { isCrossSymbolStrategy, resolveCrossSymbolExecution } from "../cross-symbol-runtime";
 
 import { compareFinderResults } from "./finder-engine";
@@ -26,11 +25,9 @@ import {
     finderSortRequiresTradeTimingQuality,
 } from "../trade-timing-quality";
 import {
-    buildFinderSearchBaseParams,
     buildComparableFinderResult,
     compactSignalsForRust,
     computeFinderCompositeEdgeRatio,
-    extractRustFinderCandidates,
     finderSortRequiresCompositeEdgeRatio,
     getPreparedFinderData,
     normalizeFinderCandidateParams,
@@ -613,8 +610,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         recordFinderStrategyFailure(stats, error);
     };
 
-    const comboActive = !!input.comboPrimarySignals;
-    let { useRustForFinder, canTryNativeFinder, cacheId, cacheRequested } =
+    let { useRustForFinder, cacheId } =
         await resolveFinderEngineDecision({
             input,
             callbacks,
@@ -625,9 +621,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         });
     if (requiresTradeTimingQualitySort && useRustForFinder) {
         useRustForFinder = false;
-        canTryNativeFinder = false;
         cacheId = null;
-        cacheRequested = false;
         callbacks.setStatus("Using TypeScript engine (timing-score sort requires full trades)...");
     }
 

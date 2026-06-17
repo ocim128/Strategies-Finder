@@ -96,6 +96,31 @@ import { cumulative_return_percentile_reversion } from "./lib/cumulative_return_
 import { decay_pressure_percentile_reversion } from "./lib/decay_pressure_percentile_reversion";
 import { volatility_breakout_follow } from "./lib/volatility_breakout_follow";
 import { initiative_pressure_acceleration_follow } from "./lib/initiative_pressure_acceleration_follow";
+import { median_distance_bar_rejection } from "./lib/median_distance_bar_rejection";
+import { atr_adjusted_streak_momentum } from "./lib/atr_adjusted_streak_momentum";
+import { atr_normalized_range_reversion } from "./lib/atr_normalized_range_reversion";
+import { autocorrelation_crossover_momentum } from "./lib/autocorrelation_crossover_momentum";
+import { body_proportion_percentile_fade } from "./lib/body_proportion_percentile_fade";
+import { close_acceptance_decay_weighted_drift } from "./lib/close_acceptance_decay_weighted_drift";
+import { close_location_streak_mean_reversion } from "./lib/close_location_streak_mean_reversion";
+import { compression_ratio_expansion_reversion } from "./lib/compression_ratio_expansion_reversion";
+import { entropy_decay_momentum_acceleration } from "./lib/entropy_decay_momentum_acceleration";
+import { historical_volatility_envelope_fade } from "./lib/historical_volatility_envelope_fade";
+import { median_crossing_frequency_fade } from "./lib/median_crossing_frequency_fade";
+import { range_efficiency_regime_ignition } from "./lib/range_efficiency_regime_ignition";
+import { range_volatility_divergence_fade } from "./lib/range_volatility_divergence_fade";
+import { return_reversal_count_reversion } from "./lib/return_reversal_count_reversion";
+import { return_sign_streak_fade } from "./lib/return_sign_streak_fade";
+import { return_zscore_extreme_reversion } from "./lib/return_zscore_extreme_reversion";
+import { skewness_reversal_momentum_ignite } from "./lib/skewness_reversal_momentum_ignite";
+import { volatility_autocorrelation_gated_reversion } from "./lib/volatility_autocorrelation_gated_reversion";
+import { volatility_gated_close_acceptance } from "./lib/volatility_gated_close_acceptance";
+import { volatility_percentile_reversion_fade } from "./lib/volatility_percentile_reversion_fade";
+import { volatility_skewness_exhaustion } from "./lib/volatility_skewness_exhaustion";
+import { volatility_weighted_momentum_autocorrelation } from "./lib/volatility_weighted_momentum_autocorrelation";
+import { volatility_zscore_reversion_trigger } from "./lib/volatility_zscore_reversion_trigger";
+import { volume_correlation_trend_follow } from "./lib/volume_correlation_trend_follow";
+import { wick_imbalance_thrust_continuation } from "./lib/wick_imbalance_thrust_continuation";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -197,6 +222,31 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "decay_pressure_percentile_reversion", strategy: decay_pressure_percentile_reversion },
     { key: "volatility_breakout_follow", strategy: volatility_breakout_follow },
     { key: "initiative_pressure_acceleration_follow", strategy: initiative_pressure_acceleration_follow },
+    { key: "median_distance_bar_rejection", strategy: median_distance_bar_rejection },
+    { key: "atr_adjusted_streak_momentum", strategy: atr_adjusted_streak_momentum },
+    { key: "atr_normalized_range_reversion", strategy: atr_normalized_range_reversion },
+    { key: "autocorrelation_crossover_momentum", strategy: autocorrelation_crossover_momentum },
+    { key: "body_proportion_percentile_fade", strategy: body_proportion_percentile_fade },
+    { key: "close_acceptance_decay_weighted_drift", strategy: close_acceptance_decay_weighted_drift },
+    { key: "close_location_streak_mean_reversion", strategy: close_location_streak_mean_reversion },
+    { key: "compression_ratio_expansion_reversion", strategy: compression_ratio_expansion_reversion },
+    { key: "entropy_decay_momentum_acceleration", strategy: entropy_decay_momentum_acceleration },
+    { key: "historical_volatility_envelope_fade", strategy: historical_volatility_envelope_fade },
+    { key: "median_crossing_frequency_fade", strategy: median_crossing_frequency_fade },
+    { key: "range_efficiency_regime_ignition", strategy: range_efficiency_regime_ignition },
+    { key: "range_volatility_divergence_fade", strategy: range_volatility_divergence_fade },
+    { key: "return_reversal_count_reversion", strategy: return_reversal_count_reversion },
+    { key: "return_sign_streak_fade", strategy: return_sign_streak_fade },
+    { key: "return_zscore_extreme_reversion", strategy: return_zscore_extreme_reversion },
+    { key: "skewness_reversal_momentum_ignite", strategy: skewness_reversal_momentum_ignite },
+    { key: "volatility_autocorrelation_gated_reversion", strategy: volatility_autocorrelation_gated_reversion },
+    { key: "volatility_gated_close_acceptance", strategy: volatility_gated_close_acceptance },
+    { key: "volatility_percentile_reversion_fade", strategy: volatility_percentile_reversion_fade },
+    { key: "volatility_skewness_exhaustion", strategy: volatility_skewness_exhaustion },
+    { key: "volatility_weighted_momentum_autocorrelation", strategy: volatility_weighted_momentum_autocorrelation },
+    { key: "volatility_zscore_reversion_trigger", strategy: volatility_zscore_reversion_trigger },
+    { key: "volume_correlation_trend_follow", strategy: volume_correlation_trend_follow },
+    { key: "wick_imbalance_thrust_continuation", strategy: wick_imbalance_thrust_continuation },
 ];
 
 export function createStrategiesRecordFromManifest(

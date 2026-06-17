@@ -1,4 +1,4 @@
-import tradFiPairsRaw from '../archive/tradfi-pair.txt?raw';
+import tradFiPairsRaw from './tradfi-pair-data';
 
 export type TradFiAssetType = 'stock' | 'forex' | 'commodity';
 

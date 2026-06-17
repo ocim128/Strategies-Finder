@@ -931,5 +931,3 @@ class WalkForwardService {
 }
 
 export const walkForwardService = new WalkForwardService();
-
-import { isSmartTradeSizingMode } from "./types/backtest";

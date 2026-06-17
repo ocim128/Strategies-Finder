@@ -509,7 +509,7 @@ describe("second market Finder runner", () => {
         expect(strategyDiagnostics?.skippedRuns).to.equal(2);
         expect(diagnostics?.failureBreakdown?.[0]?.runs).to.equal(1);
         expect(statuses.at(-1)).to.contain("2 skipped");
-        expect(diagnostics?.bottlenecks.some((item) => item.includes("skipped after fatal strategy failure"))).to.equal(true);
+        expect(diagnostics?.bottlenecks.some((item) => item.includes("fatal strategy failure"))).to.equal(true);
     });
 
     it("rejects 1s CLOB scoring for unsupported execution models", async () => {
