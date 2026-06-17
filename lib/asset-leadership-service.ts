@@ -33,6 +33,7 @@ class AssetLeadershipService {
 
     public async persistUniverseRun(args: {
         interval: string;
+        strategyPreset?: AssetLeadershipPersistedRun["strategyPreset"];
         strategyCount: number;
         universeSymbolCount: number;
         topN: number;
@@ -42,6 +43,7 @@ class AssetLeadershipService {
         const run = createAssetLeadershipPersistedRun({
             runId,
             interval: args.interval,
+            strategyPreset: args.strategyPreset,
             strategyCount: args.strategyCount,
             universeSymbolCount: args.universeSymbolCount,
             topN: args.topN,
@@ -283,6 +285,7 @@ class AssetLeadershipService {
             return `<div style="font-size:11px;padding:3px 0;border-bottom:1px solid var(--glass-border);display:flex;gap:8px;">`
                 + `<span style="color:var(--text-secondary);">${date}</span>`
                 + `<span>${run.strategyCount} strats</span>`
+                + (run.strategyPreset ? `<span>${run.strategyPreset}</span>` : "")
                 + `<span>${run.universeSymbolCount} syms</span>`
                 + `<span>top${run.topN}</span>`
                 + `<span style="color:var(--text-muted);">${run.interval}</span>`

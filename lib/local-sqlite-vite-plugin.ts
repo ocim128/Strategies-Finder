@@ -388,6 +388,7 @@ function getSqliteDb(): DatabaseSync {
             run_id TEXT NOT NULL PRIMARY KEY,
             created_at INTEGER NOT NULL,
             interval TEXT NOT NULL,
+            strategy_preset TEXT,
             strategy_count INTEGER NOT NULL,
             universe_symbol_count INTEGER NOT NULL,
             top_n INTEGER NOT NULL,
@@ -422,6 +423,11 @@ function getSqliteDb(): DatabaseSync {
         CREATE INDEX IF NOT EXISTS idx_al_obs_asset_b_time
             ON asset_leadership_observations(asset_b, run_created_at);
     `);
+    try {
+        db.exec('ALTER TABLE asset_leadership_runs ADD COLUMN strategy_preset TEXT');
+    } catch {
+        // Existing databases already have the column.
+    }
     sqliteDb = db;
     return db;
 }
@@ -1009,6 +1015,8 @@ export function localSqlitePlugin(): Plugin {
                     const runId = String(payload?.runId || '').trim();
                     const createdAt = Number(payload?.createdAt) || 0;
                     const interval = String(payload?.interval || '').trim().toLowerCase();
+                    const strategyPresetRaw = String(payload?.strategyPreset || '').trim().toLowerCase();
+                    const strategyPreset = ['follow', 'reversion', 'custom'].includes(strategyPresetRaw) ? strategyPresetRaw : null;
                     const strategyCount = Number(payload?.strategyCount) || 0;
                     const universeSymbolCount = Number(payload?.universeSymbolCount) || 0;
                     const topN = Number(payload?.topN) || 0;
@@ -1026,16 +1034,17 @@ export function localSqlitePlugin(): Plugin {
                     db.exec('BEGIN');
                     try {
                         db.prepare(`
-                            INSERT INTO asset_leadership_runs (run_id, created_at, interval, strategy_count, universe_symbol_count, top_n, candidates_json)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            INSERT INTO asset_leadership_runs (run_id, created_at, interval, strategy_preset, strategy_count, universe_symbol_count, top_n, candidates_json)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                             ON CONFLICT(run_id) DO UPDATE SET
                                 created_at = excluded.created_at,
                                 interval = excluded.interval,
+                                strategy_preset = excluded.strategy_preset,
                                 strategy_count = excluded.strategy_count,
                                 universe_symbol_count = excluded.universe_symbol_count,
                                 top_n = excluded.top_n,
                                 candidates_json = excluded.candidates_json
-                        `).run(runId, createdAt, interval, strategyCount, universeSymbolCount, topN, JSON.stringify(candidates));
+                        `).run(runId, createdAt, interval, strategyPreset, strategyCount, universeSymbolCount, topN, JSON.stringify(candidates));
 
                         const obsUpsert = db.prepare(`
                             INSERT INTO asset_leadership_observations (
@@ -1088,7 +1097,7 @@ export function localSqlitePlugin(): Plugin {
                     const limit = Math.max(1, Math.min(200, Math.floor(Number(requestUrl.searchParams.get('limit')) || 50)));
                     const db = getSqliteDb();
                     const runRows = db.prepare(`
-                        SELECT run_id, created_at, interval, strategy_count, universe_symbol_count, top_n, candidates_json
+                        SELECT run_id, created_at, interval, strategy_preset, strategy_count, universe_symbol_count, top_n, candidates_json
                         FROM asset_leadership_runs
                         ORDER BY created_at DESC
                         LIMIT ?
@@ -1096,6 +1105,7 @@ export function localSqlitePlugin(): Plugin {
                         run_id: string;
                         created_at: number;
                         interval: string;
+                        strategy_preset: string | null;
                         strategy_count: number;
                         universe_symbol_count: number;
                         top_n: number;
@@ -1107,6 +1117,7 @@ export function localSqlitePlugin(): Plugin {
                             runId: row.run_id,
                             createdAt: row.created_at,
                             interval: row.interval,
+                            strategyPreset: row.strategy_preset || undefined,
                             strategyCount: row.strategy_count,
                             universeSymbolCount: row.universe_symbol_count,
                             topN: row.top_n,

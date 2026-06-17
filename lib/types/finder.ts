@@ -336,6 +336,7 @@ export interface AssetLeadershipPersistedRun {
     runId: string;
     createdAt: number;
     interval: string;
+    strategyPreset?: "follow" | "reversion" | "custom";
     strategyCount: number;
     universeSymbolCount: number;
     topN: number;
@@ -406,6 +407,7 @@ export interface AssetLeadershipReport {
         runId: string;
         createdAt: number;
         interval: string;
+        strategyPreset?: "follow" | "reversion" | "custom";
         strategyCount: number;
         universeSymbolCount: number;
         topN: number;

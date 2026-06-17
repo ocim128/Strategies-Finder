@@ -61,6 +61,41 @@ import { aggregateSyntheticBars, buildSyntheticPairDataset, deriveSyntheticSymbo
 import { SYNTHETIC_TARGET_BARS, DATA_CHART_TOTAL_LIMIT } from "./data/constants";
 
 const QUOTE_SUFFIXES = ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD', 'BTC', 'ETH', 'BNB', 'EUR', 'TRY', 'BRL'];
+const FINDER_FOLLOW_STRATEGY_KEYS = [
+	"decay_momentum_alignment",
+	"volatility_regime_median_alignment",
+	"initiative_pressure_acceleration_follow",
+	"volatility_breakout_follow",
+	"accumulation_persistence_streak_gate",
+] as const;
+const FINDER_REVERSION_STRATEGY_KEYS = [
+	"decay_pressure_percentile_reversion",
+	"cumulative_return_zscore_reversion",
+	"cumulative_return_percentile_reversion",
+	"acceptance_deviation_median_reversion",
+	"negative_autocorrelation_median_reversion",
+	"range_expansion_exhaustion_reversion",
+	"probability_boundary_eigen_shift",
+] as const;
+type FinderStrategyPreset = "follow" | "reversion" | "custom";
+
+function sameStrategySet(keys: readonly string[], preset: readonly string[]): boolean {
+	if (keys.length !== preset.length) {
+		return false;
+	}
+	const selected = new Set(keys);
+	return preset.every((key) => selected.has(key));
+}
+
+function resolveFinderStrategyPreset(keys: readonly string[]): FinderStrategyPreset {
+	if (sameStrategySet(keys, FINDER_FOLLOW_STRATEGY_KEYS)) {
+		return "follow";
+	}
+	if (sameStrategySet(keys, FINDER_REVERSION_STRATEGY_KEYS)) {
+		return "reversion";
+	}
+	return "custom";
+}
 
 function resolveToBinanceSymbol(token: string): string {
 	const upper = token.toUpperCase();
@@ -843,6 +878,14 @@ export class FinderManager {
 		dom.finderStrategySelectVisible.addEventListener('click', () => {
 			this.setStrategySelection(this.getVisibleStrategyKeys(), true);
 		});
+
+		dom.finderStrategySelectFollow.addEventListener('click', () => {
+			this.replaceStrategySelection(FINDER_FOLLOW_STRATEGY_KEYS);
+		});
+
+		dom.finderStrategySelectReversion.addEventListener('click', () => {
+			this.replaceStrategySelection(FINDER_REVERSION_STRATEGY_KEYS);
+		});
 	}
 
 	private initUniverseUI(): void {
@@ -1252,6 +1295,12 @@ export class FinderManager {
 		}
 	}
 
+	private replaceStrategySelection(strategyKeys: readonly string[]): void {
+		const availableKeys = strategyKeys.filter((key) => this.strategyToggles.has(key));
+		this.setStrategySelection(this.strategyOrder, false, false);
+		this.setStrategySelection(availableKeys, true);
+	}
+
 	private invertStrategySelection(strategyKeys: Iterable<string>): void {
 		const selected = this.isUniverseScope()
 			? this.getUniverseSelectedStrategyKeys()
@@ -1613,6 +1662,7 @@ export class FinderManager {
 				const { assetLeadershipService } = await import("./asset-leadership-service");
 				void assetLeadershipService.persistUniverseRun({
 					interval: state.currentInterval,
+					strategyPreset: resolveFinderStrategyPreset(selectedStrategies.map((selection) => selection.key)),
 					strategyCount: selectedStrategies.length,
 					universeSymbolCount: totalSymbols,
 					topN: options.topN,

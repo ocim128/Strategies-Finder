@@ -57,6 +57,7 @@ function makeRun(overrides: Partial<AssetLeadershipPersistedRun> & { candidates:
         runId: overrides.runId ?? `run-${Date.now()}`,
         createdAt: overrides.createdAt ?? Date.now(),
         interval: overrides.interval ?? "4h",
+        strategyPreset: overrides.strategyPreset,
         strategyCount: overrides.strategyCount ?? 1,
         universeSymbolCount: overrides.universeSymbolCount ?? 10,
         topN: overrides.topN ?? 5,
@@ -251,6 +252,48 @@ describe("Asset Leadership aggregation", () => {
         expect(report.overview.totalRuns).to.equal(1);
         expect(report.recentRuns.map((run) => run.interval)).to.deep.equal(["15m"]);
         expect(report.currentLeaders.some((row) => row.asset === "BTC")).to.equal(false);
+        expect(report.strongestNow[0]?.asset).to.equal("ZEC");
+    });
+
+    it("scopes reports to the latest strategy preset by default", () => {
+        const followRun = makeRun({
+            runId: "run-follow",
+            createdAt: 1000,
+            interval: "15m",
+            strategyPreset: "follow",
+            candidates: [
+                makeCandidate({
+                    strategyKey: "follow",
+                    strategyName: "Follow",
+                    profitableActiveRatio: 1,
+                    symbols: [
+                        { symbol: "WLD+APT", status: "profitable", netProfit: 1000, expectancy: 100, sharpeRatio: 4, profitFactor: 4, totalTrades: 30, directionalLookbackClose: 1, directionalLookbackBars: 96, lastClose: 1.5 },
+                    ],
+                }),
+            ],
+        });
+        const reversionRun = makeRun({
+            runId: "run-reversion",
+            createdAt: 2000,
+            interval: "15m",
+            strategyPreset: "reversion",
+            candidates: [
+                makeCandidate({
+                    strategyKey: "reversion",
+                    strategyName: "Reversion",
+                    profitableActiveRatio: 0.8,
+                    symbols: [
+                        { symbol: "ZEC+ENA", status: "profitable", netProfit: 500, expectancy: 50, sharpeRatio: 3, profitFactor: 2.5, totalTrades: 20, directionalLookbackClose: 1, directionalLookbackBars: 96, lastClose: 1.2 },
+                    ],
+                }),
+            ],
+        });
+
+        const report = buildAssetLeadershipReport({ runs: [followRun, reversionRun] });
+
+        expect(report.overview.totalRuns).to.equal(1);
+        expect(report.recentRuns.map((run) => run.strategyPreset)).to.deep.equal(["reversion"]);
+        expect(report.currentLeaders.some((row) => row.asset === "WLD")).to.equal(false);
         expect(report.strongestNow[0]?.asset).to.equal("ZEC");
     });
 

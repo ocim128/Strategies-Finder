@@ -500,6 +500,7 @@ export function buildAssetLeadershipReport(args: {
     recentRunLimit?: number;
     recentWindowRuns?: number;
     intervalFilter?: string | "latest" | null;
+    strategyPresetFilter?: AssetLeadershipPersistedRun["strategyPreset"] | "latest" | null;
 }): AssetLeadershipReport {
     const recentRunLimit = Math.max(1, args.recentRunLimit ?? DEFAULT_RECENT_RUN_LIMIT);
     const recentWindowRuns = Math.max(1, args.recentWindowRuns ?? DEFAULT_RECENT_WINDOW_RUNS);
@@ -508,9 +509,14 @@ export function buildAssetLeadershipReport(args: {
         .slice(-recentRunLimit);
     const intervalFilter = args.intervalFilter === undefined ? "latest" : args.intervalFilter;
     const latestInterval = recentRuns[recentRuns.length - 1]?.interval ?? null;
-    const runs = intervalFilter === null
+    const intervalRuns = intervalFilter === null
         ? recentRuns
         : recentRuns.filter((run) => run.interval === (intervalFilter === "latest" ? latestInterval : intervalFilter));
+    const strategyPresetFilter = args.strategyPresetFilter === undefined ? "latest" : args.strategyPresetFilter;
+    const latestStrategyPreset = intervalRuns[intervalRuns.length - 1]?.strategyPreset ?? null;
+    const runs = strategyPresetFilter === null || !latestStrategyPreset
+        ? intervalRuns
+        : intervalRuns.filter((run) => run.strategyPreset === (strategyPresetFilter === "latest" ? latestStrategyPreset : strategyPresetFilter));
     const observations = buildObservations(runs);
     const rows = sortByCurrentLeadership(toAssetRows({ observations, runs, recentWindowRuns }));
     const currentLeaders = rows.slice(0, 20);
@@ -532,6 +538,7 @@ export function buildAssetLeadershipReport(args: {
             runId: run.runId,
             createdAt: run.createdAt,
             interval: run.interval,
+            strategyPreset: run.strategyPreset,
             strategyCount: run.strategyCount,
             universeSymbolCount: run.universeSymbolCount,
             topN: run.topN,
@@ -543,6 +550,7 @@ export function createAssetLeadershipPersistedRun(args: {
     runId: string;
     createdAt?: number;
     interval: string;
+    strategyPreset?: AssetLeadershipPersistedRun["strategyPreset"];
     strategyCount: number;
     universeSymbolCount: number;
     topN: number;
@@ -552,6 +560,7 @@ export function createAssetLeadershipPersistedRun(args: {
         runId: args.runId,
         createdAt: args.createdAt ?? Date.now(),
         interval: args.interval,
+        strategyPreset: args.strategyPreset,
         strategyCount: args.strategyCount,
         universeSymbolCount: args.universeSymbolCount,
         topN: args.topN,
