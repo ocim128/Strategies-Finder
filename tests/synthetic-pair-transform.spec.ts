@@ -280,4 +280,19 @@ describe('aggregateSyntheticBars', () => {
         assert.equal(aggregated[0].low, 9);
         assert.equal(aggregated[0].volume, 250);
     });
+
+    it('uses earliest open and latest close for unsorted sub-bars', () => {
+        const aggregated = aggregateSyntheticBars([
+            { time: 60 as OHLCVData['time'], open: 11, high: 15, low: 10, close: 14, volume: 150 },
+            { time: 0 as OHLCVData['time'], open: 10, high: 12, low: 9, close: 11, volume: 100 },
+        ], '2m');
+
+        assert.equal(aggregated.length, 1);
+        assert.equal(Number(aggregated[0].time), 0);
+        assert.equal(aggregated[0].open, 10);
+        assert.equal(aggregated[0].close, 14);
+        assert.equal(aggregated[0].high, 15);
+        assert.equal(aggregated[0].low, 9);
+        assert.equal(aggregated[0].volume, 250);
+    });
 });

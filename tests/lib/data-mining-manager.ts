@@ -14,7 +14,7 @@ import { OHLCVData, HistoricalFetchProgress } from "./types/index";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { formatPolymarketDisplayName, parsePolymarketEventInput } from "./dataProviders/polymarket";
 import { queryDataMiningDom, type DataMiningDom } from "./data-mining-dom";
-import { aggregateSyntheticBars, buildSyntheticPairDataset, deriveSyntheticSymbol, pickSourceInterval } from "../scripts/lib/synthetic-pair";
+import { aggregateSyntheticBars, buildSyntheticPairDataset, deriveSyntheticSymbol, isSyntheticSymbol, pickSourceInterval } from "../scripts/lib/synthetic-pair";
 
 interface NormalizedCandle {
     time: number;
@@ -33,6 +33,7 @@ export class DataMiningManager {
     private lastUpdatedAt: number | null = null;
     private isFetching = false;
     private isImporting = false;
+    private isGeneratingSynthetic = false;
     private lastSymbolValue: string | null = null;
     private lastIntervalValue: string | null = null;
     private lastSyntheticPair: { baseSymbol: string; quoteSymbol: string } | null = null;
@@ -48,6 +49,17 @@ export class DataMiningManager {
     }
 
     public async regenerateSyntheticPair(baseSymbol: string, quoteSymbol: string, interval: string): Promise<void> {
+        if (
+            this.lastSyntheticPair
+            && isSyntheticSymbol(state.currentSymbol, this.lastSyntheticPair)
+            && isSyntheticSymbol(state.currentSymbol, { baseSymbol, quoteSymbol })
+            && state.currentInterval === interval
+            && state.ohlcvData.length > 0
+        ) {
+            this.recordDiagnostic('synth_regenerate_skipped_current', { base: baseSymbol, quote: quoteSymbol, interval });
+            return;
+        }
+
         this.recordDiagnostic('synth_regenerate_from_config', { base: baseSymbol, quote: quoteSymbol, interval });
 
         // Set the UI inputs if DOM is available
@@ -567,6 +579,7 @@ export class DataMiningManager {
 
     private getProviderLabel(symbol: string): string {
         if (dataManager.isMockSymbol(symbol)) return 'Mock';
+        if (isSyntheticSymbol(symbol, this.lastSyntheticPair)) return 'Synthetic';
 
         const provider = dataManager.getProvider(symbol);
         if (provider === 'binance') return 'Binance Spot';
@@ -685,9 +698,13 @@ export class DataMiningManager {
     }
 
     private async executeSyntheticPairGeneration(baseSymbol: string, quoteSymbol: string, interval: string): Promise<void> {
+        if (this.isGeneratingSynthetic) return;
+
         const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
         const source = pickSourceInterval(interval);
         const sourceInterval = source?.sourceInterval ?? interval;
+        this.isGeneratingSynthetic = true;
+        if (this.dom?.synthGenerateButton) this.dom.synthGenerateButton.disabled = true;
         this.setStatus(
             source
                 ? `Fetching ${baseSymbol} and ${quoteSymbol} (${sourceInterval}, ${source.ratio}x sub-bars -> ${interval})...`
@@ -774,6 +791,9 @@ export class DataMiningManager {
             this.recordDiagnostic('synth_error', { error: message });
             uiManager.showToast(`Synthetic pair failed: ${message}`, 'error');
             this.setStatus(`Synthetic pair failed: ${message}`, 'error');
+        } finally {
+            this.isGeneratingSynthetic = false;
+            if (this.dom?.synthGenerateButton) this.dom.synthGenerateButton.disabled = false;
         }
     }
 

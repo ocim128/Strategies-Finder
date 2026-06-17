@@ -241,13 +241,23 @@ export function buildSyntheticPairPayload(
 }
 
 const SOURCE_INTERVAL_CANDIDATES = ['1s', '1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d'];
+const sourceIntervalCache = new Map<string, { sourceInterval: string; ratio: number } | null>();
 
 export function pickSourceInterval(
     targetInterval: string,
     maxRatio = 12,
 ): { sourceInterval: string; ratio: number } | null {
+    const cacheKey = `${targetInterval}|${maxRatio}`;
+    const cached = sourceIntervalCache.get(cacheKey);
+    if (cached !== undefined) {
+        return cached ? { ...cached } : null;
+    }
+
     const targetSecs = parseIntervalSeconds(targetInterval);
-    if (!targetSecs || targetSecs <= 0) return null;
+    if (!targetSecs || targetSecs <= 0) {
+        sourceIntervalCache.set(cacheKey, null);
+        return null;
+    }
 
     for (const candidate of SOURCE_INTERVAL_CANDIDATES) {
         const candidateSecs = parseIntervalSeconds(candidate);
@@ -257,10 +267,13 @@ export function pickSourceInterval(
 
         const ratio = targetSecs / candidateSecs;
         if (ratio <= maxRatio) {
-            return { sourceInterval: candidate, ratio };
+            const result = { sourceInterval: candidate, ratio };
+            sourceIntervalCache.set(cacheKey, result);
+            return { ...result };
         }
     }
 
+    sourceIntervalCache.set(cacheKey, null);
     return null;
 }
 
@@ -294,6 +307,9 @@ export function aggregateSyntheticBars(
     for (const bucketStart of sortedBucketStarts) {
         const chunk = buckets.get(bucketStart);
         if (!chunk || chunk.length === 0) continue;
+        const sortedChunk = chunk.length > 1
+            ? chunk.slice().sort((left, right) => Number(left.time) - Number(right.time))
+            : chunk;
 
         let high = -Infinity;
         let low = Infinity;
@@ -306,8 +322,8 @@ export function aggregateSyntheticBars(
 
         result.push({
             time: bucketStart as Time,
-            open: chunk[0].open,
-            close: chunk[chunk.length - 1].close,
+            open: sortedChunk[0].open,
+            close: sortedChunk[sortedChunk.length - 1].close,
             high,
             low,
             volume,
@@ -334,6 +350,17 @@ export function deriveSyntheticSymbol(baseSymbol: string, quoteSymbol: string): 
     }
 
     return `${baseSymbol}${quoteSymbol}`;
+}
+
+export function isSyntheticSymbol(
+    symbol: string,
+    known: { baseSymbol: string; quoteSymbol: string } | null,
+): boolean {
+    if (!known) return false;
+    return normalizeSymbol(symbol) === deriveSyntheticSymbol(
+        normalizeSymbol(known.baseSymbol),
+        normalizeSymbol(known.quoteSymbol),
+    );
 }
 
 function longestCommonSuffix(a: string, b: string): number {
