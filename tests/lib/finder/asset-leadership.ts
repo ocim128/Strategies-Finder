@@ -24,6 +24,9 @@ type AssetAccumulator = {
     profitFactorSum: number;
     rankSum: number;
     weightedScoreSum: number;
+    directionalScoreSum: number;
+    directionalObservations: number;
+    absoluteCloseChangePercentSum: number;
     recentWeightedScoreSum: number;
     previousWeightedScoreSum: number;
     runIds: Set<string>;
@@ -47,6 +50,19 @@ function round(value: number, digits = 4): number {
 
 function clamp(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value));
+}
+
+function getCloseChangePercent(firstClose: number | undefined, lastClose: number | undefined): number | undefined {
+    if (
+        typeof firstClose !== "number"
+        || typeof lastClose !== "number"
+        || !Number.isFinite(firstClose)
+        || !Number.isFinite(lastClose)
+        || firstClose <= 0
+    ) {
+        return undefined;
+    }
+    return ((lastClose - firstClose) / firstClose) * 100;
 }
 
 function normalizeSyntheticAsset(symbol: string): string {
@@ -123,6 +139,8 @@ export function buildObservations(runs: readonly AssetLeadershipPersistedRun[]):
                     totalUniverseTrades: candidate.totalTrades,
                     topDecile: candidateIndex < topDecileCutoff,
                     profitable,
+                    closeChangePercent: getCloseChangePercent(symbolResult.directionalLookbackClose, symbolResult.lastClose),
+                    directionalLookbackBars: symbolResult.directionalLookbackBars,
                 });
             });
         });
@@ -142,6 +160,9 @@ function createAccumulator(asset: string): AssetAccumulator {
         profitFactorSum: 0,
         rankSum: 0,
         weightedScoreSum: 0,
+        directionalScoreSum: 0,
+        directionalObservations: 0,
+        absoluteCloseChangePercentSum: 0,
         recentWeightedScoreSum: 0,
         previousWeightedScoreSum: 0,
         runIds: new Set<string>(),
@@ -181,6 +202,16 @@ function toAssetRows(args: {
             totalTrades: observation.totalTrades,
             profitable: observation.profitable,
         });
+        const hasDirectionalSignal = typeof observation.closeChangePercent === "number"
+            && Number.isFinite(observation.closeChangePercent)
+            && Math.abs(observation.closeChangePercent) > 0.0001
+            && observationWeight > 0;
+        const directionalMagnitude = hasDirectionalSignal
+            ? clamp(Math.abs(observation.closeChangePercent!) / 20, 0.25, 2)
+            : 0;
+        const directionalScore = hasDirectionalSignal
+            ? observationWeight * directionalMagnitude * (observation.closeChangePercent! > 0 ? 1 : -1)
+            : 0;
 
         for (const asset of assets) {
             let accumulator = accumulators.get(asset);
@@ -198,6 +229,12 @@ function toAssetRows(args: {
             accumulator.profitFactorSum += observation.profitFactor;
             accumulator.rankSum += observation.candidateRank;
             accumulator.weightedScoreSum += observationWeight;
+            if (hasDirectionalSignal) {
+                const assetDirection = asset === observation.assetA ? 1 : -1;
+                accumulator.directionalScoreSum += directionalScore * assetDirection;
+                accumulator.directionalObservations += 1;
+                accumulator.absoluteCloseChangePercentSum += Math.abs(observation.closeChangePercent!);
+            }
             accumulator.runIds.add(observation.runId);
             accumulator.partnerCounts.set(partner, (accumulator.partnerCounts.get(partner) ?? 0) + 1);
             accumulator.lastSeenAt = Math.max(accumulator.lastSeenAt, observation.runTimestamp);
@@ -301,6 +338,14 @@ function toAssetRows(args: {
         return {
             asset: accumulator.asset,
             score: round(score, 2),
+            directionalScore: round(accumulator.directionalScoreSum * 100, 2),
+            directionalAppearances: accumulator.directionalObservations,
+            avgPairChangePercent: round(
+                accumulator.directionalObservations > 0
+                    ? accumulator.absoluteCloseChangePercentSum / accumulator.directionalObservations
+                    : 0,
+                2
+            ),
             previousScore: round(previousWindowScore * 100, 2),
             scoreChange: round(scoreChange, 2),
             trend,
@@ -376,6 +421,28 @@ function sortByCurrentLeadership(rows: readonly AssetLeadershipAssetRow[]): Asse
     ));
 }
 
+function sortByStrongNow(rows: readonly AssetLeadershipAssetRow[]): AssetLeadershipAssetRow[] {
+    return [...rows]
+        .filter((row) => row.directionalAppearances > 0 && row.directionalScore > 0)
+        .sort((left, right) => (
+            right.directionalScore - left.directionalScore
+            || right.score - left.score
+            || right.directionalAppearances - left.directionalAppearances
+            || left.asset.localeCompare(right.asset)
+        ));
+}
+
+function sortByWeakNow(rows: readonly AssetLeadershipAssetRow[]): AssetLeadershipAssetRow[] {
+    return [...rows]
+        .filter((row) => row.directionalAppearances > 0 && row.directionalScore < 0)
+        .sort((left, right) => (
+            left.directionalScore - right.directionalScore
+            || right.score - left.score
+            || right.directionalAppearances - left.directionalAppearances
+            || left.asset.localeCompare(right.asset)
+        ));
+}
+
 function sortByEmergence(rows: readonly AssetLeadershipAssetRow[]): AssetLeadershipAssetRow[] {
     return [...rows]
         .filter((row) => row.scoreChange > 0)
@@ -432,21 +499,31 @@ export function buildAssetLeadershipReport(args: {
     runs: readonly AssetLeadershipPersistedRun[];
     recentRunLimit?: number;
     recentWindowRuns?: number;
+    intervalFilter?: string | "latest" | null;
 }): AssetLeadershipReport {
     const recentRunLimit = Math.max(1, args.recentRunLimit ?? DEFAULT_RECENT_RUN_LIMIT);
     const recentWindowRuns = Math.max(1, args.recentWindowRuns ?? DEFAULT_RECENT_WINDOW_RUNS);
-    const runs = [...args.runs]
+    const recentRuns = [...args.runs]
         .sort((left, right) => left.createdAt - right.createdAt)
         .slice(-recentRunLimit);
+    const intervalFilter = args.intervalFilter === undefined ? "latest" : args.intervalFilter;
+    const latestInterval = recentRuns[recentRuns.length - 1]?.interval ?? null;
+    const runs = intervalFilter === null
+        ? recentRuns
+        : recentRuns.filter((run) => run.interval === (intervalFilter === "latest" ? latestInterval : intervalFilter));
     const observations = buildObservations(runs);
     const rows = sortByCurrentLeadership(toAssetRows({ observations, runs, recentWindowRuns }));
     const currentLeaders = rows.slice(0, 20);
+    const strongestNow = sortByStrongNow(rows).slice(0, 12);
+    const weakestNow = sortByWeakNow(rows).slice(0, 12);
     const emergingLeaders = sortByEmergence(rows).slice(0, 12);
     const fallingLeaders = sortByFalling(rows).slice(0, 12);
     const consistentLeaders = sortByConsistency(rows).slice(0, 12);
     return {
         overview: buildOverview({ rows, observations, runs, recentWindowRuns }),
         currentLeaders,
+        strongestNow,
+        weakestNow,
         emergingLeaders,
         fallingLeaders,
         consistentLeaders,

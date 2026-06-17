@@ -142,6 +142,10 @@ export interface FinderUniverseSymbolResult {
     barCount: number;
     firstTime?: Time;
     lastTime?: Time;
+    firstClose?: number;
+    lastClose?: number;
+    directionalLookbackClose?: number;
+    directionalLookbackBars?: number;
     result?: FinderUniverseSymbolMetrics;
     error?: string;
 }
@@ -324,6 +328,8 @@ export interface AssetLeadershipObservation {
     totalUniverseTrades: number;
     topDecile: boolean;
     profitable: boolean;
+    closeChangePercent?: number;
+    directionalLookbackBars?: number;
 }
 
 export interface AssetLeadershipPersistedRun {
@@ -339,6 +345,9 @@ export interface AssetLeadershipPersistedRun {
 export interface AssetLeadershipAssetRow {
     asset: string;
     score: number;
+    directionalScore: number;
+    directionalAppearances: number;
+    avgPairChangePercent: number;
     previousScore: number;
     scoreChange: number;
     trend: "up" | "down" | "flat";
@@ -387,6 +396,8 @@ export interface AssetLeadershipDerivedMetric {
 export interface AssetLeadershipReport {
     overview: AssetLeadershipOverview;
     currentLeaders: AssetLeadershipAssetRow[];
+    strongestNow: AssetLeadershipAssetRow[];
+    weakestNow: AssetLeadershipAssetRow[];
     emergingLeaders: AssetLeadershipAssetRow[];
     fallingLeaders: AssetLeadershipAssetRow[];
     consistentLeaders: AssetLeadershipAssetRow[];

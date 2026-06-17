@@ -127,6 +127,8 @@ class AssetLeadershipService {
             dom.overviewMetrics.innerHTML = "";
             dom.derived.innerHTML = "";
             dom.currentLeaders.innerHTML = "";
+            dom.strongNow.innerHTML = "";
+            dom.weakNow.innerHTML = "";
             dom.emergingLeaders.innerHTML = "";
             dom.fallingLeaders.innerHTML = "";
             dom.consistentLeaders.innerHTML = "";
@@ -146,6 +148,12 @@ class AssetLeadershipService {
         this.renderLeadershipTable(dom.currentLeaders, report.currentLeaders, [
             "Asset", "Score", "Appr.", "Profit%", "Top10%", "AvgSharpe", "AvgExp", "PFScore"
         ]);
+        this.renderLeadershipTable(dom.strongNow, report.strongestNow, [
+            "Asset", "DirScore", "Obs", "AvgMove", "Leader", "Profit%"
+        ], "strongNow");
+        this.renderLeadershipTable(dom.weakNow, report.weakestNow, [
+            "Asset", "DirScore", "Obs", "AvgMove", "Leader", "Profit%"
+        ], "weakNow");
         this.renderLeadershipTable(dom.emergingLeaders, report.emergingLeaders, [
             "Asset", "ΔScore", "Trend", "Appr.", "Profit%", "AvgSharpe"
         ], "emerging");
@@ -192,7 +200,7 @@ class AssetLeadershipService {
         container: HTMLElement,
         rows: readonly AssetLeadershipAssetRow[],
         headers: readonly string[],
-        mode: "current" | "emerging" | "falling" | "consistent" = "current"
+        mode: "current" | "strongNow" | "weakNow" | "emerging" | "falling" | "consistent" = "current"
     ): void {
         if (rows.length === 0) {
             container.innerHTML = '<div class="param-hint">No data available.</div>';
@@ -214,6 +222,16 @@ class AssetLeadershipService {
         const r = (v: number, d = 2) => v.toFixed(d);
 
         switch (mode) {
+            case "strongNow":
+            case "weakNow":
+                return [
+                    `<td style="font-weight:600;">${row.asset}</td>`,
+                    `<td style="text-align:right;font-weight:600;color:${mode === "strongNow" ? "var(--color-green)" : "var(--color-red)"};">${r(row.directionalScore, 1)}</td>`,
+                    `<td style="text-align:right;">${row.directionalAppearances}</td>`,
+                    `<td style="text-align:right;">${r(row.avgPairChangePercent)}%</td>`,
+                    `<td style="text-align:right;">${r(row.score, 1)}</td>`,
+                    `<td style="text-align:right;">${(row.profitableRate * 100).toFixed(0)}%</td>`,
+                ].join("");
             case "emerging":
                 return [
                     `<td style="font-weight:600;">${row.asset}</td>`,

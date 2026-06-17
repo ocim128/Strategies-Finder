@@ -6,7 +6,7 @@ import type { AssetLeadershipPersistedRun, FinderUniverseCandidate } from "../li
 function makeCandidate(args: {
     strategyKey: string;
     strategyName: string;
-    symbols: Array<{ symbol: string; status: "profitable" | "losing"; netProfit: number; expectancy: number; sharpeRatio: number; profitFactor: number; totalTrades: number }>;
+    symbols: Array<{ symbol: string; status: "profitable" | "losing"; netProfit: number; expectancy: number; sharpeRatio: number; profitFactor: number; totalTrades: number; firstClose?: number; lastClose?: number; directionalLookbackClose?: number; directionalLookbackBars?: number }>;
     profitableActiveRatio: number;
 }): FinderUniverseCandidate {
     return {
@@ -17,6 +17,10 @@ function makeCandidate(args: {
             symbol: s.symbol,
             status: s.status,
             barCount: 1000,
+            firstClose: s.firstClose,
+            lastClose: s.lastClose,
+            directionalLookbackClose: s.directionalLookbackClose,
+            directionalLookbackBars: s.directionalLookbackBars,
             result: {
                 netProfit: s.netProfit,
                 netProfitPercent: 0,
@@ -168,6 +172,86 @@ describe("Asset Leadership aggregation", () => {
         expect(zec).to.not.be.undefined;
         expect(zec!.consecutiveRuns).to.equal(5);
         expect(zec!.totalRunsSeen).to.equal(5);
+    });
+
+    it("ranks the base asset as strong when a profitable synthetic ratio rises", () => {
+        const run = makeRun({
+            candidates: [
+                makeCandidate({
+                    strategyKey: "demo",
+                    strategyName: "Demo",
+                    profitableActiveRatio: 0.8,
+                    symbols: [
+                        { symbol: "ZEC+APT", status: "profitable", netProfit: 500, expectancy: 50, sharpeRatio: 3.0, profitFactor: 2.5, totalTrades: 20, directionalLookbackClose: 1, directionalLookbackBars: 96, lastClose: 1.2 },
+                    ],
+                }),
+            ],
+        });
+
+        const report = buildAssetLeadershipReport({ runs: [run] });
+
+        expect(report.strongestNow[0]?.asset).to.equal("ZEC");
+        expect(report.weakestNow[0]?.asset).to.equal("APT");
+    });
+
+    it("ranks the quote asset as strong when a profitable synthetic ratio falls", () => {
+        const run = makeRun({
+            candidates: [
+                makeCandidate({
+                    strategyKey: "demo",
+                    strategyName: "Demo",
+                    profitableActiveRatio: 0.8,
+                    symbols: [
+                        { symbol: "ZEC+APT", status: "profitable", netProfit: 500, expectancy: 50, sharpeRatio: 3.0, profitFactor: 2.5, totalTrades: 20, directionalLookbackClose: 1, directionalLookbackBars: 96, lastClose: 0.8 },
+                    ],
+                }),
+            ],
+        });
+
+        const report = buildAssetLeadershipReport({ runs: [run] });
+
+        expect(report.strongestNow[0]?.asset).to.equal("APT");
+        expect(report.weakestNow[0]?.asset).to.equal("ZEC");
+    });
+
+    it("scopes reports to the latest interval by default", () => {
+        const olderRun = makeRun({
+            runId: "run-2h",
+            createdAt: 1000,
+            interval: "2h",
+            candidates: [
+                makeCandidate({
+                    strategyKey: "older",
+                    strategyName: "Older",
+                    profitableActiveRatio: 1,
+                    symbols: [
+                        { symbol: "BTC+ETH", status: "profitable", netProfit: 1000, expectancy: 100, sharpeRatio: 4, profitFactor: 4, totalTrades: 30, directionalLookbackClose: 1, directionalLookbackBars: 96, lastClose: 1.5 },
+                    ],
+                }),
+            ],
+        });
+        const latestRun = makeRun({
+            runId: "run-15m",
+            createdAt: 2000,
+            interval: "15m",
+            candidates: [
+                makeCandidate({
+                    strategyKey: "latest",
+                    strategyName: "Latest",
+                    profitableActiveRatio: 0.8,
+                    symbols: [
+                        { symbol: "ZEC+APT", status: "profitable", netProfit: 500, expectancy: 50, sharpeRatio: 3, profitFactor: 2.5, totalTrades: 20, directionalLookbackClose: 1, directionalLookbackBars: 96, lastClose: 1.2 },
+                    ],
+                }),
+            ],
+        });
+
+        const report = buildAssetLeadershipReport({ runs: [olderRun, latestRun] });
+
+        expect(report.overview.totalRuns).to.equal(1);
+        expect(report.recentRuns.map((run) => run.interval)).to.deep.equal(["15m"]);
+        expect(report.currentLeaders.some((row) => row.asset === "BTC")).to.equal(false);
+        expect(report.strongestNow[0]?.asset).to.equal("ZEC");
     });
 
     it("ignores non-synthetic symbols", () => {

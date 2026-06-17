@@ -49,6 +49,7 @@ const UNIVERSE_DATA_LOAD_YIELD_EVERY = 8;
 const UNIVERSE_EVALUATION_YIELD_EVERY_RUNS = 256;
 const UNIVERSE_EVALUATION_YIELD_MIN_MS = 250;
 const UNIVERSE_ZERO_SIGNAL_BAIL_THRESHOLD = 5;
+const DIRECTIONAL_LOOKBACK_BARS = 96;
 
 interface FinderUniverseLoadedSymbol {
     symbol: string;
@@ -56,6 +57,10 @@ interface FinderUniverseLoadedSymbol {
     barCount: number;
     firstTime?: Time;
     lastTime?: Time;
+    firstClose?: number;
+    lastClose?: number;
+    directionalLookbackClose?: number;
+    directionalLookbackBars?: number;
     maxPossibleTrades: number;
 }
 
@@ -194,6 +199,10 @@ function buildRunFailedResult(symbol: FinderUniverseLoadedSymbol, error: string)
         barCount: symbol.barCount,
         firstTime: symbol.firstTime,
         lastTime: symbol.lastTime,
+        firstClose: symbol.firstClose,
+        lastClose: symbol.lastClose,
+        directionalLookbackClose: symbol.directionalLookbackClose,
+        directionalLookbackBars: symbol.directionalLookbackBars,
         error,
     };
 }
@@ -234,6 +243,10 @@ function buildSymbolResult(symbol: FinderUniverseLoadedSymbol, result: Awaited<R
         barCount: symbol.barCount,
         firstTime: symbol.firstTime,
         lastTime: symbol.lastTime,
+        firstClose: symbol.firstClose,
+        lastClose: symbol.lastClose,
+        directionalLookbackClose: symbol.directionalLookbackClose,
+        directionalLookbackBars: symbol.directionalLookbackBars,
         result: buildUniverseSymbolMetrics(result),
     };
 }
@@ -421,6 +434,8 @@ export async function runFinderUniverseExecution(
                 if (!Array.isArray(data) || data.length === 0) {
                     return { status: "failed", symbol, result: buildLoadFailedResult(symbol, "No candles returned.") };
                 }
+                const directionalLookbackBars = Math.min(DIRECTIONAL_LOOKBACK_BARS, Math.max(0, data.length - 1));
+                const directionalLookbackIndex = Math.max(0, data.length - 1 - directionalLookbackBars);
 
                 return {
                     status: "loaded",
@@ -430,6 +445,10 @@ export async function runFinderUniverseExecution(
                         barCount: data.length,
                         firstTime: data[0]?.time,
                         lastTime: data[data.length - 1]?.time,
+                        firstClose: data[0]?.close,
+                        lastClose: data[data.length - 1]?.close,
+                        directionalLookbackClose: data[directionalLookbackIndex]?.close,
+                        directionalLookbackBars,
                         maxPossibleTrades: data.length,
                     },
                 };
