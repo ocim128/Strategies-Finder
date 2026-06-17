@@ -326,6 +326,7 @@ function registerLazyFeatures(): void {
     registerLazyFeature("debug-panel", async () => (await import("./debug-panel")).initDebugPanel());
     registerLazyFeature("quick-view", async () => (await import("./quick-view")).quickViewManager.init());
     registerLazyFeature("finder", async () => (await import("./finder-manager")).finderManager.init());
+    registerLazyFeature("asset-leadership", async () => (await import("./asset-leadership-service")).assetLeadershipService.init());
     registerLazyFeature("alerts", async () => (await import("./handlers/alert-handlers")).initAlertHandlers());
     registerLazyFeature("hunt", async () => (await import("./hunt/hunt-service")).huntService.init());
     registerLazyFeature("data-mining", async () => (await import("./data-mining-manager")).dataMiningManager.init());

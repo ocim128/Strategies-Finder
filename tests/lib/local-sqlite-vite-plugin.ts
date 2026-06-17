@@ -384,6 +384,43 @@ function getSqliteDb(): DatabaseSync {
             ON polymarket_price_points(series_id, event_start_ts, ts);
         CREATE INDEX IF NOT EXISTS idx_pm_price_points_series_time
             ON polymarket_price_points(series_id, ts);
+        CREATE TABLE IF NOT EXISTS asset_leadership_runs (
+            run_id TEXT NOT NULL PRIMARY KEY,
+            created_at INTEGER NOT NULL,
+            interval TEXT NOT NULL,
+            strategy_count INTEGER NOT NULL,
+            universe_symbol_count INTEGER NOT NULL,
+            top_n INTEGER NOT NULL,
+            candidates_json TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS asset_leadership_observations (
+            run_id TEXT NOT NULL,
+            run_created_at INTEGER NOT NULL,
+            interval TEXT NOT NULL,
+            asset_a TEXT NOT NULL,
+            asset_b TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            status TEXT NOT NULL,
+            strategy_key TEXT NOT NULL,
+            strategy_name TEXT NOT NULL,
+            candidate_rank INTEGER NOT NULL,
+            profitable INTEGER NOT NULL,
+            top_decile INTEGER NOT NULL,
+            net_profit REAL NOT NULL,
+            expectancy REAL NOT NULL,
+            sharpe_ratio REAL NOT NULL,
+            profit_factor REAL NOT NULL,
+            total_trades INTEGER NOT NULL,
+            profitable_active_ratio REAL NOT NULL,
+            active_symbols INTEGER NOT NULL,
+            total_universe_trades INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY(run_id, asset_a, asset_b, strategy_key, symbol)
+        );
+        CREATE INDEX IF NOT EXISTS idx_al_obs_asset_time
+            ON asset_leadership_observations(asset_a, run_created_at);
+        CREATE INDEX IF NOT EXISTS idx_al_obs_asset_b_time
+            ON asset_leadership_observations(asset_b, run_created_at);
     `);
     sqliteDb = db;
     return db;
@@ -964,6 +1001,135 @@ export function localSqlitePlugin(): Plugin {
                         filePath,
                         bytes: Buffer.byteLength(normalized, 'utf8'),
                     });
+                    return;
+                }
+
+                if (method === 'POST' && path === '/store-asset-leadership') {
+                    const payload = await readJsonBody(req as IncomingMessage);
+                    const runId = String(payload?.runId || '').trim();
+                    const createdAt = Number(payload?.createdAt) || 0;
+                    const interval = String(payload?.interval || '').trim().toLowerCase();
+                    const strategyCount = Number(payload?.strategyCount) || 0;
+                    const universeSymbolCount = Number(payload?.universeSymbolCount) || 0;
+                    const topN = Number(payload?.topN) || 0;
+                    const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
+                    const observations = Array.isArray(payload?.observations) ? payload.observations : [];
+
+                    if (!runId || !interval) {
+                        sendJson(res, 400, { ok: false, error: 'runId and interval are required' });
+                        return;
+                    }
+
+                    const db = getSqliteDb();
+                    const nowSec = Math.floor(Date.now() / 1000);
+
+                    db.exec('BEGIN');
+                    try {
+                        db.prepare(`
+                            INSERT INTO asset_leadership_runs (run_id, created_at, interval, strategy_count, universe_symbol_count, top_n, candidates_json)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(run_id) DO UPDATE SET
+                                created_at = excluded.created_at,
+                                interval = excluded.interval,
+                                strategy_count = excluded.strategy_count,
+                                universe_symbol_count = excluded.universe_symbol_count,
+                                top_n = excluded.top_n,
+                                candidates_json = excluded.candidates_json
+                        `).run(runId, createdAt, interval, strategyCount, universeSymbolCount, topN, JSON.stringify(candidates));
+
+                        const obsUpsert = db.prepare(`
+                            INSERT INTO asset_leadership_observations (
+                                run_id, run_created_at, interval, asset_a, asset_b, symbol, status,
+                                strategy_key, strategy_name, candidate_rank, profitable, top_decile,
+                                net_profit, expectancy, sharpe_ratio, profit_factor, total_trades,
+                                profitable_active_ratio, active_symbols, total_universe_trades, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(run_id, asset_a, asset_b, strategy_key, symbol) DO UPDATE SET
+                                run_created_at = excluded.run_created_at,
+                                status = excluded.status,
+                                candidate_rank = excluded.candidate_rank,
+                                profitable = excluded.profitable,
+                                top_decile = excluded.top_decile,
+                                net_profit = excluded.net_profit,
+                                expectancy = excluded.expectancy,
+                                sharpe_ratio = excluded.sharpe_ratio,
+                                profit_factor = excluded.profit_factor,
+                                total_trades = excluded.total_trades,
+                                profitable_active_ratio = excluded.profitable_active_ratio,
+                                active_symbols = excluded.active_symbols,
+                                total_universe_trades = excluded.total_universe_trades,
+                                updated_at = excluded.updated_at
+                        `);
+
+                        for (const obs of observations) {
+                            obsUpsert.run(
+                                runId, createdAt, interval,
+                                String(obs.assetA || ''), String(obs.assetB || ''), String(obs.symbol || ''),
+                                String(obs.status || ''), String(obs.strategyKey || ''), String(obs.strategyName || ''),
+                                Number(obs.candidateRank) || 0, obs.profitable ? 1 : 0, obs.topDecile ? 1 : 0,
+                                Number(obs.netProfit) || 0, Number(obs.expectancy) || 0, Number(obs.sharpeRatio) || 0,
+                                Number(obs.profitFactor) || 0, Number(obs.totalTrades) || 0,
+                                Number(obs.profitableActiveRatio) || 0, Number(obs.activeSymbols) || 0,
+                                Number(obs.totalUniverseTrades) || 0, nowSec
+                            );
+                        }
+
+                        db.exec('COMMIT');
+                    } catch (error) {
+                        db.exec('ROLLBACK');
+                        throw error;
+                    }
+
+                    sendJson(res, 200, { ok: true, runId, observationsStored: observations.length });
+                    return;
+                }
+
+                if (method === 'GET' && path === '/load-asset-leadership') {
+                    const limit = Math.max(1, Math.min(200, Math.floor(Number(requestUrl.searchParams.get('limit')) || 50)));
+                    const db = getSqliteDb();
+                    const runRows = db.prepare(`
+                        SELECT run_id, created_at, interval, strategy_count, universe_symbol_count, top_n, candidates_json
+                        FROM asset_leadership_runs
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                    `).all(limit) as Array<{
+                        run_id: string;
+                        created_at: number;
+                        interval: string;
+                        strategy_count: number;
+                        universe_symbol_count: number;
+                        top_n: number;
+                        candidates_json: string;
+                    }>;
+
+                    const runs = runRows
+                        .map((row) => ({
+                            runId: row.run_id,
+                            createdAt: row.created_at,
+                            interval: row.interval,
+                            strategyCount: row.strategy_count,
+                            universeSymbolCount: row.universe_symbol_count,
+                            topN: row.top_n,
+                            candidates: JSON.parse(row.candidates_json || '[]'),
+                        }))
+                        .reverse();
+
+                    sendJson(res, 200, { ok: true, runs });
+                    return;
+                }
+
+                if (method === 'POST' && path === '/clear-asset-leadership') {
+                    const db = getSqliteDb();
+                    db.exec('BEGIN');
+                    try {
+                        db.exec('DELETE FROM asset_leadership_observations');
+                        db.exec('DELETE FROM asset_leadership_runs');
+                        db.exec('COMMIT');
+                    } catch (error) {
+                        db.exec('ROLLBACK');
+                        throw error;
+                    }
+                    sendJson(res, 200, { ok: true });
                     return;
                 }
 

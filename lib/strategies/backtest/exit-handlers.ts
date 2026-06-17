@@ -25,7 +25,10 @@ export function canExitAfterMinimumHold(position: PositionState, config: Normali
 }
 
 function comparisonTolerance(left: number, right: number): number {
-    return Math.max(1e-9, Math.max(Math.abs(left), Math.abs(right), 1) * 1e-12);
+    const magnitude = Math.max(Math.abs(left), Math.abs(right));
+    // Use relative tolerance (1e-10 of magnitude) so micro-prices like 4.5e-11
+    // don't get a 1e-9 absolute floor that dwarfs the actual price differences.
+    return magnitude > 0 ? magnitude * 1e-10 : 1e-12;
 }
 
 function greaterThanOrNearlyEqual(left: number, right: number): boolean {

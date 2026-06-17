@@ -3,6 +3,7 @@ import { bindFormAccessibility } from './form-accessibility';
 
 const LAZY_STRATEGY_PANEL_TAB_LOADERS = {
     finder: () => import('../html-partials/tab-finder.html?raw'),
+    assetleadership: () => import('../html-partials/tab-asset-leadership.html?raw'),
     alerts: () => import('../html-partials/tab-alerts.html?raw'),
     datamining: () => import('../html-partials/tab-datamining.html?raw'),
     hunt: () => import('../html-partials/tab-hunt.html?raw'),

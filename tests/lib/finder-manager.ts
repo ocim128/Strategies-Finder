@@ -1607,6 +1607,22 @@ export class FinderManager {
 			}
 			segments.push(`${Math.round(performance.now() - startTime)}ms`);
 			this.setStatus(segments.join(' | '));
+
+			// Persist universe results for Asset Leadership analysis
+			try {
+				const { assetLeadershipService } = await import("./asset-leadership-service");
+				void assetLeadershipService.persistUniverseRun({
+					interval: state.currentInterval,
+					strategyCount: selectedStrategies.length,
+					universeSymbolCount: totalSymbols,
+					topN: options.topN,
+					candidates: this.getUniverseResults(),
+				});
+			} catch (error) {
+				debugLogger.error("finder.asset_leadership_persist_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
 		}
 		return true;
 	}

@@ -18,6 +18,7 @@ let tabLazyListener: EventListener | null = null;
 
 const TAB_TO_FEATURE: Record<string, string> = {
     finder: "finder",
+    assetleadership: "asset-leadership",
     alerts: "alerts",
     hunt: "hunt",
     walkforward: "walk-forward",

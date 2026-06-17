@@ -261,9 +261,6 @@ export interface FinderDiagnostics {
         failedRuns: number;
         skippedRuns: number;
     };
-    backtest?: FinderBacktestDiagnostics;
-    failureBreakdown?: FinderFailureDiagnostics[];
-    universe?: FinderUniverseDiagnostics;
     timingsMs: {
         total: number;
         paramGeneration: number;
@@ -301,4 +298,105 @@ export interface FinderDiagnostics {
     };
     strategyBreakdown: FinderStrategyDiagnostics[];
     bottlenecks: string[];
+    backtest?: FinderBacktestDiagnostics;
+    failureBreakdown?: FinderFailureDiagnostics[];
+    universe?: FinderUniverseDiagnostics;
+}
+
+export interface AssetLeadershipObservation {
+    symbol: string;
+    assetA: string;
+    assetB: string;
+    status: FinderUniverseSymbolStatus;
+    candidateRank: number;
+    strategyKey: string;
+    strategyName: string;
+    interval: string;
+    runId: string;
+    runTimestamp: number;
+    netProfit: number;
+    expectancy: number;
+    sharpeRatio: number;
+    profitFactor: number;
+    totalTrades: number;
+    profitableActiveRatio: number;
+    activeSymbols: number;
+    totalUniverseTrades: number;
+    topDecile: boolean;
+    profitable: boolean;
+}
+
+export interface AssetLeadershipPersistedRun {
+    runId: string;
+    createdAt: number;
+    interval: string;
+    strategyCount: number;
+    universeSymbolCount: number;
+    topN: number;
+    candidates: FinderUniverseCandidate[];
+}
+
+export interface AssetLeadershipAssetRow {
+    asset: string;
+    score: number;
+    previousScore: number;
+    scoreChange: number;
+    trend: "up" | "down" | "flat";
+    appearances: number;
+    profitableAppearances: number;
+    topDecileAppearances: number;
+    profitableRate: number;
+    topDecileRate: number;
+    avgSharpe: number;
+    avgExpectancy: number;
+    avgNetProfit: number;
+    avgProfitFactor: number;
+    avgRank: number;
+    consistencyScore: number;
+    persistenceScore: number;
+    partnerDiversity: number;
+    strongestPartner: string | null;
+    strongestPartnerAppearances: number;
+    latestRunScore: number;
+    previousWindowScore: number;
+    recentSlope: number;
+    consecutiveRuns: number;
+    totalRunsSeen: number;
+    firstSeenAt: number;
+    lastSeenAt: number;
+}
+
+export interface AssetLeadershipOverview {
+    totalRuns: number;
+    totalObservations: number;
+    totalAssets: number;
+    latestRunAt: number | null;
+    recentWindowRuns: number;
+    previousWindowRuns: number;
+    topDecileThresholdRank: number;
+    currentLeader: string | null;
+    dominantAssetShare: number;
+}
+
+export interface AssetLeadershipDerivedMetric {
+    label: string;
+    value: string;
+    description: string;
+}
+
+export interface AssetLeadershipReport {
+    overview: AssetLeadershipOverview;
+    currentLeaders: AssetLeadershipAssetRow[];
+    emergingLeaders: AssetLeadershipAssetRow[];
+    fallingLeaders: AssetLeadershipAssetRow[];
+    consistentLeaders: AssetLeadershipAssetRow[];
+    derivedMetrics: AssetLeadershipDerivedMetric[];
+    recentRuns: Array<{
+        runId: string;
+        createdAt: number;
+        interval: string;
+        strategyCount: number;
+        universeSymbolCount: number;
+        topN: number;
+    }>;
 }

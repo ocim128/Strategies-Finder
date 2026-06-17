@@ -1,0 +1,60 @@
+<!-- Asset Leadership Tab -->
+<div id="assetleadershipTab">
+    <div class="section-title">Asset Leadership</div>
+    <div class="param-hint" id="assetLeadershipStatus">
+        Analyze which assets repeatedly appear in winning Finder universe strategies.
+        Run the Finder in Symbol Universe mode to generate leadership data.
+    </div>
+
+    <div class="finder-actions" style="margin-top: 8px;">
+        <button class="btn btn-secondary btn-compact" id="assetLeadershipRefresh" type="button">
+            Refresh
+        </button>
+        <button class="btn btn-secondary btn-compact" id="assetLeadershipCopy" type="button" disabled>
+            Copy Report
+        </button>
+        <button class="btn btn-secondary btn-compact" id="assetLeadershipClear" type="button" disabled>
+            Clear
+        </button>
+    </div>
+
+    <div class="finder-metrics" id="assetLeadershipOverviewMetrics" style="margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px;">
+    </div>
+
+    <div id="assetLeadershipDerived" style="margin-top: 12px;">
+    </div>
+
+    <div class="section-header" style="margin-top: 16px;">
+        <div class="section-title">Current Leaders</div>
+    </div>
+    <div class="param-hint">Assets with highest composite leadership score.</div>
+    <div id="assetLeadershipCurrentLeaders" class="finder-list" style="margin-top: 6px;">
+    </div>
+
+    <div class="section-header" style="margin-top: 16px;">
+        <div class="section-title">Emerging Leaders</div>
+    </div>
+    <div class="param-hint">Assets gaining leadership strength across recent runs.</div>
+    <div id="assetLeadershipEmergingLeaders" class="finder-list" style="margin-top: 6px;">
+    </div>
+
+    <div class="section-header" style="margin-top: 16px;">
+        <div class="section-title">Falling Leaders</div>
+    </div>
+    <div class="param-hint">Assets losing leadership strength across recent runs.</div>
+    <div id="assetLeadershipFallingLeaders" class="finder-list" style="margin-top: 6px;">
+    </div>
+
+    <div class="section-header" style="margin-top: 16px;">
+        <div class="section-title">Most Consistent Leaders</div>
+    </div>
+    <div class="param-hint">Assets that appear in consecutive Finder runs with sustained quality.</div>
+    <div id="assetLeadershipConsistentLeaders" class="finder-list" style="margin-top: 6px;">
+    </div>
+
+    <div class="section-header" style="margin-top: 16px;">
+        <div class="section-title">Recent Runs</div>
+    </div>
+    <div id="assetLeadershipRecentRuns" style="margin-top: 6px;">
+    </div>
+</div>
