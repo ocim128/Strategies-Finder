@@ -20,11 +20,13 @@ The synthetic pair system generates an ordinary OHLCV JSON file from two real sy
 6. Click **Generate & Load**.
 7. The synthetic chart loads. Run backtests and Finder as usual.
 
+The UI generator targets 50,000 final synthetic bars when the source data overlap allows it. Finder's **Data Window** control can run against one fifth of the loaded chart; **5/5 newest** is the latest roughly 10,000 bars on a 50,000-bar synthetic series.
+
 ### From the CLI
 
 ```bash
 # Fetch from Binance and generate locally
-npm run synthetic:pair -- --base-symbol BNBUSDT --quote-symbol PAXGUSDT --interval 15m --bars 10000
+npm run synthetic:pair -- --base-symbol BNBUSDT --quote-symbol PAXGUSDT --interval 15m --bars 50000
 
 # Use local JSON files (offline, no network)
 npm run synthetic:pair -- --base-symbol BNBUSDT --quote-symbol PAXGUSDT --interval 15m --bars 2000 --base-file base.json --quote-file quote.json

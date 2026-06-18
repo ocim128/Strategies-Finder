@@ -6,9 +6,24 @@ import {
     resolveFinderPolymarketExitMode,
     resolveFinderSortPriority,
     resolveFinderUniverseSortPriority,
+    sliceFinderDataWindow,
 } from "./lib/finder/finder-manager-logic";
 
 describe("Finder manager logic", () => {
+    it("slices Finder data into fifths with the fifth slice ending at the newest bar", () => {
+        const data = Array.from({ length: 50_000 }, (_, index) => index);
+
+        expect(sliceFinderDataWindow(data, "1")).to.deep.equal(data.slice(0, 10_000));
+        expect(sliceFinderDataWindow(data, "2")).to.deep.equal(data.slice(10_000, 20_000));
+        expect(sliceFinderDataWindow(data, "5")).to.deep.equal(data.slice(40_000));
+    });
+
+    it("keeps full Finder data when no fifth slice is selected", () => {
+        const data = [1, 2, 3, 4, 5];
+
+        expect(sliceFinderDataWindow(data, "all")).to.deep.equal(data);
+    });
+
     it("builds simple sort priority with stable netProfit fallback", () => {
         const sortPriority = resolveFinderSortPriority({
             useAdvancedSort: false,
@@ -73,6 +88,7 @@ describe("Finder manager logic", () => {
             primarySort: "expectancy",
             secondarySort: "profitFactor",
             mode: "random",
+            dataSlice: "5",
             topN: 12,
             steps: 4,
             rangePercent: 40,
@@ -89,6 +105,7 @@ describe("Finder manager logic", () => {
         });
 
         expect(options.sortPriority).to.deep.equal(["polyScore", "polyWinRate", "polyPredictions"]);
+        expect(options.dataSlice).to.equal("5");
         expect(options.maxTrades).to.equal(30);
         expect(options.freezeRiskManagement).to.equal(true);
         expect(options.polymarketMinScoredPredictions).to.equal(0);

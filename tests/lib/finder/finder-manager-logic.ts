@@ -3,6 +3,7 @@ import type {
     FinderMetric,
     FinderMode,
     FinderOptions,
+    FinderDataSlice,
     FinderUniverseMetric,
     FinderUniverseOptions,
     PolymarketFinderRankMode,
@@ -18,6 +19,7 @@ export interface FinderOptionsInput {
     primarySort: FinderMetric;
     secondarySort: FinderMetric;
     mode: FinderMode;
+    dataSlice?: FinderDataSlice;
     topN: number;
     steps: number;
     rangePercent: number;
@@ -44,6 +46,28 @@ export interface FinderOptionsInput {
     polymarketPostSignalLimitExitMode?: "fixed_price" | "entry_offset";
     polymarketPostSignalLimitExitPriceCents?: number;
     polymarketPostSignalLimitExitOffsetCents?: number;
+}
+
+export function normalizeFinderDataSlice(value: unknown): FinderDataSlice {
+    return value === "1" || value === "2" || value === "3" || value === "4" || value === "5"
+        ? value
+        : "all";
+}
+
+export function sliceFinderDataWindow<T>(data: readonly T[], dataSlice: FinderDataSlice): T[] {
+    if (dataSlice === "all") {
+        return data.slice();
+    }
+    if (data.length === 0) {
+        return [];
+    }
+
+    const sliceIndex = Number(dataSlice) - 1;
+    const start = Math.floor((sliceIndex * data.length) / 5);
+    const end = dataSlice === "5"
+        ? data.length
+        : Math.floor(((sliceIndex + 1) * data.length) / 5);
+    return data.slice(start, end);
 }
 
 export interface FinderUniverseOptionsInput {
@@ -127,6 +151,7 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
 
     return {
         mode: input.mode,
+        dataSlice: normalizeFinderDataSlice(input.dataSlice),
         sortPriority: resolveFinderSortPriority(input),
         useAdvancedSort: input.useAdvancedSort,
         topN: input.topN,

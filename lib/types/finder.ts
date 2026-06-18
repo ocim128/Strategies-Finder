@@ -5,6 +5,7 @@ import type { PolymarketExitMode } from "../polymarket-exit-mode";
 export type FinderMode = 'default' | 'grid' | 'random' | 'genetic';
 export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'accuracyTrades' | 'volume' | 'expectancy' | 'expectancyTrades' | 'profitFactor' | 'profitFactorTrades' | 'sizedNet';
 export type FinderScope = 'current_chart' | 'symbol_universe';
+export type FinderDataSlice = 'all' | '1' | '2' | '3' | '4' | '5';
 export type FinderMetric =
     | 'netProfit'
     | 'profitFactor'
@@ -49,6 +50,7 @@ export interface FinderOptions {
     sortPriority: FinderMetric[];
     useAdvancedSort: boolean;
     scope?: FinderScope;
+    dataSlice?: FinderDataSlice;
     randomSeed?: number;
     multiTimeframeEnabled?: boolean;
     timeframes?: string[];

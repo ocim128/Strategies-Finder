@@ -20,7 +20,9 @@ import { FinderUI } from "./finder/finder-ui";
 import {
 	buildFinderOptions,
 	buildFinderUniverseOptions,
+	normalizeFinderDataSlice,
 	resolveFinderPolymarketExitMode,
+	sliceFinderDataWindow,
 } from "./finder/finder-manager-logic";
 import { sortFinderResults } from "./finder/finder-engine";
 import { mergeFinderRiskParamsIntoBacktestSettings } from "./finder/finder-runner-core";
@@ -47,6 +49,7 @@ import type {
 	FinderDiagnostics,
 	FinderMetric,
 	FinderMode,
+	FinderDataSlice,
 	FinderOptions,
 	FinderScope,
 	PolymarketFinderRankMode,
@@ -138,6 +141,7 @@ type FinderPersistedUiState = {
 	advancedSortOrder: FinderMetric[];
 	advancedTimingSortEnabled: FinderMetric[];
 	mode: FinderMode;
+	dataSlice: FinderDataSlice;
 	topN: number;
 	maxRuns: number;
 	rangePercent: number;
@@ -175,6 +179,7 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	advancedSortOrder: [...FINDER_SORT_OPTIONS],
 	advancedTimingSortEnabled: [],
 	mode: "random",
+	dataSlice: "all",
 	topN: 10,
 	maxRuns: 120,
 	rangePercent: 555,
@@ -339,6 +344,7 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		advancedSortOrder: normalizeAdvancedSortOrder(source.advancedSortOrder),
 		advancedTimingSortEnabled: normalizeTimingSortMetrics(source.advancedTimingSortEnabled),
 		mode: normalizeFinderMode(source.mode),
+		dataSlice: normalizeFinderDataSlice(source.dataSlice),
 		topN: Math.round(normalizeNumber(source.topN, DEFAULT_FINDER_UI_STATE.topN, 1)),
 		maxRuns: Math.round(normalizeNumber(source.maxRuns, DEFAULT_FINDER_UI_STATE.maxRuns, 1)),
 		rangePercent: normalizeNumber(source.rangePercent, DEFAULT_FINDER_UI_STATE.rangePercent, 0),
@@ -491,9 +497,11 @@ export class FinderManager {
 		const cacheKey = this.buildUniverseDatasetCacheKey(symbol, interval);
 		const cached = this.universeDatasetCache.get(cacheKey);
 		if (cached) {
+			debugLogger.event("finder.universe_dataset_cache_hit", { symbol, interval, cacheKey });
 			this.setUniverseDatasetCache(cacheKey, cached);
 			return cached;
 		}
+		debugLogger.event("finder.universe_dataset_cache_miss", { symbol, interval, cacheKey });
 
 		let promise: Promise<OHLCVData[]>;
 		promise = dataManager.fetchDataDetached(symbol, interval, signal)
@@ -515,11 +523,21 @@ export class FinderManager {
 		return promise;
 	}
 
-	private buildSyntheticUniverseCacheKey(syntheticSymbol: string, interval: string): string {
-		const normalizedSymbol = syntheticSymbol.trim().toUpperCase();
-		const normalizedInterval = interval.trim().toLowerCase();
+	private buildSyntheticUniverseCacheKey(args: {
+		syntheticSymbol: string;
+		baseSymbol: string;
+		quoteSymbol: string;
+		interval: string;
+		sourceInterval: string;
+		sourceBars: number;
+	}): string {
+		const normalizedBase = args.baseSymbol.trim().toUpperCase();
+		const normalizedQuote = args.quoteSymbol.trim().toUpperCase();
+		const normalizedSymbol = args.syntheticSymbol.trim().toUpperCase();
+		const normalizedInterval = args.interval.trim().toLowerCase();
+		const normalizedSourceInterval = args.sourceInterval.trim().toLowerCase();
 		const provider = dataManager.getProvider(normalizedSymbol);
-		return `${provider}|${normalizedSymbol}|${normalizedInterval}|synthetic`;
+		return `${provider}|${normalizedSymbol}|${normalizedBase}|${normalizedQuote}|${normalizedInterval}|${normalizedSourceInterval}|${args.sourceBars}|synthetic`;
 	}
 
 	private async loadSyntheticPairForUniverse(
@@ -529,16 +547,38 @@ export class FinderManager {
 		signal?: AbortSignal,
 	): Promise<OHLCVData[]> {
 		const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
-		const cacheKey = this.buildSyntheticUniverseCacheKey(syntheticSymbol, interval);
-		const cached = this.universeDatasetCache.get(cacheKey);
-		if (cached) {
-			this.setUniverseDatasetCache(cacheKey, cached);
-			return cached;
-		}
-
 		const source = pickSourceInterval(interval);
 		const sourceInterval = source?.sourceInterval ?? interval;
 		const sourceBars = Math.min(SYNTHETIC_TARGET_BARS * (source?.ratio ?? 1), DATA_CHART_TOTAL_LIMIT);
+		const cacheKey = this.buildSyntheticUniverseCacheKey({
+			syntheticSymbol,
+			baseSymbol,
+			quoteSymbol,
+			interval,
+			sourceInterval,
+			sourceBars,
+		});
+		const cached = this.universeDatasetCache.get(cacheKey);
+		if (cached) {
+			debugLogger.event("finder.synthetic_universe_cache_hit", {
+				syntheticSymbol,
+				baseSymbol,
+				quoteSymbol,
+				interval,
+				sourceInterval,
+				sourceBars,
+			});
+			this.setUniverseDatasetCache(cacheKey, cached);
+			return cached;
+		}
+		debugLogger.event("finder.synthetic_universe_cache_miss", {
+			syntheticSymbol,
+			baseSymbol,
+			quoteSymbol,
+			interval,
+			sourceInterval,
+			sourceBars,
+		});
 
 		let promise: Promise<OHLCVData[]>;
 		promise = (async () => {
@@ -640,6 +680,7 @@ export class FinderManager {
 		setVisible(dom.finderSortList, this.uiState.useAdvancedSort);
 		this.applyAdvancedSortStateToDom();
 		dom.finderMode.value = this.uiState.mode;
+		dom.finderDataSlice.value = this.uiState.dataSlice;
 		dom.finderTopN.value = String(this.uiState.topN);
 		dom.finderMaxRuns.value = String(this.uiState.maxRuns);
 		dom.finderRange.value = String(this.uiState.rangePercent);
@@ -971,6 +1012,7 @@ export class FinderManager {
 		dom.finderTradeFilterSection.style.display = universeScope ? "none" : "";
 		dom.finderModeRow.classList.toggle("is-disabled", universeScope);
 		dom.finderStepsRow.style.display = universeScope ? "none" : "";
+		dom.finderDataSliceRow.style.display = universeScope ? "none" : "";
 		dom.finderStrategyActions.classList.remove("is-disabled");
 		dom.finderStrategiesToggleAll.disabled = false;
 		dom.finderStrategySelectAll.disabled = false;
@@ -1028,6 +1070,7 @@ export class FinderManager {
 			dom.finderSortSecondary,
 			dom.finderAdvancedToggle,
 			dom.finderMode,
+			dom.finderDataSlice,
 			dom.finderTopN,
 			dom.finderMaxRuns,
 			dom.finderRange,
@@ -1059,6 +1102,7 @@ export class FinderManager {
 			.map((item) => item.dataset.value)
 			.filter((metric): metric is FinderMetric => isTimingSortMetric(metric));
 		this.uiState.mode = normalizeFinderMode(dom.finderMode.value);
+		this.uiState.dataSlice = normalizeFinderDataSlice(dom.finderDataSlice.value);
 		this.uiState.topN = Math.round(this.readFinderNumberInput(dom.finderTopN, DEFAULT_FINDER_UI_STATE.topN, 1));
 		this.uiState.maxRuns = Math.round(this.readFinderNumberInput(dom.finderMaxRuns, DEFAULT_FINDER_UI_STATE.maxRuns, 1));
 		this.uiState.rangePercent = this.readFinderNumberInput(dom.finderRange, DEFAULT_FINDER_UI_STATE.rangePercent, 0);
@@ -1501,7 +1545,8 @@ export class FinderManager {
 		const requiresTsEngine = backtestService.requiresTypescriptEngine(settings) || isSmartTradeSizingMode(capitalSettings.sizingMode);
 
 		const blockSlicedData = sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
-		const ohlcvData = buildFinderEvaluationData(blockSlicedData, state.currentInterval, settings);
+		const windowSlicedData = sliceFinderDataWindow(blockSlicedData, options.dataSlice ?? "all");
+		const ohlcvData = buildFinderEvaluationData(windowSlicedData, state.currentInterval, settings);
 		if (ohlcvData.length === 0) {
 			this.setStatus('No candles available for finder run.');
 			return false;
@@ -1693,6 +1738,7 @@ export class FinderManager {
 			})
 			.map(el => (el as HTMLElement).dataset.value as FinderMetric | undefined);
 		const mode = scope === 'symbol_universe' ? 'random' : dom.finderMode.value as FinderMode;
+		const dataSlice = scope === 'symbol_universe' ? 'all' : normalizeFinderDataSlice(dom.finderDataSlice.value);
 		const topN = Math.round(this.readFinderNumberInput(dom.finderTopN, DEFAULT_FINDER_UI_STATE.topN, 1));
 		const steps = Math.round(this.readFinderNumberInput(dom.finderSteps, DEFAULT_FINDER_UI_STATE.steps, 2));
 		const rangePercent = this.readFinderNumberInput(dom.finderRange, DEFAULT_FINDER_UI_STATE.rangePercent, 0);
@@ -1720,6 +1766,7 @@ export class FinderManager {
 
 		const options = buildFinderOptions({
 			mode,
+			dataSlice,
 			useAdvancedSort,
 			advancedSortValues,
 			primarySort: dom.finderSort.value as FinderMetric,
