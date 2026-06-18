@@ -336,4 +336,167 @@ describe("DataFetcher chart lookback", () => {
         assert.equal(data.length, 10);
         assert.deepEqual(data.map((candle) => candle.time), [300, 600, 900, 1_200, 1_500, 1_800, 2_100, 2_400, 2_700, 3_000]);
     });
+
+    it("offline detached load serves SQLite cache without any Binance gap-fill", async () => {
+        resetLocalApiAvailability();
+        const cachedCandles = Array.from({ length: 12 }, (_, index) => {
+            const time = (index + 1) * 300;
+            return {
+                time,
+                open: 100 + index,
+                high: 101 + index,
+                low: 99 + index,
+                close: 100.5 + index,
+                volume: 1000 + index,
+            };
+        });
+        const requestedPaths: string[] = [];
+
+        globalThis.fetch = async (input) => {
+            const url = new URL(String(input), "http://localhost");
+            requestedPaths.push(url.pathname);
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response("ok", { status: 200 });
+            }
+            if (url.pathname === "/api/sqlite/load-ohlcv") {
+                return new Response(JSON.stringify({ ok: true, candles: cachedCandles }), {
+                    status: 200,
+                    headers: { "content-type": "application/json" },
+                });
+            }
+            if (url.pathname === "/api/sqlite/store-ohlcv") {
+                return new Response(JSON.stringify({ ok: true, upserted: 0, totalBars: cachedCandles.length }), { status: 200 });
+            }
+            // Any Binance hit is a regression: offline Universe loads must skip the remote gap-fill.
+            throw new Error(`Unexpected remote request: ${url.toString()}`);
+        };
+
+        const fetcher = createFetcher({
+            getLookbackBars: () => null,
+            persistence: {
+                persistLocalCandles: async () => undefined,
+            },
+        });
+
+        const data = await fetcher.fetchDataDetached("ETHUSDT", "5m", { offline: true });
+        const binanceRequests = requestedPaths.filter((path) => path === "/api/v3/klines" || path === "/api/fapi/v1/klines");
+
+        assert.equal(binanceRequests.length, 0, "offline mode must not hit Binance when local data exists");
+        assert.equal(data.length, cachedCandles.length);
+        assert.deepEqual(
+            data.map((candle) => candle.time),
+            cachedCandles.map((candle) => candle.time),
+        );
+    });
+
+    it("offline detached load on a fully cold symbol still falls back to remote (cold-symbol safety net)", async () => {
+        resetLocalApiAvailability();
+        const toBinanceKline = (timeSec: number, price: number) => ([
+            timeSec * 1000,
+            String(price),
+            String(price + 1),
+            String(price - 1),
+            String(price + 0.5),
+            "1000",
+        ]);
+        let binanceHits = 0;
+
+        globalThis.fetch = async (input) => {
+            const url = new URL(String(input), "http://localhost");
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response("ok", { status: 200 });
+            }
+            if (url.pathname === "/api/sqlite/load-ohlcv") {
+                return new Response(JSON.stringify({ ok: true, candles: [] }), {
+                    status: 200,
+                    headers: { "content-type": "application/json" },
+                });
+            }
+            if (url.pathname === "/api/sqlite/store-ohlcv") {
+                return new Response(JSON.stringify({ ok: true, upserted: 0, totalBars: 0 }), { status: 200 });
+            }
+            if (url.pathname === "/api/v3/klines") {
+                binanceHits += 1;
+                return new Response(JSON.stringify([
+                    toBinanceKline(300, 99),
+                    toBinanceKline(600, 100),
+                ]), { status: 200 });
+            }
+
+            throw new Error(`Unexpected request: ${url.toString()}`);
+        };
+
+        const fetcher = createFetcher({
+            getLookbackBars: () => null,
+            persistence: {
+                persistLocalCandles: async () => undefined,
+            },
+        });
+
+        const data = await fetcher.fetchDataDetached("ETHUSDT", "5m", { offline: true });
+
+        assert.ok(binanceHits >= 1, "cold symbol with no local data must still go remote for correctness");
+        assert.ok(data.length >= 1);
+    });
+
+    it("non-offline detached load still performs the Binance gap-fill on warm cache", async () => {
+        resetLocalApiAvailability();
+        const cachedCandles = Array.from({ length: 12 }, (_, index) => {
+            const time = (index + 1) * 300;
+            return {
+                time,
+                open: 100 + index,
+                high: 101 + index,
+                low: 99 + index,
+                close: 100.5 + index,
+                volume: 1000 + index,
+            };
+        });
+        const toBinanceKline = (timeSec: number, price: number) => ([
+            timeSec * 1000,
+            String(price),
+            String(price + 1),
+            String(price - 1),
+            String(price + 0.5),
+            "1000",
+        ]);
+        let binanceHits = 0;
+
+        globalThis.fetch = async (input) => {
+            const url = new URL(String(input), "http://localhost");
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response("ok", { status: 200 });
+            }
+            if (url.pathname === "/api/sqlite/load-ohlcv") {
+                return new Response(JSON.stringify({ ok: true, candles: cachedCandles }), {
+                    status: 200,
+                    headers: { "content-type": "application/json" },
+                });
+            }
+            if (url.pathname === "/api/sqlite/store-ohlcv") {
+                return new Response(JSON.stringify({ ok: true, upserted: 0, totalBars: cachedCandles.length }), { status: 200 });
+            }
+            if (url.pathname === "/api/v3/klines") {
+                binanceHits += 1;
+                return new Response(JSON.stringify([]), { status: 200 });
+            }
+
+            throw new Error(`Unexpected request: ${url.toString()}`);
+        };
+
+        const fetcher = createFetcher({
+            getLookbackBars: () => null,
+            persistence: {
+                persistLocalCandles: async () => undefined,
+            },
+        });
+
+        const data = await fetcher.fetchDataDetached("ETHUSDT", "5m");
+
+        assert.ok(binanceHits >= 1, "non-offline detached path must still perform the remote gap-fill");
+        assert.equal(data.length, cachedCandles.length);
+    });
 });

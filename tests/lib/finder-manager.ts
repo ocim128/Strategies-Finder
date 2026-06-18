@@ -222,6 +222,10 @@ const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
 	"activeSymbols",
 ] as const;
 const UNIVERSE_DATASET_CACHE_MAX_ENTRIES = 512;
+// Synthetic universe runs reuse the same source symbols (e.g. BNBUSDT 1m) across
+// many pairs. A typical universe has <50 unique source symbols, so a small LRU
+// is enough to dedup 200+ source reads down to the unique set per run.
+const SYNTHETIC_SOURCE_SERIES_CACHE_MAX_ENTRIES = 64;
 const TIMING_SORT_METRICS: readonly FinderMetric[] = ["entryScore", "exitScore"];
 
 function isTimingSortMetric(value: unknown): value is FinderMetric {
@@ -398,6 +402,7 @@ export class FinderManager {
 	private dom: FinderManagerDom | null = null;
 	private localDailyAssetMapPromise: Promise<Map<string, LocalDailyAsset>> | null = null;
 	private readonly universeDatasetCache = new Map<string, Promise<OHLCVData[]>>();
+	private readonly syntheticSourceSeriesCache = new Map<string, Promise<OHLCVData[]>>();
 
 	private getDom(): FinderManagerDom {
 		return this.dom ??= createFinderManagerDom();
@@ -516,7 +521,7 @@ export class FinderManager {
 		debugLogger.event("finder.universe_dataset_cache_miss", { symbol, interval, cacheKey });
 
 		let promise: Promise<OHLCVData[]>;
-		promise = dataManager.fetchDataDetached(symbol, interval, signal)
+		promise = dataManager.fetchDataDetached(symbol, interval, { signal, offline: true })
 			.then((data) => {
 				if (signal?.aborted || !Array.isArray(data) || data.length === 0) {
 					if (this.universeDatasetCache.get(cacheKey) === promise) {
@@ -550,6 +555,40 @@ export class FinderManager {
 		const normalizedSourceInterval = args.sourceInterval.trim().toLowerCase();
 		const provider = dataManager.getProvider(normalizedSymbol);
 		return `${provider}|${normalizedSymbol}|${normalizedBase}|${normalizedQuote}|${normalizedInterval}|${normalizedSourceInterval}|${args.sourceBars}|synthetic`;
+	}
+
+	private getSourceSeriesForSynthetic(
+		sourceSymbol: string,
+		sourceInterval: string,
+		sourceBars: number,
+		signal?: AbortSignal,
+	): Promise<OHLCVData[]> {
+		// Synthetic universe pairs reuse the same source symbols (e.g. BNBUSDT 1m)
+		// across many pairs. Without this cache, BNBUSDT 1m would be re-read from
+		// SQLite/IndexedDB once per pair that references it (up to ~15x in a typical
+		// universe). The source arrays are treated as read-only by
+		// buildSyntheticPairDataset and aggregateSyntheticBars, so sharing is safe.
+		const cacheKey = `${sourceSymbol.trim().toUpperCase()}|${sourceInterval.trim().toLowerCase()}|${sourceBars}`;
+		const cached = this.syntheticSourceSeriesCache.get(cacheKey);
+		if (cached) {
+			debugLogger.event("finder.synthetic_source_cache_hit", { sourceSymbol, sourceInterval, sourceBars });
+			return cached;
+		}
+		const promise = dataManager
+			.fetchHistoricalData(sourceSymbol, sourceInterval, sourceBars, { signal, offline: true })
+			.catch((error) => {
+				if (this.syntheticSourceSeriesCache.get(cacheKey) === promise) {
+					this.syntheticSourceSeriesCache.delete(cacheKey);
+				}
+				throw error;
+			});
+		this.syntheticSourceSeriesCache.set(cacheKey, promise);
+		while (this.syntheticSourceSeriesCache.size > SYNTHETIC_SOURCE_SERIES_CACHE_MAX_ENTRIES) {
+			const oldestKey = this.syntheticSourceSeriesCache.keys().next().value;
+			if (!oldestKey) break;
+			this.syntheticSourceSeriesCache.delete(oldestKey);
+		}
+		return promise;
 	}
 
 	private async loadSyntheticPairForUniverse(
@@ -595,9 +634,13 @@ export class FinderManager {
 		let promise: Promise<OHLCVData[]>;
 		promise = (async () => {
 			if (signal?.aborted) return [];
+			// Source bars are fetched through getSourceSeriesForSynthetic, which
+			// dedupes identical source reads across pairs (BNBUSDT 1m is reused
+			// ~15x in a typical universe). offline:true skips the remote Binance
+			// gap-fill so warm symbols serve from local caches only.
 			const [baseData, quoteData] = await Promise.all([
-				dataManager.fetchHistoricalData(baseSymbol, sourceInterval, sourceBars),
-				dataManager.fetchHistoricalData(quoteSymbol, sourceInterval, sourceBars),
+				this.getSourceSeriesForSynthetic(baseSymbol, sourceInterval, sourceBars, signal),
+				this.getSourceSeriesForSynthetic(quoteSymbol, sourceInterval, sourceBars, signal),
 			]);
 			if (signal?.aborted) return [];
 			if (baseData.length === 0 || quoteData.length === 0) return [];

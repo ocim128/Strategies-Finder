@@ -13,6 +13,18 @@ export type HistoricalFetchOptions = {
     onProgress?: (progress: HistoricalFetchProgress) => void;
     requestDelayMs?: number;
     maxRequests?: number;
+    /**
+     * When true, satisfy the request only from local sources (imported, SQLite,
+     * IndexedDB cache, bundled seed) and skip the remote Binance gap-fill tail.
+     *
+     * Batch research workloads (e.g. Symbol Universe Finder) read thousands of
+     * already-cached historical bars per symbol; paying for interactive-chart
+     * freshness on each one dominates runtime without changing backtest input.
+     *
+     * If no local data exists at all, the remote path is still used so cold
+     * symbols remain correct.
+     */
+    offline?: boolean;
 };
 
 export interface BybitTradFiKlineResponse {

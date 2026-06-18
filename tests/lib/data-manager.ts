@@ -174,8 +174,12 @@ export class DataManager {
         return this.fetcher.fetchData(symbol, interval, signal);
     }
 
-    public async fetchDataDetached(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
-        return this.fetcher.fetchDataDetached(symbol, interval, signal);
+    public async fetchDataDetached(
+        symbol: string,
+        interval: string,
+        options?: { signal?: AbortSignal; offline?: boolean }
+    ): Promise<OHLCVData[]> {
+        return this.fetcher.fetchDataDetached(symbol, interval, options);
     }
 
     public async fetchDataForScan(

@@ -120,6 +120,16 @@ export class DataFetcher {
     }
 
     async fetchData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
+        return this.fetchDataWithOptions(symbol, interval, { signal });
+    }
+
+    async fetchDataWithOptions(
+        symbol: string,
+        interval: string,
+        options?: { signal?: AbortSignal; offline?: boolean }
+    ): Promise<OHLCVData[]> {
+        const signal = options?.signal;
+        const offline = options?.offline === true;
         const secondMarketSymbol = normalizeSecondMarketChartSymbol(symbol);
         if (secondMarketSymbol && isSecondMarketChartContext(symbol, interval)) {
             if (signal?.aborted) return [];
@@ -156,14 +166,20 @@ export class DataFetcher {
 
         const load = async () => {
             const chain = await this.resolveProviderFallbackChain(symbol, interval, signal);
-            return this.fetchDataFromProviderChain(chain, symbol, interval, signal);
+            return this.fetchDataFromProviderChain(chain, symbol, interval, signal, offline);
         };
-        return signal
+        // offline and signal both bypass dedupe (abortable callers must not share
+        // an in-flight promise another caller could resolve after they abort).
+        return signal || offline
             ? load()
             : this.runDedupedLoad(`chart:${provider}:${cacheKey}:${interval}:${lookbackBars ?? "all"}`, load);
     }
 
-    async fetchDataDetached(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
+    async fetchDataDetached(
+        symbol: string,
+        interval: string,
+        options?: { signal?: AbortSignal; offline?: boolean }
+    ): Promise<OHLCVData[]> {
         const detachedFetcher = new DataFetcher(
             this.providerRouter,
             this.cache,
@@ -172,7 +188,7 @@ export class DataFetcher {
             this.getChartLookbackBars,
             {}
         );
-        return detachedFetcher.fetchData(symbol, interval, signal);
+        return detachedFetcher.fetchDataWithOptions(symbol, interval, options);
     }
 
     async fetchDataForScan(
@@ -620,14 +636,15 @@ export class DataFetcher {
         chain: ProviderFallbackChain,
         symbol: string,
         interval: string,
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        offline?: boolean
     ): Promise<OHLCVData[]> {
         if (chain.provider === 'mock') {
             return this.fetchMockChartData(symbol, interval, signal, chain.lookbackBars);
         }
 
         if (isBinanceDataProvider(chain.provider)) {
-            return this.fetchBinanceChartData(symbol, interval, signal, chain.lookbackBars);
+            return this.fetchBinanceChartData(symbol, interval, signal, chain.lookbackBars, offline);
         }
 
         if (chain.provider === 'bybit-tradfi') {
@@ -691,7 +708,8 @@ export class DataFetcher {
         symbol: string,
         interval: string,
         signal: AbortSignal | undefined,
-        lookbackBars: number | null
+        lookbackBars: number | null,
+        offline?: boolean
     ): Promise<OHLCVData[]> {
         const provider = this.providerRouter.getProvider(symbol);
         if (!isBinanceDataProvider(provider)) {
@@ -699,12 +717,15 @@ export class DataFetcher {
         }
         const result = await this.fetchBinanceDataHybridWithMeta(symbol, interval, signal, {
             maxBars: lookbackBars ?? undefined,
+            offline,
         });
-        this.reporter.updateSymbolDataSource?.(
-            `Live: ${getBinanceMarketLabel(getBinanceMarketTypeForProvider(provider))}`,
-            'live',
-            `Chart data is loaded from ${getBinanceMarketLabel(getBinanceMarketTypeForProvider(provider))}.`
-        );
+        if (!offline) {
+            this.reporter.updateSymbolDataSource?.(
+                `Live: ${getBinanceMarketLabel(getBinanceMarketTypeForProvider(provider))}`,
+                'live',
+                `Chart data is loaded from ${getBinanceMarketLabel(getBinanceMarketTypeForProvider(provider))}.`
+            );
+        }
         return result.data;
     }
 
@@ -1053,6 +1074,7 @@ export class DataFetcher {
         const requestSignal = options?.signal ?? signal;
         const requestDelayMs = options?.requestDelayMs ?? 80;
         const maxRequests = options?.maxRequests;
+        const offline = options?.offline === true;
 
         const imported = this.getImportedDataByKey().get(cacheKey);
         if (imported && imported.length > 0) {
@@ -1118,7 +1140,12 @@ export class DataFetcher {
         const lastSyncAt = this.cache.syncAtByKey.get(cacheKey) ?? 0;
         const recentlySynced = now - lastSyncAt < DATA_CACHE_SYNC_MIN_MS;
         const hasCachedData = Boolean(cached && cached.candles.length > 0);
-        if (hasCachedData && recentlySynced) {
+        // Offline (batch research) path and recently-synced path share the same
+        // semantics: serve cached data without the remote Binance gap-fill. Offline
+        // is an explicit opt-in for workloads that never want freshness (Universe
+        // Finder); recentlySynced is the time-based auto short-circuit. If no local
+        // data exists at all, both fall through to the remote path for correctness.
+        if (hasCachedData && (offline || recentlySynced)) {
             if (cachedSanitized) {
                 await this.persistLocalCandles({
                     symbol: storageSymbol,
