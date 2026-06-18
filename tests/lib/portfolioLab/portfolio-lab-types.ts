@@ -18,9 +18,22 @@ export const DEFAULT_LOOKBACK_BARS = 1500;
 export const DEFAULT_FORECAST_ANCHOR = "ETHUSDT";
 export const MAJOR_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT"] as const;
 
-export type DataSource = "mock" | "local" | "network";
+export type DataSource = "mock" | "local" | "network" | "synthetic";
 export type PortfolioWindowMode = "latest_bars" | "common_overlap";
 export type PortfolioEngineUsed = "rust" | "typescript";
+
+export interface SyntheticPairConnection {
+    baseAsset: string;
+    quoteAsset: string;
+    baseSymbol: string;
+    quoteSymbol: string;
+    syntheticSymbol: string;
+    baseMovePercent: number | null;
+    quoteMovePercent: number | null;
+    ratioMovePercent: number | null;
+    alignedBars: number;
+    droppedBars: number;
+}
 
 export interface PortfolioCapitalSettings extends CapitalSettings {
     fixedTradeToggle?: boolean;
@@ -30,6 +43,7 @@ export interface CachedPairData {
     rawData: OHLCVData[];
     data: OHLCVData[];
     source: DataSource;
+    syntheticConnection?: SyntheticPairConnection;
 }
 
 export interface PairRunArtifacts {
@@ -57,6 +71,7 @@ export interface PairAnalysisRow {
     engineUsed: PortfolioEngineUsed;
     marketCorrelation: number | null;
     strategyCorrelation: number | null;
+    syntheticConnection?: SyntheticPairConnection;
 }
 
 export interface ConsensusTradeSample {

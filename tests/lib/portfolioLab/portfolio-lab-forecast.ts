@@ -2,7 +2,7 @@ import { getOpenPositionForScanner } from "../strategies/backtest/signal-prepara
 import { timeKey, type OHLCVData, type Signal, type Time, type Trade } from "../strategies";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { formatPercent, toDisplaySymbol } from "./portfolio-lab-formatters";
-import { resolveLatestPortfolioSignalType } from "./portfolio-lab-helpers";
+import { isIndependentPeer, resolveLatestPortfolioSignalType } from "./portfolio-lab-helpers";
 import {
     average,
     computeAdverseExcursionAtr,
@@ -550,6 +550,9 @@ export function buildForecastOpenBreadthContext(
         if (symbol === targetSymbol) {
             continue;
         }
+        if (!isIndependentPeer(targetSymbol, symbol)) {
+            continue;
+        }
         const peerBarIndex = artifacts.timeIndex.get(timeKeyValue);
         if (peerBarIndex === undefined) {
             continue;
@@ -609,6 +612,9 @@ export function buildForecastSignalBreadthContext(
         if (symbol === targetSymbol) {
             continue;
         }
+        if (!isIndependentPeer(targetSymbol, symbol)) {
+            continue;
+        }
         const latestType = resolveLatestPortfolioSignalType(windowKeys, artifacts.signalPresenceByTime);
         if (!latestType) {
             continue;
@@ -659,7 +665,7 @@ export function computeOpenBreadthPersistence(
             context.runCache,
             peerWeights
         );
-        if (breadth.sameCount < breadth.oppositeCount) {
+        if (breadth.activePeerCount === 0 || breadth.sameCount < breadth.oppositeCount) {
             break;
         }
         persistence += 1;
@@ -689,7 +695,7 @@ export function computeSignalBreadthPersistence(
             context.lagBars,
             peerWeights
         );
-        if (breadth.sameCount < breadth.oppositeCount) {
+        if (breadth.activePeerCount === 0 || breadth.sameCount < breadth.oppositeCount) {
             break;
         }
         persistence += 1;

@@ -17,6 +17,7 @@ import {
     buildConsensusAnalysis,
     buildLiveContextSnapshot,
     buildOpenTradeForecast,
+    buildSyntheticPairConnection,
     buildOppositionSweepRows,
     buildPortfolioSignalPresenceLookup,
     buildRankingRows,
@@ -36,6 +37,7 @@ import {
     MAX_LOOKBACK_BARS,
     MAX_PORTFOLIO_SYMBOLS,
     MIN_LOOKBACK_BARS,
+    parsePortfolioSyntheticPairSymbol,
     type BreadthSweepRow,
     type CachedPairData,
     type ConsensusAnalysis,
@@ -49,6 +51,12 @@ import {
     type PortfolioWindowMode,
     type SizingScenarioRow,
 } from "./portfolioLab";
+import {
+    aggregateSyntheticBars,
+    buildSyntheticPairDataset,
+    pickSourceInterval,
+    resolveSyntheticSourceBars,
+} from "../scripts/lib/synthetic-pair";
 import { renderPortfolioLab } from "./portfolioLab/portfolio-lab-renderer";
 import {
     renderBreadthSweep,
@@ -68,10 +76,11 @@ import {
     renderRow,
     renderSizingSummary,
     renderSizingTable,
+    renderSyntheticConnections,
     renderSummary,
 } from "./portfolioLab/portfolio-lab-html";
 import { state } from "./state";
-import { commitBacktestResult } from "./state-actions";
+import { commitBacktestResult, commitOhlcvData, setMarketSelection } from "./state-actions";
 import { applySignalPolarity, timeKey, type OHLCVData, type Strategy, type StrategyParams } from "./strategies";
 import { mapWithConcurrencyLimit } from "./async-pool";
 import { getTimeIndex } from "./strategies/backtest/backtest-utils";
@@ -283,13 +292,14 @@ class PortfolioLabService {
                         return {
                             row: {
                                 symbol,
-                                displayName: symbol.endsWith("USDT") ? `${symbol.slice(0, -4)}/USDT` : symbol,
+                                displayName: this.getDisplayName(symbol, pairData),
                                 bars: pairData.data.length,
                                 source: pairData.source,
                                 result: runResult.result,
                                 engineUsed: runResult.engineUsed,
                                 marketCorrelation: benchmarkData.data.length >= MIN_LOOKBACK_BARS ? computeCloseReturnCorrelation(pairData.data, benchmarkData.data) : null,
                                 strategyCorrelation: benchmarkRun ? computeEquityReturnCorrelation(runResult.result, benchmarkRun.result) : null,
+                                syntheticConnection: pairData.syntheticConnection,
                             },
                         };
                     } catch (error) {
@@ -562,12 +572,65 @@ class PortfolioLabService {
             return cached;
         }
 
+        const syntheticData = await this.loadSyntheticPairData(symbol, lookbackBars, dataCache);
+        if (syntheticData) {
+            return syntheticData;
+        }
+
         const result = await dataManager.fetchDataForScanWithMeta(symbol, state.currentInterval, undefined, lookbackBars);
         const prepared: CachedPairData = {
             rawData: result.data,
             data: this.prepareAnalysisData(result.data),
             source: result.source,
         };
+        dataCache.set(symbol, prepared);
+        return prepared;
+    }
+
+    private async loadSyntheticPairData(
+        symbol: string,
+        lookbackBars: number,
+        dataCache: Map<string, CachedPairData>
+    ): Promise<CachedPairData | null> {
+        const parsed = parsePortfolioSyntheticPairSymbol(symbol);
+        if (!parsed) {
+            return null;
+        }
+
+        const source = pickSourceInterval(state.currentInterval);
+        const sourceInterval = source?.sourceInterval ?? state.currentInterval;
+        const sourceBars = resolveSyntheticSourceBars(lookbackBars, source?.ratio ?? 1);
+        const [baseData, quoteData] = await Promise.all([
+            dataManager.fetchHistoricalData(parsed.baseSymbol, sourceInterval, sourceBars),
+            dataManager.fetchHistoricalData(parsed.quoteSymbol, sourceInterval, sourceBars),
+        ]);
+
+        const dataset = buildSyntheticPairDataset({
+            base: baseData,
+            quote: quoteData,
+            interval: sourceInterval,
+            minBars: 1,
+        });
+        const ratioData = source
+            ? aggregateSyntheticBars(dataset.bars, state.currentInterval)
+            : dataset.bars;
+        const analysisData = this.prepareAnalysisData(ratioData);
+        const preparedBaseData = this.prepareAnalysisData(baseData);
+        const preparedQuoteData = this.prepareAnalysisData(quoteData);
+        const prepared: CachedPairData = {
+            rawData: ratioData,
+            data: analysisData,
+            source: "synthetic",
+            syntheticConnection: buildSyntheticPairConnection({
+                parsed,
+                ratioData: analysisData,
+                baseData: preparedBaseData,
+                quoteData: preparedQuoteData,
+                alignedBars: dataset.meta.alignedBars,
+                droppedBars: dataset.meta.droppedBars,
+            }),
+        };
+        dataManager.registerImportedData(parsed.syntheticSymbol, state.currentInterval, ratioData);
         dataCache.set(symbol, prepared);
         return prepared;
     }
@@ -678,6 +741,7 @@ class PortfolioLabService {
             maxOppose,
             currentInterval: state.currentInterval,
         });
+        renderSyntheticConnections(this.getDom(), rows);
     }
 
     private bindRowActions(): void {
@@ -688,6 +752,14 @@ class PortfolioLabService {
             button.addEventListener("click", () => {
                 const symbol = button.dataset.symbol;
                 if (!symbol) {
+                    return;
+                }
+                const cached = this.lastRunContext?.dataCache.get(symbol);
+                if (cached?.syntheticConnection) {
+                    const syntheticSymbol = cached.syntheticConnection.syntheticSymbol;
+                    setMarketSelection({ symbol: syntheticSymbol, interval: state.currentInterval });
+                    commitOhlcvData(cached.data, "portfolio_synthetic_pair_load");
+                    uiManager.showToast(`Loaded synthetic ${syntheticSymbol} on ${state.currentInterval}.`, "success");
                     return;
                 }
                 uiManager.showToast(`Loading ${symbol} on ${state.currentInterval}...`, "info");
@@ -707,8 +779,22 @@ class PortfolioLabService {
     }
 
     private normalizeSymbol(raw: string): string | null {
-        const normalized = raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+        const trimmed = raw.trim().toUpperCase();
+        const plusIdx = trimmed.indexOf("+");
+        if (plusIdx > 0 && plusIdx < trimmed.length - 1 && trimmed.indexOf("+", plusIdx + 1) === -1) {
+            const base = trimmed.slice(0, plusIdx).replace(/[^A-Z0-9]/g, "");
+            const quote = trimmed.slice(plusIdx + 1).replace(/[^A-Z0-9]/g, "");
+            return base && quote ? `${base}+${quote}` : null;
+        }
+        const normalized = trimmed.replace(/[^A-Z0-9]/g, "");
         return normalized.length > 0 ? normalized : null;
+    }
+
+    private getDisplayName(symbol: string, data: CachedPairData): string {
+        if (data.syntheticConnection) {
+            return `${data.syntheticConnection.baseAsset}/${data.syntheticConnection.quoteAsset}`;
+        }
+        return symbol.endsWith("USDT") ? `${symbol.slice(0, -4)}/USDT` : symbol;
     }
 
     private readLookbackBars(raw: string): number {

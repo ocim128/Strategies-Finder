@@ -2,6 +2,7 @@ import { getOpenPositionForScanner } from "../strategies/backtest/signal-prepara
 import { timeKey, type Trade } from "../strategies";
 import { getConsensusBucket } from "./portfolio-lab-consensus";
 import { buildSignalContextKey, buildSignalContexts } from "./portfolio-lab-sweep";
+import { isIndependentPeer } from "./portfolio-lab-helpers";
 import type {
     ConsensusAnalysis,
     ConsensusTradeSample,
@@ -79,6 +80,9 @@ export function buildCurrentOpenPositionContext(
 
     for (const [symbol, artifacts] of context.runCache.entries()) {
         if (symbol === context.benchmarkSymbol) {
+            continue;
+        }
+        if (!isIndependentPeer(context.benchmarkSymbol, symbol)) {
             continue;
         }
 

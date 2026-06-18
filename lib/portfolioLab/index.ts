@@ -9,3 +9,4 @@ export * from "./portfolio-lab-live-context";
 export * from "./portfolio-lab-html";
 export * from "./portfolio-lab-helpers";
 export * from "./portfolio-lab-renderer";
+export * from "./portfolio-lab-synthetic";

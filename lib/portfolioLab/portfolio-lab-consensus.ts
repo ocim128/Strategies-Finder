@@ -1,5 +1,5 @@
 import { timeKey, type Signal, type Trade } from "../strategies";
-import { resolveLatestPortfolioSignalType } from "./portfolio-lab-helpers";
+import { isIndependentPeer, resolveLatestPortfolioSignalType } from "./portfolio-lab-helpers";
 import type {
     ConsensusAnalysis,
     ConsensusBucketSummary,
@@ -161,6 +161,9 @@ export function buildConsensusTradeSample(
 
     for (const [symbol, artifacts] of artifactsBySymbol.entries()) {
         if (symbol === targetSymbol) {
+            continue;
+        }
+        if (!isIndependentPeer(targetSymbol, symbol)) {
             continue;
         }
 

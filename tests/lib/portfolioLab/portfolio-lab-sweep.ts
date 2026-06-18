@@ -2,7 +2,7 @@ import { backtestService } from "../backtest-service";
 import { timeKey, type BacktestResult, type OHLCVData, type Signal, type Strategy, type StrategyParams } from "../strategies";
 import { uiManager } from "../ui-manager";
 import { MIN_LOOKBACK_BARS, type BreadthSweepRow, type ExecutionFilter, type ExecutionFilterRun, type OppositionSweepRow, type PairRunArtifacts, type PortfolioCapitalSettings, type PortfolioEngineUsed, type PortfolioRunContext, type SignalContext } from "./portfolio-lab-types";
-import { resolveLatestPortfolioSignalType, resolvePortfolioSignalType } from "./portfolio-lab-helpers";
+import { isIndependentPeer, resolveLatestPortfolioSignalType, resolvePortfolioSignalType } from "./portfolio-lab-helpers";
 
 export interface PortfolioSweepDependencies {
     runPair: (
@@ -163,6 +163,9 @@ export function buildSignalContexts(
 
         for (const [symbol, artifacts] of artifactsBySymbol.entries()) {
             if (symbol === targetSymbol) {
+                continue;
+            }
+            if (!isIndependentPeer(targetSymbol, symbol)) {
                 continue;
             }
 

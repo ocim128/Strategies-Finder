@@ -354,6 +354,58 @@ export function renderInsights(
     return insights.map((item) => `<div class="portfolio-lab__insight">${item}</div>`).join("");
 }
 
+export function renderSyntheticConnections(dom: PortfolioLabDom, rows: PairAnalysisRow[]): void {
+    const syntheticRows = rows.filter((row) => row.syntheticConnection);
+    dom.portfolioSyntheticConnectionSection.style.display = syntheticRows.length > 0 ? "" : "none";
+    if (syntheticRows.length === 0) {
+        dom.portfolioSyntheticConnectionSummary.innerHTML = "";
+        dom.portfolioSyntheticConnectionTableBody.innerHTML = `
+            <tr>
+                <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                    Add synthetic pairs such as NEAR+WIF to inspect base/quote connections.
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    const baseLeading = syntheticRows.filter((row) => (row.syntheticConnection?.ratioMovePercent ?? 0) > 0);
+    const quoteLeading = syntheticRows.filter((row) => (row.syntheticConnection?.ratioMovePercent ?? 0) < 0);
+    const strongest = syntheticRows
+        .slice()
+        .sort((a, b) => Math.abs(b.syntheticConnection?.ratioMovePercent ?? 0) - Math.abs(a.syntheticConnection?.ratioMovePercent ?? 0))[0];
+
+    dom.portfolioSyntheticConnectionSummary.innerHTML = [
+        renderSummaryCard("Synthetic Pairs", `${syntheticRows.length}`, `${baseLeading.length} base-led / ${quoteLeading.length} quote-led`),
+        renderSummaryCard(
+            "Strongest Spread",
+            strongest?.displayName ?? "-",
+            strongest?.syntheticConnection ? `${formatPercent(strongest.syntheticConnection.ratioMovePercent)} ratio move` : "No ratio movement"
+        ),
+        renderSummaryCard("Connection Rule", "Base / Quote", "ratio up = base stronger; ratio down = quote stronger"),
+    ].join("");
+
+    dom.portfolioSyntheticConnectionTableBody.innerHTML = syntheticRows.map((row) => {
+        const connection = row.syntheticConnection!;
+        const ratioMove = connection.ratioMovePercent ?? 0;
+        const isBaseLeading = ratioMove >= 0;
+        const leader = isBaseLeading ? connection.baseAsset : connection.quoteAsset;
+        const laggard = isBaseLeading ? connection.quoteAsset : connection.baseAsset;
+        return `
+            <tr>
+                <td>${escapeHtml(row.displayName)}</td>
+                <td>${escapeHtml(connection.baseSymbol)} / ${escapeHtml(connection.quoteSymbol)}</td>
+                <td class="${(connection.baseMovePercent ?? 0) >= 0 ? "positive" : "negative"}">${formatPercent(connection.baseMovePercent)}</td>
+                <td class="${(connection.quoteMovePercent ?? 0) >= 0 ? "positive" : "negative"}">${formatPercent(connection.quoteMovePercent)}</td>
+                <td class="${ratioMove >= 0 ? "positive" : "negative"}">${formatPercent(connection.ratioMovePercent)}</td>
+                <td>${escapeHtml(leader)} leading ${escapeHtml(laggard)}</td>
+                <td>${row.result.totalTrades}</td>
+                <td class="${row.result.expectancy >= 0 ? "positive" : "negative"}">${formatCurrency(row.result.expectancy)}</td>
+            </tr>
+        `;
+    }).join("");
+}
+
 export function renderCorrelationMatrix(
     rows: PairAnalysisRow[],
     selectedSymbols: string[],

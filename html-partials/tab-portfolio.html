@@ -128,6 +128,37 @@
             <div class="portfolio-lab__insights" id="portfolioInsights"></div>
         </div>
 
+        <div class="analysis-finder-section portfolio-lab__section" id="portfolioSyntheticConnectionSection" style="display: none;">
+            <div class="analysis-finder-header">
+                <h4 class="analysis-finder-title">Synthetic Pair Connections</h4>
+            </div>
+            <div class="simulation-grid" id="portfolioSyntheticConnectionSummary"></div>
+            <div class="analysis-table-wrap portfolio-lab__consensus-table-wrap">
+                <div class="portfolio-lab__table-caption">Ratio direction is base divided by quote; rising means the base asset is stronger than the quote asset.</div>
+                <table class="analysis-table portfolio-lab__table">
+                    <thead>
+                        <tr>
+                            <th>Pair</th>
+                            <th>Connection</th>
+                            <th>Base Move</th>
+                            <th>Quote Move</th>
+                            <th>Ratio Move</th>
+                            <th>Read</th>
+                            <th>Trades</th>
+                            <th>Exp</th>
+                        </tr>
+                    </thead>
+                    <tbody id="portfolioSyntheticConnectionTableBody">
+                        <tr>
+                            <td colspan="8" style="text-align:center;color:var(--text-secondary);padding:16px;">
+                                Add synthetic pairs such as NEAR+WIF to inspect base/quote connections.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <div class="analysis-finder-section portfolio-lab__section" id="portfolioExecutionSection" style="display: none;">
             <div class="analysis-finder-header">
                 <h4 class="analysis-finder-title">Execution Filters</h4>

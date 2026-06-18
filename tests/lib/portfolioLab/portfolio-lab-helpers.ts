@@ -1,4 +1,5 @@
 import { timeKey, type Signal, type Time } from "../strategies";
+import { parsePortfolioSyntheticPairSymbol } from "./portfolio-lab-synthetic";
 
 const DEFAULT_PORTFOLIO_MAJOR_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT"] as const;
 
@@ -73,4 +74,47 @@ export function buildRunnablePortfolioUniverse(
     }
 
     return Array.from(unique).slice(0, 2);
+}
+
+const PORTFOLIO_QUOTE_SUFFIXES = ["USDT", "USDC", "USD", "BTC", "ETH", "BNB"] as const;
+
+function stripKnownQuoteSuffix(symbol: string): string {
+    for (const suffix of PORTFOLIO_QUOTE_SUFFIXES) {
+        if (symbol.length > suffix.length && symbol.endsWith(suffix)) {
+            return symbol.slice(0, -suffix.length);
+        }
+    }
+    return symbol;
+}
+
+function sharesLegWithCompressedTarget(targetCompressed: string, legSymbol: string): boolean {
+    const core = stripKnownQuoteSuffix(legSymbol);
+    if (!core) {
+        return false;
+    }
+    return targetCompressed.startsWith(core) || targetCompressed.endsWith(core);
+}
+
+function resolveCompressedForm(symbol: string): string | null {
+    const parsed = parsePortfolioSyntheticPairSymbol(symbol);
+    if (parsed) {
+        return parsed.syntheticSymbol;
+    }
+    const normalized = symbol.trim().toUpperCase();
+    return normalized || null;
+}
+
+export function isIndependentPeer(targetSymbol: string, peerSymbol: string): boolean {
+    const targetCompressed = resolveCompressedForm(targetSymbol);
+    const peer = parsePortfolioSyntheticPairSymbol(peerSymbol);
+    if (!targetCompressed || !peer) {
+        return true;
+    }
+    if (sharesLegWithCompressedTarget(targetCompressed, peer.baseSymbol)) {
+        return false;
+    }
+    if (sharesLegWithCompressedTarget(targetCompressed, peer.quoteSymbol)) {
+        return false;
+    }
+    return true;
 }
