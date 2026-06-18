@@ -60,8 +60,8 @@ import type {
 	FinderStrategyDiagnostics,
 } from './types/finder';
 import { isSmartTradeSizingMode } from "./types/backtest";
-import { aggregateSyntheticBars, buildSyntheticPairDataset, deriveSyntheticSymbol, pickSourceInterval } from "../scripts/lib/synthetic-pair";
-import { SYNTHETIC_TARGET_BARS, DATA_CHART_TOTAL_LIMIT } from "./data/constants";
+import { aggregateSyntheticBars, buildSyntheticPairDataset, deriveSyntheticSymbol, pickSourceInterval, resolveSyntheticSourceBars } from "../scripts/lib/synthetic-pair";
+import { SYNTHETIC_TARGET_BARS } from "./data/constants";
 
 const QUOTE_SUFFIXES = ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD', 'BTC', 'ETH', 'BNB', 'EUR', 'TRY', 'BRL'];
 const FINDER_FOLLOW_STRATEGY_KEYS = [
@@ -549,7 +549,7 @@ export class FinderManager {
 		const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
 		const source = pickSourceInterval(interval);
 		const sourceInterval = source?.sourceInterval ?? interval;
-		const sourceBars = Math.min(SYNTHETIC_TARGET_BARS * (source?.ratio ?? 1), DATA_CHART_TOTAL_LIMIT);
+		const sourceBars = resolveSyntheticSourceBars(SYNTHETIC_TARGET_BARS, source?.ratio ?? 1);
 		const cacheKey = this.buildSyntheticUniverseCacheKey({
 			syntheticSymbol,
 			baseSymbol,
@@ -1012,7 +1012,7 @@ export class FinderManager {
 		dom.finderTradeFilterSection.style.display = universeScope ? "none" : "";
 		dom.finderModeRow.classList.toggle("is-disabled", universeScope);
 		dom.finderStepsRow.style.display = universeScope ? "none" : "";
-		dom.finderDataSliceRow.style.display = universeScope ? "none" : "";
+		dom.finderDataSliceRow.style.display = "";
 		dom.finderStrategyActions.classList.remove("is-disabled");
 		dom.finderStrategiesToggleAll.disabled = false;
 		dom.finderStrategySelectAll.disabled = false;
@@ -1618,8 +1618,9 @@ export class FinderManager {
 		let maxLoadedSymbols = 0;
 		const settings = backtestService.getBacktestSettings();
 		const capitalSettings = backtestService.getCapitalSettings();
-		const loadDataset = (symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> => {
-			return this.loadUniverseDataset(symbol, interval, signal);
+		const loadDataset = async (symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> => {
+			const data = await this.loadUniverseDataset(symbol, interval, signal);
+			return sliceFinderDataWindow(data, options.dataSlice ?? "all");
 		};
 
 		for (let strategyIndex = 0; strategyIndex < selectedStrategies.length; strategyIndex += 1) {
@@ -1738,7 +1739,7 @@ export class FinderManager {
 			})
 			.map(el => (el as HTMLElement).dataset.value as FinderMetric | undefined);
 		const mode = scope === 'symbol_universe' ? 'random' : dom.finderMode.value as FinderMode;
-		const dataSlice = scope === 'symbol_universe' ? 'all' : normalizeFinderDataSlice(dom.finderDataSlice.value);
+		const dataSlice = normalizeFinderDataSlice(dom.finderDataSlice.value);
 		const topN = Math.round(this.readFinderNumberInput(dom.finderTopN, DEFAULT_FINDER_UI_STATE.topN, 1));
 		const steps = Math.round(this.readFinderNumberInput(dom.finderSteps, DEFAULT_FINDER_UI_STATE.steps, 2));
 		const rangePercent = this.readFinderNumberInput(dom.finderRange, DEFAULT_FINDER_UI_STATE.rangePercent, 0);

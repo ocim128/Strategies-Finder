@@ -12,6 +12,7 @@ import type { Time } from 'lightweight-charts';
 import type { OHLCVData } from '../../lib/types/strategies';
 import { parseOhlcvBars } from './ohlcv-file';
 import { parseIntervalSeconds } from '../../lib/interval-utils';
+import { SYNTHETIC_SOURCE_BARS_LIMIT } from '../../lib/data/constants';
 
 // ============================================================================
 // Public types
@@ -275,6 +276,12 @@ export function pickSourceInterval(
 
     sourceIntervalCache.set(cacheKey, null);
     return null;
+}
+
+export function resolveSyntheticSourceBars(targetBars: number, sourceRatio = 1): number {
+    const normalizedTarget = Math.max(1, Math.floor(Number.isFinite(targetBars) ? targetBars : 1));
+    const normalizedRatio = Math.max(1, Math.floor(Number.isFinite(sourceRatio) ? sourceRatio : 1));
+    return Math.min(SYNTHETIC_SOURCE_BARS_LIMIT, normalizedTarget * normalizedRatio);
 }
 
 export function aggregateSyntheticBars(

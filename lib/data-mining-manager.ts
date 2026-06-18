@@ -5,7 +5,7 @@ import { setCurrentInterval, setCurrentSymbol } from "./state-actions";
 import { uiManager } from "./ui-manager";
 import { dataManager } from "./data-manager";
 import { SYMBOL_MAP } from "./constants";
-import { DATA_CHART_TOTAL_LIMIT, SYNTHETIC_TARGET_BARS } from "./data/constants";
+import { SYNTHETIC_TARGET_BARS } from "./data/constants";
 import { debugLogger } from "./debug-logger";
 import { clearAll } from "./app-actions";
 import { commitOhlcvData } from "./state-actions";
@@ -14,7 +14,7 @@ import { OHLCVData, HistoricalFetchProgress } from "./types/index";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { formatPolymarketDisplayName, parsePolymarketEventInput } from "./dataProviders/polymarket";
 import { queryDataMiningDom, type DataMiningDom } from "./data-mining-dom";
-import { aggregateSyntheticBars, buildSyntheticPairDataset, deriveSyntheticSymbol, isSyntheticSymbol, pickSourceInterval } from "../scripts/lib/synthetic-pair";
+import { aggregateSyntheticBars, buildSyntheticPairDataset, deriveSyntheticSymbol, isSyntheticSymbol, pickSourceInterval, resolveSyntheticSourceBars } from "../scripts/lib/synthetic-pair";
 
 interface NormalizedCandle {
     time: number;
@@ -715,11 +715,11 @@ export class DataMiningManager {
         this.recordDiagnostic('synth_generate_start', {
             base: baseSymbol, quote: quoteSymbol, target: syntheticSymbol,
             interval, sourceInterval, subBarRatio: source?.ratio ?? 1,
-            sourceBarsRequested: Math.min(SYNTHETIC_TARGET_BARS * (source?.ratio ?? 1), DATA_CHART_TOTAL_LIMIT),
+            sourceBarsRequested: resolveSyntheticSourceBars(SYNTHETIC_TARGET_BARS, source?.ratio ?? 1),
         });
 
         try {
-            const sourceBars = Math.min(SYNTHETIC_TARGET_BARS * (source?.ratio ?? 1), DATA_CHART_TOTAL_LIMIT);
+            const sourceBars = resolveSyntheticSourceBars(SYNTHETIC_TARGET_BARS, source?.ratio ?? 1);
             const [baseData, quoteData] = await Promise.all([
                 dataManager.fetchHistoricalData(baseSymbol, sourceInterval, sourceBars),
                 dataManager.fetchHistoricalData(quoteSymbol, sourceInterval, sourceBars),

@@ -5,7 +5,8 @@ export const DATA_CACHE_SYNC_MIN_MS = 30_000;
 
 /**
  * Desired final bar count for synthetic pair generation.
- * Source bars fetched = this × subBarRatio (capped at DATA_CHART_TOTAL_LIMIT).
+ * Source bars fetched = this × subBarRatio (capped at SYNTHETIC_SOURCE_BARS_LIMIT).
  * Ensures every target interval gets ~same number of bars regardless of ratio.
  */
 export const SYNTHETIC_TARGET_BARS = 50_000;
+export const SYNTHETIC_SOURCE_BARS_LIMIT = 1_000_000;

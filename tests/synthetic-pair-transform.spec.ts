@@ -6,6 +6,7 @@ import {
     buildSyntheticPairDataset,
     buildSyntheticPairPayload,
     pickSourceInterval,
+    resolveSyntheticSourceBars,
     SyntheticAlignmentError,
     SyntheticQuoteError,
 } from '../scripts/lib/synthetic-pair';
@@ -23,6 +24,11 @@ function bar(time: number, overrides: Partial<OHLCVData> = {}): OHLCVData {
 }
 
 describe('synthetic pair dataset builder', () => {
+    it('requests enough raw source bars to preserve the target final bar count after sub-bar aggregation', () => {
+        assert.equal(resolveSyntheticSourceBars(50_000, 5), 250_000);
+        assert.equal(resolveSyntheticSourceBars(50_000, 12), 600_000);
+    });
+
     it('builds ratio bars from aligned intersection timestamps', () => {
         const base = [
             bar(10, { open: 200, high: 220, low: 180, close: 210 }),
