@@ -48,6 +48,7 @@ export interface CompactFinderDiagnostics {
             reason: string;
         }>;
         omittedFailedSymbols: number;
+        dataWindow?: NonNullable<FinderDiagnostics["universe"]>["dataWindow"];
     };
     timings: {
         totalMs: number;
@@ -665,6 +666,7 @@ export function buildCompactFinderDiagnostics(diagnostics: FinderDiagnostics): C
             loadFailures: diagnostics.universe.failedSymbols.length,
             failedSymbols: diagnostics.universe.failedSymbols.slice(0, COMPACT_FINDER_UNIVERSE_FAILURE_LIMIT),
             omittedFailedSymbols: Math.max(0, diagnostics.universe.failedSymbols.length - COMPACT_FINDER_UNIVERSE_FAILURE_LIMIT),
+            dataWindow: diagnostics.universe.dataWindow,
         };
     }
 

@@ -8,6 +8,7 @@ import {
 import { debugLogger } from "../debug-logger";
 import {
     fetchBinanceDataAfter,
+    fetchBinanceDataBefore,
     fetchBinanceData,
     fetchBinanceDataWithLimit,
 } from "../dataProviders/binance";
@@ -74,6 +75,11 @@ type FastPathLocalCandlesOptions = {
     minBars?: number;
     lookbackBars?: number | null;
     skipCache?: boolean;
+};
+type BinanceHybridOptions = HistoricalFetchOptions & {
+    maxBars?: number;
+    clampToChartLimit?: boolean;
+    requireMinBars?: boolean;
 };
 type SecondMarketMarketType = "spot" | "futures";
 
@@ -292,17 +298,31 @@ export class DataFetcher {
         });
         if (fastPathCandles) return fastPathCandles;
 
-        // SQLite fallback — survives page refresh, avoids re-fetching from Binance
         if (isBinanceDataProvider(provider)) {
-            const storageSymbol = this.providerRouter.getStorageSymbol(symbol, provider);
-            const sqliteRaw = await loadSqliteCandles(storageSymbol, storageInterval, limit);
-            if (sqliteRaw) {
-                const sanitized = this.sanitizeBinanceCandles(symbol, storageInterval, sqliteRaw.candles, 'sqlite');
-                if (sanitized.length >= limit) {
-                    this.cache.set(cacheKey, sanitized, 'sqlite');
-                    return sliceCandlesToLookback(sanitized, limit);
-                }
+            const load = async () => {
+                const result = await this.fetchBinanceDataHybridInternal(symbol, interval, options?.signal, {
+                    ...options,
+                    maxBars: limit,
+                    clampToChartLimit: false,
+                    requireMinBars: true,
+                });
+                return result.data;
+            };
+            if (this.canDedupeHistoricalOptions(options)) {
+                return this.runDedupedLoad(
+                    [
+                        "limit-hybrid",
+                        provider,
+                        cacheKey,
+                        interval,
+                        limit,
+                        options?.requestDelayMs ?? "default",
+                        options?.maxRequests ?? "default",
+                    ].join(":"),
+                    load
+                );
             }
+            return load();
         }
 
         const load = async () => {
@@ -1002,7 +1022,7 @@ export class DataFetcher {
         symbol: string,
         interval: string,
         signal?: AbortSignal,
-        options?: { maxBars?: number }
+        options?: BinanceHybridOptions
     ): Promise<{ data: OHLCVData[]; source: 'local' | 'network' }> {
         const result = await this.fetchBinanceDataHybridInternal(symbol, interval, signal, options);
         return { data: result.data, source: result.source };
@@ -1012,7 +1032,7 @@ export class DataFetcher {
         symbol: string,
         interval: string,
         signal?: AbortSignal,
-        options?: { maxBars?: number }
+        options?: BinanceHybridOptions
     ): Promise<{ data: OHLCVData[]; source: 'local' | 'network'; cached: { candles: OHLCVData[]; updatedAt: number; source: string } | null; hasSqliteBase: boolean; cacheKey: string; storageInterval: string; effectiveMaxBars: number }> {
         const provider = this.providerRouter.getProvider(symbol);
         if (!isBinanceDataProvider(provider)) {
@@ -1023,12 +1043,16 @@ export class DataFetcher {
         const storageSymbol = this.providerRouter.getStorageSymbol(symbol, provider);
         const requestedMaxBars = options?.maxBars;
         const hasMaxBars = typeof requestedMaxBars === 'number' && Number.isFinite(requestedMaxBars);
+        const maxBarsLimit = options?.clampToChartLimit === false ? Number.MAX_SAFE_INTEGER : DATA_CHART_TOTAL_LIMIT;
         const effectiveMaxBars = hasMaxBars
-            ? Math.max(1, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(requestedMaxBars)))
+            ? Math.max(1, Math.min(maxBarsLimit, Math.floor(requestedMaxBars)))
             : DATA_CHART_TOTAL_LIMIT;
         const storageInterval = resolveStorageInterval(interval);
         const resampleOptions = this.getResampleOptions(interval);
         const cacheKey = this.buildCacheKey(symbol, storageInterval, provider);
+        const requestSignal = options?.signal ?? signal;
+        const requestDelayMs = options?.requestDelayMs ?? 80;
+        const maxRequests = options?.maxRequests;
 
         const imported = this.getImportedDataByKey().get(cacheKey);
         if (imported && imported.length > 0) {
@@ -1066,7 +1090,7 @@ export class DataFetcher {
         if (!cached || cached.candles.length === 0) {
             const seedCandles = marketType === "futures"
                 ? null
-                : await loadSeedCandlesFromPriceData(symbol, interval, signal);
+                : await loadSeedCandlesFromPriceData(symbol, interval, requestSignal);
             if (seedCandles && seedCandles.length > 0) {
                 const sanitizedSeedCandles = this.sanitizeBinanceCandles(symbol, storageInterval, seedCandles, 'seed-file');
                 cached = {
@@ -1121,40 +1145,65 @@ export class DataFetcher {
         if (hasCachedData) {
             const cachedCandles = cached!.candles;
             const gapAnchorTime = findFirstGapAnchorTime(cachedCandles, interval);
-            const fetchFromTime = gapAnchorTime ?? Number(cachedCandles[cachedCandles.length - 1]?.time ?? 0);
             if (gapAnchorTime !== null) {
+                const fetchFromTime = gapAnchorTime;
                 debugLogger.warn('data.series.cached_gap_detected', {
                     symbol,
                     interval,
                     gapAnchorTime,
                     candles: cachedCandles.length,
                 });
+                remoteData = await fetchBinanceDataAfter(symbol, interval, fetchFromTime, {
+                    signal: requestSignal,
+                    requestDelayMs,
+                    maxRequests: maxRequests ?? 60,
+                    onProgress: options?.onProgress,
+                    marketType,
+                    ...(resampleOptions ?? {}),
+                });
+            } else if (options?.requireMinBars && cachedCandles.length < effectiveMaxBars) {
+                const firstCachedTime = parseTimeToUnixSeconds(cachedCandles[0]?.time);
+                const missingBars = effectiveMaxBars - cachedCandles.length;
+                remoteData = firstCachedTime === null
+                    ? []
+                    : await fetchBinanceDataBefore(symbol, interval, firstCachedTime, missingBars, {
+                        signal: requestSignal,
+                        requestDelayMs,
+                        ...(maxRequests === undefined ? {} : { maxRequests }),
+                        onProgress: options?.onProgress,
+                        marketType,
+                        ...(resampleOptions ?? {}),
+                    });
+            } else {
+                const fetchFromTime = Number(cachedCandles[cachedCandles.length - 1]?.time ?? 0);
+                remoteData = await fetchBinanceDataAfter(symbol, interval, fetchFromTime, {
+                    signal: requestSignal,
+                    requestDelayMs,
+                    maxRequests: maxRequests ?? 60,
+                    onProgress: options?.onProgress,
+                    marketType,
+                    ...(resampleOptions ?? {}),
+                });
             }
-            remoteData = await fetchBinanceDataAfter(symbol, interval, fetchFromTime, {
-                signal,
-                requestDelayMs: 80,
-                maxRequests: 60,
-                marketType,
-                ...(resampleOptions ?? {}),
-            });
         } else {
             if (hasMaxBars) {
                 remoteData = await fetchBinanceDataWithLimit(symbol, interval, effectiveMaxBars, {
-                    signal,
-                    requestDelayMs: 80,
-                    maxRequests: 60,
+                    signal: requestSignal,
+                    requestDelayMs,
+                    ...(maxRequests === undefined ? {} : { maxRequests }),
+                    onProgress: options?.onProgress,
                     marketType,
                     ...(resampleOptions ?? {}),
                 });
             } else {
-                remoteData = await fetchBinanceData(symbol, interval, signal, {
+                remoteData = await fetchBinanceData(symbol, interval, requestSignal, {
                     marketType,
                     ...(resampleOptions ?? {}),
                 });
             }
         }
 
-        if (signal?.aborted) {
+        if (requestSignal?.aborted) {
             return { data: [], source: 'network', cached, hasSqliteBase, cacheKey, storageInterval, effectiveMaxBars };
         }
 

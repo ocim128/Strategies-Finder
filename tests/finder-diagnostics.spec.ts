@@ -106,6 +106,21 @@ function makeDiagnostics(): FinderDiagnostics {
         universe: {
             totalSymbols: 12,
             loadedSymbols: 10,
+            dataWindow: {
+                dataSlice: "5",
+                loadedBars: { min: 1700, max: 1700, avg: 1700 },
+                slicedBars: { min: 340, max: 340, avg: 340 },
+                shortestSymbols: [
+                    {
+                        symbol: "BTC+APT",
+                        loadedBars: 1700,
+                        slicedBars: 340,
+                        firstTime: 1_718_582_400 as any,
+                        lastTime: 1_718_684_100 as any,
+                        synthetic: true,
+                    },
+                ],
+            },
             failedSymbols: [
                 { symbol: "MISS_01", reason: "Dataset missing" },
                 { symbol: "MISS_02", reason: "No candles returned." },
@@ -191,6 +206,21 @@ describe("Finder compact diagnostics", () => {
                 { symbol: "MISS_04", reason: "No candles returned." },
             ],
             omittedFailedSymbols: 5,
+            dataWindow: {
+                dataSlice: "5",
+                loadedBars: { min: 1700, max: 1700, avg: 1700 },
+                slicedBars: { min: 340, max: 340, avg: 340 },
+                shortestSymbols: [
+                    {
+                        symbol: "BTC+APT",
+                        loadedBars: 1700,
+                        slicedBars: 340,
+                        firstTime: 1_718_582_400,
+                        lastTime: 1_718_684_100,
+                        synthetic: true,
+                    },
+                ],
+            },
         });
         expect(compact.timings.topPhases.map((phase) => phase.phase)).to.deep.equal([
             "backtest",
@@ -200,7 +230,7 @@ describe("Finder compact diagnostics", () => {
         ]);
         expect(compactJson).to.not.contain('"strategyBreakdown"');
         expect(compactJson).to.not.contain('"totals"');
-        expect(compactJson.split("\n").length).to.be.lessThan(240);
+        expect(compactJson.split("\n").length).to.be.lessThan(260);
         expect(compactJson.length).to.be.lessThan(fullJson.length / 3);
     });
 

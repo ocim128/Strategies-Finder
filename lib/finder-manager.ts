@@ -119,6 +119,18 @@ export function parseSyntheticPairToken(symbol: string): { baseSymbol: string; q
 		quoteSymbol: resolveToBinanceSymbol(quoteRaw),
 	};
 }
+
+interface UniverseDatasetWindowStats {
+	symbol: string;
+	loadedBars: number;
+	slicedBars: number;
+	firstTime?: OHLCVData["time"];
+	lastTime?: OHLCVData["time"];
+	synthetic: boolean;
+}
+
+type UniverseDataWindowDiagnostics = NonNullable<FinderDiagnostics["universe"]>["dataWindow"];
+
 import { isSameEventPolymarketExitMode } from "./polymarket-exit-mode";
 import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
 import {
@@ -604,7 +616,10 @@ export class FinderManager {
 			return syntheticBars;
 		})()
 			.then((data) => {
-				if (signal?.aborted || !Array.isArray(data) || data.length === 0) {
+				const isShortSyntheticDataset = Array.isArray(data)
+					&& data.length > 0
+					&& data.length < SYNTHETIC_TARGET_BARS;
+				if (signal?.aborted || !Array.isArray(data) || data.length === 0 || isShortSyntheticDataset) {
 					if (this.universeDatasetCache.get(cacheKey) === promise) {
 						this.universeDatasetCache.delete(cacheKey);
 					}
@@ -1601,6 +1616,58 @@ export class FinderManager {
 		return true;
 	}
 
+	private buildUniverseDataWindowDiagnostics(
+		dataSlice: FinderDataSlice,
+		statsBySymbol: Map<string, UniverseDatasetWindowStats>
+	): UniverseDataWindowDiagnostics {
+		const stats = [...statsBySymbol.values()];
+		const emptyBars = { min: 0, max: 0, avg: 0 };
+		if (stats.length === 0) {
+			return {
+				dataSlice,
+				loadedBars: emptyBars,
+				slicedBars: emptyBars,
+				shortestSymbols: [],
+			};
+		}
+
+		const summarizeBars = (values: number[]) => {
+			const sum = values.reduce((total, value) => total + value, 0);
+			return {
+				min: Math.min(...values),
+				max: Math.max(...values),
+				avg: Number((sum / values.length).toFixed(2)),
+			};
+		};
+
+		return {
+			dataSlice,
+			loadedBars: summarizeBars(stats.map((item) => item.loadedBars)),
+			slicedBars: summarizeBars(stats.map((item) => item.slicedBars)),
+			shortestSymbols: stats
+				.slice()
+				.sort((a, b) => a.slicedBars - b.slicedBars || a.loadedBars - b.loadedBars || a.symbol.localeCompare(b.symbol))
+				.slice(0, 8)
+				.map((item) => ({
+					symbol: item.symbol,
+					loadedBars: item.loadedBars,
+					slicedBars: item.slicedBars,
+					firstTime: item.firstTime,
+					lastTime: item.lastTime,
+					synthetic: item.synthetic,
+				})),
+		};
+	}
+
+	private attachUniverseDataWindowDiagnostics(
+		diagnostics: FinderDiagnostics,
+		dataSlice: FinderDataSlice,
+		statsBySymbol: Map<string, UniverseDatasetWindowStats>
+	): void {
+		if (!diagnostics.universe) return;
+		diagnostics.universe.dataWindow = this.buildUniverseDataWindowDiagnostics(dataSlice, statsBySymbol);
+	}
+
 	private async runUniverseFinder(options: FinderOptions, startTime: number): Promise<boolean> {
 		const selectedStrategies = await this.getUniverseSelectedStrategies();
 		if (selectedStrategies.length === 0) {
@@ -1618,9 +1685,20 @@ export class FinderManager {
 		let maxLoadedSymbols = 0;
 		const settings = backtestService.getBacktestSettings();
 		const capitalSettings = backtestService.getCapitalSettings();
+		const dataWindowStats = new Map<string, UniverseDatasetWindowStats>();
 		const loadDataset = async (symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> => {
 			const data = await this.loadUniverseDataset(symbol, interval, signal);
-			return sliceFinderDataWindow(data, options.dataSlice ?? "all");
+			const sliced = sliceFinderDataWindow(data, options.dataSlice ?? "all");
+			const normalizedSymbol = symbol.trim().toUpperCase();
+			dataWindowStats.set(normalizedSymbol, {
+				symbol: normalizedSymbol,
+				loadedBars: data.length,
+				slicedBars: sliced.length,
+				firstTime: sliced[0]?.time,
+				lastTime: sliced[sliced.length - 1]?.time,
+				synthetic: Boolean(parseSyntheticPairToken(symbol)),
+			});
+			return sliced;
 		};
 
 		for (let strategyIndex = 0; strategyIndex < selectedStrategies.length; strategyIndex += 1) {
@@ -1658,6 +1736,7 @@ export class FinderManager {
 
 			allResults.push(...output.results);
 			if (output.diagnostics) {
+				this.attachUniverseDataWindowDiagnostics(output.diagnostics, options.dataSlice ?? "all", dataWindowStats);
 				diagnosticsParts.push(output.diagnostics);
 			}
 			maxLoadedSymbols = Math.max(maxLoadedSymbols, output.loadedSymbols);
@@ -1984,6 +2063,10 @@ export class FinderManager {
 			failedSymbols: [...failedSymbols.entries()]
 				.map(([symbol, reason]) => ({ symbol, reason }))
 				.sort((a, b) => a.symbol.localeCompare(b.symbol)),
+			dataWindow: universeParts
+				.slice()
+				.reverse()
+				.find((universe) => universe.dataWindow)?.dataWindow,
 		};
 	}
 

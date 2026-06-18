@@ -247,6 +247,79 @@ export async function fetchBinanceDataWithLimit(
     }
 }
 
+export async function fetchBinanceDataBefore(
+    symbol: string,
+    interval: string,
+    beforeTimeSec: number,
+    totalBars: number,
+    options?: HistoricalFetchOptions & ResampleOptions & { marketType?: BinanceMarketType }
+): Promise<OHLCVData[]> {
+    try {
+        const targetBars = Math.max(1, Math.floor(totalBars));
+        const beforeSec = Math.max(0, Math.floor(beforeTimeSec || 0));
+        const { sourceInterval, needsResample } = resolveFetchInterval(interval, options);
+        const { rawLimit, ratio } = resolveRawFetchLimit(targetBars, interval, sourceInterval, needsResample);
+        const batches: BinanceKline[][] = [];
+        let endTime = Math.max(0, beforeSec * 1000 - 1);
+        let requestCount = 0;
+        let totalDataLength = 0;
+        const maxRequests = Math.min(
+            options?.maxRequests ?? Math.ceil(rawLimit / LIMIT_PER_REQUEST),
+            5000
+        );
+
+        while (totalDataLength < rawLimit && requestCount < maxRequests) {
+            if (options?.signal?.aborted) return [];
+            const remaining = rawLimit - totalDataLength;
+            const limit = Math.min(remaining, LIMIT_PER_REQUEST);
+
+            const data = await fetchKlinesBatch(symbol, sourceInterval, limit, {
+                endTime,
+                signal: options?.signal,
+                marketType: options?.marketType,
+            });
+            if (data.length === 0) break;
+
+            batches.push(data);
+            totalDataLength += data.length;
+            endTime = data[0][0] - 1;
+            requestCount++;
+
+            const fetchedTarget = needsResample
+                ? Math.min(targetBars, Math.floor(totalDataLength / Math.max(1, ratio)))
+                : Math.min(targetBars, totalDataLength);
+            options?.onProgress?.({ fetched: fetchedTarget, total: targetBars, requestCount });
+
+            if (data.length < limit) break;
+            if (options?.requestDelayMs) {
+                await wait(options.requestDelayMs);
+            }
+        }
+
+        const allRawData = batches.reverse().flat();
+        const mapped = mapToOHLCV(allRawData);
+        const beforeTime = beforeSec;
+        const filtered = mapped.filter(bar => Number(bar.time) < beforeTime);
+
+        if (needsResample) {
+            const resampled = resampleOHLCV(filtered, interval, options);
+            return resampled.slice(-targetBars);
+        }
+
+        return filtered.slice(-targetBars);
+    } catch (error) {
+        if (isAbortError(error)) {
+            return [];
+        }
+        debugLogger.error('data.fetch.historical_prefix_error', {
+            symbol,
+            interval,
+            error: formatProviderError(error),
+        });
+        return [];
+    }
+}
+
 export async function fetchBinanceDataAfter(
     symbol: string,
     interval: string,

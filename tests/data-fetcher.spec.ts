@@ -7,6 +7,7 @@ import {
     isBybitTradFiSymbolKnownUnsupported,
     resetBybitTradFiSymbolSupportForTests,
 } from "../lib/dataProviders/bybit";
+import { resetLocalApiAvailability } from "../lib/local-api-transport";
 import type { OHLCVData } from "../lib/types/strategies";
 
 const originalFetch = globalThis.fetch;
@@ -14,6 +15,7 @@ const originalFetch = globalThis.fetch;
 afterEach(() => {
     globalThis.fetch = originalFetch;
     resetBybitTradFiSymbolSupportForTests();
+    resetLocalApiAvailability();
 });
 
 function makeCandles(count: number): OHLCVData[] {
@@ -35,6 +37,7 @@ function createFetcher(options: {
     importedDataByKey?: Map<string, OHLCVData[]>;
     getLookbackBars: () => number | null;
     provider?: string;
+    persistence?: any;
     reporter?: DataLoadReporter;
 }): DataFetcher {
     const providerRouter = {
@@ -46,7 +49,7 @@ function createFetcher(options: {
     return new DataFetcher(
         providerRouter as any,
         options.cache ?? new DataCache(),
-        {} as any,
+        options.persistence ?? {} as any,
         () => options.importedDataByKey ?? new Map<string, OHLCVData[]>(),
         options.getLookbackBars,
         options.reporter ?? {}
@@ -263,5 +266,74 @@ describe("DataFetcher chart lookback", () => {
 
         const data = await fetcher.fetchData("ETHUSDT", "1h");
         assert.deepEqual(data.map((candle) => candle.time), [0, 3_600, 7_200]);
+    });
+
+    it("backfills Binance historical limit requests before a short cached window", async () => {
+        resetLocalApiAvailability();
+        const cachedCandles = Array.from({ length: 8 }, (_, index) => {
+            const time = (index + 3) * 300;
+            return {
+                time,
+                open: 100 + index,
+                high: 101 + index,
+                low: 99 + index,
+                close: 100.5 + index,
+                volume: 1000 + index,
+            };
+        });
+        const requestedUrls: URL[] = [];
+
+        const toBinanceKline = (timeSec: number, price: number) => ([
+            timeSec * 1000,
+            String(price),
+            String(price + 1),
+            String(price - 1),
+            String(price + 0.5),
+            "1000",
+        ]);
+
+        globalThis.fetch = async (input) => {
+            const url = new URL(String(input), "http://localhost");
+            requestedUrls.push(url);
+
+            if (url.pathname === "/api/sqlite/status") {
+                return new Response("ok", { status: 200 });
+            }
+            if (url.pathname === "/api/sqlite/load-ohlcv") {
+                assert.equal(url.searchParams.get("limit"), "10");
+                return new Response(JSON.stringify({ ok: true, candles: cachedCandles }), {
+                    status: 200,
+                    headers: { "content-type": "application/json" },
+                });
+            }
+            if (url.pathname === "/api/v3/klines") {
+                assert.equal(url.searchParams.get("startTime"), null);
+                assert.equal(url.searchParams.get("endTime"), "899999");
+                assert.equal(url.searchParams.get("limit"), "2");
+                return new Response(JSON.stringify([
+                    toBinanceKline(300, 98),
+                    toBinanceKline(600, 99),
+                ]), { status: 200 });
+            }
+            if (url.pathname === "/api/sqlite/store-ohlcv") {
+                return new Response(JSON.stringify({ ok: true, upserted: 2, totalBars: 10 }), { status: 200 });
+            }
+
+            throw new Error(`Unexpected request: ${url.toString()}`);
+        };
+
+        const fetcher = createFetcher({
+            getLookbackBars: () => null,
+            persistence: {
+                persistLocalCandles: async () => undefined,
+            },
+        });
+
+        const data = await fetcher.fetchDataWithLimit("ETHUSDT", "5m", 10, { requestDelayMs: 0 });
+        const binanceRequests = requestedUrls.filter((url) => url.hostname === "api.binance.com");
+
+        assert.equal(binanceRequests.length, 1);
+        assert.equal(data.length, 10);
+        assert.deepEqual(data.map((candle) => candle.time), [300, 600, 900, 1_200, 1_500, 1_800, 2_100, 2_400, 2_700, 3_000]);
     });
 });

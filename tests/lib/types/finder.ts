@@ -242,6 +242,27 @@ export interface FinderUniverseDiagnostics {
         symbol: string;
         reason: string;
     }>;
+    dataWindow?: {
+        dataSlice: FinderDataSlice;
+        loadedBars: {
+            min: number;
+            max: number;
+            avg: number;
+        };
+        slicedBars: {
+            min: number;
+            max: number;
+            avg: number;
+        };
+        shortestSymbols: Array<{
+            symbol: string;
+            loadedBars: number;
+            slicedBars: number;
+            firstTime?: Time;
+            lastTime?: Time;
+            synthetic: boolean;
+        }>;
+    };
 }
 
 export interface FinderDiagnostics {
