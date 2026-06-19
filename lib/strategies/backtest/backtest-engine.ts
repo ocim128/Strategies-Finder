@@ -7,7 +7,7 @@ import { calculateSharpeRatioFromEquitySamples } from '../performance-metrics';
 
 import { prepareSignals } from './signal-preparation';
 import { calculateTradeExitDetails, createEmptyBacktestResult, finalizeBacktestMetrics, calculateBacktestStats, calculateMaxDrawdown } from './position-stats';
-import { precomputeIndicators, resolveIndicators } from './indicator-precompute';
+import { precomputeIndicators, resolveIndicatorsFromConfig } from './indicator-precompute';
 import { buildPositionFromSignal, type SmartSizingState } from './position-builder';
 import {
     canExitAfterMinimumHold,
@@ -159,7 +159,6 @@ function buildEntryPosition(
 function registerOpenedPosition(args: {
     position: PositionState;
     positions: PositionState[];
-    currentBarOpenedPositions?: Set<PositionState>;
     smartSizingPositionState: WeakMap<PositionState, SmartSizingPositionState>;
     settings: NormalizedSettings;
     adaptiveTakeProfitState: ReturnType<typeof createAdaptiveTakeProfitState>;
@@ -170,7 +169,6 @@ function registerOpenedPosition(args: {
     const {
         position,
         positions,
-        currentBarOpenedPositions,
         smartSizingPositionState,
         settings,
         adaptiveTakeProfitState,
@@ -179,7 +177,7 @@ function registerOpenedPosition(args: {
         barIndex,
     } = args;
     positions.push(position);
-    currentBarOpenedPositions?.add(position);
+    position.openedBarIndex = barIndex;
     registerSmartSizingPosition(smartSizingPositionState, position);
     registerAdaptiveTakeProfitPosition(settings, adaptiveTakeProfitState, position, barIndex);
     if (isLossStreakFlipTradeDirection(tradeDirection) && flipLossDirection.activeDirection === null) {
@@ -193,7 +191,6 @@ function openPositionFromSignal(args: {
     barIndex: number;
     capital: number;
     positions: PositionState[];
-    currentBarOpenedPositions?: Set<PositionState>;
     smartSizingPositionState: WeakMap<PositionState, SmartSizingPositionState>;
     config: NormalizedSettings;
     adaptiveTakeProfitState: ReturnType<typeof createAdaptiveTakeProfitState>;
@@ -206,7 +203,6 @@ function openPositionFromSignal(args: {
     registerOpenedPosition({
         position: opened.nextPosition,
         positions: args.positions,
-        currentBarOpenedPositions: args.currentBarOpenedPositions,
         smartSizingPositionState: args.smartSizingPositionState,
         settings: args.config,
         adaptiveTakeProfitState: args.adaptiveTakeProfitState,
@@ -1346,7 +1342,7 @@ export function runBacktestCompact(
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
     const advancedSizing = sizing?.advancedSizing;
     const indicatorStartedAt = performance.now();
-    const indicatorSeries = resolveIndicators(data, settings, precomputed);
+    const indicatorSeries = resolveIndicatorsFromConfig(data, config, precomputed);
     addBacktestDiagnosticElapsed(diagnostics, "indicatorResolution", indicatorStartedAt);
 
     const signalPreparationStartedAt = performance.now();
@@ -1535,8 +1531,7 @@ export function runBacktestCompact(
 
     const openSignalPosition = (
         signal: Signal,
-        barIndex: number,
-        currentBarOpenedPositions?: Set<PositionState>
+        barIndex: number
     ) => {
         if (diagnostics) {
             diagnostics.counts.entriesAttempted++;
@@ -1547,7 +1542,6 @@ export function runBacktestCompact(
             barIndex,
             capital,
             positions,
-            currentBarOpenedPositions,
             smartSizingPositionState,
             config,
             adaptiveTakeProfitState,
@@ -1584,7 +1578,6 @@ export function runBacktestCompact(
         }
         diagnostics && diagnostics.counts.barsScanned++;
         const candle = data[i];
-        let currentBarOpenedPositions: Set<PositionState> | undefined;
 
         for (let p = positions.length - 1; p >= 0; p--) {
             const pos = positions[p];
@@ -1638,7 +1631,7 @@ export function runBacktestCompact(
                     if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
                         continue;
                     }
-                    openSignalPosition(signal, i, currentBarOpenedPositions ??= new Set<PositionState>());
+                    openSignalPosition(signal, i);
                 } else if (exitTarget) {
                     if (!canExitAfterMinimumHold(exitTarget, config)) {
                         continue;
@@ -1665,7 +1658,7 @@ export function runBacktestCompact(
                         signalExitReentryCooldownUntilBarIndex,
                         barIndex: i,
                     })) {
-                        openSignalPosition(signal, i, currentBarOpenedPositions ??= new Set<PositionState>());
+                        openSignalPosition(signal, i);
                     }
                 }
             }
@@ -1674,7 +1667,7 @@ export function runBacktestCompact(
         // Process exits for ALL open positions (iterate backwards for safe splice)
         for (let p = positions.length - 1; p >= 0; p--) {
             const pos = positions[p];
-            const openedThisBar = currentBarOpenedPositions?.has(pos) ?? false;
+            const openedThisBar = pos.openedBarIndex === i;
             if (!openedThisBar) {
                 pos.barsInTrade += 1;
             }
@@ -1880,7 +1873,7 @@ export function runBacktest(
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
     const advancedSizing = sizing?.advancedSizing;
     const indicatorStartedAt = performance.now();
-    const indicatorSeries = resolveIndicators(data, settings, precomputed);
+    const indicatorSeries = resolveIndicatorsFromConfig(data, config, precomputed);
     addBacktestDiagnosticElapsed(diagnostics, "indicatorResolution", indicatorStartedAt);
 
     const signalPreparationStartedAt = performance.now();
@@ -2080,8 +2073,7 @@ export function runBacktest(
 
     const openSignalPosition = (
         signal: Signal,
-        barIndex: number,
-        currentBarOpenedPositions?: Set<PositionState>
+        barIndex: number
     ) => {
         if (diagnostics) {
             diagnostics.counts.entriesAttempted++;
@@ -2092,7 +2084,6 @@ export function runBacktest(
             barIndex,
             capital,
             positions,
-            currentBarOpenedPositions,
             smartSizingPositionState,
             config,
             adaptiveTakeProfitState,
@@ -2123,7 +2114,6 @@ export function runBacktest(
         }
         diagnostics && diagnostics.counts.barsScanned++;
         const candle = data[i];
-        let currentBarOpenedPositions: Set<PositionState> | undefined;
 
         for (let p = positions.length - 1; p >= 0; p--) {
             const pos = positions[p];
@@ -2178,7 +2168,7 @@ export function runBacktest(
                     if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
                         continue;
                     }
-                    openSignalPosition(signal, i, currentBarOpenedPositions ??= new Set<PositionState>());
+                    openSignalPosition(signal, i);
                 } else if (exitTarget) {
                     // Signal exit
                     if (!canExitAfterMinimumHold(exitTarget, config)) {
@@ -2206,7 +2196,7 @@ export function runBacktest(
                         signalExitReentryCooldownUntilBarIndex,
                         barIndex: i,
                     })) {
-                        openSignalPosition(signal, i, currentBarOpenedPositions ??= new Set<PositionState>());
+                        openSignalPosition(signal, i);
                     }
                 }
             }
@@ -2215,7 +2205,7 @@ export function runBacktest(
         // Process exits for ALL open positions
         for (let p = positions.length - 1; p >= 0; p--) {
             const pos = positions[p];
-            const openedThisBar = currentBarOpenedPositions?.has(pos) ?? false;
+            const openedThisBar = pos.openedBarIndex === i;
             if (!openedThisBar) {
                 pos.barsInTrade += 1;
             }

@@ -93,14 +93,15 @@ export function precomputeIndicators(
 }
 
 /**
- * Helper to ensure indicators are available, either from precomputed cache or fresh calculation.
+ * Resolve indicators from an already-normalized config. Use this when the
+ * caller has already normalized settings (avoids the redundant second
+ * normalization that {@link resolveIndicators} would do).
  */
-export function resolveIndicators(
+export function resolveIndicatorsFromConfig(
     data: OHLCVData[],
-    settings: BacktestSettings,
+    config: NormalizedSettings,
     precomputed?: PrecomputedIndicators
 ): IndicatorSeries {
-    const config = normalizeBacktestSettings(settings);
     const cacheKey = buildIndicatorCacheKey(config);
     let computed: PrecomputedIndicators | undefined;
     if (
@@ -118,5 +119,17 @@ export function resolveIndicators(
         emaTrend: computed.emaTrend,
         adx: computed.adx,
     };
+}
+
+/**
+ * Helper to ensure indicators are available, either from precomputed cache or fresh calculation.
+ */
+export function resolveIndicators(
+    data: OHLCVData[],
+    settings: BacktestSettings,
+    precomputed?: PrecomputedIndicators
+): IndicatorSeries {
+    const config = normalizeBacktestSettings(settings);
+    return resolveIndicatorsFromConfig(data, config, precomputed);
 }
 

@@ -1,5 +1,6 @@
 import { getTimeIndex } from "./strategies/backtest/backtest-utils";
 import { timeKey } from "./strategies/index";
+import { medianOrNull } from "./statistics-utils";
 import type {
     BacktestResult,
     OHLCVData,
@@ -327,7 +328,7 @@ function computeMovementFloorPct(ohlcvData: OHLCVData[], horizon: number): numbe
         if (!isFinitePositive(startClose) || !Number.isFinite(endClose)) continue;
         moves.push(Math.abs(percentMove(endClose, startClose)));
     }
-    return median(moves) ?? 0;
+    return medianOrNull(moves) ?? 0;
 }
 
 function averageEntryHorizon(qualities: readonly TradeTimingQuality[], horizon: number): TradeTimingEntryHorizon {
@@ -427,15 +428,6 @@ function emptyExitHorizon(horizon: number, movementFloorPct: number): TradeTimin
 
 function percentMove(to: number, from: number): number {
     return ((to - from) / from) * 100;
-}
-
-function median(values: number[]): number | null {
-    if (values.length === 0) return null;
-    const sorted = [...values].sort((a, b) => a - b);
-    const middle = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 0
-        ? (sorted[middle - 1] + sorted[middle]) / 2
-        : sorted[middle];
 }
 
 function isFinitePositive(value: number): boolean {

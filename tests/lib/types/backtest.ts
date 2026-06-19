@@ -90,6 +90,14 @@ export interface PositionState {
     partialTaken: boolean;
     breakEvenApplied: boolean;
     realizedPnl: number;
+    /**
+     * Transient engine bookkeeping: the bar index at which the position was
+     * last (re-)opened, so the simulation loop can detect same-bar entries
+     * without allocating a Set per bar. Undefined for positions constructed
+     * outside the engine (e.g. tests); those are treated as "not opened this
+     * bar" by the loop, matching prior Set-based behavior.
+     */
+    openedBarIndex?: number;
 }
 
 export type KellyFraction = 'full' | 'half' | 'quarter';

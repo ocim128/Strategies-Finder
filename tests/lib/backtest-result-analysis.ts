@@ -14,6 +14,7 @@ import type { Trade } from "./types/strategies";
 import { timeKey } from "./strategies/index";
 import { getTimeIndex } from "./strategies/backtest/backtest-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
+import { medianOrNull } from "./statistics-utils";
 
 const EXIT_REASON_LABELS: Record<string, string> = {
     signal: "Signal",
@@ -177,23 +178,59 @@ function collectTradeDuration(
     }
 }
 
-function buildExpectancyRow(label: string, trades: Trade[]): ExpectancyBreakdownRow {
-    const winningTrades = trades.filter((trade) => trade.pnl > 0);
-    const totalProfit = winningTrades.reduce((sum, trade) => sum + trade.pnl, 0);
-    const losingTrades = trades.filter((trade) => trade.pnl <= 0);
-    const totalLoss = Math.abs(losingTrades.reduce((sum, trade) => sum + trade.pnl, 0));
-    const netProfit = totalProfit - totalLoss;
-    const tradeCount = trades.length;
-    const winRate = tradeCount > 0 ? (winningTrades.length / tradeCount) * 100 : 0;
-    const expectancy = tradeCount > 0 ? netProfit / tradeCount : 0;
-    const avgWin = winningTrades.length > 0 ? totalProfit / winningTrades.length : 0;
-    const avgLoss = losingTrades.length > 0 ? totalLoss / losingTrades.length : 0;
-    const profitFactor = totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? Infinity : 0;
+interface TradeSummary {
+    tradeCount: number;
+    winCount: number;
+    lossCount: number;
+    totalProfit: number;
+    totalLoss: number;
+    entryPrices: number[];
+}
 
-    const entryPrices = trades
-        .map((trade) => trade.polymarketOutcome?.marketEntryPrice)
-        .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-    const avgEntryPrice = entryPrices.length > 0 ? average(entryPrices) : null;
+function summarizeTrades(trades: Trade[]): TradeSummary {
+    let totalProfit = 0;
+    let totalLoss = 0;
+    let winCount = 0;
+    let lossCount = 0;
+    const entryPrices: number[] = [];
+
+    for (const trade of trades) {
+        if (trade.pnl > 0) {
+            winCount++;
+            totalProfit += trade.pnl;
+        } else {
+            lossCount++;
+            totalLoss += trade.pnl;
+        }
+        const marketEntryPrice = trade.polymarketOutcome?.marketEntryPrice;
+        if (typeof marketEntryPrice === "number" && Number.isFinite(marketEntryPrice)) {
+            entryPrices.push(marketEntryPrice);
+        }
+    }
+
+    return {
+        tradeCount: trades.length,
+        winCount,
+        lossCount,
+        totalProfit,
+        totalLoss: Math.abs(totalLoss),
+        entryPrices,
+    };
+}
+
+function buildExpectancyRow(label: string, trades: Trade[]): ExpectancyBreakdownRow {
+    const summary = summarizeTrades(trades);
+    const netProfit = summary.totalProfit - summary.totalLoss;
+    const tradeCount = summary.tradeCount;
+    const winRate = tradeCount > 0 ? (summary.winCount / tradeCount) * 100 : 0;
+    const expectancy = tradeCount > 0 ? netProfit / tradeCount : 0;
+    const avgWin = summary.winCount > 0 ? summary.totalProfit / summary.winCount : 0;
+    const avgLoss = summary.lossCount > 0 ? summary.totalLoss / summary.lossCount : 0;
+    const profitFactor = summary.totalLoss > 0
+        ? summary.totalProfit / summary.totalLoss
+        : summary.totalProfit > 0 ? Infinity : 0;
+
+    const avgEntryPrice = summary.entryPrices.length > 0 ? average(summary.entryPrices) : null;
     const breakEvenWinRate = avgEntryPrice === null ? null : avgEntryPrice * 100;
     const edgeVsBreakEven = breakEvenWinRate === null ? null : winRate - breakEvenWinRate;
 
@@ -264,7 +301,7 @@ function finalizePostEntryBucket(
 ): PostEntryPathBucketStats {
     return {
         avgSignedMovePctByBar: movesByBar.map((values) => average(values)),
-        medianSignedMovePctByBar: movesByBar.map((values) => median(values)),
+        medianSignedMovePctByBar: movesByBar.map((values) => medianOrNull(values)),
         maxSignedMovePctByBar: movesByBar.map((values) => maximum(values)),
         minSignedMovePctByBar: movesByBar.map((values) => minimum(values)),
         positiveRatePctByBar: movesByBar.map((values) => {
@@ -414,16 +451,6 @@ function average(values: number[]): number | null {
     return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function median(values: number[]): number | null {
-    if (values.length === 0) return null;
-    const sorted = [...values].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    if (sorted.length % 2 === 0) {
-        return (sorted[mid - 1] + sorted[mid]) / 2;
-    }
-    return sorted[mid];
-}
-
 function maximum(values: number[]): number | null {
     if (values.length === 0) return null;
     return values.reduce((max, value) => (value > max ? value : max), values[0]);
@@ -437,8 +464,9 @@ function minimum(values: number[]): number | null {
 function buildExitReasonBreakdown(trades: Trade[]): ExitReasonBreakdown | undefined {
     if (trades.length === 0) return undefined;
 
-    const winTrades = trades.filter((trade) => trade.pnl > 0);
-    const loseTrades = trades.filter((trade) => trade.pnl <= 0);
+    const summary = summarizeTrades(trades);
+    const totalWins = summary.winCount;
+    const totalLosses = summary.lossCount;
 
     const reasonCounts = new Map<string, { win: number; lose: number }>();
     for (const trade of trades) {
@@ -453,9 +481,6 @@ function buildExitReasonBreakdown(trades: Trade[]): ExitReasonBreakdown | undefi
             counts.lose++;
         }
     }
-
-    const totalWins = winTrades.length;
-    const totalLosses = loseTrades.length;
 
     const rows: ExitReasonRow[] = [];
     for (const [reason, counts] of reasonCounts) {

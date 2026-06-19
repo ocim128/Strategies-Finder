@@ -5,18 +5,7 @@ import type {
     FinderUniverseSymbolResult,
 } from "../types/finder";
 import type { StrategyParams } from "../types/strategies";
-
-function median(values: readonly number[]): number {
-    if (values.length === 0) {
-        return 0;
-    }
-    const sorted = [...values].sort((left, right) => left - right);
-    const midpoint = Math.floor(sorted.length / 2);
-    if ((sorted.length & 1) === 1) {
-        return sorted[midpoint] ?? 0;
-    }
-    return ((sorted[midpoint - 1] ?? 0) + (sorted[midpoint] ?? 0)) / 2;
-}
+import { median } from "../statistics-utils";
 
 function isAscendingUniverseMetric(_metric: FinderUniverseMetric): boolean {
     return false;

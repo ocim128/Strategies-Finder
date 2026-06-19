@@ -12,7 +12,7 @@ import type {
 } from "./types";
 import { createSeededRandom } from "./utils";
 import { calculateSharpeRatioFromEquitySamples } from "../performance-metrics";
-import { mean, median, percentile, sampleStdDev } from "../../statistics-utils";
+import { medianOrNull, prepareSortedStats } from "../../statistics-utils";
 import { timeKey } from "../backtest/backtest-utils";
 import { resolveAllocatedCapital, type SmartSizingState } from "../backtest/position-builder";
 import { createKellySizingState, updateKellyState } from "../sizing/kelly-criterion";
@@ -168,11 +168,12 @@ export async function runMonteCarloSimulation(
             sampledSimulations.push(createStoredSimulation(simulationId, metrics));
         }
 
-        if (
-            options.onProgress &&
-            (simulationId + 1 === settings.simulations || (simulationId + 1) % runContext.progressChunkSize === 0)
-        ) {
-            options.onProgress({
+        const isCheckpoint =
+            simulationId + 1 === settings.simulations ||
+            (simulationId + 1) % runContext.progressChunkSize === 0;
+
+        if (isCheckpoint) {
+            options.onProgress?.({
                 completed: simulationId + 1,
                 total: settings.simulations,
             });
@@ -279,11 +280,12 @@ export async function runPolymarketMonteCarloSimulation(
             sampledSimulations.push(createStoredSimulation(simulationId, metrics));
         }
 
-        if (
-            options.onProgress &&
-            (simulationId + 1 === settings.simulations || (simulationId + 1) % runContext.progressChunkSize === 0)
-        ) {
-            options.onProgress({
+        const isCheckpoint =
+            simulationId + 1 === settings.simulations ||
+            (simulationId + 1) % runContext.progressChunkSize === 0;
+
+        if (isCheckpoint) {
+            options.onProgress?.({
                 completed: simulationId + 1,
                 total: settings.simulations,
             });
@@ -824,20 +826,21 @@ function computeRuinProbabilityMetrics(
     ruinCount: number,
     totalSimulations: number,
 ): RuinProbabilityMetrics {
+    const stats = prepareSortedStats(maxDrawdownPercentValues);
     return {
         ruinProbability: totalSimulations > 0 ? ruinCount / totalSimulations : 0,
         expectedTradesToRuin:
             timesToRuin.length > 0 ? timesToRuin.reduce((sum, value) => sum + value, 0) / timesToRuin.length : null,
-        medianTradesToRuin: timesToRuin.length > 0 ? median(timesToRuin) : null,
+        medianTradesToRuin: medianOrNull(timesToRuin),
         ruinRate: totalSimulations > 0 ? ruinCount / totalSimulations : 0,
         maxDrawdownDistribution: {
-            mean: mean(maxDrawdownPercentValues),
-            median: median(maxDrawdownPercentValues),
-            stdDev: sampleStdDev(maxDrawdownPercentValues),
-            percentile5: percentile(maxDrawdownPercentValues, 5),
-            percentile25: percentile(maxDrawdownPercentValues, 25),
-            percentile75: percentile(maxDrawdownPercentValues, 75),
-            percentile95: percentile(maxDrawdownPercentValues, 95),
+            mean: stats.mean,
+            median: stats.median,
+            stdDev: stats.stdDev,
+            percentile5: stats.percentile(5),
+            percentile25: stats.percentile(25),
+            percentile75: stats.percentile(75),
+            percentile95: stats.percentile(95),
         },
     };
 }
@@ -870,13 +873,14 @@ function computeConfidenceIntervals(
 }
 
 function computePercentiles(values: readonly number[]) {
+    const stats = prepareSortedStats(values);
     return {
-        ci50Lower: percentile(values, 25),
-        ci50Upper: percentile(values, 75),
-        ci90Lower: percentile(values, 5),
-        ci90Upper: percentile(values, 95),
-        ci95Lower: percentile(values, 2.5),
-        ci95Upper: percentile(values, 97.5),
+        ci50Lower: stats.percentile(25),
+        ci50Upper: stats.percentile(75),
+        ci90Lower: stats.percentile(5),
+        ci90Upper: stats.percentile(95),
+        ci95Lower: stats.percentile(2.5),
+        ci95Upper: stats.percentile(97.5),
     };
 }
 
@@ -886,19 +890,16 @@ function computeDistributionStatistics(values: readonly number[]) {
         return { mean: 0, median: 0, stdDev: 0, skewness: 0, kurtosis: 0, min: 0, max: 0 };
     }
 
-    const meanValue = mean(values);
-    const medianValue = median(values);
-    const stdDevValue = sampleStdDev(values);
-    const sorted = [...values].sort((left, right) => left - right);
+    const stats = prepareSortedStats(values);
 
     let skewness = 0;
     let kurtosis = -3;
 
-    if (stdDevValue > 0) {
+    if (stats.stdDev > 0) {
         let m3 = 0;
         let m4 = 0;
         for (const value of values) {
-            const z = (value - meanValue) / stdDevValue;
+            const z = (value - stats.mean) / stats.stdDev;
             m3 += z ** 3;
             m4 += z ** 4;
         }
@@ -907,13 +908,13 @@ function computeDistributionStatistics(values: readonly number[]) {
     }
 
     return {
-        mean: meanValue,
-        median: medianValue,
-        stdDev: stdDevValue,
+        mean: stats.mean,
+        median: stats.median,
+        stdDev: stats.stdDev,
         skewness,
         kurtosis,
-        min: sorted[0] ?? 0,
-        max: sorted[n - 1] ?? 0,
+        min: stats.min,
+        max: stats.max,
     };
 }
 

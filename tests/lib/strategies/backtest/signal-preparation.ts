@@ -215,12 +215,22 @@ export function getOpenPositionForScanner(
     const entryTimeNum = timeToNumber(lastTrade.entryTime);
     if (entryTimeNum === null) return null;
 
-    let entryBarIndex = 0;
-    for (let i = 0; i < data.length; i++) {
-        const barTime = timeToNumber(data[i].time);
-        if (barTime !== null && barTime >= entryTimeNum) {
-            entryBarIndex = i;
-            break;
+    // Fast path: the entry time usually matches a bar exactly, so reuse the
+    // cached time->index map the engine already maintains. Fall back to a
+    // linear scan only when the entry time lands between bars (legacy mixed
+    // time-shape edge case).
+    const cachedIndex = getTimeIndexValue(getTimeIndex(data), lastTrade.entryTime);
+    let entryBarIndex: number;
+    if (cachedIndex !== undefined && cachedIndex >= 0 && cachedIndex < data.length) {
+        entryBarIndex = cachedIndex;
+    } else {
+        entryBarIndex = 0;
+        for (let i = 0; i < data.length; i++) {
+            const barTime = timeToNumber(data[i].time);
+            if (barTime !== null && barTime >= entryTimeNum) {
+                entryBarIndex = i;
+                break;
+            }
         }
     }
     const barsInTrade = data.length - 1 - entryBarIndex;

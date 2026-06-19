@@ -42,17 +42,15 @@ function extractSampleTime(sample: Time | TimedPoint): Time {
         : sample;
 }
 
-function toUtcDayKey(time: Time): string | null {
+function toUtcDayId(time: Time): number | null {
     if (time && typeof time === "object" && "year" in time) {
         const businessDay = time as { year: number; month: number; day: number };
-        const month = String(businessDay.month).padStart(2, "0");
-        const day = String(businessDay.day).padStart(2, "0");
-        return `${businessDay.year}-${month}-${day}`;
+        return businessDay.year * 10000 + businessDay.month * 100 + businessDay.day;
     }
 
     const epochMs = toEpochMilliseconds(time);
     if (epochMs === null) return null;
-    return new Date(epochMs).toISOString().slice(0, 10);
+    return Math.floor(epochMs / MILLIS_PER_DAY);
 }
 
 export function estimatePeriodsPerYear(
@@ -104,18 +102,18 @@ function collapseIntradayEquitySamples(
 
     const collapsedTimes: Time[] = [];
     const collapsedValues: number[] = [];
-    let currentDayKey: string | null = null;
+    let currentDayId: number | null = null;
 
     for (let index = 0; index < sampleCount; index += 1) {
         const sampleTime = extractSampleTime(samples[index]);
-        const dayKey = toUtcDayKey(sampleTime);
+        const dayId = toUtcDayId(sampleTime);
         const equityValue = Number(equityValues[index]);
-        if (dayKey === null || !Number.isFinite(equityValue)) continue;
+        if (dayId === null || !Number.isFinite(equityValue)) continue;
 
-        if (dayKey !== currentDayKey) {
+        if (dayId !== currentDayId) {
             collapsedTimes.push(sampleTime);
             collapsedValues.push(equityValue);
-            currentDayKey = dayKey;
+            currentDayId = dayId;
             continue;
         }
 
