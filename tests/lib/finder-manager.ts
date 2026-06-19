@@ -60,8 +60,8 @@ import type {
 	FinderStrategyDiagnostics,
 } from './types/finder';
 import { isSmartTradeSizingMode } from "./types/backtest";
-import { aggregateSyntheticBars, buildSyntheticPairDataset, deriveSyntheticSymbol, pickSourceInterval, resolveSyntheticSourceBars } from "../scripts/lib/synthetic-pair";
-import { SYNTHETIC_TARGET_BARS } from "./data/constants";
+import { aggregateSyntheticBars, buildSyntheticPairDataset, deriveSyntheticSymbol, pickSourceInterval } from "../scripts/lib/synthetic-pair";
+import { SYNTHETIC_TARGET_BARS, DATA_CHART_TOTAL_LIMIT } from "./data/constants";
 
 const QUOTE_SUFFIXES = ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD', 'BTC', 'ETH', 'BNB', 'EUR', 'TRY', 'BRL'];
 const FINDER_FOLLOW_STRATEGY_KEYS = [
@@ -565,10 +565,19 @@ export class FinderManager {
 		signal?: AbortSignal,
 	): Promise<OHLCVData[]> {
 		// Synthetic universe pairs reuse the same source symbols (e.g. BNBUSDT 1m)
-		// across many pairs. Without this cache, BNBUSDT 1m would be re-read from
-		// SQLite/IndexedDB once per pair that references it (up to ~15x in a typical
-		// universe). The source arrays are treated as read-only by
-		// buildSyntheticPairDataset and aggregateSyntheticBars, so sharing is safe.
+		// across many pairs. Without this cache, BNBUSDT 1m would be re-read once
+		// per pair that references it (up to ~15x in a typical universe). The
+		// source arrays are treated as read-only by buildSyntheticPairDataset and
+		// aggregateSyntheticBars, so sharing is safe.
+		//
+		// Note: unlike loadUniverseDataset for real symbols, the source fetch here
+		// intentionally does NOT pass offline:true. The source interval (e.g. 5m
+		// for a 1h target) is a derived interval the user may never have loaded,
+		// so an offline-only read would return whatever stray bars the local
+		// cache holds and produce a degenerate 1-bar synthetic pair. Allowing the
+		// remote Binance gap-fill here matches the Data Mining synthetic generator
+		// and the original universe synthetic loader. The LRU cache above means
+		// each unique source symbol is fetched at most once per run.
 		const cacheKey = `${sourceSymbol.trim().toUpperCase()}|${sourceInterval.trim().toLowerCase()}|${sourceBars}`;
 		const cached = this.syntheticSourceSeriesCache.get(cacheKey);
 		if (cached) {
@@ -576,7 +585,7 @@ export class FinderManager {
 			return cached;
 		}
 		const promise = dataManager
-			.fetchHistoricalData(sourceSymbol, sourceInterval, sourceBars, { signal, offline: true })
+			.fetchHistoricalData(sourceSymbol, sourceInterval, sourceBars, { signal })
 			.catch((error) => {
 				if (this.syntheticSourceSeriesCache.get(cacheKey) === promise) {
 					this.syntheticSourceSeriesCache.delete(cacheKey);
@@ -601,7 +610,12 @@ export class FinderManager {
 		const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
 		const source = pickSourceInterval(interval);
 		const sourceInterval = source?.sourceInterval ?? interval;
-		const sourceBars = resolveSyntheticSourceBars(SYNTHETIC_TARGET_BARS, source?.ratio ?? 1);
+		// Cap source bars at DATA_CHART_TOTAL_LIMIT (100k). The synthetic source
+		// interval is a derived interval the user may not have pre-warmed, so the
+		// read often has to gap-fill from Binance; capping keeps the paginated
+		// remote fetch bounded (the original universe synthetic loader used this
+		// same cap before the SYNTHETIC_SOURCE_BARS_LIMIT inflation regressed it).
+		const sourceBars = Math.min(SYNTHETIC_TARGET_BARS * (source?.ratio ?? 1), DATA_CHART_TOTAL_LIMIT);
 		const cacheKey = this.buildSyntheticUniverseCacheKey({
 			syntheticSymbol,
 			baseSymbol,
@@ -637,8 +651,8 @@ export class FinderManager {
 			if (signal?.aborted) return [];
 			// Source bars are fetched through getSourceSeriesForSynthetic, which
 			// dedupes identical source reads across pairs (BNBUSDT 1m is reused
-			// ~15x in a typical universe). offline:true skips the remote Binance
-			// gap-fill so warm symbols serve from local caches only.
+			// ~15x in a typical universe). The source read allows the remote
+			// Binance gap-fill because the source interval may not be pre-warmed.
 			const [baseData, quoteData] = await Promise.all([
 				this.getSourceSeriesForSynthetic(baseSymbol, sourceInterval, sourceBars, signal),
 				this.getSourceSeriesForSynthetic(quoteSymbol, sourceInterval, sourceBars, signal),

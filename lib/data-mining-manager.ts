@@ -719,6 +719,25 @@ export class DataMiningManager {
         });
 
         try {
+            // Reuse the Finder's already-built bars when available. The Finder's
+            // universe synthetic loader and a prior Data Mining build both
+            // register the result via dataManager.registerImportedData; without
+            // this check, opening the same pair here would silently re-fetch
+            // both legs and rebuild identical bars.
+            const cached = dataManager.getImportedData(syntheticSymbol, interval);
+            if (cached && cached.length > 0) {
+                this.recordDiagnostic('synth_reused_imported', {
+                    symbol: syntheticSymbol, interval, bars: cached.length,
+                    firstTime: cached[0]?.time, lastTime: cached[cached.length - 1]?.time,
+                });
+                this.commitSyntheticPair(syntheticSymbol, interval, baseSymbol, quoteSymbol, cached);
+                this.setStatus(
+                    `Loaded ${cached.length} cached synthetic bars for ${syntheticSymbol} (no re-fetch).`,
+                    'success'
+                );
+                return;
+            }
+
             const sourceBars = resolveSyntheticSourceBars(SYNTHETIC_TARGET_BARS, source?.ratio ?? 1);
             const [baseData, quoteData] = await Promise.all([
                 dataManager.fetchHistoricalData(baseSymbol, sourceInterval, sourceBars),
@@ -761,20 +780,7 @@ export class DataMiningManager {
                 aggregated: !!source,
             });
 
-            dataManager.stopStreaming();
-            clearAll();
-            dataManager.suppressNextAutoReload();
-
-            if (syntheticSymbol !== state.currentSymbol) {
-                setCurrentSymbol(syntheticSymbol);
-            }
-            if (interval !== state.currentInterval) {
-                setCurrentInterval(interval);
-            }
-
-            commitOhlcvData(syntheticBars, 'synthetic_pair');
-            dataManager.registerImportedData(syntheticSymbol, interval, syntheticBars);
-            this.lastSyntheticPair = { baseSymbol, quoteSymbol };
+            this.commitSyntheticPair(syntheticSymbol, interval, baseSymbol, quoteSymbol, syntheticBars);
 
             this.recordDiagnostic('synth_committed', {
                 symbol: syntheticSymbol, finalBars: syntheticBars.length,
@@ -795,6 +801,35 @@ export class DataMiningManager {
             this.isGeneratingSynthetic = false;
             if (this.dom?.synthGenerateButton) this.dom.synthGenerateButton.disabled = false;
         }
+    }
+
+    /**
+     * Commits a synthetic pair's bars to the chart and registers them as
+     * imported data. Shared by the cached-reuse fast path and the rebuild path
+     * so both stay in lockstep on side-effect ordering (stop streaming, clear,
+     * suppress auto-reload, set symbol/interval, commit, register, remember).
+     */
+    private commitSyntheticPair(
+        syntheticSymbol: string,
+        interval: string,
+        baseSymbol: string,
+        quoteSymbol: string,
+        bars: OHLCVData[],
+    ): void {
+        dataManager.stopStreaming();
+        clearAll();
+        dataManager.suppressNextAutoReload();
+
+        if (syntheticSymbol !== state.currentSymbol) {
+            setCurrentSymbol(syntheticSymbol);
+        }
+        if (interval !== state.currentInterval) {
+            setCurrentInterval(interval);
+        }
+
+        commitOhlcvData(bars, 'synthetic_pair');
+        dataManager.registerImportedData(syntheticSymbol, interval, bars);
+        this.lastSyntheticPair = { baseSymbol, quoteSymbol };
     }
 
     private async importJsonFile(): Promise<void> {

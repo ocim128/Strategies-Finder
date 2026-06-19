@@ -137,6 +137,26 @@ export class DataManager {
         }
     }
 
+    /**
+     * Returns the bars previously registered for (symbol, interval) via
+     * registerImportedData, or null if none. Mirrors the write-side key
+     * construction so callers (e.g. the Data Mining synthetic generator) can
+     * reuse a pair the Finder already built instead of re-fetching the legs.
+     */
+    public getImportedData(symbol: string, interval: string): OHLCVData[] | null {
+        const normalizedSymbol = symbol.trim().toUpperCase();
+        const normalizedInterval = interval.trim().toLowerCase();
+        if (!normalizedSymbol || !normalizedInterval) return null;
+
+        const provider = this.getProvider(normalizedSymbol);
+        for (const storageInterval of resolveImportStorageIntervals(normalizedInterval)) {
+            const cacheKey = this.fetcher.buildCacheKey(normalizedSymbol, storageInterval, provider);
+            const cached = this.importedDataByKey.get(cacheKey);
+            if (cached && cached.length > 0) return cached;
+        }
+        return null;
+    }
+
     public clearImportedData(): void {
         for (const key of this.importedDataByKey.keys()) {
             this.cache.delete(key);
