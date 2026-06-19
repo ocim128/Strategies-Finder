@@ -91,12 +91,13 @@ export const POLYMARKET_RANK_MODE_LABELS: Record<PolymarketFinderRankMode, strin
 };
 
 export const UNIVERSE_METRIC_FULL_LABELS: Record<FinderUniverseMetric, string> = {
-	profitableActiveRatio: 'Profitable Active Ratio',
-	activeSymbols: 'Active Symbols',
-	medianExpectancy: 'Median Expectancy',
-	medianSharpe: 'Median Sharpe Ratio',
-	worstNetProfit: 'Worst Net Profit',
-	totalTrades: 'Total Trades',
+    profitableActiveRatio: 'Profitable Active Ratio',
+    activeSymbols: 'Active Symbols',
+    medianExpectancy: 'Median Expectancy',
+    medianSharpe: 'Median Sharpe Ratio',
+    medianProfitFactor: 'Median Profit Factor',
+    worstNetProfit: 'Worst Net Profit',
+    totalTrades: 'Total Trades',
 };
 
 export function getPolymarketSortPriority(mode: PolymarketFinderRankMode = 'balanced'): FinderMetric[] {

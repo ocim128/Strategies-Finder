@@ -21,6 +21,7 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
     const expectancies: number[] = [];
     const netProfits: number[] = [];
     const sharpes: number[] = [];
+    const profitFactors: number[] = [];
 
     for (const symbol of symbols) {
         const result = symbol.result;
@@ -41,6 +42,7 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
         expectancies.push(result.expectancy);
         netProfits.push(result.netProfit);
         sharpes.push(result.sharpeRatio);
+        profitFactors.push(result.profitFactor);
 
         if (result.netProfit > 0.0001) {
             profitableSymbols += 1;
@@ -60,6 +62,7 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
         totalTrades,
         medianExpectancy: median(expectancies),
         medianSharpe: median(sharpes),
+        medianProfitFactor: median(profitFactors),
         medianNetProfit: median(netProfits),
         worstNetProfit: netProfits.length > 0 ? Math.min(...netProfits) : 0,
         bestNetProfit: netProfits.length > 0 ? Math.max(...netProfits) : 0,
@@ -102,6 +105,8 @@ export function getFinderUniverseMetricValue(
             return item.medianExpectancy;
         case "medianSharpe":
             return item.medianSharpe;
+        case "medianProfitFactor":
+            return item.medianProfitFactor;
         case "worstNetProfit":
             return item.worstNetProfit;
         case "totalTrades":

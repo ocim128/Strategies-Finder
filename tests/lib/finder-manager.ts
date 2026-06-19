@@ -214,12 +214,13 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 };
 
 const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
-	"profitableActiveRatio",
-	"medianExpectancy",
-	"medianSharpe",
-	"worstNetProfit",
-	"totalTrades",
-	"activeSymbols",
+    "profitableActiveRatio",
+    "medianExpectancy",
+    "medianSharpe",
+    "medianProfitFactor",
+    "worstNetProfit",
+    "totalTrades",
+    "activeSymbols",
 ] as const;
 const UNIVERSE_DATASET_CACHE_MAX_ENTRIES = 512;
 // Synthetic universe runs reuse the same source symbols (e.g. BNBUSDT 1m) across

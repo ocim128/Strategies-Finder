@@ -155,6 +155,50 @@ describe("Finder universe metrics", () => {
 
         expect(sorted.map((item) => item.strategyKey)).to.deep.equal(["sharper", "flatter"]);
     });
+
+    it("aggregates median profit factor across active symbols", () => {
+        const candidate = buildFinderUniverseCandidate({
+            strategyKey: "demo",
+            strategyName: "Demo",
+            params: { threshold: 1 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(120, 4, 8, 1.5, 2.0)),
+                makeSymbol("ETHUSDT", "losing", makeBacktestResult(-40, -2, 4, 0.5, 0.4)),
+                makeSymbol("SOLUSDT", "no_trades", makeBacktestResult(0, 0, 0, 9, 9)),
+            ],
+        });
+
+        // median of [2.0, 0.4] = 1.2; no_trades symbol excluded
+        expect(candidate.medianProfitFactor).to.equal(1.2);
+    });
+
+    it("sorts survivors by median profit factor", () => {
+        const stronger = buildFinderUniverseCandidate({
+            strategyKey: "stronger",
+            strategyName: "Stronger",
+            params: { threshold: 1 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(15, 3, 5, 1.5, 2.0)),
+                makeSymbol("ETHUSDT", "profitable", makeBacktestResult(10, 2, 5, 1.5, 1.8)),
+            ],
+        });
+        const weaker = buildFinderUniverseCandidate({
+            strategyKey: "weaker",
+            strategyName: "Weaker",
+            params: { threshold: 2 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(5, 1, 4, 1.0, 0.6)),
+                makeSymbol("ETHUSDT", "losing", makeBacktestResult(-10, -1, 4, 0.5, 0.4)),
+            ],
+        });
+
+        const sorted = sortFinderUniverseCandidates(
+            [weaker, stronger],
+            ["medianProfitFactor"]
+        );
+
+        expect(sorted.map((item) => item.strategyKey)).to.deep.equal(["stronger", "weaker"]);
+    });
 });
 
 describe("Performance verdict", () => {

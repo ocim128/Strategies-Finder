@@ -34,6 +34,7 @@ export type FinderUniverseMetric =
     | 'activeSymbols'
     | 'medianExpectancy'
     | 'medianSharpe'
+    | 'medianProfitFactor'
     | 'worstNetProfit'
     | 'totalTrades';
 
@@ -166,6 +167,7 @@ export interface FinderUniverseCandidate {
     profitableActiveRatio: number;
     medianExpectancy: number;
     medianSharpe: number;
+    medianProfitFactor: number;
     medianNetProfit: number;
     worstNetProfit: number;
     bestNetProfit: number;
