@@ -14,7 +14,6 @@ import type {
     Strategy,
     StrategyExecutionContext,
     StrategyParams,
-    Time,
     Polymarket1sRuntimeContext,
 } from "./types/strategies";
 import { isSmartTradeSizingMode, type CapitalSettings } from "./types/backtest";
@@ -47,7 +46,6 @@ import {
     getBuiltInStrategyKeys,
 } from "./strategies/built-in-catalog";
 import {
-    getResampleBucketStart,
     resampleOHLCV,
     type ResampleOptions,
 } from "./strategies/resample-utils";
@@ -57,7 +55,8 @@ import {
     calculateSharpeRatioFromReturns,
 } from "./strategies/performance-metrics";
 import { parseTimeToUnixSeconds } from "./time-normalization";
-import { filterSignalsByBlockRange as filterSignalsBySelectedBlockRange } from "./signal-block-filter";
+import { toNumericTimeData, mapSignalsFromHigherTimeframe } from "./strategy-timeframe";
+import { filterSignalsByBlockRange } from "./signal-block-filter";
 import {
     applyConfirmationStrategiesToSignals,
     ensureConfirmationStrategiesLoaded,
@@ -770,25 +769,8 @@ function isResultConsistent(result: BacktestResult): boolean {
     return true;
 }
 
-function filterSignalsByBlockRange<T extends { time: Signal["time"] }>(
-    signals: T[],
-    blockRange: { from: number; to: number } | null
-): T[] {
-    return filterSignalsBySelectedBlockRange(signals, blockRange);
-}
-
 function hasGlobalStrategyTimeframeWrapper(strategy: Strategy): boolean {
     return (strategy as Strategy & { __global_timeframe_wrapped__?: boolean }).__global_timeframe_wrapped__ === true;
-}
-
-function toNumericTimeData(data: OHLCVData[]): OHLCVData[] | null {
-    const mapped: OHLCVData[] = new Array(data.length);
-    for (let i = 0; i < data.length; i++) {
-        const seconds = parseTimeToUnixSeconds(data[i].time);
-        if (seconds === null) return null;
-        mapped[i] = { ...data[i], time: seconds as Time };
-    }
-    return mapped;
 }
 
 function readStrategyTimeframeConfig(settings: BacktestSettings): {
@@ -804,61 +786,6 @@ function readStrategyTimeframeConfig(settings: BacktestSettings): {
     const interval = `${minutes}m`;
     const resampleOptions: ResampleOptions | undefined = undefined;
     return { enabled, interval, resampleOptions };
-}
-
-function mapSignalsFromHigherTimeframe(
-    baseData: OHLCVData[],
-    numericBaseData: OHLCVData[],
-    higherData: OHLCVData[],
-    higherSignals: Signal[],
-    interval: string,
-    options?: ResampleOptions
-): Signal[] {
-    if (higherSignals.length === 0) return [];
-
-    const lastBaseIndexByBucket = new Map<number, number>();
-    for (let i = 0; i < numericBaseData.length; i++) {
-        const time = Number(numericBaseData[i].time);
-        if (!Number.isFinite(time)) continue;
-        const bucketStart = getResampleBucketStart(time, interval, options);
-        lastBaseIndexByBucket.set(bucketStart, i);
-    }
-
-    const mapped: Signal[] = [];
-    for (const signal of higherSignals) {
-        let bucketStart: number | null = null;
-
-        if (Number.isFinite(signal.barIndex)) {
-            const index = Math.trunc(signal.barIndex as number);
-            if (index >= 0 && index < higherData.length) {
-                const timeValue = higherData[index].time;
-                const seconds = typeof timeValue === "number" ? timeValue : parseTimeToUnixSeconds(timeValue);
-                if (seconds !== null) {
-                    bucketStart = seconds;
-                }
-            }
-        }
-
-        if (bucketStart === null) {
-            const signalTimeSec = parseTimeToUnixSeconds(signal.time);
-            if (signalTimeSec !== null) {
-                bucketStart = getResampleBucketStart(signalTimeSec, interval, options);
-            }
-        }
-
-        if (bucketStart === null) continue;
-        const baseIndex = lastBaseIndexByBucket.get(bucketStart);
-        if (baseIndex === undefined) continue;
-
-        mapped.push({
-            ...signal,
-            time: baseData[baseIndex].time,
-            price: baseData[baseIndex].close,
-            barIndex: baseIndex,
-        });
-    }
-
-    return mapped;
 }
 
 function executeStrategySignals(

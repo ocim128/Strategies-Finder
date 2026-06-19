@@ -16,11 +16,9 @@ import type {
     Signal,
     StrategyParams,
     StrategyExecutionContext,
-    Time,
 } from "./lib/strategies/index";
 import { state } from "./lib/state";
 import {
-    getResampleBucketStart,
     resampleOHLCV,
     type ResampleOptions,
 } from "./lib/strategies/resample-utils";
@@ -35,7 +33,7 @@ import {
     ensureBuiltInStrategyLoaded,
     type BuiltInStrategyMeta,
 } from "./lib/strategies/built-in-catalog";
-import { parseTimeToUnixSeconds } from "./lib/time-normalization";
+import { toNumericTimeData, mapSignalsFromHigherTimeframe } from "./lib/strategy-timeframe";
 export type { Strategy, OHLCVData, Signal, StrategyParams };
 export type { BuiltInStrategyMeta };
 
@@ -100,79 +98,11 @@ class StrategyRegistryImpl implements StrategyRegistry {
     private listeners: Set<StrategyRegistryListener> = new Set();
     private readonly wrappedFlag = '__global_timeframe_wrapped__';
 
-    private toUnixSeconds(time: Time): number | null {
-        return parseTimeToUnixSeconds(time);
-    }
-
-    private toNumericTimeData(data: OHLCVData[]): OHLCVData[] | null {
-        const mapped: OHLCVData[] = new Array(data.length);
-        for (let i = 0; i < data.length; i++) {
-            const t = this.toUnixSeconds(data[i].time);
-            if (t === null) return null;
-            mapped[i] = { ...data[i], time: t as Time };
-        }
-        return mapped;
-    }
-
     private readGlobalStrategyTfSettings(): { enabled: boolean; minutes: number } {
         const enabled = state.strategyTimeframeEnabled === true;
         const parsedMinutes = Number(state.strategyTimeframeMinutes);
         const minutes = Number.isFinite(parsedMinutes) ? Math.max(1, Math.floor(parsedMinutes)) : 120;
         return { enabled, minutes };
-    }
-
-    private mapSignalsFromHigherTimeframe(
-        baseData: OHLCVData[],
-        numericBaseData: OHLCVData[],
-        higherData: OHLCVData[],
-        higherSignals: Signal[],
-        tfMinutes: number,
-        resampleOptions?: ResampleOptions
-    ): Signal[] {
-        if (higherSignals.length === 0) return [];
-
-        const interval = `${tfMinutes}m`;
-        const lastBaseIndexByBucket = new Map<number, number>();
-
-        for (let i = 0; i < numericBaseData.length; i++) {
-            const t = numericBaseData[i].time as number;
-            const bucketStart = getResampleBucketStart(t, interval, resampleOptions);
-            lastBaseIndexByBucket.set(bucketStart, i);
-        }
-
-        const mapped: Signal[] = [];
-        for (const signal of higherSignals) {
-            let bucketStart: number | null = null;
-
-            if (Number.isFinite(signal.barIndex)) {
-                const idx = Math.trunc(signal.barIndex as number);
-                if (idx >= 0 && idx < higherData.length) {
-                    const timeValue = higherData[idx].time;
-                    bucketStart = typeof timeValue === 'number' ? timeValue : this.toUnixSeconds(timeValue);
-                }
-            }
-
-            if (bucketStart === null) {
-                const signalTime = this.toUnixSeconds(signal.time);
-                if (signalTime !== null) {
-                    bucketStart = getResampleBucketStart(signalTime, interval, resampleOptions);
-                }
-            }
-
-            if (bucketStart === null) continue;
-
-            const baseIndex = lastBaseIndexByBucket.get(bucketStart);
-            if (baseIndex === undefined) continue;
-
-            mapped.push({
-                ...signal,
-                time: baseData[baseIndex].time,
-                price: baseData[baseIndex].close,
-                barIndex: baseIndex
-            });
-        }
-
-        return mapped;
     }
 
     private wrapStrategyWithGlobalTimeframe(strategy: Strategy): Strategy {
@@ -201,7 +131,7 @@ class StrategyRegistryImpl implements StrategyRegistry {
                     );
                 }
 
-                const numericData = this.toNumericTimeData(data);
+                const numericData = toNumericTimeData(data);
                 if (!numericData) {
                     return originalExecute(data, params, context);
                 }
@@ -214,7 +144,7 @@ class StrategyRegistryImpl implements StrategyRegistry {
                 }
 
                 const higherSignals = originalExecute(higherData, params, context);
-                return this.mapSignalsFromHigherTimeframe(data, numericData, higherData, higherSignals, minutes, resampleOptions);
+                return mapSignalsFromHigherTimeframe(data, numericData, higherData, higherSignals, interval, resampleOptions);
             }
         };
 

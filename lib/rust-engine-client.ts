@@ -1,11 +1,9 @@
 /**
  * Rust Trading Engine Client
- * 
+ *
  * Provides interface to the high-performance Rust backend for:
  * - Backtesting (100x faster than TypeScript)
- * - Walk-forward optimization
- * - Strategy finder
- * 
+ *
  * Falls back to TypeScript implementation when Rust server is unavailable.
  */
 
@@ -43,64 +41,6 @@ interface RustBacktestRequest {
     };
 }
 
-interface WalkForwardConfig {
-    optimizationWindow: number;
-    testWindow: number;
-    stepSize: number;
-    parameterRanges: Array<{
-        name: string;
-        min: number;
-        max: number;
-        step: number;
-    }>;
-    topN?: number;
-    minTrades?: number;
-}
-
-interface RustWalkForwardRequest {
-    data: OHLCVData[];
-    strategyName: string;
-    baseParams: Record<string, number>;
-    initialCapital: number;
-    positionSizePercent: number;
-    commissionPercent: number;
-    settings: BacktestSettings;
-    config: WalkForwardConfig;
-}
-
-interface FinderOptions {
-    mode: 'grid' | 'random';
-    sortPriority: string[];
-    useAdvancedSort: boolean;
-    topN: number;
-    steps: number;
-    rangePercent: number;
-    maxRuns: number;
-    tradeFilterEnabled: boolean;
-    minTrades: number;
-    maxTrades: number;
-}
-
-interface RustFinderRequest {
-    data: OHLCVData[];
-    strategyName: string;
-    baseParams: Record<string, number>;
-    initialCapital: number;
-    positionSizePercent: number;
-    commissionPercent: number;
-    settings: BacktestSettings;
-    options: FinderOptions;
-}
-
-interface ProgressUpdate {
-    percent: number;
-    status: string;
-    currentWindow?: number;
-    totalWindows?: number;
-}
-
-type ProgressCallback = (update: ProgressUpdate) => void;
-
 // ============================================================================
 // Rust Engine Client
 // ============================================================================
@@ -116,8 +56,6 @@ export class RustEngineClient {
     private readonly backtestTimeoutMs = 30_000;
     private readonly batchBacktestTimeoutMs = 120_000;
     private readonly cacheTimeoutMs = 180_000;
-    private readonly optimizerTimeoutMs = 180_000;
-    private ws: WebSocket | null = null;
 
     // Data caching for large datasets
     private readonly maxCachedDataEntries = 4;
@@ -544,177 +482,6 @@ export class RustEngineClient {
      */
     clearLocalCache(): void {
         this.cachedDataIdsByHash.clear();
-    }
-
-    // ========================================================================
-    // Walk-Forward API
-    // ========================================================================
-
-    /**
-     * Run walk-forward analysis on Rust engine with progress streaming
-     */
-    async runWalkForward(
-        data: OHLCVData[],
-        strategyName: string,
-        baseParams: Record<string, number>,
-        initialCapital: number,
-        positionSizePercent: number,
-        commissionPercent: number,
-        settings: BacktestSettings,
-        config: WalkForwardConfig,
-        onProgress?: ProgressCallback
-    ): Promise<any | null> {
-        if (!await this.checkHealth()) {
-            return null;
-        }
-
-        try {
-            // Connect WebSocket for progress updates
-            if (onProgress) {
-                this.connectProgressSocket(onProgress);
-            }
-
-            const request: RustWalkForwardRequest = {
-                data,
-                strategyName,
-                baseParams,
-                initialCapital,
-                positionSizePercent,
-                commissionPercent,
-                settings,
-                config,
-            };
-
-            const startTime = performance.now();
-
-            const response = await fetch(`${this.baseUrl}/api/walk-forward`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(request),
-                signal: AbortSignal.timeout(this.optimizerTimeoutMs),
-            });
-
-            // Disconnect WebSocket
-            this.disconnectProgressSocket();
-
-            if (!response.ok) {
-                rustLog.error('[RustEngine] Walk-forward failed:', response.statusText);
-                return null;
-            }
-
-            const result = await response.json();
-            const elapsed = performance.now() - startTime;
-
-            rustLog.info(`[RustEngine] Walk-forward completed in ${elapsed.toFixed(2)}ms`);
-
-            return result;
-        } catch (error) {
-            this.disconnectProgressSocket();
-            rustLog.error('[RustEngine] Walk-forward error:', error);
-            return null;
-        }
-    }
-
-    // ========================================================================
-    // Finder API
-    // ========================================================================
-
-    /**
-     * Run strategy finder on Rust engine with progress streaming
-     */
-    async runFinder(
-        data: OHLCVData[],
-        strategyName: string,
-        baseParams: Record<string, number>,
-        initialCapital: number,
-        positionSizePercent: number,
-        commissionPercent: number,
-        settings: BacktestSettings,
-        options: FinderOptions,
-        onProgress?: ProgressCallback
-    ): Promise<any[] | null> {
-        if (!await this.checkHealth()) {
-            return null;
-        }
-
-        try {
-            // Connect WebSocket for progress updates
-            if (onProgress) {
-                this.connectProgressSocket(onProgress);
-            }
-
-            const request: RustFinderRequest = {
-                data,
-                strategyName,
-                baseParams,
-                initialCapital,
-                positionSizePercent,
-                commissionPercent,
-                settings,
-                options,
-            };
-
-            const startTime = performance.now();
-
-            const response = await fetch(`${this.baseUrl}/api/finder`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(request),
-                signal: AbortSignal.timeout(this.optimizerTimeoutMs),
-            });
-
-            // Disconnect WebSocket
-            this.disconnectProgressSocket();
-
-            if (!response.ok) {
-                rustLog.error('[RustEngine] Finder failed:', response.statusText);
-                return null;
-            }
-
-            const result = await response.json();
-            const elapsed = performance.now() - startTime;
-
-            rustLog.info(`[RustEngine] Finder completed in ${elapsed.toFixed(2)}ms`);
-
-            return result;
-        } catch (error) {
-            this.disconnectProgressSocket();
-            rustLog.error('[RustEngine] Finder error:', error);
-            return null;
-        }
-    }
-
-    // ========================================================================
-    // WebSocket Progress Streaming
-    // ========================================================================
-
-    private connectProgressSocket(onProgress: ProgressCallback): void {
-        try {
-            const wsUrl = this.baseUrl.replace('http://', 'ws://').replace('https://', 'wss://');
-            this.ws = new WebSocket(`${wsUrl}/ws/optimizer`);
-
-            this.ws.onmessage = (event) => {
-                try {
-                    const update: ProgressUpdate = JSON.parse(event.data);
-                    onProgress(update);
-                } catch (e) {
-                    rustLog.warn('[RustEngine] Invalid progress message:', event.data);
-                }
-            };
-
-            this.ws.onerror = (error) => {
-                rustLog.warn('[RustEngine] WebSocket error:', error);
-            };
-        } catch (error) {
-            rustLog.warn('[RustEngine] Failed to connect WebSocket:', error);
-        }
-    }
-
-    private disconnectProgressSocket(): void {
-        if (this.ws) {
-            this.ws.close();
-            this.ws = null;
-        }
     }
 }
 

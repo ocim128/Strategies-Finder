@@ -491,6 +491,8 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         initialCapital: effectiveInitialCapital,
     } = effectiveCapitalSettings;
     const effectiveBacktestSettings = input.comboPrimarySettings ?? input.settings;
+    const resolveCandidateBacktestSettings = (job: ParamJob) =>
+        resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings);
 
     const timing = createEmptyFinderDiagnosticsTimings();
     timing.paramGeneration = paramGenerationMs;
@@ -852,7 +854,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     signals,
                     params: job.params,
                     capitalSettings: effectiveCapitalSettings,
-                    backtestSettings: resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
+                    backtestSettings: resolveCandidateBacktestSettings(job),
                     backtestFn: quickBacktestFn,
                     precomputed: getJobPrecomputed(job, shortPrecomputed),
                     backtestOptions: { collectDiagnostics: true },
@@ -905,7 +907,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 closedData,
                 backtestFn,
                 capitalSettings: effectiveCapitalSettings,
-                resolveBacktestSettings: (job) => resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
+                resolveBacktestSettings: resolveCandidateBacktestSettings,
                 getJobData,
                 getJobPrecomputed,
                 defaultPrecomputed: singleTfPrecomputed,
@@ -979,7 +981,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             closedData,
             backtestFn,
             capitalSettings: effectiveCapitalSettings,
-            resolveBacktestSettings: (job) => resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
+            resolveBacktestSettings: resolveCandidateBacktestSettings,
             getJobData,
             getJobPrecomputed,
             defaultPrecomputed: singleTfPrecomputed,
@@ -1055,7 +1057,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
         closedData,
         backtestFn,
         capitalSettings: effectiveCapitalSettings,
-        resolveBacktestSettings: (job) => resolveFinderCandidateBacktestSettings(job.backtestSettings, input.comboPrimarySettings),
+        resolveBacktestSettings: resolveCandidateBacktestSettings,
         getJobData,
         getJobPrecomputed,
         defaultPrecomputed: singleTfPrecomputed,

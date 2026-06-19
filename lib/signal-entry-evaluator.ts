@@ -17,8 +17,9 @@ import {
     normalizeTradeDirection,
 } from "./strategies/backtest/backtest-utils";
 import { runBacktest } from "./strategies/backtest/backtest-engine";
-import { getResampleBucketStart, resampleOHLCV, type ResampleOptions } from "./strategies/resample-utils";
+import { resampleOHLCV, type ResampleOptions } from "./strategies/resample-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
+import { toNumericTimeData, mapSignalsFromHigherTimeframe } from "./strategy-timeframe";
 import { applyConfirmationStrategiesToSignals } from "./confirmation-signal-filter";
 import { toBooleanLike } from "./settings-parse-utils";
 import { isTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
@@ -140,16 +141,6 @@ function resolveEvaluationCapitalSettings(request: EntrySignalEvaluationRequest)
     }, EVALUATION_CAPITAL_DEFAULTS);
 }
 
-function toNumericTimeData(data: OHLCVData[]): OHLCVData[] | null {
-    const mapped: OHLCVData[] = new Array(data.length);
-    for (let i = 0; i < data.length; i++) {
-        const sec = toUnixSeconds(data[i].time);
-        if (sec === null) return null;
-        mapped[i] = { ...data[i], time: sec as Time };
-    }
-    return mapped;
-}
-
 function readStrategyTimeframeConfig(settings: BacktestSettings): {
     enabled: boolean;
     interval: string;
@@ -163,61 +154,6 @@ function readStrategyTimeframeConfig(settings: BacktestSettings): {
     const interval = `${minutes}m`;
     const resampleOptions: ResampleOptions | undefined = undefined;
     return { enabled, interval, resampleOptions };
-}
-
-function mapSignalsFromHigherTimeframe(
-    baseData: OHLCVData[],
-    numericBaseData: OHLCVData[],
-    higherData: OHLCVData[],
-    higherSignals: Signal[],
-    interval: string,
-    options?: ResampleOptions
-): Signal[] {
-    if (higherSignals.length === 0) return [];
-
-    const lastBaseIndexByBucket = new Map<number, number>();
-    for (let i = 0; i < numericBaseData.length; i++) {
-        const t = Number(numericBaseData[i].time);
-        if (!Number.isFinite(t)) continue;
-        const bucketStart = getResampleBucketStart(t, interval, options);
-        lastBaseIndexByBucket.set(bucketStart, i);
-    }
-
-    const mapped: Signal[] = [];
-    for (const signal of higherSignals) {
-        let bucketStart: number | null = null;
-
-        if (Number.isFinite(signal.barIndex)) {
-            const idx = Math.trunc(signal.barIndex as number);
-            if (idx >= 0 && idx < higherData.length) {
-                const timeValue = higherData[idx].time;
-                const sec = typeof timeValue === "number" ? timeValue : toUnixSeconds(timeValue);
-                if (sec !== null) {
-                    bucketStart = sec;
-                }
-            }
-        }
-
-        if (bucketStart === null) {
-            const signalTimeSec = toUnixSeconds(signal.time);
-            if (signalTimeSec !== null) {
-                bucketStart = getResampleBucketStart(signalTimeSec, interval, options);
-            }
-        }
-
-        if (bucketStart === null) continue;
-        const baseIndex = lastBaseIndexByBucket.get(bucketStart);
-        if (baseIndex === undefined) continue;
-
-        mapped.push({
-            ...signal,
-            time: baseData[baseIndex].time,
-            price: baseData[baseIndex].close,
-            barIndex: baseIndex,
-        });
-    }
-
-    return mapped;
 }
 
 function executeStrategyWithSettings(
