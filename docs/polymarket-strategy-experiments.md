@@ -163,7 +163,6 @@ Implementation note: `minEdge = 0` means any positive Gamma consensus edge is en
 
 ## Next Checks
 
-- Prefer the easy feedback loop in `docs/polymarket-ai-strategy-debugger-plan.md`: AI idea -> strategy lib -> Strategy Debugger diagnostic -> next AI prompt.
 - Stop adding entry-only strategies for `signal_exit_same_event` until the exit contract is cleaner.
 - Prefer testing the stronger resolve-hold entry ideas with Polymarket protective TP/SL or post-signal limit exits, because those model quote exits without pretending every opposite signal is a good new entry.
 - If `signal_exit_same_event` remains a priority, the next code change should be an explicit close-only signal contract so a strategy can exit YES/NO without automatically flipping into the other side.
