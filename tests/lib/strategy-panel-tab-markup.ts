@@ -14,6 +14,7 @@ const LAZY_STRATEGY_PANEL_TAB_LOADERS = {
     portfolio: () => import('../html-partials/tab-portfolio.html?raw'),
     ensemble: () => import('../html-partials/tab-ensemble.html?raw'),
     libraryaudit: () => import('../html-partials/tab-library-audit.html?raw'),
+    signalcommittee: () => import('../html-partials/tab-signal-committee.html?raw'),
 } as const;
 
 type LazyStrategyPanelTabId = keyof typeof LAZY_STRATEGY_PANEL_TAB_LOADERS;

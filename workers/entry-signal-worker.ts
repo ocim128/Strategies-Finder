@@ -93,6 +93,7 @@ interface SubscriptionUpsertRequest {
     notifyExit?: boolean;
     enabled?: boolean;
     candleLimit?: number;
+    committeeTag?: string | null;
 }
 
 interface StoredSignalRow {
@@ -147,6 +148,8 @@ interface SubscriptionRow {
     last_status: string | null;
     created_at: string;
     updated_at: string;
+    latest_state_json: string | null;
+    committee_tag: string | null;
 }
 
 interface ProcessSignalPayload {
@@ -185,6 +188,18 @@ interface ProcessSignalResult {
         fingerprint: string;
         signal: { price: number };
     } | null;
+    /**
+     * Latest trade context from the evaluation (entry/exit timing, isOpen).
+     * Surfaced so the cron can persist it into latest_state_json for the
+     * batched state endpoint without re-running evaluateLatestEntrySignal.
+     */
+    latestTrade?: SubscriptionStateResult["latestTrade"];
+    /**
+     * Compact per-trade direction windows [entrySec, exitSec, dirSign] used by
+     * the Signal Committee chart overlay to forward-fill historical votes.
+     * Null when the strategy produced no trades.
+     */
+    tradeWindows?: Array<[number, number | null, 1 | -1]> | null;
 }
 
 interface SubscriptionStateResult {
@@ -196,6 +211,7 @@ interface SubscriptionStateResult {
     evaluatedAt: string;
     closedCandleTimeSec: number | null;
     reason: string | null;
+    latestClose: number | null;
     latestTrade: {
         entryTimeSec: number;
         entryPrice: number;
@@ -215,6 +231,26 @@ interface SubscriptionStateResult {
         isFresh: boolean;
         fingerprint: string;
     } | null;
+}
+
+/**
+ * Shape persisted in `signal_subscriptions.latest_state_json` by the cron
+ * and read back by the batched `/api/subscriptions/states` endpoint. Must
+ * stay forward-compatible: missing fields are tolerated by readers.
+ */
+interface StoredLatestState {
+    evaluatedAt: string;
+    closedCandleTimeSec: number | null;
+    latestClose: number | null;
+    reason: string | null;
+    latestTrade: SubscriptionStateResult["latestTrade"];
+    latestEntry: SubscriptionStateResult["latestEntry"];
+    /**
+     * Optional per-trade direction windows [entrySec, exitSec, dirSign] for the
+     * Signal Committee historical chart overlay. Absent on old cron writes;
+     * readers treat absence as "no historical vote data".
+     */
+    tradeWindows?: Array<[number, number | null, 1 | -1]> | null;
 }
 
 const DEFAULT_MIN_CANDLES = 200;
@@ -661,6 +697,8 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
             reason: evaluation.reason ?? "no_signals",
             rawSignalCount: evaluation.rawSignalCount,
             preparedSignalCount: evaluation.preparedSignalCount,
+            latestTrade: evaluation.latestTrade ?? null,
+            tradeWindows: evaluation.tradeWindows ?? null,
         };
     }
 
@@ -677,6 +715,8 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
                 rawSignalCount: evaluation.rawSignalCount,
                 preparedSignalCount: evaluation.preparedSignalCount,
                 latestEntry: evaluation.latestEntry,
+                latestTrade: evaluation.latestTrade ?? null,
+                tradeWindows: evaluation.tradeWindows ?? null,
                 latestEvaluatedEntry: {
                     direction: evaluation.latestEntry.direction,
                     signalTimeSec: evaluation.latestEntry.signalTimeSec,
@@ -704,6 +744,8 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
                 signalAgeBars: evaluation.latestEntry.signalAgeBars,
                 rawSignalCount: evaluation.rawSignalCount,
                 preparedSignalCount: evaluation.preparedSignalCount,
+                latestTrade: evaluation.latestTrade ?? null,
+                tradeWindows: evaluation.tradeWindows ?? null,
                 latestEvaluatedEntry: {
                     direction: evaluation.latestEntry.direction,
                     signalTimeSec: evaluation.latestEntry.signalTimeSec,
@@ -836,6 +878,8 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
         entry: entryPayload,
         rawSignalCount: evaluation.rawSignalCount,
         preparedSignalCount: evaluation.preparedSignalCount,
+        latestTrade: evaluation.latestTrade ?? null,
+        tradeWindows: evaluation.tradeWindows ?? null,
         latestEvaluatedEntry: evaluation.latestEntry
             ? {
                 direction: evaluation.latestEntry.direction,
@@ -1046,8 +1090,15 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
         ?? safeJsonParse(existing?.strategy_params_json ?? "{}", {} as Record<string, number>);
     const backtestSettings = resolveSubscriptionExecutionBacktestSettings(
         (payload.backtestSettings
-            ?? safeJsonParse(existing?.backtest_settings_json ?? "{}", {} as BacktestSettings)) as BacktestSettings
+        ?? safeJsonParse(existing?.backtest_settings_json ?? "{}", {} as BacktestSettings)) as BacktestSettings
     );
+    // committee_tag: null/undefined payload value preserves the existing tag
+    // (so Alerts-tab re-upserts of a tagged subscription do not silently untag it).
+    // An explicit empty string clears the tag.
+    const committeeTagRaw = payload.committeeTag === undefined ? existing?.committee_tag : payload.committeeTag;
+    const committeeTag = typeof committeeTagRaw === "string" && committeeTagRaw.trim().length > 0
+        ? normalizeText(committeeTagRaw)
+        : null;
 
     try {
         await env.SIGNALS_DB.prepare(
@@ -1064,8 +1115,9 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
                 notify_telegram,
                 notify_exit,
                 candle_limit,
+                committee_tag,
                 last_processed_candle_open_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
             ON CONFLICT(stream_id) DO UPDATE SET
                 enabled = excluded.enabled,
                 symbol = excluded.symbol,
@@ -1077,6 +1129,7 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
                 notify_telegram = excluded.notify_telegram,
                 notify_exit = excluded.notify_exit,
                 candle_limit = excluded.candle_limit,
+                committee_tag = excluded.committee_tag,
                 updated_at = CURRENT_TIMESTAMP
             `
         )
@@ -1091,7 +1144,8 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
                 freshnessBars,
                 notifyTelegram,
                 notifyExit,
-                candleLimit
+                candleLimit,
+                committeeTag
             )
             .run();
 
@@ -1119,14 +1173,21 @@ async function handleSubscriptionUpsert(request: Request, env: Env): Promise<Res
     }
 }
 
-async function handleSubscriptionList(_request: Request, env: Env): Promise<Response> {
+async function handleSubscriptionList(request: Request, env: Env): Promise<Response> {
     if (!env.SIGNALS_DB) {
         return toJsonResponse({ ok: false, error: "Missing SIGNALS_DB binding" }, 500);
     }
 
-    const result = await env.SIGNALS_DB.prepare(
-        `SELECT * FROM signal_subscriptions ORDER BY updated_at DESC LIMIT 500`
-    ).all<SubscriptionRow>();
+    const url = new URL(request.url);
+    const committeeOnly = url.searchParams.get("committee") === "1";
+
+    const result = committeeOnly
+        ? await env.SIGNALS_DB.prepare(
+            `SELECT * FROM signal_subscriptions WHERE committee_tag IS NOT NULL ORDER BY updated_at DESC LIMIT 500`
+        ).all<SubscriptionRow>()
+        : await env.SIGNALS_DB.prepare(
+            `SELECT * FROM signal_subscriptions ORDER BY updated_at DESC LIMIT 500`
+        ).all<SubscriptionRow>();
 
     return toJsonResponse({
         ok: true,
@@ -1281,6 +1342,35 @@ async function updateSubscriptionStatus(
     )
         .bind(safeStatus, streamId)
         .run();
+}
+
+/**
+ * Best-effort write of the latest evaluation state into
+ * `signal_subscriptions.latest_state_json`. Called from the cron after every
+ * due evaluation so the batched `/api/subscriptions/states` endpoint can
+ * serve cached state without re-running `evaluateLatestEntrySignal` per
+ * stream. Failures are swallowed and logged: the cron's signal-insert path
+ * must never regress because of a state-write failure.
+ */
+async function persistLatestSubscriptionState(
+    env: Env,
+    streamId: string,
+    state: StoredLatestState
+): Promise<void> {
+    try {
+        await env.SIGNALS_DB.prepare(
+            `UPDATE signal_subscriptions SET latest_state_json = ? WHERE stream_id = ?`
+        )
+            .bind(JSON.stringify(state), streamId)
+            .run();
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(JSON.stringify({
+            event: "latest_state_persist_failed",
+            streamId,
+            error: detail,
+        }));
+    }
 }
 
 type SubscriptionCandleContext = {
@@ -1450,6 +1540,34 @@ async function runSubscription(
 
         if (result.ok) {
             await updateSubscriptionStatus(env, streamId, status, closed.closedCandleTimeSec);
+            // Persist the latest evaluation snapshot for the batched state endpoint.
+            // Best-effort: a failed write must not break the cron path.
+            const closedCandles = closed.candles;
+            const latestCloseBar = closedCandles.length > 0 ? closedCandles[closedCandles.length - 1] : null;
+            const latestCloseValue = latestCloseBar && Number.isFinite(Number(latestCloseBar.close))
+                ? Number(latestCloseBar.close)
+                : null;
+            const evaluatedEntry = result.latestEvaluatedEntry;
+            const statePayload: StoredLatestState = {
+                evaluatedAt: new Date().toISOString(),
+                closedCandleTimeSec: closed.closedCandleTimeSec,
+                latestClose: latestCloseValue,
+                reason: result.reason ?? result.error ?? null,
+                latestTrade: result.latestTrade ?? null,
+                tradeWindows: result.tradeWindows ?? null,
+                latestEntry: evaluatedEntry
+                    ? {
+                        direction: evaluatedEntry.direction,
+                        signalTimeSec: evaluatedEntry.signalTimeSec,
+                        signalPrice: evaluatedEntry.signalPrice,
+                        entryPrice: evaluatedEntry.entryPrice ?? null,
+                        signalAgeBars: result.signalAgeBars ?? 0,
+                        isFresh: true,
+                        fingerprint: evaluatedEntry.fingerprint,
+                    }
+                    : null,
+            };
+            await persistLatestSubscriptionState(env, streamId, statePayload);
         } else {
             await updateSubscriptionStatus(env, streamId, status);
         }
@@ -1483,6 +1601,7 @@ async function evaluateSubscriptionState(
         interval: subscription.interval,
         strategyKey: subscription.strategy_key,
         evaluatedAt: new Date().toISOString(),
+        latestClose: null,
     };
 
     const prepared = await buildSubscriptionCandleContext(env, subscription);
@@ -1492,6 +1611,7 @@ async function evaluateSubscriptionState(
             ok: false,
             reason: prepared.reason,
             closedCandleTimeSec: null,
+            latestClose: null,
             latestTrade: null,
             latestEntry: null,
         };
@@ -1505,6 +1625,12 @@ async function evaluateSubscriptionState(
         backtestSettings: parsedBacktestSettings,
         freshnessBars: Math.max(0, subscription.freshness_bars ?? 1),
     });
+
+    const closedCandles = closed.candles;
+    const latestCloseBar = closedCandles.length > 0 ? closedCandles[closedCandles.length - 1] : null;
+    const latestClose = latestCloseBar && Number.isFinite(Number(latestCloseBar.close))
+        ? Number(latestCloseBar.close)
+        : null;
 
     const latestEntry = evaluation.latestEntry
         ? {
@@ -1523,6 +1649,7 @@ async function evaluateSubscriptionState(
         ok: evaluation.ok,
         reason: evaluation.reason ?? null,
         closedCandleTimeSec: closed.closedCandleTimeSec,
+        latestClose,
         latestTrade: evaluation.latestTrade ?? null,
         latestEntry,
     };
@@ -1566,6 +1693,7 @@ async function handleSubscriptionState(request: Request, env: Env): Promise<Resp
                     strategyKey: subscription.strategy_key,
                     evaluatedAt: new Date().toISOString(),
                     closedCandleTimeSec: null,
+                    latestClose: null,
                     reason: "evaluation_failed",
                     latestTrade: null,
                     latestEntry: null,
@@ -1574,6 +1702,368 @@ async function handleSubscriptionState(request: Request, env: Env): Promise<Resp
             500
         );
     }
+}
+
+interface SubscriptionStatesBatchRow {
+    stream_id: string;
+    symbol: string;
+    interval: string;
+    strategy_key: string;
+    latest_state_json: string | null;
+    last_status: string | null;
+    updated_at: string;
+    last_run_at: string | null;
+    committee_tag: string | null;
+}
+
+/**
+ * Batched state read for the Signal Committee. Reads precomputed
+ * `latest_state_json` written by the cron, so the cost is one SQL query
+ * regardless of member count. Never re-evaluates per stream.
+ *
+ * Streams with no cached state (subscription created but never evaluated by
+ * the cron) are returned with `ok: false, reason: "no_cached_state"` so the
+ * UI can render them as pending instead of hiding them.
+ */
+async function handleSubscriptionStatesBatch(request: Request, env: Env): Promise<Response> {
+    const body = await request.json().catch(() => ({}));
+    const rawStreamIds = (body as { streamIds?: unknown }).streamIds;
+    if (!Array.isArray(rawStreamIds)) {
+        return toJsonResponse({ ok: false, error: "streamIds must be an array" }, 400);
+    }
+
+    const streamIds = rawStreamIds
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter((value) => value.length > 0);
+
+    if (streamIds.length === 0) {
+        return toJsonResponse({ ok: true, states: [] });
+    }
+
+    if (!env.SIGNALS_DB) {
+        return toJsonResponse({ ok: false, error: "Missing SIGNALS_DB binding" }, 500);
+    }
+
+    // D1 binding limit is one ? per each IN value. Cap defensively.
+    const MAX_BATCH = 100;
+    const limited = streamIds.slice(0, MAX_BATCH);
+    const placeholders = limited.map(() => "?").join(",");
+    const result = await env.SIGNALS_DB.prepare(
+        `SELECT
+            stream_id,
+            symbol,
+            interval,
+            strategy_key,
+            latest_state_json,
+            last_status,
+            updated_at,
+            last_run_at,
+            committee_tag
+        FROM signal_subscriptions
+        WHERE stream_id IN (${placeholders})`
+    )
+        .bind(...limited)
+        .all<SubscriptionStatesBatchRow>();
+
+    const rows = result.results ?? [];
+    const byStreamId = new Map<string, SubscriptionStatesBatchRow>();
+    for (const row of rows) {
+        byStreamId.set(row.stream_id, row);
+    }
+
+    const nowIso = new Date().toISOString();
+    const states: Array<{
+        streamId: string;
+        ok: boolean;
+        reason: string | null;
+        symbol: string;
+        interval: string;
+        strategyKey: string;
+        evaluatedAt: string;
+        closedCandleTimeSec: number | null;
+        latestClose: number | null;
+        latestTrade: SubscriptionStateResult["latestTrade"];
+        latestEntry: SubscriptionStateResult["latestEntry"];
+        tradeWindows: Array<[number, number | null, 1 | -1]> | null;
+        lastStatus: string | null;
+        lastRunAt: string | null;
+        updatedAt: string | null;
+        committeeTag: string | null;
+    }> = new Array(limited.length);
+
+    for (let i = 0; i < limited.length; i++) {
+        const streamId = limited[i];
+        const row = byStreamId.get(streamId);
+        if (!row) {
+            states[i] = {
+                streamId,
+                ok: false,
+                reason: "subscription_not_found",
+                symbol: "",
+                interval: "",
+                strategyKey: "",
+                evaluatedAt: nowIso,
+                closedCandleTimeSec: null,
+                latestClose: null,
+                latestTrade: null,
+                latestEntry: null,
+                tradeWindows: null,
+                lastStatus: null,
+                lastRunAt: null,
+                updatedAt: null,
+                committeeTag: null,
+            };
+            continue;
+        }
+
+        const parsed = row.latest_state_json
+            ? safeJsonParse<StoredLatestState | null>(row.latest_state_json, null)
+            : null;
+
+        if (!parsed) {
+            states[i] = {
+                streamId,
+                ok: false,
+                reason: "no_cached_state",
+                symbol: row.symbol,
+                interval: row.interval,
+                strategyKey: row.strategy_key,
+                evaluatedAt: nowIso,
+                closedCandleTimeSec: null,
+                latestClose: null,
+                latestTrade: null,
+                latestEntry: null,
+                tradeWindows: null,
+                lastStatus: row.last_status,
+                lastRunAt: row.last_run_at,
+                updatedAt: row.updated_at,
+                committeeTag: row.committee_tag,
+            };
+            continue;
+        }
+
+        states[i] = {
+            streamId,
+            ok: true,
+            reason: parsed.reason ?? null,
+            symbol: row.symbol,
+            interval: row.interval,
+            strategyKey: row.strategy_key,
+            evaluatedAt: parsed.evaluatedAt,
+            closedCandleTimeSec: parsed.closedCandleTimeSec ?? null,
+            latestClose: Number.isFinite(parsed.latestClose as number) ? parsed.latestClose : null,
+            latestTrade: parsed.latestTrade ?? null,
+            latestEntry: parsed.latestEntry ?? null,
+            tradeWindows: Array.isArray(parsed.tradeWindows) ? parsed.tradeWindows : null,
+            lastStatus: row.last_status,
+            lastRunAt: row.last_run_at,
+            updatedAt: row.updated_at,
+            committeeTag: row.committee_tag,
+        };
+    }
+
+    return toJsonResponse({
+        ok: true,
+        scanned: limited.length,
+        truncated: streamIds.length > MAX_BATCH,
+        states,
+    });
+}
+
+// ========================================================================
+// Committee aggregate-score alert rules (Phase 4)
+// ------------------------------------------------------------------------
+// Opt-in (default disabled). When the committee net score crosses a
+// configured threshold AND its sign differs from the last fired alert's
+// sign, a Telegram message is sent. Hysteresis via `last_fired_score_sign`
+// prevents spam on threshold flap and duplicate alerts every cron tick.
+// ========================================================================
+
+interface CommitteeAlertRuleRow {
+    committee_tag: string;
+    enabled: number;
+    long_threshold: number;
+    short_threshold: number;
+    last_fired_score_sign: number;
+    last_fired_at: string | null;
+    updated_at: string;
+}
+
+export interface CommitteeAlertRule {
+    committeeTag: string;
+    enabled: boolean;
+    longThreshold: number;
+    shortThreshold: number;
+    lastFiredScoreSign: number;
+    lastFiredAt: string | null;
+    updatedAt: string;
+}
+
+/**
+ * Pure decision: given the current score and the rule, should an alert fire?
+ * Returns the new `lastFiredScoreSign` to persist, or `null` if no fire.
+ *
+ * Hysteresis rule:
+ * - score > 0 and score >= longThreshold and lastSign <= 0 -> fire, new sign = +1
+ * - score < 0 and score <= shortThreshold and lastSign >= 0 -> fire, new sign = -1
+ * - otherwise -> no fire (sign unchanged)
+ *
+ * The sign-differs check is what prevents repeat alerts while the score stays
+ * on one side of zero across cron ticks.
+ */
+export function decideCommitteeAlert(
+    score: number,
+    rule: { enabled: boolean; longThreshold: number; shortThreshold: number; lastFiredScoreSign: number }
+): { fire: true; newSign: 1 | -1 } | { fire: false } {
+    if (!rule.enabled) return { fire: false };
+    if (score > 0 && score >= rule.longThreshold && rule.lastFiredScoreSign <= 0) {
+        return { fire: true, newSign: 1 };
+    }
+    if (score < 0 && score <= rule.shortThreshold && rule.lastFiredScoreSign >= 0) {
+        return { fire: true, newSign: -1 };
+    }
+    return { fire: false };
+}
+
+interface CommitteeMemberStateRow {
+    stream_id: string;
+    committee_tag: string | null;
+    latest_state_json: string | null;
+}
+
+/**
+ * Cron-side aggregate-score alert pass. Runs after `runScheduledSubscriptions`
+ * so `latest_state_json` is fresh. For each distinct committee_tag with an
+ * enabled rule, sums the open-trade votes of its members and fires Telegram
+ * on threshold cross with hysteresis. Failures are logged and swallowed so
+ * they never block the cron.
+ */
+async function runCommitteeAlertPass(env: Env): Promise<void> {
+    if (!env.SIGNALS_DB) return;
+
+    const rulesResult = await env.SIGNALS_DB.prepare(
+        `SELECT * FROM committee_alert_rules WHERE enabled = 1`
+    ).all<CommitteeAlertRuleRow>();
+    const rules = rulesResult.results ?? [];
+    if (rules.length === 0) return;
+
+    const membersResult = await env.SIGNALS_DB.prepare(
+        `SELECT stream_id, committee_tag, latest_state_json
+         FROM signal_subscriptions
+         WHERE committee_tag IS NOT NULL`
+    ).all<CommitteeMemberStateRow>();
+    const members = membersResult.results ?? [];
+
+    const membersByTag = new Map<string, CommitteeMemberStateRow[]>();
+    for (const m of members) {
+        if (!m.committee_tag) continue;
+        const arr = membersByTag.get(m.committee_tag) ?? [];
+        arr.push(m);
+        membersByTag.set(m.committee_tag, arr);
+    }
+
+    for (const rule of rules) {
+        const tagMembers = membersByTag.get(rule.committee_tag) ?? [];
+        let score = 0;
+        for (const m of tagMembers) {
+            if (!m.latest_state_json) continue;
+            const parsed = safeJsonParse<StoredLatestState | null>(m.latest_state_json, null);
+            if (!parsed?.latestTrade?.isOpen || !parsed.latestEntry) continue;
+            score += parsed.latestEntry.direction === "long" ? 1
+                : parsed.latestEntry.direction === "short" ? -1 : 0;
+        }
+
+        const decision = decideCommitteeAlert(score, {
+            enabled: rule.enabled !== 0,
+            longThreshold: rule.long_threshold,
+            shortThreshold: rule.short_threshold,
+            lastFiredScoreSign: rule.last_fired_score_sign,
+        });
+
+        if (!decision.fire) continue;
+
+        try {
+            const sign = decision.newSign;
+            const text = `📊 Committee "${rule.committee_tag}" score crossed ${sign > 0 ? "+" : ""}${score}` +
+                ` (threshold ${sign > 0 ? `long≥${rule.long_threshold}` : `short≤${rule.short_threshold}`}).`;
+            await sendTelegramText(env, text);
+            await env.SIGNALS_DB.prepare(
+                `UPDATE committee_alert_rules
+                 SET last_fired_score_sign = ?, last_fired_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                 WHERE committee_tag = ?`
+            ).bind(sign, rule.committee_tag).run();
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            console.error(JSON.stringify({
+                event: "committee_alert_send_failed",
+                committeeTag: rule.committee_tag,
+                error: detail,
+            }));
+        }
+    }
+}
+
+async function handleCommitteeAlertRulesList(_request: Request, env: Env): Promise<Response> {
+    if (!env.SIGNALS_DB) {
+        return toJsonResponse({ ok: false, error: "Missing SIGNALS_DB binding" }, 500);
+    }
+    const result = await env.SIGNALS_DB.prepare(
+        `SELECT * FROM committee_alert_rules ORDER BY committee_tag ASC LIMIT 100`
+    ).all<CommitteeAlertRuleRow>();
+    const items: CommitteeAlertRule[] = (result.results ?? []).map(rowToRule);
+    return toJsonResponse({ ok: true, count: items.length, items });
+}
+
+async function handleCommitteeAlertRulesUpsert(request: Request, env: Env): Promise<Response> {
+    if (!env.SIGNALS_DB) {
+        return toJsonResponse({ ok: false, error: "Missing SIGNALS_DB binding" }, 500);
+    }
+    const body = await request.json().catch(() => ({}));
+    const payload = body as {
+        committeeTag?: string;
+        enabled?: boolean;
+        longThreshold?: number;
+        shortThreshold?: number;
+    };
+    const committeeTag = typeof payload.committeeTag === "string" ? payload.committeeTag.trim() : "";
+    if (!committeeTag) {
+        return toJsonResponse({ ok: false, error: "committeeTag is required" }, 400);
+    }
+    const enabled = payload.enabled === true ? 1 : 0;
+    const longThreshold = Number.isFinite(payload.longThreshold)
+        ? Math.max(1, Math.floor(Number(payload.longThreshold)))
+        : 1;
+    const shortThreshold = Number.isFinite(payload.shortThreshold)
+        ? Math.min(-1, Math.floor(Number(payload.shortThreshold)))
+        : -1;
+
+    await env.SIGNALS_DB.prepare(
+        `INSERT INTO committee_alert_rules
+            (committee_tag, enabled, long_threshold, short_threshold, last_fired_score_sign, last_fired_at)
+         VALUES (?, ?, ?, ?, 0, NULL)
+         ON CONFLICT(committee_tag) DO UPDATE SET
+            enabled = excluded.enabled,
+            long_threshold = excluded.long_threshold,
+            short_threshold = excluded.short_threshold,
+            updated_at = CURRENT_TIMESTAMP`
+    ).bind(committeeTag, enabled, longThreshold, shortThreshold).run();
+
+    const row = await env.SIGNALS_DB.prepare(
+        `SELECT * FROM committee_alert_rules WHERE committee_tag = ? LIMIT 1`
+    ).bind(committeeTag).first<CommitteeAlertRuleRow>();
+    return toJsonResponse({ ok: true, item: row ? rowToRule(row) : null });
+}
+
+function rowToRule(row: CommitteeAlertRuleRow): CommitteeAlertRule {
+    return {
+        committeeTag: row.committee_tag,
+        enabled: row.enabled !== 0,
+        longThreshold: row.long_threshold,
+        shortThreshold: row.short_threshold,
+        lastFiredScoreSign: row.last_fired_score_sign,
+        lastFiredAt: row.last_fired_at,
+        updatedAt: row.updated_at,
+    };
 }
 
 async function handleRunNow(request: Request, env: Env): Promise<Response> {
@@ -1714,12 +2204,24 @@ export default {
             return handleSubscriptionState(request, env);
         }
 
+        if (request.method === "POST" && pathname === "/api/subscriptions/states") {
+            return handleSubscriptionStatesBatch(request, env);
+        }
+
         if (request.method === "POST" && pathname === "/api/subscriptions/delete") {
             return handleSubscriptionDelete(request, env);
         }
 
         if (request.method === "POST" && pathname === "/api/subscriptions/run-now") {
             return handleRunNow(request, env);
+        }
+
+        if (request.method === "GET" && pathname === "/api/committee-alert/rules") {
+            return handleCommitteeAlertRulesList(request, env);
+        }
+
+        if (request.method === "POST" && pathname === "/api/committee-alert/rules") {
+            return handleCommitteeAlertRulesUpsert(request, env);
         }
 
         return toJsonResponse({ ok: false, error: "Not found" }, 404);
@@ -1746,5 +2248,10 @@ export default {
             event: "scheduled_run_summary",
             ...summary,
         }));
+
+        // Phase 4: opt-in committee aggregate-score alerts. Runs after the
+        // subscription pass so latest_state_json is fresh. Swallows its own
+        // errors so alert failures never block the cron.
+        await runCommitteeAlertPass(env);
     },
 };

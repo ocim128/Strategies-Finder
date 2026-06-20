@@ -65,6 +65,18 @@ async function applyUserStrategyConfig(config: StrategyConfig): Promise<void> {
     }
 }
 
+/**
+ * Public entry so other feature tabs (e.g. Signal Committee "Load") can apply
+ * a saved configuration to the chart with the same symbol/interval switching
+ * semantics as the Settings tab's Load button.
+ */
+export async function applySavedStrategyConfig(name: string): Promise<boolean> {
+    const config = settingsManager.loadStrategyConfig(name);
+    if (!config) return false;
+    await applyUserStrategyConfig(config);
+    return true;
+}
+
 export function setupSettingsHandlers() {
     const dom = createSettingsHandlersDom();
     // Reset to Default button

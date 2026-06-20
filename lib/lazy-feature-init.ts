@@ -29,6 +29,7 @@ const TAB_TO_FEATURE: Record<string, string> = {
     executionlab: "execution-lab",
     datamining: "data-mining",
     libraryaudit: "strategy-library-audit",
+    signalcommittee: "signal-committee",
 };
 
 const FEATURE_TO_TAB: Record<string, string> = Object.fromEntries(

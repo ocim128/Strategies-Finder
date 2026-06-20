@@ -1014,6 +1014,52 @@ export class ChartManager {
         return id;
     }
 
+    // ========================================================================
+    // Signal Committee overlay (current score projection)
+    // ------------------------------------------------------------------------
+    // The worker persists only entry signals (no exit events), so the committee
+    // cannot reconstruct a per-bar historical vote. This overlay instead
+    // projects the CURRENT net committee score across the visible chart bars:
+    // each bar gets one signed histogram bar (green/red/gray) reflecting the
+    // live verdict. A historical per-bar score requires server-side exit
+    // persistence and is tracked as a deferred phase.
+    // ------------------------------------------------------------------------
+
+    private committeeScoreSeries: ISeriesApi<"Histogram"> | null = null;
+
+    /**
+     * Render the current committee score across `bars`. The score is the live
+     * net vote; bars receive the same value so the user sees the verdict in
+     * chart context. Pass an empty array to clear.
+     */
+    public setCommitteeScoreOverlay(bars: { time: Time; value: number }[]): void {
+        if (bars.length === 0) {
+            this.removeCommitteeScoreOverlay();
+            return;
+        }
+        const last = bars[bars.length - 1];
+        const sign = (last.value ?? 0) > 0 ? ENHANCED_CANDLE_COLORS.up
+            : (last.value ?? 0) < 0 ? ENHANCED_CANDLE_COLORS.down
+                : "#888888";
+        if (!this.committeeScoreSeries) {
+            this.committeeScoreSeries = state.chart.addSeries(HistogramSeries, {
+                color: sign,
+                priceLineVisible: false,
+                lastValueVisible: false,
+            });
+        } else {
+            this.committeeScoreSeries.applyOptions({ color: sign });
+        }
+        this.committeeScoreSeries.setData(bars);
+    }
+
+    public removeCommitteeScoreOverlay(): void {
+        if (this.committeeScoreSeries) {
+            state.chart.removeSeries(this.committeeScoreSeries);
+            this.committeeScoreSeries = null;
+        }
+    }
+
     private indexIndicatorTooltipData(id: string, data: IndicatorTooltipPoint[]): void {
         const valuesByTime = new Map<string, number>();
         for (const point of data) {

@@ -16,6 +16,8 @@ import {
 
 export const ALERT_WORKER_URL_CHANGED_EVENT = 'alert-worker-url-changed';
 const API_FETCH_TIMEOUT_MS = 10_000;
+/** Hard cap on N-parallel fallback when the batched states endpoint is unavailable. */
+const COMMITTEE_FALLBACK_MAX = 25;
 
 export interface AlertWorkerHealth {
     ok: boolean;
@@ -47,6 +49,7 @@ export interface AlertSubscription {
     last_status: string | null;
     created_at: string;
     updated_at: string;
+    committee_tag?: string | null;
 }
 
 export interface AlertSubscriptionUpsert {
@@ -62,6 +65,12 @@ export interface AlertSubscriptionUpsert {
     notifyExit?: boolean;
     enabled?: boolean;
     candleLimit?: number;
+    /**
+     * Committee membership tag. Setting a non-empty string tags the subscription
+     * as a committee member. Omit to preserve the existing tag on re-upsert.
+     * Pass null/'' to clear.
+     */
+    committeeTag?: string | null;
 }
 
 export interface AlertSignalRecord {
@@ -115,8 +124,55 @@ export interface AlertSubscriptionState {
     evaluatedAt: string;
     closedCandleTimeSec: number | null;
     reason: string | null;
+    latestClose?: number | null;
     latestTrade: AlertEvaluatedTradeContext | null;
     latestEntry: AlertEvaluatedEntrySignal | null;
+}
+
+/**
+ * One element returned by the batched `/api/subscriptions/states` endpoint.
+ * Mirrors AlertSubscriptionState plus the membership/operational fields the
+ * committee UI needs to render per-row diagnostics without a second round trip.
+ */
+export interface CommitteeMemberState {
+    streamId: string;
+    ok: boolean;
+    reason: string | null;
+    symbol: string;
+    interval: string;
+    strategyKey: string;
+    evaluatedAt: string;
+    closedCandleTimeSec: number | null;
+    latestClose: number | null;
+    latestTrade: AlertEvaluatedTradeContext | null;
+    latestEntry: AlertEvaluatedEntrySignal | null;
+    /**
+     * Per-trade direction windows [entrySec, exitSec, dirSign] for the
+     * historical chart overlay. `exitSec` is null while the trade is open.
+     * Absent on old workers or when the strategy produced no trades.
+     */
+    tradeWindows?: Array<[number, number | null, 1 | -1]> | null;
+    lastStatus: string | null;
+    lastRunAt: string | null;
+    updatedAt: string | null;
+    committeeTag: string | null;
+}
+
+export interface CommitteeStateResult {
+    ok: boolean;
+    scanned: number;
+    truncated: boolean;
+    states: CommitteeMemberState[];
+}
+
+export interface CommitteeAlertRule {
+    committeeTag: string;
+    enabled: boolean;
+    longThreshold: number;
+    shortThreshold: number;
+    lastFiredScoreSign: number;
+    lastFiredAt: string | null;
+    updatedAt: string;
 }
 
 /**
@@ -323,6 +379,21 @@ export const alertService = {
         return data.items ?? [];
     },
 
+    /** List only committee-tagged subscriptions. Falls back to client-side filter on old workers. */
+    async listCommitteeSubscriptions(): Promise<AlertSubscription[]> {
+        try {
+            const data = await apiFetch<{ ok: boolean; items: AlertSubscription[] }>('/api/subscriptions?committee=1');
+            const items = data.items ?? [];
+            // Defend against older workers that ignore the ?committee flag.
+            return items.length > 0 && items.some((sub) => sub.committee_tag)
+                ? items.filter((sub) => sub.committee_tag)
+                : items;
+        } catch {
+            const all = await this.listSubscriptions();
+            return all.filter((sub) => sub.committee_tag);
+        }
+    },
+
     /** Create or update a subscription */
     async upsertSubscription(payload: AlertSubscriptionUpsert): Promise<{
         ok: boolean;
@@ -348,6 +419,22 @@ export const alertService = {
                 method: 'POST',
                 body: JSON.stringify({ streamId, enabled: false }),
             });
+        }
+    },
+
+    /**
+     * Hard-delete a subscription and its signal history. Used by the Signal
+     * Committee Remove action so membership actually goes away (not just
+     * disabled). Falls back to soft-disable on workers without hard-delete.
+     */
+    async deleteSubscription(streamId: string, hardDelete = true): Promise<void> {
+        try {
+            await apiFetch('/api/subscriptions/delete', {
+                method: 'POST',
+                body: JSON.stringify({ streamId, hardDelete }),
+            });
+        } catch {
+            await this.disableSubscription(streamId);
         }
     },
 
@@ -388,5 +475,116 @@ export const alertService = {
             throw new Error('Subscription state response missing payload.');
         }
         return state;
+    },
+
+    /**
+     * Batched committee state. Reads precomputed `latest_state_json` written by
+     * the cron, so cost is one request regardless of member count. Falls back
+     * to N parallel getSubscriptionState calls if the batched endpoint is
+     * missing (worker not yet redeployed) or returns an error.
+     *
+     * The fallback is bounded by `Math.min(streamIds.length, COMMITTEE_FALLBACK_MAX)`.
+     * Callers should cap UI membership to keep the fallback bounded.
+     */
+    async getCommitteeState(streamIds: readonly string[]): Promise<CommitteeStateResult> {
+        const limited = streamIds.slice(0, COMMITTEE_FALLBACK_MAX);
+        if (limited.length === 0) {
+            return { ok: true, scanned: 0, truncated: false, states: [] };
+        }
+
+        try {
+            const data = await apiFetch<CommitteeStateResult>('/api/subscriptions/states', {
+                method: 'POST',
+                body: JSON.stringify({ streamIds: limited }),
+            });
+            return {
+                ok: Boolean(data.ok),
+                scanned: typeof data.scanned === "number" ? data.scanned : data.states?.length ?? 0,
+                truncated: streamIds.length > COMMITTEE_FALLBACK_MAX || data.truncated === true,
+                states: Array.isArray(data.states) ? data.states : [],
+            };
+        } catch {
+            // Worker has not been redeployed with /api/subscriptions/states yet.
+            // Degrade to N parallel on-demand state calls.
+            const settled = await Promise.all(
+                limited.map((streamId) =>
+                    this.getSubscriptionState(streamId)
+                        .then((state): CommitteeMemberState => ({
+                            streamId: state.streamId,
+                            ok: state.ok,
+                            reason: state.reason,
+                            symbol: state.symbol,
+                            interval: state.interval,
+                            strategyKey: state.strategyKey,
+                            evaluatedAt: state.evaluatedAt,
+                            closedCandleTimeSec: state.closedCandleTimeSec,
+                            latestClose: state.latestClose ?? null,
+                            latestTrade: state.latestTrade,
+                            latestEntry: state.latestEntry,
+                            lastStatus: null,
+                            lastRunAt: null,
+                            updatedAt: null,
+                            committeeTag: null,
+                        }))
+                        .catch((error): CommitteeMemberState => ({
+                            streamId,
+                            ok: false,
+                            reason: error instanceof Error ? error.message : String(error),
+                            symbol: "",
+                            interval: "",
+                            strategyKey: "",
+                            evaluatedAt: new Date().toISOString(),
+                            closedCandleTimeSec: null,
+                            latestClose: null,
+                            latestTrade: null,
+                            latestEntry: null,
+                            lastStatus: null,
+                            lastRunAt: null,
+                            updatedAt: null,
+                            committeeTag: null,
+                        }))
+                )
+            );
+            return {
+                ok: true,
+                scanned: limited.length,
+                truncated: streamIds.length > COMMITTEE_FALLBACK_MAX,
+                states: settled,
+            };
+        }
+    },
+
+    /** List all committee alert rules. Empty array on old workers. */
+    async listCommitteeAlertRules(): Promise<CommitteeAlertRule[]> {
+        try {
+            const data = await apiFetch<{ ok: boolean; items?: CommitteeAlertRule[] }>('/api/committee-alert/rules');
+            return data.items ?? [];
+        } catch {
+            return [];
+        }
+    },
+
+    /**
+     * Upsert a committee alert rule. Returns the persisted rule, or null if the
+     * worker does not support the endpoint yet.
+     */
+    async upsertCommitteeAlertRule(rule: {
+        committeeTag: string;
+        enabled: boolean;
+        longThreshold: number;
+        shortThreshold: number;
+    }): Promise<CommitteeAlertRule | null> {
+        try {
+            const data = await apiFetch<{ ok: boolean; item?: CommitteeAlertRule }>(
+                '/api/committee-alert/rules',
+                {
+                    method: 'POST',
+                    body: JSON.stringify(rule),
+                }
+            );
+            return data.item ?? null;
+        } catch {
+            return null;
+        }
     },
 };

@@ -22,6 +22,7 @@ import { MONTE_CARLO_REQUIRED_IDS } from "../lib/monte-carlo-dom";
 import { STRATEGY_LIBRARY_ADMIN_REQUIRED_IDS } from "../lib/strategy-library-admin-dom";
 import { STRATEGY_LIBRARY_AUDIT_REQUIRED_IDS } from "../lib/strategy-library-audit-dom";
 import { CROSS_SYMBOL_REQUIRED_IDS } from "../lib/cross-symbol-dom";
+import { SIGNAL_COMMITTEE_REQUIRED_IDS } from "../lib/signal-committee-dom";
 import { CHART_MANAGER_REQUIRED_IDS } from "../lib/chart-manager-dom";
 import { STRATEGY_PANEL_REQUIRED_IDS } from "../lib/strategy-panel-dom";
 import { ASSET_LEADERSHIP_REQUIRED_IDS } from "../lib/asset-leadership-dom";
@@ -94,6 +95,7 @@ describe("Feature DOM contracts", () => {
         strategyLibraryAdmin: [...STRATEGY_LIBRARY_ADMIN_REQUIRED_IDS],
         strategyLibraryAudit: [...STRATEGY_LIBRARY_AUDIT_REQUIRED_IDS],
         crossSymbol: [...CROSS_SYMBOL_REQUIRED_IDS],
+        signalCommittee: [...SIGNAL_COMMITTEE_REQUIRED_IDS],
         chartManager: [...CHART_MANAGER_REQUIRED_IDS],
         strategyPanel: [...STRATEGY_PANEL_REQUIRED_IDS],
         assetLeadership: [...ASSET_LEADERSHIP_REQUIRED_IDS],

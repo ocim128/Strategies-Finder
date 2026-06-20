@@ -87,6 +87,14 @@ export interface EntrySignalEvaluationResult {
     preparedSignalCount: number;
     latestEntry: EvaluatedEntrySignal | null;
     latestTrade: EvaluatedLatestTradeContext | null;
+    /**
+     * Compact per-trade direction windows, used by the Signal Committee chart
+     * overlay to forward-fill each member's vote across the visible chart
+     * timeframe. Each entry is [entrySec, exitSec, dirSign] where dirSign is
+     * +1 for long, -1 for short, and exitSec is null while the trade is open.
+     * Capped to the most recent N to bound payload size.
+     */
+    tradeWindows?: Array<[number, number | null, 1 | -1]> | null;
 }
 
 const EVALUATION_CAPITAL_DEFAULTS = Object.freeze({
@@ -581,5 +589,28 @@ export function evaluateLatestEntrySignalFromPreparedSignals(
             takeProfitPercent: toTargetPercent(latestTrade.entryPrice, latestTrade.takeProfitPrice),
             stopLossPercent: toTargetPercent(latestTrade.entryPrice, latestTrade.stopLossPrice),
         },
+        tradeWindows: compressTradeWindows(backtestResult.trades),
     };
+}
+
+/**
+ * Convert a full backtest trade list into compact [entrySec, exitSec, dirSign]
+ * tuples for committee chart forward-fill. Caps to the most recent
+ * `TRADE_WINDOWS_CAP` trades to bound payload size. Open trades (exit reason
+ * `end_of_data`) get `exitSec: null`, which the forward-filler treats as
+ * "until the last visible bar".
+ */
+const TRADE_WINDOWS_CAP = 200;
+
+function compressTradeWindows(trades: Trade[]): Array<[number, number | null, 1 | -1]> | null {
+    if (!Array.isArray(trades) || trades.length === 0) return null;
+    const recent = trades.length > TRADE_WINDOWS_CAP ? trades.slice(trades.length - TRADE_WINDOWS_CAP) : trades;
+    const out: Array<[number, number | null, 1 | -1]> = [];
+    for (const trade of recent) {
+        const entrySec = toUnixSeconds(trade.entryTime);
+        const exitSec = trade.exitReason === "end_of_data" ? null : toUnixSeconds(trade.exitTime);
+        if (entrySec === null) continue;
+        out.push([entrySec, exitSec, trade.type === "long" ? 1 : -1]);
+    }
+    return out.length > 0 ? out : null;
 }
