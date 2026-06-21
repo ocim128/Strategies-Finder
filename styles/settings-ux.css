@@ -39,15 +39,17 @@
 
 .strategy-workspace-body.accordion-body {
     overflow: hidden;
-    transition: max-height 0.25s ease, opacity 0.15s ease;
-    max-height: 1200px;
+    transition: max-height 0.2s var(--ease-out-expo), opacity 0.15s ease;
+    max-height: 800px;
     opacity: 1;
+    will-change: max-height;
 }
 
 .strategy-workspace-body.accordion-body.collapsed {
-    max-height: 0 !important;
+    max-height: 0;
     opacity: 0;
     pointer-events: none;
+    will-change: auto;
 }
 
 .strategy-workspace-card {
@@ -598,17 +600,19 @@
 /* The section body slides/collapses */
 .section-body.accordion-body {
     overflow: hidden;
-    transition: max-height 0.25s ease, opacity 0.15s ease;
-    max-height: 1200px;
+    transition: max-height 0.2s var(--ease-out-expo), opacity 0.15s ease;
+    max-height: 800px;
     opacity: 1;
+    will-change: max-height;
 }
 
 .section-body.accordion-body.collapsed {
-    max-height: 0 !important;
+    max-height: 0;
     opacity: 0;
     margin-top: 0;
     margin-bottom: 0;
     pointer-events: none;
+    will-change: auto;
 }
 
 /* --------------------------------------------------------------------------

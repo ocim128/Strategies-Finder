@@ -47,7 +47,6 @@
 .btn-secondary:hover {
     background: var(--field-bg-hover);
     border-color: hsl(var(--hsl-accent) / 0.25);
-    transform: translateY(-1px);
 }
 
 .btn-success {

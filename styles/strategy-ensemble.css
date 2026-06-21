@@ -3,26 +3,24 @@
 }
 
 .ensemble-lab__panel {
-    padding: 12px;
-    border: 1px solid var(--border-light, rgba(128, 128, 128, 0.12));
-    border-radius: 12px;
-    background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015)),
-        rgba(255, 255, 255, 0.01);
+    padding: var(--space-3);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-xl);
+    background: var(--card-bg-muted);
     min-width: 0;
 }
 
 .ensemble-lab__control-grid {
-    margin-bottom: 12px;
+    margin-bottom: var(--space-3);
 }
 
 .ensemble-lab__field {
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    gap: 6px;
+    gap: var(--space-1-5);
     min-width: 0;
-    font-size: 11px;
+    font-size: var(--font-size-xs);
 }
 
 .ensemble-lab__field--target {
@@ -43,18 +41,16 @@
 .ensemble-lab__target-trigger {
     width: 100%;
     min-height: 38px;
-    padding: 9px 12px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.02)),
-        rgba(255, 255, 255, 0.02);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-l);
+    border: 1px solid var(--field-border);
+    background: var(--field-bg);
     color: var(--text-primary);
     font: inherit;
     text-align: left;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 10px;
+    gap: var(--space-2-5);
     align-items: center;
     cursor: pointer;
     transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
@@ -62,9 +58,7 @@
 
 .ensemble-lab__target-trigger:hover {
     border-color: hsl(var(--hsl-accent) / 0.3);
-    background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.03)),
-        rgba(255, 255, 255, 0.03);
+    background: var(--field-bg-hover);
 }
 
 .ensemble-lab__target-trigger[aria-expanded="true"] {
@@ -81,8 +75,8 @@
 .ensemble-lab__target-trigger-title,
 .ensemble-lab__target-option-title {
     color: var(--text-primary);
-    font-size: 12px;
-    font-weight: 600;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
     line-height: 1.35;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -92,7 +86,7 @@
 .ensemble-lab__target-trigger-subtitle,
 .ensemble-lab__target-option-subtitle {
     color: var(--text-secondary);
-    font-size: 10px;
+    font-size: var(--font-size-2xs);
     line-height: 1.35;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -101,7 +95,7 @@
 
 .ensemble-lab__target-trigger-caret {
     color: var(--text-secondary);
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     transition: transform 120ms ease, color 120ms ease;
 }
 
@@ -112,15 +106,15 @@
 
 .ensemble-lab__target-menu {
     position: absolute;
-    top: calc(100% + 8px);
+    top: calc(100% + var(--space-2));
     left: 0;
     right: 0;
     z-index: 40;
     display: grid;
-    gap: 8px;
-    padding: 10px;
-    border-radius: 12px;
-    border: 1px solid var(--card-border, var(--border));
+    gap: var(--space-2);
+    padding: var(--space-2-5);
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--card-border);
     background: hsl(var(--hsl-surface-1) / 0.98);
     box-shadow: var(--shadow-floating);
     backdrop-filter: blur(12px);
@@ -133,7 +127,7 @@
 
 .ensemble-lab__target-options {
     display: grid;
-    gap: 6px;
+    gap: var(--space-1-5);
     max-height: 280px;
     overflow-y: auto;
     padding-right: 2px;
@@ -141,10 +135,10 @@
 
 .ensemble-lab__target-option {
     width: 100%;
-    padding: 10px 12px;
+    padding: var(--space-2-5) var(--space-3);
     border: 1px solid transparent;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.03);
+    border-radius: var(--radius-l);
+    background: var(--card-bg-muted);
     color: inherit;
     text-align: left;
     display: grid;
@@ -155,22 +149,22 @@
 
 .ensemble-lab__target-option:hover {
     border-color: hsl(var(--hsl-accent) / 0.2);
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--field-bg-hover);
     transform: translateY(-1px);
 }
 
 .ensemble-lab__target-option.is-selected {
     border-color: hsl(var(--hsl-accent) / 0.36);
-    background: hsl(var(--hsl-accent) / 0.12);
+    background: var(--accent-soft);
 }
 
 .ensemble-lab__target-empty {
-    padding: 10px 12px;
-    border-radius: 10px;
-    border: 1px dashed var(--border);
-    background: rgba(255, 255, 255, 0.015);
+    padding: var(--space-2-5) var(--space-3);
+    border-radius: var(--radius-l);
+    border: 1px dashed var(--border-color);
+    background: var(--card-bg-muted);
     color: var(--text-secondary);
-    font-size: 12px;
+    font-size: var(--font-size-sm);
 }
 
 .ensemble-lab__control-grid .portfolio-lab__readout {
@@ -179,13 +173,13 @@
 
 .ensemble-lab__target-summary {
     display: grid;
-    gap: 10px;
-    padding: 12px;
-    border-radius: 10px;
-    border: 1px solid var(--border-light, rgba(128, 128, 128, 0.12));
-    background: rgba(255, 255, 255, 0.025);
+    gap: var(--space-2-5);
+    padding: var(--space-3);
+    border-radius: var(--radius-l);
+    border: 1px solid var(--card-border);
+    background: var(--card-bg-muted);
     color: var(--text-secondary);
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     line-height: 1.5;
 }
 
@@ -193,37 +187,37 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: var(--space-2);
 }
 
 .ensemble-lab__target-name {
     color: var(--text-primary);
-    font-size: 14px;
-    font-weight: 700;
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-bold);
 }
 
 .ensemble-lab__target-pill {
     display: inline-flex;
     align-items: center;
-    padding: 4px 8px;
-    border-radius: 999px;
-    background: rgba(0, 200, 83, 0.14);
-    color: #00c853;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--success-soft);
+    color: var(--green);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-bold);
+    letter-spacing: var(--tracking-medium);
     text-transform: uppercase;
 }
 
 .ensemble-lab__target-subtitle {
     color: var(--text-primary);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
 }
 
 .ensemble-lab__target-meta {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--space-2);
 }
 
 .ensemble-lab__target-note {
@@ -233,52 +227,52 @@
 .ensemble-lab__toolbar {
     display: grid;
     grid-template-columns: minmax(0, 1.5fr) minmax(180px, 0.9fr);
-    gap: 10px;
+    gap: var(--space-2-5);
     align-items: end;
 }
 
 .ensemble-lab__actions {
-    margin-top: 10px;
+    margin-top: var(--space-2-5);
 }
 
 .ensemble-lab__selection-summary {
-    margin-top: 10px;
-    font-size: 12px;
+    margin-top: var(--space-2-5);
+    font-size: var(--font-size-sm);
     color: var(--text-secondary);
 }
 
 .ensemble-lab__helper {
-    margin-top: 8px;
-    font-size: 12px;
+    margin-top: var(--space-2);
+    font-size: var(--font-size-sm);
     color: var(--text-secondary);
 }
 
 .ensemble-lab__context-list {
-    margin-top: 10px;
-    padding: 4px;
-    border-radius: 10px;
-    border: 1px solid var(--border-light, rgba(128, 128, 128, 0.12));
-    background: rgba(255, 255, 255, 0.02);
+    margin-top: var(--space-2-5);
+    padding: var(--space-1);
+    border-radius: var(--radius-l);
+    border: 1px solid var(--card-border);
+    background: var(--card-bg-muted);
     max-height: 360px;
 }
 
 .ensemble-lab__empty {
-    margin-top: 10px;
-    padding: 12px;
-    border-radius: 10px;
-    border: 1px dashed var(--border);
-    background: rgba(255, 255, 255, 0.01);
+    margin-top: var(--space-2-5);
+    padding: var(--space-3);
+    border-radius: var(--radius-l);
+    border: 1px dashed var(--border-color);
+    background: var(--card-bg-muted);
     color: var(--text-secondary);
-    font-size: 12px;
+    font-size: var(--font-size-sm);
 }
 
 .ensemble-lab__config-item {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
-    gap: 10px;
+    gap: var(--space-2-5);
     align-items: start;
-    padding: 10px;
-    border-radius: 10px;
+    padding: var(--space-2-5);
+    border-radius: var(--radius-l);
     border: 1px solid transparent;
     background: transparent;
     cursor: pointer;
@@ -286,14 +280,14 @@
 }
 
 .ensemble-lab__config-item:hover {
-    border-color: var(--border-light, rgba(128, 128, 128, 0.18));
-    background: rgba(255, 255, 255, 0.03);
+    border-color: var(--card-border);
+    background: var(--card-bg-muted);
     transform: translateY(-1px);
 }
 
 .ensemble-lab__config-item.is-target {
-    border-color: rgba(0, 200, 83, 0.2);
-    background: rgba(0, 200, 83, 0.06);
+    border-color: hsl(var(--hsl-success) / 0.2);
+    background: hsl(var(--hsl-success) / 0.06);
     cursor: not-allowed;
 }
 
@@ -309,20 +303,20 @@
 .ensemble-lab__config-body {
     min-width: 0;
     display: grid;
-    gap: 8px;
+    gap: var(--space-2);
 }
 
 .ensemble-lab__config-title-row {
     display: grid;
-    gap: 4px;
+    gap: var(--space-1);
     min-width: 0;
 }
 
 .ensemble-lab__config-title {
     min-width: 0;
     color: var(--text-primary);
-    font-size: 13px;
-    font-weight: 700;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-bold);
     line-height: 1.35;
     white-space: normal;
     overflow-wrap: anywhere;
@@ -330,7 +324,7 @@
 
 .ensemble-lab__config-strategy {
     color: var(--text-secondary);
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     line-height: 1.35;
     white-space: normal;
     overflow-wrap: anywhere;
@@ -338,7 +332,7 @@
 
 .ensemble-lab__config-meta {
     display: grid;
-    gap: 6px;
+    gap: var(--space-1-5);
     grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
 }
 
@@ -347,18 +341,18 @@
     max-width: 100%;
     display: grid;
     gap: 2px;
-    padding: 4px 8px;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.06);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-l);
+    background: var(--bg-tertiary);
     color: var(--text-secondary);
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     line-height: 1.2;
     overflow-wrap: anywhere;
 }
 
 .ensemble-lab__config-badge strong {
     color: var(--text-primary);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
 }
 
 .ensemble-lab__diagnostics {
@@ -366,11 +360,11 @@
 }
 
 .ensemble-lab__polymarket-empty {
-    margin-top: 12px;
+    margin-top: var(--space-3);
 }
 
 .ensemble-lab__polymarket-agreement {
-    margin-top: 12px;
+    margin-top: var(--space-3);
 }
 
 .ensemble-lab__polymarket-verdict {
@@ -378,36 +372,36 @@
     align-items: center;
     justify-content: center;
     min-width: 84px;
-    padding: 4px 8px;
-    border-radius: 999px;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-pill);
     border: 1px solid transparent;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-bold);
+    letter-spacing: var(--tracking-medium);
     text-transform: uppercase;
 }
 
 .ensemble-lab__polymarket-verdict--edge {
-    border-color: hsl(var(--hsl-success, 145 70% 42%) / 0.28);
-    background: hsl(var(--hsl-success, 145 70% 42%) / 0.12);
-    color: hsl(var(--hsl-success, 145 70% 42%));
+    border-color: hsl(var(--hsl-success) / 0.28);
+    background: hsl(var(--hsl-success) / 0.12);
+    color: var(--green);
 }
 
 .ensemble-lab__polymarket-verdict--marginal {
-    border-color: hsl(var(--hsl-warning, 38 92% 50%) / 0.28);
-    background: hsl(var(--hsl-warning, 38 92% 50%) / 0.12);
-    color: hsl(var(--hsl-warning, 38 92% 50%));
+    border-color: hsl(var(--hsl-warning) / 0.28);
+    background: hsl(var(--hsl-warning) / 0.12);
+    color: var(--warning);
 }
 
 .ensemble-lab__polymarket-verdict--no_edge {
-    border-color: hsl(var(--hsl-danger, 4 78% 57%) / 0.28);
-    background: hsl(var(--hsl-danger, 4 78% 57%) / 0.12);
-    color: hsl(var(--hsl-danger, 4 78% 57%));
+    border-color: hsl(var(--hsl-danger) / 0.28);
+    background: hsl(var(--hsl-danger) / 0.12);
+    color: var(--red);
 }
 
 .ensemble-lab__polymarket-verdict--insufficient {
-    border-color: var(--border);
-    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--border-color);
+    background: var(--bg-tertiary);
     color: var(--text-secondary);
 }
 

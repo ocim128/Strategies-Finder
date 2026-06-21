@@ -20,7 +20,6 @@
     color: var(--text-primary);
     border-color: hsl(var(--hsl-accent) / 0.22);
     box-shadow: var(--shadow-xs);
-    transform: translateY(-1px);
 }
 
 .tool-btn:active {
@@ -88,27 +87,9 @@
     border-radius: var(--radius-s);
 }
 
-.dropdown-item::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%) scaleY(0);
-    width: 3px;
-    height: 60%;
-    background: var(--accent-color);
-    border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
-    transition: transform 0.2s ease;
-}
-
 .dropdown-item:hover {
     background: var(--field-bg-hover);
 }
-
-.dropdown-item:hover::before {
-    transform: translateY(-50%) scaleY(1);
-}
-
 .dropdown-item:active {
     transform: scale(0.98);
 }
@@ -118,9 +99,6 @@
     color: var(--accent-color);
 }
 
-.dropdown-item.active::before {
-    transform: translateY(-50%) scaleY(1);
-}
 
 .dropdown-header {
     padding: var(--space-2) var(--space-4);

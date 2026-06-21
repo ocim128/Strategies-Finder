@@ -50,10 +50,10 @@
     background: var(--card-bg-muted);
     color: var(--text-secondary);
     border-color: var(--card-border);
-    animation: pulse 1.5s ease-in-out infinite;
+    animation: enginePulse 1.5s ease-in-out infinite;
 }
 
-@keyframes pulse {
+@keyframes enginePulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.6; }
 }

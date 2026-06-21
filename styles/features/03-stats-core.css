@@ -144,12 +144,23 @@
 
 /* Positive stat card - subtle tint only */
 .stat-card.positive {
-    background: hsl(var(--hsl-success) / 0.05);
+    background: hsl(var(--hsl-success) / 0.08);
 }
 
 /* Negative stat card - subtle tint only */
 .stat-card.negative {
-    background: hsl(var(--hsl-danger) / 0.05);
+    background: hsl(var(--hsl-danger) / 0.08);
+}
+
+/* Hero stat card – primary metric (spans full width, larger) */
+.stat-card.hero {
+    grid-column: span 2;
+    padding: var(--space-3) var(--space-3);
+    border-bottom-width: 2px;
+}
+
+.stat-card.hero .stat-value {
+    font-size: var(--font-size-lg);
 }
 
 .stat-label {

@@ -4,18 +4,18 @@
 .deployability-section {
     margin-top: 20px;
     padding: 16px;
-    background: var(--card-bg, rgba(255, 255, 255, 0.05));
-    border-radius: 8px;
-    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+    background: var(--card-bg);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--card-border);
 }
 
 .section-subtitle {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary, #e5e5e5);
-    margin-bottom: 12px;
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    margin-bottom: var(--space-3);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--tracking-wide);
 }
 
 /* Verdict Banner */
@@ -23,44 +23,44 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px 16px;
-    background: var(--card-bg, rgba(255, 255, 255, 0.05));
-    border-radius: 8px;
-    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
-    margin-bottom: 16px;
+    padding: var(--space-3) var(--space-4);
+    background: var(--card-bg);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--card-border);
+    margin-bottom: var(--space-4);
 }
 
 .verdict-badge {
     display: inline-block;
-    padding: 4px 12px;
+    padding: var(--space-1) var(--space-3);
     border-radius: 999px;
-    font-size: 12px;
-    font-weight: 700;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-bold);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--tracking-wide);
 }
 
 .verdict-badge--robust {
-    background: rgba(34, 197, 94, 0.2);
-    color: #22c55e;
-    border: 1px solid rgba(34, 197, 94, 0.4);
+    background: var(--success-soft);
+    color: var(--green);
+    border: 1px solid hsl(var(--hsl-success) / 0.4);
 }
 
 .verdict-badge--borderline {
-    background: rgba(251, 191, 36, 0.2);
-    color: #fbbf24;
-    border: 1px solid rgba(251, 191, 36, 0.4);
+    background: hsl(var(--hsl-warning) / 0.18);
+    color: var(--warning);
+    border: 1px solid hsl(var(--hsl-warning) / 0.4);
 }
 
 .verdict-badge--weak {
-    background: rgba(239, 68, 68, 0.2);
-    color: #ef4444;
-    border: 1px solid rgba(239, 68, 68, 0.4);
+    background: var(--danger-soft);
+    color: var(--red);
+    border: 1px solid hsl(var(--hsl-danger) / 0.4);
 }
 
 .verdict-text {
-    font-size: 13px;
-    color: var(--text-secondary, #a3a3a3);
+    font-size: var(--font-size-md);
+    color: var(--text-secondary);
 }
 
 /* Deployability Stats Grid */
@@ -71,59 +71,59 @@
 }
 
 .deployability-panel__stats .stat-card {
-    background: var(--card-bg, rgba(255, 255, 255, 0.05));
-    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
-    border-radius: 8px;
-    padding: 12px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-m);
+    padding: var(--space-3);
 }
 
 .deployability-panel__stats .stat-label {
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text-secondary, #a3a3a3);
-    margin-bottom: 6px;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-1-5);
 }
 
 .deployability-panel__stats .stat-value {
-    font-size: 18px;
-    font-weight: 600;
-    color: var(--text-primary, #e5e5e5);
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
 }
 
 /* Deployability Tables */
 .deployability-panel__table {
     width: 100%;
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     border-collapse: collapse;
 }
 
 .deployability-panel__table th {
     text-align: left;
-    padding: 8px 12px;
-    font-size: 11px;
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--font-size-xs);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text-secondary, #a3a3a3);
-    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
-    font-weight: 500;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--card-border);
+    font-weight: var(--font-weight-medium);
 }
 
 .deployability-panel__table td {
-    padding: 10px 12px;
-    color: var(--text-primary, #e5e5e5);
-    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.05));
+    padding: var(--space-2-5) var(--space-3);
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-subtle);
 }
 
 .deployability-panel__table tbody tr:hover {
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--tab-hover-bg);
 }
 
 /* Regime Grid Layout */
 .deployability-regime-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 16px;
+    gap: var(--space-4);
 }
 
 @media (max-width: 900px) {
@@ -133,8 +133,8 @@
 }
 
 .regime-column-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-primary, #e5e5e5);
-    margin-bottom: 10px;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    margin-bottom: var(--space-2-5);
 }

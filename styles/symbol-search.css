@@ -292,10 +292,10 @@
 
 .symbol-search-loading-text {
     font-size: var(--font-size-sm);
-    animation: pulse 1.5s ease-in-out infinite;
+    animation: searchPulse 1.5s ease-in-out infinite;
 }
 
-@keyframes pulse {
+@keyframes searchPulse {
 
     0%,
     100% {

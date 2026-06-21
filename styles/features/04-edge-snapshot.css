@@ -148,7 +148,7 @@
 
 .snapshot-profile-cell.edge-weak {
 
-    color: var(--yellow, #f0b429);
+    color: var(--warning);
 
 }
 
@@ -687,4 +687,3 @@
     color: var(--red);
 
 }
-
