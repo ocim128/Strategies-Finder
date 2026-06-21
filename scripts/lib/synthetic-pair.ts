@@ -123,15 +123,12 @@ export function buildSyntheticPairDataset(
         }
     }
 
-    const usedTimes = new Set<number>();
     const aligned: Array<{ base: OHLCVData; quote: OHLCVData }> = [];
 
+    // Dedup happens upstream in parseOhlcvBars (last-write-wins); here we only align.
     for (const baseBar of baseBars) {
         const time = Number(baseBar.time);
         if (!Number.isFinite(time)) {
-            continue;
-        }
-        if (usedTimes.has(time)) {
             continue;
         }
 
@@ -140,7 +137,6 @@ export function buildSyntheticPairDataset(
             continue;
         }
 
-        usedTimes.add(time);
         aligned.push({ base: baseBar, quote: quoteBar });
     }
 
@@ -284,6 +280,88 @@ export function resolveSyntheticSourceBars(targetBars: number, sourceRatio = 1):
     return Math.min(SYNTHETIC_SOURCE_BARS_LIMIT, normalizedTarget * normalizedRatio);
 }
 
+// ============================================================================
+// Pipeline helper
+// ============================================================================
+
+/**
+ * Result of {@link buildSyntheticPairFromLegs}. Mirrors {@link SyntheticPairDataset}
+ * with the resolved source interval so callers can emit diagnostics without
+ * re-deriving it. The raw `base`/`quote` legs are returned for callers (e.g.
+ * Portfolio Lab) that need per-leg diagnostics; other callers ignore them.
+ */
+export interface SyntheticPairFromLegsResult {
+    bars: OHLCVData[];
+    meta: SyntheticPairDatasetMeta;
+    sourceInterval: string;
+    base: OHLCVData[];
+    quote: OHLCVData[];
+}
+
+/**
+ * Shared pipeline for the 5 callsites that previously inlined:
+ *   pickSourceInterval -> resolveSyntheticSourceBars ->
+ *   Promise.all([fetchBase, fetchQuote]) ->
+ *   buildSyntheticPairDataset -> aggregateSyntheticBars.
+ *
+ * Callers inject a `fetchLeg` function so the helper stays pure (no dependency
+ * on dataManager, AbortSignal routing, caching, or worker env). Variations
+ * that previously caused contract drift collapse to two options:
+ *   - `sourceBarsCap` (finder caps at DATA_CHART_TOTAL_LIMIT; others don't)
+ *   - `tailSliceBars` (worker slices to targetLimit; others don't)
+ *
+ * Note: signal-committee-service intentionally builds once and aggregates
+ * per-member inside a loop; it does not use this helper.
+ */
+export async function buildSyntheticPairFromLegs(args: {
+    baseSymbol: string;
+    quoteSymbol: string;
+    interval: string;
+    targetBars: number;
+    fetchLeg: (symbol: string, sourceInterval: string, sourceBars: number) => Promise<OHLCVData[]>;
+    sourceBarsCap?: number;
+    tailSliceBars?: number;
+    minBars?: number;
+    /**
+     * When true, an empty base or quote leg yields an empty `bars` array
+     * instead of throwing SyntheticAlignmentError / SyntheticQuoteError.
+     * Lets callers (e.g. Data Mining) emit their own per-leg diagnostics
+     * before deciding how to surface the failure.
+     */
+    allowEmptyLegs?: boolean;
+}): Promise<SyntheticPairFromLegsResult> {
+    const { interval, targetBars, fetchLeg, baseSymbol, quoteSymbol } = args;
+    const minBars = args.minBars ?? 1;
+    const source = pickSourceInterval(interval);
+    const sourceInterval = source?.sourceInterval ?? interval;
+    const rawSourceBars = resolveSyntheticSourceBars(targetBars, source?.ratio ?? 1);
+    const sourceBars = args.sourceBarsCap
+        ? Math.min(rawSourceBars, args.sourceBarsCap)
+        : rawSourceBars;
+
+    const [base, quote] = await Promise.all([
+        fetchLeg(baseSymbol, sourceInterval, sourceBars),
+        fetchLeg(quoteSymbol, sourceInterval, sourceBars),
+    ]);
+
+    if (args.allowEmptyLegs && (base.length === 0 || quote.length === 0)) {
+        return { bars: [], meta: { baseBars: base.length, quoteBars: quote.length, alignedBars: 0, droppedBars: 0 }, sourceInterval, base, quote };
+    }
+
+    const dataset = buildSyntheticPairDataset({ base, quote, interval: sourceInterval, minBars });
+    const bars = source
+        ? aggregateSyntheticBars(dataset.bars, interval)
+        : dataset.bars;
+
+    return {
+        bars: args.tailSliceBars ? bars.slice(-Math.max(1, args.tailSliceBars)) : bars,
+        meta: dataset.meta,
+        sourceInterval,
+        base,
+        quote,
+    };
+}
+
 export function aggregateSyntheticBars(
     bars: OHLCVData[],
     targetInterval: string,
@@ -293,10 +371,19 @@ export function aggregateSyntheticBars(
     if (bars.length <= 1) return bars;
 
     const buckets = new Map<number, OHLCVData[]>();
+    // The producer (buildSyntheticPairDataset) always returns ascending bars,
+    // so each bucket's bars are already in chronological order and the
+    // per-bucket re-sort is wasted work in the hot path. Track monotonicity
+    // during bucketing so unsorted input (e.g. direct calls from tests or
+    // ad-hoc callers) still gets sorted, preserving the documented contract.
+    let inputAscending = true;
+    let prevEpoch = -Infinity;
 
     for (const bar of bars) {
         const epoch = Number(bar.time);
         if (!Number.isFinite(epoch)) continue;
+        if (epoch < prevEpoch) inputAscending = false;
+        prevEpoch = epoch;
 
         const bucketStart = Math.floor(epoch / targetSecs) * targetSecs;
         const bucket = buckets.get(bucketStart);
@@ -314,14 +401,14 @@ export function aggregateSyntheticBars(
     for (const bucketStart of sortedBucketStarts) {
         const chunk = buckets.get(bucketStart);
         if (!chunk || chunk.length === 0) continue;
-        const sortedChunk = chunk.length > 1
-            ? chunk.slice().sort((left, right) => Number(left.time) - Number(right.time))
-            : chunk;
+        const sortedChunk = inputAscending || chunk.length === 1
+            ? chunk
+            : chunk.slice().sort((left, right) => Number(left.time) - Number(right.time));
 
         let high = -Infinity;
         let low = Infinity;
         let volume = 0;
-        for (const subBar of chunk) {
+        for (const subBar of sortedChunk) {
             if (subBar.high > high) high = subBar.high;
             if (subBar.low < low) low = subBar.low;
             volume += Number.isFinite(subBar.volume) ? subBar.volume : 0;

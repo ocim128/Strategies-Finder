@@ -60,7 +60,7 @@ import type {
 	FinderStrategyDiagnostics,
 } from './types/finder';
 import { isSmartTradeSizingMode } from "./types/backtest";
-import { aggregateSyntheticBars, buildSyntheticPairDataset, deriveSyntheticSymbol, pickSourceInterval } from "../scripts/lib/synthetic-pair";
+import { buildSyntheticPairFromLegs, deriveSyntheticSymbol, pickSourceInterval } from "../scripts/lib/synthetic-pair";
 import { SYNTHETIC_TARGET_BARS, DATA_CHART_TOTAL_LIMIT } from "./data/constants";
 
 const QUOTE_SUFFIXES = ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD', 'BTC', 'ETH', 'BNB', 'EUR', 'TRY', 'BRL'];
@@ -649,26 +649,25 @@ export class FinderManager {
 		let promise: Promise<OHLCVData[]>;
 		promise = (async () => {
 			if (signal?.aborted) return [];
-			// Source bars are fetched through getSourceSeriesForSynthetic, which
-			// dedupes identical source reads across pairs (BNBUSDT 1m is reused
-			// ~15x in a typical universe). The source read allows the remote
-			// Binance gap-fill because the source interval may not be pre-warmed.
-			const [baseData, quoteData] = await Promise.all([
-				this.getSourceSeriesForSynthetic(baseSymbol, sourceInterval, sourceBars, signal),
-				this.getSourceSeriesForSynthetic(quoteSymbol, sourceInterval, sourceBars, signal),
-			]);
-			if (signal?.aborted) return [];
-			if (baseData.length === 0 || quoteData.length === 0) return [];
-
-			const dataset = buildSyntheticPairDataset({
-				base: baseData,
-				quote: quoteData,
-				interval: sourceInterval,
-				minBars: 1,
+			// The pipeline (pick source -> fetch legs -> align -> aggregate)
+			// is centralized in buildSyntheticPairFromLegs so every synthetic
+			// consumer stays in lockstep. This callsite keeps two local
+			// variations: the source-bars cap below (kept bounded because the
+			// derived source interval often forces a remote Binance gap-fill),
+			// and getSourceSeriesForSynthetic as the fetchLeg so BNBUSDT 1m is
+			// reused ~15x rather than re-read per pair.
+			const result = await buildSyntheticPairFromLegs({
+				baseSymbol,
+				quoteSymbol,
+				interval,
+				targetBars: SYNTHETIC_TARGET_BARS,
+				sourceBarsCap: DATA_CHART_TOTAL_LIMIT,
+				fetchLeg: (legSymbol, sourceInterval, sourceBars) =>
+					this.getSourceSeriesForSynthetic(legSymbol, sourceInterval, sourceBars, signal),
 			});
-			const syntheticBars = source
-				? aggregateSyntheticBars(dataset.bars, interval)
-				: dataset.bars;
+			if (signal?.aborted) return [];
+			const syntheticBars = result.bars;
+			if (syntheticBars.length === 0) return [];
 
 			dataManager.registerImportedData(syntheticSymbol, interval, syntheticBars);
 			return syntheticBars;

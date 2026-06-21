@@ -1,5 +1,5 @@
 import { timeKey, type Signal, type Time } from "../strategies";
-import { parsePortfolioSyntheticPairSymbol } from "./portfolio-lab-synthetic";
+import { parsePortfolioSyntheticPairSymbol, stripKnownQuoteSuffix } from "./portfolio-lab-synthetic";
 
 const DEFAULT_PORTFOLIO_MAJOR_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT"] as const;
 
@@ -74,17 +74,6 @@ export function buildRunnablePortfolioUniverse(
     }
 
     return Array.from(unique).slice(0, 2);
-}
-
-const PORTFOLIO_QUOTE_SUFFIXES = ["USDT", "USDC", "USD", "BTC", "ETH", "BNB"] as const;
-
-function stripKnownQuoteSuffix(symbol: string): string {
-    for (const suffix of PORTFOLIO_QUOTE_SUFFIXES) {
-        if (symbol.length > suffix.length && symbol.endsWith(suffix)) {
-            return symbol.slice(0, -suffix.length);
-        }
-    }
-    return symbol;
 }
 
 function sharesLegWithCompressedTarget(targetCompressed: string, legSymbol: string): boolean {

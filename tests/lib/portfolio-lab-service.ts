@@ -52,10 +52,7 @@ import {
     type SizingScenarioRow,
 } from "./portfolioLab";
 import {
-    aggregateSyntheticBars,
-    buildSyntheticPairDataset,
-    pickSourceInterval,
-    resolveSyntheticSourceBars,
+    buildSyntheticPairFromLegs,
 } from "../scripts/lib/synthetic-pair";
 import { renderPortfolioLab } from "./portfolioLab/portfolio-lab-renderer";
 import {
@@ -597,23 +594,14 @@ class PortfolioLabService {
             return null;
         }
 
-        const source = pickSourceInterval(state.currentInterval);
-        const sourceInterval = source?.sourceInterval ?? state.currentInterval;
-        const sourceBars = resolveSyntheticSourceBars(lookbackBars, source?.ratio ?? 1);
-        const [baseData, quoteData] = await Promise.all([
-            dataManager.fetchHistoricalData(parsed.baseSymbol, sourceInterval, sourceBars),
-            dataManager.fetchHistoricalData(parsed.quoteSymbol, sourceInterval, sourceBars),
-        ]);
-
-        const dataset = buildSyntheticPairDataset({
-            base: baseData,
-            quote: quoteData,
-            interval: sourceInterval,
-            minBars: 1,
+        const { bars: ratioData, meta, base: baseData, quote: quoteData } = await buildSyntheticPairFromLegs({
+            baseSymbol: parsed.baseSymbol,
+            quoteSymbol: parsed.quoteSymbol,
+            interval: state.currentInterval,
+            targetBars: lookbackBars,
+            fetchLeg: (legSymbol, sourceInterval, sourceBars) =>
+                dataManager.fetchHistoricalData(legSymbol, sourceInterval, sourceBars),
         });
-        const ratioData = source
-            ? aggregateSyntheticBars(dataset.bars, state.currentInterval)
-            : dataset.bars;
         const analysisData = this.prepareAnalysisData(ratioData);
         const preparedBaseData = this.prepareAnalysisData(baseData);
         const preparedQuoteData = this.prepareAnalysisData(quoteData);
@@ -626,8 +614,8 @@ class PortfolioLabService {
                 ratioData: analysisData,
                 baseData: preparedBaseData,
                 quoteData: preparedQuoteData,
-                alignedBars: dataset.meta.alignedBars,
-                droppedBars: dataset.meta.droppedBars,
+                alignedBars: meta.alignedBars,
+                droppedBars: meta.droppedBars,
             }),
         };
         dataManager.registerImportedData(parsed.syntheticSymbol, state.currentInterval, ratioData);

@@ -18,10 +18,7 @@ import {
     parseConfigNameFromStreamId as parseConfigNameFromAlertStreamId,
 } from "../lib/alert-stream-id";
 import {
-    aggregateSyntheticBars,
-    buildSyntheticPairDataset,
-    pickSourceInterval,
-    resolveSyntheticSourceBars,
+    buildSyntheticPairFromLegs,
 } from "../scripts/lib/synthetic-pair";
 import {
     getWorkerStrategySupportSnapshot,
@@ -706,23 +703,46 @@ async function fetchSyntheticMarketCandles(
 ): Promise<OHLCVData[]> {
     const minClosedCandles = readMinClosedCandles(env);
     const targetLimit = Math.max(minClosedCandles + 2, Math.floor(limit));
-    const source = pickSourceInterval(interval);
-    const sourceInterval = source?.sourceInterval ?? interval;
-    const sourceLimit = resolveSyntheticSourceBars(targetLimit, source?.ratio ?? 1);
-    const [base, quote] = await Promise.all([
-        fetchCandlesForLeg(syntheticPair.baseSymbol, sourceInterval, sourceLimit, env),
-        fetchCandlesForLeg(syntheticPair.quoteSymbol, sourceInterval, sourceLimit, env),
-    ]);
-    const dataset = buildSyntheticPairDataset({
-        base,
-        quote,
-        interval: sourceInterval,
-        minBars: 1,
+    const result = await buildSyntheticPairFromLegs({
+        baseSymbol: syntheticPair.baseSymbol,
+        quoteSymbol: syntheticPair.quoteSymbol,
+        interval,
+        targetBars: targetLimit,
+        fetchLeg: (symbol, sourceInterval, sourceBars) =>
+            fetchCandlesForLeg(symbol, sourceInterval, sourceBars, env),
+        tailSliceBars: targetLimit,
     });
-    const bars = source
-        ? aggregateSyntheticBars(dataset.bars, interval)
-        : dataset.bars;
-    return bars.slice(-Math.max(1, targetLimit));
+
+    // Structured diagnostics so silent synthetic failures (rate-limited leg,
+    // empty quote response, alignment collapse) are greppable in worker logs
+    // instead of surfacing only as a generic "no candles" error downstream.
+    // Mirrors the synth_* event names used by lib/data-mining-manager.ts so
+    // UI and worker logs can be searched together.
+    if (result.base.length === 0 || result.quote.length === 0) {
+        console.error(JSON.stringify({
+            event: "synth_worker_zero_data",
+            base: syntheticPair.baseSymbol,
+            quote: syntheticPair.quoteSymbol,
+            interval,
+            sourceInterval: result.sourceInterval,
+            baseBars: result.base.length,
+            quoteBars: result.quote.length,
+        }));
+    } else {
+        console.log(JSON.stringify({
+            event: "synth_worker_built",
+            base: syntheticPair.baseSymbol,
+            quote: syntheticPair.quoteSymbol,
+            interval,
+            sourceInterval: result.sourceInterval,
+            baseBars: result.base.length,
+            quoteBars: result.quote.length,
+            alignedBars: result.meta.alignedBars,
+            droppedBars: result.meta.droppedBars,
+            outputBars: result.bars.length,
+        }));
+    }
+    return result.bars;
 }
 
 function formatPercent(value: number): string {

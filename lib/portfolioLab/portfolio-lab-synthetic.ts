@@ -2,7 +2,7 @@ import type { OHLCVData } from "../strategies";
 import { deriveSyntheticSymbol } from "../../scripts/lib/synthetic-pair";
 import type { SyntheticPairConnection } from "./portfolio-lab-types";
 
-const QUOTE_SUFFIXES = ["USDT", "USDC", "USD", "BTC", "ETH", "BNB"] as const;
+export const PORTFOLIO_QUOTE_SUFFIXES = ["USDT", "USDC", "USD", "BTC", "ETH", "BNB"] as const;
 
 export interface ParsedSyntheticPairSymbol {
     baseAsset: string;
@@ -12,8 +12,8 @@ export interface ParsedSyntheticPairSymbol {
     syntheticSymbol: string;
 }
 
-function stripKnownQuoteSuffix(symbol: string): string {
-    const suffix = QUOTE_SUFFIXES.find((candidate) => symbol.endsWith(candidate) && symbol.length > candidate.length);
+export function stripKnownQuoteSuffix(symbol: string): string {
+    const suffix = PORTFOLIO_QUOTE_SUFFIXES.find((candidate) => symbol.endsWith(candidate) && symbol.length > candidate.length);
     return suffix ? symbol.slice(0, -suffix.length) : symbol;
 }
 
@@ -22,7 +22,7 @@ function resolveToBinanceSymbol(token: string): string {
     if (!upper) {
         return "";
     }
-    if (QUOTE_SUFFIXES.some((suffix) => upper.endsWith(suffix) && upper.length > suffix.length)) {
+    if (PORTFOLIO_QUOTE_SUFFIXES.some((suffix) => upper.endsWith(suffix) && upper.length > suffix.length)) {
         return upper;
     }
     return `${upper}USDT`;

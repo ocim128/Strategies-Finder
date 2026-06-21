@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
     aggregateSyntheticBars,
     buildSyntheticPairDataset,
+    buildSyntheticPairFromLegs,
     buildSyntheticPairPayload,
     pickSourceInterval,
     resolveSyntheticSourceBars,
@@ -77,6 +78,23 @@ describe('synthetic pair dataset builder', () => {
         assert.ok(candle.high >= candle.close, 'high should bound close');
         assert.ok(candle.low <= candle.open, 'low should bound open');
         assert.ok(candle.low <= candle.close, 'low should bound close');
+    });
+
+    it('degrades gracefully when only some quote OHLC points are zero or non-finite', () => {
+        // rHigh (220/0) and rLow (180/0) become NaN and are filtered out;
+        // the bar is still emitted with high/low collapsing onto the
+        // finite open/close ratios. Locking this in so a future "cleanup"
+        // cannot silently switch to dropping the whole bar.
+        const base = [bar(10, { open: 200, high: 220, low: 180, close: 210 })];
+        const quote = [bar(10, { open: 1000, high: 0, low: 0, close: 1005 })];
+
+        const dataset = buildSyntheticPairDataset({ base, quote, interval: '5m' });
+
+        assert.equal(dataset.bars.length, 1);
+        assert.equal(dataset.bars[0].open, 200 / 1000);
+        assert.equal(dataset.bars[0].close, 210 / 1005);
+        assert.equal(dataset.bars[0].high, 210 / 1005);
+        assert.equal(dataset.bars[0].low, 200 / 1000);
     });
 
     it('normalizes timestamps, sorts ascending, and dedupes by last-write-wins', () => {
@@ -300,5 +318,99 @@ describe('aggregateSyntheticBars', () => {
         assert.equal(aggregated[0].high, 15);
         assert.equal(aggregated[0].low, 9);
         assert.equal(aggregated[0].volume, 250);
+    });
+});
+
+describe('buildSyntheticPairFromLegs', () => {
+    it('runs the full pipeline (fetch -> align -> aggregate) and returns legs + meta', async () => {
+        // Two 1m legs that align on timestamps 0 and 60; target interval 2m
+        // forces pickSourceInterval to use 1m and aggregate two sub-bars each.
+        const fetched: Record<string, OHLCVData[]> = {
+            BASE: [
+                bar(0, { open: 100, high: 110, low: 95, close: 105, volume: 10 }),
+                bar(60, { open: 105, high: 115, low: 100, close: 110, volume: 20 }),
+            ],
+            QUOTE: [
+                bar(0, { open: 50, high: 52, low: 48, close: 51, volume: 5 }),
+                bar(60, { open: 51, high: 53, low: 49, close: 52, volume: 6 }),
+            ],
+        };
+        const fetchLeg = async (symbol: string, _sourceInterval: string, _sourceBars: number) =>
+            fetched[symbol];
+
+        const result = await buildSyntheticPairFromLegs({
+            baseSymbol: 'BASE',
+            quoteSymbol: 'QUOTE',
+            interval: '2m',
+            targetBars: 2,
+            fetchLeg,
+        });
+
+        // Aggregated to a single 2m bar at time 0.
+        assert.equal(result.bars.length, 1);
+        assert.equal(Number(result.bars[0].time), 0);
+        // open = base.open(0) / quote.open(0) = 100/50
+        assert.equal(result.bars[0].open, 100 / 50);
+        // close = base.close(60) / quote.close(60) = 110/52
+        assert.equal(result.bars[0].close, 110 / 52);
+        // Legs are returned so callers (Portfolio Lab) can compute per-leg stats.
+        assert.equal(result.base.length, 2);
+        assert.equal(result.quote.length, 2);
+        assert.equal(result.meta.alignedBars, 2);
+        // Source interval should be the finer interval picked for sub-bar build.
+        assert.equal(result.sourceInterval, '1m');
+    });
+
+    it('returns empty bars and skips throwing when allowEmptyLegs is true and a leg is empty', async () => {
+        const fetchLeg = async (symbol: string): Promise<OHLCVData[]> =>
+            symbol === 'BASE' ? [bar(0)] : [];
+
+        const result = await buildSyntheticPairFromLegs({
+            baseSymbol: 'BASE',
+            quoteSymbol: 'QUOTE',
+            interval: '15m',
+            targetBars: 1,
+            allowEmptyLegs: true,
+            fetchLeg,
+        });
+
+        assert.equal(result.bars.length, 0);
+        assert.equal(result.meta.alignedBars, 0);
+        assert.equal(result.base.length, 1);
+        assert.equal(result.quote.length, 0);
+    });
+
+    it('throws SyntheticQuoteError on empty quote leg when allowEmptyLegs is not set', async () => {
+        const fetchLeg = async (symbol: string): Promise<OHLCVData[]> =>
+            symbol === 'BASE' ? [bar(0)] : [];
+
+        await assert.rejects(
+            () => buildSyntheticPairFromLegs({
+                baseSymbol: 'BASE',
+                quoteSymbol: 'QUOTE',
+                interval: '15m',
+                targetBars: 1,
+                fetchLeg,
+            }),
+            SyntheticQuoteError
+        );
+    });
+
+    it('honors tailSliceBars to trim the output to the most recent N bars', async () => {
+        const base = [bar(0), bar(60), bar(120), bar(180)];
+        const quote = [bar(0), bar(60), bar(120), bar(180)];
+
+        const result = await buildSyntheticPairFromLegs({
+            baseSymbol: 'BASE',
+            quoteSymbol: 'QUOTE',
+            interval: '1m',
+            targetBars: 4,
+            tailSliceBars: 2,
+            fetchLeg: async () => base, // same shape for both legs is fine for this test
+        });
+
+        // fetchLeg ignores which leg; ensure we sliced to last 2 of [0,60,120,180].
+        assert.equal(result.bars.length, 2);
+        assert.deepEqual(result.bars.map((b) => Number(b.time)), [120, 180]);
     });
 });

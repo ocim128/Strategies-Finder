@@ -157,7 +157,17 @@ Synthetic bar count is limited by the overlap between the two input series. If o
 5. Result is loaded via `commitOhlcvData()` + `registerImportedData()`.
 6. Backtest/Finder operate on the synthetic data as if it were a normal market.
 
+### Pipeline helper
+
+The shared fetch → align → aggregate pipeline lives in `buildSyntheticPairFromLegs()` in `scripts/lib/synthetic-pair.ts`. All five runtime callsites (Data Mining, Finder universe loader, Portfolio Lab, Worker, CLI) route through it so any change to source-interval resolution, source-bar accounting, or aggregation applies uniformly. Two options encode the per-callsite variations that previously drifted:
+
+- `sourceBarsCap` — Finder passes `DATA_CHART_TOTAL_LIMIT` to keep remote gap-fill bounded.
+- `tailSliceBars` — Worker trims the final bars to `targetLimit`.
+- `allowEmptyLegs` — Data Mining uses this to emit its own per-leg diagnostics before failing.
+
+The Signal Committee sync path (`lib/signal-committee-service.ts`) intentionally bypasses the helper: it builds once and aggregates per-member inside a loop to avoid refetching shared legs.
+
 ### Tests
 
-- `tests/synthetic-pair-transform.spec.ts` — ratio formula, alignment, error handling, payload shape
+- `tests/synthetic-pair-transform.spec.ts` — ratio formula, alignment, error handling, payload shape, pipeline helper
 - `tests/build-synthetic-pair-script.spec.ts` — CLI argument parsing

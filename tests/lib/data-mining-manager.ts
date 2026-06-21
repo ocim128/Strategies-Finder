@@ -15,7 +15,7 @@ import { parseTimeToUnixSeconds } from "./time-normalization";
 import { parseIntervalSeconds } from "./interval-utils";
 import { formatPolymarketDisplayName, parsePolymarketEventInput } from "./dataProviders/polymarket";
 import { queryDataMiningDom, type DataMiningDom } from "./data-mining-dom";
-import { aggregateSyntheticBars, buildSyntheticPairDataset, deriveSyntheticSymbol, isSyntheticSymbol, pickSourceInterval, resolveSyntheticSourceBars } from "../scripts/lib/synthetic-pair";
+import { buildSyntheticPairFromLegs, deriveSyntheticSymbol, isSyntheticSymbol, pickSourceInterval, resolveSyntheticSourceBars } from "../scripts/lib/synthetic-pair";
 
 interface NormalizedCandle {
     time: number;
@@ -770,48 +770,43 @@ export class DataMiningManager {
                 }
             }
 
-            const sourceBars = resolveSyntheticSourceBars(SYNTHETIC_TARGET_BARS, source?.ratio ?? 1);
-            const [baseData, quoteData] = await Promise.all([
-                dataManager.fetchHistoricalData(baseSymbol, sourceInterval, sourceBars),
-                dataManager.fetchHistoricalData(quoteSymbol, sourceInterval, sourceBars),
-            ]);
+            const result = await buildSyntheticPairFromLegs({
+                baseSymbol,
+                quoteSymbol,
+                interval,
+                targetBars: SYNTHETIC_TARGET_BARS,
+                allowEmptyLegs: true,
+                fetchLeg: (legSymbol, sourceInterval, bars) =>
+                    dataManager.fetchHistoricalData(legSymbol, sourceInterval, bars),
+            });
+            const syntheticBars = result.bars;
 
             this.recordDiagnostic('synth_legs_fetched', {
-                baseBars: baseData.length, quoteBars: quoteData.length, sourceInterval,
-                baseFirst: baseData[0]?.time, baseLast: baseData[baseData.length - 1]?.time,
-                quoteFirst: quoteData[0]?.time, quoteLast: quoteData[quoteData.length - 1]?.time,
+                baseBars: result.base.length, quoteBars: result.quote.length, sourceInterval,
+                baseFirst: result.base[0]?.time, baseLast: result.base[result.base.length - 1]?.time,
+                quoteFirst: result.quote[0]?.time, quoteLast: result.quote[result.quote.length - 1]?.time,
             });
 
-            if (baseData.length === 0) {
+            if (result.base.length === 0) {
                 this.recordDiagnostic('synth_zero_data', { leg: 'base', symbol: baseSymbol, sourceInterval });
                 uiManager.showToast(`No data for ${baseSymbol} on ${sourceInterval}.`, 'error');
                 this.setStatus(`No data for ${baseSymbol}.`, 'error');
                 return;
             }
-            if (quoteData.length === 0) {
+            if (result.quote.length === 0) {
                 this.recordDiagnostic('synth_zero_data', { leg: 'quote', symbol: quoteSymbol, sourceInterval });
                 uiManager.showToast(`No data for ${quoteSymbol} on ${sourceInterval}.`, 'error');
                 this.setStatus(`No data for ${quoteSymbol}.`, 'error');
                 return;
             }
 
-            const dataset = buildSyntheticPairDataset({
-                base: baseData,
-                quote: quoteData,
-                interval: sourceInterval,
-                minBars: 1,
-            });
-            const syntheticBars = source
-                ? aggregateSyntheticBars(dataset.bars, interval)
-                : dataset.bars;
-
             if (!this.barsMatchInterval(syntheticBars, interval)) {
                 throw new Error(`Synthetic bars do not match requested interval ${interval}.`);
             }
 
             this.recordDiagnostic('synth_dataset_built', {
-                alignedBars: dataset.bars.length,
-                droppedBars: dataset.meta.droppedBars,
+                alignedBars: result.meta.alignedBars,
+                droppedBars: result.meta.droppedBars,
                 afterAggregation: syntheticBars.length,
                 aggregated: !!source,
             });
@@ -825,7 +820,7 @@ export class DataMiningManager {
 
             const subBarNote = source ? ` (sub-bar: ${sourceInterval}->${interval}, ${source.ratio}x)` : '';
             this.setStatus(
-                `Loaded ${syntheticBars.length} synthetic bars for ${syntheticSymbol}${subBarNote} (dropped ${dataset.meta.droppedBars}).`,
+                `Loaded ${syntheticBars.length} synthetic bars for ${syntheticSymbol}${subBarNote} (dropped ${result.meta.droppedBars}).`,
                 'success'
             );
         } catch (error) {
