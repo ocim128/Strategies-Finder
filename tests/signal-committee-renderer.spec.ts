@@ -84,6 +84,7 @@ describe("signal-committee-renderer / buildCommitteeRowView", () => {
     it("renders LONG / +1 for an open long trade", () => {
         const view = buildCommitteeRowView(baseMember(), openLongState(), NOW_SEC, "cfg");
         expect(view.directionLabel).to.equal("LONG");
+        expect(view.directionTone).to.equal("long");
         expect(view.voteLabel).to.equal("+1");
         expect(view.statusTone).to.equal("ok");
         // entry 100 -> last 110 = +10%
@@ -97,6 +98,7 @@ describe("signal-committee-renderer / buildCommitteeRowView", () => {
             : null;
         const view = buildCommitteeRowView(baseMember(), state, NOW_SEC, "cfg");
         expect(view.directionLabel).to.equal("SHORT");
+        expect(view.directionTone).to.equal("short");
         expect(view.voteLabel).to.equal("-1");
         // short: (entry - last)/entry*100 = (100-90)/100*100 = +10%
         expect(view.gainLabel).to.equal("+10.00%");
@@ -109,6 +111,7 @@ describe("signal-committee-renderer / buildCommitteeRowView", () => {
             : null;
         const view = buildCommitteeRowView(baseMember(), state, NOW_SEC, "cfg");
         expect(view.directionLabel).to.equal("FLAT");
+        expect(view.directionTone).to.equal("flat");
         expect(view.voteLabel).to.equal("0");
         // No open trade -> gain/age both render "—".
         expect(view.gainLabel).to.equal("—");
@@ -125,6 +128,7 @@ describe("signal-committee-renderer / buildCommitteeRowView", () => {
         };
         const view = buildCommitteeRowView(baseMember({ last_status: "no_cached_state" }), state, NOW_SEC, "cfg");
         expect(view.directionLabel).to.equal("PENDING");
+        expect(view.directionTone).to.equal("pending");
         expect(view.statusLabel).to.equal("no_cached_state");
         expect(view.statusTone).to.equal("warn");
     });
@@ -145,6 +149,7 @@ describe("signal-committee-renderer / buildCommitteeRowView", () => {
         );
         // The error in last_status wins over the otherwise-pending label.
         expect(view.directionLabel).to.equal("ERROR");
+        expect(view.directionTone).to.equal("error");
         expect(view.statusLabel).to.contain("error:Binance API unavailable");
         expect(view.statusTone).to.equal("error");
     });
@@ -226,12 +231,19 @@ describe("signal-committee-renderer / renderCommitteeHeader", () => {
     it("renders score with a leading + when positive and there are open trades", () => {
         const header = renderCommitteeHeader(aggregate({ score: 3, longCount: 3 }), "2026-06-21T00:00:00.000Z");
         expect(header.score).to.equal("+3");
+        expect(header.scoreTone).to.equal("positive");
         expect(header.longShort).to.equal("3L / 0S / 0Flat");
     });
 
     it("renders — score when there are no open or flat rows", () => {
         const header = renderCommitteeHeader(aggregate({ score: 0 }), "2026-06-21T00:00:00.000Z");
         expect(header.score).to.equal("—");
+        expect(header.scoreTone).to.equal("neutral");
+    });
+
+    it("renders a negative score tone when shorts dominate", () => {
+        const header = renderCommitteeHeader(aggregate({ score: -2, shortCount: 2 }), null);
+        expect(header.scoreTone).to.equal("negative");
     });
 
     it("renders — lastUpdated when updatedAtIso is null", () => {
@@ -243,7 +255,7 @@ describe("signal-committee-renderer / renderCommitteeHeader", () => {
 describe("signal-committee-renderer / renderCommitteeRows", () => {
     it("emits an empty-state row with colspan when given no rows", () => {
         const html = renderCommitteeRows([]);
-        expect(html).to.contain("colspan=\"10\"");
+        expect(html).to.contain("colspan=\"9\"");
         expect(html).to.contain("Add Current Configuration");
     });
 
@@ -255,6 +267,7 @@ describe("signal-committee-renderer / renderCommitteeRows", () => {
             interval: "1m",
             strategyKey: "strat",
             directionLabel: "LONG",
+            directionTone: "long" as const,
             voteLabel: "+1",
             ageLabel: "1m 00s",
             gainLabel: "+1.00%",
@@ -266,5 +279,27 @@ describe("signal-committee-renderer / renderCommitteeRows", () => {
         expect(html).to.contain("&lt;script&gt;");
         // Stream id is also round-tripped through escapeHtml on the buttons.
         expect(html).to.contain("data-signal-committee-load=\"stream:&lt;x&gt;\"");
+    });
+
+    it("tones the direction cell and omits a vote column", () => {
+        // Vote is no longer a column; direction carries the tone instead.
+        const longRow = renderCommitteeRows([{
+            streamId: "s1",
+            configName: "cfg",
+            symbol: "BTCUSDT",
+            interval: "1m",
+            strategyKey: "strat",
+            directionLabel: "LONG",
+            directionTone: "long",
+            voteLabel: "+1",
+            ageLabel: "—",
+            gainLabel: "—",
+            statusLabel: "ok",
+            statusTone: "ok",
+        }]);
+        expect(longRow).to.contain("signal-committee__direction--long");
+        // No +1 cell of its own; the direction label carries the meaning.
+        const cells = longRow.match(/<td/g)?.length ?? 0;
+        expect(cells).to.equal(9);
     });
 });

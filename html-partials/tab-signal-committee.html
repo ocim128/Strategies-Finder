@@ -15,31 +15,39 @@
     </div>
 
     <div class="portfolio-lab" id="signalCommitteeContent">
+        <div class="section-title">Signal Committee</div>
+
         <div class="analysis-finder-section">
             <div class="analysis-finder-header">
-                <h4 class="analysis-finder-title">Committee</h4>
+                <h4 class="analysis-finder-title">Members</h4>
                 <div class="analysis-finder-controls">
-                    <label class="toggle-label" style="font-size:0.78rem;">
-                        <input type="checkbox" id="signalCommitteeAutoToggle"> Auto
-                    </label>
-                    <select id="signalCommitteeIntervalSelect" class="settings-select" style="font-size:0.78rem;" title="Auto-refresh interval (cron runs per minute, so faster polls only re-read cached state)">
-                        <option value="10">10s</option>
-                        <option value="30">30s</option>
-                        <option value="60">1m</option>
-                        <option value="300">5m</option>
-                    </select>
-                    <button class="btn btn-secondary btn-compact" id="signalCommitteeRefreshBtn" type="button">Refresh</button>
                     <button class="btn btn-primary btn-compact" id="signalCommitteeAddBtn" type="button">Add Current Configuration</button>
-                    <button class="btn btn-secondary btn-compact" id="signalCommitteeAddSavedBtn" type="button">Add Saved Configs</button>
-                    <button class="btn btn-secondary btn-compact" id="signalCommitteeSyncSyntheticBtn" type="button" title="Fetch synthetic-pair legs from Binance into local SQLite, then refresh worker state">Sync Synthetic Legs</button>
-                    <button class="btn btn-secondary btn-compact" id="signalCommitteeChartToggleBtn" type="button" title="Project the current committee score onto the main chart">Show Score on Chart</button>
+                    <button class="btn btn-secondary btn-compact" id="signalCommitteeRefreshBtn" type="button">Refresh</button>
+                    <div class="signal-committee__toolbar-utility">
+                        <button class="btn btn-secondary btn-compact" id="signalCommitteeAddSavedBtn" type="button">Add Saved Configs</button>
+                        <button class="btn btn-secondary btn-compact" id="signalCommitteeSyncSyntheticBtn" type="button" title="Fetch synthetic-pair legs from Binance into local SQLite, then refresh worker state">Sync Synthetic Legs</button>
+                        <button class="btn btn-secondary btn-compact" id="signalCommitteeChartToggleBtn" type="button" title="Project the current committee score onto the main chart">Show Score on Chart</button>
+                        <label class="signal-committee__auto-toggle" aria-label="Toggle auto refresh">
+                            <span>Auto</span>
+                            <span class="section-toggle">
+                                <input type="checkbox" id="signalCommitteeAutoToggle">
+                                <span class="section-toggle-track"></span>
+                            </span>
+                        </label>
+                        <select id="signalCommitteeIntervalSelect" class="settings-select" title="Auto-refresh interval (cron runs per minute, so faster polls only re-read cached state)">
+                            <option value="10">10s</option>
+                            <option value="30">30s</option>
+                            <option value="60">1m</option>
+                            <option value="300">5m</option>
+                        </select>
+                    </div>
                 </div>
             </div>
 
             <div class="portfolio-lab__control-grid">
                 <div class="analysis-control portfolio-lab__readout">
                     Score
-                    <div class="portfolio-lab__badge portfolio-lab__badge--accent" id="signalCommitteeScore">—</div>
+                    <div class="portfolio-lab__badge signal-committee__score--neutral" id="signalCommitteeScore">—</div>
                 </div>
                 <div class="analysis-control portfolio-lab__readout">
                     Open L / S / Flat
@@ -67,32 +75,27 @@
                 <h4 class="analysis-finder-title">Aggregate Score Alerts (optional)</h4>
             </div>
             <div class="portfolio-lab__control-grid">
-                <label class="toggle-label" style="font-size:0.78rem;">
-                    <input type="checkbox" id="signalCommitteeAlertEnabled"> Enable Telegram alerts
+                <label class="signal-committee__auto-toggle">
+                    <span class="section-toggle">
+                        <input type="checkbox" id="signalCommitteeAlertEnabled">
+                        <span class="section-toggle-track"></span>
+                    </span>
+                    <span>Enable Telegram alerts</span>
                 </label>
                 <div class="analysis-control portfolio-lab__readout">
                     Long ≥
-                    <input type="number" id="signalCommitteeAlertLongThreshold" value="2" min="1" step="1" style="width:4rem;">
+                    <input type="number" id="signalCommitteeAlertLongThreshold" value="2" min="1" step="1" class="signal-committee__threshold-input">
                 </div>
                 <div class="analysis-control portfolio-lab__readout">
                     Short ≤
-                    <input type="number" id="signalCommitteeAlertShortThreshold" value="-2" max="-1" step="1" style="width:4rem;">
+                    <input type="number" id="signalCommitteeAlertShortThreshold" value="-2" max="-1" step="1" class="signal-committee__threshold-input">
                 </div>
                 <button class="btn btn-secondary btn-compact" id="signalCommitteeAlertSaveBtn" type="button">Save Alert Rule</button>
             </div>
-            <div class="analysis-finder-status" id="signalCommitteeAlertStatus" style="font-size:0.75rem;">
+            <div class="analysis-finder-status" id="signalCommitteeAlertStatus">
                 Default off. When enabled, the worker sends one Telegram message when the net score
                 crosses a threshold, with hysteresis so it won't repeat every tick.
             </div>
-        </div>
-
-        <div class="analysis-finder-section">
-            <details style="margin-top:8px;">
-                <summary style="cursor:pointer;font-size:0.78rem;color:var(--text-secondary);">
-                    Diagnostic output (debug)
-                </summary>
-                <pre id="signalCommitteeDiagnosticPre" style="margin-top:6px;padding:8px;background:var(--bg-secondary,#111);border:1px solid var(--border-color,#333);border-radius:4px;font-size:0.72rem;line-height:1.35;max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-all;">(no diagnostic yet)</pre>
-            </details>
         </div>
 
         <div class="analysis-finder-section">
@@ -105,7 +108,6 @@
                             <th>TF</th>
                             <th>Strategy</th>
                             <th>Dir</th>
-                            <th>Vote</th>
                             <th>Age</th>
                             <th>Gain %</th>
                             <th>Status</th>
@@ -113,14 +115,19 @@
                         </tr>
                     </thead>
                     <tbody id="signalCommitteeTableBody">
-                        <tr>
-                            <td colspan="10" style="text-align:center;color:var(--text-secondary);padding:16px;">
-                                Loading committee members...
-                            </td>
+                        <tr class="signal-committee__empty-row">
+                            <td colspan="9">Loading committee members...</td>
                         </tr>
                     </tbody>
                 </table>
             </div>
+        </div>
+
+        <div class="analysis-finder-section">
+            <details class="signal-committee__diagnostic">
+                <summary>Diagnostic output (debug)</summary>
+                <pre id="signalCommitteeDiagnosticPre">(no diagnostic yet)</pre>
+            </details>
         </div>
     </div>
 </div>

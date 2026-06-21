@@ -1459,6 +1459,17 @@ class SignalCommitteeService {
     // Rendering
     // ------------------------------------------------------------------
 
+    /**
+     * Update the Score badge text + tone. Keeps `portfolio-lab__badge` for
+     * sizing and swaps the tone class so positive/negative/neutral reads at
+     * a glance. Mirrors the renderer's pure scoreTone output.
+     */
+    private setScoreBadge(text: string, tone: "positive" | "negative" | "neutral"): void {
+        const badge = this.getDom().signalCommitteeScore;
+        badge.textContent = text;
+        badge.className = `portfolio-lab__badge signal-committee__score--${tone}`;
+    }
+
     private buildScoreRows(): Array<CommitteeScoreRow & { voteDirection: "long" | "short" | null }> {
         return this.members.map((m) => {
             const s = this.memberStates.get(m.stream_id);
@@ -1496,7 +1507,7 @@ class SignalCommitteeService {
         const aggregate: CommitteeAggregate = aggregateScore(scoreRows, nowSec);
 
         const header = renderCommitteeHeader(aggregate, this.latestStatesAtIso);
-        dom.signalCommitteeScore.textContent = header.score;
+        this.setScoreBadge(header.score, header.scoreTone);
         dom.signalCommitteeLongShort.textContent = header.longShort;
         dom.signalCommitteeAvgAge.textContent = header.avgAge;
         dom.signalCommitteeAvgGain.textContent = header.avgGain;
@@ -1518,7 +1529,7 @@ class SignalCommitteeService {
 
     private renderEmptyMembers(): void {
         const dom = this.getDom();
-        dom.signalCommitteeScore.textContent = "—";
+        this.setScoreBadge("—", "neutral");
         dom.signalCommitteeLongShort.textContent = "0L / 0S / 0Flat";
         dom.signalCommitteeAvgAge.textContent = "—";
         dom.signalCommitteeAvgGain.textContent = "—";
@@ -1536,7 +1547,7 @@ class SignalCommitteeService {
 
     private renderHealthFail(message: string): void {
         const dom = this.getDom();
-        dom.signalCommitteeScore.textContent = "—";
+        this.setScoreBadge("—", "neutral");
         dom.signalCommitteeLongShort.textContent = "—";
         dom.signalCommitteeAvgAge.textContent = "—";
         dom.signalCommitteeAvgGain.textContent = "—";
