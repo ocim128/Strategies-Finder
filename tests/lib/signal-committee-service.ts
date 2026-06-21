@@ -39,10 +39,6 @@ import { resolveCurrentAlertSubscriptionContext } from "./current-alert-subscrip
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
 import {
     aggregateScore,
-    gainPctForRow,
-    formatAgeShort,
-    formatPercentSigned,
-    ageSecForRow,
     type CommitteeAggregate,
     type CommitteeScoreRow,
 } from "./signal-committee-score";
@@ -51,10 +47,10 @@ import {
     toOverlayPoints,
 } from "./signal-committee-overlay";
 import {
+    buildCommitteeRowView,
     renderCommitteeHeader,
     renderCommitteeRows,
     renderEmptyHealthFail,
-    type CommitteeRowView,
 } from "./signal-committee-renderer";
 import { createSignalCommitteeDom, type SignalCommitteeDom } from "./signal-committee-dom";
 import {
@@ -66,6 +62,20 @@ import type { StrategyConfig } from "./settings-model";
 import type { BacktestSettings } from "./types/strategies";
 
 const HEALTH_STALE_RUN_AT_SEC = 600; // 10 minutes since last_run_at = stale cron
+
+/**
+ * Committee chart overlay modes, ordered as the toggle button cycles them.
+ * Adding a new mode only requires appending to this tuple — the rotation,
+ * button label switch, and TypeScript union all derive from it.
+ */
+const COMMITTEE_OVERLAY_MODES = ["off", "current", "historical"] as const;
+type CommitteeOverlayMode = typeof COMMITTEE_OVERLAY_MODES[number];
+
+const COMMITTEE_OVERLAY_BUTTON_LABEL: Record<CommitteeOverlayMode, string> = {
+    off: "Show Score on Chart",
+    current: "Score: Current (click for Historical)",
+    historical: "Score: Historical (click to hide)",
+};
 
 const DEFAULT_COMMITTEE_TAG = "default";
 const LOCAL_SYNTHETIC_COMMITTEE_TAG = "local_synthetic";
@@ -219,8 +229,13 @@ class SignalCommitteeService {
      * Last diagnostic snapshot — populated at every refresh, rendered into the
      * collapsible diagnostic <pre>. Lets the user (and us) see exactly which
      * stage broke: worker URL, health, list count, per-member raw state.
+     *
+     * Stored as the raw object so stringification can be deferred until the
+     * diagnostic <details> is actually open; auto-refresh otherwise pays the
+     * JSON.stringify + <pre> reflow cost on every tick for output nobody is
+     * looking at.
      */
-    private lastDiagnostic: string = "";
+    private lastDiagnosticObj: Record<string, unknown> | null = null;
     /**
      * Chart overlay mode:
      * - "off"        : no overlay
@@ -229,27 +244,31 @@ class SignalCommitteeService {
      *                  tradeWindows (entrySec..exitSec). Requires worker
      *                  support (latest_state_json.tradeWindows).
      */
-    private overlayMode: "off" | "current" | "historical" = "off";
+    private overlayMode: CommitteeOverlayMode = "off";
 
     private getDom(): SignalCommitteeDom {
         return this.dom ??= createSignalCommitteeDom();
     }
 
+    /**
+     * Fan out `runNow` across streams in parallel. The worker's `run-now`
+     * handler is stateless across streams (each reads its own D1 row), so
+     * there is no ordering dependency to honor, and the cron itself already
+     * evaluates every enabled subscription concurrently every minute.
+     */
     private async warmWorkerStateCache(
         streamIds: readonly string[]
     ): Promise<Array<{ streamId: string; status: string; error?: string }>> {
-        const results: Array<{ streamId: string; status: string; error?: string }> = [];
-        for (const streamId of streamIds) {
+        return Promise.all(streamIds.map(async (streamId) => {
             try {
                 const run = await alertService.runNow(streamId, true);
-                results.push({ streamId, status: run.status ?? "unknown" });
+                return { streamId, status: run.status ?? "unknown" };
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
-                results.push({ streamId, status: "error", error: message });
                 debugLogger.warn("signal_committee.run_now_failed", { streamId, error: message });
+                return { streamId, status: "error", error: message };
             }
-        }
-        return results;
+        }));
     }
 
     private async syncSyntheticLegs(): Promise<void> {
@@ -421,9 +440,18 @@ class SignalCommitteeService {
             storedStrategyKey: string;
             error?: string;
         }> = [];
+        // One bulk config snapshot for the whole repair pass; previously each
+        // iteration called loadStrategyConfig (which re-reads + re-parses the
+        // entire persisted blob).
+        const configNames = new Set<string>();
+        for (const member of members) {
+            const name = parseAlertConfigNameFromStreamId(member.stream_id);
+            if (name) configNames.add(name);
+        }
+        const configByName = settingsManager.loadStrategyConfigsByName(configNames);
         for (const member of members) {
             const configName = parseAlertConfigNameFromStreamId(member.stream_id);
-            const config = configName ? settingsManager.loadStrategyConfig(configName) : null;
+            const config = configName ? (configByName.get(configName) ?? null) : null;
             const streamStrategyKey = parseStrategyKeyFromStreamId(member.stream_id);
             const existingPair = readSyntheticPairFromSettingsJson(member.backtest_settings_json);
             const syntheticPair = existingPair ?? config?.syntheticPair ?? this.resolveWorkerSyntheticPair(member);
@@ -552,16 +580,13 @@ class SignalCommitteeService {
             }
         });
         dom.signalCommitteeChartToggleBtn.addEventListener("click", () => {
-            // Cycle off -> current -> historical -> off.
-            const next: "off" | "current" | "historical" =
-                this.overlayMode === "off" ? "current"
-                    : this.overlayMode === "current" ? "historical"
-                        : "off";
+            // Cycle off -> current -> historical -> off via the ordered tuple,
+            // so adding a future mode can't silently break the rotation.
+            const currentIndex = COMMITTEE_OVERLAY_MODES.indexOf(this.overlayMode);
+            const nextIndex = (currentIndex + 1) % COMMITTEE_OVERLAY_MODES.length;
+            const next = COMMITTEE_OVERLAY_MODES[nextIndex];
             this.overlayMode = next;
-            dom.signalCommitteeChartToggleBtn.textContent =
-                next === "off" ? "Show Score on Chart"
-                    : next === "current" ? "Score: Current (click for Historical)"
-                        : "Score: Historical (click to hide)";
+            dom.signalCommitteeChartToggleBtn.textContent = COMMITTEE_OVERLAY_BUTTON_LABEL[next];
             if (next === "off") {
                 chartManager.removeCommitteeScoreOverlay();
             } else {
@@ -591,6 +616,16 @@ class SignalCommitteeService {
                     this.startAutoRefresh();
                     void this.refresh({ manual: false });
                 }
+            });
+        }
+
+        // Render the diagnostic snapshot lazily — only when the user actually
+        // expands the <details>. renderDiagnostic skips work while it stays
+        // collapsed, so auto-refresh doesn't pay the stringify + reflow cost.
+        const diagnosticDetails = dom.signalCommitteeDiagnosticPre?.closest("details");
+        if (diagnosticDetails) {
+            diagnosticDetails.addEventListener("toggle", () => {
+                if (diagnosticDetails.open) this.renderDiagnostic();
             });
         }
     }
@@ -633,8 +668,15 @@ class SignalCommitteeService {
     }
 
     private getLocalSyntheticMemberRecords(): LocalSyntheticMemberRecord[] {
-        return readLocalSyntheticMembers().map((stored, index) => {
-            const config = settingsManager.loadStrategyConfig(stored.configName);
+        // One snapshot of the persisted blob per refresh; previously this called
+        // loadStrategyConfig (which re-reads + re-parses the whole blob) once
+        // per local member, which compounded with auto-refresh.
+        const storedMembers = readLocalSyntheticMembers();
+        const configByName = settingsManager.loadStrategyConfigsByName(
+            new Set(storedMembers.map((m) => m.configName))
+        );
+        return storedMembers.map((stored, index) => {
+            const config = configByName.get(stored.configName) ?? null;
             const syntheticPair = config?.syntheticPair ?? null;
             const fallbackSymbol = syntheticPair
                 ? deriveSyntheticSymbol(syntheticPair.baseSymbol, syntheticPair.quoteSymbol)
@@ -826,7 +868,7 @@ class SignalCommitteeService {
                         this.memberStates.clear();
                         diag.stage = "health_failed";
                         diag.membersBeforeFilter = 0;
-                        this.lastDiagnostic = JSON.stringify(diag, null, 2);
+                        this.lastDiagnosticObj = diag;
                         this.renderDiagnostic();
                         this.renderHealthFail(
                             health.error
@@ -867,16 +909,31 @@ class SignalCommitteeService {
                 ...localRecords.map((record) => record.subscription.stream_id),
             ]);
             const remoteWorkerMembers = workerMembers.filter((member) => !localRecordStreamIds.has(member.stream_id));
+            // Parse each member's stream_id / settings JSON exactly once per
+            // refresh and reuse the result across both diagnostic blocks
+            // (listMembers and memberStates) instead of re-parsing 3-4 times.
+            const memberDigestByStreamId = new Map<string, {
+                syntheticPair: { baseSymbol: string; quoteSymbol: string } | null;
+                streamStrategyKey: string | null;
+            }>();
+            for (const m of workerMembers) {
+                memberDigestByStreamId.set(m.stream_id, {
+                    syntheticPair: readSyntheticPairFromSettingsJson(m.backtest_settings_json),
+                    streamStrategyKey: parseStrategyKeyFromStreamId(m.stream_id),
+                });
+            }
             diag.listCount = workerMembers.length;
             diag.listMembers = workerMembers.map((m) => {
-                const syntheticPair = readSyntheticPairFromSettingsJson(m.backtest_settings_json);
+                const digest = memberDigestByStreamId.get(m.stream_id);
+                const syntheticPair = digest?.syntheticPair ?? null;
+                const streamStrategyKey = digest?.streamStrategyKey ?? null;
                 return {
                     stream_id: m.stream_id,
                     symbol: m.symbol,
                     interval: m.interval,
                     strategy_key: m.strategy_key,
-                    stream_strategy_key: parseStrategyKeyFromStreamId(m.stream_id),
-                    strategy_key_matches_stream: parseStrategyKeyFromStreamId(m.stream_id) === m.strategy_key,
+                    stream_strategy_key: streamStrategyKey,
+                    strategy_key_matches_stream: streamStrategyKey === m.strategy_key,
                     committee_tag: m.committee_tag ?? null,
                     enabled: m.enabled,
                     candle_limit: m.candle_limit,
@@ -894,7 +951,7 @@ class SignalCommitteeService {
             if (this.members.length === 0) {
                 this.memberStates.clear();
                 diag.stage = "no_members";
-                this.lastDiagnostic = JSON.stringify(diag, null, 2);
+                this.lastDiagnosticObj = diag;
                 this.renderDiagnostic();
                 this.renderEmptyMembers();
                 return;
@@ -968,7 +1025,7 @@ class SignalCommitteeService {
                     latestClose: s.latestClose,
                     tradeWindowsCount: Array.isArray(s.tradeWindows) ? s.tradeWindows.length : null,
                     lastStatus: s.lastStatus,
-                    workerSource: readSyntheticPairFromSettingsJson(m.backtest_settings_json)
+                    workerSource: memberDigestByStreamId.get(m.stream_id)?.syntheticPair
                         ? "worker synthetic"
                         : "worker market",
                     chartComparison: {
@@ -1001,13 +1058,13 @@ class SignalCommitteeService {
 
             this.renderMembers();
             this.warnStaleCronIfAny();
-            this.lastDiagnostic = JSON.stringify(diag, null, 2);
+            this.lastDiagnosticObj = diag;
             this.renderDiagnostic();
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             diag.stage = "exception";
             diag.error = message;
-            this.lastDiagnostic = JSON.stringify(diag, null, 2);
+            this.lastDiagnosticObj = diag;
             this.renderDiagnostic();
             debugLogger.error("signal_committee.refresh_failed", { error: message });
             uiManager.showToast(`Committee refresh failed: ${message}`, "error");
@@ -1018,9 +1075,15 @@ class SignalCommitteeService {
 
     private renderDiagnostic(): void {
         const dom = this.getDom();
-        if (dom.signalCommitteeDiagnosticPre) {
-            dom.signalCommitteeDiagnosticPre.textContent = this.lastDiagnostic || "(no diagnostic yet)";
-        }
+        if (!dom.signalCommitteeDiagnosticPre) return;
+        // Skip the stringify + reflow when the diagnostic <details> is collapsed.
+        // The toggle listener (see bindDomEvents) re-runs this on open so the
+        // latest snapshot appears the moment the user expands it.
+        const details = dom.signalCommitteeDiagnosticPre.closest("details");
+        if (details && !details.open) return;
+        dom.signalCommitteeDiagnosticPre.textContent = this.lastDiagnosticObj
+            ? JSON.stringify(this.lastDiagnosticObj, null, 2)
+            : "(no diagnostic yet)";
     }
 
     /**
@@ -1152,53 +1215,81 @@ class SignalCommitteeService {
             return;
         }
 
-        let added = 0;
-        let failed = 0;
-        for (const config of configs) {
+        // Fan out upserts in parallel. The worker persists each stream to its
+        // own D1 row, so there is no cross-stream ordering dependency, and
+        // warming all freshly-added streams in a single parallel batch at the
+        // end avoids N sequential round trips.
+        const plans = configs.map((config) => {
             const syntheticPair = this.resolveSyntheticPairForConfig(config);
             const symbol = config.symbol ?? state.currentSymbol;
             const interval = config.interval ?? state.currentInterval;
             const streamId = buildAlertStreamId(symbol, interval, config.strategyKey, config.name);
+            return {
+                config,
+                syntheticPair,
+                symbol,
+                interval,
+                streamId,
+            };
+        });
+
+        const outcomes = await Promise.all(plans.map(async (plan) => {
             try {
                 await alertService.upsertSubscription({
-                    streamId,
-                    symbol,
-                    interval,
-                    strategyKey: config.strategyKey,
-                    configName: config.name,
-                    strategyParams: config.strategyParams,
-                    backtestSettings: syntheticPair
-                        ? { ...config.backtestSettings, syntheticPair }
-                        : config.backtestSettings,
+                    streamId: plan.streamId,
+                    symbol: plan.symbol,
+                    interval: plan.interval,
+                    strategyKey: plan.config.strategyKey,
+                    configName: plan.config.name,
+                    strategyParams: plan.config.strategyParams,
+                    backtestSettings: plan.syntheticPair
+                        ? { ...plan.config.backtestSettings, syntheticPair: plan.syntheticPair }
+                        : plan.config.backtestSettings,
                     freshnessBars: 1,
                     notifyTelegram: false,
                     enabled: true,
-                    candleLimit: syntheticPair ? SYNTHETIC_WORKER_CANDLE_LIMIT : undefined,
+                    candleLimit: plan.syntheticPair ? SYNTHETIC_WORKER_CANDLE_LIMIT : undefined,
                     committeeTag: DEFAULT_COMMITTEE_TAG,
                 });
-                await this.warmWorkerStateCache([streamId]);
-                added += 1;
+                return { ok: true as const, streamId: plan.streamId, name: plan.config.name };
             } catch (error) {
-                failed += 1;
-                debugLogger.warn("signal_committee.bulk_add_failed", {
-                    name: config.name,
+                return {
+                    ok: false as const,
+                    name: plan.config.name,
                     error: error instanceof Error ? error.message : String(error),
-                });
+                };
             }
+        }));
+
+        const addedStreamIds = outcomes
+            .filter((o): o is { ok: true; streamId: string; name: string } => o.ok)
+            .map((o) => o.streamId);
+        const failed = outcomes.filter((o) => !o.ok);
+        const added = addedStreamIds.length;
+
+        for (const failure of failed) {
+            debugLogger.warn("signal_committee.bulk_add_failed", {
+                name: failure.name,
+                error: failure.error,
+            });
+        }
+
+        if (addedStreamIds.length > 0) {
+            await this.warmWorkerStateCache(addedStreamIds);
         }
 
         if (added > 0) {
             uiManager.showToast(
-                failed > 0
-                    ? `Added ${added} saved configurations; ${failed} failed.`
+                failed.length > 0
+                    ? `Added ${added} saved configurations; ${failed.length} failed.`
                     : `Added ${added} saved configurations to the committee.`,
-                failed > 0 ? "warning" : "success"
+                failed.length > 0 ? "warning" : "success"
             );
             await this.refresh({ manual: true });
             return;
         }
 
-        uiManager.showToast(`Failed to add ${failed} saved configurations.`, "error");
+        uiManager.showToast(`Failed to add ${failed.length} saved configurations.`, "error");
     }
 
     private async addCurrentConfiguration(): Promise<void> {
@@ -1411,116 +1502,18 @@ class SignalCommitteeService {
         dom.signalCommitteeAvgGain.textContent = header.avgGain;
         dom.signalCommitteeLastUpdated.textContent = header.lastUpdated;
 
-        const views: CommitteeRowView[] = this.members.map((m) => this.memberToView(m, nowSec));
+        const views = this.members.map((m) => buildCommitteeRowView(
+            m,
+            this.memberStates.get(m.stream_id),
+            nowSec,
+            parseAlertConfigNameFromStreamId(m.stream_id)
+        ));
         dom.signalCommitteeTableBody.innerHTML = renderCommitteeRows(views);
 
         dom.signalCommitteeEmpty.style.display = "none";
         dom.signalCommitteeContent.style.display = "block";
 
         this.renderScoreOverlay();
-    }
-
-    private memberToView(m: AlertSubscription, nowSec: number): CommitteeRowView {
-        const s = this.memberStates.get(m.stream_id);
-        const configName = parseAlertConfigNameFromStreamId(m.stream_id) ?? m.strategy_key;
-        const direction = s?.latestEntry?.direction ?? null;
-        const trade = s?.latestTrade ?? null;
-        const isOpen = Boolean(trade?.isOpen);
-
-        let directionLabel = "—";
-        let voteLabel = "0";
-        if (s && s.ok && isOpen && direction) {
-            directionLabel = direction === "long" ? "LONG" : "SHORT";
-            voteLabel = direction === "long" ? "+1" : "-1";
-        } else if (s && s.ok) {
-            directionLabel = "FLAT";
-            voteLabel = "0";
-        } else if (s && !s.ok && s.reason === "no_cached_state") {
-            // Cron never wrote state. The most useful label depends on WHY:
-            // if last_status shows an error, surface that; else "PENDING".
-            directionLabel = m.last_status && /error/i.test(m.last_status) ? "ERROR" : "PENDING";
-        } else if (s && !s.ok) {
-            directionLabel = "ERROR";
-        }
-
-        const okRow = s?.ok === true;
-        const ageSec = okRow && trade
-            ? ageSecForRow({
-                streamId: m.stream_id,
-                ok: true,
-                latestTrade: {
-                    entryTimeSec: trade.entryTimeSec,
-                    entryPrice: trade.entryPrice,
-                    isOpen: trade.isOpen,
-                },
-                latestClose: s?.latestClose ?? null,
-            }, nowSec)
-            : null;
-        const gainPct = okRow && trade
-            ? gainPctForRow({
-                streamId: m.stream_id,
-                ok: true,
-                latestTrade: {
-                    entryTimeSec: trade.entryTimeSec,
-                    entryPrice: trade.entryPrice,
-                    isOpen: trade.isOpen,
-                },
-                latestClose: s?.latestClose ?? null,
-                voteDirection: direction,
-            })
-            : null;
-
-        const ageLabel = formatAgeShort(ageSec);
-        const gainLabel = formatPercentSigned(gainPct);
-
-        let statusLabel = "—";
-        let statusTone: "ok" | "warn" | "error" = "ok";
-        if (!s) {
-            // State map miss entirely. last_status is the only signal we have.
-            if (m.last_status && /error/i.test(m.last_status)) {
-                statusLabel = m.last_status;
-                statusTone = "error";
-            } else {
-                statusLabel = m.last_status ?? "no state";
-                statusTone = "warn";
-            }
-        } else if (!s.ok) {
-            // Cached state missing/error. Prefer the cron's last_status (which
-            // records WHY evaluation failed, e.g. "error:Binance API ..."),
-            // falling back to the cached-state reason.
-            if (m.last_status && /error/i.test(m.last_status)) {
-                statusLabel = m.last_status;
-                statusTone = "error";
-            } else {
-                statusLabel = s.reason ?? "error";
-                statusTone = s.reason === "no_cached_state" ? "warn" : "error";
-            }
-        } else if (m.last_status && /error/i.test(m.last_status)) {
-            statusLabel = m.last_status;
-            statusTone = "error";
-        } else {
-            statusLabel = m.last_status ?? "ok";
-        }
-
-        // The full error string can be very long (multi-URL ban messages).
-        // Truncate for the table cell; the diagnostic <pre> has the full text.
-        if (statusLabel.length > 80) {
-            statusLabel = statusLabel.slice(0, 77) + "...";
-        }
-
-        return {
-            streamId: m.stream_id,
-            configName,
-            symbol: m.symbol,
-            interval: m.interval,
-            strategyKey: m.strategy_key,
-            directionLabel,
-            voteLabel,
-            ageLabel,
-            gainLabel,
-            statusLabel,
-            statusTone,
-        };
     }
 
     private renderEmptyMembers(): void {

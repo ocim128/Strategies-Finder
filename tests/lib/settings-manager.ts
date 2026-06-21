@@ -336,6 +336,26 @@ class SettingsManager {
         return configs.find(c => c.name === name) || null;
     }
 
+    /**
+     * Bulk variant of {@link loadStrategyConfig} for callers that need several
+     * configs by name in one go (e.g. the Signal Committee refresh path, which
+     * previously called loadStrategyConfig once per member and re-parsed the
+     * whole persisted blob each time). Performs a single read + parse, then a
+     * single linear scan. Names not present in storage are simply absent from
+     * the returned map; the caller decides how to treat misses.
+     */
+    public loadStrategyConfigsByName(names: ReadonlySet<string>): Map<string, StrategyConfig> {
+        const out = new Map<string, StrategyConfig>();
+        if (names.size === 0) return out;
+        const all = this.loadAllStrategyConfigs();
+        for (const config of all) {
+            if (names.has(config.name)) {
+                out.set(config.name, config);
+            }
+        }
+        return out;
+    }
+
     public async applyStrategyConfig(config: StrategyConfig): Promise<void> {
         this.autoSaveEnabled = false;
         try {
