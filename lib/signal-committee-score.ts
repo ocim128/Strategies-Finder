@@ -160,3 +160,91 @@ export function formatPercentSigned(value: number | null): string {
     const sign = value > 0 ? "+" : "";
     return `${sign}${value.toFixed(2)}%`;
 }
+
+// ---------------------------------------------------------------------------
+// Per-leg scoring
+// ---------------------------------------------------------------------------
+
+/**
+ * Row extended with the member's chart symbol and optional synthetic-pair legs.
+ *
+ * For a non-synthetic member, the vote accrues to `symbol` only. For a
+ * synthetic member (`syntheticPair` set), the vote decomposes into two
+ * opposite leg votes:
+ *   long synthetic = long base   + short quote
+ *   short synthetic = short base + long quote
+ *
+ * This mirrors how a ratio pair (BASE/QUOTE) resolves to underlying exposure:
+ * being long BASE/QUOTE is long BASE and short QUOTE, and vice versa.
+ *
+ * The leaderboard counts each leg independently, so the same underlying can
+ * appear from multiple members (e.g. 3 short ZECAPT each contribute -1 ZEC
+ * and +1 APT).
+ */
+export interface LegScoreRow extends CommitteeScoreRow {
+    symbol: string;
+    syntheticPair?: { baseSymbol: string; quoteSymbol: string } | null;
+}
+
+export interface LegScore {
+    /** Uppercased leg symbol (e.g. "ZEC", "APT", "BTCUSDT"). */
+    symbol: string;
+    /** Net signed vote across all members that touched this leg. */
+    score: number;
+    longCount: number;
+    shortCount: number;
+    /** Whether this leg only exists as a synthetic leg (no direct member). */
+    syntheticOnly: boolean;
+}
+
+/**
+ * Decompose member votes into per-leg scores and return legs sorted by
+ * `|score|` desc, then alphabetically. Flat / excluded members contribute
+ * nothing (consistent with `aggregateScore`).
+ *
+ * Pure and side-effect-free; safe to unit-test without a DOM.
+ */
+export function aggregateLegScores(rows: readonly (LegScoreRow & { voteDirection?: "long" | "short" | null })[]): LegScore[] {
+    const legs = new Map<string, { score: number; long: number; short: number; syntheticOnly: boolean }>();
+
+    const bump = (symbol: string, vote: CommitteeVote, syntheticOnly: boolean): void => {
+        const key = symbol.trim().toUpperCase();
+        if (!key) return;
+        const entry = legs.get(key) ?? { score: 0, long: 0, short: 0, syntheticOnly };
+        entry.score += vote;
+        if (vote > 0) entry.long += 1;
+        else if (vote < 0) entry.short += 1;
+        // Once a leg has been touched by a direct (non-synthetic) member, it
+        // is no longer "syntheticOnly" — a real-symbol member has voted on it.
+        if (!syntheticOnly) entry.syntheticOnly = false;
+        legs.set(key, entry);
+    };
+
+    for (const row of rows) {
+        const vote = voteForRow(row);
+        if (vote === 0) continue;
+        const pair = row.syntheticPair ?? null;
+        if (pair && pair.baseSymbol && pair.quoteSymbol) {
+            // Long BASE/QUOTE  -> +1 base, -1 quote
+            // Short BASE/QUOTE -> -1 base, +1 quote
+            bump(pair.baseSymbol, vote, true);
+            bump(pair.quoteSymbol, -vote as CommitteeVote, true);
+        } else {
+            bump(row.symbol, vote, false);
+        }
+    }
+
+    return Array.from(legs.entries())
+        .map(([symbol, e]) => ({
+            symbol,
+            score: e.score,
+            longCount: e.long,
+            shortCount: e.short,
+            syntheticOnly: e.syntheticOnly,
+        }))
+        .sort((a, b) =>
+            Math.abs(b.score) !== Math.abs(a.score)
+                ? Math.abs(b.score) - Math.abs(a.score)
+                : a.symbol.localeCompare(b.symbol)
+        );
+}

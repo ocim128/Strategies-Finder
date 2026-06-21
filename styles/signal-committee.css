@@ -142,6 +142,53 @@
     color: var(--text-secondary);
 }
 
+/* ── Per-leg leaderboard ───────────────────────────────────────────────────
+   Decomposes synthetic-pair votes into underlying legs so directional
+   exposure reads at a glance. Renders as a wrapping list of ranked chips. */
+.signal-committee__leg-board {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1-5) var(--space-2);
+    margin-top: var(--space-2);
+}
+
+.signal-committee__leg-row {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1-5) var(--space-3);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--border-subtle);
+    background: rgba(255, 255, 255, 0.02);
+    font-size: var(--font-size-sm);
+}
+
+.signal-committee__leg-symbol {
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    font-family: var(--font-family-mono);
+    letter-spacing: 0.02em;
+}
+
+.signal-committee__leg-score {
+    min-width: 2rem;
+    text-align: right;
+    font-weight: var(--font-weight-semibold);
+    padding: 0 var(--space-1-5);
+    border-radius: var(--radius-s);
+}
+
+.signal-committee__leg-tally {
+    color: var(--text-tertiary);
+    font-size: var(--font-size-xs);
+    font-variant-numeric: tabular-nums;
+}
+
+.signal-committee__leg-empty {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
 /* ── Toolbar layout ──────────────────────────────────────────────────────
    Splits the old single-row dump into:
    - .signal-committee__toolbar-actions  primary action + refresh (left)

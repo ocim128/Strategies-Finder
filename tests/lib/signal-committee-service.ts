@@ -39,8 +39,10 @@ import { resolveCurrentAlertSubscriptionContext } from "./current-alert-subscrip
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
 import {
     aggregateScore,
+    aggregateLegScores,
     type CommitteeAggregate,
     type CommitteeScoreRow,
+    type LegScoreRow,
 } from "./signal-committee-score";
 import {
     computeCommitteeOverlayScores,
@@ -51,6 +53,7 @@ import {
     renderCommitteeHeader,
     renderCommitteeRows,
     renderEmptyHealthFail,
+    renderLegLeaderboard,
 } from "./signal-committee-renderer";
 import { createSignalCommitteeDom, type SignalCommitteeDom } from "./signal-committee-dom";
 import {
@@ -1500,6 +1503,50 @@ class SignalCommitteeService {
         });
     }
 
+    /**
+     * Build the per-leg score rows. Same vote logic as `buildScoreRows`, but
+     * each row also carries the member's resolved synthetic pair so the
+     * aggregator can decompose synthetic-pair votes into their two legs.
+     *
+     * Pair resolution delegates to `resolveWorkerSyntheticPair`, the same
+     * canonical chain (`backtest_settings_json` → current-chart pair → saved
+     * config) the rest of the service uses. The `matchesSyntheticSymbol` gate
+     * mirrors `repairWorkerSyntheticSubscriptions`: a pair only counts when
+     * the member's symbol actually is the derived synthetic, otherwise the
+     * member is a real symbol and must not be decomposed.
+     */
+    private buildLegRows(): Array<LegScoreRow & { voteDirection: "long" | "short" | null }> {
+        return this.members.map((m): LegScoreRow & { voteDirection: "long" | "short" | null } => {
+            const s = this.memberStates.get(m.stream_id);
+            const direction = s?.ok ? (s.latestEntry?.direction ?? null) : null;
+            const trade = s?.latestTrade ?? null;
+            const pair = this.resolveWorkerSyntheticPair(m);
+            return {
+                streamId: m.stream_id,
+                ok: Boolean(s?.ok),
+                latestTrade: trade
+                    ? {
+                        entryTimeSec: trade.entryTimeSec,
+                        entryPrice: trade.entryPrice,
+                        isOpen: trade.isOpen,
+                    }
+                    : null,
+                latestClose: s?.latestClose ?? null,
+                voteDirection: direction,
+                symbol: m.symbol,
+                syntheticPair: pair && matchesSyntheticSymbol(m.symbol, pair) ? pair : null,
+            };
+        });
+    }
+
+    private renderLegBoard(rows: Array<LegScoreRow & { voteDirection: "long" | "short" | null }>): void {
+        const dom = this.getDom();
+        const legs = aggregateLegScores(rows);
+        const html = renderLegLeaderboard(legs);
+        dom.signalCommitteeLegLeaderboard.innerHTML = html
+            || '<span class="signal-committee__leg-empty">No open trades yet.</span>';
+    }
+
     private renderMembers(): void {
         const dom = this.getDom();
         const scoreRows = this.buildScoreRows();
@@ -1521,6 +1568,8 @@ class SignalCommitteeService {
         ));
         dom.signalCommitteeTableBody.innerHTML = renderCommitteeRows(views);
 
+        this.renderLegBoard(this.buildLegRows());
+
         dom.signalCommitteeEmpty.style.display = "none";
         dom.signalCommitteeContent.style.display = "block";
 
@@ -1537,6 +1586,8 @@ class SignalCommitteeService {
         dom.signalCommitteeStatus.textContent =
             "Worker connected. No committee members yet — click Add Current Configuration to start.";
         dom.signalCommitteeTableBody.innerHTML = renderCommitteeRows([]);
+        dom.signalCommitteeLegLeaderboard.innerHTML =
+            '<span class="signal-committee__leg-empty">No open trades yet.</span>';
         // Show the content (status bar + empty table) so the user sees the
         // real "connected, add a member" state. Hide the static pre-load
         // empty-state illustration.
@@ -1554,6 +1605,8 @@ class SignalCommitteeService {
         dom.signalCommitteeLastUpdated.textContent = "—";
         dom.signalCommitteeStatus.textContent = message;
         dom.signalCommitteeTableBody.innerHTML = renderEmptyHealthFail(message);
+        dom.signalCommitteeLegLeaderboard.innerHTML =
+            '<span class="signal-committee__leg-empty">No open trades yet.</span>';
         // Show content so the status bar + table (with the error message) are
         // visible. The static empty-state is for pre-load only.
         dom.signalCommitteeEmpty.style.display = "none";

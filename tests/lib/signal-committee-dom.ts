@@ -29,6 +29,7 @@ const SIGNAL_COMMITTEE_DOM_IDS = {
     signalCommitteeAlertSaveBtn: "signalCommitteeAlertSaveBtn",
     signalCommitteeAlertStatus: "signalCommitteeAlertStatus",
     signalCommitteeDiagnosticPre: "signalCommitteeDiagnosticPre",
+    signalCommitteeLegLeaderboard: "signalCommitteeLegLeaderboard",
 } as const;
 
 export const SIGNAL_COMMITTEE_REQUIRED_IDS = getRequiredDomIds(SIGNAL_COMMITTEE_DOM_IDS);

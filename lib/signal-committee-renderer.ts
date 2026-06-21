@@ -10,6 +10,7 @@ import {
     ageSecForRow,
     gainPctForRow,
     type CommitteeAggregate,
+    type LegScore,
 } from "./signal-committee-score";
 
 export interface CommitteeRowView {
@@ -247,4 +248,33 @@ export function renderEmptyHealthFail(message: string): string {
     return `<tr class="signal-committee__empty-row"><td colspan="${COLSPAN}">
         ${escapeHtml(message)}
     </td></tr>`;
+}
+
+// ---------------------------------------------------------------------------
+// Per-leg leaderboard
+// ---------------------------------------------------------------------------
+
+/**
+ * Render the per-leg net-score leaderboard as a row of ranked chips.
+ *
+ * Decomposes synthetic-pair votes into their underlying legs so directional
+ * exposure reads at a glance (e.g. 3 short ZECAPT => ZEC: -3, APT: +3).
+ *
+ * Returns an empty string when there are no legs (no members with open
+ * trades), so the caller can hide the section. Tone mirrors the score badge:
+ * positive -> green, negative -> red, neutral -> muted.
+ */
+export function renderLegLeaderboard(legs: readonly LegScore[]): string {
+    if (legs.length === 0) return "";
+    const rows = legs.map((leg) => {
+        const tone = leg.score === 0 ? "neutral" : leg.score > 0 ? "positive" : "negative";
+        const sign = leg.score > 0 ? "+" : "";
+        const tally = `${leg.longCount}L · ${leg.shortCount}S`;
+        return `<div class="signal-committee__leg-row">
+            <span class="signal-committee__leg-symbol" title="${escapeHtml(leg.syntheticOnly ? "synthetic leg" : "direct member")}">${escapeHtml(leg.symbol)}</span>
+            <span class="signal-committee__leg-score signal-committee__score--${tone}">${sign}${leg.score}</span>
+            <span class="signal-committee__leg-tally">${escapeHtml(tally)}</span>
+        </div>`;
+    });
+    return rows.join("");
 }
