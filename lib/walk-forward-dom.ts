@@ -19,6 +19,7 @@ export const WALK_FORWARD_SERVICE_REQUIRED_IDS = [
     "wf-spinner",
     "wf-quick-spinner",
     "wf-status",
+    "wf-copy-diagnostics",
 ] as const;
 
 export function createWalkForwardServiceDom() {
@@ -41,6 +42,7 @@ export function createWalkForwardServiceDom() {
         wfSpinner: getRequiredElement("wf-spinner"),
         wfQuickSpinner: getRequiredElement("wf-quick-spinner"),
         wfStatus: getRequiredElement("wf-status"),
+        wfCopyDiagnostics: getRequiredElement<HTMLButtonElement>("wf-copy-diagnostics"),
     };
 }
 

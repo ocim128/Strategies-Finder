@@ -17,7 +17,10 @@ export function deriveWalkForwardTradeThresholds(
     const safeEstimatedWindows = Math.max(1, Math.floor(estimatedWindows));
 
     const expectedOOSTradesPerWindow = safeTradesPerBar * safeTestWindow;
-    const minOOSTradesPerWindow = Math.max(1, Math.floor(expectedOOSTradesPerWindow * 0.5));
+    // A window with fewer than 10 OOS trades carries no statistical signal —
+    // win rate, profit factor, and Sharpe are all dominated by noise. Floor the
+    // per-window threshold so sparse strategies aren't scored on coin-flip samples.
+    const minOOSTradesPerWindow = Math.max(10, Math.floor(expectedOOSTradesPerWindow * 0.5));
     const minTotalOOSTrades = Math.max(
         20,
         Math.min(

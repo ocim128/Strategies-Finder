@@ -797,7 +797,7 @@ export async function runWalkForwardAnalysis(
         topN = 3,
         minTrades = 5,
         maxCombinations = 5000,
-        minOOSTradesPerWindow = 1,
+        minOOSTradesPerWindow = 10,
         minTotalOOSTrades = 50,
         onProgress,
         signal

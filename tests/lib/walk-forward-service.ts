@@ -51,6 +51,8 @@ import {
     updateWalkForwardWindowTable,
 } from "./walk-forward-ui";
 import { commitBacktestResult } from "./state-actions";
+import { copyToClipboard } from "./browser-transfer";
+import { uiManager } from "./ui-manager";
 
 type WalkForwardRunMode = "analysis" | "quick";
 
@@ -748,7 +750,7 @@ class WalkForwardService {
             parameterRanges,
             topN,
             minTrades,
-            minOOSTradesPerWindow: tradeAwareThresholds?.minOOSTradesPerWindow ?? 1,
+            minOOSTradesPerWindow: tradeAwareThresholds?.minOOSTradesPerWindow ?? 10,
             minTotalOOSTrades: tradeAwareThresholds?.minTotalOOSTrades ?? 50
         };
     }
@@ -784,6 +786,9 @@ class WalkForwardService {
 
         // Update robustness gauge
         this.updateRobustnessGauge(result.robustnessScore);
+
+        // Enable copy diagnostics button
+        this.getDom().wfCopyDiagnostics.disabled = false;
 
         // Plot combined OOS equity curve
         this.plotEquityCurve(result);
@@ -890,6 +895,123 @@ class WalkForwardService {
     }
 
     /**
+     * Build a diagnostic JSON object from the last WFA result.
+     */
+    private buildDiagnostics(): Record<string, unknown> | null {
+        const result = this.lastResult;
+        if (!result) return null;
+
+        const oos = result.combinedOOSTrades;
+        const decay = result.decayMonitoring;
+
+        // Flag when combined-OOS Sharpe (stitched equity) disagrees in sign or
+        // magnitude with the per-window average. A wide divergence means the
+        // combined headline is being propped up by a few outlier windows and is
+        // not a reliable robustness read on its own.
+        const combinedSharpe = Number.isFinite(oos.sharpeRatio) ? oos.sharpeRatio : 0;
+        const avgSharpe = Number.isFinite(result.avgOutOfSampleSharpe) ? result.avgOutOfSampleSharpe : 0;
+        const sharpeDivergence = combinedSharpe - avgSharpe;
+        const sharpeDivergenceFlag =
+            Math.sign(combinedSharpe) !== Math.sign(avgSharpe) || Math.abs(sharpeDivergence) > 1;
+
+        return {
+            schema: "wfa.diagnostics.v1",
+            generatedAtIso: new Date().toISOString(),
+            strategyKey: state.currentStrategyKey,
+            symbol: state.currentSymbol,
+            interval: state.currentInterval,
+            summary: {
+                totalWindows: result.totalWindows,
+                robustnessScore: result.robustnessScore,
+                avgInSampleSharpe: result.avgInSampleSharpe,
+                avgOutOfSampleSharpe: result.avgOutOfSampleSharpe,
+                walkForwardEfficiency: result.walkForwardEfficiency,
+                parameterStability: result.parameterStability,
+                optimizationTimeMs: result.optimizationTimeMs,
+                combinedVsAvgSharpeDivergence: sharpeDivergence,
+                combinedSharpeSignMatchesAvg: !sharpeDivergenceFlag,
+            },
+            combinedOOS: {
+                netProfit: oos.netProfit,
+                netProfitPercent: oos.netProfitPercent,
+                winRate: oos.winRate,
+                profitFactor: oos.profitFactor,
+                maxDrawdownPercent: oos.maxDrawdownPercent,
+                totalTrades: oos.totalTrades,
+                sharpeRatio: oos.sharpeRatio,
+            },
+            baseParams: this.lastRunBaseParams?.params ?? null,
+            windows: result.windows.map((w) => ({
+                index: w.windowIndex + 1,
+                is: {
+                    netProfitPercent: w.inSampleResult.netProfitPercent,
+                    sharpeRatio: w.inSampleResult.sharpeRatio,
+                    totalTrades: w.inSampleResult.totalTrades,
+                    winRate: w.inSampleResult.winRate,
+                    profitFactor: w.inSampleResult.profitFactor,
+                },
+                oos: {
+                    netProfitPercent: w.outOfSampleResult.netProfitPercent,
+                    sharpeRatio: w.outOfSampleResult.sharpeRatio,
+                    totalTrades: w.outOfSampleResult.totalTrades,
+                    winRate: w.outOfSampleResult.winRate,
+                    profitFactor: w.outOfSampleResult.profitFactor,
+                    maxDrawdownPercent: w.outOfSampleResult.maxDrawdownPercent,
+                },
+                degradationPercent: w.performanceDegradationPercent,
+                optimizedParams: w.optimizedParams,
+            })),
+            decayMonitoring: decay ? {
+                alphaStatus: decay.alphaDecay.status,
+                earlyEdge: decay.alphaDecay.earlyEdge,
+                recentEdge: decay.alphaDecay.recentEdge,
+                edgeDelta: decay.alphaDecay.recentVsEarlyDelta,
+                cusumDetected: decay.cusum.detected,
+                cusumDirection: decay.cusum.direction,
+                latestRollingSharpe: decay.rollingRisk.length > 0
+                    ? decay.rollingRisk[decay.rollingRisk.length - 1].sharpe : null,
+                latestRollingSortino: decay.rollingRisk.length > 0
+                    ? decay.rollingRisk[decay.rollingRisk.length - 1].sortino : null,
+                halfLifeWindows: decay.halfLife.halfLifeWindows,
+                halfLifeFitQuality: decay.halfLife.fitQuality,
+                parameterDrift: decay.parameterMetrics.map((m) => ({
+                    name: m.name,
+                    first: m.firstValue,
+                    latest: m.latestValue,
+                    driftPercent: m.driftPercentOfRange,
+                    stability: m.stabilityScore,
+                    trend: m.trendDirection,
+                })),
+                rollingRisk: decay.rollingRisk.map((p) => ({
+                    window: p.windowIndex + 1,
+                    sharpe: p.sharpe,
+                    sortino: p.sortino,
+                })),
+                robustnessPenalty: decay.robustnessPenalty,
+                robustnessPenaltyReasons: decay.robustnessPenaltyReasons,
+            } : null,
+        };
+    }
+
+    private async copyDiagnostics(): Promise<void> {
+        const diagnostics = this.buildDiagnostics();
+        if (!diagnostics) {
+            uiManager.showToast("No WFA results to copy", "info");
+            return;
+        }
+        try {
+            const copied = await copyToClipboard(JSON.stringify(diagnostics, null, 2));
+            if (!copied) throw new Error("Clipboard copy returned false");
+            uiManager.showToast("WFA diagnostics copied", "success");
+        } catch (error) {
+            debugLogger.error("[WalkForward] copy_diagnostics_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
+            uiManager.showToast("Copy failed - check browser permissions", "error");
+        }
+    }
+
+    /**
      * Cancel a running analysis
      */
     cancelRun(): void {
@@ -913,6 +1035,7 @@ class WalkForwardService {
         runBtn.addEventListener('click', () => this.runAnalysis());
         quickBtn.addEventListener('click', () => this.runQuickAnalysis());
         cancelBtn.addEventListener('click', () => this.cancelRun());
+        this.getDom().wfCopyDiagnostics.addEventListener('click', () => void this.copyDiagnostics());
         autoSuggestToggle.addEventListener('change', () => {
             if (autoSuggestToggle.checked) {
                 this.refreshAutoSuggestionFromCurrentResult();

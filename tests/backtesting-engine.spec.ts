@@ -1894,6 +1894,46 @@ describe('Backtesting Engine', () => {
         expect(intradaySharpe).to.be.closeTo(dailySharpe, 1e-12);
     });
 
+    it('should report Sharpe = 0 when an intraday window collapses to a single daily bar', () => {
+        // A 1m WFA OOS segment that fits in one UTC day collapses to a single daily
+        // bar. There is no second point to form a return, so Sharpe must be 0 rather
+        // than inflated by a raw bar-level fallback. Reporting 0 here is what keeps
+        // walkForwardEfficiency and avgOutOfSampleSharpe honest — a window with no
+        // observable daily return variation carries no Sharpe information.
+        const dayStartMs = Date.UTC(2026, 0, 1, 0, 0, 0);
+        const minuteMs = 60 * 1000;
+        const intradayCurve: { time: Time; value: number }[] = [];
+        let equity = 10000;
+        for (let i = 0; i < 1440; i++) {
+            if (i > 0 && i % 240 === 0) equity *= 1.001; // a few intra-day trade moves
+            intradayCurve.push({ time: ((dayStartMs + i * minuteMs) / 1000) as Time, value: equity });
+        }
+
+        const intradaySharpe = calculateSharpeRatioFromEquityCurve(intradayCurve);
+
+        expect(intradaySharpe).to.equal(0);
+    });
+
+    it('should report Sharpe = 0 when daily-collapsed returns have near-zero variance', () => {
+        // A consistent-drift OOS window (e.g. 3 wins stepping equity up by almost the
+        // same small amount each day) collapses to daily returns whose stdDev is below
+        // SHARPE_MIN_STD_DEV. That is not a meaningful Sharpe — the per-bar stdDev is
+        // tiny because of trade sparsity, and the annualization factor would inflate
+        // it to a clamp at ±8, producing a false confidence reading. Report 0 instead.
+        const dayStartMs = Date.UTC(2026, 0, 1, 0, 0, 0);
+        const minuteMs = 60 * 1000;
+        const driftCurve: { time: Time; value: number }[] = [];
+        let equity = 10000;
+        for (let i = 0; i < 7 * 1440; i++) {
+            if (i > 0 && i % 1440 === 720) equity *= 1.0001; // ~uniform +0.01%/day
+            driftCurve.push({ time: ((dayStartMs + i * minuteMs) / 1000) as Time, value: equity });
+        }
+
+        const driftSharpe = calculateSharpeRatioFromEquityCurve(driftCurve);
+
+        expect(driftSharpe).to.equal(0);
+    });
+
     it('should handle commission correctly', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 105, low: 95, close: 100, volume: 1000 },
