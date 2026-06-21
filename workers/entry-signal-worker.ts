@@ -18,6 +18,12 @@ import {
     parseConfigNameFromStreamId as parseConfigNameFromAlertStreamId,
 } from "../lib/alert-stream-id";
 import {
+    aggregateSyntheticBars,
+    buildSyntheticPairDataset,
+    pickSourceInterval,
+    resolveSyntheticSourceBars,
+} from "../scripts/lib/synthetic-pair";
+import {
     getWorkerStrategySupportSnapshot,
     isWorkerSupportedStrategyKey,
     resolveSubscriptionExecutionBacktestSettings,
@@ -58,6 +64,18 @@ interface Env {
     BINANCE_API_BASES?: string;
     MIN_CLOSED_CANDLES?: string;
     WORKER_API_TOKEN?: string;
+    /**
+     * Optional base URL of a local candle proxy (e.g. a cloudflared tunnel to
+     * the user's Vite dev server). When set, fetchCandlesViaProxy is tried
+     * first for every leg; public exchanges are only used as a per-request
+     * fallback. Works around Binance geo-blocking Cloudflare egress IPs.
+     * The proxy must serve /api/sqlite/load-ohlcv?symbol=&interval=&limit=
+     * with the same { ok, candles: OHLCVData[] } JSON shape and epoch-second
+     * time values that the local SQLite cache returns.
+     */
+    LOCAL_CANDLE_PROXY_URL?: string;
+    /** Shared secret sent as `Authorization: Bearer <token>` to the proxy. */
+    LOCAL_CANDLE_PROXY_TOKEN?: string;
 }
 
 interface StreamSignalRequest {
@@ -94,6 +112,12 @@ interface SubscriptionUpsertRequest {
     enabled?: boolean;
     candleLimit?: number;
     committeeTag?: string | null;
+}
+
+interface SubscriptionRunWithCandlesRequest {
+    streamId?: string;
+    candles?: StreamSignalRequest["candles"];
+    force?: boolean;
 }
 
 interface StoredSignalRow {
@@ -233,6 +257,11 @@ interface SubscriptionStateResult {
     } | null;
 }
 
+interface SyntheticPairSettings {
+    baseSymbol: string;
+    quoteSymbol: string;
+}
+
 /**
  * Shape persisted in `signal_subscriptions.latest_state_json` by the cron
  * and read back by the batched `/api/subscriptions/states` endpoint. Must
@@ -276,14 +305,17 @@ function parseTelegramFailCount(status: string | null): number {
     return 0;
 }
 const DEFAULT_BINANCE_API_BASES = [
-    "https://api.binance.us",
-    "https://api.mexc.com",
+    // data-api.binance.vision is Binance's public data mirror: same instruments
+    // as api.binance.com, not geo-blocked, no auth, and honors the full 1000
+    // klines/request cap. Lead with it so synthetic-pair legs (e.g. ZECUSDT,
+    // APTUSDT — Binance.com-only listings) resolve with deep history.
     "https://data-api.binance.vision",
     "https://api.binance.com",
     "https://api1.binance.com",
     "https://api2.binance.com",
     "https://api3.binance.com",
     "https://api4.binance.com",
+    "https://api.binance.us",
 ];
 
 const CORS_HEADERS: Record<string, string> = {
@@ -506,8 +538,8 @@ async function fetchBinanceCandles(
             while (collectedRows.length < sourceLimit) {
                 const remaining = sourceLimit - collectedRows.length;
                 const requestLimit = Math.max(1, Math.min(MAX_BINANCE_KLINES_PER_REQUEST, remaining));
-                const endTimeQuery = typeof endTimeMs === "number" ? `&endTime=${endTimeMs}` : "";
-                const endpoint = `${base}/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(providerInterval)}&limit=${requestLimit}${endTimeQuery}`;
+                const timeQuery = typeof endTimeMs === "number" ? `&endTime=${endTimeMs}` : "";
+                const endpoint = `${base}/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(providerInterval)}&limit=${requestLimit}${timeQuery}`;
 
                 const res = await fetchWithTimeout(endpoint, {
                     headers: {
@@ -576,7 +608,121 @@ async function fetchMarketCandles(
     limit: number,
     env: Env
 ): Promise<OHLCVData[]> {
+    const proxied = await fetchCandlesViaProxy(symbol, interval, limit, env);
+    if (proxied !== null) return proxied;
     return fetchBinanceCandles(symbol, interval, limit, env);
+}
+
+/**
+ * Try the user's local candle proxy (cloudflared tunnel → Vite dev server's
+ * /api/sqlite/load-ohlcv). Returns the candles on success, or null when the
+ * proxy is unconfigured, unreachable, returns an error, or has no bars for
+ * the requested symbol. Never throws — callers fall back to public exchanges.
+ *
+ * The proxy is preferred because Binance geo-blocks Cloudflare egress IPs,
+ * while the user's machine has unrestricted access and a durable SQLite
+ * cache of the legs they actually trade.
+ */
+async function fetchCandlesViaProxy(
+    symbol: string,
+    interval: string,
+    limit: number,
+    env: Env
+): Promise<OHLCVData[] | null> {
+    const base = env.LOCAL_CANDLE_PROXY_URL?.trim();
+    if (!base) return null;
+    const trimmedBase = base.replace(/\/+$/, "");
+    const token = env.LOCAL_CANDLE_PROXY_TOKEN?.trim();
+    const url = `${trimmedBase}/api/sqlite/load-ohlcv`
+        + `?symbol=${encodeURIComponent(symbol.toUpperCase())}`
+        + `&interval=${encodeURIComponent(interval.toLowerCase())}`
+        + `&limit=${Math.max(1, Math.floor(limit))}`;
+    try {
+        const res = await fetchWithTimeout(url, {
+            headers: {
+                accept: "application/json",
+                ...(token ? { authorization: `Bearer ${token}` } : {}),
+            },
+        }, BINANCE_FETCH_TIMEOUT_MS);
+        if (!res.ok) return null;
+        const body = await res.json() as { ok?: boolean; candles?: unknown };
+        if (!body || body.ok !== true || !Array.isArray(body.candles) || body.candles.length === 0) {
+            return null;
+        }
+        const candles: OHLCVData[] = [];
+        for (const row of body.candles) {
+            if (!row || typeof row !== "object") continue;
+            const r = row as Record<string, unknown>;
+            const time = Number(r.time);
+            const open = Number(r.open);
+            const high = Number(r.high);
+            const low = Number(r.low);
+            const close = Number(r.close);
+            const volume = Number(r.volume ?? 0);
+            if (!Number.isFinite(time) || !Number.isFinite(open) || !Number.isFinite(close)) continue;
+            candles.push({
+                time: Math.floor(time) as OHLCVData["time"],
+                open, high, low, close,
+                volume: Number.isFinite(volume) ? volume : 0,
+            });
+        }
+        return candles.length > 0 ? candles : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Resolve a single leg via the local proxy when configured, falling back to
+ * Binance public endpoints. Used for both plain-symbol and synthetic-pair
+ * legs so the proxy benefits each leg independently.
+ */
+async function fetchCandlesForLeg(
+    symbol: string,
+    interval: string,
+    limit: number,
+    env: Env
+): Promise<OHLCVData[]> {
+    const proxied = await fetchCandlesViaProxy(symbol, interval, limit, env);
+    if (proxied !== null) return proxied;
+    return fetchBinanceCandles(symbol, interval, limit, env);
+}
+
+function readSyntheticPairSettings(settings: BacktestSettings): SyntheticPairSettings | null {
+    const raw = (settings as Record<string, unknown>).syntheticPair;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const candidate = raw as Record<string, unknown>;
+    const baseSymbol = typeof candidate.baseSymbol === "string" ? normalizeText(candidate.baseSymbol).toUpperCase() : "";
+    const quoteSymbol = typeof candidate.quoteSymbol === "string" ? normalizeText(candidate.quoteSymbol).toUpperCase() : "";
+    if (!baseSymbol || !quoteSymbol || baseSymbol === quoteSymbol) return null;
+    return { baseSymbol, quoteSymbol };
+}
+
+async function fetchSyntheticMarketCandles(
+    syntheticPair: SyntheticPairSettings,
+    interval: string,
+    limit: number,
+    env: Env
+): Promise<OHLCVData[]> {
+    const minClosedCandles = readMinClosedCandles(env);
+    const targetLimit = Math.max(minClosedCandles + 2, Math.floor(limit));
+    const source = pickSourceInterval(interval);
+    const sourceInterval = source?.sourceInterval ?? interval;
+    const sourceLimit = resolveSyntheticSourceBars(targetLimit, source?.ratio ?? 1);
+    const [base, quote] = await Promise.all([
+        fetchCandlesForLeg(syntheticPair.baseSymbol, sourceInterval, sourceLimit, env),
+        fetchCandlesForLeg(syntheticPair.quoteSymbol, sourceInterval, sourceLimit, env),
+    ]);
+    const dataset = buildSyntheticPairDataset({
+        base,
+        quote,
+        interval: sourceInterval,
+        minBars: 1,
+    });
+    const bars = source
+        ? aggregateSyntheticBars(dataset.bars, interval)
+        : dataset.bars;
+    return bars.slice(-Math.max(1, targetLimit));
 }
 
 function formatPercent(value: number): string {
@@ -1378,7 +1524,103 @@ type SubscriptionCandleContext = {
     parsedBacktestSettings: BacktestSettings;
     closed: NonNullable<ReturnType<typeof selectClosedCandleWindow>>;
     evaluationCandles: OHLCVData[];
+    latestClose: number | null;
 };
+
+function readLatestClose(candles: readonly OHLCVData[]): number | null {
+    const latest = candles[candles.length - 1] ?? null;
+    const close = latest ? Number(latest.close) : NaN;
+    return Number.isFinite(close) ? close : null;
+}
+
+async function evaluateSubscriptionWithCandles(
+    env: Env,
+    subscription: SubscriptionRow,
+    candles: OHLCVData[],
+    force = false
+): Promise<Record<string, unknown>> {
+    const streamId = subscription.stream_id;
+    const parsedStrategyParams = safeJsonParse(subscription.strategy_params_json, {} as Record<string, number>);
+    const parsedBacktestSettings = resolveSubscriptionExecutionBacktestSettings(
+        safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings)
+    );
+    const minClosedCandles = readMinClosedCandles(env);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const closed = selectClosedCandleWindow(candles, subscription.interval, nowSec, minClosedCandles);
+    if (!closed) {
+        const closedCount = countClosedCandles(candles, subscription.interval, nowSec);
+        const status = `insufficient_candles:${closedCount}/${minClosedCandles}`;
+        await updateSubscriptionStatus(env, streamId, status);
+        await persistLatestSubscriptionState(env, streamId, {
+            evaluatedAt: new Date().toISOString(),
+            closedCandleTimeSec: null,
+            latestClose: null,
+            reason: status,
+            latestTrade: null,
+            tradeWindows: null,
+            latestEntry: null,
+        });
+        return { streamId, status };
+    }
+
+    if (!force && closed.closedCandleTimeSec <= (subscription.last_processed_candle_open_time || 0)) {
+        const status = "no_new_closed_candle";
+        await updateSubscriptionStatus(env, streamId, status);
+        return { streamId, status, closedCandleTimeSec: closed.closedCandleTimeSec };
+    }
+
+    const evaluationCandles = buildExecutionAwareCandleWindow(
+        closed.candles,
+        closed.nextOpenCandle,
+        parsedBacktestSettings
+    );
+    const subscriptionFreshnessBars = Math.max(0, subscription.freshness_bars ?? 1);
+    const result = await processSignalPayload(
+        {
+            streamId,
+            symbol: subscription.symbol,
+            interval: subscription.interval,
+            strategyKey: subscription.strategy_key,
+            configName: parseConfigNameFromStreamId(streamId) ?? undefined,
+            strategyParams: parsedStrategyParams,
+            backtestSettings: parsedBacktestSettings,
+            freshnessBars: subscriptionFreshnessBars,
+            notifyTelegram: false,
+            notifyExit: false,
+            candles: evaluationCandles,
+        },
+        env
+    );
+
+    const baseStatus = result.ok
+        ? result.newEntry ? "new_entry" : (result.reason ?? "no_entry")
+        : result.error ?? "processing_error";
+    const status = composeSubscriptionStatus(baseStatus, extractExitAlertKey(subscription.last_status));
+    const latestCloseValue = readLatestClose(candles);
+    const evaluatedEntry = result.latestEvaluatedEntry;
+    await updateSubscriptionStatus(env, streamId, status, result.ok ? closed.closedCandleTimeSec : undefined);
+    await persistLatestSubscriptionState(env, streamId, {
+        evaluatedAt: new Date().toISOString(),
+        closedCandleTimeSec: closed.closedCandleTimeSec,
+        latestClose: latestCloseValue,
+        reason: result.reason ?? result.error ?? null,
+        latestTrade: result.latestTrade ?? null,
+        tradeWindows: result.tradeWindows ?? null,
+        latestEntry: evaluatedEntry
+            ? {
+                direction: evaluatedEntry.direction,
+                signalTimeSec: evaluatedEntry.signalTimeSec,
+                signalPrice: evaluatedEntry.signalPrice,
+                entryPrice: evaluatedEntry.entryPrice ?? null,
+                signalAgeBars: result.signalAgeBars ?? 0,
+                isFresh: true,
+                fingerprint: evaluatedEntry.fingerprint,
+            }
+            : null,
+    });
+
+    return { streamId, status, closedCandleTimeSec: closed.closedCandleTimeSec, result };
+}
 
 async function buildSubscriptionCandleContext(
     env: Env,
@@ -1392,12 +1634,16 @@ async function buildSubscriptionCandleContext(
         safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings)
     );
     const minClosedCandles = readMinClosedCandles(env);
-    const candles = await fetchMarketCandles(
-        subscription.symbol,
-        subscription.interval,
-        subscription.candle_limit || DEFAULT_SUBSCRIPTION_CANDLE_LIMIT,
-        env
-    );
+    const syntheticPair = readSyntheticPairSettings(parsedBacktestSettings);
+    const candleLimit = subscription.candle_limit || DEFAULT_SUBSCRIPTION_CANDLE_LIMIT;
+    const candles = syntheticPair
+        ? await fetchSyntheticMarketCandles(syntheticPair, subscription.interval, candleLimit, env)
+        : await fetchMarketCandles(
+            subscription.symbol,
+            subscription.interval,
+            candleLimit,
+            env
+        );
 
     const nowSec = Math.floor(Date.now() / 1000);
     const closed = selectClosedCandleWindow(candles, subscription.interval, nowSec, minClosedCandles);
@@ -1421,6 +1667,7 @@ async function buildSubscriptionCandleContext(
                 closed.nextOpenCandle,
                 parsedBacktestSettings
             ),
+            latestClose: readLatestClose(candles),
         },
     };
 }
@@ -1445,9 +1692,24 @@ async function runSubscription(
         if (!prepared.ok) {
             const status = composeSubscriptionStatus(prepared.reason, persistedExitAlertKey);
             await updateSubscriptionStatus(env, streamId, status);
+            // Overwrite latest_state_json with a not-ok snapshot. Without this,
+            // the batched /api/subscriptions/states endpoint keeps serving the
+            // last successful evaluation (ok:true, open trade, vote), so the
+            // committee shows stale direction/gain alongside the fresh failure
+            // status. Clearing the trade context here makes the row render as
+            // PENDING instead of a contradiction.
+            await persistLatestSubscriptionState(env, streamId, {
+                evaluatedAt: new Date().toISOString(),
+                closedCandleTimeSec: null,
+                latestClose: null,
+                reason: prepared.reason,
+                latestTrade: null,
+                tradeWindows: null,
+                latestEntry: null,
+            });
             return { streamId, status };
         }
-        const { parsedStrategyParams, parsedBacktestSettings, closed, evaluationCandles } = prepared.context;
+        const { parsedStrategyParams, parsedBacktestSettings, closed, evaluationCandles, latestClose } = prepared.context;
 
         if (!force && closed.closedCandleTimeSec <= (subscription.last_processed_candle_open_time || 0)) {
             const status = composeSubscriptionStatus("no_new_closed_candle", persistedExitAlertKey);
@@ -1542,16 +1804,11 @@ async function runSubscription(
             await updateSubscriptionStatus(env, streamId, status, closed.closedCandleTimeSec);
             // Persist the latest evaluation snapshot for the batched state endpoint.
             // Best-effort: a failed write must not break the cron path.
-            const closedCandles = closed.candles;
-            const latestCloseBar = closedCandles.length > 0 ? closedCandles[closedCandles.length - 1] : null;
-            const latestCloseValue = latestCloseBar && Number.isFinite(Number(latestCloseBar.close))
-                ? Number(latestCloseBar.close)
-                : null;
             const evaluatedEntry = result.latestEvaluatedEntry;
             const statePayload: StoredLatestState = {
                 evaluatedAt: new Date().toISOString(),
                 closedCandleTimeSec: closed.closedCandleTimeSec,
-                latestClose: latestCloseValue,
+                latestClose,
                 reason: result.reason ?? result.error ?? null,
                 latestTrade: result.latestTrade ?? null,
                 tradeWindows: result.tradeWindows ?? null,
@@ -1585,6 +1842,15 @@ async function runSubscription(
         );
         const status = composeSubscriptionStatus(`error:${rawStatus}`, persistedExitAlertKey);
         await updateSubscriptionStatus(env, streamId, status);
+        await persistLatestSubscriptionState(env, streamId, {
+            evaluatedAt: new Date().toISOString(),
+            closedCandleTimeSec: null,
+            latestClose: null,
+            reason: status,
+            latestTrade: null,
+            tradeWindows: null,
+            latestEntry: null,
+        });
         return { streamId, status };
     }
 }
@@ -2099,6 +2365,43 @@ async function handleRunNow(request: Request, env: Env): Promise<Response> {
     return toJsonResponse({ ok: true, run, ...(run as Record<string, unknown>) });
 }
 
+async function handleRunWithCandles(request: Request, env: Env): Promise<Response> {
+    if (!env.SIGNALS_DB) {
+        return toJsonResponse({ ok: false, error: "Missing SIGNALS_DB binding" }, 500);
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const payload = body as SubscriptionRunWithCandlesRequest;
+    const streamId = payload.streamId?.trim();
+    if (!streamId) {
+        return toJsonResponse({ ok: false, error: "streamId is required" }, 400);
+    }
+    if (!Array.isArray(payload.candles)) {
+        return toJsonResponse({ ok: false, error: "candles[] is required" }, 400);
+    }
+
+    const subscription = await env.SIGNALS_DB.prepare(
+        `SELECT * FROM signal_subscriptions WHERE stream_id = ? LIMIT 1`
+    )
+        .bind(streamId)
+        .first<SubscriptionRow>();
+
+    if (!subscription) {
+        return toJsonResponse({ ok: false, error: "Subscription not found" }, 404);
+    }
+    if (!subscription.enabled) {
+        return toJsonResponse({ ok: false, error: "Subscription is disabled. Re-enable it before running manually." }, 400);
+    }
+
+    const candles = normalizeOhlcvCandles(payload.candles);
+    if (candles.length === 0) {
+        return toJsonResponse({ ok: false, error: "No valid candles found." }, 400);
+    }
+
+    const run = await evaluateSubscriptionWithCandles(env, subscription, candles, payload.force === true);
+    return toJsonResponse({ ok: true, run, ...(run as Record<string, unknown>) });
+}
+
 async function runScheduledSubscriptions(env: Env): Promise<Record<string, unknown>> {
     if (!env.SIGNALS_DB) {
         return { ok: false, error: "Missing SIGNALS_DB binding" };
@@ -2214,6 +2517,10 @@ export default {
 
         if (request.method === "POST" && pathname === "/api/subscriptions/run-now") {
             return handleRunNow(request, env);
+        }
+
+        if (request.method === "POST" && pathname === "/api/subscriptions/run-with-candles") {
+            return handleRunWithCandles(request, env);
         }
 
         if (request.method === "GET" && pathname === "/api/committee-alert/rules") {

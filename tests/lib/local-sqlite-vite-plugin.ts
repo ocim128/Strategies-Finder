@@ -35,6 +35,15 @@ function parseSqliteLimit(raw: string | null): number {
     return Math.max(1, Math.min(500000, Math.floor(parsed)));
 }
 
+export function isTrustedLocalRequest(req: { headers?: Record<string, unknown> }): boolean {
+    const origin = (req.headers?.origin || '').toString();
+    const referer = (req.headers?.referer || '').toString();
+    return origin.startsWith('http://localhost')
+        || origin.startsWith('http://127.0.0.1')
+        || referer.startsWith('http://localhost')
+        || referer.startsWith('http://127.0.0.1');
+}
+
 function toUnixSeconds(value: unknown): number | null {
     return parseTimeToUnixSeconds(value);
 }
@@ -443,6 +452,23 @@ export function localSqlitePlugin(): Plugin {
             const method = req.method || 'GET';
             const requestUrl = new URL(req.url || '/', 'http://localhost');
             const path = requestUrl.pathname;
+
+            // Optional Bearer-token gate for tunnel exposure. When
+            // LOCAL_PROXY_TOKEN is set in the server environment, cross-origin
+            // requests (cloudflared tunnel from the Cloudflare Worker) must
+            // present a matching Authorization header. Same-origin browser
+            // calls from the dev server itself pass through without a token,
+            // so the local UI is unaffected.
+            const proxyToken = process.env.LOCAL_PROXY_TOKEN?.trim();
+            if (proxyToken) {
+                if (!isTrustedLocalRequest(req)) {
+                    const auth = (req.headers.authorization || '').toString();
+                    if (auth !== `Bearer ${proxyToken}`) {
+                        sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+                        return;
+                    }
+                }
+            }
 
             try {
                 if (method === 'GET' && path === '/status') {

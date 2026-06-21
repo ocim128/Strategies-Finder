@@ -12,6 +12,7 @@ import { commitOhlcvData } from "./state-actions";
 import { OHLCVData, HistoricalFetchProgress } from "./types/index";
 
 import { parseTimeToUnixSeconds } from "./time-normalization";
+import { parseIntervalSeconds } from "./interval-utils";
 import { formatPolymarketDisplayName, parsePolymarketEventInput } from "./dataProviders/polymarket";
 import { queryDataMiningDom, type DataMiningDom } from "./data-mining-dom";
 import { aggregateSyntheticBars, buildSyntheticPairDataset, deriveSyntheticSymbol, isSyntheticSymbol, pickSourceInterval, resolveSyntheticSourceBars } from "../scripts/lib/synthetic-pair";
@@ -55,6 +56,7 @@ export class DataMiningManager {
             && isSyntheticSymbol(state.currentSymbol, { baseSymbol, quoteSymbol })
             && state.currentInterval === interval
             && state.ohlcvData.length > 0
+            && this.barsMatchInterval(state.ohlcvData, interval)
         ) {
             this.recordDiagnostic('synth_regenerate_skipped_current', { base: baseSymbol, quote: quoteSymbol, interval });
             return;
@@ -658,6 +660,26 @@ export class DataMiningManager {
         }
     }
 
+    private barsMatchInterval(bars: readonly OHLCVData[], interval: string): boolean {
+        const expectedSec = parseIntervalSeconds(interval);
+        if (!expectedSec || expectedSec <= 0 || bars.length < 3) return true;
+
+        const start = Math.max(1, bars.length - 64);
+        let checked = 0;
+        let matching = 0;
+        for (let i = start; i < bars.length; i++) {
+            const prev = parseTimeToUnixSeconds(bars[i - 1]?.time);
+            const current = parseTimeToUnixSeconds(bars[i]?.time);
+            if (prev === null || current === null) continue;
+            const gap = current - prev;
+            if (gap <= 0) continue;
+            checked += 1;
+            if (Math.abs(gap - expectedSec) <= 1) matching += 1;
+        }
+
+        return checked === 0 || matching / checked >= 0.8;
+    }
+
     private updateSynthDerivedSymbol(): void {
         const dom = this.dom;
         if (!dom?.synthDerivedEl) return;
@@ -726,16 +748,26 @@ export class DataMiningManager {
             // both legs and rebuild identical bars.
             const cached = dataManager.getImportedData(syntheticSymbol, interval);
             if (cached && cached.length > 0) {
-                this.recordDiagnostic('synth_reused_imported', {
-                    symbol: syntheticSymbol, interval, bars: cached.length,
-                    firstTime: cached[0]?.time, lastTime: cached[cached.length - 1]?.time,
-                });
-                this.commitSyntheticPair(syntheticSymbol, interval, baseSymbol, quoteSymbol, cached);
-                this.setStatus(
-                    `Loaded ${cached.length} cached synthetic bars for ${syntheticSymbol} (no re-fetch).`,
-                    'success'
-                );
-                return;
+                if (!this.barsMatchInterval(cached, interval)) {
+                    this.recordDiagnostic('synth_ignored_wrong_interval_cache', {
+                        symbol: syntheticSymbol,
+                        interval,
+                        bars: cached.length,
+                        firstTime: cached[0]?.time,
+                        lastTime: cached[cached.length - 1]?.time,
+                    });
+                } else {
+                    this.recordDiagnostic('synth_reused_imported', {
+                        symbol: syntheticSymbol, interval, bars: cached.length,
+                        firstTime: cached[0]?.time, lastTime: cached[cached.length - 1]?.time,
+                    });
+                    this.commitSyntheticPair(syntheticSymbol, interval, baseSymbol, quoteSymbol, cached);
+                    this.setStatus(
+                        `Loaded ${cached.length} cached synthetic bars for ${syntheticSymbol} (no re-fetch).`,
+                        'success'
+                    );
+                    return;
+                }
             }
 
             const sourceBars = resolveSyntheticSourceBars(SYNTHETIC_TARGET_BARS, source?.ratio ?? 1);
@@ -772,6 +804,10 @@ export class DataMiningManager {
             const syntheticBars = source
                 ? aggregateSyntheticBars(dataset.bars, interval)
                 : dataset.bars;
+
+            if (!this.barsMatchInterval(syntheticBars, interval)) {
+                throw new Error(`Synthetic bars do not match requested interval ${interval}.`);
+            }
 
             this.recordDiagnostic('synth_dataset_built', {
                 alignedBars: dataset.bars.length,
@@ -816,6 +852,9 @@ export class DataMiningManager {
         quoteSymbol: string,
         bars: OHLCVData[],
     ): void {
+        if (!this.barsMatchInterval(bars, interval)) {
+            throw new Error(`Refusing to load ${bars.length} ${syntheticSymbol} bars because their cadence does not match ${interval}.`);
+        }
         dataManager.stopStreaming();
         clearAll();
         dataManager.suppressNextAutoReload();

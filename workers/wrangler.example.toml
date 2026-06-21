@@ -16,6 +16,13 @@ crons = ["0 * * * *"]
 
 [vars]
 # Optional: override Binance-compatible candle sources (CSV, ordered fallback).
-# MARKET_DATA_API_BASES = "https://api.mexc.com,https://api.binance.us,https://data-api.binance.vision"
+# MARKET_DATA_API_BASES = "https://data-api.binance.vision,https://api.binance.com,https://api1.binance.com,https://api2.binance.com,https://api3.binance.com,https://api4.binance.com,https://api.binance.us"
 # Optional: minimum required closed candles for subscription evaluation.
 # MIN_CLOSED_CANDLES = "120"
+# Optional: cloudflared tunnel URL exposing the local Vite dev server
+# (http://localhost:5173). When set, the worker fetches candles from this URL
+# first via /api/sqlite/load-ohlcv, falling back to public exchanges only when
+# the proxy is unreachable or lacks the requested symbol. Pair with a
+# LOCAL_CANDLE_PROXY_TOKEN secret and a matching LOCAL_PROXY_TOKEN env var on
+# the Vite side so cross-origin tunnel calls are authenticated.
+# LOCAL_CANDLE_PROXY_URL = "https://your-tunnel.cfargotunnel.com"

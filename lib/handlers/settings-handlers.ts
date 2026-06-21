@@ -10,6 +10,8 @@ import { refreshEngineStatus } from "../engine-status-indicator";
 import { state } from "../state";
 import { setCurrentInterval, setCurrentSymbol } from "../state-actions";
 import { backtestService } from "../backtest-service";
+import { dataManager } from "../data-manager";
+import { dataMiningManager } from "../data-mining-manager";
 import {
     createStrategyShareLink,
     parseStrategyConfigFromCurrentUrl,
@@ -19,6 +21,7 @@ import { strategyPanelController } from "../strategy-panel-controller";
 import { parseInputNumber } from "../dom-input-readers";
 import { copyToClipboard } from "../browser-transfer";
 import { createSettingsHandlersDom } from "./settings-handlers-dom";
+import { buildSharedSyntheticApplyPlan, type SharedChartContext } from "./settings-handlers-shared";
 
 const STRATEGY_CONFIGS_CHANGED_EVENT = "strategy-configs:changed";
 
@@ -53,15 +56,71 @@ function getStrategyConfigChartContext(config: StrategyConfig): { symbol: string
     };
 }
 
+function getSyntheticReloadCount(context: { symbol: string | null; interval: string | null }): number {
+    const willChangeSymbol = Boolean(context.symbol) && context.symbol !== state.currentSymbol;
+    const willChangeInterval = Boolean(context.interval) && context.interval !== state.currentInterval;
+    return (willChangeSymbol ? 1 : 0) + (willChangeInterval ? 1 : 0);
+}
+
+export async function applySharedStrategyConfig(
+    config: StrategyConfig,
+    context: SharedChartContext,
+): Promise<void> {
+    await settingsManager.applyStrategyConfig(config);
+
+    const plan = buildSharedSyntheticApplyPlan({
+        config,
+        currentSymbol: state.currentSymbol,
+        currentInterval: state.currentInterval,
+        context,
+    });
+
+    if (plan.suppressCount > 0) {
+        dataManager.suppressNextAutoReload(plan.suppressCount);
+    }
+
+    if (state.currentSymbol !== plan.nextSymbol) {
+        setCurrentSymbol(plan.nextSymbol);
+    }
+    if (state.currentInterval !== plan.nextInterval) {
+        setCurrentInterval(plan.nextInterval);
+    }
+
+    if (plan.syntheticPair) {
+        await dataMiningManager.regenerateSyntheticPair(
+            plan.syntheticPair.baseSymbol,
+            plan.syntheticPair.quoteSymbol,
+            plan.nextInterval
+        );
+    }
+}
+
 async function applyUserStrategyConfig(config: StrategyConfig): Promise<void> {
     await settingsManager.applyStrategyConfig(config);
 
     const context = getStrategyConfigChartContext(config);
+    // When the saved config carries a synthetic pair, the chart symbol is a
+    // derived key (e.g. ZECAPT) that the regular data-fetcher cannot load —
+    // it would route to Binance and fail with HTTP 400 + CORS. Suppress the
+    // auto-reload that the symbol/interval change would trigger, so the
+    // synthetic generator below is what actually populates the chart.
+    const hasSyntheticPair = Boolean(config.syntheticPair) && Boolean(context.interval);
+    if (hasSyntheticPair) {
+        // Each change fires its own subscriber → its own auto-reload attempt.
+        dataManager.suppressNextAutoReload(getSyntheticReloadCount(context));
+    }
     if (context.symbol && context.symbol !== state.currentSymbol) {
         setCurrentSymbol(context.symbol);
     }
     if (context.interval && context.interval !== state.currentInterval) {
         setCurrentInterval(context.interval);
+    }
+    if (hasSyntheticPair) {
+        await dataMiningManager.regenerateSyntheticPair(
+            config.syntheticPair!.baseSymbol,
+            config.syntheticPair!.quoteSymbol,
+            context.interval!
+        );
     }
 }
 
@@ -284,13 +343,7 @@ export function setupSettingsHandlers() {
             state.currentInterval !== sharedChartContext.interval;
 
         const imported = settingsManager.upsertStrategyConfig(sharedConfig);
-        void settingsManager.applyStrategyConfig(imported);
-        if (state.currentSymbol !== sharedChartContext.symbol) {
-            setCurrentSymbol(sharedChartContext.symbol);
-        }
-        if (state.currentInterval !== sharedChartContext.interval) {
-            setCurrentInterval(sharedChartContext.interval);
-        }
+        void applySharedStrategyConfig(imported, sharedChartContext);
         updateConfigDropdown(imported.name);
         activateSharedLinkViewMode();
         consumeSharedConfigFromUrl();

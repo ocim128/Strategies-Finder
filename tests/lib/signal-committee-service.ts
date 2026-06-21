@@ -18,7 +18,15 @@ import {
     type CommitteeMemberState,
 } from "./alert-service";
 import { isWorkerSupportedStrategyKey } from "./alert-subscription-utils";
-import { deriveSyntheticSymbol } from "../scripts/lib/synthetic-pair";
+import { dataManager } from "./data-manager";
+import { storeSqliteCandles } from "./local-sqlite-api";
+import {
+    aggregateSyntheticBars,
+    buildSyntheticPairDataset,
+    deriveSyntheticSymbol,
+    pickSourceInterval,
+    resolveSyntheticSourceBars,
+} from "../scripts/lib/synthetic-pair";
 import { dataMiningManager } from "./data-mining-manager";
 import { settingsManager } from "./settings-manager";
 import { state } from "./state";
@@ -63,6 +71,8 @@ const DEFAULT_COMMITTEE_TAG = "default";
 const LOCAL_SYNTHETIC_COMMITTEE_TAG = "local_synthetic";
 const LOCAL_SYNTHETIC_STREAM_PREFIX = "local-synthetic:";
 const MEMBER_HARD_CAP = 25;
+const SYNTHETIC_WORKER_CANDLE_LIMIT = 500;
+const SYNTHETIC_COMMITTEE_SYNC_MIN_SOURCE_BARS = 50_000;
 const LOCAL_SYNTHETIC_MEMBERS_STORAGE = {
     key: "signal_committee_local_synthetic_members",
     schema: "signal_committee_local_synthetic_members",
@@ -91,15 +101,6 @@ function isLocalSyntheticStreamId(streamId: string): boolean {
     return streamId.startsWith(LOCAL_SYNTHETIC_STREAM_PREFIX);
 }
 
-function buildLocalSyntheticStreamId(
-    symbol: string,
-    interval: string,
-    strategyKey: string,
-    configName: string
-): string {
-    return `${LOCAL_SYNTHETIC_STREAM_PREFIX}${buildAlertStreamId(symbol, interval, strategyKey, configName)}`;
-}
-
 function matchesSyntheticSymbol(
     symbol: string,
     known: { baseSymbol: string; quoteSymbol: string } | null
@@ -111,6 +112,14 @@ function matchesSyntheticSymbol(
     );
     const normalized = symbol.trim().toUpperCase();
     return normalized === derived || normalized.replace(/[^A-Z0-9]/g, "") === derived;
+}
+
+function normalizeSymbolKey(value: string): string {
+    return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function symbolsMatch(left: string, right: string): boolean {
+    return normalizeSymbolKey(left) === normalizeSymbolKey(right);
 }
 
 function parseJsonRecord(value: string): Record<string, unknown> {
@@ -132,6 +141,27 @@ function parseStrategyParamsJson(value: string): Record<string, number> {
         params[key] = Number.isFinite(n) ? n : 0;
     }
     return params;
+}
+
+function readSyntheticPairFromSettingsJson(
+    value: string
+): { baseSymbol: string; quoteSymbol: string } | null {
+    const settings = parseJsonRecord(value);
+    const raw = settings.syntheticPair;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const candidate = raw as Record<string, unknown>;
+    const baseSymbol = typeof candidate.baseSymbol === "string" ? candidate.baseSymbol.trim().toUpperCase() : "";
+    const quoteSymbol = typeof candidate.quoteSymbol === "string" ? candidate.quoteSymbol.trim().toUpperCase() : "";
+    return baseSymbol && quoteSymbol && baseSymbol !== quoteSymbol
+        ? { baseSymbol, quoteSymbol }
+        : null;
+}
+
+function parseStrategyKeyFromStreamId(streamId: string): string | null {
+    const beforeConfig = streamId.split(":cfg:", 1)[0] ?? "";
+    const parts = beforeConfig.split(":");
+    const key = parts.length >= 3 ? parts.slice(2).join(":").trim() : "";
+    return key || null;
 }
 
 function readLocalSyntheticMembers(): LocalSyntheticCommitteeMember[] {
@@ -205,6 +235,265 @@ class SignalCommitteeService {
         return this.dom ??= createSignalCommitteeDom();
     }
 
+    private async warmWorkerStateCache(
+        streamIds: readonly string[]
+    ): Promise<Array<{ streamId: string; status: string; error?: string }>> {
+        const results: Array<{ streamId: string; status: string; error?: string }> = [];
+        for (const streamId of streamIds) {
+            try {
+                const run = await alertService.runNow(streamId, true);
+                results.push({ streamId, status: run.status ?? "unknown" });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                results.push({ streamId, status: "error", error: message });
+                debugLogger.warn("signal_committee.run_now_failed", { streamId, error: message });
+            }
+        }
+        return results;
+    }
+
+    private async syncSyntheticLegs(): Promise<void> {
+        const dom = this.getDom();
+        const originalText = dom.signalCommitteeSyncSyntheticBtn.textContent ?? "Sync Synthetic Legs";
+        dom.signalCommitteeSyncSyntheticBtn.disabled = true;
+        dom.signalCommitteeSyncSyntheticBtn.textContent = "Syncing...";
+
+        try {
+            const members = this.members.length > 0
+                ? this.members
+                : this.workerReachable
+                    ? await alertService.listCommitteeSubscriptions()
+                    : [];
+            const plans = new Map<string, {
+                baseSymbol: string;
+                quoteSymbol: string;
+                sourceInterval: string;
+                sourceBars: number;
+                members: Array<{ streamId: string; interval: string; targetBars: number }>;
+            }>();
+
+            for (const member of members) {
+                const syntheticPair = this.resolveWorkerSyntheticPair(member);
+                if (!syntheticPair || !matchesSyntheticSymbol(member.symbol, syntheticPair)) continue;
+
+                const source = pickSourceInterval(member.interval);
+                const sourceInterval = source?.sourceInterval ?? member.interval;
+                const targetBars = Math.max(
+                    SYNTHETIC_WORKER_CANDLE_LIMIT,
+                    Math.floor(member.candle_limit || 0)
+                );
+                const sourceBars = Math.max(
+                    SYNTHETIC_COMMITTEE_SYNC_MIN_SOURCE_BARS,
+                    resolveSyntheticSourceBars(targetBars, source?.ratio ?? 1)
+                );
+                const key = [
+                    syntheticPair.baseSymbol,
+                    syntheticPair.quoteSymbol,
+                    sourceInterval,
+                ].join("|");
+                const existing = plans.get(key);
+                if (existing) {
+                    existing.sourceBars = Math.max(existing.sourceBars, sourceBars);
+                    existing.members.push({ streamId: member.stream_id, interval: member.interval, targetBars });
+                    continue;
+                }
+                plans.set(key, {
+                    baseSymbol: syntheticPair.baseSymbol,
+                    quoteSymbol: syntheticPair.quoteSymbol,
+                    sourceInterval,
+                    sourceBars,
+                    members: [{ streamId: member.stream_id, interval: member.interval, targetBars }],
+                });
+            }
+
+            if (plans.size === 0) {
+                uiManager.showToast("No synthetic committee members to sync.", "info");
+                return;
+            }
+
+            let storedLegs = 0;
+            let evaluatedMembers = 0;
+            let stillBinanceBlocked = false;
+            for (const plan of plans.values()) {
+                dom.signalCommitteeStatus.textContent =
+                    `Syncing ${plan.baseSymbol}/${plan.quoteSymbol} ${plan.sourceInterval} (${plan.sourceBars.toLocaleString()} bars)...`;
+                const [baseData, quoteData] = await Promise.all([
+                    dataManager.fetchHistoricalData(plan.baseSymbol, plan.sourceInterval, plan.sourceBars),
+                    dataManager.fetchHistoricalData(plan.quoteSymbol, plan.sourceInterval, plan.sourceBars),
+                ]);
+                const legs = [
+                    { symbol: plan.baseSymbol, data: baseData },
+                    { symbol: plan.quoteSymbol, data: quoteData },
+                ];
+                for (const leg of legs) {
+                    if (leg.data.length === 0) {
+                        throw new Error(`No Binance candles returned for ${leg.symbol} ${plan.sourceInterval}.`);
+                    }
+                    const stored = await storeSqliteCandles(
+                        leg.symbol,
+                        plan.sourceInterval,
+                        leg.data,
+                        "Binance",
+                        "signal-committee-sync"
+                    );
+                    if (!stored?.ok) {
+                        throw new Error(stored?.error || `Failed to store ${leg.symbol} ${plan.sourceInterval} in SQLite.`);
+                    }
+                    dataManager.invalidateCacheEntry(leg.symbol, plan.sourceInterval);
+                    storedLegs += 1;
+                }
+                const dataset = buildSyntheticPairDataset({
+                    base: baseData,
+                    quote: quoteData,
+                    interval: plan.sourceInterval,
+                    minBars: 1,
+                });
+                for (const member of plan.members) {
+                    const source = pickSourceInterval(member.interval);
+                    const bars = source
+                        ? aggregateSyntheticBars(dataset.bars, member.interval)
+                        : dataset.bars;
+                    const candles = bars.slice(-Math.max(1, member.targetBars));
+                    if (candles.length === 0) {
+                        throw new Error(`No synthetic candles built for ${member.streamId}.`);
+                    }
+                    const run = await alertService.runWithCandles(member.streamId, candles, true);
+                    if (run.status.includes("Binance API unavailable")) {
+                        stillBinanceBlocked = true;
+                    }
+                    evaluatedMembers += 1;
+                }
+            }
+
+            uiManager.showToast(
+                stillBinanceBlocked
+                    ? `Synced ${storedLegs} leg series, but at least one member still hit Binance fetch.`
+                    : `Synced ${storedLegs} leg series and evaluated ${evaluatedMembers} members from local synthetic candles.`,
+                stillBinanceBlocked ? "warning" : "success"
+            );
+            await this.refresh({ manual: true });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            debugLogger.error("signal_committee.synthetic_leg_sync_failed", { error: message });
+            uiManager.showToast(`Synthetic leg sync failed: ${message}`, "error");
+            dom.signalCommitteeStatus.textContent = `Synthetic leg sync failed: ${message}`;
+        } finally {
+            dom.signalCommitteeSyncSyntheticBtn.disabled = false;
+            dom.signalCommitteeSyncSyntheticBtn.textContent = originalText;
+        }
+    }
+
+    private resolveWorkerSyntheticPair(
+        member: AlertSubscription
+    ): { baseSymbol: string; quoteSymbol: string } | null {
+        const storedPair = readSyntheticPairFromSettingsJson(member.backtest_settings_json);
+        if (storedPair) return storedPair;
+
+        const currentPair = dataMiningManager.getSyntheticPairMetadata();
+        if (matchesSyntheticSymbol(state.currentSymbol, currentPair) && matchesSyntheticSymbol(member.symbol, currentPair)) {
+            return currentPair;
+        }
+
+        const configName = parseAlertConfigNameFromStreamId(member.stream_id);
+        const config = configName ? settingsManager.loadStrategyConfig(configName) : null;
+        return config?.syntheticPair ?? null;
+    }
+
+    private async repairWorkerSyntheticSubscriptions(
+        members: readonly AlertSubscription[]
+    ): Promise<Array<{
+        streamId: string;
+        syntheticPair: { baseSymbol: string; quoteSymbol: string };
+        status: string;
+        candleLimit: number;
+        strategyKey: string;
+        streamStrategyKey: string | null;
+        storedStrategyKey: string;
+        error?: string;
+    }>> {
+        const repairs: Array<{
+            streamId: string;
+            syntheticPair: { baseSymbol: string; quoteSymbol: string };
+            status: string;
+            candleLimit: number;
+            strategyKey: string;
+            streamStrategyKey: string | null;
+            storedStrategyKey: string;
+            error?: string;
+        }> = [];
+        for (const member of members) {
+            const configName = parseAlertConfigNameFromStreamId(member.stream_id);
+            const config = configName ? settingsManager.loadStrategyConfig(configName) : null;
+            const streamStrategyKey = parseStrategyKeyFromStreamId(member.stream_id);
+            const existingPair = readSyntheticPairFromSettingsJson(member.backtest_settings_json);
+            const syntheticPair = existingPair ?? config?.syntheticPair ?? this.resolveWorkerSyntheticPair(member);
+            if (!syntheticPair || !matchesSyntheticSymbol(member.symbol, syntheticPair)) continue;
+            const strategyKey = config?.strategyKey ?? streamStrategyKey ?? member.strategy_key;
+            const strategyParams = config?.strategyParams ?? parseStrategyParamsJson(member.strategy_params_json);
+            const nextCandleLimit = Math.max(SYNTHETIC_WORKER_CANDLE_LIMIT, member.candle_limit || 0);
+            const needsSyntheticPairRepair = !existingPair;
+            const needsCandleLimitRepair = member.candle_limit < nextCandleLimit;
+            const needsStrategyRepair = strategyKey !== member.strategy_key;
+            const needsParamRepair = config !== null
+                && JSON.stringify(config.strategyParams ?? {}) !== JSON.stringify(parseStrategyParamsJson(member.strategy_params_json));
+            if (!needsSyntheticPairRepair && !needsCandleLimitRepair && !needsStrategyRepair && !needsParamRepair) continue;
+
+            const backtestSettings = {
+                ...((config?.backtestSettings as unknown as Record<string, unknown> | undefined)
+                    ?? parseJsonRecord(member.backtest_settings_json)),
+                syntheticPair,
+            };
+            try {
+                await alertService.upsertSubscription({
+                    streamId: member.stream_id,
+                    symbol: member.symbol,
+                    interval: member.interval,
+                    strategyKey,
+                    configName: configName ?? undefined,
+                    strategyParams,
+                    backtestSettings,
+                    freshnessBars: member.freshness_bars,
+                    notifyTelegram: member.notify_telegram === 1,
+                    notifyExit: member.notify_exit === 1,
+                    enabled: member.enabled === 1,
+                    candleLimit: nextCandleLimit,
+                    committeeTag: member.committee_tag ?? DEFAULT_COMMITTEE_TAG,
+                });
+                repairs.push({
+                    streamId: member.stream_id,
+                    syntheticPair,
+                    status: [
+                        needsSyntheticPairRepair ? "synthetic_pair" : null,
+                        needsCandleLimitRepair ? "candle_limit" : null,
+                        needsStrategyRepair ? "strategy_key" : null,
+                        needsParamRepair ? "strategy_params" : null,
+                    ].filter(Boolean).join("+") || "repaired",
+                    candleLimit: nextCandleLimit,
+                    strategyKey,
+                    streamStrategyKey,
+                    storedStrategyKey: member.strategy_key,
+                });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                repairs.push({
+                    streamId: member.stream_id,
+                    syntheticPair,
+                    status: "error",
+                    candleLimit: nextCandleLimit,
+                    strategyKey,
+                    streamStrategyKey,
+                    storedStrategyKey: member.strategy_key,
+                    error: message,
+                });
+                debugLogger.warn("signal_committee.worker_subscription_repair_failed", {
+                    streamId: member.stream_id,
+                    error: message,
+                });
+            }
+        }
+        return repairs;
+    }
+
     public init(): void {
         if (this.initialized) return;
         ensureLazyStylesheet(
@@ -236,6 +525,12 @@ class SignalCommitteeService {
         });
         dom.signalCommitteeAddBtn.addEventListener("click", () => {
             void this.addCurrentConfiguration();
+        });
+        dom.signalCommitteeAddSavedBtn.addEventListener("click", () => {
+            void this.addSavedConfigurationsForCurrentChart();
+        });
+        dom.signalCommitteeSyncSyntheticBtn.addEventListener("click", () => {
+            void this.syncSyntheticLegs();
         });
         dom.signalCommitteeAutoToggle.addEventListener("change", () => {
             this.prefs = { ...this.prefs, autoRefresh: dom.signalCommitteeAutoToggle.checked };
@@ -377,41 +672,6 @@ class SignalCommitteeService {
                 },
             };
         });
-    }
-
-    private getWorkerSyntheticFallbackRecords(members: readonly AlertSubscription[]): LocalSyntheticMemberRecord[] {
-        const records: LocalSyntheticMemberRecord[] = [];
-        const currentPair = dataMiningManager.getSyntheticPairMetadata();
-        const currentChartSynthetic = matchesSyntheticSymbol(state.currentSymbol, currentPair);
-        for (const member of members) {
-            const configName = parseAlertConfigNameFromStreamId(member.stream_id);
-            if (!configName) continue;
-            const config = settingsManager.loadStrategyConfig(configName);
-            const syntheticPair = config?.syntheticPair
-                ?? (currentChartSynthetic && matchesSyntheticSymbol(member.symbol, currentPair) ? currentPair : null);
-            if (!syntheticPair) continue;
-            records.push({
-                stored: {
-                    streamId: member.stream_id,
-                    configName,
-                    createdAt: member.created_at,
-                    updatedAt: member.updated_at,
-                },
-                config,
-                syntheticPair,
-                interval: config?.interval ?? member.interval,
-                strategyKey: config?.strategyKey ?? member.strategy_key,
-                strategyParams: config?.strategyParams ?? parseStrategyParamsJson(member.strategy_params_json),
-                backtestSettings: (config?.backtestSettings as unknown as Record<string, unknown> | undefined)
-                    ?? parseJsonRecord(member.backtest_settings_json),
-                subscription: {
-                    ...member,
-                    last_status: "local synthetic fallback",
-                    committee_tag: LOCAL_SYNTHETIC_COMMITTEE_TAG,
-                },
-            });
-        }
-        return records;
     }
 
     private async evaluateLocalSyntheticMembers(
@@ -588,40 +848,47 @@ class SignalCommitteeService {
             }
 
             // 2. List worker committee-tagged members when the worker is reachable.
-            const workerMembers = this.workerReachable
+            let workerMembers = this.workerReachable
                 ? await alertService.listCommitteeSubscriptions()
                 : [];
-            const workerLocalRecords = this.getWorkerSyntheticFallbackRecords(workerMembers);
+            const workerSubscriptionRepairs = this.workerReachable
+                ? await this.repairWorkerSyntheticSubscriptions(workerMembers)
+                : [];
+            const repairedStreamIds = workerSubscriptionRepairs
+                .filter((repair) => repair.status !== "error")
+                .map((repair) => repair.streamId);
+            if (workerSubscriptionRepairs.length > 0) {
+                diag.workerSubscriptionRepairs = workerSubscriptionRepairs;
+            }
+            if (repairedStreamIds.length > 0) {
+                workerMembers = await alertService.listCommitteeSubscriptions();
+            }
             const localRecordStreamIds = new Set([
                 ...localRecords.map((record) => record.subscription.stream_id),
-                ...workerLocalRecords.map((record) => record.subscription.stream_id),
             ]);
             const remoteWorkerMembers = workerMembers.filter((member) => !localRecordStreamIds.has(member.stream_id));
-            const workerLocalStates = await this.evaluateLocalSyntheticMembers(workerLocalRecords);
-            for (const [streamId, memberState] of workerLocalStates) {
-                localStates.set(streamId, memberState);
-            }
             diag.listCount = workerMembers.length;
-            diag.listMembers = workerMembers.map((m) => ({
-                stream_id: m.stream_id,
-                symbol: m.symbol,
-                interval: m.interval,
-                strategy_key: m.strategy_key,
-                committee_tag: m.committee_tag ?? null,
-                enabled: m.enabled,
-                last_status: m.last_status,
-                last_run_at: m.last_run_at,
-            }));
-            diag.workerSyntheticFallbackMembers = workerLocalRecords.map((record) => ({
-                stream_id: record.subscription.stream_id,
-                symbol: record.subscription.symbol,
-                interval: record.subscription.interval,
-                strategy_key: record.subscription.strategy_key,
-                hasConfig: Boolean(record.config),
-            }));
+            diag.listMembers = workerMembers.map((m) => {
+                const syntheticPair = readSyntheticPairFromSettingsJson(m.backtest_settings_json);
+                return {
+                    stream_id: m.stream_id,
+                    symbol: m.symbol,
+                    interval: m.interval,
+                    strategy_key: m.strategy_key,
+                    stream_strategy_key: parseStrategyKeyFromStreamId(m.stream_id),
+                    strategy_key_matches_stream: parseStrategyKeyFromStreamId(m.stream_id) === m.strategy_key,
+                    committee_tag: m.committee_tag ?? null,
+                    enabled: m.enabled,
+                    candle_limit: m.candle_limit,
+                    syntheticPair,
+                    hasSyntheticPair: Boolean(syntheticPair),
+                    last_status: m.last_status,
+                    last_run_at: m.last_run_at,
+                };
+            });
+            diag.workerSyntheticFallbackMembers = [];
             this.members = [
                 ...localRecords.map((record) => record.subscription),
-                ...workerLocalRecords.map((record) => record.subscription),
                 ...remoteWorkerMembers,
             ].slice(0, MEMBER_HARD_CAP);
             if (this.members.length === 0) {
@@ -638,7 +905,7 @@ class SignalCommitteeService {
                 .slice(0, Math.max(0, MEMBER_HARD_CAP - localRecordStreamIds.size))
                 .map((m) => m.stream_id);
             diag.batchedRequest = { streamIds };
-            const result = streamIds.length > 0
+            let result = streamIds.length > 0
                 ? await alertService.getCommitteeState(streamIds)
                 : { ok: true, scanned: 0, truncated: false, states: [] };
             diag.batchedResponse = {
@@ -647,6 +914,32 @@ class SignalCommitteeService {
                 truncated: result.truncated,
                 statesCount: result.states.length,
             };
+            if (options.manual && repairedStreamIds.length > 0) {
+                diag.workerSubscriptionRepairWarmup = await this.warmWorkerStateCache(repairedStreamIds);
+                result = await alertService.getCommitteeState(streamIds);
+                diag.batchedResponseAfterWorkerSubscriptionRepairWarmup = {
+                    ok: result.ok,
+                    scanned: result.scanned,
+                    truncated: result.truncated,
+                    statesCount: result.states.length,
+                };
+            }
+            if (options.manual && streamIds.length > 0) {
+                const missingCachedStreamIds = streamIds.filter((streamId) => {
+                    const state = result.states.find((candidate) => candidate.streamId === streamId);
+                    return !state || (!state.ok && state.reason === "no_cached_state");
+                });
+                if (missingCachedStreamIds.length > 0) {
+                    diag.runNowWarmup = await this.warmWorkerStateCache(missingCachedStreamIds);
+                    result = await alertService.getCommitteeState(streamIds);
+                    diag.batchedResponseAfterWarmup = {
+                        ok: result.ok,
+                        scanned: result.scanned,
+                        truncated: result.truncated,
+                        statesCount: result.states.length,
+                    };
+                }
+            }
             this.memberStates = new Map(localStates);
             for (const s of result.states) {
                 this.memberStates.set(s.streamId, s);
@@ -656,6 +949,14 @@ class SignalCommitteeService {
             diag.memberStates = this.members.map((m) => {
                 const s = this.memberStates.get(m.stream_id);
                 if (!s) return { stream_id: m.stream_id, present: false };
+                const latestChartCandle = state.ohlcvData[state.ohlcvData.length - 1] ?? null;
+                const chartTrades = state.currentBacktestResult?.trades ?? [];
+                const chartLastTrade = chartTrades[chartTrades.length - 1] ?? null;
+                const chartEntryTimeSec = chartLastTrade ? this.candleToSec({ time: chartLastTrade.entryTime }) : null;
+                const workerEntryTimeSec = s.latestTrade?.entryTimeSec ?? null;
+                const chartLatestClose = latestChartCandle && Number.isFinite(latestChartCandle.close)
+                    ? latestChartCandle.close
+                    : null;
                 return {
                     stream_id: m.stream_id,
                     ok: s.ok,
@@ -667,6 +968,32 @@ class SignalCommitteeService {
                     latestClose: s.latestClose,
                     tradeWindowsCount: Array.isArray(s.tradeWindows) ? s.tradeWindows.length : null,
                     lastStatus: s.lastStatus,
+                    workerSource: readSyntheticPairFromSettingsJson(m.backtest_settings_json)
+                        ? "worker synthetic"
+                        : "worker market",
+                    chartComparison: {
+                        chartSymbol: state.currentSymbol,
+                        chartInterval: state.currentInterval,
+                        chartBars: state.ohlcvData.length,
+                        chartLatestClose,
+                        latestCloseDelta: chartLatestClose !== null && s.latestClose !== null
+                            ? s.latestClose - chartLatestClose
+                            : null,
+                        chartLastTrade: chartLastTrade
+                            ? {
+                                type: chartLastTrade.type,
+                                entryTimeSec: chartEntryTimeSec,
+                                entryPrice: chartLastTrade.entryPrice,
+                                exitReason: chartLastTrade.exitReason ?? null,
+                            }
+                            : null,
+                        workerVsChartEntryTimeDeltaSec: workerEntryTimeSec !== null && chartEntryTimeSec !== null
+                            ? workerEntryTimeSec - chartEntryTimeSec
+                            : null,
+                        workerVsChartEntryPriceDelta: chartLastTrade && s.latestTrade?.entryPrice != null
+                            ? s.latestTrade.entryPrice - chartLastTrade.entryPrice
+                            : null,
+                    },
                 };
             });
             this.latestStatesAtIso = new Date().toISOString();
@@ -783,6 +1110,97 @@ class SignalCommitteeService {
         }
     }
 
+    private resolveSyntheticPairForConfig(config: StrategyConfig): { baseSymbol: string; quoteSymbol: string } | null {
+        if (config.syntheticPair) return config.syntheticPair;
+        const currentPair = dataMiningManager.getSyntheticPairMetadata();
+        const configSymbol = config.symbol ?? "";
+        return matchesSyntheticSymbol(state.currentSymbol, currentPair)
+            && configSymbol
+            && matchesSyntheticSymbol(configSymbol, currentPair)
+            ? currentPair
+            : null;
+    }
+
+    private configMatchesCurrentChart(config: StrategyConfig): boolean {
+        if (!isWorkerSupportedStrategyKey(config.strategyKey)) return false;
+        if ((config.interval ?? "") !== state.currentInterval) return false;
+        const configSymbol = config.symbol ?? "";
+        if (!configSymbol) return false;
+        if (symbolsMatch(configSymbol, state.currentSymbol)) return true;
+
+        const currentPair = dataMiningManager.getSyntheticPairMetadata();
+        return matchesSyntheticSymbol(state.currentSymbol, currentPair)
+            && (
+                matchesSyntheticSymbol(configSymbol, currentPair)
+                || matchesSyntheticSymbol(configSymbol, config.syntheticPair ?? null)
+            );
+    }
+
+    private async addSavedConfigurationsForCurrentChart(): Promise<void> {
+        const configs = settingsManager.loadAllStrategyConfigs()
+            .filter((config) => this.configMatchesCurrentChart(config));
+
+        if (configs.length === 0) {
+            uiManager.showToast("No saved configurations match the current chart and worker-supported strategies.", "info");
+            return;
+        }
+
+        if (
+            configs.length > 1
+            && !window.confirm(`Add ${configs.length} saved configurations for ${state.currentSymbol} ${state.currentInterval} to the committee?`)
+        ) {
+            return;
+        }
+
+        let added = 0;
+        let failed = 0;
+        for (const config of configs) {
+            const syntheticPair = this.resolveSyntheticPairForConfig(config);
+            const symbol = config.symbol ?? state.currentSymbol;
+            const interval = config.interval ?? state.currentInterval;
+            const streamId = buildAlertStreamId(symbol, interval, config.strategyKey, config.name);
+            try {
+                await alertService.upsertSubscription({
+                    streamId,
+                    symbol,
+                    interval,
+                    strategyKey: config.strategyKey,
+                    configName: config.name,
+                    strategyParams: config.strategyParams,
+                    backtestSettings: syntheticPair
+                        ? { ...config.backtestSettings, syntheticPair }
+                        : config.backtestSettings,
+                    freshnessBars: 1,
+                    notifyTelegram: false,
+                    enabled: true,
+                    candleLimit: syntheticPair ? SYNTHETIC_WORKER_CANDLE_LIMIT : undefined,
+                    committeeTag: DEFAULT_COMMITTEE_TAG,
+                });
+                await this.warmWorkerStateCache([streamId]);
+                added += 1;
+            } catch (error) {
+                failed += 1;
+                debugLogger.warn("signal_committee.bulk_add_failed", {
+                    name: config.name,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
+
+        if (added > 0) {
+            uiManager.showToast(
+                failed > 0
+                    ? `Added ${added} saved configurations; ${failed} failed.`
+                    : `Added ${added} saved configurations to the committee.`,
+                failed > 0 ? "warning" : "success"
+            );
+            await this.refresh({ manual: true });
+            return;
+        }
+
+        uiManager.showToast(`Failed to add ${failed} saved configurations.`, "error");
+    }
+
     private async addCurrentConfiguration(): Promise<void> {
         const strategyKey = state.currentStrategyKey.trim();
         if (!strategyKey) {
@@ -811,40 +1229,18 @@ class SignalCommitteeService {
             const existingConfig = settingsManager.loadStrategyConfig(trimmed);
             let savedConfig = settingsManager.saveStrategyConfig(trimmed);
             const existingSyntheticPair = existingConfig?.syntheticPair ?? null;
-            const shouldUseLocalSynthetic =
+            const currentSyntheticPair = dataMiningManager.getSyntheticPairMetadata();
+            const shouldUseSyntheticWorker =
                 this.isCurrentSymbolSynthetic()
                 || matchesSyntheticSymbol(state.currentSymbol, existingSyntheticPair);
-            if (shouldUseLocalSynthetic && existingSyntheticPair && !savedConfig.syntheticPair) {
+            const syntheticPairForWorker = shouldUseSyntheticWorker
+                ? savedConfig.syntheticPair ?? existingSyntheticPair ?? currentSyntheticPair
+                : null;
+            if (shouldUseSyntheticWorker && syntheticPairForWorker && !savedConfig.syntheticPair) {
                 savedConfig = settingsManager.upsertStrategyConfig({
                     ...savedConfig,
-                    syntheticPair: existingSyntheticPair,
+                    syntheticPair: syntheticPairForWorker,
                 });
-            }
-            if (shouldUseLocalSynthetic) {
-                const streamId = buildLocalSyntheticStreamId(
-                    context.symbol,
-                    context.interval,
-                    context.strategyKey,
-                    trimmed
-                );
-                const now = new Date().toISOString();
-                const members = readLocalSyntheticMembers();
-                const existingIndex = members.findIndex((member) => member.streamId === streamId);
-                const stored: LocalSyntheticCommitteeMember = {
-                    streamId,
-                    configName: savedConfig.name,
-                    createdAt: existingIndex >= 0 ? members[existingIndex].createdAt : now,
-                    updatedAt: now,
-                };
-                if (existingIndex >= 0) {
-                    members[existingIndex] = stored;
-                } else {
-                    members.push(stored);
-                }
-                writeLocalSyntheticMembers(members);
-                uiManager.showToast(`Added "${trimmed}" as a local synthetic committee member.`, "success");
-                await this.refresh({ manual: true });
-                return;
             }
             const configName = context.configName ?? trimmed;
             const streamId = buildAlertStreamId(
@@ -860,13 +1256,22 @@ class SignalCommitteeService {
                 strategyKey: context.strategyKey,
                 configName,
                 strategyParams: context.strategyParams,
-                backtestSettings: context.backtestSettings,
+                backtestSettings: syntheticPairForWorker
+                    ? { ...context.backtestSettings, syntheticPair: syntheticPairForWorker }
+                    : context.backtestSettings,
                 freshnessBars: 1,
                 notifyTelegram: false,
                 enabled: true,
+                candleLimit: syntheticPairForWorker ? SYNTHETIC_WORKER_CANDLE_LIMIT : undefined,
                 committeeTag: DEFAULT_COMMITTEE_TAG,
             });
-            uiManager.showToast(`Added "${trimmed}" to the committee.`, "success");
+            await this.warmWorkerStateCache([streamId]);
+            uiManager.showToast(
+                syntheticPairForWorker
+                    ? `Added "${trimmed}" to the committee with worker synthetic-pair metadata.`
+                    : `Added "${trimmed}" to the committee.`,
+                "success"
+            );
             await this.refresh({ manual: true });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

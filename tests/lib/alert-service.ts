@@ -13,6 +13,7 @@ import {
     writeAlertWorkerToken,
     writeAlertWorkerUrl,
 } from "./alert-storage";
+import type { OHLCVData } from "./types/strategies";
 
 export const ALERT_WORKER_URL_CHANGED_EVENT = 'alert-worker-url-changed';
 const API_FETCH_TIMEOUT_MS = 10_000;
@@ -443,6 +444,21 @@ export const alertService = {
         const data = await apiFetch<{ ok: boolean; run?: RunNowResult } & Partial<RunNowResult>>('/api/subscriptions/run-now', {
             method: 'POST',
             body: JSON.stringify({ streamId, force }),
+        });
+
+        return data.run ?? {
+            streamId: data.streamId ?? streamId,
+            status: data.status ?? 'unknown',
+            closedCandleTimeSec: data.closedCandleTimeSec,
+            result: data.result,
+        };
+    },
+
+    /** Trigger immediate subscription evaluation using caller-supplied candles. */
+    async runWithCandles(streamId: string, candles: OHLCVData[], force = false): Promise<RunNowResult> {
+        const data = await apiFetch<{ ok: boolean; run?: RunNowResult } & Partial<RunNowResult>>('/api/subscriptions/run-with-candles', {
+            method: 'POST',
+            body: JSON.stringify({ streamId, candles, force }),
         });
 
         return data.run ?? {
