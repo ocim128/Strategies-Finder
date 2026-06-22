@@ -2357,4 +2357,1968 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "atr_normalized_close_breakout",
+        name: "ATR Normalized Close Breakout",
+        description: "Follows price breakouts when the hourly close return exceeds a multiple of the rolling average true range (ATR), identifying high-energy breakouts.",
+        defaultParams: {
+		lookback: 30,
+		atrMultiplier: 2.0,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		atrMultiplier: "ATR Multiplier",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "atrMultiplier"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "autocorrelation_confirmed_breakout",
+        name: "Autocorrelation Confirmed Breakout",
+        description: "Triggers a breakout entry when the ratio breaks its rolling median channel, gated by positive return autocorrelation to filter out mean-reverting chop.",
+        defaultParams: {
+		lookback: 30,
+		acThreshold: 0.20,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		acThreshold: "Autocorrelation Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "acThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "autocorrelation_reversion_fade",
+        name: "Autocorrelation Reversion Fade",
+        description: "Fades the current bar's return when the rolling 1-bar autocorrelation of returns is highly negative.",
+        defaultParams: {
+		lookback: 30,
+		autoCorrThreshold: -0.30,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Autocorrelation Window",
+		autoCorrThreshold: "Autocorrelation Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "autoCorrThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_acceptance_streak_breakout",
+        name: "Close Acceptance Streak Breakout",
+        description: "Follows breakouts when the ratio close consistently accepts near the extremes of the bar range for a consecutive streak of bars.",
+        defaultParams: {
+		lookback: 20,
+		streakLength: 3,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Warmup Lookback",
+		streakLength: "Required Streak Length",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "streakLength"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_acceptance_streak_continuation",
+        name: "Close Acceptance Streak Continuation",
+        description: "Enters in the direction of a persistent trend when the ratio consistently closes outside the midpoint of its previous bars.",
+        defaultParams: {
+		lookback: 20,
+		streakLen: 4,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Warmup Lookback",
+		streakLen: "Required Streak Length",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "streakLen"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "coupling_breakout_range_chase",
+        name: "Coupling Breakout Range Chase",
+        description: "Enters a breakout in the direction of close location when a prolonged state of low range (tight coupling) ends with a sharp range expansion.",
+        defaultParams: {
+		lookback: 35,
+		couplingLookback: 10,
+		breakoutCloseLoc: 0.85,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		couplingLookback: "Coupling Lookback",
+		breakoutCloseLoc: "Breakout Close Location",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "couplingLookback", "breakoutCloseLoc"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "dislocated_range_midpoint_reversion",
+        name: "Dislocated Range Midpoint Reversion",
+        description: "Fades extreme intrabar leg disagreement (large range) when the close fails to hold the extremes and snaps back to the midpoint.",
+        defaultParams: {
+		lookback: 40,
+		rangeThreshold: 0.90,
+		midTolerance: 0.15,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		rangeThreshold: "Range Threshold",
+		midTolerance: "Midpoint Tolerance",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "rangeThreshold", "midTolerance"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "efficiency_gated_boundary_fade",
+        name: "Efficiency-Gated Boundary Fade",
+        description: "Fades the ratio when it reaches its rolling min/max boundary but the efficiency ratio is extremely low.",
+        defaultParams: {
+		lookback: 30,
+		efficiencyThreshold: 0.15,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		efficiencyThreshold: "Efficiency Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "efficiencyThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "efficiency_gated_range_breakout",
+        name: "Efficiency Gated Range Breakout",
+        description: "Follows range expansions (leg disagreement) only when they are highly efficient, indicating a clean structural decoupling.",
+        defaultParams: {
+		lookback: 25,
+		rangeThreshold: 0.80,
+		efficiencyMin: 0.55,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		rangeThreshold: "Range Percentile Threshold",
+		efficiencyMin: "Min Efficiency Ratio",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "rangeThreshold", "efficiencyMin"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "entropy_drop_momentum_breakout",
+        name: "Entropy Drop Momentum Breakout",
+        description: "Triggers a trend-following entry when typical price z-score breakouts occur immediately after a low-entropy consolidation phase.",
+        defaultParams: {
+		lookback: 30,
+		entropyMaxPercentile: 0.30,
+		zThreshold: 1.8,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		entropyMaxPercentile: "Max Entropy Percentile",
+		zThreshold: "Typical Price Z-Score Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "entropyMaxPercentile", "zThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_breakout_follow",
+        name: "Initiative Pressure Breakout Follow",
+        description: "Follows the breakout when the rolling average of initiative pressure breaks out above a high threshold, backed by high relative volume.",
+        defaultParams: {
+		lookback: 35,
+		pressureThreshold: 0.65,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		pressureThreshold: "Pressure Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "pressureThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_percentile_drift",
+        name: "Initiative Pressure Percentile Drift",
+        description: "Chases ratio trends that are confirmed by sustained buyer/seller initiative pressure and healthy relative volume.",
+        defaultParams: {
+		lookback: 25,
+		pressureThreshold: 0.75,
+		volumeMinPercentile: 0.40,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		pressureThreshold: "Pressure Threshold",
+		volumeMinPercentile: "Min Volume Percentile",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "pressureThreshold", "volumeMinPercentile"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "median_deviation_breakout_chase",
+        name: "Median Deviation Breakout Chase",
+        description: "Follows the breakout when the z-score of the deviation from the rolling median breaks out of its normal range, indicating a structural trend.",
+        defaultParams: {
+		lookback: 30,
+		zThreshold: 2.1,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		zThreshold: "Z-Score Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "zThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "median_deviation_zscore_reversion",
+        name: "Median Deviation Z-Score Reversion",
+        description: "Fades extreme ratio deviations from the rolling median measured in rolling standard deviations.",
+        defaultParams: {
+		lookback: 30,
+		zScoreThreshold: 2.0,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		zScoreThreshold: "Z-Score Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "zScoreThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_compression_expansion_chase",
+        name: "Range Compression-Expansion Chase",
+        description: "Chases the direction of a ratio breakout when the intrabar range spikes after a period of tight coupling (low range).",
+        defaultParams: {
+		lookback: 30,
+		expansionThreshold: 0.85,
+		compressionLookback: 5,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		expansionThreshold: "Expansion Threshold",
+		compressionLookback: "Compression Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "expansionThreshold", "compressionLookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "rate_of_change_zscore_breakout",
+        name: "Rate of Change Z-Score Breakout",
+        description: "Follows momentum when the rolling z-score of the rate of change breaks out above a threshold, confirmed by a healthy volume percentile rank.",
+        defaultParams: {
+		lookback: 20,
+		rocZThreshold: 2.0,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		rocZThreshold: "ROC Z-Score Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "rocZThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "roc_percentile_tail_reversion",
+        name: "ROC Percentile Tail Reversion",
+        description: "Fades the ratio when its rate of change (ROC) reaches extreme historical percentiles.",
+        defaultParams: {
+		rocLookback: 5,
+		lookback: 50,
+		extremeThreshold: 0.95,
+	} as Record<string, number>,
+        paramLabels: {
+		rocLookback: "ROC Period",
+		lookback: "Percentile Window",
+		extremeThreshold: "Extreme Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["rocLookback", "lookback", "extremeThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "rolling_min_max_breakout",
+        name: "Rolling Min-Max Breakout",
+        description: "Follows breakouts of the rolling high or low over a lookback window, confirmed by high relative proxy volume on the illiquid leg.",
+        defaultParams: {
+		lookback: 30,
+		volThreshold: 0.70,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		volThreshold: "Volume Percentile Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "volThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_expansion_close_acceptance",
+        name: "Volatility Expansion Close Acceptance",
+        description: "Follows breakouts when return volatility spikes to a high percentile, entering in the direction of the close location breakout.",
+        defaultParams: {
+		lookback: 30,
+		volThreshold: 0.80,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		volThreshold: "Volatility Percentile Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "volThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_zscore_volatility_expansion",
+        name: "Volume Z-Score Volatility Expansion",
+        description: "Chases ratio breakouts when a sudden spike in proxy volume z-score is accompanied by a volatility expansion.",
+        defaultParams: {
+		lookback: 25,
+		volumeZThreshold: 1.5,
+		volPercentileThreshold: 0.80,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		volumeZThreshold: "Volume Z-Score Threshold",
+		volPercentileThreshold: "Volatility Percentile Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "volumeZThreshold", "volPercentileThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "autocorrelation_gated_reversion_fade",
+        name: "Autocorrelation-Gated Reversion Fade",
+        description: "Fades the ratio when negative autocorrelation of close acceptance has persisted for a streak of bars, and close return agrees.",
+        defaultParams: {
+		lookback: 5,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Autocorrelation Streak Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "autocorrelation_momentum_breakout",
+        name: "Autocorrelation Momentum Breakout",
+        description: "Chases a breakout when rolling autocorrelation of returns is positive (trending regime) and range expands.",
+        defaultParams: {
+		lookback: 20,
+		threshold: 0.15,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		threshold: "Autocorrelation Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "average_range_deviation_reversion",
+        name: "Average Range Deviation Reversion",
+        description: "Fades the ratio when rolling average range is extremely high and the close crosses its average.",
+        defaultParams: {
+    lookback: 30,
+    rangeAvgPercentile: 0.80,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    rangeAvgPercentile: "Range Avg Percentile",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "rangeAvgPercentile"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "body_direction_streak_fade",
+        name: "Body Direction Streak Fade",
+        description: "Fades the ratio after a consecutive streak of green (close > open) or red (close < open) candles.",
+        defaultParams: {
+		lookback: 5,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Streak Length Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "body_pct_skew_compression_fade",
+        name: "Body PCT Skew Compression Fade",
+        description: "Fades large-range expansions when body percentage skewness is positive but the current bar is a low-body, large-wick exhaustion.",
+        defaultParams: {
+    lookback: 30,
+    skewThreshold: 1.0,
+    rangePercentile: 0.85,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    skewThreshold: "Body PCT Skew Threshold",
+    rangePercentile: "Range Percentile Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "skewThreshold", "rangePercentile"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "body_size_compression_breakout",
+        name: "Body Size Compression Breakout",
+        description: "Chases a breakout when the body size expands significantly after a period of compressed bodies.",
+        defaultParams: {
+    lookback: 12,
+    threshold: 0.60,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    threshold: "Current Body Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "threshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "body_to_range_ratio_breakout",
+        name: "Body to Range Ratio Breakout",
+        description: "Trades range expansions where the body makes up the vast majority of the range (minimal wicks).",
+        defaultParams: {
+    lookback: 25,
+    bodyRatioThreshold: 0.70,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    bodyRatioThreshold: "Body Ratio Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "bodyRatioThreshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "clean_body_range_expansion",
+        name: "Clean Body Range Expansion",
+        description: "Trades range expansions where the candle is mostly body (> 70%) and range exceeds median.",
+        defaultParams: {
+		lookback: 25,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "clean_range_streak_continuation",
+        name: "Clean Range Streak Continuation",
+        description: "Chases a breakout when the ratio prints a streak of consecutive bars with expanding ranges and directional close locations.",
+        defaultParams: {
+    lookback: 15,
+    streakLen: 3,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    streakLen: "Streak Length",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "streakLen"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_acceptance_accumulation_fade",
+        name: "Close Acceptance Accumulation Fade",
+        description: "Fades the ratio when the rolling sum of close acceptance over a window is extremely high or low.",
+        defaultParams: {
+		lookback: 20,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_acceptance_decay_fade",
+        name: "Close Acceptance Decay Fade",
+        description: "Fades the ratio when the decay-weighted sum of close acceptance is at a z-score extreme.",
+        defaultParams: {
+		lookback: 20,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Z-Score Lookback Window",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_acceptance_momentum",
+        name: "Close Acceptance Momentum",
+        description: "Chases a trend when the rolling average of close acceptance is positive or negative.",
+        defaultParams: {
+		lookback: 20,
+		threshold: 0.30,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+		threshold: "Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_acceptance_momentum_breakout",
+        name: "Close Acceptance Momentum Breakout",
+        description: "Chases a breakout when the rolling average of close acceptance is strongly directional and the range is expanded.",
+        defaultParams: {
+		lookback: 20,
+		threshold: 0.25,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		threshold: "Close Acceptance Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_acceptance_percentile_streak_fade",
+        name: "Close Acceptance Percentile Streak Fade",
+        description: "Fades the ratio when close acceptance percentile rank remains at extremes (above 0.80 or below 0.20) for a streak of bars.",
+        defaultParams: {
+		lookback: 4,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Streak Length Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_acceptance_skew_reversal_fade",
+        name: "Close Acceptance Skew Reversal Fade",
+        description: "Fades the ratio when rolling close acceptance skewness is extreme and the current close acceptance crosses its rolling median.",
+        defaultParams: {
+    lookback: 30,
+    skewLimit: 1.5,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    skewLimit: "Skew Limit",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "skewLimit"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_acceptance_streak_fade",
+        name: "Close Acceptance Streak Fade",
+        description: "Fades the ratio when close acceptance is consistently in one direction for a streak of bars.",
+        defaultParams: {
+		lookback: 4,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Streak Length Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_acceptance_streak_reversal",
+        name: "Close Acceptance Streak Reversal",
+        description: "Fades the typical price when close acceptance has been consistently in one direction for 3 bars and typical price is extreme.",
+        defaultParams: {
+    lookback: 20,
+    threshold: 1.8,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    threshold: "Typical Price Z-Score Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "threshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_location_streak_fade",
+        name: "Close Location Streak Fade",
+        description: "Fades the ratio when close location is consistently near the extremes (top 30% or bottom 30%) for a streak of bars.",
+        defaultParams: {
+		lookback: 4,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Streak Length Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_midpoint_deviation_skew_reversion",
+        name: "Close Midpoint Deviation Skew Reversion",
+        description: "Fades a trending ratio when the skewness of close midpoint deviations reaches positive extremes and starts to revert.",
+        defaultParams: {
+    lookback: 40,
+    skewThreshold: 1.2,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    skewThreshold: "Skew Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "skewThreshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_skewness_boundary_reversion",
+        name: "Close Skewness Boundary Reversion",
+        description: "Fades the typical price when its distribution skewness is at extremes and crosses back over the median.",
+        defaultParams: {
+		lookback: 35,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "compressed_range_close_location_chase",
+        name: "Compressed Range Close Location Chase",
+        description: "Enters a trade when the range is compressed (rolling average below median) and a bar prints an extreme close location.",
+        defaultParams: {
+    lookback: 30,
+    closeLocThreshold: 0.85,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    closeLocThreshold: "Close Location Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "closeLocThreshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "efficiency_ratio_exhaustion_fade",
+        name: "Efficiency Ratio Exhaustion Fade",
+        description: "Fades a ratio move when it reaches z-score extremes but the rolling efficiency ratio is low.",
+        defaultParams: {
+		lookback: 35,
+		threshold: 2.0,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		threshold: "Z-Score Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "efficiency_ratio_range_expansion",
+        name: "Efficiency Ratio Range Expansion",
+        description: "Chases range expansions only when the efficiency ratio is high (> 0.40), confirming trend purity.",
+        defaultParams: {
+		lookback: 25,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "efficiency_ratio_reversion_trigger",
+        name: "Efficiency Ratio Reversion Trigger",
+        description: "Fades price extremes when the rolling efficiency ratio is extremely low (choppy market).",
+        defaultParams: {
+    lookback: 20,
+    threshold: 0.15,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    threshold: "Efficiency Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "threshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "efficiency_ratio_trend_filter",
+        name: "Efficiency Ratio Trend Filter",
+        description: "Chases momentum only when the efficiency ratio is high.",
+        defaultParams: {
+		lookback: 30,
+		threshold: 0.40,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+		threshold: "Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "gap_pct_skew_mean_reversion",
+        name: "Gap PCT Skew Mean Reversion",
+        description: "Fades large opening gaps when the gap percentile is opposite to the prevailing gap skewness.",
+        defaultParams: {
+    lookback: 35,
+    gapPercentile: 0.95,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    gapPercentile: "Gap Percentile Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "gapPercentile"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_correlation_reversal",
+        name: "Initiative Pressure Correlation Reversal",
+        description: "Fades the ratio when price is at z-score extremes and the correlation between returns and initiative pressure is negative.",
+        defaultParams: {
+		lookback: 25,
+		threshold: 1.8,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		threshold: "Z-Score Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_skew_divergence",
+        name: "Initiative Pressure Skew Divergence",
+        description: "Enters a breakout when rolling skewness of initiative pressure is opposite to the strong close acceptance.",
+        defaultParams: {
+    lookback: 20,
+    acceptanceThreshold: 0.60,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    acceptanceThreshold: "Acceptance Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "acceptanceThreshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_streak_fade",
+        name: "Initiative Pressure Streak Fade",
+        description: "Fades the ratio when initiative pressure (volume-backed directional commitment) is consistently in one direction for a streak of bars.",
+        defaultParams: {
+		lookback: 5,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Streak Length Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_surge_follow",
+        name: "Initiative Pressure Surge Follow",
+        description: "Chases a trend when the initiative pressure percentile rank spikes, confirming volume-backed commitment.",
+        defaultParams: {
+    lookback: 20,
+    threshold: 0.20,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    threshold: "Threshold Percentile",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "threshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "median_typical_deviation_fade",
+        name: "Median Typical Deviation Fade",
+        description: "Fades the typical price when its deviation from its rolling median is extreme.",
+        defaultParams: {
+		lookback: 30,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "price_channel_breakout_chase",
+        name: "Price Channel Breakout Chase",
+        description: "Chases a breakout when the close price breaks out of its trailing channel, confirmed by range expansion.",
+        defaultParams: {
+		lookback: 40,
+		rangeThreshold: 0.60,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+		rangeThreshold: "Range Percentile Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "rangeThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_atr_breakout_follow",
+        name: "Range ATR Breakout Follow",
+        description: "Chases trends when the current range exceeds 1.5x ATR and close acceptance confirms the direction.",
+        defaultParams: {
+		lookback: 14,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_compression_breakout_follow",
+        name: "Range Compression Breakout Follow",
+        description: "Chases breakouts when the current bar close location is extreme immediately following range compression.",
+        defaultParams: {
+		lookback: 30,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_efficiency_skew_breakout",
+        name: "Range Efficiency Skew Breakout",
+        description: "Chases breakouts when rolling efficiency skewness is positive, indicating clean trends over chop.",
+        defaultParams: {
+    lookback: 30,
+    efficiencySkewThreshold: 0.50,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    efficiencySkewThreshold: "Efficiency Skew Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "efficiencySkewThreshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_expansion_acceptance_alignment",
+        name: "Range Expansion Acceptance Alignment",
+        description: "Chases a breakout when range expands above its rolling median and close acceptance is strongly directional.",
+        defaultParams: {
+		lookback: 25,
+		threshold: 0.50,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		threshold: "Close Acceptance Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_expansion_close_median_fade",
+        name: "Range Expansion Close Median Fade",
+        description: "Fades large range expansions (> 1.5x ATR) when close deviates significantly from its median.",
+        defaultParams: {
+		lookback: 30,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_expansion_streak_reversal",
+        name: "Range Expansion Streak Reversal",
+        description: "Fades range expansions when the range has expanded for 3 consecutive bars and typical price z-score is at an extreme.",
+        defaultParams: {
+		lookback: 30,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Z-Score Lookback Window",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_expansion_wick_rejection_fade",
+        name: "Range Expansion Wick Rejection Fade",
+        description: "Fades range expansions (range > 1.5x ATR) that print a large upper or lower wick rejection.",
+        defaultParams: {
+		lookback: 30,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_percentile_acceptance_follow",
+        name: "Range Percentile Acceptance Follow",
+        description: "Enters a breakout when the range is in the top 80th percentile and close acceptance confirms direction.",
+        defaultParams: {
+		lookback: 30,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_percentile_close_acceptance",
+        name: "Range Percentile Close Acceptance",
+        description: "Chases a breakout when the current bar's true range is in a high percentile and close acceptance is highly directional.",
+        defaultParams: {
+    lookback: 20,
+    rangeThreshold: 0.80,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    rangeThreshold: "Range Percentile Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "rangeThreshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_percentile_momentum_chase",
+        name: "Range Percentile Momentum Chase",
+        description: "Chases a breakout when the range is in a high percentile and the close location is extreme.",
+        defaultParams: {
+    lookback: 24,
+    threshold: 0.20,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    threshold: "Threshold Percentile Offset",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "threshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_percentile_trend_reversal",
+        name: "Range Percentile Trend Reversal",
+        description: "Chases a breakout when the range percentile rank spikes after a prolonged period of compressed range.",
+        defaultParams: {
+		lookback: 30,
+		threshold: 0.75,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		threshold: "Percentile Spike Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_percentile_wick_rejection_fade",
+        name: "Range Percentile Wick Rejection Fade",
+        description: "Fades a range breakout when the current range is high but the bar is dominated by a large upper or lower wick.",
+        defaultParams: {
+    lookback: 35,
+    rangeThreshold: 0.80,
+    wickThreshold: 0.50,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    rangeThreshold: "Range Percentile Threshold",
+    wickThreshold: "Wick Threshold Ratio",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "rangeThreshold", "wickThreshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_ratio_efficiency_breakout",
+        name: "Range Ratio Efficiency Breakout",
+        description: "Chases a range breakout only when the efficiency ratio is high.",
+        defaultParams: {
+    lookback: 25,
+    efficiencyThreshold: 0.40,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    efficiencyThreshold: "Efficiency Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "efficiencyThreshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_rejection_fade",
+        name: "Range Rejection Fade",
+        description: "Fades a ratio extreme when a large-range bar prints a massive wick rejection.",
+        defaultParams: {
+		lookback: 30,
+		threshold: 2.0,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+		threshold: "Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_roc_percentile_chase",
+        name: "Range ROC Percentile Chase",
+        description: "Chases momentum when the 1-bar rate of change (ROC) of true range is in the top 20% of history.",
+        defaultParams: {
+		lookback: 20,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_skew_entropy_reversal",
+        name: "Range Skew Entropy Reversal",
+        description: "Fades range breakouts when true-range skewness and rolling entropy of range are both extremely high.",
+        defaultParams: {
+    lookback: 30,
+    skewThreshold: 1.5,
+    entropyThreshold: 0.8,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    skewThreshold: "Skew Threshold",
+    entropyThreshold: "Entropy Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "skewThreshold", "entropyThreshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_velocity_skew_breakout",
+        name: "Range Velocity Skew Breakout",
+        description: "Chases a breakout when range velocity (rate of change of true range) skewness spikes, confirming that range expansion is accelerating rapidly.",
+        defaultParams: {
+    lookback: 30,
+    velocityPercentile: 0.85,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    velocityPercentile: "Velocity Percentile Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "velocityPercentile"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_volatility_clustering_breakout",
+        name: "Range Volatility Clustering Breakout",
+        description: "Chases a breakout when range volatility expands significantly above its average and close location is extreme.",
+        defaultParams: {
+		lookback: 20,
+		threshold: 1.5,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+		threshold: "Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_zscore_acceptance_reversal",
+        name: "Range Z-Score Acceptance Reversal",
+        description: "Fades extreme range expansions when the close fails to validate the breakout direction, indicating intraday exhaustion.",
+        defaultParams: {
+    lookback: 30,
+    rangeZThreshold: 2.0,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    rangeZThreshold: "Range Z-Score Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "rangeZThreshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_zscore_median_alignment",
+        name: "Range Z-Score Median Alignment",
+        description: "Fades the ratio when price distance to median is extreme but range is contracting (small).",
+        defaultParams: {
+    lookback: 30,
+    zScoreThreshold: 1.8,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    zScoreThreshold: "Z-Score Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "zScoreThreshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_zscore_momentum_follow",
+        name: "Range Z-Score Momentum Follow",
+        description: "Chases a breakout when the z-score of true range exceeds 1.5, gated by directional close location.",
+        defaultParams: {
+		lookback: 20,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "ratio_mean_reversion_zscore",
+        name: "Ratio Mean Reversion Z-Score",
+        description: "Fades the ratio when it deviates significantly from its rolling average.",
+        defaultParams: {
+		lookback: 50,
+		threshold: 2.0,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+		threshold: "Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "ratio_return_autocorrelation_fade",
+        name: "Ratio Return Autocorrelation Fade",
+        description: "Fades return direction when the rolling 1-bar autocorrelation of returns is negative.",
+        defaultParams: {
+		lookback: 30,
+		threshold: -0.15,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+		threshold: "Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "short_term_autocorrelation_reversal",
+        name: "Short-Term Autocorrelation Reversal",
+        description: "Fades the previous bar's return when the short-term autocorrelation is highly negative.",
+        defaultParams: {
+    lookback: 12,
+    threshold: -0.20,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    threshold: "Autocorrelation Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "threshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "trailing_window_boundary_reversal",
+        name: "Trailing Window Boundary Reversal",
+        description: "Fades the ratio when typical price touches the trailing min/max boundary, and closes back inside.",
+        defaultParams: {
+		lookback: 20,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "true_range_autocorrelation_skew_chase",
+        name: "True Range Autocorrelation Skew Chase",
+        description: "Chases breakouts when true-range autocorrelation is positive and true-range skewness is positive, indicating persistent expansions.",
+        defaultParams: {
+    lookback: 25,
+    autoCorrThreshold: 0.25,
+    skewThreshold: 0.50,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    autoCorrThreshold: "AutoCorrelation Threshold",
+    skewThreshold: "Skew Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "autoCorrThreshold", "skewThreshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_price_deviation_crossover",
+        name: "Typical Price Deviation Crossover",
+        description: "Triggers a mean-reversion trade when typical price deviates from its rolling average by more than a standard deviation threshold, and typical price crosses back over the average.",
+        defaultParams: {
+    lookback: 24,
+    threshold: 1.5,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    threshold: "Deviation Z-Score Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "threshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_price_direction_streak_fade",
+        name: "Typical Price Direction Streak Fade",
+        description: "Fades the ratio when the typical price has printed a consecutive streak of increases or decreases.",
+        defaultParams: {
+		lookback: 5,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Streak Length Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_price_entropy_squeeze_reversion",
+        name: "Typical Price Entropy Squeeze Reversion",
+        description: "Fades typical price breakouts when typical price entropy is low (< 0.35) and z-score is at an extreme.",
+        defaultParams: {
+		lookback: 30,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_price_percentile_rebound",
+        name: "Typical Price Percentile Rebound",
+        description: "Fades extreme typical price stretches when the current bar shows a directional rejection (close > open for long, close < open for short).",
+        defaultParams: {
+    lookback: 24,
+    threshold: 0.05,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    threshold: "Threshold Percentile",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "threshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_price_percentile_reversion",
+        name: "Typical Price Percentile Reversion",
+        description: "Fades the typical price when its rolling percentile rank reaches statistical tails (< threshold or > 1 - threshold).",
+        defaultParams: {
+		lookback: 50,
+		threshold: 0.05,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+		threshold: "Percentile Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_price_streak_exhaustion_fade",
+        name: "Typical Price Streak Exhaustion Fade",
+        description: "Fades typical price trends when typical price moves in the same direction for 5+ bars and z-score is extreme.",
+        defaultParams: {
+		lookback: 25,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_price_streak_fade",
+        name: "Typical Price Streak Fade",
+        description: "Fades typical price trends when typical price prints a 4-bar directional streak and the typical price z-score is extreme.",
+        defaultParams: {
+		lookback: 30,
+		threshold: 1.8,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		threshold: "Z-Score Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_price_vwap_deviation_fade",
+        name: "Typical Price VWAP Deviation Fade",
+        description: "Fades typical price deviations from the rolling VWAP, normalized by typical price standard deviation.",
+        defaultParams: {
+		lookback: 30,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_price_zscore_reversion",
+        name: "Typical Price Z-Score Reversion",
+        description: "Fades the typical price when its rolling z-score crosses a 2.5-sigma boundary.",
+        defaultParams: {
+		lookback: 50,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_adjusted_typical_return_fade",
+        name: "Volatility-Adjusted Typical Return Fade",
+        description: "Fades typical price returns when the 1-bar return is extremely large relative to rolling return standard deviation.",
+        defaultParams: {
+		lookback: 30,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_reversal_fade",
+        name: "Volatility Reversal Fade",
+        description: "Fades the ratio when the price expands outside standard deviation bands and then closes back inside.",
+        defaultParams: {
+		lookback: 30,
+		threshold: 2.5,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+		threshold: "Standard Deviation Multiplier",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_exhaustion_median_fade",
+        name: "Volume Exhaustion Median Fade",
+        description: "Fades ratio extensions that occur on low relative volume.",
+        defaultParams: {
+		lookback: 40,
+		threshold: 2.0,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		threshold: "Z-Score Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_gated_range_expansion",
+        name: "Volume-Gated Range Expansion",
+        description: "Chases a breakout when range expands beyond its median and proxy volume is in the top 30% of history.",
+        defaultParams: {
+		lookback: 20,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_percentile_trend_follow",
+        name: "Volume Percentile Trend Follow",
+        description: "Chases trends only when the price movement is accompanied by high relative proxy volume.",
+        defaultParams: {
+		lookback: 25,
+		threshold: 0.75,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+		threshold: "Volume Percentile Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_profile_poc_deviation_fade",
+        name: "Volume Profile POC Deviation Fade",
+        description: "Fades the typical price when it deviates significantly from the volume profile Point of Control (POC).",
+        defaultParams: {
+		lookback: 40,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_weighted_range_expansion",
+        name: "Volume-Weighted Range Expansion",
+        description: "Chases range expansions that are confirmed by high relative proxy volume.",
+        defaultParams: {
+    lookback: 20,
+    volumeThreshold: 0.70,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    volumeThreshold: "Volume Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "volumeThreshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_zscore_gated_reversion",
+        name: "Volume Z-Score Gated Reversion",
+        description: "Fades price extremes that occur on massive volume spikes.",
+        defaultParams: {
+    lookback: 30,
+    threshold: 2.0,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    threshold: "Price Z-Score Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "threshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "weighted_close_percentile_reversion",
+        name: "Weighted Close Percentile Reversion",
+        description: "Fades the weighted close price when it reaches extreme historical percentile ranks (bottom 2% or top 2%).",
+        defaultParams: {
+		lookback: 40,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "wick_imbalance_skew_exhaustion",
+        name: "Wick Imbalance Skew Exhaustion",
+        description: "Fades extreme wicks in the direction of the dominant wick skewness when the close fails to validate the push.",
+        defaultParams: {
+    lookback: 25,
+    wickPercentile: 0.90,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    wickPercentile: "Wick Percentile Threshold",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "wickPercentile"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "wick_percentile_reversion_fade",
+        name: "Wick Percentile Reversion Fade",
+        description: "Fades the ratio when upper or lower wicks reach extreme historical percentiles.",
+        defaultParams: {
+		lookback: 30,
+		threshold: 0.90,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		threshold: "Percentile Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "wick_rejection_reversion_chase",
+        name: "Wick Rejection Reversion Chase",
+        description: "Enters a reversal trade on the bar following a massive wick rejection, chasing the direction of the rejection once it is confirmed.",
+        defaultParams: {
+    lookback: 24,
+    threshold: 0.10,
+  } as Record<string, number>,
+        paramLabels: {
+    lookback: "Lookback Window",
+    threshold: "Wick Threshold Percentile",
+  } as Record<string, string>,
+        metadata: {
+    role: "entry",
+    direction: "both",
+    walkForwardParams: ["lookback", "threshold"],
+  },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "zscore_roc_divergence_reversion",
+        name: "Z-Score ROC Divergence Reversion",
+        description: "Fades extreme price rate of change (ROC) moves when they occur on low range (legs did not diverge significantly).",
+        defaultParams: {
+		lookback: 30,
+		threshold: 2.0,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		threshold: "Z-Score Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "threshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];
