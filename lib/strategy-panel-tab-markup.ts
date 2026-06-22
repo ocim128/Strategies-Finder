@@ -17,6 +17,19 @@ const LAZY_STRATEGY_PANEL_TAB_LOADERS = {
     signalcommittee: () => import('../html-partials/tab-signal-committee.html?raw'),
 } as const;
 
+/**
+ * Canonical list of lazy-loaded strategy panel tab ids. Each entry must have:
+ *   - a runtime placeholder `<div id="${tabId}Tab">` injected by
+ *     `appendLazyStrategyPanelTabPlaceholders`, and
+ *   - a matching `#${tabId}Tab` root in its `LAZY_STRATEGY_PANEL_TAB_LOADERS`
+ *     partial, so `ensureStrategyPanelTabMarkup` can swap placeholder -> content.
+ * Exposed as a readonly array (not the loader map) to avoid carrying the
+ * `?raw` import side effects into test/consumer modules.
+ */
+export const LAZY_STRATEGY_PANEL_TAB_IDS: readonly string[] = Object.freeze(
+    Object.keys(LAZY_STRATEGY_PANEL_TAB_LOADERS)
+);
+
 type LazyStrategyPanelTabId = keyof typeof LAZY_STRATEGY_PANEL_TAB_LOADERS;
 
 function isLazyStrategyPanelTabId(tabId: string): tabId is LazyStrategyPanelTabId {

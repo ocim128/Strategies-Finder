@@ -32,10 +32,44 @@ function logBootstrapFeature(
 }
 
 /**
+ * Verifies that within `stageFeatures`, every `dependsOn` entry that resolves
+ * to another feature in the same stage appears earlier in execution order.
+ * Cross-stage dependencies are intentionally allowed: `pre_restore` always
+ * runs before `post_restore`, so a `post_restore` feature may legitimately
+ * depend on a `pre_restore` feature without an ordering violation here.
+ *
+ * Throws on the first within-stage ordering violation so startup cannot
+ * silently continue with features initializing ahead of their dependencies.
+ */
+function assertBootstrapStageOrdering<TContext>(
+    stageFeatures: readonly AppBootstrapFeature<TContext>[]
+): void {
+    const indexById = new Map<string, number>();
+    for (let i = 0; i < stageFeatures.length; i++) {
+        indexById.set(stageFeatures[i]!.id, i);
+    }
+    for (let i = 0; i < stageFeatures.length; i++) {
+        const feature = stageFeatures[i]!;
+        if (!feature.dependsOn || feature.dependsOn.length === 0) continue;
+        for (const dep of feature.dependsOn) {
+            const depIndex = indexById.get(dep);
+            if (depIndex === undefined) continue; // cross-stage or unknown dep
+            if (depIndex >= i) {
+                throw new Error(
+                    `Bootstrap ordering violation: feature "${feature.id}" declares dependsOn "${dep}", `
+                    + `but "${dep}" appears later in stage "${feature.stage}". `
+                    + `List dependencies before their dependents in APP_BOOTSTRAP_FEATURES.`
+                );
+            }
+        }
+    }
+}
+
+/**
  * Runs all features matching `stage`, calling `handler` (init or restore)
- * on each, in array definition order. Features must be listed in dependency
- * order in the source array — this is enforced by code review, not by a
- * runtime topological sort.
+ * on each, in array definition order. Within a stage, features must be listed
+ * in dependency order — runtime-validated against each feature's `dependsOn`.
+ * Cross-stage ordering (e.g. post_restore depending on pre_restore) is allowed.
  */
 export async function runBootstrapFeatureStage<TContext>(
     features: readonly AppBootstrapFeature<TContext>[],
@@ -44,6 +78,7 @@ export async function runBootstrapFeatureStage<TContext>(
     context: TContext
 ): Promise<void> {
     const stageFeatures = features.filter((f) => f.stage === stage);
+    assertBootstrapStageOrdering(stageFeatures);
     for (const feature of stageFeatures) {
         const step = feature[handler];
         if (!step) continue;

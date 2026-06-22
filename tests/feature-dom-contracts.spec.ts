@@ -26,6 +26,7 @@ import { SIGNAL_COMMITTEE_REQUIRED_IDS } from "../lib/signal-committee-dom";
 import { CHART_MANAGER_REQUIRED_IDS } from "../lib/chart-manager-dom";
 import { STRATEGY_PANEL_REQUIRED_IDS } from "../lib/strategy-panel-dom";
 import { ASSET_LEADERSHIP_REQUIRED_IDS } from "../lib/asset-leadership-dom";
+import { LAZY_STRATEGY_PANEL_TAB_IDS } from "../lib/strategy-panel-tab-markup";
 
 const PARTIALS_DIR = path.join(process.cwd(), "html-partials");
 
@@ -117,5 +118,31 @@ describe("Feature DOM contracts", () => {
             .filter(tabId => !htmlIds.has(`${tabId}Tab`));
 
         expect(missingPanels).to.deep.equal([]);
+    });
+
+    describe("lazy strategy panel tab contracts", () => {
+        // WHY: each lazy tab is runtime-injected as `<div id="${tabId}Tab">`
+        // by appendLazyStrategyPanelTabPlaceholders and then swapped with the
+        // matching partial's root by ensureStrategyPanelTabMarkup. If a lazy
+        // partial ever stops defining its `#${tabId}Tab` root, the swap is
+        // silently skipped and the tab renders empty. If an eager partial
+        // starts defining the same id, the runtime injector creates a duplicate.
+        // Both regressions look like random UI bugs and are convention-only
+        // without these checks.
+
+        it("every lazy tab partial defines its matching placeholder root id", () => {
+            const missingRoots = LAZY_STRATEGY_PANEL_TAB_IDS
+                .map(tabId => `${tabId}Tab`)
+                .filter(rootId => !htmlIds.has(rootId));
+
+            expect(missingRoots, "lazy partials missing their #${tabId}Tab root").to.deep.equal([]);
+        });
+
+        it("no eager partial pre-bakes the runtime data-lazy-tab attribute", () => {
+            // WHY: appendLazyStrategyPanelTabPlaceholders owns data-lazy-tab.
+            // A pre-baked attribute would collide with the runtime placeholder
+            // and confuse ensureStrategyPanelTabMarkup's swap logic.
+            expect(markup.includes("data-lazy-tab=")).to.equal(false);
+        });
     });
 });

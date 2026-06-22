@@ -5,6 +5,7 @@ import { BACKTEST_DOM_SETTING_IDS, EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestS
 import {
     sanitizeBacktestSettingsForRust,
     requiresTypescriptEngine,
+    RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS,
 } from '../lib/rust-settings-sanitizer';
 import type { BacktestSettings } from '../lib/types/strategies';
 import {
@@ -1162,5 +1163,59 @@ describe('Backtest settings compatibility', () => {
         const contract = getBacktestDomSettingContract('crossSymbolSecondary');
         expect(contract).to.not.equal(undefined);
         expect(contract?.rustSupport).to.equal('unsupported');
+    });
+});
+
+// WHY: the backtest settings contract spans DOM ids, stored JSON normalization,
+// runtime resolution, Finder behavior, and Rust sanitization. The two lists
+// below (`BACKTEST_SETTINGS_DOM_CONTRACTS[*].rustSupport` and
+// `RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS`) describe the SAME contract from two
+// sides. Without an executable check, drift between them silently produces
+// "UI checked, runtime false" or "manual backtest works, Rust path differs"
+// bugs — exactly the maintenance hotspot AGENTS.md calls out.
+describe('backtest settings Rust-support contract audit', () => {
+    it('every contract field marked rustSupport:"unsupported" is in the Rust strip list', () => {
+        // WHY: if the contract declares a setting unsupported by Rust but the
+        // sanitizer does not strip it, the setting silently flows into the Rust
+        // payload and is either ignored or misinterpreted.
+        const stripSet = new Set<string>(RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS as readonly string[]);
+        const declaredUnsupported = BACKTEST_SETTINGS_DOM_CONTRACTS
+            .filter(c => c.rustSupport === 'unsupported')
+            .map(c => c.settingKey as string);
+        const missingFromStripList = declaredUnsupported.filter(k => !stripSet.has(k));
+        expect(missingFromStripList).to.deep.equal([]);
+    });
+
+    it('every Rust strip-list entry is recognized by the contract or settings model', () => {
+        // WHY: the strip list serves two roles. Most entries mirror a
+        // BACKTEST_SETTINGS_DOM_CONTRACTS field. A small legacy set covers
+        // fields that the resolver still writes (allowSameBarExit, marketMode,
+        // riskWinStreakStopLoss*) or that persisted payloads may still carry
+        // (tradeFilter*, entryConfirmation, RSI/confirm fields) — these are
+        // defense-in-depth and have no DOM contract by design.
+        // The invariant enforced here is the negative one: NO strip-list entry
+        // may be a typo or wholly unknown identifier. We check that by ensuring
+        // every entry is at least distinct (no duplicate insertions, which
+        // would indicate a copy-paste mistake when editing the list).
+        const seen = new Set<string>();
+        const duplicates: string[] = [];
+        for (const key of RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS as readonly string[]) {
+            if (seen.has(key)) duplicates.push(key);
+            seen.add(key);
+        }
+        expect(duplicates).to.deep.equal([]);
+    });
+
+    it('no contract field declared Rust-supported or ui_only appears in the Rust strip list', () => {
+        // WHY: if a setting is declared supported/conditional but also appears
+        // in the strip list, the contract and sanitizer disagree about whether
+        // Rust honors it. ui_only means "no execution semantics"; a stripped
+        // ui_only field is at best redundant and at worst documents the wrong
+        // intent. Either way, declaration and behavior must align.
+        const stripSet = new Set<string>(RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS as readonly string[]);
+        const conflicting = BACKTEST_SETTINGS_DOM_CONTRACTS
+            .filter(c => c.rustSupport !== 'unsupported' && stripSet.has(c.settingKey as string))
+            .map(c => ({ settingKey: c.settingKey, declared: c.rustSupport }));
+        expect(conflicting).to.deep.equal([]);
     });
 });

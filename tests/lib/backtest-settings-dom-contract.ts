@@ -298,7 +298,7 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("minTradesBeforeFirstFlip", { rustSupport: "unsupported" }),
     createField("confirmationStrategiesToggle", {
         parser: "boolean",
-        rustSupport: "ui_only",
+        rustSupport: "unsupported",
         workerSupport: "ui_only",
     }),
     createField("confirmationStrategies", {
