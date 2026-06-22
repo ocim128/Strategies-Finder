@@ -5,10 +5,11 @@ import { setCurrentInterval, setCurrentSymbol } from "./state-actions";
 import { uiManager } from "./ui-manager";
 import { dataManager } from "./data-manager";
 import { SYMBOL_MAP } from "./constants";
-import { SYNTHETIC_TARGET_BARS } from "./data/constants";
+import { SYNTHETIC_TARGET_BARS, SYNTHETIC_RESULT_CACHE_TTL_MS } from "./data/constants";
 import { debugLogger } from "./debug-logger";
 import { clearAll } from "./app-actions";
 import { commitOhlcvData } from "./state-actions";
+import { loadCachedCandles, saveCachedCandles } from "./candle-cache";
 import { OHLCVData, HistoricalFetchProgress } from "./types/index";
 
 import { parseTimeToUnixSeconds } from "./time-normalization";
@@ -746,7 +747,49 @@ export class DataMiningManager {
             // register the result via dataManager.registerImportedData; without
             // this check, opening the same pair here would silently re-fetch
             // both legs and rebuild identical bars.
-            const cached = dataManager.getImportedData(syntheticSymbol, interval);
+            //
+            // The in-memory importedDataByKey map is wiped on page refresh, so
+            // a second lookup against IndexedDB covers the "same pair after
+            // refresh" case: commitSyntheticPair writes the built bars there
+            // with the synthetic symbol (e.g. ZECAPT), which never collides
+            // with a real Binance symbol. Leg swaps (A/B vs B/A) intentionally
+            // miss — they produce a different ratio series and must rebuild.
+            //
+            // IndexedDB hits are gated by SYNTHETIC_RESULT_CACHE_TTL_MS so a
+            // pair built in an earlier session eventually rebuilds against
+            // newly-ingested leg history instead of serving stale bars forever.
+            let cached = dataManager.getImportedData(syntheticSymbol, interval);
+            let cacheSource: 'imported' | 'idb' | null = cached && cached.length > 0 ? 'imported' : null;
+            if (!cached && typeof indexedDB !== 'undefined') {
+                const idb = await loadCachedCandles(syntheticSymbol, interval);
+                if (idb && idb.candles.length > 0) {
+                    // Defense against the theoretical case where a real symbol
+                    // (e.g. an exotic BTC/USDT variant) resolves to the same
+                    // key as a derived synthetic symbol: only trust records
+                    // this code path itself wrote.
+                    if (idb.source !== 'synthetic') {
+                        this.recordDiagnostic('synth_ignored_foreign_idb', {
+                            symbol: syntheticSymbol,
+                            interval,
+                            source: idb.source,
+                        });
+                    } else {
+                        const ageMs = Date.now() - (idb.updatedAt || 0);
+                        if (ageMs <= SYNTHETIC_RESULT_CACHE_TTL_MS) {
+                            cached = idb.candles;
+                            cacheSource = 'idb';
+                        } else {
+                            this.recordDiagnostic('synth_ignored_stale_idb', {
+                                symbol: syntheticSymbol,
+                                interval,
+                                bars: idb.candles.length,
+                                ageMs,
+                                ttlMs: SYNTHETIC_RESULT_CACHE_TTL_MS,
+                            });
+                        }
+                    }
+                }
+            }
             if (cached && cached.length > 0) {
                 if (!this.barsMatchInterval(cached, interval)) {
                     this.recordDiagnostic('synth_ignored_wrong_interval_cache', {
@@ -757,7 +800,7 @@ export class DataMiningManager {
                         lastTime: cached[cached.length - 1]?.time,
                     });
                 } else {
-                    this.recordDiagnostic('synth_reused_imported', {
+                    this.recordDiagnostic(cacheSource === 'idb' ? 'synth_reused_idb' : 'synth_reused_imported', {
                         symbol: syntheticSymbol, interval, bars: cached.length,
                         firstTime: cached[0]?.time, lastTime: cached[cached.length - 1]?.time,
                     });
@@ -776,8 +819,16 @@ export class DataMiningManager {
                 interval,
                 targetBars: SYNTHETIC_TARGET_BARS,
                 allowEmptyLegs: true,
+                // offline:true so synthetic leg fetches skip the remote Binance
+                // gap-fill tail and read straight from SQLite/IndexedDB when
+                // present. Synthetic pair freshness is bounded for the whole
+                // result by SYNTHETIC_RESULT_CACHE_TTL_MS at the top of this
+                // function; re-gap-filling legs on every rebuild would duplicate
+                // the Binance round-trip the TTL gate is meant to avoid. The
+                // offline contract still falls back to remote for cold symbols,
+                // so a brand-new pair fetches normally.
                 fetchLeg: (legSymbol, sourceInterval, bars) =>
-                    dataManager.fetchHistoricalData(legSymbol, sourceInterval, bars),
+                    dataManager.fetchHistoricalData(legSymbol, sourceInterval, bars, { offline: true }),
             });
             const syntheticBars = result.bars;
 
@@ -864,6 +915,19 @@ export class DataMiningManager {
         commitOhlcvData(bars, 'synthetic_pair');
         dataManager.registerImportedData(syntheticSymbol, interval, bars);
         this.lastSyntheticPair = { baseSymbol, quoteSymbol };
+
+        // Persist the built synthetic bars to IndexedDB so a page refresh of
+        // the same pair reuses them instead of re-fetching both legs. The
+        // synthetic symbol namespace (ZECAPT, BNBPAXG, ...) does not overlap
+        // real Binance symbols, so this never collides with the leg cache.
+        // Fire-and-forget: persistence failure must not block chart display.
+        void saveCachedCandles(syntheticSymbol, interval, bars, 'synthetic', true).catch((error) => {
+            this.recordDiagnostic('synth_persist_failed', {
+                symbol: syntheticSymbol,
+                interval,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        });
     }
 
     private async importJsonFile(): Promise<void> {
