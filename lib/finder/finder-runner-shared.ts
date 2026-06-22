@@ -24,6 +24,9 @@ import {
     type CandidateResult,
     type FinderPreparedDataCache,
 } from "./finder-runner-core";
+import { mergeExitStrategySignals } from "../exit-strategy-merge";
+import { splitExitStrategyParams } from "./exit-strategy-param-prefix";
+import { executeBacktestStrategySignals } from "../strategy-signal-execution";
 import type { CapitalSettings } from "../types/backtest";
 import type { EndpointSelectionAdjustment, FinderOptions, FinderResult } from "../types/finder";
 import type { StrategyExecutionContext } from "../types/strategies";
@@ -51,6 +54,10 @@ export type StrategyPlan = {
     name: string;
     strategy: Strategy;
     paramSets: StrategyParams[];
+    /** Pre-loaded exit strategy for Exit Strategy Override; undefined when override is off. */
+    exitStrategy?: Strategy;
+    /** Registry key for the pre-loaded exit strategy. */
+    exitStrategyKey?: string;
 };
 
 export type ParamJob = {
@@ -61,6 +68,10 @@ export type ParamJob = {
     backtestSettings: BacktestSettings;
     rustBacktestSettings: BacktestSettings;
     strategy: Strategy;
+    /** Pre-loaded exit strategy for Exit Strategy Override; undefined when override is off. */
+    exitStrategy?: Strategy;
+    /** Registry key for the pre-loaded exit strategy. */
+    exitStrategyKey?: string;
 };
 
 export type FinderDatasetFlags = {
@@ -109,6 +120,7 @@ export function resolveEffectiveCapitalSettings(input: FinderRunInput): CapitalS
 export function generateSignalsForJob(
     job: ParamJob,
     data: OHLCVData[],
+    interval: string,
     preparedDataCache?: FinderPreparedDataCache,
     preparedSettings?: BacktestSettings,
     executionContext?: StrategyExecutionContext,
@@ -119,24 +131,44 @@ export function generateSignalsForJob(
     let signalExecutionMs = 0;
     let confirmationMs = 0;
     let preparedFinderData: unknown;
+    const signalSettings = job.backtestSettings;
+    const preparedDataSettings = preparedSettings ?? job.backtestSettings;
     const canUsePreparedData = preparedDataCache !== undefined
+        && signalSettings.strategyTimeframeEnabled !== true
         && Boolean(job.strategy.executePrepared && job.strategy.prepareFinderData);
 
     if (canUsePreparedData && preparedDataCache) {
         const preparedStartedAt = performance.now();
-        preparedFinderData = getPreparedFinderData(preparedDataCache, job.key, job.strategy, data, preparedSettings ?? job.backtestSettings, executionContext);
+        preparedFinderData = getPreparedFinderData(preparedDataCache, job.key, job.strategy, data, preparedDataSettings, executionContext);
         preparedDataMs = performance.now() - preparedStartedAt;
     }
     const signalStartedAt = performance.now();
-    const rawSignals = job.strategy.executePrepared
+    const rawSignals = canUsePreparedData && job.strategy.executePrepared
         ? job.strategy.executePrepared(preparedFinderData, job.params, data, executionContext)
-        : job.strategy.execute(data, job.params, executionContext);
+        : executeBacktestStrategySignals({
+            data,
+            interval,
+            strategy: job.strategy,
+            params: job.params,
+            settings: signalSettings,
+            executionContext,
+    });
     signalExecutionMs = performance.now() - signalStartedAt;
     const confirmationStartedAt = performance.now();
+    const confirmationSettings = signalSettings.strategyTimeframeEnabled
+        ? { ...signalSettings, strategyTimeframeEnabled: false }
+        : signalSettings;
     const signals = applyConfirmationStrategiesToSignals({
         data,
-        baseSignals: applySignalPolarity(rawSignals, job.backtestSettings),
-        settings: job.backtestSettings,
+        baseSignals: canUsePreparedData ? applySignalPolarity(rawSignals, signalSettings) : rawSignals,
+        settings: signalSettings,
+        executeStrategy: (_key, confirmationStrategy, confirmationParams) => executeBacktestStrategySignals({
+            data,
+            interval,
+            strategy: confirmationStrategy,
+            params: confirmationParams,
+            settings: confirmationSettings,
+        }),
     });
     confirmationMs = performance.now() - confirmationStartedAt;
     onTiming?.({
@@ -168,6 +200,9 @@ export function runStrategyBacktest(args: {
     backtestFn: FinderBacktestFn;
     precomputed?: ReturnType<typeof precomputeIndicators>;
     backtestOptions?: Parameters<typeof runBacktest>[8];
+    /** Pre-loaded exit strategy. When present, its params (under `_exit__` prefix in args.params) are split out, its signals generated and tagged exitOnly, and merged into args.signals. */
+    exitStrategy?: Strategy;
+    executionContext?: StrategyExecutionContext;
 }): BacktestResult {
     const {
         strategy,
@@ -178,12 +213,20 @@ export function runStrategyBacktest(args: {
         backtestSettings,
         backtestFn,
         precomputed,
+        exitStrategy,
+        executionContext,
     } = args;
     const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount, advancedSizing } = capitalSettings;
     const evaluationStartedAt = performance.now();
     const evaluation = strategy.evaluate?.(data, params, signals);
     const evaluationMs = performance.now() - evaluationStartedAt;
     const entryStats = evaluation?.entryStats;
+
+    // Exit Strategy Override: split prefixed exit params, generate close-only exit signals, merge.
+    const effectiveSignals = exitStrategy
+        ? mergeExitStrategySignals(signals, generateExitStrategySignals(exitStrategy, params, data, backtestSettings, executionContext))
+        : signals;
+
     return strategy.metadata?.role === "entry" && entryStats
         ? buildEntryBacktestResult(
             entryStats,
@@ -198,7 +241,7 @@ export function runStrategyBacktest(args: {
         )
         : backtestFn(
             data,
-            signals,
+            effectiveSignals,
             initialCapital,
             positionSize,
             commission,
@@ -209,11 +252,44 @@ export function runStrategyBacktest(args: {
         );
 }
 
+/**
+ * Generates close-only exit signals from a pre-loaded exit strategy for one Finder candidate.
+ * Splits the `_exit__`-prefixed params out of the combined candidate params, normalizes them
+ * through the exit strategy's own normalizer, and runs its executor. Returned signals are NOT
+ * tagged here; the caller (mergeExitStrategySignals) tags them exitOnly.
+ */
+function generateExitStrategySignals(
+    exitStrategy: Strategy,
+    combinedParams: StrategyParams,
+    data: OHLCVData[],
+    backtestSettings: BacktestSettings,
+    executionContext?: StrategyExecutionContext
+): Signal[] {
+    const { exitParams } = splitExitStrategyParams(combinedParams);
+    const normalizedExitParams = exitStrategy.normalizeParams
+        ? exitStrategy.normalizeParams(exitParams)
+        : exitParams;
+    const rawSignals = exitStrategy.executePrepared
+        ? exitStrategy.executePrepared(
+            exitStrategy.prepareFinderData?.(data, backtestSettings, executionContext),
+            normalizedExitParams,
+            data,
+            executionContext
+        )
+        : exitStrategy.execute(data, normalizedExitParams, executionContext);
+    return applyConfirmationStrategiesToSignals({
+        data,
+        baseSignals: applySignalPolarity(rawSignals, backtestSettings),
+        settings: backtestSettings,
+    });
+}
+
 export function buildFinderResult(args: {
     key: string;
     name: string;
     params: StrategyParams;
     result: BacktestResult;
+    exitStrategyKey?: string;
     comboMode?: boolean;
     comboPrimaryConfigName?: string;
     timeframes?: string[];
@@ -227,6 +303,7 @@ export function buildFinderResult(args: {
         name,
         params,
         result,
+        exitStrategyKey,
         comboMode,
         comboPrimaryConfigName,
         timeframes,
@@ -235,13 +312,17 @@ export function buildFinderResult(args: {
         endpointAdjusted,
         endpointRemovedTrades,
     } = args;
+    const { entryParams, exitParams } = exitStrategyKey
+        ? splitExitStrategyParams(params)
+        : { entryParams: params, exitParams: {} };
     return {
         key,
         name,
         comboMode,
         comboPrimaryConfigName,
         timeframes,
-        params,
+        params: entryParams,
+        ...(exitStrategyKey ? { exitStrategyKey, exitStrategyParams: exitParams } : {}),
         result,
         selectionResult: selectionResult ?? result,
         compositeEdgeRatio,
@@ -273,12 +354,14 @@ export function runBacktestAndInsert(
             backtestFn,
             precomputed,
             backtestOptions: { collectDiagnostics: true },
+            exitStrategy: job.exitStrategy,
         });
         onResult?.(result);
         insertResult({
             key: job.key,
             name: job.name,
             params: job.params,
+            exitStrategyKey: job.exitStrategyKey,
             result,
         });
         return true;

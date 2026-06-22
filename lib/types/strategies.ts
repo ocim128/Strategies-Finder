@@ -88,6 +88,19 @@ export interface BacktestDiagnostics {
     };
 }
 
+export interface BacktestExitControlDiagnostics {
+    requestedDisableSignalExits: boolean;
+    resolvedDisableSignalExits: boolean;
+    exitStrategyOverrideEnabled: boolean;
+    exitStrategyKey: string;
+    primarySignals: number;
+    exitOverrideSignals: number;
+    mergedSignals: number;
+    mergedExitOnlySignals: number;
+    exitStrategyLoaded: boolean;
+    skippedReason?: string;
+}
+
 export interface AdvancedPerformanceAnalytics {
     sortinoRatio: number;
     calmarRatio: number;
@@ -161,6 +174,7 @@ export interface BacktestResult {
     polymarketTradeSummary?: BacktestPolymarketTradeSummary;
     marketContext?: BacktestResultMarketContext;
     diagnostics?: BacktestDiagnostics;
+    exitControlDiagnostics?: BacktestExitControlDiagnostics;
 }
 
 export interface TradeTimingEntryHorizon {
@@ -324,6 +338,12 @@ export interface BacktestSettings {
     riskWinStreakStopLossPercent?: number;
     /** Ignore opposite strategy signals as exits when chart TP or SL risk exits are active. */
     disableSignalExits?: boolean;
+    /** Enable Exit Strategy Override. Only effective when disableSignalExits is true. */
+    exitStrategyOverrideEnabled?: boolean;
+    /** Registry key of the strategy whose signals act as close-only exits under override. */
+    exitStrategyKey?: string;
+    /** Params for the exit strategy referenced by exitStrategyKey. */
+    exitStrategyParams?: Record<string, number>;
 
     trendEmaPeriod?: number;
     trendEmaSlopeBars?: number;
@@ -431,6 +451,13 @@ export interface Signal {
      * Omitted means full exit.
      */
     sizeFraction?: number;
+    /**
+     * Marks this signal as close-only: it may close an opposite-direction position
+     * even when `disableSignalExits` is on, and will never open a new position.
+     * Used by the Exit Strategy Override feature to inject a second strategy's
+     * signals as pure exits.
+     */
+    exitOnly?: boolean;
 }
 
 export interface EntryStats {

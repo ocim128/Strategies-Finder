@@ -97,6 +97,12 @@ export interface BacktestSettingsData {
     riskWinStreakStopLossAfterWins: number;
     riskWinStreakStopLossPercent: number;
     disableSignalExits: boolean;
+    /** When true and disableSignalExits is on, use exitStrategyKey's signals as close-only exits. */
+    exitStrategyOverrideEnabled: boolean;
+    /** Registry key of the strategy whose signals act as close-only exits when override is enabled. */
+    exitStrategyKey: string;
+    /** Params for the exit strategy referenced by exitStrategyKey. */
+    exitStrategyParams: Record<string, number>;
     marketMode: MarketMode;
 
     // Trade direction
@@ -235,6 +241,11 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     riskSettingsToggle: false,
     stopLossEnabled: false,
     takeProfitEnabled: false,
+
+    // Exit strategy override
+    exitStrategyOverrideEnabled: false,
+    exitStrategyKey: "",
+    exitStrategyParams: {},
 
     // Cross-symbol
     crossSymbolSecondary: "",
@@ -413,6 +424,16 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
     normalized.crossSymbolSecondary = typeof source.crossSymbolSecondary === 'string'
         ? source.crossSymbolSecondary.trim().toUpperCase()
         : '';
+
+    // Exit strategy override
+    normalized.exitStrategyOverrideEnabled = readBoolean(
+        source.exitStrategyOverrideEnabled,
+        DEFAULT_BACKTEST_SETTINGS.exitStrategyOverrideEnabled
+    );
+    normalized.exitStrategyKey = typeof source.exitStrategyKey === 'string'
+        ? source.exitStrategyKey.trim()
+        : '';
+    normalized.exitStrategyParams = normalizeStrategyParams(source.exitStrategyParams);
 
     return normalized;
 }

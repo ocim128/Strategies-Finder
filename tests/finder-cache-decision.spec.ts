@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import type { BacktestSettings } from './lib/types/strategies';
+import type { BacktestSettings, OHLCVData, Strategy, Time } from './lib/types/strategies';
 import type { FinderResult } from './lib/types/finder';
 import { buildSelectionResult } from './lib/finder/endpoint';
 import { getFinderMetricValue } from './lib/finder/finder-engine';
@@ -18,6 +18,8 @@ import {
     normalizeFinderCandidateParamSets,
     resolveFinderRiskOverrides,
 } from './lib/finder/finder-runner-core';
+import { buildFinderResult, generateSignalsForJob } from './lib/finder/finder-runner-shared';
+import { withExitStrategyBaseParams } from './lib/finder/exit-strategy-param-prefix';
 
 describe('Finder adaptive cache mode decision', () => {
     it('enables cache for large dataset (>500k bars)', () => {
@@ -151,6 +153,60 @@ describe('Finder candidate parameter normalization', () => {
             { entropy_window: 3, implosion_threshold: -0.01, stopLossPercent: 3 },
             { entropy_window: 3, implosion_threshold: -0.01, stopLossPercent: 4 },
         ]);
+    });
+
+    it('normalizes exit-strategy params separately and splits them from Finder results', () => {
+        const strategy = {
+            defaultParams: { lookback: 10 },
+            normalizeParams: (params: Record<string, number>) => ({
+                lookback: Math.max(2, Math.round(params.lookback ?? 10)),
+            }),
+        } as any;
+        const exitBaseParams = { lookback: 7, threshold: 0.25 };
+        const combined = withExitStrategyBaseParams({ lookback: 2 }, exitBaseParams);
+
+        const normalized = normalizeFinderCandidateParamSets(
+            strategy,
+            [
+                { ...combined, lookback: 2.4, _exit__lookback: 7.8, _exit__threshold: 0.9 },
+                { lookback: 2, _exit__lookback: 8, _exit__threshold: 0.9 },
+            ],
+            {
+                normalizeExitParams: (params) => ({
+                    lookback: Math.round(params.lookback ?? 7),
+                    threshold: Math.max(0, Math.min(1, params.threshold ?? 0)),
+                }),
+            }
+        );
+        const finderResult = buildFinderResult({
+            key: 'entry',
+            name: 'Entry',
+            params: normalized[0],
+            exitStrategyKey: 'exit',
+            result: {
+                netProfit: 0,
+                netProfitPercent: 0,
+                totalTrades: 0,
+                winningTrades: 0,
+                losingTrades: 0,
+                winRate: 0,
+                avgTrade: 0,
+                maxDrawdown: 0,
+                maxDrawdownPercent: 0,
+                profitFactor: 0,
+                expectancy: 0,
+                sharpeRatio: 0,
+                trades: [],
+                equityCurve: [],
+            },
+        });
+
+        expect(normalized).to.deep.equal([
+            { lookback: 2, _exit__lookback: 8, _exit__threshold: 0.9 },
+        ]);
+        expect(finderResult.params).to.deep.equal({ lookback: 2 });
+        expect(finderResult.exitStrategyKey).to.equal('exit');
+        expect(finderResult.exitStrategyParams).to.deep.equal({ lookback: 8, threshold: 0.9 });
     });
 });
 
@@ -641,5 +697,45 @@ describe('Finder execution-aware data', () => {
             close: 105,
             volume: 0,
         });
+    });
+
+    it('generates Finder signals through Strategy Timeframe just like manual backtests', () => {
+        const data: OHLCVData[] = Array.from({ length: 8 }, (_, index) => ({
+            time: (1_700_000_000 + index * 900) as Time,
+            open: 100 + index,
+            high: 101 + index,
+            low: 99 + index,
+            close: 100 + index,
+            volume: 1000,
+        }));
+        const strategy: Strategy = {
+            name: 'Signal Every Input Bar',
+            description: 'Test strategy',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (input) => input.map((bar, index) => ({
+                time: bar.time,
+                type: 'buy',
+                price: bar.close,
+                barIndex: index,
+            })),
+        };
+        const settings: BacktestSettings = {
+            strategyTimeframeEnabled: true,
+            strategyTimeframeMinutes: 60,
+        };
+
+        const signals = generateSignalsForJob({
+            id: 1,
+            key: 'signal_every_input_bar',
+            name: strategy.name,
+            params: {},
+            backtestSettings: settings,
+            rustBacktestSettings: settings,
+            strategy,
+        }, data, '15m');
+
+        expect(signals).to.have.length(2);
+        expect(signals.map((signal) => signal.barIndex)).to.deep.equal([3, 7]);
     });
 });

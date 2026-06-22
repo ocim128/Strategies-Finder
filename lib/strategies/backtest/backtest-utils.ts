@@ -38,6 +38,12 @@ function hasActiveChartTakeProfitOrStopLoss(config: Pick<NormalizedSettings,
     return config.stopLossAtr > 0 || config.takeProfitAtr > 0;
 }
 
+function hasActiveExitStrategyOverride(settings?: BacktestSettings): boolean {
+    return settings?.exitStrategyOverrideEnabled === true
+        && typeof settings.exitStrategyKey === 'string'
+        && settings.exitStrategyKey.trim().length > 0;
+}
+
 export function normalizeBacktestSettings(settings?: BacktestSettings): NormalizedSettings {
     const rawExecutionModel = settings?.executionModel;
     const executionModel = rawExecutionModel === 'next_open' || rawExecutionModel === 'next_close' || rawExecutionModel === 'signal_close'
@@ -99,7 +105,8 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         slippageBps: Math.max(0, toNumberOr(settings?.slippageBps, 0)),
         maxOpenTrades: clamp(Math.round(toNumberOr(settings?.maxOpenTrades, 1)), 1, 2),
     };
-    config.disableSignalExits = settings?.disableSignalExits === true && hasActiveChartTakeProfitOrStopLoss(config);
+    config.disableSignalExits = settings?.disableSignalExits === true
+        && (hasActiveChartTakeProfitOrStopLoss(config) || hasActiveExitStrategyOverride(settings));
     return config;
 }
 

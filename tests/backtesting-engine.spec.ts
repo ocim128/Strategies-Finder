@@ -412,6 +412,95 @@ describe('Backtesting Engine', () => {
         expect(disabled.trades[0].exitTime).to.equal(3 as Time);
     });
 
+    it('allows exit-only signals to close trades while disableSignalExits is active', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 },
+            { time: 3 as Time, open: 101, high: 103, low: 100, close: 102, volume: 1000 },
+            { time: 4 as Time, open: 102, high: 104, low: 101, close: 103, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 1 as Time, type: 'buy', price: 100 },
+            { time: 2 as Time, type: 'sell', price: 101, exitOnly: true },
+            { time: 3 as Time, type: 'sell', price: 102, exitOnly: true },
+        ];
+
+        const result = runBacktest(data, signals, 1000, 100, 0, {
+            tradeDirection: 'both',
+            executionModel: 'signal_close',
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitPercent: 10,
+            disableSignalExits: true,
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].exitReason).to.equal('signal');
+        expect(result.trades[0].exitTime).to.equal(2 as Time);
+        expect(result.trades.map((trade) => trade.type)).to.deep.equal(['long']);
+    });
+
+    it('keeps disableSignalExits active when an exit strategy override supplies close-only signals', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 },
+            { time: 3 as Time, open: 101, high: 103, low: 100, close: 102, volume: 1000 },
+            { time: 4 as Time, open: 102, high: 104, low: 101, close: 103, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 1 as Time, type: 'buy', price: 100 },
+            { time: 2 as Time, type: 'sell', price: 101 },
+            { time: 3 as Time, type: 'sell', price: 102, exitOnly: true },
+        ];
+
+        const result = runBacktest(data, signals, 1000, 100, 0, {
+            tradeDirection: 'both',
+            executionModel: 'signal_close',
+            riskMode: 'percentage',
+            disableSignalExits: true,
+            exitStrategyOverrideEnabled: true,
+            exitStrategyKey: 'exit_demo',
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].exitReason).to.equal('signal');
+        expect(result.trades[0].exitTime).to.equal(3 as Time);
+        expect(result.trades.map((trade) => trade.type)).to.deep.equal(['long']);
+    });
+
+    it('never opens a new position from an exitOnly signal, even in both-direction mode', () => {
+        // WHY this test exists: the core safety property of Exit Strategy Override is that
+        // the exit strategy's signals are close-ONLY. If an exitOnly sell signal could open
+        // a fresh short after closing a long, the exit strategy would silently become a second
+        // entry strategy, defeating the feature's purpose and corrupting backtest results.
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 },
+            { time: 3 as Time, open: 101, high: 103, low: 100, close: 102, volume: 1000 },
+            { time: 4 as Time, open: 102, high: 104, low: 101, close: 103, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 1 as Time, type: 'buy', price: 100 },
+            { time: 2 as Time, type: 'sell', price: 101, exitOnly: true },
+            { time: 3 as Time, type: 'sell', price: 102, exitOnly: true }, // would open a short if not exitOnly
+        ];
+
+        const result = runBacktest(data, signals, 1000, 100, 0, {
+            tradeDirection: 'both',
+            executionModel: 'signal_close',
+            riskMode: 'percentage',
+            takeProfitEnabled: true,
+            takeProfitPercent: 10,
+            disableSignalExits: true,
+        });
+
+        // Exactly one trade (the long), closed by the exitOnly sell at time=2.
+        // The time=3 exitOnly sell must NOT open a new short.
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades.map((trade) => trade.type)).to.deep.equal(['long']);
+        expect(result.trades[0].exitTime).to.equal(2 as Time);
+    });
+
     it('does not treat forced Polymarket exit signals as entries without a matching open trade', () => {
         const data: OHLCVData[] = [
             { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },

@@ -6,7 +6,7 @@ It combines:
 - a browser UI assembled from HTML partials at runtime
 - a TypeScript backtest engine with optional Rust acceleration
 - a multi-source data pipeline with local caching
-- research tools such as Finder, Hunt, Walk Forward, Monte Carlo, Scanner, Replay, Pair Combiner, Portfolio Lab, and Strategy Ensemble Lab
+- research tools such as Finder, Exit Strategy Override, Hunt, Walk Forward, Monte Carlo, Scanner, Replay, Pair Combiner, Portfolio Lab, and Strategy Ensemble Lab
 - optional Cloudflare Worker alerting and subscription execution
 
 ## What You Can Do Here

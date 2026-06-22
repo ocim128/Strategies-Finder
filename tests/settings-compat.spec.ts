@@ -171,7 +171,7 @@ describe('Backtest settings compatibility', () => {
         expect(hasActivePolymarketProtection({ polymarketProtectionTakeProfitEnabled: true })).to.equal(true);
     });
 
-    it('only enables disableSignalExits when a chart TP or SL is active', () => {
+    it('only enables disableSignalExits when chart risk or exit override is active', () => {
         const inactive = resolveBacktestSettingsFromRaw({
             riskSettingsToggle: true,
             riskMode: 'percentage',
@@ -190,6 +190,39 @@ describe('Backtest settings compatibility', () => {
         } as unknown as BacktestSettings);
         expect(active.disableSignalExits).to.equal(true);
         expect(requiresTypescriptEngine(active)).to.equal(true);
+
+        const overrideActive = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            disableSignalExits: true,
+            stopLossToggle: false,
+            takeProfitToggle: false,
+            exitStrategyOverrideEnabled: true,
+            exitStrategyKey: '  entropy_ratio_regime_alignment  ',
+            exitStrategyParams: { slowWindow: '171', bad: 'NaN' },
+        } as unknown as BacktestSettings);
+        expect(overrideActive.disableSignalExits).to.equal(true);
+        expect(overrideActive.exitStrategyOverrideEnabled).to.equal(true);
+        expect(overrideActive.exitStrategyKey).to.equal('entropy_ratio_regime_alignment');
+        expect(overrideActive.exitStrategyParams).to.deep.equal({ slowWindow: 171 });
+        expect(requiresTypescriptEngine(overrideActive)).to.equal(true);
+    });
+
+    it('preserves disableSignalExits while the exit override toggle is on but no key is picked yet', () => {
+        // WHY: the resolver guard would otherwise strip disableSignalExits before the user
+        // has finished configuring the override (toggle on, key still empty), making it
+        // impossible to ever activate the feature. This is the chicken-and-egg fix.
+        const configuring = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            disableSignalExits: true,
+            stopLossToggle: false,
+            takeProfitToggle: false,
+            exitStrategyOverrideEnabled: true,
+            exitStrategyKey: '',
+        } as unknown as BacktestSettings);
+        expect(configuring.disableSignalExits).to.equal(true);
+        expect(configuring.exitStrategyOverrideEnabled).to.equal(true);
     });
 
     it('normalizes the Polymarket event entry cutoff setting', () => {
@@ -225,6 +258,39 @@ describe('Backtest settings compatibility', () => {
         expect(BACKTEST_DOM_SETTING_IDS.includes('historicalLevelTakeProfitToggle')).to.equal(true);
         expect(BACKTEST_DOM_SETTING_IDS.includes('historicalLevelStopLossToggle')).to.equal(true);
         expect(BACKTEST_DOM_SETTING_IDS.includes('historicalLevelLookbackBars')).to.equal(true);
+    });
+
+    it('normalizes Exit Strategy Override settings without breaking old payloads', () => {
+        expect(DEFAULT_BACKTEST_SETTINGS.exitStrategyOverrideEnabled).to.equal(false);
+        expect(DEFAULT_BACKTEST_SETTINGS.exitStrategyKey).to.equal('');
+        expect(DEFAULT_BACKTEST_SETTINGS.exitStrategyParams).to.deep.equal({});
+        expect(BACKTEST_DOM_SETTING_IDS.includes('exitStrategyOverrideEnabled')).to.equal(true);
+        expect(BACKTEST_DOM_SETTING_IDS.includes('exitStrategyKey')).to.equal(true);
+        expect(BACKTEST_DOM_SETTING_IDS.includes('exitStrategyParams')).to.equal(true);
+
+        const keyContract = getBacktestDomSettingContract('exitStrategyKey');
+        const paramsContract = getBacktestDomSettingContract('exitStrategyParams');
+        expect(keyContract).to.not.equal(undefined);
+        expect(paramsContract).to.not.equal(undefined);
+        expect(coerceBacktestDomSettingValue(keyContract!, '  robust_median_channel_breakout  ')).to.equal('robust_median_channel_breakout');
+        expect(coerceBacktestDomSettingValue(paramsContract!, '{"lookback":"21","bad":"NaN"}')).to.deep.equal({ lookback: 21 });
+
+        const oldPayload = normalizeStoredBacktestSettings({});
+        expect(oldPayload.exitStrategyOverrideEnabled).to.equal(false);
+        expect(oldPayload.exitStrategyKey).to.equal('');
+        expect(oldPayload.exitStrategyParams).to.deep.equal({});
+
+        const normalized = normalizeStoredBacktestSettings({
+            exitStrategyOverrideEnabled: 'true',
+            exitStrategyKey: '  robust_median_channel_breakout  ',
+            exitStrategyParams: { lookback: '21', bad: 'NaN' },
+        });
+        expect(normalized.exitStrategyOverrideEnabled).to.equal(true);
+        expect(normalized.exitStrategyKey).to.equal('robust_median_channel_breakout');
+        expect(normalized.exitStrategyParams).to.deep.equal({ lookback: 21 });
+        expect('exitStrategyOverrideEnabled' in sanitizeBacktestSettingsForRust(normalized)).to.equal(false);
+        expect('exitStrategyKey' in sanitizeBacktestSettingsForRust(normalized)).to.equal(false);
+        expect('exitStrategyParams' in sanitizeBacktestSettingsForRust(normalized)).to.equal(false);
     });
 
     it('normalizes selected confirmation strategies from the settings UI payload', () => {

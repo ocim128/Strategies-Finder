@@ -159,6 +159,7 @@ type FinderPersistedUiState = {
 	rangePercent: number;
 	steps: number;
 	freezeRiskManagement: boolean;
+	exitStrategyOverrideEnabled: boolean;
 	tradeFilterEnabled: boolean;
 	minTrades: number;
 	maxTradesText: string;
@@ -197,6 +198,7 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	rangePercent: 555,
 	steps: 3,
 	freezeRiskManagement: false,
+	exitStrategyOverrideEnabled: false,
 	tradeFilterEnabled: true,
 	minTrades: 40,
 	maxTradesText: "",
@@ -367,6 +369,7 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		rangePercent: normalizeNumber(source.rangePercent, DEFAULT_FINDER_UI_STATE.rangePercent, 0),
 		steps: Math.round(normalizeNumber(source.steps, DEFAULT_FINDER_UI_STATE.steps, 2)),
 		freezeRiskManagement: source.freezeRiskManagement === true,
+		exitStrategyOverrideEnabled: source.exitStrategyOverrideEnabled === true,
 		tradeFilterEnabled: source.tradeFilterEnabled !== false,
 		minTrades: Math.round(normalizeNumber(source.minTrades, DEFAULT_FINDER_UI_STATE.minTrades, 0)),
 		maxTradesText: normalizeOptionalNumberText(source.maxTradesText),
@@ -758,6 +761,7 @@ export class FinderManager {
 		dom.finderRange.value = String(this.uiState.rangePercent);
 		dom.finderSteps.value = String(this.uiState.steps);
 		dom.finderFreezeRiskManagementToggle.checked = this.uiState.freezeRiskManagement;
+		dom.finderExitStrategyOverrideToggle.checked = this.uiState.exitStrategyOverrideEnabled;
 		dom.finderTradesToggle.checked = this.uiState.tradeFilterEnabled;
 		dom.finderTradesMin.value = String(this.uiState.minTrades);
 		dom.finderTradesMax.value = this.uiState.maxTradesText;
@@ -1148,6 +1152,7 @@ export class FinderManager {
 			dom.finderRange,
 			dom.finderSteps,
 			dom.finderFreezeRiskManagementToggle,
+			dom.finderExitStrategyOverrideToggle,
 			dom.finderTradesToggle,
 			dom.finderTradesMin,
 			dom.finderTradesMax,
@@ -1180,6 +1185,7 @@ export class FinderManager {
 		this.uiState.rangePercent = this.readFinderNumberInput(dom.finderRange, DEFAULT_FINDER_UI_STATE.rangePercent, 0);
 		this.uiState.steps = Math.round(this.readFinderNumberInput(dom.finderSteps, DEFAULT_FINDER_UI_STATE.steps, 2));
 		this.uiState.freezeRiskManagement = dom.finderFreezeRiskManagementToggle.checked;
+		this.uiState.exitStrategyOverrideEnabled = dom.finderExitStrategyOverrideToggle.checked;
 		this.uiState.tradeFilterEnabled = dom.finderTradesToggle.checked;
 		this.uiState.minTrades = Math.round(this.readFinderNumberInput(dom.finderTradesMin, DEFAULT_FINDER_UI_STATE.minTrades, 0));
 		this.uiState.maxTradesText = dom.finderTradesMax.value.trim();
@@ -1607,6 +1613,7 @@ export class FinderManager {
 			this.setStatus('No strategies selected.');
 			return false;
 		}
+		const exitStrategyCandidates = this.resolveExitStrategyCandidates(options, selectedStrategies);
 		if (options.mode === "genetic" && finderSortRequiresTradeTimingQuality(options.sortPriority)) {
 			this.setStatus("Entry Score and Exit Score sorting are supported in grid and random modes only.");
 			return false;
@@ -1638,6 +1645,7 @@ export class FinderManager {
 				requiresTsEngine,
 				selectedStrategies,
 				capitalSettings,
+				exitStrategyCandidates,
 				generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),
 			},
 			{
@@ -1859,7 +1867,7 @@ export class FinderManager {
 		return true;
 	}
 
-	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'polymarketExitMode' | 'polymarketSignalExitAllowMultipleTradesPerEvent' | 'executionModel' | 'polymarketEntryDelayBars' | 'polymarketEntryPriceFilterCents' | 'polymarketBacktestSlippageCents' | 'polymarketPostSignalLimitEntryEnabled' | 'polymarketPostSignalLimitEntryMode' | 'polymarketPostSignalLimitEntryPriceCents' | 'polymarketPostSignalLimitEntryOffsetCents' | 'polymarketPostSignalLimitExitEnabled' | 'polymarketPostSignalLimitExitMode' | 'polymarketPostSignalLimitExitPriceCents' | 'polymarketPostSignalLimitExitOffsetCents'>): FinderOptions {
+	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'polymarketExitMode' | 'polymarketSignalExitAllowMultipleTradesPerEvent' | 'executionModel' | 'polymarketEntryDelayBars' | 'polymarketEntryPriceFilterCents' | 'polymarketBacktestSlippageCents' | 'polymarketPostSignalLimitEntryEnabled' | 'polymarketPostSignalLimitEntryMode' | 'polymarketPostSignalLimitEntryPriceCents' | 'polymarketPostSignalLimitEntryOffsetCents' | 'polymarketPostSignalLimitExitEnabled' | 'polymarketPostSignalLimitExitMode' | 'polymarketPostSignalLimitExitPriceCents' | 'polymarketPostSignalLimitExitOffsetCents' | 'disableSignalExits' | 'exitStrategyOverrideEnabled'>): FinderOptions {
 		const dom = this.getDom();
 		const scope = this.isUniverseScope() ? 'symbol_universe' : 'current_chart';
 		const useAdvancedSort = dom.finderAdvancedToggle.checked;
@@ -1886,6 +1894,12 @@ export class FinderManager {
 			? Math.round(this.readFinderNumberInput(dom.finderTradesMax, Number.POSITIVE_INFINITY, 0))
 			: Number.POSITIVE_INFINITY;
 		const freezeRiskManagement = dom.finderFreezeRiskManagementToggle.checked;
+		const finderExitStrategyToggleOn = dom.finderExitStrategyOverrideToggle.checked;
+		const exitStrategyOverrideEnabled = scope !== 'current_chart'
+			? false
+			: finderExitStrategyToggleOn
+				&& backtestSettings.disableSignalExits === true
+				&& backtestSettings.exitStrategyOverrideEnabled === true;
 		const polymarketScoringEnabled = scope === 'current_chart' && dom.finderPolymarketToggle.checked;
 		const polymarketRankMode = (dom.finderPolymarketRankMode.value as PolymarketFinderRankMode) || 'balanced';
 		const polymarketMinScoredPredictions = polymarketScoringEnabled
@@ -1934,6 +1948,7 @@ export class FinderManager {
 			polymarketPostSignalLimitExitMode: backtestSettings.polymarketPostSignalLimitExitMode,
 			polymarketPostSignalLimitExitPriceCents: backtestSettings.polymarketPostSignalLimitExitPriceCents,
 			polymarketPostSignalLimitExitOffsetCents: backtestSettings.polymarketPostSignalLimitExitOffsetCents,
+			exitStrategyOverrideEnabled,
 		});
 
 		options.scope = scope;
@@ -1957,6 +1972,20 @@ export class FinderManager {
 
 	private generateParamSets(defaultParams: StrategyParams, options: FinderOptions): StrategyParams[] {
 		return this.paramSpace.generateParamSets(defaultParams, options);
+	}
+
+	private resolveExitStrategyCandidates(
+		options: FinderOptions,
+		selectedStrategies: FinderSelectedStrategy[]
+	): FinderSelectedStrategy[] | undefined {
+		if (!options.exitStrategyOverrideEnabled) {
+			return undefined;
+		}
+		if (selectedStrategies.length === 0) {
+			options.exitStrategyOverrideEnabled = false;
+			return undefined;
+		}
+		return selectedStrategies;
 	}
 
 	private setLatestResults(results: FinderLatestResults): void {
@@ -2233,6 +2262,10 @@ export class FinderManager {
 			},
 			endpointAdjusted: result.endpointAdjusted,
 			endpointRemovedTrades: result.endpointRemovedTrades,
+			exitStrategy: result.exitStrategyKey ? {
+				key: result.exitStrategyKey,
+				params: result.exitStrategyParams ?? {},
+			} : null,
 			polymarketEval: result.polymarketEval ?? null,
 		};
 	}
@@ -2364,7 +2397,7 @@ export class FinderManager {
 		paramManager.render(strategy);
 		paramManager.setValues(strategy, result.params);
 
-		this.applyFinderBacktestSettings(result.params, result.polymarketEval);
+		this.applyFinderBacktestSettings(result.params, result.polymarketEval, result.exitStrategyKey, result.exitStrategyParams);
 		strategyPanelController.switchTab('trades');
 
 		if (result.endpointAdjusted) {
@@ -2375,8 +2408,7 @@ export class FinderManager {
 		}
 
 		try {
-			const snapshot = isPolymarketResult
-				&& this.lastFinderEvaluationData?.interval === state.currentInterval
+			const snapshot = this.lastFinderEvaluationData?.interval === state.currentInterval
 				? this.cloneOhlcvData(this.lastFinderEvaluationData.data)
 				: null;
 			await backtestService.runCurrentBacktest(snapshot
@@ -2425,11 +2457,24 @@ export class FinderManager {
 		}
 	}
 
-	private applyFinderBacktestSettings(params: StrategyParams, polymarketEval?: FinderResult['polymarketEval']): void {
+	private applyFinderBacktestSettings(
+		params: StrategyParams,
+		polymarketEval?: FinderResult['polymarketEval'],
+		exitStrategyKey?: string,
+		exitStrategyParams?: StrategyParams
+	): void {
 		const baseSettings = this.lastFinderRunBacktestSettings
 			? this.cloneBacktestSettings(this.lastFinderRunBacktestSettings)
 			: settingsManager.getBacktestSettings();
+		// `params` is already entry-only: buildFinderResult split exit params into
+		// exitStrategyParams when it built the result. Merge directly.
 		const mergedSettings = mergeFinderRiskParamsIntoBacktestSettings(baseSettings, params, this.lastFinderOptions ?? undefined);
+		if (exitStrategyKey) {
+			mergedSettings.disableSignalExits = true;
+			mergedSettings.exitStrategyOverrideEnabled = true;
+			mergedSettings.exitStrategyKey = exitStrategyKey;
+			mergedSettings.exitStrategyParams = { ...(exitStrategyParams ?? {}) };
+		}
 		const effectiveMode = this.lastFinderOptions?.polymarketExitMode ?? 'resolve_hold';
 		const applyPolymarketLimitEntrySettings = (): boolean => {
 			if (!polymarketEval?.limitEntryEnabled) {

@@ -187,6 +187,13 @@ export type UiEventHandlersDom = UiEventRequiredDom & {
     riskPercentage: HTMLElement | null;
     flipLossStreakSettingsRow: HTMLElement | null;
     strategyTimeframeMinutesGroup: HTMLElement | null;
+    disableSignalExits: HTMLInputElement | null;
+    exitStrategyOverrideEnabled: HTMLInputElement | null;
+    exitStrategyOverrideRow: HTMLElement | null;
+    exitStrategyOverrideConfig: HTMLElement | null;
+    exitStrategyKey: HTMLSelectElement | null;
+    exitStrategyParamsContainer: HTMLElement | null;
+    exitStrategyParams: HTMLInputElement | null;
 };
 
 export function createUiEventHandlersDom(): UiEventHandlersDom {
@@ -213,5 +220,12 @@ export function createUiEventHandlersDom(): UiEventHandlersDom {
         riskPercentage: getOptionalElement("riskPercentage"),
         flipLossStreakSettingsRow: getOptionalElement("flipLossStreakSettingsRow"),
         strategyTimeframeMinutesGroup: getOptionalElement("strategyTimeframeMinutesGroup"),
+        disableSignalExits: getOptionalElement<HTMLInputElement>("disableSignalExits"),
+        exitStrategyOverrideEnabled: getOptionalElement<HTMLInputElement>("exitStrategyOverrideEnabled"),
+        exitStrategyOverrideRow: getOptionalElement("exitStrategyOverrideRow"),
+        exitStrategyOverrideConfig: getOptionalElement("exitStrategyOverrideConfig"),
+        exitStrategyKey: getOptionalElement<HTMLSelectElement>("exitStrategyKey"),
+        exitStrategyParamsContainer: getOptionalElement("exitStrategyParamsContainer"),
+        exitStrategyParams: getOptionalElement<HTMLInputElement>("exitStrategyParams"),
     };
 }

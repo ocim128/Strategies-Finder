@@ -48,7 +48,8 @@ export function prepareSignals(
             price,
             triggerPrice: signal.price,
             reason: signal.reason,
-            sizeFraction: signal.sizeFraction
+            sizeFraction: signal.sizeFraction,
+            exitOnly: signal.exitOnly
         });
     };
 

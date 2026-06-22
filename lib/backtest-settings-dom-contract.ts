@@ -66,7 +66,9 @@ export type BacktestDomSettingParser =
     | "volScalingMethod"
     | "riskParityMethod"
     | "martingaleBaseSize"
-    | "secureFMethod";
+    | "secureFMethod"
+    | "strategyKey"
+    | "strategyParams";
 
 export type SettingSupportLevel = "supported" | "unsupported" | "conditional" | "ui_only";
 
@@ -117,6 +119,10 @@ function inferParser(settingKey: BacktestDomSettingKey): BacktestDomSettingParse
             return "confirmationMode";
         case "confirmationStrategyParams":
             return "confirmationStrategyParams";
+        case "exitStrategyKey":
+            return "strategyKey";
+        case "exitStrategyParams":
+            return "strategyParams";
         case "kellyFraction":
             return "kellyFraction";
         case "volScalingMethod":
@@ -273,6 +279,9 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         rustSupport: "unsupported",
     }),
     createField("disableSignalExits", { rustSupport: "unsupported" }),
+    createField("exitStrategyOverrideEnabled", { rustSupport: "unsupported" }),
+    createField("exitStrategyKey", { rustSupport: "unsupported" }),
+    createField("exitStrategyParams", { rustSupport: "unsupported" }),
     createField("tradeDirection", {
         parser: "tradeDirection",
         rustSupport: "conditional",
@@ -426,6 +435,27 @@ function readConfirmationStrategyParamsValue(value: unknown): Record<string, Str
     return result;
 }
 
+function readStrategyParamsValue(value: unknown): StrategyParams {
+    let source = value;
+    if (typeof value === "string") {
+        try {
+            source = JSON.parse(value || "{}");
+        } catch {
+            return {};
+        }
+    }
+    if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+
+    const params: StrategyParams = {};
+    for (const [paramKey, rawValue] of Object.entries(source as Record<string, unknown>)) {
+        const parsed = readNumericValue(rawValue, Number.NaN);
+        if (Number.isFinite(parsed)) {
+            params[paramKey] = parsed;
+        }
+    }
+    return params;
+}
+
 export function getBacktestDomSettingContract(domId: string): BacktestDomSettingContract | undefined {
     return BACKTEST_SETTINGS_DOM_CONTRACT_MAP.get(domId);
 }
@@ -508,6 +538,16 @@ export function coerceBacktestDomSettingValue(
         }
         case "confirmationStrategyParams":
             return readConfirmationStrategyParamsValue(value);
+        case "strategyKey": {
+            // Strategy keys are case-sensitive (e.g. rolling_vwap_center); do not uppercase.
+            if (typeof value === "string") {
+                return value.trim();
+            }
+            const keyFallback = contract.fallbackValue ?? (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[contract.settingKey];
+            return typeof keyFallback === "string" ? keyFallback : "";
+        }
+        case "strategyParams":
+            return readStrategyParamsValue(value);
         case "number": {
             const fallback = contract.fallbackValue ?? (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[contract.settingKey];
             return readNumericValue(value, typeof fallback === "number" ? fallback : 0);

@@ -422,6 +422,9 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "riskMaxHoldBars",
     "riskMaxHoldToggle",
     "disableSignalExits",
+    "exitStrategyOverrideEnabled",
+    "exitStrategyKey",
+    "exitStrategyParams",
     "tradeDirection",
     "invertSignalsToggle",
     "flipAfterConsecutiveLosses",
@@ -586,6 +589,30 @@ function readConfirmationStrategyParams(
     return result;
 }
 
+function readStrategyParams(rawValue: unknown): StrategyParams {
+    let rawSource = rawValue;
+    if (typeof rawValue === "string") {
+        try {
+            rawSource = JSON.parse(rawValue || "{}");
+        } catch {
+            return {};
+        }
+    }
+    if (!rawSource || typeof rawSource !== "object" || Array.isArray(rawSource)) return {};
+
+    const source = coerceDeepValue(rawSource);
+    if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+
+    const result: StrategyParams = {};
+    for (const [paramKey, paramValue] of Object.entries(source as Record<string, unknown>)) {
+        const parsed = toFiniteNumber(paramValue);
+        if (parsed !== null) {
+            result[paramKey] = parsed;
+        }
+    }
+    return result;
+}
+
 function readConfirmationMode(rawValue: unknown, fallback: ConfirmationMode): ConfirmationMode {
     if (typeof rawValue === "string") {
         const mode = rawValue.trim().toLowerCase() as ConfirmationMode;
@@ -622,7 +649,15 @@ function hasActiveChartTakeProfitOrStopLoss(settings: Record<string, unknown>): 
 }
 
 function applyDerivedBacktestSettingGuards(settings: Record<string, unknown>): Record<string, unknown> {
-    if (settings.disableSignalExits === true && !hasActiveChartTakeProfitOrStopLoss(settings)) {
+    // Preserve disableSignalExits when there is any active exit path: chart TP/SL, a fully
+    // configured Exit Strategy Override (toggle on + key picked), or the override toggle
+    // alone (lets the user finish configuring the key without the guard stripping
+    // disable-signal-exits first — chicken-and-egg otherwise).
+    if (
+        settings.disableSignalExits === true
+        && !hasActiveChartTakeProfitOrStopLoss(settings)
+        && !settings.exitStrategyOverrideEnabled
+    ) {
         settings.disableSignalExits = false;
     }
     return settings;
@@ -691,6 +726,9 @@ export function resolveBacktestSettingsFromRaw(
         coerced.polymarketEntryCutoffEnabled = readBooleanAny(raw, ["polymarketEntryCutoffEnabled", "polymarketEntryCutoffToggle"], EFFECTIVE_BACKTEST_DEFAULTS.polymarketEntryCutoffEnabled);
         coerced.polymarketEntryCutoffSeconds = clampPolymarketEntryCutoffSeconds(raw["polymarketEntryCutoffSeconds"]);
         coerced.disableSignalExits = readBoolean(raw, "disableSignalExits", EFFECTIVE_BACKTEST_DEFAULTS.disableSignalExits);
+        coerced.exitStrategyOverrideEnabled = readBoolean(raw, "exitStrategyOverrideEnabled", false);
+        coerced.exitStrategyKey = typeof raw["exitStrategyKey"] === "string" ? raw["exitStrategyKey"].trim() : "";
+        coerced.exitStrategyParams = readStrategyParams(raw["exitStrategyParams"]);
         Object.assign(coerced, resolvePolymarketPostSignalLimitSettingFields(
             raw,
             (key, fallback) => readBoolean(raw, key, fallback)
@@ -791,6 +829,9 @@ export function resolveBacktestSettingsFromRaw(
         confirmationStrategyParams,
         tradeDirection,
         executionModel,
+        exitStrategyOverrideEnabled: readBoolean(raw, "exitStrategyOverrideEnabled", false),
+        exitStrategyKey: typeof raw["exitStrategyKey"] === "string" ? raw["exitStrategyKey"].trim() : "",
+        exitStrategyParams: readStrategyParams(raw["exitStrategyParams"]),
         polymarketAnnotationEnabled: readBoolean(raw, "polymarketAnnotationEnabled", EFFECTIVE_BACKTEST_DEFAULTS.polymarketAnnotationEnabled),
         polymarketOutcomeSymbol: readString(raw, "polymarketOutcomeSymbol", EFFECTIVE_BACKTEST_DEFAULTS.polymarketOutcomeSymbol),
         polymarketOutcomeInterval: resolvePolymarketOutcomeInterval(raw["polymarketOutcomeInterval"]),

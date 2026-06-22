@@ -170,6 +170,7 @@ export class FinderUI {
                 title,
                 subText: `${item.key}${timeframeLabel}`,
                 paramsText: this.formatParams(item.params),
+                detailLines: this.formatDetailLines(item),
                 metrics,
             }));
         });
@@ -341,6 +342,7 @@ export class FinderUI {
         subText: string;
         paramsText: string;
         metrics: HTMLElement;
+        detailLines?: string[];
         details?: HTMLElement;
     }): HTMLDivElement {
         const row = document.createElement("div");
@@ -364,6 +366,12 @@ export class FinderUI {
         main.appendChild(options.title);
         main.appendChild(sub);
         main.appendChild(params);
+        for (const detailLine of options.detailLines ?? []) {
+            const detail = document.createElement("div");
+            detail.className = "finder-sub";
+            detail.textContent = detailLine;
+            main.appendChild(detail);
+        }
         main.appendChild(options.metrics);
         if (options.details) {
             main.appendChild(options.details);
@@ -384,6 +392,16 @@ export class FinderUI {
         return Object.entries(params)
             .map(([key, value]) => `${key}=${this.formatParamValue(value)}`)
             .join(", ");
+    }
+
+    private formatDetailLines(item: FinderResult): string[] {
+        if (!item.exitStrategyKey) return [];
+        const exitParams = item.exitStrategyParams ? this.formatParams(item.exitStrategyParams) : "";
+        return [
+            exitParams
+                ? `Exit override: ${item.exitStrategyKey} (${exitParams})`
+                : `Exit override: ${item.exitStrategyKey}`,
+        ];
     }
 
     private formatParamValue(value: number): string {

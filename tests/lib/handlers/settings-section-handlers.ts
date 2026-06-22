@@ -3,6 +3,7 @@ import { parseInputNumber } from "../dom-input-readers";
 import { ADVANCED_SIZING_SUBSECTION_IDS } from "../advanced-sizing-dom";
 import { TAKE_PROFIT_MODE_PANEL_IDS } from "../take-profit-dom";
 import { setStrategyTimeframeSettings } from "../state-actions";
+import { setupExitStrategyOverride } from "./exit-strategy-override-handler";
 import type { UiEventHandlersDom } from "./ui-event-handlers-dom";
 
 const CONFIRMATION_STRATEGY_CHECKBOXES = [
@@ -406,4 +407,6 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     tradeSizingModeInput.addEventListener('change', applyTradeSizingMode);
     martingaleBaseSizeInput.addEventListener('change', applyTradeSizingMode);
     applyTradeSizingMode();
+
+    setupExitStrategyOverride(dom);
 }

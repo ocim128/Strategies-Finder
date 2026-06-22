@@ -6,7 +6,6 @@ import {
     precomputeIndicators,
     runBacktest,
     runBacktestCompact,
-    applySignalPolarity,
 } from "../strategies/index";
 import type { BacktestResult, StrategyExecutionContext } from "../types/strategies";
 import { rustEngine } from "../rust-engine-client";
@@ -19,7 +18,6 @@ import { FinderResultRanker } from "./finder-result-ranker";
 import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import type { FinderRandomBenchmark, FinderResult } from "../types/finder";
 import type { CapitalSettings } from "../types/backtest";
-import { applyConfirmationStrategiesToSignals } from "../confirmation-signal-filter";
 import {
     attachTradeTimingQuality,
     finderSortRequiresTradeTimingQuality,
@@ -29,7 +27,6 @@ import {
     compactSignalsForRust,
     computeFinderCompositeEdgeRatio,
     finderSortRequiresCompositeEdgeRatio,
-    getPreparedFinderData,
     normalizeFinderCandidateParams,
     resolveFinderCandidateBacktestSettings,
     resolveFinderRiskOverrides,
@@ -74,6 +71,7 @@ import {
     type FinderDiagnosticsTimings,
     type FinderStrategyDiagnosticsStats,
 } from "./finder-diagnostics";
+import { withExitStrategyBaseParams } from "./exit-strategy-param-prefix";
 import type { FinderRunCallbacks, FinderRunInput, FinderRunOutput } from "./finder-runner";
 
 export { buildFinderEvaluationData } from "./finder-runner-shared";
@@ -87,7 +85,7 @@ async function getDataManager() {
 }
 
 type FinderCandidateForEnrichment = Pick<FinderResult, "key" | "name" | "params" | "result">
-    & Partial<Pick<FinderResult, "comboMode" | "comboPrimaryConfigName" | "compositeEdgeRatio" | "polymarketEval">>;
+    & Partial<Pick<FinderResult, "comboMode" | "comboPrimaryConfigName" | "compositeEdgeRatio" | "exitStrategyKey" | "polymarketEval">>;
 
 function enrichFinderCandidate(args: {
     candidate: FinderCandidateForEnrichment;
@@ -96,6 +94,7 @@ function enrichFinderCandidate(args: {
     initialCapital: number;
     requiresCompositeEdgeRatioSort: boolean;
     requiresTradeTimingQualitySort: boolean;
+    exitStrategyKey?: string;
     comboMode?: boolean;
     comboPrimaryConfigName?: string;
 }): FinderResult {
@@ -122,6 +121,7 @@ function enrichFinderCandidate(args: {
         comboPrimaryConfigName: args.comboPrimaryConfigName ?? candidate.comboPrimaryConfigName,
         result: normalizedResult,
         selectionResult: adjustment.result,
+        exitStrategyKey: candidate.exitStrategyKey ?? args.exitStrategyKey,
         compositeEdgeRatio: requiresCompositeEdgeRatioSort
             ? computeFinderCompositeEdgeRatio(normalizedResult, candidateData)
             : candidate.compositeEdgeRatio,
@@ -233,6 +233,7 @@ function prepareRustBatchRuns(options: RustRunPreparationOptions): PreparedRun[]
             let signals = generateSignalsForJob(
                 job,
                 jobData,
+                options.input.interval,
                 options.preparedDataCache,
                 options.preparedSettings,
                 options.getJobCtx(job),
@@ -645,6 +646,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
             initialCapital: effectiveInitialCapital,
             requiresCompositeEdgeRatioSort,
             requiresTradeTimingQualitySort,
+            exitStrategyKey: input.options.exitStrategyOverrideEnabled ? input.options.exitStrategyKey : undefined,
             comboMode: Boolean(input.comboPrimarySignals),
             comboPrimaryConfigName: input.options.comboPrimaryConfigName,
         });
@@ -835,6 +837,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                 let signals = generateSignalsForJob(
                     job,
                     jobData,
+                    input.interval,
                     preparedDataCache,
                     effectiveBacktestSettings,
                     getJobCtx(job),
@@ -858,6 +861,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     backtestFn: quickBacktestFn,
                     precomputed: getJobPrecomputed(job, shortPrecomputed),
                     backtestOptions: { collectDiagnostics: true },
+                    exitStrategy: job.exitStrategy,
                 });
                 recordBacktestResult(job, quickRawResult);
                 const quickBacktestMs = performance.now() - tQuickStart;
@@ -927,6 +931,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     let signals = generateSignalsForJob(
                         job,
                         jobData,
+                        input.interval,
                         preparedDataCache,
                         effectiveBacktestSettings,
                         getJobCtx(job),
@@ -1102,6 +1107,7 @@ export async function runSingleTimeframe(params: SingleTimeframeRunParams): Prom
                     const signals = generateSignalsForJob(
                         job,
                         jobData,
+                        input.interval,
                         preparedDataCache,
                         effectiveBacktestSettings,
                         getJobCtx(job),
@@ -1267,24 +1273,30 @@ async function reconcileSingleTimeframeTopResults(
             const jobData = csEntry?.data ?? closedData;
             const jobCtx = csEntry?.ctx;
             const jobPrecomputed = csEntry?.precomputed ?? precomputed;
-            const normalizedParams = normalizeFinderCandidateParams(strategy, candidate.params);
-            const { backtestSettings } = resolveFinderRiskOverrides(input.settings, rustSettings, normalizedParams, input.options);
-            const preparedFinderData = getPreparedFinderData(
-                preparedDataCache,
-                candidate.key,
+            const combinedParams = withExitStrategyBaseParams(candidate.params, candidate.exitStrategyParams ?? {});
+            const exitStrategyByKey = new Map((input.exitStrategyCandidates ?? []).map((item) => [item.key, item.strategy]));
+            const exitStrategy = candidate.exitStrategyKey
+                ? exitStrategyByKey.get(candidate.exitStrategyKey)
+                : input.exitStrategy;
+            const normalizedParams = normalizeFinderCandidateParams(
                 strategy,
-                jobData,
-                comboBacktestSettings,
-                jobCtx
+                combinedParams,
+                exitStrategy?.normalizeParams
+                    ? { normalizeExitParams: exitStrategy.normalizeParams }
+                    : undefined
             );
-            const rawSignals = strategy.executePrepared
-                ? strategy.executePrepared(preparedFinderData, normalizedParams, jobData, jobCtx)
-                : strategy.execute(jobData, normalizedParams, jobCtx);
-            const signals = applyConfirmationStrategiesToSignals({
-                data: jobData,
-                baseSignals: applySignalPolarity(rawSignals, backtestSettings),
-                settings: backtestSettings,
-            });
+            const { backtestSettings } = resolveFinderRiskOverrides(input.settings, rustSettings, normalizedParams, input.options);
+            const signals = generateSignalsForJob({
+                id: 0,
+                key: candidate.key,
+                name: candidate.name,
+                params: normalizedParams,
+                backtestSettings,
+                rustBacktestSettings: sanitizeBacktestSettingsForRust(backtestSettings),
+                strategy,
+                exitStrategy,
+                exitStrategyKey: candidate.exitStrategyKey,
+            }, jobData, input.interval, preparedDataCache, comboBacktestSettings, jobCtx);
             const mergedSignals = comboActive ? applyComboMerge(signals, input) : signals;
             const rawResult = runStrategyBacktest({
                 strategy,
@@ -1295,6 +1307,8 @@ async function reconcileSingleTimeframeTopResults(
                 backtestSettings: resolveFinderCandidateBacktestSettings(backtestSettings, input.comboPrimarySettings),
                 backtestFn: runBacktest,
                 precomputed: jobPrecomputed,
+                exitStrategy,
+                executionContext: jobCtx,
             });
             reconciled.push(enrichFinderCandidate({
                 candidate: {
@@ -1307,6 +1321,7 @@ async function reconcileSingleTimeframeTopResults(
                 initialCapital,
                 requiresCompositeEdgeRatioSort,
                 requiresTradeTimingQualitySort,
+                exitStrategyKey: candidate.exitStrategyKey ?? (input.options.exitStrategyOverrideEnabled ? input.options.exitStrategyKey : undefined),
             }));
         } catch (_error) {
             reconciled.push(candidate);

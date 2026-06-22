@@ -83,6 +83,18 @@ export interface FinderOptions {
     polymarketPostSignalLimitExitMode?: "fixed_price" | "entry_offset";
     polymarketPostSignalLimitExitPriceCents?: number;
     polymarketPostSignalLimitExitOffsetCents?: number;
+    /**
+     * When true and disableSignalExits is on, Finder varies the exit-strategy's params
+     * alongside the entry strategy's params and uses its signals as close-only exits.
+     */
+    exitStrategyOverrideEnabled?: boolean;
+    /** Registry key of the strategy whose signals act as close-only exits. */
+    exitStrategyKey?: string;
+    /**
+     * Exit strategy's default params, pre-resolved at Finder kickoff. Param-space
+     * generation merges these with the entry strategy's params using an `_exit__` prefix.
+     */
+    exitStrategyBaseParams?: StrategyParams;
     universe?: FinderUniverseOptions;
 }
 
@@ -99,6 +111,8 @@ export interface FinderResult {
     comboPrimaryConfigName?: string;
     timeframes?: string[];
     params: StrategyParams;
+    exitStrategyKey?: string;
+    exitStrategyParams?: StrategyParams;
     /** Raw backtest result (includes any final forced liquidation). */
     result: BacktestResult;
     /** Selection result with endpoint-bias trades removed. */

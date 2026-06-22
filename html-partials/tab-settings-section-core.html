@@ -258,6 +258,30 @@
                         <div class="param-hint">Entries remain signal-based. Opposite strategy signals no longer close trades; chart TP or SL must be active.</div>
                     </div>
                 </div>
+                <div class="param-row" id="exitStrategyOverrideRow">
+                    <div class="param-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Exit Strategy Override</label>
+                            <label class="section-toggle" style="transform: scale(0.8);"
+                                aria-label="Override exits with another strategy's signals">
+                                <input type="checkbox" id="exitStrategyOverrideEnabled">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">Requires Disable Exit Signal. Use another strategy's signals as close-only exits (sell closes long, buy closes short; never opens new positions).</div>
+                        <div id="exitStrategyOverrideConfig" style="display: none; margin-top: 8px;">
+                            <div class="param-row">
+                                <div class="param-group">
+                                    <label class="param-label" for="exitStrategyKey">Exit Strategy</label>
+                                    <select class="param-input" id="exitStrategyKey"></select>
+                                    <div class="param-hint">Pick any built-in strategy. Its signals will close opposite-direction positions.</div>
+                                </div>
+                            </div>
+                            <div id="exitStrategyParamsContainer"></div>
+                            <input type="hidden" id="exitStrategyParams" value="{}">
+                        </div>
+                    </div>
+                </div>
                 <div class="risk-simple-advanced" id="riskSimpleAdvanced">
                     <div class="param-row">
                         <div class="param-group">

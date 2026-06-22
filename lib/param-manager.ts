@@ -6,8 +6,13 @@ import { parseInputNumber } from "./dom-input-readers";
 export class ParamManager {
     private inputsByParam = new Map<string, HTMLInputElement | HTMLSelectElement>();
 
+    constructor(
+        private readonly containerId: string = 'strategyParams',
+        private readonly idPrefix: string = 'param_',
+    ) {}
+
     private getParamContainer(): HTMLElement {
-        return getRequiredElement('strategyParams');
+        return getRequiredElement(this.containerId);
     }
 
     private getParamInput(key: string): HTMLInputElement | HTMLSelectElement | null {
@@ -29,12 +34,12 @@ export class ParamManager {
                 const label = strategy.paramLabels[key] || key;
                 const group = document.createElement('div');
                 group.className = 'param-group';
-                group.id = `param_group_${key}`;
+                group.id = `${this.idPrefix}group_${key}`;
 
                 const labelEl = document.createElement('label');
                 labelEl.className = 'param-label';
-                labelEl.id = `param_label_${key}`;
-                labelEl.htmlFor = `param_${key}`;
+                labelEl.id = `${this.idPrefix}label_${key}`;
+                labelEl.htmlFor = `${this.idPrefix}${key}`;
                 labelEl.textContent = label;
 
                 const input = this.renderParamInput(key, value);
@@ -97,7 +102,7 @@ export class ParamManager {
         const input = document.createElement('input');
         input.type = 'number';
         input.className = 'param-input';
-        input.id = `param_${key}`;
+        input.id = `${this.idPrefix}${key}`;
         input.value = String(value);
         input.dataset.param = key;
         return input;
@@ -105,3 +110,4 @@ export class ParamManager {
 }
 
 export const paramManager = new ParamManager();
+export const exitStrategyParamManager = new ParamManager('exitStrategyParamsContainer', 'exit_param_');

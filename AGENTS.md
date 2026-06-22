@@ -286,6 +286,25 @@ Strategy-lib failure modes seen repeatedly:
 - Preserve cache decisions and deterministic seeded behavior
 - If touching robust mode, keep explicit `PASS`/`FAIL` decision semantics
 
+### Modify Exit Strategy Override
+- Keep it gated on `disableSignalExits`; when normal signal exits are enabled, the override is inert
+- Preserve `Signal.exitOnly` through signal preparation and every TS engine signal loop; exit-only signals close opposite positions but never open new positions
+- New settings ids must be registered in BOTH DOM-contract systems or the reader silently drops them:
+  - `BACKTEST_DOM_SETTING_IDS` in `lib/backtest-settings-resolver.ts` (used by `backtestService.getBacktestSettings()`)
+  - `BACKTEST_SETTINGS_DOM_CONTRACTS` in `lib/backtest-settings-dom-contract.ts` (used by `settingsManager` read/write)
+  Adding to only one causes the exact symptom "DOM checked, settings false" — verify both lists after adding a backtest setting id
+- `applyDerivedBacktestSettingGuards` in `lib/backtest-settings-resolver.ts` must preserve `disableSignalExits` when `exitStrategyOverrideEnabled` is on, even before a strategy key is picked. Without this guard exemption, the resolver strips `disableSignalExits` before the user can finish configuring the override (chicken-and-egg)
+- Finder support is current-chart only; do not silently expand to Hunt, Walk Forward, Scanner, Portfolio Lab, genetic mode, Symbol Universe, or Polymarket Finder
+- Finder exit params use the `_exit__` prefix internally and must split before entry-strategy normalization, result display, and Apply
+- Apply must write both `exitStrategyKey` and `exitStrategyParams`, and force `disableSignalExits` plus `exitStrategyOverrideEnabled`
+- Validation habit after changes:
+  - `npm run typecheck`
+  - `..\\..\\..\\node_modules\\.bin\\esno tests\\backtesting-engine.spec.ts`
+  - `..\\..\\..\\node_modules\\.bin\\esno tests\\exit-strategy-merge.spec.ts`
+  - `..\\..\\..\\node_modules\\.bin\\esno tests\\exit-strategy-param-prefix.spec.ts`
+  - `..\\..\\..\\node_modules\\.bin\\esno tests\\finder-cache-decision.spec.ts`
+  - `..\\..\\..\\node_modules\\.bin\\esno tests\\feature-dom-contracts.spec.ts`
+
 ### Modify Polymarket scoring
 - Keep the five Polymarket contracts separate:
   - direct charting
@@ -446,6 +465,7 @@ Treat unrelated pre-existing failures carefully. Do not assume your change cause
 - Added a strategy file but forgot to run `npm run strategies:sync-manifest`
 - Added params in `defaultParams` but forgot matching `paramLabels` or `metadata.walkForwardParams`
 - Added a new setting but forgot Rust sanitization or finder parity
+- Added a backtest setting id to only one of `BACKTEST_DOM_SETTING_IDS` or `BACKTEST_SETTINGS_DOM_CONTRACTS` (the reader silently drops it; symptom: "DOM checked, settings false")
 - Changed `polymarketExitMode` semantics without keeping endpoint / ensemble fences explicit
 - Added signal-exit price logic in one Polymarket surface but not the shared evaluator, causing manual backtest / Finder / Quick View drift
 - Changed price-point loading to raw timestamp ranges and missed same-event exit quotes that occur after the latest trade entry timestamp

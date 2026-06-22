@@ -7,6 +7,7 @@
  */
 
 import type {
+    BacktestExitControlDiagnostics,
     BacktestResult,
     BacktestSettings,
     OHLCVData,
@@ -34,8 +35,8 @@ import {
 import { shouldUseRustEngine } from "./engine-preferences";
 import { rustEngine } from "./rust-engine-client";
 import { sanitizeBacktestSettingsForRust, requiresTypescriptEngine } from "./rust-settings-sanitizer";
+import { mergeExitStrategySignals } from "./exit-strategy-merge";
 import {
-    applySignalPolarity,
     buildEntryBacktestResult,
     createEmptyBacktestResult,
     runBacktest,
@@ -46,22 +47,17 @@ import {
     getBuiltInStrategyKeys,
 } from "./strategies/built-in-catalog";
 import {
-    resampleOHLCV,
-    type ResampleOptions,
-} from "./strategies/resample-utils";
-import {
     calculateAdvancedPerformanceAnalyticsFromEquityCurve,
     calculateSharpeRatioFromEquityCurve,
     calculateSharpeRatioFromReturns,
 } from "./strategies/performance-metrics";
 import { parseTimeToUnixSeconds } from "./time-normalization";
-import { toNumericTimeData, mapSignalsFromHigherTimeframe } from "./strategy-timeframe";
 import { filterSignalsByBlockRange } from "./signal-block-filter";
 import {
     applyConfirmationStrategiesToSignals,
     ensureConfirmationStrategiesLoaded,
 } from "./confirmation-signal-filter";
-import { executeStrategyWithTimeGapIsolation } from "./strategy-time-gap-isolation";
+import { executeBacktestStrategySignals } from "./strategy-signal-execution";
 import { timeKey } from "./strategies/backtest/backtest-utils";
 import {
     registerBacktestEdgeAnalysisInput,
@@ -118,6 +114,12 @@ export interface BacktestExecutorResult {
     result: BacktestResult;
     engineUsed: "rust" | "typescript";
     signals: Signal[];
+}
+
+interface ExitStrategyOverrideSignalResolution {
+    signals: Signal[];
+    strategyLoaded: boolean;
+    skippedReason?: string;
 }
 
 function mergeStrategyExecutionContext(
@@ -266,16 +268,37 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         executionContext,
     });
 
+    const exitOverrideResolution = await resolveExitStrategyOverrideSignals({
+        data: backtestData,
+        interval,
+        settings: resolvedSettings,
+        blockRange,
+        executionContext,
+    });
+    const exitOverrideSignals = exitOverrideResolution.signals;
+    const mergedSignals = mergeExitStrategySignals(signals, exitOverrideSignals);
+    const exitControlDiagnostics = buildExitControlDiagnostics({
+        requestedSettings: backtestSettings as Record<string, unknown>,
+        resolvedSettings,
+        primarySignals: signals.length,
+        exitOverrideSignals: exitOverrideSignals.length,
+        mergedSignals,
+        exitStrategyLoaded: exitOverrideResolution.strategyLoaded,
+        skippedReason: exitOverrideResolution.skippedReason,
+    });
+
     const evaluation = strategy.evaluate?.(backtestData, normalizedParams, signals);
     const entryStats = evaluation?.entryStats;
 
     if (strategy.metadata?.role === "entry" && entryStats) {
         let result = buildEntryBacktestResult(entryStats);
+        result.exitControlDiagnostics = exitControlDiagnostics;
         if (!shouldSkipResultPostProcessing(req)) {
             finalizeResult(result, backtestData, interval, settingsWithMeta);
         }
         if (annotatePolymarket) {
             const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
+            annotatedResult.exitControlDiagnostics = exitControlDiagnostics;
             transferBacktestEdgeAnalysisInput(result, annotatedResult);
             result = annotatedResult;
         }
@@ -283,8 +306,9 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         return { result, engineUsed: "typescript", signals };
     }
 
-    if (signals.length === 0 && shouldSkipResultPostProcessing(req)) {
+    if (signals.length === 0 && mergedSignals.length === 0 && shouldSkipResultPostProcessing(req)) {
         const result = createEmptyBacktestResult();
+        result.exitControlDiagnostics = exitControlDiagnostics;
         registerBacktestEdgeAnalysisInput(result, backtestData);
         return { result, engineUsed: "typescript", signals };
     }
@@ -293,9 +317,10 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
 
     const requireTs = requiresTypescriptEngine(resolvedSettings) || isSmartTradeSizingMode(resolvedCapital.sizingMode);
     if (shouldAttemptRust(req.context.engineMode ?? "auto", requireTs)) {
-        const rustResult = await tryRustBacktest(backtestData, signals, resolvedCapital, resolvedSettings);
+        const rustResult = await tryRustBacktest(backtestData, mergedSignals, resolvedCapital, resolvedSettings);
         if (rustResult && isResultConsistent(rustResult)) {
             let result = rustResult;
+            result.exitControlDiagnostics = exitControlDiagnostics;
             if (!shouldSkipResultPostProcessing(req)) {
                 finalizeResult(result, backtestData, interval, settingsWithMeta);
             }
@@ -314,7 +339,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         : runBacktest;
     let result = runBacktestImpl(
         backtestData,
-        signals,
+        mergedSignals,
         resolvedCapital.initialCapital,
         resolvedCapital.positionSize,
         resolvedCapital.commission,
@@ -330,8 +355,10 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     if (!shouldSkipResultPostProcessing(req)) {
         finalizeResult(result, backtestData, interval, settingsWithMeta);
     }
+    result.exitControlDiagnostics = exitControlDiagnostics;
     if (annotatePolymarket) {
         const annotatedResult = await annotatePolymarketResult(result, ohlcvData, resolvedSettings);
+        annotatedResult.exitControlDiagnostics = exitControlDiagnostics;
         transferBacktestEdgeAnalysisInput(result, annotatedResult);
         result = annotatedResult;
     }
@@ -488,6 +515,85 @@ function resolveBacktestSignalsForData(args: {
     );
     const confirmedSignals = applyConfirmationStrategies(args.data, args.interval, signals, args.settings);
     return filterSignalsByBlockRange(confirmedSignals, args.blockRange);
+}
+
+/**
+ * Generates close-only exit signals from the configured Exit Strategy Override, when active.
+ * Returns an empty array when the override is off, when disableSignalExits is off (inert),
+ * or when the configured strategy key cannot be resolved.
+ *
+ * Returned signals are NOT tagged here; mergeExitStrategySignals tags them exitOnly.
+ */
+async function resolveExitStrategyOverrideSignals(args: {
+    data: OHLCVData[];
+    interval: string;
+    settings: BacktestSettings;
+    blockRange: { from: number; to: number } | null;
+    executionContext?: StrategyExecutionContext;
+}): Promise<ExitStrategyOverrideSignalResolution> {
+    if (!args.settings.exitStrategyOverrideEnabled) {
+        return { signals: [], strategyLoaded: false, skippedReason: "override_disabled" };
+    }
+    if (!args.settings.disableSignalExits) {
+        return { signals: [], strategyLoaded: false, skippedReason: "disable_signal_exits_off" };
+    }
+    const exitKey = typeof args.settings.exitStrategyKey === "string"
+        ? args.settings.exitStrategyKey.trim()
+        : "";
+    if (!exitKey) {
+        return { signals: [], strategyLoaded: false, skippedReason: "missing_exit_strategy_key" };
+    }
+
+    const exitStrategy = await ensureBuiltInStrategyLoaded(exitKey);
+    if (!exitStrategy) {
+        return { signals: [], strategyLoaded: false, skippedReason: "exit_strategy_not_loaded" };
+    }
+
+    const exitParams = args.settings.exitStrategyParams ?? {};
+    const normalizedExitParams = exitStrategy.normalizeParams
+        ? exitStrategy.normalizeParams(exitParams)
+        : exitParams;
+
+    const signals = resolveBacktestSignalsForData({
+        data: args.data,
+        interval: args.interval,
+        strategy: exitStrategy,
+        params: normalizedExitParams,
+        settings: args.settings,
+        blockRange: args.blockRange,
+        executionContext: args.executionContext,
+    });
+    return {
+        signals,
+        strategyLoaded: true,
+        skippedReason: signals.length === 0 ? "exit_strategy_zero_signals" : undefined,
+    };
+}
+
+function buildExitControlDiagnostics(args: {
+    requestedSettings: Record<string, unknown>;
+    resolvedSettings: BacktestSettings;
+    primarySignals: number;
+    exitOverrideSignals: number;
+    mergedSignals: Signal[];
+    exitStrategyLoaded: boolean;
+    skippedReason?: string;
+}): BacktestExitControlDiagnostics {
+    const exitStrategyKey = typeof args.resolvedSettings.exitStrategyKey === "string"
+        ? args.resolvedSettings.exitStrategyKey.trim()
+        : "";
+    return {
+        requestedDisableSignalExits: args.requestedSettings.disableSignalExits === true,
+        resolvedDisableSignalExits: args.resolvedSettings.disableSignalExits === true,
+        exitStrategyOverrideEnabled: args.resolvedSettings.exitStrategyOverrideEnabled === true,
+        exitStrategyKey,
+        primarySignals: args.primarySignals,
+        exitOverrideSignals: args.exitOverrideSignals,
+        mergedSignals: args.mergedSignals.length,
+        mergedExitOnlySignals: args.mergedSignals.reduce((count, signal) => count + (signal.exitOnly === true ? 1 : 0), 0),
+        exitStrategyLoaded: args.exitStrategyLoaded,
+        skippedReason: args.skippedReason,
+    };
 }
 
 function applyConfirmationStrategies(
@@ -773,21 +879,6 @@ function hasGlobalStrategyTimeframeWrapper(strategy: Strategy): boolean {
     return (strategy as Strategy & { __global_timeframe_wrapped__?: boolean }).__global_timeframe_wrapped__ === true;
 }
 
-function readStrategyTimeframeConfig(settings: BacktestSettings): {
-    enabled: boolean;
-    interval: string;
-    resampleOptions?: ResampleOptions;
-} {
-    const enabled = settings.strategyTimeframeEnabled === true;
-    const parsedMinutes = Number(settings.strategyTimeframeMinutes);
-    const minutes = Number.isFinite(parsedMinutes) && parsedMinutes > 0
-        ? Math.max(1, Math.floor(parsedMinutes))
-        : 120;
-    const interval = `${minutes}m`;
-    const resampleOptions: ResampleOptions | undefined = undefined;
-    return { enabled, interval, resampleOptions };
-}
-
 function executeStrategySignals(
     data: OHLCVData[],
     strategy: Strategy,
@@ -797,56 +888,14 @@ function executeStrategySignals(
     strategyAlreadyWrapped: boolean,
     crossSymbolContext?: StrategyExecutionContext
 ): Signal[] {
-    if (strategyAlreadyWrapped) {
-        const signals = executeDirectStrategySignals(data, interval, strategy, params, crossSymbolContext);
-        return applySignalPolarity(signals, settings);
-    }
-
-    const tfConfig = readStrategyTimeframeConfig(settings);
-    if (!tfConfig.enabled || data.length === 0) {
-        const signals = executeDirectStrategySignals(data, interval, strategy, params, crossSymbolContext);
-        return applySignalPolarity(signals, settings);
-    }
-
-    const numericData = toNumericTimeData(data);
-    if (!numericData) {
-        const signals = executeDirectStrategySignals(data, interval, strategy, params, crossSymbolContext);
-        return applySignalPolarity(signals, settings);
-    }
-
-    const higherData = resampleOHLCV(numericData, tfConfig.interval, tfConfig.resampleOptions);
-    if (higherData.length === 0) {
-        return [];
-    }
-
-    // Cross-symbol and Polymarket-1s context combinations with Strategy Timeframe
-    // are rejected before this point; keep the context argument here so helper
-    // strategies cannot silently lose their runtime context if another caller
-    // reaches this path.
-    const higherSignals = strategy.execute(higherData, params, crossSymbolContext);
-    const mappedSignals = mapSignalsFromHigherTimeframe(
-        data,
-        numericData,
-        higherData,
-        higherSignals,
-        tfConfig.interval,
-        tfConfig.resampleOptions
-    );
-    return applySignalPolarity(mappedSignals, settings);
-}
-
-function executeDirectStrategySignals(
-    data: OHLCVData[],
-    interval: string,
-    strategy: Strategy,
-    params: StrategyParams,
-    context?: StrategyExecutionContext
-): Signal[] {
-    return executeStrategyWithTimeGapIsolation({
+    return executeBacktestStrategySignals({
         data,
         interval,
-        executionContext: context,
-        execute: (segmentData, segmentContext) => strategy.execute(segmentData, params, segmentContext),
+        strategy,
+        params,
+        settings,
+        strategyAlreadyWrapped,
+        executionContext: crossSymbolContext,
     });
 }
 

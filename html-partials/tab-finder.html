@@ -199,6 +199,17 @@
     </div>
 
     <div class="section-header">
+        <div class="section-title">Exit Strategy Override</div>
+        <label class="section-toggle" aria-label="Vary Exit Strategy Override params in Finder">
+            <input type="checkbox" id="finderExitStrategyOverrideToggle">
+            <span class="section-toggle-track"></span>
+        </label>
+    </div>
+    <div class="section-body">
+        <div class="param-hint">Requires Disable Exit Signal and Exit Strategy Override in settings. When on, Finder samples exit strategies from the checked strategy list and varies their params alongside entry params. Apply writes the chosen exit strategy and both param sets back to settings.</div>
+    </div>
+
+    <div class="section-header">
         <div class="section-title">Strategies</div>
         <label class="section-toggle" aria-label="Toggle all strategies">
             <input type="checkbox" id="finderStrategiesToggleAll">

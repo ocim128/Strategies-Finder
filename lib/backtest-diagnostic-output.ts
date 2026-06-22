@@ -90,6 +90,16 @@ export interface BacktestDiagnosticOutput {
         signalTrades: number;
         nonSignalTrades: number;
     };
+    exitControl: {
+        requestedDisableSignalExits: boolean | null;
+        requestedExitStrategyOverrideEnabled: boolean | null;
+        requestedExitStrategyKey: string;
+        requestedExitStrategyParamKeys: string[];
+        executor: BacktestResult["exitControlDiagnostics"] | null;
+        engineInputSignals: number | null;
+        enginePreparedSignals: number | null;
+        engineSignalExitOrders: number | null;
+    };
     polymarket: {
         annotationEnabled: boolean | null;
         requestedExitMode?: PolymarketExitMode;
@@ -241,6 +251,31 @@ function buildChartExitDiagnostics(trades: readonly Trade[]): BacktestDiagnostic
         top: toCountRows(counts, trades.length),
         signalTrades,
         nonSignalTrades: Math.max(0, trades.length - signalTrades),
+    };
+}
+
+function buildExitControlDiagnostics(
+    result: BacktestResult,
+    settings: BacktestSettings | undefined
+): BacktestDiagnosticOutput["exitControl"] {
+    const requestedExitStrategyKey = typeof settings?.exitStrategyKey === "string"
+        ? settings.exitStrategyKey.trim()
+        : "";
+    const requestedExitStrategyParams = settings?.exitStrategyParams;
+    const requestedExitStrategyParamKeys = requestedExitStrategyParams
+        && typeof requestedExitStrategyParams === "object"
+        && !Array.isArray(requestedExitStrategyParams)
+        ? Object.keys(requestedExitStrategyParams).sort()
+        : [];
+    return {
+        requestedDisableSignalExits: settings ? settings.disableSignalExits === true : null,
+        requestedExitStrategyOverrideEnabled: settings ? settings.exitStrategyOverrideEnabled === true : null,
+        requestedExitStrategyKey,
+        requestedExitStrategyParamKeys,
+        executor: result.exitControlDiagnostics ?? null,
+        engineInputSignals: result.diagnostics?.counts.inputSignals ?? null,
+        enginePreparedSignals: result.diagnostics?.counts.preparedSignals ?? null,
+        engineSignalExitOrders: result.diagnostics?.counts.signalExitOrders ?? null,
     };
 }
 
@@ -700,6 +735,7 @@ export function buildBacktestDiagnosticOutput(
             : storedEvaluationMode
         : undefined;
     const chartExits = buildChartExitDiagnostics(result.trades);
+    const exitControl = buildExitControlDiagnostics(result, settings);
     const polymarket = buildPolymarketDiagnostics(
         result,
         snapshot,
@@ -744,6 +780,7 @@ export function buildBacktestDiagnosticOutput(
             blockRange: snapshot?.blockRange,
         },
         chartExits,
+        exitControl,
         polymarket,
         engineDiagnostics: result.diagnostics,
         warnings,

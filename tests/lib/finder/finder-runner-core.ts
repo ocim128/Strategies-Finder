@@ -8,6 +8,7 @@ import type {
 } from "../strategies";
 import { computeEdgeStatistics } from "../strategies/backtest/edge-statistics";
 import type { FinderMetric, FinderOptions, FinderResult } from "../types/finder";
+import { splitExitStrategyParams, withExitStrategyBaseParams } from "./exit-strategy-param-prefix";
 
 export type FinderPreparedDataCache = WeakMap<OHLCVData[], Map<string, unknown>>;
 
@@ -36,6 +37,8 @@ export type QuickFunnelCandidate = {
         backtestSettings: BacktestSettings;
         rustBacktestSettings: BacktestSettings;
         strategy: Strategy;
+        exitStrategy?: Strategy;
+        exitStrategyKey?: string;
     };
     result: BacktestResult;
     comparable: FinderResult;
@@ -241,11 +244,11 @@ function isRiskManagementFrozen(options?: Pick<FinderOptions, "freezeRiskManagem
 export function buildFinderSearchBaseParams(
     strategy: Strategy,
     settings: BacktestSettings,
-    options?: Pick<FinderOptions, "freezeRiskManagement">
+    options?: Pick<FinderOptions, "freezeRiskManagement" | "exitStrategyBaseParams">
 ): StrategyParams {
     const baseParams: StrategyParams = { ...strategy.defaultParams };
     if (isRiskManagementFrozen(options)) {
-        return baseParams;
+        return withExitStrategyBaseParams(baseParams, options?.exitStrategyBaseParams);
     }
 
     if (usesAtrRiskSettings(settings) && Number.isFinite(settings.atrPeriod)) {
@@ -257,7 +260,7 @@ export function buildFinderSearchBaseParams(
     }
 
     if (settings.riskMode !== "percentage") {
-        return baseParams;
+        return withExitStrategyBaseParams(baseParams, options?.exitStrategyBaseParams);
     }
 
     if (settings.stopLossEnabled && Number.isFinite(settings.stopLossPercent)) {
@@ -267,19 +270,31 @@ export function buildFinderSearchBaseParams(
         baseParams.takeProfitPercent = clampPercentValue(Number(settings.takeProfitPercent), 0, 100);
     }
     addModeSpecificTakeProfitSearchParams(baseParams, settings);
-    return baseParams;
+    return withExitStrategyBaseParams(baseParams, options?.exitStrategyBaseParams);
 }
 
-export function normalizeFinderCandidateParams(strategy: Strategy, params: StrategyParams): StrategyParams {
+export function normalizeFinderCandidateParams(
+    strategy: Strategy,
+    params: StrategyParams,
+    options?: { normalizeExitParams?: (exitParams: StrategyParams) => StrategyParams }
+): StrategyParams {
+    // Split off exit-strategy params first so the entry strategy's normalizer
+    // never sees them (avoids accidental snapping of exit params onto entry grids).
+    const { entryParams, exitParams } = splitExitStrategyParams(params);
+
     if (!strategy.normalizeParams) {
-        return { ...params };
+        const passthroughEntry: StrategyParams = { ...entryParams };
+        const finalExitParams = options?.normalizeExitParams
+            ? options.normalizeExitParams(exitParams)
+            : exitParams;
+        return { ...passthroughEntry, ...withExitStrategyBaseParams({}, finalExitParams) };
     }
 
     const strategyParamKeys = new Set(Object.keys(strategy.defaultParams));
     const strategyParams: StrategyParams = {};
     const passthroughParams: StrategyParams = {};
 
-    for (const [key, value] of Object.entries(params)) {
+    for (const [key, value] of Object.entries(entryParams)) {
         if (strategyParamKeys.has(key)) {
             strategyParams[key] = value;
         } else {
@@ -291,18 +306,26 @@ export function normalizeFinderCandidateParams(strategy: Strategy, params: Strat
         ...strategy.defaultParams,
         ...strategyParams,
     });
+    const finalExitParams = options?.normalizeExitParams
+        ? options.normalizeExitParams(exitParams)
+        : exitParams;
     return {
         ...normalizedStrategyParams,
         ...passthroughParams,
+        ...withExitStrategyBaseParams({}, finalExitParams),
     };
 }
 
-export function normalizeFinderCandidateParamSets(strategy: Strategy, paramSets: StrategyParams[]): StrategyParams[] {
+export function normalizeFinderCandidateParamSets(
+    strategy: Strategy,
+    paramSets: StrategyParams[],
+    options?: { normalizeExitParams?: (exitParams: StrategyParams) => StrategyParams }
+): StrategyParams[] {
     const normalized: StrategyParams[] = [];
     const seen = new Set<string>();
 
     for (const params of paramSets) {
-        const candidate = normalizeFinderCandidateParams(strategy, params);
+        const candidate = normalizeFinderCandidateParams(strategy, params, options);
         const key = serializeCandidateParams(candidate);
         if (seen.has(key)) {
             continue;

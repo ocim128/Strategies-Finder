@@ -46,6 +46,9 @@ export interface FinderOptionsInput {
     polymarketPostSignalLimitExitMode?: "fixed_price" | "entry_offset";
     polymarketPostSignalLimitExitPriceCents?: number;
     polymarketPostSignalLimitExitOffsetCents?: number;
+    exitStrategyOverrideEnabled?: boolean;
+    exitStrategyKey?: string;
+    exitStrategyBaseParams?: import("../types/strategies").StrategyParams;
 }
 
 export function normalizeFinderDataSlice(value: unknown): FinderDataSlice {
@@ -188,5 +191,8 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
         polymarketPostSignalLimitExitMode: input.polymarketPostSignalLimitExitMode,
         polymarketPostSignalLimitExitPriceCents: input.polymarketPostSignalLimitExitPriceCents,
         polymarketPostSignalLimitExitOffsetCents: input.polymarketPostSignalLimitExitOffsetCents,
+        exitStrategyOverrideEnabled: input.exitStrategyOverrideEnabled === true,
+        exitStrategyKey: input.exitStrategyOverrideEnabled === true ? input.exitStrategyKey : undefined,
+        exitStrategyBaseParams: input.exitStrategyOverrideEnabled === true ? input.exitStrategyBaseParams : undefined,
     };
 }
