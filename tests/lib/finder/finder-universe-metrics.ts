@@ -1,6 +1,8 @@
 import type {
+    FinderOosVerdict,
     FinderUniverseCandidate,
     FinderUniverseMetric,
+    FinderUniverseOosAggregate,
     FinderUniverseOptions,
     FinderUniverseSymbolResult,
 } from "../types/finder";
@@ -67,6 +69,58 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
         worstNetProfit: netProfits.length > 0 ? Math.min(...netProfits) : 0,
         bestNetProfit: netProfits.length > 0 ? Math.max(...netProfits) : 0,
     };
+}
+
+/**
+ * Per-symbol OOS verdict. Mirrors the current-chart gate: pass requires a
+ * non-negative OOS net profit and an OOS profit factor of at least 1.0. Too
+ * few OOS trades (below the per-symbol floor) is inconclusive, not a failure.
+ */
+export function computeUniverseSymbolOosVerdict(args: {
+    oosNetProfit: number;
+    oosProfitFactor: number;
+    oosTotalTrades: number;
+    minTrades: number;
+}): FinderOosVerdict {
+    const floor = Math.max(1, args.minTrades);
+    if (args.oosTotalTrades < floor) return "inconclusive";
+    return args.oosNetProfit >= 0 && args.oosProfitFactor >= 1.0 ? "pass" : "fail";
+}
+
+/**
+ * Strategy-level OOS summary across all symbols. The verdict compares the OOS
+ * profitable-active breadth against the IS baseline:
+ * - `fail` when fewer than 30% of active OOS symbols are profitable, or the
+ *   OOS breadth collapsed below half the IS breadth (curve-fit signal);
+ * - `inconclusive` when too few symbols produced any OOS trades;
+ * - `pass` otherwise.
+ */
+export function computeUniverseOosAggregate(args: {
+    symbols: FinderUniverseSymbolResult[];
+    isProfitableActiveRatio: number;
+    minActiveSymbols: number;
+}): FinderUniverseOosAggregate {
+    let activeSymbols = 0;
+    let profitableSymbols = 0;
+    let worstNetProfit = 0;
+    for (const symbol of args.symbols) {
+        const oos = symbol.oosResult;
+        if (!oos || oos.totalTrades <= 0) continue;
+        activeSymbols += 1;
+        if (oos.netProfit > 0.0001) profitableSymbols += 1;
+        worstNetProfit = Math.min(worstNetProfit, oos.netProfit);
+    }
+    const profitableActiveRatio = activeSymbols > 0 ? profitableSymbols / activeSymbols : 0;
+
+    let verdict: FinderOosVerdict;
+    if (activeSymbols < Math.max(1, args.minActiveSymbols)) {
+        verdict = "inconclusive";
+    } else if (profitableActiveRatio < 0.3 || profitableActiveRatio < args.isProfitableActiveRatio * 0.5) {
+        verdict = "fail";
+    } else {
+        verdict = "pass";
+    }
+    return { verdict, activeSymbols, profitableSymbols, profitableActiveRatio, worstNetProfit };
 }
 
 export function buildFinderUniverseCandidate(input: {

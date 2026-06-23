@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { buildFinderUniverseCandidate, computePerformanceVerdict, computeStrategyVerdict, passesFinderUniverseFilters, sortFinderUniverseCandidates } from "../lib/finder/finder-universe-metrics";
+import { buildFinderUniverseCandidate, computePerformanceVerdict, computeStrategyVerdict, computeUniverseOosAggregate, computeUniverseSymbolOosVerdict, passesFinderUniverseFilters, sortFinderUniverseCandidates } from "../lib/finder/finder-universe-metrics";
 import type { FinderUniverseSymbolMetrics, FinderUniverseSymbolResult } from "../lib/types/finder";
 
 function makeBacktestResult(netProfit: number, expectancy: number, totalTrades: number, sharpeRatio = 0, profitFactor = 0): FinderUniverseSymbolMetrics {
@@ -198,6 +198,58 @@ describe("Finder universe metrics", () => {
         );
 
         expect(sorted.map((item) => item.strategyKey)).to.deep.equal(["stronger", "weaker"]);
+    });
+
+    it("passes per-symbol OOS verdict only when OOS is profitable with enough trades", () => {
+        // Profitable + enough trades -> pass
+        expect(computeUniverseSymbolOosVerdict({ oosNetProfit: 100, oosProfitFactor: 1.5, oosTotalTrades: 10, minTrades: 5 })).to.equal("pass");
+        // Boundary: zero net profit and PF 1.0 still passes
+        expect(computeUniverseSymbolOosVerdict({ oosNetProfit: 0, oosProfitFactor: 1.0, oosTotalTrades: 10, minTrades: 5 })).to.equal("pass");
+        // Degraded -> fail
+        expect(computeUniverseSymbolOosVerdict({ oosNetProfit: -50, oosProfitFactor: 0.9, oosTotalTrades: 10, minTrades: 5 })).to.equal("fail");
+        // Too few OOS trades -> inconclusive regardless of profitability
+        expect(computeUniverseSymbolOosVerdict({ oosNetProfit: -1000, oosProfitFactor: 0.3, oosTotalTrades: 2, minTrades: 5 })).to.equal("inconclusive");
+    });
+
+    it("aggregates per-symbol OOS into a strategy-level verdict that flags breadth collapse", () => {
+        // IS ratio 0.7, OOS retains 0.6 -> pass (above 0.3 floor and above half of IS)
+        const retained = computeUniverseOosAggregate({
+            isProfitableActiveRatio: 0.7,
+            minActiveSymbols: 2,
+            symbols: [
+                makeSymbol("A", "profitable", makeBacktestResult(10, 1, 8, 0.5, 1.4)),
+                makeSymbol("B", "profitable", makeBacktestResult(20, 2, 9, 0.5, 1.6)),
+                makeSymbol("C", "losing", makeBacktestResult(-5, -1, 7, 0.5, 0.9)),
+            ].map((s) => ({ ...s, oosResult: makeBacktestResult(10, 1, 8, 0.5, 1.4) })),
+        });
+        expect(retained.verdict).to.equal("pass");
+        expect(retained.activeSymbols).to.equal(3);
+        expect(retained.profitableSymbols).to.equal(3);
+
+        // IS ratio 0.7, OOS collapses to 0.2 profitable -> fail
+        const collapsed = computeUniverseOosAggregate({
+            isProfitableActiveRatio: 0.7,
+            minActiveSymbols: 2,
+            symbols: [
+                makeSymbol("A", "profitable", makeBacktestResult(10, 1, 8, 0.5, 1.4)),
+                makeSymbol("B", "profitable", makeBacktestResult(20, 2, 9, 0.5, 1.6)),
+                makeSymbol("C", "profitable", makeBacktestResult(30, 3, 8, 0.5, 1.5)),
+                makeSymbol("D", "profitable", makeBacktestResult(40, 4, 9, 0.5, 1.6)),
+                makeSymbol("E", "losing", makeBacktestResult(-5, -1, 7, 0.5, 0.9)),
+            ].map((s) => ({ ...s, oosResult: makeBacktestResult(-10, -1, 8, 0.5, 0.9) })),
+        });
+        expect(collapsed.verdict).to.equal("fail");
+        expect(collapsed.profitableSymbols).to.equal(0);
+
+        // Too few OOS-active symbols -> inconclusive
+        const thin = computeUniverseOosAggregate({
+            isProfitableActiveRatio: 0.7,
+            minActiveSymbols: 5,
+            symbols: [
+                makeSymbol("A", "profitable", makeBacktestResult(10, 1, 8, 0.5, 1.4)),
+            ].map((s) => ({ ...s, oosResult: makeBacktestResult(10, 1, 8, 0.5, 1.4) })),
+        });
+        expect(thin.verdict).to.equal("inconclusive");
     });
 });
 

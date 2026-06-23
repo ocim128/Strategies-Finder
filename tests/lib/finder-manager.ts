@@ -20,13 +20,33 @@ import { FinderUI } from "./finder/finder-ui";
 import {
 	buildFinderOptions,
 	buildFinderUniverseOptions,
+	computeFinderOosVerdict,
 	normalizeFinderDataSlice,
 	resolveFinderPolymarketExitMode,
+	resolveOosDataSlice,
 	sliceFinderDataWindow,
 } from "./finder/finder-manager-logic";
 import { sortFinderResults } from "./finder/finder-engine";
-import { mergeFinderRiskParamsIntoBacktestSettings } from "./finder/finder-runner-core";
-import { sortFinderUniverseCandidates } from "./finder/finder-universe-metrics";
+import {
+	mergeFinderRiskParamsIntoBacktestSettings,
+	normalizeFinderCandidateParams,
+	resolveFinderCandidateBacktestSettings,
+	resolveFinderRiskOverrides,
+} from "./finder/finder-runner-core";
+import {
+	generateSignalsForJob,
+	runStrategyBacktest,
+	type ParamJob,
+} from "./finder/finder-runner-shared";
+import { withExitStrategyBaseParams, splitExitStrategyParams } from "./finder/exit-strategy-param-prefix";
+import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
+import { precomputeIndicators, runBacktest } from "./strategies/index";
+import {
+	computeUniverseOosAggregate,
+	computeUniverseSymbolOosVerdict,
+	sortFinderUniverseCandidates,
+} from "./finder/finder-universe-metrics";
+import { executeBacktest, resolveExecutorBacktestSettings } from "./backtest-executor";
 import {
 	buildFinderDiagnostics,
 	buildCompactFinderDiagnostics,
@@ -56,10 +76,12 @@ import type {
 	FinderResult,
 	FinderUniverseCandidate,
 	FinderUniverseMetric,
+	FinderUniverseSymbolMetrics,
 	FinderFailureDiagnostics,
 	FinderStrategyDiagnostics,
 } from './types/finder';
-import { isSmartTradeSizingMode } from "./types/backtest";
+import { isSmartTradeSizingMode, type CapitalSettings } from "./types/backtest";
+import type { BacktestResult, BacktestSettings } from "./types/strategies";
 import { buildSyntheticPairFromLegs, deriveSyntheticSymbol, pickSourceInterval } from "../scripts/lib/synthetic-pair";
 import { SYNTHETIC_TARGET_BARS, DATA_CHART_TOTAL_LIMIT } from "./data/constants";
 
@@ -168,6 +190,8 @@ type FinderPersistedUiState = {
 	polymarketMinScoredPredictions: number;
 	polymarketLockOffset: boolean;
 	polymarketAfterTakeProfitOnly: boolean;
+	/** IS/OOS gate toggle (only effective with a half data window). */
+	oosValidationEnabled: boolean;
 	universeSymbolsText: string;
 	universeMinActiveSymbols: number;
 	universeMinTotalTrades: number;
@@ -207,6 +231,7 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	polymarketMinScoredPredictions: 100,
 	polymarketLockOffset: false,
 	polymarketAfterTakeProfitOnly: false,
+	oosValidationEnabled: false,
 	universeSymbolsText: "",
 	universeMinActiveSymbols: 2,
 	universeMinTotalTrades: 40,
@@ -378,6 +403,7 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		polymarketMinScoredPredictions: Math.round(normalizeNumber(source.polymarketMinScoredPredictions, DEFAULT_FINDER_UI_STATE.polymarketMinScoredPredictions, 0)),
 		polymarketLockOffset: source.polymarketLockOffset === true,
 		polymarketAfterTakeProfitOnly: source.polymarketAfterTakeProfitOnly === true,
+		oosValidationEnabled: source.oosValidationEnabled === true,
 		universeSymbolsText: typeof source.universeSymbolsText === "string" ? source.universeSymbolsText : "",
 		universeMinActiveSymbols: minActiveSymbols,
 		universeMinTotalTrades: minTotalTrades,
@@ -770,6 +796,7 @@ export class FinderManager {
 		dom.finderPolymarketMinScored.value = String(this.uiState.polymarketMinScoredPredictions);
 		dom.finderPolymarketLockOffset.checked = this.uiState.polymarketLockOffset;
 		dom.finderPolymarketAfterTakeProfitOnly.checked = this.uiState.polymarketAfterTakeProfitOnly;
+		dom.finderOosValidationToggle.checked = this.uiState.oosValidationEnabled;
 		dom.finderUniverseSymbols.value = this.uiState.universeSymbolsText;
 		dom.finderUniverseMinActiveSymbols.value = String(this.uiState.universeMinActiveSymbols);
 		dom.finderUniverseMinTotalTrades.value = String(this.uiState.universeMinTotalTrades);
@@ -829,7 +856,16 @@ export class FinderManager {
 		this.initTradeFilterUI();
 		this.initPolymarketUI();
 		this.initFinderSettingsPersistenceUI();
+		this.initOosValidationUI();
 		this.applyScopeUi();
+	}
+
+	private initOosValidationUI(): void {
+		const dom = this.getDom();
+		const refresh = () => this.syncOosValidationControlState();
+		dom.finderDataSlice.addEventListener('change', refresh);
+		dom.finderPolymarketToggle.addEventListener('change', refresh);
+		refresh();
 	}
 
 	private initSortingUI(): void {
@@ -1102,6 +1138,24 @@ export class FinderManager {
 		setVisible("finderBlockBadge", !universeScope && Boolean(state.blockRange));
 		this.setTradeFilterControlsEnabled(this.isTradeFilterControlsEnabled());
 		this.updateTimingSortControlState();
+		this.syncOosValidationControlState();
+	}
+
+	/**
+	 * Keeps the OOS Validation toggle visually + functionally in step with the
+	 * conditions it depends on. OOS only applies to half data windows and is
+	 * inert under Polymarket scoring, so the toggle is disabled otherwise to
+	 * make the silent-ignore obvious (the prior behavior silently dropped the
+	 * flag, which made it impossible to tell whether OOS was active).
+	 */
+	private syncOosValidationControlState(): void {
+		const dom = this.getDom();
+		const dataSlice = normalizeFinderDataSlice(dom.finderDataSlice.value);
+		const halfWindowActive = dataSlice === 'half_oldest' || dataSlice === 'half_newest';
+		const polymarketOn = dom.finderPolymarketToggle.checked;
+		const applicable = halfWindowActive && !polymarketOn;
+		dom.finderOosValidationToggle.disabled = !applicable;
+		dom.finderOosValidationRow.classList.toggle('is-disabled', !applicable);
 	}
 
 	private initTradeFilterUI(): void {
@@ -1161,6 +1215,7 @@ export class FinderManager {
 			dom.finderPolymarketMinScored,
 			dom.finderPolymarketLockOffset,
 			dom.finderPolymarketAfterTakeProfitOnly,
+			dom.finderOosValidationToggle,
 		].forEach((element) => {
 			element.addEventListener("input", persist);
 			element.addEventListener("change", persist);
@@ -1198,6 +1253,7 @@ export class FinderManager {
 		));
 		this.uiState.polymarketLockOffset = dom.finderPolymarketLockOffset.checked;
 		this.uiState.polymarketAfterTakeProfitOnly = dom.finderPolymarketAfterTakeProfitOnly.checked;
+		this.uiState.oosValidationEnabled = dom.finderOosValidationToggle.checked;
 		this.saveUiState();
 	}
 
@@ -1662,10 +1718,20 @@ export class FinderManager {
 		);
 
 		const sortedResults = sortFinderResults(output.results, options.sortPriority);
-		this.setLatestResults({ scope: 'current_chart', results: sortedResults });
+		const oosReport = await this.applyOosValidationIfNeeded({
+			results: sortedResults,
+			blockSlicedData,
+			selectedStrategies,
+			settings,
+			capitalSettings,
+			options,
+			startTime,
+		});
+		const finalResults = oosReport?.filtered ?? sortedResults;
+		this.setLatestResults({ scope: 'current_chart', results: finalResults });
 		this.latestDiagnostics = output.diagnostics ?? this.buildFallbackDiagnostics({
 			options,
-			results: sortedResults,
+			results: finalResults,
 			selectedStrategies,
 			ohlcvData,
 			elapsedMs: performance.now() - startTime,
@@ -1676,9 +1742,290 @@ export class FinderManager {
 		this.ui.renderRandomBenchmark(options.mode, output.randomBenchmark);
 
 		if (!this.isCancelled) {
-			this.setStatus(`Finder complete. ${sortedResults.length} result${sortedResults.length === 1 ? '' : 's'} in ${Math.round(performance.now() - startTime)}ms.`);
+			const elapsed = Math.round(performance.now() - startTime);
+			if (oosReport && oosReport.removedCount > 0) {
+				this.setStatus(
+					`Finder complete. ${finalResults.length} result${finalResults.length === 1 ? '' : 's'}`
+					+ ` (${oosReport.removedCount} filtered by OOS gate) in ${elapsed}ms.`
+				);
+			} else {
+				this.setStatus(`Finder complete. ${finalResults.length} result${finalResults.length === 1 ? '' : 's'} in ${elapsed}ms.`);
+			}
 		}
 		return true;
+	}
+
+	/**
+	 * Out-of-sample gate. After the normal Finder ranking produces its top-N survivors,
+	 * each survivor is re-backtested on the complementary half of the data window. Any
+	 * candidate that degrades (netProfit < 0 or profitFactor < 1.0) is filtered out;
+	 * inconclusive OOS runs (too few trades) are kept and flagged. Returns null when the
+	 * gate is not applicable (toggle off, non-half window, polymarket mode, cancelled).
+	 */
+	private async applyOosValidationIfNeeded(args: {
+		results: FinderResult[];
+		blockSlicedData: OHLCVData[];
+		selectedStrategies: FinderSelectedStrategy[];
+		settings: BacktestSettings;
+		capitalSettings: CapitalSettings;
+		options: FinderOptions;
+		startTime: number;
+	}): Promise<{ filtered: FinderResult[]; removedCount: number } | null> {
+		const { results, blockSlicedData, selectedStrategies, settings, capitalSettings, options } = args;
+		const dataSlice = options.dataSlice ?? 'all';
+		if (!options.oosValidationEnabled) return null;
+		const oosSlice = resolveOosDataSlice(dataSlice);
+		if (!oosSlice) return null;
+		if (results.length === 0) return { filtered: results, removedCount: 0 };
+
+		const oosWindowData = sliceFinderDataWindow(blockSlicedData, oosSlice);
+		const oosData = buildFinderEvaluationData(oosWindowData, state.currentInterval, settings);
+		if (oosData.length === 0) {
+			return { filtered: results, removedCount: 0 };
+		}
+
+		const strategyByKey = new Map(selectedStrategies.map((item) => [item.key, item.strategy]));
+		const exitStrategyByKey = new Map((this.resolveExitStrategyCandidates(options, selectedStrategies) ?? []).map((item) => [item.key, item.strategy]));
+		const minTrades = options.tradeFilterEnabled ? options.minTrades : 0;
+		const precomputed = precomputeIndicators(oosData, settings);
+		const rustSettings = sanitizeBacktestSettingsForRust(settings);
+
+		this.setProgress(true, 0, 'Validating survivors out-of-sample...');
+
+		for (let candidateIndex = 0; candidateIndex < results.length; candidateIndex += 1) {
+			if (this.isCancelled) break;
+			const candidate = results[candidateIndex]!;
+			this.setProgress(
+				true,
+				(candidateIndex / results.length) * 100,
+				`OOS validation ${candidateIndex + 1}/${results.length}: ${candidate.name}`
+			);
+			const strategy = strategyByKey.get(candidate.key);
+			if (!strategy) {
+				candidate.oosVerdict = 'inconclusive';
+				continue;
+			}
+			try {
+				const exitStrategy = candidate.exitStrategyKey
+					? exitStrategyByKey.get(candidate.exitStrategyKey)
+					: undefined;
+				const combinedParams = withExitStrategyBaseParams(candidate.params, candidate.exitStrategyParams ?? {});
+				const normalizedParams = normalizeFinderCandidateParams(
+					strategy,
+					combinedParams,
+					exitStrategy?.normalizeParams ? { normalizeExitParams: exitStrategy.normalizeParams } : undefined
+				);
+				const { backtestSettings } = resolveFinderRiskOverrides(settings, rustSettings, normalizedParams, options);
+				const job: ParamJob = {
+					id: 0,
+					key: candidate.key,
+					name: candidate.name,
+					params: normalizedParams,
+					backtestSettings,
+					rustBacktestSettings: sanitizeBacktestSettingsForRust(backtestSettings),
+					strategy,
+					...(candidate.exitStrategyKey ? { exitStrategy, exitStrategyKey: candidate.exitStrategyKey } : {}),
+				};
+				const signals = generateSignalsForJob(job, oosData, state.currentInterval, undefined, settings);
+				const oosResult = runStrategyBacktest({
+					strategy,
+					data: oosData,
+					signals,
+					params: normalizedParams,
+					capitalSettings,
+					backtestSettings: resolveFinderCandidateBacktestSettings(backtestSettings, undefined),
+					backtestFn: runBacktest,
+					precomputed,
+					...(exitStrategy ? { exitStrategy } : {}),
+				});
+				candidate.oosResult = oosResult;
+				candidate.oosVerdict = computeFinderOosVerdict({
+					oosNetProfit: oosResult.netProfit,
+					oosProfitFactor: oosResult.profitFactor,
+					oosTotalTrades: oosResult.totalTrades,
+					minTrades,
+				});
+			} catch {
+				candidate.oosResult = undefined;
+				candidate.oosVerdict = 'inconclusive';
+			}
+			await this.taskYielder.yieldControl();
+		}
+
+		const filtered = results.filter((candidate) => candidate.oosVerdict !== 'fail');
+		return { filtered, removedCount: results.length - filtered.length };
+	}
+
+	/**
+	 * Per-symbol OOS pass for Symbol Universe mode. For each survivor candidate,
+	 * re-runs the strategy on the complementary half of every symbol's data and
+	 * attaches a per-symbol OOS result/verdict plus a strategy-level aggregate.
+	 * Candidates whose OOS breadth collapses are filtered out. Returns the number
+	 * removed; returns 0 when the gate is not applicable (toggle off, non-half
+	 * window, polymarket mode) or no survivors exist.
+	 */
+	private async applyUniverseOosValidationIfNeeded(args: {
+		results: FinderUniverseCandidate[];
+		selectedStrategies: FinderSelectedStrategy[];
+		settings: BacktestSettings;
+		options: FinderOptions;
+		startTime: number;
+	}): Promise<number> {
+		const { results, selectedStrategies, settings, options } = args;
+		if (!options.oosValidationEnabled) return 0;
+		const oosSlice = resolveOosDataSlice(options.dataSlice ?? 'all');
+		if (!oosSlice) return 0;
+		if (results.length === 0) return 0;
+
+		const strategyByKey = new Map(selectedStrategies.map((item) => [item.key, item.strategy]));
+		const minActiveSymbols = options.universe?.minActiveSymbols ?? 1;
+		// Per-symbol OOS trade floor: a small constant so symbols with a handful of
+		// OOS trades are inconclusive rather than auto-failing. Mirrors the IS
+		// intent without reusing the cross-strategy minTrades knob.
+		const perSymbolMinTrades = 5;
+		// Hoist per-run constants out of the candidate loop.
+		const rustSettings = sanitizeBacktestSettingsForRust(settings);
+		const capitalSettings = backtestService.getCapitalSettings();
+		const runNowSec = Math.floor(Date.now() / 1000);
+
+		this.setProgress(true, 0, 'Validating universe survivors out-of-sample...');
+		const symbolDataCache = new Map<string, OHLCVData[]>();
+
+		for (let candidateIndex = 0; candidateIndex < results.length; candidateIndex += 1) {
+			if (this.isCancelled) break;
+			const candidate = results[candidateIndex]!;
+			this.setProgress(
+				true,
+				(candidateIndex / results.length) * 100,
+				`OOS validation ${candidateIndex + 1}/${results.length}: ${candidate.strategyName}`
+			);
+
+			const strategy = strategyByKey.get(candidate.strategyKey);
+			if (!strategy) {
+				candidate.oosAggregate = {
+					verdict: 'inconclusive',
+					activeSymbols: 0,
+					profitableSymbols: 0,
+					profitableActiveRatio: 0,
+					worstNetProfit: 0,
+				};
+				continue;
+			}
+			// Match the universe IS path: split exit params out and inject the exit
+			// descriptor into per-candidate backtest settings (see finder-runner-universe.ts).
+			const combinedParams = withExitStrategyBaseParams(candidate.params, candidate.exitStrategyParams ?? {});
+			const { entryParams } = candidate.exitStrategyKey
+				? splitExitStrategyParams(combinedParams)
+				: { entryParams: combinedParams };
+			const { backtestSettings: riskAdjustedSettings } = resolveFinderRiskOverrides(settings, rustSettings, combinedParams, options);
+			const oosBacktestSettings: BacktestSettings = candidate.exitStrategyKey
+				? {
+					...riskAdjustedSettings,
+					disableSignalExits: true,
+					exitStrategyOverrideEnabled: true,
+					exitStrategyKey: candidate.exitStrategyKey,
+					exitStrategyParams: { ...(candidate.exitStrategyParams ?? {}) },
+				}
+				: riskAdjustedSettings;
+			const preResolvedSettings = resolveExecutorBacktestSettings(
+				{ ...(oosBacktestSettings as Record<string, unknown>), interval: state.currentInterval } as BacktestSettings,
+				state.currentInterval,
+			);
+
+			for (const symbolResult of candidate.symbols) {
+				if (this.isCancelled) break;
+				if (symbolResult.status === 'load_failed' || symbolResult.status === 'run_failed') {
+					continue;
+				}
+				let oosData = symbolDataCache.get(symbolResult.symbol);
+				if (oosData === undefined) {
+					try {
+						const full = await this.loadUniverseDataset(symbolResult.symbol, state.currentInterval);
+						oosData = sliceFinderDataWindow(full, oosSlice);
+					} catch {
+						oosData = [];
+					}
+					symbolDataCache.set(symbolResult.symbol, oosData);
+				}
+				if (oosData.length === 0) continue;
+
+				try {
+					const output = await executeBacktest({
+						ohlcvData: oosData,
+						interval: state.currentInterval,
+						primarySymbol: symbolResult.symbol,
+						strategyKey: candidate.strategyKey,
+						strategy,
+						strategyParams: entryParams,
+						backtestSettings: oosBacktestSettings,
+						capitalSettings,
+						preResolvedSettings,
+						context: {
+							blockRange: null,
+							annotatePolymarket: false,
+							engineMode: 'auto',
+							nowSec: runNowSec,
+						},
+						backtestRunOptions: {
+							includeAdvancedAnalytics: false,
+							omitEquityCurve: true,
+							skipDrawdown: true,
+							skipResultPostProcessing: true,
+						},
+					});
+					const oosMetrics = this.backtestResultToUniverseMetrics(output.result);
+					symbolResult.oosResult = oosMetrics;
+					symbolResult.oosVerdict = computeUniverseSymbolOosVerdict({
+						oosNetProfit: oosMetrics.netProfit,
+						oosProfitFactor: oosMetrics.profitFactor,
+						oosTotalTrades: oosMetrics.totalTrades,
+						minTrades: perSymbolMinTrades,
+					});
+				} catch {
+					symbolResult.oosResult = undefined;
+					symbolResult.oosVerdict = 'inconclusive';
+				}
+				await this.taskYielder.yieldControl();
+			}
+
+			candidate.oosAggregate = computeUniverseOosAggregate({
+				symbols: candidate.symbols,
+				isProfitableActiveRatio: candidate.profitableActiveRatio,
+				minActiveSymbols,
+			});
+		}
+
+		const initialCount = results.length;
+		const survivors = results.filter((candidate) => candidate.oosAggregate?.verdict !== 'fail');
+		const removedCount = initialCount - survivors.length;
+		// Always re-publish + re-render after the OOS pass: even when nothing is
+		// filtered out, per-symbol oosResult/oosAggregate were attached and must
+		// be painted. Without this the OOS chips/badges never appear.
+		if (removedCount > 0) {
+			results.length = 0;
+			results.push(...survivors);
+		}
+		this.setLatestResults({ scope: 'symbol_universe', results: [...results] });
+		this.renderLatestResults();
+		return removedCount;
+	}
+
+	private backtestResultToUniverseMetrics(result: BacktestResult): FinderUniverseSymbolMetrics {
+		return {
+			netProfit: result.netProfit,
+			netProfitPercent: result.netProfitPercent,
+			expectancy: result.expectancy,
+			avgTrade: result.avgTrade,
+			winRate: result.winRate,
+			profitFactor: result.profitFactor,
+			totalTrades: result.totalTrades,
+			maxDrawdownPercent: result.maxDrawdownPercent,
+			winningTrades: result.winningTrades,
+			losingTrades: result.losingTrades,
+			avgWin: result.avgWin,
+			avgLoss: result.avgLoss,
+			sharpeRatio: result.sharpeRatio,
+		};
 	}
 
 	private buildUniverseDataWindowDiagnostics(
@@ -1821,6 +2168,19 @@ export class FinderManager {
 			}
 		}
 
+		// Per-symbol OOS pass on the finalized survivors. Loads the complementary
+		// half of each symbol's data (cache hit on universeDatasetCache) and
+		// re-runs each survivor strategy via executeBacktest. Candidates whose
+		// OOS breadth collapses are filtered out.
+		const universeResults = sortFinderUniverseCandidates(allResults, options.universe.sortPriority).slice(0, options.topN);
+		const oosRemovedCount = await this.applyUniverseOosValidationIfNeeded({
+			results: universeResults,
+			selectedStrategies,
+			settings,
+			options,
+			startTime,
+		});
+
 		this.latestDiagnostics = diagnosticsParts.length === 0
 			? null
 			: diagnosticsParts.length === 1
@@ -1843,6 +2203,9 @@ export class FinderManager {
 				`${selectedStrategies.length} strateg${selectedStrategies.length === 1 ? 'y' : 'ies'}`,
 				`${maxLoadedSymbols}/${totalSymbols} symbols loaded`,
 			];
+			if (oosRemovedCount > 0) {
+				segments.push(`${oosRemovedCount} filtered by OOS gate`);
+			}
 			if (failureCount > 0) {
 				segments.push(`${failureCount} load failure${failureCount === 1 ? '' : 's'}`);
 			}
@@ -1965,6 +2328,13 @@ export class FinderManager {
 				primarySort: normalizeFinderUniverseMetric(dom.finderUniverseSort.value, DEFAULT_FINDER_UI_STATE.universeSort),
 				secondarySort: normalizeFinderUniverseMetric(dom.finderUniverseSortSecondary.value, DEFAULT_FINDER_UI_STATE.universeSortSecondary),
 			});
+		}
+
+		// OOS gate: half-window only, not under polymarket scoring. Applies to
+		// both current_chart and symbol_universe scopes.
+		const oosWindowActive = dataSlice === 'half_oldest' || dataSlice === 'half_newest';
+		if (oosWindowActive && !polymarketScoringEnabled) {
+			options.oosValidationEnabled = dom.finderOosValidationToggle.checked;
 		}
 
 		return options;

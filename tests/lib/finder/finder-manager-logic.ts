@@ -4,6 +4,7 @@ import type {
     FinderMode,
     FinderOptions,
     FinderDataSlice,
+    FinderOosVerdict,
     FinderUniverseMetric,
     FinderUniverseOptions,
     PolymarketFinderRankMode,
@@ -53,6 +54,7 @@ export interface FinderOptionsInput {
 
 export function normalizeFinderDataSlice(value: unknown): FinderDataSlice {
     return value === "1" || value === "2" || value === "3" || value === "4" || value === "5"
+        || value === "half_oldest" || value === "half_newest"
         ? value
         : "all";
 }
@@ -65,12 +67,49 @@ export function sliceFinderDataWindow<T>(data: readonly T[], dataSlice: FinderDa
         return [];
     }
 
+    if (dataSlice === "half_oldest") {
+        return data.slice(0, Math.floor(data.length / 2));
+    }
+    if (dataSlice === "half_newest") {
+        return data.slice(Math.floor(data.length / 2));
+    }
+
     const sliceIndex = Number(dataSlice) - 1;
     const start = Math.floor((sliceIndex * data.length) / 5);
     const end = dataSlice === "5"
         ? data.length
         : Math.floor(((sliceIndex + 1) * data.length) / 5);
     return data.slice(start, end);
+}
+
+/**
+ * Returns the data-slice value for the OOS (complementary) window, or null when
+ * OOS validation is not applicable to the given IS slice. Only half-windows have
+ * a well-defined single complementary half; fifth-windows do not.
+ */
+export function resolveOosDataSlice(dataSlice: FinderDataSlice): FinderDataSlice | null {
+    if (dataSlice === "half_oldest") return "half_newest";
+    if (dataSlice === "half_newest") return "half_oldest";
+    return null;
+}
+
+/**
+ * IS/OOS gate verdict. Pass requires non-negative OOS net profit and an OOS
+ * profit factor of at least 1.0. Returns `inconclusive` (not rejected) when the
+ * OOS run produced fewer trades than the IS minTrades floor.
+ */
+export function computeFinderOosVerdict(args: {
+    oosNetProfit: number;
+    oosProfitFactor: number;
+    oosTotalTrades: number;
+    minTrades: number;
+}): FinderOosVerdict {
+    if (args.oosTotalTrades < Math.max(1, args.minTrades)) {
+        return "inconclusive";
+    }
+    return args.oosNetProfit >= 0 && args.oosProfitFactor >= 1.0
+        ? "pass"
+        : "fail";
 }
 
 export interface FinderUniverseOptionsInput {

@@ -3,9 +3,11 @@ import { describe, it } from "node:test";
 import {
     buildFinderOptions,
     buildFinderUniverseOptions,
+    computeFinderOosVerdict,
     resolveFinderPolymarketExitMode,
     resolveFinderSortPriority,
     resolveFinderUniverseSortPriority,
+    resolveOosDataSlice,
     sliceFinderDataWindow,
 } from "./lib/finder/finder-manager-logic";
 
@@ -16,6 +18,38 @@ describe("Finder manager logic", () => {
         expect(sliceFinderDataWindow(data, "1")).to.deep.equal(data.slice(0, 10_000));
         expect(sliceFinderDataWindow(data, "2")).to.deep.equal(data.slice(10_000, 20_000));
         expect(sliceFinderDataWindow(data, "5")).to.deep.equal(data.slice(40_000));
+    });
+
+    it("slices Finder data into halves with the newest half ending at the newest bar", () => {
+        const data = Array.from({ length: 50_000 }, (_, index) => index);
+
+        expect(sliceFinderDataWindow(data, "half_oldest")).to.deep.equal(data.slice(0, 25_000));
+        expect(sliceFinderDataWindow(data, "half_newest")).to.deep.equal(data.slice(25_000));
+    });
+
+    it("resolves the complementary OOS window only for half data slices", () => {
+        expect(resolveOosDataSlice("half_oldest")).to.equal("half_newest");
+        expect(resolveOosDataSlice("half_newest")).to.equal("half_oldest");
+        expect(resolveOosDataSlice("all")).to.be.null;
+        expect(resolveOosDataSlice("1")).to.be.null;
+        expect(resolveOosDataSlice("5")).to.be.null;
+    });
+
+    it("passes OOS verdict only when OOS is profitable with enough trades", () => {
+        // Profitable + enough trades -> pass
+        expect(computeFinderOosVerdict({ oosNetProfit: 100, oosProfitFactor: 1.5, oosTotalTrades: 40, minTrades: 40 })).to.equal("pass");
+        // Boundary: exactly zero net profit and PF 1.0 still passes
+        expect(computeFinderOosVerdict({ oosNetProfit: 0, oosProfitFactor: 1.0, oosTotalTrades: 40, minTrades: 40 })).to.equal("pass");
+
+        // Degraded -> fail
+        expect(computeFinderOosVerdict({ oosNetProfit: -50, oosProfitFactor: 0.9, oosTotalTrades: 40, minTrades: 40 })).to.equal("fail");
+        // Profitable but PF below 1.0 -> fail
+        expect(computeFinderOosVerdict({ oosNetProfit: 10, oosProfitFactor: 0.95, oosTotalTrades: 40, minTrades: 40 })).to.equal("fail");
+
+        // Too few OOS trades -> inconclusive regardless of profitability
+        expect(computeFinderOosVerdict({ oosNetProfit: -1000, oosProfitFactor: 0.3, oosTotalTrades: 5, minTrades: 40 })).to.equal("inconclusive");
+        // Zero-trade floor is clamped to 1 so at least one trade is required for pass/fail
+        expect(computeFinderOosVerdict({ oosNetProfit: 100, oosProfitFactor: 2.0, oosTotalTrades: 0, minTrades: 0 })).to.equal("inconclusive");
     });
 
     it("keeps full Finder data when no fifth slice is selected", () => {

@@ -4,7 +4,7 @@ import {
     formatProfitFactor,
     formatSignedCompactDollar,
 } from "../ui-formatters";
-import type { FinderMode, FinderRandomBenchmark, FinderResult, FinderUniverseCandidate } from "../types/finder";
+import type { FinderMode, FinderOosVerdict, FinderRandomBenchmark, FinderResult, FinderUniverseCandidate, FinderUniverseOosAggregate, FinderUniverseSymbolMetrics } from "../types/finder";
 import type { BacktestResult, StrategyParams, Time } from "../types/strategies";
 import { getFinderSelectionResult } from "./finder-engine";
 import { computePerformanceVerdict, computeStrategyVerdict } from "./finder-universe-metrics";
@@ -159,6 +159,10 @@ export class FinderUI {
                 }
                 metrics.appendChild(this.createMetricChip(`DD ${result.maxDrawdownPercent.toFixed(2)}%`));
                 metrics.appendChild(this.createMetricChip(`Trades ${result.totalTrades}`));
+                if (item.oosResult && item.oosVerdict) {
+                    const oos = item.oosResult;
+                    metrics.appendChild(this.createOosMetricChip(oos.netProfit, oos.profitFactor, oos.totalTrades, item.oosVerdict));
+                }
                 if (item.endpointAdjusted) {
                     metrics.appendChild(this.createMetricChip(this.formatSelectionSummary(result)));
                     metrics.appendChild(this.createMetricChip(`Endpoint bias removed (${item.endpointRemovedTrades})`));
@@ -207,6 +211,9 @@ export class FinderUI {
             metrics.appendChild(this.createMetricChip(`Med PF ${formatProfitFactor(item.medianProfitFactor)}`));
             metrics.appendChild(this.createMetricChip(`Worst ${this.formatCurrency(item.worstNetProfit)}`));
             metrics.appendChild(this.createMetricChip(`Trades ${item.totalTrades}`));
+            if (item.oosAggregate) {
+                metrics.appendChild(this.createUniverseOosChip(item.oosAggregate));
+            }
 
             const details = document.createElement("details");
             const summary = document.createElement("summary");
@@ -245,6 +252,9 @@ export class FinderUI {
                 badge.className = `finder-verdict ${verdict.cssClass}`;
                 badge.textContent = verdict.label;
                 line.appendChild(badge);
+                if (symbolResult.oosVerdict && symbolResult.oosResult) {
+                    line.appendChild(this.createUniverseSymbolOosBadge(symbolResult.oosVerdict, symbolResult.oosResult));
+                }
 
                 const textParts: string[] = [symbolResult.symbol];
                 textParts.push(this.formatUniverseStatus(symbolResult.status));
@@ -352,6 +362,37 @@ export class FinderUI {
     private createMetricChip(text: string): HTMLSpanElement {
         const span = document.createElement("span");
         span.textContent = text;
+        return span;
+    }
+
+    private createOosMetricChip(netProfit: number, profitFactor: number, totalTrades: number, verdict: FinderOosVerdict): HTMLSpanElement {
+        const span = document.createElement("span");
+        span.className = `finder-oos finder-oos-${verdict}`;
+        const label = verdict === "pass" ? "OOS ✓"
+            : verdict === "fail" ? "OOS ✗"
+            : "OOS ?";
+        span.textContent = `${label} ${this.formatCurrency(netProfit)} • PF ${formatProfitFactor(profitFactor)} • ${totalTrades}`;
+        return span;
+    }
+
+    private createUniverseOosChip(aggregate: FinderUniverseOosAggregate): HTMLSpanElement {
+        const span = document.createElement("span");
+        span.className = `finder-oos finder-oos-${aggregate.verdict}`;
+        const label = aggregate.verdict === "pass" ? "OOS ✓"
+            : aggregate.verdict === "fail" ? "OOS ✗"
+            : "OOS ?";
+        const ratio = (aggregate.profitableActiveRatio * 100).toFixed(1);
+        span.textContent = `${label} OOS ${aggregate.profitableSymbols}/${aggregate.activeSymbols} (${ratio}%)`;
+        return span;
+    }
+
+    private createUniverseSymbolOosBadge(verdict: FinderOosVerdict, oos: FinderUniverseSymbolMetrics): HTMLSpanElement {
+        const span = document.createElement("span");
+        span.className = `finder-oos-badge finder-oos-badge-${verdict}`;
+        const mark = verdict === "pass" ? "✓"
+            : verdict === "fail" ? "✗"
+            : "?";
+        span.textContent = `OOS ${mark} ${this.formatCurrency(oos.netProfit)} • PF ${formatProfitFactor(oos.profitFactor)}`;
         return span;
     }
 

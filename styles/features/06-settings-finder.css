@@ -840,6 +840,74 @@
 
 
 
+.finder-oos {
+
+    font-family: var(--font-family-mono);
+
+    font-weight: var(--font-weight-semibold);
+
+    padding: 1px 6px;
+
+    border-radius: var(--radius-xs);
+
+    border: 1px solid var(--border-color);
+
+}
+
+
+
+.finder-oos-badge {
+
+    font-family: var(--font-family-mono);
+
+    font-size: var(--font-size-xs);
+
+    margin-left: 4px;
+
+    padding: 0 4px;
+
+    border-radius: var(--radius-xs);
+
+    border: 1px solid var(--border-color);
+
+}
+
+
+
+.finder-oos-pass,
+
+.finder-oos-badge-pass {
+
+    color: var(--green);
+
+    border-color: var(--green);
+
+}
+
+
+
+.finder-oos-fail,
+
+.finder-oos-badge-fail {
+
+    color: var(--red);
+
+    border-color: var(--red);
+
+}
+
+
+
+.finder-oos-inconclusive,
+
+.finder-oos-badge-inconclusive {
+
+    color: var(--text-tertiary);
+
+}
+
+
+
 .finder-apply {
 
     width: 100%;

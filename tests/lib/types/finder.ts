@@ -5,7 +5,14 @@ import type { PolymarketExitMode } from "../polymarket-exit-mode";
 export type FinderMode = 'default' | 'grid' | 'random' | 'genetic';
 export type PolymarketFinderRankMode = 'balanced' | 'accuracy' | 'accuracyTrades' | 'volume' | 'expectancy' | 'expectancyTrades' | 'profitFactor' | 'profitFactorTrades' | 'sizedNet';
 export type FinderScope = 'current_chart' | 'symbol_universe';
-export type FinderDataSlice = 'all' | '1' | '2' | '3' | '4' | '5';
+export type FinderDataSlice = 'all' | '1' | '2' | '3' | '4' | '5' | 'half_oldest' | 'half_newest';
+/**
+ * Out-of-sample validation verdict for the complementary data window.
+ * - `pass`: OOS net profit >= 0 AND profit factor >= 1.0
+ * - `fail`: OOS evaluated with enough trades but degraded below the gate
+ * - `inconclusive`: OOS produced fewer trades than the IS minTrades floor
+ */
+export type FinderOosVerdict = 'pass' | 'fail' | 'inconclusive';
 export type FinderMetric =
     | 'netProfit'
     | 'profitFactor'
@@ -95,6 +102,14 @@ export interface FinderOptions {
      * generation merges these with the entry strategy's params using an `_exit__` prefix.
      */
     exitStrategyBaseParams?: StrategyParams;
+    /**
+     * When true, after IS ranking the complementary half of the data window is
+     * backtested for each top-N survivor and any that degrade are filtered out.
+     * Honored for both current_chart and symbol_universe scopes; only effective
+     * when dataSlice is half_oldest or half_newest, and inert under Polymarket
+     * scoring (readOptions never sets it otherwise).
+     */
+    oosValidationEnabled?: boolean;
     universe?: FinderUniverseOptions;
 }
 
@@ -122,6 +137,14 @@ export interface FinderResult {
     endpointAdjusted: boolean;
     endpointRemovedTrades: number;
     polymarketEval?: PolymarketEvalResult;
+    /**
+     * Out-of-sample backtest on the complementary data window. Present only when
+     * OOS validation ran for this candidate. Used for the IS/OOS gate and the
+     * OOS metric chip / verdict badge on the result row.
+     */
+    oosResult?: BacktestResult;
+    /** OOS gate verdict. Present iff oosResult is present. */
+    oosVerdict?: FinderOosVerdict;
 }
 
 export type FinderUniverseSymbolStatus =
@@ -165,6 +188,26 @@ export interface FinderUniverseSymbolResult {
     directionalLookbackBars?: number;
     result?: FinderUniverseSymbolMetrics;
     error?: string;
+    /**
+     * Out-of-sample metrics on the complementary data window. Present only when
+     * OOS validation ran for this symbol. Drives the per-symbol OOS badge.
+     */
+    oosResult?: FinderUniverseSymbolMetrics;
+    /** Per-symbol OOS gate verdict. Present iff oosResult is present. */
+    oosVerdict?: FinderOosVerdict;
+}
+
+/**
+ * Strategy-level OOS summary attached to a FinderUniverseCandidate when OOS
+ * validation ran. The verdict aggregates per-symbol OOS outcomes; the ratios
+ * let the renderer show how much of the IS edge survived out-of-sample.
+ */
+export interface FinderUniverseOosAggregate {
+    verdict: FinderOosVerdict;
+    activeSymbols: number;
+    profitableSymbols: number;
+    profitableActiveRatio: number;
+    worstNetProfit: number;
 }
 
 export interface FinderUniverseCandidate {
@@ -193,6 +236,12 @@ export interface FinderUniverseCandidate {
     exitStrategyName?: string;
     /** Sampled exit-strategy params (prefix already stripped), when Exit Strategy Override is active. */
     exitStrategyParams?: StrategyParams;
+    /**
+     * Strategy-level OOS summary across all symbols. Present only when OOS
+     * validation ran for this candidate. A `fail` verdict is filtered out of
+     * the survivor list.
+     */
+    oosAggregate?: FinderUniverseOosAggregate;
 }
 
 export type FinderLatestResults =
