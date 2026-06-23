@@ -187,6 +187,12 @@ export interface FinderUniverseCandidate {
     bestNetProfit: number;
     evaluationStoppedEarly?: boolean;
     stoppedReason?: FinderUniverseEarlyStopReason;
+    /** Registry key of the sampled exit-strategy lib, when Exit Strategy Override is active. */
+    exitStrategyKey?: string;
+    /** Display name of the sampled exit-strategy lib, when Exit Strategy Override is active. */
+    exitStrategyName?: string;
+    /** Sampled exit-strategy params (prefix already stripped), when Exit Strategy Override is active. */
+    exitStrategyParams?: StrategyParams;
 }
 
 export type FinderLatestResults =

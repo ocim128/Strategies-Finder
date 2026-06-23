@@ -462,4 +462,83 @@ describe("Finder universe runner", () => {
         expect(output.diagnostics?.counts.processedRuns).to.equal(8 + 5); // 8 for threshold=1, 5 for threshold=10
         expect(output.diagnostics?.counts.skippedRuns).to.equal(3);
     });
+
+    it("samples an exit strategy lib per candidate and surfaces it on the survivor row", async () => {
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP", makeCandles([100, 105, 110, 115, 120])],
+            ["UP2", makeCandles([100, 104, 108, 112, 116])],
+        ]);
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            randomSeed: 1234,
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 3,
+            rangePercent: 35,
+            maxRuns: 20,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            exitStrategyOverrideEnabled: true,
+            universe: {
+                symbols: ["UP", "UP2"],
+                minActiveSymbols: 1,
+                minTotalTrades: 1,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["profitableActiveRatio", "medianExpectancy", "worstNetProfit"],
+            },
+        };
+
+        const output = await runFinderUniverseExecution(
+            {
+                interval: "5m",
+                options,
+                settings: { ...settings, disableSignalExits: true },
+                capitalSettings,
+                selectedStrategy: {
+                    key: "universe_test",
+                    name: testStrategy.name,
+                    strategy: testStrategy,
+                },
+                loadDataset: async (symbol) => datasets.get(symbol) ?? [],
+                generateParamSets: (defaultParams) => [defaultParams],
+                exitStrategyCandidates: [
+                    {
+                        key: "exit_alpha",
+                        name: "Exit Alpha",
+                        strategy: {
+                            name: "Exit Alpha",
+                            description: "Sampled exit lib.",
+                            defaultParams: { exitLookback: 2 },
+                            paramLabels: { exitLookback: "Exit Lookback" },
+                            execute(data) {
+                                return [
+                                    { time: data[0]!.time, type: "sell", price: data[0]!.close },
+                                ];
+                            },
+                        },
+                    },
+                ],
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                yieldControl: async () => {},
+                isCancelled: () => false,
+            }
+        );
+
+        // The survivor must carry the sampled exit strategy identity so the UI row
+        // can show which lib was used, and Apply can write the override settings.
+        expect(output.results.length).to.be.greaterThan(0);
+        const survivor = output.results[0]!;
+        expect(survivor.exitStrategyKey).to.equal("exit_alpha");
+        expect(survivor.exitStrategyName).to.equal("Exit Alpha");
+        expect(survivor.exitStrategyParams).to.exist;
+        expect(survivor.exitStrategyParams!.exitLookback).to.equal(2);
+        // Entry params on the candidate must stay clean of the `_exit__` prefix.
+        expect(Object.keys(survivor.params).some((key) => key.startsWith("_exit__"))).to.equal(false);
+    });
 });

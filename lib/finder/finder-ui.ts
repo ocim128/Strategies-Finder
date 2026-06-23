@@ -276,9 +276,28 @@ export class FinderUI {
                 paramsText: this.formatParams(item.params),
                 metrics,
                 details,
+                detailLines: this.formatUniverseExitStrategyDetail(item),
             }));
         });
         list.appendChild(fragment);
+    }
+
+    /**
+     * Renders the sampled Exit Strategy Override descriptor for a universe survivor
+     * row, mirroring the current-chart `formatDetailLines` shape. Returns an empty
+     * array when no exit strategy was sampled for this candidate.
+     */
+    private formatUniverseExitStrategyDetail(item: FinderUniverseCandidate): string[] {
+        if (!item.exitStrategyKey) return [];
+        const label = item.exitStrategyName
+            ? `${item.exitStrategyName} (${item.exitStrategyKey})`
+            : item.exitStrategyKey;
+        const exitParams = item.exitStrategyParams ? this.formatParams(item.exitStrategyParams) : "";
+        return [
+            exitParams
+                ? `Exit override: ${label} | ${exitParams}`
+                : `Exit override: ${label}`,
+        ];
     }
 
     public setProgress(active: boolean, percent: number, text: string): void {

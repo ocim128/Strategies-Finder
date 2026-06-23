@@ -4,6 +4,7 @@ import { mapWithConcurrencyLimit } from "../async-pool";
 import type { CrossSymbolDataFetcher } from "../cross-symbol-runtime";
 import { debugLogger } from "../debug-logger";
 import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
+import { createSeededRandom } from "../param-math-utils";
 import type { CapitalSettings } from "../types/backtest";
 import type {
     FinderOptions,
@@ -18,6 +19,7 @@ import type {
     BacktestResult,
     OHLCVData,
     Strategy,
+    StrategyParams,
     Time,
 } from "../types/strategies";
 import {
@@ -27,6 +29,7 @@ import {
     resolveFinderRiskOverrides,
     type FinderPreparedDataCache,
 } from "./finder-runner-core";
+import { withExitStrategyBaseParams, splitExitStrategyParams } from "./exit-strategy-param-prefix";
 import {
     addElapsed,
     buildFinderDiagnostics,
@@ -73,6 +76,8 @@ export interface FinderUniverseRunInput {
     loadDataset: (symbol: string, interval: string, signal?: AbortSignal) => Promise<OHLCVData[]>;
     getProvider?: (symbol: string) => string;
     generateParamSets: (defaultParams: Record<string, number>, options: FinderOptions) => Record<string, number>[];
+    /** Candidate exit strategies Finder may sample for Exit Strategy Override. */
+    exitStrategyCandidates?: FinderSelectedStrategy[];
 }
 
 export interface FinderUniverseRunCallbacks {
@@ -305,6 +310,95 @@ function passesUniverseFiltersFromCounts(
     return profitableActiveRatio >= universe.minProfitableActiveRatio;
 }
 
+/**
+ * A single universe evaluation plan: the combined entry+exit params to feed into
+ * `executeBacktest`, plus the sampled exit-strategy identity (when Exit Strategy
+ * Override is active) so the survivor row can show which lib was used.
+ */
+interface UniverseCandidatePlan {
+    params: StrategyParams;
+    exitStrategyKey?: string;
+    exitStrategyName?: string;
+    exitStrategyParams?: StrategyParams;
+}
+
+/**
+ * Build the per-candidate plan list for one selected entry strategy.
+ *
+ * When Exit Strategy Override is off (no candidates), this is just the entry
+ * strategy's normalized param sets wrapped in plans with no exit identity.
+ *
+ * When override is on, mirrors the current-chart Finder: each entry param set
+ * is paired with one randomly-sampled exit strategy lib + one of its param
+ * sets, merged via the `_exit__` prefix. The exit half is split back out so
+ * `executeBacktest` receives clean entry params and a separate exit descriptor.
+ */
+function buildUniverseCandidatePlans(args: {
+    selectedStrategy: FinderSelectedStrategy;
+    exitStrategyCandidates: readonly FinderSelectedStrategy[];
+    settings: BacktestSettings;
+    options: FinderOptions;
+    generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[];
+}): UniverseCandidatePlan[] {
+    const { selectedStrategy, exitStrategyCandidates, settings, options, generateParamSets } = args;
+    const exitActive = exitStrategyCandidates.length > 0;
+
+    if (!exitActive) {
+        const baseParams = buildFinderSearchBaseParams(selectedStrategy.strategy, settings, options);
+        const paramSets = normalizeFinderCandidateParamSets(
+            selectedStrategy.strategy,
+            generateParamSets(baseParams, options),
+        );
+        return paramSets.map((params) => ({ params }));
+    }
+
+    // Entry space excludes exit params; exit space is sampled per entry param set.
+    const entryOptions: FinderOptions = { ...options, exitStrategyBaseParams: undefined };
+    const entryBaseParams = buildFinderSearchBaseParams(selectedStrategy.strategy, settings, entryOptions);
+    const entryParamSets = normalizeFinderCandidateParamSets(
+        selectedStrategy.strategy,
+        generateParamSets(entryBaseParams, options),
+    );
+    if (entryParamSets.length === 0) return [];
+
+    const randomFn = options.mode === "random" && Number.isFinite(options.randomSeed)
+        ? createSeededRandom(Number(options.randomSeed) + 0x9e3779b9)
+        : Math.random;
+
+    // Cache each exit lib's normalized param space so we don't regenerate it per entry set.
+    const exitParamSetsByKey = new Map<string, StrategyParams[]>();
+    const getExitParamSets = (selection: FinderSelectedStrategy): StrategyParams[] => {
+        const cached = exitParamSetsByKey.get(selection.key);
+        if (cached) return cached;
+        const generated = generateParamSets(selection.strategy.defaultParams, options);
+        const normalized = normalizeFinderCandidateParamSets(selection.strategy, generated);
+        const paramSets = normalized.length > 0
+            ? normalized
+            : [{ ...selection.strategy.defaultParams }];
+        exitParamSetsByKey.set(selection.key, paramSets);
+        return paramSets;
+    };
+
+    const plans: UniverseCandidatePlan[] = [];
+    for (const entryParams of entryParamSets) {
+        const exitSelection = exitStrategyCandidates[Math.floor(randomFn() * exitStrategyCandidates.length)]!;
+        const exitParamSets = getExitParamSets(exitSelection);
+        const sampledExitParams = exitParamSets[Math.floor(randomFn() * exitParamSets.length)]
+            ?? exitSelection.strategy.defaultParams;
+        const combinedParams: StrategyParams = {
+            ...entryParams,
+            ...withExitStrategyBaseParams({}, sampledExitParams),
+        };
+        plans.push({
+            params: combinedParams,
+            exitStrategyKey: exitSelection.key,
+            exitStrategyName: exitSelection.name,
+            exitStrategyParams: { ...sampledExitParams },
+        });
+    }
+    return plans;
+}
+
 function assertUniverseRunSupported(input: FinderUniverseRunInput): FinderUniverseOptions {
     const universe = input.options.universe;
     if (!universe) {
@@ -491,13 +585,17 @@ export async function runFinderUniverseExecution(
 
     const rustSettings = sanitizeBacktestSettingsForRust(input.settings);
     const paramGenerationStartedAt = performance.now();
-    const baseParams = buildFinderSearchBaseParams(input.selectedStrategy.strategy, input.settings, input.options);
-    const paramSets = normalizeFinderCandidateParamSets(
-        input.selectedStrategy.strategy,
-        input.generateParamSets(baseParams, input.options)
-    );
+    const candidatePlans = buildUniverseCandidatePlans({
+        selectedStrategy: input.selectedStrategy,
+        exitStrategyCandidates: input.options.exitStrategyOverrideEnabled
+            ? (input.exitStrategyCandidates ?? [])
+            : [],
+        settings: input.settings,
+        options: input.options,
+        generateParamSets: input.generateParamSets,
+    });
     addElapsed(timings, "paramGeneration", paramGenerationStartedAt);
-    if (paramSets.length === 0) {
+    if (candidatePlans.length === 0) {
         callbacks.setStatus("No valid parameter combinations generated.");
         return {
             results: [],
@@ -553,13 +651,29 @@ export async function runFinderUniverseExecution(
     };
     const totalPossibleTrades = loadedSymbols.reduce((sum, item) => sum + item.maxPossibleTrades, 0);
     const totalInputBars = loadedSymbols.reduce((sum, item) => sum + item.barCount, 0);
-    for (let candidateIndex = 0; candidateIndex < paramSets.length; candidateIndex += 1) {
+    for (let candidateIndex = 0; candidateIndex < candidatePlans.length; candidateIndex += 1) {
         if (callbacks.isCancelled()) {
             break;
         }
 
-        const params = paramSets[candidateIndex];
-        const { backtestSettings } = resolveFinderRiskOverrides(input.settings, rustSettings, params, input.options);
+        const plan = candidatePlans[candidateIndex];
+        const params = plan.params;
+        // When Exit Strategy Override is active, split the `_exit__`-prefixed half
+        // out so the entry strategy sees only its own params, and inject the sampled
+        // exit descriptor into per-candidate backtest settings for executeBacktest.
+        const { entryParams, exitParams } = plan.exitStrategyKey
+            ? splitExitStrategyParams(params)
+            : { entryParams: params, exitParams: undefined };
+        const { backtestSettings: riskAdjustedSettings } = resolveFinderRiskOverrides(input.settings, rustSettings, params, input.options);
+        const backtestSettings: BacktestSettings = plan.exitStrategyKey
+            ? {
+                ...riskAdjustedSettings,
+                disableSignalExits: true,
+                exitStrategyOverrideEnabled: true,
+                exitStrategyKey: plan.exitStrategyKey,
+                exitStrategyParams: { ...(exitParams ?? {}) },
+            }
+            : riskAdjustedSettings;
         const preResolvedSettings = resolveExecutorBacktestSettings(
             { ...(backtestSettings as Record<string, unknown>), interval: input.interval } as BacktestSettings,
             input.interval,
@@ -600,12 +714,12 @@ export async function runFinderUniverseExecution(
             }
 
             const symbol = loadedSymbols[symbolIndex];
-            const progressBase = candidateIndex / Math.max(1, paramSets.length);
+            const progressBase = candidateIndex / Math.max(1, candidatePlans.length);
             const progressWithin = symbolIndex / Math.max(1, loadedSymbols.length);
-            const progress = 15 + ((progressBase + (progressWithin / Math.max(1, paramSets.length))) * 85);
+            const progress = 15 + ((progressBase + (progressWithin / Math.max(1, candidatePlans.length))) * 85);
 
-            callbacks.setProgress(progress, `Testing ${input.selectedStrategy.name} on ${symbol.symbol} (${candidateIndex + 1}/${paramSets.length})...`);
-            callbacks.setStatus(`Evaluating candidate ${candidateIndex + 1}/${paramSets.length} on ${symbol.symbol}...`);
+            callbacks.setProgress(progress, `Testing ${input.selectedStrategy.name} on ${symbol.symbol} (${candidateIndex + 1}/${candidatePlans.length})...`);
+            callbacks.setStatus(`Evaluating candidate ${candidateIndex + 1}/${candidatePlans.length} on ${symbol.symbol}...`);
 
             let zeroSignals = false;
             const runStartedAt = performance.now();
@@ -621,7 +735,7 @@ export async function runFinderUniverseExecution(
                     primarySymbol: symbol.symbol,
                     strategyKey: input.selectedStrategy.key,
                     strategy: preparedStrategy,
-                    strategyParams: params,
+                    strategyParams: entryParams,
                     backtestSettings,
                     capitalSettings: input.capitalSettings,
                     preResolvedSettings,
@@ -723,10 +837,13 @@ export async function runFinderUniverseExecution(
         const candidate = buildFinderUniverseCandidate({
             strategyKey: input.selectedStrategy.key,
             strategyName: input.selectedStrategy.name,
-            params,
+            params: entryParams,
             symbols: mergedSymbols,
             evaluationStoppedEarly,
             stoppedReason,
+            exitStrategyKey: plan.exitStrategyKey,
+            exitStrategyName: plan.exitStrategyName,
+            exitStrategyParams: plan.exitStrategyParams,
         });
 
         if (passesFinderUniverseFilters(candidate, universe)) {
@@ -758,7 +875,7 @@ export async function runFinderUniverseExecution(
         inputBars: totalInputBars,
         evaluationBars: totalInputBars,
         selectedStrategies: 1,
-        totalParamRuns: paramSets.length * normalizedSymbols.length,
+        totalParamRuns: candidatePlans.length * normalizedSymbols.length,
         batchSize: 1,
         processedRuns,
         filteredRuns: keptCandidateCount,
@@ -786,7 +903,7 @@ export async function runFinderUniverseExecution(
         evaluationMs,
         symbolCount: normalizedSymbols.length,
         loadedSymbolCount: loadedSymbols.length,
-        candidateCount: paramSets.length,
+        candidateCount: candidatePlans.length,
         keptCandidateCount,
     };
     debugLogger.event("finder.universe.timing", timingSummary);

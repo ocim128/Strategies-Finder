@@ -1743,6 +1743,7 @@ export class FinderManager {
 			this.setStatus('Add at least one symbol for Symbol Universe mode.');
 			return false;
 		}
+		const exitStrategyCandidates = this.resolveExitStrategyCandidates(options, selectedStrategies);
 
 		const allResults: FinderUniverseCandidate[] = [];
 		const failedSymbols = new Set<string>();
@@ -1779,6 +1780,7 @@ export class FinderManager {
 					loadDataset,
 					getProvider: (symbol) => dataManager.getProvider(symbol),
 					generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),
+					exitStrategyCandidates,
 				},
 				{
 					setProgress: (percent, text) => {
@@ -1895,11 +1897,9 @@ export class FinderManager {
 			: Number.POSITIVE_INFINITY;
 		const freezeRiskManagement = dom.finderFreezeRiskManagementToggle.checked;
 		const finderExitStrategyToggleOn = dom.finderExitStrategyOverrideToggle.checked;
-		const exitStrategyOverrideEnabled = scope !== 'current_chart'
-			? false
-			: finderExitStrategyToggleOn
-				&& backtestSettings.disableSignalExits === true
-				&& backtestSettings.exitStrategyOverrideEnabled === true;
+		const exitStrategyOverrideEnabled = finderExitStrategyToggleOn
+			&& backtestSettings.disableSignalExits === true
+			&& backtestSettings.exitStrategyOverrideEnabled === true;
 		const polymarketScoringEnabled = scope === 'current_chart' && dom.finderPolymarketToggle.checked;
 		const polymarketRankMode = (dom.finderPolymarketRankMode.value as PolymarketFinderRankMode) || 'balanced';
 		const polymarketMinScoredPredictions = polymarketScoringEnabled
@@ -2438,7 +2438,7 @@ export class FinderManager {
 
 		paramManager.render(strategy);
 		paramManager.setValues(strategy, candidate.params);
-		this.applyFinderBacktestSettings(candidate.params);
+		this.applyFinderBacktestSettings(candidate.params, undefined, candidate.exitStrategyKey, candidate.exitStrategyParams);
 		strategyPanelController.switchTab('trades');
 
 		try {

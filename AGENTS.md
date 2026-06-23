@@ -294,7 +294,8 @@ Strategy-lib failure modes seen repeatedly:
   - `BACKTEST_SETTINGS_DOM_CONTRACTS` in `lib/backtest-settings-dom-contract.ts` (used by `settingsManager` read/write)
   Adding to only one causes the exact symptom "DOM checked, settings false" — verify both lists after adding a backtest setting id
 - `applyDerivedBacktestSettingGuards` in `lib/backtest-settings-resolver.ts` must preserve `disableSignalExits` when `exitStrategyOverrideEnabled` is on, even before a strategy key is picked. Without this guard exemption, the resolver strips `disableSignalExits` before the user can finish configuring the override (chicken-and-egg)
-- Finder support is current-chart only; do not silently expand to Hunt, Walk Forward, Scanner, Portfolio Lab, genetic mode, Symbol Universe, or Polymarket Finder
+- Finder support covers current-chart and Symbol Universe; do not silently expand to Hunt, Walk Forward, Scanner, Portfolio Lab, genetic mode, or Polymarket Finder
+- In Symbol Universe, each entry param set samples one exit strategy lib + param set, and the survivor row exposes `exitStrategyKey`/`exitStrategyName`/`exitStrategyParams` so the chosen lib is visible; Apply writes the override settings (`exitStrategyKey`, `exitStrategyParams`, `disableSignalExits`, `exitStrategyOverrideEnabled`)
 - Finder exit params use the `_exit__` prefix internally and must split before entry-strategy normalization, result display, and Apply
 - Apply must write both `exitStrategyKey` and `exitStrategyParams`, and force `disableSignalExits` plus `exitStrategyOverrideEnabled`
 - Validation habit after changes:

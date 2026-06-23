@@ -76,6 +76,9 @@ export function buildFinderUniverseCandidate(input: {
     symbols: FinderUniverseSymbolResult[];
     evaluationStoppedEarly?: boolean;
     stoppedReason?: FinderUniverseCandidate["stoppedReason"];
+    exitStrategyKey?: string;
+    exitStrategyName?: string;
+    exitStrategyParams?: StrategyParams;
 }): FinderUniverseCandidate {
     const counts = classifyCounts(input.symbols);
     return {
@@ -89,6 +92,13 @@ export function buildFinderUniverseCandidate(input: {
             : 0,
         evaluationStoppedEarly: input.evaluationStoppedEarly,
         stoppedReason: input.stoppedReason,
+        ...(input.exitStrategyKey
+            ? {
+                exitStrategyKey: input.exitStrategyKey,
+                exitStrategyName: input.exitStrategyName,
+                exitStrategyParams: input.exitStrategyParams,
+            }
+            : {}),
     };
 }
 
