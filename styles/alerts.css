@@ -6,24 +6,24 @@
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: var(--text-muted, #666);
-    margin-left: 4px;
+    background: var(--text-muted);
+    margin-left: var(--space-1);
     vertical-align: middle;
     transition: background 0.3s;
 }
 
 .alert-status-ok {
-    background: var(--green, #26a69a);
-    box-shadow: 0 0 6px rgba(38, 166, 154, 0.5);
+    background: var(--green);
+    box-shadow: 0 0 6px hsl(var(--hsl-success) / 0.5);
 }
 
 .alert-status-fail {
-    background: var(--red, #ef5350);
-    box-shadow: 0 0 6px rgba(239, 83, 80, 0.5);
+    background: var(--red);
+    box-shadow: 0 0 6px hsl(var(--hsl-danger) / 0.5);
 }
 
 .alert-status-checking {
-    background: var(--warning, #ffa726);
+    background: var(--warning);
     animation: pulse-dot 1s ease-in-out infinite;
 }
 
@@ -41,27 +41,27 @@
 .alert-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.78rem;
+    font-size: var(--font-size-sm);
 }
 
 .alert-table th,
 .alert-table td {
-    padding: 6px 8px;
+    padding: var(--space-1-5) var(--space-2);
     text-align: left;
-    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.06));
+    border-bottom: 1px solid var(--border-subtle);
     white-space: nowrap;
 }
 
 .alert-table th {
-    color: var(--text-muted, #888);
-    font-weight: 500;
-    font-size: 0.72rem;
+    color: var(--text-secondary);
+    font-weight: var(--font-weight-medium);
+    font-size: var(--font-size-xs);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--tracking-medium);
 }
 
 .alert-table tbody tr:hover {
-    background: var(--hover-bg, rgba(255, 255, 255, 0.03));
+    background: var(--tab-hover-bg);
 }
 
 /* Cell-specific */
@@ -69,20 +69,20 @@
     max-width: 140px;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-family: monospace;
-    font-size: 0.72rem;
-    color: var(--text-muted, #888);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
 }
 
 .alert-cell-actions {
     display: flex;
-    gap: 4px;
+    gap: var(--space-1);
 }
 
 .alert-action-btn {
-    padding: 2px 6px !important;
+    padding: var(--space-1-5) var(--space-2) !important;
     min-width: unset !important;
-    font-size: 0.72rem !important;
+    font-size: var(--font-size-xs) !important;
 }
 
 .alert-action-btn[data-action="info"] {
@@ -92,23 +92,23 @@
 
 /* Status colors */
 .alert-status-new {
-    color: var(--green, #26a69a);
-    font-weight: 600;
+    color: var(--green);
+    font-weight: var(--font-weight-semibold);
 }
 
 .alert-status-error {
-    color: var(--red, #ef5350);
+    color: var(--red);
 }
 
 /* Direction colors in signal history */
 .alert-dir-long {
-    color: var(--green, #26a69a);
-    font-weight: 600;
+    color: var(--green);
+    font-weight: var(--font-weight-semibold);
 }
 
 .alert-dir-short {
-    color: var(--red, #ef5350);
-    font-weight: 600;
+    color: var(--red);
+    font-weight: var(--font-weight-semibold);
 }
 
 .alert-config-modal {
@@ -119,22 +119,22 @@
 .alert-config-modal-body {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--space-2-5);
 }
 
 .alert-config-section {
-    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
-    border-radius: 8px;
-    padding: 8px 10px;
-    background: var(--bg-tertiary, rgba(255, 255, 255, 0.02));
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-m);
+    padding: var(--space-2) var(--space-2-5);
+    background: var(--bg-tertiary);
 }
 
 .alert-config-section h4 {
-    margin: 0 0 6px;
-    font-size: 0.76rem;
+    margin: 0 0 var(--space-1-5);
+    font-size: var(--font-size-xs);
     text-transform: uppercase;
-    letter-spacing: 0.4px;
-    color: var(--text-muted, #9aa4b1);
+    letter-spacing: var(--tracking-medium);
+    color: var(--text-secondary);
 }
 
 .alert-config-list {
@@ -143,17 +143,17 @@
     list-style: none;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space-1);
 }
 
 .alert-config-list li {
-    font-size: 0.78rem;
-    line-height: 1.35;
-    color: var(--text-primary, #d6dde8);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-normal);
+    color: var(--text-primary);
 }
 
 .alert-config-muted {
-    color: var(--text-muted, #8b96a6);
+    color: var(--text-muted);
 }
 
 /* Last Trade Modal Styles */
@@ -163,7 +163,7 @@
 }
 
 .last-trade-modal .modal-body {
-    padding: 16px;
+    padding: var(--space-4);
 }
 
 .last-trade-loading {
@@ -171,15 +171,15 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 40px 20px;
-    gap: 12px;
+    padding: var(--space-7) var(--space-5);
+    gap: var(--space-3);
 }
 
 .last-trade-loading .spinner {
     width: 32px;
     height: 32px;
-    border: 3px solid var(--border-color, rgba(255, 255, 255, 0.1));
-    border-top-color: var(--accent-color, #2962ff);
+    border: 3px solid var(--border-color);
+    border-top-color: var(--accent-color);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
 }
@@ -189,79 +189,79 @@
 }
 
 .last-trade-loading p {
-    color: var(--text-muted, #888);
+    color: var(--text-muted);
     margin: 0;
-    font-size: 0.85rem;
+    font-size: var(--font-size-sm);
 }
 
 .last-trade-content {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--space-3);
 }
 
 .last-trade-error {
-    padding: 20px;
+    padding: var(--space-5);
     text-align: center;
-    color: var(--red, #ef5350);
+    color: var(--red);
 }
 
 .last-trade-error .error-message {
     margin: 0;
-    font-size: 0.9rem;
+    font-size: var(--font-size-sm);
 }
 
 .last-trade-summary {
-    margin-bottom: 4px;
+    margin-bottom: var(--space-1);
 }
 
 .last-trade-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 16px;
-    border-radius: 8px;
-    background: var(--bg-tertiary, rgba(255, 255, 255, 0.03));
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-m);
+    background: var(--bg-tertiary);
 }
 
 .last-trade-header.win {
-    border-left: 4px solid var(--green, #26a69a);
+    border-left: 4px solid var(--green);
 }
 
 .last-trade-header.loss {
-    border-left: 4px solid var(--red, #ef5350);
+    border-left: 4px solid var(--red);
 }
 
 .last-trade-header .trade-type {
-    font-weight: 700;
-    font-size: 1rem;
+    font-weight: var(--font-weight-bold);
+    font-size: var(--font-size-base);
     letter-spacing: 1px;
 }
 
 .last-trade-header .trade-type.long {
-    color: var(--green, #26a69a);
+    color: var(--green);
 }
 
 .last-trade-header .trade-type.short {
-    color: var(--red, #ef5350);
+    color: var(--red);
 }
 
 .last-trade-header .trade-result {
-    font-weight: 600;
-    font-size: 1.1rem;
+    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-lg);
 }
 
 .last-trade-header .trade-result.win {
-    color: var(--green, #26a69a);
+    color: var(--green);
 }
 
 .last-trade-header .trade-result.loss {
-    color: var(--red, #ef5350);
+    color: var(--red);
 }
 
 .last-trade-details {
-    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
-    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-m);
     overflow: hidden;
 }
 
@@ -273,9 +273,9 @@
 .detail-row {
     display: flex;
     justify-content: space-between;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.06));
-    font-size: 0.82rem;
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: var(--font-size-sm);
 }
 
 .detail-row:last-child {
@@ -285,21 +285,21 @@
 .detail-row.divider {
     height: 1px;
     padding: 0;
-    background: var(--border-color, rgba(255, 255, 255, 0.1));
+    background: var(--border-color);
 }
 
 .detail-row .label {
-    color: var(--text-muted, #888);
+    color: var(--text-muted);
 }
 
 .detail-row .value {
-    color: var(--text-primary, #d6dde8);
-    font-weight: 500;
+    color: var(--text-primary);
+    font-weight: var(--font-weight-medium);
 }
 
 .no-trades {
     text-align: center;
-    color: var(--text-muted, #888);
-    padding: 20px;
+    color: var(--text-muted);
+    padding: var(--space-5);
     margin: 0;
 }

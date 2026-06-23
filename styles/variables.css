@@ -184,7 +184,6 @@
     /* Radius tokens */
     --radius-xs: 4px;
     --radius-s: 6px;
-    --radius-sm: var(--radius-s);
     --radius-m: 8px;
     --radius-l: 10px;
     --radius-xl: 14px;

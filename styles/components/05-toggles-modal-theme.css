@@ -73,6 +73,21 @@
     background: var(--text-on-accent);
 }
 
+/* Compact toggle for inline use inside param rows */
+.section-toggle--sm .section-toggle-track {
+    width: 30px;
+    height: 16px;
+}
+
+.section-toggle--sm .section-toggle-track::after {
+    width: 12px;
+    height: 12px;
+}
+
+.section-toggle--sm input:checked+.section-toggle-track::after {
+    transform: translateX(14px);
+}
+
 /* Modal */
 .modal-overlay {
     position: fixed;

@@ -352,7 +352,6 @@
 .scanner-panel__cell-target--close {
     color: var(--green-light);
     font-weight: var(--font-weight-semibold);
-    text-shadow: 0 0 8px hsl(var(--hsl-success) / 0.4);
 }
 
 .scanner-panel__cell-age {
@@ -368,12 +367,10 @@
 
 .scanner-panel__cell-pnl--profit {
     color: var(--green);
-    text-shadow: 0 0 10px hsl(var(--hsl-success) / 0.3);
 }
 
 .scanner-panel__cell-pnl--loss {
     color: var(--red);
-    text-shadow: 0 0 10px hsl(var(--hsl-danger) / 0.3);
 }
 
 .scanner-panel__empty {

@@ -378,55 +378,6 @@
 
 
 
-/* Stagger animation for trade items */
-
-.trade-item:nth-child(1) {
-
-    animation-delay: 0s;
-
-}
-
-
-
-.trade-item:nth-child(2) {
-
-    animation-delay: 0.03s;
-
-}
-
-
-
-.trade-item:nth-child(3) {
-
-    animation-delay: 0.06s;
-
-}
-
-
-
-.trade-item:nth-child(4) {
-
-    animation-delay: 0.09s;
-
-}
-
-
-
-.trade-item:nth-child(5) {
-
-    animation-delay: 0.12s;
-
-}
-
-
-
-.trade-item:nth-child(n+6) {
-
-    animation-delay: 0.15s;
-
-}
-
-
 
 .trade-item:last-child {
 
@@ -752,25 +703,9 @@
 
 
 
-.trade-item.win:hover .trade-pnl {
-
-    text-shadow: 0 0 16px hsl(var(--hsl-success) / 0.5);
-
-}
-
-
-
 .trade-item.loss .trade-pnl {
 
     color: var(--red);
-
-}
-
-
-
-.trade-item.loss:hover .trade-pnl {
-
-    text-shadow: 0 0 16px hsl(var(--hsl-danger) / 0.5);
 
 }
 
@@ -838,7 +773,9 @@
 
 }
 
-.exit-reason-badge--stop-loss {
+.exit-reason-badge--stop-loss,
+
+.exit-reason-badge--polymarket-lose {
 
     color: var(--red);
 
@@ -848,7 +785,9 @@
 
 }
 
-.exit-reason-badge--take-profit {
+.exit-reason-badge--take-profit,
+
+.exit-reason-badge--polymarket-win {
 
     color: var(--green);
 
@@ -880,57 +819,37 @@
 
 .exit-reason-badge--partial {
 
-    color: hsl(191 91% 42%);
+    color: var(--accent-light);
 
-    background: hsl(191 91% 42% / 0.16);
+    background: hsl(var(--hsl-accent) / 0.16);
 
-    border: 1px solid hsl(191 91% 42% / 0.32);
+    border: 1px solid hsl(var(--hsl-accent) / 0.32);
 
 }
 
 .exit-reason-badge--probation-fail {
 
-    color: hsl(330 81% 60%);
+    color: var(--warning);
 
-    background: hsl(330 81% 60% / 0.16);
+    background: hsl(var(--hsl-warning) / 0.16);
 
-    border: 1px solid hsl(330 81% 60% / 0.32);
+    border: 1px solid hsl(var(--hsl-warning) / 0.32);
 
 }
 
 .exit-reason-badge--end-of-data {
 
-    color: hsl(24 95% 53%);
+    color: var(--warning);
 
-    background: hsl(24 95% 53% / 0.16);
+    background: hsl(var(--hsl-warning) / 0.16);
 
-    border: 1px solid hsl(24 95% 53% / 0.32);
-
-}
-
-.exit-reason-badge--polymarket-win {
-
-    color: hsl(var(--hsl-success));
-
-    background: hsl(var(--hsl-success) / 0.16);
-
-    border: 1px solid hsl(var(--hsl-success) / 0.32);
-
-}
-
-.exit-reason-badge--polymarket-lose {
-
-    color: hsl(var(--hsl-danger));
-
-    background: hsl(var(--hsl-danger) / 0.16);
-
-    border: 1px solid hsl(var(--hsl-danger) / 0.32);
+    border: 1px solid hsl(var(--hsl-warning) / 0.32);
 
 }
 
 .exit-reason-badge--polymarket-open {
 
-    color: hsl(var(--hsl-accent));
+    color: var(--accent-color);
 
     background: hsl(var(--hsl-accent) / 0.16);
 
@@ -940,11 +859,11 @@
 
 .exit-reason-badge--polymarket-skip {
 
-    color: hsl(0 0% 55%);
+    color: var(--text-tertiary);
 
-    background: hsl(0 0% 55% / 0.10);
+    background: hsl(var(--hsl-surface-3) / 0.4);
 
-    border: 1px solid hsl(0 0% 55% / 0.22);
+    border: 1px solid var(--border-subtle);
 
     opacity: 0.7;
 
@@ -992,7 +911,7 @@
 
 .trade-target.tp {
 
-    color: #22c55e;
+    color: var(--green);
 
 }
 
@@ -1000,7 +919,7 @@
 
 .trade-target.sl {
 
-    color: #ef4444;
+    color: var(--red);
 
 }
 

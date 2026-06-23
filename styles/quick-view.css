@@ -80,7 +80,7 @@
     align-items: center;
     justify-content: center;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-s);
     background: transparent;
     color: var(--text-tertiary);
     cursor: pointer;
@@ -122,7 +122,7 @@
 
 .qv-stat-card {
     padding: 10px 12px;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-s);
     background: hsl(var(--hsl-surface-3) / 0.35);
     border: 1px solid hsl(var(--hsl-border) / 0.25);
     transition: background 0.15s ease;
@@ -344,7 +344,7 @@
     gap: 5px;
     padding: 3px 8px;
     border: 1px solid hsl(var(--hsl-border) / 0.35);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-s);
     background: hsl(var(--hsl-surface-3) / 0.3);
     color: var(--text-tertiary);
     font-size: 10px;
@@ -379,7 +379,7 @@
     align-items: center;
     gap: 8px;
     padding: 8px 10px;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-s);
     cursor: pointer;
     transition: background 0.12s ease;
     font-size: var(--font-size-xs);

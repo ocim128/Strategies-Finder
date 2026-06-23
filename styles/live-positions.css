@@ -299,7 +299,7 @@
     bottom: 0;
     width: 3px;
     background: var(--red);
-    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+    border-radius: var(--radius-s) 0 0 var(--radius-s);
 }
 
 .lp-position.closed {
@@ -457,7 +457,7 @@
 
 .lp-detail-section {
     border: 1px solid hsl(var(--hsl-border) / 0.2);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-s);
     padding: 12px;
 }
 
@@ -504,7 +504,7 @@
     align-items: center;
     gap: 8px;
     padding: 10px 12px;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-s);
     background: hsl(var(--hsl-red) / 0.1);
     color: var(--red);
     font-size: var(--font-size-sm);

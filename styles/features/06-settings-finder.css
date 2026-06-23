@@ -564,56 +564,6 @@
 
 
 
-/* Stagger animation for finder rows */
-
-.finder-row:nth-child(1) {
-
-    animation-delay: 0s;
-
-}
-
-
-
-.finder-row:nth-child(2) {
-
-    animation-delay: 0.05s;
-
-}
-
-
-
-.finder-row:nth-child(3) {
-
-    animation-delay: 0.1s;
-
-}
-
-
-
-.finder-row:nth-child(4) {
-
-    animation-delay: 0.15s;
-
-}
-
-
-
-.finder-row:nth-child(5) {
-
-    animation-delay: 0.2s;
-
-}
-
-
-
-.finder-row:nth-child(n+6) {
-
-    animation-delay: 0.25s;
-
-}
-
-
-
 .finder-row:hover {
 
     background: var(--bg-elevated);
@@ -778,11 +728,11 @@
 
 .finder-title-badge-combo {
 
-    color: hsl(36 100% 64%);
+    color: var(--warning);
 
-    background: hsl(36 100% 55% / 0.12);
+    background: hsl(var(--hsl-warning) / 0.12);
 
-    border-color: hsl(36 100% 55% / 0.35);
+    border-color: hsl(var(--hsl-warning) / 0.35);
 
 }
 
@@ -930,77 +880,57 @@
 
 
 
-.finder-verdict-strong {
+/* Strong edge – success token */
 
-    color: hsl(142 70% 45%);
-
-    background: hsl(142 70% 45% / 0.12);
-
-    border-color: hsl(142 70% 45% / 0.35);
-
-}
-
-
+.finder-verdict-strong,
 
 .finder-verdict-solid {
 
-    color: hsl(142 60% 55%);
+    color: var(--green);
 
-    background: hsl(142 60% 55% / 0.08);
+    background: hsl(var(--hsl-success) / 0.12);
 
-    border-color: hsl(142 60% 55% / 0.25);
-
-}
-
-
-
-.finder-verdict-marginal {
-
-    color: hsl(45 90% 55%);
-
-    background: hsl(45 90% 55% / 0.1);
-
-    border-color: hsl(45 90% 55% / 0.3);
+    border-color: hsl(var(--hsl-success) / 0.35);
 
 }
 
 
 
-.finder-verdict-weak {
+/* Marginal edge – warning token */
 
-    color: hsl(36 100% 64%);
+.finder-verdict-marginal,
 
-    background: hsl(36 100% 55% / 0.08);
+.finder-verdict-weak,
 
-    border-color: hsl(36 100% 55% / 0.25);
+.finder-verdict-uniform {
+
+    color: var(--warning);
+
+    background: hsl(var(--hsl-warning) / 0.10);
+
+    border-color: hsl(var(--hsl-warning) / 0.30);
 
 }
 
 
+
+/* Losing edge – danger token */
 
 .finder-verdict-losing {
 
-    color: hsl(0 80% 65%);
+    color: var(--red);
 
-    background: hsl(0 80% 55% / 0.1);
+    background: hsl(var(--hsl-danger) / 0.10);
 
-    border-color: hsl(0 80% 55% / 0.3);
-
-}
-
-
-
-.finder-verdict-thin {
-
-    color: hsl(210 60% 65%);
-
-    background: hsl(210 60% 55% / 0.08);
-
-    border-color: hsl(210 60% 55% / 0.25);
+    border-color: hsl(var(--hsl-danger) / 0.30);
 
 }
 
 
+
+/* Thin / no signal – neutral */
+
+.finder-verdict-thin,
 
 .finder-verdict-no-signal {
 
@@ -1009,18 +939,6 @@
     background: hsl(var(--hsl-surface-3) / 0.3);
 
     border-color: transparent;
-
-}
-
-
-
-.finder-verdict-uniform {
-
-    color: hsl(36 100% 60%);
-
-    background: hsl(36 100% 55% / 0.12);
-
-    border-color: hsl(36 100% 55% / 0.35);
 
 }
 

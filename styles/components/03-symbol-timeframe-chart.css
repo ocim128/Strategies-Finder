@@ -131,7 +131,6 @@
 
 .timeframe-tab.active {
     background: hsl(0 0% 100% / 0.96);
-    color: var(--text-on-accent);
     box-shadow: var(--shadow-sm);
     color: hsl(223 37% 15%);
 }

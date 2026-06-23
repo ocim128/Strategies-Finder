@@ -206,21 +206,6 @@
         opacity 0.3s ease;
 }
 
-.strategy-panel::before {
-    content: '';
-    position: absolute;
-    left: var(--space-4);
-    right: var(--space-4);
-    top: 0;
-    height: 1px;
-    background: linear-gradient(90deg,
-            transparent,
-            hsl(0 0% 100% / 0.18),
-            transparent);
-    pointer-events: none;
-    z-index: 2;
-}
-
 .strategy-panel.collapsed {
     width: 0;
     min-width: 0;
@@ -348,10 +333,7 @@
     transform: translateY(-50%);
     height: 56px;
     width: 2px;
-    background: linear-gradient(180deg,
-            hsl(var(--hsl-accent) / 0.2),
-            hsl(var(--hsl-accent) / 0.6),
-            hsl(var(--hsl-accent) / 0.2));
+    background: hsl(var(--hsl-accent) / 0.45);
     border-radius: 2px;
     opacity: 0;
     transition: opacity 0.15s ease;
