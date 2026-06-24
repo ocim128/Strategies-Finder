@@ -91,11 +91,14 @@ export const POLYMARKET_RANK_MODE_LABELS: Record<PolymarketFinderRankMode, strin
 };
 
 export const UNIVERSE_METRIC_FULL_LABELS: Record<FinderUniverseMetric, string> = {
+    robustUniverseScore: 'Robust Universe Score',
+    windowStabilityScore: 'Window Stability Score',
     profitableActiveRatio: 'Profitable Active Ratio',
     activeSymbols: 'Active Symbols',
     medianExpectancy: 'Median Expectancy',
     medianSharpe: 'Median Sharpe Ratio',
     medianProfitFactor: 'Median Profit Factor',
+    medianCompositeEdgeRatio: 'Median Composite Edge Ratio',
     worstNetProfit: 'Worst Net Profit',
     totalTrades: 'Total Trades',
 };

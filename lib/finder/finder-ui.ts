@@ -203,12 +203,21 @@ export class FinderUI {
 
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
+            metrics.appendChild(this.createMetricChip(`Robust ${item.robustUniverseScore.toFixed(1)}`));
+            metrics.appendChild(this.createMetricChip(item.oosAggregate
+                ? `Stable ${item.windowStabilityScore.toFixed(1)}`
+                : "Stable --"));
             metrics.appendChild(this.createMetricChip(`Ratio ${(item.profitableActiveRatio * 100).toFixed(1)}%`));
             metrics.appendChild(this.createMetricChip(`Active ${item.activeSymbols}`));
             metrics.appendChild(this.createMetricChip(`No Trade ${item.noTradeSymbols}`));
             metrics.appendChild(this.createMetricChip(`Med Exp ${item.medianExpectancy.toFixed(2)}`));
-            metrics.appendChild(this.createMetricChip(`Med Sharpe ${item.medianSharpe.toFixed(2)}`));
+            metrics.appendChild(this.createMetricChip(item.medianSharpeAvailable
+                ? `Med Sharpe ${item.medianSharpe.toFixed(2)}`
+                : "Med Sharpe --"));
             metrics.appendChild(this.createMetricChip(`Med PF ${formatProfitFactor(item.medianProfitFactor)}`));
+            if (item.medianCompositeEdgeRatio > 0) {
+                metrics.appendChild(this.createMetricChip(`Med ER ${item.medianCompositeEdgeRatio.toFixed(2)}`));
+            }
             metrics.appendChild(this.createMetricChip(`Worst ${this.formatCurrency(item.worstNetProfit)}`));
             metrics.appendChild(this.createMetricChip(`Trades ${item.totalTrades}`));
             if (item.oosAggregate) {
@@ -265,8 +274,12 @@ export class FinderUI {
                     textParts.push(`Exp ${r.expectancy.toFixed(2)}`);
                     textParts.push(`PF ${formatProfitFactor(r.profitFactor)}`);
                     textParts.push(`WR ${r.winRate.toFixed(0)}%`);
-                    textParts.push(`Sharpe ${r.sharpeRatio.toFixed(2)}`);
-                    textParts.push(`DD ${r.maxDrawdownPercent.toFixed(2)}%`);
+                    textParts.push(r.sharpeRatioAvailable
+                        ? `Sharpe ${r.sharpeRatio.toFixed(2)}`
+                        : "Sharpe --");
+                    textParts.push(r.drawdownAvailable
+                        ? `DD ${r.maxDrawdownPercent.toFixed(2)}%`
+                        : "DD --");
                     textParts.push(`Trades ${r.totalTrades}`);
                 }
                 if (symbolResult.error) textParts.push(symbolResult.error);

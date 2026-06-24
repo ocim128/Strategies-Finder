@@ -1,9 +1,10 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { buildFinderUniverseCandidate, computePerformanceVerdict, computeStrategyVerdict, computeUniverseOosAggregate, computeUniverseSymbolOosVerdict, passesFinderUniverseFilters, sortFinderUniverseCandidates } from "../lib/finder/finder-universe-metrics";
+import { buildFinderUniverseCandidate, computePerformanceVerdict, computeStrategyVerdict, computeUniverseOosAggregate, computeUniverseSymbolOosVerdict, passesFinderUniverseFilters, sortFinderUniverseCandidates, updateFinderUniverseCandidateScores } from "../lib/finder/finder-universe-metrics";
 import type { FinderUniverseSymbolMetrics, FinderUniverseSymbolResult } from "../lib/types/finder";
 
-function makeBacktestResult(netProfit: number, expectancy: number, totalTrades: number, sharpeRatio = 0, profitFactor = 0): FinderUniverseSymbolMetrics {
+function makeBacktestResult(netProfit: number, expectancy: number, totalTrades: number, sharpeRatio = 0, profitFactor = 0, compositeEdgeRatio?: number): FinderUniverseSymbolMetrics {
+    const sharpeRatioAvailable = arguments.length >= 4;
     return {
         netProfit,
         netProfitPercent: 0,
@@ -18,6 +19,9 @@ function makeBacktestResult(netProfit: number, expectancy: number, totalTrades: 
         avgWin: 0,
         avgLoss: 0,
         sharpeRatio,
+        sharpeRatioAvailable,
+        drawdownAvailable: false,
+        ...(typeof compositeEdgeRatio === "number" ? { compositeEdgeRatio } : {}),
     };
 }
 
@@ -198,6 +202,175 @@ describe("Finder universe metrics", () => {
         );
 
         expect(sorted.map((item) => item.strategyKey)).to.deep.equal(["stronger", "weaker"]);
+    });
+
+    it("aggregates median composite edge ratio across active symbols", () => {
+        const candidate = buildFinderUniverseCandidate({
+            strategyKey: "demo",
+            strategyName: "Demo",
+            params: { threshold: 1 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(120, 4, 8, 1.5, 2.0, 1.6)),
+                makeSymbol("ETHUSDT", "losing", makeBacktestResult(-40, -2, 4, 0.5, 0.4, 1.2)),
+                makeSymbol("SOLUSDT", "no_trades", makeBacktestResult(0, 0, 0, 9, 9, 9)),
+            ],
+        });
+
+        // median of [1.6, 1.2] = 1.4; no_trades symbol excluded even though it has an ER value
+        expect(candidate.medianCompositeEdgeRatio).to.equal(1.4);
+    });
+
+    it("defaults median composite edge ratio to 0 when no symbol contributed one", () => {
+        const candidate = buildFinderUniverseCandidate({
+            strategyKey: "demo",
+            strategyName: "Demo",
+            params: { threshold: 1 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(120, 4, 8)),
+                makeSymbol("ETHUSDT", "losing", makeBacktestResult(-40, -2, 4)),
+            ],
+        });
+
+        expect(candidate.medianCompositeEdgeRatio).to.equal(0);
+    });
+
+    it("sorts survivors by median composite edge ratio", () => {
+        const edgier = buildFinderUniverseCandidate({
+            strategyKey: "edgier",
+            strategyName: "Edgier",
+            params: { threshold: 1 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(15, 3, 5, 1.5, 1.6, 1.8)),
+                makeSymbol("ETHUSDT", "profitable", makeBacktestResult(10, 2, 5, 1.5, 1.4, 1.6)),
+            ],
+        });
+        const flatter = buildFinderUniverseCandidate({
+            strategyKey: "flatter",
+            strategyName: "Flatter",
+            params: { threshold: 2 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(5, 1, 4, 1.0, 0.8, 0.9)),
+                makeSymbol("ETHUSDT", "losing", makeBacktestResult(-10, -1, 4, 0.5, 0.5, 0.7)),
+            ],
+        });
+
+        const sorted = sortFinderUniverseCandidates(
+            [flatter, edgier],
+            ["medianCompositeEdgeRatio"]
+        );
+
+        expect(sorted.map((item) => item.strategyKey)).to.deep.equal(["edgier", "flatter"]);
+    });
+
+    it("scores robust universe candidates higher when breadth, samples, edge, and downside all hold", () => {
+        const robust = buildFinderUniverseCandidate({
+            strategyKey: "robust",
+            strategyName: "Robust",
+            params: { threshold: 1 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(60, 4, 20, 1.5, 1.8, 1.7)),
+                makeSymbol("ETHUSDT", "profitable", makeBacktestResult(45, 3, 18, 1.2, 1.6, 1.5)),
+                makeSymbol("SOLUSDT", "profitable", makeBacktestResult(30, 2, 16, 1.0, 1.4, 1.3)),
+                makeSymbol("BNBUSDT", "losing", makeBacktestResult(-10, 1, 14, 0.8, 1.2, 1.1)),
+            ],
+        });
+        const flashyButNarrow = buildFinderUniverseCandidate({
+            strategyKey: "flashy",
+            strategyName: "Flashy",
+            params: { threshold: 2 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(200, 10, 8, 4.0, 4.0, 4.0)),
+                makeSymbol("ETHUSDT", "losing", makeBacktestResult(-160, -8, 8, -1.0, 0.2, 0.5)),
+            ],
+        });
+
+        expect(robust.robustUniverseScore).to.be.greaterThan(flashyButNarrow.robustUniverseScore);
+
+        const sorted = sortFinderUniverseCandidates(
+            [flashyButNarrow, robust],
+            ["robustUniverseScore"]
+        );
+        expect(sorted.map((item) => item.strategyKey)).to.deep.equal(["robust", "flashy"]);
+    });
+
+    it("does not treat many thin one-trade winners as robust universe breadth", () => {
+        const thinWinners = buildFinderUniverseCandidate({
+            strategyKey: "thin",
+            strategyName: "Thin",
+            params: { threshold: 1 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(500, 500, 1, 0, Infinity, 4)),
+                makeSymbol("ETHUSDT", "profitable", makeBacktestResult(400, 400, 1, 0, Infinity, 4)),
+                makeSymbol("SOLUSDT", "profitable", makeBacktestResult(300, 300, 1, 0, Infinity, 4)),
+                makeSymbol("BNBUSDT", "losing", makeBacktestResult(-200, -20, 10, 0, 0.2, 0.5)),
+            ],
+        });
+
+        expect(thinWinners.robustUniverseScore).to.equal(0);
+    });
+
+    it("scores window stability from OOS breadth retention and re-sorts by it", () => {
+        const stable = buildFinderUniverseCandidate({
+            strategyKey: "stable",
+            strategyName: "Stable",
+            params: { threshold: 1 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(40, 4, 12, 1.5, 1.8)),
+                makeSymbol("ETHUSDT", "profitable", makeBacktestResult(30, 3, 12, 1.2, 1.6)),
+                makeSymbol("SOLUSDT", "profitable", makeBacktestResult(20, 2, 12, 1.0, 1.4)),
+                makeSymbol("BNBUSDT", "losing", makeBacktestResult(-5, 1, 12, 0.8, 1.2)),
+            ],
+        });
+        stable.oosAggregate = {
+            verdict: "pass",
+            activeSymbols: 4,
+            profitableSymbols: 2,
+            profitableActiveRatio: 0.5,
+            worstNetProfit: 0,
+        };
+        stable.symbols[0]!.oosResult = makeBacktestResult(10, 1, 8, 0.5, 1.4);
+        stable.symbols[0]!.oosVerdict = "pass";
+        stable.symbols[1]!.oosResult = makeBacktestResult(10, 1, 8, 0.5, 1.4);
+        stable.symbols[1]!.oosVerdict = "pass";
+        stable.symbols[2]!.oosResult = makeBacktestResult(-5, -1, 8, 0.5, 0.5);
+        stable.symbols[2]!.oosVerdict = "fail";
+        stable.symbols[3]!.oosResult = makeBacktestResult(-5, -1, 2, 0.5, 0.5);
+        stable.symbols[3]!.oosVerdict = "inconclusive";
+
+        const collapsed = buildFinderUniverseCandidate({
+            strategyKey: "collapsed",
+            strategyName: "Collapsed",
+            params: { threshold: 2 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(80, 8, 12, 2.0, 2.5)),
+                makeSymbol("ETHUSDT", "profitable", makeBacktestResult(70, 7, 12, 1.8, 2.2)),
+                makeSymbol("SOLUSDT", "profitable", makeBacktestResult(60, 6, 12, 1.6, 2.0)),
+                makeSymbol("BNBUSDT", "profitable", makeBacktestResult(50, 5, 12, 1.4, 1.8)),
+            ],
+        });
+        collapsed.oosAggregate = {
+            verdict: "fail",
+            activeSymbols: 4,
+            profitableSymbols: 0,
+            profitableActiveRatio: 0,
+            worstNetProfit: -40,
+        };
+        for (const symbol of collapsed.symbols) {
+            symbol.oosResult = makeBacktestResult(-10, -1, 8, 0.5, 0.5);
+            symbol.oosVerdict = "fail";
+        }
+
+        updateFinderUniverseCandidateScores(stable);
+        updateFinderUniverseCandidateScores(collapsed);
+
+        expect(stable.windowStabilityScore).to.be.greaterThan(0);
+        expect(collapsed.windowStabilityScore).to.equal(0);
+
+        const sorted = sortFinderUniverseCandidates(
+            [collapsed, stable],
+            ["windowStabilityScore"]
+        );
+        expect(sorted.map((item) => item.strategyKey)).to.deep.equal(["stable", "collapsed"]);
     });
 
     it("passes per-symbol OOS verdict only when OOS is profitable with enough trades", () => {

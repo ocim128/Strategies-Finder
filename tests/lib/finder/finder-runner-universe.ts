@@ -24,6 +24,7 @@ import type {
 } from "../types/strategies";
 import {
     buildFinderSearchBaseParams,
+    computeFinderCompositeEdgeRatio,
     getPreparedFinderData,
     normalizeFinderCandidateParamSets,
     resolveFinderRiskOverrides,
@@ -212,7 +213,14 @@ function buildRunFailedResult(symbol: FinderUniverseLoadedSymbol, error: string)
     };
 }
 
-function buildUniverseSymbolMetrics(result: BacktestResult): NonNullable<FinderUniverseSymbolResult["result"]> {
+function buildUniverseSymbolMetrics(
+    result: BacktestResult,
+    options: {
+        compositeEdgeRatio?: number;
+        sharpeRatioAvailable?: boolean;
+        drawdownAvailable?: boolean;
+    } = {}
+): NonNullable<FinderUniverseSymbolResult["result"]> {
     return {
         netProfit: result.netProfit,
         netProfitPercent: result.netProfitPercent,
@@ -227,10 +235,19 @@ function buildUniverseSymbolMetrics(result: BacktestResult): NonNullable<FinderU
         avgWin: result.avgWin,
         avgLoss: result.avgLoss,
         sharpeRatio: result.sharpeRatio,
+        sharpeRatioAvailable: options.sharpeRatioAvailable === true,
+        drawdownAvailable: options.drawdownAvailable === true,
+        ...(typeof options.compositeEdgeRatio === "number" && Number.isFinite(options.compositeEdgeRatio)
+            ? { compositeEdgeRatio: options.compositeEdgeRatio }
+            : {}),
     };
 }
 
-function buildSymbolResult(symbol: FinderUniverseLoadedSymbol, result: Awaited<ReturnType<typeof executeBacktest>>["result"]): FinderUniverseSymbolResult {
+function buildSymbolResult(
+    symbol: FinderUniverseLoadedSymbol,
+    result: Awaited<ReturnType<typeof executeBacktest>>["result"],
+    options: Parameters<typeof buildUniverseSymbolMetrics>[1] = {}
+): FinderUniverseSymbolResult {
     let status: FinderUniverseSymbolResult["status"];
     if (result.totalTrades <= 0) {
         status = "no_trades";
@@ -252,7 +269,7 @@ function buildSymbolResult(symbol: FinderUniverseLoadedSymbol, result: Awaited<R
         lastClose: symbol.lastClose,
         directionalLookbackClose: symbol.directionalLookbackClose,
         directionalLookbackBars: symbol.directionalLookbackBars,
-        result: buildUniverseSymbolMetrics(result),
+        result: buildUniverseSymbolMetrics(result, options),
     };
 }
 
@@ -633,6 +650,11 @@ export async function runFinderUniverseExecution(
     const evaluationStart = performance.now();
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
     const requiresSharpeRatio = universe.sortPriority.includes("medianSharpe");
+    // Composite Edge Ratio needs per-trade OHLCV lookups; only compute when the
+    // active sort requests it, and only for non-cross-symbol runs where we have
+    // a clean closed-candle series matching what the backtest ran on.
+    const requiresCompositeEdgeRatio = !hasCrossSymbol
+        && universe.sortPriority.includes("medianCompositeEdgeRatio");
     const maxStoredSurvivors = Math.max(input.options.topN, 50);
     const survivors: FinderUniverseCandidate[] = [];
     let keptCandidateCount = 0;
@@ -767,7 +789,14 @@ export async function runFinderUniverseExecution(
                 if (zeroSignals && !signalTimingByRun.observed) {
                     recordFinderStrategyNoSignals(strategyStats);
                 }
-                const symbolResult = buildSymbolResult(symbol, output.result);
+                const symbolEdgeRatio = requiresCompositeEdgeRatio
+                    ? computeFinderCompositeEdgeRatio(output.result, closedDataBySymbol.get(symbol.symbol) ?? symbol.data)
+                    : undefined;
+                const symbolResult = buildSymbolResult(symbol, output.result, {
+                    compositeEdgeRatio: symbolEdgeRatio,
+                    sharpeRatioAvailable: requiresSharpeRatio,
+                    drawdownAvailable: false,
+                });
                 symbolResults.set(symbol.symbol, symbolResult);
                 accumulatePartialCounts(partialCounts, symbolResult);
             } catch (error) {

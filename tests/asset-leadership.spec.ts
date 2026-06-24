@@ -46,7 +46,11 @@ function makeCandidate(args: {
         profitableActiveRatio: args.profitableActiveRatio,
         medianExpectancy: 50,
         medianSharpe: 2,
+        medianSharpeAvailable: true,
         medianNetProfit: 100,
+        medianCompositeEdgeRatio: 0,
+        robustUniverseScore: 0,
+        windowStabilityScore: 0,
         worstNetProfit: -100,
         bestNetProfit: 1000,
     };

@@ -37,11 +37,14 @@ export type FinderMetric =
     | 'polyProfitFactorBalance'
     | 'polySizedNet';
 export type FinderUniverseMetric =
+    | 'robustUniverseScore'
+    | 'windowStabilityScore'
     | 'profitableActiveRatio'
     | 'activeSymbols'
     | 'medianExpectancy'
     | 'medianSharpe'
     | 'medianProfitFactor'
+    | 'medianCompositeEdgeRatio'
     | 'worstNetProfit'
     | 'totalTrades';
 
@@ -174,6 +177,16 @@ export interface FinderUniverseSymbolMetrics {
     avgWin: number;
     avgLoss: number;
     sharpeRatio: number;
+    /** True when Sharpe was actually computed; false means the fast universe path skipped it. */
+    sharpeRatioAvailable?: boolean;
+    /** True when drawdown was actually computed; false means the fast universe path skipped it. */
+    drawdownAvailable?: boolean;
+    /**
+     * Composite Edge Ratio (avg MFE/MAE across horizons). Only populated when
+     * the active Finder sort requests it, since it needs per-trade OHLCV lookups.
+     * Undefined otherwise; treat as 0/missing when not requested.
+     */
+    compositeEdgeRatio?: number;
 }
 
 export interface FinderUniverseSymbolResult {
@@ -224,10 +237,18 @@ export interface FinderUniverseCandidate {
     profitableActiveRatio: number;
     medianExpectancy: number;
     medianSharpe: number;
+    /** True when medianSharpe is based on computed symbol Sharpe values. */
+    medianSharpeAvailable: boolean;
     medianProfitFactor: number;
     medianNetProfit: number;
     worstNetProfit: number;
     bestNetProfit: number;
+    /** Median per-symbol Composite Edge Ratio across active symbols (0 when never computed). */
+    medianCompositeEdgeRatio: number;
+    /** Bounded 0..100 score favoring broad, sufficiently sampled, downside-aware universe performance. */
+    robustUniverseScore: number;
+    /** Bounded 0..100 score comparing IS breadth against the OOS validation window; 0 until OOS validation runs. */
+    windowStabilityScore: number;
     evaluationStoppedEarly?: boolean;
     stoppedReason?: FinderUniverseEarlyStopReason;
     /** Registry key of the sampled exit-strategy lib, when Exit Strategy Override is active. */

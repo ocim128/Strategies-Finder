@@ -45,6 +45,7 @@ import {
 	computeUniverseOosAggregate,
 	computeUniverseSymbolOosVerdict,
 	sortFinderUniverseCandidates,
+	updateFinderUniverseCandidateScores,
 } from "./finder/finder-universe-metrics";
 import { executeBacktest, resolveExecutorBacktestSettings } from "./backtest-executor";
 import {
@@ -236,15 +237,18 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	universeMinActiveSymbols: 2,
 	universeMinTotalTrades: 40,
 	universeMinProfitableActiveRatio: 0.5,
-	universeSort: "profitableActiveRatio",
-	universeSortSecondary: "medianExpectancy",
+	universeSort: "robustUniverseScore",
+	universeSortSecondary: "windowStabilityScore",
 };
 
 const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
+    "robustUniverseScore",
+    "windowStabilityScore",
     "profitableActiveRatio",
     "medianExpectancy",
     "medianSharpe",
     "medianProfitFactor",
+    "medianCompositeEdgeRatio",
     "worstNetProfit",
     "totalTrades",
     "activeSymbols",
@@ -1993,6 +1997,7 @@ export class FinderManager {
 				isProfitableActiveRatio: candidate.profitableActiveRatio,
 				minActiveSymbols,
 			});
+			updateFinderUniverseCandidateScores(candidate);
 		}
 
 		const initialCount = results.length;
@@ -2005,6 +2010,12 @@ export class FinderManager {
 			results.length = 0;
 			results.push(...survivors);
 		}
+		const sortedResults = sortFinderUniverseCandidates(
+			results,
+			options.universe?.sortPriority ?? []
+		).slice(0, options.topN);
+		results.length = 0;
+		results.push(...sortedResults);
 		this.setLatestResults({ scope: 'symbol_universe', results: [...results] });
 		this.renderLatestResults();
 		return removedCount;
@@ -2661,6 +2672,7 @@ export class FinderManager {
 				profitableActiveRatio: result.profitableActiveRatio,
 				medianExpectancy: result.medianExpectancy,
 				medianSharpe: result.medianSharpe,
+				medianSharpeAvailable: result.medianSharpeAvailable,
 				medianNetProfit: result.medianNetProfit,
 				worstNetProfit: result.worstNetProfit,
 				bestNetProfit: result.bestNetProfit,
@@ -2683,11 +2695,13 @@ export class FinderManager {
 					profitFactor: symbolResult.result.profitFactor,
 					totalTrades: symbolResult.result.totalTrades,
 					maxDrawdownPercent: symbolResult.result.maxDrawdownPercent,
+					drawdownAvailable: symbolResult.result.drawdownAvailable === true,
 					winningTrades: symbolResult.result.winningTrades,
 					losingTrades: symbolResult.result.losingTrades,
 					avgWin: symbolResult.result.avgWin,
 					avgLoss: symbolResult.result.avgLoss,
 					sharpeRatio: symbolResult.result.sharpeRatio,
+					sharpeRatioAvailable: symbolResult.result.sharpeRatioAvailable === true,
 				} : null,
 			})),
 		};
