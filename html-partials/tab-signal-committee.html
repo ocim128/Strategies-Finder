@@ -137,6 +137,19 @@
 
         <div class="analysis-finder-section">
             <details class="signal-committee__diagnostic">
+                <summary>Score Edge Report (current chart)</summary>
+                <div class="analysis-finder-header">
+                    <h4 class="analysis-finder-title">Does the committee score predict returns here?</h4>
+                    <div class="analysis-finder-controls">
+                        <button class="btn btn-secondary btn-compact" id="signalCommitteeScoreEdgeCopyBtn" type="button" title="Copy a compact stats summary for an AI to narrate">Copy AI Export</button>
+                    </div>
+                </div>
+                <div id="signalCommitteeScoreEdgeBody"><span class="signal-committee__edge-empty">Enable “Show Score on Chart” and refresh — the report rebuilds from the historical committee score on the loaded bars.</span></div>
+            </details>
+        </div>
+
+        <div class="analysis-finder-section">
+            <details class="signal-committee__diagnostic">
                 <summary>Diagnostic output (debug)</summary>
                 <pre id="signalCommitteeDiagnosticPre">(no diagnostic yet)</pre>
             </details>

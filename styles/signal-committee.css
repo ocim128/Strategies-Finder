@@ -78,6 +78,33 @@
     padding: var(--space-4);
 }
 
+/* ── Deactivated member rows ──────────────────────────────────────────────
+   A disabled member stays in the table but reads as inert: dimmed opacity,
+   secondary text color, and a small "disabled" pill in the status cell. The
+   member neither votes nor gets re-evaluated; the pill makes that visible. */
+.signal-committee__row--disabled {
+    opacity: 0.55;
+    color: var(--text-secondary);
+}
+
+.signal-committee__row--disabled td {
+    color: var(--text-secondary);
+}
+
+.signal-committee__disabled-pill {
+    display: inline-block;
+    margin-left: var(--space-1);
+    padding: 0 var(--space-1-5);
+    border-radius: var(--radius-s);
+    border: 1px solid var(--border-subtle);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-tertiary);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
 /* ── Threshold inputs in the alert rule row ──────────────────────────────
    Extends the portfolio-lab field treatment to the number inputs that
    previously shipped as raw browser widgets with width:4rem inline. */
@@ -208,4 +235,78 @@
     gap: var(--space-2);
     font-size: var(--font-size-sm);
     color: var(--text-secondary);
+}
+
+/* ── Score Edge Report ────────────────────────────────────────────────────
+   Tables reuse the global .alert-table; these scope the edge-specific bits:
+   small secondary lines inside cells (drift-adj / win-n), the reversal flag,
+   the auto-detected findings callout, and tighter numeric cells. */
+.signal-committee__edge {
+    margin-top: var(--space-2);
+}
+
+.signal-committee__edge-sub {
+    color: var(--text-tertiary);
+    font-size: var(--font-size-2xs);
+    font-variant-numeric: tabular-nums;
+}
+
+.signal-committee__edge-thin {
+    color: var(--text-tertiary);
+    font-size: var(--font-size-2xs);
+}
+
+.signal-committee__edge-reversal {
+    display: inline-block;
+    margin-left: var(--space-1);
+    padding: 0 var(--space-1-5);
+    border-radius: var(--radius-s);
+    border: 1px solid hsl(var(--hsl-warning) / 0.45);
+    background: hsl(var(--hsl-warning) / 0.10);
+    color: var(--text-secondary);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+    white-space: nowrap;
+}
+
+.signal-committee__edge-score {
+    font-family: var(--font-family-mono);
+    font-weight: var(--font-weight-semibold);
+    padding: 0 var(--space-1-5);
+    border-radius: var(--radius-s);
+    border: 1px solid var(--border-subtle);
+}
+
+.signal-committee__edge-findings {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1-5);
+    margin: var(--space-2) 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-m);
+    border: 1px solid hsl(var(--hsl-accent) / 0.35);
+    background: hsl(var(--hsl-accent) / 0.06);
+}
+
+.signal-committee__edge-finding {
+    font-size: var(--font-size-sm);
+    color: var(--text-primary);
+    line-height: 1.4;
+}
+
+.signal-committee__edge-note {
+    margin: var(--space-2) 0;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.signal-committee__edge-table .alert-table td {
+    font-variant-numeric: tabular-nums;
+    vertical-align: top;
+}
+
+.signal-committee__edge-empty {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
 }

@@ -72,6 +72,7 @@ export class ChartManager {
     private executionLabYesSeries: ISeriesApi<"Line"> | null = null;
     private executionLabNoSeries: ISeriesApi<"Line"> | null = null;
     private executionLabMarkersPlugin: ISeriesMarkersPluginApi<Time> | null = null;
+    private committeeScoreMarkersPlugin: ISeriesMarkersPluginApi<Time> | null = null;
     private paperStreamFirstTimeSec: number | null = null;
     private paperStreamLastTimeSec: number | null = null;
     private paperStreamDataLength = 0;
@@ -1015,48 +1016,57 @@ export class ChartManager {
     }
 
     // ========================================================================
-    // Signal Committee overlay (current score projection)
+    // Signal Committee overlay (score wick markers)
     // ------------------------------------------------------------------------
-    // The worker persists only entry signals (no exit events), so the committee
-    // cannot reconstruct a per-bar historical vote. This overlay instead
-    // projects the CURRENT net committee score across the visible chart bars:
-    // each bar gets one signed histogram bar (green/red/gray) reflecting the
-    // live verdict. A historical per-bar score requires server-side exit
-    // persistence and is tracked as a deferred phase.
+    // The committee score is projected onto the main candlestick series as a
+    // thin set of wick markers — one per bar where the verdict changes, plus
+    // the latest bar — so the numeric score (+3, -2, 0) reads directly on the
+    // chart instead of being buried in a side-panel badge. Positive scores sit
+    // above the bar in green with an up arrow; negative scores sit below in red
+    // with a down arrow. A dedicated markers plugin coexists with the trade and
+    // execution-lab marker plugins on the same candlestick series.
     // ------------------------------------------------------------------------
-
-    private committeeScoreSeries: ISeriesApi<"Histogram"> | null = null;
 
     /**
-     * Render the current committee score across `bars`. The score is the live
-     * net vote; bars receive the same value so the user sees the verdict in
-     * chart context. Pass an empty array to clear.
+     * Stamp the committee score as wick markers on the candlestick series.
+     * Each entry is a `{ time, value }` pair whose `value` is the net vote at
+     * that bar (caller picks which bars are worth annotating). Pass an empty
+     * array to clear.
      */
-    public setCommitteeScoreOverlay(bars: { time: Time; value: number }[]): void {
-        if (bars.length === 0) {
+    public setCommitteeScoreOverlay(points: { time: Time; value: number }[]): void {
+        if (points.length === 0) {
             this.removeCommitteeScoreOverlay();
             return;
         }
-        const last = bars[bars.length - 1];
-        const sign = (last.value ?? 0) > 0 ? ENHANCED_CANDLE_COLORS.up
-            : (last.value ?? 0) < 0 ? ENHANCED_CANDLE_COLORS.down
-                : "#888888";
-        if (!this.committeeScoreSeries) {
-            this.committeeScoreSeries = state.chart.addSeries(HistogramSeries, {
-                color: sign,
-                priceLineVisible: false,
-                lastValueVisible: false,
-            });
-        } else {
-            this.committeeScoreSeries.applyOptions({ color: sign });
-        }
-        this.committeeScoreSeries.setData(bars);
+        const markers: SeriesMarker<Time>[] = points.map((point) => {
+            const score = point.value;
+            const isLong = score > 0;
+            const isFlat = score === 0;
+            const color = isLong ? ENHANCED_CANDLE_COLORS.up
+                : score < 0 ? ENHANCED_CANDLE_COLORS.down
+                    : "#888888";
+            const sign = score > 0 ? `+${score}` : `${score}`;
+            return {
+                time: point.time,
+                position: isLong || isFlat ? 'aboveBar' : 'belowBar',
+                color,
+                shape: isLong || isFlat ? 'arrowUp' : 'arrowDown',
+                text: `Score ${sign}`,
+                size: 1,
+            };
+        });
+        this.clearCommitteeScoreMarkers();
+        this.committeeScoreMarkersPlugin = createSeriesMarkers(state.candlestickSeries, markers);
     }
 
     public removeCommitteeScoreOverlay(): void {
-        if (this.committeeScoreSeries) {
-            state.chart.removeSeries(this.committeeScoreSeries);
-            this.committeeScoreSeries = null;
+        this.clearCommitteeScoreMarkers();
+    }
+
+    private clearCommitteeScoreMarkers(): void {
+        if (this.committeeScoreMarkersPlugin) {
+            this.committeeScoreMarkersPlugin.detach();
+            this.committeeScoreMarkersPlugin = null;
         }
     }
 

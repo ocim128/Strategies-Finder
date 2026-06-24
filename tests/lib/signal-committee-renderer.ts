@@ -12,6 +12,7 @@ import {
     type CommitteeAggregate,
     type LegScore,
 } from "./signal-committee-score";
+import type { ScoreEdgeReport, ScoreEdgeBucket } from "./signal-committee-edge";
 
 export interface CommitteeRowView {
     streamId: string;
@@ -32,6 +33,13 @@ export interface CommitteeRowView {
     gainLabel: string;
     statusLabel: string;
     statusTone: "ok" | "warn" | "error";
+    /**
+     * Whether the member currently counts toward the committee score. False
+     * when the user has deactivated the member (worker `enabled=0`, or the
+     * local-synthetic `disabled` flag). Disabled rows render muted with a
+     * "disabled" pill and are excluded from the score by the service.
+     */
+    enabled: boolean;
 }
 
 /** Truncation limit for the status cell; full text lives in the diagnostic <pre>. */
@@ -63,7 +71,8 @@ export function buildCommitteeRowView(
         | "symbol"
         | "interval"
         | "strategy_key"
-        | "last_status">,
+        | "last_status"
+        | "enabled">,
     memberState: CommitteeMemberState | undefined,
     nowSec: number,
     configNameFromStreamId: string | null
@@ -73,11 +82,18 @@ export function buildCommitteeRowView(
     const direction = s?.latestEntry?.direction ?? null;
     const trade = s?.latestTrade ?? null;
     const isOpen = Boolean(trade?.isOpen);
+    const enabled = member.enabled === 1;
 
     let directionLabel = "—";
     let directionTone: CommitteeRowView["directionTone"] = "none";
     let voteLabel = "0";
-    if (s && s.ok && isOpen && direction) {
+    if (!enabled) {
+        // Deactivated members neither vote nor get re-evaluated. Show a muted
+        // DISABLED state regardless of any stale cached trade underneath.
+        directionLabel = "DISABLED";
+        directionTone = "none";
+        voteLabel = "0";
+    } else if (s && s.ok && isOpen && direction) {
         directionLabel = direction === "long" ? "LONG" : "SHORT";
         directionTone = direction;
         voteLabel = direction === "long" ? "+1" : "-1";
@@ -178,6 +194,7 @@ export function buildCommitteeRowView(
         gainLabel,
         statusLabel,
         statusTone,
+        enabled,
     };
 }
 
@@ -222,7 +239,17 @@ function renderCommitteeRow(row: CommitteeRowView): string {
         ? ""
         : `signal-committee__direction--${row.directionTone}`;
     const directionCellClass = directionClass ? ` class="${directionClass}"` : "";
-    return `<tr>
+    const rowClass = row.enabled ? "" : ' class="signal-committee__row--disabled"';
+    // Toggle button carries the desired NEXT enabled state as `{0|1}:{streamId}`
+    // so the service reads the target directly instead of re-deriving it.
+    const toggleAttr = row.enabled
+        ? `data-signal-committee-toggle-enabled="0:${escapeHtml(row.streamId)}"`
+        : `data-signal-committee-toggle-enabled="1:${escapeHtml(row.streamId)}"`;
+    const toggleLabel = row.enabled ? "Deactivate" : "Activate";
+    const disabledPill = row.enabled
+        ? ""
+        : ' <span class="signal-committee__disabled-pill">disabled</span>';
+    return `<tr${rowClass}>
         <td>${escapeHtml(row.configName)}</td>
         <td>${escapeHtml(row.symbol)}</td>
         <td>${escapeHtml(row.interval)}</td>
@@ -230,9 +257,10 @@ function renderCommitteeRow(row: CommitteeRowView): string {
         <td${directionCellClass}>${escapeHtml(row.directionLabel)}</td>
         <td>${escapeHtml(row.ageLabel)}</td>
         <td>${escapeHtml(row.gainLabel)}</td>
-        <td class="${toneClass(row.statusTone)}">${escapeHtml(row.statusLabel)}</td>
+        <td class="${toneClass(row.statusTone)}">${escapeHtml(row.statusLabel)}${disabledPill}</td>
         <td>
             <button class="btn btn-secondary btn-compact" data-signal-committee-load="${escapeHtml(row.streamId)}" type="button">Load</button>
+            <button class="btn btn-secondary btn-compact" ${toggleAttr} type="button">${toggleLabel}</button>
             <button class="btn btn-secondary btn-compact" data-signal-committee-remove="${escapeHtml(row.streamId)}" type="button">Remove</button>
         </td>
     </tr>`;
@@ -277,4 +305,124 @@ export function renderLegLeaderboard(legs: readonly LegScore[]): string {
         </div>`;
     });
     return rows.join("");
+}
+
+// ---------------------------------------------------------------------------
+// Score Edge Report
+// ---------------------------------------------------------------------------
+
+function scoreTone(score: number): "positive" | "negative" | "neutral" {
+    return score > 0 ? "positive" : score < 0 ? "negative" : "neutral";
+}
+
+function formatPctCell(value: number, digits = 2): string {
+    if (!Number.isFinite(value)) return "—";
+    const sign = value > 0 ? "+" : "";
+    return `${sign}${value.toFixed(digits)}%`;
+}
+
+function renderScoreEdgeBucketRow(bucket: ScoreEdgeBucket): string {
+    const cells = bucket.horizons.map((h) => {
+        const star = h.thin ? ' <span class="signal-committee__edge-thin" title="thin sample">*</span>' : "";
+        return `<td>${formatPctCell(h.meanForwardReturnPct)}<br><span class="signal-committee__edge-sub">adj ${formatPctCell(h.driftAdjustedPct)} · ${h.effectSizeBp.toFixed(1)} bp</span><br><span class="signal-committee__edge-sub">win ${h.winRate.toFixed(2)} · n${h.samples}</span>${star}</td>`;
+    }).join("");
+    const sign = bucket.score > 0 ? "+" : "";
+    const revFlag = bucket.reversal
+        ? ' <span class="signal-committee__edge-reversal" title="forward return contradicts the score sign — treat as a fade, not a follow">↺ reversal</span>'
+        : "";
+    return `<tr>
+        <td><span class="signal-committee__edge-score signal-committee__score--${scoreTone(bucket.score)}">${sign}${bucket.score}</span>${revFlag}</td>
+        ${cells}
+    </tr>`;
+}
+
+/**
+ * Render the Score Edge Report body as an HTML string.
+ *
+ * Returns an empty string when `report` is null (caller shows the placeholder
+ * hint instead). The report is deterministic; the renderer is pure and does
+ * not recompute anything — it only formats the report's numbers.
+ */
+export function renderScoreEdgeReport(report: ScoreEdgeReport | null): string {
+    if (!report) return "";
+    const headerCells = report.horizons
+        .map((h) => `<th>+${h} bars</th>`)
+        .join("");
+    const bucketRows = report.buckets
+        .map((row) => renderScoreEdgeBucketRow(row))
+        .join("");
+
+    const s = report.strategy;
+    const stratTone = s.cumulativeReturnPct > 0
+        ? "positive"
+        : s.cumulativeReturnPct < 0 ? "negative" : "neutral";
+    // Significance drives the badge tone: a big alpha that is not significant
+    // is the small-edge-times-many-bets trap, so it renders neutral, not green.
+    const sigTone = s.significance === "significant"
+        ? (s.alphaPct >= 0 ? "positive" : "negative")
+        : "neutral";
+    const inMarket = s.longBars + s.shortBars;
+
+    const findingsHtml = report.notableFindings.length > 0
+        ? `<div class="signal-committee__edge-findings">${report.notableFindings
+            .map((f) => `<div class="signal-committee__edge-finding">${escapeHtml(f)}</div>`)
+            .join("")}</div>`
+        : "";
+
+    return `<div class="signal-committee__edge">
+        <div class="portfolio-lab__control-grid">
+            <div class="analysis-control portfolio-lab__readout">
+                LS cumulative
+                <div class="portfolio-lab__badge signal-committee__score--${stratTone}">${formatPctCell(s.cumulativeReturnPct)}</div>
+            </div>
+            <div class="analysis-control portfolio-lab__readout">
+                Buy &amp; hold
+                <div class="portfolio-lab__badge">${formatPctCell(s.buyAndHoldReturnPct)}</div>
+            </div>
+            <div class="analysis-control portfolio-lab__readout">
+                Alpha (LS − B&amp;H)
+                <div class="portfolio-lab__badge signal-committee__score--${sigTone}" title="Alpha tone is gated by significance — a large alpha that is not significant is small-edge-times-many-bets noise, rendered neutral.">${formatPctCell(s.alphaPct)}</div>
+            </div>
+            <div class="analysis-control portfolio-lab__readout">
+                Significance
+                <div class="portfolio-lab__badge signal-committee__score--${sigTone}" title="t = sharpe × √(in-market bars). Large alpha + low t = unreliable.">t=${Number.isFinite(s.tStat) ? s.tStat.toFixed(2) : "—"} · ${escapeHtml(s.significance)}</div>
+            </div>
+            <div class="analysis-control portfolio-lab__readout">
+                LS Sharpe (raw)
+                <div class="portfolio-lab__badge">${Number.isFinite(s.sharpeRaw) ? s.sharpeRaw.toFixed(2) : "—"}</div>
+            </div>
+            <div class="analysis-control portfolio-lab__readout">
+                Bars in market
+                <div class="portfolio-lab__badge">${inMarket} <span class="signal-committee__edge-sub">(${s.longBars}L/${s.shortBars}S/${s.flatBars}flat)</span></div>
+            </div>
+            <div class="analysis-control portfolio-lab__readout">
+                Score range
+                <div class="portfolio-lab__badge">${report.scoreRange.min} .. ${report.scoreRange.max}</div>
+            </div>
+        </div>
+
+        ${findingsHtml}
+
+        <div class="signal-committee__edge-note">
+            Forward return per score bucket. Each cell: mean forward return,
+            then <strong>drift-adjusted</strong> (minus the asset's own per-bar
+            drift × horizon — removes beta so the number reads as score-specific
+            edge), then win rate &amp; sample count. Positive scores predicting
+            positive drift-adjusted returns = real edge.
+            <span class="signal-committee__edge-thin">*</span> = thin sample.
+            <span class="signal-committee__edge-reversal">↺ reversal</span> = forward return contradicts the score — fade, don't follow.
+        </div>
+
+        <div class="alert-table-wrapper signal-committee__edge-table">
+            <table class="alert-table">
+                <thead>
+                    <tr>
+                        <th>Score</th>
+                        ${headerCells}
+                    </tr>
+                </thead>
+                <tbody>${bucketRows || `<tr class="signal-committee__empty-row"><td colspan="${report.horizons.length + 1}">No scored bars.</td></tr>`}</tbody>
+            </table>
+        </div>
+    </div>`;
 }

@@ -46,15 +46,22 @@ import {
 } from "./signal-committee-score";
 import {
     computeCommitteeOverlayScores,
-    toOverlayPoints,
+    pickScoreChangePoints,
 } from "./signal-committee-overlay";
+import {
+    computeScoreEdgeReport,
+    formatScoreEdgeAiExport,
+    type ScoreEdgeReport,
+} from "./signal-committee-edge";
 import {
     buildCommitteeRowView,
     renderCommitteeHeader,
     renderCommitteeRows,
     renderEmptyHealthFail,
     renderLegLeaderboard,
+    renderScoreEdgeReport,
 } from "./signal-committee-renderer";
+import { copyToClipboard } from "./browser-transfer";
 import { createSignalCommitteeDom, type SignalCommitteeDom } from "./signal-committee-dom";
 import {
     readSignalCommitteePrefs,
@@ -70,13 +77,19 @@ const HEALTH_STALE_RUN_AT_SEC = 600; // 10 minutes since last_run_at = stale cro
  * Committee chart overlay modes, ordered as the toggle button cycles them.
  * Adding a new mode only requires appending to this tuple — the rotation,
  * button label switch, and TypeScript union all derive from it.
+ *
+ * "historical" is the only on-mode: it stamps one wick marker per bar where
+ * the reconstructed committee score changes (plus the latest bar), so the
+ * user reads the score evolution across the whole chart (e.g. +3 a day ago,
+ * +2 in the last 40 minutes) instead of a single live verdict. The previous
+ * "current" mode showed only the latest-bar score, which duplicated the
+ * side-panel badge without adding chart context — removed.
  */
-const COMMITTEE_OVERLAY_MODES = ["off", "current", "historical"] as const;
+const COMMITTEE_OVERLAY_MODES = ["off", "historical"] as const;
 type CommitteeOverlayMode = typeof COMMITTEE_OVERLAY_MODES[number];
 
 const COMMITTEE_OVERLAY_BUTTON_LABEL: Record<CommitteeOverlayMode, string> = {
     off: "Show Score on Chart",
-    current: "Score: Current (click for Historical)",
     historical: "Score: Historical (click to hide)",
 };
 
@@ -89,7 +102,10 @@ const SYNTHETIC_COMMITTEE_SYNC_MIN_SOURCE_BARS = 50_000;
 const LOCAL_SYNTHETIC_MEMBERS_STORAGE = {
     key: "signal_committee_local_synthetic_members",
     schema: "signal_committee_local_synthetic_members",
-    version: 1,
+    // v2: added optional `disabled` flag so local members can be deactivated
+    // without deletion (mirrors worker `enabled=0`). v1 rows migrate with
+    // `disabled=false`.
+    version: 2,
 } as const;
 
 interface LocalSyntheticCommitteeMember {
@@ -97,6 +113,8 @@ interface LocalSyntheticCommitteeMember {
     configName: string;
     createdAt: string;
     updatedAt: string;
+    /** v2. True when the user deactivated this local member. */
+    disabled?: boolean;
 }
 
 interface LocalSyntheticMemberRecord {
@@ -203,6 +221,8 @@ function readLocalSyntheticMembers(): LocalSyntheticCommitteeMember[] {
                     configName: candidate.configName,
                     createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : now,
                     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : now,
+                    // v1 rows have no `disabled`; default to false (active).
+                    disabled: candidate.disabled === true,
                 });
             }
             return members;
@@ -240,12 +260,19 @@ class SignalCommitteeService {
      */
     private lastDiagnosticObj: Record<string, unknown> | null = null;
     /**
+     * Latest Score Edge Report (deterministic forward-return edge of the
+     * committee score on the current chart). Recomputed on every refresh when
+     * historical overlay data is available; null otherwise. Rendered lazily
+     * into the collapsible Score Edge Report section, like the diagnostic.
+     */
+    private lastScoreEdgeReport: ScoreEdgeReport | null = null;
+    /**
      * Chart overlay mode:
      * - "off"        : no overlay
-     * - "current"    : project the live committee score across all visible bars
      * - "historical" : per-bar net vote reconstructed from each member's
-     *                  tradeWindows (entrySec..exitSec). Requires worker
-     *                  support (latest_state_json.tradeWindows).
+     *                  tradeWindows (entrySec..exitSec), stamped as wick
+     *                  markers on the chart. Requires worker support
+     *                  (latest_state_json.tradeWindows).
      */
     private overlayMode: CommitteeOverlayMode = "off";
 
@@ -592,6 +619,7 @@ class SignalCommitteeService {
             dom.signalCommitteeChartToggleBtn.textContent = COMMITTEE_OVERLAY_BUTTON_LABEL[next];
             if (next === "off") {
                 chartManager.removeCommitteeScoreOverlay();
+                this.clearScoreEdge();
             } else {
                 this.renderScoreOverlay();
             }
@@ -599,15 +627,26 @@ class SignalCommitteeService {
         dom.signalCommitteeAlertSaveBtn.addEventListener("click", () => {
             void this.saveAlertRule();
         });
+        dom.signalCommitteeScoreEdgeCopyBtn.addEventListener("click", () => {
+            void this.copyScoreEdgeExport();
+        });
         dom.signalCommitteeTableBody.addEventListener("click", (event) => {
             const target = event.target;
             if (!(target instanceof HTMLElement)) return;
             const loadStream = target.dataset.signalCommitteeLoad;
             const removeStream = target.dataset.signalCommitteeRemove;
+            const toggleSpec = target.dataset.signalCommitteeToggleEnabled;
             if (loadStream) {
                 void this.loadConfiguration(loadStream);
             } else if (removeStream) {
                 void this.removeConfiguration(removeStream);
+            } else if (toggleSpec) {
+                // Encoded as `{0|1}:{streamId}` — the desired NEXT enabled
+                // state, so we don't have to re-derive it from cached state.
+                const sep = toggleSpec.indexOf(":");
+                const wantEnabled = sep > 0 && toggleSpec.slice(0, sep) === "1";
+                const streamId = sep > 0 ? toggleSpec.slice(sep + 1) : "";
+                if (streamId) void this.setMemberEnabled(streamId, wantEnabled);
             }
         });
 
@@ -629,6 +668,16 @@ class SignalCommitteeService {
         if (diagnosticDetails) {
             diagnosticDetails.addEventListener("toggle", () => {
                 if (diagnosticDetails.open) this.renderDiagnostic();
+            });
+        }
+
+        // Same lazy pattern for the Score Edge Report: recompute-on-refresh
+        // stores the report; we only pay the innerHTML reflow when the user
+        // opens the section.
+        const scoreEdgeDetails = dom.signalCommitteeScoreEdgeBody?.closest("details");
+        if (scoreEdgeDetails) {
+            scoreEdgeDetails.addEventListener("toggle", () => {
+                if (scoreEdgeDetails.open) this.renderScoreEdge();
             });
         }
     }
@@ -698,7 +747,10 @@ class SignalCommitteeService {
                 subscription: {
                     id: -(index + 1),
                     stream_id: stored.streamId,
-                    enabled: 1,
+                    // Surface the local `disabled` flag as the standard
+                    // `enabled` column so `isMemberActive` treats worker and
+                    // local members uniformly.
+                    enabled: stored.disabled ? 0 : 1,
                     symbol,
                     interval,
                     strategy_key: strategyKey,
@@ -1092,55 +1144,114 @@ class SignalCommitteeService {
     /**
      * Render the committee-score chart overlay in the current mode.
      *
-     * - "current": every visible bar gets the live net vote (step histogram).
-     * - "historical": each bar gets the per-bar net vote reconstructed from
-     *   members' tradeWindows. Bars before any member's first entry, or after
-     *   all windows close, score 0.
+     * The overlay is a thin set of wick markers on the main candlestick series,
+     * not a histogram band. Markers carry the numeric net vote as their label
+     * so the verdict reads directly on the chart.
+     *
+     * "historical" stamps one marker per bar where the reconstructed per-bar
+     * vote changes (plus the latest bar), so flips in the committee verdict
+     * are visible across the whole chart (e.g. +3 a day ago, +2 recently)
+     * without stamping a number on every bar.
      *
      * If the worker has not yet populated `tradeWindows`, "historical" mode
      * renders nothing (overlay cleared) rather than misleading the user with
-     * an all-zero series.
+     * an all-zero marker on every bar.
      */
     private renderScoreOverlay(): void {
-        if (this.overlayMode === "off") return;
+        if (this.overlayMode === "off") {
+            this.clearScoreEdge();
+            return;
+        }
         if (this.members.length === 0 || this.memberStates.size === 0) {
             chartManager.removeCommitteeScoreOverlay();
+            this.clearScoreEdge();
             return;
         }
 
-        if (this.overlayMode === "current") {
-            const nowSec = Math.floor(Date.now() / 1000);
-            const aggregate = aggregateScore(this.buildScoreRows(), nowSec);
-            const bars = state.ohlcvData.map((candle) => ({
-                time: candle.time as unknown as import("lightweight-charts").Time,
-                value: aggregate.score,
-            }));
-            chartManager.setCommitteeScoreOverlay(bars);
-            return;
-        }
-
-        // historical mode
-        const overlayMembers = this.members.map((m) => {
-            const s = this.memberStates.get(m.stream_id);
-            return {
-                streamId: m.stream_id,
-                tradeWindows: Array.isArray(s?.tradeWindows) ? s!.tradeWindows : null,
-            };
-        });
+        // Build the per-bar score series from ACTIVE members only, so the
+        // chart overlay markers AND the Score Edge Report analyze the exact
+        // same score the user sees in the badge (which excludes deactivated
+        // members via buildScoreRows). Without this filter, deactivating a
+        // noisy member would drop the badge score but leave the edge report
+        // reflecting the deactivated member — breaking the very workflow the
+        // deactivate feature enables.
+        const overlayMembers = this.members
+            .filter((m) => this.isMemberActive(m))
+            .map((m) => {
+                const s = this.memberStates.get(m.stream_id);
+                return {
+                    streamId: m.stream_id,
+                    tradeWindows: Array.isArray(s?.tradeWindows) ? s!.tradeWindows : null,
+                };
+            });
         const anyHasWindows = overlayMembers.some((m) => m.tradeWindows && m.tradeWindows.length > 0);
         if (!anyHasWindows) {
-            // Worker hasn't populated tradeWindows yet (pre-redploy) — clear
-            // rather than show a misleading flat-zero histogram.
+            // No member has tradeWindows — either the worker hasn't populated
+            // them yet, or every member's evaluation failed. Clear rather than
+            // show a misleading flat-zero marker.
             chartManager.removeCommitteeScoreOverlay();
+            this.clearScoreEdge();
             return;
         }
         const bars = state.ohlcvData.map((candle) => ({ candle, sec: this.candleToSec(candle) }));
         const scores = computeCommitteeOverlayScores(bars, overlayMembers);
-        const points = toOverlayPoints(bars, scores as unknown as ReadonlyArray<number>, (b) => {
+        const points = pickScoreChangePoints(bars, scores as unknown as ReadonlyArray<number>, (b) => {
             // Lightweight-charts accepts the bar's original time value.
             return b.candle.time as unknown as import("lightweight-charts").Time;
         });
         chartManager.setCommitteeScoreOverlay(points as Array<{ time: import("lightweight-charts").Time; value: number }>);
+
+        // Rebuild the deterministic edge report from the same per-bar scores.
+        // Computation is cheap (single pass + small Sharpe); rendering is gated
+        // on the section being open (see renderScoreEdge).
+        this.lastScoreEdgeReport = computeScoreEdgeReport(
+            state.ohlcvData,
+            scores as unknown as ReadonlyArray<number>,
+            state.currentSymbol,
+            state.currentInterval
+        );
+        this.renderScoreEdge();
+    }
+
+    /**
+     * Render the Score Edge Report body, but only when its `<details>` is open.
+     * The report is recomputed on every refresh; this gate avoids paying the
+     * innerHTML reflow on every auto-refresh tick when the section is closed.
+     */
+    private renderScoreEdge(): void {
+        const dom = this.getDom();
+        if (!dom.signalCommitteeScoreEdgeBody) return;
+        const details = dom.signalCommitteeScoreEdgeBody.closest("details");
+        if (details && !details.open) return;
+        const html = renderScoreEdgeReport(this.lastScoreEdgeReport);
+        dom.signalCommitteeScoreEdgeBody.innerHTML = html
+            || '<span class="signal-committee__edge-empty">Enable “Show Score on Chart” and refresh — the report rebuilds from the historical committee score on the loaded bars.</span>';
+    }
+
+    /** Clear the cached edge report and reset the section to its placeholder. */
+    private clearScoreEdge(): void {
+        this.lastScoreEdgeReport = null;
+        const dom = this.getDom();
+        if (!dom.signalCommitteeScoreEdgeBody) return;
+        const details = dom.signalCommitteeScoreEdgeBody.closest("details");
+        if (details && !details.open) return;
+        dom.signalCommitteeScoreEdgeBody.innerHTML =
+            '<span class="signal-committee__edge-empty">Enable “Show Score on Chart” and refresh — the report rebuilds from the historical committee score on the loaded bars.</span>';
+    }
+
+    private async copyScoreEdgeExport(): Promise<void> {
+        if (!this.lastScoreEdgeReport) {
+            uiManager.showToast("No score edge report yet. Enable historical overlay and refresh first.", "info");
+            return;
+        }
+        const text = formatScoreEdgeAiExport(this.lastScoreEdgeReport);
+        try {
+            const copied = await copyToClipboard(text);
+            if (!copied) throw new Error("Clipboard copy returned false");
+            uiManager.showToast("Score edge AI export copied.", "success");
+        } catch {
+            uiManager.showToast("Copy failed.", "error");
+        }
     }
 
     /** Extract unix seconds from a chart candle for window containment tests. */
@@ -1409,6 +1520,39 @@ class SignalCommitteeService {
     }
 
     /**
+     * Toggle a member's active state without deleting it. A deactivated member
+     * stops counting toward the committee score (filtered out of
+     * `buildScoreRows`/`buildLegRows` via `isMemberActive`), stops being
+     * re-evaluated by the worker cron, and is excluded from the worker's
+     * committee Telegram alert. Re-enabling restores all three.
+     *
+     * Worker members flip the D1 `enabled` column via upsert; local-synthetic
+     * members flip a `disabled` flag in the localStorage blob (they have no
+     * D1 row). Both surfaces expose the result as `AlertSubscription.enabled`,
+     * so `isMemberActive` treats them uniformly.
+     */
+    private async setMemberEnabled(streamId: string, enabled: boolean): Promise<void> {
+        const configName = parseAlertConfigNameFromStreamId(streamId);
+        const label = configName ?? streamId;
+        try {
+            if (isLocalSyntheticStreamId(streamId)) {
+                writeLocalSyntheticMembers(readLocalSyntheticMembers().map((member) =>
+                    member.streamId === streamId
+                        ? { ...member, disabled: !enabled, updatedAt: new Date().toISOString() }
+                        : member
+                ));
+            } else {
+                await alertService.upsertSubscription({ streamId, enabled });
+            }
+            uiManager.showToast(`${enabled ? "Activated" : "Deactivated"} "${label}".`, "success");
+            await this.refresh({ manual: true });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            uiManager.showToast(`Failed to toggle: ${message}`, "error");
+        }
+    }
+
+    /**
      * Load the alert rule for the default committee tag and populate the UI.
      * If the worker has no rule yet, leave the inputs at their visual defaults
      * (which mirror the migration defaults: enabled=false, long=2, short=-2).
@@ -1474,20 +1618,26 @@ class SignalCommitteeService {
     }
 
     private buildScoreRows(): Array<CommitteeScoreRow & { voteDirection: "long" | "short" | null }> {
-        return this.members.map((m) => {
+        const rows: Array<CommitteeScoreRow & { voteDirection: "long" | "short" | null }> = [];
+        for (const m of this.members) {
+            // Deactivated members are excluded from the score entirely — they
+            // neither vote nor count as excluded-error. The score number, L/S
+            // counts, and avg age/gain all reflect only active members.
+            if (!this.isMemberActive(m)) continue;
             const s = this.memberStates.get(m.stream_id);
             if (!s || !s.ok) {
-                return {
+                rows.push({
                     streamId: m.stream_id,
                     ok: false,
                     latestTrade: null,
                     latestClose: null,
                     voteDirection: null,
-                };
+                });
+                continue;
             }
             const trade = s.latestTrade;
             const direction = s.latestEntry?.direction ?? null;
-            return {
+            rows.push({
                 streamId: m.stream_id,
                 ok: true,
                 latestTrade: trade
@@ -1499,8 +1649,15 @@ class SignalCommitteeService {
                     : null,
                 latestClose: s.latestClose ?? null,
                 voteDirection: direction,
-            };
-        });
+            });
+        }
+        return rows;
+    }
+
+    /** A member counts toward the score iff it is enabled (worker `enabled=1`
+     *  or local-synthetic `disabled=false` surfaced as `enabled`). */
+    private isMemberActive(m: AlertSubscription): boolean {
+        return m.enabled === 1;
     }
 
     /**
@@ -1516,12 +1673,16 @@ class SignalCommitteeService {
      * member is a real symbol and must not be decomposed.
      */
     private buildLegRows(): Array<LegScoreRow & { voteDirection: "long" | "short" | null }> {
-        return this.members.map((m): LegScoreRow & { voteDirection: "long" | "short" | null } => {
+        const rows: Array<LegScoreRow & { voteDirection: "long" | "short" | null }> = [];
+        for (const m of this.members) {
+            // Deactivated members are excluded from the leg leaderboard too —
+            // a disabled synthetic pair must not decompose into leg votes.
+            if (!this.isMemberActive(m)) continue;
             const s = this.memberStates.get(m.stream_id);
             const direction = s?.ok ? (s.latestEntry?.direction ?? null) : null;
             const trade = s?.latestTrade ?? null;
             const pair = this.resolveWorkerSyntheticPair(m);
-            return {
+            rows.push({
                 streamId: m.stream_id,
                 ok: Boolean(s?.ok),
                 latestTrade: trade
@@ -1535,8 +1696,9 @@ class SignalCommitteeService {
                 voteDirection: direction,
                 symbol: m.symbol,
                 syntheticPair: pair && matchesSyntheticSymbol(m.symbol, pair) ? pair : null,
-            };
-        });
+            });
+        }
+        return rows;
     }
 
     private renderLegBoard(rows: Array<LegScoreRow & { voteDirection: "long" | "short" | null }>): void {
@@ -1594,6 +1756,7 @@ class SignalCommitteeService {
         dom.signalCommitteeEmpty.style.display = "none";
         dom.signalCommitteeContent.style.display = "block";
         chartManager.removeCommitteeScoreOverlay();
+        this.clearScoreEdge();
     }
 
     private renderHealthFail(message: string): void {
@@ -1612,6 +1775,7 @@ class SignalCommitteeService {
         dom.signalCommitteeEmpty.style.display = "none";
         dom.signalCommitteeContent.style.display = "block";
         chartManager.removeCommitteeScoreOverlay();
+        this.clearScoreEdge();
     }
 }
 

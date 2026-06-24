@@ -112,3 +112,39 @@ export function toOverlayPoints<TBar>(
     }
     return points;
 }
+
+/**
+ * Select the bars worth annotating with a wick marker + score label.
+ *
+ * Used by the committee chart overlay to avoid stamping a number on every bar
+ * (illegible on dense charts). A bar is picked when:
+ * - it is the first bar (anchors the start of the score series), or
+ * - its score differs from the previous bar's (the verdict changed), or
+ * - it is the last bar (keeps the live verdict visible even when flat).
+ *
+ * `timeFor` returns the chart-library time; bars whose `timeFor` returns
+ * `null`/`undefined` are dropped (their neighbours are still compared, so a
+ * single null time can't suppress a real change).
+ */
+export function pickScoreChangePoints<TBar>(
+    bars: ReadonlyArray<TBar>,
+    scores: ReadonlyArray<number>,
+    timeFor: (bar: TBar) => unknown
+): Array<{ time: unknown; value: number }> {
+    const len = Math.min(bars.length, scores.length);
+    const points: Array<{ time: unknown; value: number }> = [];
+    if (len === 0) return points;
+    let lastScore = scores[0];
+    for (let i = 0; i < len; i++) {
+        const score = scores[i];
+        const isChange = i === 0 || score !== lastScore;
+        if (isChange || i === len - 1) {
+            const time = timeFor(bars[i]);
+            if (time !== undefined && time !== null) {
+                points.push({ time, value: score });
+            }
+        }
+        lastScore = score;
+    }
+    return points;
+}

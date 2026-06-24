@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
     computeCommitteeOverlayScores,
+    pickScoreChangePoints,
     toOverlayPoints,
     type CommitteeOverlayBar,
     type CommitteeOverlayMember,
@@ -121,5 +122,64 @@ describe("signal-committee-overlay / toOverlayPoints", () => {
     it("stops at the shorter of bars/scores", () => {
         const points = toOverlayPoints([1, 2, 3], [10, 20], (n) => n);
         expect(points).to.deep.equal([{ time: 1, value: 10 }, { time: 2, value: 20 }]);
+    });
+});
+
+describe("signal-committee-overlay / pickScoreChangePoints", () => {
+    it("returns nothing for empty input", () => {
+        expect(pickScoreChangePoints([], [], (b) => b)).to.deep.equal([]);
+    });
+
+    it("picks the first bar, every change, and the last bar", () => {
+        // scores: 0, 1, 1, -1, -1, 0
+        //   idx0 -> first (0)
+        //   idx1 -> change to 1
+        //   idx2 -> same as idx1 -> skip
+        //   idx3 -> change to -1
+        //   idx4 -> same as idx3 -> skip
+        //   idx5 -> change to 0 (also last)
+        const bars = ["a", "b", "c", "d", "e", "f"];
+        const scores = [0, 1, 1, -1, -1, 0];
+        const points = pickScoreChangePoints(bars, scores, (b) => b);
+        expect(points).to.deep.equal([
+            { time: "a", value: 0 },
+            { time: "b", value: 1 },
+            { time: "d", value: -1 },
+            { time: "f", value: 0 },
+        ]);
+    });
+
+    it("keeps the last bar visible even when the score is flat throughout", () => {
+        // All-zero verdict across many bars: only the first and last are picked.
+        const bars = ["a", "b", "c", "d"];
+        const scores = [0, 0, 0, 0];
+        const points = pickScoreChangePoints(bars, scores, (b) => b);
+        expect(points).to.deep.equal([
+            { time: "a", value: 0 },
+            { time: "d", value: 0 },
+        ]);
+    });
+
+    it("dedupes when the last bar is also a change (no double entry)", () => {
+        // The last bar is both a change and the last bar — must appear once.
+        const bars = ["a", "b"];
+        const scores = [0, 1];
+        const points = pickScoreChangePoints(bars, scores, (b) => b);
+        expect(points).to.deep.equal([
+            { time: "a", value: 0 },
+            { time: "b", value: 1 },
+        ]);
+    });
+
+    it("drops bars whose time is null but keeps comparing neighbours", () => {
+        // A null-time bar in the middle is dropped, but the change it carried
+        // is NOT — the next real bar still reflects the updated score.
+        const bars = ["a", null, "c"];
+        const scores = [0, 1, 1];
+        const points = pickScoreChangePoints(bars, scores, (b) => b);
+        expect(points).to.deep.equal([
+            { time: "a", value: 0 },
+            { time: "c", value: 1 },
+        ]);
     });
 });

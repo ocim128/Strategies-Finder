@@ -27,7 +27,8 @@ type MemberPick = Pick<AlertSubscription,
     | "symbol"
     | "interval"
     | "strategy_key"
-    | "last_status">;
+    | "last_status"
+    | "enabled">;
 
 function baseMember(overrides: Partial<MemberPick> = {}): MemberPick {
     return {
@@ -36,6 +37,7 @@ function baseMember(overrides: Partial<MemberPick> = {}): MemberPick {
         interval: "1m",
         strategy_key: "strat",
         last_status: "ok",
+        enabled: 1,
         ...overrides,
     };
 }
@@ -273,6 +275,7 @@ describe("signal-committee-renderer / renderCommitteeRows", () => {
             gainLabel: "+1.00%",
             statusLabel: "ok",
             statusTone: "ok" as const,
+            enabled: true,
         };
         const html = renderCommitteeRows([view]);
         expect(html).to.not.contain("<script>");
@@ -296,10 +299,85 @@ describe("signal-committee-renderer / renderCommitteeRows", () => {
             gainLabel: "—",
             statusLabel: "ok",
             statusTone: "ok",
+            enabled: true,
         }]);
         expect(longRow).to.contain("signal-committee__direction--long");
         // No +1 cell of its own; the direction label carries the meaning.
         const cells = longRow.match(/<td/g)?.length ?? 0;
         expect(cells).to.equal(9);
+    });
+});
+
+describe("signal-committee-renderer / deactivate (enabled flag)", () => {
+    it("buildCommitteeRowView surfaces enabled=false for a disabled member", () => {
+        const view = buildCommitteeRowView(
+            baseMember({ enabled: 0 }),
+            openLongState(),
+            NOW_SEC,
+            "cfg"
+        );
+        expect(view.enabled).to.equal(false);
+    });
+
+    it("forces a DISABLED direction label and 0 vote even with a stale open trade underneath", () => {
+        // The member has a cached open long, but is deactivated — the row must
+        // not lie about voting +1. Direction becomes DISABLED, tone muted.
+        const view = buildCommitteeRowView(
+            baseMember({ enabled: 0 }),
+            openLongState(),
+            NOW_SEC,
+            "cfg"
+        );
+        expect(view.directionLabel).to.equal("DISABLED");
+        expect(view.directionTone).to.equal("none");
+        expect(view.voteLabel).to.equal("0");
+    });
+
+    it("renders an Activate button and disabled pill for a deactivated row", () => {
+        const html = renderCommitteeRows([{
+            streamId: "stream:z",
+            configName: "cfg",
+            symbol: "BTCUSDT",
+            interval: "1m",
+            strategyKey: "strat",
+            directionLabel: "DISABLED",
+            directionTone: "none",
+            voteLabel: "0",
+            ageLabel: "—",
+            gainLabel: "—",
+            statusLabel: "ok",
+            statusTone: "ok",
+            enabled: false,
+        }]);
+        // Muted row class.
+        expect(html).to.contain('class="signal-committee__row--disabled"');
+        // Disabled pill in the status cell.
+        expect(html).to.contain("signal-committee__disabled-pill");
+        // Toggle button targets enabling (next state = 1).
+        expect(html).to.contain('data-signal-committee-toggle-enabled="1:stream:z"');
+        expect(html).to.contain(">Activate<");
+    });
+
+    it("renders a Deactivate button for an active row with no muted class or pill", () => {
+        const html = renderCommitteeRows([{
+            streamId: "stream:z",
+            configName: "cfg",
+            symbol: "BTCUSDT",
+            interval: "1m",
+            strategyKey: "strat",
+            directionLabel: "LONG",
+            directionTone: "long",
+            voteLabel: "+1",
+            ageLabel: "—",
+            gainLabel: "—",
+            statusLabel: "ok",
+            statusTone: "ok",
+            enabled: true,
+        }]);
+        expect(html).to.not.contain("signal-committee__row--disabled");
+        expect(html).to.not.contain("signal-committee__disabled-pill");
+        // Toggle button targets disabling (next state = 0).
+        expect(html).to.contain('data-signal-committee-toggle-enabled="0:stream:z"');
+        expect(html).to.contain(">Deactivate<");
     });
 });

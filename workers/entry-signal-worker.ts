@@ -2236,7 +2236,7 @@ async function runCommitteeAlertPass(env: Env): Promise<void> {
     const membersResult = await env.SIGNALS_DB.prepare(
         `SELECT stream_id, committee_tag, latest_state_json
          FROM signal_subscriptions
-         WHERE committee_tag IS NOT NULL`
+         WHERE committee_tag IS NOT NULL AND enabled = 1`
     ).all<CommitteeMemberStateRow>();
     const members = membersResult.results ?? [];
 

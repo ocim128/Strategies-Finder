@@ -30,6 +30,8 @@ const SIGNAL_COMMITTEE_DOM_IDS = {
     signalCommitteeAlertStatus: "signalCommitteeAlertStatus",
     signalCommitteeDiagnosticPre: "signalCommitteeDiagnosticPre",
     signalCommitteeLegLeaderboard: "signalCommitteeLegLeaderboard",
+    signalCommitteeScoreEdgeBody: "signalCommitteeScoreEdgeBody",
+    signalCommitteeScoreEdgeCopyBtn: "signalCommitteeScoreEdgeCopyBtn",
 } as const;
 
 export const SIGNAL_COMMITTEE_REQUIRED_IDS = getRequiredDomIds(SIGNAL_COMMITTEE_DOM_IDS);
@@ -46,6 +48,7 @@ type SignalCommitteeTypedControls = {
     signalCommitteeAlertLongThreshold: HTMLInputElement;
     signalCommitteeAlertShortThreshold: HTMLInputElement;
     signalCommitteeAlertSaveBtn: HTMLButtonElement;
+    signalCommitteeScoreEdgeCopyBtn: HTMLButtonElement;
 };
 
 export type SignalCommitteeDom =
