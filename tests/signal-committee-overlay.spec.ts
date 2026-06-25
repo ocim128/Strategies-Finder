@@ -3,7 +3,6 @@ import { describe, it } from "node:test";
 import {
     computeCommitteeOverlayScores,
     pickScoreChangePoints,
-    toOverlayPoints,
     type CommitteeOverlayBar,
     type CommitteeOverlayMember,
 } from "../lib/signal-committee-overlay";
@@ -104,24 +103,6 @@ describe("signal-committee-overlay / computeCommitteeOverlayScores", () => {
         // 17 -> +2 (inside both)
         // 25 -> 0
         expect(Array.from(scores)).to.deep.equal([0, 2, 2, 0]);
-    });
-});
-
-describe("signal-committee-overlay / toOverlayPoints", () => {
-    it("zips bars and scores into {time, value} points, dropping null times", () => {
-        const bars = [{ t: "a" }, { t: "b" }, { t: null }, { t: "d" }];
-        const scores = [1, 2, 3, 4];
-        const points = toOverlayPoints(bars, scores, (b) => b.t);
-        expect(points).to.deep.equal([
-            { time: "a", value: 1 },
-            { time: "b", value: 2 },
-            { time: "d", value: 4 },
-        ]);
-    });
-
-    it("stops at the shorter of bars/scores", () => {
-        const points = toOverlayPoints([1, 2, 3], [10, 20], (n) => n);
-        expect(points).to.deep.equal([{ time: 1, value: 10 }, { time: 2, value: 20 }]);
     });
 });
 

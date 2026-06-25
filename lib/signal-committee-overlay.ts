@@ -94,26 +94,6 @@ export function computeCommitteeOverlayScores(
 }
 
 /**
- * Convert (bars, scores) into `{time, value}` points suitable for a histogram
- * series. Bars with non-finite time are dropped. `timeFor(bar)` lets the
- * caller choose how to extract the chart-library time (e.g. from OHLCVData).
- */
-export function toOverlayPoints<TBar>(
-    bars: ReadonlyArray<TBar>,
-    scores: ReadonlyArray<number>,
-    timeFor: (bar: TBar) => unknown
-): Array<{ time: unknown; value: number }> {
-    const points: Array<{ time: unknown; value: number }> = [];
-    const len = Math.min(bars.length, scores.length);
-    for (let i = 0; i < len; i++) {
-        const time = timeFor(bars[i]);
-        if (time === undefined || time === null) continue;
-        points.push({ time, value: scores[i] });
-    }
-    return points;
-}
-
-/**
  * Select the bars worth annotating with a wick marker + score label.
  *
  * Used by the committee chart overlay to avoid stamping a number on every bar
