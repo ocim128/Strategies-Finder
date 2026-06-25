@@ -267,6 +267,18 @@ class SignalCommitteeService {
      */
     private lastScoreEdgeReport: ScoreEdgeReport | null = null;
     /**
+     * Latest "Sync Synthetic Legs" skip report: which active members could not
+     * be planned and why. Populated by `syncSyntheticLegs` whenever members are
+     * skipped (all-skipped OR partial). Folded into the main diagnostic snapshot
+     * by `refresh()` so the user can see the reasons without re-running sync.
+     * Cleared at the start of each sync pass.
+     */
+    private lastSyntheticLegSyncSkip: {
+        at: string;
+        activeMemberCount: number;
+        skipped: Array<{ streamId: string; symbol: string; reason: string }>;
+    } | null = null;
+    /**
      * Chart overlay mode:
      * - "off"        : no overlay
      * - "historical" : per-bar net vote reconstructed from each member's
@@ -308,11 +320,16 @@ class SignalCommitteeService {
         dom.signalCommitteeSyncSyntheticBtn.textContent = "Syncing...";
 
         try {
-            const members = this.members.length > 0
+            // Disabled members are intentionally paused and the worker's
+            // run-with-candles endpoint rejects them ("Subscription is disabled.
+            // Re-enable it before running manually."). Including one would abort
+            // the whole sync via the outer catch. Filter them out up front so
+            // only active members are synced, matching isMemberActive's contract.
+            const members = (this.members.length > 0
                 ? this.members
                 : this.workerReachable
                     ? await alertService.listCommitteeSubscriptions()
-                    : [];
+                    : []).filter((m) => this.isMemberActive(m));
             const plans = new Map<string, {
                 baseSymbol: string;
                 quoteSymbol: string;
@@ -320,10 +337,34 @@ class SignalCommitteeService {
                 sourceBars: number;
                 members: Array<{ streamId: string; interval: string; targetBars: number }>;
             }>();
+            // Members that could not be planned, with the precise reason. Surfaced
+            // in the empty-plans message and the diagnostic pane so the user can
+            // see WHY sync skipped (e.g. "no synthetic chart loaded") instead of
+            // only "No synthetic committee members to sync."
+            const skippedMembers: Array<{ streamId: string; symbol: string; reason: string }> = [];
+            // Record skip provenance once for the diagnostic even when some
+            // members succeed, so partial syncs also show what was excluded.
+            this.lastSyntheticLegSyncSkip = null;
 
             for (const member of members) {
-                const syntheticPair = this.resolveWorkerSyntheticPair(member);
-                if (!syntheticPair || !matchesSyntheticSymbol(member.symbol, syntheticPair)) continue;
+                const resolution = this.resolveWorkerSyntheticPairWithSource(member, members);
+                const syntheticPair = resolution.pair;
+                if (!syntheticPair) {
+                    skippedMembers.push({
+                        streamId: member.stream_id,
+                        symbol: member.symbol,
+                        reason: resolution.reason ?? "no synthetic pair resolvable",
+                    });
+                    continue;
+                }
+                if (!matchesSyntheticSymbol(member.symbol, syntheticPair)) {
+                    skippedMembers.push({
+                        streamId: member.stream_id,
+                        symbol: member.symbol,
+                        reason: `resolved pair ${syntheticPair.baseSymbol}/${syntheticPair.quoteSymbol} does not match member symbol ${member.symbol}`,
+                    });
+                    continue;
+                }
 
                 const source = pickSourceInterval(member.interval);
                 const sourceInterval = source?.sourceInterval ?? member.interval;
@@ -356,8 +397,42 @@ class SignalCommitteeService {
             }
 
             if (plans.size === 0) {
-                uiManager.showToast("No synthetic committee members to sync.", "info");
+                // No member could be planned. Distinguish "nothing enabled"
+                // from "members exist but their synthetic pair couldn't be
+                // resolved" — the latter is the common, fixable case (load the
+                // synthetic chart so the `chart` resolution branch matches).
+                const skipSnapshot = {
+                    at: new Date().toISOString(),
+                    activeMemberCount: members.length,
+                    skipped: skippedMembers,
+                };
+                this.lastSyntheticLegSyncSkip = skipSnapshot;
+                if (skippedMembers.length === 0) {
+                    uiManager.showToast(
+                        "No synthetic committee members to sync. Add a synthetic chart member or enable existing ones.",
+                        "info"
+                    );
+                    dom.signalCommitteeStatus.textContent =
+                        "No active synthetic members to sync.";
+                } else {
+                    uiManager.showToast(
+                        `No synthetic members could be planned. ${skippedMembers.length} skipped — see diagnostic. Example: ${skippedMembers[0].reason}`,
+                        "warning"
+                    );
+                    dom.signalCommitteeStatus.textContent =
+                        `Sync skipped ${skippedMembers.length} member${skippedMembers.length === 1 ? "" : "s"} (open the diagnostic for reasons). Most common fix: load the synthetic chart so its pair is in scope.`;
+                    debugLogger.warn("signal_committee.synthetic_leg_sync_all_skipped", skipSnapshot);
+                }
                 return;
+            }
+            // Some members planned (possibly with others skipped). Record the
+            // skips for the diagnostic pane so partial syncs are explainable.
+            if (skippedMembers.length > 0) {
+                this.lastSyntheticLegSyncSkip = {
+                    at: new Date().toISOString(),
+                    activeMemberCount: members.length,
+                    skipped: skippedMembers,
+                };
             }
 
             let storedLegs = 0;
@@ -433,19 +508,91 @@ class SignalCommitteeService {
     }
 
     private resolveWorkerSyntheticPair(
-        member: AlertSubscription
+        member: AlertSubscription,
+        siblings: readonly AlertSubscription[] = []
     ): { baseSymbol: string; quoteSymbol: string } | null {
+        return this.resolveWorkerSyntheticPairWithSource(member, siblings).pair;
+    }
+
+    /**
+     * Same resolution as {@link resolveWorkerSyntheticPair}, but returns which
+     * source supplied the pair (or why none did). Used by `syncSyntheticLegs`
+     * to surface actionable skip reasons instead of a generic "nothing to sync"
+     * — the failure modes below are the real reasons a synthetic member can't
+     * be synced, and each has a distinct user fix.
+     *
+     * Resolution order (first non-null wins):
+     *   1. `stored`   — pair embedded in the worker row's `backtest_settings_json`
+     *   2. `chart`    — the currently loaded chart is this pair (populates via
+     *                   `getSyntheticPairMetadata`), and the member's symbol matches
+     *   3. `config`   — the member's saved StrategyConfig carries `syntheticPair`
+     *   4. `sibling`  — another committee member on the same synthetic symbol
+     *                   already has a stored pair. This recovers members that were
+     *                   added without persisting a pair (legacy rows) without the
+     *                   user needing to load the synthetic chart first. The
+     *                   sibling's pair must derive to the member's symbol, so a
+     *                   ZECUSDT/APTUSDT sibling only reuses for ZECAPT members.
+     *
+     * `reason` is populated only when `pair === null` and names the most
+     * informative available signal about why resolution failed. A chart-member
+     * mismatch does NOT short-circuit resolution: the member may still resolve
+     * via `config` or `sibling` (e.g. an APTZEC member while the ZECAPT chart
+     * is open). It is recorded as a candidate reason used only if every source
+     * ultimately fails.
+     *
+     * @param siblings optional committee member list for the `sibling` fallback.
+     *   Callers that already have the member list in hand (sync, repair, legs)
+     *   pass it so legacy rows recover automatically. Omit to skip that branch.
+     */
+    private resolveWorkerSyntheticPairWithSource(
+        member: AlertSubscription,
+        siblings: readonly AlertSubscription[] = []
+    ): { pair: { baseSymbol: string; quoteSymbol: string } | null; source: "stored" | "chart" | "config" | "sibling" | null; reason: string | null } {
         const storedPair = readSyntheticPairFromSettingsJson(member.backtest_settings_json);
-        if (storedPair) return storedPair;
+        if (storedPair) return { pair: storedPair, source: "stored", reason: null };
+
+        // Candidate reason if every source ultimately fails. Recorded early so
+        // the chart-vs-member mismatch shows up in diagnostics, but it never
+        // short-circuits: a member whose symbol differs from the open chart can
+        // still resolve via config or a sibling (e.g. an APTZEC member while the
+        // ZECAPT chart is open).
+        let bestReason: string | null = null;
 
         const currentPair = dataMiningManager.getSyntheticPairMetadata();
-        if (matchesSyntheticSymbol(state.currentSymbol, currentPair) && matchesSyntheticSymbol(member.symbol, currentPair)) {
-            return currentPair;
+        if (currentPair && matchesSyntheticSymbol(state.currentSymbol, currentPair)) {
+            if (matchesSyntheticSymbol(member.symbol, currentPair)) {
+                return { pair: currentPair, source: "chart", reason: null };
+            }
+            bestReason = `chart pair is ${currentPair.baseSymbol}/${currentPair.quoteSymbol} but member symbol is ${member.symbol}`;
         }
 
         const configName = parseAlertConfigNameFromStreamId(member.stream_id);
         const config = configName ? settingsManager.loadStrategyConfig(configName) : null;
-        return config?.syntheticPair ?? null;
+        const configPair = config?.syntheticPair ?? null;
+        if (configPair) return { pair: configPair, source: "config", reason: null };
+
+        // Sibling fallback: reuse a stored pair from any other member whose
+        // stored pair derives to this member's synthetic symbol. Unambiguous
+        // because it keys off a real stored pair + the existing
+        // `matchesSyntheticSymbol` derivation, never off string-splitting the
+        // member symbol itself.
+        if (siblings.length > 0) {
+            for (const sibling of siblings) {
+                if (sibling === member) continue;
+                const siblingPair = readSyntheticPairFromSettingsJson(sibling.backtest_settings_json);
+                if (siblingPair && matchesSyntheticSymbol(member.symbol, siblingPair)) {
+                    return { pair: siblingPair, source: "sibling", reason: null };
+                }
+            }
+        }
+
+        // All sources empty. Prefer the chart-mismatch reason (the most
+        // actionable: "the open chart is a different pair") when available;
+        // otherwise name the missing sources.
+        const fallbackReason = bestReason ?? (configName
+            ? `no synthetic pair in stored settings, loaded chart, or saved config "${configName}"`
+            : "no synthetic pair in stored settings and no synthetic chart loaded");
+        return { pair: null, source: null, reason: fallbackReason };
     }
 
     private async repairWorkerSyntheticSubscriptions(
@@ -484,7 +631,7 @@ class SignalCommitteeService {
             const config = configName ? (configByName.get(configName) ?? null) : null;
             const streamStrategyKey = parseStrategyKeyFromStreamId(member.stream_id);
             const existingPair = readSyntheticPairFromSettingsJson(member.backtest_settings_json);
-            const syntheticPair = existingPair ?? config?.syntheticPair ?? this.resolveWorkerSyntheticPair(member);
+            const syntheticPair = existingPair ?? config?.syntheticPair ?? this.resolveWorkerSyntheticPair(member, members);
             if (!syntheticPair || !matchesSyntheticSymbol(member.symbol, syntheticPair)) continue;
             const strategyKey = config?.strategyKey ?? streamStrategyKey ?? member.strategy_key;
             const strategyParams = config?.strategyParams ?? parseStrategyParamsJson(member.strategy_params_json);
@@ -1110,6 +1257,12 @@ class SignalCommitteeService {
             });
             this.latestStatesAtIso = new Date().toISOString();
             diag.stage = "rendered";
+            // Surface the latest "Sync Synthetic Legs" skip report so the user
+            // can diagnose future sync failures (e.g. a member whose synthetic
+            // pair couldn't be resolved) from the same diagnostic pane.
+            if (this.lastSyntheticLegSyncSkip) {
+                diag.lastSyntheticLegSyncSkip = this.lastSyntheticLegSyncSkip;
+            }
 
             this.renderMembers();
             this.warnStaleCronIfAny();
@@ -1267,8 +1420,18 @@ class SignalCommitteeService {
 
     private warnStaleCronIfAny(): void {
         const nowSec = Math.floor(Date.now() / 1000);
-        const workerMembers = this.members.filter((m) => !isLocalSyntheticStreamId(m.stream_id));
-        const localCount = this.members.length - workerMembers.length;
+        // Staleness should only be assessed against ENABLED worker members.
+        // Disabled members are never evaluated by the cron by design, so their
+        // last_run_at is permanently stale; including them would surface a
+        // false "verify cron triggers" warning whenever any member is paused —
+        // even when the cron is healthy and every active member is fresh.
+        const workerMembers = this.members.filter(
+            (m) => !isLocalSyntheticStreamId(m.stream_id) && this.isMemberActive(m)
+        );
+        // localCount is local-synthetic members (any enabled state), computed
+        // independently of the enabled-worker filter above so it isn't inflated
+        // by disabled worker members.
+        const localCount = this.members.filter((m) => isLocalSyntheticStreamId(m.stream_id)).length;
         const anyStale = workerMembers.some((m) => {
             const runAtMs = m.last_run_at ? Date.parse(m.last_run_at) : NaN;
             if (!Number.isFinite(runAtMs)) return true;
@@ -1277,7 +1440,7 @@ class SignalCommitteeService {
         const dom = this.getDom();
         if (anyStale && this.workerReachable) {
             dom.signalCommitteeStatus.textContent =
-                "Worker reachable but at least one member has not been evaluated recently. Verify cron triggers are set.";
+                "Worker reachable but at least one active member has not been evaluated recently. Verify cron triggers are set.";
         } else if (this.workerReachable) {
             dom.signalCommitteeStatus.textContent =
                 `${this.members.length} member${this.members.length === 1 ? "" : "s"} on the committee${localCount > 0 ? ` (${localCount} local synthetic)` : ""}.`;
@@ -1681,7 +1844,7 @@ class SignalCommitteeService {
             const s = this.memberStates.get(m.stream_id);
             const direction = s?.ok ? (s.latestEntry?.direction ?? null) : null;
             const trade = s?.latestTrade ?? null;
-            const pair = this.resolveWorkerSyntheticPair(m);
+            const pair = this.resolveWorkerSyntheticPair(m, this.members);
             rows.push({
                 streamId: m.stream_id,
                 ok: Boolean(s?.ok),

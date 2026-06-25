@@ -373,7 +373,7 @@ describe('Entry signal worker local candle proxy', () => {
 });
 
 describe('Entry signal worker run-now staleness', () => {
-    it('overwrites latest_state_json with a not-ok snapshot when buildSubscriptionCandleContext fails, so the batched committee endpoint never serves a stale open trade alongside an insufficient_candles status', async () => {
+    it('overwrites latest_state_json with a not-ok snapshot for a real-symbol subscription when buildSubscriptionCandleContext fails, so the batched committee endpoint never serves a stale open trade alongside an insufficient_candles status', async () => {
         const originalFetch = globalThis.fetch;
         const staleOpenTradeState = {
             evaluatedAt: '2026-06-20T10:00:00.000Z',
@@ -401,17 +401,20 @@ describe('Entry signal worker run-now staleness', () => {
             },
             tradeWindows: [[1781909700, null, 1]],
         };
+        // Real-symbol subscription (no syntheticPair). Synthetic members keep
+        // their last-good snapshot on fetch failure because their only recovery
+        // path is a manual "Sync Synthetic Legs"; real-symbol members have no
+        // such recovery, so wiping prevents a stale open trade from rendering
+        // indefinitely. See the isSyntheticMember gate in runSubscription.
         const subscription = {
             id: 1,
-            stream_id: 'zecapt:3m:wick_imbalance_thrust_continuation:cfg:ZECAPT-3m',
+            stream_id: 'btcusdt:3m:wick_imbalance_thrust_continuation:cfg:BTCUSDT-3m',
             enabled: 1,
-            symbol: 'ZECAPT',
+            symbol: 'BTCUSDT',
             interval: '3m',
             strategy_key: 'wick_imbalance_thrust_continuation',
             strategy_params_json: '{}',
-            backtest_settings_json: JSON.stringify({
-                syntheticPair: { baseSymbol: 'ZECUSDT', quoteSymbol: 'APTUSDT' },
-            }),
+            backtest_settings_json: JSON.stringify({}),
             freshness_bars: 1,
             notify_telegram: 0,
             notify_exit: 0,
@@ -427,10 +430,10 @@ describe('Entry signal worker run-now staleness', () => {
         };
 
         const stateUpdates: Array<{ sql: string; params: unknown[] }> = [];
-        // Stub fetch to return a few aligned klines for both legs. Enough that
-        // synthetic-pair building succeeds, but far below MIN_CLOSED_CANDLES
-        // (200) so buildSubscriptionCandleContext returns insufficient_candles.
-        const stepSec = 60; // 3m target uses 1m source via pickSourceInterval
+        // Stub fetch to return a few klines. Enough to resolve, but far below
+        // MIN_CLOSED_CANDLES (200) so buildSubscriptionCandleContext returns
+        // insufficient_candles.
+        const stepSec = 180;
         const fewRows: Array<[number, string, string, string, string, string]> = [];
         const baseOpen = Math.floor(Date.now() / 1000) - stepSec * 9;
         for (let i = 0; i < 10; i++) {
@@ -466,7 +469,7 @@ describe('Entry signal worker run-now staleness', () => {
                 new Request('https://worker.test/api/subscriptions/run-now', {
                     method: 'POST',
                     body: JSON.stringify({
-                        streamId: 'zecapt:3m:wick_imbalance_thrust_continuation:cfg:ZECAPT-3m',
+                        streamId: 'btcusdt:3m:wick_imbalance_thrust_continuation:cfg:BTCUSDT-3m',
                     }),
                 }),
                 env
@@ -495,8 +498,17 @@ describe('Entry signal worker run-now staleness', () => {
         }
     });
 
-    it('clears latest_state_json when candle fetching throws, so Binance 403 errors do not leave a stale vote rendered', async () => {
+    it('keeps the last-good latest_state_json for a synthetic-pair subscription when candle fetching throws (Binance 403), so the committee stays useful until the next manual Sync Synthetic Legs; only last_status records the failure', async () => {
         const originalFetch = globalThis.fetch;
+        const existingState = {
+            evaluatedAt: '2026-06-20T10:00:00.000Z',
+            closedCandleTimeSec: 1781900000,
+            latestClose: 740.41,
+            reason: null,
+            latestTrade: { entryTimeSec: 1781909700, entryPrice: 742.61, exitReason: 'end_of_data', isOpen: true },
+            latestEntry: { direction: 'long', signalTimeSec: 1781909700, signalPrice: 742.61, entryPrice: 742.61 },
+            tradeWindows: [[1781909700, null, 1]],
+        };
         const subscription = {
             id: 1,
             stream_id: 'zecapt:5m:volatility_regime_median_alignment:cfg:ZECAPT-5m',
@@ -517,15 +529,7 @@ describe('Entry signal worker run-now staleness', () => {
             last_status: 'new_entry',
             created_at: '2026-06-20 00:00:00',
             updated_at: '2026-06-20 00:00:00',
-            latest_state_json: JSON.stringify({
-                evaluatedAt: '2026-06-20T10:00:00.000Z',
-                closedCandleTimeSec: 1781900000,
-                latestClose: 740.41,
-                reason: null,
-                latestTrade: { entryTimeSec: 1781909700, entryPrice: 742.61, exitReason: 'end_of_data', isOpen: true },
-                latestEntry: { direction: 'long', signalTimeSec: 1781909700, signalPrice: 742.61, entryPrice: 742.61 },
-                tradeWindows: [[1781909700, null, 1]],
-            }),
+            latest_state_json: JSON.stringify(existingState),
             committee_tag: 'default',
         };
         const stateUpdates: Array<{ sql: string; params: unknown[] }> = [];
@@ -560,18 +564,18 @@ describe('Entry signal worker run-now staleness', () => {
             expect(res.status).to.equal(200);
             const body = await res.json() as { ok: boolean; status: string };
             expect(body.ok).to.equal(true);
+            // The failure is still surfaced in last_status.
             expect(body.status).to.contain('error:Binance API unavailable');
 
+            // KEY INVARIANT: a synthetic member must NOT have its latest_state_json
+            // overwritten on a fetch failure. The cron cannot self-recover (Binance
+            // is blocked), so the only path back is a manual Sync Synthetic Legs.
+            // Keeping the last-good snapshot lets the committee keep showing the
+            // direction/tradeWindows until that manual sync; wiping it would blind
+            // the committee with no recovery. The row's last_status still shows
+            // WHY the snapshot is stale.
             const stateWrite = stateUpdates.find((u) => u.sql.includes('latest_state_json'));
-            expect(stateWrite, 'expected error path to clear latest_state_json').to.not.equal(undefined);
-            const persisted = JSON.parse(String(stateWrite!.params[0])) as {
-                latestTrade: unknown;
-                latestEntry: unknown;
-                reason: string;
-            };
-            expect(persisted.latestTrade).to.equal(null);
-            expect(persisted.latestEntry).to.equal(null);
-            expect(persisted.reason).to.contain('error:Binance API unavailable');
+            expect(stateWrite, 'synthetic member on fetch failure must keep its latest_state_json, not rewrite it').to.equal(undefined);
         } finally {
             globalThis.fetch = originalFetch;
         }

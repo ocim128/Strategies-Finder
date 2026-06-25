@@ -1706,27 +1706,37 @@ async function runSubscription(
         : subscriptionFreshnessBars;
     const prevTelegramFailCount = parseTelegramFailCount(subscription.last_status);
     const telegramRetriesExhausted = prevTelegramFailCount >= MAX_TELEGRAM_RETRIES;
+    // Synthetic members can't self-recover from a Binance fetch failure: their
+    // only recovery path is a manual "Sync Synthetic Legs", which pushes locally-
+    // built synthetic candles via runWithCandles and never hits Binance. Wiping
+    // latest_state_json on such a failure would blind the committee with no
+    // cron-side recovery. Instead we keep serving the last good snapshot
+    // (direction + tradeWindows) until the next manual sync; the error is still
+    // surfaced via last_status so the row shows WHY the snapshot is stale.
+    // Real-symbol members keep the original wipe behavior: they have no manual
+    // recovery, so a stale-but-ok snapshot would mislead.
+    const isSyntheticMember = readSyntheticPairSettings(
+        resolveSubscriptionExecutionBacktestSettings(
+            safeJsonParse(subscription.backtest_settings_json, {} as BacktestSettings)
+        )
+    ) !== null;
 
     try {
         const prepared = await buildSubscriptionCandleContext(env, subscription);
         if (!prepared.ok) {
             const status = composeSubscriptionStatus(prepared.reason, persistedExitAlertKey);
             await updateSubscriptionStatus(env, streamId, status);
-            // Overwrite latest_state_json with a not-ok snapshot. Without this,
-            // the batched /api/subscriptions/states endpoint keeps serving the
-            // last successful evaluation (ok:true, open trade, vote), so the
-            // committee shows stale direction/gain alongside the fresh failure
-            // status. Clearing the trade context here makes the row render as
-            // PENDING instead of a contradiction.
-            await persistLatestSubscriptionState(env, streamId, {
-                evaluatedAt: new Date().toISOString(),
-                closedCandleTimeSec: null,
-                latestClose: null,
-                reason: prepared.reason,
-                latestTrade: null,
-                tradeWindows: null,
-                latestEntry: null,
-            });
+            if (!isSyntheticMember) {
+                await persistLatestSubscriptionState(env, streamId, {
+                    evaluatedAt: new Date().toISOString(),
+                    closedCandleTimeSec: null,
+                    latestClose: null,
+                    reason: prepared.reason,
+                    latestTrade: null,
+                    tradeWindows: null,
+                    latestEntry: null,
+                });
+            }
             return { streamId, status };
         }
         const { parsedStrategyParams, parsedBacktestSettings, closed, evaluationCandles, latestClose } = prepared.context;
@@ -1862,15 +1872,17 @@ async function runSubscription(
         );
         const status = composeSubscriptionStatus(`error:${rawStatus}`, persistedExitAlertKey);
         await updateSubscriptionStatus(env, streamId, status);
-        await persistLatestSubscriptionState(env, streamId, {
-            evaluatedAt: new Date().toISOString(),
-            closedCandleTimeSec: null,
-            latestClose: null,
-            reason: status,
-            latestTrade: null,
-            tradeWindows: null,
-            latestEntry: null,
-        });
+        if (!isSyntheticMember) {
+            await persistLatestSubscriptionState(env, streamId, {
+                evaluatedAt: new Date().toISOString(),
+                closedCandleTimeSec: null,
+                latestClose: null,
+                reason: status,
+                latestTrade: null,
+                tradeWindows: null,
+                latestEntry: null,
+            });
+        }
         return { streamId, status };
     }
 }
