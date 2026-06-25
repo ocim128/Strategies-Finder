@@ -15,6 +15,7 @@ export * from "./portfolio-lab-dom";
 export * from "./live-positions-dom";
 export * from "./finder/finder-manager-dom";
 export * from "./hunt/hunt-dom";
+export * from "./batch-backtest/batch-backtest-dom";
 export * from "./pairCombiner/pair-combiner-bridge-dom";
 export * from "./walk-forward-dom";
 export * from "./strategy-ensemble-dom";

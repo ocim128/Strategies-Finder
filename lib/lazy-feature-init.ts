@@ -21,6 +21,7 @@ const TAB_TO_FEATURE: Record<string, string> = {
     assetleadership: "asset-leadership",
     alerts: "alerts",
     hunt: "hunt",
+    batchbacktest: "batch-backtest",
     walkforward: "walk-forward",
     montecarlo: "monte-carlo",
     portfolio: "portfolio-lab",

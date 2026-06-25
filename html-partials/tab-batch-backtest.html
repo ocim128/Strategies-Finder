@@ -1,0 +1,68 @@
+<!-- Batch Backtest Tab -->
+<div id="batchbacktestTab">
+    <div class="section-title">Batch Backtest</div>
+    <div class="param-hint">
+        Run the current strategy + current params + current backtest settings once
+        on each pair in the list. Real symbols and synthetic pairs (e.g.
+        <code>ZEC+APT</code>) are both supported. This is not a search &mdash; use Finder for that.
+    </div>
+
+    <div class="section-body">
+        <div class="finder-strategy-actions" role="group" aria-label="Batch symbols helpers">
+            <button class="btn btn-secondary btn-compact" id="batchBacktestUseCurrent" type="button">Use Current</button>
+            <button class="btn btn-secondary btn-compact" id="batchBacktestClear" type="button">Clear</button>
+        </div>
+        <div class="param-group" style="margin-top: 12px;">
+            <label class="param-label" for="batchBacktestSymbols">Pairs</label>
+            <textarea class="param-input" id="batchBacktestSymbols" rows="8"
+                placeholder="BTCUSDT&#10;ZEC+APT&#10;PAXGUSDT&#10;TSLAUSDT"></textarea>
+        </div>
+        <div class="param-hint">One pair per line, or comma / whitespace separated. Synthetic pairs use <code>BASE+QUOTE</code>.</div>
+    </div>
+
+    <div class="finder-actions">
+        <button class="btn btn-primary run-btn" id="batchBacktestRunBtn" type="button">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8 5v14l11-7z" />
+            </svg>
+            Run Batch
+        </button>
+        <button class="btn btn-danger stop-btn" id="batchBacktestStopBtn" style="display:none" type="button">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6 6h12v12H6z" />
+            </svg>
+            Stop
+        </button>
+        <button class="btn btn-secondary btn-compact" id="batchBacktestCopyBtn" type="button"
+            title="Copy all rows as pipe-delimited text">
+            Copy Results
+        </button>
+    </div>
+
+    <div class="progress-container" id="batchBacktestProgress">
+        <div class="progress-bar">
+            <div class="progress-fill" id="batchBacktestProgressFill"></div>
+        </div>
+        <div class="progress-text" id="batchBacktestProgressText">Ready</div>
+    </div>
+
+    <div class="finder-status" id="batchBacktestStatus">Idle</div>
+    <div class="finder-universe-summary" id="batchBacktestSummary">0 pairs</div>
+
+    <div class="finder-results">
+        <div class="finder-list" id="batchBacktestResults">
+        </div>
+        <div class="empty-state empty-state-illustrated" id="batchBacktestEmpty">
+            <div class="empty-state-icon">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path
+                        d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14H7v-2h5v2zm5-4H7v-2h10v2zm0-4H7V7h10v2z" />
+                </svg>
+            </div>
+            <h3 class="empty-state-title">Run One Strategy Across Many Pairs</h3>
+            <p class="empty-state-description">
+                Paste a list of pairs above, then click <strong>Run Batch</strong>.
+            </p>
+        </div>
+    </div>
+</div>
