@@ -1,6 +1,8 @@
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createFetchTimeoutSignal, isAbortError } from '../lib/dataProviders/fetch-helpers';
+import { createFetchTimeoutSignal, fetchWithTimeoutAndRetry, isAbortError } from '../lib/dataProviders/fetch-helpers';
+
+const originalFetch = globalThis.fetch;
 
 function waitForAbort(signal: AbortSignal): Promise<void> {
     if (signal.aborted) return Promise.resolve();
@@ -10,6 +12,10 @@ function waitForAbort(signal: AbortSignal): Promise<void> {
 }
 
 describe('fetch helper abort handling', () => {
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+    });
+
     it('treats nullish and primitive errors as non-abort errors', () => {
         assert.equal(isAbortError(null), false);
         assert.equal(isAbortError(undefined), false);
@@ -39,5 +45,24 @@ describe('fetch helper abort handling', () => {
         } finally {
             timeout.cleanup();
         }
+    });
+
+    it('retries transient HTTP responses before returning the final response', async () => {
+        let calls = 0;
+        globalThis.fetch = (async () => {
+            calls += 1;
+            return new Response(JSON.stringify({ calls }), {
+                status: calls === 1 ? 429 : 200,
+                headers: { 'content-type': 'application/json' },
+            });
+        }) as typeof fetch;
+
+        const response = await fetchWithTimeoutAndRetry('https://example.test/data', {}, {
+            maxAttempts: 2,
+            baseDelayMs: 0,
+        });
+
+        assert.equal(response.status, 200);
+        assert.equal(calls, 2);
     });
 });

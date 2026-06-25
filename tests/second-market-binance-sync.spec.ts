@@ -6,6 +6,7 @@ import { expect } from "chai";
 import {
     loadSecondDataSyncState,
     openSecondMarketDb,
+    upsertBinance1sCandles,
     writeSecondDataSyncState,
 } from "../lib/second-market/db";
 import { loadBinance1sCandles } from "../lib/second-market/loaders";
@@ -284,6 +285,46 @@ describe("second market Binance 1s sync", () => {
             expect(summary.fetched).to.equal(0);
             expect(summary.lastTs).to.equal(null);
             expect(state?.cursor_ts).to.equal(cursorTs);
+        } finally {
+            db.close();
+        }
+    });
+
+    it("skips Binance REST when the requested 1s range is already covered locally", async () => {
+        const db = openSecondMarketDb(makeDbPath());
+        try {
+            upsertBinance1sCandles(db, [1_700_000_000, 1_700_000_001, 1_700_000_002].map((ts, index) => ({
+                symbol: "BTCUSDT",
+                market_type: "spot",
+                ts,
+                open: 100 + index,
+                high: 101 + index,
+                low: 99 + index,
+                close: 100.5 + index,
+                volume: 10,
+                trade_count: 1,
+                source: "binance_1s",
+                updated_at: 1_700_000_010,
+            })));
+            globalThis.fetch = (async () => {
+                throw new Error("Binance should not be fetched for a fully covered range");
+            }) as typeof fetch;
+
+            const summary = await syncBinance1sRange(db, {
+                symbol: "BTCUSDT",
+                marketType: "spot",
+                startTs: 1_700_000_000,
+                endTs: 1_700_000_002,
+            });
+            const state = loadSecondDataSyncState(db, "binance_1s", "BTCUSDT", "spot");
+
+            expect(summary).to.include({
+                fetched: 0,
+                upserted: 0,
+                firstTs: 1_700_000_000,
+                lastTs: 1_700_000_002,
+            });
+            expect(state?.cursor_ts).to.equal(1_700_000_002);
         } finally {
             db.close();
         }

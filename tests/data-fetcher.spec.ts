@@ -330,7 +330,7 @@ describe("DataFetcher chart lookback", () => {
         });
 
         const data = await fetcher.fetchDataWithLimit("ETHUSDT", "5m", 10, { requestDelayMs: 0 });
-        const binanceRequests = requestedUrls.filter((url) => url.hostname === "api.binance.com");
+        const binanceRequests = requestedUrls.filter((url) => url.pathname === "/api/v3/klines");
 
         assert.equal(binanceRequests.length, 1);
         assert.equal(data.length, 10);

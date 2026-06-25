@@ -1,6 +1,7 @@
 import { getIntervalSeconds } from "./utils";
 
 export const DEFAULT_PROVIDER_FETCH_TIMEOUT_MS = 15_000;
+const DEFAULT_RETRY_STATUSES = new Set([418, 429, 500, 502, 503, 504]);
 
 export function findBestDivisibleInterval(
     targetSeconds: number,
@@ -60,6 +61,33 @@ export function formatProviderError(error: unknown): string {
     return String(error);
 }
 
+function parseRetryAfterMs(value: string | null): number | null {
+    if (!value) return null;
+    const seconds = Number(value);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+        return Math.floor(seconds * 1000);
+    }
+    const dateMs = Date.parse(value);
+    if (!Number.isFinite(dateMs)) return null;
+    return Math.max(0, dateMs - Date.now());
+}
+
+function delayWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+    if (ms <= 0) return Promise.resolve();
+    if (signal?.aborted) return Promise.reject((signal as AbortSignal & { reason?: unknown }).reason ?? new Error('Aborted'));
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            signal?.removeEventListener('abort', abort);
+            resolve();
+        }, ms);
+        const abort = () => {
+            clearTimeout(timeout);
+            reject((signal as AbortSignal & { reason?: unknown } | undefined)?.reason ?? new Error('Aborted'));
+        };
+        signal?.addEventListener('abort', abort, { once: true });
+    });
+}
+
 function createTimeoutAbortReason(): unknown {
     if (typeof DOMException !== 'undefined') {
         return new DOMException('Provider request timed out', 'TimeoutError');
@@ -104,4 +132,49 @@ export function createFetchTimeoutSignal(
             parentSignal?.removeEventListener('abort', abortFromParent);
         },
     };
+}
+
+export async function fetchWithTimeoutAndRetry(
+    input: RequestInfo | URL,
+    init: RequestInit = {},
+    options: {
+        timeoutMs?: number;
+        maxAttempts?: number;
+        retryStatuses?: Iterable<number>;
+        baseDelayMs?: number;
+        signal?: AbortSignal;
+    } = {}
+): Promise<Response> {
+    const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? 1));
+    const retryStatuses = new Set(options.retryStatuses ?? DEFAULT_RETRY_STATUSES);
+    const baseDelayMs = Math.max(0, Math.floor(options.baseDelayMs ?? 250));
+    const sourceSignal = options.signal ?? init.signal;
+
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const timeout = createFetchTimeoutSignal(sourceSignal ?? undefined, options.timeoutMs);
+        try {
+            const response = await fetch(input, {
+                ...init,
+                signal: timeout.signal,
+            });
+            if (!retryStatuses.has(response.status) || attempt >= maxAttempts) {
+                return response;
+            }
+
+            const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
+            const backoffMs = retryAfterMs ?? baseDelayMs * attempt;
+            await delayWithAbort(backoffMs, sourceSignal ?? undefined);
+        } catch (error) {
+            lastError = error;
+            if (isAbortError(error) || attempt >= maxAttempts) {
+                throw error;
+            }
+            await delayWithAbort(baseDelayMs * attempt, sourceSignal ?? undefined);
+        } finally {
+            timeout.cleanup();
+        }
+    }
+
+    throw lastError ?? new Error('Fetch failed');
 }

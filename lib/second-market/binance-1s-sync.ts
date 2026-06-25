@@ -1,15 +1,17 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { BinanceMarketType } from "../binance-market";
+import { resolveBinanceApiBases } from "../binance-api-bases";
+import { fetchWithTimeoutAndRetry, isAbortError } from "../dataProviders/fetch-helpers";
 import { upsertBinance1sCandles, writeSecondDataSyncState } from "./db";
 import type { Binance1sCandleRow, SecondMarketSymbol } from "./types";
 
-const BINANCE_BASES: Record<BinanceMarketType, string> = {
-    spot: "https://api.binance.com",
-    futures: "https://fapi.binance.com",
-};
 const BINANCE_SPOT_KLINE_PATH = "/api/v3/klines";
 const BINANCE_FUTURES_AGG_TRADES_PATH = "/fapi/v1/aggTrades";
 const BINANCE_1S_LIMIT = 1000;
+const BINANCE_1S_FETCH_TIMEOUT_MS = 15_000;
+const BINANCE_1S_MAX_ATTEMPTS = 3;
+const BINANCE_1S_RETRY_DELAY_MS = 250;
+const MAX_MISSING_SEGMENTS_BEFORE_FULL_FETCH = 25;
 
 type RawBinanceKline = unknown[];
 type RawFuturesAggTrade = Record<string, unknown>;
@@ -28,6 +30,25 @@ function nowSec(): number {
 function normalizeClosedLagSec(value: number | undefined): number {
     const numeric = Number(value ?? 2);
     return Number.isFinite(numeric) ? Math.max(1, Math.floor(numeric)) : 2;
+}
+
+function getBinanceApiBase(marketType: BinanceMarketType): string {
+    return resolveBinanceApiBases(marketType)[0] ?? (
+        marketType === "futures" ? "https://fapi.binance.com" : "https://api.binance.com"
+    );
+}
+
+async function fetchBinanceJson(url: URL, signal?: AbortSignal): Promise<unknown> {
+    const response = await fetchWithTimeoutAndRetry(url, {}, {
+        signal,
+        timeoutMs: BINANCE_1S_FETCH_TIMEOUT_MS,
+        maxAttempts: BINANCE_1S_MAX_ATTEMPTS,
+        baseDelayMs: BINANCE_1S_RETRY_DELAY_MS,
+    });
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+    }
+    return response.json() as Promise<unknown>;
 }
 
 function toFiniteNumber(value: unknown): number | null {
@@ -219,7 +240,7 @@ async function fetchBinanceFutures1sCandlesFromAggTrades(args: {
 
     while (cursorMs <= endMs) {
         if (args.signal?.aborted) break;
-        const url = new URL(`${BINANCE_BASES.futures}${BINANCE_FUTURES_AGG_TRADES_PATH}`);
+        const url = new URL(`${getBinanceApiBase("futures")}${BINANCE_FUTURES_AGG_TRADES_PATH}`);
         url.searchParams.set("symbol", args.symbol);
         url.searchParams.set("limit", String(BINANCE_1S_LIMIT));
         if (fromId === null) {
@@ -229,12 +250,10 @@ async function fetchBinanceFutures1sCandlesFromAggTrades(args: {
             url.searchParams.set("fromId", String(fromId));
         }
 
-        const response = await fetch(url, { signal: args.signal });
-        if (!response.ok) {
-            throw new Error(`Binance futures aggTrades fetch failed for ${args.symbol}: HTTP ${response.status}`);
-        }
-
-        const payload = await response.json() as unknown;
+        const payload = await fetchBinanceJson(url, args.signal).catch((error) => {
+            if (isAbortError(error)) throw error;
+            throw new Error(`Binance futures aggTrades fetch failed for ${args.symbol}: ${error instanceof Error ? error.message : String(error)}`);
+        });
         const rawRows = Array.isArray(payload) ? payload : [];
         if (rawRows.length === 0) break;
 
@@ -307,19 +326,17 @@ export async function fetchBinance1sCandles(args: {
 
     while (cursorMs <= endMs) {
         if (args.signal?.aborted) break;
-        const url = new URL(`${BINANCE_BASES.spot}${BINANCE_SPOT_KLINE_PATH}`);
+        const url = new URL(`${getBinanceApiBase("spot")}${BINANCE_SPOT_KLINE_PATH}`);
         url.searchParams.set("symbol", args.symbol);
         url.searchParams.set("interval", "1s");
         url.searchParams.set("startTime", String(cursorMs));
         url.searchParams.set("endTime", String(endMs));
         url.searchParams.set("limit", String(BINANCE_1S_LIMIT));
 
-        const response = await fetch(url, { signal: args.signal });
-        if (!response.ok) {
-            throw new Error(`Binance 1s fetch failed for ${args.symbol}: HTTP ${response.status}`);
-        }
-
-        const payload = await response.json() as unknown;
+        const payload = await fetchBinanceJson(url, args.signal).catch((error) => {
+            if (isAbortError(error)) throw error;
+            throw new Error(`Binance 1s fetch failed for ${args.symbol}: ${error instanceof Error ? error.message : String(error)}`);
+        });
         const rawRows = Array.isArray(payload) ? payload as RawBinanceKline[] : [];
         if (rawRows.length === 0) break;
 
@@ -349,6 +366,77 @@ export async function fetchBinance1sCandles(args: {
     return rows.sort((left, right) => left.ts - right.ts);
 }
 
+function findMissingBinance1sRanges(db: DatabaseSync, args: {
+    symbol: SecondMarketSymbol;
+    marketType: BinanceMarketType;
+    startTs: number;
+    endTs: number;
+}): Array<{ startTs: number; endTs: number }> {
+    const startTs = Math.max(0, Math.floor(args.startTs));
+    const endTs = Math.max(startTs, Math.floor(args.endTs));
+    const expectedCount = endTs - startTs + 1;
+    const summary = db.prepare(`
+        SELECT COUNT(*) AS count, MIN(ts) AS firstTs, MAX(ts) AS lastTs
+        FROM binance_1s_candles
+        WHERE symbol = ? AND market_type = ? AND ts BETWEEN ? AND ?
+    `).get(args.symbol, args.marketType, startTs, endTs) as {
+        count?: number;
+        firstTs?: number | null;
+        lastTs?: number | null;
+    };
+    if (
+        Number(summary.count) === expectedCount &&
+        Number(summary.firstTs) === startTs &&
+        Number(summary.lastTs) === endTs
+    ) {
+        return [];
+    }
+
+    const rows = db.prepare(`
+        SELECT ts
+        FROM binance_1s_candles
+        WHERE symbol = ? AND market_type = ? AND ts BETWEEN ? AND ?
+        ORDER BY ts ASC
+    `).all(args.symbol, args.marketType, startTs, endTs) as Array<{ ts?: number }>;
+
+    const ranges: Array<{ startTs: number; endTs: number }> = [];
+    let cursor = startTs;
+    for (const row of rows) {
+        const ts = Number(row.ts);
+        if (!Number.isFinite(ts) || ts < cursor) continue;
+        if (ts > cursor) {
+            ranges.push({ startTs: cursor, endTs: ts - 1 });
+        }
+        cursor = ts + 1;
+    }
+    if (cursor <= endTs) {
+        ranges.push({ startTs: cursor, endTs });
+    }
+    return ranges;
+}
+
+function loadAvailableBinance1sBounds(db: DatabaseSync, args: {
+    symbol: SecondMarketSymbol;
+    marketType: BinanceMarketType;
+    startTs: number;
+    endTs: number;
+}): { firstTs: number | null; lastTs: number | null } {
+    const row = db.prepare(`
+        SELECT MIN(ts) AS firstTs, MAX(ts) AS lastTs
+        FROM binance_1s_candles
+        WHERE symbol = ? AND market_type = ? AND ts BETWEEN ? AND ?
+    `).get(args.symbol, args.marketType, Math.floor(args.startTs), Math.floor(args.endTs)) as {
+        firstTs?: number | null;
+        lastTs?: number | null;
+    };
+    const firstTs = row.firstTs === null || row.firstTs === undefined ? Number.NaN : Number(row.firstTs);
+    const lastTs = row.lastTs === null || row.lastTs === undefined ? Number.NaN : Number(row.lastTs);
+    return {
+        firstTs: Number.isFinite(firstTs) ? firstTs : null,
+        lastTs: Number.isFinite(lastTs) ? lastTs : null,
+    };
+}
+
 export async function syncBinance1sRange(db: DatabaseSync, args: {
     symbol: SecondMarketSymbol;
     marketType?: BinanceMarketType;
@@ -360,13 +448,73 @@ export async function syncBinance1sRange(db: DatabaseSync, args: {
     onProgress?: (progress: { fetched: number; cursorTs: number; requestCount: number }) => void;
 }): Promise<{ fetched: number; upserted: number; firstTs: number | null; lastTs: number | null }> {
     const marketType = args.marketType ?? "spot";
-    const candles = await fetchBinance1sCandles({
-        ...args,
+    const startTs = Math.max(0, Math.floor(args.startTs));
+    const endTs = Math.max(startTs, Math.floor(args.endTs));
+    const missingRanges = findMissingBinance1sRanges(db, {
+        symbol: args.symbol,
         marketType,
+        startTs,
+        endTs,
     });
+    if (missingRanges.length === 0) {
+        const bounds = loadAvailableBinance1sBounds(db, {
+            symbol: args.symbol,
+            marketType,
+            startTs,
+            endTs,
+        });
+        if (bounds.lastTs !== null) {
+            writeSecondDataSyncState(db, {
+                source: "binance_1s",
+                symbol: args.symbol,
+                series_id: marketType,
+                cursor_ts: bounds.lastTs,
+                cursor_id: "",
+                status: "ok",
+                updated_at: nowSec(),
+            });
+        }
+        return {
+            fetched: 0,
+            upserted: 0,
+            firstTs: bounds.firstTs,
+            lastTs: bounds.lastTs,
+        };
+    }
+
+    const rangesToFetch = missingRanges.length <= MAX_MISSING_SEGMENTS_BEFORE_FULL_FETCH
+        ? missingRanges
+        : [{ startTs, endTs }];
+    const candles: Binance1sCandleRow[] = [];
+    let fetchedSoFar = 0;
+    for (const range of rangesToFetch) {
+        const rangeCandles = await fetchBinance1sCandles({
+            ...args,
+            marketType,
+            startTs: range.startTs,
+            endTs: range.endTs,
+            onProgress: args.onProgress
+                ? (progress) => {
+                    args.onProgress?.({
+                        fetched: fetchedSoFar + progress.fetched,
+                        cursorTs: progress.cursorTs,
+                        requestCount: progress.requestCount,
+                    });
+                }
+                : undefined,
+        });
+        fetchedSoFar += rangeCandles.length;
+        candles.push(...rangeCandles);
+    }
     const upserted = upsertBinance1sCandles(db, candles);
-    const firstTs = candles[0]?.ts ?? null;
-    const lastTs = candles[candles.length - 1]?.ts ?? null;
+    const bounds = loadAvailableBinance1sBounds(db, {
+        symbol: args.symbol,
+        marketType,
+        startTs,
+        endTs,
+    });
+    const firstTs = candles[0]?.ts ?? bounds.firstTs;
+    const lastTs = bounds.lastTs;
     if (lastTs !== null) {
         writeSecondDataSyncState(db, {
             source: "binance_1s",

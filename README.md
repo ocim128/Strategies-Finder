@@ -6,7 +6,7 @@ It combines:
 - a browser UI assembled from HTML partials at runtime
 - a TypeScript backtest engine with optional Rust acceleration
 - a multi-source data pipeline with local caching
-- research tools such as Finder, Exit Strategy Override, Hunt, Walk Forward, Monte Carlo, Scanner, Replay, Pair Combiner, Portfolio Lab, and Strategy Ensemble Lab
+- research tools such as Finder, Exit Strategy Override, Hunt, Walk Forward, Monte Carlo, Scanner, Strategy Combiner, Portfolio Lab, and Strategy Ensemble Lab
 - optional Cloudflare Worker alerting and subscription execution
 
 ## What You Can Do Here
@@ -91,7 +91,6 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Portfolio Lab: `lib/portfolio-lab-service.ts`
 - Execution Lab: `lib/execution-lab/*`
 - Scanner: `lib/scanner/*`
-- Replay: `lib/replay/*`
 - Pair Combiner bridge: `lib/pairCombiner/*`
 - Data Mining / feature export: `lib/data-mining-manager.ts`, `lib/featureLab/*`
 - Strategy Ensemble Lab: `lib/strategy-ensemble-service.ts`

@@ -70,7 +70,7 @@ Behavior:
 - `2h` subscriptions are composed from `1h` source candles inside the worker so close-hour parity (`odd`/`even`) stays deterministic across providers.
 - It only evaluates when a **new closed candle** exists (`last_processed_closed_candle_time` guard).
 - This avoids duplicate alerts between candle closes.
-- Worker queries configured Binance-compatible hosts in parallel and uses the first successful response.
+- Worker queries configured Binance-compatible hosts in configured order and uses the first successful response. Keep the fastest/reliable proxy first.
 
 Live Positions / Last Trade parity notes:
 - Local verification now trims to the latest closed candle before comparing against the Worker.

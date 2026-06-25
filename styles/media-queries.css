@@ -308,12 +308,6 @@
         width: calc(100vw - var(--space-6));
         max-width: none;
     }
-
-    /* Command palette full width */
-    .command-palette {
-        width: calc(100vw - var(--space-6));
-        max-width: none;
-    }
 }
 
 /* Small phone */

@@ -163,8 +163,7 @@ textarea:focus-visible {
     /* Remove glassmorphism effects */
     .ohlc-panel,
     .toast,
-    .dropdown-menu,
-    .command-palette {
+    .dropdown-menu {
         backdrop-filter: none;
         background: var(--bg-secondary);
     }

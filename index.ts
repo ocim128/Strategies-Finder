@@ -11,11 +11,6 @@ const shouldExposeDebugGlobals =
 if (shouldExposeDebugGlobals) {
     (window as any).__state = state;
     (window as any).__debug = debugLogger;
-    (window as any).__loadCommandPalette = async () => {
-        const commandPaletteModule = await import("./lib/command-palette");
-        (window as any).__commandPalette = commandPaletteModule.commandPaletteManager;
-        return commandPaletteModule.commandPaletteManager;
-    };
     (window as any).__loadScanner = async () => {
         const scannerModule = await import("./lib/scanner");
         (window as any).__scannerPanel = scannerModule.scannerPanel;
@@ -27,10 +22,7 @@ if (shouldExposeDebugGlobals) {
     };
 
     if (import.meta.env.VITE_EXPOSE_DEBUG_GLOBALS === "1") {
-        void Promise.all([
-            (window as any).__loadCommandPalette(),
-            (window as any).__loadScanner(),
-        ]).catch((error: unknown) => {
+        void (window as any).__loadScanner().catch((error: unknown) => {
             console.warn("[debug-globals] Failed to expose debug globals", error);
         });
     }
