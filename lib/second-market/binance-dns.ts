@@ -36,6 +36,9 @@ type CacheEntry = {
 const require = createRequire(import.meta.url);
 const cache = new Map<string, CacheEntry>();
 let configuredMode: BinanceDnsMode = "system";
+// True once we have attempted AdGuard DoH and found undici unresolvable.
+// Keeps the fallback idempotent without misreporting configuredMode.
+let undiciUnavailable = false;
 
 export function resolveBinanceDnsMode(value: unknown, fallback: BinanceDnsMode = "system"): BinanceDnsMode {
     const normalized = String(value ?? "").trim().toLowerCase();
@@ -124,10 +127,21 @@ const adguardLookup: ConnectLookup = (hostname, options, callback) => {
 };
 
 export function configureBinanceDns(mode: BinanceDnsMode): BinanceDnsMode {
-    if (mode === "system" || configuredMode === mode) return configuredMode;
+    if (mode === "system" || configuredMode === mode || undiciUnavailable) return configuredMode;
 
-    const { Agent, setGlobalDispatcher } = require("undici") as UndiciModule;
-    setGlobalDispatcher(new Agent({
+    // undici is an optional peer (see lib/polymarket-node-dns.ts for the full
+    // rationale). On hosts where it isn't resolvable, fall back to the system
+    // resolver instead of throwing and aborting the Vite config load / build.
+    let undici: UndiciModule;
+    try {
+        undici = require("undici") as UndiciModule;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[binance-dns] undici unavailable (${message}); falling back to system DNS. AdGuard DoH will not be active.`);
+        undiciUnavailable = true;
+        return "system";
+    }
+    undici.setGlobalDispatcher(new undici.Agent({
         connect: {
             lookup: adguardLookup,
         },

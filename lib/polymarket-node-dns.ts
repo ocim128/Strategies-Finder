@@ -36,6 +36,10 @@ type CacheEntry = {
 const require = createRequire(import.meta.url);
 const dnsCache = new Map<string, CacheEntry>();
 let configuredMode: PolymarketDnsMode = "system";
+// True once we have attempted AdGuard DoH and found undici unresolvable.
+// Keeps the fallback idempotent without misreporting configuredMode as the
+// requested mode (which would break the return-value contract).
+let undiciUnavailable = false;
 
 export function resolvePolymarketDnsMode(
     value: unknown,
@@ -121,10 +125,26 @@ const adguardLookup: ConnectLookup = (hostname, options, callback) => {
 };
 
 export function configurePolymarketNodeDns(mode: PolymarketDnsMode): PolymarketDnsMode {
-    if (mode === "system" || configuredMode === mode) return configuredMode;
+    if (mode === "system" || configuredMode === mode || undiciUnavailable) return configuredMode;
 
-    const { Agent, setGlobalDispatcher } = require("undici") as UndiciModule;
-    setGlobalDispatcher(new Agent({
+    // undici is an optional peer: it ships with Node >=18 but is not declared
+    // as a project dependency, and is hoisted only in some install layouts
+    // (e.g. the monorepo's shared node_modules). On hosts where it isn't
+    // resolvable (Vercel, minimal installs), require() would throw and abort
+    // the Vite config load — breaking the whole build. Treat a missing undici
+    // as "AdGuard DoH unavailable here" and fall back to the system resolver
+    // instead of crashing. The DoH behavior simply won't be active in that
+    // environment; nothing else regresses.
+    let undici: UndiciModule;
+    try {
+        undici = require("undici") as UndiciModule;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[polymarket-node-dns] undici unavailable (${message}); falling back to system DNS. AdGuard DoH will not be active.`);
+        undiciUnavailable = true;
+        return "system";
+    }
+    undici.setGlobalDispatcher(new undici.Agent({
         connect: {
             lookup: adguardLookup,
             timeout: CONNECT_TIMEOUT_MS,
