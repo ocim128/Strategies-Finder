@@ -29,6 +29,19 @@ import type { CapitalSettings } from "../types/backtest";
 // Public types
 // ============================================================================
 
+/**
+ * Minimum bar count a loaded dataset must reach to be considered usable for a
+ * batch backtest. Real Binance datasets are capped at ~65k bars; a dataset well
+ * below this threshold is almost always a stale fragment left in the offline
+ * cache by a prior streaming/gap-fill session (e.g. 16 bars covering a single
+ * day). Running a strategy on such a fragment produces a misleading "No Trades"
+ * row, so the runner refuses it and surfaces a load failure instead.
+ *
+ * 200 is comfortably above every built-in strategy's lookback window (max ~30)
+ * and comfortably below any real full-length dataset.
+ */
+export const BATCH_MIN_USABLE_BARS = 200;
+
 export type BatchBacktestSymbolStatus =
     | "profitable"
     | "losing"
@@ -57,6 +70,16 @@ export interface BatchBacktestRunInput {
     symbols: string[];
     /** Loads one symbol's OHLCV series without touching the live chart. */
     loadDataset: (symbol: string, interval: string, signal?: AbortSignal) => Promise<OHLCVData[]>;
+    /**
+     * Minimum bar count for a loaded dataset to be considered usable. Loads
+     * that return a positive but smaller number of bars (typical of a stale
+     * streaming gap-fill fragment held in the offline cache) are reported as
+     * `load_failed` instead of silently running a degenerate backtest.
+     *
+     * Defaults to {@link BATCH_MIN_USABLE_BARS}. Tests may inject a smaller
+     * value to keep deterministic fixtures compact.
+     */
+    minUsableBars?: number;
 }
 
 export interface BatchBacktestRunCallbacks {
@@ -117,6 +140,7 @@ export async function runBatchBacktest(
         input.interval,
     );
     const preResolvedCapital = resolveCapitalSettingsFromRaw(input.capitalSettings as unknown as Record<string, unknown>);
+    const minUsableBars = Math.max(1, Math.floor(input.minUsableBars ?? BATCH_MIN_USABLE_BARS));
 
     // Prefetch window: kick off dataset loads ahead of the serial consumer so
     // I/O overlaps with the current backtest's CPU work. Execution stays serial
@@ -170,6 +194,27 @@ export async function runBatchBacktest(
                 failedSymbols.push(symbol);
                 callbacks.onSymbolComplete?.(i, failure);
                 // Refill the prefetch window before continuing.
+                const nextIdx = i + PREFETCH_AHEAD;
+                if (nextIdx < symbols.length) startPrefetch(nextIdx);
+                continue;
+            }
+            // Refuse an implausibly small fragment. The offline cache can hold
+            // a handful of bars left over from a prior streaming/gap-fill
+            // session (e.g. 16 bars spanning a single day); backtesting on that
+            // is meaningless and historically surfaced as a confusing "No
+            // Trades" row. Treat it as a load failure with an explicit reason.
+            if (data.length < minUsableBars) {
+                const failure: BatchBacktestSymbolResult = {
+                    symbol,
+                    status: "load_failed",
+                    barCount: data.length,
+                    firstTime: data[0]?.time,
+                    lastTime: data[data.length - 1]?.time,
+                    error: `Insufficient bars (${data.length} < ${minUsableBars}); likely a stale cache fragment. Reload the pair on the chart to refresh.`,
+                };
+                results[i] = failure;
+                failedSymbols.push(symbol);
+                callbacks.onSymbolComplete?.(i, failure);
                 const nextIdx = i + PREFETCH_AHEAD;
                 if (nextIdx < symbols.length) startPrefetch(nextIdx);
                 continue;

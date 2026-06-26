@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
+    BATCH_MIN_USABLE_BARS,
     parseBatchSymbols,
     runBatchBacktest,
 } from "../lib/batch-backtest/batch-backtest-runner";
@@ -92,6 +93,10 @@ describe("runBatchBacktest", () => {
                 capitalSettings,
                 symbols: ["UP", "DOWN", "MISSING"],
                 loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                // Fixtures are intentionally compact (5 bars); the default
+                // threshold would refuse them. The minimum-bars gate itself is
+                // exercised by the "refuses stale fragment" test below.
+                minUsableBars: 1,
             },
             {
                 setProgress: () => {},
@@ -138,6 +143,7 @@ describe("runBatchBacktest", () => {
                     calls += 1;
                     return Promise.resolve(datasets.get(symbol) ?? datasets.get("A")!);
                 },
+                minUsableBars: 1,
             },
             {
                 setProgress: () => {},
@@ -150,6 +156,53 @@ describe("runBatchBacktest", () => {
         expect(output.results.length).to.equal(3);
         const skipped = output.results.filter((r) => r.error === "Skipped (cancelled).");
         expect(skipped.length).to.be.greaterThan(0);
+    });
+
+    it("refuses a stale cache fragment below the minimum bar threshold as a load failure", async () => {
+        // Reproduces the reported bug: pairs whose offline cache held only a
+        // streaming-leftover fragment (e.g. 16 bars over a single day) used to
+        // run a degenerate backtest and surface as "No Trades". The runner must
+        // refuse such datasets with an explicit, diagnosable load failure.
+        const fragment = makeCandles(Array.from({ length: 16 }, (_, i) => 100 + i));
+        const full = makeCandles(Array.from({ length: 300 }, (_, i) => 100 + i));
+
+        const output = await runBatchBacktest(
+            {
+                interval: "15m",
+                strategyKey: "batch_test",
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols: ["STALE", "HEALTHY"],
+                loadDataset: (symbol) =>
+                    Promise.resolve(symbol === "STALE" ? fragment : full),
+                // Default threshold exercises the production code path.
+            },
+            { setProgress: () => {}, setStatus: () => {}, isCancelled: () => false },
+        );
+
+        expect(output.failedSymbols).to.deep.equal(["STALE"]);
+        expect(output.loadedSymbols).to.equal(1);
+
+        const stale = output.results.find((r) => r.symbol === "STALE")!;
+        const healthy = output.results.find((r) => r.symbol === "HEALTHY")!;
+
+        expect(stale.status).to.equal("load_failed");
+        expect(stale.barCount).to.equal(16);
+        expect(stale.error).to.contain("Insufficient bars (16 <");
+        expect(stale.result).to.equal(undefined);
+
+        expect(healthy.status).to.equal("profitable");
+        expect(healthy.barCount).to.equal(300);
+    });
+
+    it("default minimum bar threshold is 200", () => {
+        // Guards the production constant against an accidental drift that would
+        // either let fragments through (too low) or reject real short datasets
+        // (too high). 200 sits above every built-in strategy lookback (~30 max)
+        // and well below any real full-length dataset (~65k).
+        expect(BATCH_MIN_USABLE_BARS).to.equal(200);
     });
 });
 
