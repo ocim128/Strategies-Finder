@@ -1613,6 +1613,9 @@ export class FinderManager {
 			runButton.classList.toggle('is-loading', running);
 			runButton.setAttribute('aria-busy', running ? 'true' : 'false');
 			stopButton.style.display = running ? '' : 'none';
+			if (typeof document !== 'undefined') {
+				document.body.classList.toggle('finder-running', running);
+			}
 		};
 		const finalizeProgress = (percent: number, text: string) => {
 			this.setProgress(false, percent, text);

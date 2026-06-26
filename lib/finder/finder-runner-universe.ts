@@ -52,6 +52,7 @@ const UNIVERSE_DATA_LOAD_CONCURRENCY = 12;
 const UNIVERSE_DATA_LOAD_YIELD_EVERY = 8;
 const UNIVERSE_EVALUATION_YIELD_EVERY_RUNS = 256;
 const UNIVERSE_EVALUATION_YIELD_MIN_MS = 250;
+const UNIVERSE_UI_UPDATE_MIN_MS = 250;
 const UNIVERSE_ZERO_SIGNAL_BAIL_THRESHOLD = 5;
 const DIRECTIONAL_LOOKBACK_BARS = 96;
 
@@ -673,6 +674,14 @@ export async function runFinderUniverseExecution(
     };
     const totalPossibleTrades = loadedSymbols.reduce((sum, item) => sum + item.maxPossibleTrades, 0);
     const totalInputBars = loadedSymbols.reduce((sum, item) => sum + item.barCount, 0);
+    let lastEvaluationUiUpdateAt = 0;
+    const updateEvaluationProgress = (percent: number, text: string, status: string, force = false): void => {
+        const now = performance.now();
+        if (!force && now - lastEvaluationUiUpdateAt < UNIVERSE_UI_UPDATE_MIN_MS) return;
+        lastEvaluationUiUpdateAt = now;
+        callbacks.setProgress(percent, text);
+        callbacks.setStatus(status);
+    };
     // Build the timing-instrumented strategy wrapper ONCE per (strategy, run).
     // The wrapper is identical for every param set; only the per-candidate
     // `backtestSettings` varies, and it is read through `currentBacktestSettings`
@@ -747,8 +756,12 @@ export async function runFinderUniverseExecution(
             const progressWithin = symbolIndex / Math.max(1, loadedSymbols.length);
             const progress = 15 + ((progressBase + (progressWithin / Math.max(1, candidatePlans.length))) * 85);
 
-            callbacks.setProgress(progress, `Testing ${input.selectedStrategy.name} on ${symbol.symbol} (${candidateIndex + 1}/${candidatePlans.length})...`);
-            callbacks.setStatus(`Evaluating candidate ${candidateIndex + 1}/${candidatePlans.length} on ${symbol.symbol}...`);
+            updateEvaluationProgress(
+                progress,
+                `Testing ${input.selectedStrategy.name} on ${symbol.symbol} (${candidateIndex + 1}/${candidatePlans.length})...`,
+                `Evaluating candidate ${candidateIndex + 1}/${candidatePlans.length} on ${symbol.symbol}...`,
+                candidateIndex === 0 && symbolIndex === 0,
+            );
 
             let zeroSignals = false;
             const runStartedAt = performance.now();

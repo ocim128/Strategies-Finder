@@ -125,6 +125,31 @@ textarea:focus-visible {
     }
 }
 
+body.finder-running .header,
+body.finder-running .toolbar,
+body.finder-running .strategy-panel,
+body.finder-running .status-bar,
+body.finder-running .ohlc-panel,
+body.finder-running .live-positions-panel,
+body.finder-running .progress-container,
+body.finder-running .dropdown-menu.active,
+body.finder-running .quick-view-overlay,
+body.finder-running .scanner-panel,
+body.finder-running .strategy-ensemble-card {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    animation: none !important;
+    box-shadow: none !important;
+}
+
+body.finder-running .progress-fill::after,
+body.finder-running .btn.is-loading::after,
+body.finder-running .live-dot,
+body.finder-running .engine-status--checking,
+body.finder-running .scanner-panel__scan-btn.scanner-panel__scan-btn--cancel {
+    animation: none !important;
+}
+
 /* ----------------------------------------
    High Contrast Mode
    ---------------------------------------- */
