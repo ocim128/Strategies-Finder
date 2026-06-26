@@ -235,7 +235,7 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     sizingMode: "fixed",
     fixedTradeAmount: CAPITAL_DEFAULTS.fixedTradeAmount,
     ...ADVANCED_SIZING_DEFAULTS,
-    useRustEngine: true,
+    useRustEngine: false,
 
     // Risk management
     riskSettingsToggle: false,
