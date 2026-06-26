@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { buildPivotFlags } from './lib/strategies/strategy-helpers';
+import { buildPivotFlags } from '../lib/strategies/strategy-helpers';
 
 describe('Pivot Flags', () => {
     it('strict pivot flags should match expected extrema behavior', () => {

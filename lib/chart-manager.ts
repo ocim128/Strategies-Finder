@@ -20,7 +20,7 @@ import { darkTheme, lightTheme, ENHANCED_CANDLE_COLORS, LIGHT_CANDLE_COLORS, EQU
 import { toHeikinAshi } from "./heikin-ashi-utils";
 import { formatJakartaTickMark, formatJakartaTime } from "./timezone-utils";
 import { formatDisplayPrice } from "./price-format";
-import { bindChartRuntime, setIndicators, setMarkersPlugin } from "./state-actions";
+import { bindChartRuntime, buildOhlcvTimeMap, setIndicators, setMarkersPlugin } from "./state-actions";
 import { createChartManagerDom } from "./chart-manager-dom";
 
 import { Trade, OHLCVData } from "./strategies/index";
@@ -713,7 +713,7 @@ export class ChartManager {
             ? toHeikinAshi(data)
             : data;
 
-        state._ohlcvTimeMap = new Map(data.map((candle) => [timeKey(candle.time), candle]));
+        state._ohlcvTimeMap = buildOhlcvTimeMap(data);
         state.candlestickSeries.setData(displayData.map(d => ({
             time: d.time,
             open: d.open,
@@ -838,7 +838,7 @@ export class ChartManager {
     }
 
     public restoreStateChartData(): void {
-        state._ohlcvTimeMap = new Map(state.ohlcvData.map((candle) => [timeKey(candle.time), candle]));
+        state._ohlcvTimeMap = buildOhlcvTimeMap(state.ohlcvData);
         if (state.ohlcvData.length === 0) {
             state.candlestickSeries.setData([]);
             return;

@@ -1,8 +1,8 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { OHLCVData, Strategy, Time } from './lib/strategies/index';
-import { quickWalkForward, runWalkForwardAnalysis } from './lib/strategies/walk-forward';
-import { deriveAutoWalkForwardRange, resolveFiniteRangeReferenceValue } from './lib/walk-forward-range-utils';
+import { OHLCVData, Strategy, Time } from '../lib/strategies/index';
+import { quickWalkForward, runWalkForwardAnalysis } from '../lib/strategies/walk-forward';
+import { deriveAutoWalkForwardRange, resolveFiniteRangeReferenceValue } from '../lib/walk-forward-range-utils';
 describe('Walk-forward parameter normalization', () => {
     it('preserves zero-valued WFA seed params instead of falling back to defaults', () => {
         expect(resolveFiniteRangeReferenceValue(0, 1, 10)).to.equal(0);

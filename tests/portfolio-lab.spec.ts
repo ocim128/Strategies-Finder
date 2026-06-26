@@ -1,12 +1,12 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import type { Signal, Time } from "./lib/strategies";
+import type { Signal, Time } from "../lib/strategies";
 import {
     buildPortfolioSignalPresenceLookup,
     buildRunnablePortfolioUniverse,
     resolveLatestPortfolioSignalType,
     resolvePortfolioSignalType,
-} from "./lib/portfolio-lab-helpers";
+} from "../lib/portfolio-lab-helpers";
 
 describe("Portfolio Lab helpers", () => {
     it("builds a runnable current-universe even when benchmark matches the current symbol", () => {

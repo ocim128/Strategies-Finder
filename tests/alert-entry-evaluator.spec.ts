@@ -1,8 +1,8 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { OHLCVData, Strategy, Time } from './lib/strategies/index';
-import { evaluateLatestEntrySignal } from './lib/signal-entry-evaluator';
-import { strategies } from './lib/strategies/library';
+import { OHLCVData, Strategy, Time } from '../lib/strategies/index';
+import { evaluateLatestEntrySignal } from '../lib/signal-entry-evaluator';
+import { strategies } from '../lib/strategies/library';
 describe('Alert Entry Evaluator', () => {
     function buildCandles(count: number, startSec = 1_700_000_000): OHLCVData[] {
         const out: OHLCVData[] = [];

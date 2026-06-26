@@ -1,12 +1,12 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { State, state } from "./lib/state";
+import { State, state } from "../lib/state";
 import {
     selectBacktestState,
     selectChartState,
     selectLayoutState,
     selectMarketState,
-} from "./lib/state-domains";
+} from "../lib/state-domains";
 import {
     setBlockRange,
     setChartMode,
@@ -16,7 +16,7 @@ import {
     setMockChartBars,
     setMockChartModel,
     setStrategyTimeframeSettings,
-} from "./lib/state-actions";
+} from "../lib/state-actions";
 
 describe("State domains", () => {
     it("slices a state instance into domain snapshots", () => {

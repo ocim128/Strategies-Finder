@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { mean, median, medianOrNull, percentile, percentileSorted, prepareSortedStats, sampleStdDev } from "./lib/statistics-utils";
+import { mean, median, medianOrNull, percentile, percentileSorted, prepareSortedStats, sampleStdDev } from "../lib/statistics-utils";
 
 describe("statistics utils", () => {
     it("computes central tendency for empty and populated samples", () => {

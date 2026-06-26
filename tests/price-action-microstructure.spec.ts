@@ -1,12 +1,12 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { OHLCVData, Time } from './lib/strategies/index';
+import { OHLCVData, Time } from '../lib/strategies/index';
 import {
     buildCloseAcceptanceSeries,
     buildInitiativePressureSeries,
     buildTrailingHighLow,
-} from './lib/strategies/lib/price-action-frequency-core';
-import { buildEfficiencyRatio, buildPercentileRank, buildRollingEntropy } from './lib/strategies/lib/price-action-statistics-core';
+} from '../lib/strategies/lib/price-action-frequency-core';
+import { buildEfficiencyRatio, buildPercentileRank, buildRollingEntropy } from '../lib/strategies/lib/price-action-statistics-core';
 
 describe('Price Action Microstructure Helpers', () => {
     it('should score close acceptance by settlement quality', () => {

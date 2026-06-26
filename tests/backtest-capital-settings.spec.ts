@@ -4,7 +4,7 @@ import {
     normalizeTradeSizingMode,
     resolveCapitalSettingsFromRaw,
     SUBSCRIPTION_CAPITAL_LEGACY_DEFAULTS,
-} from "./lib/backtest-capital-settings";
+} from "../lib/backtest-capital-settings";
 
 describe("Backtest capital settings", () => {
     it("upgrades deleted smart sizing modes to surviving canonical modes", () => {

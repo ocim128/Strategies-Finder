@@ -4,7 +4,7 @@ import {
     getProviderScopedSeriesSymbol,
     normalizeUnderlyingPriceFeedSymbolValue,
     normalizePolymarketPriceFeedSymbolValue,
-} from "./lib/polymarket-price-feed-utils";
+} from "../lib/polymarket-price-feed-utils";
 
 describe("Underlying price feed helpers", () => {
     it("normalizes underlying crypto symbols for chainlink candles", () => {

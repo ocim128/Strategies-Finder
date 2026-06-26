@@ -1,8 +1,8 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import type { Time } from "./lib/strategies";
-import { calculateBacktestStats } from "./lib/strategies";
-import { calculateAdvancedPerformanceAnalyticsFromEquityCurve } from "./lib/strategies/performance-metrics";
+import type { Time } from "../lib/strategies";
+import { calculateBacktestStats } from "../lib/strategies";
+import { calculateAdvancedPerformanceAnalyticsFromEquityCurve } from "../lib/strategies/performance-metrics";
 
 describe("advanced performance analytics", () => {
     it("computes advanced risk metrics from an equity curve and attaches them to backtest results", () => {

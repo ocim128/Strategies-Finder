@@ -1,9 +1,9 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { compareFinderResults, sortFinderResults } from "./lib/finder/finder-engine";
-import { FinderResultRanker } from "./lib/finder/finder-result-ranker";
-import type { FinderMetric, FinderResult } from "./lib/types/finder";
-import type { BacktestResult, TradeTimingQuality } from "./lib/types/strategies";
+import { compareFinderResults, sortFinderResults } from "../lib/finder/finder-engine";
+import { FinderResultRanker } from "../lib/finder/finder-result-ranker";
+import type { FinderMetric, FinderResult } from "../lib/types/finder";
+import type { BacktestResult, TradeTimingQuality } from "../lib/types/strategies";
 
 function makePolymarketResult(
     key: string,

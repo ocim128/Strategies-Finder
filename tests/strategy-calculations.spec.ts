@@ -1,8 +1,8 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { calculateSMA, calculateATR, calculateADX, calculateKeltnerChannels, calculateCMF, calculateIchimoku, OHLCVData, Time } from './lib/strategies/index';
-import { precomputeIndicators, resolveIndicators } from './lib/strategies/backtest';
-import { buildRollingSkewness } from './lib/strategies/lib/price-action-statistics-core';
+import { calculateSMA, calculateATR, calculateADX, calculateKeltnerChannels, calculateCMF, calculateIchimoku, OHLCVData, Time } from '../lib/strategies/index';
+import { precomputeIndicators, resolveIndicators } from '../lib/strategies/backtest';
+import { buildRollingSkewness } from '../lib/strategies/lib/price-action-statistics-core';
 
 function buildRollingSkewnessWindowed(values: number[], lookbackInput: number): (number | null)[] {
     const lookback = Math.max(3, Math.round(lookbackInput));

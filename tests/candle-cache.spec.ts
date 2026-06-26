@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { loadCachedCandles, loadSeedCandlesFromPriceData, mergeCandles, saveCachedCandles } from './lib/candle-cache';
+import { loadCachedCandles, loadSeedCandlesFromPriceData, mergeCandles, saveCachedCandles } from '../lib/candle-cache';
 
 type StoredRecord = {
     key: string;

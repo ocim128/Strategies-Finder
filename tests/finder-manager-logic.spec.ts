@@ -9,7 +9,7 @@ import {
     resolveFinderUniverseSortPriority,
     resolveOosDataSlice,
     sliceFinderDataWindow,
-} from "./lib/finder/finder-manager-logic";
+} from "../lib/finder/finder-manager-logic";
 
 describe("Finder manager logic", () => {
     it("slices Finder data into fifths with the fifth slice ending at the newest bar", () => {

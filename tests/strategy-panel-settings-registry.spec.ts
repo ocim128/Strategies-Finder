@@ -5,8 +5,8 @@ import { resolve } from "node:path";
 import {
     STRATEGY_PANEL_SETTINGS_SECTIONS,
     getSettingsSectionDefinition,
-} from "./lib/strategy-panel-settings-registry";
-import { BACKTEST_SETTINGS_DOM_IDS } from "./lib/backtest-settings-dom-contract";
+} from "../lib/strategy-panel-settings-registry";
+import { BACKTEST_SETTINGS_DOM_IDS } from "../lib/backtest-settings-dom-contract";
 
 function readSettingsSectionIds(partialPath: string): string[] {
     const html = readFileSync(resolve(process.cwd(), partialPath), "utf8");

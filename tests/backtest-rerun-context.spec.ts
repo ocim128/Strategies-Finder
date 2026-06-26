@@ -4,7 +4,7 @@ import {
     clearActiveBacktestRerunContext,
     getActiveBacktestRerunContext,
     setActiveBacktestRerunContext,
-} from "./lib/backtest-rerun-context";
+} from "../lib/backtest-rerun-context";
 
 describe("Backtest rerun context", () => {
     it("stores and clears the active rerun handler", async () => {

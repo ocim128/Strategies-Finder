@@ -11,6 +11,17 @@ import type { BinanceMarketType } from "./binance-market";
 import type { Indicator } from "./types/index";
 import type { BacktestResult, OHLCVData } from "./strategies/index";
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, Time } from "lightweight-charts";
+import { timeKey } from "./strategies/backtest/backtest-utils";
+
+/**
+ * Build the O(1) time->candle lookup used by the crosshair tooltip and other
+ * hot paths. Centralized so the key format and dedupe semantics live in one
+ * place; previously this expression was duplicated across chart-manager.ts
+ * and handlers/state-subscriptions.ts.
+ */
+export function buildOhlcvTimeMap(data: readonly OHLCVData[]): Map<string, OHLCVData> {
+    return new Map(data.map((candle) => [timeKey(candle.time), candle]));
+}
 
 let dataManagerModulePromise: Promise<typeof import("./data-manager")> | null = null;
 

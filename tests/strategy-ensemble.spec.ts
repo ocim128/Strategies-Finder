@@ -1,13 +1,13 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { DEFAULT_BACKTEST_SETTINGS, type StrategyConfig } from "./lib/settings-model";
+import { DEFAULT_BACKTEST_SETTINGS, type StrategyConfig } from "../lib/settings-model";
 import {
     selectEnsembleRuleSelection,
     type EnsembleRuleEvaluation,
-} from "./lib/strategy-ensemble-rule-selection";
-import type { ConfigRunArtifact, EnsembleEntryPresence } from "./lib/strategy-ensemble-types";
-import type { BacktestResult, OHLCVData, Signal, Strategy, Trade } from "./lib/strategies";
-import { buildEnsembleRows, type StrategyEnsembleRulesRuntime } from "./lib/strategy-ensemble-rules";
+} from "../lib/strategy-ensemble-rule-selection";
+import type { ConfigRunArtifact, EnsembleEntryPresence } from "../lib/strategy-ensemble-types";
+import type { BacktestResult, OHLCVData, Signal, Strategy, Trade } from "../lib/strategies";
+import { buildEnsembleRows, type StrategyEnsembleRulesRuntime } from "../lib/strategy-ensemble-rules";
 
 function createSignal(time: number, type: Signal["type"], barIndex: number): Signal {
     return {

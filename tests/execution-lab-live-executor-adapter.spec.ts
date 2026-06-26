@@ -208,6 +208,17 @@ describe("Execution Lab live executor adapter", () => {
     });
 
     it("loads non-VITE live executor settings from repo .env", () => {
+        // Vite's loadEnv merges process.env on top of file values, so a developer
+        // machine with EXECUTION_LAB_LIVE_* already in process.env (e.g. from the
+        // real repo .env) would clobber the temp-dir .env and make this test
+        // non-hermetic. Snapshot and clear every EXECUTION_LAB_LIVE_* key for the
+        // duration of the assertion, then restore.
+        const stash = new Map<string, string | undefined>();
+        const savedKeys = Object.keys(process.env).filter((k) => k.startsWith("EXECUTION_LAB_LIVE_"));
+        for (const key of savedKeys) {
+            stash.set(key, process.env[key]);
+            delete process.env[key];
+        }
         const dir = mkdtempSync(join(tmpdir(), "execution-lab-env-"));
         try {
             writeFileSync(join(dir, ".env"), [
@@ -234,6 +245,10 @@ describe("Execution Lab live executor adapter", () => {
             expect(config.timeoutMs).to.equal(1234);
         } finally {
             rmSync(dir, { recursive: true, force: true });
+            for (const [key, value] of stash) {
+                if (value === undefined) delete process.env[key];
+                else process.env[key] = value;
+            }
         }
     });
 

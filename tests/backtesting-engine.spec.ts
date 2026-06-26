@@ -1,16 +1,16 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { calculateBacktestStats, OHLCVData, Signal, Time, Trade } from './lib/strategies/index';
-import { calculateSharpeRatioFromEquityCurve } from './lib/strategies/performance-metrics';
-import { calculateEMA } from './lib/strategies/indicators';
-import { runBacktest, runBacktestCompact } from './lib/strategies/index';
-import { precomputeIndicators } from './lib/strategies/backtest';
-import { normalizeBacktestSettings } from './lib/strategies/backtest/backtest-utils';
-import { buildPositionFromSignal } from './lib/strategies/backtest/position-builder';
-import { getOpenPositionForScanner } from './lib/strategies/backtest/signal-preparation';
-import { resolveScannerBacktestSettings } from './lib/scanner/scanner-engine';
-import { resolveBacktestSettingsFromRaw } from './lib/backtest-settings-resolver';
-import { resolveEntryRiskTargets } from './lib/entry-risk-targets';
+import { calculateBacktestStats, OHLCVData, Signal, Time, Trade } from '../lib/strategies/index';
+import { calculateSharpeRatioFromEquityCurve } from '../lib/strategies/performance-metrics';
+import { calculateEMA } from '../lib/strategies/indicators';
+import { runBacktest, runBacktestCompact } from '../lib/strategies/index';
+import { precomputeIndicators } from '../lib/strategies/backtest';
+import { normalizeBacktestSettings } from '../lib/strategies/backtest/backtest-utils';
+import { buildPositionFromSignal } from '../lib/strategies/backtest/position-builder';
+import { getOpenPositionForScanner } from '../lib/strategies/backtest/signal-preparation';
+import { resolveScannerBacktestSettings } from '../lib/scanner/scanner-engine';
+import { resolveBacktestSettingsFromRaw } from '../lib/backtest-settings-resolver';
+import { resolveEntryRiskTargets } from '../lib/entry-risk-targets';
 describe('Backtesting Engine', () => {
     function makeHistoricalLevelCandle(time: number, high: number, low: number, price = (high + low) / 2): OHLCVData {
         return { time: time as Time, open: price, high, low, close: price, volume: 1000 };

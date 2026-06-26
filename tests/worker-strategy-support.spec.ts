@@ -3,9 +3,9 @@ import { describe, it } from 'node:test';
 import {
     getWorkerSupportedStrategyKeys,
     isWorkerSupportedStrategyKey,
-} from './lib/alert-subscription-utils';
-import { strategyManifest } from './lib/strategies/manifest-eager';
-import { strategies } from './lib/strategies/library';
+} from '../lib/alert-subscription-utils';
+import { strategyManifest } from '../lib/strategies/manifest-eager';
+import { strategies } from '../lib/strategies/library';
 
 describe('Worker strategy support', () => {
     it('supports every manifest strategy that does not need runtime-only context', () => {

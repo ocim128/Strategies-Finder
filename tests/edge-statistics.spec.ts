@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import type { OHLCVData, Time, Trade } from './lib/strategies/index';
-import { computeEdgeRatios, computeStreakAnalysis, computeTTest } from './lib/strategies/backtest/edge-statistics';
+import type { OHLCVData, Time, Trade } from '../lib/strategies/index';
+import { computeEdgeRatios, computeStreakAnalysis, computeTTest } from '../lib/strategies/backtest/edge-statistics';
 
 function makeTrade(id: number, pnlPercent: number, entryTime: Time, exitTime: Time, type: 'long' | 'short' = 'long'): Trade {
     return {

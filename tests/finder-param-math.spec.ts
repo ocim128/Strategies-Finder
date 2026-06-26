@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { computeParamRange, normalizeParamValue } from './lib/finder/finder-param-math';
+import { computeParamRange, normalizeParamValue } from '../lib/finder/finder-param-math';
 
 describe('Finder param math', () => {
     it('applies Finder-only bounds to midpointBars when requested', () => {

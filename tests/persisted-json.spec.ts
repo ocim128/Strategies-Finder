@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { describe, it, beforeEach, afterEach } from "node:test";
-import { readPersistedJson, writePersistedJson } from "./lib/persisted-json";
+import { readPersistedJson, writePersistedJson } from "../lib/persisted-json";
 
 class MemoryStorage implements Storage {
     public length = 0;

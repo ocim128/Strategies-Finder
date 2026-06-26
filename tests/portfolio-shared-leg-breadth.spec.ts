@@ -1,15 +1,15 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import type { Signal, Time, Trade } from "./lib/strategies";
+import type { Signal, Time, Trade } from "../lib/strategies";
 import {
     buildPortfolioSignalPresenceLookup,
     isIndependentPeer,
-} from "./lib/portfolio-lab-helpers";
-import { buildConsensusTradeSample } from "./lib/portfolioLab/portfolio-lab-consensus";
+} from "../lib/portfolio-lab-helpers";
+import { buildConsensusTradeSample } from "../lib/portfolioLab/portfolio-lab-consensus";
 import {
     buildForecastSignalBreadthContext,
     computeSignalBreadthPersistence,
-} from "./lib/portfolioLab/portfolio-lab-forecast";
+} from "../lib/portfolioLab/portfolio-lab-forecast";
 
 type MinimalArtifacts = {
     signalPresenceByTime: Map<string, { buy: boolean; sell: boolean }>;

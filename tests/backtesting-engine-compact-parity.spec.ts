@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { OHLCVData, Signal, Time } from './lib/strategies/index';
-import { runBacktest, runBacktestCompact } from './lib/strategies/index';
+import { OHLCVData, Signal, Time } from '../lib/strategies/index';
+import { runBacktest, runBacktestCompact } from '../lib/strategies/index';
 
 // Compact vs full parity tests. The two engine paths deliberately diverge on
 // what they materialize (compact tracks aggregate metrics; full builds Trade[]

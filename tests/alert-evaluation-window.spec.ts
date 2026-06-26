@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { selectExecutionAwareClosedCandles } from './lib/alert-evaluation-window';
-import type { OHLCVData, Time } from './lib/strategies/index';
+import { selectExecutionAwareClosedCandles } from '../lib/alert-evaluation-window';
+import type { OHLCVData, Time } from '../lib/strategies/index';
 
 function buildCandles(count: number, startSec = 1_700_000_000, intervalSec = 60): OHLCVData[] {
     const out: OHLCVData[] = [];

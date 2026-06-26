@@ -6,11 +6,11 @@ import {
     buildPrimaryVetoPreparedSignals,
     buildTargetConflictFilterPreparedSignals,
     type EnsembleRecipeSignalArtifact,
-} from "./lib/ensemble-signal-recipes";
-import { DEFAULT_BACKTEST_SETTINGS, type EnsembleSignalRecipe, type StrategyConfig } from "./lib/settings-model";
-import { timeKey, type Signal, type Strategy } from "./lib/strategies";
-import type { EnsembleEntryPresence } from "./lib/strategy-ensemble-types";
-import type { OHLCVData } from "./lib/strategies";
+} from "../lib/ensemble-signal-recipes";
+import { DEFAULT_BACKTEST_SETTINGS, type EnsembleSignalRecipe, type StrategyConfig } from "../lib/settings-model";
+import { timeKey, type Signal, type Strategy } from "../lib/strategies";
+import type { EnsembleEntryPresence } from "../lib/strategy-ensemble-types";
+import type { OHLCVData } from "../lib/strategies";
 
 function createSignal(time: number, type: Signal["type"], barIndex: number): Signal {
     return {

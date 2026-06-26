@@ -1,25 +1,25 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import type { BacktestSettings, OHLCVData, Strategy, Time } from './lib/types/strategies';
-import type { FinderResult } from './lib/types/finder';
-import { buildSelectionResult } from './lib/finder/endpoint';
-import { getFinderMetricValue } from './lib/finder/finder-engine';
-import { getFinderDisplayResult } from './lib/finder/finder-ui';
-import { FinderParamSpace } from './lib/finder/finder-param-space';
-import { calculateSharpeRatioFromEquityCurve } from './lib/strategies/performance-metrics';
+import type { BacktestSettings, OHLCVData, Strategy, Time } from '../lib/types/strategies';
+import type { FinderResult } from '../lib/types/finder';
+import { buildSelectionResult } from '../lib/finder/endpoint';
+import { getFinderMetricValue } from '../lib/finder/finder-engine';
+import { getFinderDisplayResult } from '../lib/finder/finder-ui';
+import { FinderParamSpace } from '../lib/finder/finder-param-space';
+import { calculateSharpeRatioFromEquityCurve } from '../lib/strategies/performance-metrics';
 import {
     buildFinderEvaluationData,
     resolveFinderCandidateBacktestSettings,
     shouldUseRustCachedMode,
-} from './lib/finder/finder-runner';
+} from '../lib/finder/finder-runner';
 import {
     buildFinderSearchBaseParams,
     mergeFinderRiskParamsIntoBacktestSettings,
     normalizeFinderCandidateParamSets,
     resolveFinderRiskOverrides,
-} from './lib/finder/finder-runner-core';
-import { buildFinderResult, generateSignalsForJob } from './lib/finder/finder-runner-shared';
-import { withExitStrategyBaseParams } from './lib/finder/exit-strategy-param-prefix';
+} from '../lib/finder/finder-runner-core';
+import { buildFinderResult, generateSignalsForJob } from '../lib/finder/finder-runner-shared';
+import { withExitStrategyBaseParams } from '../lib/finder/exit-strategy-param-prefix';
 
 describe('Finder adaptive cache mode decision', () => {
     it('enables cache for large dataset (>500k bars)', () => {
