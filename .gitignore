@@ -151,3 +151,6 @@ archive/
 .vercel
 .wrangler/
 signals/
+
+# Stale lib mirror — never tracked. Real specs live in tests/*.spec.ts.
+tests/lib/
