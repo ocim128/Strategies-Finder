@@ -1,13 +1,5 @@
 /* Walk-Forward Analysis */
 
-#walkforwardTab {
-
-    display: none;
-
-}
-
-
-
 #walkforwardTab .section-desc {
 
     font-size: var(--font-size-sm);

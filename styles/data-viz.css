@@ -337,3 +337,71 @@
     height: 100%;
     background: var(--border-color);
 }
+
+/* ========================================
+   Shared Data Grid System
+   Eliminates redundant grid-table patterns across feature CSS
+   ======================================== */
+
+.data-grid {
+    display: grid;
+    min-width: var(--grid-min-width, auto);
+}
+
+.data-grid-shell {
+    overflow-x: auto;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+    background: hsl(var(--hsl-surface-2) / 0.5);
+}
+
+.data-grid-cell {
+    padding: var(--space-2) var(--space-3);
+    border-top: 1px solid var(--border-color);
+    border-right: 1px solid var(--border-color);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+}
+
+.data-grid .data-grid-cell:last-child {
+    border-right: none;
+}
+
+.data-grid-cell.header {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold);
+}
+
+.data-grid-cell.metric {
+    font-weight: var(--font-weight-medium);
+}
+
+.data-grid-cell.value {
+    font-family: var(--font-family-mono);
+}
+
+.data-grid-cell.right {
+    text-align: right;
+}
+
+.data-grid-cell.positive {
+    color: var(--green);
+}
+
+.data-grid-cell.negative {
+    color: var(--red);
+}
+
+.data-grid-cell.edge-strong {
+    color: var(--green);
+}
+
+.data-grid-cell.edge-weak {
+    color: var(--warning);
+}
+
+.data-grid-cell.edge-none {
+    color: var(--text-tertiary);
+}

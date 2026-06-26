@@ -55,6 +55,9 @@ export interface PersistenceContext {
 export class DataPersistence {
     private cachePersistTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
     private cachePersistPendingByKey: Map<string, { symbol: string; storageInterval: string; candles: OHLCVData[] }> = new Map();
+    // Last bar time (unix seconds) successfully persisted to SQLite per cacheKey.
+    // Tracked so burst updates on fast intervals don't drop intermediate candles.
+    private lastStreamPersistedTimeByKey: Map<string, number> = new Map();
     private readonly STREAM_PERSIST_DELAY_MS = 1200;
 
     normalizeExternalCandles(candles: OHLCVData[]): OHLCVData[] {
@@ -266,7 +269,12 @@ export class DataPersistence {
                 const snapshot = pending.candles.length > DATA_CHART_TOTAL_LIMIT
                     ? pending.candles.slice(-DATA_CHART_TOTAL_LIMIT)
                     : pending.candles.slice();
-                const delta = snapshot.slice(-2);
+                // Compute the delta vs the last bar we successfully persisted. On the
+                // first flush for this key (or if state was lost), store the full tail.
+                const lastPersistedTime = persistence.lastStreamPersistedTimeByKey.get(cacheKey);
+                const delta = lastPersistedTime == null
+                    ? snapshot.slice(-2)
+                    : snapshot.filter(c => Number(c.time) > lastPersistedTime);
                 const sqliteResult = await storeSqliteCandles(
                     pending.symbol,
                     pending.storageInterval,
@@ -274,6 +282,12 @@ export class DataPersistence {
                     providerLabel,
                     'stream'
                 );
+                if (sqliteResult && snapshot.length > 0) {
+                    persistence.lastStreamPersistedTimeByKey.set(
+                        cacheKey,
+                        Number(snapshot[snapshot.length - 1].time)
+                    );
+                }
                 const lastSync = ctx.syncAtByKey.get(cacheKey) ?? 0;
                 const shouldPersistSnapshot = !sqliteResult || (Date.now() - lastSync >= DATA_CACHE_SYNC_MIN_MS);
                 await persistence.persistLocalCandles({

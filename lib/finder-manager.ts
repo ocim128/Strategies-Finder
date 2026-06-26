@@ -32,6 +32,7 @@ import {
 	normalizeFinderCandidateParams,
 	resolveFinderCandidateBacktestSettings,
 	resolveFinderRiskOverrides,
+	type FinderPreparedDataCache,
 } from "./finder/finder-runner-core";
 import {
 	generateSignalsForJob,
@@ -48,6 +49,7 @@ import {
 	updateFinderUniverseCandidateScores,
 } from "./finder/finder-universe-metrics";
 import { executeBacktest, resolveExecutorBacktestSettings } from "./backtest-executor";
+import { resolveCapitalSettingsFromRaw } from "./backtest-capital-settings";
 import {
 	buildFinderDiagnostics,
 	buildCompactFinderDiagnostics,
@@ -1793,6 +1795,11 @@ export class FinderManager {
 		const minTrades = options.tradeFilterEnabled ? options.minTrades : 0;
 		const precomputed = precomputeIndicators(oosData, settings);
 		const rustSettings = sanitizeBacktestSettingsForRust(settings);
+		// Reuse prepared Finder data across OOS survivors (mirrors the IS path in
+		// finder-runner-single.ts). Without this, generateSignalsForJob falls back
+		// to executeBacktestStrategySignals and re-does any strategy-internal
+		// indicator math that prepareFinderData was designed to hoist.
+		const oosPreparedDataCache: FinderPreparedDataCache = new WeakMap();
 
 		this.setProgress(true, 0, 'Validating survivors out-of-sample...');
 
@@ -1830,7 +1837,7 @@ export class FinderManager {
 					strategy,
 					...(candidate.exitStrategyKey ? { exitStrategy, exitStrategyKey: candidate.exitStrategyKey } : {}),
 				};
-				const signals = generateSignalsForJob(job, oosData, state.currentInterval, undefined, settings);
+				const signals = generateSignalsForJob(job, oosData, state.currentInterval, oosPreparedDataCache, settings);
 				const oosResult = runStrategyBacktest({
 					strategy,
 					data: oosData,
@@ -1890,6 +1897,10 @@ export class FinderManager {
 		// Hoist per-run constants out of the candidate loop.
 		const rustSettings = sanitizeBacktestSettingsForRust(settings);
 		const capitalSettings = backtestService.getCapitalSettings();
+		// Capital settings are identical for every OOS candidate × symbol;
+		// resolve once to avoid re-running the normalizer per call (mirrors
+		// the IS universe path in finder-runner-universe.ts).
+		const preResolvedCapital = resolveCapitalSettingsFromRaw(capitalSettings as unknown as Record<string, unknown>);
 		const runNowSec = Math.floor(Date.now() / 1000);
 
 		this.setProgress(true, 0, 'Validating universe survivors out-of-sample...');
@@ -1964,6 +1975,7 @@ export class FinderManager {
 						backtestSettings: oosBacktestSettings,
 						capitalSettings,
 						preResolvedSettings,
+						preResolvedCapital,
 						context: {
 							blockRange: null,
 							annotatePolymarket: false,

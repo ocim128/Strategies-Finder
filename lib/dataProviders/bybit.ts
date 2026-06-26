@@ -8,7 +8,7 @@ import { normalizeTradFiDailyCandles } from "../data/data-interval-utils";
 import { BybitTradFiKline, BybitTradFiKlineResponse, HistoricalFetchOptions } from '../types/index';
 import { getIntervalSeconds, wait } from "./utils";
 import {
-    createFetchTimeoutSignal,
+    fetchWithTimeoutAndRetry,
     findBestDivisibleInterval,
     formatProviderError,
     isAbortError,
@@ -221,49 +221,55 @@ async function fetchBybitTradFiBatch(
             to: String(effectiveTo),
         });
 
-        const timeout = createFetchTimeoutSignal(signal);
-        try {
-            const response = await fetch(`${BYBIT_TRADFI_KLINE_URL}?${params.toString()}`, {
-                signal: timeout.signal,
+        // Bybit TradFi (MT5 copy-trade proxy) is brittle to transient 5xx/429;
+        // wrap in the same retry/backoff helper Binance uses so a single blip
+        // doesn't drop the user to stale seed data. The helper owns per-attempt
+        // timeouts and propagates aborts, so no separate createFetchTimeoutSignal
+        // is needed here.
+        const response = await fetchWithTimeoutAndRetry(
+            `${BYBIT_TRADFI_KLINE_URL}?${params.toString()}`,
+            {
                 headers: {
                     Accept: 'application/json',
                 },
-            });
-            if (!response.ok) {
-                throw new Error(`Bybit TradFi request failed: ${response.status}`);
-            }
-
-            const data: BybitTradFiKlineResponse = await response.json();
-            const retCode = getBybitTradFiRetCode(data);
-            const retMsg = getBybitTradFiRetMsg(data);
-
-            if (retCode === 0) {
-                const list = data.result?.list;
-                if (!Array.isArray(list)) {
-                    return [];
-                }
-
-                const symbolKey = getBybitTradFiSymbolKey(symbol);
-                const normalizedInput = symbol.trim();
-                if (requestSymbol !== normalizedInput) {
-                    bybitTradFiSymbolOverride.set(normalizedInput.toUpperCase(), requestSymbol);
-                    bybitTradFiSymbolOverride.set(symbolKey, requestSymbol);
-                }
-
-                return list.filter((item): item is BybitTradFiKline =>
-                    Array.isArray(item) && item.length >= 5
-                );
-            }
-
-            // Invalid symbol on one alias -> try next candidate alias.
-            if (retCode === 10001) {
-                continue;
-            }
-
-            throw new Error(retMsg || `Bybit TradFi API error (${retCode})`);
-        } finally {
-            timeout.cleanup();
+            },
+            {
+                signal,
+                maxAttempts: 3,
+            },
+        );
+        if (!response.ok) {
+            throw new Error(`Bybit TradFi request failed: ${response.status}`);
         }
+
+        const data: BybitTradFiKlineResponse = await response.json();
+        const retCode = getBybitTradFiRetCode(data);
+        const retMsg = getBybitTradFiRetMsg(data);
+
+        if (retCode === 0) {
+            const list = data.result?.list;
+            if (!Array.isArray(list)) {
+                return [];
+            }
+
+            const symbolKey = getBybitTradFiSymbolKey(symbol);
+            const normalizedInput = symbol.trim();
+            if (requestSymbol !== normalizedInput) {
+                bybitTradFiSymbolOverride.set(normalizedInput.toUpperCase(), requestSymbol);
+                bybitTradFiSymbolOverride.set(symbolKey, requestSymbol);
+            }
+
+            return list.filter((item): item is BybitTradFiKline =>
+                Array.isArray(item) && item.length >= 5
+            );
+        }
+
+        // Invalid symbol on one alias -> try next candidate alias.
+        if (retCode === 10001) {
+            continue;
+        }
+
+        throw new Error(retMsg || `Bybit TradFi API error (${retCode})`);
     }
 
     markBybitTradFiSymbolUnsupported(symbol);

@@ -77,6 +77,17 @@
     --danger-soft: hsl(var(--hsl-danger) / 0.2);
     --premium-soft: hsl(var(--hsl-premium) / 0.16);
 
+    /* Rank medal colors — fixed across themes */
+    --rank-gold-bg: linear-gradient(135deg, hsl(45 80% 55%), hsl(35 90% 45%));
+    --rank-gold-border: hsl(45 90% 60%);
+    --rank-gold-text: hsl(35 50% 15%);
+    --rank-silver-bg: linear-gradient(135deg, hsl(0 0% 70%), hsl(0 0% 55%));
+    --rank-silver-border: hsl(0 0% 75%);
+    --rank-silver-text: hsl(0 0% 20%);
+    --rank-bronze-bg: linear-gradient(135deg, hsl(30 50% 50%), hsl(25 60% 40%));
+    --rank-bronze-border: hsl(30 60% 55%);
+    --rank-bronze-text: hsl(25 30% 15%);
+
     --overlay-bg: hsl(var(--hsl-shadow) / 0.72);
     --glass-bg: hsl(var(--hsl-glass) / 0.78);
     --glass-bg-strong: hsl(var(--hsl-glass) / 0.92);
@@ -191,6 +202,7 @@
 
     /* Typography tokens */
     --font-family-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-family-base: var(--font-family-sans);
     --font-family-mono: 'JetBrains Mono', 'Consolas', monospace;
     --font-size-2xs: 10px;
     --font-size-xs: 11px;

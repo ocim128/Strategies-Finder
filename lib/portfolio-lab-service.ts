@@ -84,6 +84,7 @@ import { getTimeIndex } from "./strategies/backtest/backtest-utils";
 import { strategyPanelController } from "./strategy-panel-controller";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { uiManager } from "./ui-manager";
+import { SyntheticLegCache, buildLegCacheKey } from "./batch-backtest/synthetic-leg-cache";
 
 const PORTFOLIO_DATA_LOAD_CONCURRENCY = 6;
 const PORTFOLIO_BACKTEST_CONCURRENCY = 4;
@@ -93,6 +94,10 @@ class PortfolioLabService {
     private initialized = false;
     private benchmarkDirty = false;
     private lastRunContext: PortfolioRunContext | null = null;
+    // Synthetic source-leg LRU. A basket like BTC+ETH, BTC+SOL, BTC+XRP shares
+    // the BTC leg; without this each pair re-fetches it. Mirrors Batch Backtest
+    // and Finder universe leg dedup.
+    private readonly syntheticLegCache = new SyntheticLegCache<OHLCVData[]>(64);
 
     private getDom(): PortfolioLabDom {
         return this.dom ??= createPortfolioLabDom();
@@ -600,7 +605,7 @@ class PortfolioLabService {
             interval: state.currentInterval,
             targetBars: lookbackBars,
             fetchLeg: (legSymbol, sourceInterval, sourceBars) =>
-                dataManager.fetchHistoricalData(legSymbol, sourceInterval, sourceBars),
+                this.fetchSyntheticLegDeduped(legSymbol, sourceInterval, sourceBars),
         });
         const analysisData = this.prepareAnalysisData(ratioData);
         const preparedBaseData = this.prepareAnalysisData(baseData);
@@ -621,6 +626,25 @@ class PortfolioLabService {
         dataManager.registerImportedData(parsed.syntheticSymbol, state.currentInterval, ratioData);
         dataCache.set(symbol, prepared);
         return prepared;
+    }
+
+    /**
+     * Fetch one synthetic source leg, deduped by `symbol|interval|bars`. Mirrors
+     * Batch Backtest's `getSourceSeriesForBatch` and Finder's
+     * `getSourceSeriesForSynthetic`: a basket anchored on one leader (e.g.
+     * BTC+ETH, BTC+SOL) fetches the leader leg once instead of once per pair.
+     */
+    private fetchSyntheticLegDeduped(
+        legSymbol: string,
+        sourceInterval: string,
+        sourceBars: number,
+    ): Promise<OHLCVData[]> {
+        const legKey = buildLegCacheKey(legSymbol, sourceInterval, sourceBars);
+        const cached = this.syntheticLegCache.get(legKey);
+        if (cached) return cached;
+        const promise = dataManager.fetchHistoricalData(legSymbol, sourceInterval, sourceBars);
+        this.syntheticLegCache.set(legKey, promise);
+        return promise;
     }
 
     private async runPair(

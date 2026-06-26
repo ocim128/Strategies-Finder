@@ -191,6 +191,12 @@
 
 }
 
+.ohlc-volume {
+
+    color: var(--volume-color, hsl(280 60% 65%));
+
+}
+
 
 
 /* OHLC separator */

@@ -391,6 +391,14 @@
     gap: var(--space-1);
 }
 
+.status-divider {
+    display: block;
+    width: 1px;
+    height: 14px;
+    background: var(--border-color);
+    flex-shrink: 0;
+}
+
 .status-viewbars {
     display: inline-flex;
     align-items: center;

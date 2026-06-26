@@ -457,6 +457,11 @@ export class DataManager {
             );
 
             this.isStreaming = true;
+            // A reconnect that reaches the connected state should reset the
+            // attempt counter, otherwise intermittent drops over a long session
+            // accumulate toward DATA_MAX_RECONNECT_ATTEMPTS and the stream
+            // silently stops retrying.
+            this.reconnectAttempts = 0;
             debugLogger.event('data.stream.connected', { symbol, interval });
         } catch (error) {
             debugLogger.error('data.stream.connection_failed', { error: String(error) });

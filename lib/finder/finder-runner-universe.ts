@@ -121,7 +121,7 @@ function createPreparedStrategy(
     strategyKey: string,
     strategy: Strategy,
     cache: FinderPreparedDataCache,
-    settings: BacktestSettings,
+    getSettings: () => BacktestSettings,
     onTiming?: (timing: { preparedDataMs: number; signalExecutionMs: number; totalMs: number; signalCount: number; usedPreparedData: boolean }) => void
 ): Strategy {
     const canUsePreparedData = Boolean(strategy.prepareFinderData && strategy.executePrepared);
@@ -143,7 +143,7 @@ function createPreparedStrategy(
                         strategyKey,
                         strategy,
                         data,
-                        settings,
+                        getSettings(),
                         executionContext
                     );
                 } finally {
@@ -673,6 +673,29 @@ export async function runFinderUniverseExecution(
     };
     const totalPossibleTrades = loadedSymbols.reduce((sum, item) => sum + item.maxPossibleTrades, 0);
     const totalInputBars = loadedSymbols.reduce((sum, item) => sum + item.barCount, 0);
+    // Build the timing-instrumented strategy wrapper ONCE per (strategy, run).
+    // The wrapper is identical for every param set; only the per-candidate
+    // `backtestSettings` varies, and it is read through `currentBacktestSettings`
+    // at execute time so the closure stays valid across iterations. Avoids
+    // M-1 proto-clone + property-descriptor allocations per symbol per run.
+    let currentBacktestSettings: BacktestSettings = input.settings;
+    const preparedStrategy = createPreparedStrategy(
+        input.selectedStrategy.key,
+        input.selectedStrategy.strategy,
+        preparedDataCache,
+        () => currentBacktestSettings,
+        (signalTiming) => {
+            signalTimingByRun.observed = true;
+            signalTimingByRun.preparedDataMs += signalTiming.preparedDataMs;
+            signalTimingByRun.signalMs += signalTiming.signalExecutionMs;
+            signalTimingByRun.totalMs += signalTiming.totalMs;
+            strategyStats.signalMs += signalTiming.signalExecutionMs;
+            strategyStats.usedPreparedData = strategyStats.usedPreparedData || signalTiming.usedPreparedData;
+            if (signalTiming.signalCount === 0) {
+                recordFinderStrategyNoSignals(strategyStats);
+            }
+        }
+    );
     for (let candidateIndex = 0; candidateIndex < candidatePlans.length; candidateIndex += 1) {
         if (callbacks.isCancelled()) {
             break;
@@ -696,26 +719,10 @@ export async function runFinderUniverseExecution(
                 exitStrategyParams: { ...(exitParams ?? {}) },
             }
             : riskAdjustedSettings;
+        currentBacktestSettings = backtestSettings;
         const preResolvedSettings = resolveExecutorBacktestSettings(
             { ...(backtestSettings as Record<string, unknown>), interval: input.interval } as BacktestSettings,
             input.interval,
-        );
-        const preparedStrategy = createPreparedStrategy(
-            input.selectedStrategy.key,
-            input.selectedStrategy.strategy,
-            preparedDataCache,
-            backtestSettings,
-            (signalTiming) => {
-                signalTimingByRun.observed = true;
-                signalTimingByRun.preparedDataMs += signalTiming.preparedDataMs;
-                signalTimingByRun.signalMs += signalTiming.signalExecutionMs;
-                signalTimingByRun.totalMs += signalTiming.totalMs;
-                strategyStats.signalMs += signalTiming.signalExecutionMs;
-                strategyStats.usedPreparedData = strategyStats.usedPreparedData || signalTiming.usedPreparedData;
-                if (signalTiming.signalCount === 0) {
-                    recordFinderStrategyNoSignals(strategyStats);
-                }
-            }
         );
 
         const symbolResults = new Map<string, FinderUniverseSymbolResult>();

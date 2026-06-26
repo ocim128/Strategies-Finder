@@ -50,7 +50,11 @@
 
 
 
-.snapshot-profile-cell {
+.snapshot-profile-cell,
+.exit-reason-cell,
+.edge-ratio-cell,
+.edge-ttest-item,
+.edge-streak-item {
 
     padding: var(--space-2) var(--space-3);
 
@@ -66,27 +70,9 @@
 
 }
 
-
-
-.snapshot-profile-cell:last-child,
-
-.snapshot-profile-grid .snapshot-profile-cell:nth-child(5n) {
-
-    border-right: none;
-
-}
-
-
-
-.snapshot-profile-grid .snapshot-profile-cell:nth-child(-n+5) {
-
-    border-top: none;
-
-}
-
-
-
-.snapshot-profile-cell.header {
+.snapshot-profile-cell.header,
+.exit-reason-cell.header,
+.edge-ratio-cell.header {
 
     background: var(--bg-tertiary);
 
@@ -96,47 +82,44 @@
 
 }
 
-
-
-.snapshot-profile-cell.metric {
+.snapshot-profile-cell.metric,
+.exit-reason-cell.metric {
 
     font-weight: var(--font-weight-medium);
 
 }
 
-
-
-.snapshot-profile-cell.value {
+.snapshot-profile-cell.value,
+.exit-reason-cell.value,
+.edge-ratio-cell.value {
 
     font-family: var(--font-family-mono);
 
 }
 
-
-
-.snapshot-profile-cell.right {
+.snapshot-profile-cell.right,
+.exit-reason-cell.right,
+.edge-ratio-cell.right {
 
     text-align: right;
 
 }
 
-
-
-.snapshot-profile-cell.positive {
+.snapshot-profile-cell.positive,
+.exit-reason-cell.positive,
+.edge-ratio-cell.positive {
 
     color: var(--green);
 
 }
 
-
-
-.snapshot-profile-cell.negative {
+.snapshot-profile-cell.negative,
+.exit-reason-cell.negative,
+.edge-ratio-cell.negative {
 
     color: var(--red);
 
 }
-
-
 
 .snapshot-profile-cell.edge-strong {
 
@@ -144,15 +127,11 @@
 
 }
 
-
-
 .snapshot-profile-cell.edge-weak {
 
     color: var(--warning);
 
 }
-
-
 
 .snapshot-profile-cell.edge-none {
 
@@ -165,6 +144,60 @@
 /* â”€â”€ Exit Reason Breakdown â”€â”€ */
 
 
+
+/* Snapshot Profile Grid — 5 columns */
+.snapshot-profile-cell:last-child,
+.snapshot-profile-grid .snapshot-profile-cell:nth-child(5n) {
+    border-right: none;
+}
+.snapshot-profile-grid .snapshot-profile-cell:nth-child(-n+5) {
+    border-top: none;
+}
+
+/* Exit Reason Grid — 6 columns */
+.exit-reason-cell:last-child,
+.exit-reason-grid .exit-reason-cell:nth-child(6n) {
+    border-right: none;
+}
+.exit-reason-grid .exit-reason-cell:nth-child(-n+6) {
+    border-top: none;
+}
+
+/* Edge Ratio Grid — 5 columns */
+.edge-ratio-cell:last-child,
+.edge-ratio-grid .edge-ratio-cell:nth-child(5n) {
+    border-right: none;
+}
+.edge-ratio-grid .edge-ratio-cell:nth-child(-n+5) {
+    border-top: none;
+}
+
+/* Edge Ratio Grid — Timing Quality variant (7 columns) */
+.edge-ratio-grid.timing-quality-grid .edge-ratio-cell:nth-child(5n) {
+    border-right: 1px solid var(--border-color);
+}
+.edge-ratio-grid.timing-quality-grid .edge-ratio-cell:nth-child(7n) {
+    border-right: none;
+}
+.edge-ratio-grid.timing-quality-grid .edge-ratio-cell:nth-child(-n+7) {
+    border-top: none;
+}
+
+/* Edge T-Test Grid — 2 columns */
+.edge-ttest-item:nth-child(2n) {
+    border-right: none;
+}
+.edge-ttest-item:nth-child(-n+2) {
+    border-top: none;
+}
+
+/* Edge Streak Grid — 2 columns */
+.edge-streak-item:nth-child(2n) {
+    border-right: none;
+}
+.edge-streak-item:nth-child(-n+2) {
+    border-top: none;
+}
 
 .exit-reason-section {
 
@@ -200,91 +233,7 @@
 
 
 
-.exit-reason-cell {
 
-    padding: var(--space-2) var(--space-3);
-
-    border-top: 1px solid var(--border-color);
-
-    border-right: 1px solid var(--border-color);
-
-    font-size: var(--font-size-xs);
-
-    color: var(--text-secondary);
-
-    background: var(--bg-secondary);
-
-}
-
-
-
-.exit-reason-cell:last-child,
-
-.exit-reason-grid .exit-reason-cell:nth-child(6n) {
-
-    border-right: none;
-
-}
-
-
-
-.exit-reason-grid .exit-reason-cell:nth-child(-n+6) {
-
-    border-top: none;
-
-}
-
-
-
-.exit-reason-cell.header {
-
-    background: var(--bg-tertiary);
-
-    color: var(--text-primary);
-
-    font-weight: var(--font-weight-semibold);
-
-}
-
-
-
-.exit-reason-cell.metric {
-
-    font-weight: var(--font-weight-medium);
-
-}
-
-
-
-.exit-reason-cell.value {
-
-    font-family: var(--font-family-mono);
-
-}
-
-
-
-.exit-reason-cell.right {
-
-    text-align: right;
-
-}
-
-
-
-.exit-reason-cell.positive {
-
-    color: var(--green);
-
-}
-
-
-
-.exit-reason-cell.negative {
-
-    color: var(--red);
-
-}
 
 
 /* â”€â”€ Edge Analysis Section â”€â”€ */
@@ -381,58 +330,6 @@
     min-width: 620px;
 }
 
-.edge-ratio-cell {
-    padding: var(--space-2) var(--space-3);
-    border-top: 1px solid var(--border-color);
-    border-right: 1px solid var(--border-color);
-    font-size: var(--font-size-xs);
-    color: var(--text-secondary);
-    background: var(--bg-secondary);
-}
-
-.edge-ratio-cell:last-child,
-.edge-ratio-grid .edge-ratio-cell:nth-child(5n) {
-    border-right: none;
-}
-
-.edge-ratio-grid.timing-quality-grid .edge-ratio-cell:nth-child(5n) {
-    border-right: 1px solid var(--border-color);
-}
-
-.edge-ratio-grid.timing-quality-grid .edge-ratio-cell:nth-child(7n) {
-    border-right: none;
-}
-
-.edge-ratio-grid .edge-ratio-cell:nth-child(-n+5) {
-    border-top: none;
-}
-
-.edge-ratio-grid.timing-quality-grid .edge-ratio-cell:nth-child(-n+7) {
-    border-top: none;
-}
-
-.edge-ratio-cell.header {
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-    font-weight: var(--font-weight-semibold);
-}
-
-.edge-ratio-cell.value {
-    font-family: var(--font-family-mono);
-}
-
-.edge-ratio-cell.right {
-    text-align: right;
-}
-
-.edge-ratio-cell.positive {
-    color: var(--green);
-}
-
-.edge-ratio-cell.negative {
-    color: var(--red);
-}
-
 .edge-composite {
     padding: var(--space-2) var(--space-3);
     font-size: var(--font-size-sm);
@@ -464,21 +361,6 @@
     gap: 0;
 }
 
-.edge-ttest-item {
-    padding: var(--space-2) var(--space-3);
-    border-top: 1px solid var(--border-color);
-    border-right: 1px solid var(--border-color);
-    background: var(--bg-secondary);
-}
-
-.edge-ttest-item:nth-child(2n) {
-    border-right: none;
-}
-
-.edge-ttest-item:nth-child(-n+2) {
-    border-top: none;
-}
-
 .edge-ttest-label {
     font-size: var(--font-size-2xs);
     font-weight: var(--font-weight-medium);
@@ -507,21 +389,6 @@
     display: grid;
     grid-template-columns: repeat(2, 1fr);
     gap: 0;
-}
-
-.edge-streak-item {
-    padding: var(--space-2) var(--space-3);
-    border-top: 1px solid var(--border-color);
-    border-right: 1px solid var(--border-color);
-    background: var(--bg-secondary);
-}
-
-.edge-streak-item:nth-child(2n) {
-    border-right: none;
-}
-
-.edge-streak-item:nth-child(-n+2) {
-    border-top: none;
 }
 
 .edge-streak-item.full-width {

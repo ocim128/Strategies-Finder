@@ -33,6 +33,11 @@ class BatchBacktestService {
     private initialized = false;
     private cancelled = false;
     private lastResults: BatchBacktestSymbolResult[] = [];
+    // Number of result rows already appended to the DOM via onSymbolComplete.
+    // Tracked so the post-run path only appends the cancelled back-fill tail
+    // instead of rebuilding every row (the runner emits onSymbolComplete in
+    // strict input order, so the incremental appends are already ordered).
+    private appendedCount = 0;
     // Monotonic run token. A stale run that resumes after a newer run started
     // (e.g. Stop -> Run while the old run is still awaiting executeBacktest)
     // sees its token as stale and stops writing DOM/state, preventing two
@@ -112,6 +117,7 @@ class BatchBacktestService {
         const token = this.runToken;
         this.cancelled = false;
         this.lastResults = [];
+        this.appendedCount = 0;
         dom.batchBacktestRunBtn.disabled = true;
         setVisible(dom.batchBacktestStopBtn, true);
         dom.batchBacktestCopyBtn.disabled = true;
@@ -142,6 +148,7 @@ class BatchBacktestService {
                     onSymbolComplete: (_index, result) => {
                         if (token !== this.runToken) return;
                         this.lastResults.push(result);
+                        this.appendedCount += 1;
                         this.appendResultRow(dom, result);
                     },
                     isCancelled: () => token !== this.runToken || this.cancelled,
@@ -150,8 +157,15 @@ class BatchBacktestService {
             // A newer run has taken over; leave all UI state to that run.
             if (token !== this.runToken) return;
             this.lastResults = output.results;
-            // Re-render in stable input order so failed/slow loads don't jumble.
-            this.renderAllResults(dom, this.lastResults);
+            // The runner emits onSymbolComplete in strict input order, so every
+            // processed row is already in the DOM. Only the cancelled back-fill
+            // tail (slots never processed because Stop broke the loop) needs to
+            // be appended here. Avoids a full O(N) rebuild + reflow per run.
+            for (let i = this.appendedCount; i < output.results.length; i += 1) {
+                this.appendResultRow(dom, output.results[i]);
+            }
+            this.appendedCount = output.results.length;
+            setVisible(dom.batchBacktestEmpty, output.results.length === 0);
             dom.batchBacktestStatus.textContent = this.cancelled
                 ? `Stopped (${output.results.length}/${symbols.length} pairs)`
                 : `Done (${output.results.length} pairs, ${output.failedSymbols.length} failed)`;
@@ -188,15 +202,6 @@ class BatchBacktestService {
 
     private appendResultRow(dom: BatchBacktestDom, result: BatchBacktestSymbolResult): void {
         dom.batchBacktestResults.appendChild(this.createResultRow(result));
-    }
-
-    private renderAllResults(dom: BatchBacktestDom, results: BatchBacktestSymbolResult[]): void {
-        const fragment = document.createDocumentFragment();
-        for (const result of results) {
-            fragment.appendChild(this.createResultRow(result));
-        }
-        dom.batchBacktestResults.replaceChildren(fragment);
-        setVisible(dom.batchBacktestEmpty, results.length === 0);
     }
 
     private createResultRow(result: BatchBacktestSymbolResult): HTMLDivElement {

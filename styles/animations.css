@@ -98,16 +98,6 @@
     }
 }
 
-@keyframes spinReverse {
-    from {
-        transform: rotate(360deg);
-    }
-
-    to {
-        transform: rotate(0deg);
-    }
-}
-
 /* Shimmer - Skeleton Loading Effect */
 @keyframes shimmer {
     0% {
@@ -203,26 +193,6 @@
     100% {
         opacity: 1;
         transform: scale(1);
-    }
-}
-
-@keyframes bounceOut {
-    0% {
-        transform: scale(1);
-    }
-
-    25% {
-        transform: scale(0.95);
-    }
-
-    50% {
-        opacity: 1;
-        transform: scale(1.1);
-    }
-
-    100% {
-        opacity: 0;
-        transform: scale(0.3);
     }
 }
 
@@ -381,37 +351,6 @@
     }
 }
 
-/* Loading Dots */
-@keyframes loadingDots {
-
-    0%,
-    20% {
-        opacity: 0;
-    }
-
-    40% {
-        opacity: 1;
-    }
-
-    100% {
-        opacity: 0;
-    }
-}
-
-/* Typing Cursor */
-@keyframes blink {
-
-    0%,
-    50% {
-        opacity: 1;
-    }
-
-    51%,
-    100% {
-        opacity: 0;
-    }
-}
-
 /* ========================================
    Animation Utility Classes
    ======================================== */
@@ -443,10 +382,6 @@
 
 .animate-bounce {
     animation: bounce 0.6s ease;
-}
-
-.animate-bounce-in {
-    animation: bounceIn 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
 }
 
 .animate-shake {

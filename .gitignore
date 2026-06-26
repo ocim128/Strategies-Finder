@@ -143,6 +143,8 @@ matrix-summary-*.json
 # Accidental top-level generated files
 /8
 /3000
+# Windows reserved-name artifact created by shell redirects (e.g. `2>nul`)
+/nul
 
 # Archive directory
 archive/

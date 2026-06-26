@@ -13,7 +13,8 @@
  * head plus an AbortController whose signal is threaded into dataset loads.
  */
 
-import { executeBacktest } from "../backtest-executor";
+import { executeBacktest, resolveExecutorBacktestSettings } from "../backtest-executor";
+import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import type {
     BacktestResult,
     BacktestSettings,
@@ -108,6 +109,36 @@ export async function runBatchBacktest(
     const abort = new AbortController();
     const nowSec = Math.floor(Date.now() / 1000);
     const cancelCheck = () => callbacks.isCancelled();
+    // Settings + capital are identical for every item in a batch (the contract
+    // is "read once, replay everywhere"). Resolve them once so executeBacktest
+    // skips per-item normalization (mirrors Finder universe's IS path).
+    const preResolvedSettings = resolveExecutorBacktestSettings(
+        { ...(input.backtestSettings as Record<string, unknown>), interval: input.interval } as BacktestSettings,
+        input.interval,
+    );
+    const preResolvedCapital = resolveCapitalSettingsFromRaw(input.capitalSettings as unknown as Record<string, unknown>);
+
+    // Prefetch window: kick off dataset loads ahead of the serial consumer so
+    // I/O overlaps with the current backtest's CPU work. Execution stays serial
+    // (no engine contention); only loads are pipelined, and onSymbolComplete
+    // still fires in strict input order because the consumer loop is serial.
+    // The Finder universe runner parallelizes loads the same way via
+    // mapWithConcurrencyLimit.
+    const PREFETCH_AHEAD = 4;
+    const inflight: Promise<OHLCVData[]>[] = [];
+    const startPrefetch = (idx: number) => {
+        // The promise is consumed by the serial loop in order. Attach a
+        // no-op catch so that if the loop breaks early on cancel (leaving
+        // up to PREFETCH_AHEAD promises unawaited) and one of them later
+        // rejects on a network error, it doesn't surface as an unhandled
+        // rejection. The consumer path handles errors itself via try/catch.
+        const p = input.loadDataset(symbols[idx], input.interval, abort.signal);
+        p.catch(() => { /* abandoned prefetch; error surfaced by consumer path */ });
+        inflight.push(p);
+    };
+    for (let p = 0; p < Math.min(PREFETCH_AHEAD, symbols.length); p += 1) {
+        startPrefetch(p);
+    }
 
     for (let i = 0; i < symbols.length; i += 1) {
         if (cancelCheck()) {
@@ -119,9 +150,14 @@ export async function runBatchBacktest(
         callbacks.setProgress((i / total) * 100, `Running ${symbol} (${i + 1}/${total})...`);
         callbacks.setStatus(`Backtesting ${symbol}...`);
 
+        // The prefetched load for this index sits at the head of the window.
+        // (Loads are started and consumed strictly in increasing index order,
+        // so inflight[0] always corresponds to i.)
+        const loadPromise = inflight.shift()!;
+
         let data: OHLCVData[] = [];
         try {
-            data = await input.loadDataset(symbol, input.interval, abort.signal);
+            data = await loadPromise;
             if (cancelCheck() || abort.signal.aborted) break;
             if (!Array.isArray(data) || data.length === 0) {
                 const failure: BatchBacktestSymbolResult = {
@@ -133,6 +169,9 @@ export async function runBatchBacktest(
                 results[i] = failure;
                 failedSymbols.push(symbol);
                 callbacks.onSymbolComplete?.(i, failure);
+                // Refill the prefetch window before continuing.
+                const nextIdx = i + PREFETCH_AHEAD;
+                if (nextIdx < symbols.length) startPrefetch(nextIdx);
                 continue;
             }
             loadedSymbols += 1;
@@ -151,8 +190,15 @@ export async function runBatchBacktest(
             results[i] = failure;
             failedSymbols.push(symbol);
             callbacks.onSymbolComplete?.(i, failure);
+            const nextIdx = i + PREFETCH_AHEAD;
+            if (nextIdx < symbols.length) startPrefetch(nextIdx);
             continue;
         }
+
+        // Kick off the next prefetch BEFORE the backtest so the load overlaps
+        // with execution.
+        const nextIdx = i + PREFETCH_AHEAD;
+        if (nextIdx < symbols.length) startPrefetch(nextIdx);
 
         try {
             const output = await executeBacktest({
@@ -164,6 +210,8 @@ export async function runBatchBacktest(
                 strategyParams: input.strategyParams,
                 backtestSettings: input.backtestSettings,
                 capitalSettings: input.capitalSettings,
+                preResolvedSettings,
+                preResolvedCapital,
                 context: {
                     blockRange: null,
                     annotatePolymarket: false,
