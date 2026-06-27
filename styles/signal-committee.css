@@ -91,6 +91,14 @@
     color: var(--text-secondary);
 }
 
+/* ── Bulk-select checkbox column ──────────────────────────────────────────
+   Narrow, centered column for the per-row select checkbox and the header
+   "select all" checkbox. Width kept tight so it doesn't push the layout. */
+.signal-committee__select-cell {
+    text-align: center;
+    width: 28px;
+}
+
 .signal-committee__disabled-pill {
     display: inline-block;
     margin-left: var(--space-1);

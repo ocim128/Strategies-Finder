@@ -257,7 +257,7 @@ describe("signal-committee-renderer / renderCommitteeHeader", () => {
 describe("signal-committee-renderer / renderCommitteeRows", () => {
     it("emits an empty-state row with colspan when given no rows", () => {
         const html = renderCommitteeRows([]);
-        expect(html).to.contain("colspan=\"9\"");
+        expect(html).to.contain("colspan=\"10\"");
         expect(html).to.contain("Add Current Configuration");
     });
 
@@ -302,9 +302,34 @@ describe("signal-committee-renderer / renderCommitteeRows", () => {
             enabled: true,
         }]);
         expect(longRow).to.contain("signal-committee__direction--long");
-        // No +1 cell of its own; the direction label carries the meaning.
+        // 10 cells = leading bulk-select checkbox + 9 original columns.
         const cells = longRow.match(/<td/g)?.length ?? 0;
-        expect(cells).to.equal(9);
+        expect(cells).to.equal(10);
+    });
+
+    it("prepends a select checkbox carrying the stream id for bulk delete", () => {
+        // The checkbox is the first cell and carries the stream id so the bulk
+        // delete handler can fan out deletes without re-deriving it.
+        const html = renderCommitteeRows([{
+            streamId: "btcusdt:5m:strat",
+            configName: "cfg",
+            symbol: "BTCUSDT",
+            interval: "5m",
+            strategyKey: "strat",
+            directionLabel: "FLAT",
+            directionTone: "flat",
+            voteLabel: "0",
+            ageLabel: "—",
+            gainLabel: "—",
+            statusLabel: "ok",
+            statusTone: "ok",
+            enabled: true,
+        }]);
+        expect(html).to.contain('data-signal-committee-select="btcusdt:5m:strat"');
+        // Checkbox must be the FIRST cell so it aligns with the header's
+        // select-all checkbox column.
+        const firstCell = html.match(/<tr[^>]*>\s*(<td[^>]*>)/)?.[1] ?? "";
+        expect(firstCell).to.contain("signal-committee__select-cell");
     });
 });
 

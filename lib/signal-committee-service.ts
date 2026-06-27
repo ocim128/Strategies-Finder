@@ -35,6 +35,8 @@ import { uiManager } from "./ui-manager";
 import { debugLogger } from "./debug-logger";
 import { evaluateLatestEntrySignal } from "./signal-entry-evaluator";
 import { loadBuiltInStrategyByKey } from "../strategyRegistry";
+import { parseSyntheticPairToken } from "./finder-manager";
+import { parseBatchSymbols } from "./batch-backtest/batch-backtest-runner";
 import { resolveCurrentAlertSubscriptionContext } from "./current-alert-subscription";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
 import {
@@ -96,7 +98,12 @@ const COMMITTEE_OVERLAY_BUTTON_LABEL: Record<CommitteeOverlayMode, string> = {
 const DEFAULT_COMMITTEE_TAG = "default";
 const LOCAL_SYNTHETIC_COMMITTEE_TAG = "local_synthetic";
 const LOCAL_SYNTHETIC_STREAM_PREFIX = "local-synthetic:";
-const MEMBER_HARD_CAP = 25;
+// Member cap matches the worker's `listCommitteeSubscriptions` LIMIT (500).
+// State reads are chunked client-side at COMMITTEE_STATE_BATCH_SIZE because the
+// worker's getCommitteeState caps at MAX_BATCH=100 per request (one D1 `?` per
+// IN value). Without chunking, members past 100 would silently get no state.
+const MEMBER_HARD_CAP = 500;
+const COMMITTEE_STATE_BATCH_SIZE = 100;
 const SYNTHETIC_WORKER_CANDLE_LIMIT = 500;
 const SYNTHETIC_COMMITTEE_SYNC_MIN_SOURCE_BARS = 50_000;
 const LOCAL_SYNTHETIC_MEMBERS_STORAGE = {
@@ -311,6 +318,48 @@ class SignalCommitteeService {
                 return { streamId, status: "error", error: message };
             }
         }));
+    }
+
+    /**
+     * Fetch committee state for many stream ids, transparently chunking
+     * requests at {@link COMMITTEE_STATE_BATCH_SIZE}. The worker's
+     * `getCommitteeState` caps each request at MAX_BATCH=100 (one D1 `?` per
+     * IN value) and silently truncates beyond that. Without chunking, members
+     * past 100 would get no state and stop voting/displaying.
+     *
+     * Chunks run sequentially, not in parallel — each round trip already hits
+     * the worker's full D1 quota for that request shape, and the cron itself
+     * fans out across subscriptions concurrently every minute, so adding
+     * client-side parallelism here would only risk tripping rate limits.
+     */
+    private async getCommitteeStateBatched(
+        streamIds: readonly string[]
+    ): Promise<Awaited<ReturnType<typeof alertService.getCommitteeState>>> {
+        if (streamIds.length === 0) {
+            return { ok: true, scanned: 0, truncated: false, states: [] };
+        }
+        const merged: Awaited<ReturnType<typeof alertService.getCommitteeState>> = {
+            ok: true,
+            scanned: 0,
+            truncated: false,
+            states: [],
+        };
+        for (let i = 0; i < streamIds.length; i += COMMITTEE_STATE_BATCH_SIZE) {
+            const chunk = streamIds.slice(i, i + COMMITTEE_STATE_BATCH_SIZE);
+            const result = await alertService.getCommitteeState(chunk);
+            if (!result.ok) {
+                // Surface the first failure but keep the partial states already
+                // collected so the UI still renders whatever we have.
+                merged.ok = false;
+                merged.scanned += result.scanned;
+                merged.states.push(...result.states);
+                return merged;
+            }
+            merged.scanned += result.scanned;
+            merged.truncated = merged.truncated || result.truncated;
+            merged.states.push(...result.states);
+        }
+        return merged;
     }
 
     private async syncSyntheticLegs(): Promise<void> {
@@ -733,6 +782,40 @@ class SignalCommitteeService {
         });
         dom.signalCommitteeAddSavedBtn.addEventListener("click", () => {
             void this.addSavedConfigurationsForCurrentChart();
+        });
+        dom.signalCommitteeBulkPairsBtn.addEventListener("click", () => {
+            // Open the collapsed bulk-pairs panel and focus the textarea so the
+            // user has an obvious entry point from the toolbar. The panel stays
+            // collapsed by default to avoid crowding the tab on first load.
+            const details = dom.signalCommitteeBulkPairs.closest("details");
+            if (details && !details.open) details.open = true;
+            dom.signalCommitteeBulkPairs.focus();
+        });
+        dom.signalCommitteeBulkAddBtn.addEventListener("click", () => {
+            void this.addBulkPairsFromTextarea();
+        });
+        dom.signalCommitteeBulkDeleteBtn.addEventListener("click", () => {
+            void this.bulkDeleteSelected();
+        });
+        dom.signalCommitteeSelectAll.addEventListener("change", () => {
+            // Master toggle: set every row checkbox to match the header checkbox,
+            // then sync the delete-button label. Row checkboxes are re-read from
+            // the DOM (rows are re-rendered on refresh, so a JS-side selection
+            // set would desync; DOM is the source of truth for selection).
+            const checked = dom.signalCommitteeSelectAll.checked;
+            dom.signalCommitteeTableBody
+                .querySelectorAll<HTMLInputElement>("input[type=\"checkbox\"][data-signal-committee-select]")
+                .forEach((cb) => { cb.checked = checked; });
+            this.syncBulkDeleteButton();
+        });
+        // Row checkbox changes: re-derive select-all state + button label.
+        // `change` (not `click`) because checkboxes toggle on keyboard too.
+        dom.signalCommitteeTableBody.addEventListener("change", (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLInputElement)) return;
+            if (!target.dataset.signalCommitteeSelect) return;
+            this.syncBulkDeleteButton();
+            this.syncSelectAllCheckbox();
         });
         dom.signalCommitteeSyncSyntheticBtn.addEventListener("click", () => {
             void this.syncSyntheticLegs();
@@ -1160,13 +1243,14 @@ class SignalCommitteeService {
             }
 
             // 3. Batched state read (with fallback handled inside alertService).
+            // getCommitteeStateBatched chunks at COMMITTEE_STATE_BATCH_SIZE so
+            // committees over 100 members still get state for every row — the
+            // worker's getCommitteeState caps each request at MAX_BATCH=100.
             const streamIds = remoteWorkerMembers
                 .slice(0, Math.max(0, MEMBER_HARD_CAP - localRecordStreamIds.size))
                 .map((m) => m.stream_id);
             diag.batchedRequest = { streamIds };
-            let result = streamIds.length > 0
-                ? await alertService.getCommitteeState(streamIds)
-                : { ok: true, scanned: 0, truncated: false, states: [] };
+            let result = await this.getCommitteeStateBatched(streamIds);
             diag.batchedResponse = {
                 ok: result.ok,
                 scanned: result.scanned,
@@ -1175,7 +1259,7 @@ class SignalCommitteeService {
             };
             if (options.manual && repairedStreamIds.length > 0) {
                 diag.workerSubscriptionRepairWarmup = await this.warmWorkerStateCache(repairedStreamIds);
-                result = await alertService.getCommitteeState(streamIds);
+                result = await this.getCommitteeStateBatched(streamIds);
                 diag.batchedResponseAfterWorkerSubscriptionRepairWarmup = {
                     ok: result.ok,
                     scanned: result.scanned,
@@ -1190,7 +1274,7 @@ class SignalCommitteeService {
                 });
                 if (missingCachedStreamIds.length > 0) {
                     diag.runNowWarmup = await this.warmWorkerStateCache(missingCachedStreamIds);
-                    result = await alertService.getCommitteeState(streamIds);
+                    result = await this.getCommitteeStateBatched(streamIds);
                     diag.batchedResponseAfterWarmup = {
                         ok: result.ok,
                         scanned: result.scanned,
@@ -1496,7 +1580,9 @@ class SignalCommitteeService {
         // own D1 row, so there is no cross-stream ordering dependency, and
         // warming all freshly-added streams in a single parallel batch at the
         // end avoids N sequential round trips.
-        const plans = configs.map((config) => {
+        // Skip configs that are already committee members (same stream_id) so
+        // the user gets feedback instead of a silent re-upsert of the same row.
+        const allPlans = configs.map((config) => {
             const syntheticPair = this.resolveSyntheticPairForConfig(config);
             const symbol = config.symbol ?? state.currentSymbol;
             const interval = config.interval ?? state.currentInterval;
@@ -1509,6 +1595,18 @@ class SignalCommitteeService {
                 streamId,
             };
         });
+        const skippedAlreadyMembers = allPlans.filter((p) => this.isStreamIdAlreadyMember(p.streamId)).length;
+        const plans = allPlans.filter((p) => !this.isStreamIdAlreadyMember(p.streamId));
+
+        if (plans.length === 0) {
+            uiManager.showToast(
+                skippedAlreadyMembers > 0
+                    ? `All ${skippedAlreadyMembers} matching config${skippedAlreadyMembers === 1 ? "" : "s"} already in the committee.`
+                    : "No new saved configurations to add.",
+                "info"
+            );
+            return;
+        }
 
         const outcomes = await Promise.all(plans.map(async (plan) => {
             try {
@@ -1556,17 +1654,199 @@ class SignalCommitteeService {
         }
 
         if (added > 0) {
-            uiManager.showToast(
-                failed.length > 0
-                    ? `Added ${added} saved configurations; ${failed.length} failed.`
-                    : `Added ${added} saved configurations to the committee.`,
-                failed.length > 0 ? "warning" : "success"
-            );
+            // Build a summary that surfaces skipped-already-members alongside
+            // the added/failed counts so the user sees why N configs in the
+            // list produced fewer than N new rows.
+            const parts: string[] = [`Added ${added} saved configuration${added === 1 ? "" : "s"}`];
+            if (skippedAlreadyMembers > 0) {
+                parts.push(`${skippedAlreadyMembers} already member${skippedAlreadyMembers === 1 ? "" : "s"}`);
+            }
+            if (failed.length > 0) parts.push(`${failed.length} failed`);
+            uiManager.showToast(parts.join("; "), failed.length > 0 ? "warning" : "success");
             await this.refresh({ manual: true });
             return;
         }
 
-        uiManager.showToast(`Failed to add ${failed.length} saved configurations.`, "error");
+        uiManager.showToast(`Failed to add ${failed.length} saved configuration${failed.length === 1 ? "" : "s"}.`, "error");
+    }
+
+    /**
+     * Bulk-add worker committee members from the textarea list. Each pair
+     * becomes a voting member using the CURRENT strategy + params + backtest
+     * settings + timeframe (mirrors {@link addCurrentConfiguration}, fanned
+     * out across many symbols). Real symbols and synthetic tokens
+     * (`BASE+QUOTE`) share the same parse path as Batch Backtest via
+     * `parseBatchSymbols`, and synthetic members embed the same
+     * `syntheticPair` metadata + `SYNTHETIC_WORKER_CANDLE_LIMIT` the single
+     * Add path produces, so the worker treats them identically.
+     */
+    private async addBulkPairsFromTextarea(): Promise<void> {
+        const dom = this.getDom();
+        const strategyKey = state.currentStrategyKey.trim();
+        if (!strategyKey) {
+            uiManager.showToast("No strategy selected.", "warning");
+            return;
+        }
+        if (!isWorkerSupportedStrategyKey(strategyKey)) {
+            uiManager.showToast(
+                "Signal Committee supports chart-data strategies only. Cross-symbol and 1s-Polymarket strategies are not supported here.",
+                "warning"
+            );
+            return;
+        }
+
+        const context = resolveCurrentAlertSubscriptionContext();
+        if (!context) {
+            uiManager.showToast("No current chart context to add.", "error");
+            return;
+        }
+
+        const pairs = parseBatchSymbols(dom.signalCommitteeBulkPairs.value);
+        if (pairs.length === 0) {
+            uiManager.showToast("No pairs entered. Paste one per line (e.g. BTCUSDT or ZEC+APT).", "info");
+            return;
+        }
+
+        // Existing members occupy hard-cap slots already; only the remainder is
+        // available for this bulk pass. Surface the truncation so the user
+        // doesn't wonder why part of their list was silently dropped.
+        const remaining = Math.max(0, MEMBER_HARD_CAP - this.members.length);
+        let cappedPairs = pairs;
+        if (pairs.length > remaining) {
+            cappedPairs = pairs.slice(0, remaining);
+            uiManager.showToast(
+                `Committee is at the ${MEMBER_HARD_CAP}-member cap; only the first ${remaining} of ${pairs.length} pairs will be added.`,
+                "warning"
+            );
+            if (remaining === 0) return;
+        }
+
+        // Pre-resolve each pair to its member symbol + synthetic metadata once,
+        // so the upsert closure below is allocation-free. Synthetic pairs derive
+        // a BASE+QUOTE symbol (e.g. ZEC+APT -> ZECAPT) and carry the legs in
+        // backtestSettings, matching `addCurrentConfiguration`.
+        const plans = cappedPairs.map((rawPair) => {
+            const synth = parseSyntheticPairToken(rawPair);
+            if (synth) {
+                const memberSymbol = deriveSyntheticSymbol(synth.baseSymbol, synth.quoteSymbol);
+                return {
+                    rawPair,
+                    memberSymbol,
+                    syntheticPair: { baseSymbol: synth.baseSymbol, quoteSymbol: synth.quoteSymbol } as const,
+                };
+            }
+            return { rawPair, memberSymbol: rawPair, syntheticPair: null } as const;
+        });
+
+        // Dedup at the streamId level — same config+TF+pair+strategy means the
+        // same stream_id. Two flavors of duplicate:
+        //   1. intra-list: the pasted text contained the same pair twice (the
+        //      second is dropped from this pass)
+        //   2. already-member: the committee already has this stream_id (the
+        //      user explicitly wants a re-add rejected, not silently upserted)
+        const seenStreamIds = new Set<string>();
+        const existingMemberStreamIds = new Set<string>();
+        const uniquePlans = plans.filter((plan) => {
+            const streamId = buildAlertStreamId(
+                plan.memberSymbol,
+                context.interval,
+                context.strategyKey,
+                context.configName ?? undefined
+            );
+            if (seenStreamIds.has(streamId)) return false; // intra-list dup
+            seenStreamIds.add(streamId);
+            if (this.isStreamIdAlreadyMember(streamId)) {
+                existingMemberStreamIds.add(streamId);
+                return false;
+            }
+            return true;
+        });
+        const intraListDuplicates = plans.length - uniquePlans.length - existingMemberStreamIds.size;
+
+        const outcomes = await Promise.all(uniquePlans.map(async (plan) => {
+            const streamId = buildAlertStreamId(
+                plan.memberSymbol,
+                context.interval,
+                context.strategyKey,
+                context.configName ?? undefined
+            );
+            try {
+                await alertService.upsertSubscription({
+                    streamId,
+                    symbol: plan.memberSymbol,
+                    interval: context.interval,
+                    strategyKey: context.strategyKey,
+                    configName: context.configName ?? undefined,
+                    strategyParams: context.strategyParams,
+                    backtestSettings: plan.syntheticPair
+                        ? { ...context.backtestSettings, syntheticPair: plan.syntheticPair }
+                        : context.backtestSettings,
+                    freshnessBars: 1,
+                    notifyTelegram: false,
+                    enabled: true,
+                    candleLimit: plan.syntheticPair ? SYNTHETIC_WORKER_CANDLE_LIMIT : undefined,
+                    committeeTag: DEFAULT_COMMITTEE_TAG,
+                });
+                return { ok: true as const, streamId, rawPair: plan.rawPair };
+            } catch (error) {
+                return {
+                    ok: false as const,
+                    rawPair: plan.rawPair,
+                    error: error instanceof Error ? error.message : String(error),
+                };
+            }
+        }));
+
+        const addedStreamIds = outcomes
+            .filter((o): o is { ok: true; streamId: string; rawPair: string } => o.ok)
+            .map((o) => o.streamId);
+        const failed = outcomes.filter((o) => !o.ok);
+        for (const failure of failed) {
+            debugLogger.warn("signal_committee.bulk_pair_add_failed", {
+                pair: failure.rawPair,
+                error: failure.error,
+            });
+        }
+
+        if (addedStreamIds.length > 0) {
+            await this.warmWorkerStateCache(addedStreamIds);
+        }
+        // Build a summary that names every outcome so the user can see why the
+        // added count doesn't match their pasted line count. Order: added,
+        // already members, duplicates in list, failed.
+        const parts: string[] = [`Added ${addedStreamIds.length} pair${addedStreamIds.length === 1 ? "" : "s"}`];
+        if (existingMemberStreamIds.size > 0) {
+            parts.push(`${existingMemberStreamIds.size} already member${existingMemberStreamIds.size === 1 ? "" : "s"}`);
+        }
+        if (intraListDuplicates > 0) {
+            parts.push(`${intraListDuplicates} duplicate${intraListDuplicates === 1 ? "" : "s"} in list`);
+        }
+        if (failed.length > 0) {
+            parts.push(`${failed.length} failed`);
+        }
+        const summary = parts.join("; ");
+        const tone = failed.length > 0
+            ? "warning"
+            : addedStreamIds.length > 0 ? "success" : "info";
+
+        if (addedStreamIds.length > 0) {
+            uiManager.showToast(summary, tone);
+            // Clear the textarea only when every unique new pair actually added
+            // (failures or dups shouldn't wipe the input — the user may want to
+            // retry or inspect what was skipped).
+            if (failed.length === 0) dom.signalCommitteeBulkPairs.value = "";
+            await this.refresh({ manual: true });
+            return;
+        }
+
+        // Nothing added. Distinguish "all already members / duplicates" (info)
+        // from genuine failures (error) so the user isn't told their already-
+        // member pairs "failed".
+        if (failed.length === 0) {
+            uiManager.showToast(summary || "No new pairs to add.", "info");
+        } else {
+            uiManager.showToast(`Failed to add ${failed.length} pair${failed.length === 1 ? "" : "s"}.`, "error");
+        }
     }
 
     private async addCurrentConfiguration(): Promise<void> {
@@ -1617,6 +1897,10 @@ class SignalCommitteeService {
                 context.strategyKey,
                 configName
             );
+            if (this.isStreamIdAlreadyMember(streamId)) {
+                uiManager.showToast(`"${trimmed}" is already a member of the committee.`, "info");
+                return;
+            }
             await alertService.upsertSubscription({
                 streamId,
                 symbol: context.symbol,
@@ -1660,6 +1944,97 @@ class SignalCommitteeService {
             return;
         }
         uiManager.showToast(`Loaded configuration "${configName}".`, "success");
+    }
+
+    /**
+     * Update the bulk-delete button label and enabled state from the current
+     * DOM selection. Called after every row-checkbox change and after every
+     * render (selection is DOM-owned; see {@link bulkDeleteSelected}).
+     */
+    private syncBulkDeleteButton(): void {
+        const dom = this.getDom();
+        const checked = dom.signalCommitteeTableBody
+            .querySelectorAll<HTMLInputElement>("input[type=\"checkbox\"][data-signal-committee-select]:checked");
+        const count = checked.length;
+        dom.signalCommitteeBulkDeleteBtn.disabled = count === 0;
+        dom.signalCommitteeBulkDeleteBtn.textContent = `Delete Selected (${count})`;
+    }
+
+    /**
+     * Reflect the per-row selection state into the header "select all"
+     * checkbox: checked when every row is checked, unchecked when none are,
+     * indeterminate for partial selection. Mirrors standard table UX.
+     */
+    private syncSelectAllCheckbox(): void {
+        const dom = this.getDom();
+        const rowCheckboxes = Array.from(dom.signalCommitteeTableBody
+            .querySelectorAll<HTMLInputElement>("input[type=\"checkbox\"][data-signal-committee-select]"));
+        if (rowCheckboxes.length === 0) {
+            dom.signalCommitteeSelectAll.checked = false;
+            dom.signalCommitteeSelectAll.indeterminate = false;
+            return;
+        }
+        const checkedCount = rowCheckboxes.filter((cb) => cb.checked).length;
+        dom.signalCommitteeSelectAll.checked = checkedCount === rowCheckboxes.length;
+        dom.signalCommitteeSelectAll.indeterminate = checkedCount > 0 && checkedCount < rowCheckboxes.length;
+    }
+
+    /**
+     * Bulk-delete every checked row. Partitions local-synthetic vs worker
+     * members so local rows are removed in a single localStorage write and
+     * worker rows fan out parallel `deleteSubscription` calls with per-row
+     * error capture (same outcomes shape as {@link addBulkPairsFromTextarea}).
+     */
+    private async bulkDeleteSelected(): Promise<void> {
+        const dom = this.getDom();
+        const checked = Array.from(dom.signalCommitteeTableBody
+            .querySelectorAll<HTMLInputElement>("input[type=\"checkbox\"][data-signal-committee-select]:checked"));
+        const streamIds = checked
+            .map((cb) => cb.dataset.signalCommitteeSelect)
+            .filter((s): s is string => Boolean(s));
+        if (streamIds.length === 0) return;
+
+        if (!window.confirm(`Remove ${streamIds.length} member${streamIds.length === 1 ? "" : "s"} from the committee?`)) {
+            return;
+        }
+
+        // Disable the button + clear checkboxes immediately so the user gets
+        // visual confirmation even though worker deletes are async.
+        dom.signalCommitteeBulkDeleteBtn.disabled = true;
+        checked.forEach((cb) => { cb.checked = false; });
+        dom.signalCommitteeSelectAll.checked = false;
+
+        const localStreamIds = streamIds.filter((id) => isLocalSyntheticStreamId(id));
+        const workerStreamIds = streamIds.filter((id) => !isLocalSyntheticStreamId(id));
+
+        // Local members: one filtered write.
+        if (localStreamIds.length > 0) {
+            const localSet = new Set(localStreamIds);
+            writeLocalSyntheticMembers(readLocalSyntheticMembers().filter((m) => !localSet.has(m.streamId)));
+        }
+
+        let failed = 0;
+        if (workerStreamIds.length > 0) {
+            const outcomes = await Promise.all(workerStreamIds.map(async (streamId) => {
+                try {
+                    await alertService.deleteSubscription(streamId, true);
+                    return { ok: true as const, streamId };
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    debugLogger.warn("signal_committee.bulk_delete_failed", { streamId, error: message });
+                    return { ok: false as const, streamId, error: message };
+                }
+            }));
+            failed = outcomes.filter((o) => !o.ok).length;
+        }
+
+        const removed = streamIds.length - failed;
+        if (failed > 0) {
+            uiManager.showToast(`Removed ${removed}; ${failed} failed.`, "warning");
+        } else {
+            uiManager.showToast(`Removed ${removed} member${removed === 1 ? "" : "s"}.`, "success");
+        }
+        await this.refresh({ manual: true });
     }
 
     private async removeConfiguration(streamId: string): Promise<void> {
@@ -1824,6 +2199,21 @@ class SignalCommitteeService {
     }
 
     /**
+     * Membership test keyed on stream_id. Stream ids are deterministic from
+     * (symbol+interval+strategyKey+configName), so an exact match here IS the
+     * "same config + same timeframe + same pair" check. Used by every add path
+     * to reject re-adding an existing member instead of silently upserting the
+     * same D1 row (which is what the worker would otherwise do).
+     *
+     * Source of truth is the in-memory `this.members` cache, refreshed on
+     * every `refresh()`. A member added in another browser tab won't be seen
+     * until the next refresh — standard client-side cache limitation.
+     */
+    private isStreamIdAlreadyMember(streamId: string): boolean {
+        return this.members.some((m) => m.stream_id === streamId);
+    }
+
+    /**
      * Build the per-leg score rows. Same vote logic as `buildScoreRows`, but
      * each row also carries the member's resolved synthetic pair so the
      * aggregator can decompose synthetic-pair votes into their two legs.
@@ -1892,6 +2282,10 @@ class SignalCommitteeService {
             parseAlertConfigNameFromStreamId(m.stream_id)
         ));
         dom.signalCommitteeTableBody.innerHTML = renderCommitteeRows(views);
+        // Rows were just replaced, so any prior checkbox selection is gone.
+        // Reset the header checkbox and the bulk-delete button to a clean state.
+        dom.signalCommitteeSelectAll.checked = false;
+        this.syncBulkDeleteButton();
 
         this.renderLegBoard(this.buildLegRows());
 

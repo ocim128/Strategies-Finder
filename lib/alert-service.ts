@@ -17,8 +17,13 @@ import type { OHLCVData } from "./types/strategies";
 
 export const ALERT_WORKER_URL_CHANGED_EVENT = 'alert-worker-url-changed';
 const API_FETCH_TIMEOUT_MS = 10_000;
-/** Hard cap on N-parallel fallback when the batched states endpoint is unavailable. */
-const COMMITTEE_FALLBACK_MAX = 25;
+/**
+ * Cap on stream ids sent per `/api/subscriptions/states` request. Must be ≤ the
+ * worker's MAX_BATCH (100) — the worker hard-truncates past that with one D1
+ * `?` per IN value. Also bounds the N-parallel fallback path used when the
+ * batched endpoint is unavailable on an older deployed worker.
+ */
+const COMMITTEE_STATE_MAX_BATCH = 100;
 
 export interface AlertWorkerHealth {
     ok: boolean;
@@ -499,11 +504,11 @@ export const alertService = {
      * to N parallel getSubscriptionState calls if the batched endpoint is
      * missing (worker not yet redeployed) or returns an error.
      *
-     * The fallback is bounded by `Math.min(streamIds.length, COMMITTEE_FALLBACK_MAX)`.
-     * Callers should cap UI membership to keep the fallback bounded.
+     * The request and fallback are both bounded by
+     * `Math.min(streamIds.length, COMMITTEE_STATE_MAX_BATCH)`.
      */
     async getCommitteeState(streamIds: readonly string[]): Promise<CommitteeStateResult> {
-        const limited = streamIds.slice(0, COMMITTEE_FALLBACK_MAX);
+        const limited = streamIds.slice(0, COMMITTEE_STATE_MAX_BATCH);
         if (limited.length === 0) {
             return { ok: true, scanned: 0, truncated: false, states: [] };
         }
@@ -516,7 +521,7 @@ export const alertService = {
             return {
                 ok: Boolean(data.ok),
                 scanned: typeof data.scanned === "number" ? data.scanned : data.states?.length ?? 0,
-                truncated: streamIds.length > COMMITTEE_FALLBACK_MAX || data.truncated === true,
+                truncated: streamIds.length > COMMITTEE_STATE_MAX_BATCH || data.truncated === true,
                 states: Array.isArray(data.states) ? data.states : [],
             };
         } catch {
@@ -564,7 +569,7 @@ export const alertService = {
             return {
                 ok: true,
                 scanned: limited.length,
-                truncated: streamIds.length > COMMITTEE_FALLBACK_MAX,
+                truncated: streamIds.length > COMMITTEE_STATE_MAX_BATCH,
                 states: settled,
             };
         }

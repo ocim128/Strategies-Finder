@@ -10,6 +10,11 @@ const SIGNAL_COMMITTEE_DOM_IDS = {
     signalCommitteeContent: "signalCommitteeContent",
     signalCommitteeAddBtn: "signalCommitteeAddBtn",
     signalCommitteeAddSavedBtn: "signalCommitteeAddSavedBtn",
+    signalCommitteeBulkDeleteBtn: "signalCommitteeBulkDeleteBtn",
+    signalCommitteeSelectAll: "signalCommitteeSelectAll",
+    signalCommitteeBulkPairsBtn: "signalCommitteeBulkPairsBtn",
+    signalCommitteeBulkPairs: "signalCommitteeBulkPairs",
+    signalCommitteeBulkAddBtn: "signalCommitteeBulkAddBtn",
     signalCommitteeSyncSyntheticBtn: "signalCommitteeSyncSyntheticBtn",
     signalCommitteeRefreshBtn: "signalCommitteeRefreshBtn",
     signalCommitteeChartToggleBtn: "signalCommitteeChartToggleBtn",
@@ -39,6 +44,11 @@ export const SIGNAL_COMMITTEE_REQUIRED_IDS = getRequiredDomIds(SIGNAL_COMMITTEE_
 type SignalCommitteeTypedControls = {
     signalCommitteeAddBtn: HTMLButtonElement;
     signalCommitteeAddSavedBtn: HTMLButtonElement;
+    signalCommitteeBulkDeleteBtn: HTMLButtonElement;
+    signalCommitteeSelectAll: HTMLInputElement;
+    signalCommitteeBulkPairsBtn: HTMLButtonElement;
+    signalCommitteeBulkPairs: HTMLTextAreaElement;
+    signalCommitteeBulkAddBtn: HTMLButtonElement;
     signalCommitteeSyncSyntheticBtn: HTMLButtonElement;
     signalCommitteeRefreshBtn: HTMLButtonElement;
     signalCommitteeChartToggleBtn: HTMLButtonElement;

@@ -225,14 +225,16 @@ export function renderCommitteeHeader(aggregate: CommitteeAggregate, updatedAtIs
 
 export function renderCommitteeRows(rows: readonly CommitteeRowView[]): string {
     if (rows.length === 0) {
-        return `<tr class="signal-committee__empty-row"><td colspan="9">
+        return `<tr class="signal-committee__empty-row"><td colspan="${COLSPAN}">
             No committee members yet. Click <strong>Add Current Configuration</strong> to start.
         </td></tr>`;
     }
     return rows.map((row) => renderCommitteeRow(row)).join("");
 }
 
-const COLSPAN = 9;
+// 10 = select checkbox + the 9 original columns (Config, Symbol, TF, Strategy,
+// Dir, Age, Gain %, Status, Actions). Keep in sync with the partial's <thead>.
+const COLSPAN = 10;
 
 function renderCommitteeRow(row: CommitteeRowView): string {
     const directionClass = row.directionTone === "none"
@@ -250,6 +252,7 @@ function renderCommitteeRow(row: CommitteeRowView): string {
         ? ""
         : ' <span class="signal-committee__disabled-pill">disabled</span>';
     return `<tr${rowClass}>
+        <td class="signal-committee__select-cell"><input type="checkbox" data-signal-committee-select="${escapeHtml(row.streamId)}" title="Select ${escapeHtml(row.configName)}"></td>
         <td>${escapeHtml(row.configName)}</td>
         <td>${escapeHtml(row.symbol)}</td>
         <td>${escapeHtml(row.interval)}</td>

@@ -23,8 +23,10 @@
                 <div class="analysis-finder-controls">
                     <button class="btn btn-primary btn-compact" id="signalCommitteeAddBtn" type="button">Add Current Configuration</button>
                     <button class="btn btn-secondary btn-compact" id="signalCommitteeRefreshBtn" type="button">Refresh</button>
+                    <button class="btn btn-danger btn-compact" id="signalCommitteeBulkDeleteBtn" type="button" disabled title="Remove all checked rows from the committee">Delete Selected (0)</button>
                     <div class="signal-committee__toolbar-utility">
                         <button class="btn btn-secondary btn-compact" id="signalCommitteeAddSavedBtn" type="button">Add Saved Configs</button>
+                        <button class="btn btn-secondary btn-compact" id="signalCommitteeBulkPairsBtn" type="button" title="Add many pairs (real or synthetic) as committee members using the current strategy + timeframe">Add Bulk Pairs</button>
                         <button class="btn btn-secondary btn-compact" id="signalCommitteeSyncSyntheticBtn" type="button" title="Fetch synthetic-pair legs from Binance into local SQLite, then refresh worker state">Sync Synthetic Legs</button>
                         <button class="btn btn-secondary btn-compact" id="signalCommitteeChartToggleBtn" type="button" title="Project the current committee score onto the main chart">Show Score on Chart</button>
                         <label class="signal-committee__auto-toggle" aria-label="Toggle auto refresh">
@@ -68,6 +70,26 @@
             </div>
 
             <div class="analysis-finder-status" id="signalCommitteeStatus">Loading committee state...</div>
+        </div>
+
+        <div class="analysis-finder-section">
+            <details class="signal-committee__diagnostic">
+                <summary>Add Bulk Pairs (current strategy + timeframe)</summary>
+                <div class="param-hint">
+                    Each pair becomes a committee member using the current strategy, params,
+                    backtest settings, and timeframe. Real symbols (e.g. <code>BTCUSDT</code>)
+                    and synthetic tokens (e.g. <code>ZEC+APT</code>) are both supported.
+                </div>
+                <div class="param-group" style="margin-top: 12px;">
+                    <label class="param-label" for="signalCommitteeBulkPairs">Pairs</label>
+                    <textarea class="param-input" id="signalCommitteeBulkPairs" rows="6"
+                        placeholder="BTCUSDT&#10;ZEC+APT&#10;PAXGUSDT&#10;ETHUSDT"></textarea>
+                </div>
+                <div class="param-hint">One pair per line, or comma / whitespace separated. Synthetic pairs use <code>BASE+QUOTE</code>.</div>
+                <div class="finder-strategy-actions" role="group" aria-label="Bulk pair helpers" style="margin-top: 8px;">
+                    <button class="btn btn-primary btn-compact" id="signalCommitteeBulkAddBtn" type="button">Add Pairs</button>
+                </div>
+            </details>
         </div>
 
         <div class="analysis-finder-section" id="signalCommitteeLegSection">
@@ -115,6 +137,7 @@
                 <table class="alert-table">
                     <thead>
                         <tr>
+                            <th class="signal-committee__select-cell"><input type="checkbox" id="signalCommitteeSelectAll" title="Select all members"></th>
                             <th>Config</th>
                             <th>Symbol</th>
                             <th>TF</th>
