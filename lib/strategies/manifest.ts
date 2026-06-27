@@ -138,4 +138,10 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     builtInStrategyMetaByKey["short_term_autocorrelation_reversal"],
     builtInStrategyMetaByKey["typical_price_zscore_reversion"],
     builtInStrategyMetaByKey["volume_percentile_trend_follow"],
+    builtInStrategyMetaByKey["atr_regime_shift_confirmation"],
+    builtInStrategyMetaByKey["base_quote_momentum_divergence"],
+    builtInStrategyMetaByKey["directional_body_acceptance"],
+    builtInStrategyMetaByKey["pullback_after_relative_expansion"],
+    builtInStrategyMetaByKey["range_expansion_follow_through"],
+    builtInStrategyMetaByKey["relative_acceptance_breakout"],
 ];

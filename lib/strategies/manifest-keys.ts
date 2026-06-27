@@ -130,4 +130,10 @@ export const builtInStrategyKeys: readonly string[] = [
     "short_term_autocorrelation_reversal",
     "typical_price_zscore_reversion",
     "volume_percentile_trend_follow",
+    "atr_regime_shift_confirmation",
+    "base_quote_momentum_divergence",
+    "directional_body_acceptance",
+    "pullback_after_relative_expansion",
+    "range_expansion_follow_through",
+    "relative_acceptance_breakout",
 ];

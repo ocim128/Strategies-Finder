@@ -131,6 +131,12 @@ import { range_zscore_acceptance_reversal } from "./lib/range_zscore_acceptance_
 import { short_term_autocorrelation_reversal } from "./lib/short_term_autocorrelation_reversal";
 import { typical_price_zscore_reversion } from "./lib/typical_price_zscore_reversion";
 import { volume_percentile_trend_follow } from "./lib/volume_percentile_trend_follow";
+import { atr_regime_shift_confirmation } from "./lib/atr_regime_shift_confirmation";
+import { base_quote_momentum_divergence } from "./lib/base_quote_momentum_divergence";
+import { directional_body_acceptance } from "./lib/directional_body_acceptance";
+import { pullback_after_relative_expansion } from "./lib/pullback_after_relative_expansion";
+import { range_expansion_follow_through } from "./lib/range_expansion_follow_through";
+import { relative_acceptance_breakout } from "./lib/relative_acceptance_breakout";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -267,6 +273,12 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "short_term_autocorrelation_reversal", strategy: short_term_autocorrelation_reversal },
     { key: "typical_price_zscore_reversion", strategy: typical_price_zscore_reversion },
     { key: "volume_percentile_trend_follow", strategy: volume_percentile_trend_follow },
+    { key: "atr_regime_shift_confirmation", strategy: atr_regime_shift_confirmation },
+    { key: "base_quote_momentum_divergence", strategy: base_quote_momentum_divergence },
+    { key: "directional_body_acceptance", strategy: directional_body_acceptance },
+    { key: "pullback_after_relative_expansion", strategy: pullback_after_relative_expansion },
+    { key: "range_expansion_follow_through", strategy: range_expansion_follow_through },
+    { key: "relative_acceptance_breakout", strategy: relative_acceptance_breakout },
 ];
 
 export function createStrategiesRecordFromManifest(

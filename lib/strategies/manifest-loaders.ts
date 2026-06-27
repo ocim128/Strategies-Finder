@@ -132,4 +132,10 @@ export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {
     "short_term_autocorrelation_reversal": () => import("./lib/short_term_autocorrelation_reversal").then(m => m.short_term_autocorrelation_reversal),
     "typical_price_zscore_reversion": () => import("./lib/typical_price_zscore_reversion").then(m => m.typical_price_zscore_reversion),
     "volume_percentile_trend_follow": () => import("./lib/volume_percentile_trend_follow").then(m => m.volume_percentile_trend_follow),
+    "atr_regime_shift_confirmation": () => import("./lib/atr_regime_shift_confirmation").then(m => m.atr_regime_shift_confirmation),
+    "base_quote_momentum_divergence": () => import("./lib/base_quote_momentum_divergence").then(m => m.base_quote_momentum_divergence),
+    "directional_body_acceptance": () => import("./lib/directional_body_acceptance").then(m => m.directional_body_acceptance),
+    "pullback_after_relative_expansion": () => import("./lib/pullback_after_relative_expansion").then(m => m.pullback_after_relative_expansion),
+    "range_expansion_follow_through": () => import("./lib/range_expansion_follow_through").then(m => m.range_expansion_follow_through),
+    "relative_acceptance_breakout": () => import("./lib/relative_acceptance_breakout").then(m => m.relative_acceptance_breakout),
 };
