@@ -117,6 +117,11 @@ describe("runBatchBacktest", () => {
 
         expect(up.status).to.equal("profitable");
         expect(up.result!.totalTrades).to.be.greaterThan(0);
+        expect(up.tradeSummary?.avgHoldBars).to.equal(4);
+        expect(up.tradeSummary?.maxHoldBars).to.equal(4);
+        expect(up.tradeSummary?.avgHoldDays).to.be.closeTo(20 / 1440, 0.000001);
+        expect(up.tradeSummary?.maxHoldDays).to.be.closeTo(20 / 1440, 0.000001);
+        expect(up.tradeSummary?.exposurePercent).to.equal(100);
         expect(up.barCount).to.equal(5);
         expect(down.status).to.equal("losing");
         expect(missing.status).to.equal("load_failed");

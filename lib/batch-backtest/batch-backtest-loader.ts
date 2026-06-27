@@ -30,6 +30,7 @@ import {
     pickSourceInterval,
 } from "../../scripts/lib/synthetic-pair";
 import { SYNTHETIC_TARGET_BARS, DATA_CHART_TOTAL_LIMIT } from "../data/constants";
+import { parseIntervalSeconds } from "../interval-utils";
 import type { OHLCVData } from "../types/strategies";
 import {
     SyntheticLegCache,
@@ -44,15 +45,12 @@ const pairCache = new SyntheticLegCache<OHLCVData[]>(128);
 
 // A cached dataset below this many bars is almost certainly incomplete — either
 // a stale streaming/gap-fill leftover (e.g. 16 bars over a single day) or a
-// prior truncated load (e.g. ~1000 bars from when the chart's visible-candles
-// setting was small). A real full Binance dataset is ~65k bars; 10k sits well
-// above any partial-cache pollution and well below a complete series, so the
-// loader can confidently self-heal anything under it without re-fetching
-// legitimate full datasets on every run. The runner's BATCH_MIN_USABLE_BARS
-// (200) remains the absolute floor below which a dataset is rejected outright;
-// these two constants intentionally differ because they answer different
-// questions ("is the cache worth trusting?" vs "is the series usable at all?").
-const STALE_FRAGMENT_BAR_THRESHOLD = 10_000;
+// prior truncated load from when the chart's visible-candles setting was small.
+// Use an interval-aware floor so newer listings with complete but shorter
+// histories are not refetched on every page reload. The runner's 200-bar
+// minimum remains the absolute usability floor.
+const STALE_FRAGMENT_MAX_THRESHOLD = 10_000;
+const STALE_FRAGMENT_MIN_THRESHOLD = 200;
 
 /**
  * Loads one symbol's OHLCV series without touching the live chart.
@@ -62,7 +60,7 @@ const STALE_FRAGMENT_BAR_THRESHOLD = 10_000;
  * through the same pick-source -> align -> aggregate pipeline Finder uses.
  *
  * Real symbols read warm-cache-first (`offline: true`). If the cache only
- * holds a stale fragment (below {@link STALE_FRAGMENT_BAR_THRESHOLD}), the
+ * holds a stale fragment (below the interval-aware stale threshold), the
  * loader transparently falls back to a full `fetchHistoricalData` and repairs
  * the cache, so a user running Batch against a fresh symbol list does not have
  * to load each pair on the chart by hand.
@@ -95,9 +93,10 @@ export async function loadBatchDataset(
     // offline path reads, so subsequent runs are warm again. Mirrors why
     // Finder's synthetic-leg path intentionally avoids offline mode for cold
     // source intervals.
-    if (data.length > 0 && data.length < STALE_FRAGMENT_BAR_THRESHOLD) {
+    const staleFragmentThreshold = resolveStaleFragmentBarThreshold(interval);
+    if (data.length > 0 && data.length < staleFragmentThreshold) {
         debugLogger.warn("batch.stale_fragment_refetch", {
-            symbol, interval, cachedBars: data.length, threshold: STALE_FRAGMENT_BAR_THRESHOLD,
+            symbol, interval, cachedBars: data.length, threshold: staleFragmentThreshold,
         });
         // Request a full backtest-sized series, NOT the chart's visible-candles
         // lookback. `getChartLookbackBars()` is a display preference (how many
@@ -173,12 +172,10 @@ async function loadSyntheticPairForBatch(
 }
 
 /**
- * Fetch one synthetic source leg, deduped by `symbol|interval|bars`. Mirrors
- * Finder's `getSourceSeriesForSynthetic` (lib/finder-manager.ts:594): the
- * source fetch intentionally does NOT pass offline:true, because the derived
- * source interval (e.g. 5m for a 1h target) is one the user may never have
- * loaded directly, so an offline-only read would return stray bars and produce
- * a degenerate synthetic pair.
+ * Fetch one synthetic source leg, deduped by `symbol|interval|bars`. Use
+ * offline:true so rerunning Batch after a page reload reads already-synced
+ * source legs from SQLite/IndexedDB without refreshing Binance on every run.
+ * The offline contract still falls back to remote for a fully cold symbol.
  */
 function getSourceSeriesForBatch(
     sourceSymbol: string,
@@ -193,9 +190,21 @@ function getSourceSeriesForBatch(
         return cached;
     }
 
-    const promise = dataManager.fetchHistoricalData(sourceSymbol, sourceInterval, sourceBars, { signal });
+    const promise = dataManager.fetchHistoricalData(sourceSymbol, sourceInterval, sourceBars, { signal, offline: true });
     legCache.set(legKey, promise);
     return promise;
+}
+
+function resolveStaleFragmentBarThreshold(interval: string): number {
+    const intervalSeconds = parseIntervalSeconds(interval);
+    if (intervalSeconds === null || intervalSeconds <= 0) {
+        return STALE_FRAGMENT_MAX_THRESHOLD;
+    }
+    const oneYearBars = Math.ceil((365 * 24 * 60 * 60) / intervalSeconds);
+    return Math.max(
+        STALE_FRAGMENT_MIN_THRESHOLD,
+        Math.min(STALE_FRAGMENT_MAX_THRESHOLD, oneYearBars),
+    );
 }
 
 // Test-only accessors. Production code should not call these; the caches are

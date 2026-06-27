@@ -77,13 +77,16 @@ class BatchBacktestService {
                     ? `${dom.batchBacktestSymbols.value}\n${current}`
                     : current;
             }
+            this.clearStaleResults(dom);
             this.updateSummary(dom);
         });
         dom.batchBacktestClear.addEventListener("click", () => {
             dom.batchBacktestSymbols.value = "";
+            this.clearStaleResults(dom);
             this.updateSummary(dom);
         });
         dom.batchBacktestSymbols.addEventListener("input", () => {
+            this.clearStaleResults(dom);
             this.updateSummary(dom);
         });
     }
@@ -188,7 +191,7 @@ class BatchBacktestService {
 
     private async copyResults(): Promise<void> {
         if (this.lastResults.length === 0) return;
-        const text = this.lastResults.map((r) => formatResultRowPipe(r)).join("\n");
+        const text = formatBatchOverallSummary(this.lastResults).join("\n");
         try {
             await navigator.clipboard.writeText(text);
         } catch {
@@ -202,6 +205,13 @@ class BatchBacktestService {
 
     private appendResultRow(dom: BatchBacktestDom, result: BatchBacktestSymbolResult): void {
         dom.batchBacktestResults.appendChild(this.createResultRow(result));
+    }
+
+    private clearStaleResults(dom: BatchBacktestDom): void {
+        if (this.lastResults.length === 0) return;
+        this.lastResults = [];
+        this.appendedCount = 0;
+        dom.batchBacktestCopyBtn.disabled = true;
     }
 
     private createResultRow(result: BatchBacktestSymbolResult): HTMLDivElement {
@@ -233,9 +243,150 @@ class BatchBacktestService {
     }
 
     private updateSummary(dom: BatchBacktestDom): void {
+        if (this.lastResults.length > 0) {
+            dom.batchBacktestSummary.textContent = formatBatchSummaryLine(this.lastResults);
+            return;
+        }
         const count = parseBatchSymbols(dom.batchBacktestSymbols.value).length;
         dom.batchBacktestSummary.textContent = `${count} pair${count === 1 ? "" : "s"}`;
     }
+}
+
+interface BatchOverallStats {
+    completedRows: BatchBacktestSymbolResult[];
+    resultRows: BatchBacktestSymbolResult[];
+    profitableRows: BatchBacktestSymbolResult[];
+    losingRows: BatchBacktestSymbolResult[];
+    noTradeRows: BatchBacktestSymbolResult[];
+    failedRows: BatchBacktestSymbolResult[];
+    totalNet: number;
+    totalTrades: number;
+    totalWinningTrades: number;
+    grossProfit: number;
+    grossLossAbs: number;
+    verdictCounts: Map<string, number>;
+}
+
+function formatBatchSummaryLine(results: readonly BatchBacktestSymbolResult[]): string {
+    const stats = summarizeBatchResults(results);
+    if (stats.resultRows.length === 0) {
+        return `${stats.completedRows.length} pair${stats.completedRows.length === 1 ? "" : "s"}`;
+    }
+    return [
+        `${stats.resultRows.length} tested`,
+        `${stats.profitableRows.length} profitable`,
+        `Net ${formatCurrency(stats.totalNet)}`,
+        `Trades ${stats.totalTrades}`,
+        `Avg/Trade ${formatCurrency(resolveAggregateExpectancy(stats))}`,
+        `Med Exposure ${formatPercent(medianMetric(stats.resultRows, (row) => row.tradeSummary?.exposurePercent ?? null))}`,
+    ].join(" | ");
+}
+
+function formatBatchOverallSummary(results: readonly BatchBacktestSymbolResult[]): string[] {
+    const stats = summarizeBatchResults(results);
+    if (stats.resultRows.length === 0) {
+        return [`SUMMARY | Pairs ${stats.completedRows.length} | No completed backtests`];
+    }
+
+    const tradeWinRate = stats.totalTrades > 0
+        ? (stats.totalWinningTrades / stats.totalTrades) * 100
+        : null;
+    const aggregateExpectancy = resolveAggregateExpectancy(stats);
+    const aggregateProfitFactor = resolveAggregateProfitFactor(stats);
+    const verdictText = formatVerdictCounts(stats.verdictCounts);
+    const best = maxBy(stats.resultRows, (row) => row.result?.netProfit ?? Number.NEGATIVE_INFINITY);
+    const worst = minBy(stats.resultRows, (row) => row.result?.netProfit ?? Number.POSITIVE_INFINITY);
+
+    return [
+        [
+            "SUMMARY",
+            `Pairs ${stats.completedRows.length}`,
+            `Tested ${stats.resultRows.length}`,
+            `Profitable ${stats.profitableRows.length}/${stats.resultRows.length} (${formatPercent((stats.profitableRows.length / stats.resultRows.length) * 100)})`,
+            `Losing ${stats.losingRows.length}`,
+            `No Trades ${stats.noTradeRows.length}`,
+            `Failed ${stats.failedRows.length}`,
+            verdictText,
+        ].filter(Boolean).join(" | "),
+        [
+            "SUMMARY",
+            `Total Net ${formatCurrency(stats.totalNet)}`,
+            `Avg Net/Pair ${formatCurrency(stats.totalNet / stats.resultRows.length)}`,
+            `Median Net ${formatCurrency(medianMetric(stats.resultRows, (row) => row.result?.netProfit ?? null))}`,
+            best ? `Best ${best.symbol} ${formatCurrency(best.result!.netProfit)}` : "",
+            worst ? `Worst ${worst.symbol} ${formatCurrency(worst.result!.netProfit)}` : "",
+        ].filter(Boolean).join(" | "),
+        [
+            "SUMMARY",
+            `Trades ${stats.totalTrades}`,
+            `Trade WR ${formatPercent(tradeWinRate)}`,
+            `Avg/Trade ${formatCurrency(aggregateExpectancy)}`,
+            `PF ${formatProfitFactor(aggregateProfitFactor ?? Number.NaN)}`,
+            `Median Trades ${formatNumber(medianMetric(stats.resultRows, (row) => row.result?.totalTrades ?? null), 0)}`,
+            `Median AvgTrade ${formatCurrency(medianMetric(stats.resultRows, (row) => row.result?.avgTrade ?? null))}`,
+            `Median Sharpe ${formatNumber(medianMetric(stats.resultRows, (row) => row.result?.sharpeRatio ?? null), 2)}`,
+            `Median DD ${formatPercent(medianMetric(stats.resultRows, (row) => row.result?.maxDrawdownPercent ?? null))}`,
+        ].join(" | "),
+        [
+            "SUMMARY",
+            `Median Hold ${formatHoldSummary(medianMetric(stats.resultRows, (row) => row.tradeSummary?.avgHoldBars ?? null), medianMetric(stats.resultRows, (row) => row.tradeSummary?.avgHoldDays ?? null))}`,
+            `Median MaxHold ${formatHoldSummary(medianMetric(stats.resultRows, (row) => row.tradeSummary?.maxHoldBars ?? null), medianMetric(stats.resultRows, (row) => row.tradeSummary?.maxHoldDays ?? null))}`,
+            `Median Exposure ${formatPercent(medianMetric(stats.resultRows, (row) => row.tradeSummary?.exposurePercent ?? null))}`,
+        ].join(" | "),
+    ];
+}
+
+function summarizeBatchResults(results: readonly BatchBacktestSymbolResult[]): BatchOverallStats {
+    const completedRows = results.filter((row) => row.status !== "no_trades" || row.error !== "Skipped (cancelled).");
+    const resultRows = completedRows.filter((row) => Boolean(row.result));
+    const profitableRows = resultRows.filter((row) => row.result!.netProfit > 0);
+    const losingRows = resultRows.filter((row) => row.result!.netProfit < 0);
+    const noTradeRows = completedRows.filter((row) => row.status === "no_trades");
+    const failedRows = completedRows.filter((row) => row.status === "load_failed" || row.status === "run_failed");
+    const verdictCounts = new Map<string, number>();
+
+    let totalNet = 0;
+    let totalTrades = 0;
+    let totalWinningTrades = 0;
+    let grossProfit = 0;
+    let grossLossAbs = 0;
+    for (const row of resultRows) {
+        const result = row.result!;
+        totalNet += result.netProfit;
+        totalTrades += result.totalTrades;
+        totalWinningTrades += result.winningTrades;
+        grossProfit += Math.max(0, result.avgWin) * result.winningTrades;
+        grossLossAbs += Math.max(0, result.avgLoss) * result.losingTrades;
+
+        const verdict = computePerformanceVerdict(result, row.status).label;
+        verdictCounts.set(verdict, (verdictCounts.get(verdict) ?? 0) + 1);
+    }
+
+    return {
+        completedRows,
+        resultRows,
+        profitableRows,
+        losingRows,
+        noTradeRows,
+        failedRows,
+        totalNet,
+        totalTrades,
+        totalWinningTrades,
+        grossProfit,
+        grossLossAbs,
+        verdictCounts,
+    };
+}
+
+function resolveAggregateExpectancy(stats: BatchOverallStats): number | null {
+    return stats.totalTrades > 0 ? stats.totalNet / stats.totalTrades : null;
+}
+
+function resolveAggregateProfitFactor(stats: BatchOverallStats): number | null {
+    if (stats.grossLossAbs > 0) {
+        return stats.grossProfit / stats.grossLossAbs;
+    }
+    return stats.grossProfit > 0 ? Infinity : null;
 }
 
 /**
@@ -258,6 +409,9 @@ function formatResultRowPipe(result: BatchBacktestSymbolResult): string {
                 : "DD --",
         );
         parts.push(`Trades ${r.totalTrades}`);
+        parts.push(`AvgTrade ${formatCurrency(r.avgTrade)}`);
+        parts.push(`Hold ${formatHold(result)}`);
+        parts.push(`Exposure ${formatPercent(result.tradeSummary?.exposurePercent)}`);
     }
     if (result.error) parts.push(result.error);
     const range = formatTimeRange(result.firstTime, result.lastTime);
@@ -277,9 +431,111 @@ function formatStatus(status: BatchBacktestSymbolResult["status"]): string {
     }
 }
 
-function formatCurrency(value: number): string {
+function formatCurrency(value: number | null | undefined): string {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+        return "--";
+    }
     const sign = value >= 0 ? "+" : "";
     return `${sign}$${value.toFixed(2)}`;
+}
+
+function formatNumber(value: number | null | undefined, digits: number): string {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+        return "--";
+    }
+    return value.toFixed(digits);
+}
+
+function formatVerdictCounts(verdictCounts: ReadonlyMap<string, number>): string {
+    const labels = ["STRONG", "SOLID", "MARGINAL", "WEAK", "THIN", "LOSING"];
+    const parts = labels
+        .map((label) => {
+            const count = verdictCounts.get(label) ?? 0;
+            return count > 0 ? `${label} ${count}` : "";
+        })
+        .filter(Boolean);
+    return parts.length > 0 ? `Verdicts ${parts.join(", ")}` : "";
+}
+
+function medianMetric(
+    rows: readonly BatchBacktestSymbolResult[],
+    select: (row: BatchBacktestSymbolResult) => number | null | undefined,
+): number | null {
+    const values = rows
+        .map(select)
+        .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value))
+        .sort((a, b) => a - b);
+    if (values.length === 0) return null;
+    const middle = Math.floor(values.length / 2);
+    if (values.length % 2 === 1) return values[middle];
+    return (values[middle - 1] + values[middle]) / 2;
+}
+
+function maxBy<T>(items: readonly T[], select: (item: T) => number): T | null {
+    let best: T | null = null;
+    let bestValue = Number.NEGATIVE_INFINITY;
+    for (const item of items) {
+        const value = select(item);
+        if (value > bestValue) {
+            best = item;
+            bestValue = value;
+        }
+    }
+    return best;
+}
+
+function minBy<T>(items: readonly T[], select: (item: T) => number): T | null {
+    let best: T | null = null;
+    let bestValue = Number.POSITIVE_INFINITY;
+    for (const item of items) {
+        const value = select(item);
+        if (value < bestValue) {
+            best = item;
+            bestValue = value;
+        }
+    }
+    return best;
+}
+
+function formatHoldSummary(bars: number | null, days: number | null): string {
+    const barsText = formatHoldBars(bars);
+    const daysText = formatHoldDuration(days);
+    return daysText === "--" ? barsText : `${barsText} (${daysText})`;
+}
+
+function formatHold(result: BatchBacktestSymbolResult): string {
+    const summary = result.tradeSummary;
+    const bars = `${formatHoldBars(summary?.avgHoldBars)}/${formatHoldBars(summary?.maxHoldBars)}`;
+    const days = `${formatHoldDuration(summary?.avgHoldDays)}/${formatHoldDuration(summary?.maxHoldDays)}`;
+    return days === "--/--" ? bars : `${bars} (${days})`;
+}
+
+function formatHoldBars(value: number | null | undefined): string {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+        return "--";
+    }
+    return `${value.toFixed(value >= 10 ? 0 : 1)}b`;
+}
+
+function formatHoldDuration(days: number | null | undefined): string {
+    if (days === null || days === undefined || !Number.isFinite(days)) {
+        return "--";
+    }
+    if (days >= 1) {
+        return `${days.toFixed(days >= 10 ? 0 : 1)}d`;
+    }
+    const hours = days * 24;
+    if (hours >= 1) {
+        return `${hours.toFixed(hours >= 10 ? 0 : 1)}h`;
+    }
+    return `${Math.max(0, hours * 60).toFixed(0)}m`;
+}
+
+function formatPercent(value: number | null | undefined): string {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+        return "--";
+    }
+    return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
 }
 
 function formatTimeRange(firstTime?: Time, lastTime?: Time): string {

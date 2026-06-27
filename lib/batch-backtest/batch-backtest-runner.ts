@@ -24,6 +24,8 @@ import type {
     Time,
 } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
+import { timeKey } from "../strategies";
+import { parseTimeToUnixSeconds } from "../time-normalization";
 
 // ============================================================================
 // Public types
@@ -57,7 +59,16 @@ export interface BatchBacktestSymbolResult {
     firstTime?: Time;
     lastTime?: Time;
     result?: BacktestResult;
+    tradeSummary?: BatchBacktestTradeSummary;
     error?: string;
+}
+
+export interface BatchBacktestTradeSummary {
+    avgHoldBars: number | null;
+    maxHoldBars: number | null;
+    avgHoldDays: number | null;
+    maxHoldDays: number | null;
+    exposurePercent: number | null;
 }
 
 export interface BatchBacktestRunInput {
@@ -340,5 +351,53 @@ function buildSymbolResult(
         firstTime: data[0]?.time,
         lastTime: data[data.length - 1]?.time,
         result,
+        tradeSummary: buildTradeSummary(data, result),
+    };
+}
+
+function buildTradeSummary(
+    data: OHLCVData[],
+    result: BacktestResult,
+): BatchBacktestTradeSummary {
+    const timeIndex = new Map<string, number>();
+    data.forEach((bar, index) => {
+        timeIndex.set(timeKey(bar.time), index);
+    });
+
+    const holdBars: number[] = [];
+    const holdDays: number[] = [];
+    for (const trade of result.trades) {
+        const entryIndex = timeIndex.get(timeKey(trade.entryTime));
+        const exitIndex = timeIndex.get(timeKey(trade.exitTime));
+        if (entryIndex === undefined || exitIndex === undefined || exitIndex < entryIndex) {
+            continue;
+        }
+        holdBars.push(exitIndex - entryIndex);
+
+        const entrySec = parseTimeToUnixSeconds(trade.entryTime);
+        const exitSec = parseTimeToUnixSeconds(trade.exitTime);
+        if (entrySec !== null && exitSec !== null && exitSec >= entrySec) {
+            holdDays.push((exitSec - entrySec) / 86_400);
+        }
+    }
+
+    if (holdBars.length === 0) {
+        return {
+            avgHoldBars: null,
+            maxHoldBars: null,
+            avgHoldDays: null,
+            maxHoldDays: null,
+            exposurePercent: null,
+        };
+    }
+
+    const totalHoldBars = holdBars.reduce((sum, value) => sum + value, 0);
+    const totalHoldDays = holdDays.reduce((sum, value) => sum + value, 0);
+    return {
+        avgHoldBars: totalHoldBars / holdBars.length,
+        maxHoldBars: Math.max(...holdBars),
+        avgHoldDays: holdDays.length > 0 ? totalHoldDays / holdDays.length : null,
+        maxHoldDays: holdDays.length > 0 ? Math.max(...holdDays) : null,
+        exposurePercent: Math.min(100, (totalHoldBars / Math.max(1, data.length - 1)) * 100),
     };
 }
