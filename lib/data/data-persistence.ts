@@ -109,7 +109,7 @@ export class DataPersistence {
         const [sqliteResult, cachedResult, seedResult] = await Promise.allSettled([
             loadSqliteCandles(storageSymbol, storageInterval, normalizedLimit),
             loadCachedCandles(storageSymbol, storageInterval),
-            loadSeedCandlesFromPriceData(symbol, interval, signal),
+            loadSeedCandlesFromPriceData(symbol, interval, signal, provider),
         ]);
 
         if (sqliteResult.status === 'fulfilled' && sqliteResult.value && sqliteResult.value.candles.length > 0) {

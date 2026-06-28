@@ -119,6 +119,34 @@ export const LOCAL_DAILY_DATASETS: readonly LocalDailyDatasetConfig[] = [
 
 const assetCacheByDataset = new Map<LocalDailyDatasetKey, LocalDailyAsset[]>();
 const pendingLoadByDataset = new Map<LocalDailyDatasetKey, Promise<LocalDailyAsset[]>>();
+// Pre-normalized search index kept in sync with `assetCacheByDataset` so the
+// per-keystroke search loop avoids recomputing alphanumeric-normalized forms
+// for every row on every query.
+const indexedCacheByDataset = new Map<LocalDailyDatasetKey, IndexedLocalDailyAsset[]>();
+
+type IndexedLocalDailyAsset = {
+    asset: LocalDailyAsset;
+    symbol: string;
+    symbolNormalized: string;
+    name: string;
+    nameNormalized: string;
+    datasetLabel: string;
+};
+
+function buildIndexedAssets(assets: LocalDailyAsset[]): IndexedLocalDailyAsset[] {
+    return assets.map((asset) => {
+        const symbol = asset.symbol.toUpperCase();
+        const name = asset.name.toUpperCase();
+        return {
+            asset,
+            symbol,
+            symbolNormalized: symbol.replace(/[^A-Z0-9]/g, ""),
+            name,
+            nameNormalized: name.replace(/[^A-Z0-9]/g, ""),
+            datasetLabel: asset.datasetLabel.toUpperCase(),
+        };
+    });
+}
 
 export function getLocalDailyDatasetConfig(key: LocalDailyDatasetKey): LocalDailyDatasetConfig | null {
     return LOCAL_DAILY_DATASETS.find((dataset) => dataset.key === key) ?? null;
@@ -243,6 +271,7 @@ async function loadDatasetAssets(config: LocalDailyDatasetConfig): Promise<Local
                 ? parseSp500Catalog(await response.text(), config)
                 : parseJsonCatalog(await response.json() as LocalPriceDataCatalogResponse, config);
             assetCacheByDataset.set(config.key, assets);
+            indexedCacheByDataset.set(config.key, buildIndexedAssets(assets));
             return assets;
         } catch {
             return [];
@@ -278,23 +307,19 @@ export async function searchLocalDailyAssets(
     limit = 50,
     datasetKey?: LocalDailyDatasetKey
 ): Promise<LocalDailyAsset[]> {
-    const catalog = await getLocalDailyAssets(datasetKey);
-    if (catalog.length === 0) return [];
+    const indexedCatalog = await getIndexedLocalDailyAssets(datasetKey);
+    if (indexedCatalog.length === 0) return [];
 
     const normalizedLimit = Math.max(1, Math.floor(limit));
     const trimmed = query.trim();
     if (!trimmed) {
-        return catalog.slice(0, normalizedLimit);
+        return indexedCatalog.slice(0, normalizedLimit).map((entry) => entry.asset);
     }
 
     const term = trimmed.toUpperCase();
     const normalizedTerm = term.replace(/[^A-Z0-9]/g, "");
-    const scored = catalog.map((asset) => {
-        const symbol = asset.symbol.toUpperCase();
-        const name = asset.name.toUpperCase();
-        const dataset = asset.datasetLabel.toUpperCase();
-        const symbolNormalized = symbol.replace(/[^A-Z0-9]/g, "");
-        const nameNormalized = name.replace(/[^A-Z0-9]/g, "");
+    const scored = indexedCatalog.map((entry) => {
+        const { symbol, symbolNormalized, name, nameNormalized, datasetLabel } = entry;
         let score = 0;
 
         if (symbol === term || symbolNormalized === normalizedTerm) score += 1000;
@@ -302,9 +327,9 @@ export async function searchLocalDailyAssets(
         if (symbol.includes(term) || symbolNormalized.includes(normalizedTerm)) score += 70;
         if (name.startsWith(term) || nameNormalized.startsWith(normalizedTerm)) score += 40;
         if (name.includes(term) || nameNormalized.includes(normalizedTerm)) score += 20;
-        if (dataset.includes(term)) score += 5;
+        if (datasetLabel.includes(term)) score += 5;
 
-        return { asset, score };
+        return { asset: entry.asset, score };
     });
 
     return scored
@@ -312,6 +337,19 @@ export async function searchLocalDailyAssets(
         .sort((a, b) => b.score - a.score || a.asset.symbol.localeCompare(b.asset.symbol))
         .slice(0, normalizedLimit)
         .map((item) => item.asset);
+}
+
+async function getIndexedLocalDailyAssets(
+    datasetKey?: LocalDailyDatasetKey
+): Promise<IndexedLocalDailyAsset[]> {
+    const configs = datasetKey
+        ? LOCAL_DAILY_DATASETS.filter((config) => config.key === datasetKey)
+        : LOCAL_DAILY_DATASETS;
+    if (configs.length === 0) return [];
+
+    // `loadDatasetAssets` populates `indexedCacheByDataset` as a side effect.
+    await Promise.all(configs.map((config) => loadDatasetAssets(config)));
+    return configs.flatMap((config) => indexedCacheByDataset.get(config.key) ?? []);
 }
 
 export function encodeLocalDailyAssetSelection(asset: LocalDailyAsset): string {

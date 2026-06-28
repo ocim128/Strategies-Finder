@@ -28,7 +28,7 @@ import { strategyPanelController } from "./strategy-panel-controller";
 import { getOptionalElement } from "./dom-utils";
 import { initCrossSymbolUI } from "./cross-symbol-ui";
 import { setBinanceMarketType, setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
-import { getLocalDailyAsset } from "./local-daily-datasets";
+import { getLocalDailyAsset, isStockMarketSymbol } from "./local-daily-datasets";
 import {
     runBootstrapFeatureStage,
     type AppBootstrapFeature,
@@ -68,9 +68,21 @@ async function restoreSavedSettings(context: AppBootstrapContext): Promise<void>
         settingsManager.applySettings(savedSettings);
 
         if (savedSettings.currentSymbol) {
-            const localDailyAsset = await getLocalDailyAsset(savedSettings.currentSymbol);
-            if (localDailyAsset) {
-                dataManager.setProviderOverride(localDailyAsset.symbol, localDailyAsset.provider);
+            // Skip the 6-catalog local-daily lookup on the critical startup
+            // path for symbols that cannot be in any local-daily dataset.
+            // Stock-market symbols are always diamond-marked at runtime; the
+            // unmarked S&P 500 / Indonesian datasets only hold short bare
+            // all-letter tickers. Crypto/forex/commodity/polymarket symbols
+            // therefore can never match and would otherwise force six network
+            // catalog fetches + parses just to conclude "no match".
+            const candidate = savedSettings.currentSymbol.trim().toUpperCase();
+            const mightBeLocalDaily = isStockMarketSymbol(candidate)
+                || (/^[A-Z]{1,6}$/.test(candidate) && !candidate.endsWith("USDT"));
+            if (mightBeLocalDaily) {
+                const localDailyAsset = await getLocalDailyAsset(candidate);
+                if (localDailyAsset) {
+                    dataManager.setProviderOverride(localDailyAsset.symbol, localDailyAsset.provider);
+                }
             }
         }
 

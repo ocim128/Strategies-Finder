@@ -40,9 +40,23 @@ export type CachedCandles = {
 };
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
+// Bounded negative-result caches. Without a cap, long-lived sessions that
+// sample many symbols accumulate entries forever; eviction also bounds the
+// window during which an operator-shipped CSV is wrongly remembered as missing.
+const MAX_MISSING_ENTRIES = 500;
 const missingSeedFiles = new Set<string>();
 const missingLocalDailyCsvFiles = new Set<string>();
 const localDailyCsvCache = new Map<string, OHLCVData[]>();
+
+function rememberMissing(set: Set<string>, key: string): void {
+    if (set.has(key)) return;
+    if (set.size >= MAX_MISSING_ENTRIES) {
+        // FIFO eviction of the oldest entry to keep the cache bounded.
+        const oldest = set.values().next().value;
+        if (oldest !== undefined) set.delete(oldest);
+    }
+    set.add(key);
+}
 
 function toCacheKey(symbol: string, interval: string): string {
     return `${symbol.trim().toUpperCase()}::${interval.trim().toLowerCase()}`;
@@ -358,7 +372,7 @@ async function loadLocalDailyDatasetCandles(
             });
 
             if (response.status === 404) {
-                missingLocalDailyCsvFiles.add(cacheKey);
+                rememberMissing(missingLocalDailyCsvFiles, cacheKey);
                 continue;
             }
             if (!response.ok) {
@@ -368,13 +382,21 @@ async function loadLocalDailyDatasetCandles(
             const payload = await response.text();
             const candles = normalizeTradFiDailyCandles(parsePayload(payload), baseInterval);
             if (candles.length === 0) {
-                missingLocalDailyCsvFiles.add(cacheKey);
+                rememberMissing(missingLocalDailyCsvFiles, cacheKey);
                 continue;
             }
 
             localDailyCsvCache.set(cacheKey, candles);
             return candles;
-        } catch {
+        } catch (error) {
+            if (signal?.aborted) return null;
+            debugLogger.warn('seed.local_daily_dataset_load_failed', {
+                dataset: dataset.key,
+                symbol,
+                candidate,
+                interval: baseInterval,
+                error: error instanceof Error ? error.message : String(error),
+            });
             return null;
         }
     }
@@ -388,19 +410,22 @@ async function loadLocalDailyCandles(
     signal?: AbortSignal
 ): Promise<OHLCVData[] | null> {
     const marked = isStockMarketSymbol(symbol);
-    for (const dataset of LOCAL_DAILY_DATASETS) {
-        // A diamond-marked symbol only ever resolves against the stock-market
-        // datasets; skip the others so a marked ticker can't accidentally
-        // match a bare-ticker CSV in another dataset.
-        if (marked && !isStockMarketDatasetKey(dataset.key)) {
-            continue;
-        }
-        // Conversely, an unmarked symbol should not be resolved by the
-        // stock-market datasets, which only know marked symbols at runtime.
-        if (!marked && isStockMarketDatasetKey(dataset.key)) {
-            continue;
-        }
-        const candles = await loadLocalDailyDatasetCandles(dataset, symbol, interval, signal);
+    // A diamond-marked symbol only ever resolves against the stock-market
+    // datasets; skip the others so a marked ticker can't accidentally
+    // match a bare-ticker CSV in another dataset.
+    const candidateDatasets = LOCAL_DAILY_DATASETS.filter((dataset) =>
+        marked ? isStockMarketDatasetKey(dataset.key) : !isStockMarketDatasetKey(dataset.key)
+    );
+    if (candidateDatasets.length === 0) return null;
+
+    // Iterate datasets in parallel; per-dataset caches make repeat loads
+    // cheap and the first non-empty winner is returned.
+    const results = await Promise.all(
+        candidateDatasets.map((dataset) =>
+            loadLocalDailyDatasetCandles(dataset, symbol, interval, signal)
+        )
+    );
+    for (const candles of results) {
         if (candles && candles.length > 0) {
             return candles;
         }
@@ -590,37 +615,46 @@ export async function clearCachedCandlesDatabase(): Promise<boolean> {
 export async function loadSeedCandlesFromPriceData(
     symbol: string,
     interval: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    provider?: string
 ): Promise<OHLCVData[] | null> {
     const normalizedSymbol = symbol.trim().toUpperCase();
     const normalizedInterval = interval.trim().toLowerCase();
     const key = toCacheKey(normalizedSymbol, normalizedInterval);
     if (missingSeedFiles.has(key)) return null;
 
-    const fileName = `${normalizedSymbol}-${normalizedInterval}.json`;
-    const filePath = `/price-data/${fileName}`;
+    // The `.json` seed probe only applies to legacy Binance/bybit-tradfi
+    // overlay seeds. `local-daily` symbols only ever resolve via per-dataset
+    // CSVs, so probing `/price-data/{symbol}-{interval}.json` is an always-404
+    // round trip before the real loader runs. Skip it for that provider.
+    const skipJsonProbe = provider === 'local-daily';
+
     let markMissing = false;
 
-    try {
-        const response = await fetch(filePath, {
-            signal,
-            cache: 'no-store',
-        });
+    if (!skipJsonProbe) {
+        const fileName = `${normalizedSymbol}-${normalizedInterval}.json`;
+        const filePath = `/price-data/${fileName}`;
+        try {
+            const response = await fetch(filePath, {
+                signal,
+                cache: 'no-store',
+            });
 
-        if (response.status === 404) {
-            markMissing = true;
-        } else if (response.ok) {
-            const payload = await response.json();
-            const candles = extractCandlesFromPayload(payload);
-            if (candles.length > 0) {
-                return candles;
+            if (response.status === 404) {
+                markMissing = true;
+            } else if (response.ok) {
+                const payload = await response.json();
+                const candles = extractCandlesFromPayload(payload);
+                if (candles.length > 0) {
+                    return candles;
+                }
+                markMissing = true;
+            } else {
+                return null;
             }
-            markMissing = true;
-        } else {
-            return null;
+        } catch {
+            // Keep fallback path below.
         }
-    } catch {
-        // Keep fallback path below.
     }
 
     const localDailyCandles = await loadLocalDailyCandles(normalizedSymbol, normalizedInterval, signal);
@@ -629,7 +663,7 @@ export async function loadSeedCandlesFromPriceData(
     }
 
     if (markMissing) {
-        missingSeedFiles.add(key);
+        rememberMissing(missingSeedFiles, key);
     }
 
     return null;
