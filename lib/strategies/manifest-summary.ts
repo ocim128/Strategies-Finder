@@ -1576,7 +1576,7 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["range_lookback", "momentum_lookback", "atr_period", "range_percentile_min", "acceptance_min", "max_range_atr"],
+        walkForwardParams: ["range_lookback", "momentum_lookback", "range_percentile_min", "acceptance_min"],
     },
         crossSymbolConfig: false,
         polymarket1sConfig: false,
