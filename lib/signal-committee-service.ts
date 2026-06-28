@@ -49,6 +49,8 @@ import {
 import {
     computeCommitteeOverlayScores,
     pickScoreChangePoints,
+    chartOverlayVoteMultiplier,
+    type TradeWindow,
 } from "./signal-committee-overlay";
 import {
     computeScoreEdgeReport,
@@ -104,7 +106,16 @@ const LOCAL_SYNTHETIC_STREAM_PREFIX = "local-synthetic:";
 // IN value). Without chunking, members past 100 would silently get no state.
 const MEMBER_HARD_CAP = 500;
 const COMMITTEE_STATE_BATCH_SIZE = 100;
-const SYNTHETIC_WORKER_CANDLE_LIMIT = 500;
+// Synthetic committee members are scored on the chart by their tradeWindows.
+// The worker feeds each member this many ratio candles per evaluation, which
+// bounds how far back the chart overlay can reach. 500 (~83 days at 4h) was
+// too tight: multi-year charts had bars older than the oldest supplied candle
+// silently score 0. 2000 (~333 days at 4h) gives ~1 year of on-chart coverage
+// without straining the worker's CPU budget at the documented committee target
+// (<=25 members). The browser-side repair path in `applyWorkerSyntheticRepairs`
+// raises existing D1 rows below this value on the next refresh, so raising this
+// constant migrates already-registered members without a manual backfill.
+const SYNTHETIC_WORKER_CANDLE_LIMIT = 2000;
 const SYNTHETIC_COMMITTEE_SYNC_MIN_SOURCE_BARS = 50_000;
 const LOCAL_SYNTHETIC_MEMBERS_STORAGE = {
     key: "signal_committee_local_synthetic_members",
@@ -158,6 +169,46 @@ function normalizeSymbolKey(value: string): string {
 
 function symbolsMatch(left: string, right: string): boolean {
     return normalizeSymbolKey(left) === normalizeSymbolKey(right);
+}
+
+/**
+ * Summarize a member's tradeWindows for the diagnostic panel. The point is to
+ * answer "why do old bars score 0?" without more round-trips:
+ *   - `count` small + `spanDays` years-long  -> strategy genuinely fires few
+ *     trades (not a bug; old bars legitimately have no window).
+ *   - `count` near the worker cap + `earliestSec` only a few months ago ->
+ *     tradeWindows are being truncated; check `SYNTHETIC_WORKER_CANDLE_LIMIT`
+ *     (candles supplied to the strategy) rather than `TRADE_WINDOWS_CAP`
+ *     (which only matters if `count` saturates it).
+ *   - otherwise (count sparse, spanDays short) -> some other cap or stale
+ *     data; dig further.
+ * `earliestSec`/`latestSec` are unix seconds (null when no windows).
+ */
+function tradeWindowsRange(
+    windows: ReadonlyArray<TradeWindow> | null | undefined
+): { count: number; range: { earliestSec: number | null; latestSec: number | null; spanDays: number | null } } {
+    if (!Array.isArray(windows) || windows.length === 0) {
+        return { count: 0, range: { earliestSec: null, latestSec: null, spanDays: null } };
+    }
+    let earliest = Infinity;
+    let latest = -Infinity;
+    for (const w of windows) {
+        const entry = w[0];
+        const exit = w[1];
+        if (Number.isFinite(entry)) {
+            if (entry < earliest) earliest = entry;
+            if (entry > latest) latest = entry;
+        }
+        if (typeof exit === "number" && Number.isFinite(exit)) {
+            if (exit > latest) latest = exit;
+        }
+    }
+    const earliestSec = Number.isFinite(earliest) ? earliest : null;
+    const latestSec = Number.isFinite(latest) ? latest : null;
+    const spanDays = earliestSec !== null && latestSec !== null
+        ? Math.round((latestSec - earliestSec) / 86400)
+        : null;
+    return { count: windows.length, range: { earliestSec, latestSec, spanDays } };
 }
 
 function parseJsonRecord(value: string): Record<string, unknown> {
@@ -1300,6 +1351,13 @@ class SignalCommitteeService {
                 const chartLatestClose = latestChartCandle && Number.isFinite(latestChartCandle.close)
                     ? latestChartCandle.close
                     : null;
+                // tradeWindows range — the key field for diagnosing "old bars
+                // score 0". If `earliestSec` is recent (e.g. ~2 months ago on a
+                // multi-year chart), the worker is sending a capped window and
+                // needs redeploy; if `count` is small but `spanDays` is years,
+                // the strategy itself fires few trades. Either way this number
+                // localizes the cause without further instrumentation.
+                const twRange = tradeWindowsRange(s.tradeWindows);
                 return {
                     stream_id: m.stream_id,
                     ok: s.ok,
@@ -1309,7 +1367,8 @@ class SignalCommitteeService {
                     entryTimeSec: s.latestTrade?.entryTimeSec ?? null,
                     entryPrice: s.latestTrade?.entryPrice ?? null,
                     latestClose: s.latestClose,
-                    tradeWindowsCount: Array.isArray(s.tradeWindows) ? s.tradeWindows.length : null,
+                    tradeWindowsCount: twRange.count,
+                    tradeWindowsRange: twRange.range,
                     lastStatus: s.lastStatus,
                     workerSource: memberDigestByStreamId.get(m.stream_id)?.syntheticPair
                         ? "worker synthetic"
@@ -1405,27 +1464,47 @@ class SignalCommitteeService {
             return;
         }
 
-        // Build the per-bar score series from ACTIVE members only, so the
-        // chart overlay markers AND the Score Edge Report analyze the exact
-        // same score the user sees in the badge (which excludes deactivated
-        // members via buildScoreRows). Without this filter, deactivating a
-        // noisy member would drop the badge score but leave the edge report
-        // reflecting the deactivated member — breaking the very workflow the
-        // deactivate feature enables.
+        // Build the per-bar score series from ACTIVE members whose symbol (or
+        // synthetic leg) matches the chart symbol. Without this scope, the
+        // overlay would sum votes from every committee member — including
+        // unrelated pairs — and the FETUSDT chart would read a score inflated
+        // by every BTCUSDT / ETHUSDT / synthetic member. The badge in the
+        // committee header intentionally sums the whole committee; the chart
+        // overlay must NOT, because the chart is on one specific symbol.
+        //
+        // Resolution matches the per-leg leaderboard (`aggregateLegScores`):
+        //   - direct member whose symbol is the chart symbol -> +1
+        //   - synthetic member whose base leg is the chart symbol -> +1
+        //     (long BASE/QUOTE is long BASE)
+        //   - synthetic member whose quote leg is the chart symbol -> -1
+        //     (long BASE/QUOTE is short QUOTE)
+        // The multiplier is applied to every dirSign in the member's
+        // tradeWindows inside `computeCommitteeOverlayScores`, so cross-pair
+        // decomposition is consistent between the overlay and the leg board.
+        const chartSymbol = state.currentSymbol;
         const overlayMembers = this.members
             .filter((m) => this.isMemberActive(m))
             .map((m) => {
                 const s = this.memberStates.get(m.stream_id);
+                const syntheticPair = this.resolveWorkerSyntheticPair(m, this.members);
                 return {
                     streamId: m.stream_id,
                     tradeWindows: Array.isArray(s?.tradeWindows) ? s!.tradeWindows : null,
+                    voteMultiplier: chartOverlayVoteMultiplier(chartSymbol, {
+                        symbol: m.symbol,
+                        syntheticPair: syntheticPair && matchesSyntheticSymbol(m.symbol, syntheticPair)
+                            ? syntheticPair
+                            : null,
+                    }),
                 };
-            });
-        const anyHasWindows = overlayMembers.some((m) => m.tradeWindows && m.tradeWindows.length > 0);
-        if (!anyHasWindows) {
-            // No member has tradeWindows — either the worker hasn't populated
-            // them yet, or every member's evaluation failed. Clear rather than
-            // show a misleading flat-zero marker.
+            })
+            .filter((m) => m.tradeWindows && m.tradeWindows.length > 0 && m.voteMultiplier !== 0);
+        // The filter above guarantees every surviving overlayMembers entry has
+        // non-empty tradeWindows and a non-zero multiplier, so an empty list
+        // means no committee member matches this chart symbol. Clear rather
+        // than show a misleading flat-zero marker that would imply the
+        // committee is neutral on this symbol.
+        if (overlayMembers.length === 0) {
             chartManager.removeCommitteeScoreOverlay();
             this.clearScoreEdge();
             return;

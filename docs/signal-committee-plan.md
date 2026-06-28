@@ -846,6 +846,84 @@ requires crossing back through zero to the opposite threshold.
 
 ---
 
+## Post-Phase fix — chart overlay scope + multi-year coverage (2026-06-28)
+
+Two defects surfaced after deployment, both fixed in the same pass:
+
+### 1. Overlay summed unrelated pairs onto the chart
+
+`renderScoreOverlay` was summing `tradeWindows` from every active committee
+member regardless of symbol. A FETUSDT chart would read votes accumulated from
+BTCUSDT, ETHUSDT, and every synthetic pair — the committee header badge's
+whole-committee tally, accidentally applied to a single-symbol chart.
+
+Fix: scope the overlay to members whose symbol (or synthetic leg) matches
+`state.currentSymbol`, reusing the per-leg decomposition already used by
+`aggregateLegScores` (long BASE/QUOTE -> +1 base leg, -1 quote leg on the
+chart). New pure helper `chartOverlayVoteMultiplier(chartSymbol, member)` in
+`lib/signal-committee-overlay.ts`. The committee header badge is unchanged
+(it intentionally reflects the whole committee).
+
+### 2. Older bars scored 0 (200-trade cap)
+
+`compressTradeWindows` was capped at the most recent 200 trades. On a 4h chart
+(~1k–2k trades/year) that only reached back ~2 months, so older bars had no
+covering window and silently read 0. Symptom matched by Score Edge reports
+showing `bars in market: 432, score=0 n=15623` on a 7-year chart.
+
+Fix: raised `TRADE_WINDOWS_CAP` from 200 to 5000 (covers several years at
+typical trade frequency; payload ~0.6 MB stays under D1's 1 MB row limit for
+the documented ≤25-member committee). To keep overlay render time flat at the
+larger cap, rewrote `computeCommitteeOverlayScores` from
+O(members × windows × bars) to an events-based sweep
+O(events log events + bars). Measured 29 ms at 25 members × 5000 windows ×
+16 000 bars (250 000 events).
+
+### Caveat — worker members need a redeploy
+
+Both fixes live in browser-evaluated code paths. Local-synthetic members
+(evaluator runs in-browser) pick up the changes immediately on reload.
+Worker-evaluated members only get the larger `tradeWindows` cap after the
+worker is redeployed with the updated `lib/signal-entry-evaluator.ts`; until
+then their `latest_state_json` still carries the 200-window cap.
+
+### Post-fix follow-up — synthetic candle limit (2026-06-28)
+
+The cap raise above turned out not to be the active bottleneck for synthetic
+committee members. Diagnostics on a 45-member synthetic committee showed every
+member's `tradeWindowsRange.spanDays` ≤ ~75 days, regardless of
+`tradeWindowsCount` (1–18). The strategy was never hitting the 5000-window
+trade cap; it was being fed too few candles to produce older windows at all.
+
+Root cause: `SYNTHETIC_WORKER_CANDLE_LIMIT = 500` in
+`lib/signal-committee-service.ts`. The browser sends this `candleLimit` when
+registering each synthetic pair via `upsertSubscription`, and the worker uses
+it (read from D1 `signal_subscriptions.candle_limit`) to bound how many ratio
+candles it fetches and feeds the strategy. 500 candles at 4h ≈ 83 days, so the
+strategy literally had no data older than ~83 days to produce tradeWindows
+for — matching the "score only shows for ~2 months" symptom exactly.
+
+Fix: raised `SYNTHETIC_WORKER_CANDLE_LIMIT` from 500 to 2000 (~333 days at 4h).
+The existing-member override path in `applyWorkerSyntheticRepairs` already
+compares each D1 row's `candle_limit` against the constant and re-upserts rows
+below it, so raising the constant migrates already-registered members on the
+next browser refresh — no manual D1 backfill, no worker redeploy (the worker
+reads `candle_limit` from D1, not from any worker-side constant).
+
+Worker CPU/rate-limit budget: at 2000 candles × 2 legs × 25 members = 100k
+klines per cron tick, split across 7 Binance API bases (~14k/base/min) — well
+under the documented committee target.
+
+### Validation
+
+- `npm run typecheck` ✓
+- `tests/signal-committee-overlay.spec.ts` ✓ (cap-raise regression, events-sweep
+  correctness vs hand-computed scores, tie resolution, perf gate at 25 × 5000 ×
+  16 000)
+- existing committee specs unaffected ✓
+
+---
+
 # Open Assumptions and Unknowns
 
 - **Option A vs Option B (membership tag).** Plan defaults to Option A

@@ -599,8 +599,17 @@ export function evaluateLatestEntrySignalFromPreparedSignals(
  * `TRADE_WINDOWS_CAP` trades to bound payload size. Open trades (exit reason
  * `end_of_data`) get `exitSec: null`, which the forward-filler treats as
  * "until the last visible bar".
+ *
+ * Cap sizing (5000): on a 4h chart a typical strategy emits ~1k–2k trades per
+ * year, so 5000 windows covers several years — enough to score the full
+ * visible range users load, instead of only the last ~2 months (the bug the
+ * previous 200 cap caused). Payload is ~120 bytes/window (3 numbers as JSON
+ * with separators), so 5000 windows ≈ 0.6 MB. That stays under the D1 1 MB row
+ * limit for the documented UI committee target (<=25 members, each in its own
+ * row). `computeCommitteeOverlayScores` is O(events log events + bars), so a
+ * larger cap does not regress chart-overlay render time.
  */
-const TRADE_WINDOWS_CAP = 200;
+const TRADE_WINDOWS_CAP = 5000;
 
 function compressTradeWindows(trades: Trade[]): Array<[number, number | null, 1 | -1]> | null {
     if (!Array.isArray(trades) || trades.length === 0) return null;
