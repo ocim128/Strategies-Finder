@@ -9,7 +9,7 @@ import { dataManager } from "./data-manager";
 import { settingsManager } from "./settings-manager";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
 import { MAJOR_SYMBOLS } from "./portfolioLab/portfolio-lab-types";
-import { getLocalDailyAssets, type LocalDailyAsset } from "./local-daily-datasets";
+import { getLocalDailyAssets, isStockMarketSymbol, type LocalDailyAsset } from "./local-daily-datasets";
 import { cloneJsonCompatible } from "./json-utils";
 
 import { FINDER_SORT_OPTIONS, METRIC_FULL_LABELS, UNIVERSE_METRIC_FULL_LABELS } from "./finder/constants";
@@ -85,7 +85,12 @@ import type {
 } from './types/finder';
 import { isSmartTradeSizingMode, type CapitalSettings } from "./types/backtest";
 import type { BacktestResult, BacktestSettings } from "./types/strategies";
-import { buildSyntheticPairFromLegs, deriveSyntheticSymbol, pickSourceInterval } from "../scripts/lib/synthetic-pair";
+import {
+    buildSyntheticPairFromLegs,
+    deriveSyntheticSymbol,
+    pickSourceInterval,
+    resolveEffectiveIntervalForSynthetic,
+} from "../scripts/lib/synthetic-pair";
 import { SYNTHETIC_TARGET_BARS, DATA_CHART_TOTAL_LIMIT } from "./data/constants";
 
 const QUOTE_SUFFIXES = ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD', 'BTC', 'ETH', 'BNB', 'EUR', 'TRY', 'BRL'];
@@ -139,9 +144,13 @@ export function parseSyntheticPairToken(symbol: string): { baseSymbol: string; q
 	const baseRaw = symbol.slice(0, plusIdx).trim().toUpperCase();
 	const quoteRaw = symbol.slice(plusIdx + 1).trim().toUpperCase();
 	if (!baseRaw || !quoteRaw) return null;
+	// Diamond-marked legs are offline stock_market_data tickers and must NOT
+	// be funneled through resolveToBinanceSymbol, which appends `USDT` to
+	// bare tokens — that would strip the marker's self-resolving provider
+	// hint and route the fetch to Binance.
 	return {
-		baseSymbol: resolveToBinanceSymbol(baseRaw),
-		quoteSymbol: resolveToBinanceSymbol(quoteRaw),
+		baseSymbol: isStockMarketSymbol(baseRaw) ? baseRaw : resolveToBinanceSymbol(baseRaw),
+		quoteSymbol: isStockMarketSymbol(quoteRaw) ? quoteRaw : resolveToBinanceSymbol(quoteRaw),
 	};
 }
 
@@ -543,21 +552,29 @@ export class FinderManager {
 
 	private async loadUniverseDataset(symbol: string, interval: string, signal?: AbortSignal) {
 		const synthParts = parseSyntheticPairToken(symbol);
+		// Diamond-marked symbols are offline stock_market_data, which only has
+		// `1d` bars. Coerce to `1d` whenever a marked symbol or leg is involved
+		// so the local-daily loader returns data instead of empty.
+		const effectiveInterval = resolveEffectiveIntervalForSynthetic(
+			symbol,
+			synthParts?.baseSymbol ?? null,
+			synthParts?.quoteSymbol ?? null,
+			interval,
+		);
 		if (synthParts) {
-			return this.loadSyntheticPairForUniverse(synthParts.baseSymbol, synthParts.quoteSymbol, interval, signal);
+			return this.loadSyntheticPairForUniverse(synthParts.baseSymbol, synthParts.quoteSymbol, effectiveInterval, signal);
 		}
 		await this.prepareUniverseSymbolProvider(symbol);
-		const cacheKey = this.buildUniverseDatasetCacheKey(symbol, interval);
+		const cacheKey = this.buildUniverseDatasetCacheKey(symbol, effectiveInterval);
 		const cached = this.universeDatasetCache.get(cacheKey);
 		if (cached) {
-			debugLogger.event("finder.universe_dataset_cache_hit", { symbol, interval, cacheKey });
-			this.setUniverseDatasetCache(cacheKey, cached);
+			debugLogger.event("finder.universe_dataset_cache_hit", { symbol, interval: effectiveInterval, cacheKey });
 			return cached;
 		}
-		debugLogger.event("finder.universe_dataset_cache_miss", { symbol, interval, cacheKey });
+		debugLogger.event("finder.universe_dataset_cache_miss", { symbol, interval: effectiveInterval, cacheKey });
 
 		let promise: Promise<OHLCVData[]>;
-		promise = dataManager.fetchDataDetached(symbol, interval, { signal, offline: true })
+		promise = dataManager.fetchDataDetached(symbol, effectiveInterval, { signal, offline: true })
 			.then((data) => {
 				if (signal?.aborted || !Array.isArray(data) || data.length === 0) {
 					if (this.universeDatasetCache.get(cacheKey) === promise) {
@@ -613,14 +630,22 @@ export class FinderManager {
 		// remote Binance gap-fill here matches the Data Mining synthetic generator
 		// and the original universe synthetic loader. The LRU cache above means
 		// each unique source symbol is fetched at most once per run.
+		//
+		// Exception: diamond-marked legs are offline stock_market_data tickers
+		// with no remote source. They MUST stay offline — gap-filling would
+		// silently fall back to Binance and produce wrong data.
 		const cacheKey = `${sourceSymbol.trim().toUpperCase()}|${sourceInterval.trim().toLowerCase()}|${sourceBars}`;
 		const cached = this.syntheticSourceSeriesCache.get(cacheKey);
 		if (cached) {
 			debugLogger.event("finder.synthetic_source_cache_hit", { sourceSymbol, sourceInterval, sourceBars });
 			return cached;
 		}
+		const markedLeg = isStockMarketSymbol(sourceSymbol);
 		const promise = dataManager
-			.fetchHistoricalData(sourceSymbol, sourceInterval, sourceBars, { signal })
+			.fetchHistoricalData(sourceSymbol, sourceInterval, sourceBars, {
+				signal,
+				...(markedLeg ? { offline: true } : {}),
+			})
 			.catch((error) => {
 				if (this.syntheticSourceSeriesCache.get(cacheKey) === promise) {
 					this.syntheticSourceSeriesCache.delete(cacheKey);
@@ -643,7 +668,10 @@ export class FinderManager {
 		signal?: AbortSignal,
 	): Promise<OHLCVData[]> {
 		const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
-		const source = pickSourceInterval(interval);
+		// Stock-market legs have no finer granularity than the target interval,
+		// so skip the source subdivision for them (matches buildSyntheticPairFromLegs).
+		const markedLeg = isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol);
+		const source = markedLeg ? null : pickSourceInterval(interval);
 		const sourceInterval = source?.sourceInterval ?? interval;
 		// Cap source bars at DATA_CHART_TOTAL_LIMIT (100k). The synthetic source
 		// interval is a derived interval the user may not have pre-warmed, so the
@@ -1661,6 +1689,20 @@ export class FinderManager {
 				});
 				this.setStatus(`Finder failed. ${message}`);
 				uiManager.showToast('Finder run failed. Check the status panel for details.', 'error');
+				// When the universe loader throws, latestDiagnostics stays null
+				// and the Copy Diagnostics button is silently disabled — exactly
+				// when the user needs it most. Build a minimal diagnostics from
+				// the per-symbol loadFailures map attached to the thrown error
+				// so the user can copy and share WHY each symbol failed.
+				const loadFailures = (error as Error & { loadFailures?: Map<string, { error?: string }> }).loadFailures;
+				if (loadFailures && loadFailures.size > 0) {
+					this.latestDiagnostics = this.buildLoadFailureDiagnostics({
+						options,
+						elapsedMs: performance.now() - startTime,
+						loadFailures,
+					});
+					this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics;
+				}
 			}
 		} finally {
 			if (!progressFinalized) {
@@ -2394,6 +2436,58 @@ export class FinderManager {
 
 	private getUniverseResults(): FinderUniverseCandidate[] {
 		return this.latestResults.scope === 'symbol_universe' ? this.latestResults.results : [];
+	}
+
+	/**
+	 * Minimal diagnostics for the "No universe symbols could be loaded" path.
+	 * The full diagnostics builder lives deep inside the runner and never runs
+	 * when the universe load throws, so without this the Copy Diagnostics
+	 * button stays disabled and the user has no way to share why symbols
+	 * failed. Populates `universe.failedSymbols` from the thrown error's
+	 * attached loadFailures map.
+	 */
+	private buildLoadFailureDiagnostics(args: {
+		options: FinderOptions;
+		elapsedMs: number;
+		loadFailures: Map<string, { error?: string }>;
+	}): FinderDiagnostics {
+		const failedSymbols = [...args.loadFailures.entries()].map(([symbol, result]) => ({
+			symbol,
+			reason: result.error ?? 'unknown error',
+		}));
+		const timings = createEmptyFinderDiagnosticsTimings();
+		timings.total = args.elapsedMs;
+		timings.dataLoading = args.elapsedMs;
+		const engineMode = args.options.polymarketScoringEnabled
+			? (isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval) ? 'second_market_polymarket' : 'polymarket')
+			: args.options.mode === 'genetic'
+				? 'genetic'
+				: 'typescript';
+		return buildFinderDiagnostics({
+			runId: createFinderRunId('finder-load-failure'),
+			symbol: state.currentSymbol,
+			interval: state.currentInterval,
+			mode: args.options.mode,
+			engineMode,
+			inputBars: 0,
+			evaluationBars: 0,
+			selectedStrategies: 0,
+			totalParamRuns: 0,
+			batchSize: 0,
+			processedRuns: 0,
+			filteredRuns: 0,
+			shownResults: 0,
+			endpointAdjusted: 0,
+			failedRuns: 0,
+			skippedRuns: 0,
+			timings,
+			strategyBreakdown: [],
+			universeDiagnostics: {
+				totalSymbols: failedSymbols.length,
+				loadedSymbols: 0,
+				failedSymbols,
+			},
+		});
 	}
 
 	private buildFallbackDiagnostics(args: {

@@ -3,7 +3,13 @@ import type { OHLCVData } from "./types/index";
 import { normalizeTradFiDailyCandles } from "./data/data-interval-utils";
 import { debugLogger } from "./debug-logger";
 import { parseTimeToUnixSeconds } from "./time-normalization";
-import { LOCAL_DAILY_DATASETS, type LocalDailyDatasetConfig } from "./local-daily-datasets";
+import {
+    LOCAL_DAILY_DATASETS,
+    isStockMarketDatasetKey,
+    isStockMarketSymbol,
+    stripStockMarketMarker,
+    type LocalDailyDatasetConfig,
+} from "./local-daily-datasets";
 
 const DB_NAME = 'strategies-finder-candles';
 const STORE_NAME = 'series';
@@ -227,6 +233,66 @@ function extractCandlesFromCsvPayload(payload: string): OHLCVData[] {
     return sortAndDedupeCandles(candles);
 }
 
+// Stock Market Data CSVs ship with a `DD-MM-YYYY` Date column (e.g.
+// 15-12-1980 = Dec 15 1980). The shared parseTimeToUnixSeconds relies on
+// Date.parse, which is MM-DD-YYYY-biased and silently rejects days > 12,
+// so this loader parses the date explicitly. Columns are matched by header
+// name to tolerate the Yahoo column order (`Date,Low,Open,Volume,High,Close,
+// Adjusted Close`) and uses the unadjusted OHLC columns.
+const STOCK_MARKET_DATE_PATTERN = /^(\d{1,2})-(\d{1,2})-(\d{4})$/;
+
+export function parseStockMarketCsvDate(raw: string): number | null {
+    const match = STOCK_MARKET_DATE_PATTERN.exec(raw.trim());
+    if (!match) return null;
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const year = Number(match[3]);
+    if (!Number.isFinite(day) || !Number.isFinite(month) || !Number.isFinite(year)) return null;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    const utcSeconds = Math.floor(Date.UTC(year, month - 1, day) / 1000);
+    if (Number.isFinite(utcSeconds)) return utcSeconds;
+    return null;
+}
+
+export function extractCandlesFromStockMarketCsvPayload(payload: string): OHLCVData[] {
+    const lines = payload
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    if (lines.length <= 1) return [];
+
+    const header = parseCsvLine(lines[0]).map((value) => value.toLowerCase());
+    const dateIdx = header.indexOf('date');
+    const openIdx = header.indexOf('open');
+    const highIdx = header.indexOf('high');
+    const lowIdx = header.indexOf('low');
+    const closeIdx = header.indexOf('close');
+    const volumeIdx = header.indexOf('volume');
+
+    if (dateIdx < 0 || openIdx < 0 || highIdx < 0 || lowIdx < 0 || closeIdx < 0) {
+        return [];
+    }
+
+    const candles: OHLCVData[] = [];
+    for (let i = 1; i < lines.length; i += 1) {
+        const columns = parseCsvLine(lines[i]);
+        if (columns.length <= closeIdx) continue;
+
+        const time = parseStockMarketCsvDate(columns[dateIdx] ?? '');
+        const open = Number(columns[openIdx]);
+        const high = Number(columns[highIdx]);
+        const low = Number(columns[lowIdx]);
+        const close = Number(columns[closeIdx]);
+        const volume = volumeIdx >= 0 ? Number(columns[volumeIdx] ?? 0) : 0;
+        const candle = buildCandle(time, open, high, low, close, volume);
+        if (candle) {
+            candles.push(candle);
+        }
+    }
+
+    return sortAndDedupeCandles(candles);
+}
+
 function buildLocalDailySymbolCandidates(symbol: string): string[] {
     const normalized = symbol.trim().toUpperCase().replace(/\s+/g, '').replace(/\//g, '');
     if (!normalized) return [];
@@ -265,7 +331,16 @@ async function loadLocalDailyDatasetCandles(
     const baseInterval = interval.trim().toLowerCase().split('@')[0];
     if (baseInterval !== '1d') return null;
 
-    const candidates = buildLocalDailySymbolCandidates(symbol);
+    const isStockMarket = isStockMarketDatasetKey(dataset.key);
+    // Stock-market symbols are stored on disk under their bare ticker; the
+    // diamond marker is a runtime-only namespace. Strip it before resolving
+    // the CSV path so `AAPL♦` maps to `AAPL.csv`.
+    const lookupSymbol = isStockMarket ? stripStockMarketMarker(symbol) : symbol;
+    const candidates = buildLocalDailySymbolCandidates(lookupSymbol);
+    const parsePayload = isStockMarket
+        ? extractCandlesFromStockMarketCsvPayload
+        : extractCandlesFromCsvPayload;
+
     for (const candidate of candidates) {
         const cacheKey = `${dataset.key}:${candidate}`;
         if (localDailyCsvCache.has(cacheKey)) {
@@ -291,7 +366,7 @@ async function loadLocalDailyDatasetCandles(
             }
 
             const payload = await response.text();
-            const candles = normalizeTradFiDailyCandles(extractCandlesFromCsvPayload(payload), baseInterval);
+            const candles = normalizeTradFiDailyCandles(parsePayload(payload), baseInterval);
             if (candles.length === 0) {
                 missingLocalDailyCsvFiles.add(cacheKey);
                 continue;
@@ -312,7 +387,19 @@ async function loadLocalDailyCandles(
     interval: string,
     signal?: AbortSignal
 ): Promise<OHLCVData[] | null> {
+    const marked = isStockMarketSymbol(symbol);
     for (const dataset of LOCAL_DAILY_DATASETS) {
+        // A diamond-marked symbol only ever resolves against the stock-market
+        // datasets; skip the others so a marked ticker can't accidentally
+        // match a bare-ticker CSV in another dataset.
+        if (marked && !isStockMarketDatasetKey(dataset.key)) {
+            continue;
+        }
+        // Conversely, an unmarked symbol should not be resolved by the
+        // stock-market datasets, which only know marked symbols at runtime.
+        if (!marked && isStockMarketDatasetKey(dataset.key)) {
+            continue;
+        }
         const candles = await loadLocalDailyDatasetCandles(dataset, symbol, interval, signal);
         if (candles && candles.length > 0) {
             return candles;

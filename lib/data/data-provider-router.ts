@@ -8,6 +8,7 @@ import {
 import { state } from "../state";
 import { isPolymarketEventSymbol } from "../dataProviders/polymarket";
 import { tradfiSearchService } from "../tradfi-search-service";
+import { isStockMarketSymbol } from "../local-daily-datasets";
 
 export class DataProviderRouter {
     private providerOverrideBySymbol: Map<string, Exclude<DataProvider, BinanceDataProvider>> = new Map();
@@ -31,6 +32,13 @@ export class DataProviderRouter {
         if (isPolymarketEventSymbol(symbol)) {
             this.providerOverrideBySymbol.set(normalizedSymbol, 'polymarket');
             return 'polymarket';
+        }
+        // Diamond-marked symbols are always offline stock_market_data lookups.
+        // Self-resolves so typed-in or pasted marked symbols don't accidentally
+        // route to Binance if the explicit override wasn't set first.
+        if (isStockMarketSymbol(normalizedSymbol)) {
+            this.providerOverrideBySymbol.set(normalizedSymbol, 'local-daily');
+            return 'local-daily';
         }
         if (tradfiSearchService.isTradFiSymbol(normalizedSymbol)) {
             this.providerOverrideBySymbol.set(normalizedSymbol, 'bybit-tradfi');

@@ -1,6 +1,48 @@
 import type { DataProvider } from "./types/data-providers";
 
-export type LocalDailyDatasetKey = "sp500" | "indonesian-stock";
+export type LocalDailyDatasetKey =
+    | "sp500"
+    | "indonesian-stock"
+    | "forbes2000-stock"
+    | "nasdaq-stock"
+    | "nyse-stock"
+    | "sp500-stock";
+
+// Diamond suffix marking stock_market_data symbols so they namespace apart
+// from Binance/Bybit/indonesian-stock sources. The marker is preserved
+// end-to-end through .trim().toUpperCase(), so cache/SQLite/IndexedDB keys
+// stay distinct from the bare ticker.
+export const STOCK_MARKET_SYMBOL_SUFFIX = "\u2666"; // ♦
+
+const STOCK_MARKET_DATASET_KEYS: ReadonlySet<LocalDailyDatasetKey> = new Set([
+    "forbes2000-stock",
+    "nasdaq-stock",
+    "nyse-stock",
+    "sp500-stock",
+]);
+
+export function markStockSymbol(symbol: string): string {
+    const normalized = symbol.trim().toUpperCase();
+    if (!normalized) return normalized;
+    return normalized.endsWith(STOCK_MARKET_SYMBOL_SUFFIX)
+        ? normalized
+        : `${normalized}${STOCK_MARKET_SYMBOL_SUFFIX}`;
+}
+
+export function isStockMarketSymbol(symbol: string): boolean {
+    return symbol.trim().endsWith(STOCK_MARKET_SYMBOL_SUFFIX);
+}
+
+export function stripStockMarketMarker(symbol: string): string {
+    const trimmed = symbol.trim();
+    return trimmed.endsWith(STOCK_MARKET_SYMBOL_SUFFIX)
+        ? trimmed.slice(0, -STOCK_MARKET_SYMBOL_SUFFIX.length).toUpperCase()
+        : trimmed.toUpperCase();
+}
+
+export function isStockMarketDatasetKey(key: string): boolean {
+    return STOCK_MARKET_DATASET_KEYS.has(key as LocalDailyDatasetKey);
+}
 
 export interface LocalDailyDatasetConfig {
     key: LocalDailyDatasetKey;
@@ -39,6 +81,38 @@ export const LOCAL_DAILY_DATASETS: readonly LocalDailyDatasetConfig[] = [
         catalogUrl: "/api/local-price-data/indonesian-stock/catalog",
         catalogFormat: "json",
         candlesBasePath: "/price-data/indonesian-stock",
+        provider: "local-daily",
+    },
+    {
+        key: "forbes2000-stock",
+        label: "Stock Market \u2014 Forbes 2000",
+        catalogUrl: "/api/local-price-data/stock-market/catalog?dataset=forbes2000",
+        catalogFormat: "json",
+        candlesBasePath: "/price-data/stock_market_data/forbes2000/csv",
+        provider: "local-daily",
+    },
+    {
+        key: "nasdaq-stock",
+        label: "Stock Market \u2014 NASDAQ",
+        catalogUrl: "/api/local-price-data/stock-market/catalog?dataset=nasdaq",
+        catalogFormat: "json",
+        candlesBasePath: "/price-data/stock_market_data/nasdaq/csv",
+        provider: "local-daily",
+    },
+    {
+        key: "nyse-stock",
+        label: "Stock Market \u2014 NYSE",
+        catalogUrl: "/api/local-price-data/stock-market/catalog?dataset=nyse",
+        catalogFormat: "json",
+        candlesBasePath: "/price-data/stock_market_data/nyse/csv",
+        provider: "local-daily",
+    },
+    {
+        key: "sp500-stock",
+        label: "Stock Market \u2014 S&P 500",
+        catalogUrl: "/api/local-price-data/stock-market/catalog?dataset=sp500",
+        catalogFormat: "json",
+        candlesBasePath: "/price-data/stock_market_data/sp500/csv",
         provider: "local-daily",
     },
 ];
@@ -83,8 +157,15 @@ function toAsset(
     name: string,
     sector = ""
 ): LocalDailyAsset | null {
-    const normalizedSymbol = symbol.trim().toUpperCase();
-    if (!normalizedSymbol) return null;
+    const trimmedSymbol = symbol.trim().toUpperCase();
+    if (!trimmedSymbol) return null;
+    // Stock-market datasets namespace their symbols with the diamond marker
+    // so they never collide with bare tickers from other providers. The
+    // catalog endpoint already returns marked symbols, but re-marking here
+    // keeps the asset shape consistent regardless of which path fed it in.
+    const normalizedSymbol = isStockMarketDatasetKey(config.key)
+        ? markStockSymbol(stripStockMarketMarker(trimmedSymbol))
+        : trimmedSymbol;
     return {
         symbol: normalizedSymbol,
         name: name.trim() || normalizedSymbol,

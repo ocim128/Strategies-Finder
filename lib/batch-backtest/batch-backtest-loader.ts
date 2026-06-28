@@ -24,10 +24,12 @@
 import { dataManager } from "../data-manager";
 import { debugLogger } from "../debug-logger";
 import { parseSyntheticPairToken } from "../finder-manager";
+import { isStockMarketSymbol } from "../local-daily-datasets";
 import {
     buildSyntheticPairFromLegs,
     deriveSyntheticSymbol,
     pickSourceInterval,
+    resolveEffectiveIntervalForSynthetic,
 } from "../../scripts/lib/synthetic-pair";
 import { SYNTHETIC_TARGET_BARS, DATA_CHART_TOTAL_LIMIT } from "../data/constants";
 import { parseIntervalSeconds } from "../interval-utils";
@@ -74,16 +76,24 @@ export async function loadBatchDataset(
     signal?: AbortSignal,
 ): Promise<OHLCVData[]> {
     const synthParts = parseSyntheticPairToken(symbol);
+    // Same daily-only coercion as Finder's loadUniverseDataset: stock_market_data
+    // has no intraday bars, so a finer interval would return empty.
+    const effectiveInterval = resolveEffectiveIntervalForSynthetic(
+        symbol,
+        synthParts?.baseSymbol ?? null,
+        synthParts?.quoteSymbol ?? null,
+        interval,
+    );
     if (synthParts) {
         return loadSyntheticPairForBatch(
             synthParts.baseSymbol,
             synthParts.quoteSymbol,
-            interval,
+            effectiveInterval,
             signal,
         );
     }
 
-    const data = await dataManager.fetchDataDetached(symbol, interval, { signal, offline: true });
+    const data = await dataManager.fetchDataDetached(symbol, effectiveInterval, { signal, offline: true });
     if (signal?.aborted) return [];
 
     // Offline short-circuit can return a stale streaming-leftover fragment
@@ -93,10 +103,10 @@ export async function loadBatchDataset(
     // offline path reads, so subsequent runs are warm again. Mirrors why
     // Finder's synthetic-leg path intentionally avoids offline mode for cold
     // source intervals.
-    const staleFragmentThreshold = resolveStaleFragmentBarThreshold(interval);
+    const staleFragmentThreshold = resolveStaleFragmentBarThreshold(effectiveInterval);
     if (data.length > 0 && data.length < staleFragmentThreshold) {
         debugLogger.warn("batch.stale_fragment_refetch", {
-            symbol, interval, cachedBars: data.length, threshold: staleFragmentThreshold,
+            symbol, interval: effectiveInterval, cachedBars: data.length, threshold: staleFragmentThreshold,
         });
         // Request a full backtest-sized series, NOT the chart's visible-candles
         // lookback. `getChartLookbackBars()` is a display preference (how many
@@ -107,7 +117,7 @@ export async function loadBatchDataset(
         // pairs' ~65k). DATA_CHART_TOTAL_LIMIT is the same target the chart
         // uses for a full load; Binance caps the response at ~65k.
         const targetBars = DATA_CHART_TOTAL_LIMIT;
-        const refetched = await dataManager.fetchHistoricalData(symbol, interval, targetBars, { signal });
+        const refetched = await dataManager.fetchHistoricalData(symbol, effectiveInterval, targetBars, { signal });
         if (signal?.aborted) return [];
         // If the network also returns a fragment (delisted symbol, provider
         // issue), prefer the larger of the two so the runner's minimum-bar
@@ -127,7 +137,10 @@ async function loadSyntheticPairForBatch(
     if (signal?.aborted) return [];
 
     const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
-    const source = pickSourceInterval(interval);
+    // Stock-market legs have no finer granularity than the target interval,
+    // so skip the source subdivision for them (matches buildSyntheticPairFromLegs).
+    const markedLeg = isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol);
+    const source = markedLeg ? null : pickSourceInterval(interval);
     const sourceInterval = source?.sourceInterval ?? interval;
     // Same cap as Finder: derived source intervals often forces a remote
     // gap-fill, so capping at DATA_CHART_TOTAL_LIMIT keeps the paginated

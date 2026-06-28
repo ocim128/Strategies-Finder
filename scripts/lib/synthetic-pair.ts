@@ -13,6 +13,7 @@ import type { OHLCVData } from '../../lib/types/strategies';
 import { parseOhlcvBars } from './ohlcv-file';
 import { parseIntervalSeconds } from '../../lib/interval-utils';
 import { SYNTHETIC_SOURCE_BARS_LIMIT } from '../../lib/data/constants';
+import { isStockMarketSymbol } from '../../lib/local-daily-datasets';
 
 // ============================================================================
 // Public types
@@ -332,7 +333,13 @@ export async function buildSyntheticPairFromLegs(args: {
 }): Promise<SyntheticPairFromLegsResult> {
     const { interval, targetBars, fetchLeg, baseSymbol, quoteSymbol } = args;
     const minBars = args.minBars ?? 1;
-    const source = pickSourceInterval(interval);
+    // Stock-market legs (offline stock_market_data) only have `1d` bars, so the
+    // source-interval subdivision (e.g. 1d -> 2h) would fetch legs at an
+    // interval that has no data and every pair would fail with "Quote bars
+    // must contain at least one aligned candle." When either leg is marked,
+    // skip subdivision and fetch both legs at the target interval directly.
+    const markedLeg = isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol);
+    const source = markedLeg ? null : pickSourceInterval(interval);
     const sourceInterval = source?.sourceInterval ?? interval;
     const rawSourceBars = resolveSyntheticSourceBars(targetBars, source?.ratio ?? 1);
     const sourceBars = args.sourceBarsCap
@@ -435,7 +442,38 @@ function normalizeSymbol(value: string): string {
     return value.trim().toUpperCase();
 }
 
+/**
+ * Stock-market symbols (offline stock_market_data) only have `1d` bars. When
+ * a marked symbol or synthetic leg is involved, the requested interval must be
+ * coerced to `1d` or the local-daily loader returns empty and the whole
+ * universe/batch load fails. Mixed pairs (e.g. BTCUSDT+AAPL♦) also coerce
+ * because one daily-only leg forces the whole pair to daily resolution.
+ *
+ * Centralized here so Finder and Batch Backtest apply the same rule.
+ */
+export function resolveEffectiveIntervalForSynthetic(
+    symbol: string,
+    baseSymbol: string | null,
+    quoteSymbol: string | null,
+    interval: string,
+): string {
+    const involvesStockMarket =
+        isStockMarketSymbol(symbol)
+        || (baseSymbol !== null && isStockMarketSymbol(baseSymbol))
+        || (quoteSymbol !== null && isStockMarketSymbol(quoteSymbol));
+    return involvesStockMarket ? '1d' : interval;
+}
+
 export function deriveSyntheticSymbol(baseSymbol: string, quoteSymbol: string): string {
+    // When either leg carries the diamond marker (offline stock_market_data
+    // namespace), the suffix-stripping logic below would silently drop the
+    // shared marker and produce an ambiguous bare-ticker synthetic. Switch to
+    // an explicit `leg+leg` join so the result stays namespaced, e.g.
+    // NVDA♦ + AAPL♦ => NVDA♦+AAPL♦.
+    if (isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol)) {
+        return `${baseSymbol}+${quoteSymbol}`;
+    }
+
     const commonSuffixLen = longestCommonSuffix(baseSymbol, quoteSymbol);
     if (commonSuffixLen > 0) {
         const baseCore = baseSymbol.slice(0, baseSymbol.length - commonSuffixLen);

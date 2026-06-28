@@ -1,5 +1,6 @@
 import type { OHLCVData } from "../strategies";
 import { deriveSyntheticSymbol } from "../../scripts/lib/synthetic-pair";
+import { isStockMarketSymbol, stripStockMarketMarker } from "../local-daily-datasets";
 import type { SyntheticPairConnection } from "./portfolio-lab-types";
 
 export const PORTFOLIO_QUOTE_SUFFIXES = ["USDT", "USDC", "USD", "BTC", "ETH", "BNB"] as const;
@@ -35,15 +36,21 @@ export function parsePortfolioSyntheticPairSymbol(symbol: string): ParsedSynthet
         return null;
     }
 
-    const baseSymbol = resolveToBinanceSymbol(normalized.slice(0, plusIdx));
-    const quoteSymbol = resolveToBinanceSymbol(normalized.slice(plusIdx + 1));
+    const baseRaw = normalized.slice(0, plusIdx);
+    const quoteRaw = normalized.slice(plusIdx + 1);
+    // Diamond-marked legs are offline stock_market_data tickers and must
+    // bypass resolveToBinanceSymbol, which strips non-alphanumerics and
+    // appends `USDT` — both would corrupt the marker that routes the leg
+    // to the local-daily provider.
+    const baseSymbol = isStockMarketSymbol(baseRaw) ? baseRaw : resolveToBinanceSymbol(baseRaw);
+    const quoteSymbol = isStockMarketSymbol(quoteRaw) ? quoteRaw : resolveToBinanceSymbol(quoteRaw);
     if (!baseSymbol || !quoteSymbol || baseSymbol === quoteSymbol) {
         return null;
     }
 
     return {
-        baseAsset: stripKnownQuoteSuffix(baseSymbol),
-        quoteAsset: stripKnownQuoteSuffix(quoteSymbol),
+        baseAsset: isStockMarketSymbol(baseSymbol) ? stripStockMarketMarker(baseSymbol) : stripKnownQuoteSuffix(baseSymbol),
+        quoteAsset: isStockMarketSymbol(quoteSymbol) ? stripStockMarketMarker(quoteSymbol) : stripKnownQuoteSuffix(quoteSymbol),
         baseSymbol,
         quoteSymbol,
         syntheticSymbol: deriveSyntheticSymbol(baseSymbol, quoteSymbol),
