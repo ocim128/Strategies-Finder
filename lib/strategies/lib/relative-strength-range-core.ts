@@ -19,6 +19,10 @@ import {
     buildRateOfChange,
     buildRollingZScore,
 } from "./price-action-statistics-core";
+import {
+    normalizeIntegerParam,
+    normalizeNumberParam,
+} from "./range-conviction-core";
 
 export type NullableSeries = (number | null)[];
 
@@ -36,27 +40,7 @@ export type RelativeStrengthRangePrepared = {
     smaByPeriod: Map<number, NullableSeries>;
 };
 
-export function normalizeIntegerParam(
-    value: number | undefined,
-    fallback: number,
-    min: number,
-    max = Number.POSITIVE_INFINITY
-): number {
-    const raw = Number(value ?? fallback);
-    const finite = Number.isFinite(raw) ? raw : fallback;
-    return Math.max(min, Math.min(max, Math.round(finite)));
-}
-
-export function normalizeNumberParam(
-    value: number | undefined,
-    fallback: number,
-    min: number,
-    max = Number.POSITIVE_INFINITY
-): number {
-    const raw = Number(value ?? fallback);
-    const finite = Number.isFinite(raw) ? raw : fallback;
-    return Math.max(min, Math.min(max, finite));
-}
+export { normalizeIntegerParam, normalizeNumberParam };
 
 export function hasEnoughBars(data: OHLCVData[], requiredBars: number): boolean {
     return data.length >= Math.max(2, Math.round(requiredBars));

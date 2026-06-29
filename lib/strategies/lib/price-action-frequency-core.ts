@@ -8,6 +8,9 @@ const closeLocationSeriesCache = new WeakMap<OHLCVData[], number[]>();
 const closeAcceptanceSeriesCache = new WeakMap<OHLCVData[], number[]>();
 const initiativePressureCache = new WeakMap<OHLCVData[], Map<number, NullableSeries>>();
 const trailingHighLowCache = new WeakMap<OHLCVData[], Map<string, { highest: NullableSeries; lowest: NullableSeries }>>();
+const clampedVolumeCache = new WeakMap<OHLCVData[], number[]>();
+const rollingAverageCache = new WeakMap<number[], Map<number, NullableSeries>>();
+const barMetricSeriesCache = new WeakMap<OHLCVData[], Map<BarMetricType, number[]>>();
 
 export interface PriceActionBarMetrics {
 	range: number;
@@ -123,7 +126,15 @@ export function buildRollingAverage(
 	lookbackInput: number
 ): (number | null)[] {
 	const lookback = Math.max(1, Math.round(lookbackInput));
-	const result: (number | null)[] = new Array(values.length).fill(null);
+	let byLookback = rollingAverageCache.get(values);
+	if (!byLookback) {
+		byLookback = new Map<number, NullableSeries>();
+		rollingAverageCache.set(values, byLookback);
+	}
+	const cached = byLookback.get(lookback);
+	if (cached) return cached;
+
+	const result: NullableSeries = new Array(values.length).fill(null);
 	let sum = 0;
 
 	for (let i = 0; i < values.length; i++) {
@@ -136,6 +147,7 @@ export function buildRollingAverage(
 		}
 	}
 
+	byLookback.set(lookback, result);
 	return result;
 }
 
@@ -154,7 +166,12 @@ export function buildInitiativePressureSeries(
 
 	const result: NullableSeries = new Array(data.length).fill(null);
 	const closeAcceptance = buildCloseAcceptanceSeries(data);
-	const avgVolumes = buildRollingAverage(data.map((bar) => Math.max(0, bar.volume)), lookback);
+	let clampedVolumes = clampedVolumeCache.get(data);
+	if (!clampedVolumes) {
+		clampedVolumes = data.map((bar) => Math.max(0, bar.volume));
+		clampedVolumeCache.set(data, clampedVolumes);
+	}
+	const avgVolumes = buildRollingAverage(clampedVolumes, lookback);
 
 	for (let i = 0; i < data.length; i++) {
 		const avgVolume = avgVolumes[i];
@@ -226,6 +243,14 @@ export function buildTrailingHighLow(
 export type BarMetricType = 'gapPct' | 'closeReturn' | 'bodyDirection' | 'bodyPct' | 'wickImbalance' | 'bodyMidDelta' | 'closeMidpointDev' | 'trueRange';
 
 export function extractBarMetricSeries(data: OHLCVData[], metricType: BarMetricType): number[] {
+	let byMetric = barMetricSeriesCache.get(data);
+	if (!byMetric) {
+		byMetric = new Map<BarMetricType, number[]>();
+		barMetricSeriesCache.set(data, byMetric);
+	}
+	const cached = byMetric.get(metricType);
+	if (cached) return cached;
+
 	const result = new Array(data.length).fill(0);
 	for (let i = 0; i < data.length; i++) {
 		const bar = data[i];
@@ -288,42 +313,7 @@ export function extractBarMetricSeries(data: OHLCVData[], metricType: BarMetricT
 				break;
 		}
 	}
+	byMetric.set(metricType, result);
 	return result;
 }
-
-export function buildSweepReclaimSeries(
-	data: OHLCVData[],
-	lookbackInput: number
-): { bullish: (number | null)[]; bearish: (number | null)[] } {
-	const lookback = Math.max(2, Math.round(lookbackInput));
-	const len = data.length;
-	const bullish: (number | null)[] = new Array(len).fill(null);
-	const bearish: (number | null)[] = new Array(len).fill(null);
-	if (len < lookback + 1) return { bullish, bearish };
-
-	for (let i = lookback; i < len; i++) {
-		let lowestLow = Infinity;
-		let highestHigh = -Infinity;
-		for (let j = i - lookback; j < i; j++) {
-			if (data[j].low < lowestLow) lowestLow = data[j].low;
-			if (data[j].high > highestHigh) highestHigh = data[j].high;
-		}
-
-		const current = data[i];
-		const range = current.high - current.low;
-		if (range <= 0) continue;
-
-		// Bullish Sweep Reclaim: price dipped below lowestLow but closed above it
-		if (current.low < lowestLow && current.close > lowestLow) {
-			bullish[i] = (current.close - lowestLow) / range;
-		}
-
-		// Bearish Sweep Reclaim: price spiked above highestHigh but closed below it
-		if (current.high > highestHigh && current.close < highestHigh) {
-			bearish[i] = (highestHigh - current.close) / range;
-		}
-	}
-	return { bullish, bearish };
-}
-
 

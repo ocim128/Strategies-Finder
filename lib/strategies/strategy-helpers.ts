@@ -173,6 +173,11 @@ export function createSignalLoop(
 
 export type PivotExtremaMode = 'strict' | 'pine';
 
+type PivotFlagsResult = { pivotHighs: boolean[]; pivotLows: boolean[] };
+// Two-level cache: highs -> lows -> (key -> result). Both highs and lows must
+// match referentially because pivot detection depends on both arrays.
+const pivotFlagsCache = new WeakMap<number[], WeakMap<number[], Map<string, PivotFlagsResult>>>();
+
 export function buildPivotFlags(
     highs: number[],
     lows: number[],
@@ -180,11 +185,28 @@ export function buildPivotFlags(
     extremaMode: PivotExtremaMode = 'strict'
 ): { pivotHighs: boolean[]; pivotLows: boolean[] } {
     const length = highs.length;
+    const cacheKey = `${swingLength}|${extremaMode}|${length}`;
+
+    let byLows = pivotFlagsCache.get(highs);
+    if (!byLows) {
+        byLows = new WeakMap<number[], Map<string, PivotFlagsResult>>();
+        pivotFlagsCache.set(highs, byLows);
+    }
+    let byKey = byLows.get(lows);
+    if (!byKey) {
+        byKey = new Map<string, PivotFlagsResult>();
+        byLows.set(lows, byKey);
+    }
+    const cached = byKey.get(cacheKey);
+    if (cached) return cached;
+
     const pivotHighs = new Array(length).fill(false);
     const pivotLows = new Array(length).fill(false);
 
     if (length === 0 || swingLength <= 0) {
-        return { pivotHighs, pivotLows };
+        const result = { pivotHighs, pivotLows };
+        byKey.set(cacheKey, result);
+        return result;
     }
 
     for (let i = swingLength; i < length - swingLength; i++) {
@@ -217,5 +239,7 @@ export function buildPivotFlags(
         if (isLow) pivotLows[i] = true;
     }
 
-    return { pivotHighs, pivotLows };
+    const result = { pivotHighs, pivotLows };
+    byKey.set(cacheKey, result);
+    return result;
 }

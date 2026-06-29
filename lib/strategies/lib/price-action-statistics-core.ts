@@ -1,5 +1,5 @@
 ﻿import { OHLCVData } from "../../types/strategies";
-import { computePriceActionBarMetrics } from "./price-action-frequency-core";
+import { computePriceActionBarMetrics, PriceActionBarMetrics } from "./price-action-frequency-core";
 
 type NullableSeries = (number | null)[];
 
@@ -11,6 +11,7 @@ const rollingMinMaxCache = new WeakMap<number[], Map<string, { min: NullableSeri
 const rollingEntropyCache = new WeakMap<number[], Map<string, NullableSeries>>();
 const percentileRankCache = new WeakMap<number[], Map<number, NullableSeries>>();
 const efficiencyRatioCache = new WeakMap<OHLCVData[], Map<number, NullableSeries>>();
+const barMetricSeriesCache = new WeakMap<OHLCVData[], Map<BarMetricExtractor, number[]>>();
 
 function getCachedSeries<K>(
 	cache: WeakMap<number[], Map<K, NullableSeries>>,
@@ -633,7 +634,16 @@ export function extractBarMetricSeries(
 	data: OHLCVData[],
 	metric: BarMetricExtractor
 ): number[] {
+	let byMetric = barMetricSeriesCache.get(data);
+	if (!byMetric) {
+		byMetric = new Map<BarMetricExtractor, number[]>();
+		barMetricSeriesCache.set(data, byMetric);
+	}
+	const cached = byMetric.get(metric);
+	if (cached) return cached;
+
 	const result: number[] = new Array(data.length).fill(0);
+	let prevM: PriceActionBarMetrics | null = null;
 
 	for (let i = 0; i < data.length; i++) {
 		const m = computePriceActionBarMetrics(data[i]);
@@ -664,10 +674,9 @@ export function extractBarMetricSeries(
 				result[i] = m.range > 0 ? (m.lowerWick - m.upperWick) / m.range : 0;
 				break;
 			case "bodyMidDelta":
-				if (i === 0) {
+				if (i === 0 || prevM === null) {
 					result[i] = 0;
 				} else {
-					const prevM = computePriceActionBarMetrics(data[i - 1]);
 					const avgRange = (m.range + prevM.range) / 2;
 					result[i] = avgRange > 0 ? (m.bodyMid - prevM.bodyMid) / avgRange : 0;
 				}
@@ -706,8 +715,10 @@ export function extractBarMetricSeries(
 				result[i] = m.range > 0 ? (data[i].close - m.midpoint) / m.range : 0;
 				break;
 		}
+		prevM = m;
 	}
 
+	byMetric.set(metric, result);
 	return result;
 }
 
