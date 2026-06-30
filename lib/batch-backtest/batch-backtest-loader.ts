@@ -185,10 +185,17 @@ async function loadSyntheticPairForBatch(
 }
 
 /**
- * Fetch one synthetic source leg, deduped by `symbol|interval|bars`. Use
- * offline:true so rerunning Batch after a page reload reads already-synced
- * source legs from SQLite/IndexedDB without refreshing Binance on every run.
- * The offline contract still falls back to remote for a fully cold symbol.
+ * Fetch one synthetic source leg, deduped by `symbol|interval|bars`.
+ *
+ * Source-interval legs are fetched WITHOUT `offline: true`, matching
+ * Finder's `fetchSyntheticSourceSeries` (`lib/finder-manager.ts`). The
+ * source interval (e.g. 5m for a 1h target) is a derived interval the user
+ * may never have loaded on the chart; an offline-only read returns whatever
+ * stray bars the local cache holds and produces a degenerate short pair.
+ * Letting the remote Binance gap-fill run returns a full-length leg and the
+ * LRU cache above means each unique source symbol is fetched at most once
+ * per run. Stock-market legs are the exception: they only have `1d` bars in
+ * the local SQLite store and no remote source, so they stay offline.
  */
 function getSourceSeriesForBatch(
     sourceSymbol: string,
@@ -203,7 +210,11 @@ function getSourceSeriesForBatch(
         return cached;
     }
 
-    const promise = dataManager.fetchHistoricalData(sourceSymbol, sourceInterval, sourceBars, { signal, offline: true });
+    const markedLeg = isStockMarketSymbol(sourceSymbol);
+    const promise = dataManager.fetchHistoricalData(sourceSymbol, sourceInterval, sourceBars, {
+        signal,
+        ...(markedLeg ? { offline: true } : {}),
+    });
     legCache.set(legKey, promise);
     return promise;
 }
