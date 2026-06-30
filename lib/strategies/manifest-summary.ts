@@ -2805,4 +2805,16 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "ema_confirmation",
+        name: "EMA Confirmation",
+        description: "Confirms entries only while close trades above (long) or below (short) its EMA. Use as an entry confirmation strategy.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["emaPeriod"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];

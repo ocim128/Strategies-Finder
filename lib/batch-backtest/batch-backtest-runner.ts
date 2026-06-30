@@ -15,6 +15,7 @@
 
 import { executeBacktest, resolveExecutorBacktestSettings } from "../backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
+import { ensureConfirmationStrategiesLoaded } from "../confirmation-signal-filter";
 import type {
     BacktestResult,
     BacktestSettings,
@@ -150,6 +151,7 @@ export async function runBatchBacktest(
         { ...(input.backtestSettings as Record<string, unknown>), interval: input.interval } as BacktestSettings,
         input.interval,
     );
+    await ensureConfirmationStrategiesLoaded(preResolvedSettings);
     const preResolvedCapital = resolveCapitalSettingsFromRaw(input.capitalSettings as unknown as Record<string, unknown>);
     const minUsableBars = Math.max(1, Math.floor(input.minUsableBars ?? BATCH_MIN_USABLE_BARS));
 

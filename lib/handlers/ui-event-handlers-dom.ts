@@ -55,6 +55,8 @@ const UI_EVENT_HANDLER_DOM_IDS = {
     confirmationWidthExpansionVaLookback: "confirmationWidthExpansionVaLookback",
     confirmationWidthExpansionWidthThreshold: "confirmationWidthExpansionWidthThreshold",
     confirmationWidthExpansionZThreshold: "confirmationWidthExpansionZThreshold",
+    confirmationEmaTrend: "confirmationEmaTrend",
+    confirmationEmaPeriod: "confirmationEmaPeriod",
     strategyTimeframeToggle: "strategyTimeframeToggle",
     strategyTimeframeMinutes: "strategyTimeframeMinutes",
     fixedTradeToggle: "fixedTradeToggle",
@@ -135,6 +137,8 @@ type UiEventTypedControls = {
     confirmationWidthExpansionVaLookback: HTMLInputElement;
     confirmationWidthExpansionWidthThreshold: HTMLInputElement;
     confirmationWidthExpansionZThreshold: HTMLInputElement;
+    confirmationEmaTrend: HTMLInputElement;
+    confirmationEmaPeriod: HTMLInputElement;
     strategyTimeframeToggle: HTMLInputElement;
     strategyTimeframeMinutes: HTMLInputElement;
     fixedTradeToggle: HTMLInputElement;

@@ -37,6 +37,13 @@ const CONFIRMATION_STRATEGY_CHECKBOXES = [
             { inputKey: "confirmationWidthExpansionZThreshold", paramKey: "z_threshold", defaultValue: 0, minValue: 0 },
         ],
     },
+    {
+        checkboxKey: "confirmationEmaTrend",
+        strategyKey: "ema_confirmation",
+        params: [
+            { inputKey: "confirmationEmaPeriod", paramKey: "emaPeriod", defaultValue: 50, minValue: 2 },
+        ],
+    },
 ] as const;
 
 function setDisabledState(

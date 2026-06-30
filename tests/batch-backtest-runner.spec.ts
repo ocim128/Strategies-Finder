@@ -130,6 +130,37 @@ describe("runBatchBacktest", () => {
         expect(statuses.get("MISSING")).to.equal("load_failed");
     });
 
+    it("preloads confirmation strategies before replaying the batch", async () => {
+        const output = await runBatchBacktest(
+            {
+                interval: "5m",
+                strategyKey: "batch_test",
+                strategy: testStrategy,
+                strategyParams: { threshold: 10 },
+                backtestSettings: {
+                    ...settings,
+                    confirmationStrategies: ["ema_confirmation"],
+                    confirmationStrategyParams: { ema_confirmation: { emaPeriod: 5 } },
+                },
+                capitalSettings,
+                symbols: ["UP"],
+                loadDataset: () =>
+                    Promise.resolve(makeCandles(Array.from({ length: 30 }, (_, i) => 100 + i))),
+                minUsableBars: 1,
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                isCancelled: () => false,
+            },
+        );
+
+        const result = output.results[0]!;
+        expect(output.failedSymbols).to.deep.equal([]);
+        expect(result.status).to.equal("profitable");
+        expect(result.result!.totalTrades).to.be.greaterThan(0);
+    });
+
     it("stops the loop and fills remaining slots on cancel", async () => {
         let calls = 0;
         const datasets = new Map<string, OHLCVData[]>([

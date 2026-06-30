@@ -215,6 +215,22 @@
                         </div>
                     </div>
                 </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">EMA Trend</label>
+                            <label class="section-toggle section-toggle--sm" aria-label="Toggle EMA trend confirmation">
+                                <input type="checkbox" id="confirmationEmaTrend">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">Requires the confirmation strategy to agree on the same buy or sell bar. On a synthetic pair, agreeing long means the base leg is above its EMA vs the side leg.</div>
+                        <div class="param-group">
+                            <label class="param-label">EMA Period</label>
+                            <input type="number" class="param-input" id="confirmationEmaPeriod" value="50" min="2" step="1">
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

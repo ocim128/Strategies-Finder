@@ -237,4 +237,5 @@ export const builtInStrategyKeys: readonly string[] = [
     "volatility_compression_regime_shift",
     "wick_rejection_reversion",
     "close_acceptance_streak_efficiency",
+    "ema_confirmation",
 ];

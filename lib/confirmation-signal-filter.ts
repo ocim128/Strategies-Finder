@@ -12,6 +12,11 @@ type ConfirmationSignalExecutor = (
     params: StrategyParams
 ) => Signal[];
 
+type ConfirmationSignalIndex = {
+    byBarIndex: Map<number, Signal[]>;
+    byTime: Map<number, Signal[]>;
+};
+
 const defaultConfirmationSignalCache = new WeakMap<OHLCVData[], Map<string, Signal[]>>();
 
 function resolveConfirmationMode(settings: BacktestSettings): ConfirmationMode {
@@ -32,43 +37,91 @@ function resolveConfirmationWindowBars(settings: BacktestSettings): number {
     return Math.max(0, Math.round(parsed));
 }
 
-function buildSignalIndexByTime(signals: Signal[]): Map<number, Signal[]> {
-    const index = new Map<number, Signal[]>();
-    for (const signal of signals) {
-        const seconds = parseTimeToUnixSeconds(signal.time);
-        if (seconds === null) continue;
-        const existing = index.get(seconds);
-        if (existing) {
-            existing.push(signal);
-        } else {
-            index.set(seconds, [signal]);
+function addSignalToIndex(index: Map<number, Signal[]>, key: number, signal: Signal): void {
+    const existing = index.get(key);
+    if (existing) {
+        existing.push(signal);
+    } else {
+        index.set(key, [signal]);
+    }
+}
+
+function buildDataIndexByTime(data: OHLCVData[]): Map<number, number> {
+    const index = new Map<number, number>();
+    for (let i = 0; i < data.length; i++) {
+        const seconds = parseTimeToUnixSeconds(data[i].time);
+        if (seconds !== null) {
+            index.set(seconds, i);
         }
     }
     return index;
 }
 
+function resolveSignalBarIndex(signal: Signal, dataIndexByTime: Map<number, number>): number | null {
+    if (Number.isFinite(signal.barIndex as number)) {
+        return Math.trunc(signal.barIndex as number);
+    }
+
+    const seconds = parseTimeToUnixSeconds(signal.time);
+    return seconds === null ? null : dataIndexByTime.get(seconds) ?? null;
+}
+
+function buildSignalIndex(signals: Signal[], dataIndexByTime: Map<number, number>): ConfirmationSignalIndex {
+    const byBarIndex = new Map<number, Signal[]>();
+    const index = new Map<number, Signal[]>();
+    for (const signal of signals) {
+        const barIndex = resolveSignalBarIndex(signal, dataIndexByTime);
+        if (barIndex !== null) {
+            addSignalToIndex(byBarIndex, barIndex, signal);
+        }
+
+        const seconds = parseTimeToUnixSeconds(signal.time);
+        if (seconds === null) continue;
+        addSignalToIndex(index, seconds, signal);
+    }
+    return { byBarIndex, byTime: index };
+}
+
 function hasConfirmationMatch(
     baseSignal: Signal,
-    confirmationByTime: Map<number, Signal[]>,
+    confirmationIndex: ConfirmationSignalIndex,
+    dataIndexByTime: Map<number, number>,
     mode: ConfirmationMode,
     windowBars: number
 ): boolean {
-    const baseTime = parseTimeToUnixSeconds(baseSignal.time);
-    if (baseTime === null) return false;
-
-    const startTime = baseTime - windowBars;
-    const endTime = baseTime + windowBars;
     let hasOpposite = false;
     let hasSame = false;
 
-    for (let time = startTime; time <= endTime; time++) {
-        const matches = confirmationByTime.get(time);
-        if (!matches) continue;
-        for (const match of matches) {
-            if (match.type === baseSignal.type) {
-                hasSame = true;
-            } else {
-                hasOpposite = true;
+    const baseBarIndex = resolveSignalBarIndex(baseSignal, dataIndexByTime);
+    if (baseBarIndex !== null) {
+        const startIndex = baseBarIndex - windowBars;
+        const endIndex = baseBarIndex + windowBars;
+        for (let barIndex = startIndex; barIndex <= endIndex; barIndex++) {
+            const matches = confirmationIndex.byBarIndex.get(barIndex);
+            if (!matches) continue;
+            for (const match of matches) {
+                if (match.type === baseSignal.type) {
+                    hasSame = true;
+                } else {
+                    hasOpposite = true;
+                }
+            }
+        }
+    } else {
+        const baseTime = parseTimeToUnixSeconds(baseSignal.time);
+        if (baseTime === null) return false;
+
+        const startTime = baseTime - windowBars;
+        const endTime = baseTime + windowBars;
+        for (let time = startTime; time <= endTime; time++) {
+            const matches = confirmationIndex.byTime.get(time);
+            if (!matches) continue;
+            for (const match of matches) {
+                if (match.type === baseSignal.type) {
+                    hasSame = true;
+                } else {
+                    hasOpposite = true;
+                }
             }
         }
     }
@@ -87,6 +140,7 @@ function hasConfirmationMatch(
 }
 
 function mergeConfirmationSignals(
+    data: OHLCVData[],
     baseSignals: Signal[],
     confirmationSignals: Signal[],
     settings: BacktestSettings
@@ -97,9 +151,10 @@ function mergeConfirmationSignals(
     const windowBars = mode === "agree" || mode === "veto_opposite"
         ? 0
         : resolveConfirmationWindowBars(settings);
-    const confirmationByTime = buildSignalIndexByTime(confirmationSignals);
+    const dataIndexByTime = buildDataIndexByTime(data);
+    const confirmationIndex = buildSignalIndex(confirmationSignals, dataIndexByTime);
 
-    return baseSignals.filter((signal) => hasConfirmationMatch(signal, confirmationByTime, mode, windowBars));
+    return baseSignals.filter((signal) => hasConfirmationMatch(signal, confirmationIndex, dataIndexByTime, mode, windowBars));
 }
 
 export function readConfirmationStrategyKeys(value: unknown): string[] {
@@ -180,7 +235,7 @@ export function applyConfirmationStrategiesToSignals(args: {
             ? args.executeStrategy(key, strategy, params)
             : executeDefaultConfirmationStrategy(args.data, args.settings, key, strategy, params);
 
-        mergedSignals = mergeConfirmationSignals(mergedSignals, confirmationSignals, args.settings);
+        mergedSignals = mergeConfirmationSignals(args.data, mergedSignals, confirmationSignals, args.settings);
         if (mergedSignals.length === 0) break;
     }
 

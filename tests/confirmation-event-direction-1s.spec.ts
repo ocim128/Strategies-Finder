@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { OHLCVData, Signal, Time } from "../lib/types/strategies";
 import { applyConfirmationStrategiesToSignals } from "../lib/confirmation-signal-filter";
 import { registerLoadedBuiltInStrategy, unregisterLoadedBuiltInStrategy } from "../lib/strategies/built-in-catalog";
+import { ema_confirmation } from "../lib/strategies/lib/ema_confirmation";
 import { event_direction_1s } from "../lib/strategies/lib/event_direction_1s";
 
 const EVENT_START = 1_700_001_000;
@@ -20,6 +21,17 @@ function makeBars(count: number, basePrice: number, closeOffset: number): OHLCVD
         });
     }
     return bars;
+}
+
+function makeMinuteBars(count: number): OHLCVData[] {
+    return Array.from({ length: count }, (_, i) => ({
+        time: (EVENT_START + i * 60) as Time,
+        open: 100 + i,
+        high: 101 + i,
+        low: 99 + i,
+        close: 100 + i,
+        volume: 1000,
+    }));
 }
 
 describe("confirmation with event_direction_1s", () => {
@@ -131,6 +143,52 @@ describe("confirmation with event_direction_1s", () => {
                 paramLabels: {},
                 execute: () => [{ time: bars[4]!.time, type: "buy", price: bars[4]!.close, barIndex: 4 }],
             }),
+        });
+
+        expect(result.length).to.equal(1);
+    });
+
+    it("treats confirmation windows as bars on non-1s charts", () => {
+        const bars = makeMinuteBars(10);
+        const baseSignals: Signal[] = [
+            { time: bars[5]!.time, type: "buy", price: bars[5]!.close, barIndex: 5 },
+        ];
+
+        const result = applyConfirmationStrategiesToSignals({
+            data: bars,
+            baseSignals,
+            settings: {
+                confirmationStrategies: ["manual_confirm"],
+                confirmationMode: "confirm_within_window",
+                confirmationWindowBars: 1,
+                confirmationStrategyParams: {},
+            } as any,
+            resolveStrategy: () => ({
+                name: "Manual Confirm",
+                description: "test",
+                defaultParams: {},
+                paramLabels: {},
+                execute: () => [{ time: bars[4]!.time, type: "buy", price: bars[4]!.close, barIndex: 4 }],
+            }),
+        });
+
+        expect(result.length).to.equal(1);
+    });
+
+    it("keeps EMA trend confirmation aligned by signal bar index", () => {
+        const bars = makeMinuteBars(20);
+        const baseSignals: Signal[] = [
+            { time: (EVENT_START - 1) as Time, type: "buy", price: bars[10]!.close, barIndex: 10 },
+        ];
+
+        const result = applyConfirmationStrategiesToSignals({
+            data: bars,
+            baseSignals,
+            settings: {
+                confirmationStrategies: ["ema_confirmation"],
+                confirmationStrategyParams: { ema_confirmation: { emaPeriod: 5 } },
+            } as any,
+            resolveStrategy: () => ema_confirmation,
         });
 
         expect(result.length).to.equal(1);

@@ -245,4 +245,5 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     builtInStrategyMetaByKey["volatility_compression_regime_shift"],
     builtInStrategyMetaByKey["wick_rejection_reversion"],
     builtInStrategyMetaByKey["close_acceptance_streak_efficiency"],
+    builtInStrategyMetaByKey["ema_confirmation"],
 ];

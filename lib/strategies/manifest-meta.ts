@@ -4837,4 +4837,22 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "ema_confirmation",
+        name: "EMA Confirmation",
+        description: "Confirms entries only while close trades above (long) or below (short) its EMA. Use as an entry confirmation strategy.",
+        defaultParams: {
+        emaPeriod: 50,
+    } as Record<string, number>,
+        paramLabels: {
+        emaPeriod: "EMA Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["emaPeriod"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];

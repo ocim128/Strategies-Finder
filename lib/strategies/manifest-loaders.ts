@@ -239,4 +239,5 @@ export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {
     "volatility_compression_regime_shift": () => import("./lib/volatility_compression_regime_shift").then(m => m.volatility_compression_regime_shift),
     "wick_rejection_reversion": () => import("./lib/wick_rejection_reversion").then(m => m.wick_rejection_reversion),
     "close_acceptance_streak_efficiency": () => import("./lib/close_acceptance_streak_efficiency").then(m => m.close_acceptance_streak_efficiency),
+    "ema_confirmation": () => import("./lib/ema_confirmation").then(m => m.ema_confirmation),
 };
