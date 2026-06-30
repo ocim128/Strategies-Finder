@@ -342,6 +342,7 @@ function registerLazyFeatures(): void {
     registerLazyFeature("alerts", async () => (await import("./handlers/alert-handlers")).initAlertHandlers());
     registerLazyFeature("hunt", async () => (await import("./hunt/hunt-service")).huntService.init());
     registerLazyFeature("batch-backtest", async () => (await import("./batch-backtest/batch-backtest-service")).batchBacktestService.init());
+    registerLazyFeature("rank-pairs", async () => (await import("./rank-pairs/rank-pairs-service")).rankPairsService.init());
     registerLazyFeature("data-mining", async () => (await import("./data-mining-manager")).dataMiningManager.init());
     registerLazyFeature("walk-forward", async () => (await import("./walk-forward-service")).walkForwardService.initUI());
     registerLazyFeature("portfolio-lab", async () => (await import("./portfolio-lab-service")).portfolioLabService.init());

@@ -1,0 +1,74 @@
+<!-- Rank Pairs Tab -->
+<div id="rankpairsTab">
+    <div class="section-title">Rank Pairs</div>
+    <div class="param-hint">
+        Score each synthetic pair (<code>BASE+QUOTE</code>) by how much the base
+        out- or under-performed the side over the fetched window. The ratio
+        series <em>is</em> the relative-strength measurement: a rising ratio means
+        the base leg is strong vs the side leg. Use it to spot structurally weak
+        bases before backtesting.
+    </div>
+    <div class="param-hint" style="margin-top: 4px; color: var(--color-warning, #b8860b);">
+        ⚠ Research only &mdash; full-window return has lookahead bias. Do not treat
+        rankings as a deployable filter without re-testing on a rolling window.
+    </div>
+
+    <div class="section-body">
+        <div class="finder-strategy-actions" role="group" aria-label="Rank pairs helpers">
+            <button class="btn btn-secondary btn-compact" id="rankPairsUseCurrent" type="button">Use Current</button>
+            <button class="btn btn-secondary btn-compact" id="rankPairsClear" type="button">Clear</button>
+        </div>
+        <div class="param-group" style="margin-top: 12px;">
+            <label class="param-label" for="rankPairsSymbols">Pairs</label>
+            <textarea class="param-input" id="rankPairsSymbols" rows="8"
+                placeholder="ETH+CRV&#10;ETH+DOGE&#10;ZEC+APT&#10;FET+BNB"></textarea>
+        </div>
+        <div class="param-hint">One pair per line, or comma / whitespace separated. Synthetic pairs use <code>BASE+QUOTE</code>.</div>
+    </div>
+
+    <div class="finder-actions">
+        <button class="btn btn-primary run-btn" id="rankPairsRunBtn" type="button">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8 5v14l11-7z" />
+            </svg>
+            Rank Pairs
+        </button>
+        <button class="btn btn-danger stop-btn" id="rankPairsStopBtn" style="display:none" type="button">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6 6h12v12H6z" />
+            </svg>
+            Stop
+        </button>
+        <button class="btn btn-secondary btn-compact" id="rankPairsCopyBtn" type="button"
+            title="Copy all rows as pipe-delimited text">
+            Copy Results
+        </button>
+    </div>
+
+    <div class="progress-container" id="rankPairsProgress">
+        <div class="progress-bar">
+            <div class="progress-fill" id="rankPairsProgressFill"></div>
+        </div>
+        <div class="progress-text" id="rankPairsProgressText">Ready</div>
+    </div>
+
+    <div class="finder-status" id="rankPairsStatus">Idle</div>
+    <div class="finder-universe-summary" id="rankPairsSummary">0 pairs</div>
+
+    <div class="finder-results">
+        <div class="finder-list" id="rankPairsResults">
+        </div>
+        <div class="empty-state empty-state-illustrated" id="rankPairsEmpty">
+            <div class="empty-state-icon">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path
+                        d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z" />
+                </svg>
+            </div>
+            <h3 class="empty-state-title">Rank Pairs by Relative Strength</h3>
+            <p class="empty-state-description">
+                Paste a list of synthetic pairs above, then click <strong>Rank Pairs</strong>.
+            </p>
+        </div>
+    </div>
+</div>
