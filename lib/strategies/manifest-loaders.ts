@@ -238,4 +238,5 @@ export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {
     "return_kurtosis_regime_reversion": () => import("./lib/return_kurtosis_regime_reversion").then(m => m.return_kurtosis_regime_reversion),
     "volatility_compression_regime_shift": () => import("./lib/volatility_compression_regime_shift").then(m => m.volatility_compression_regime_shift),
     "wick_rejection_reversion": () => import("./lib/wick_rejection_reversion").then(m => m.wick_rejection_reversion),
+    "close_acceptance_streak_efficiency": () => import("./lib/close_acceptance_streak_efficiency").then(m => m.close_acceptance_streak_efficiency),
 };

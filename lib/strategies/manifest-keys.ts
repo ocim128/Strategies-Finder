@@ -236,4 +236,5 @@ export const builtInStrategyKeys: readonly string[] = [
     "return_kurtosis_regime_reversion",
     "volatility_compression_regime_shift",
     "wick_rejection_reversion",
+    "close_acceptance_streak_efficiency",
 ];

@@ -2793,4 +2793,16 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "close_acceptance_streak_efficiency",
+        name: "Close Acceptance Streak Efficiency",
+        description: "Persistent directional close acceptance streaks validated by efficiency ratio signal sustained directional flow.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "streakMin", "efficiencyMin"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];

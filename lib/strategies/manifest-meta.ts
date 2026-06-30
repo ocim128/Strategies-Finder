@@ -4815,4 +4815,26 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "close_acceptance_streak_efficiency",
+        name: "Close Acceptance Streak Efficiency",
+        description: "Persistent directional close acceptance streaks validated by efficiency ratio signal sustained directional flow.",
+        defaultParams: {
+        lookback: 20,
+        streakMin: 3,
+        efficiencyMin: 0.4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback",
+        streakMin: "Streak Min",
+        efficiencyMin: "Min Efficiency",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "streakMin", "efficiencyMin"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];

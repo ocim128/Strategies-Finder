@@ -237,6 +237,7 @@ import { range_expansion_failure_fade } from "./lib/range_expansion_failure_fade
 import { return_kurtosis_regime_reversion } from "./lib/return_kurtosis_regime_reversion";
 import { volatility_compression_regime_shift } from "./lib/volatility_compression_regime_shift";
 import { wick_rejection_reversion } from "./lib/wick_rejection_reversion";
+import { close_acceptance_streak_efficiency } from "./lib/close_acceptance_streak_efficiency";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -479,6 +480,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "return_kurtosis_regime_reversion", strategy: return_kurtosis_regime_reversion },
     { key: "volatility_compression_regime_shift", strategy: volatility_compression_regime_shift },
     { key: "wick_rejection_reversion", strategy: wick_rejection_reversion },
+    { key: "close_acceptance_streak_efficiency", strategy: close_acceptance_streak_efficiency },
 ];
 
 export function createStrategiesRecordFromManifest(

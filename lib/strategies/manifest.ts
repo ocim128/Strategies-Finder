@@ -244,4 +244,5 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     builtInStrategyMetaByKey["return_kurtosis_regime_reversion"],
     builtInStrategyMetaByKey["volatility_compression_regime_shift"],
     builtInStrategyMetaByKey["wick_rejection_reversion"],
+    builtInStrategyMetaByKey["close_acceptance_streak_efficiency"],
 ];

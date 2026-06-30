@@ -1,5 +1,5 @@
 import { StrategyParams, type OHLCVData } from "./strategies/index";
-import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey, getStrategyKind, getStrategyKindTitle } from "../strategyRegistry";
+import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey, ensureStrategyKeysLoaded, getStrategyKind, getStrategyKindTitle } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtest-service";
 import { paramManager } from "./param-manager";
@@ -1720,7 +1720,7 @@ export class FinderManager {
 			this.setStatus('No strategies selected.');
 			return false;
 		}
-		const exitStrategyCandidates = this.resolveExitStrategyCandidates(options, selectedStrategies);
+		const exitStrategyCandidates = await this.resolveExitStrategyCandidates(options, selectedStrategies);
 		if (options.mode === "genetic" && finderSortRequiresTradeTimingQuality(options.sortPriority)) {
 			this.setStatus("Entry Score and Exit Score sorting are supported in grid and random modes only.");
 			return false;
@@ -1836,7 +1836,8 @@ export class FinderManager {
 		}
 
 		const strategyByKey = new Map(selectedStrategies.map((item) => [item.key, item.strategy]));
-		const exitStrategyByKey = new Map((this.resolveExitStrategyCandidates(options, selectedStrategies) ?? []).map((item) => [item.key, item.strategy]));
+		const exitCandidatesForOos = await this.resolveExitStrategyCandidates(options, selectedStrategies);
+		const exitStrategyByKey = new Map((exitCandidatesForOos ?? []).map((item) => [item.key, item.strategy]));
 		const minTrades = options.tradeFilterEnabled ? options.minTrades : 0;
 		const precomputed = precomputeIndicators(oosData, settings);
 		const rustSettings = sanitizeBacktestSettingsForRust(settings);
@@ -2158,7 +2159,7 @@ export class FinderManager {
 			this.setStatus('Add at least one symbol for Symbol Universe mode.');
 			return false;
 		}
-		const exitStrategyCandidates = this.resolveExitStrategyCandidates(options, selectedStrategies);
+		const exitStrategyCandidates = await this.resolveExitStrategyCandidates(options, selectedStrategies);
 
 		const allResults: FinderUniverseCandidate[] = [];
 		const failedSymbols = new Set<string>();
@@ -2412,10 +2413,10 @@ export class FinderManager {
 		return this.paramSpace.generateParamSets(defaultParams, options);
 	}
 
-	private resolveExitStrategyCandidates(
+	private async resolveExitStrategyCandidates(
 		options: FinderOptions,
 		selectedStrategies: FinderSelectedStrategy[]
-	): FinderSelectedStrategy[] | undefined {
+	): Promise<FinderSelectedStrategy[] | undefined> {
 		if (!options.exitStrategyOverrideEnabled) {
 			return undefined;
 		}
@@ -2423,7 +2424,20 @@ export class FinderManager {
 			options.exitStrategyOverrideEnabled = false;
 			return undefined;
 		}
-		return selectedStrategies;
+		// Exit-side sampling must draw from the FULL strategy library, not just the
+		// entry selection. Returning `selectedStrategies` here previously pinned the
+		// exit pool to whatever the user ticked as entries, so e.g. a 2-entry run
+		// could only ever sample between those same 2 libs on the exit side.
+		const library = getStrategyList();
+		await ensureStrategyKeysLoaded(library.map((entry) => entry.key));
+		const candidates: FinderSelectedStrategy[] = [];
+		for (const entry of library) {
+			const strategy = strategyRegistry.get(entry.key);
+			if (strategy) {
+				candidates.push({ key: entry.key, name: strategy.name, strategy });
+			}
+		}
+		return candidates.length > 0 ? candidates : undefined;
 	}
 
 	private setLatestResults(results: FinderLatestResults): void {
