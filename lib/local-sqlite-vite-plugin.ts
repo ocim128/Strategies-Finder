@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { IncomingMessage } from "node:http";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type StatementSync } from "node:sqlite";
 import type { Plugin } from "vite";
 import {
     fetchPolymarketHistoryWithFallback,
@@ -19,6 +19,22 @@ import {
 const SQLITE_DB_PATH = resolve(process.cwd(), 'price-data', 'market-data.sqlite');
 const POLYMARKET_CLOB_HISTORY_URL = 'https://clob.polymarket.com/prices-history';
 let sqliteDb: DatabaseSync | null = null;
+// Prepared statements are reused across requests. Keyed by the literal SQL
+// string, which is stable per query shape (dynamic `IN (?,?,?)` placeholder
+// counts produce distinct keys but still cache when the same count recurs).
+// `node:sqlite` parses/compiles SQL on every `prepare()` call; caching the
+// compiled statement removes that work from hot read/write paths.
+const preparedStatements = new Map<string, StatementSync>();
+
+function getPreparedStatement(sql: string): StatementSync {
+    const db = getSqliteDb();
+    let stmt = preparedStatements.get(sql);
+    if (!stmt) {
+        stmt = db.prepare(sql);
+        preparedStatements.set(sql, stmt);
+    }
+    return stmt;
+}
 
 type SqliteCandleRow = {
     time: number;
@@ -166,7 +182,6 @@ async function fetchPolymarketPricePointsForOutcome(
 }
 
 function loadStoredPolymarketPricePoints(
-    db: DatabaseSync,
     seriesId: string,
     eventStartTs: readonly number[],
 ): PolymarketPricePointDbRow[] {
@@ -175,7 +190,7 @@ function loadStoredPolymarketPricePoints(
     }
 
     const placeholders = eventStartTs.map(() => '?').join(',');
-    return db.prepare(`
+    return getPreparedStatement(`
         SELECT series_id, event_start_ts, event_end_ts, market_slug,
                yes_token_id, no_token_id, ts, yes_price, no_price, updated_at
         FROM polymarket_price_points
@@ -193,7 +208,7 @@ function storePolymarketPricePointsInDb(
     }
 
     const nowSec = Math.floor(Date.now() / 1000);
-    const upsert = db.prepare(`
+    const upsert = getPreparedStatement(`
         INSERT INTO polymarket_price_points (
             series_id, event_start_ts, event_end_ts, market_slug,
             yes_token_id, no_token_id, ts, yes_price, no_price, updated_at
@@ -256,7 +271,7 @@ async function ensurePolymarketPricePointsInDb(args: {
         return { rows: [], upserted: 0, fetchedEvents: 0, failedEvents: 0, missingTokenEvents: 0 };
     }
 
-    const existingRows = loadStoredPolymarketPricePoints(args.db, args.seriesId, eventStartTs);
+    const existingRows = loadStoredPolymarketPricePoints(args.seriesId, eventStartTs);
     const coverageByEvent = new Map<number, { timestamps: Set<number>; latestTs: number }>();
     for (const row of existingRows) {
         let coverage = coverageByEvent.get(row.event_start_ts);
@@ -312,7 +327,7 @@ async function ensurePolymarketPricePointsInDb(args: {
 
     const upserted = storePolymarketPricePointsInDb(args.db, newRows);
     return {
-        rows: loadStoredPolymarketPricePoints(args.db, args.seriesId, eventStartTs),
+        rows: loadStoredPolymarketPricePoints(args.seriesId, eventStartTs),
         upserted,
         fetchedEvents: uncoveredOutcomes.length,
         failedEvents,
@@ -442,6 +457,8 @@ function getSqliteDb(): DatabaseSync {
 }
 
 function closeSqliteDb(): void {
+    // `db.close()` releases all prepared statements held by the connection.
+    preparedStatements.clear();
     sqliteDb?.close();
     sqliteDb = null;
 }
@@ -472,13 +489,13 @@ export function localSqlitePlugin(): Plugin {
 
             try {
                 if (method === 'GET' && path === '/status') {
-                    const db = getSqliteDb();
+                    getSqliteDb();
                     const payload: { ok: true; dbPath: string; totalCandles?: number } = {
                         ok: true,
                         dbPath: SQLITE_DB_PATH,
                     };
                     if (requestUrl.searchParams.get('includeCount') === '1') {
-                        const total = db.prepare('SELECT COUNT(*) AS count FROM candles').get() as { count?: number };
+                        const total = getPreparedStatement('SELECT COUNT(*) AS count FROM candles').get() as { count?: number };
                         payload.totalCandles = Number(total.count) || 0;
                     }
                     sendJson(res, 200, payload);
@@ -494,8 +511,7 @@ export function localSqlitePlugin(): Plugin {
                         return;
                     }
 
-                    const db = getSqliteDb();
-                    const rows = db.prepare(`
+                    const rows = getPreparedStatement(`
                         SELECT time, open, high, low, close, volume
                         FROM candles
                         WHERE symbol = ? AND interval = ?
@@ -605,7 +621,7 @@ export function localSqlitePlugin(): Plugin {
 
                     const db = getSqliteDb();
                     const nowSec = Math.floor(Date.now() / 1000);
-                    const upsert = db.prepare(`
+                    const upsert = getPreparedStatement(`
                         INSERT INTO candles (
                             symbol, interval, time, open, high, low, close, volume, provider, source, updated_at
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -643,7 +659,7 @@ export function localSqlitePlugin(): Plugin {
                         throw error;
                     }
 
-                    const summary = db.prepare(`
+                    const summary = getPreparedStatement(`
                         SELECT
                             COUNT(*) AS count,
                             MIN(time) AS firstTime,
@@ -652,7 +668,7 @@ export function localSqlitePlugin(): Plugin {
                         WHERE symbol = ? AND interval = ?
                     `).get(symbol, interval) as { count?: number; firstTime?: number; lastTime?: number };
 
-                    db.prepare(`
+                    getPreparedStatement(`
                         INSERT INTO series_meta (symbol, interval, provider, bars_count, first_time, last_time, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(symbol, interval) DO UPDATE SET
@@ -714,7 +730,6 @@ export function localSqlitePlugin(): Plugin {
                         return;
                     }
 
-                    const db = getSqliteDb();
                     const conditions: string[] = [];
                     const bindings: (string | number)[] = [];
 
@@ -730,7 +745,7 @@ export function localSqlitePlugin(): Plugin {
                     const queryLimit = limit + 1;
                     bindings.push(queryLimit);
 
-                    const queryRows = db.prepare(`
+                    const queryRows = getPreparedStatement(`
                         SELECT series_id, event_slug, market_slug, interval,
                                event_start_ts, event_end_ts, yes_token_id, no_token_id,
                                yes_open_price, yes_entry_minute_1_price, yes_entry_minute_2_price,
@@ -768,7 +783,7 @@ export function localSqlitePlugin(): Plugin {
                     const db = getSqliteDb();
                     const nowSec = Math.floor(Date.now() / 1000);
 
-                    const upsert = db.prepare(`
+                    const upsert = getPreparedStatement(`
                         INSERT INTO polymarket_outcomes (
                             series_id, event_slug, market_slug, interval,
                             event_start_ts, event_end_ts, yes_token_id, no_token_id,
@@ -911,7 +926,6 @@ export function localSqlitePlugin(): Plugin {
                         return;
                     }
 
-                    const db = getSqliteDb();
                     const conditions: string[] = ['series_id = ?'];
                     const bindings: (string | number)[] = [seriesId];
 
@@ -940,7 +954,7 @@ export function localSqlitePlugin(): Plugin {
                     const where = `WHERE ${conditions.join(' AND ')}`;
                     bindings.push(limit);
 
-                    const rows = db.prepare(`
+                    const rows = getPreparedStatement(`
                         SELECT series_id, event_start_ts, event_end_ts, market_slug,
                                yes_token_id, no_token_id, ts, yes_price, no_price, updated_at
                         FROM polymarket_price_points
@@ -964,7 +978,7 @@ export function localSqlitePlugin(): Plugin {
                     const db = getSqliteDb();
                     const nowSec = Math.floor(Date.now() / 1000);
 
-                    const upsert = db.prepare(`
+                    const upsert = getPreparedStatement(`
                         INSERT INTO polymarket_price_points (
                             series_id, event_start_ts, event_end_ts, market_slug,
                             yes_token_id, no_token_id, ts, yes_price, no_price, updated_at
@@ -1059,7 +1073,7 @@ export function localSqlitePlugin(): Plugin {
 
                     db.exec('BEGIN');
                     try {
-                        db.prepare(`
+                        getPreparedStatement(`
                             INSERT INTO asset_leadership_runs (run_id, created_at, interval, strategy_preset, strategy_count, universe_symbol_count, top_n, candidates_json)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                             ON CONFLICT(run_id) DO UPDATE SET
@@ -1072,7 +1086,7 @@ export function localSqlitePlugin(): Plugin {
                                 candidates_json = excluded.candidates_json
                         `).run(runId, createdAt, interval, strategyPreset, strategyCount, universeSymbolCount, topN, JSON.stringify(candidates));
 
-                        const obsUpsert = db.prepare(`
+                        const obsUpsert = getPreparedStatement(`
                             INSERT INTO asset_leadership_observations (
                                 run_id, run_created_at, interval, asset_a, asset_b, symbol, status,
                                 strategy_key, strategy_name, candidate_rank, profitable, top_decile,
@@ -1121,8 +1135,7 @@ export function localSqlitePlugin(): Plugin {
 
                 if (method === 'GET' && path === '/load-asset-leadership') {
                     const limit = Math.max(1, Math.min(200, Math.floor(Number(requestUrl.searchParams.get('limit')) || 50)));
-                    const db = getSqliteDb();
-                    const runRows = db.prepare(`
+                    const runRows = getPreparedStatement(`
                         SELECT run_id, created_at, interval, strategy_preset, strategy_count, universe_symbol_count, top_n, candidates_json
                         FROM asset_leadership_runs
                         ORDER BY created_at DESC
