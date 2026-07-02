@@ -44,6 +44,7 @@ let dbPromise: Promise<IDBDatabase | null> | null = null;
 // sample many symbols accumulate entries forever; eviction also bounds the
 // window during which an operator-shipped CSV is wrongly remembered as missing.
 const MAX_MISSING_ENTRIES = 500;
+const MAX_LOCAL_DAILY_CSV_ENTRIES = 64;
 const missingSeedFiles = new Set<string>();
 const missingLocalDailyCsvFiles = new Set<string>();
 const localDailyCsvCache = new Map<string, OHLCVData[]>();
@@ -60,6 +61,25 @@ function rememberMissing(set: Set<string>, key: string): void {
 
 function toCacheKey(symbol: string, interval: string): string {
     return `${symbol.trim().toUpperCase()}::${interval.trim().toLowerCase()}`;
+}
+
+function getLocalDailyCsvCache(cacheKey: string): OHLCVData[] | undefined {
+    const candles = localDailyCsvCache.get(cacheKey);
+    if (candles) {
+        localDailyCsvCache.delete(cacheKey);
+        localDailyCsvCache.set(cacheKey, candles);
+    }
+    return candles;
+}
+
+function rememberLocalDailyCsv(cacheKey: string, candles: OHLCVData[]): void {
+    if (localDailyCsvCache.has(cacheKey)) {
+        localDailyCsvCache.delete(cacheKey);
+    } else if (localDailyCsvCache.size >= MAX_LOCAL_DAILY_CSV_ENTRIES) {
+        const oldest = localDailyCsvCache.keys().next().value;
+        if (oldest !== undefined) localDailyCsvCache.delete(oldest);
+    }
+    localDailyCsvCache.set(cacheKey, candles);
 }
 
 function getIndexedDbFactory(): IDBFactory | null {
@@ -357,8 +377,9 @@ async function loadLocalDailyDatasetCandles(
 
     for (const candidate of candidates) {
         const cacheKey = `${dataset.key}:${candidate}`;
-        if (localDailyCsvCache.has(cacheKey)) {
-            return localDailyCsvCache.get(cacheKey)!;
+        const cachedCandles = getLocalDailyCsvCache(cacheKey);
+        if (cachedCandles) {
+            return cachedCandles;
         }
         if (missingLocalDailyCsvFiles.has(cacheKey)) {
             continue;
@@ -386,7 +407,7 @@ async function loadLocalDailyDatasetCandles(
                 continue;
             }
 
-            localDailyCsvCache.set(cacheKey, candles);
+            rememberLocalDailyCsv(cacheKey, candles);
             return candles;
         } catch (error) {
             if (signal?.aborted) return null;

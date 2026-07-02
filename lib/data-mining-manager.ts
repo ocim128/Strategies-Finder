@@ -457,7 +457,8 @@ export class DataMiningManager {
                 totalBars,
             });
 
-            const response = await fetch('/api/sqlite/store-ohlcv', {
+            const includeSummary = chunkIndex === totalChunks - 1;
+            const response = await fetch(includeSummary ? '/api/sqlite/store-ohlcv?summary=1' : '/api/sqlite/store-ohlcv', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

@@ -1,6 +1,13 @@
 import type { OHLCVData } from "../types/index";
 
-type CacheEntry = {
+export type CacheEntryMetadata = {
+    sanitizedFor?: string;
+    contiguous?: boolean;
+    contiguousFor?: string;
+    lastBarTime?: number;
+};
+
+export type CacheEntry = CacheEntryMetadata & {
     candles: OHLCVData[];
     source: string;
 };
@@ -30,12 +37,12 @@ export class DataCache {
         return entry;
     }
 
-    set(cacheKey: string, candles: OHLCVData[], source: string): void {
+    set(cacheKey: string, candles: OHLCVData[], source: string, metadata: CacheEntryMetadata = {}): void {
         // Ensure insertion order puts this key last (most-recently-used).
         if (this.lruCache.has(cacheKey)) {
             this.lruCache.delete(cacheKey);
         }
-        this.lruCache.set(cacheKey, { candles, source });
+        this.lruCache.set(cacheKey, { candles, source, ...metadata });
 
         if (this.lruCache.size > this.MAX_CACHE_ENTRIES) {
             // Oldest key is the first in iteration order.
@@ -59,10 +66,14 @@ export class DataCache {
         this.cacheSyncAtByKey.clear();
     }
 
-    updateCandles(cacheKey: string, candles: OHLCVData[]): void {
+    updateCandles(cacheKey: string, candles: OHLCVData[], metadata: CacheEntryMetadata = {}): void {
         const entry = this.lruCache.get(cacheKey);
         if (entry) {
             entry.candles = candles;
+            entry.sanitizedFor = metadata.sanitizedFor;
+            entry.contiguous = metadata.contiguous;
+            entry.contiguousFor = metadata.contiguousFor;
+            entry.lastBarTime = metadata.lastBarTime;
         }
     }
 

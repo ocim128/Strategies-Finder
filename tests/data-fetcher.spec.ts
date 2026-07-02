@@ -266,6 +266,7 @@ describe("DataFetcher chart lookback", () => {
 
         const data = await fetcher.fetchData("ETHUSDT", "1h");
         assert.deepEqual(data.map((candle) => candle.time), [0, 3_600, 7_200]);
+        assert.equal(cache.get("ETHUSDT::1h")?.sanitizedFor, "binance|1h");
     });
 
     it("backfills Binance historical limit requests before a short cached window", async () => {

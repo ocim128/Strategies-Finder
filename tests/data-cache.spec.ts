@@ -43,4 +43,26 @@ describe("DataCache metadata lifecycle", () => {
         assert.equal(cache.get("SYMBOL0:1m"), undefined);
         assert.equal(cache.syncAtByKey.has("SYMBOL0:1m"), false);
     });
+
+    it("stores cache-entry metadata and clears it on unguarded updates", () => {
+        const cache = new DataCache();
+
+        cache.set("BTCUSDT:1m", [candle(1)], "test", {
+            sanitizedFor: "binance|1m",
+            contiguous: true,
+            contiguousFor: "binance|1m",
+            lastBarTime: 60,
+        });
+
+        assert.equal(cache.get("BTCUSDT:1m")?.sanitizedFor, "binance|1m");
+        assert.equal(cache.get("BTCUSDT:1m")?.contiguous, true);
+
+        cache.updateCandles("BTCUSDT:1m", [candle(2)]);
+
+        const entry = cache.get("BTCUSDT:1m");
+        assert.equal(entry?.sanitizedFor, undefined);
+        assert.equal(entry?.contiguous, undefined);
+        assert.equal(entry?.contiguousFor, undefined);
+        assert.equal(entry?.lastBarTime, undefined);
+    });
 });

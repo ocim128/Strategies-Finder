@@ -121,8 +121,27 @@ describe("local sqlite api binary transport", () => {
 
         assert.equal(result?.ok, true);
         assert.ok(storeCall?.url.includes("symbol=ETHUSDT"));
+        assert.equal(new URL(storeCall!.url, "http://localhost").searchParams.get("summary"), null);
         assert.equal((storeCall?.init?.headers as Record<string, string>)?.["Content-Type"], "application/octet-stream");
         assert.ok(storeCall?.init?.body instanceof ArrayBuffer);
+    });
+
+    it("requests store summaries only when explicitly requested", async () => {
+        const calls: FetchCall[] = [];
+        installFetch(() => new Response(JSON.stringify({ ok: true, upserted: 2, totalBars: 10 }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+        }), calls);
+        const candles: OHLCVData[] = [
+            { time: 1_700_000_000 as OHLCVData["time"], open: 1, high: 2, low: 0.5, close: 1.5, volume: 10 },
+            { time: 1_700_000_060 as OHLCVData["time"], open: 2, high: 3, low: 1.5, close: 2.5, volume: 20 },
+        ];
+
+        await storeSqliteCandles("ethusdt", "1m", candles, "Binance", "test", { summary: true });
+        const storeCall = calls.find((call) => call.url.includes("/api/sqlite/store-ohlcv"));
+        const body = JSON.parse(String(storeCall?.init?.body ?? "{}")) as { summary?: boolean };
+
+        assert.equal(body.summary, true);
     });
 
     it("falls back to JSON uploads when binary store response is not JSON", async () => {

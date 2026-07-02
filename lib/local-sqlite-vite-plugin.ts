@@ -16,6 +16,7 @@ import {
     sendCaughtErrorJson,
     sendJson,
 } from "./vite-http-utils";
+import { decodeBinaryOhlcvRows, encodeBinaryOhlcvRows } from "./ohlcv-binary";
 const SQLITE_DB_PATH = resolve(process.cwd(), 'price-data', 'market-data.sqlite');
 const POLYMARKET_CLOB_HISTORY_URL = 'https://clob.polymarket.com/prices-history';
 let sqliteDb: DatabaseSync | null = null;
@@ -344,6 +345,9 @@ function getSqliteDb(): DatabaseSync {
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;
         PRAGMA busy_timeout = 5000;
+        PRAGMA temp_store = MEMORY;
+        PRAGMA cache_size = -65536;
+        PRAGMA mmap_size = 268435456;
         CREATE TABLE IF NOT EXISTS candles (
             symbol TEXT NOT NULL,
             interval TEXT NOT NULL,
@@ -521,25 +525,7 @@ export function localSqlitePlugin(): Plugin {
 
                     const accept = req.headers.accept || '';
                     if (accept.includes('application/octet-stream')) {
-                        const N = rows.length;
-                        const F = 6;
-                        const buffer = Buffer.alloc(16 + F * N * 8);
-                        
-                        buffer.writeUInt32LE(0x4F484C56, 0);
-                        buffer.writeUInt32LE(1, 4);
-                        buffer.writeUInt32LE(N, 8);
-                        buffer.writeUInt32LE(F, 12);
-                        
-                        for (let i = 0; i < N; i++) {
-                            const row = rows[N - 1 - i];
-                            buffer.writeDoubleLE(row.time, 16 + i * 8);
-                            buffer.writeDoubleLE(row.open, 16 + N * 8 + i * 8);
-                            buffer.writeDoubleLE(row.high, 16 + 2 * N * 8 + i * 8);
-                            buffer.writeDoubleLE(row.low, 16 + 3 * N * 8 + i * 8);
-                            buffer.writeDoubleLE(row.close, 16 + 4 * N * 8 + i * 8);
-                            buffer.writeDoubleLE(row.volume, 16 + 5 * N * 8 + i * 8);
-                        }
-                        
+                        const buffer = Buffer.from(encodeBinaryOhlcvRows(rows.reverse()));
                         sendBinary(res, 200, buffer);
                         return;
                     }
@@ -564,6 +550,7 @@ export function localSqlitePlugin(): Plugin {
                     let provider = 'unknown';
                     let source = 'manual';
                     let candles: SqliteCandleRow[] = [];
+                    let includeSummary = requestUrl.searchParams.get('summary') === '1';
 
                     if (isBinary) {
                         symbol = (requestUrl.searchParams.get('symbol') || '').trim().toUpperCase();
@@ -572,37 +559,20 @@ export function localSqlitePlugin(): Plugin {
                         source = requestUrl.searchParams.get('source') || 'manual';
 
                         const buffer = await readBodyBuffer(req as IncomingMessage);
-                        if (buffer.length >= 16) {
-                            const magic = buffer.readUInt32LE(0);
-                            const version = buffer.readUInt32LE(4);
-                            const N = buffer.readUInt32LE(8);
-                            const F = buffer.readUInt32LE(12);
-                            
-                            if (magic === 0x4F484C56 && version === 1 && F === 6 && buffer.length >= 16 + N * F * 8) {
-                                for (let i = 0; i < N; i++) {
-                                    candles.push({
-                                        time: buffer.readDoubleLE(16 + i * 8),
-                                        open: buffer.readDoubleLE(16 + N * 8 + i * 8),
-                                        high: buffer.readDoubleLE(16 + 2 * N * 8 + i * 8),
-                                        low: buffer.readDoubleLE(16 + 3 * N * 8 + i * 8),
-                                        close: buffer.readDoubleLE(16 + 4 * N * 8 + i * 8),
-                                        volume: buffer.readDoubleLE(16 + 5 * N * 8 + i * 8)
-                                    });
-                                }
-                            } else {
-                                sendJson(res, 400, { ok: false, error: 'Invalid binary payload' });
-                                return;
-                            }
-                        } else {
-                            sendJson(res, 400, { ok: false, error: 'Binary payload too small' });
+                        const decoded = decodeBinaryOhlcvRows(buffer);
+                        if (!decoded) {
+                            sendJson(res, 400, { ok: false, error: 'Invalid binary payload' });
                             return;
                         }
+                        // The binary wire format stores unix-second numeric time values.
+                        candles = decoded as unknown as SqliteCandleRow[];
                     } else {
                         const payload = await readJsonBody(req as IncomingMessage);
                         symbol = String(payload.symbol || '').trim().toUpperCase();
                         interval = String(payload.interval || '').trim().toLowerCase();
                         provider = String(payload.provider || 'unknown');
                         source = String(payload.source || 'manual');
+                        includeSummary = includeSummary || payload.summary === true;
                         const rawCandles = Array.isArray(payload.candles) ? payload.candles : [];
 
                         candles = rawCandles
@@ -659,44 +629,58 @@ export function localSqlitePlugin(): Plugin {
                         throw error;
                     }
 
-                    const summary = getPreparedStatement(`
-                        SELECT
-                            COUNT(*) AS count,
-                            MIN(time) AS firstTime,
-                            MAX(time) AS lastTime
-                        FROM candles
-                        WHERE symbol = ? AND interval = ?
-                    `).get(symbol, interval) as { count?: number; firstTime?: number; lastTime?: number };
-
-                    getPreparedStatement(`
-                        INSERT INTO series_meta (symbol, interval, provider, bars_count, first_time, last_time, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(symbol, interval) DO UPDATE SET
-                            provider = excluded.provider,
-                            bars_count = excluded.bars_count,
-                            first_time = excluded.first_time,
-                            last_time = excluded.last_time,
-                            updated_at = excluded.updated_at
-                    `).run(
-                        symbol,
-                        interval,
-                        provider,
-                        Number(summary.count) || 0,
-                        Number(summary.firstTime) || null,
-                        Number(summary.lastTime) || null,
-                        nowSec
-                    );
-
-                    sendJson(res, 200, {
+                    const payload: {
+                        ok: true;
+                        symbol: string;
+                        interval: string;
+                        upserted: number;
+                        totalBars?: number;
+                        firstTime?: number | null;
+                        lastTime?: number | null;
+                        dbPath: string;
+                    } = {
                         ok: true,
                         symbol,
                         interval,
                         upserted: candles.length,
-                        totalBars: Number(summary.count) || 0,
-                        firstTime: Number(summary.firstTime) || null,
-                        lastTime: Number(summary.lastTime) || null,
                         dbPath: SQLITE_DB_PATH,
-                    });
+                    };
+
+                    if (includeSummary) {
+                        const summary = getPreparedStatement(`
+                            SELECT
+                                COUNT(*) AS count,
+                                MIN(time) AS firstTime,
+                                MAX(time) AS lastTime
+                            FROM candles
+                            WHERE symbol = ? AND interval = ?
+                        `).get(symbol, interval) as { count?: number; firstTime?: number; lastTime?: number };
+
+                        getPreparedStatement(`
+                            INSERT INTO series_meta (symbol, interval, provider, bars_count, first_time, last_time, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(symbol, interval) DO UPDATE SET
+                                provider = excluded.provider,
+                                bars_count = excluded.bars_count,
+                                first_time = excluded.first_time,
+                                last_time = excluded.last_time,
+                                updated_at = excluded.updated_at
+                        `).run(
+                            symbol,
+                            interval,
+                            provider,
+                            Number(summary.count) || 0,
+                            Number(summary.firstTime) || null,
+                            Number(summary.lastTime) || null,
+                            nowSec
+                        );
+
+                        payload.totalBars = Number(summary.count) || 0;
+                        payload.firstTime = Number(summary.firstTime) || null;
+                        payload.lastTime = Number(summary.lastTime) || null;
+                    }
+
+                    sendJson(res, 200, payload);
                     return;
                 }
 

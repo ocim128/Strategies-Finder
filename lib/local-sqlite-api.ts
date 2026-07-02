@@ -18,8 +18,14 @@ type StoreSqliteResponse = {
     ok: boolean;
     upserted?: number;
     totalBars?: number;
+    firstTime?: number | null;
+    lastTime?: number | null;
     dbPath?: string;
     error?: string;
+};
+
+type StoreSqliteOptions = {
+    summary?: boolean;
 };
 
 function normalizeSymbol(symbol: string): string {
@@ -170,7 +176,8 @@ export async function storeSqliteCandles(
     interval: string,
     candles: OHLCVData[],
     provider = 'Binance',
-    source = 'manual'
+    source = 'manual',
+    options: StoreSqliteOptions = {}
 ): Promise<StoreSqliteResponse | null> {
     if (!candles.length) {
         return { ok: true, upserted: 0 };
@@ -195,6 +202,7 @@ export async function storeSqliteCandles(
                 interval: normalizeInterval(interval),
                 provider,
                 source,
+                summary: options.summary === true,
                 candles: normalizedRows,
             }),
         }, SQLITE_INGEST_TIMEOUT_MS);
@@ -213,6 +221,9 @@ export async function storeSqliteCandles(
             provider,
             source,
         });
+        if (options.summary === true) {
+            query.set('summary', '1');
+        }
         const response = await fetchLocalApi(`/api/sqlite/store-ohlcv?${query.toString()}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/octet-stream' },

@@ -48,13 +48,13 @@ import {
 } from "./constants";
 import {
     estimateBybitSeedOverlayBars as estimateBybitSeedOverlayBarsValue,
+    getIntervalAlignment,
     getStorageInterval as resolveStorageInterval,
-    isIntervalAlignedTime as checkIntervalAlignedTime,
     sliceCandlesToLookback,
     takeLastCandles as trimToLastCandles,
 } from "./data-interval-utils";
 import type { DataProviderRouter } from "./data-provider-router";
-import type { DataCache } from "./data-cache";
+import type { CacheEntryMetadata, DataCache } from "./data-cache";
 import type { DataPersistence, PersistenceContext } from "./data-persistence";
 
 export type DataLoadReporter = {
@@ -344,7 +344,7 @@ export class DataFetcher {
         const load = async () => {
             const data = await this.fetchDataWithLimitUncached(symbol, interval, limit, provider, options);
             if (data.length > 0) {
-                this.cache.set(cacheKey, data, 'network-historical');
+                this.cache.set(cacheKey, data, 'network-historical', this.getContiguousCacheMetadata(provider, storageInterval, data));
                 this.queuePersistCandles(symbol, interval, data, provider);
             }
             return data;
@@ -441,6 +441,7 @@ export class DataFetcher {
         const cleaned: OHLCVData[] = [];
         let dropped = 0;
         const maxRatio = DataFetcher.PRICE_JUMP_GUARD_RATIO;
+        const intervalAlignment = getIntervalAlignment(interval);
 
         for (const candle of sorted) {
             const open = Number(candle.open);
@@ -451,6 +452,7 @@ export class DataFetcher {
 
             if (
                 timeSec === null ||
+                !Number.isFinite(timeSec) ||
                 !Number.isFinite(open) ||
                 !Number.isFinite(high) ||
                 !Number.isFinite(low) ||
@@ -464,9 +466,13 @@ export class DataFetcher {
                 dropped += 1;
                 continue;
             }
-            if (!checkIntervalAlignedTime(timeSec, interval)) {
-                dropped += 1;
-                continue;
+            if (intervalAlignment) {
+                const { intervalSeconds, phaseOffsetSeconds } = intervalAlignment;
+                const remainder = ((timeSec - phaseOffsetSeconds) % intervalSeconds + intervalSeconds) % intervalSeconds;
+                if (remainder !== 0) {
+                    dropped += 1;
+                    continue;
+                }
             }
 
             const prev = cleaned[cleaned.length - 1];
@@ -528,6 +534,48 @@ export class DataFetcher {
             : candles;
     }
 
+    private getBinanceCacheGuard(provider: DataProvider, storageInterval: string): string {
+        return `${provider}|${storageInterval}`;
+    }
+
+    private getSanitizedCacheMetadata(provider: DataProvider, storageInterval: string): CacheEntryMetadata {
+        return isBinanceDataProvider(provider)
+            ? { sanitizedFor: this.getBinanceCacheGuard(provider, storageInterval) }
+            : {};
+    }
+
+    private getContiguousCacheMetadata(
+        provider: DataProvider,
+        storageInterval: string,
+        candles: OHLCVData[]
+    ): CacheEntryMetadata {
+        if (!isBinanceDataProvider(provider) || candles.length === 0) {
+            return this.getSanitizedCacheMetadata(provider, storageInterval);
+        }
+
+        const sanitizedMetadata = this.getSanitizedCacheMetadata(provider, storageInterval);
+        const lastBarTime = parseTimeToUnixSeconds(candles[candles.length - 1]?.time);
+        if (lastBarTime === null || findFirstGapAnchorTime(candles, storageInterval) !== null) {
+            return sanitizedMetadata;
+        }
+
+        return {
+            ...sanitizedMetadata,
+            contiguous: true,
+            contiguousFor: this.getBinanceCacheGuard(provider, storageInterval),
+            lastBarTime,
+        };
+    }
+
+    private isContiguousCacheHit(
+        metadata: { contiguous?: boolean; contiguousFor?: string } | null | undefined,
+        provider: DataProvider,
+        storageInterval: string
+    ): boolean {
+        return metadata?.contiguous === true
+            && metadata.contiguousFor === this.getBinanceCacheGuard(provider, storageInterval);
+    }
+
     private readFastPathLocalCandles(
         provider: DataProvider,
         symbol: string,
@@ -551,9 +599,14 @@ export class DataFetcher {
 
         const cached = this.cache.get(cacheKey);
         if (cached && cached.candles.length >= minBars) {
-            const candles = this.sanitizeFastPathCandles(provider, symbol, storageInterval, cached.candles, String(cached.source ?? 'cache'));
-            if (candles.length !== cached.candles.length) {
-                this.cache.set(cacheKey, candles, cached.source);
+            const sanitizedFor = isBinanceDataProvider(provider)
+                ? this.getBinanceCacheGuard(provider, storageInterval)
+                : undefined;
+            const candles = sanitizedFor && cached.sanitizedFor === sanitizedFor
+                ? cached.candles
+                : this.sanitizeFastPathCandles(provider, symbol, storageInterval, cached.candles, String(cached.source ?? 'cache'));
+            if (candles !== cached.candles || (sanitizedFor && cached.sanitizedFor !== sanitizedFor)) {
+                this.cache.set(cacheKey, candles, cached.source, this.getSanitizedCacheMetadata(provider, storageInterval));
             }
             if (candles.length >= minBars) {
                 return takeCandles(candles);
@@ -1093,19 +1146,23 @@ export class DataFetcher {
         const sqliteCachedCandles = sqliteLoadedCandles;
         const hasSqliteBase = Boolean(sqliteCachedCandles && sqliteCachedCandles.length > 0);
 
-        let cached: { candles: OHLCVData[]; updatedAt: number; source: string } | null = hasSqliteBase
-            ? { candles: sqliteCachedCandles!, updatedAt: Date.now(), source: 'sqlite' }
+        let cached: ({ candles: OHLCVData[]; updatedAt: number; source: string } & CacheEntryMetadata) | null = hasSqliteBase
+            ? { candles: sqliteCachedCandles!, updatedAt: Date.now(), source: 'sqlite', ...this.getSanitizedCacheMetadata(provider, storageInterval) }
             : await loadCachedCandles(storageSymbol, storageInterval);
         let cachedSanitized = sqliteSanitized;
 
         if (cached) {
-            const before = cached.candles.length;
-            cached = {
-                ...cached,
-                candles: this.sanitizeBinanceCandles(symbol, storageInterval, cached.candles, String(cached.source ?? 'cache')),
-            };
-            if (cached.candles.length < before) {
-                cachedSanitized = true;
+            const sanitizedFor = this.getBinanceCacheGuard(provider, storageInterval);
+            if (cached.sanitizedFor !== sanitizedFor) {
+                const before = cached.candles.length;
+                cached = {
+                    ...cached,
+                    candles: this.sanitizeBinanceCandles(symbol, storageInterval, cached.candles, String(cached.source ?? 'cache')),
+                    ...this.getSanitizedCacheMetadata(provider, storageInterval),
+                };
+                if (cached.candles.length < before) {
+                    cachedSanitized = true;
+                }
             }
         }
 
@@ -1171,7 +1228,9 @@ export class DataFetcher {
 
         if (hasCachedData) {
             const cachedCandles = cached!.candles;
-            const gapAnchorTime = findFirstGapAnchorTime(cachedCandles, interval);
+            const gapAnchorTime = this.isContiguousCacheHit(cached, provider, storageInterval)
+                ? null
+                : findFirstGapAnchorTime(cachedCandles, interval);
             if (gapAnchorTime !== null) {
                 const fetchFromTime = gapAnchorTime;
                 debugLogger.warn('data.series.cached_gap_detected', {
@@ -1249,7 +1308,7 @@ export class DataFetcher {
                     cacheKey,
                     updateSyncTime: true,
                 });
-                this.cache.set(cacheKey, fresh, 'network');
+                this.cache.set(cacheKey, fresh, 'network', this.getContiguousCacheMetadata(provider, storageInterval, fresh));
             }
             return { data: fresh, source: 'network', cached, hasSqliteBase, cacheKey, storageInterval, effectiveMaxBars };
         }
@@ -1257,7 +1316,7 @@ export class DataFetcher {
         if (remoteData.length === 0) {
             this.cache.syncAtByKey.set(cacheKey, Date.now());
             const finalData = trimToLastCandles(cached!.candles, effectiveMaxBars);
-            this.cache.set(cacheKey, finalData, 'network');
+            this.cache.set(cacheKey, finalData, 'network', this.getContiguousCacheMetadata(provider, storageInterval, finalData));
             return {
                 data: finalData,
                 source: 'network',
@@ -1288,7 +1347,7 @@ export class DataFetcher {
             });
         }
         const finalData = merged.length > 0 ? merged : trimToLastCandles(cached!.candles, effectiveMaxBars);
-        this.cache.set(cacheKey, finalData, 'network');
+        this.cache.set(cacheKey, finalData, 'network', this.getContiguousCacheMetadata(provider, storageInterval, finalData));
         return {
             data: finalData,
             source: 'network',
