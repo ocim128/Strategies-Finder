@@ -71,11 +71,32 @@ export class DebugLogger {
             data,
         };
         this.entries.push(entry);
+        // Mirror to the console so error/warn surface in production even when no
+        // debug panel is attached. Lower levels stay ring-buffer-only outside of
+        // DEV to avoid flooding the console during normal Finder/data operations.
+        this.mirrorToConsole(level, message, data);
         if (this.listeners.size === 0) {
             return;
         }
         const allEntries = this.entries.getAll();
         this.notifyListeners(allEntries);
+    }
+
+    private mirrorToConsole(level: DebugLevel, message: string, data?: unknown): void {
+        const isDev = Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV);
+        switch (level) {
+            case 'error':
+                // Always forward; an error logged via debugLogger should never be silent.
+                console.error(`[debug] ${message}`, data ?? '');
+                return;
+            case 'warn':
+                console.warn(`[debug] ${message}`, data ?? '');
+                return;
+            case 'info':
+            case 'event':
+                if (isDev) console.log(`[debug:${level}] ${message}`, data ?? '');
+                return;
+        }
     }
 
     public info(message: string, data?: unknown) {

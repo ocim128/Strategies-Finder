@@ -85,6 +85,7 @@ import { strategyPanelController } from "./strategy-panel-controller";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { uiManager } from "./ui-manager";
 import { SyntheticLegCache, buildLegCacheKey } from "./batch-backtest/synthetic-leg-cache";
+import { isStockMarketSymbol } from "./local-daily-datasets";
 
 const PORTFOLIO_DATA_LOAD_CONCURRENCY = 6;
 const PORTFOLIO_BACKTEST_CONCURRENCY = 4;
@@ -633,6 +634,13 @@ class PortfolioLabService {
      * Batch Backtest's `getSourceSeriesForBatch` and Finder's
      * `getSourceSeriesForSynthetic`: a basket anchored on one leader (e.g.
      * BTC+ETH, BTC+SOL) fetches the leader leg once instead of once per pair.
+     *
+     * Legs are persisted to SQLite/IDB after their first Binance fetch, so we
+     * read offline-first; the hybrid fetcher falls through to Binance on its
+     * own if no local data exists at all. As a safety net against a partial /
+     * interrupted prior persist, if the offline result is degenerate we retry
+     * once with the remote gap-fill path. Stock-market legs have no remote
+     * source and stay unconditionally offline.
      */
     private fetchSyntheticLegDeduped(
         legSymbol: string,
@@ -642,7 +650,27 @@ class PortfolioLabService {
         const legKey = buildLegCacheKey(legSymbol, sourceInterval, sourceBars);
         const cached = this.syntheticLegCache.get(legKey);
         if (cached) return cached;
-        const promise = dataManager.fetchHistoricalData(legSymbol, sourceInterval, sourceBars);
+        const markedLeg = isStockMarketSymbol(legSymbol);
+        const minHealthyLegBars = Math.max(1_000, Math.floor(sourceBars * 0.25));
+        const fetchLeg = (offline: boolean): Promise<OHLCVData[]> =>
+            dataManager.fetchHistoricalData(legSymbol, sourceInterval, sourceBars, {
+                ...(offline ? { offline: true } : {}),
+            });
+        const promise = markedLeg
+            ? fetchLeg(true)
+            : fetchLeg(true).then((data) =>
+                    data.length >= minHealthyLegBars
+                        ? data
+                        : (debugLogger.warn("portfolio_lab.synthetic_leg_offline_thin", {
+                                legSymbol,
+                                sourceInterval,
+                                returned: data.length,
+                                expected: sourceBars,
+                            }),
+                            fetchLeg(false)),
+                );
+        // SyntheticLegCache auto-evicts rejected promises (see its `set`), so no
+        // manual cleanup is needed on failure — a retry produces a fresh producer.
         this.syntheticLegCache.set(legKey, promise);
         return promise;
     }

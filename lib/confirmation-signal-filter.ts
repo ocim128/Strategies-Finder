@@ -18,6 +18,10 @@ type ConfirmationSignalIndex = {
 };
 
 const defaultConfirmationSignalCache = new WeakMap<OHLCVData[], Map<string, Signal[]>>();
+// Per-dataset time index: data array identity is stable across Finder iterations
+// (callers pass the same OHLCVData[] reference), so we can avoid re-walking the
+// entire dataset and re-parsing every bar's time on every Finder job.
+const dataIndexByTimeCache = new WeakMap<OHLCVData[], Map<number, number>>();
 
 function resolveConfirmationMode(settings: BacktestSettings): ConfirmationMode {
     const mode = settings.confirmationMode;
@@ -47,6 +51,8 @@ function addSignalToIndex(index: Map<number, Signal[]>, key: number, signal: Sig
 }
 
 function buildDataIndexByTime(data: OHLCVData[]): Map<number, number> {
+    const cached = dataIndexByTimeCache.get(data);
+    if (cached) return cached;
     const index = new Map<number, number>();
     for (let i = 0; i < data.length; i++) {
         const seconds = parseTimeToUnixSeconds(data[i].time);
@@ -54,6 +60,7 @@ function buildDataIndexByTime(data: OHLCVData[]): Map<number, number> {
             index.set(seconds, i);
         }
     }
+    dataIndexByTimeCache.set(data, index);
     return index;
 }
 

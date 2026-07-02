@@ -108,21 +108,32 @@ export async function loadBatchDataset(
         debugLogger.warn("batch.stale_fragment_refetch", {
             symbol, interval: effectiveInterval, cachedBars: data.length, threshold: staleFragmentThreshold,
         });
-        // Request a full backtest-sized series, NOT the chart's visible-candles
-        // lookback. `getChartLookbackBars()` is a display preference (how many
-        // candles the user wants visible on screen); it is unrelated to how
-        // much history a backtest needs. When it is set low, fetching only that
-        // many bars produces a uselessly short series for any pair whose local
-        // cache does not already hold a deep history (matching the healthy
-        // pairs' ~65k). DATA_CHART_TOTAL_LIMIT is the same target the chart
-        // uses for a full load; Binance caps the response at ~65k.
+        // Offline-first repair: fetchDataDetached honors the chart's visible-candle
+        // lookback, which can be much smaller than the SQLite store actually holds.
+        // Try a deep offline read at the full backtest target before going remote.
+        // On a cold page load this typically hits SQLite and avoids Binance entirely;
+        // only if SQLite genuinely doesn't have the bars do we fall through to the
+        // remote gap-fill below.
         const targetBars = DATA_CHART_TOTAL_LIMIT;
+        const offlineDeep = await dataManager.fetchHistoricalData(symbol, effectiveInterval, targetBars, {
+            signal,
+            offline: true,
+        });
+        if (signal?.aborted) return [];
+        if (offlineDeep.length >= staleFragmentThreshold) {
+            return offlineDeep;
+        }
+        // SQLite genuinely shallow — go remote. The paginated Binance path returns
+        // a complete series and persists back to the same cache the offline path
+        // reads, so subsequent runs are warm again.
         const refetched = await dataManager.fetchHistoricalData(symbol, effectiveInterval, targetBars, { signal });
         if (signal?.aborted) return [];
         // If the network also returns a fragment (delisted symbol, provider
-        // issue), prefer the larger of the two so the runner's minimum-bar
-        // gate can make the final call with the best available information.
-        return refetched.length >= data.length ? refetched : data;
+        // issue), prefer the larger of the available offline-deep / remote
+        // results so the runner's minimum-bar gate makes the final call.
+        return Math.max(refetched.length, offlineDeep.length) === refetched.length
+            ? refetched
+            : offlineDeep;
     }
 
     return data;
@@ -187,15 +198,14 @@ async function loadSyntheticPairForBatch(
 /**
  * Fetch one synthetic source leg, deduped by `symbol|interval|bars`.
  *
- * Source-interval legs are fetched WITHOUT `offline: true`, matching
- * Finder's `fetchSyntheticSourceSeries` (`lib/finder-manager.ts`). The
- * source interval (e.g. 5m for a 1h target) is a derived interval the user
- * may never have loaded on the chart; an offline-only read returns whatever
- * stray bars the local cache holds and produces a degenerate short pair.
- * Letting the remote Binance gap-fill run returns a full-length leg and the
- * LRU cache above means each unique source symbol is fetched at most once
- * per run. Stock-market legs are the exception: they only have `1d` bars in
- * the local SQLite store and no remote source, so they stay offline.
+ * Legs are persisted to SQLite/IDB after their first Binance fetch (see
+ * data-fetcher.ts persistLocalCandles calls), so we read them offline-first —
+ * matching Finder's `getSourceSeriesForSynthetic`. The hybrid fetcher falls
+ * through to Binance on its own if no local data exists at all (true first-ever
+ * fetch). As a safety net against a partial / interrupted prior persist, if the
+ * offline result is degenerate (well below the requested sourceBars) we retry
+ * once with the remote gap-fill path. Stock-market legs have no remote source
+ * and stay unconditionally offline.
  */
 function getSourceSeriesForBatch(
     sourceSymbol: string,
@@ -211,10 +221,30 @@ function getSourceSeriesForBatch(
     }
 
     const markedLeg = isStockMarketSymbol(sourceSymbol);
-    const promise = dataManager.fetchHistoricalData(sourceSymbol, sourceInterval, sourceBars, {
-        signal,
-        ...(markedLeg ? { offline: true } : {}),
-    });
+    // 25% threshold: a healthy leg should be near the requested sourceBars;
+    // anything dramatically smaller signals a partial cache or interrupted
+    // prior persist, not a real short history.
+    const minHealthyLegBars = Math.max(1_000, Math.floor(sourceBars * 0.25));
+    const fetchLeg = (offline: boolean): Promise<OHLCVData[]> =>
+        dataManager.fetchHistoricalData(sourceSymbol, sourceInterval, sourceBars, {
+            signal,
+            ...(offline ? { offline: true } : {}),
+        });
+    const promise = markedLeg
+        ? fetchLeg(true)
+        : fetchLeg(true).then((data) =>
+                data.length >= minHealthyLegBars
+                    ? data
+                    : (debugLogger.warn("batch.synthetic_leg_offline_thin", {
+                            sourceSymbol,
+                            sourceInterval,
+                            returned: data.length,
+                            expected: sourceBars,
+                        }),
+                        fetchLeg(false)),
+            );
+    // SyntheticLegCache auto-evicts rejected promises (see its `set`), so no
+    // manual cleanup is needed on failure — a retry produces a fresh producer.
     legCache.set(legKey, promise);
     return promise;
 }

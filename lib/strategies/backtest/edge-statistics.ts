@@ -136,7 +136,15 @@ export function computeEdgeRatios(
             // Only evaluate trades that have the full horizon available.
             if (endIdx >= ohlcvData.length) continue;
 
+            // Hoist per-trade loop invariants out of the bar loop below.
+            // dir = +1 for long, -1 for short. With favorablePrice/adversePrice
+            // selected per direction, the move formulas reduce to:
+            //   favorableMove = dir * (favorablePrice - entry) * inv
+            //   adverseMove   = -dir * (adversePrice - entry) * inv
+            // where inv = 1 / entryPrice * 100, both loop-invariant.
             const isLong = trade.type === 'long';
+            const dir = isLong ? 1 : -1;
+            const inv = 100 / trade.entryPrice;
             let mfe = 0; // best favorable excursion
             let mae = 0; // worst adverse excursion
 
@@ -149,13 +157,8 @@ export function computeEdgeRatios(
                 const favorablePrice = isLong ? bar.high : bar.low;
                 const adversePrice = isLong ? bar.low : bar.high;
 
-                const favorableMove = isLong
-                    ? (favorablePrice - trade.entryPrice) / trade.entryPrice * 100
-                    : (trade.entryPrice - favorablePrice) / trade.entryPrice * 100;
-
-                const adverseMove = isLong
-                    ? (trade.entryPrice - adversePrice) / trade.entryPrice * 100
-                    : (adversePrice - trade.entryPrice) / trade.entryPrice * 100;
+                const favorableMove = dir * (favorablePrice - trade.entryPrice) * inv;
+                const adverseMove = -dir * (adversePrice - trade.entryPrice) * inv;
 
                 if (favorableMove > mfe) mfe = favorableMove;
                 if (adverseMove > mae) mae = adverseMove;

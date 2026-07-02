@@ -1139,10 +1139,13 @@ export class DataFetcher {
         }
 
         const sqliteRaw = await loadSqliteCandles(storageSymbol, storageInterval, effectiveMaxBars);
-        const sqliteLoadedCandles = sqliteRaw
-            ? this.sanitizeBinanceCandles(symbol, storageInterval, sqliteRaw.candles, 'sqlite')
-            : null;
-        const sqliteSanitized = Boolean(sqliteRaw && sqliteLoadedCandles && sqliteLoadedCandles.length < sqliteRaw.candles.length);
+        // SQLite rows are written only by the controlled persistence path
+        // (storeSqliteCandles), which receives already-sanitized candles.
+        // Re-running sanitizeBinanceCandles here is redundant O(N log N) work
+        // on every Finder run; the in-memory cache branch above uses a
+        // `sanitizedFor` guard for the same purpose. Trust SQLite rows on read.
+        const sqliteLoadedCandles = sqliteRaw ? sqliteRaw.candles : null;
+        const sqliteSanitized = false;
         const sqliteCachedCandles = sqliteLoadedCandles;
         const hasSqliteBase = Boolean(sqliteCachedCandles && sqliteCachedCandles.length > 0);
 

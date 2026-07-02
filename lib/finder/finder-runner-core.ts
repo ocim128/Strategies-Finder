@@ -87,14 +87,17 @@ export function shouldUseRustCachedMode(
 
 export function compactSignalsForRust(signals: Signal[]): CompactSignal[] {
     for (const signal of signals) {
-        let keyCount = 0;
-        for (const key in signal) {
-            if (key !== "time" && key !== "type" && key !== "price" && key !== "barIndex") {
-                return cloneCompactSignals(signals);
-            }
-            keyCount++;
-        }
-        if (keyCount !== 4) {
+        // The compact shape is exactly {time, type, price, barIndex}. Any Signal
+        // carrying one of the known optional fields below would ship extra bytes
+        // to Rust, so we fall back to a cloned compact array. This is coupled to
+        // the `Signal` interface — if a new non-compact optional field is added
+        // there, add it to this check.
+        if (
+            signal.triggerPrice !== undefined
+            || signal.reason !== undefined
+            || signal.sizeFraction !== undefined
+            || signal.exitOnly !== undefined
+        ) {
             return cloneCompactSignals(signals);
         }
     }

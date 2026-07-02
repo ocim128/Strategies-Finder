@@ -622,18 +622,16 @@ export class FinderManager {
 		// source arrays are treated as read-only by buildSyntheticPairDataset and
 		// aggregateSyntheticBars, so sharing is safe.
 		//
-		// Note: unlike loadUniverseDataset for real symbols, the source fetch here
-		// intentionally does NOT pass offline:true. The source interval (e.g. 5m
-		// for a 1h target) is a derived interval the user may never have loaded,
-		// so an offline-only read would return whatever stray bars the local
-		// cache holds and produce a degenerate 1-bar synthetic pair. Allowing the
-		// remote Binance gap-fill here matches the Data Mining synthetic generator
-		// and the original universe synthetic loader. The LRU cache above means
-		// each unique source symbol is fetched at most once per run.
+		// Legs are persisted to SQLite/IDB after their first Binance fetch (see
+		// data-fetcher.ts persistLocalCandles calls), so we read them offline-only
+		// here. The hybrid fetch falls through to Binance on its own if no local
+		// data exists at all (true first-ever fetch). As a safety net against a
+		// partial / interrupted prior persist, if the offline result is degenerate
+		// (well below the requested sourceBars) we retry once with the remote
+		// gap-fill path.
 		//
 		// Exception: diamond-marked legs are offline stock_market_data tickers
-		// with no remote source. They MUST stay offline — gap-filling would
-		// silently fall back to Binance and produce wrong data.
+		// with no remote source — they always stay offline.
 		const cacheKey = `${sourceSymbol.trim().toUpperCase()}|${sourceInterval.trim().toLowerCase()}|${sourceBars}`;
 		const cached = this.syntheticSourceSeriesCache.get(cacheKey);
 		if (cached) {
@@ -641,11 +639,29 @@ export class FinderManager {
 			return cached;
 		}
 		const markedLeg = isStockMarketSymbol(sourceSymbol);
-		const promise = dataManager
-			.fetchHistoricalData(sourceSymbol, sourceInterval, sourceBars, {
-				signal,
-				...(markedLeg ? { offline: true } : {}),
-			})
+		// 25% threshold: a healthy 1h leg for a 4h synthetic should be near the
+		// requested sourceBars; anything dramatically smaller signals a partial
+		// cache or interrupted prior persist, not a real short history.
+		const minHealthyLegBars = Math.max(1_000, Math.floor(sourceBars * 0.25));
+		const fetchLeg = (offline: boolean): Promise<OHLCVData[]> =>
+			dataManager
+				.fetchHistoricalData(sourceSymbol, sourceInterval, sourceBars, {
+					signal,
+					...(offline ? { offline: true } : {}),
+				});
+		const promise = (markedLeg
+				? fetchLeg(true)
+				: fetchLeg(true).then((data) =>
+						data.length >= minHealthyLegBars
+							? data
+							: (debugLogger.warn('finder.synthetic_source_offline_thin', {
+									sourceSymbol,
+									sourceInterval,
+									returned: data.length,
+									expected: sourceBars,
+								}),
+								fetchLeg(false)),
+					))
 			.catch((error) => {
 				if (this.syntheticSourceSeriesCache.get(cacheKey) === promise) {
 					this.syntheticSourceSeriesCache.delete(cacheKey);
@@ -736,10 +752,14 @@ export class FinderManager {
 			return syntheticBars;
 		})()
 			.then((data) => {
-				const isShortSyntheticDataset = Array.isArray(data)
-					&& data.length > 0
-					&& data.length < SYNTHETIC_TARGET_BARS;
-				if (signal?.aborted || !Array.isArray(data) || data.length === 0 || isShortSyntheticDataset) {
+				// Only evict on abort or genuinely broken loads. The previous
+				// `isShortSyntheticDataset` guard evicted any synthetic with fewer
+				// than SYNTHETIC_TARGET_BARS (50,000) rows — but no 4h synthetic can
+				// ever reach that bar count (~22 years of data), so the guard caused
+				// every 4h synthetic to be re-gap-filled from Binance on every Finder
+				// run. The in-memory LRU (UNIVERSE_DATASET_CACHE_MAX_ENTRIES) bounds
+				// growth; empty-array/abort still evict.
+				if (signal?.aborted || !Array.isArray(data) || data.length === 0) {
 					if (this.universeDatasetCache.get(cacheKey) === promise) {
 						this.universeDatasetCache.delete(cacheKey);
 					}

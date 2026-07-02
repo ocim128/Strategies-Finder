@@ -14,6 +14,7 @@ import {
     writeAlertWorkerUrl,
 } from "./alert-storage";
 import type { OHLCVData } from "./types/strategies";
+import { debugLogger } from "./debug-logger";
 
 export const ALERT_WORKER_URL_CHANGED_EVENT = 'alert-worker-url-changed';
 const API_FETCH_TIMEOUT_MS = 10_000;
@@ -394,7 +395,10 @@ export const alertService = {
             return items.length > 0 && items.some((sub) => sub.committee_tag)
                 ? items.filter((sub) => sub.committee_tag)
                 : items;
-        } catch {
+        } catch (error) {
+            // Genuine programming errors and network failures look identical to
+            // "old worker" without this; surface the cause before degrading.
+            debugLogger.warn('alert.listCommitteeSubscriptions.fallback', { error: String(error) });
             const all = await this.listSubscriptions();
             return all.filter((sub) => sub.committee_tag);
         }
@@ -419,8 +423,9 @@ export const alertService = {
                 method: 'POST',
                 body: JSON.stringify({ streamId }),
             });
-        } catch {
+        } catch (error) {
             // Backward compatibility for workers that do not expose /delete yet.
+            debugLogger.warn('alert.disableSubscription.fallback', { streamId, error: String(error) });
             await apiFetch('/api/subscriptions/upsert', {
                 method: 'POST',
                 body: JSON.stringify({ streamId, enabled: false }),
@@ -524,9 +529,10 @@ export const alertService = {
                 truncated: streamIds.length > COMMITTEE_STATE_MAX_BATCH || data.truncated === true,
                 states: Array.isArray(data.states) ? data.states : [],
             };
-        } catch {
+        } catch (error) {
             // Worker has not been redeployed with /api/subscriptions/states yet.
             // Degrade to N parallel on-demand state calls.
+            debugLogger.warn('alert.getCommitteeState.fallback', { streamIds: streamIds.length, error: String(error) });
             const settled = await Promise.all(
                 limited.map((streamId) =>
                     this.getSubscriptionState(streamId)
@@ -580,7 +586,8 @@ export const alertService = {
         try {
             const data = await apiFetch<{ ok: boolean; items?: CommitteeAlertRule[] }>('/api/committee-alert/rules');
             return data.items ?? [];
-        } catch {
+        } catch (error) {
+            debugLogger.warn('alert.listCommitteeAlertRules.fallback', { error: String(error) });
             return [];
         }
     },
@@ -604,7 +611,8 @@ export const alertService = {
                 }
             );
             return data.item ?? null;
-        } catch {
+        } catch (error) {
+            debugLogger.warn('alert.upsertCommitteeAlertRule.fallback', { rule, error: String(error) });
             return null;
         }
     },

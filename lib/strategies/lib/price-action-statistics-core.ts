@@ -12,6 +12,17 @@ const rollingEntropyCache = new WeakMap<number[], Map<string, NullableSeries>>()
 const percentileRankCache = new WeakMap<number[], Map<number, NullableSeries>>();
 const efficiencyRatioCache = new WeakMap<OHLCVData[], Map<number, NullableSeries>>();
 const barMetricSeriesCache = new WeakMap<OHLCVData[], Map<BarMetricExtractor, number[]>>();
+// Caches for the helpers below that previously rebuilt their output on every call.
+// Keyed by the same input arrays other helpers in this file already memoize on;
+// the inputs are stable across Finder iterations (extracted via memoized helpers),
+// so caching is safe and the results are deterministic.
+const streakCountCache = new WeakMap<number[], number[]>();
+const rateOfChangeCache = new WeakMap<number[], Map<number, NullableSeries>>();
+const cumulativeDecaySumCache = new WeakMap<number[], Map<number, number[]>>();
+const thresholdCrossingCountCache = new WeakMap<number[], Map<string, NullableSeries>>();
+const rollingAutoCorrelationCache = new WeakMap<number[], Map<string, NullableSeries>>();
+const rollingCorrelationCache = new WeakMap<number[], Map<number[], Map<string, NullableSeries>>>();
+const rollingKurtosisCache = new WeakMap<number[], Map<number, NullableSeries>>();
 
 function getCachedSeries<K>(
 	cache: WeakMap<number[], Map<K, NullableSeries>>,
@@ -179,6 +190,8 @@ export function buildPercentileRank(
 export function buildStreakCount(
 	flags: number[]
 ): number[] {
+	const cached = streakCountCache.get(flags);
+	if (cached) return cached;
 	const result: number[] = new Array(flags.length).fill(0);
 
 	for (let i = 0; i < flags.length; i++) {
@@ -202,6 +215,7 @@ export function buildStreakCount(
 		}
 	}
 
+	streakCountCache.set(flags, result);
 	return result;
 }
 
@@ -214,15 +228,17 @@ export function buildRateOfChange(
 	periodInput: number
 ): (number | null)[] {
 	const period = Math.max(1, Math.round(periodInput));
-	const result: (number | null)[] = new Array(values.length).fill(null);
+	return getCachedSeries(rateOfChangeCache, values, period, () => {
+		const result: (number | null)[] = new Array(values.length).fill(null);
 
-	for (let i = period; i < values.length; i++) {
-		const past = values[i - period];
-		if (past === 0) continue;
-		result[i] = (values[i] - past) / Math.abs(past);
-	}
+		for (let i = period; i < values.length; i++) {
+			const past = values[i - period];
+			if (past === 0) continue;
+			result[i] = (values[i] - past) / Math.abs(past);
+		}
 
-	return result;
+		return result;
+	});
 }
 
 /**
@@ -314,6 +330,14 @@ export function buildCumulativeDecaySum(
 	decayFactor: number
 ): number[] {
 	const decay = Math.max(0.01, Math.min(0.999, decayFactor));
+	let byDecay = cumulativeDecaySumCache.get(scores);
+	if (!byDecay) {
+		byDecay = new Map<number, number[]>();
+		cumulativeDecaySumCache.set(scores, byDecay);
+	}
+	const cached = byDecay.get(decay);
+	if (cached) return cached;
+
 	const result: number[] = new Array(scores.length).fill(0);
 	let accum = 0;
 
@@ -322,6 +346,7 @@ export function buildCumulativeDecaySum(
 		result[i] = accum;
 	}
 
+	byDecay.set(decay, result);
 	return result;
 }
 
@@ -338,26 +363,29 @@ export function buildThresholdCrossingCount(
 ): (number | null)[] {
 	const lookback = Math.max(2, Math.round(lookbackInput));
 	const absThreshold = Math.abs(threshold);
-	const result: (number | null)[] = new Array(values.length).fill(null);
-	const crossingEvents: number[] = new Array(values.length).fill(0);
+	const key = `${lookback}|${absThreshold}`;
+	return getCachedSeries(thresholdCrossingCountCache, values, key, () => {
+		const result: (number | null)[] = new Array(values.length).fill(null);
+		const crossingEvents: number[] = new Array(values.length).fill(0);
 
-	for (let i = 1; i < values.length; i++) {
-		const prev = values[i - 1];
-		const curr = values[i];
-		const crossedUp = prev <= absThreshold && curr > absThreshold;
-		const crossedDown = prev >= -absThreshold && curr < -absThreshold;
-		crossingEvents[i] = crossedUp || crossedDown ? 1 : 0;
-	}
-
-	for (let i = lookback - 1; i < values.length; i++) {
-		let count = 0;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			count += crossingEvents[j];
+		for (let i = 1; i < values.length; i++) {
+			const prev = values[i - 1];
+			const curr = values[i];
+			const crossedUp = prev <= absThreshold && curr > absThreshold;
+			const crossedDown = prev >= -absThreshold && curr < -absThreshold;
+			crossingEvents[i] = crossedUp || crossedDown ? 1 : 0;
 		}
-		result[i] = count;
-	}
 
-	return result;
+		for (let i = lookback - 1; i < values.length; i++) {
+			let count = 0;
+			for (let j = i - lookback + 1; j <= i; j++) {
+				count += crossingEvents[j];
+			}
+			result[i] = count;
+		}
+
+		return result;
+	});
 }
 
 /**
@@ -464,39 +492,42 @@ export function buildRollingAutoCorrelation(
 ): (number | null)[] {
 	const lookback = Math.max(3, Math.round(lookbackInput));
 	const safeLag = Math.max(1, Math.round(lag));
-	const result: (number | null)[] = new Array(values.length).fill(null);
+	const key = `${lookback}|${safeLag}`;
+	return getCachedSeries(rollingAutoCorrelationCache, values, key, () => {
+		const result: (number | null)[] = new Array(values.length).fill(null);
 
-	for (let i = lookback - 1 + safeLag; i < values.length; i++) {
-		let sumX = 0;
-		let sumY = 0;
-		const n = lookback;
+		for (let i = lookback - 1 + safeLag; i < values.length; i++) {
+			let sumX = 0;
+			let sumY = 0;
+			const n = lookback;
 
-		for (let j = 0; j < n; j++) {
-			const idx = i - n + 1 + j;
-			sumX += values[idx - safeLag];
-			sumY += values[idx];
+			for (let j = 0; j < n; j++) {
+				const idx = i - n + 1 + j;
+				sumX += values[idx - safeLag];
+				sumY += values[idx];
+			}
+			const meanX = sumX / n;
+			const meanY = sumY / n;
+
+			let cov = 0;
+			let varX = 0;
+			let varY = 0;
+			for (let j = 0; j < n; j++) {
+				const idx = i - n + 1 + j;
+				const dx = values[idx - safeLag] - meanX;
+				const dy = values[idx] - meanY;
+				cov += dx * dy;
+				varX += dx * dx;
+				varY += dy * dy;
+			}
+
+			const denom = Math.sqrt(varX * varY);
+			if (denom <= 0) continue;
+			result[i] = cov / denom;
 		}
-		const meanX = sumX / n;
-		const meanY = sumY / n;
 
-		let cov = 0;
-		let varX = 0;
-		let varY = 0;
-		for (let j = 0; j < n; j++) {
-			const idx = i - n + 1 + j;
-			const dx = values[idx - safeLag] - meanX;
-			const dy = values[idx] - meanY;
-			cov += dx * dy;
-			varX += dx * dx;
-			varY += dy * dy;
-		}
-
-		const denom = Math.sqrt(varX * varY);
-		if (denom <= 0) continue;
-		result[i] = cov / denom;
-	}
-
-	return result;
+		return result;
+	});
 }
 
 /**
@@ -509,6 +540,19 @@ export function buildRollingCorrelation(
 	lookbackInput: number
 ): (number | null)[] {
 	const lookback = Math.max(3, Math.round(lookbackInput));
+	let bySeries2 = rollingCorrelationCache.get(series1);
+	if (!bySeries2) {
+		bySeries2 = new Map<number[], Map<string, NullableSeries>>();
+		rollingCorrelationCache.set(series1, bySeries2);
+	}
+	let byKey = bySeries2.get(series2);
+	if (!byKey) {
+		byKey = new Map<string, NullableSeries>();
+		bySeries2.set(series2, byKey);
+	}
+	const cached = byKey.get(`${lookback}`);
+	if (cached) return cached;
+
 	const len = Math.min(series1.length, series2.length);
 	const result: (number | null)[] = new Array(len).fill(null);
 
@@ -542,6 +586,7 @@ export function buildRollingCorrelation(
 		result[i] = cov / denom;
 	}
 
+	byKey.set(`${lookback}`, result);
 	return result;
 }
 
@@ -732,32 +777,34 @@ export function buildRollingKurtosis(
 	lookbackInput: number
 ): (number | null)[] {
 	const lookback = Math.max(4, Math.round(lookbackInput));
-	const result: (number | null)[] = new Array(values.length).fill(null);
+	return getCachedSeries(rollingKurtosisCache, values, lookback, () => {
+		const result: (number | null)[] = new Array(values.length).fill(null);
 
-	for (let i = lookback - 1; i < values.length; i++) {
-		let sum = 0;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			sum += values[j];
+		for (let i = lookback - 1; i < values.length; i++) {
+			let sum = 0;
+			for (let j = i - lookback + 1; j <= i; j++) {
+				sum += values[j];
+			}
+			const mean = sum / lookback;
+
+			let m2 = 0;
+			let m4 = 0;
+			for (let j = i - lookback + 1; j <= i; j++) {
+				const diff = values[j] - mean;
+				const diffSq = diff * diff;
+				m2 += diffSq;
+				m4 += diffSq * diffSq;
+			}
+			m2 /= lookback;
+			m4 /= lookback;
+
+			if (m2 <= 0) continue;
+
+			result[i] = m4 / (m2 * m2) - 3;
 		}
-		const mean = sum / lookback;
 
-		let m2 = 0;
-		let m4 = 0;
-		for (let j = i - lookback + 1; j <= i; j++) {
-			const diff = values[j] - mean;
-			const diffSq = diff * diff;
-			m2 += diffSq;
-			m4 += diffSq * diffSq;
-		}
-		m2 /= lookback;
-		m4 /= lookback;
-
-		if (m2 <= 0) continue;
-
-		result[i] = m4 / (m2 * m2) - 3;
-	}
-
-	return result;
+		return result;
+	});
 }
 
 

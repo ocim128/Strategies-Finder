@@ -19,6 +19,7 @@ import {
     normalizeTradFiDailyCandles,
     takeLastCandles as trimToLastCandles,
 } from "./data-interval-utils";
+import { debugLogger } from "../debug-logger";
 
 export type NonBinanceLocalSource = 'imported' | 'sqlite' | 'cache' | 'seed';
 export type NonBinanceLocalCandidate = { candles: OHLCVData[]; source: NonBinanceLocalSource };
@@ -262,44 +263,52 @@ export class DataPersistence {
         const timer = setTimeout(() => {
             persistence.cachePersistTimers.delete(cacheKey);
             void (async () => {
-                const pending = persistence.cachePersistPendingByKey.get(cacheKey);
-                persistence.cachePersistPendingByKey.delete(cacheKey);
-                if (!pending || pending.candles.length === 0) return;
+                try {
+                    const pending = persistence.cachePersistPendingByKey.get(cacheKey);
+                    persistence.cachePersistPendingByKey.delete(cacheKey);
+                    if (!pending || pending.candles.length === 0) return;
 
-                const snapshot = pending.candles.length > DATA_CHART_TOTAL_LIMIT
-                    ? pending.candles.slice(-DATA_CHART_TOTAL_LIMIT)
-                    : pending.candles.slice();
-                // Compute the delta vs the last bar we successfully persisted. On the
-                // first flush for this key (or if state was lost), store the full tail.
-                const lastPersistedTime = persistence.lastStreamPersistedTimeByKey.get(cacheKey);
-                const delta = lastPersistedTime == null
-                    ? snapshot.slice(-2)
-                    : snapshot.filter(c => Number(c.time) > lastPersistedTime);
-                const sqliteResult = await storeSqliteCandles(
-                    pending.symbol,
-                    pending.storageInterval,
-                    delta,
-                    providerLabel,
-                    'stream'
-                );
-                if (sqliteResult && snapshot.length > 0) {
-                    persistence.lastStreamPersistedTimeByKey.set(
-                        cacheKey,
-                        Number(snapshot[snapshot.length - 1].time)
+                    const snapshot = pending.candles.length > DATA_CHART_TOTAL_LIMIT
+                        ? pending.candles.slice(-DATA_CHART_TOTAL_LIMIT)
+                        : pending.candles.slice();
+                    // Compute the delta vs the last bar we successfully persisted. On the
+                    // first flush for this key (or if state was lost), store the full tail.
+                    const lastPersistedTime = persistence.lastStreamPersistedTimeByKey.get(cacheKey);
+                    const delta = lastPersistedTime == null
+                        ? snapshot.slice(-2)
+                        : snapshot.filter(c => Number(c.time) > lastPersistedTime);
+                    const sqliteResult = await storeSqliteCandles(
+                        pending.symbol,
+                        pending.storageInterval,
+                        delta,
+                        providerLabel,
+                        'stream'
                     );
+                    if (sqliteResult && snapshot.length > 0) {
+                        persistence.lastStreamPersistedTimeByKey.set(
+                            cacheKey,
+                            Number(snapshot[snapshot.length - 1].time)
+                        );
+                    }
+                    const lastSync = ctx.syncAtByKey.get(cacheKey) ?? 0;
+                    const shouldPersistSnapshot = !sqliteResult || (Date.now() - lastSync >= DATA_CACHE_SYNC_MIN_MS);
+                    await persistence.persistLocalCandles({
+                        symbol: pending.symbol,
+                        storageInterval: pending.storageInterval,
+                        cacheCandles: shouldPersistSnapshot ? snapshot : undefined,
+                        providerLabel,
+                        sourceTrait: 'stream',
+                        cacheKey,
+                        updateSyncTime: true,
+                        ctx,
+                    });
+                } catch (error) {
+                    // Stream persistence runs as a fire-and-forget timer on every
+                    // streamed bar; without this guard a transient SQLite/IDB
+                    // failure becomes an unhandled rejection (and a silent gap in
+                    // the local candle cache). Surface it so operators can see it.
+                    debugLogger.warn('data.persist.stream_failed', { cacheKey, error: String(error) });
                 }
-                const lastSync = ctx.syncAtByKey.get(cacheKey) ?? 0;
-                const shouldPersistSnapshot = !sqliteResult || (Date.now() - lastSync >= DATA_CACHE_SYNC_MIN_MS);
-                await persistence.persistLocalCandles({
-                    symbol: pending.symbol,
-                    storageInterval: pending.storageInterval,
-                    cacheCandles: shouldPersistSnapshot ? snapshot : undefined,
-                    providerLabel,
-                    sourceTrait: 'stream',
-                    cacheKey,
-                    updateSyncTime: true,
-                    ctx,
-                });
             })();
         }, this.STREAM_PERSIST_DELAY_MS);
         this.cachePersistTimers.set(cacheKey, timer);
