@@ -1,4 +1,6 @@
 import type { IncomingMessage } from "node:http";
+import { debugLogger } from "./debug-logger";
+import { createFetchTimeoutSignal, isAbortError } from "./dataProviders/fetch-helpers";
 
 export const DEFAULT_MAX_BODY_BYTES = 80 * 1024 * 1024;
 
@@ -79,3 +81,67 @@ export function sendCaughtErrorJson(res: ViteHttpResponse, error: unknown): void
     const message = error instanceof Error ? error.message : String(error);
     sendJson(res, 500, { ok: false, error: message });
 }
+
+export type ProxyUpstreamJsonHandlers = {
+    onTimeout: () => void;
+    onError: (error: unknown) => void;
+};
+
+/**
+ * Proxies a GET request to an upstream URL, mirroring its status, content-type,
+ * and body back to the client. Used by the tradfi/polymarket Vite proxy plugins
+ * to avoid duplicating the fetch + timeout + mirror-success pattern.
+ *
+ * On a timeout (AbortError) or failure, the caller-supplied `onTimeout`/`onError`
+ * handlers are invoked so the plugin can render its own error payload shape
+ * (different surfaces use `{ ret_code, ret_msg }` vs `{ ok, error }`).
+ *
+ * Emits structured `proxy.upstream` / `proxy.upstream.failed` logs for
+ * observability — previously these proxy calls had no logging at all, which
+ * made "stale chart" symptoms hard to diagnose.
+ */
+export async function proxyUpstreamJson(
+    res: ViteHttpResponse,
+    url: string,
+    timeoutMs: number,
+    label: string,
+    handlers: ProxyUpstreamJsonHandlers
+): Promise<void> {
+    const startedAt = Date.now();
+    const timeout = createFetchTimeoutSignal(undefined, timeoutMs);
+    try {
+        const upstream = await fetch(url, {
+            headers: { Accept: "application/json" },
+            signal: timeout.signal,
+        });
+        const body = await upstream.text();
+        res.statusCode = upstream.status;
+        res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
+        res.setHeader("Cache-Control", "no-store");
+        res.end(body);
+        debugLogger.info("proxy.upstream", {
+            target: label,
+            url,
+            status: upstream.status,
+            durationMs: Date.now() - startedAt,
+            bytes: body.length,
+        });
+    } catch (error) {
+        const timedOut = isAbortError(error);
+        debugLogger.warn("proxy.upstream.failed", {
+            target: label,
+            url,
+            timedOut,
+            durationMs: Date.now() - startedAt,
+            error: error instanceof Error ? error.message : String(error),
+        });
+        if (timedOut) {
+            handlers.onTimeout();
+        } else {
+            handlers.onError(error);
+        }
+    } finally {
+        timeout.cleanup();
+    }
+}
+

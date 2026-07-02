@@ -2,8 +2,6 @@
 // Indicator Calculations
 // ============================================================================
 
-import { parseTimeToUnixSeconds } from "../time-normalization";
-
 export function calculateSMA(data: number[], period: number): (number | null)[] {
     return getOrCompute(__smaCache, data, period, () => {
         const result: (number | null)[] = new Array(data.length).fill(null);
@@ -433,79 +431,6 @@ export function calculateIchimoku(
     });
 }
 
-export function calculateMFI(
-    high: number[],
-    low: number[],
-    close: number[],
-    volume: number[],
-    period: number
-): (number | null)[] {
-    const length = close.length;
-    const mfi: (number | null)[] = new Array(length).fill(null);
-    if (length < period + 1 || period < 1) return mfi;
-
-    const typicalPrices = new Array(length);
-    const rawMoneyFlow = new Array(length);
-    for (let i = 0; i < length; i++) {
-        typicalPrices[i] = (high[i] + low[i] + close[i]) / 3;
-        rawMoneyFlow[i] = typicalPrices[i] * volume[i];
-    }
-
-    for (let i = period; i < length; i++) {
-        let posFlow = 0;
-        let negFlow = 0;
-        for (let j = i - period + 1; j <= i; j++) {
-            if (typicalPrices[j] > typicalPrices[j - 1]) {
-                posFlow += rawMoneyFlow[j];
-            } else if (typicalPrices[j] < typicalPrices[j - 1]) {
-                negFlow += rawMoneyFlow[j];
-            }
-        }
-        if (negFlow === 0) {
-            mfi[i] = 100;
-        } else {
-            const moneyRatio = posFlow / negFlow;
-            mfi[i] = 100 - 100 / (1 + moneyRatio);
-        }
-    }
-    return mfi;
-}
-
-export function calculateSessionVWAP(
-    high: number[],
-    low: number[],
-    close: number[],
-    volume: number[],
-    times: unknown[]
-): (number | null)[] {
-    const length = close.length;
-    const vwap: (number | null)[] = new Array(length).fill(null);
-    if (length === 0) return vwap;
-
-    let sumPV = 0;
-    let sumV = 0;
-    let lastDay = -1;
-
-    for (let i = 0; i < length; i++) {
-        const ts = parseTimeToUnixSeconds(times[i]);
-        const day = ts !== null ? Math.floor(ts / 86400) : -1;
-
-        if (day !== lastDay && day !== -1) {
-            sumPV = 0;
-            sumV = 0;
-            lastDay = day;
-        }
-
-        const typical = (high[i] + low[i] + close[i]) / 3;
-        sumPV += typical * volume[i];
-        sumV += volume[i];
-
-        vwap[i] = sumV > 0 ? sumPV / sumV : typical;
-    }
-
-    return vwap;
-}
-
 export function calculateVWAP(
     high: number[],
     low: number[],
@@ -540,63 +465,5 @@ export function calculateVWAP(
         return vwap;
     });
 }
-
-export function calculateParabolicSAR(
-    high: number[],
-    low: number[],
-    step: number,
-    max: number
-): (number | null)[] {
-    const length = high.length;
-    const sar: (number | null)[] = new Array(length).fill(null);
-    if (length < 2) return sar;
-
-    let isLong = high[1] > high[0] || low[0] > low[1];
-    let ep = isLong ? high[1] : low[1];
-    let af = step;
-    let currentSar = isLong ? low[0] : high[0];
-
-    sar[0] = currentSar;
-    sar[1] = currentSar;
-
-    for (let i = 2; i < length; i++) {
-        const nextSar = currentSar + af * (ep - currentSar);
-        let cappedSar = nextSar;
-
-        if (isLong) {
-            cappedSar = Math.min(cappedSar, low[i - 1], low[i - 2]);
-            if (low[i] < cappedSar) {
-                isLong = false;
-                cappedSar = Math.max(high[i], high[i - 1], ep);
-                ep = low[i];
-                af = step;
-            } else {
-                if (high[i] > ep) {
-                    ep = high[i];
-                    af = Math.min(af + step, max);
-                }
-            }
-        } else {
-            cappedSar = Math.max(cappedSar, high[i - 1], high[i - 2]);
-            if (high[i] > cappedSar) {
-                isLong = true;
-                cappedSar = Math.min(low[i], low[i - 1], ep);
-                ep = high[i];
-                af = step;
-            } else {
-                if (low[i] < ep) {
-                    ep = low[i];
-                    af = Math.min(af + step, max);
-                }
-            }
-        }
-
-        sar[i] = cappedSar;
-        currentSar = cappedSar;
-    }
-
-    return sar;
-}
-
 
 

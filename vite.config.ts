@@ -7,8 +7,7 @@ import { strategyLibraryAuditPlugin } from './lib/strategy-library-audit-plugin'
 import { executionLabVitePlugin } from './lib/execution-lab/execution-lab-vite-plugin';
 import { localSqlitePlugin } from './lib/local-sqlite-vite-plugin';
 import { secondMarketApiPlugin } from './lib/second-market-vite-plugin';
-import { createFetchTimeoutSignal, isAbortError } from './lib/dataProviders/fetch-helpers';
-import { sendCaughtErrorJson, sendJson } from './lib/vite-http-utils';
+import { sendCaughtErrorJson, sendJson, proxyUpstreamJson } from './lib/vite-http-utils';
 import { configurePolymarketNodeDns } from './lib/polymarket-node-dns';
 import { STOCK_MARKET_SYMBOL_SUFFIX } from './lib/local-daily-datasets';
 
@@ -123,60 +122,60 @@ function manualChunks(id: string): string | undefined {
 }
 
 function tradFiKlineProxyPlugin(): Plugin {
+    const register = (middlewares: any) => {
+        middlewares.use('/api/tradfi-kline', async (req: any, res: any) => {
+            if (req.method !== 'GET') {
+                sendJson(res, 405, { ret_code: 10003, ret_msg: 'Method not allowed' });
+                return;
+            }
+
+            const requestUrl = new URL(req.url || '/', 'http://localhost');
+            const symbol = requestUrl.searchParams.get('symbol');
+            const interval = requestUrl.searchParams.get('interval');
+            const limit = parseLimit(requestUrl.searchParams.get('limit'));
+            const to = requestUrl.searchParams.get('to');
+
+            if (!symbol || !interval) {
+                sendJson(res, 400, { ret_code: 10001, ret_msg: 'symbol and interval are required' });
+                return;
+            }
+
+            const upstreamParams = new URLSearchParams({
+                timeStamp: Date.now().toString(),
+                symbol,
+                interval,
+                limit: limit.toString(),
+            });
+            if (to) {
+                upstreamParams.set('to', to);
+            }
+
+            await proxyUpstreamJson(
+                res,
+                `${BYBIT_TRADFI_KLINE_URL}?${upstreamParams.toString()}`,
+                BYBIT_TRADFI_PROXY_TIMEOUT_MS,
+                'tradfi-kline',
+                {
+                    onTimeout: () => sendJson(res, 504, {
+                        ret_code: 10002,
+                        ret_msg: 'TradFi proxy request timed out',
+                    }),
+                    onError: () => sendJson(res, 500, {
+                        ret_code: 10002,
+                        ret_msg: 'TradFi proxy request failed',
+                    }),
+                }
+            );
+        });
+    };
+
     return {
         name: 'tradfi-kline-proxy',
         configureServer(server) {
-            server.middlewares.use('/api/tradfi-kline', async (req, res) => {
-                if (req.method !== 'GET') {
-                    sendJson(res, 405, { ret_code: 10003, ret_msg: 'Method not allowed' });
-                    return;
-                }
-
-                try {
-                    const requestUrl = new URL(req.url || '/', 'http://localhost');
-                    const symbol = requestUrl.searchParams.get('symbol');
-                    const interval = requestUrl.searchParams.get('interval');
-                    const limit = parseLimit(requestUrl.searchParams.get('limit'));
-                    const to = requestUrl.searchParams.get('to');
-
-                    if (!symbol || !interval) {
-                        sendJson(res, 400, { ret_code: 10001, ret_msg: 'symbol and interval are required' });
-                        return;
-                    }
-
-                    const upstreamParams = new URLSearchParams({
-                        timeStamp: Date.now().toString(),
-                        symbol,
-                        interval,
-                        limit: limit.toString(),
-                    });
-                    if (to) {
-                        upstreamParams.set('to', to);
-                    }
-
-                    const timeout = createFetchTimeoutSignal(undefined, BYBIT_TRADFI_PROXY_TIMEOUT_MS);
-                    try {
-                        const upstream = await fetch(`${BYBIT_TRADFI_KLINE_URL}?${upstreamParams.toString()}`, {
-                            headers: { Accept: 'application/json' },
-                            signal: timeout.signal,
-                        });
-
-                        const body = await upstream.text();
-                        res.statusCode = upstream.status;
-                        res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
-                        res.setHeader('Cache-Control', 'no-store');
-                        res.end(body);
-                    } finally {
-                        timeout.cleanup();
-                    }
-                } catch (error) {
-                    const timedOut = isAbortError(error);
-                    sendJson(res, timedOut ? 504 : 500, {
-                        ret_code: 10002,
-                        ret_msg: timedOut ? 'TradFi proxy request timed out' : 'TradFi proxy request failed',
-                    });
-                }
-            });
+            register(server.middlewares);
+        },
+        configurePreviewServer(server) {
+            register(server.middlewares);
         },
     };
 }
@@ -189,37 +188,29 @@ function polymarketProxyPlugin(): Plugin {
                 return;
             }
 
-            try {
-                const requestUrl = new URL(req.url || '/', 'http://localhost');
-                const slug = (requestUrl.searchParams.get('slug') || '').trim().toLowerCase();
-                if (!slug) {
-                    sendJson(res, 400, { ok: false, error: 'slug is required' });
-                    return;
-                }
-
-                const timeout = createFetchTimeoutSignal(undefined, POLYMARKET_PROXY_TIMEOUT_MS);
-                try {
-                    const upstream = await fetch(`${POLYMARKET_GAMMA_EVENT_SLUG_URL}/${encodeURIComponent(slug)}`, {
-                        headers: { Accept: 'application/json' },
-                        signal: timeout.signal,
-                    });
-                    const body = await upstream.text();
-                    res.statusCode = upstream.status;
-                    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
-                    res.setHeader('Cache-Control', 'no-store');
-                    res.end(body);
-                } finally {
-                    timeout.cleanup();
-                }
-            } catch (error) {
-                const timedOut = isAbortError(error);
-                sendJson(res, timedOut ? 504 : 500, {
-                    ok: false,
-                    error: timedOut
-                        ? 'Polymarket event proxy request timed out'
-                        : 'Polymarket event proxy request failed',
-                });
+            const requestUrl = new URL(req.url || '/', 'http://localhost');
+            const slug = (requestUrl.searchParams.get('slug') || '').trim().toLowerCase();
+            if (!slug) {
+                sendJson(res, 400, { ok: false, error: 'slug is required' });
+                return;
             }
+
+            await proxyUpstreamJson(
+                res,
+                `${POLYMARKET_GAMMA_EVENT_SLUG_URL}/${encodeURIComponent(slug)}`,
+                POLYMARKET_PROXY_TIMEOUT_MS,
+                'polymarket-event',
+                {
+                    onTimeout: () => sendJson(res, 504, {
+                        ok: false,
+                        error: 'Polymarket event proxy request timed out',
+                    }),
+                    onError: () => sendJson(res, 500, {
+                        ok: false,
+                        error: 'Polymarket event proxy request failed',
+                    }),
+                }
+            );
         });
 
         middlewares.use('/api/polymarket-history', async (req: any, res: any) => {
@@ -228,48 +219,40 @@ function polymarketProxyPlugin(): Plugin {
                 return;
             }
 
-            try {
-                const requestUrl = new URL(req.url || '/', 'http://localhost');
-                const market = (requestUrl.searchParams.get('market') || '').trim();
-                const interval = (requestUrl.searchParams.get('interval') || '').trim();
-                const startTs = (requestUrl.searchParams.get('startTs') || '').trim();
-                const endTs = (requestUrl.searchParams.get('endTs') || '').trim();
-                const fidelity = (requestUrl.searchParams.get('fidelity') || '').trim();
+            const requestUrl = new URL(req.url || '/', 'http://localhost');
+            const market = (requestUrl.searchParams.get('market') || '').trim();
+            const interval = (requestUrl.searchParams.get('interval') || '').trim();
+            const startTs = (requestUrl.searchParams.get('startTs') || '').trim();
+            const endTs = (requestUrl.searchParams.get('endTs') || '').trim();
+            const fidelity = (requestUrl.searchParams.get('fidelity') || '').trim();
 
-                if (!market) {
-                    sendJson(res, 400, { ok: false, error: 'market is required' });
-                    return;
-                }
-
-                const upstreamParams = new URLSearchParams({ market });
-                if (interval) upstreamParams.set('interval', interval);
-                if (startTs) upstreamParams.set('startTs', startTs);
-                if (endTs) upstreamParams.set('endTs', endTs);
-                if (fidelity) upstreamParams.set('fidelity', fidelity);
-
-                const timeout = createFetchTimeoutSignal(undefined, POLYMARKET_PROXY_TIMEOUT_MS);
-                try {
-                    const upstream = await fetch(`${POLYMARKET_CLOB_HISTORY_URL}?${upstreamParams.toString()}`, {
-                        headers: { Accept: 'application/json' },
-                        signal: timeout.signal,
-                    });
-                    const body = await upstream.text();
-                    res.statusCode = upstream.status;
-                    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
-                    res.setHeader('Cache-Control', 'no-store');
-                    res.end(body);
-                } finally {
-                    timeout.cleanup();
-                }
-            } catch (error) {
-                const timedOut = isAbortError(error);
-                sendJson(res, timedOut ? 504 : 500, {
-                    ok: false,
-                    error: timedOut
-                        ? 'Polymarket history proxy request timed out'
-                        : 'Polymarket history proxy request failed',
-                });
+            if (!market) {
+                sendJson(res, 400, { ok: false, error: 'market is required' });
+                return;
             }
+
+            const upstreamParams = new URLSearchParams({ market });
+            if (interval) upstreamParams.set('interval', interval);
+            if (startTs) upstreamParams.set('startTs', startTs);
+            if (endTs) upstreamParams.set('endTs', endTs);
+            if (fidelity) upstreamParams.set('fidelity', fidelity);
+
+            await proxyUpstreamJson(
+                res,
+                `${POLYMARKET_CLOB_HISTORY_URL}?${upstreamParams.toString()}`,
+                POLYMARKET_PROXY_TIMEOUT_MS,
+                'polymarket-history',
+                {
+                    onTimeout: () => sendJson(res, 504, {
+                        ok: false,
+                        error: 'Polymarket history proxy request timed out',
+                    }),
+                    onError: () => sendJson(res, 500, {
+                        ok: false,
+                        error: 'Polymarket history proxy request failed',
+                    }),
+                }
+            );
         });
     };
 

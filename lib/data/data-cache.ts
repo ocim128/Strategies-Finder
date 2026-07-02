@@ -2,12 +2,14 @@ import type { OHLCVData } from "../types/index";
 
 type CacheEntry = {
     candles: OHLCVData[];
-    lastAccessedAt: number;
     source: string;
 };
 
 export class DataCache {
     private readonly MAX_CACHE_ENTRIES = 256;
+    // Map iterates in insertion order; re-inserting a key (delete + set) moves
+    // it to the most-recently-used position. This gives O(1) LRU eviction
+    // without the prior O(MAX_CACHE_ENTRIES) timestamp scan on every overflow.
     private lruCache: Map<string, CacheEntry> = new Map();
     private cacheSyncAtByKey: Map<string, number> = new Map();
 
@@ -20,32 +22,25 @@ export class DataCache {
     }
 
     get(key: string): CacheEntry | undefined {
-        const entry = this.lruCache.get(key);
-        if (entry) {
-            entry.lastAccessedAt = Date.now();
-        }
+        if (!this.lruCache.has(key)) return undefined;
+        // Move to most-recently-used by reinserting at the end of iteration order.
+        const entry = this.lruCache.get(key)!;
+        this.lruCache.delete(key);
+        this.lruCache.set(key, entry);
         return entry;
     }
 
     set(cacheKey: string, candles: OHLCVData[], source: string): void {
-        this.lruCache.set(cacheKey, {
-            candles,
-            lastAccessedAt: Date.now(),
-            source
-        });
+        // Ensure insertion order puts this key last (most-recently-used).
+        if (this.lruCache.has(cacheKey)) {
+            this.lruCache.delete(cacheKey);
+        }
+        this.lruCache.set(cacheKey, { candles, source });
 
         if (this.lruCache.size > this.MAX_CACHE_ENTRIES) {
-            let oldestKey: string | null = null;
-            let oldestAccess = Infinity;
-
-            for (const [key, entry] of this.lruCache.entries()) {
-                if (entry.lastAccessedAt < oldestAccess) {
-                    oldestAccess = entry.lastAccessedAt;
-                    oldestKey = key;
-                }
-            }
-
-            if (oldestKey) {
+            // Oldest key is the first in iteration order.
+            const oldestKey = this.lruCache.keys().next().value;
+            if (oldestKey !== undefined) {
                 this.removeEntry(oldestKey);
             }
         }
