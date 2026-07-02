@@ -138,106 +138,15 @@ import { pullback_after_relative_expansion } from "./lib/pullback_after_relative
 import { range_expansion_follow_through } from "./lib/range_expansion_follow_through";
 import { relative_acceptance_breakout } from "./lib/relative_acceptance_breakout";
 import { autocorrelation_break_reversal } from "./lib/autocorrelation_break_reversal";
-import { autocorrelation_proxy_volume_persistence } from "./lib/autocorrelation_proxy_volume_persistence";
-import { body_imbalance_range_confirmation } from "./lib/body_imbalance_range_confirmation";
-import { close_location_pressure_ignition } from "./lib/close_location_pressure_ignition";
 import { compression_close_location_expansion } from "./lib/compression_close_location_expansion";
-import { decaying_return_skewness_autocorrelation } from "./lib/decaying_return_skewness_autocorrelation";
-import { efficiency_collapse_return_reversion } from "./lib/efficiency_collapse_return_reversion";
-import { range_expansion_efficiency_follow } from "./lib/range_expansion_efficiency_follow";
-import { true_range_expansion_percentile_follow } from "./lib/true_range_expansion_percentile_follow";
-import { true_range_skew_efficiency_filtered } from "./lib/true_range_skew_efficiency_filtered";
-import { true_range_skew_percentile_gate } from "./lib/true_range_skew_percentile_gate";
-import { wick_exhaustion_close_return_fade } from "./lib/wick_exhaustion_close_return_fade";
-import { body_position_range_correlation } from "./lib/body_position_range_correlation";
-import { close_location_deviation_autocorrelation } from "./lib/close_location_deviation_autocorrelation";
-import { directional_body_balance_persistence } from "./lib/directional_body_balance_persistence";
-import { gap_percentile_efficiency_follow } from "./lib/gap_percentile_efficiency_follow";
-import { naive_ratio_zscore_reversion } from "./lib/naive_ratio_zscore_reversion";
-import { range_efficiency_anti_correlation_reversion } from "./lib/range_efficiency_anti_correlation_reversion";
-import { range_efficiency_correlation_regime } from "./lib/range_efficiency_correlation_regime";
-import { return_kurtosis_extreme_reversion } from "./lib/return_kurtosis_extreme_reversion";
-import { true_range_skew_acceleration } from "./lib/true_range_skew_acceleration";
-import { true_range_skew_acceptance_quality } from "./lib/true_range_skew_acceptance_quality";
-import { true_range_skew_conviction_composite } from "./lib/true_range_skew_conviction_composite";
-import { true_range_skew_dual_lookback } from "./lib/true_range_skew_dual_lookback";
-import { true_range_skew_entropy_gated } from "./lib/true_range_skew_entropy_gated";
-import { true_range_skew_magnitude_rank } from "./lib/true_range_skew_magnitude_rank";
-import { true_range_skew_volume_confirmed } from "./lib/true_range_skew_volume_confirmed";
-import { true_range_skew_zscore_expansion } from "./lib/true_range_skew_zscore_expansion";
-import { typical_price_proximity_streak_drift } from "./lib/typical_price_proximity_streak_drift";
-import { volatility_regime_acceptance_follow } from "./lib/volatility_regime_acceptance_follow";
-import { wick_imbalance_autocorrelation_expansion } from "./lib/wick_imbalance_autocorrelation_expansion";
-import { extreme_close_location_fade } from "./lib/extreme_close_location_fade";
-import { naive_body_direction_streak_follow } from "./lib/naive_body_direction_streak_follow";
 import { naive_compression_breakout_follow } from "./lib/naive_compression_breakout_follow";
 import { proxy_volume_spike_fade } from "./lib/proxy_volume_spike_fade";
-import { raw_autocorrelation_direction_follow } from "./lib/raw_autocorrelation_direction_follow";
-import { raw_momentum_persistence_follow } from "./lib/raw_momentum_persistence_follow";
-import { raw_return_sign_streak_follow } from "./lib/raw_return_sign_streak_follow";
-import { simple_efficiency_ratio_direction } from "./lib/simple_efficiency_ratio_direction";
-import { simple_gap_fade } from "./lib/simple_gap_fade";
-import { algorithmic_autocorrelation_regime_shift } from "./lib/algorithmic_autocorrelation_regime_shift";
-import { arbitrage_bound_range_fade } from "./lib/arbitrage_bound_range_fade";
-import { bar_symmetry_break_direction } from "./lib/bar_symmetry_break_direction";
-import { body_wick_ratio_regime_shift } from "./lib/body_wick_ratio_regime_shift";
 import { close_location_gradient_acceleration } from "./lib/close_location_gradient_acceleration";
 import { close_position_vs_typical_follow } from "./lib/close_position_vs_typical_follow";
-import { compression_efficiency_burst } from "./lib/compression_efficiency_burst";
-import { gap_fill_speed_reversion } from "./lib/gap_fill_speed_reversion";
-import { initiative_pressure_streak_follow } from "./lib/initiative_pressure_streak_follow";
-import { institutional_flow_hedging_pattern } from "./lib/institutional_flow_hedging_pattern";
-import { meme_sentiment_spike_follow } from "./lib/meme_sentiment_spike_follow";
-import { midpoint_close_deviation_persistence } from "./lib/midpoint_close_deviation_persistence";
 import { modern_arbitrage_speed_reversion } from "./lib/modern_arbitrage_speed_reversion";
-import { price_volume_correlation_manipulation_detect } from "./lib/price_volume_correlation_manipulation_detect";
-import { range_compression_ratio_breakout } from "./lib/range_compression_ratio_breakout";
-import { return_distribution_regime_transition } from "./lib/return_distribution_regime_transition";
-import { return_sign_entropy_direction } from "./lib/return_sign_entropy_direction";
-import { tight_coupling_persistence_follow } from "./lib/tight_coupling_persistence_follow";
-import { tight_range_efficiency_direction } from "./lib/tight_range_efficiency_direction";
 import { typical_price_momentum_divergence } from "./lib/typical_price_momentum_divergence";
-import { volatility_structure_regime_transition } from "./lib/volatility_structure_regime_transition";
-import { volume_weighted_close_location_drift } from "./lib/volume_weighted_close_location_drift";
-import { wick_direction_persistence_follow } from "./lib/wick_direction_persistence_follow";
-import { autocorrelation_compression_transition } from "./lib/autocorrelation_compression_transition";
-import { bar_extreme_volume_reversion } from "./lib/bar_extreme_volume_reversion";
-import { body_spike_volume_confirmation } from "./lib/body_spike_volume_confirmation";
-import { body_volume_conviction_drift } from "./lib/body_volume_conviction_drift";
-import { close_acceptance_initiative_alignment } from "./lib/close_acceptance_initiative_alignment";
-import { close_location_autocorrelation_filter } from "./lib/close_location_autocorrelation_filter";
-import { compression_acceptance_breakout } from "./lib/compression_acceptance_breakout";
-import { compression_directional_breakout } from "./lib/compression_directional_breakout";
-import { efficiency_confirmed_close_acceptance } from "./lib/efficiency_confirmed_close_acceptance";
-import { efficiency_trend_pullback_entry } from "./lib/efficiency_trend_pullback_entry";
-import { efficient_mean_reversion } from "./lib/efficient_mean_reversion";
-import { gap_fill_volume_confirmed } from "./lib/gap_fill_volume_confirmed";
-import { initiative_pressure_return_divergence } from "./lib/initiative_pressure_return_divergence";
-import { initiative_pressure_volume_follow } from "./lib/initiative_pressure_volume_follow";
-import { median_breakout_volume_confirmed } from "./lib/median_breakout_volume_confirmed";
-import { median_pullback_volume_entry } from "./lib/median_pullback_volume_entry";
-import { pressure_accumulation_decay_signal } from "./lib/pressure_accumulation_decay_signal";
-import { pressure_side_transition_follow } from "./lib/pressure_side_transition_follow";
-import { quiet_drift_efficiency_follow } from "./lib/quiet_drift_efficiency_follow";
 import { return_autocorrelation_close_acceptance } from "./lib/return_autocorrelation_close_acceptance";
-import { return_streak_efficiency_confirmed } from "./lib/return_streak_efficiency_confirmed";
-import { streak_efficiency_continuation } from "./lib/streak_efficiency_continuation";
-import { tight_coupling_directional_drift } from "./lib/tight_coupling_directional_drift";
-import { true_range_percentile_directional_follow } from "./lib/true_range_percentile_directional_follow";
-import { volume_price_flow_alignment } from "./lib/volume_price_flow_alignment";
-import { zscore_reversion_efficiency_filtered } from "./lib/zscore_reversion_efficiency_filtered";
-import { autocorrelation_regime_follow } from "./lib/autocorrelation_regime_follow";
-import { bar_symmetry_mean_reversion } from "./lib/bar_symmetry_mean_reversion";
-import { close_location_extreme_efficiency_fade } from "./lib/close_location_extreme_efficiency_fade";
-import { efficient_zscore_reversion } from "./lib/efficient_zscore_reversion";
-import { entropy_regime_mean_reversion } from "./lib/entropy_regime_mean_reversion";
-import { negative_autocorrelation_reversion } from "./lib/negative_autocorrelation_reversion";
 import { price_volume_flow_divergence } from "./lib/price_volume_flow_divergence";
-import { range_expansion_failure_fade } from "./lib/range_expansion_failure_fade";
-import { return_kurtosis_regime_reversion } from "./lib/return_kurtosis_regime_reversion";
-import { volatility_compression_regime_shift } from "./lib/volatility_compression_regime_shift";
-import { wick_rejection_reversion } from "./lib/wick_rejection_reversion";
-import { close_acceptance_streak_efficiency } from "./lib/close_acceptance_streak_efficiency";
 import { ema_confirmation } from "./lib/ema_confirmation";
 
 export interface StrategyManifestEntry {
@@ -382,106 +291,15 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "range_expansion_follow_through", strategy: range_expansion_follow_through },
     { key: "relative_acceptance_breakout", strategy: relative_acceptance_breakout },
     { key: "autocorrelation_break_reversal", strategy: autocorrelation_break_reversal },
-    { key: "autocorrelation_proxy_volume_persistence", strategy: autocorrelation_proxy_volume_persistence },
-    { key: "body_imbalance_range_confirmation", strategy: body_imbalance_range_confirmation },
-    { key: "close_location_pressure_ignition", strategy: close_location_pressure_ignition },
     { key: "compression_close_location_expansion", strategy: compression_close_location_expansion },
-    { key: "decaying_return_skewness_autocorrelation", strategy: decaying_return_skewness_autocorrelation },
-    { key: "efficiency_collapse_return_reversion", strategy: efficiency_collapse_return_reversion },
-    { key: "range_expansion_efficiency_follow", strategy: range_expansion_efficiency_follow },
-    { key: "true_range_expansion_percentile_follow", strategy: true_range_expansion_percentile_follow },
-    { key: "true_range_skew_efficiency_filtered", strategy: true_range_skew_efficiency_filtered },
-    { key: "true_range_skew_percentile_gate", strategy: true_range_skew_percentile_gate },
-    { key: "wick_exhaustion_close_return_fade", strategy: wick_exhaustion_close_return_fade },
-    { key: "body_position_range_correlation", strategy: body_position_range_correlation },
-    { key: "close_location_deviation_autocorrelation", strategy: close_location_deviation_autocorrelation },
-    { key: "directional_body_balance_persistence", strategy: directional_body_balance_persistence },
-    { key: "gap_percentile_efficiency_follow", strategy: gap_percentile_efficiency_follow },
-    { key: "naive_ratio_zscore_reversion", strategy: naive_ratio_zscore_reversion },
-    { key: "range_efficiency_anti_correlation_reversion", strategy: range_efficiency_anti_correlation_reversion },
-    { key: "range_efficiency_correlation_regime", strategy: range_efficiency_correlation_regime },
-    { key: "return_kurtosis_extreme_reversion", strategy: return_kurtosis_extreme_reversion },
-    { key: "true_range_skew_acceleration", strategy: true_range_skew_acceleration },
-    { key: "true_range_skew_acceptance_quality", strategy: true_range_skew_acceptance_quality },
-    { key: "true_range_skew_conviction_composite", strategy: true_range_skew_conviction_composite },
-    { key: "true_range_skew_dual_lookback", strategy: true_range_skew_dual_lookback },
-    { key: "true_range_skew_entropy_gated", strategy: true_range_skew_entropy_gated },
-    { key: "true_range_skew_magnitude_rank", strategy: true_range_skew_magnitude_rank },
-    { key: "true_range_skew_volume_confirmed", strategy: true_range_skew_volume_confirmed },
-    { key: "true_range_skew_zscore_expansion", strategy: true_range_skew_zscore_expansion },
-    { key: "typical_price_proximity_streak_drift", strategy: typical_price_proximity_streak_drift },
-    { key: "volatility_regime_acceptance_follow", strategy: volatility_regime_acceptance_follow },
-    { key: "wick_imbalance_autocorrelation_expansion", strategy: wick_imbalance_autocorrelation_expansion },
-    { key: "extreme_close_location_fade", strategy: extreme_close_location_fade },
-    { key: "naive_body_direction_streak_follow", strategy: naive_body_direction_streak_follow },
     { key: "naive_compression_breakout_follow", strategy: naive_compression_breakout_follow },
     { key: "proxy_volume_spike_fade", strategy: proxy_volume_spike_fade },
-    { key: "raw_autocorrelation_direction_follow", strategy: raw_autocorrelation_direction_follow },
-    { key: "raw_momentum_persistence_follow", strategy: raw_momentum_persistence_follow },
-    { key: "raw_return_sign_streak_follow", strategy: raw_return_sign_streak_follow },
-    { key: "simple_efficiency_ratio_direction", strategy: simple_efficiency_ratio_direction },
-    { key: "simple_gap_fade", strategy: simple_gap_fade },
-    { key: "algorithmic_autocorrelation_regime_shift", strategy: algorithmic_autocorrelation_regime_shift },
-    { key: "arbitrage_bound_range_fade", strategy: arbitrage_bound_range_fade },
-    { key: "bar_symmetry_break_direction", strategy: bar_symmetry_break_direction },
-    { key: "body_wick_ratio_regime_shift", strategy: body_wick_ratio_regime_shift },
     { key: "close_location_gradient_acceleration", strategy: close_location_gradient_acceleration },
     { key: "close_position_vs_typical_follow", strategy: close_position_vs_typical_follow },
-    { key: "compression_efficiency_burst", strategy: compression_efficiency_burst },
-    { key: "gap_fill_speed_reversion", strategy: gap_fill_speed_reversion },
-    { key: "initiative_pressure_streak_follow", strategy: initiative_pressure_streak_follow },
-    { key: "institutional_flow_hedging_pattern", strategy: institutional_flow_hedging_pattern },
-    { key: "meme_sentiment_spike_follow", strategy: meme_sentiment_spike_follow },
-    { key: "midpoint_close_deviation_persistence", strategy: midpoint_close_deviation_persistence },
     { key: "modern_arbitrage_speed_reversion", strategy: modern_arbitrage_speed_reversion },
-    { key: "price_volume_correlation_manipulation_detect", strategy: price_volume_correlation_manipulation_detect },
-    { key: "range_compression_ratio_breakout", strategy: range_compression_ratio_breakout },
-    { key: "return_distribution_regime_transition", strategy: return_distribution_regime_transition },
-    { key: "return_sign_entropy_direction", strategy: return_sign_entropy_direction },
-    { key: "tight_coupling_persistence_follow", strategy: tight_coupling_persistence_follow },
-    { key: "tight_range_efficiency_direction", strategy: tight_range_efficiency_direction },
     { key: "typical_price_momentum_divergence", strategy: typical_price_momentum_divergence },
-    { key: "volatility_structure_regime_transition", strategy: volatility_structure_regime_transition },
-    { key: "volume_weighted_close_location_drift", strategy: volume_weighted_close_location_drift },
-    { key: "wick_direction_persistence_follow", strategy: wick_direction_persistence_follow },
-    { key: "autocorrelation_compression_transition", strategy: autocorrelation_compression_transition },
-    { key: "bar_extreme_volume_reversion", strategy: bar_extreme_volume_reversion },
-    { key: "body_spike_volume_confirmation", strategy: body_spike_volume_confirmation },
-    { key: "body_volume_conviction_drift", strategy: body_volume_conviction_drift },
-    { key: "close_acceptance_initiative_alignment", strategy: close_acceptance_initiative_alignment },
-    { key: "close_location_autocorrelation_filter", strategy: close_location_autocorrelation_filter },
-    { key: "compression_acceptance_breakout", strategy: compression_acceptance_breakout },
-    { key: "compression_directional_breakout", strategy: compression_directional_breakout },
-    { key: "efficiency_confirmed_close_acceptance", strategy: efficiency_confirmed_close_acceptance },
-    { key: "efficiency_trend_pullback_entry", strategy: efficiency_trend_pullback_entry },
-    { key: "efficient_mean_reversion", strategy: efficient_mean_reversion },
-    { key: "gap_fill_volume_confirmed", strategy: gap_fill_volume_confirmed },
-    { key: "initiative_pressure_return_divergence", strategy: initiative_pressure_return_divergence },
-    { key: "initiative_pressure_volume_follow", strategy: initiative_pressure_volume_follow },
-    { key: "median_breakout_volume_confirmed", strategy: median_breakout_volume_confirmed },
-    { key: "median_pullback_volume_entry", strategy: median_pullback_volume_entry },
-    { key: "pressure_accumulation_decay_signal", strategy: pressure_accumulation_decay_signal },
-    { key: "pressure_side_transition_follow", strategy: pressure_side_transition_follow },
-    { key: "quiet_drift_efficiency_follow", strategy: quiet_drift_efficiency_follow },
     { key: "return_autocorrelation_close_acceptance", strategy: return_autocorrelation_close_acceptance },
-    { key: "return_streak_efficiency_confirmed", strategy: return_streak_efficiency_confirmed },
-    { key: "streak_efficiency_continuation", strategy: streak_efficiency_continuation },
-    { key: "tight_coupling_directional_drift", strategy: tight_coupling_directional_drift },
-    { key: "true_range_percentile_directional_follow", strategy: true_range_percentile_directional_follow },
-    { key: "volume_price_flow_alignment", strategy: volume_price_flow_alignment },
-    { key: "zscore_reversion_efficiency_filtered", strategy: zscore_reversion_efficiency_filtered },
-    { key: "autocorrelation_regime_follow", strategy: autocorrelation_regime_follow },
-    { key: "bar_symmetry_mean_reversion", strategy: bar_symmetry_mean_reversion },
-    { key: "close_location_extreme_efficiency_fade", strategy: close_location_extreme_efficiency_fade },
-    { key: "efficient_zscore_reversion", strategy: efficient_zscore_reversion },
-    { key: "entropy_regime_mean_reversion", strategy: entropy_regime_mean_reversion },
-    { key: "negative_autocorrelation_reversion", strategy: negative_autocorrelation_reversion },
     { key: "price_volume_flow_divergence", strategy: price_volume_flow_divergence },
-    { key: "range_expansion_failure_fade", strategy: range_expansion_failure_fade },
-    { key: "return_kurtosis_regime_reversion", strategy: return_kurtosis_regime_reversion },
-    { key: "volatility_compression_regime_shift", strategy: volatility_compression_regime_shift },
-    { key: "wick_rejection_reversion", strategy: wick_rejection_reversion },
-    { key: "close_acceptance_streak_efficiency", strategy: close_acceptance_streak_efficiency },
     { key: "ema_confirmation", strategy: ema_confirmation },
 ];
 
