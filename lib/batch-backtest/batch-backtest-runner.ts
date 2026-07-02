@@ -20,6 +20,7 @@ import type {
     BacktestResult,
     BacktestSettings,
     OHLCVData,
+    Signal,
     Strategy,
     StrategyParams,
     Time,
@@ -60,6 +61,8 @@ export interface BatchBacktestSymbolResult {
     firstTime?: Time;
     lastTime?: Time;
     result?: BacktestResult;
+    data?: OHLCVData[];
+    signals?: Signal[];
     tradeSummary?: BatchBacktestTradeSummary;
     error?: string;
 }
@@ -284,7 +287,7 @@ export async function runBatchBacktest(
                 },
             });
             if (cancelCheck()) break;
-            const result = buildSymbolResult(symbol, data, output.result);
+            const result = buildSymbolResult(symbol, data, output.result, output.signals);
             results[i] = result;
             callbacks.onSymbolComplete?.(i, result);
         } catch (error) {
@@ -334,6 +337,7 @@ function buildSymbolResult(
     symbol: string,
     data: OHLCVData[],
     result: BacktestResult,
+    signals: Signal[],
 ): BatchBacktestSymbolResult {
     let status: BatchBacktestSymbolStatus;
     if (result.totalTrades <= 0) {
@@ -353,6 +357,8 @@ function buildSymbolResult(
         firstTime: data[0]?.time,
         lastTime: data[data.length - 1]?.time,
         result,
+        data,
+        signals,
         tradeSummary: buildTradeSummary(data, result),
     };
 }

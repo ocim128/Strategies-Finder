@@ -37,6 +37,14 @@
             title="Copy all rows as pipe-delimited text">
             Copy Results
         </button>
+        <button class="btn btn-secondary btn-compact" id="batchBacktestMineBtn" type="button" disabled
+            title="Mine robust asset timing verdicts from the latest Batch run">
+            Mine Timing
+        </button>
+        <button class="btn btn-secondary btn-compact" id="batchBacktestCopyMinerBtn" type="button" disabled
+            title="Copy the latest miner verdicts">
+            Copy Miner
+        </button>
     </div>
 
     <div class="progress-container" id="batchBacktestProgress">
@@ -48,8 +56,11 @@
 
     <div class="finder-status" id="batchBacktestStatus">Idle</div>
     <div class="finder-universe-summary" id="batchBacktestSummary">0 pairs</div>
+    <div class="finder-universe-summary" id="batchBacktestMinerSummary">Miner idle</div>
 
     <div class="finder-results">
+        <div class="finder-list" id="batchBacktestMinerResults">
+        </div>
         <div class="finder-list" id="batchBacktestResults">
         </div>
         <div class="empty-state empty-state-illustrated" id="batchBacktestEmpty">

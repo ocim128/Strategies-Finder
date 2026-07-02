@@ -20,6 +20,7 @@ import { setVisible } from "../dom-utils";
 import { debugLogger } from "../debug-logger";
 import { computePerformanceVerdict } from "../finder/finder-universe-metrics";
 import type { BacktestResult, Time } from "../types/strategies";
+import { parsePortfolioSyntheticPairSymbol } from "../portfolioLab/portfolio-lab-synthetic";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
 import { loadBatchDataset } from "./batch-backtest-loader";
 import {
@@ -27,12 +28,23 @@ import {
     runBatchBacktest,
     type BatchBacktestSymbolResult,
 } from "./batch-backtest-runner";
+import {
+    resolveBatchSyntheticTargetSymbol,
+    runBatchSyntheticStateMiner,
+    type BatchSyntheticAssetVerdict,
+    type BatchSyntheticMinerResult,
+    type BatchSyntheticPairArtifact,
+    type BatchSyntheticTargetArtifact,
+} from "./batch-synthetic-state-miner";
 
 class BatchBacktestService {
     private dom: BatchBacktestDom | null = null;
     private initialized = false;
     private cancelled = false;
     private lastResults: BatchBacktestSymbolResult[] = [];
+    private lastMinerResult: BatchSyntheticMinerResult | null = null;
+    private lastRunFingerprint: string | null = null;
+    private lastRunInterval: string | null = null;
     // Number of result rows already appended to the DOM via onSymbolComplete.
     // Tracked so the post-run path only appends the cancelled back-fill tail
     // instead of rebuilding every row (the runner emits onSymbolComplete in
@@ -68,6 +80,12 @@ class BatchBacktestService {
         });
         dom.batchBacktestCopyBtn.addEventListener("click", () => {
             void this.copyResults();
+        });
+        dom.batchBacktestMineBtn.addEventListener("click", () => {
+            void this.runMiner();
+        });
+        dom.batchBacktestCopyMinerBtn.addEventListener("click", () => {
+            void this.copyMinerResults();
         });
         dom.batchBacktestUseCurrent.addEventListener("click", () => {
             const current = state.currentSymbol?.trim().toUpperCase();
@@ -113,6 +131,7 @@ class BatchBacktestService {
         const backtestSettings = backtestService.getBacktestSettings();
         const capitalSettings = backtestService.getCapitalSettings();
         const interval = state.currentInterval;
+        const runFingerprint = this.buildRunFingerprint(symbols, strategyKey, strategyParams, backtestSettings, capitalSettings, interval);
 
         // Invalidate any in-flight run and claim this one. The stale run will
         // see its token mismatch after its next await and stop mutating state.
@@ -120,10 +139,14 @@ class BatchBacktestService {
         const token = this.runToken;
         this.cancelled = false;
         this.lastResults = [];
+        this.lastRunFingerprint = null;
+        this.lastRunInterval = null;
         this.appendedCount = 0;
         dom.batchBacktestRunBtn.disabled = true;
         setVisible(dom.batchBacktestStopBtn, true);
         dom.batchBacktestCopyBtn.disabled = true;
+        dom.batchBacktestMineBtn.disabled = true;
+        this.clearMinerResults(dom);
         setVisible(dom.batchBacktestEmpty, false);
         dom.batchBacktestResults.replaceChildren();
 
@@ -160,6 +183,8 @@ class BatchBacktestService {
             // A newer run has taken over; leave all UI state to that run.
             if (token !== this.runToken) return;
             this.lastResults = output.results;
+            this.lastRunFingerprint = runFingerprint;
+            this.lastRunInterval = interval;
             // The runner emits onSymbolComplete in strict input order, so every
             // processed row is already in the DOM. Only the cancelled back-fill
             // tail (slots never processed because Stop broke the loop) needs to
@@ -183,6 +208,7 @@ class BatchBacktestService {
                 dom.batchBacktestRunBtn.disabled = false;
                 setVisible(dom.batchBacktestStopBtn, false);
                 dom.batchBacktestCopyBtn.disabled = this.lastResults.length === 0;
+                dom.batchBacktestMineBtn.disabled = !this.hasMineableArtifacts();
                 this.updateSummary(dom);
                 this.setProgress(dom, 100, this.cancelled ? "Stopped" : "Done");
             }
@@ -199,6 +225,197 @@ class BatchBacktestService {
         }
     }
 
+    private async runMiner(): Promise<void> {
+        const dom = this.getDom();
+        if (this.lastResults.length === 0) {
+            dom.batchBacktestMinerSummary.textContent = "Run Batch first.";
+            return;
+        }
+        const currentFingerprint = this.buildCurrentRunFingerprint();
+        if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
+            dom.batchBacktestMinerSummary.textContent = "Rerun Batch before mining; settings or symbols changed.";
+            dom.batchBacktestCopyMinerBtn.disabled = true;
+            return;
+        }
+
+        const pairArtifacts = this.buildMinerPairArtifacts();
+        if (pairArtifacts.length === 0) {
+            dom.batchBacktestMinerSummary.textContent = "No completed synthetic pair artifacts to mine.";
+            dom.batchBacktestCopyMinerBtn.disabled = true;
+            return;
+        }
+
+        dom.batchBacktestMineBtn.disabled = true;
+        dom.batchBacktestCopyMinerBtn.disabled = true;
+        dom.batchBacktestMinerSummary.textContent = "Loading target assets...";
+        dom.batchBacktestMinerResults.replaceChildren();
+
+        try {
+            const targets = await this.loadMinerTargets(pairArtifacts, this.lastRunInterval ?? state.currentInterval);
+            if (targets.length === 0) {
+                this.lastMinerResult = null;
+                dom.batchBacktestMinerSummary.textContent = "No target asset candles loaded.";
+                return;
+            }
+            dom.batchBacktestMinerSummary.textContent = "Mining timing analogs...";
+            const result = runBatchSyntheticStateMiner({
+                interval: this.lastRunInterval ?? state.currentInterval,
+                targets,
+                artifacts: pairArtifacts,
+            });
+            this.lastMinerResult = result;
+            this.renderMinerResult(dom, result);
+            dom.batchBacktestCopyMinerBtn.disabled = result.verdicts.length === 0;
+            debugLogger.event("batch_synthetic_miner.complete", {
+                pairs: pairArtifacts.length,
+                targets: targets.length,
+                verdicts: result.verdicts.length,
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.lastMinerResult = null;
+            dom.batchBacktestMinerSummary.textContent = `Miner error: ${message}`;
+            debugLogger.error("batch_synthetic_miner.failed", { error: message });
+        } finally {
+            dom.batchBacktestMineBtn.disabled = !this.hasMineableArtifacts();
+        }
+    }
+
+    private async copyMinerResults(): Promise<void> {
+        if (!this.lastMinerResult) return;
+        const text = formatMinerCopy(this.lastMinerResult);
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch {
+            // Clipboard can fail in non-secure contexts; fall back silently.
+        }
+    }
+
+    private buildMinerPairArtifacts(): BatchSyntheticPairArtifact[] {
+        const artifacts: BatchSyntheticPairArtifact[] = [];
+        for (const row of this.lastResults) {
+            if (!row.result || !row.data || !row.signals) {
+                continue;
+            }
+            const parsed = parsePortfolioSyntheticPairSymbol(row.symbol);
+            if (!parsed) {
+                continue;
+            }
+            artifacts.push({
+                symbol: row.symbol,
+                baseAsset: parsed.baseAsset,
+                quoteAsset: parsed.quoteAsset,
+                data: row.data,
+                signals: row.signals,
+                result: row.result,
+            });
+        }
+        return artifacts;
+    }
+
+    private async loadMinerTargets(
+        pairArtifacts: readonly BatchSyntheticPairArtifact[],
+        interval: string
+    ): Promise<BatchSyntheticTargetArtifact[]> {
+        const assets = Array.from(new Set(
+            pairArtifacts.flatMap((artifact) => [artifact.baseAsset, artifact.quoteAsset])
+                .map((asset) => asset.trim().toUpperCase())
+                .filter(Boolean)
+        )).sort();
+        // Load all target datasets concurrently. Each load is independent
+        // (loadBatchDataset goes through the shared LRU caches and
+        // dataManager.fetchDataDetached, both safe under concurrency), and the
+        // previous sequential `for...await` serialized ~16 network reads. On
+        // 4H each target has a deep history, so this was the dominant wall
+        // clock cost of Mine. Per-target errors are isolated so one failed
+        // asset does not reject the batch.
+        const loaded = await Promise.all(
+            assets.map(async (asset) => {
+                const symbol = resolveBatchSyntheticTargetSymbol(asset);
+                try {
+                    const data = await loadBatchDataset(symbol, interval);
+                    if (Array.isArray(data) && data.length > 0) {
+                        return { asset, symbol, data };
+                    }
+                    return null;
+                } catch (error) {
+                    debugLogger.warn("batch_synthetic_miner.target_load_failed", {
+                        asset,
+                        symbol,
+                        error: error instanceof Error ? error.message : String(error),
+                    });
+                    return null;
+                }
+            }),
+        );
+        // Preserve the sorted asset order; drop failed/empty loads.
+        return loaded.filter((entry): entry is BatchSyntheticTargetArtifact => entry !== null);
+    }
+
+    private buildCurrentRunFingerprint(): string | null {
+        const strategyKey = state.currentStrategyKey;
+        const strategy = strategyRegistry.get(strategyKey);
+        if (!strategy) {
+            return null;
+        }
+        return this.buildRunFingerprint(
+            parseBatchSymbols(this.getDom().batchBacktestSymbols.value),
+            strategyKey,
+            paramManager.getValues(strategy),
+            backtestService.getBacktestSettings(),
+            backtestService.getCapitalSettings(),
+            state.currentInterval
+        );
+    }
+
+    private buildRunFingerprint(
+        symbols: readonly string[],
+        strategyKey: string,
+        strategyParams: unknown,
+        backtestSettings: unknown,
+        capitalSettings: unknown,
+        interval: string
+    ): string {
+        return JSON.stringify({
+            symbols,
+            strategyKey,
+            strategyParams,
+            backtestSettings,
+            capitalSettings,
+            interval,
+        });
+    }
+
+    private hasMineableArtifacts(): boolean {
+        return this.lastResults.some((row) => Boolean(row.result && row.data && row.signals && parsePortfolioSyntheticPairSymbol(row.symbol)));
+    }
+
+    private clearMinerResults(dom: BatchBacktestDom): void {
+        this.lastMinerResult = null;
+        dom.batchBacktestMinerSummary.textContent = "Miner idle";
+        dom.batchBacktestMinerResults.replaceChildren();
+        dom.batchBacktestCopyMinerBtn.disabled = true;
+    }
+
+    private renderMinerResult(dom: BatchBacktestDom, result: BatchSyntheticMinerResult): void {
+        dom.batchBacktestMinerResults.replaceChildren();
+        dom.batchBacktestMinerSummary.textContent = formatMinerSummary(result);
+        for (const verdict of result.verdicts) {
+            dom.batchBacktestMinerResults.appendChild(this.createMinerRow(verdict));
+        }
+    }
+
+    private createMinerRow(verdict: BatchSyntheticAssetVerdict): HTMLDivElement {
+        const line = document.createElement("div");
+        line.className = "finder-sub finder-symbol-row";
+        const badge = document.createElement("span");
+        badge.className = `finder-verdict ${getMinerVerdictClass(verdict.verdict)}`;
+        badge.textContent = verdict.verdict;
+        line.appendChild(badge);
+        line.appendChild(document.createTextNode(` ${formatMinerRowPipe(verdict)}`));
+        return line;
+    }
+
     // --------------------------------------------------------------------
     // Rendering
     // --------------------------------------------------------------------
@@ -208,6 +425,10 @@ class BatchBacktestService {
     }
 
     private clearStaleResults(dom: BatchBacktestDom): void {
+        this.clearMinerResults(dom);
+        this.lastRunFingerprint = null;
+        this.lastRunInterval = null;
+        dom.batchBacktestMineBtn.disabled = true;
         if (this.lastResults.length === 0) return;
         this.lastResults = [];
         this.appendedCount = 0;
@@ -334,6 +555,80 @@ function formatBatchOverallSummary(results: readonly BatchBacktestSymbolResult[]
             `Median Exposure ${formatPercent(medianMetric(stats.resultRows, (row) => row.tradeSummary?.exposurePercent ?? null))}`,
         ].join(" | "),
     ];
+}
+
+function formatMinerSummary(result: BatchSyntheticMinerResult): string {
+    const counts = new Map<string, number>();
+    for (const verdict of result.verdicts) {
+        counts.set(verdict.verdict, (counts.get(verdict.verdict) ?? 0) + 1);
+    }
+    const parts = ["LONG", "SHORT", "WATCH", "SKIP", "INCONCLUSIVE"]
+        .map((label) => {
+            const count = counts.get(label) ?? 0;
+            return count > 0 ? `${label} ${count}` : "";
+        })
+        .filter(Boolean);
+    return `Miner | Assets ${result.verdicts.length}${parts.length > 0 ? ` | ${parts.join(", ")}` : ""}`;
+}
+
+function formatMinerRowPipe(verdict: BatchSyntheticAssetVerdict): string {
+    const evidence = verdict.evidence;
+    const direction = verdict.direction ? verdict.direction.toUpperCase() : "--";
+    const reason = verdict.reasons[0] ?? "";
+    const horizonLabel = evidence.horizonBarsAll.length > 1
+        ? `Hrz [${evidence.horizonBarsAll.join(",")}]`
+        : `Hrz ${evidence.horizonBars}`;
+    const parts = [
+        verdict.asset,
+        `Dir ${direction}`,
+        `Conf ${verdict.confidence}`,
+        horizonLabel,
+        `Samples ${evidence.analogCount}/${evidence.candidateCount}`,
+        `Pre ${evidence.selectionCount}`,
+        `PreRet ${formatSignedPercent(evidence.selectionForwardReturnPct)}`,
+        `OOS ${evidence.oosCount}`,
+        `Ret ${formatSignedPercent(evidence.expectedForwardReturnPct)}`,
+        `Lift ${formatSignedPercent(evidence.oosLiftPct)}`,
+        `MFE ${formatSignedPercent(evidence.expectedMfePct)}`,
+        `MAE ${formatSignedPercent(evidence.expectedMaePct)}`,
+        `Long ${evidence.longestHorizonBars ?? "--"}b ${formatSignedPercent(evidence.longestOosForwardReturnPct)}/${formatSignedPercent(evidence.longestOosLiftPct)}`,
+        `Dist ${formatNumber(evidence.avgDistance, 2)}`,
+        reason,
+    ].filter(Boolean);
+    return parts.join(" | ");
+}
+
+function formatMinerCopy(result: BatchSyntheticMinerResult): string {
+    const lines = [formatMinerSummary(result)];
+    for (const verdict of result.verdicts) {
+        lines.push(`${verdict.verdict} | ${formatMinerRowPipe(verdict)}`);
+        if (verdict.verdict !== "LONG" && verdict.verdict !== "SHORT" && verdict.verdict !== "WATCH") {
+            continue;
+        }
+        const warnings = verdict.pairContributions
+            .filter((entry) => entry.label === "dominating" || entry.label === "harmful" || entry.label === "opposing")
+            .slice(0, 3)
+            .map((entry) => `${entry.symbol}:${entry.label}`);
+        if (warnings.length > 0) {
+            lines.push(`PAIR_CHECK | ${verdict.asset} | ${warnings.join(", ")}`);
+        }
+    }
+    return lines.join("\n");
+}
+
+function getMinerVerdictClass(verdict: BatchSyntheticAssetVerdict["verdict"]): string {
+    switch (verdict) {
+        case "LONG":
+        case "SHORT":
+            return "finder-verdict-strong";
+        case "WATCH":
+            return "finder-verdict-marginal";
+        case "SKIP":
+            return "finder-verdict-losing";
+        case "INCONCLUSIVE":
+        default:
+            return "finder-verdict-thin";
+    }
 }
 
 function summarizeBatchResults(results: readonly BatchBacktestSymbolResult[]): BatchOverallStats {
@@ -536,6 +831,14 @@ function formatPercent(value: number | null | undefined): string {
         return "--";
     }
     return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
+}
+
+function formatSignedPercent(value: number | null | undefined): string {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+        return "--";
+    }
+    const sign = value >= 0 ? "+" : "";
+    return `${sign}${value.toFixed(Math.abs(value) >= 10 ? 1 : 2)}%`;
 }
 
 function formatTimeRange(firstTime?: Time, lastTime?: Time): string {
