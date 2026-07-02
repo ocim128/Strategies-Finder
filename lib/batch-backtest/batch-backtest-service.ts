@@ -19,8 +19,8 @@ import { formatProfitFactor } from "../ui-formatters";
 import { setVisible } from "../dom-utils";
 import { debugLogger } from "../debug-logger";
 import { computePerformanceVerdict } from "../finder/finder-universe-metrics";
-import type { BacktestResult, Time } from "../types/strategies";
-import { parsePortfolioSyntheticPairSymbol } from "../portfolioLab/portfolio-lab-synthetic";
+import type { BacktestResult, OHLCVData, Time } from "../types/strategies";
+import { parsePortfolioSyntheticPairSymbol, stripKnownQuoteSuffix } from "../portfolioLab/portfolio-lab-synthetic";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
 import { loadBatchDataset } from "./batch-backtest-loader";
 import {
@@ -518,7 +518,7 @@ function formatBatchOverallSummary(results: readonly BatchBacktestSymbolResult[]
     const best = maxBy(stats.resultRows, (row) => row.result?.netProfit ?? Number.NEGATIVE_INFINITY);
     const worst = minBy(stats.resultRows, (row) => row.result?.netProfit ?? Number.POSITIVE_INFINITY);
 
-    return [
+    const lines = [
         [
             "SUMMARY",
             `Pairs ${stats.completedRows.length}`,
@@ -555,6 +555,391 @@ function formatBatchOverallSummary(results: readonly BatchBacktestSymbolResult[]
             `Median Exposure ${formatPercent(medianMetric(stats.resultRows, (row) => row.tradeSummary?.exposurePercent ?? null))}`,
         ].join(" | "),
     ];
+
+    // Buy-and-hold comparison. B&H is always long-the-series (the ratio
+    // series for synthetic pairs, the asset itself for singles), so Alpha =
+    // Strategy Net% - B&H% is the same alpha-vs-beta read used by
+    // signal-committee-edge. Aggregate uses MEDIAN alpha (mean is meaningless
+    // here: a few +9000% B&H pairs dominate it). Per-pair output is trimmed to
+    // top/bottom 5 by alpha instead of dumping every row.
+    const bhRows = buildBuyHoldRows(stats.resultRows);
+
+    if (bhRows.length > 0) {
+        const medStrat = median(bhRows.map((r) => r.strat));
+        const medBh = median(bhRows.map((r) => r.bh));
+        const medAlpha = median(bhRows.map((r) => r.alpha));
+        const avgAlpha = mean(bhRows.map((r) => r.alpha));
+        lines.push(
+            [
+                "SUMMARY",
+                `B&H Compare ${bhRows.length}/${stats.resultRows.length} pairs`,
+                `Med Strat ${formatSignedPercent(medStrat)}`,
+                `Med B&H ${formatSignedPercent(medBh)}`,
+                `Med Alpha ${formatSignedPercent(medAlpha)}`,
+                `Avg Alpha ${formatSignedPercent(avgAlpha)}`,
+            ].join(" | "),
+        );
+
+        // Regime split: separates "defensive utility" (downtrend alpha) from
+        // "trend capture" (uptrend alpha). A strategy that only wins by
+        // avoiding crashes shows positive alpha in the down bucket and
+        // negative in the up bucket — a completely different read from the
+        // combined headline.
+        const regime = summarizeRegimeSplit(bhRows);
+        lines.push(
+            [
+                "REGIME",
+                `Uptrend ${regime.up.count} pairs | Strat ${formatSignedPercent(regime.up.avgStrat)} | B&H ${formatSignedPercent(regime.up.avgBh)} | Alpha ${formatSignedPercent(regime.up.avgAlpha)}`,
+                `Down ${regime.down.count} pairs | Strat ${formatSignedPercent(regime.down.avgStrat)} | B&H ${formatSignedPercent(regime.down.avgBh)} | Alpha ${formatSignedPercent(regime.down.avgAlpha)}`,
+            ].join(" | "),
+        );
+
+        // Per-pair B&H detail: one line per pair, sorted by symbol so a
+        // specific pair is easy to find in the dump. The full table is kept
+        // (rather than a top/bottom-N digest) on request — useful when
+        // comparing two strategies pair-by-pair.
+        const sortedBySymbol = [...bhRows].sort((a, b) => a.symbol.localeCompare(b.symbol));
+        for (const row of sortedBySymbol) {
+            lines.push(
+                `B&H | ${row.symbol} | Strat ${formatSignedPercent(row.strat)} | B&H ${formatSignedPercent(row.bh)} | Alpha ${formatSignedPercent(row.alpha)}`,
+            );
+        }
+    }
+
+    // Profit concentration: how much of the headline Net comes from a few
+    // outliers. "Avg Net/Pair" vs "Median Net" hints at this; the concentration
+    // line makes it unmissable. If top-3 = 50% of Net, "110 pairs" is really
+    // a 3-pair result and the rest are window dressing.
+    const concentration = summarizeProfitConcentration(stats.resultRows);
+    lines.push(
+        [
+            "CONCENTRATION",
+            `Net $${concentration.totalNet.toFixed(0)}`,
+            `Top1 ${formatPercent(concentration.top1Share * 100)}`,
+            `Top3 ${formatPercent(concentration.top3Share * 100)}`,
+            `Top10 ${formatPercent(concentration.top10Share * 100)}`,
+            concentration.effectiveN !== null ? `EffN ${concentration.effectiveN.toFixed(1)}` : "EffN --",
+        ].join(" | "),
+    );
+
+    // Robustness: how many pairs clear a basic significance bar. Median
+    // Sharpe 0.39 buried in the trades line is the honest headline; surfacing
+    // how many pairs clear 1.0 / 2.0 and how many are THIN (<15 trades) makes
+    // "is this real?" answerable at a glance.
+    const robustness = summarizeRobustness(stats.resultRows);
+    lines.push(
+        [
+            "ROBUSTNESS",
+            `Sharpe>1 ${robustness.sharpeGt1}/${robustness.total}`,
+            `Sharpe>2 ${robustness.sharpeGt2}/${robustness.total}`,
+            `THIN ${robustness.thin} (${formatPercent((robustness.thin / Math.max(1, robustness.total)) * 100)})`,
+            `Sample-adequate ${robustness.total - robustness.thin}`,
+        ].join(" | "),
+    );
+
+    // Per-asset open-trade score tally. Each pair's currently-open trade
+    // (last trade with exitReason "end_of_data") decomposes into +/- 1 per
+    // leg: a long on BASE+QUOTE is long BASE / short QUOTE; a short flips
+    // the signs. Single symbols score their stripped asset directly.
+    const scores = computeOpenTradeAssetScores(stats.resultRows);
+    if (scores.length > 0) {
+        lines.push(
+            `OPEN_SCORE | ${scores.map((s) => `${s.asset} ${formatSignedScore(s.score)}`).join(", ")}`,
+        );
+        // Effective-bets concentration: gross leg exposure share of the top
+        // few assets. 110 "pairs" often collapse to a handful of macro bets
+        // (e.g. net short APT, net long ZEC across many pairs). HHI on gross
+        // legs gives the honest "effective N" independent-bets read.
+        const openConcentration = summarizeOpenScoreConcentration(scores);
+        lines.push(
+            [
+                "OPEN_SCORE",
+                `EffN ${openConcentration.effectiveN.toFixed(1)}`,
+                `Top3 ${openConcentration.top3Assets.join(", ")} = ${formatPercent(openConcentration.top3Share * 100)} gross`,
+            ].join(" | "),
+        );
+    }
+
+    return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Buy-and-hold comparison
+// ---------------------------------------------------------------------------
+
+interface BuyHoldRow {
+    symbol: string;
+    strat: number;
+    bh: number;
+    alpha: number;
+}
+
+/**
+ * Build per-pair { strategy %, B&H %, alpha % } rows for every result row
+ * whose dataset yields a usable buy-and-hold. Alpha = strategy net% minus
+ * buy-and-hold %, mirroring signal-committee-edge's alpha convention.
+ */
+export function buildBuyHoldRows(rows: readonly BatchBacktestSymbolResult[]): BuyHoldRow[] {
+    const out: BuyHoldRow[] = [];
+    for (const row of rows) {
+        if (!row.result) continue;
+        const bh = computeBuyAndHoldPct(row.data);
+        if (bh === null) continue;
+        const strat = row.result.netProfitPercent;
+        out.push({ symbol: row.symbol, strat, bh, alpha: strat - bh });
+    }
+    return out;
+}
+
+interface RegimeBucket {
+    count: number;
+    avgStrat: number;
+    avgBh: number;
+    avgAlpha: number;
+}
+
+export interface RegimeSplit {
+    up: RegimeBucket;
+    down: RegimeBucket;
+}
+
+/**
+ * Partition buy-and-hold rows by B&H sign so defensive value (downtrend
+ * alpha) can be read separately from trend capture (uptrend alpha). A
+ * "crash protector" strategy shows positive alpha in `down` and negative
+ * alpha in `up` — a completely different read from the combined headline.
+ */
+export function summarizeRegimeSplit(rows: readonly BuyHoldRow[]): RegimeSplit {
+    const up = rows.filter((r) => r.bh >= 0);
+    const down = rows.filter((r) => r.bh < 0);
+    return {
+        up: summarizeRegimeBucket(up),
+        down: summarizeRegimeBucket(down),
+    };
+}
+
+function summarizeRegimeBucket(rows: readonly BuyHoldRow[]): RegimeBucket {
+    if (rows.length === 0) {
+        return { count: 0, avgStrat: NaN, avgBh: NaN, avgAlpha: NaN };
+    }
+    return {
+        count: rows.length,
+        avgStrat: mean(rows.map((r) => r.strat)),
+        avgBh: mean(rows.map((r) => r.bh)),
+        avgAlpha: mean(rows.map((r) => r.alpha)),
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Profit concentration
+// ---------------------------------------------------------------------------
+
+export interface ProfitConcentration {
+    totalNet: number;
+    /** Top-1 pair share of total net profit (fraction 0..1; can exceed 1 if a
+     * single pair's gain exceeds the net of all pairs combined). */
+    top1Share: number;
+    top3Share: number;
+    top10Share: number;
+    /** Effective N via Herfindahl on positive net profit. null when total
+     * positive profit is non-positive (no profitable pair). */
+    effectiveN: number | null;
+}
+
+/**
+ * How much of the headline Net comes from a few outliers. If top-3 = 50% of
+ * net, the "N pairs" result is really a 3-pair result. Effective N is the
+ * Herfindahl reciprocal on positive profit shares (1 = concentrated in one
+ * pair, N = evenly spread across N pairs).
+ */
+export function summarizeProfitConcentration(rows: readonly BatchBacktestSymbolResult[]): ProfitConcentration {
+    const nets = rows
+        .map((r) => r.result?.netProfit ?? 0)
+        .filter((v) => Number.isFinite(v));
+    const totalNet = nets.reduce((sum, v) => sum + v, 0);
+    const sortedDesc = [...nets].sort((a, b) => b - a);
+    const grossPositive = sortedDesc.filter((v) => v > 0).reduce((sum, v) => sum + v, 0);
+
+    const share = (topK: number): number => {
+        if (grossPositive <= 0) return 0;
+        const topSum = sortedDesc.slice(0, topK).filter((v) => v > 0).reduce((sum, v) => sum + v, 0);
+        return topSum / grossPositive;
+    };
+
+    let effectiveN: number | null = null;
+    if (grossPositive > 0) {
+        const positiveShares = sortedDesc.filter((v) => v > 0).map((v) => v / grossPositive);
+        const hhi = positiveShares.reduce((sum, s) => sum + s * s, 0);
+        effectiveN = hhi > 0 ? 1 / hhi : null;
+    }
+
+    return {
+        totalNet,
+        top1Share: share(1),
+        top3Share: share(3),
+        top10Share: share(10),
+        effectiveN,
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Robustness
+// ---------------------------------------------------------------------------
+
+export interface RobustnessSummary {
+    total: number;
+    sharpeGt1: number;
+    sharpeGt2: number;
+    /** Pairs with < 15 trades (the verdict engine's THIN threshold). */
+    thin: number;
+}
+
+/**
+ * How many pairs clear a basic significance bar. Counters complement median
+ * Sharpe: median Sharpe 0.39 with 60% THIN means most pairs don't have
+ * enough sample to read at all. THIN mirrors the verdict engine's
+ * `totalTrades < 15` gate (computePerformanceVerdict in finder-universe-metrics).
+ */
+export function summarizeRobustness(rows: readonly BatchBacktestSymbolResult[]): RobustnessSummary {
+    let total = 0;
+    let sharpeGt1 = 0;
+    let sharpeGt2 = 0;
+    let thin = 0;
+    for (const row of rows) {
+        if (!row.result) continue;
+        total += 1;
+        const sharpe = row.result.sharpeRatio;
+        if (Number.isFinite(sharpe) && sharpe > 1) sharpeGt1 += 1;
+        if (Number.isFinite(sharpe) && sharpe > 2) sharpeGt2 += 1;
+        if (row.result.totalTrades < 15) thin += 1;
+    }
+    return { total, sharpeGt1, sharpeGt2, thin };
+}
+
+// ---------------------------------------------------------------------------
+// Open-score concentration
+// ---------------------------------------------------------------------------
+
+export interface OpenScoreConcentration {
+    /** Effective independent bets via Herfindahl reciprocal on gross leg
+     * exposure (1 = one macro bet, N = spread across N assets). */
+    effectiveN: number;
+    /** Three largest |score| assets, formatted "ASSET s" (signed). */
+    top3Assets: string[];
+    /** Top-3 |score| share of total gross leg exposure (fraction 0..1). */
+    top3Share: number;
+}
+
+/**
+ * Convert the per-asset open-trade tally into a concentration read. 110
+ * "pairs" often collapse to a handful of macro bets because pairs share
+ * legs (ZEC+APT, ZEC+WLD, WLD+APT all express long-ZEC / short-APT / long-
+ * WLD). HHI on gross leg exposure (= sum of |score|) gives the honest
+ * effective independent-bets number.
+ */
+export function summarizeOpenScoreConcentration(scores: readonly { asset: string; score: number }[]): OpenScoreConcentration {
+    const grossByAbs = scores.map((s) => Math.abs(s.score));
+    const totalGross = grossByAbs.reduce((sum, v) => sum + v, 0);
+    if (totalGross <= 0) {
+        return { effectiveN: 0, top3Assets: [], top3Share: 0 };
+    }
+    const shares = grossByAbs.map((v) => v / totalGross);
+    const hhi = shares.reduce((sum, s) => sum + s * s, 0);
+    const effectiveN = hhi > 0 ? 1 / hhi : 0;
+
+    const top3 = [...scores]
+        .sort((a, b) => Math.abs(b.score) - Math.abs(a.score) || a.asset.localeCompare(b.asset))
+        .slice(0, 3);
+    const top3Gross = top3.reduce((sum, s) => sum + Math.abs(s.score), 0);
+    return {
+        effectiveN,
+        top3Assets: top3.map((s) => `${s.asset} ${formatSignedScore(s.score)}`),
+        top3Share: top3Gross / totalGross,
+    };
+}
+
+/**
+ * Buy-and-hold return over a series: (lastClose / firstClose - 1) * 100,
+ * using the first and last finite positive closes. Returns null when no
+ * usable pair of closes exists. For synthetic pairs `data` is the ratio
+ * series, so this is "buy the ratio and hold"; for singles it is the
+ * asset's own B&H. Mirrors `closeMovePercent` in portfolio-lab-synthetic.
+ */
+export function computeBuyAndHoldPct(data: readonly OHLCVData[] | undefined | null): number | null {
+    if (!data || data.length === 0) return null;
+    let first: number | null = null;
+    for (const bar of data) {
+        if (Number.isFinite(bar.close) && bar.close > 0) {
+            first = bar.close;
+            break;
+        }
+    }
+    let last: number | null = null;
+    for (let i = data.length - 1; i >= 0; i -= 1) {
+        const close = data[i]!.close;
+        if (Number.isFinite(close) && close > 0) {
+            last = close;
+            break;
+        }
+    }
+    if (first === null || last === null || first === 0) return null;
+    return ((last / first) - 1) * 100;
+}
+
+/**
+ * Decompose each pair's currently-open trade into per-asset +/- scores.
+ *
+ * An "open" trade is the last trade with `exitReason === "end_of_data"`
+ * (the engine holds one position, so there is at most one). For a synthetic
+ * `BASE+QUOTE` pair, a long is long BASE / short QUOTE; a short flips the
+ * signs. For a single symbol the stripped base asset is scored directly.
+ * Closed and no-trade rows contribute nothing. Results are sorted by
+ * abs(score) desc then asset asc so the most conflicted assets surface first.
+ */
+export function computeOpenTradeAssetScores(
+    rows: readonly BatchBacktestSymbolResult[],
+): { asset: string; score: number }[] {
+    const tally = new Map<string, number>();
+    for (const row of rows) {
+        const trades = row.result?.trades;
+        if (!trades || trades.length === 0) continue;
+        const last = trades[trades.length - 1]!;
+        if (last.exitReason !== "end_of_data") continue;
+        const sign = last.type === "long" ? 1 : last.type === "short" ? -1 : 0;
+        if (sign === 0) continue;
+
+        const parsed = parsePortfolioSyntheticPairSymbol(row.symbol);
+        if (parsed) {
+            // Long the ratio = long base / short quote; short flips both.
+            tally.set(parsed.baseAsset, (tally.get(parsed.baseAsset) ?? 0) + sign);
+            tally.set(parsed.quoteAsset, (tally.get(parsed.quoteAsset) ?? 0) - sign);
+        } else {
+            const asset = stripKnownQuoteSuffix(row.symbol);
+            if (asset) tally.set(asset, (tally.get(asset) ?? 0) + sign);
+        }
+    }
+    return Array.from(tally.entries())
+        .map(([asset, score]) => ({ asset, score }))
+        .sort((a, b) => Math.abs(b.score) - Math.abs(a.score) || a.asset.localeCompare(b.asset));
+}
+
+function mean(values: readonly number[]): number {
+    if (values.length === 0) return 0;
+    let sum = 0;
+    for (const v of values) sum += v;
+    return sum / values.length;
+}
+
+function median(values: readonly number[]): number {
+    if (values.length === 0) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+function formatSignedScore(value: number): string {
+    if (!Number.isFinite(value)) return "--";
+    return value >= 0 ? `+${value}` : `${value}`;
 }
 
 function formatMinerSummary(result: BatchSyntheticMinerResult): string {
