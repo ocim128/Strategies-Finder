@@ -2278,19 +2278,19 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
     {
         key: "volatility_weighted_momentum_autocorrelation",
         name: "Volatility-Weighted Momentum Autocorrelation",
-        description: "Follows volatility-weighted return momentum when autocorrelation confirms trend persistence.",
+        description: "Autocorrelation of returns weighted by rolling ATR combined with expanding true range percentiles.",
         defaultParams: {
         lookback: 30,
-        acThreshold: 0.22,
+        minAutoCorr: 0.25,
     } as Record<string, number>,
         paramLabels: {
         lookback: "Lookback Window",
-        acThreshold: "Autocorrelation Threshold",
+        minAutoCorr: "Min Autocorrelation",
     } as Record<string, string>,
         metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["lookback", "acThreshold"],
+        walkForwardParams: ["lookback", "minAutoCorr"],
     },
         crossSymbolConfig: false,
         polymarket1sConfig: false,
@@ -2937,6 +2937,1146 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         role: "entry",
         direction: "both",
         walkForwardParams: ["emaPeriod"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "atr_normalized_streak_reversal",
+        name: "ATR-Normalized Streak Reversal",
+        description: "Mean reversion after extreme streak of returns exceeding rolling ATR.",
+        defaultParams: {
+        lookback: 30,
+        minStreak: 4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minStreak: "Min Streak Count",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minStreak"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "autocorrelation_regime_compression_break",
+        name: "Autocorrelation Regime Compression Break",
+        description: "Transitions from a compressed, low-range state to an expanded, highly persistent trending state.",
+        defaultParams: {
+        lookback: 30,
+        compressionLimit: 0.35,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        compressionLimit: "Compression Limit Pct",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "compressionLimit"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "decay_weighted_streak_momentum",
+        name: "Decay-Weighted Streak Momentum",
+        description: "Momentum acceleration using cumulative decay sum of ATR-normalized returns.",
+        defaultParams: {
+        lookback: 30,
+        decay: 0.85,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        decay: "Decay Multiplier",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "decay"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "efficiency_gated_volatility_autocorrelation",
+        name: "Efficiency-Gated Volatility Autocorrelation",
+        description: "Trend following strategy combining Kaufman Efficiency Ratio and return autocorrelation gating.",
+        defaultParams: {
+        lookback: 30,
+        minEfficiency: 0.6,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minEfficiency: "Min Efficiency Ratio",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minEfficiency"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "entropy_autocorrelation_momentum_gate",
+        name: "Entropy Autocorrelation Momentum Gate",
+        description: "Enters the direction of momentum when low return entropy signals structure and return autocorrelation confirms persistence.",
+        defaultParams: {
+        lookback: 30,
+        maxEntropy: 0.45,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        maxEntropy: "Max Entropy Limit",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "maxEntropy"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "failed_streak_exhaustion_fade",
+        name: "Failed Streak Exhaustion Fade",
+        description: "Fades streak exhaustion when it occurs during a low-volume regime and z-score shows overextension.",
+        defaultParams: {
+        lookback: 30,
+        maxVolumePercentile: 0.4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        maxVolumePercentile: "Max Volume Percentile",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "maxVolumePercentile"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "failed_vwap_breakout_reversion",
+        name: "Failed VWAP Breakout Reversion",
+        description: "Trades failed breakout attempts away from the VWAP center, utilizing close location gradient to confirm reversion entries.",
+        defaultParams: {
+        lookback: 30,
+        minRangePercentile: 0.8,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minRangePercentile: "Min Range Percentile",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minRangePercentile"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_streak_follow",
+        name: "Initiative Pressure Streak Follow",
+        description: "Follows persistent initiative pressure streaks supported by high volume percentiles.",
+        defaultParams: {
+        lookback: 30,
+        minStreak: 3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minStreak: "Min Streak Count",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minStreak"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "range_skewness_streak_alignment",
+        name: "Range Skewness Streak Alignment",
+        description: "Aligns range skewness expansion with directional return streaks exceeding median true range.",
+        defaultParams: {
+        lookback: 40,
+        minStreak: 2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minStreak: "Min Return Streak",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minStreak"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_gated_acceptance_streak",
+        name: "Volatility Gated Acceptance Streak",
+        description: "Enters when close acceptance streak is persistent and true range percentile confirms expanding volatility.",
+        defaultParams: {
+        lookback: 35,
+        streakThreshold: 3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        streakThreshold: "Streak Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "streakThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_weighted_vwap_pullback",
+        name: "Volume Weighted VWAP Pullback",
+        description: "Fades price pullbacks to the VWAP center in established trend regimes, confirmed by volume and close location pressure.",
+        defaultParams: {
+        lookback: 40,
+        minVolumePercentile: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minVolumePercentile: "Min Volume Percentile",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minVolumePercentile"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_autocorrelation_gradient_drift",
+        name: "VWAP Autocorrelation Gradient Drift",
+        description: "Trades persistent momentum drift away from the VWAP center, using positive return autocorrelation and close location gradient.",
+        defaultParams: {
+        lookback: 30,
+        minAutoCorr: 0.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minAutoCorr: "Min Autocorrelation",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minAutoCorr"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_band_gradient_thrust",
+        name: "VWAP Band Gradient Thrust",
+        description: "Enters a trend breakout when price crosses beyond rolling VWAP standard deviation bands, supported by close location pressure.",
+        defaultParams: {
+        lookback: 30,
+        stdDevMultiplier: 2.0,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        stdDevMultiplier: "StdDev Multiplier",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "stdDevMultiplier"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_cross_gradient_acceleration",
+        name: "VWAP Cross Gradient Acceleration",
+        description: "Enters on VWAP crossovers supported by accelerating close location pressure.",
+        defaultParams: {
+        lookback: 30,
+        minAcceleration: 0.1,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minAcceleration: "Min Acceleration",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minAcceleration"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_deviation_gradient_fade",
+        name: "VWAP Deviation Gradient Fade",
+        description: "Fades extreme deviations from the rolling VWAP center when close location gradient reverses.",
+        defaultParams: {
+        lookback: 30,
+        stdDevMultiplier: 2.0,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        stdDevMultiplier: "StdDev Multiplier",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "stdDevMultiplier"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_efficient_gradient_trend",
+        name: "VWAP Efficient Gradient Trend",
+        description: "Follows structural trends away from the VWAP center only when Kaufman Efficiency is high and close location gradient agrees.",
+        defaultParams: {
+        lookback: 30,
+        minEfficiency: 0.6,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minEfficiency: "Min Efficiency",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minEfficiency"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_skew_acceptance_gradient",
+        name: "VWAP Skew Acceptance Gradient",
+        description: "Aligns structural true range skewness with price position relative to VWAP and close location gradient.",
+        defaultParams: {
+        lookback: 30,
+        skewThreshold: 0.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        skewThreshold: "Skew Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "skewThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_squeeze_gradient_release",
+        name: "VWAP Squeeze Gradient Release",
+        description: "Breakout from compression around the VWAP center, confirmed by expanding true range percentiles and accelerating close location gradient.",
+        defaultParams: {
+        lookback: 30,
+        compressionLimit: 0.35,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        compressionLimit: "Compression Limit",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "compressionLimit"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_volatility_gradient_alignment",
+        name: "VWAP Volatility Gradient Alignment",
+        description: "Enters in the direction of close location gradient aligned with price position relative to VWAP when volatility is expanding.",
+        defaultParams: {
+        lookback: 35,
+        minRangePercentile: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minRangePercentile: "Min Range Percentile",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minRangePercentile"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "failed_vwap_gradient_exhaustion",
+        name: "Failed VWAP Gradient Exhaustion",
+        description: "Fades extreme deviations from the rolling VWAP center when close location gradient reverses.",
+        defaultParams: {
+        lookback: 30,
+        stdDevMultiplier: 2.0,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        stdDevMultiplier: "StdDev Multiplier",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "stdDevMultiplier"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_weighted_gradient_pullback",
+        name: "Volume-Weighted Gradient Pullback",
+        description: "Buying trend pullbacks to the VWAP center under high volume, confirmed by close location gradient turning back to trend direction.",
+        defaultParams: {
+        lookback: 40,
+        minVolPctl: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minVolPctl: "Min Volume Percentile",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minVolPctl"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_crossover_gradient_acceleration",
+        name: "VWAP Crossover Gradient Acceleration",
+        description: "Crossover of the rolling VWAP center confirmed by elevated close location gradient percentile rank.",
+        defaultParams: {
+        lookback: 30,
+        minGradPctl: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minGradPctl: "Min Gradient Percentile",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minGradPctl"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_drift_gradient_efficiency",
+        name: "VWAP Drift Gradient Efficiency",
+        description: "Follows structural trends away from the VWAP center only if the move is efficient and close location gradient agrees.",
+        defaultParams: {
+        lookback: 30,
+        minEfficiency: 0.6,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minEfficiency: "Min Efficiency",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minEfficiency"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_entropy_gradient_breakout",
+        name: "VWAP Entropy Gradient Breakout",
+        description: "Breakout from a structured low entropy state around VWAP, confirmed by extreme close location gradient percentile rank.",
+        defaultParams: {
+        lookback: 30,
+        maxEntropy: 0.45,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        maxEntropy: "Max Entropy Limit",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "maxEntropy"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_gradient_acceptance_streak",
+        name: "VWAP Gradient Acceptance Streak",
+        description: "Trend continuation triggered by a persistent streak of close location gradients away from the VWAP center.",
+        defaultParams: {
+        lookback: 30,
+        minStreak: 3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minStreak: "Min Streak Count",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minStreak"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_gradient_autocorrelation_drift",
+        name: "VWAP Gradient Autocorrelation Drift",
+        description: "Trades trends away from the VWAP center only when returns show serial persistence and close location gradient is positive/negative.",
+        defaultParams: {
+        lookback: 30,
+        minAutoCorr: 0.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minAutoCorr: "Min Autocorrelation",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minAutoCorr"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_gradient_squeeze_release",
+        name: "VWAP Gradient Squeeze Release",
+        description: "Breakout from compression around the VWAP center, confirmed by expanding true range percentiles and positive/negative close location gradient.",
+        defaultParams: {
+        lookback: 30,
+        compressionLimit: 0.35,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        compressionLimit: "Compression Limit",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "compressionLimit"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_outer_band_gradient_reversal",
+        name: "VWAP Outer Band Gradient Reversal",
+        description: "Reversion to the VWAP center when price stretches outside standard deviation bands and close location gradient reverses.",
+        defaultParams: {
+        lookback: 30,
+        stdDevMultiplier: 2.0,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        stdDevMultiplier: "StdDev Multiplier",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "stdDevMultiplier"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_skew_gradient_alignment",
+        name: "VWAP Skew Gradient Alignment",
+        description: "Aligns return skewness with price position relative to VWAP and close location gradient.",
+        defaultParams: {
+        lookback: 30,
+        skewMin: 0.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        skewMin: "Skew Minimum",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "skewMin"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "autocorrelation_gated_volatility_median",
+        name: "Autocorrelation Gated Volatility Median",
+        description: "Enters in the direction of the rolling median in a high-volatility regime only when return autocorrelation confirms persistence.",
+        defaultParams: {
+        lookback: 63,
+        volThreshold: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        volThreshold: "Vol Percentile Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "volThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "autocorrelation_volatility_ratio_chase",
+        name: "Autocorrelation Volatility Ratio Chase",
+        description: "Trend-chasing in volatility expansions when return autocorrelation confirms momentum persistence and close acceptance is aligned.",
+        defaultParams: {
+        lookback: 45,
+        volThreshold: 0.65,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        volThreshold: "Vol Percentile Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "volThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "efficient_volatility_regime_alignment",
+        name: "Efficient Volatility Regime Alignment",
+        description: "Aligns entries with the rolling median in high-volatility regimes only when Kaufman Efficiency Ratio is elevated.",
+        defaultParams: {
+        lookback: 55,
+        minEfficiency: 0.6,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minEfficiency: "Min Efficiency",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minEfficiency"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "entropy_gated_volatility_acceptance",
+        name: "Entropy Gated Volatility Acceptance",
+        description: "Enters in the direction of close acceptance during high volatility expansions when return entropy is low.",
+        defaultParams: {
+        lookback: 50,
+        volThreshold: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        volThreshold: "Vol Percentile Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "volThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "failed_volatility_expansion_fade",
+        name: "Failed Volatility Expansion Fade",
+        description: "Fades false volatility expansions when return autocorrelation is negative, close location is neutral, and price deviates from rolling median.",
+        defaultParams: {
+        lookback: 45,
+        volThreshold: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        volThreshold: "Vol Percentile Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "volThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "mean_reversion_volatility_median_alignment",
+        name: "Mean Reversion Volatility Median Alignment",
+        description: "Fades deviations from the rolling median in low-volatility regimes when autocorrelation is negative.",
+        defaultParams: {
+        lookback: 60,
+        volThresholdMax: 0.4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        volThresholdMax: "Max Vol Percentile",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "volThresholdMax"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "proxy_volume_gated_volatility_median",
+        name: "Proxy Volume Gated Volatility Median",
+        description: "Trades volatility expansions aligned with rolling median only when proxy volume percentile confirms active leg participation.",
+        defaultParams: {
+        lookback: 60,
+        volumeThreshold: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        volumeThreshold: "Volume Percentile Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "volumeThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_regime_acceptance_streak",
+        name: "Volatility Regime Acceptance Streak",
+        description: "Enters during expanding volatility backed by a persistent streak of close acceptance bars.",
+        defaultParams: {
+        lookback: 40,
+        minStreak: 3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minStreak: "Min Streak Count",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minStreak"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_regime_close_location_drift",
+        name: "Volatility Regime Close Location Drift",
+        description: "Follows smoothed close location drift in high-volatility regimes.",
+        defaultParams: {
+        lookback: 50,
+        minDev: 0.1,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minDev: "Min Deviation",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minDev"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_skewness_acceptance_drift",
+        name: "Volatility Skewness Acceptance Drift",
+        description: "Aligns return skewness with close acceptance in high-volatility expansions to capture persistent trends.",
+        defaultParams: {
+        lookback: 50,
+        minSkew: 0.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minSkew: "Min Skew",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minSkew"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "failed_typical_breakout_fade",
+        name: "Failed Typical Breakout Fade",
+        description: "Fades extreme typical price breakouts when close momentum fails to support it and instead reverses.",
+        defaultParams: {
+        lookback: 30,
+        typicalPercentileMin: 0.8,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        typicalPercentileMin: "Typical Percentile Min",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "typicalPercentileMin"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_autocorrelation_divergence_break",
+        name: "Typical Autocorrelation Divergence Break",
+        description: "Enters trends when typical price returns show serial persistence and typical price momentum leads close momentum.",
+        defaultParams: {
+        lookback: 30,
+        minAutoCorr: 0.25,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minAutoCorr: "Min Autocorrelation",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minAutoCorr"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_close_acceptance_streak",
+        name: "Typical Close Acceptance Streak",
+        description: "Trend entry triggered by a consecutive streak of typical price exceeding or lagging the close price.",
+        defaultParams: {
+        lookback: 30,
+        minStreak: 3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minStreak: "Min Streak Count",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minStreak"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_close_entropy_alignment",
+        name: "Typical Close Entropy Alignment",
+        description: "Enters typical vs close price divergences when typical price return entropy is low (indicating a structured trend).",
+        defaultParams: {
+        lookback: 30,
+        maxEntropy: 0.45,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        maxEntropy: "Max Entropy Limit",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "maxEntropy"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_close_pressure_follow",
+        name: "Typical Close Pressure Follow",
+        description: "Follows closing momentum relative to average bar transaction price when true range expands.",
+        defaultParams: {
+        lookback: 30,
+        minPercentile: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minPercentile: "Min Range Percentile",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minPercentile"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_close_skewness_acceptance",
+        name: "Typical Close Skewness Acceptance",
+        description: "Enters when typical price returns display asymmetry (skewness) and close acceptance agrees.",
+        defaultParams: {
+        lookback: 40,
+        minSkew: 0.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minSkew: "Min Skew",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minSkew"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_momentum_efficiency_alignment",
+        name: "Typical Momentum Efficiency Alignment",
+        description: "Follows efficient typical price trends when typical price momentum leads close momentum.",
+        defaultParams: {
+        lookback: 30,
+        minEfficiency: 0.6,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minEfficiency: "Min Efficiency",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minEfficiency"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_range_squeeze_divergence",
+        name: "Typical Range Squeeze Divergence",
+        description: "Breakout from compression range when typical price momentum spikes while close momentum lags.",
+        defaultParams: {
+        lookback: 30,
+        compressionLimit: 0.35,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        compressionLimit: "Compression Limit",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "compressionLimit"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_volatility_regime_median_divergence",
+        name: "Typical Volatility Regime Median Divergence",
+        description: "Fades price deviations from typical price median in high-volatility regimes.",
+        defaultParams: {
+        lookback: 50,
+        volThreshold: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        volThreshold: "Vol Percentile Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "volThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "typical_volume_confirmed_divergence",
+        name: "Typical Volume Confirmed Divergence",
+        description: "Trades divergence between typical price and close momentum when backed by high volume percentile rank.",
+        defaultParams: {
+        lookback: 30,
+        volThreshold: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        volThreshold: "Vol Percentile Threshold",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "volThreshold"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volume_percentile_gated_vwap_cross",
+        name: "Volume Percentile Gated VWAP Cross",
+        description: "Crossovers of the rolling VWAP center are only traded when proxy volume is in a high percentile and the close location gradient agrees.",
+        defaultParams: {
+        lookback: 30,
+        minVolPctl: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minVolPctl: "Min Volume Percentile",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minVolPctl"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_efficiency_gradient_squeeze",
+        name: "VWAP Efficiency Gradient Squeeze",
+        description: "Detects compression where typical price efficiency of the VWAP center is low, and triggers a breakout entry when close location gradient acceleration exceeds a threshold.",
+        defaultParams: {
+        lookback: 30,
+        maxEfficiency: 0.4,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        maxEfficiency: "Max Efficiency Limit",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "maxEfficiency"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_entropy_gradient_alignment",
+        name: "VWAP Entropy Gradient Alignment",
+        description: "Enters in the direction of the close location gradient during structured low-entropy regimes relative to VWAP center.",
+        defaultParams: {
+        lookback: 30,
+        maxEntropy: 0.45,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        maxEntropy: "Max Entropy Limit",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "maxEntropy"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_gradient_autocorrelation_reversion",
+        name: "VWAP Gradient Autocorrelation Reversion",
+        description: "Fades price deviations from the VWAP center during mean-reverting regimes when close location gradient reverses.",
+        defaultParams: {
+        lookback: 30,
+        minAutoCorr: -0.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minAutoCorr: "Max Autocorrelation",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minAutoCorr"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_gradient_efficiency_trend",
+        name: "VWAP Gradient Efficiency Trend",
+        description: "Follows trends away from the VWAP center only if the move is efficient (low noise) and backed by steady close location gradient values.",
+        defaultParams: {
+        lookback: 30,
+        minEfficiency: 0.6,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minEfficiency: "Min Efficiency",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minEfficiency"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_gradient_momentum_divergence",
+        name: "VWAP Gradient Momentum Divergence",
+        description: "Triggers when price return diverges from the rolling VWAP trend slope, confirmed by a spike in the close location gradient percentile.",
+        defaultParams: {
+        lookback: 30,
+        minGradPctl: 0.7,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minGradPctl: "Min Gradient Percentile",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minGradPctl"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_regime_gradient_streak",
+        name: "VWAP Regime Gradient Streak",
+        description: "Trend entry triggered by a streak of consecutive close location gradients away from the rolling VWAP center.",
+        defaultParams: {
+        lookback: 30,
+        minStreak: 3,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minStreak: "Min Streak Count",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minStreak"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "vwap_skew_gradient_exhaustion",
+        name: "VWAP Skew Gradient Exhaustion",
+        description: "Fades price deviations from the VWAP center when return skewness is extreme and close location gradient reverses.",
+        defaultParams: {
+        lookback: 40,
+        minSkew: 0.2,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "Lookback Window",
+        minSkew: "Min Skew",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback", "minSkew"],
     },
         crossSymbolConfig: false,
         polymarket1sConfig: false,

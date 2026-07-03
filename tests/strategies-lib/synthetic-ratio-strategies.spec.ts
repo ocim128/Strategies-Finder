@@ -240,9 +240,9 @@ describe("Synthetic Ratio Strategies Smoke Tests", () => {
         expect(volatility_weighted_momentum_autocorrelation.name).to.equal("Volatility-Weighted Momentum Autocorrelation");
         const signals = volatility_weighted_momentum_autocorrelation.execute(mockData, volatility_weighted_momentum_autocorrelation.defaultParams);
         expect(signals).to.be.an("array");
-        const norm = volatility_weighted_momentum_autocorrelation.normalizeParams({ lookback: "25", acThreshold: "0.3" });
+        const norm = volatility_weighted_momentum_autocorrelation.normalizeParams({ lookback: "25", minAutoCorr: "0.3" });
         expect(norm.lookback).to.equal(25);
-        expect(norm.acThreshold).to.equal(0.3);
+        expect(norm.minAutoCorr).to.equal(0.3);
     });
 
     it("entropy_decay_momentum_acceleration executes and normalizes", () => {

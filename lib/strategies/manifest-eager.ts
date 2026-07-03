@@ -148,6 +148,63 @@ import { typical_price_momentum_divergence } from "./lib/typical_price_momentum_
 import { return_autocorrelation_close_acceptance } from "./lib/return_autocorrelation_close_acceptance";
 import { price_volume_flow_divergence } from "./lib/price_volume_flow_divergence";
 import { ema_confirmation } from "./lib/ema_confirmation";
+import { atr_normalized_streak_reversal } from "./lib/atr_normalized_streak_reversal";
+import { autocorrelation_regime_compression_break } from "./lib/autocorrelation_regime_compression_break";
+import { decay_weighted_streak_momentum } from "./lib/decay_weighted_streak_momentum";
+import { efficiency_gated_volatility_autocorrelation } from "./lib/efficiency_gated_volatility_autocorrelation";
+import { entropy_autocorrelation_momentum_gate } from "./lib/entropy_autocorrelation_momentum_gate";
+import { failed_streak_exhaustion_fade } from "./lib/failed_streak_exhaustion_fade";
+import { failed_vwap_breakout_reversion } from "./lib/failed_vwap_breakout_reversion";
+import { initiative_pressure_streak_follow } from "./lib/initiative_pressure_streak_follow";
+import { range_skewness_streak_alignment } from "./lib/range_skewness_streak_alignment";
+import { volatility_gated_acceptance_streak } from "./lib/volatility_gated_acceptance_streak";
+import { volume_weighted_vwap_pullback } from "./lib/volume_weighted_vwap_pullback";
+import { vwap_autocorrelation_gradient_drift } from "./lib/vwap_autocorrelation_gradient_drift";
+import { vwap_band_gradient_thrust } from "./lib/vwap_band_gradient_thrust";
+import { vwap_cross_gradient_acceleration } from "./lib/vwap_cross_gradient_acceleration";
+import { vwap_deviation_gradient_fade } from "./lib/vwap_deviation_gradient_fade";
+import { vwap_efficient_gradient_trend } from "./lib/vwap_efficient_gradient_trend";
+import { vwap_skew_acceptance_gradient } from "./lib/vwap_skew_acceptance_gradient";
+import { vwap_squeeze_gradient_release } from "./lib/vwap_squeeze_gradient_release";
+import { vwap_volatility_gradient_alignment } from "./lib/vwap_volatility_gradient_alignment";
+import { failed_vwap_gradient_exhaustion } from "./lib/failed_vwap_gradient_exhaustion";
+import { volume_weighted_gradient_pullback } from "./lib/volume_weighted_gradient_pullback";
+import { vwap_crossover_gradient_acceleration } from "./lib/vwap_crossover_gradient_acceleration";
+import { vwap_drift_gradient_efficiency } from "./lib/vwap_drift_gradient_efficiency";
+import { vwap_entropy_gradient_breakout } from "./lib/vwap_entropy_gradient_breakout";
+import { vwap_gradient_acceptance_streak } from "./lib/vwap_gradient_acceptance_streak";
+import { vwap_gradient_autocorrelation_drift } from "./lib/vwap_gradient_autocorrelation_drift";
+import { vwap_gradient_squeeze_release } from "./lib/vwap_gradient_squeeze_release";
+import { vwap_outer_band_gradient_reversal } from "./lib/vwap_outer_band_gradient_reversal";
+import { vwap_skew_gradient_alignment } from "./lib/vwap_skew_gradient_alignment";
+import { autocorrelation_gated_volatility_median } from "./lib/autocorrelation_gated_volatility_median";
+import { autocorrelation_volatility_ratio_chase } from "./lib/autocorrelation_volatility_ratio_chase";
+import { efficient_volatility_regime_alignment } from "./lib/efficient_volatility_regime_alignment";
+import { entropy_gated_volatility_acceptance } from "./lib/entropy_gated_volatility_acceptance";
+import { failed_volatility_expansion_fade } from "./lib/failed_volatility_expansion_fade";
+import { mean_reversion_volatility_median_alignment } from "./lib/mean_reversion_volatility_median_alignment";
+import { proxy_volume_gated_volatility_median } from "./lib/proxy_volume_gated_volatility_median";
+import { volatility_regime_acceptance_streak } from "./lib/volatility_regime_acceptance_streak";
+import { volatility_regime_close_location_drift } from "./lib/volatility_regime_close_location_drift";
+import { volatility_skewness_acceptance_drift } from "./lib/volatility_skewness_acceptance_drift";
+import { failed_typical_breakout_fade } from "./lib/failed_typical_breakout_fade";
+import { typical_autocorrelation_divergence_break } from "./lib/typical_autocorrelation_divergence_break";
+import { typical_close_acceptance_streak } from "./lib/typical_close_acceptance_streak";
+import { typical_close_entropy_alignment } from "./lib/typical_close_entropy_alignment";
+import { typical_close_pressure_follow } from "./lib/typical_close_pressure_follow";
+import { typical_close_skewness_acceptance } from "./lib/typical_close_skewness_acceptance";
+import { typical_momentum_efficiency_alignment } from "./lib/typical_momentum_efficiency_alignment";
+import { typical_range_squeeze_divergence } from "./lib/typical_range_squeeze_divergence";
+import { typical_volatility_regime_median_divergence } from "./lib/typical_volatility_regime_median_divergence";
+import { typical_volume_confirmed_divergence } from "./lib/typical_volume_confirmed_divergence";
+import { volume_percentile_gated_vwap_cross } from "./lib/volume_percentile_gated_vwap_cross";
+import { vwap_efficiency_gradient_squeeze } from "./lib/vwap_efficiency_gradient_squeeze";
+import { vwap_entropy_gradient_alignment } from "./lib/vwap_entropy_gradient_alignment";
+import { vwap_gradient_autocorrelation_reversion } from "./lib/vwap_gradient_autocorrelation_reversion";
+import { vwap_gradient_efficiency_trend } from "./lib/vwap_gradient_efficiency_trend";
+import { vwap_gradient_momentum_divergence } from "./lib/vwap_gradient_momentum_divergence";
+import { vwap_regime_gradient_streak } from "./lib/vwap_regime_gradient_streak";
+import { vwap_skew_gradient_exhaustion } from "./lib/vwap_skew_gradient_exhaustion";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -301,6 +358,63 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "return_autocorrelation_close_acceptance", strategy: return_autocorrelation_close_acceptance },
     { key: "price_volume_flow_divergence", strategy: price_volume_flow_divergence },
     { key: "ema_confirmation", strategy: ema_confirmation },
+    { key: "atr_normalized_streak_reversal", strategy: atr_normalized_streak_reversal },
+    { key: "autocorrelation_regime_compression_break", strategy: autocorrelation_regime_compression_break },
+    { key: "decay_weighted_streak_momentum", strategy: decay_weighted_streak_momentum },
+    { key: "efficiency_gated_volatility_autocorrelation", strategy: efficiency_gated_volatility_autocorrelation },
+    { key: "entropy_autocorrelation_momentum_gate", strategy: entropy_autocorrelation_momentum_gate },
+    { key: "failed_streak_exhaustion_fade", strategy: failed_streak_exhaustion_fade },
+    { key: "failed_vwap_breakout_reversion", strategy: failed_vwap_breakout_reversion },
+    { key: "initiative_pressure_streak_follow", strategy: initiative_pressure_streak_follow },
+    { key: "range_skewness_streak_alignment", strategy: range_skewness_streak_alignment },
+    { key: "volatility_gated_acceptance_streak", strategy: volatility_gated_acceptance_streak },
+    { key: "volume_weighted_vwap_pullback", strategy: volume_weighted_vwap_pullback },
+    { key: "vwap_autocorrelation_gradient_drift", strategy: vwap_autocorrelation_gradient_drift },
+    { key: "vwap_band_gradient_thrust", strategy: vwap_band_gradient_thrust },
+    { key: "vwap_cross_gradient_acceleration", strategy: vwap_cross_gradient_acceleration },
+    { key: "vwap_deviation_gradient_fade", strategy: vwap_deviation_gradient_fade },
+    { key: "vwap_efficient_gradient_trend", strategy: vwap_efficient_gradient_trend },
+    { key: "vwap_skew_acceptance_gradient", strategy: vwap_skew_acceptance_gradient },
+    { key: "vwap_squeeze_gradient_release", strategy: vwap_squeeze_gradient_release },
+    { key: "vwap_volatility_gradient_alignment", strategy: vwap_volatility_gradient_alignment },
+    { key: "failed_vwap_gradient_exhaustion", strategy: failed_vwap_gradient_exhaustion },
+    { key: "volume_weighted_gradient_pullback", strategy: volume_weighted_gradient_pullback },
+    { key: "vwap_crossover_gradient_acceleration", strategy: vwap_crossover_gradient_acceleration },
+    { key: "vwap_drift_gradient_efficiency", strategy: vwap_drift_gradient_efficiency },
+    { key: "vwap_entropy_gradient_breakout", strategy: vwap_entropy_gradient_breakout },
+    { key: "vwap_gradient_acceptance_streak", strategy: vwap_gradient_acceptance_streak },
+    { key: "vwap_gradient_autocorrelation_drift", strategy: vwap_gradient_autocorrelation_drift },
+    { key: "vwap_gradient_squeeze_release", strategy: vwap_gradient_squeeze_release },
+    { key: "vwap_outer_band_gradient_reversal", strategy: vwap_outer_band_gradient_reversal },
+    { key: "vwap_skew_gradient_alignment", strategy: vwap_skew_gradient_alignment },
+    { key: "autocorrelation_gated_volatility_median", strategy: autocorrelation_gated_volatility_median },
+    { key: "autocorrelation_volatility_ratio_chase", strategy: autocorrelation_volatility_ratio_chase },
+    { key: "efficient_volatility_regime_alignment", strategy: efficient_volatility_regime_alignment },
+    { key: "entropy_gated_volatility_acceptance", strategy: entropy_gated_volatility_acceptance },
+    { key: "failed_volatility_expansion_fade", strategy: failed_volatility_expansion_fade },
+    { key: "mean_reversion_volatility_median_alignment", strategy: mean_reversion_volatility_median_alignment },
+    { key: "proxy_volume_gated_volatility_median", strategy: proxy_volume_gated_volatility_median },
+    { key: "volatility_regime_acceptance_streak", strategy: volatility_regime_acceptance_streak },
+    { key: "volatility_regime_close_location_drift", strategy: volatility_regime_close_location_drift },
+    { key: "volatility_skewness_acceptance_drift", strategy: volatility_skewness_acceptance_drift },
+    { key: "failed_typical_breakout_fade", strategy: failed_typical_breakout_fade },
+    { key: "typical_autocorrelation_divergence_break", strategy: typical_autocorrelation_divergence_break },
+    { key: "typical_close_acceptance_streak", strategy: typical_close_acceptance_streak },
+    { key: "typical_close_entropy_alignment", strategy: typical_close_entropy_alignment },
+    { key: "typical_close_pressure_follow", strategy: typical_close_pressure_follow },
+    { key: "typical_close_skewness_acceptance", strategy: typical_close_skewness_acceptance },
+    { key: "typical_momentum_efficiency_alignment", strategy: typical_momentum_efficiency_alignment },
+    { key: "typical_range_squeeze_divergence", strategy: typical_range_squeeze_divergence },
+    { key: "typical_volatility_regime_median_divergence", strategy: typical_volatility_regime_median_divergence },
+    { key: "typical_volume_confirmed_divergence", strategy: typical_volume_confirmed_divergence },
+    { key: "volume_percentile_gated_vwap_cross", strategy: volume_percentile_gated_vwap_cross },
+    { key: "vwap_efficiency_gradient_squeeze", strategy: vwap_efficiency_gradient_squeeze },
+    { key: "vwap_entropy_gradient_alignment", strategy: vwap_entropy_gradient_alignment },
+    { key: "vwap_gradient_autocorrelation_reversion", strategy: vwap_gradient_autocorrelation_reversion },
+    { key: "vwap_gradient_efficiency_trend", strategy: vwap_gradient_efficiency_trend },
+    { key: "vwap_gradient_momentum_divergence", strategy: vwap_gradient_momentum_divergence },
+    { key: "vwap_regime_gradient_streak", strategy: vwap_regime_gradient_streak },
+    { key: "vwap_skew_gradient_exhaustion", strategy: vwap_skew_gradient_exhaustion },
 ];
 
 export function createStrategiesRecordFromManifest(

@@ -9,33 +9,34 @@ import {
     getLows,
 } from "../strategy-helpers";
 import { calculateATR } from "../indicators";
-import { buildRollingAutoCorrelation, buildPercentileRank } from "./price-action-statistics-core";
+import { buildCumulativeDecaySum, buildRollingZScore } from "./price-action-statistics-core";
 import { extractBarMetricSeries } from "./price-action-frequency-core";
 
 function normalizeParams(params: StrategyParams): StrategyParams {
     return {
         ...params,
         lookback: Math.max(3, Math.round(Number(params.lookback ?? 30))),
-        minAutoCorr: Number(params.minAutoCorr ?? 0.25),
+        decay: Math.max(0.01, Math.min(0.999, Number(params.decay ?? 0.85))),
     };
 }
 
-export const volatility_weighted_momentum_autocorrelation: Strategy = {
-    name: "Volatility-Weighted Momentum Autocorrelation",
-    description: "Autocorrelation of returns weighted by rolling ATR combined with expanding true range percentiles.",
+export const decay_weighted_streak_momentum: Strategy = {
+    name: "Decay-Weighted Streak Momentum",
+    description: "Momentum acceleration using cumulative decay sum of ATR-normalized returns.",
     defaultParams: {
         lookback: 30,
-        minAutoCorr: 0.25,
+        decay: 0.85,
     },
     paramLabels: {
         lookback: "Lookback Window",
-        minAutoCorr: "Min Autocorrelation",
+        decay: "Decay Multiplier",
     },
     normalizeParams,
     execute: (data: OHLCVData[], params: StrategyParams) => {
         const cleanData = ensureCleanData(data);
         const p = normalizeParams(params);
         const lookback = p.lookback as number;
+        const decay = p.decay as number;
         if (cleanData.length < lookback) return [];
 
         const closes = getCloses(cleanData);
@@ -50,35 +51,32 @@ export const volatility_weighted_momentum_autocorrelation: Strategy = {
             const atrVal = atr[i];
             if (atrVal !== null && atrVal > 0) {
                 normReturns[i] = returns[i] / atrVal;
-            } else {
-                normReturns[i] = 0;
             }
         }
 
-        const ac = buildRollingAutoCorrelation(normReturns, lookback, 1);
-        const trueRange = extractBarMetricSeries(cleanData, "trueRange");
-        const trPercentile = buildPercentileRank(trueRange, lookback);
+        const decaySum = buildCumulativeDecaySum(normReturns, decay);
+        const decayZ = buildRollingZScore(decaySum, lookback);
 
-        return createSignalLoop(cleanData, [ac, trPercentile], (i) => {
+        return createSignalLoop(cleanData, [decayZ], (i) => {
             if (i < lookback) return null;
-            const currentAc = ac[i];
-            const currentPct = trPercentile[i];
-            if (currentAc === null || currentPct === null) return null;
+            const currentZ = decayZ[i];
+            if (currentZ === null) return null;
 
-            const ret = returns[i];
+            // Buy: z-score > 1.7
+            if (currentZ > 1.7) {
+                return createBuySignal(cleanData, i, `Decay Sum Mom Buy: Z ${currentZ.toFixed(2)}`);
+            }
+            // Sell: z-score < -1.7
+            if (currentZ < -1.7) {
+                return createSellSignal(cleanData, i, `Decay Sum Mom Sell: Z ${currentZ.toFixed(2)}`);
+            }
 
-            if (currentAc > (p.minAutoCorr as number) && ret > 0 && currentPct > 0.6) {
-                return createBuySignal(cleanData, i, `VWMAC Buy: AC ${currentAc.toFixed(2)}, TR Pct ${currentPct.toFixed(2)}`);
-            }
-            if (currentAc > (p.minAutoCorr as number) && ret < 0 && currentPct > 0.6) {
-                return createSellSignal(cleanData, i, `VWMAC Sell: AC ${currentAc.toFixed(2)}, TR Pct ${currentPct.toFixed(2)}`);
-            }
             return null;
         });
     },
     metadata: {
         role: "entry",
         direction: "both",
-        walkForwardParams: ["lookback", "minAutoCorr"],
+        walkForwardParams: ["lookback", "decay"],
     },
 };
