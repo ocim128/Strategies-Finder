@@ -15,7 +15,6 @@ import { type OptimalFState, calculateSecureF } from '../sizing/optimal-f';
 import { resolveRiskParityMultiplier } from '../sizing/risk-parity';
 import { average, clamp } from '../sizing/shared';
 import { resolveVolTargetingMultiplier } from '../sizing/volatility-targeting';
-import { resolveHistoricalLevelTargets } from './historical-levels';
 const VELOCITY_MEMORY_MIN_MULTIPLIER = 0.75;
 const VELOCITY_MEMORY_MAX_MULTIPLIER = 1.2;
 const QUALITY_X_VELOCITY_MIN_MULTIPLIER = 0.72;
@@ -359,19 +358,6 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
             finalTakeProfitPrice = entryFillPrice * (1 + directionFactor * (config.takeProfitPercent / 100));
         }
     }
-
-    const historicalTargets = resolveHistoricalLevelTargets({
-        data,
-        entryBarIndex: barIndex,
-        entryPrice: entryFillPrice,
-        direction,
-        config,
-        atrArray,
-        baseStopLossPrice: finalStopLossPrice,
-        baseTakeProfitPrice: finalTakeProfitPrice,
-    });
-    finalStopLossPrice = historicalTargets.stopLossPrice;
-    finalTakeProfitPrice = historicalTargets.takeProfitPrice;
 
     const allocatedCapital = resolveAllocatedCapital(
         sizingMode,

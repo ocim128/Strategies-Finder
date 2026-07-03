@@ -25,10 +25,6 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
     const usesRiskMinHold =
         settings.riskMinHoldEnabled === true
         && (settings.riskMinHoldBars ?? 0) > 0;
-    const usesHistoricalLevels =
-        ((settings.historicalLevelTakeProfitEnabled === true)
-            || (settings.historicalLevelStopLossEnabled === true))
-        && (settings.historicalLevelLookbackBars ?? 0) > 0;
     const usesPercentageWinStreakStopLoss = false;
     const usesAdaptivePercentageTakeProfit =
         settings.riskMode === 'percentage'
@@ -49,7 +45,6 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         || usesNonAllMarketMode
         || usesRiskMaxHold
         || usesRiskMinHold
-        || usesHistoricalLevels
         || usesPercentageWinStreakStopLoss
         || usesAdaptivePercentageTakeProfit
         || usesMultiPosition
@@ -70,9 +65,6 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "riskMinHoldEnabled",
     "riskMaxHoldBars",
     "riskMaxHoldEnabled",
-    "historicalLevelTakeProfitEnabled",
-    "historicalLevelStopLossEnabled",
-    "historicalLevelLookbackBars",
     "riskWinStreakStopLossEnabled",
     "riskWinStreakStopLossAfterWins",
     "riskWinStreakStopLossPercent",

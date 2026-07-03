@@ -44,7 +44,6 @@ describe("Strategy panel settings registry", () => {
             "direction",
             "confirmation",
             "engine",
-            "combiner",
         ]);
     });
 

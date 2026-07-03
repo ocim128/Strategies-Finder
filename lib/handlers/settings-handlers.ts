@@ -359,46 +359,6 @@ export function setupSettingsHandlers() {
     }
 
 
-    //  Strategy Combiner handler 
-    const runCombinedBtn = dom.runCombinedStrategyBtn;
-    if (runCombinedBtn) {
-        runCombinedBtn.addEventListener('click', async () => {
-            const primarySelect = dom.combinerPrimarySelect;
-            const secondarySelect = dom.combinerSecondarySelect;
-            const modeSelect = dom.combinerMode;
-
-            const primaryName = primarySelect?.value;
-            const secondaryName = secondarySelect?.value;
-
-            if (!primaryName) {
-                uiManager.showToast('Please select a primary configuration', 'error');
-                return;
-            }
-            if (!secondaryName) {
-                uiManager.showToast('Please select a secondary configuration', 'error');
-                return;
-            }
-
-            const primaryConfig = settingsManager.loadStrategyConfig(primaryName);
-            const secondaryConfig = settingsManager.loadStrategyConfig(secondaryName);
-
-            if (!primaryConfig || !secondaryConfig) {
-                uiManager.showToast('Failed to load selected configurations', 'error');
-                return;
-            }
-
-            const mode = (modeSelect?.value === 'or' ? 'or' : 'and') as 'and' | 'or';
-
-            try {
-                await backtestService.runCombinedStrategyBacktest(primaryConfig, secondaryConfig, mode);
-                uiManager.showToast('Combined backtest complete (' + mode.toUpperCase() + ')', 'success');
-            } catch (error) {
-                debugLogger.error('ui.combiner.run_failed', { error: error instanceof Error ? error.message : String(error) });
-                uiManager.showToast('Combined backtest failed', 'error');
-            }
-        });
-    }
-
     setupEnginePreferenceHandlers();
 
     // Initialize dropdown with saved configs
@@ -561,24 +521,6 @@ export function updateConfigDropdown(selectName?: string) {
     const currentValue = selectName || configSelect.value;
 
     populateConfigSelect(configSelect, configs, '-- Select configuration --', currentValue);
-
-    // Also refresh combiner dropdowns
-    updateCombinerDropdowns(configs);
-}
-
-/**
- * Populates the Strategy Combiner primary/secondary dropdowns from saved configs.
- */
-function updateCombinerDropdowns(configs: readonly StrategyConfig[]) {
-    const { combinerPrimarySelect: primarySelect, combinerSecondarySelect: secondarySelect } = createSettingsHandlersDom();
-    if (!primarySelect && !secondarySelect) return;
-
-    for (const select of [primarySelect, secondarySelect]) {
-        if (!select) continue;
-        const currentValue = select.value;
-        const placeholder = select === primarySelect ? '-- Select primary --' : '-- Select secondary --';
-        populateConfigSelect(select, configs, placeholder, currentValue);
-    }
 }
 
 function populateConfigSelect(

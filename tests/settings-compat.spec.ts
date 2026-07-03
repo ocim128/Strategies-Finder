@@ -255,12 +255,6 @@ describe('Backtest settings compatibility', () => {
         expect(BACKTEST_DOM_SETTING_IDS.includes('polymarketOutcomeInterval')).to.equal(true);
     });
 
-    it('includes historical-level controls in manual-backtest DOM ids', () => {
-        expect(BACKTEST_DOM_SETTING_IDS.includes('historicalLevelTakeProfitToggle')).to.equal(true);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('historicalLevelStopLossToggle')).to.equal(true);
-        expect(BACKTEST_DOM_SETTING_IDS.includes('historicalLevelLookbackBars')).to.equal(true);
-    });
-
     it('normalizes Exit Strategy Override settings without breaking old payloads', () => {
         expect(DEFAULT_BACKTEST_SETTINGS.exitStrategyOverrideEnabled).to.equal(false);
         expect(DEFAULT_BACKTEST_SETTINGS.exitStrategyKey).to.equal('');
@@ -810,40 +804,6 @@ describe('Backtest settings compatibility', () => {
         expect(normalized.allowSameBarExit).to.equal(false);
     });
 
-    it('resolves historical-level risk settings behind the risk section toggle', () => {
-        const enabled = resolveBacktestSettingsFromRaw({
-            riskSettingsToggle: true,
-            historicalLevelTakeProfitToggle: true,
-            historicalLevelStopLossToggle: 'true',
-            historicalLevelLookbackBars: '96',
-        } as unknown as BacktestSettings);
-        const disabled = resolveBacktestSettingsFromRaw({
-            riskSettingsToggle: false,
-            historicalLevelTakeProfitToggle: true,
-            historicalLevelStopLossToggle: true,
-            historicalLevelLookbackBars: 96,
-        } as unknown as BacktestSettings);
-
-        expect(enabled.historicalLevelTakeProfitEnabled).to.equal(true);
-        expect(enabled.historicalLevelStopLossEnabled).to.equal(true);
-        expect(enabled.historicalLevelLookbackBars).to.equal(96);
-        expect(disabled.historicalLevelTakeProfitEnabled).to.equal(false);
-        expect(disabled.historicalLevelStopLossEnabled).to.equal(false);
-        expect(disabled.historicalLevelLookbackBars).to.equal(0);
-    });
-
-    it('keeps historical-level exits on the TypeScript-only path', () => {
-        const settings: BacktestSettings = {
-            historicalLevelTakeProfitEnabled: true,
-            historicalLevelLookbackBars: 120,
-        };
-        const sanitized = sanitizeBacktestSettingsForRust(settings);
-
-        expect(requiresTypescriptEngine(settings)).to.equal(true);
-        expect('historicalLevelTakeProfitEnabled' in sanitized).to.equal(false);
-        expect('historicalLevelLookbackBars' in sanitized).to.equal(false);
-    });
-
     it('keeps minimum hold on the TypeScript-only path when enabled', () => {
         const resolved = resolveBacktestSettingsFromRaw({
             riskSettingsToggle: true,
@@ -890,9 +850,6 @@ describe('Backtest settings compatibility', () => {
         expect(getBacktestDomSettingContract('polymarketEntryOffset')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('polymarketEntryDelayBars')).to.not.equal(undefined);
         expect(getBacktestDomSettingContract('polymarketEntryPriceFilterCents')).to.not.equal(undefined);
-        expect(getBacktestDomSettingContract('historicalLevelTakeProfitToggle')?.settingKey).to.equal('historicalLevelTakeProfitEnabled');
-        expect(getBacktestDomSettingContract('historicalLevelStopLossToggle')?.settingKey).to.equal('historicalLevelStopLossEnabled');
-        expect(getBacktestDomSettingContract('historicalLevelLookbackBars')?.rustSupport).to.equal('unsupported');
         expect(getBacktestDomSettingContract('riskMinHoldToggle')?.settingKey).to.equal('riskMinHoldEnabled');
         expect(getBacktestDomSettingContract('riskMinHoldBars')?.rustSupport).to.equal('unsupported');
         expect(getBacktestDomSettingContract('allowSameBarExitToggle')).to.equal(undefined);

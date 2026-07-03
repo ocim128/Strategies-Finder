@@ -21,16 +21,7 @@ function hasActiveChartTakeProfitOrStopLoss(config: Pick<NormalizedSettings,
     | 'stopLossPercent'
     | 'takeProfitEnabled'
     | 'takeProfitPercent'
-    | 'historicalLevelTakeProfitEnabled'
-    | 'historicalLevelStopLossEnabled'
-    | 'historicalLevelLookbackBars'
 >): boolean {
-    if (
-        (config.historicalLevelTakeProfitEnabled || config.historicalLevelStopLossEnabled)
-        && config.historicalLevelLookbackBars > 0
-    ) {
-        return true;
-    }
     if (config.riskMode === 'percentage') {
         return (config.stopLossEnabled && config.stopLossPercent > 0)
             || (config.takeProfitEnabled && config.takeProfitPercent > 0);
@@ -76,9 +67,6 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         takeProfitAdaptiveIcScale: clamp(toNumberOr(settings?.takeProfitAdaptiveIcScale, ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveIcScale), 0, 2),
         stopLossEnabled: settings?.stopLossEnabled ?? false,
         takeProfitEnabled: settings?.takeProfitEnabled ?? false,
-        historicalLevelTakeProfitEnabled: settings?.historicalLevelTakeProfitEnabled ?? false,
-        historicalLevelStopLossEnabled: settings?.historicalLevelStopLossEnabled ?? false,
-        historicalLevelLookbackBars: Math.max(0, Math.round(toNumberOr(settings?.historicalLevelLookbackBars, 0))),
         riskMinHoldBars: Math.max(0, Math.round(toNumberOr(settings?.riskMinHoldBars, 0))),
         riskMinHoldEnabled: settings?.riskMinHoldEnabled ?? false,
         riskMaxHoldBars: Math.max(0, toNumberOr(settings?.riskMaxHoldBars, 0)),

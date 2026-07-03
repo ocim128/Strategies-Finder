@@ -6,7 +6,7 @@ It combines:
 - a browser UI assembled from HTML partials at runtime
 - a TypeScript backtest engine with optional Rust acceleration
 - a multi-source data pipeline with local caching
-- research tools such as Finder, Exit Strategy Override, Hunt, Walk Forward, Monte Carlo, Scanner, Strategy Combiner, Portfolio Lab, and Strategy Ensemble Lab
+- research tools such as Finder, Exit Strategy Override, Hunt, Walk Forward, Monte Carlo, Scanner, Portfolio Lab, and Strategy Ensemble Lab
 - optional Cloudflare Worker alerting and subscription execution
 
 ## What You Can Do Here
@@ -91,7 +91,6 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Portfolio Lab: `lib/portfolio-lab-service.ts`
 - Execution Lab: `lib/execution-lab/*`
 - Scanner: `lib/scanner/*`
-- Pair Combiner bridge: `lib/pairCombiner/*`
 - Data Mining / feature export: `lib/data-mining-manager.ts`, `lib/featureLab/*`
 - Strategy Ensemble Lab: `lib/strategy-ensemble-service.ts`
 - Polymarket research / scoring: `lib/polymarket-outcome-evaluator.ts`, `lib/polymarket-signal-exit-evaluator.ts`, `lib/polymarket-price-points-ingest.ts`, `scripts/polymarket-sync-outcomes.ts`
@@ -194,7 +193,6 @@ Reuse existing helpers instead of inventing new conversions:
 ### Execution realism matters
 - percentage and ATR take-profit exits are capped at the configured target price once touched
 - stop-loss exits can still fill worse at the bar open when price gaps through the stop
-- historical-level TP and protective exits are resolved from confirmed pre-entry pivot zones, then run through the same conservative stop/TP ordering
 - `next_open` runs impose a 1-bar re-entry cooldown after a full `signal` exit, so same-bar re-entries are blocked and the earliest new entry is the next bar
 - if you need tighter execution realism than OHLC can provide, validate with lower-timeframe or tick data
 
@@ -374,7 +372,6 @@ npm run test -- backtesting-engine
 Useful extras:
 ```bash
 ..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts
-..\..\..\node_modules\.bin\esno tests\pairCombiner.spec.ts
 ```
 
 ## Specialized Project Docs

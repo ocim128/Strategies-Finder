@@ -379,8 +379,6 @@ function getSinglePositionFinderFastPathBlockers(
     if (config.partialTakeProfitAtR !== 0) blockers.push("partial_take_profit");
     if (config.breakEvenAtR !== 0) blockers.push("break_even_atr");
     if (config.breakEvenPercent !== 0) blockers.push("break_even_percent");
-    if (config.historicalLevelTakeProfitEnabled) blockers.push("historical_take_profit");
-    if (config.historicalLevelStopLossEnabled) blockers.push("historical_stop_loss");
     if (config.riskWinStreakStopLossEnabled) blockers.push("win_streak_stop_loss");
     return blockers;
 }
@@ -405,8 +403,6 @@ function hasBarBasedExitRules(config: NormalizedSettings): boolean {
         || config.partialTakeProfitAtR > 0
         || config.breakEvenAtR > 0
         || config.breakEvenPercent > 0
-        || config.historicalLevelTakeProfitEnabled
-        || config.historicalLevelStopLossEnabled
         || hasRiskMaxHold
         || config.timeStopBars > 0;
 }

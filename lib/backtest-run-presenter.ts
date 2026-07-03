@@ -89,15 +89,6 @@ export function formatCompletedBacktestStatus(
     return `${result.totalTrades} trades | Exp ${expectancyText} | PF ${pfText}${engineBadge}`;
 }
 
-export function formatCompletedCombinedBacktestStatus(
-    mode: "and" | "or",
-    result: BacktestResult
-): string {
-    const expectancyText = `${result.expectancy >= 0 ? "+" : ""}$${result.expectancy.toFixed(2)}`;
-    const pfText = result.profitFactor === Infinity ? "Inf" : result.profitFactor.toFixed(2);
-    return `Combined (${mode.toUpperCase()}) | ${result.totalTrades} trades | Exp ${expectancyText} | PF ${pfText}`;
-}
-
 export function setReplayStartButtonDisabled(disabled: boolean): void {
     const replayStartBtn = getOptionalElement<HTMLButtonElement>("replayStartBtn");
     if (replayStartBtn) {

@@ -48,11 +48,6 @@ export const STRATEGY_PANEL_SETTINGS_SECTIONS: readonly StrategyPanelSettingsSec
         preset: "standard",
         accordionBodyId: "engineBody",
     },
-    {
-        id: "combiner",
-        preset: "standard",
-        accordionBodyId: "combinerBody",
-    },
 ] as const;
 
 const PRESET_RANK: Record<SettingsPresetMode, number> = {

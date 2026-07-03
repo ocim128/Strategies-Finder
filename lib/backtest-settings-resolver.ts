@@ -77,9 +77,6 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     takeProfitAdaptiveIcScale: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveIcScale,
     stopLossEnabled: true,
     takeProfitEnabled: true,
-    historicalLevelTakeProfitEnabled: false,
-    historicalLevelStopLossEnabled: false,
-    historicalLevelLookbackBars: 120,
     riskMinHoldBars: 10,
     riskMinHoldEnabled: false,
     riskMaxHoldBars: 10,
@@ -159,7 +156,6 @@ type NumericResolverKey =
     | "takeProfitAdaptiveGridSteps"
     | "takeProfitAdaptiveRegimeBlend"
     | "takeProfitAdaptiveIcScale"
-    | "historicalLevelLookbackBars"
     | "riskMinHoldBars"
     | "riskMaxHoldBars"
     | "riskWinStreakStopLossAfterWins"
@@ -180,8 +176,6 @@ type NumericResolverKey =
 type BooleanResolverKey =
     | "stopLossEnabled"
     | "takeProfitEnabled"
-    | "historicalLevelTakeProfitEnabled"
-    | "historicalLevelStopLossEnabled"
     | "riskMinHoldEnabled"
     | "riskMaxHoldEnabled"
     | "riskWinStreakStopLossEnabled"
@@ -264,12 +258,6 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
         resolve: (raw) => Math.max(0, Math.min(2, readDefaultedNumber(raw, "takeProfitAdaptiveIcScale"))),
     },
     {
-        key: "historicalLevelLookbackBars",
-        guard: "useRiskManagement",
-        disabledValue: 0,
-        resolve: (raw) => Math.max(0, Math.round(readDefaultedNumber(raw, "historicalLevelLookbackBars"))),
-    },
-    {
         key: "riskMinHoldBars",
         guard: "useRiskMinHold",
         disabledValue: 0,
@@ -328,18 +316,6 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
 const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
     { key: "stopLossEnabled", keys: ["stopLossEnabled", "stopLossToggle"], guard: "usePercentRisk", disabledValue: false },
     { key: "takeProfitEnabled", keys: ["takeProfitEnabled", "takeProfitToggle"], guard: "usePercentRisk", disabledValue: false },
-    {
-        key: "historicalLevelTakeProfitEnabled",
-        keys: ["historicalLevelTakeProfitEnabled", "historicalLevelTakeProfitToggle"],
-        guard: "useRiskManagement",
-        disabledValue: false,
-    },
-    {
-        key: "historicalLevelStopLossEnabled",
-        keys: ["historicalLevelStopLossEnabled", "historicalLevelStopLossToggle"],
-        guard: "useRiskManagement",
-        disabledValue: false,
-    },
     { key: "riskMinHoldEnabled", keys: ["riskMinHoldEnabled", "riskMinHoldToggle"], guard: "useRiskMinHold", disabledValue: false },
     { key: "riskMaxHoldEnabled", keys: ["riskMaxHoldEnabled", "riskMaxHoldToggle"], guard: "useRiskMaxHold", disabledValue: false },
     {
@@ -414,9 +390,6 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "takeProfitAdaptiveIcScale",
     "stopLossToggle",
     "takeProfitToggle",
-    "historicalLevelTakeProfitToggle",
-    "historicalLevelStopLossToggle",
-    "historicalLevelLookbackBars",
     "riskMinHoldBars",
     "riskMinHoldToggle",
     "riskMaxHoldBars",
@@ -629,15 +602,6 @@ function clampConfirmationWindowBars(rawValue: unknown): number {
 
 function hasActiveChartTakeProfitOrStopLoss(settings: Record<string, unknown>): boolean {
     const riskMode = settings.riskMode === "percentage" ? "percentage" : "simple";
-    const historicalLevelTakeProfitEnabled = settings.historicalLevelTakeProfitEnabled === true
-        && toFiniteNumber(settings.historicalLevelLookbackBars) !== null
-        && (toFiniteNumber(settings.historicalLevelLookbackBars) ?? 0) > 0;
-    const historicalLevelStopLossEnabled = settings.historicalLevelStopLossEnabled === true
-        && toFiniteNumber(settings.historicalLevelLookbackBars) !== null
-        && (toFiniteNumber(settings.historicalLevelLookbackBars) ?? 0) > 0;
-    if (historicalLevelTakeProfitEnabled || historicalLevelStopLossEnabled) {
-        return true;
-    }
     if (riskMode === "percentage") {
         const stopLossPercent = toFiniteNumber(settings.stopLossPercent) ?? 0;
         const takeProfitPercent = toFiniteNumber(settings.takeProfitPercent) ?? 0;
@@ -697,6 +661,9 @@ function applyRemovedBacktestSettingDefaults(settings: Record<string, unknown>):
     delete settings.rsiPeriod;
     delete settings.rsiBullish;
     delete settings.rsiBearish;
+    delete settings.historicalLevelTakeProfitEnabled;
+    delete settings.historicalLevelStopLossEnabled;
+    delete settings.historicalLevelLookbackBars;
     return settings;
 }
 

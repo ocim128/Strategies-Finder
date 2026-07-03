@@ -1,6 +1,5 @@
 /**
- * Standalone signal merge utility extracted from BacktestService for reuse
- * by both the Strategy Combiner backtest and the Combo Finder.
+ * Standalone signal merge utility used by the Combo Finder.
  */
 import type { Time } from "lightweight-charts";
 import { compareTime, timeKey } from "./strategies/backtest/backtest-utils";

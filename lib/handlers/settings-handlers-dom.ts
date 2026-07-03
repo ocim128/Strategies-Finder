@@ -13,10 +13,6 @@ export function createSettingsHandlersDom() {
         shareConfigLinkInput: getOptionalElement<HTMLInputElement>("shareConfigLinkInput"),
         loadShareLinkBtn: getOptionalElement<HTMLButtonElement>("loadShareLinkBtn"),
         shareConfigImportInput: getOptionalElement<HTMLInputElement>("shareConfigImportInput"),
-        runCombinedStrategyBtn: getOptionalElement<HTMLButtonElement>("runCombinedStrategyBtn"),
-        combinerPrimarySelect: getOptionalElement<HTMLSelectElement>("combinerPrimarySelect"),
-        combinerSecondarySelect: getOptionalElement<HTMLSelectElement>("combinerSecondarySelect"),
-        combinerMode: getOptionalElement<HTMLSelectElement>("combinerMode"),
         useRustEngineToggle: getOptionalElement<HTMLInputElement>("useRustEngineToggle"),
         runBacktest: getOptionalElement<HTMLButtonElement>("runBacktest"),
     };

@@ -9,13 +9,11 @@ import {
     BacktestSettings,
     BacktestResult,
     Signal,
-    applySignalPolarity,
 } from "./strategies/index";
 import type { OHLCVData, Strategy } from "./strategies/index";
-import { ensureStrategyKeysLoaded, loadBuiltInStrategyByKey, strategyRegistry } from "../strategyRegistry";
+import { loadBuiltInStrategyByKey, strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
-import { rustEngine } from "./rust-engine-client";
 import { shouldUseRustEngine } from "./engine-preferences";
 
 import {
@@ -23,7 +21,7 @@ import {
     calculateSharpeRatioFromEquityCurve,
     calculateSharpeRatioFromReturns,
 } from "./strategies/performance-metrics";
-import { sanitizeBacktestSettingsForRust, requiresTypescriptEngine as requiresTsEngine } from "./rust-settings-sanitizer";
+import { requiresTypescriptEngine as requiresTsEngine } from "./rust-settings-sanitizer";
 import { sliceOhlcvByBlock } from "./block-selector";
 import {
     selectExecutionAwareClosedCandles,
@@ -32,15 +30,12 @@ import {
     EFFECTIVE_BACKTEST_DEFAULTS,
     resolveBacktestSettingsFromRaw
 } from "./backtest-settings-resolver";
-import { settingsManager, type StrategyConfig } from "./settings-manager";
-import { mergeStrategySignals } from "./signal-merge";
 import { resolveSubscriptionExecutionBacktestSettings } from "./alert-subscription-utils";
 import { isSmartTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
 import {
     createDomBacktestRunHandle,
     delayBacktestUi,
     formatCompletedBacktestStatus,
-    formatCompletedCombinedBacktestStatus,
     setReplayStartButtonDisabled,
     updateDomBacktestRunProgress,
     type BacktestRunHandle,
@@ -63,7 +58,6 @@ import {
     buildLatestUiBacktestEndpointCopyBundle as buildEndpointBundle,
 } from "./backtest-endpoint-facade";
 import { addStrategyIndicators as renderStrategyIndicators } from "./backtest-chart-renderer";
-import { filterSignalsByBlockRange as filterSignalsBySelectedBlockRange } from "./signal-block-filter";
 import { markAppTiming, getMark } from "./app-timing";
 import {
     registerBacktestEdgeAnalysisInput,
@@ -336,170 +330,6 @@ export class BacktestService {
         };
     }
 
-    // ========================================================================
-    // Combined Strategy Backtest
-    // ========================================================================
-
-    /**
-     * Run a combined backtest by merging signals from two saved configurations.
-     * Primary config provides both signals AND backtest settings (risk, capital, execution).
-     * Secondary config provides signals only.
-     *
-     * @param primaryConfig  Saved config providing signals + settings
-     * @param secondaryConfig  Saved config providing signals only
-     * @param mode  'and' = keep only where both agree (same bar + direction),
-     *              'or'  = union of both (primary wins on same bar)
-     */
-    public async runCombinedStrategyBacktest(
-        primaryConfig: StrategyConfig,
-        secondaryConfig: StrategyConfig,
-        mode: 'and' | 'or'
-    ): Promise<void> {
-        const runId = this.beginInteractiveRun();
-        const startedAt = Date.now();
-        debugLogger.event('backtest.combined.start', {
-            primary: primaryConfig.strategyKey,
-            secondary: secondaryConfig.strategyKey,
-            mode,
-        });
-
-        const runUi = createDomBacktestRunHandle('runCombinedStrategyBtn', 'Running combined backtest...');
-
-        try {
-            // --- 1. Resolve both strategies from registry ---
-            await updateDomBacktestRunProgress(runUi, '10%', 'Resolving strategies...', 50);
-            await ensureStrategyKeysLoaded([primaryConfig.strategyKey, secondaryConfig.strategyKey]);
-
-            const primaryStrategy = strategyRegistry.get(primaryConfig.strategyKey);
-            const secondaryStrategy = strategyRegistry.get(secondaryConfig.strategyKey);
-
-            if (!primaryStrategy) {
-                runUi.setStatus(`Primary strategy "${primaryConfig.strategyKey}" not found`);
-                return;
-            }
-            if (!secondaryStrategy) {
-                runUi.setStatus(`Secondary strategy "${secondaryConfig.strategyKey}" not found`);
-                return;
-            }
-            if (primaryStrategy.crossSymbolConfig) {
-                runUi.setStatus(`"${primaryStrategy.name}" is a cross-symbol strategy and is not supported in combined backtest.`);
-                return;
-            }
-            if (primaryStrategy.polymarket1sConfig) {
-                runUi.setStatus(`"${primaryStrategy.name}" uses 1s Polymarket context and is not supported in combined backtest.`);
-                return;
-            }
-            if (secondaryStrategy.crossSymbolConfig) {
-                runUi.setStatus(`"${secondaryStrategy.name}" is a cross-symbol strategy and is not supported in combined backtest.`);
-                return;
-            }
-            if (secondaryStrategy.polymarket1sConfig) {
-                runUi.setStatus(`"${secondaryStrategy.name}" uses 1s Polymarket context and is not supported in combined backtest.`);
-                return;
-            }
-
-            // --- 2. Prepare data ---
-            await updateDomBacktestRunProgress(runUi, '20%', 'Preparing data...', 50);
-
-            const primarySettings = resolveBacktestSettingsFromRaw(
-                primaryConfig.backtestSettings as unknown as BacktestSettings,
-                { coerceWithoutUiToggles: true }
-            );
-            const secondarySettings = resolveBacktestSettingsFromRaw(
-                secondaryConfig.backtestSettings as unknown as BacktestSettings,
-                { coerceWithoutUiToggles: true }
-            );
-            const backtestData = this.selectClosedCandleData(
-                state.ohlcvData,
-                state.currentInterval,
-                primarySettings
-            );
-
-            // --- 3. Execute both strategies ---
-            await updateDomBacktestRunProgress(runUi, '40%', 'Generating signals from both strategies...', 50);
-
-            const primarySignals = applySignalPolarity(
-                primaryStrategy.execute(backtestData, primaryConfig.strategyParams),
-                primarySettings
-            );
-            const secondarySignals = applySignalPolarity(
-                secondaryStrategy.execute(backtestData, secondaryConfig.strategyParams),
-                secondarySettings
-            );
-
-            // --- 4. Merge signals ---
-            await updateDomBacktestRunProgress(runUi, '60%', `Merging signals (${mode.toUpperCase()})...`, 50);
-
-            const mergedSignals = mergeStrategySignals(primarySignals, secondarySignals, mode);
-
-            // --- 5. Run backtest using primary config's settings + capital ---
-            await updateDomBacktestRunProgress(runUi, '80%', 'Running backtest on merged signals...', 50);
-
-            const capitalSettings = settingsManager.resolveCapitalFromConfig(primaryConfig);
-            const requiresTsEngine =
-                this.requiresTypescriptEngine(primarySettings) || this.requiresTypescriptSizingMode(capitalSettings.sizingMode);
-            const { result, filteredSignalsCount } = await this.runBacktestForPreparedData(
-                backtestData,
-                mergedSignals,
-                primarySettings,
-                capitalSettings,
-                requiresTsEngine
-            );
-
-            if (!this.isLatestInteractiveRun(runId)) {
-                debugLogger.event('backtest.stale_ignored', {
-                    primary: primaryConfig.strategyKey,
-                    secondary: secondaryConfig.strategyKey,
-                    mode,
-                    runId,
-                    phase: 'combined_commit',
-                });
-                return;
-            }
-
-            // --- 6. Update state and UI ---
-            commitBacktestResult(result, 'backtest', {
-                reason: 'combined_strategy_backtest',
-            });
-
-            await updateDomBacktestRunProgress(runUi, '100%', 'Complete!');
-            runUi.setStatus(formatCompletedCombinedBacktestStatus(mode, result));
-
-            debugLogger.event('backtest.combined.success', {
-                primary: primaryConfig.strategyKey,
-                secondary: secondaryConfig.strategyKey,
-                mode,
-                primarySignals: primarySignals.length,
-                secondarySignals: secondarySignals.length,
-                mergedSignals: filteredSignalsCount,
-                trades: result.totalTrades,
-                durationMs: Date.now() - startedAt,
-            });
-
-            await delayBacktestUi(500);
-        } catch (error) {
-            if (!this.isLatestInteractiveRun(runId)) {
-                debugLogger.event('backtest.stale_ignored', {
-                    primary: primaryConfig.strategyKey,
-                    secondary: secondaryConfig.strategyKey,
-                    mode,
-                    runId,
-                    phase: 'combined_error',
-                });
-                return;
-            }
-            debugLogger.error('backtest.combined.error', {
-                primary: primaryConfig.strategyKey,
-                secondary: secondaryConfig.strategyKey,
-                error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
-            });
-            runUi.setStatus('Combined backtest failed');
-            throw error;
-        } finally {
-            runUi.finish();
-        }
-    }
-
     private async runBacktestForData(
         ohlcvData: OHLCVData[],
         symbol: string,
@@ -602,57 +432,6 @@ export class BacktestService {
                 engineMode: requiresTsEngine ? 'typescript' : 'auto',
             }
         );
-    }
-
-    private async runBacktestForPreparedData(
-        backtestData: OHLCVData[],
-        signals: Signal[],
-        settings: BacktestSettings,
-        capitalSettings: CapitalSettings,
-        requiresTsEngine: boolean
-    ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript'; filteredSignalsCount: number }> {
-        const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = capitalSettings;
-        const blockFilteredSignals = this.filterSignalsByBlockRange(signals);
-
-        let result: BacktestResult | undefined;
-        let engineUsed: 'rust' | 'typescript' = 'typescript';
-
-        if (shouldUseRustEngine() && !requiresTsEngine) {
-            const rustResult = await rustEngine.runBacktest(
-                backtestData,
-                blockFilteredSignals,
-                initialCapital,
-                positionSize,
-                commission,
-                sanitizeBacktestSettingsForRust(settings),
-                { mode: sizingMode, fixedTradeAmount, advancedSizing: capitalSettings.advancedSizing }
-            );
-
-            if (rustResult && this.isResultConsistent(rustResult)) {
-                result = rustResult;
-                engineUsed = 'rust';
-            }
-        }
-
-        if (!result) {
-            result = runBacktest(
-                backtestData,
-                blockFilteredSignals,
-                initialCapital,
-                positionSize,
-                commission,
-                settings,
-                { mode: sizingMode, fixedTradeAmount, advancedSizing: capitalSettings.advancedSizing }
-            );
-            engineUsed = 'typescript';
-        }
-
-        this.finalizeBacktestResult(result, initialCapital, backtestData);
-        return { result, engineUsed, filteredSignalsCount: blockFilteredSignals.length };
-    }
-
-    private filterSignalsByBlockRange<T extends { time: Signal['time'] }>(signals: T[]): T[] {
-        return filterSignalsBySelectedBlockRange(signals, state.blockRange);
     }
 
     private finalizeBacktestResult(
@@ -936,21 +715,6 @@ export class BacktestService {
 
     private resolveSubscriptionCapitalSettings(backtestSettings: BacktestSettings): CapitalSettings {
         return resolveSubCapitalSettings(backtestSettings);
-    }
-
-    private isResultConsistent(result: BacktestResult): boolean {
-        const totalTrades = result.totalTrades;
-        if (totalTrades !== result.winningTrades + result.losingTrades) return false;
-        if (totalTrades <= 0) return true;
-
-        const expectedWinRate = (result.winningTrades / totalTrades) * 100;
-        if (Math.abs(expectedWinRate - result.winRate) > 1) return false;
-
-        const expectedAvgTrade = result.netProfit / totalTrades;
-        const tolerance = Math.max(0.01, Math.abs(expectedAvgTrade) * 0.15);
-        if (Math.abs(expectedAvgTrade - result.avgTrade) > tolerance) return false;
-
-        return true;
     }
 
     private recomputeSharpeRatio(result: BacktestResult, _initialCapital: number): number {

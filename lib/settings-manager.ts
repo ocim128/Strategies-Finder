@@ -623,8 +623,6 @@ class SettingsManager {
             'executionModel',
             'stopLossToggle',
             'takeProfitToggle',
-            'historicalLevelTakeProfitToggle',
-            'historicalLevelStopLossToggle',
             'riskMinHoldToggle',
             'riskMaxHoldToggle'
         ];

@@ -1,54 +1,3 @@
-    <div class="settings-section combiner-section" data-complexity="standard" data-section="combiner">
-        <div class="section-header collapsible collapsed" data-target="combinerBody">
-            <div style="display:flex;align-items:center;">
-                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M7 10l5 5 5-5z" />
-                    </svg></span>
-                <div class="section-title">Strategy Combiner</div>
-            </div>
-        </div>
-        <div class="section-body accordion-body collapsed" id="combinerBody">
-            <div class="param-hint">Merge signals from two saved configurations. Use the same config for both to verify
-                results match a single run (sanity check).</div>
-            <div class="param-row">
-                <div class="param-group">
-                    <label class="param-label">Primary Config</label>
-                    <select class="param-input config-select" id="combinerPrimarySelect">
-                        <option value="">-- Select primary --</option>
-                    </select>
-                    <div class="param-hint">Provides signals + all backtest settings (risk, capital, execution).</div>
-                </div>
-                <div class="param-group">
-                    <label class="param-label">Secondary Config</label>
-                    <select class="param-input config-select" id="combinerSecondarySelect">
-                        <option value="">-- Select secondary --</option>
-                    </select>
-                    <div class="param-hint">Provides signals only. Backtest settings are ignored.</div>
-                </div>
-            </div>
-            <div class="param-row">
-                <div class="param-group">
-                    <label class="param-label">Combine Mode</label>
-                    <select class="param-input" id="combinerMode">
-                        <option value="and">AND (both must agree)</option>
-                        <option value="or">OR (union, primary wins ties)</option>
-                    </select>
-                    <div class="param-hint">AND keeps only signals where both fire same bar+direction. OR takes all
-                        signals, deduplicating by bar.</div>
-                </div>
-                <div class="param-group" style="display:flex;align-items:flex-end;">
-                    <button class="btn btn-primary" id="runCombinedStrategyBtn" style="width:100%;">
-                        <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"
-                            style="margin-right:4px;vertical-align:middle;">
-                            <path d="M8 5v14l11-7z" />
-                        </svg>
-                        Run Combined Backtest
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <div class="settings-section" data-complexity="simple" data-section="direction">
         <div class="section-header collapsible" data-target="directionBody">
             <div style="display:flex;align-items:center;">
@@ -345,35 +294,6 @@
                         </div>
                         <input type="number" class="param-input" id="riskMaxHoldBars" value="10" min="1" step="1">
                         <div class="param-hint">Force-close open trades after N bars regardless of PnL.</div>
-                    </div>
-                </div>
-                <div class="param-row">
-                    <div class="param-group">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label class="param-label" style="margin-bottom: 0;">Historical TP</label>
-                            <label class="section-toggle section-toggle--sm"
-                                aria-label="Toggle historical-level take profit">
-                                <input type="checkbox" id="historicalLevelTakeProfitToggle">
-                                <span class="section-toggle-track"></span>
-                            </label>
-                        </div>
-                        <div class="param-hint">Long exits before resistance; short exits before support.</div>
-                    </div>
-                    <div class="param-group">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label class="param-label" style="margin-bottom: 0;">Historical Exit</label>
-                            <label class="section-toggle section-toggle--sm"
-                                aria-label="Toggle historical-level protective exit">
-                                <input type="checkbox" id="historicalLevelStopLossToggle">
-                                <span class="section-toggle-track"></span>
-                            </label>
-                        </div>
-                        <div class="param-hint">Long exits after support breaks; short exits after resistance breaks.</div>
-                    </div>
-                    <div class="param-group">
-                        <label class="param-label">Historical Lookback (bars)</label>
-                        <input type="number" class="param-input" id="historicalLevelLookbackBars" value="120" min="5" step="1">
-                        <div class="param-hint">Uses confirmed past swing zones only.</div>
                     </div>
                 </div>
                 <div class="risk-percentage is-hidden" id="riskPercentage">

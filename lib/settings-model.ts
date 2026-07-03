@@ -86,9 +86,6 @@ export interface BacktestSettingsData {
     takeProfitAdaptiveIcScale: number;
     stopLossEnabled: boolean;
     takeProfitEnabled: boolean;
-    historicalLevelTakeProfitEnabled: boolean;
-    historicalLevelStopLossEnabled: boolean;
-    historicalLevelLookbackBars: number;
     riskMinHoldBars: number;
     riskMinHoldEnabled: boolean;
     riskMaxHoldBars: number;

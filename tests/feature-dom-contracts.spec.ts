@@ -17,7 +17,6 @@ import { FINDER_MANAGER_REQUIRED_IDS } from "../lib/finder/finder-manager-dom";
 import { HUNT_REQUIRED_IDS } from "../lib/hunt/hunt-dom";
 import { BATCH_BACKTEST_REQUIRED_IDS } from "../lib/batch-backtest/batch-backtest-dom";
 import { RANK_PAIRS_REQUIRED_IDS } from "../lib/rank-pairs/rank-pairs-dom";
-import { PAIR_COMBINER_BRIDGE_REQUIRED_IDS } from "../lib/pairCombiner/pair-combiner-bridge-dom";
 import { WALK_FORWARD_SERVICE_REQUIRED_IDS } from "../lib/walk-forward-dom";
 import { ENSEMBLE_LAB_REQUIRED_IDS } from "../lib/strategy-ensemble-dom";
 import { MONTE_CARLO_REQUIRED_IDS } from "../lib/monte-carlo-dom";
@@ -94,7 +93,6 @@ describe("Feature DOM contracts", () => {
         hunt: [...HUNT_REQUIRED_IDS],
         batchBacktest: [...BATCH_BACKTEST_REQUIRED_IDS],
         rankPairs: [...RANK_PAIRS_REQUIRED_IDS],
-        pairCombinerBridge: [...PAIR_COMBINER_BRIDGE_REQUIRED_IDS],
         walkForwardService: [...WALK_FORWARD_SERVICE_REQUIRED_IDS],
         monteCarlo: [...MONTE_CARLO_REQUIRED_IDS],
         strategyLibraryAdmin: [...STRATEGY_LIBRARY_ADMIN_REQUIRED_IDS],
