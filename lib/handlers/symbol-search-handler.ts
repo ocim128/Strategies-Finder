@@ -101,7 +101,7 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
         localSp500Select.innerHTML = '<option value="">Loading local tickers...</option>';
 
         try {
-            const assets = await getLocalDailyAssets();
+            const assets = (await getLocalDailyAssets()).filter((asset) => asset.provider !== 'ibkr-local');
             localDailyAssetBySelection.clear();
             localDailySelectionBySymbol.clear();
             localSp500Select.innerHTML = '';

@@ -20,7 +20,7 @@ import {
 import { debugLogger } from './debug-logger';
 
 export type AssetType = 'crypto' | 'stock' | 'forex' | 'commodity';
-export type AssetProvider = 'binance' | 'binance-futures' | 'bybit-tradfi' | 'polymarket' | 'local-daily' | 'mock';
+export type AssetProvider = 'binance' | 'binance-futures' | 'bybit-tradfi' | 'polymarket' | 'local-daily' | 'ibkr-local' | 'mock';
 
 export interface Asset {
     symbol: string;          // e.g., "AAPL", "ETHUSDT", "EURUSD"
@@ -171,7 +171,7 @@ class AssetSearchService {
             // Prioritize stocks and popular assets
             if (asset.type === 'stock') score += 5;
             if (asset.provider === 'bybit-tradfi') score += 8;
-            if (asset.provider === 'local-daily') score += 8;
+            if (asset.provider === 'local-daily' || asset.provider === 'ibkr-local') score += 8;
             if (asset.provider === 'polymarket') score += 20;
             if (asset.type === 'crypto' && asset.quoteAsset === 'USDT') score += 3;
 

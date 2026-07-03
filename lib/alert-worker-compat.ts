@@ -12,6 +12,8 @@ function labelForProvider(provider: AssetProvider): string {
             return "Polymarket";
         case "local-daily":
             return "Local Daily";
+        case "ibkr-local":
+            return "IBKR Local";
         case "mock":
             return "Mock";
         default:

@@ -3,6 +3,7 @@ import type { DataProvider } from "./types/data-providers";
 export type LocalDailyDatasetKey =
     | "sp500"
     | "indonesian-stock"
+    | "ibkr-stock"
     | "forbes2000-stock"
     | "nasdaq-stock"
     | "nyse-stock"
@@ -12,13 +13,18 @@ export type LocalDailyDatasetKey =
 // from Binance/Bybit/indonesian-stock sources. The marker is preserved
 // end-to-end through .trim().toUpperCase(), so cache/SQLite/IndexedDB keys
 // stay distinct from the bare ticker.
-export const STOCK_MARKET_SYMBOL_SUFFIX = "\u2666"; // ♦
+export const STOCK_MARKET_SYMBOL_SUFFIX = "\u2666"; // diamond
+export const IBKR_SYMBOL_SUFFIX = "\u2022"; // bullet
 
 const STOCK_MARKET_DATASET_KEYS: ReadonlySet<LocalDailyDatasetKey> = new Set([
     "forbes2000-stock",
     "nasdaq-stock",
     "nyse-stock",
     "sp500-stock",
+]);
+
+const IBKR_DATASET_KEYS: ReadonlySet<LocalDailyDatasetKey> = new Set([
+    "ibkr-stock",
 ]);
 
 export function markStockSymbol(symbol: string): string {
@@ -33,6 +39,29 @@ export function isStockMarketSymbol(symbol: string): boolean {
     return symbol.trim().endsWith(STOCK_MARKET_SYMBOL_SUFFIX);
 }
 
+export function markIbkrSymbol(symbol: string): string {
+    const normalized = symbol.trim().toUpperCase();
+    if (!normalized) return normalized;
+    return normalized.endsWith(IBKR_SYMBOL_SUFFIX)
+        ? normalized
+        : `${normalized}${IBKR_SYMBOL_SUFFIX}`;
+}
+
+export function isIbkrSymbol(symbol: string): boolean {
+    return symbol.trim().endsWith(IBKR_SYMBOL_SUFFIX);
+}
+
+export function stripIbkrMarker(symbol: string): string {
+    const trimmed = symbol.trim();
+    return trimmed.endsWith(IBKR_SYMBOL_SUFFIX)
+        ? trimmed.slice(0, -IBKR_SYMBOL_SUFFIX.length).toUpperCase()
+        : trimmed.toUpperCase();
+}
+
+export function isMarkedLocalStockSymbol(symbol: string): boolean {
+    return isStockMarketSymbol(symbol) || isIbkrSymbol(symbol);
+}
+
 export function stripStockMarketMarker(symbol: string): string {
     const trimmed = symbol.trim();
     return trimmed.endsWith(STOCK_MARKET_SYMBOL_SUFFIX)
@@ -40,8 +69,18 @@ export function stripStockMarketMarker(symbol: string): string {
         : trimmed.toUpperCase();
 }
 
+export function stripMarkedLocalStockSymbol(symbol: string): string {
+    return isIbkrSymbol(symbol)
+        ? stripIbkrMarker(symbol)
+        : stripStockMarketMarker(symbol);
+}
+
 export function isStockMarketDatasetKey(key: string): boolean {
     return STOCK_MARKET_DATASET_KEYS.has(key as LocalDailyDatasetKey);
+}
+
+export function isIbkrDatasetKey(key: string): boolean {
+    return IBKR_DATASET_KEYS.has(key as LocalDailyDatasetKey);
 }
 
 export interface LocalDailyDatasetConfig {
@@ -50,7 +89,8 @@ export interface LocalDailyDatasetConfig {
     catalogUrl: string;
     catalogFormat: "csv" | "json";
     candlesBasePath: string;
-    provider: Extract<DataProvider, "bybit-tradfi" | "local-daily">;
+    supportedIntervals?: readonly string[];
+    provider: Extract<DataProvider, "bybit-tradfi" | "local-daily" | "ibkr-local">;
 }
 
 export interface LocalDailyAsset {
@@ -58,7 +98,7 @@ export interface LocalDailyAsset {
     name: string;
     dataset: LocalDailyDatasetKey;
     datasetLabel: string;
-    provider: Extract<DataProvider, "bybit-tradfi" | "local-daily">;
+    provider: Extract<DataProvider, "bybit-tradfi" | "local-daily" | "ibkr-local">;
     sector?: string;
 }
 
@@ -82,6 +122,15 @@ export const LOCAL_DAILY_DATASETS: readonly LocalDailyDatasetConfig[] = [
         catalogFormat: "json",
         candlesBasePath: "/price-data/indonesian-stock",
         provider: "local-daily",
+    },
+    {
+        key: "ibkr-stock",
+        label: "IBKR Local",
+        catalogUrl: "/api/local-price-data/ibkr/catalog",
+        catalogFormat: "json",
+        candlesBasePath: "/price-data/ibkr/csv",
+        supportedIntervals: ["1d", "4h", "1h", "30m", "15m", "5m", "1m"],
+        provider: "ibkr-local",
     },
     {
         key: "forbes2000-stock",
@@ -193,7 +242,9 @@ function toAsset(
     // keeps the asset shape consistent regardless of which path fed it in.
     const normalizedSymbol = isStockMarketDatasetKey(config.key)
         ? markStockSymbol(stripStockMarketMarker(trimmedSymbol))
-        : trimmedSymbol;
+        : isIbkrDatasetKey(config.key)
+            ? markIbkrSymbol(stripIbkrMarker(trimmedSymbol))
+            : trimmedSymbol;
     return {
         symbol: normalizedSymbol,
         name: name.trim() || normalizedSymbol,
@@ -292,6 +343,12 @@ export async function getLocalDailyAssets(datasetKey?: LocalDailyDatasetKey): Pr
 
     const byDataset = await Promise.all(configs.map((config) => loadDatasetAssets(config)));
     return byDataset.flat();
+}
+
+export function clearLocalDailyAssetCaches(): void {
+    assetCacheByDataset.clear();
+    pendingLoadByDataset.clear();
+    indexedCacheByDataset.clear();
 }
 
 export async function getLocalDailyAsset(symbol: string): Promise<LocalDailyAsset | null> {

@@ -589,8 +589,8 @@ export class DataMiningManager {
         if (provider === 'binance-futures') return 'Binance Futures';
         if (provider === 'bybit-tradfi') return 'Bybit TradFi';
         if (provider === 'polymarket') return 'Polymarket';
+        if (provider === 'ibkr-local') return 'IBKR Local';
         if (provider === 'local-daily') return 'Local Daily';
-
         if (provider === 'mock') return 'Mock';
         return provider;
     }

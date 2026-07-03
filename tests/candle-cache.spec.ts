@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { loadCachedCandles, loadSeedCandlesFromPriceData, mergeCandles, saveCachedCandles } from '../lib/candle-cache';
+import { clearLocalDailyCsvCachesForSymbols, loadCachedCandles, loadSeedCandlesFromPriceData, mergeCandles, saveCachedCandles } from '../lib/candle-cache';
 
 type StoredRecord = {
     key: string;
@@ -118,6 +118,7 @@ describe('Candle cache', () => {
 
     beforeEach(() => {
         indexedDbFactory.clear();
+        clearLocalDailyCsvCachesForSymbols();
         Object.defineProperty(globalThis, 'indexedDB', {
             value: indexedDbFactory,
             configurable: true,
@@ -132,6 +133,7 @@ describe('Candle cache', () => {
             writable: true,
         });
         globalThis.fetch = originalFetch;
+        clearLocalDailyCsvCachesForSymbols();
     });
 
     it('merges already-parsed candles with sorted dedupe semantics on the fallback path', () => {
@@ -213,6 +215,40 @@ describe('Candle cache', () => {
         expect(candles?.[0].low).to.equal(8900);
         expect(candles?.[0].high).to.equal(9150);
         expect(candles?.[1].volume).to.equal(1500);
+    });
+
+    it('keeps IBKR local CSV cache entries separated by interval', async () => {
+        const requestedPaths: string[] = [];
+
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+            const path = String(input);
+            requestedPaths.push(path);
+            const isDaily = path.includes('/price-data/ibkr/csv/1d/NVDA.csv');
+            const isFourHour = path.includes('/price-data/ibkr/csv/4h/NVDA.csv');
+            if (!isDaily && !isFourHour) {
+                return { status: 404, ok: false } as Response;
+            }
+            const date = isDaily ? '2024-01-02' : '2024-01-02 14:30:00';
+            const close = isDaily ? 101 : 202;
+            return {
+                status: 200,
+                ok: true,
+                text: async () => [
+                    'time,open,high,low,close,volume',
+                    `${date},100,210,90,${close},1000`,
+                ].join('\n'),
+            } as Response;
+        }) as typeof fetch;
+
+        const daily = await loadSeedCandlesFromPriceData('NVDA\u2022', '1d');
+        const fourHour = await loadSeedCandlesFromPriceData('NVDA\u2022', '4h');
+        const dailyAgain = await loadSeedCandlesFromPriceData('NVDA\u2022', '1d');
+
+        expect(daily?.[0].close).to.equal(101);
+        expect(fourHour?.[0].close).to.equal(202);
+        expect(dailyAgain?.[0].close).to.equal(101);
+        expect(requestedPaths.filter((path) => path.includes('/price-data/ibkr/csv/1d/NVDA.csv'))).to.have.length(1);
+        expect(requestedPaths.filter((path) => path.includes('/price-data/ibkr/csv/4h/NVDA.csv'))).to.have.length(1);
     });
 
     it('returns the write-sanitized IndexedDB payload without changing its candle ordering on read', async () => {

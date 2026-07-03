@@ -29,6 +29,7 @@ const TAB_TO_FEATURE: Record<string, string> = {
     polymarket: "polymarket-panel",
     executionlab: "execution-lab",
     datamining: "data-mining",
+    ibkrdata: "ibkr-data",
     libraryaudit: "strategy-library-audit",
     signalcommittee: "signal-committee",
     rankpairs: "rank-pairs",

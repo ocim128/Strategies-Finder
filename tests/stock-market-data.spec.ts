@@ -3,8 +3,13 @@ import assert from 'node:assert/strict';
 
 import {
     isStockMarketDatasetKey,
+    isIbkrSymbol,
+    isMarkedLocalStockSymbol,
     isStockMarketSymbol,
+    markIbkrSymbol,
     markStockSymbol,
+    stripIbkrMarker,
+    stripMarkedLocalStockSymbol,
     stripStockMarketMarker,
 } from '../lib/local-daily-datasets';
 import {
@@ -50,6 +55,24 @@ describe('stock-market diamond marker helpers', () => {
         // stock-market — that would break the ISO-date CSV path.
         assert.equal(isStockMarketDatasetKey('sp500'), false);
         assert.equal(isStockMarketDatasetKey('indonesian-stock'), false);
+    });
+});
+
+describe('ibkr bullet marker helpers', () => {
+    it('marks a bare ticker and is idempotent', () => {
+        assert.equal(markIbkrSymbol('NVDA'), 'NVDA\u2022');
+        assert.equal(markIbkrSymbol('nvda'), 'NVDA\u2022');
+        assert.equal(markIbkrSymbol('NVDA\u2022'), 'NVDA\u2022');
+    });
+
+    it('detects and strips bullet-marked symbols without changing diamond behavior', () => {
+        assert.equal(isIbkrSymbol('NVDA\u2022'), true);
+        assert.equal(isIbkrSymbol('NVDA\u2666'), false);
+        assert.equal(stripIbkrMarker('nvda\u2022'), 'NVDA');
+        assert.equal(isMarkedLocalStockSymbol('NVDA\u2022'), true);
+        assert.equal(isMarkedLocalStockSymbol('NVDA\u2666'), true);
+        assert.equal(stripMarkedLocalStockSymbol('nvda\u2022'), 'NVDA');
+        assert.equal(stripMarkedLocalStockSymbol('nvda\u2666'), 'NVDA');
     });
 });
 
@@ -149,6 +172,13 @@ describe('deriveSyntheticSymbol with stock-market legs', () => {
         );
     });
 
+    it('joins IBKR bullet-marked legs with a plus', () => {
+        assert.equal(
+            deriveSyntheticSymbol('NVDA\u2022', 'AAPL\u2022'),
+            'NVDA\u2022+AAPL\u2022',
+        );
+    });
+
     it('preserves the legacy common-suffix collapse for unmarked crypto legs', () => {
         // Regression guard: BNBUSDT + PAXGUSDT must still collapse to BNBPAXG.
         assert.equal(deriveSyntheticSymbol('BNBUSDT', 'PAXGUSDT'), 'BNBPAXG');
@@ -176,6 +206,14 @@ describe('synthetic pair token parsing preserves marked legs', () => {
         assert.deepEqual(parsed, {
             baseSymbol: 'AAPL\u2666',
             quoteSymbol: 'BTCUSDT',
+        });
+    });
+
+    it('keeps IBKR bullet-marked legs intact instead of appending USDT', () => {
+        const parsed = parseSyntheticPairToken('NVDA\u2022+AAPL\u2022');
+        assert.deepEqual(parsed, {
+            baseSymbol: 'NVDA\u2022',
+            quoteSymbol: 'AAPL\u2022',
         });
     });
 
@@ -212,6 +250,15 @@ describe('portfolio synthetic pair parser preserves marked legs', () => {
         assert.equal(parsed?.quoteSymbol, 'PAXGUSDT');
         assert.equal(parsed?.baseAsset, 'BNB');
     });
+
+    it('keeps IBKR bullet-marked legs intact and exposes bare assets', () => {
+        const parsed = parsePortfolioSyntheticPairSymbol('NVDA\u2022+AAPL\u2022');
+        assert.equal(parsed?.baseSymbol, 'NVDA\u2022');
+        assert.equal(parsed?.quoteSymbol, 'AAPL\u2022');
+        assert.equal(parsed?.baseAsset, 'NVDA');
+        assert.equal(parsed?.quoteAsset, 'AAPL');
+        assert.equal(parsed?.syntheticSymbol, 'NVDA\u2022+AAPL\u2022');
+    });
 });
 
 describe('resolveEffectiveIntervalForSynthetic', () => {
@@ -241,6 +288,14 @@ describe('resolveEffectiveIntervalForSynthetic', () => {
             '1h',
         );
         assert.equal(resolveEffectiveIntervalForSynthetic('BTCUSDT', null, null, '15m'), '15m');
+    });
+
+    it('does not coerce IBKR bullet symbols to 1d', () => {
+        assert.equal(resolveEffectiveIntervalForSynthetic('NVDA\u2022', null, null, '1h'), '1h');
+        assert.equal(
+            resolveEffectiveIntervalForSynthetic('NVDA\u2022+AAPL\u2022', 'NVDA\u2022', 'AAPL\u2022', '15m'),
+            '15m',
+        );
     });
 
     it('keeps 1d as 1d (idempotent for daily Finder runs)', () => {

@@ -28,7 +28,7 @@ import { strategyPanelController } from "./strategy-panel-controller";
 import { getOptionalElement } from "./dom-utils";
 import { initCrossSymbolUI } from "./cross-symbol-ui";
 import { setBinanceMarketType, setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
-import { getLocalDailyAsset, isStockMarketSymbol } from "./local-daily-datasets";
+import { getLocalDailyAsset, isIbkrSymbol, isStockMarketSymbol } from "./local-daily-datasets";
 import {
     runBootstrapFeatureStage,
     type AppBootstrapFeature,
@@ -77,6 +77,7 @@ async function restoreSavedSettings(context: AppBootstrapContext): Promise<void>
             // catalog fetches + parses just to conclude "no match".
             const candidate = savedSettings.currentSymbol.trim().toUpperCase();
             const mightBeLocalDaily = isStockMarketSymbol(candidate)
+                || isIbkrSymbol(candidate)
                 || (/^[A-Z]{1,6}$/.test(candidate) && !candidate.endsWith("USDT"));
             if (mightBeLocalDaily) {
                 const localDailyAsset = await getLocalDailyAsset(candidate);
@@ -344,6 +345,7 @@ function registerLazyFeatures(): void {
     registerLazyFeature("batch-backtest", async () => (await import("./batch-backtest/batch-backtest-service")).batchBacktestService.init());
     registerLazyFeature("rank-pairs", async () => (await import("./rank-pairs/rank-pairs-service")).rankPairsService.init());
     registerLazyFeature("data-mining", async () => (await import("./data-mining-manager")).dataMiningManager.init());
+    registerLazyFeature("ibkr-data", async () => (await import("./ibkr-data/ibkr-data-service")).ibkrDataService.init());
     registerLazyFeature("walk-forward", async () => (await import("./walk-forward-service")).walkForwardService.initUI());
     registerLazyFeature("portfolio-lab", async () => (await import("./portfolio-lab-service")).portfolioLabService.init());
     registerLazyFeature("strategy-ensemble", async () => (await import("./strategy-ensemble-service")).strategyEnsembleService.init());

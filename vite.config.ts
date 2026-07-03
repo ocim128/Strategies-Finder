@@ -5,6 +5,7 @@ import { backtestEndpointPlugin } from './lib/backtest-endpoint-plugin';
 import { strategyLibraryAdminPlugin } from './lib/strategy-library-admin-plugin';
 import { strategyLibraryAuditPlugin } from './lib/strategy-library-audit-plugin';
 import { executionLabVitePlugin } from './lib/execution-lab/execution-lab-vite-plugin';
+import { ibkrDataVitePlugin } from './lib/ibkr-data/ibkr-data-vite-plugin';
 import { localSqlitePlugin } from './lib/local-sqlite-vite-plugin';
 import { secondMarketApiPlugin } from './lib/second-market-vite-plugin';
 import { sendCaughtErrorJson, sendJson, proxyUpstreamJson } from './lib/vite-http-utils';
@@ -339,6 +340,7 @@ export default defineConfig({
     plugins: [
         tradFiKlineProxyPlugin(),
         polymarketProxyPlugin(),
+        ibkrDataVitePlugin(),
         localPriceDataCatalogPlugin(),
         secondMarketApiPlugin(),
         executionLabVitePlugin(),

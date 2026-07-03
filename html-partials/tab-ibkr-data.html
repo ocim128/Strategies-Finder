@@ -1,0 +1,45 @@
+<!-- IBKR Data Tab -->
+<div id="ibkrdataTab">
+    <div class="section-title">IBKR Data</div>
+    <p class="section-desc">Resolve, download, and sync local IBKR CSV candles under <code>price-data/ibkr</code>.</p>
+
+    <div class="data-mining-actions">
+        <button class="btn btn-secondary" id="ibkrDataStatusBtn" type="button">Test Gateway</button>
+        <button class="btn btn-secondary" id="ibkrDataResolveBtn" type="button">Resolve</button>
+        <button class="btn btn-primary" id="ibkrDataDownloadBtn" type="button">Download CSV</button>
+        <button class="btn btn-secondary" id="ibkrDataSyncBtn" type="button">Sync Latest</button>
+        <button class="btn btn-secondary" id="ibkrDataStopBtn" type="button">Stop</button>
+        <button class="btn btn-secondary" id="ibkrDataCopyBtn" type="button">Copy Symbols</button>
+    </div>
+
+    <div class="section-body">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label" for="ibkrDataSymbols">Symbols</label>
+                <textarea class="param-input" id="ibkrDataSymbols" rows="6" placeholder="NVDA&#10;AAPL&#10;MSFT"></textarea>
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label" for="ibkrDataInterval">Timeframe</label>
+                <select class="param-input" id="ibkrDataInterval">
+                    <option value="1d" selected>1d</option>
+                    <option value="4h">4h</option>
+                    <option value="1h">1h</option>
+                    <option value="30m">30m</option>
+                    <option value="15m">15m</option>
+                    <option value="5m">5m</option>
+                    <option value="1m">1m</option>
+                </select>
+            </div>
+            <div class="param-group">
+                <label class="param-label" for="ibkrDataPeriod">IBKR Period</label>
+                <input class="param-input" id="ibkrDataPeriod" type="text" placeholder="1d default: max">
+                <div class="param-hint">Examples: max, 1w, 1m, 6m, 1y, 5y.</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="data-mining-status" id="ibkrDataStatus">Ready</div>
+    <pre class="data-mining-diagnostics" id="ibkrDataOutput">Waiting for IBKR action...</pre>
+</div>

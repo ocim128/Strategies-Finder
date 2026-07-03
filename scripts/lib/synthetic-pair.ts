@@ -13,7 +13,7 @@ import type { OHLCVData } from '../../lib/types/strategies';
 import { parseOhlcvBars } from './ohlcv-file';
 import { parseIntervalSeconds } from '../../lib/interval-utils';
 import { SYNTHETIC_SOURCE_BARS_LIMIT } from '../../lib/data/constants';
-import { isStockMarketSymbol } from '../../lib/local-daily-datasets';
+import { isMarkedLocalStockSymbol, isStockMarketSymbol } from '../../lib/local-daily-datasets';
 
 // ============================================================================
 // Public types
@@ -338,7 +338,7 @@ export async function buildSyntheticPairFromLegs(args: {
     // interval that has no data and every pair would fail with "Quote bars
     // must contain at least one aligned candle." When either leg is marked,
     // skip subdivision and fetch both legs at the target interval directly.
-    const markedLeg = isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol);
+    const markedLeg = isMarkedLocalStockSymbol(baseSymbol) || isMarkedLocalStockSymbol(quoteSymbol);
     const source = markedLeg ? null : pickSourceInterval(interval);
     const sourceInterval = source?.sourceInterval ?? interval;
     const rawSourceBars = resolveSyntheticSourceBars(targetBars, source?.ratio ?? 1);
@@ -470,7 +470,7 @@ export function deriveSyntheticSymbol(baseSymbol: string, quoteSymbol: string): 
     // shared marker and produce an ambiguous bare-ticker synthetic. Switch to
     // an explicit `leg+leg` join so the result stays namespaced, e.g.
     // NVDA♦ + AAPL♦ => NVDA♦+AAPL♦.
-    if (isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol)) {
+    if (isMarkedLocalStockSymbol(baseSymbol) || isMarkedLocalStockSymbol(quoteSymbol)) {
         return `${baseSymbol}+${quoteSymbol}`;
     }
 

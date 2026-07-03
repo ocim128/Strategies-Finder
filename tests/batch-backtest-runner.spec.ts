@@ -64,6 +64,14 @@ describe("parseBatchSymbols", () => {
         expect(parseBatchSymbols("zec+apt")).to.deep.equal(["ZEC+APT"]);
     });
 
+    it("preserves IBKR bullet markers in synthetic pair tokens", () => {
+        expect(parseBatchSymbols("nvda\u2022+aapl\u2022")).to.deep.equal(["NVDA\u2022+AAPL\u2022"]);
+    });
+
+    it("preserves IBKR bullet markers in single-symbol tokens", () => {
+        expect(parseBatchSymbols("nvda\u2022")).to.deep.equal(["NVDA\u2022"]);
+    });
+
     it("dedupes while preserving first-seen order", () => {
         expect(parseBatchSymbols("BTCUSDT\nETHUSDT\nBTCUSDT")).to.deep.equal(["BTCUSDT", "ETHUSDT"]);
     });

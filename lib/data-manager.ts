@@ -26,7 +26,7 @@ import {
 import { getIntervalSeconds } from "./dataProviders/utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { countRealtimeGapBars } from "./realtime-gap-utils";
-import { mergeCandles } from "./candle-cache";
+import { clearLocalDailyCsvCachesForSymbols, mergeCandles } from "./candle-cache";
 import { clearCachedCandlesDatabase } from "./candle-cache";
 import type { ResampleOptions } from "./strategies/resample-utils";
 import {
@@ -299,7 +299,7 @@ export class DataManager {
             debugLogger.info('data.stream.skip_polymarket', { symbol, interval });
             return;
         }
-        if (provider === 'local-daily') {
+        if (provider === 'local-daily' || provider === 'ibkr-local') {
             debugLogger.info('data.stream.skip_local_daily', { symbol, interval });
             return;
         }
@@ -416,6 +416,23 @@ export class DataManager {
     public invalidateCacheEntry(symbol: string, interval: string, provider?: DataProvider): void {
         const cacheKey = this.fetcher.buildCacheKey(symbol, interval, provider);
         this.cache.invalidate(cacheKey);
+    }
+
+    public invalidateLocalSeries(symbols: readonly string[], intervals?: readonly string[]): void {
+        clearLocalDailyCsvCachesForSymbols(symbols);
+        const normalizedIntervals = intervals && intervals.length > 0
+            ? intervals.map((interval) => this.getStorageInterval(interval))
+            : ["1d", "4h", "1h", "30m", "15m", "5m", "1m"];
+        for (const symbol of symbols) {
+            const normalizedSymbol = symbol.trim().toUpperCase();
+            if (!normalizedSymbol) continue;
+            const provider = this.getProvider(normalizedSymbol);
+            for (const interval of normalizedIntervals) {
+                const cacheKey = this.fetcher.buildCacheKey(normalizedSymbol, interval, provider);
+                this.cache.invalidate(cacheKey);
+                this.importedDataByKey.delete(cacheKey);
+            }
+        }
     }
 
     public updateCacheEntryFor(symbol: string, interval: string, candles: OHLCVData[]): void {

@@ -5,8 +5,11 @@ import { debugLogger } from "./debug-logger";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import {
     LOCAL_DAILY_DATASETS,
+    isIbkrDatasetKey,
+    isIbkrSymbol,
     isStockMarketDatasetKey,
     isStockMarketSymbol,
+    stripIbkrMarker,
     stripStockMarketMarker,
     type LocalDailyDatasetConfig,
 } from "./local-daily-datasets";
@@ -80,6 +83,36 @@ function rememberLocalDailyCsv(cacheKey: string, candles: OHLCVData[]): void {
         if (oldest !== undefined) localDailyCsvCache.delete(oldest);
     }
     localDailyCsvCache.set(cacheKey, candles);
+}
+
+function getLocalDailyCsvSymbolFromCacheKey(cacheKey: string): string {
+    const parts = cacheKey.split(":");
+    return (parts[parts.length - 1] ?? "").trim().toUpperCase();
+}
+
+export function clearLocalDailyCsvCachesForSymbols(symbols?: readonly string[]): void {
+    if (!symbols || symbols.length === 0) {
+        localDailyCsvCache.clear();
+        missingLocalDailyCsvFiles.clear();
+        return;
+    }
+
+    const bareSymbols = new Set(
+        symbols
+            .map((symbol) => isIbkrSymbol(symbol) ? stripIbkrMarker(symbol) : stripStockMarketMarker(symbol))
+            .map((symbol) => symbol.trim().toUpperCase())
+            .filter(Boolean)
+    );
+    for (const key of Array.from(localDailyCsvCache.keys())) {
+        if (bareSymbols.has(getLocalDailyCsvSymbolFromCacheKey(key))) {
+            localDailyCsvCache.delete(key);
+        }
+    }
+    for (const key of Array.from(missingLocalDailyCsvFiles.values())) {
+        if (bareSymbols.has(getLocalDailyCsvSymbolFromCacheKey(key))) {
+            missingLocalDailyCsvFiles.delete(key);
+        }
+    }
 }
 
 function getIndexedDbFactory(): IDBFactory | null {
@@ -363,20 +396,29 @@ async function loadLocalDailyDatasetCandles(
     signal?: AbortSignal
 ): Promise<OHLCVData[] | null> {
     const baseInterval = interval.trim().toLowerCase().split('@')[0];
-    if (baseInterval !== '1d') return null;
+    const isIbkr = isIbkrDatasetKey(dataset.key);
+    if (!isIbkr && baseInterval !== '1d') return null;
+    if (isIbkr && dataset.supportedIntervals && !dataset.supportedIntervals.includes(baseInterval)) return null;
 
     const isStockMarket = isStockMarketDatasetKey(dataset.key);
+    const isMarkedIbkr = isIbkr && isIbkrSymbol(symbol);
     // Stock-market symbols are stored on disk under their bare ticker; the
     // diamond marker is a runtime-only namespace. Strip it before resolving
     // the CSV path so `AAPL♦` maps to `AAPL.csv`.
-    const lookupSymbol = isStockMarket ? stripStockMarketMarker(symbol) : symbol;
+    const lookupSymbol = isStockMarket
+        ? stripStockMarketMarker(symbol)
+        : isMarkedIbkr
+            ? stripIbkrMarker(symbol)
+            : symbol;
     const candidates = buildLocalDailySymbolCandidates(lookupSymbol);
     const parsePayload = isStockMarket
         ? extractCandlesFromStockMarketCsvPayload
         : extractCandlesFromCsvPayload;
 
     for (const candidate of candidates) {
-        const cacheKey = `${dataset.key}:${candidate}`;
+        const cacheKey = isIbkr
+            ? `${dataset.key}:${baseInterval}:${candidate}`
+            : `${dataset.key}:${candidate}`;
         const cachedCandles = getLocalDailyCsvCache(cacheKey);
         if (cachedCandles) {
             return cachedCandles;
@@ -385,7 +427,9 @@ async function loadLocalDailyDatasetCandles(
             continue;
         }
 
-        const filePath = `${dataset.candlesBasePath}/${encodeURIComponent(candidate)}.csv`;
+        const filePath = isIbkr
+            ? `${dataset.candlesBasePath}/${encodeURIComponent(baseInterval)}/${encodeURIComponent(candidate)}.csv`
+            : `${dataset.candlesBasePath}/${encodeURIComponent(candidate)}.csv`;
         try {
             const response = await fetch(filePath, {
                 signal,
@@ -430,13 +474,15 @@ async function loadLocalDailyCandles(
     interval: string,
     signal?: AbortSignal
 ): Promise<OHLCVData[] | null> {
-    const marked = isStockMarketSymbol(symbol);
-    // A diamond-marked symbol only ever resolves against the stock-market
-    // datasets; skip the others so a marked ticker can't accidentally
-    // match a bare-ticker CSV in another dataset.
-    const candidateDatasets = LOCAL_DAILY_DATASETS.filter((dataset) =>
-        marked ? isStockMarketDatasetKey(dataset.key) : !isStockMarketDatasetKey(dataset.key)
-    );
+    const stockMarked = isStockMarketSymbol(symbol);
+    const ibkrMarked = isIbkrSymbol(symbol);
+    // Marked symbols only resolve against their matching marked dataset; skip
+    // the others so a source marker cannot accidentally match a bare-ticker CSV.
+    const candidateDatasets = LOCAL_DAILY_DATASETS.filter((dataset) => {
+        if (stockMarked) return isStockMarketDatasetKey(dataset.key);
+        if (ibkrMarked) return isIbkrDatasetKey(dataset.key);
+        return !isStockMarketDatasetKey(dataset.key) && !isIbkrDatasetKey(dataset.key);
+    });
     if (candidateDatasets.length === 0) return null;
 
     // Iterate datasets in parallel; per-dataset caches make repeat loads
@@ -648,7 +694,7 @@ export async function loadSeedCandlesFromPriceData(
     // overlay seeds. `local-daily` symbols only ever resolve via per-dataset
     // CSVs, so probing `/price-data/{symbol}-{interval}.json` is an always-404
     // round trip before the real loader runs. Skip it for that provider.
-    const skipJsonProbe = provider === 'local-daily';
+    const skipJsonProbe = provider === 'local-daily' || provider === 'ibkr-local';
 
     let markMissing = false;
 

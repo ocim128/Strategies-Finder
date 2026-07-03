@@ -24,7 +24,7 @@
 import { dataManager } from "../data-manager";
 import { debugLogger } from "../debug-logger";
 import { parseSyntheticPairToken } from "../finder-manager";
-import { isStockMarketSymbol } from "../local-daily-datasets";
+import { isIbkrSymbol, isMarkedLocalStockSymbol } from "../local-daily-datasets";
 import {
     buildSyntheticPairFromLegs,
     deriveSyntheticSymbol,
@@ -95,6 +95,11 @@ export async function loadBatchDataset(
 
     const data = await dataManager.fetchDataDetached(symbol, effectiveInterval, { signal, offline: true });
     if (signal?.aborted) return [];
+    if (data.length === 0 && isIbkrSymbol(symbol)) {
+        throw new Error(
+            `No IBKR local candles found for ${symbol} ${effectiveInterval}. Batch uses the current chart interval; download that IBKR timeframe first or switch the chart interval to one that exists.`
+        );
+    }
 
     // Offline short-circuit can return a stale streaming-leftover fragment
     // (e.g. 16 bars) when the pair was never fully loaded on the chart. Fall
@@ -150,7 +155,7 @@ async function loadSyntheticPairForBatch(
     const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
     // Stock-market legs have no finer granularity than the target interval,
     // so skip the source subdivision for them (matches buildSyntheticPairFromLegs).
-    const markedLeg = isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol);
+    const markedLeg = isMarkedLocalStockSymbol(baseSymbol) || isMarkedLocalStockSymbol(quoteSymbol);
     const source = markedLeg ? null : pickSourceInterval(interval);
     const sourceInterval = source?.sourceInterval ?? interval;
     // Same cap as Finder: derived source intervals often forces a remote
@@ -220,7 +225,7 @@ function getSourceSeriesForBatch(
         return cached;
     }
 
-    const markedLeg = isStockMarketSymbol(sourceSymbol);
+    const markedLeg = isMarkedLocalStockSymbol(sourceSymbol);
     // 25% threshold: a healthy leg should be near the requested sourceBars;
     // anything dramatically smaller signals a partial cache or interrupted
     // prior persist, not a real short history.
@@ -264,6 +269,10 @@ function resolveStaleFragmentBarThreshold(interval: string): number {
 // Test-only accessors. Production code should not call these; the caches are
 // meant to persist for the page session, matching Finder's behavior.
 export function __clearBatchDatasetCachesForTests(): void {
+    clearBatchDatasetCaches();
+}
+
+export function clearBatchDatasetCaches(): void {
     legCache.clear();
     pairCache.clear();
 }

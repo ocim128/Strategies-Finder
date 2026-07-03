@@ -9,7 +9,7 @@ import { dataManager } from "./data-manager";
 import { settingsManager } from "./settings-manager";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
 import { MAJOR_SYMBOLS } from "./portfolioLab/portfolio-lab-types";
-import { getLocalDailyAssets, isStockMarketSymbol, type LocalDailyAsset } from "./local-daily-datasets";
+import { getLocalDailyAssets, isMarkedLocalStockSymbol, type LocalDailyAsset } from "./local-daily-datasets";
 import { cloneJsonCompatible } from "./json-utils";
 
 import { FINDER_SORT_OPTIONS, METRIC_FULL_LABELS, UNIVERSE_METRIC_FULL_LABELS } from "./finder/constants";
@@ -149,8 +149,8 @@ export function parseSyntheticPairToken(symbol: string): { baseSymbol: string; q
 	// bare tokens — that would strip the marker's self-resolving provider
 	// hint and route the fetch to Binance.
 	return {
-		baseSymbol: isStockMarketSymbol(baseRaw) ? baseRaw : resolveToBinanceSymbol(baseRaw),
-		quoteSymbol: isStockMarketSymbol(quoteRaw) ? quoteRaw : resolveToBinanceSymbol(quoteRaw),
+		baseSymbol: isMarkedLocalStockSymbol(baseRaw) ? baseRaw : resolveToBinanceSymbol(baseRaw),
+		quoteSymbol: isMarkedLocalStockSymbol(quoteRaw) ? quoteRaw : resolveToBinanceSymbol(quoteRaw),
 	};
 }
 
@@ -453,6 +453,12 @@ export class FinderManager {
 		return this.dom ??= createFinderManagerDom();
 	}
 
+	public invalidateLocalDataCaches(): void {
+		this.localDailyAssetMapPromise = null;
+		this.universeDatasetCache.clear();
+		this.syntheticSourceSeriesCache.clear();
+	}
+
 	private getScope(): FinderScope {
 		return this.uiState.scope;
 	}
@@ -638,7 +644,7 @@ export class FinderManager {
 			debugLogger.event("finder.synthetic_source_cache_hit", { sourceSymbol, sourceInterval, sourceBars });
 			return cached;
 		}
-		const markedLeg = isStockMarketSymbol(sourceSymbol);
+		const markedLeg = isMarkedLocalStockSymbol(sourceSymbol);
 		// 25% threshold: a healthy 1h leg for a 4h synthetic should be near the
 		// requested sourceBars; anything dramatically smaller signals a partial
 		// cache or interrupted prior persist, not a real short history.
@@ -686,7 +692,7 @@ export class FinderManager {
 		const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
 		// Stock-market legs have no finer granularity than the target interval,
 		// so skip the source subdivision for them (matches buildSyntheticPairFromLegs).
-		const markedLeg = isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol);
+		const markedLeg = isMarkedLocalStockSymbol(baseSymbol) || isMarkedLocalStockSymbol(quoteSymbol);
 		const source = markedLeg ? null : pickSourceInterval(interval);
 		const sourceInterval = source?.sourceInterval ?? interval;
 		// Cap source bars at DATA_CHART_TOTAL_LIMIT (100k). The synthetic source
@@ -792,7 +798,7 @@ export class FinderManager {
 		dom.finderUniverseUseLocalSp500.disabled = true;
 
 		try {
-			const assets = await getLocalDailyAssets();
+			const assets = (await getLocalDailyAssets()).filter((asset) => asset.provider !== "ibkr-local");
 			const symbols = assets
 				.map((asset) => asset.symbol.trim().toUpperCase())
 				.filter(Boolean);

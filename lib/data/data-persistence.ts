@@ -32,10 +32,18 @@ const NON_BINANCE_LOCAL_SOURCE_PRIORITY: Record<NonBinanceLocalSource, number> =
 };
 
 export function selectBestNonBinanceLocalCandidate(
-    candidates: NonBinanceLocalCandidate[]
+    candidates: NonBinanceLocalCandidate[],
+    provider?: DataProvider
 ): NonBinanceLocalCandidate | null {
     if (candidates.length === 0) return null;
     const sorted = [...candidates].sort((a, b) => {
+        if (provider === 'ibkr-local' && a.source !== b.source) {
+            if (a.source === 'imported') return -1;
+            if (b.source === 'imported') return 1;
+            if (a.source === 'seed') return -1;
+            if (b.source === 'seed') return 1;
+        }
+
         if (a.source !== 'imported' && b.source !== 'imported') {
             const lengthDelta = b.candles.length - a.candles.length;
             if (lengthDelta !== 0) return lengthDelta;
@@ -67,7 +75,7 @@ export class DataPersistence {
 
     private normalizeProviderCandles(candles: OHLCVData[], interval: string, provider: DataProvider): OHLCVData[] {
         const normalized = this.normalizeExternalCandles(candles);
-        return provider === 'bybit-tradfi' || provider === 'local-daily'
+        return provider === 'bybit-tradfi' || provider === 'local-daily' || provider === 'ibkr-local'
             ? normalizeTradFiDailyCandles(normalized, interval)
             : normalized;
     }
@@ -138,7 +146,7 @@ export class DataPersistence {
             return null;
         }
 
-        const best = selectBestNonBinanceLocalCandidate(candidates);
+        const best = selectBestNonBinanceLocalCandidate(candidates, provider);
         if (best) {
             ctx.setCachedCandles(cacheKey, best.candles, best.source);
         }
