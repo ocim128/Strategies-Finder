@@ -162,9 +162,6 @@ class IbkrDataService {
         dataManager.invalidateLocalSeries(symbols, normalizedInterval ? [normalizedInterval] : undefined);
         finderManager.invalidateLocalDataCaches();
         clearBatchDatasetCaches();
-        window.dispatchEvent(new CustomEvent("ibkr-data:catalog-updated", {
-            detail: { symbols, interval: normalizedInterval },
-        }));
     }
 
     private async copySymbols(): Promise<void> {

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFile
 import { dirname, resolve } from "node:path";
 import { Agent } from "undici";
 import type { Plugin } from "vite";
+import { debugLogger } from "../debug-logger";
 import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { OHLCVData } from "../types/strategies";
@@ -46,6 +47,10 @@ const IBKR_HISTORY_MAX_SYNC_CHUNKS = 80;
 const IBKR_HISTORY_CHUNK_DELAY_MS = 250;
 const IBKR_KEEPALIVE_INTERVAL_MS = 60_000;
 let stopRequested = false;
+// Guards `handleSyncRequest` against concurrent invocations (double-click /
+// retry). Without this, two interleaved syncs race on the module-level
+// `stopRequested` flag and one request's reset can cancel the other's stop.
+let syncInProgress = false;
 let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
 let lastKeepAliveAt: string | null = null;
 let lastKeepAliveError: string | null = null;
@@ -82,7 +87,7 @@ function normalizeInterval(value: unknown): string {
     return interval;
 }
 
-function normalizeSymbol(value: unknown): string {
+export function normalizeSymbol(value: unknown): string {
     const symbol = stripIbkrMarker(String(value ?? "").trim().toUpperCase());
     if (!symbol || !/^[A-Z0-9._-]+$/.test(symbol)) {
         throw new HttpStatusError(400, `Invalid IBKR symbol: ${String(value ?? "")}`);
@@ -116,11 +121,18 @@ function getGatewayUrl(): string {
 
 async function fetchGatewayJson(path: string, init?: RequestInit): Promise<unknown> {
     const url = `${getGatewayUrl()}${path}`;
+    const startedAt = Date.now();
     let response: { status: number; text: string };
     try {
         response = await requestGatewayText(url, init);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        debugLogger.warn("ibkr.gateway.failed", {
+            target: "ibkr",
+            url,
+            durationMs: Date.now() - startedAt,
+            error: message,
+        });
         throw new HttpStatusError(502, `Failed to reach IBKR Gateway at ${url}: ${message}`);
     }
 
@@ -134,6 +146,12 @@ async function fetchGatewayJson(path: string, init?: RequestInit): Promise<unkno
         }
     }
     if (response.status < 200 || response.status >= 300) {
+        debugLogger.warn("ibkr.gateway.failed", {
+            target: "ibkr",
+            url,
+            status: response.status,
+            durationMs: Date.now() - startedAt,
+        });
         throw new HttpStatusError(response.status, `IBKR Gateway request failed (${response.status}): ${text.slice(0, 300)}`);
     }
     return payload;
@@ -248,6 +266,7 @@ async function fetchGatewayJsonAuthenticated(path: string, init?: RequestInit): 
         if (!(error instanceof HttpStatusError) || (error.status !== 401 && error.status !== 403)) {
             throw error;
         }
+        debugLogger.info("ibkr.auth.reinit", { target: "ibkr", path, trigger: String(error.status) });
         await initializeBrokerageSession();
         await wait(750);
         return fetchGatewayJson(path, init);
@@ -270,8 +289,13 @@ function readCatalog(): IbkrCatalog {
 }
 
 function writeCatalog(catalog: IbkrCatalog): void {
+    // Atomic write via temp+rename, mirroring `writeCsv` below. A direct
+    // `writeFileSync` could leave a truncated JSON if the process is killed
+    // mid-batch, and `readCatalog` would silently swallow it as empty.
     mkdirSync(dirname(IBKR_CATALOG_PATH), { recursive: true });
-    writeFileSync(IBKR_CATALOG_PATH, JSON.stringify(catalog, null, 2));
+    const tempPath = `${IBKR_CATALOG_PATH}.tmp`;
+    writeFileSync(tempPath, JSON.stringify(catalog, null, 2));
+    renameSync(tempPath, IBKR_CATALOG_PATH);
 }
 
 function summarizeCandles(candles: OHLCVData[], lastSyncAt: string): IbkrCatalogEntry["intervals"][string] {
@@ -322,6 +346,10 @@ function readCsvCandles(symbol: string, interval: string): OHLCVData[] {
     const filePath = getCsvPath(symbol, interval);
     if (!existsSync(filePath)) return [];
     const lines = readFileSync(filePath, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return parseCsvCandleLines(lines);
+}
+
+export function parseCsvCandleLines(lines: readonly string[]): OHLCVData[] {
     if (lines.length <= 1) return [];
     const candles: OHLCVData[] = [];
     for (let i = 1; i < lines.length; i += 1) {
@@ -340,7 +368,7 @@ function readCsvCandles(symbol: string, interval: string): OHLCVData[] {
     return mergeCandlesByTime(candles);
 }
 
-function mergeCandlesByTime(candles: OHLCVData[]): OHLCVData[] {
+export function mergeCandlesByTime(candles: OHLCVData[]): OHLCVData[] {
     const byTime = new Map<number, OHLCVData>();
     for (const candle of candles) {
         const time = parseTimeToUnixSeconds(candle.time);
@@ -373,7 +401,7 @@ function writeCsv(symbol: string, interval: string, candles: OHLCVData[]): void 
     renameSync(tempPath, filePath);
 }
 
-function parseResolvedContracts(symbol: string, payload: unknown): IbkrResolvedContract[] {
+export function parseResolvedContracts(symbol: string, payload: unknown): IbkrResolvedContract[] {
     const rows = Array.isArray(payload) ? payload : [];
     return rows
         .map((row): IbkrResolvedContract | null => {
@@ -407,7 +435,7 @@ async function resolveSymbol(symbol: string): Promise<IbkrResolvedContract> {
     return resolved;
 }
 
-function parseHistoryCandles(payload: unknown): OHLCVData[] {
+export function parseHistoryCandles(payload: unknown): OHLCVData[] {
     const value = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
     const rows = Array.isArray(value.data) ? value.data : [];
     const candles: OHLCVData[] = [];
@@ -428,7 +456,7 @@ function parseHistoryCandles(payload: unknown): OHLCVData[] {
     return mergeCandlesByTime(candles);
 }
 
-function parsePeriodToMs(period: string): number | null {
+export function parsePeriodToMs(period: string): number | null {
     const match = /^(\d+)\s*([dwmy])$/i.exec(period.trim());
     if (!match) return null;
     const amount = Number(match[1]);
@@ -497,7 +525,15 @@ async function fetchHistorical(resolved: IbkrResolvedContract, interval: string,
         : period;
     const periodMs = maxSync ? null : parsePeriodToMs(requestPeriod);
     const maxChunks = maxSync ? IBKR_HISTORY_MAX_SYNC_CHUNKS : IBKR_HISTORY_MAX_CHUNKS;
-    const chunks: OHLCVData[][] = [];
+
+    // Incremental merge: previously this re-merged every prior chunk on each
+    // iteration via `mergeCandlesByTime(chunks.flat())`, making a max sync
+    // O(N²) in chunk count. We now fold each chunk into a single map and only
+    // sort once at the end. The break conditions and period-coverage early
+    // exit behave identically to the prior implementation.
+    const byTime = new Map<number, OHLCVData>();
+    let oldestTime = Infinity;
+    let newestTime = -Infinity;
     let nextStartTime: number | undefined;
     let previousFirstTime: number | null = null;
 
@@ -505,15 +541,20 @@ async function fetchHistorical(resolved: IbkrResolvedContract, interval: string,
         if (stopRequested) break;
         const chunk = await fetchHistoricalChunk(resolved, interval, requestPeriod, nextStartTime);
         if (chunk.length === 0) break;
-        chunks.push(chunk);
 
-        const merged = mergeCandlesByTime(chunks.flat());
-        if (periodMs !== null) {
-            const newest = Number(merged[merged.length - 1]?.time);
-            const oldest = Number(merged[0]?.time);
-            if (Number.isFinite(newest) && Number.isFinite(oldest) && oldest * 1000 <= newest * 1000 - periodMs) {
-                return trimCandlesToPeriod(merged, period);
-            }
+        for (const bar of chunk) {
+            const time = Number(bar.time);
+            if (!Number.isFinite(time)) continue;
+            byTime.set(time, bar);
+            if (time < oldestTime) oldestTime = time;
+            if (time > newestTime) newestTime = time;
+        }
+
+        if (periodMs !== null
+            && Number.isFinite(oldestTime)
+            && Number.isFinite(newestTime)
+            && oldestTime * 1000 <= newestTime * 1000 - periodMs) {
+            return trimCandlesToPeriod(mergeSortedFromMap(byTime), period);
         }
         if (!maxSync && chunk.length < IBKR_HISTORY_SOFT_LIMIT) break;
 
@@ -527,11 +568,16 @@ async function fetchHistorical(resolved: IbkrResolvedContract, interval: string,
         }
     }
 
-    const merged = mergeCandlesByTime(chunks.flat());
+    const merged = mergeSortedFromMap(byTime);
     return maxSync ? merged : trimCandlesToPeriod(merged, requestPeriod);
 }
 
+function mergeSortedFromMap(byTime: Map<number, OHLCVData>): OHLCVData[] {
+    return Array.from(byTime.values()).sort((a, b) => Number(a.time) - Number(b.time));
+}
+
 async function syncOneSymbol(symbol: string, interval: string, period: string, syncOnly: boolean): Promise<Record<string, unknown>> {
+    const startedAt = Date.now();
     const resolved = await resolveSymbol(symbol);
     const fetched = await fetchHistorical(resolved, interval, period);
     if (fetched.length === 0) {
@@ -542,6 +588,15 @@ async function syncOneSymbol(symbol: string, interval: string, period: string, s
     const merged = mergeCandlesByTime([...existing, ...fetched]);
     writeCsv(symbol, interval, merged);
     const catalogEntry = upsertCatalogEntry({ symbol, interval, candles: merged, resolved });
+    debugLogger.info("ibkr.sync.symbol", {
+        target: "ibkr",
+        symbol,
+        interval,
+        mode: syncOnly ? "sync" : "download",
+        bars: merged.length,
+        fetchedBars: fetched.length,
+        durationMs: Date.now() - startedAt,
+    });
     return {
         symbol,
         markedSymbol: markIbkrSymbol(symbol),
@@ -589,28 +644,41 @@ function readCatalogAssets(): Array<{ symbol: string; name: string; sector?: str
 }
 
 async function handleSyncRequest(body: Record<string, unknown>, syncOnly: boolean): Promise<Record<string, unknown>> {
-    stopRequested = false;
-    const symbols = normalizeSymbols(body.symbols ?? body.symbol);
-    const interval = normalizeInterval(body.interval);
-    const period = String(body.period ?? DEFAULT_PERIOD_BY_INTERVAL[interval] ?? "1y").trim();
-    const results: unknown[] = [];
-    const failed: unknown[] = [];
-    let cancelled = false;
-    for (const symbol of symbols) {
-        if (stopRequested) {
-            cancelled = true;
-            break;
-        }
-        try {
-            results.push(await syncOneSymbol(symbol, interval, period, syncOnly));
-        } catch (error) {
-            failed.push({
-                symbol,
-                error: error instanceof Error ? error.message : String(error),
-            });
-        }
+    if (syncInProgress) {
+        throw new HttpStatusError(409, "An IBKR sync is already running. Use Stop first.");
     }
-    return { ok: failed.length === 0 && !cancelled, cancelled, interval, results, failed };
+    syncInProgress = true;
+    stopRequested = false;
+    try {
+        const symbols = normalizeSymbols(body.symbols ?? body.symbol);
+        const interval = normalizeInterval(body.interval);
+        const period = String(body.period ?? DEFAULT_PERIOD_BY_INTERVAL[interval] ?? "1y").trim();
+        const results: unknown[] = [];
+        const failed: unknown[] = [];
+        let cancelled = false;
+        for (const symbol of symbols) {
+            if (stopRequested) {
+                cancelled = true;
+                break;
+            }
+            try {
+                results.push(await syncOneSymbol(symbol, interval, period, syncOnly));
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                debugLogger.warn("ibkr.sync.symbol.failed", {
+                    target: "ibkr",
+                    symbol,
+                    interval,
+                    mode: syncOnly ? "sync" : "download",
+                    error: message,
+                });
+                failed.push({ symbol, error: message });
+            }
+        }
+        return { ok: failed.length === 0 && !cancelled, cancelled, interval, results, failed };
+    } finally {
+        syncInProgress = false;
+    }
 }
 
 export function ibkrDataVitePlugin(): Plugin {
