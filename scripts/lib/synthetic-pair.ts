@@ -13,7 +13,7 @@ import type { OHLCVData } from '../../lib/types/strategies';
 import { parseOhlcvBars } from './ohlcv-file';
 import { parseIntervalSeconds } from '../../lib/interval-utils';
 import { SYNTHETIC_SOURCE_BARS_LIMIT } from '../../lib/data/constants';
-import { isMarkedLocalStockSymbol, isStockMarketSymbol } from '../../lib/local-daily-datasets';
+import { getLocalDailyDatasetConfig, isIbkrSymbol, isMarkedLocalStockSymbol, isStockMarketSymbol } from '../../lib/local-daily-datasets';
 
 // ============================================================================
 // Public types
@@ -244,8 +244,16 @@ const sourceIntervalCache = new Map<string, { sourceInterval: string; ratio: num
 export function pickSourceInterval(
     targetInterval: string,
     maxRatio = 12,
+    /**
+     * Optional allowlist of intervals that actually exist on disk for both
+     * legs (e.g. IBKR's `supportedIntervals`). When supplied, candidates
+     * outside this set are skipped. Default (undefined) keeps the original
+     * crypto-path behavior where every divisible interval is fair game.
+     */
+    availableIntervals?: readonly string[],
 ): { sourceInterval: string; ratio: number } | null {
-    const cacheKey = `${targetInterval}|${maxRatio}`;
+    const allowSet = availableIntervals ? new Set(availableIntervals) : null;
+    const cacheKey = `${targetInterval}|${maxRatio}|${allowSet ? Array.from(allowSet).sort().join(",") : "*"}`;
     const cached = sourceIntervalCache.get(cacheKey);
     if (cached !== undefined) {
         return cached ? { ...cached } : null;
@@ -258,6 +266,7 @@ export function pickSourceInterval(
     }
 
     for (const candidate of SOURCE_INTERVAL_CANDIDATES) {
+        if (allowSet && !allowSet.has(candidate)) continue;
         const candidateSecs = parseIntervalSeconds(candidate);
         if (!candidateSecs || candidateSecs <= 0) continue;
         if (candidateSecs >= targetSecs) continue;
@@ -284,6 +293,25 @@ export function resolveSyntheticSourceBars(targetBars: number, sourceRatio = 1):
 // ============================================================================
 // Pipeline helper
 // ============================================================================
+
+/**
+ * Returns IBKR's on-disk `supportedIntervals` allowlist when either leg is
+ * IBKR-marked, so {@link pickSourceInterval} only considers seed intervals
+ * that IBKR actually stores. Returns `undefined` for crypto/diamond legs so
+ * the original behavior (any divisible interval) is preserved.
+ *
+ * Centralized here so all three gate sites (buildSyntheticPairFromLegs,
+ * loadSyntheticPairForBatch, Finder loadSyntheticPairForUniverse) apply the
+ * same disk-aware filter without re-deriving it.
+ */
+export function resolveSyntheticAvailableIntervals(
+    baseSymbol: string,
+    quoteSymbol: string,
+): readonly string[] | undefined {
+    if (!isIbkrSymbol(baseSymbol) && !isIbkrSymbol(quoteSymbol)) return undefined;
+    const config = getLocalDailyDatasetConfig("ibkr-stock");
+    return config?.supportedIntervals;
+}
 
 /**
  * Result of {@link buildSyntheticPairFromLegs}. Mirrors {@link SyntheticPairDataset}
@@ -333,37 +361,71 @@ export async function buildSyntheticPairFromLegs(args: {
 }): Promise<SyntheticPairFromLegsResult> {
     const { interval, targetBars, fetchLeg, baseSymbol, quoteSymbol } = args;
     const minBars = args.minBars ?? 1;
-    // Stock-market legs (offline stock_market_data) only have `1d` bars, so the
-    // source-interval subdivision (e.g. 1d -> 2h) would fetch legs at an
-    // interval that has no data and every pair would fail with "Quote bars
-    // must contain at least one aligned candle." When either leg is marked,
-    // skip subdivision and fetch both legs at the target interval directly.
-    const markedLeg = isMarkedLocalStockSymbol(baseSymbol) || isMarkedLocalStockSymbol(quoteSymbol);
-    const source = markedLeg ? null : pickSourceInterval(interval);
+    // Diamond-marked legs (offline stock_market_data) only have `1d` bars, so
+    // source-interval subdivision would fetch legs at an interval that has no
+    // data and every pair would fail. Bullet-marked IBKR legs CAN have
+    // intraday bars (30m, 1h, 4h...), so they take the normal subdivision
+    // path. The discriminator is the diamond marker specifically, not the
+    // combined `isMarkedLocalStockSymbol`.
+    const diamondLeg = isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol);
+    // Disk-aware seed: when one or both legs are IBKR, restrict candidates to
+    // intervals IBKR actually stores. pickSourceInterval('1d') would otherwise
+    // pick '2h' (ratio 12) which no IBKR symbol has on disk — this filter
+    // makes it skip 2h and fall back to the target interval itself when no
+    // finer interval in `supportedIntervals` divides evenly within the cap.
+    const available = resolveSyntheticAvailableIntervals(baseSymbol, quoteSymbol);
+    const source = diamondLeg ? null : pickSourceInterval(interval, 12, available);
     const sourceInterval = source?.sourceInterval ?? interval;
     const rawSourceBars = resolveSyntheticSourceBars(targetBars, source?.ratio ?? 1);
     const sourceBars = args.sourceBarsCap
         ? Math.min(rawSourceBars, args.sourceBarsCap)
         : rawSourceBars;
 
-    const [base, quote] = await Promise.all([
+    let [base, quote] = await Promise.all([
         fetchLeg(baseSymbol, sourceInterval, sourceBars),
         fetchLeg(quoteSymbol, sourceInterval, sourceBars),
     ]);
+    // Track whether we actually subdivided. The fallback below may collapse
+    // back to target-interval fetching, in which case no aggregation runs.
+    let subdivided = source !== null;
+
+    // Disk-aware fallback: when subdivision picked a finer seed interval
+    // (e.g. 1d -> 4h seed) and either leg came back empty, the symbol likely
+    // only has data at the target interval (e.g. AAPL has 1d but not 4h on
+    // disk). Retry BOTH legs at the target interval so they end up at the
+    // same resolution and the alignment step doesn't mix seed-interval bars
+    // with target-interval bars. Asymmetric fallback (one leg at seed, one
+    // at target) would produce silent data corruption because the alignment
+    // step matches by exact timestamp and a 1h bar coincides with a 4h
+    // boundary only one in four times.
+    if (subdivided && (base.length === 0 || quote.length === 0)) {
+        const [baseFallback, quoteFallback] = await Promise.all([
+            fetchLeg(baseSymbol, interval, targetBars),
+            fetchLeg(quoteSymbol, interval, targetBars),
+        ]);
+        // Only swap if BOTH legs returned data at the target interval;
+        // otherwise we'd reintroduce the asymmetric-resolution hazard.
+        if (baseFallback.length > 0 && quoteFallback.length > 0) {
+            base = baseFallback;
+            quote = quoteFallback;
+            subdivided = false;
+        }
+    }
 
     if (args.allowEmptyLegs && (base.length === 0 || quote.length === 0)) {
         return { bars: [], meta: { baseBars: base.length, quoteBars: quote.length, alignedBars: 0, droppedBars: 0 }, sourceInterval, base, quote };
     }
 
-    const dataset = buildSyntheticPairDataset({ base, quote, interval: sourceInterval, minBars });
-    const bars = source
+    const effectiveInterval = subdivided ? sourceInterval : interval;
+    const dataset = buildSyntheticPairDataset({ base, quote, interval: effectiveInterval, minBars });
+    const bars = subdivided
         ? aggregateSyntheticBars(dataset.bars, interval)
         : dataset.bars;
 
     return {
         bars: args.tailSliceBars ? bars.slice(-Math.max(1, args.tailSliceBars)) : bars,
         meta: dataset.meta,
-        sourceInterval,
+        sourceInterval: effectiveInterval,
         base,
         quote,
     };

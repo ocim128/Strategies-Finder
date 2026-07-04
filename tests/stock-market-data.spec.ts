@@ -343,7 +343,9 @@ describe('buildSyntheticPairFromLegs skips source subdivision for marked legs', 
 
     it('still uses source subdivision for unmarked Binance legs', async () => {
         // Sanity guard: the source-subdivision path must still fire for crypto.
-        // pickSourceInterval('1d') => 2h with ratio 12.
+        // pickSourceInterval('1d') => 2h with ratio 12. When both legs come
+        // back empty, the disk-aware fallback also retries at the target
+        // interval (1d) so callers with target-interval data still succeed.
         const requestedIntervals: string[] = [];
         const fetchLeg = async (_symbol: string, interval: string, _bars: number): Promise<OHLCVData[]> => {
             requestedIntervals.push(interval);
@@ -359,6 +361,8 @@ describe('buildSyntheticPairFromLegs skips source subdivision for marked legs', 
             allowEmptyLegs: true,
         });
 
-        assert.deepEqual(requestedIntervals, ['2h', '2h']);
+        // First two calls attempt the 2h seed (subdivision fired); the
+        // disk-aware fallback then retries both legs at the 1d target.
+        assert.deepEqual(requestedIntervals, ['2h', '2h', '1d', '1d']);
     });
 });

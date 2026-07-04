@@ -24,12 +24,13 @@
 import { dataManager } from "../data-manager";
 import { debugLogger } from "../debug-logger";
 import { parseSyntheticPairToken } from "../finder-manager";
-import { isIbkrSymbol, isMarkedLocalStockSymbol } from "../local-daily-datasets";
+import { isIbkrSymbol, isMarkedLocalStockSymbol, isStockMarketSymbol } from "../local-daily-datasets";
 import {
     buildSyntheticPairFromLegs,
     deriveSyntheticSymbol,
     pickSourceInterval,
     resolveEffectiveIntervalForSynthetic,
+    resolveSyntheticAvailableIntervals,
 } from "../../scripts/lib/synthetic-pair";
 import { SYNTHETIC_TARGET_BARS, DATA_CHART_TOTAL_LIMIT } from "../data/constants";
 import { parseIntervalSeconds } from "../interval-utils";
@@ -153,10 +154,12 @@ async function loadSyntheticPairForBatch(
     if (signal?.aborted) return [];
 
     const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
-    // Stock-market legs have no finer granularity than the target interval,
-    // so skip the source subdivision for them (matches buildSyntheticPairFromLegs).
-    const markedLeg = isMarkedLocalStockSymbol(baseSymbol) || isMarkedLocalStockSymbol(quoteSymbol);
-    const source = markedLeg ? null : pickSourceInterval(interval);
+    // Diamond-marked legs have no finer granularity than 1d, so skip source
+    // subdivision for them (matches buildSyntheticPairFromLegs). IBKR legs
+    // (bullet) take the normal path, filtered by IBKR's supportedIntervals.
+    const diamondLeg = isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol);
+    const available = resolveSyntheticAvailableIntervals(baseSymbol, quoteSymbol);
+    const source = diamondLeg ? null : pickSourceInterval(interval, 12, available);
     const sourceInterval = source?.sourceInterval ?? interval;
     // Same cap as Finder: derived source intervals often forces a remote
     // gap-fill, so capping at DATA_CHART_TOTAL_LIMIT keeps the paginated

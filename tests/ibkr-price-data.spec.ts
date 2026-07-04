@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+    computeIncrementalStartTime,
     mergeCandlesByTime,
     normalizeSymbol,
     parseCsvCandleLines,
     parseHistoryCandles,
     parsePeriodToMs,
     parseResolvedContracts,
+    resolveFromCatalog,
+    type SyncRunState,
 } from "../lib/ibkr-data/ibkr-data-vite-plugin";
+import { beginNdjsonStream } from "../lib/vite-http-utils";
 import type { OHLCVData } from "../lib/types/strategies";
 
 describe("ibkr parseHistoryCandles", () => {
@@ -217,4 +221,222 @@ describe("ibkr parseCsvCandleLines", () => {
             [1_700_000_000, 1_700_000_001, 1_700_000_002]
         );
     });
+});
+
+describe("ibkr computeIncrementalStartTime", () => {
+    it("backs up by 2 bars of overlap from the last known bar", () => {
+        // 1d bars: 2-bar overlap = 2 * 86400s. Last bar at 2024-01-10 UTC.
+        const lastTime = "2024-01-10T00:00:00.000Z";
+        const start = computeIncrementalStartTime("1d", lastTime, Date.UTC(2024, 0, 20) / 1000);
+        assert.equal(start, Math.floor(Date.UTC(2024, 0, 8) / 1000));
+    });
+
+    it("accepts a numeric unix-seconds lastTime", () => {
+        const lastSeconds = Math.floor(Date.UTC(2024, 0, 10) / 1000);
+        const start = computeIncrementalStartTime("1h", lastSeconds, Math.floor(Date.UTC(2024, 0, 20) / 1000));
+        // 1h bars: 2-bar overlap = 7200s.
+        assert.equal(start, lastSeconds - 7200);
+    });
+
+    it("returns null when there is no prior lastTime (first sync)", () => {
+        assert.equal(computeIncrementalStartTime("1d", null, 1_700_000_000), null);
+    });
+
+    it("returns null for unsupported intervals", () => {
+        assert.equal(computeIncrementalStartTime("2h", "2024-01-10T00:00:00.000Z", 1_700_000_000), null);
+    });
+
+    it("falls back to full sync when lastTime is in the future (clock skew)", () => {
+        const futureIso = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+        assert.equal(computeIncrementalStartTime("1d", futureIso), null);
+    });
+
+    it("falls back when lastTime cannot be parsed", () => {
+        assert.equal(computeIncrementalStartTime("1d", "not-a-date", 1_700_000_000), null);
+    });
+});
+
+describe("ibkr resolveFromCatalog", () => {
+    const baseEntry = {
+        symbol: "AAPL",
+        markedSymbol: "AAPL\u2022",
+        conid: "265598",
+        exchange: "NASDAQ",
+        primaryExchange: "NASDAQ",
+        currency: "USD",
+        intervals: {
+            "1d": { firstTime: "2020-01-01T00:00:00.000Z", lastTime: "2024-01-10T00:00:00.000Z", bars: 1000, lastSyncAt: "2024-01-11T00:00:00.000Z" },
+        },
+    };
+
+    it("builds a resolved contract from a fresh catalog entry", () => {
+        const resolved = resolveFromCatalog(baseEntry, Date.parse("2024-01-12"));
+        assert.equal(resolved?.conid, "265598");
+        assert.equal(resolved?.symbol, "AAPL");
+        assert.equal(resolved?.exchange, "NASDAQ");
+    });
+
+    it("returns null when the entry has no conid", () => {
+        const resolved = resolveFromCatalog({ ...baseEntry, conid: undefined }, Date.parse("2024-01-12"));
+        assert.equal(resolved, null);
+    });
+
+    it("returns null when the catalog entry is older than the conid TTL (7 days)", () => {
+        // lastSyncAt 2024-01-11, "now" 2024-01-30 → 19 days stale.
+        const resolved = resolveFromCatalog(baseEntry, Date.parse("2024-01-30"));
+        assert.equal(resolved, null);
+    });
+
+    it("uses the most recent lastSyncAt across intervals", () => {
+        const entry = {
+            ...baseEntry,
+            intervals: {
+                "1d": { firstTime: null, lastTime: null, bars: 0, lastSyncAt: "2024-01-01T00:00:00.000Z" },
+                "1h": { firstTime: null, lastTime: null, bars: 0, lastSyncAt: "2024-01-11T00:00:00.000Z" },
+            },
+        };
+        const resolved = resolveFromCatalog(entry, Date.parse("2024-01-12"));
+        assert.equal(resolved?.conid, "265598");
+    });
+
+    it("returns null when no interval has a parseable lastSyncAt", () => {
+        const resolved = resolveFromCatalog({ ...baseEntry, intervals: {} }, Date.parse("2024-01-12"));
+        assert.equal(resolved, null);
+    });
+});
+
+describe("beginNdjsonStream", () => {
+    // `captured` is the single source of truth. The fake `res` exposes array
+    // and object fields by reference (so they stay in sync), and primitive
+    // counters stay on `captured` — read those from `captured` directly,
+    // because object spread would copy primitives by value and lose updates.
+    type Captured = {
+        writes: string[];
+        endCalls: number;
+        statusCode: number;
+        headers: Record<string, string>;
+        write: (body: string) => boolean;
+        end: (body: string) => void;
+        setHeader: (name: string, value: string) => void;
+    };
+
+    function makeFakeRes(): Captured {
+        const captured: Captured = {
+            writes: [],
+            endCalls: 0,
+            statusCode: 0,
+            headers: {},
+            write: (body: string) => { captured.writes.push(body); return true; },
+            end: () => { captured.endCalls += 1; },
+            setHeader: (name: string, value: string) => { captured.headers[name] = value; },
+        };
+        return captured;
+    }
+
+    it("sets NDJSON content-type and no-store cache headers", () => {
+        const res = makeFakeRes();
+        const stream = beginNdjsonStream(res);
+        stream.write({ type: "x" });
+        stream.end();
+        assert.equal(res.headers["Content-Type"], "application/x-ndjson; charset=utf-8");
+        assert.equal(res.headers["Cache-Control"], "no-store");
+        assert.equal(res.statusCode, 200);
+    });
+
+    it("writes each event as a JSON line terminated by newline", () => {
+        const res = makeFakeRes();
+        const stream = beginNdjsonStream(res);
+        stream.write({ type: "start", total: 3 });
+        stream.write({ type: "symbol", index: 0, total: 3, symbol: "AAPL" });
+        const allWrites = res.writes.join("");
+        assert.match(allWrites, /^\{"type":"start","total":3\}\n/);
+        assert.match(allWrites, /\n\{"type":"symbol","index":0,"total":3,"symbol":"AAPL"\}\n$/);
+    });
+
+    it("end() writes a final event when supplied, then closes the stream", () => {
+        const res = makeFakeRes();
+        const stream = beginNdjsonStream(res);
+        stream.end({ type: "done", ok: true });
+        assert.equal(res.writes.length, 1);
+        assert.match(res.writes[0]!, /^\{"type":"done","ok":true\}\n$/);
+        assert.equal(res.endCalls, 1);
+    });
+
+    it("end() without a final event just closes the stream", () => {
+        const res = makeFakeRes();
+        const stream = beginNdjsonStream(res);
+        stream.write({ type: "x" });
+        stream.end();
+        assert.equal(res.writes.length, 1);
+        assert.equal(res.endCalls, 1);
+    });
+
+    it("throws when the response has no write method (non-streaming res)", () => {
+        // Simulate a one-shot-only response object.
+        const res = { statusCode: 0, setHeader() { /* noop */ }, end() { /* noop */ } };
+        assert.throws(() => beginNdjsonStream(res as any), /NDJSON streaming requires/);
+    });
+});
+
+describe("ibkr SyncRunState (sync/status contract)", () => {
+    // Pins the field names and shape that GET /api/ibkr/sync/status returns.
+    // The browser-side IbkrSyncRunSnapshot mirrors this shape, so any field
+    // rename here must be reflected in ibkr-data-service.ts — this test makes
+    // such drift fail loudly instead of silently breaking reattach polling.
+    it("exposes the documented fields with the documented types", () => {
+        const snapshot: SyncRunState = {
+            startedAt: "2026-07-04T00:00:00.000Z",
+            mode: "sync",
+            interval: "1d",
+            period: "max",
+            total: 20,
+            index: 5,
+            completed: 5,
+            failed: 0,
+            currentSymbol: "NVDA",
+            failedSymbols: [],
+            cancelled: false,
+        };
+        // No assertions on values needed; if the literal above fails to type-
+        // check or any field is removed/renamed in SyncRunState, this test
+        // fails to compile. The shape IS the contract.
+        assert.equal(snapshot.mode, "sync");
+        assert.equal(snapshot.completed, 5);
+        assert.equal(snapshot.currentSymbol, "NVDA");
+        assert.equal(snapshot.cancelled, false);
+        assert.deepEqual(snapshot.failedSymbols, []);
+    });
+
+    it("accepts both 'sync' and 'download' modes", () => {
+        const sync: SyncRunState = { ...minimalSnapshot(), mode: "sync" };
+        const download: SyncRunState = { ...minimalSnapshot(), mode: "download" };
+        assert.equal(sync.mode, "sync");
+        assert.equal(download.mode, "download");
+    });
+
+    it("supports the cancelled state for stop-mid-batch", () => {
+        const cancelled: SyncRunState = {
+            ...minimalSnapshot(),
+            cancelled: true,
+            failedSymbols: [{ symbol: "BAD", error: "stopped" }],
+        };
+        assert.equal(cancelled.cancelled, true);
+        assert.equal(cancelled.failedSymbols.length, 1);
+    });
+
+    function minimalSnapshot(): SyncRunState {
+        return {
+            startedAt: "2026-07-04T00:00:00.000Z",
+            mode: "sync",
+            interval: "1d",
+            period: null,
+            total: 0,
+            index: 0,
+            completed: 0,
+            failed: 0,
+            currentSymbol: null,
+            failedSymbols: [],
+            cancelled: false,
+        };
+    }
 });

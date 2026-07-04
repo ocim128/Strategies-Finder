@@ -15,7 +15,7 @@ import { parseTimeToUnixSeconds } from "./time-normalization";
 import { parseIntervalSeconds } from "./interval-utils";
 import { formatPolymarketDisplayName, parsePolymarketEventInput } from "./dataProviders/polymarket";
 import { queryDataMiningDom, type DataMiningDom } from "./data-mining-dom";
-import { buildSyntheticPairFromLegs, deriveSyntheticSymbol, isSyntheticSymbol, pickSourceInterval, resolveSyntheticSourceBars } from "../scripts/lib/synthetic-pair";
+import { buildSyntheticPairFromLegs, deriveSyntheticSymbol, isSyntheticSymbol, pickSourceInterval, resolveSyntheticAvailableIntervals, resolveSyntheticSourceBars } from "../scripts/lib/synthetic-pair";
 
 interface NormalizedCandle {
     time: number;
@@ -724,7 +724,8 @@ export class DataMiningManager {
         if (this.isGeneratingSynthetic) return;
 
         const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
-        const source = pickSourceInterval(interval);
+        const available = resolveSyntheticAvailableIntervals(baseSymbol, quoteSymbol);
+        const source = pickSourceInterval(interval, 12, available);
         const sourceInterval = source?.sourceInterval ?? interval;
         this.isGeneratingSynthetic = true;
         if (this.dom?.synthGenerateButton) this.dom.synthGenerateButton.disabled = true;

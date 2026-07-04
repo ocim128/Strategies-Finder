@@ -9,7 +9,7 @@ import { dataManager } from "./data-manager";
 import { settingsManager } from "./settings-manager";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
 import { MAJOR_SYMBOLS } from "./portfolioLab/portfolio-lab-types";
-import { getLocalDailyAssets, isMarkedLocalStockSymbol, type LocalDailyAsset } from "./local-daily-datasets";
+import { getLocalDailyAssets, isMarkedLocalStockSymbol, isStockMarketSymbol, type LocalDailyAsset } from "./local-daily-datasets";
 import { cloneJsonCompatible } from "./json-utils";
 
 import { FINDER_SORT_OPTIONS, METRIC_FULL_LABELS, UNIVERSE_METRIC_FULL_LABELS } from "./finder/constants";
@@ -90,6 +90,7 @@ import {
     deriveSyntheticSymbol,
     pickSourceInterval,
     resolveEffectiveIntervalForSynthetic,
+    resolveSyntheticAvailableIntervals,
 } from "../scripts/lib/synthetic-pair";
 import { SYNTHETIC_TARGET_BARS, DATA_CHART_TOTAL_LIMIT } from "./data/constants";
 
@@ -690,10 +691,13 @@ export class FinderManager {
 		signal?: AbortSignal,
 	): Promise<OHLCVData[]> {
 		const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
-		// Stock-market legs have no finer granularity than the target interval,
-		// so skip the source subdivision for them (matches buildSyntheticPairFromLegs).
-		const markedLeg = isMarkedLocalStockSymbol(baseSymbol) || isMarkedLocalStockSymbol(quoteSymbol);
-		const source = markedLeg ? null : pickSourceInterval(interval);
+		// Diamond-marked legs have no finer granularity than 1d, so skip
+		// source subdivision for them (matches buildSyntheticPairFromLegs).
+		// IBKR (bullet) legs take the normal path, filtered by IBKR's
+		// supportedIntervals so e.g. 1d won't pick a 2h seed that doesn't exist.
+		const diamondLeg = isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol);
+		const available = resolveSyntheticAvailableIntervals(baseSymbol, quoteSymbol);
+		const source = diamondLeg ? null : pickSourceInterval(interval, 12, available);
 		const sourceInterval = source?.sourceInterval ?? interval;
 		// Cap source bars at DATA_CHART_TOTAL_LIMIT (100k). The synthetic source
 		// interval is a derived interval the user may not have pre-warmed, so the

@@ -6,7 +6,7 @@ import { debugLogger } from "../debug-logger";
 import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { OHLCVData } from "../types/strategies";
-import { HttpStatusError, readJsonBody, sendCaughtErrorJson, sendJson } from "../vite-http-utils";
+import { beginNdjsonStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, sendJson, type ViteHttpResponse } from "../vite-http-utils";
 
 const APP_ROOT = process.cwd();
 const IBKR_DATA_DIR = resolve(APP_ROOT, "price-data", "ibkr");
@@ -46,14 +46,52 @@ const IBKR_HISTORY_MAX_CHUNKS = 20;
 const IBKR_HISTORY_MAX_SYNC_CHUNKS = 80;
 const IBKR_HISTORY_CHUNK_DELAY_MS = 250;
 const IBKR_KEEPALIVE_INTERVAL_MS = 60_000;
+// Auth-cache TTL: `fetchGatewayJsonAuthenticated` previously called
+// `ensureBrokerageSession()` before every gateway request, and that helper
+// makes an HTTP round-trip to /iserver/auth/status. For a 20-symbol sync
+// (~60-100 gateway calls) that was 10-20s of pure auth overhead. The TTL is
+// comfortably shorter than `IBKR_KEEPALIVE_INTERVAL_MS` and is invalidated
+// immediately on a 401 in the retry path below.
+const IBKR_AUTH_CACHE_TTL_MS = 30_000;
+// Cached-conid TTL: bounds how long `syncOneSymbol` will trust a catalog
+// entry's conid before re-resolving. Conids can change on corporate actions
+// / ticker remaps; the 0-bars fallback below covers the rare stale case.
+const IBKR_CONID_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 let stopRequested = false;
-// Guards `handleSyncRequest` against concurrent invocations (double-click /
-// retry). Without this, two interleaved syncs race on the module-level
-// `stopRequested` flag and one request's reset can cancel the other's stop.
-let syncInProgress = false;
+// Sync lock: instead of a bare boolean, an owner-generation counter. Stop
+// force-resets the lock by bumping `syncOwnerGen` to a new sentinel value
+// (SYNC_OWNER_NONE) so a stuck/hung sync can always be recovered without a
+// server restart. A stuck sync's late `finally` only writes its own (stale)
+// owner value back to SYNC_OWNER_NONE, so it cannot clobber a newer sync
+// that has since acquired the lock with a newer generation. Bare booleans
+// cannot distinguish "my lock" from "their lock" — that's how force-reset
+// would race.
+const SYNC_OWNER_NONE = 0;
+let syncOwner = SYNC_OWNER_NONE;
+let syncOwnerGen = 0;
+
+// In-progress sync snapshot. Populated when a sync starts, cleared when it
+// ends. Used by GET /api/ibkr/sync/status so a browser reload can show the
+// running batch instead of "Ready" — the server keeps syncing after the
+// NDJSON response stream is gone, this is how the UI reattaches.
+export type SyncRunState = {
+    startedAt: string;
+    mode: "sync" | "download";
+    interval: string;
+    period: string | null;
+    total: number;
+    index: number;          // index of the next symbol to process
+    completed: number;      // successful symbols so far
+    failed: number;
+    currentSymbol: string | null;
+    failedSymbols: Array<{ symbol: string; error: string }>;
+    cancelled: boolean;
+};
+let syncRunState: SyncRunState | null = null;
 let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
 let lastKeepAliveAt: string | null = null;
 let lastKeepAliveError: string | null = null;
+let cachedAuthExpiry = 0;
 
 type IbkrCatalogEntry = {
     symbol: string;
@@ -259,7 +297,10 @@ async function ensureBrokerageSession(): Promise<unknown> {
 }
 
 async function fetchGatewayJsonAuthenticated(path: string, init?: RequestInit): Promise<unknown> {
-    await ensureBrokerageSession();
+    if (Date.now() >= cachedAuthExpiry) {
+        await ensureBrokerageSession();
+        cachedAuthExpiry = Date.now() + IBKR_AUTH_CACHE_TTL_MS;
+    }
     try {
         return await fetchGatewayJson(path, init);
     } catch (error) {
@@ -267,9 +308,17 @@ async function fetchGatewayJsonAuthenticated(path: string, init?: RequestInit): 
             throw error;
         }
         debugLogger.info("ibkr.auth.reinit", { target: "ibkr", path, trigger: String(error.status) });
+        // Invalidate the auth cache: the cached "authenticated" state was
+        // wrong. Forces the retry path to re-validate before the next call.
+        cachedAuthExpiry = 0;
         await initializeBrokerageSession();
         await wait(750);
-        return fetchGatewayJson(path, init);
+        // Re-cache only after the retry actually succeeds. Previously this
+        // was set before the retry, so a second 401 left the cache claiming
+        // authenticated for 30s while every call paid a 401+reinit round-trip.
+        const result = await fetchGatewayJson(path, init);
+        cachedAuthExpiry = Date.now() + IBKR_AUTH_CACHE_TTL_MS;
+        return result;
     }
 }
 
@@ -279,9 +328,26 @@ function readCatalog(): IbkrCatalog {
     }
     try {
         const parsed = JSON.parse(readFileSync(IBKR_CATALOG_PATH, "utf8")) as Partial<IbkrCatalog>;
+        // Normalize entries defensively: `intervals` is required by the type
+        // but on-disk JSON may have been hand-edited or produced by an older
+        // version. Callers dereference `entry.intervals[interval]` without
+        // guarding, so a missing field would TypeError.
+        const rawEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
+        const entries: IbkrCatalogEntry[] = rawEntries.map((entry) => {
+            const e = entry as Partial<IbkrCatalogEntry>;
+            return {
+                symbol: typeof e.symbol === "string" ? e.symbol : "",
+                markedSymbol: typeof e.markedSymbol === "string" ? e.markedSymbol : "",
+                conid: e.conid,
+                exchange: e.exchange,
+                primaryExchange: e.primaryExchange,
+                currency: e.currency,
+                intervals: (e.intervals && typeof e.intervals === "object") ? e.intervals : {},
+            };
+        });
         return {
             updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date(0).toISOString(),
-            entries: Array.isArray(parsed.entries) ? parsed.entries as IbkrCatalogEntry[] : [],
+            entries,
         };
     } catch {
         return { updatedAt: new Date(0).toISOString(), entries: [] };
@@ -309,13 +375,50 @@ function summarizeCandles(candles: OHLCVData[], lastSyncAt: string): IbkrCatalog
     };
 }
 
-function upsertCatalogEntry(args: {
+function findCatalogEntry(catalog: IbkrCatalog, symbol: string): IbkrCatalogEntry | undefined {
+    return catalog.entries.find((item) => item.symbol === symbol);
+}
+
+/**
+ * Builds a `resolved` contract from a catalog entry, used to skip
+ * `resolveSymbol` on repeat syncs. Returns null when the entry is missing
+ * required fields or is older than `IBKR_CONID_CACHE_TTL_MS`.
+ *
+ * Exported for unit testing.
+ */
+export function resolveFromCatalog(
+    entry: IbkrCatalogEntry | undefined,
+    nowMs: number = Date.now()
+): IbkrResolvedContract | null {
+    if (!entry || !entry.conid) return null;
+    const intervals = entry.intervals ?? {};
+    const lastSyncAt = Object.values(intervals)
+        .map((info) => info?.lastSyncAt ? Date.parse(info.lastSyncAt) : NaN)
+        .filter((ms) => Number.isFinite(ms))
+        .sort((a, b) => b - a)[0];
+    if (!Number.isFinite(lastSyncAt)) return null;
+    if (nowMs - lastSyncAt > IBKR_CONID_CACHE_TTL_MS) return null;
+    return {
+        symbol: entry.symbol,
+        conid: entry.conid,
+        name: entry.symbol,
+        exchange: entry.exchange,
+        primaryExchange: entry.primaryExchange,
+        currency: entry.currency,
+    };
+}
+
+/**
+ * Mutates `catalog` in place to upsert one symbol/interval entry. Does not
+ * perform any I/O — the caller (processSyncBatch) is responsible for writing
+ * `catalog` to disk after each successful symbol via `writeCatalog(catalog)`.
+ */
+function upsertCatalogEntry(catalog: IbkrCatalog, args: {
     symbol: string;
     interval: string;
     candles: OHLCVData[];
     resolved?: IbkrResolvedContract;
 }): IbkrCatalogEntry {
-    const catalog = readCatalog();
     const nowIso = new Date().toISOString();
     const markedSymbol = markIbkrSymbol(args.symbol);
     let entry = catalog.entries.find((item) => item.symbol === args.symbol);
@@ -338,7 +441,6 @@ function upsertCatalogEntry(args: {
     entry.intervals[args.interval] = summarizeCandles(args.candles, nowIso);
     catalog.entries.sort((a, b) => a.symbol.localeCompare(b.symbol));
     catalog.updatedAt = nowIso;
-    writeCatalog(catalog);
     return entry;
 }
 
@@ -499,6 +601,46 @@ function trimCandlesToPeriod(candles: OHLCVData[], period: string): OHLCVData[] 
     return candles.filter((candle) => Number(candle.time) >= cutoffSeconds);
 }
 
+const IBKR_INTERVAL_SECONDS: Record<string, number> = {
+    "1m": 60,
+    "5m": 5 * 60,
+    "15m": 15 * 60,
+    "30m": 30 * 60,
+    "1h": 60 * 60,
+    "4h": 4 * 60 * 60,
+    "1d": 24 * 60 * 60,
+};
+
+/**
+ * Returns the IBKR `startTime` (unix seconds) to pass for an incremental
+ * sync, or `null` when incremental sync is not applicable and the caller
+ * should fall back to a full-period fetch.
+ *
+ * Backs up by 2 bars of overlap so the still-forming current bar and any
+ * late corrections to the previous bar are re-fetched. The merge step's
+ * last-write-wins dedup handles the overlap safely.
+ *
+ * Exported for unit testing.
+ */
+export function computeIncrementalStartTime(
+    interval: string,
+    lastTime: string | number | null,
+    nowSeconds: number = Math.floor(Date.now() / 1000)
+): number | null {
+    if (lastTime === null) return null;
+    const barSeconds = IBKR_INTERVAL_SECONDS[interval];
+    if (!barSeconds) return null;
+    const last = typeof lastTime === "number"
+        ? lastTime
+        : Math.floor(new Date(lastTime).getTime() / 1000);
+    if (!Number.isFinite(last) || last <= 0) return null;
+    // Defensive: if the recorded lastTime is in the future (clock skew or a
+    // bad write), fall back to full sync rather than asking IBKR for a
+    // start-time in the future.
+    if (last > nowSeconds + barSeconds) return null;
+    return last - 2 * barSeconds;
+}
+
 async function fetchHistoricalChunk(
     resolved: IbkrResolvedContract,
     interval: string,
@@ -518,7 +660,12 @@ async function fetchHistoricalChunk(
     return parseHistoryCandles(payload);
 }
 
-async function fetchHistorical(resolved: IbkrResolvedContract, interval: string, period: string): Promise<OHLCVData[]> {
+async function fetchHistorical(
+    resolved: IbkrResolvedContract,
+    interval: string,
+    period: string,
+    incrementalFromTime?: number
+): Promise<OHLCVData[]> {
     const maxSync = isMaxHistoryPeriod(period);
     const requestPeriod = maxSync
         ? MAX_SYNC_CHUNK_PERIOD_BY_INTERVAL[interval] ?? DEFAULT_PERIOD_BY_INTERVAL[interval] ?? "1y"
@@ -531,10 +678,15 @@ async function fetchHistorical(resolved: IbkrResolvedContract, interval: string,
     // O(N²) in chunk count. We now fold each chunk into a single map and only
     // sort once at the end. The break conditions and period-coverage early
     // exit behave identically to the prior implementation.
+    //
+    // Incremental sync: when `incrementalFromTime` is supplied (repeat sync),
+    // the first chunk is requested with that startTime so we only fetch bars
+    // newer than what's already on disk. The break condition below stops the
+    // backward walk as soon as a chunk reaches existing data.
     const byTime = new Map<number, OHLCVData>();
     let oldestTime = Infinity;
     let newestTime = -Infinity;
-    let nextStartTime: number | undefined;
+    let nextStartTime: number | undefined = incrementalFromTime;
     let previousFirstTime: number | null = null;
 
     for (let i = 0; i < maxChunks; i += 1) {
@@ -556,6 +708,13 @@ async function fetchHistorical(resolved: IbkrResolvedContract, interval: string,
             && oldestTime * 1000 <= newestTime * 1000 - periodMs) {
             return trimCandlesToPeriod(mergeSortedFromMap(byTime), period);
         }
+        // Incremental stop: we've reached the start of data we already have.
+        // No need to page further backward.
+        if (incrementalFromTime !== undefined
+            && Number.isFinite(oldestTime)
+            && oldestTime <= incrementalFromTime) {
+            break;
+        }
         if (!maxSync && chunk.length < IBKR_HISTORY_SOFT_LIMIT) break;
 
         const firstTime = Number(chunk[0]?.time);
@@ -576,10 +735,46 @@ function mergeSortedFromMap(byTime: Map<number, OHLCVData>): OHLCVData[] {
     return Array.from(byTime.values()).sort((a, b) => Number(a.time) - Number(b.time));
 }
 
-async function syncOneSymbol(symbol: string, interval: string, period: string, syncOnly: boolean): Promise<Record<string, unknown>> {
+async function syncOneSymbol(
+    catalog: IbkrCatalog,
+    symbol: string,
+    interval: string,
+    period: string,
+    syncOnly: boolean
+): Promise<Record<string, unknown>> {
     const startedAt = Date.now();
-    const resolved = await resolveSymbol(symbol);
-    const fetched = await fetchHistorical(resolved, interval, period);
+    const existingEntry = findCatalogEntry(catalog, symbol);
+
+    // Cached conid: skip `resolveSymbol` when the catalog has a fresh one.
+    // Falls back to a fresh resolve if the cached conid returns 0 bars
+    // (handles corporate actions / stale conids without silent wrong data).
+    let resolved: IbkrResolvedContract | null = resolveFromCatalog(existingEntry);
+    let usedCachedConid = resolved !== null;
+    if (!resolved) {
+        resolved = await resolveSymbol(symbol);
+    }
+
+    // Incremental sync: for syncOnly with a known last bar, narrow the fetch
+    // window to "newer than what we already have". Falls back to full-period
+    // fetch when no prior interval data exists.
+    let incrementalFromTime: number | undefined;
+    if (syncOnly && existingEntry) {
+        const lastIso = existingEntry.intervals[interval]?.lastTime ?? null;
+        incrementalFromTime = computeIncrementalStartTime(interval, lastIso) ?? undefined;
+    }
+
+    let fetched = await fetchHistorical(resolved, interval, period, incrementalFromTime);
+    if (fetched.length === 0 && usedCachedConid) {
+        debugLogger.info("ibkr.sync.conidFallback", {
+            target: "ibkr",
+            symbol,
+            interval,
+            reason: "0 bars with cached conid; re-resolving",
+        });
+        resolved = await resolveSymbol(symbol);
+        usedCachedConid = false;
+        fetched = await fetchHistorical(resolved, interval, period, incrementalFromTime);
+    }
     if (fetched.length === 0) {
         throw new HttpStatusError(502, `IBKR returned no ${interval} bars for ${symbol}.`);
     }
@@ -587,7 +782,7 @@ async function syncOneSymbol(symbol: string, interval: string, period: string, s
     const existing = syncOnly ? readCsvCandles(symbol, interval) : [];
     const merged = mergeCandlesByTime([...existing, ...fetched]);
     writeCsv(symbol, interval, merged);
-    const catalogEntry = upsertCatalogEntry({ symbol, interval, candles: merged, resolved });
+    const catalogEntry = upsertCatalogEntry(catalog, { symbol, interval, candles: merged, resolved });
     debugLogger.info("ibkr.sync.symbol", {
         target: "ibkr",
         symbol,
@@ -595,6 +790,8 @@ async function syncOneSymbol(symbol: string, interval: string, period: string, s
         mode: syncOnly ? "sync" : "download",
         bars: merged.length,
         fetchedBars: fetched.length,
+        incremental: incrementalFromTime !== undefined,
+        cachedConid: usedCachedConid,
         durationMs: Date.now() - startedAt,
     });
     return {
@@ -643,26 +840,95 @@ function readCatalogAssets(): Array<{ symbol: string; name: string; sector?: str
     return Array.from(bySymbol.values()).sort((a, b) => a.symbol.localeCompare(b.symbol));
 }
 
-async function handleSyncRequest(body: Record<string, unknown>, syncOnly: boolean): Promise<Record<string, unknown>> {
-    if (syncInProgress) {
-        throw new HttpStatusError(409, "An IBKR sync is already running. Use Stop first.");
-    }
-    syncInProgress = true;
-    stopRequested = false;
+type SyncStreamEvent = Record<string, unknown> & { type: string };
+type SyncStreamWriter = (event: SyncStreamEvent) => void;
+
+/**
+ * Core batch loop, factored out of the HTTP handler so it can be tested and
+ * so the NDJSON writer is the only thing that depends on the HTTP response.
+ *
+ * `writer` receives one event per symbol plus a final `done` event. The
+ * catalog is read once and mutated in place across all symbols; a write
+ * fires after each successful symbol (atomic temp+rename) so completed
+ * symbols survive an interrupted batch. The `owner` param keys cancellation:
+ * the loop bails as soon as `syncOwner !== owner` (Stop or a newer sync).
+ */
+async function processSyncBatch(
+    body: Record<string, unknown>,
+    syncOnly: boolean,
+    writer: SyncStreamWriter,
+    owner: number
+): Promise<void> {
+    const symbols = normalizeSymbols(body.symbols ?? body.symbol);
+    const interval = normalizeInterval(body.interval);
+    const period = String(body.period ?? DEFAULT_PERIOD_BY_INTERVAL[interval] ?? "1y").trim();
+
+    // Populate the in-progress snapshot so a browser reload can reattach via
+    // GET /api/ibkr/sync/status. Cleared in handleSyncRequest's finally when
+    // the batch ends (cleanly, cancelled, or fatal).
+    syncRunState = {
+        startedAt: new Date().toISOString(),
+        mode: syncOnly ? "sync" : "download",
+        interval,
+        period: period || null,
+        total: symbols.length,
+        index: 0,
+        completed: 0,
+        failed: 0,
+        currentSymbol: null,
+        failedSymbols: [],
+        cancelled: false,
+    };
+    // Capture the run-state object by identity. Cancellation checks below
+    // branch on `syncOwner !== owner`, and the snapshot mutations check
+    // `syncRunState === runState`. Together these prevent an old owner's
+    // late iteration from corrupting a new owner's lock or snapshot — the
+    // hazard that the bare `stopRequested` boolean could not prevent.
+    const runState = syncRunState;
+
+    writer({ type: "start", total: symbols.length, interval, period: period || null, mode: syncOnly ? "sync" : "download" });
+
+    const results: unknown[] = [];
+    const failed: unknown[] = [];
+    let cancelled = false;
+    const catalog = readCatalog();
+
+    // `lostOwnership` is true once Stop force-resets the lock or a newer sync
+    // takes it. Subsequent iterations observe this and break ASAP. The
+    // per-iteration `syncOwner !== owner` re-check covers the case where
+    // ownership changed during the await.
+    const lostOwnership = () => syncOwner !== owner;
+
     try {
-        const symbols = normalizeSymbols(body.symbols ?? body.symbol);
-        const interval = normalizeInterval(body.interval);
-        const period = String(body.period ?? DEFAULT_PERIOD_BY_INTERVAL[interval] ?? "1y").trim();
-        const results: unknown[] = [];
-        const failed: unknown[] = [];
-        let cancelled = false;
-        for (const symbol of symbols) {
-            if (stopRequested) {
+        for (let index = 0; index < symbols.length; index += 1) {
+            if (lostOwnership()) {
                 cancelled = true;
+                if (syncRunState === runState) runState.cancelled = true;
                 break;
             }
+            const symbol = symbols[index]!;
+            if (syncRunState === runState) {
+                runState.index = index;
+                runState.currentSymbol = symbol;
+            }
             try {
-                results.push(await syncOneSymbol(symbol, interval, period, syncOnly));
+                const result = await syncOneSymbol(catalog, symbol, interval, period, syncOnly);
+                // Re-check ownership after the await: a Stop or newer sync
+                // may have arrived mid-fetch. If so, drop this result and
+                // break without writing — the new owner owns the catalog.
+                if (lostOwnership()) {
+                    cancelled = true;
+                    if (syncRunState === runState) runState.cancelled = true;
+                    break;
+                }
+                results.push(result);
+                if (syncRunState === runState) runState.completed += 1;
+                // Per-symbol catalog write: ensures completed symbols appear
+                // in the catalog even if the batch is interrupted (reload,
+                // crash, fatal on a later symbol). The atomic temp+rename in
+                // writeCatalog keeps each individual write safe.
+                writeCatalog(catalog);
+                writer({ type: "symbol", index, total: symbols.length, ...result });
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 debugLogger.warn("ibkr.sync.symbol.failed", {
@@ -673,11 +939,84 @@ async function handleSyncRequest(body: Record<string, unknown>, syncOnly: boolea
                     error: message,
                 });
                 failed.push({ symbol, error: message });
+                if (syncRunState === runState) {
+                    runState.failed += 1;
+                    runState.failedSymbols.push({ symbol, error: message });
+                }
+                writer({ type: "symbol_failed", index, total: symbols.length, symbol, error: message });
             }
         }
-        return { ok: failed.length === 0 && !cancelled, cancelled, interval, results, failed };
     } finally {
-        syncInProgress = false;
+        if (syncRunState === runState) {
+            runState.index = runState.completed + runState.failed;
+            runState.currentSymbol = null;
+        }
+    }
+
+    writer({
+        type: "done",
+        ok: failed.length === 0 && !cancelled,
+        cancelled,
+        interval,
+        totals: {
+            bars: results.reduce((sum: number, row) => sum + (Number((row as Record<string, unknown>).bars) || 0), 0),
+            fetchedBars: results.reduce((sum: number, row) => sum + (Number((row as Record<string, unknown>).fetchedBars) || 0), 0),
+        },
+        results,
+        failed,
+    });
+}
+
+async function handleSyncRequest(res: ViteHttpResponse, body: Record<string, unknown>, syncOnly: boolean): Promise<void> {
+    if (syncOwner !== SYNC_OWNER_NONE) {
+        // Thrown before the stream is opened, so the endpoint handler's catch
+        // sends this as a normal JSON error.
+        throw new HttpStatusError(409, "An IBKR sync is already running. Use Stop first.");
+    }
+    const owner = ++syncOwnerGen;
+    syncOwner = owner;
+    // Note: we do NOT reset `stopRequested` here. Cancellation keys off
+    // ownership (`syncOwner !== owner`) inside processSyncBatch, not the
+    // boolean. `stopRequested` is now only consulted by fetchHistorical's
+    // inner chunk loop and remains meaningful for in-flight requests.
+    let stream: ReturnType<typeof beginNdjsonStream> | null = null;
+    try {
+        stream = beginNdjsonStream(res);
+        await processSyncBatch(body, syncOnly, stream.write, owner);
+        stream.end();
+    } catch (error) {
+        if (!stream) throw error;
+        // Stream already started: surface the error as a terminal event so
+        // the NDJSON client sees a clean end-of-stream rather than a partial
+        // JSON line from `sendCaughtErrorJson`. Wrapped in try/catch: if the
+        // error was caused by the socket dying, this final write can throw
+        // synchronously and we don't want to mask the original error or
+        // propagate an 'ERR_STREAM_WRITE_AFTER_END'.
+        const message = error instanceof Error ? error.message : String(error);
+        debugLogger.warn("ibkr.sync.fatal", {
+            target: "ibkr",
+            mode: syncOnly ? "sync" : "download",
+            error: message,
+        });
+        try {
+            stream.end({ type: "fatal", error: message });
+        } catch {
+            // Best-effort: the connection is likely already gone.
+        }
+    } finally {
+        // Only release the lock if we still own it. If Stop force-bumped the
+        // generation and a newer sync has since taken the lock, our stale
+        // owner value no longer matches `syncOwner` — leave it alone so we
+        // don't clobber the newer sync's lock.
+        if (syncOwner === owner) {
+            syncOwner = SYNC_OWNER_NONE;
+        }
+        // Clear the in-progress snapshot only if we still own it. A newer
+        // sync that started after a Stop force-reset will have repopulated
+        // `syncRunState` itself; don't wipe its state.
+        if (syncRunState && syncOwner === SYNC_OWNER_NONE) {
+            syncRunState = null;
+        }
     }
 }
 
@@ -739,16 +1078,23 @@ export function ibkrDataVitePlugin(): Plugin {
             try {
                 const body = await readJsonBody(req);
                 const symbols = normalizeSymbols(body.symbols ?? body.symbol);
+                const stream = beginNdjsonStream(res);
                 const results = [];
                 const failed = [];
-                for (const symbol of symbols) {
+                stream.write({ type: "start", total: symbols.length, mode: "resolve" });
+                for (let index = 0; index < symbols.length; index += 1) {
+                    const symbol = symbols[index]!;
                     try {
-                        results.push(await resolveSymbol(symbol));
+                        const resolved = await resolveSymbol(symbol);
+                        results.push(resolved);
+                        stream.write({ type: "symbol", index, total: symbols.length, ...resolved });
                     } catch (error) {
-                        failed.push({ symbol, error: error instanceof Error ? error.message : String(error) });
+                        const message = error instanceof Error ? error.message : String(error);
+                        failed.push({ symbol, error: message });
+                        stream.write({ type: "symbol_failed", index, total: symbols.length, symbol, error: message });
                     }
                 }
-                sendJson(res, 200, { ok: failed.length === 0, results, failed });
+                stream.end({ type: "done", ok: failed.length === 0, results, failed });
             } catch (error) {
                 sendCaughtErrorJson(res, error);
             }
@@ -760,7 +1106,7 @@ export function ibkrDataVitePlugin(): Plugin {
                 return;
             }
             try {
-                sendJson(res, 200, await handleSyncRequest(await readJsonBody(req), false));
+                await handleSyncRequest(res as ViteHttpResponse, await readJsonBody(req), false);
             } catch (error) {
                 sendCaughtErrorJson(res, error);
             }
@@ -772,7 +1118,7 @@ export function ibkrDataVitePlugin(): Plugin {
                 return;
             }
             try {
-                sendJson(res, 200, await handleSyncRequest(await readJsonBody(req), true));
+                await handleSyncRequest(res as ViteHttpResponse, await readJsonBody(req), true);
             } catch (error) {
                 sendCaughtErrorJson(res, error);
             }
@@ -784,7 +1130,31 @@ export function ibkrDataVitePlugin(): Plugin {
                 return;
             }
             stopRequested = true;
+            // Force-reset the sync lock so a stuck/hung sync can be recovered
+            // without a server restart. The in-flight processSyncBatch checks
+            // `syncOwner !== owner` between symbols and after each await, so
+            // dropping the lock here causes the running batch to bail at the
+            // next observation point. A new sync can then acquire the lock
+            // immediately (`++syncOwnerGen` produces a value > any prior
+            // owner, so the old batch's late `finally` won't clobber it).
+            syncOwner = SYNC_OWNER_NONE;
             sendJson(res, 200, { ok: true, stopped: true });
+        });
+
+        middlewares.use("/api/ibkr/sync/status", async (req: any, res: any) => {
+            if (req.method !== "GET") {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            // Snapshot the in-progress run state (if any) for browser-side
+            // reattachment after a reload. The server keeps syncing after the
+            // NDJSON response stream is gone; this endpoint is how the UI
+            // discovers and presents that still-running work.
+            sendJson(res, 200, {
+                ok: true,
+                running: syncRunState !== null,
+                run: syncRunState,
+            });
         });
     };
 

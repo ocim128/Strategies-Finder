@@ -7,6 +7,11 @@ export const DEFAULT_MAX_BODY_BYTES = 80 * 1024 * 1024;
 export interface ViteHttpResponse {
     statusCode: number;
     setHeader(name: string, value: string): void;
+    // Optional because every established helper (`sendJson`, `sendBinary`)
+    // ends the response in one shot. Streaming responses (NDJSON progress)
+    // use `write` repeatedly before a final `end`. Runtime `res` from Vite is
+    // a Node `ServerResponse` that already implements `write`.
+    write?(body: string | Buffer): boolean;
     end(body: string | Buffer): void;
 }
 
@@ -32,6 +37,47 @@ export function sendBinary(res: ViteHttpResponse, status: number, payload: Buffe
     res.setHeader("Content-Type", "application/octet-stream");
     res.setHeader("Cache-Control", "no-store");
     res.end(payload);
+}
+
+/**
+ * Begins an NDJSON (newline-delimited JSON) chunked response. Each `write`
+ * serializes one event as a JSON line; `end` closes the stream. Used by
+ * long-running Vite middleware (e.g. IBKR sync) to report per-symbol
+ * progress incrementally instead of buffering the whole batch.
+ *
+ * Returns `write` / `end` bound to `res` so callers don't have to thread
+ * `res` through async loops. `end` accepts an optional final event for
+ * convenience, then ends the response.
+ */
+export function beginNdjsonStream(res: ViteHttpResponse): {
+    write: (event: unknown) => void;
+    end: (event?: unknown) => void;
+} {
+    if (typeof res.write !== "function") {
+        throw new Error("NDJSON streaming requires a writable response stream.");
+    }
+    // Attach an error handler so a mid-stream socket error (client disconnect,
+    // TCP reset) doesn't surface as an unhandled EventEmitter 'error' that
+    // tears down the dev server. `ViteHttpResponse` doesn't formally expose
+    // `on`, but the runtime object is a Node ServerResponse that does.
+    const anyRes = res as ViteHttpResponse & { on?: (event: string, listener: () => void) => void };
+    if (typeof anyRes.on === "function") {
+        anyRes.on("error", () => { /* socket died; best-effort */ });
+    }
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    return {
+        write: (event: unknown) => {
+            res.write!(`${JSON.stringify(event)}\n`);
+        },
+        end: (event?: unknown) => {
+            if (event !== undefined) {
+                res.write!(`${JSON.stringify(event)}\n`);
+            }
+            res.end("");
+        },
+    };
 }
 
 export async function readBodyBuffer(

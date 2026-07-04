@@ -7,6 +7,7 @@ import {
     buildSyntheticPairFromLegs,
     buildSyntheticPairPayload,
     pickSourceInterval,
+    resolveSyntheticAvailableIntervals,
     resolveSyntheticSourceBars,
     SyntheticAlignmentError,
     SyntheticQuoteError,
@@ -287,6 +288,36 @@ describe('pickSourceInterval', () => {
     it('returns null when the target is already too fine', () => {
         assert.equal(pickSourceInterval('1m'), null);
     });
+
+    it('respects the availableIntervals allowlist (IBKR case)', () => {
+        // IBKR's supportedIntervals: ["1d","4h","1h","30m","15m","5m","1m"].
+        // Without the filter, 1d -> 2h (ratio 12). With the filter, 2h is
+        // skipped (not in the allowlist) and 4h is picked (ratio 6).
+        const ibkr = resolveSyntheticAvailableIntervals('MU\u2022', 'TSLA\u2022');
+        assert.deepEqual(ibkr, ['1d', '4h', '1h', '30m', '15m', '5m', '1m']);
+
+        const result1d = pickSourceInterval('1d', 12, ibkr);
+        assert.equal(result1d!.sourceInterval, '4h');
+        assert.equal(result1d!.ratio, 6);
+
+        // 4h -> 30m (same as crypto, since 30m IS in IBKR's list).
+        const result4h = pickSourceInterval('4h', 12, ibkr);
+        assert.equal(result4h!.sourceInterval, '30m');
+        assert.equal(result4h!.ratio, 8);
+
+        // 1h -> 5m (12x ratio, the cap). Without the filter, would also be 5m.
+        const result1h = pickSourceInterval('1h', 12, ibkr);
+        assert.equal(result1h!.sourceInterval, '5m');
+    });
+
+    it('returns null when the allowlist excludes every finer divisible candidate', () => {
+        // 1m target with a restrictive allowlist: nothing finer is allowed.
+        assert.equal(pickSourceInterval('1m', 12, ['1d', '4h', '1h']), null);
+    });
+
+    it('returns undefined allowlist for non-IBKR legs (crypto path)', () => {
+        assert.equal(resolveSyntheticAvailableIntervals('BTCUSDT', 'ETHUSDT'), undefined);
+    });
 });
 
 describe('aggregateSyntheticBars', () => {
@@ -412,5 +443,119 @@ describe('buildSyntheticPairFromLegs', () => {
         // fetchLeg ignores which leg; ensure we sliced to last 2 of [0,60,120,180].
         assert.equal(result.bars.length, 2);
         assert.deepEqual(result.bars.map((b) => Number(b.time)), [120, 180]);
+    });
+
+    it('disk-aware fallback: retries at target interval when seed fetch comes back empty', async () => {
+        // Simulates the AAPL 1d case: subdivision picks a 4h seed (IBKR
+        // allowlist excludes 2h), but the symbol has no 4h data on disk —
+        // only 1d. The fallback retries both legs at the target interval
+        // (1d) and skips aggregation.
+        const calls: Array<{ symbol: string; interval: string }> = [];
+        const fetchLeg = async (symbol: string, sourceInterval: string): Promise<OHLCVData[]> => {
+            calls.push({ symbol, interval: sourceInterval });
+            // Only the target interval (1d) returns data; seed (4h) is empty.
+            if (sourceInterval === '1d') {
+                return [bar(0, { open: 100, close: 110, high: 115, low: 95, volume: 10 })];
+            }
+            return [];
+        };
+
+        const result = await buildSyntheticPairFromLegs({
+            baseSymbol: 'AAPL\u2022',
+            quoteSymbol: 'MSFT\u2022',
+            interval: '1d',
+            targetBars: 1,
+            fetchLeg,
+        });
+
+        // First call attempts the 4h seed for both legs (IBKR allowlist
+        // excludes the crypto-default 2h), then fallback retries at the
+        // 1d target interval.
+        assert.deepEqual(
+            calls.map((c) => `${c.symbol}@${c.interval}`),
+            ['AAPL\u2022@4h', 'MSFT\u2022@4h', 'AAPL\u2022@1d', 'MSFT\u2022@1d']
+        );
+        // Single bar returned, no aggregation (target-interval data is already 1d).
+        assert.equal(result.bars.length, 1);
+        assert.equal(result.sourceInterval, '1d');
+    });
+
+    it('disk-aware fallback: keeps seed data when seed fetch succeeds (no fallback)', async () => {
+        // Subdivision succeeds at the seed interval — fallback must NOT fire.
+        // This pins the 4H IBKR case (30m seed exists on disk for MU/TSLA).
+        const calls: Array<{ symbol: string; interval: string }> = [];
+        const fetchLeg = async (symbol: string, sourceInterval: string): Promise<OHLCVData[]> => {
+            calls.push({ symbol, interval: sourceInterval });
+            if (sourceInterval === '4h') {
+                return [
+                    bar(0, { open: 100, high: 110, low: 95, close: 105 }),
+                    bar(14400, { open: 105, high: 115, low: 100, close: 110 }),
+                ];
+            }
+            return [];
+        };
+
+        const result = await buildSyntheticPairFromLegs({
+            baseSymbol: 'AAPL\u2022',
+            quoteSymbol: 'MSFT\u2022',
+            interval: '1d',
+            targetBars: 1,
+            fetchLeg,
+        });
+
+        // Only the 4h seed was fetched; no fallback to 1d.
+        assert.deepEqual(
+            calls.map((c) => `${c.symbol}@${c.interval}`),
+            ['AAPL\u2022@4h', 'MSFT\u2022@4h']
+        );
+        // Aggregation ran: two 4h bars -> one 1d bar at time 0.
+        assert.equal(result.bars.length, 1);
+        assert.equal(Number(result.bars[0].time), 0);
+        assert.equal(result.sourceInterval, '4h');
+    });
+
+    it('disk-aware fallback: rejects asymmetric fallback when only one leg has target-interval data', async () => {
+        // Regression guard: if base succeeds at seed (4h) but quote is empty
+        // at BOTH seed and target, the fallback must NOT swap to one leg at
+        // 1d and one empty — that would produce asymmetric-resolution bars.
+        // The AND guard ensures we keep the original (base@4h, quote=empty)
+        // state and let the existing empty-handling path surface the failure.
+        const calls: Array<{ symbol: string; interval: string }> = [];
+        const fetchLeg = async (symbol: string, sourceInterval: string): Promise<OHLCVData[]> => {
+            calls.push({ symbol, interval: sourceInterval });
+            if (symbol === 'AAPL\u2022' && sourceInterval === '4h') {
+                return [
+                    bar(0, { open: 100, high: 110, low: 95, close: 105 }),
+                    bar(14400, { open: 105, high: 115, low: 100, close: 110 }),
+                ];
+            }
+            // NEW• has no data at any interval.
+            return [];
+        };
+
+        // allowEmptyLegs so we can observe the post-fallback state without
+        // catching a SyntheticQuoteError.
+        const result = await buildSyntheticPairFromLegs({
+            baseSymbol: 'AAPL\u2022',
+            quoteSymbol: 'NEW\u2022',
+            interval: '1d',
+            targetBars: 1,
+            fetchLeg,
+            allowEmptyLegs: true,
+        });
+
+        // Fallback fired (target-interval fetches attempted) but did NOT swap
+        // because NEW•@1d was empty. base retains its 4h seed data, quote is
+        // still empty, and bars is empty (alignment intersection is empty).
+        assert.deepEqual(
+            calls.map((c) => `${c.symbol}@${c.interval}`),
+            ['AAPL\u2022@4h', 'NEW\u2022@4h', 'AAPL\u2022@1d', 'NEW\u2022@1d']
+        );
+        assert.equal(result.bars.length, 0);
+        assert.equal(result.base.length, 2);  // retained 4h seed data
+        assert.equal(result.quote.length, 0); // still empty
+        // sourceInterval reported as '4h' (subdivided stayed true) — the
+        // effective resolution of the surviving leg.
+        assert.equal(result.sourceInterval, '4h');
     });
 });
