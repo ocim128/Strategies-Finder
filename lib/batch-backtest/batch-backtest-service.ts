@@ -305,6 +305,8 @@ class BatchBacktestService {
                 symbol: row.symbol,
                 baseAsset: parsed.baseAsset,
                 quoteAsset: parsed.quoteAsset,
+                baseSymbol: parsed.baseSymbol,
+                quoteSymbol: parsed.quoteSymbol,
                 data: row.data,
                 signals: row.signals,
                 result: row.result,
@@ -322,6 +324,26 @@ class BatchBacktestService {
                 .map((asset) => asset.trim().toUpperCase())
                 .filter(Boolean)
         )).sort();
+        // Resolve each stripped asset back to the symbol the loader expects.
+        // Crypto pairs (e.g. ZEC+APT) become `ZECUSDT` via the USDT suffix.
+        // Marked legs carry their provider routing inline (bullet `•` for
+        // IBKR, diamond `♦` for stock_market_data); for those, the stripped
+        // `baseAsset`/`quoteAsset` is NOT a Binance ticker, so appending
+        // `USDT` would produce a symbol no provider can serve (the cause of
+        // "No target asset candles loaded." on IBKR batches). Prefer the
+        // original marked symbol when one survives from the parsed pair.
+        const markedSymbolByAsset = new Map<string, string>();
+        for (const artifact of pairArtifacts) {
+            for (const [asset, symbol] of [
+                [artifact.baseAsset, artifact.baseSymbol],
+                [artifact.quoteAsset, artifact.quoteSymbol],
+            ] as const) {
+                const key = asset?.trim().toUpperCase();
+                if (key && symbol && !markedSymbolByAsset.has(key)) {
+                    markedSymbolByAsset.set(key, symbol);
+                }
+            }
+        }
         // Load all target datasets concurrently. Each load is independent
         // (loadBatchDataset goes through the shared LRU caches and
         // dataManager.fetchDataDetached, both safe under concurrency), and the
@@ -331,7 +353,7 @@ class BatchBacktestService {
         // asset does not reject the batch.
         const loaded = await Promise.all(
             assets.map(async (asset) => {
-                const symbol = resolveBatchSyntheticTargetSymbol(asset);
+                const symbol = markedSymbolByAsset.get(asset) ?? resolveBatchSyntheticTargetSymbol(asset);
                 try {
                     const data = await loadBatchDataset(symbol, interval);
                     if (Array.isArray(data) && data.length > 0) {

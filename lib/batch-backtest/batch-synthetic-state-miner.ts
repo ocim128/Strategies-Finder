@@ -23,6 +23,15 @@ export interface BatchSyntheticPairArtifact {
     symbol: string;
     baseAsset: string;
     quoteAsset: string;
+    /**
+     * Marked forms of the legs (e.g. `AAPL•`, `NVDA♦`) when the pair came
+     * from a non-crypto source. Forwarded so the miner target loader can
+     * resolve the correct provider symbol instead of blindly appending
+     * `USDT`. Optional because legacy callers/tests construct artifacts
+     * directly with only the stripped asset names.
+     */
+    baseSymbol?: string;
+    quoteSymbol?: string;
     data: OHLCVData[];
     signals: Signal[];
     result: BacktestResult;
