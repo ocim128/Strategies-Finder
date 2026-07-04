@@ -48,6 +48,10 @@ import {
 	sortFinderUniverseCandidates,
 	updateFinderUniverseCandidateScores,
 } from "./finder/finder-universe-metrics";
+import {
+	compactFinderLatestResults,
+	normalizeFinderLatestResultsSnapshot,
+} from "./finder/finder-result-snapshot";
 import { executeBacktest, resolveExecutorBacktestSettings } from "./backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "./backtest-capital-settings";
 import {
@@ -218,6 +222,18 @@ const FINDER_UI_STORAGE = {
 	schema: "finder.ui",
 	version: 1,
 } as const;
+const FINDER_RESULTS_STORAGE = {
+	key: "playground_finder_latest_results",
+	schema: "finder.latest_results",
+	version: 1,
+} as const;
+
+type FinderPersistedResultsState = {
+	savedAt: number;
+	symbol: string;
+	interval: string;
+	results: FinderLatestResults;
+};
 
 const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	scope: "current_chart",
@@ -487,6 +503,65 @@ export class FinderManager {
 			data: this.uiState,
 			onError: (error) => {
 				debugLogger.error("finder.ui_state_save_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			},
+		});
+	}
+
+	private loadPersistedLatestResults(): void {
+		const snapshot = readPersistedJson<FinderPersistedResultsState | null>({
+			...FINDER_RESULTS_STORAGE,
+			fallback: null,
+			migrate: ({ data }) => {
+				if (!data || typeof data !== "object" || Array.isArray(data)) {
+					return null;
+				}
+				const source = data as Partial<FinderPersistedResultsState>;
+				const results = normalizeFinderLatestResultsSnapshot(source.results);
+				if (!results || results.results.length === 0) {
+					return null;
+				}
+				return {
+					savedAt: typeof source.savedAt === "number" ? source.savedAt : 0,
+					symbol: typeof source.symbol === "string" ? source.symbol : "",
+					interval: typeof source.interval === "string" ? source.interval : "",
+					results,
+				};
+			},
+			onError: (error) => {
+				debugLogger.error("finder.latest_results_load_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			},
+		});
+		if (!snapshot) return;
+
+		this.latestResults = snapshot.results;
+		debugLogger.event("finder.latest_results_restored", {
+			scope: snapshot.results.scope,
+			count: snapshot.results.results.length,
+			symbol: snapshot.symbol,
+			interval: snapshot.interval,
+			savedAt: snapshot.savedAt,
+		});
+	}
+
+	private saveLatestResultsSnapshot(results: FinderLatestResults): void {
+		if (results.results.length === 0) {
+			return;
+		}
+		const snapshot: FinderPersistedResultsState = {
+			savedAt: Date.now(),
+			symbol: state.currentSymbol,
+			interval: state.currentInterval,
+			results: compactFinderLatestResults(results),
+		};
+		writePersistedJson({
+			...FINDER_RESULTS_STORAGE,
+			data: snapshot,
+			onError: (error) => {
+				debugLogger.error("finder.latest_results_save_failed", {
 					error: error instanceof Error ? error.message : String(error),
 				});
 			},
@@ -922,6 +997,8 @@ export class FinderManager {
 		this.initFinderSettingsPersistenceUI();
 		this.initOosValidationUI();
 		this.applyScopeUi();
+		this.loadPersistedLatestResults();
+		this.renderLatestResults();
 	}
 
 	private initOosValidationUI(): void {
@@ -2472,6 +2549,7 @@ export class FinderManager {
 
 	private setLatestResults(results: FinderLatestResults): void {
 		this.latestResults = results;
+		this.saveLatestResultsSnapshot(results);
 	}
 
 	private getCurrentChartResults(): FinderResult[] {

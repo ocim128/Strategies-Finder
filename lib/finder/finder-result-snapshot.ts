@@ -1,0 +1,158 @@
+import type {
+    FinderLatestResults,
+    FinderResult,
+    FinderUniverseCandidate,
+    FinderUniverseSymbolMetrics,
+    FinderUniverseSymbolResult,
+} from "../types/finder";
+import type { BacktestResult } from "../types/strategies";
+
+export const FINDER_RESULT_SNAPSHOT_LIMIT = 25;
+const FINDER_UNIVERSE_SYMBOL_SNAPSHOT_LIMIT = 200;
+
+function compactBacktestResult(result: BacktestResult): BacktestResult {
+    return {
+        trades: [],
+        netProfit: result.netProfit,
+        netProfitPercent: result.netProfitPercent,
+        winRate: result.winRate,
+        expectancy: result.expectancy,
+        avgTrade: result.avgTrade,
+        profitFactor: result.profitFactor,
+        maxDrawdown: result.maxDrawdown,
+        maxDrawdownPercent: result.maxDrawdownPercent,
+        totalTrades: result.totalTrades,
+        winningTrades: result.winningTrades,
+        losingTrades: result.losingTrades,
+        avgWin: result.avgWin,
+        avgLoss: result.avgLoss,
+        sharpeRatio: result.sharpeRatio,
+        equityCurve: [],
+        ...(result.tradeTimingQuality ? { tradeTimingQuality: result.tradeTimingQuality } : {}),
+        ...(result.polymarketTradeSummary ? { polymarketTradeSummary: result.polymarketTradeSummary } : {}),
+    };
+}
+
+function compactFinderResult(result: FinderResult): FinderResult {
+    return {
+        key: result.key,
+        name: result.name,
+        ...(result.comboMode ? { comboMode: result.comboMode } : {}),
+        ...(result.comboPrimaryConfigName ? { comboPrimaryConfigName: result.comboPrimaryConfigName } : {}),
+        ...(result.timeframes ? { timeframes: [...result.timeframes] } : {}),
+        params: { ...result.params },
+        ...(result.exitStrategyKey ? { exitStrategyKey: result.exitStrategyKey } : {}),
+        ...(result.exitStrategyParams ? { exitStrategyParams: { ...result.exitStrategyParams } } : {}),
+        result: compactBacktestResult(result.result),
+        selectionResult: compactBacktestResult(result.selectionResult),
+        ...(Number.isFinite(result.compositeEdgeRatio) ? { compositeEdgeRatio: result.compositeEdgeRatio } : {}),
+        endpointAdjusted: result.endpointAdjusted,
+        endpointRemovedTrades: result.endpointRemovedTrades,
+        ...(result.polymarketEval ? { polymarketEval: result.polymarketEval } : {}),
+        ...(result.oosResult ? { oosResult: compactBacktestResult(result.oosResult) } : {}),
+        ...(result.oosVerdict ? { oosVerdict: result.oosVerdict } : {}),
+    };
+}
+
+function compactUniverseMetrics(metrics: FinderUniverseSymbolMetrics): FinderUniverseSymbolMetrics {
+    return {
+        netProfit: metrics.netProfit,
+        netProfitPercent: metrics.netProfitPercent,
+        expectancy: metrics.expectancy,
+        avgTrade: metrics.avgTrade,
+        winRate: metrics.winRate,
+        profitFactor: metrics.profitFactor,
+        totalTrades: metrics.totalTrades,
+        maxDrawdownPercent: metrics.maxDrawdownPercent,
+        winningTrades: metrics.winningTrades,
+        losingTrades: metrics.losingTrades,
+        avgWin: metrics.avgWin,
+        avgLoss: metrics.avgLoss,
+        sharpeRatio: metrics.sharpeRatio,
+        ...(metrics.sharpeRatioAvailable !== undefined ? { sharpeRatioAvailable: metrics.sharpeRatioAvailable } : {}),
+        ...(metrics.drawdownAvailable !== undefined ? { drawdownAvailable: metrics.drawdownAvailable } : {}),
+        ...(Number.isFinite(metrics.compositeEdgeRatio) ? { compositeEdgeRatio: metrics.compositeEdgeRatio } : {}),
+    };
+}
+
+function compactUniverseSymbol(symbol: FinderUniverseSymbolResult): FinderUniverseSymbolResult {
+    return {
+        symbol: symbol.symbol,
+        status: symbol.status,
+        barCount: symbol.barCount,
+        ...(symbol.firstTime !== undefined ? { firstTime: symbol.firstTime } : {}),
+        ...(symbol.lastTime !== undefined ? { lastTime: symbol.lastTime } : {}),
+        ...(symbol.firstClose !== undefined ? { firstClose: symbol.firstClose } : {}),
+        ...(symbol.lastClose !== undefined ? { lastClose: symbol.lastClose } : {}),
+        ...(symbol.directionalLookbackClose !== undefined ? { directionalLookbackClose: symbol.directionalLookbackClose } : {}),
+        ...(symbol.directionalLookbackBars !== undefined ? { directionalLookbackBars: symbol.directionalLookbackBars } : {}),
+        ...(symbol.result ? { result: compactUniverseMetrics(symbol.result) } : {}),
+        ...(symbol.error ? { error: symbol.error } : {}),
+        ...(symbol.oosResult ? { oosResult: compactUniverseMetrics(symbol.oosResult) } : {}),
+        ...(symbol.oosVerdict ? { oosVerdict: symbol.oosVerdict } : {}),
+    };
+}
+
+function compactUniverseCandidate(candidate: FinderUniverseCandidate): FinderUniverseCandidate {
+    return {
+        strategyKey: candidate.strategyKey,
+        strategyName: candidate.strategyName,
+        params: { ...candidate.params },
+        symbols: candidate.symbols.slice(0, FINDER_UNIVERSE_SYMBOL_SNAPSHOT_LIMIT).map(compactUniverseSymbol),
+        activeSymbols: candidate.activeSymbols,
+        profitableSymbols: candidate.profitableSymbols,
+        losingSymbols: candidate.losingSymbols,
+        flatSymbols: candidate.flatSymbols,
+        noTradeSymbols: candidate.noTradeSymbols,
+        totalTrades: candidate.totalTrades,
+        profitableActiveRatio: candidate.profitableActiveRatio,
+        medianExpectancy: candidate.medianExpectancy,
+        medianSharpe: candidate.medianSharpe,
+        medianSharpeAvailable: candidate.medianSharpeAvailable,
+        medianProfitFactor: candidate.medianProfitFactor,
+        medianNetProfit: candidate.medianNetProfit,
+        worstNetProfit: candidate.worstNetProfit,
+        bestNetProfit: candidate.bestNetProfit,
+        medianCompositeEdgeRatio: candidate.medianCompositeEdgeRatio,
+        robustUniverseScore: candidate.robustUniverseScore,
+        windowStabilityScore: candidate.windowStabilityScore,
+        ...(candidate.evaluationStoppedEarly !== undefined ? { evaluationStoppedEarly: candidate.evaluationStoppedEarly } : {}),
+        ...(candidate.stoppedReason ? { stoppedReason: candidate.stoppedReason } : {}),
+        ...(candidate.exitStrategyKey ? { exitStrategyKey: candidate.exitStrategyKey } : {}),
+        ...(candidate.exitStrategyName ? { exitStrategyName: candidate.exitStrategyName } : {}),
+        ...(candidate.exitStrategyParams ? { exitStrategyParams: { ...candidate.exitStrategyParams } } : {}),
+        ...(candidate.oosAggregate ? { oosAggregate: { ...candidate.oosAggregate } } : {}),
+    };
+}
+
+export function compactFinderLatestResults(results: FinderLatestResults): FinderLatestResults {
+    if (results.scope === "symbol_universe") {
+        return {
+            scope: "symbol_universe",
+            results: results.results
+                .slice(0, FINDER_RESULT_SNAPSHOT_LIMIT)
+                .map(compactUniverseCandidate),
+        };
+    }
+
+    return {
+        scope: "current_chart",
+        results: results.results
+            .slice(0, FINDER_RESULT_SNAPSHOT_LIMIT)
+            .map(compactFinderResult),
+    };
+}
+
+export function normalizeFinderLatestResultsSnapshot(value: unknown): FinderLatestResults | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return null;
+    }
+    const candidate = value as Partial<FinderLatestResults>;
+    if (candidate.scope !== "current_chart" && candidate.scope !== "symbol_universe") {
+        return null;
+    }
+    if (!Array.isArray(candidate.results)) {
+        return null;
+    }
+    return compactFinderLatestResults(candidate as FinderLatestResults);
+}
