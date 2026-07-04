@@ -164,9 +164,15 @@ class IbkrDataService {
         this.setStatus("Checking IBKR Gateway...");
         try {
             const response = await fetch("/api/ibkr/status", { cache: "no-store" });
-            const payload = await response.json();
+            const payload = await response.json() as { ok?: boolean; error?: string };
             this.writeOutput(payload);
-            this.setStatus(response.ok ? "Gateway reachable" : "Gateway unavailable");
+            if (response.ok && payload.ok !== false) {
+                this.setStatus("Gateway reachable");
+            } else if (response.ok && payload.error) {
+                this.setStatus(payload.error);
+            } else {
+                this.setStatus("Gateway unavailable");
+            }
         } catch (error) {
             this.writeOutput(error instanceof Error ? error.message : String(error));
             this.setStatus("Gateway check failed");

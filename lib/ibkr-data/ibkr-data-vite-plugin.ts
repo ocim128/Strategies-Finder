@@ -44,7 +44,8 @@ const LOCALHOST_TLS_DISPATCHER = new Agent({ connect: { rejectUnauthorized: fals
 const IBKR_HISTORY_SOFT_LIMIT = 900;
 const IBKR_HISTORY_MAX_CHUNKS = 20;
 const IBKR_HISTORY_MAX_SYNC_CHUNKS = 80;
-const IBKR_HISTORY_CHUNK_DELAY_MS = 250;
+const IBKR_HISTORY_CHUNK_DELAY_MS = 1_500;
+const IBKR_HISTORY_RETRY_DELAYS_MS = [5_000, 15_000, 30_000] as const;
 const IBKR_KEEPALIVE_INTERVAL_MS = 60_000;
 // Auth-cache TTL: `fetchGatewayJsonAuthenticated` previously called
 // `ensureBrokerageSession()` before every gateway request, and that helper
@@ -233,6 +234,45 @@ function getTickleAuthStatus(payload: unknown): unknown {
     return iserver?.authStatus ?? null;
 }
 
+export type IbkrMarketDataReadiness = {
+    ok: boolean;
+    error: string | null;
+    warning: string | null;
+    hmds: unknown;
+};
+
+export function describeIbkrMarketDataReadiness(ticklePayload: unknown): IbkrMarketDataReadiness {
+    const value = ticklePayload && typeof ticklePayload === "object"
+        ? ticklePayload as Record<string, unknown>
+        : {};
+    const hmds = value.hmds;
+    if (!hmds || typeof hmds !== "object") {
+        return { ok: true, error: null, warning: null, hmds: null };
+    }
+
+    const status = hmds as Record<string, unknown>;
+    const error = String(status.error ?? "").trim();
+    if (error) {
+        return {
+            ok: true,
+            error: null,
+            warning: `IBKR /tickle reports hmds.error="${error}". This gateway build can still serve /iserver/marketdata/history with that tickle warning, so sync will probe the history endpoint directly.`,
+            hmds,
+        };
+    }
+
+    if (status.connected === false || status.authenticated === false) {
+        return {
+            ok: false,
+            error: "IBKR historical market data is not ready: HMDS is not connected/authenticated.",
+            warning: null,
+            hmds,
+        };
+    }
+
+    return { ok: true, error: null, warning: null, hmds };
+}
+
 async function tickleGateway(): Promise<unknown> {
     const payload = await fetchGatewayJson("/tickle", {
         method: "POST",
@@ -277,6 +317,52 @@ async function initializeBrokerageSession(): Promise<void> {
     });
 }
 
+async function reauthenticateBrokerageSession(): Promise<void> {
+    await fetchGatewayJson("/iserver/reauthenticate", {
+        method: "POST",
+        body: "{}",
+    });
+}
+
+async function recoverBrokerageSession(trigger: string): Promise<unknown> {
+    let lastError: unknown = null;
+    try {
+        await initializeBrokerageSession();
+        await wait(750);
+        const status = await fetchGatewayJson("/iserver/auth/status");
+        if (isAuthenticatedBrokerageSession(status)) {
+            debugLogger.info("ibkr.auth.recovered", { target: "ibkr", trigger, method: "ssodh-init" });
+            startKeepAlive();
+        }
+        return status;
+    } catch (error) {
+        if (!(error instanceof HttpStatusError) || (error.status !== 401 && error.status !== 403)) {
+            throw error;
+        }
+        lastError = error;
+    }
+
+    try {
+        await reauthenticateBrokerageSession();
+        await wait(3_000);
+        const status = await fetchGatewayJson("/iserver/auth/status");
+        if (isAuthenticatedBrokerageSession(status)) {
+            debugLogger.info("ibkr.auth.recovered", { target: "ibkr", trigger, method: "reauthenticate" });
+            startKeepAlive();
+        }
+        return status;
+    } catch (error) {
+        if (error instanceof HttpStatusError && (error.status === 401 || error.status === 403)) {
+            const detail = lastError instanceof Error ? lastError.message : String(lastError ?? "");
+            throw new HttpStatusError(
+                error.status,
+                `IBKR brokerage session is no longer authenticated and automatic recovery failed. /sso/ping may still be alive, but /iserver/auth/status is returning ${error.status}; reopen the Client Portal Gateway browser login and retry.${detail ? ` Previous recovery error: ${detail}` : ""}`
+            );
+        }
+        throw error;
+    }
+}
+
 async function ensureBrokerageSession(): Promise<unknown> {
     try {
         const status = await fetchGatewayJson("/iserver/auth/status");
@@ -290,10 +376,7 @@ async function ensureBrokerageSession(): Promise<unknown> {
         }
     }
 
-    await initializeBrokerageSession();
-    const status = await fetchGatewayJson("/iserver/auth/status");
-    if (isAuthenticatedBrokerageSession(status)) startKeepAlive();
-    return status;
+    return recoverBrokerageSession("ensure");
 }
 
 async function fetchGatewayJsonAuthenticated(path: string, init?: RequestInit): Promise<unknown> {
@@ -304,6 +387,11 @@ async function fetchGatewayJsonAuthenticated(path: string, init?: RequestInit): 
     try {
         return await fetchGatewayJson(path, init);
     } catch (error) {
+        if (path.startsWith("/iserver/marketdata/history")
+            && error instanceof HttpStatusError
+            && error.status === 503) {
+            throw await enrichHistoricalMarketDataError(error);
+        }
         if (!(error instanceof HttpStatusError) || (error.status !== 401 && error.status !== 403)) {
             throw error;
         }
@@ -311,14 +399,41 @@ async function fetchGatewayJsonAuthenticated(path: string, init?: RequestInit): 
         // Invalidate the auth cache: the cached "authenticated" state was
         // wrong. Forces the retry path to re-validate before the next call.
         cachedAuthExpiry = 0;
-        await initializeBrokerageSession();
+        await recoverBrokerageSession(`request-${error.status}`);
         await wait(750);
         // Re-cache only after the retry actually succeeds. Previously this
         // was set before the retry, so a second 401 left the cache claiming
         // authenticated for 30s while every call paid a 401+reinit round-trip.
-        const result = await fetchGatewayJson(path, init);
+        let result: unknown;
+        try {
+            result = await fetchGatewayJson(path, init);
+        } catch (retryError) {
+            if (path.startsWith("/iserver/marketdata/history")
+                && retryError instanceof HttpStatusError
+                && (retryError.status === 401 || retryError.status === 403 || retryError.status === 503)) {
+                throw await enrichHistoricalMarketDataError(retryError);
+            }
+            throw retryError;
+        }
         cachedAuthExpiry = Date.now() + IBKR_AUTH_CACHE_TTL_MS;
         return result;
+    }
+}
+
+async function enrichHistoricalMarketDataError(error: HttpStatusError): Promise<HttpStatusError> {
+    try {
+        const ticklePayload = await tickleGateway();
+        const readiness = describeIbkrMarketDataReadiness(ticklePayload);
+        if (!readiness.ok && readiness.error) {
+            return new HttpStatusError(error.status, `${error.message} ${readiness.error}`);
+        }
+        if (readiness.warning) {
+            return new HttpStatusError(error.status, `${error.message} ${readiness.warning}`);
+        }
+        return new HttpStatusError(error.status, `${error.message} Historical market data request was rejected even though /tickle did not report an HMDS error.`);
+    } catch (tickleError) {
+        const detail = tickleError instanceof Error ? tickleError.message : String(tickleError);
+        return new HttpStatusError(error.status, `${error.message} Could not verify IBKR HMDS state via /tickle: ${detail}`);
     }
 }
 
@@ -576,6 +691,10 @@ function isMaxHistoryPeriod(period: string): boolean {
     return normalized === "max" || normalized === "all";
 }
 
+export function shouldUseIncrementalIbkrSync(syncOnly: boolean, period: string, hasExistingEntry: boolean): boolean {
+    return syncOnly && hasExistingEntry && !isMaxHistoryPeriod(period);
+}
+
 function formatIbkrStartTime(unixSeconds: number): string {
     const date = new Date(unixSeconds * 1000);
     const pad = (value: number) => String(value).padStart(2, "0");
@@ -660,6 +779,11 @@ async function fetchHistoricalChunk(
     return parseHistoryCandles(payload);
 }
 
+function isRetryableHistoryError(error: unknown): error is HttpStatusError {
+    return error instanceof HttpStatusError
+        && (error.status === 429 || error.status === 500 || error.status === 502 || error.status === 503 || error.status === 504);
+}
+
 async function fetchHistorical(
     resolved: IbkrResolvedContract,
     interval: string,
@@ -691,7 +815,41 @@ async function fetchHistorical(
 
     for (let i = 0; i < maxChunks; i += 1) {
         if (stopRequested) break;
-        const chunk = await fetchHistoricalChunk(resolved, interval, requestPeriod, nextStartTime);
+        let chunk: OHLCVData[] | null = null;
+        try {
+            chunk = await fetchHistoricalChunk(resolved, interval, requestPeriod, nextStartTime);
+        } catch (error) {
+            if (!maxSync || !isRetryableHistoryError(error)) {
+                throw error;
+            }
+            let recovered = false;
+            for (let retryIndex = 0; retryIndex < IBKR_HISTORY_RETRY_DELAYS_MS.length; retryIndex += 1) {
+                await wait(IBKR_HISTORY_RETRY_DELAYS_MS[retryIndex]!);
+                try {
+                    chunk = await fetchHistoricalChunk(resolved, interval, requestPeriod, nextStartTime);
+                    recovered = true;
+                    break;
+                } catch (retryError) {
+                    if (!isRetryableHistoryError(retryError) || retryIndex === IBKR_HISTORY_RETRY_DELAYS_MS.length - 1) {
+                        if (byTime.size > 0) {
+                            debugLogger.warn("ibkr.history.partialMax", {
+                                target: "ibkr",
+                                conid: resolved.conid,
+                                interval,
+                                period,
+                                startTime: nextStartTime ?? null,
+                                bars: byTime.size,
+                                error: retryError instanceof Error ? retryError.message : String(retryError),
+                            });
+                            return mergeSortedFromMap(byTime);
+                        }
+                        throw retryError;
+                    }
+                }
+            }
+            if (!recovered) break;
+        }
+        if (chunk === null) break;
         if (chunk.length === 0) break;
 
         for (const bar of chunk) {
@@ -754,12 +912,11 @@ async function syncOneSymbol(
         resolved = await resolveSymbol(symbol);
     }
 
-    // Incremental sync: for syncOnly with a known last bar, narrow the fetch
-    // window to "newer than what we already have". Falls back to full-period
-    // fetch when no prior interval data exists.
+    // Incremental sync: for bounded periods with a known last bar, narrow the
+    // fetch window. `max` must still walk backward for a full backfill.
     let incrementalFromTime: number | undefined;
-    if (syncOnly && existingEntry) {
-        const lastIso = existingEntry.intervals[interval]?.lastTime ?? null;
+    if (shouldUseIncrementalIbkrSync(syncOnly, period, existingEntry !== undefined)) {
+        const lastIso = existingEntry!.intervals[interval]?.lastTime ?? null;
         incrementalFromTime = computeIncrementalStartTime(interval, lastIso) ?? undefined;
     }
 
@@ -1043,8 +1200,24 @@ export function ibkrDataVitePlugin(): Plugin {
             }
             try {
                 const payload = await ensureBrokerageSession();
+                const brokerageOk = isAuthenticatedBrokerageSession(payload);
+                let marketData: IbkrMarketDataReadiness | null = null;
+                let ticklePayload: unknown = null;
+                if (brokerageOk) {
+                    try {
+                        ticklePayload = await tickleGateway();
+                        marketData = describeIbkrMarketDataReadiness(ticklePayload);
+                    } catch (tickleError) {
+                        marketData = {
+                            ok: false,
+                            error: tickleError instanceof Error ? tickleError.message : String(tickleError),
+                            warning: null,
+                            hmds: null,
+                        };
+                    }
+                }
                 sendJson(res, isAuthenticatedBrokerageSession(payload) ? 200 : 401, {
-                    ok: isAuthenticatedBrokerageSession(payload),
+                    ok: brokerageOk && (marketData?.ok ?? true),
                     gatewayUrl: getGatewayUrl(),
                     keepAlive: {
                         active: keepAliveTimer !== null,
@@ -1052,8 +1225,13 @@ export function ibkrDataVitePlugin(): Plugin {
                         lastTickleAt: lastKeepAliveAt,
                         lastError: lastKeepAliveError,
                     },
+                    marketData,
                     payload,
-                    ...(!isAuthenticatedBrokerageSession(payload)
+                    ticklePayload,
+                    ...(brokerageOk && marketData && !marketData.ok && marketData.error
+                        ? { error: marketData.error }
+                        : {}),
+                    ...(!brokerageOk
                         ? { error: "IBKR Gateway is reachable, but the brokerage session is not authenticated." }
                         : {}),
                 });

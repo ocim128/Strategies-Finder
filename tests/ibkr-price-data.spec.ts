@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
     computeIncrementalStartTime,
+    describeIbkrMarketDataReadiness,
     mergeCandlesByTime,
     normalizeSymbol,
     parseCsvCandleLines,
@@ -10,10 +11,46 @@ import {
     parsePeriodToMs,
     parseResolvedContracts,
     resolveFromCatalog,
+    shouldUseIncrementalIbkrSync,
     type SyncRunState,
 } from "../lib/ibkr-data/ibkr-data-vite-plugin";
 import { beginNdjsonStream } from "../lib/vite-http-utils";
 import type { OHLCVData } from "../lib/types/strategies";
+
+describe("ibkr describeIbkrMarketDataReadiness", () => {
+    it("keeps the HMDS bridge tickle error as a warning", () => {
+        const readiness = describeIbkrMarketDataReadiness({
+            iserver: { authStatus: { authenticated: true, connected: true } },
+            hmds: { error: "no bridge" },
+        });
+
+        assert.equal(readiness.ok, true);
+        assert.equal(readiness.error, null);
+        assert.match(readiness.warning ?? "", /hmds\.error="no bridge"/);
+        assert.match(readiness.warning ?? "", /sync will probe the history endpoint directly/);
+        assert.deepEqual(readiness.hmds, { error: "no bridge" });
+    });
+
+    it("treats a missing HMDS block as inconclusive instead of failed", () => {
+        const readiness = describeIbkrMarketDataReadiness({
+            iserver: { authStatus: { authenticated: true, connected: true } },
+        });
+
+        assert.equal(readiness.ok, true);
+        assert.equal(readiness.error, null);
+        assert.equal(readiness.warning, null);
+        assert.equal(readiness.hmds, null);
+    });
+
+    it("flags explicit disconnected HMDS state", () => {
+        const readiness = describeIbkrMarketDataReadiness({
+            hmds: { connected: false },
+        });
+
+        assert.equal(readiness.ok, false);
+        assert.match(readiness.error ?? "", /not connected\/authenticated/);
+    });
+});
 
 describe("ibkr parseHistoryCandles", () => {
     it("returns an empty array when the payload has no data array", () => {
@@ -253,6 +290,16 @@ describe("ibkr computeIncrementalStartTime", () => {
 
     it("falls back when lastTime cannot be parsed", () => {
         assert.equal(computeIncrementalStartTime("1d", "not-a-date", 1_700_000_000), null);
+    });
+});
+
+describe("ibkr shouldUseIncrementalIbkrSync", () => {
+    it("uses incremental sync only for bounded repeat syncs", () => {
+        assert.equal(shouldUseIncrementalIbkrSync(true, "6m", true), true);
+        assert.equal(shouldUseIncrementalIbkrSync(true, "max", true), false);
+        assert.equal(shouldUseIncrementalIbkrSync(true, "all", true), false);
+        assert.equal(shouldUseIncrementalIbkrSync(true, "6m", false), false);
+        assert.equal(shouldUseIncrementalIbkrSync(false, "6m", true), false);
     });
 });
 

@@ -1,5 +1,12 @@
 @echo off
 setlocal enabledelayedexpansion
+
+:: Elevated-relaunch entry point: when this bat re-launches itself with
+:: `_CERT_INSTALL` as the first arg (admin via UAC), jump straight to the
+:: cert install block and exit. Prevents the elevated child from also
+:: killing ports and starting the gateway.
+if /i "%~1"=="_CERT_INSTALL" goto :do_cert_install
+
 echo Cleaning up existing processes...
 
 :: Kill port 5173 (Vite)
@@ -13,6 +20,29 @@ for /f "tokens=5" %%i in ('netstat -aon ^| findstr :3030 ^| findstr LISTENING') 
     echo Killing Rust Engine process PID: %%i
     taskkill /f /pid %%i >nul 2>&1
 )
+
+:: Kill port 5000 (IBKR Client Portal Gateway)
+set "IBKR_GATEWAY_WAS_KILLED="
+for /f "tokens=5" %%i in ('netstat -aon ^| findstr :5000 ^| findstr LISTENING') do (
+    echo Killing IBKR Client Portal Gateway process PID: %%i
+    set "IBKR_GATEWAY_WAS_KILLED=1"
+    taskkill /f /pid %%i >nul 2>&1
+)
+if defined IBKR_GATEWAY_WAS_KILLED timeout /t 2 /nobreak >nul
+
+:: --- One-time IBKR gateway cert trust -----------------------------------
+:: The shipped price-data/clientportal.gw/root/vertx.jks contains an IBKR
+:: self-signed cert that EXPIRED in 2019; modern browsers refuse to load
+:: https://localhost:5000/ at all (cert error before any login page). We
+:: regenerate the keystore with a fresh self-signed localhost cert (10-year
+:: validity, same alias/password the gateway config expects: localhost /
+:: mywebapi) and install the cert into Cert:\LocalMachine\Root so Chrome and
+:: Edge trust it permanently.
+::
+:: Idempotent: if a localhost cert is already trusted, this is a sub-second
+:: no-op. Requires admin to write to LocalMachine\Root; self-elevates via UAC
+:: and waits for the elevated child to finish before continuing.
+call :ensure_ibkr_cert
 
 set "IBKR_GATEWAY_PID="
 for /f "tokens=5" %%i in ('netstat -aon ^| findstr :5000 ^| findstr LISTENING') do (
@@ -93,3 +123,119 @@ if defined CLOUDFLARED_EXE (
 echo Starting Lightweight Charts Playground...
 call npx vite
 pause
+exit /b 0
+
+:: ===========================================================================
+:: Subroutine: ensure the IBKR gateway's self-signed TLS cert is trusted.
+:: Idempotent. Self-elevates via UAC if not admin. Synchronous: caller waits.
+:: ===========================================================================
+:ensure_ibkr_cert
+set "GW_DIR=%~dp0price-data\clientportal.gw"
+set "JKS=%GW_DIR%\root\vertx.jks"
+set "CER=%GW_DIR%\root\vertx.cer"
+
+:: Skip silently if the gateway isn't installed locally.
+if not exist "%GW_DIR%\bin\run.bat" exit /b 0
+
+:: Locate keytool.exe next to java.exe on PATH.
+set "KEYTOOL="
+for /f "delims=" %%j in ('where java 2^>nul') do (
+    if not defined KEYTOOL (
+        set "JAVA_BIN=%%~dpj"
+        if exist "!JAVA_BIN!keytool.exe" set "KEYTOOL=!JAVA_BIN!keytool.exe"
+    )
+)
+if not defined KEYTOOL (
+    echo [ibkr-cert] keytool.exe not found next to java.exe — skipping cert trust.
+    exit /b 0
+)
+
+:: Idempotency check: if a localhost cert is already in LocalMachine\Root,
+:: assume setup is complete and skip everything. PowerShell exits 1 if the
+:: cert is present, 0 if absent.
+powershell -NoProfile -Command "$c = Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue | Where-Object { $_.Subject -like '*CN=localhost*' -and $_.Issuer -like '*CN=localhost*' }; if (-not $c) { exit 0 } else { exit 1 }" 2>nul
+if errorlevel 1 (
+    echo [ibkr-cert] Cert already trusted in LocalMachine\Root — skipping.
+    exit /b 0
+)
+
+:: Cert needs to be installed. Requires admin to write to LocalMachine\Root.
+:: If we're not admin, self-elevate a fresh cmd that runs :do_cert_install
+:: and exits; we wait for it before continuing.
+net session >nul 2>&1
+if errorlevel 1 (
+    echo [ibkr-cert] Cert install requires admin — requesting elevation...
+    :: Pass the bat path as a separate argv element to avoid quote-mangling.
+    :: PowerShell's Start-Process takes -ArgumentList as an array of strings.
+    powershell -NoProfile -Command "try { Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('\"' + '%~f0' + '\" _CERT_INSTALL') -Verb RunAs -Wait -WindowStyle Normal -ErrorAction Stop; exit 0 } catch { exit 1 }"
+    if errorlevel 1 (
+        echo [ibkr-cert] UAC declined or unavailable. The browser will reject the gateway cert
+        echo [ibkr-cert] until you run this bat as admin once, or manually trust the cert.
+    ) else (
+        :: Re-verify the cert is now trusted (child install succeeded).
+        powershell -NoProfile -Command "$c = Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue | Where-Object { $_.Subject -like '*CN=localhost*' }; if (-not $c) { exit 1 } else { exit 0 }" 2>nul
+        if not errorlevel 1 (
+            echo [ibkr-cert] Cert trusted via elevated install.
+        ) else (
+            echo [ibkr-cert] Elevated child did not leave a trusted cert — re-run as admin to diagnose.
+        )
+    )
+    exit /b 0
+)
+
+:: Fall-through path: we ARE admin and install is needed. Call the install
+:: block directly (also the entry point for the elevated relaunch).
+call :do_cert_install
+exit /b 0
+
+:do_cert_install
+:: Self-contained: also the entry point for the elevated relaunch, so it
+:: must derive all paths itself rather than rely on :ensure_ibkr_cert state.
+set "GW_DIR=%~dp0price-data\clientportal.gw"
+set "JKS=%GW_DIR%\root\vertx.jks"
+set "CER=%GW_DIR%\root\vertx.cer"
+set "KEYTOOL="
+for /f "delims=" %%j in ('where java 2^>nul') do (
+    if not defined KEYTOOL (
+        set "JAVA_BIN=%%~dpj"
+        if exist "!JAVA_BIN!keytool.exe" set "KEYTOOL=!JAVA_BIN!keytool.exe"
+    )
+)
+if not defined KEYTOOL (
+    echo [ibkr-cert] keytool.exe not found next to java.exe — cannot install cert.
+    exit /b 1
+)
+
+echo [ibkr-cert] Installing fresh localhost cert (one-time setup)...
+
+:: Backup the original vertx.jks once, so the user can roll back.
+if not exist "%JKS%.orig" (
+    copy /y "%JKS%" "%JKS%.orig" >nul
+    echo [ibkr-cert] Backed up original vertx.jks to vertx.jks.orig
+)
+
+:: Generate a fresh keystore with a 10-year self-signed localhost cert using
+:: the same alias/password the gateway config expects (localhost / mywebapi).
+"%KEYTOOL%" -genkeypair -alias localhost -keyalg RSA -keysize 2048 -sigalg SHA256withRSA -validity 3650 -keystore "%JKS%" -storetype JKS -storepass mywebapi -keypass mywebapi -dname "CN=localhost, OU=Client Portal, O=Local Dev, L=Local, ST=Local, C=US" -ext SAN=dns:localhost,ip:127.0.0.1,ip:::1 >nul 2>&1
+if errorlevel 1 (
+    echo [ibkr-cert] keytool failed to generate new keystore — restoring original.
+    if exist "%JKS%.orig" copy /y "%JKS%.orig" "%JKS%" >nul
+    exit /b 0
+)
+
+:: Export the cert and trust it in LocalMachine\Root.
+"%KEYTOOL%" -exportcert -alias localhost -keystore "%JKS%" -storepass mywebapi -file "%CER%" -rfc >nul 2>&1
+if errorlevel 1 (
+    echo [ibkr-cert] keytool failed to export cert.
+    exit /b 0
+)
+
+powershell -NoProfile -Command "try { Import-Certificate -FilePath '%CER%' -CertStoreLocation Cert:\LocalMachine\Root -ErrorAction Stop | Out-Null; exit 0 } catch { Write-Host '[ibkr-cert] Import-Certificate failed:' $_.Exception.Message; exit 1 }"
+if errorlevel 1 exit /b 0
+
+echo [ibkr-cert] Done. https://localhost:5000/ will now open without cert warnings.
+:: If running as the elevated relaunch child, keep the window open briefly so
+:: the user can read the result before it closes.
+if /i "%~1"=="_CERT_INSTALL" timeout /t 3 /nobreak >nul
+exit /b 0
+
