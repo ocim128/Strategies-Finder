@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
-import { Agent } from "undici";
 import type { Plugin } from "vite";
 import { debugLogger } from "../debug-logger";
 import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
@@ -40,7 +40,30 @@ const IBKR_BAR_BY_INTERVAL: Record<string, string> = {
     "4h": "4h",
     "1d": "1d",
 };
-const LOCALHOST_TLS_DISPATCHER = new Agent({ connect: { rejectUnauthorized: false } });
+// undici is an optional peer: it ships with Node >=18 but is not declared
+// as a project dependency, and is resolvable only when the monorepo's
+// hoisted node_modules is on the resolver path (i.e. locally). On hosts
+// where it isn't resolvable (Vercel, minimal installs), requiring it at
+// module top level would throw during `vite.config.ts` load and abort the
+// whole build. Resolve it lazily and tolerate absence — the dispatcher is
+// only used for `https://localhost:*` calls to the user's local IBKR
+// Gateway, which never exist in a Vercel build/runtime anyway.
+type UndiciAgent = { new (options: { connect: { rejectUnauthorized: boolean } }): unknown };
+const requireFromConfig = createRequire(import.meta.url);
+let localhostTlsDispatcher: unknown | undefined;
+let undiciUnavailable = false;
+function getLocalhostTlsDispatcher(): unknown | undefined {
+    if (localhostTlsDispatcher || undiciUnavailable) return localhostTlsDispatcher;
+    try {
+        const Undici = requireFromConfig("undici") as { Agent: UndiciAgent };
+        localhostTlsDispatcher = new Undici.Agent({ connect: { rejectUnauthorized: false } });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[ibkr-data-vite-plugin] undici unavailable (${message}); localhost HTTPS requests will use the default fetch dispatcher.`);
+        undiciUnavailable = true;
+    }
+    return localhostTlsDispatcher;
+}
 const IBKR_HISTORY_SOFT_LIMIT = 900;
 const IBKR_HISTORY_MAX_CHUNKS = 20;
 const IBKR_HISTORY_MAX_SYNC_CHUNKS = 80;
@@ -205,13 +228,14 @@ function requestGatewayText(url: string, init?: RequestInit): Promise<{ status: 
         ...(body ? { "Content-Type": "application/json" } : {}),
     };
     const isLocalhost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "::1";
+    const dispatcher = parsed.protocol === "https:" && isLocalhost ? getLocalhostTlsDispatcher() : undefined;
 
     return fetch(url, {
         method: init?.method ?? "GET",
         headers,
         body,
-        ...(parsed.protocol === "https:" && isLocalhost ? { dispatcher: LOCALHOST_TLS_DISPATCHER } : {}),
-    } as RequestInit & { dispatcher?: Agent }).then(async (response) => {
+        ...(dispatcher ? { dispatcher } : {}),
+    } as RequestInit & { dispatcher?: unknown }).then(async (response) => {
         return {
             status: response.status,
             text: await response.text(),
