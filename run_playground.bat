@@ -14,6 +14,29 @@ for /f "tokens=5" %%i in ('netstat -aon ^| findstr :3030 ^| findstr LISTENING') 
     taskkill /f /pid %%i >nul 2>&1
 )
 
+set "IBKR_GATEWAY_PID="
+for /f "tokens=5" %%i in ('netstat -aon ^| findstr :5000 ^| findstr LISTENING') do (
+    set "IBKR_GATEWAY_PID=%%i"
+)
+
+if defined IBKR_GATEWAY_PID (
+    echo IBKR Client Portal Gateway already running on port 5000, PID: !IBKR_GATEWAY_PID!
+) else (
+    set "IBKR_GATEWAY_DIR=%~dp0price-data\clientportal.gw"
+    if exist "!IBKR_GATEWAY_DIR!\bin\run.bat" (
+        where java >nul 2>&1
+        if errorlevel 1 (
+            echo [ibkr] Java was not found on PATH. Install Java or add it to PATH before using IBKR price sync.
+        ) else (
+            echo Starting IBKR Client Portal Gateway on https://localhost:5000 ...
+            start "IBKR Client Portal Gateway" cmd /k "cd /d ""!IBKR_GATEWAY_DIR!"" && call bin\run.bat root\conf.yaml"
+            timeout /t 2 /nobreak >nul
+        )
+    ) else (
+        echo [ibkr] Gateway not found at !IBKR_GATEWAY_DIR! - skipping IBKR startup.
+    )
+)
+
 echo Starting Rust Trading Engine...
 start "Rust Trading Engine" cmd /k "cd /d "%~dp0..\..\..\trading-engine" && cargo run --release"
 
