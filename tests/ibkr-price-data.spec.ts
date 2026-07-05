@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+    adjustIntradayCandlesToDailyScale,
     computeIncrementalStartTime,
     describeIbkrMarketDataReadiness,
     mergeCandlesByTime,
@@ -257,6 +258,44 @@ describe("ibkr parseCsvCandleLines", () => {
             candles.map((c) => Number(c.time)),
             [1_700_000_000, 1_700_000_001, 1_700_000_002]
         );
+    });
+});
+
+describe("ibkr adjustIntradayCandlesToDailyScale", () => {
+    it("rescales split-affected intraday bars to match adjusted daily candles", () => {
+        const intraday: OHLCVData[] = [
+            { time: Math.floor(Date.parse("2026-06-11T13:30:00.000Z") / 1000) as OHLCVData["time"], open: 2208.5, high: 2304, low: 2206.28, close: 2289.57, volume: 13769.8 },
+            { time: Math.floor(Date.parse("2026-06-11T19:30:00.000Z") / 1000) as OHLCVData["time"], open: 2406.7, high: 2431.29, low: 2400, close: 2410.26, volume: 19260.6 },
+            { time: Math.floor(Date.parse("2026-06-12T13:30:00.000Z") / 1000) as OHLCVData["time"], open: 238.53, high: 244.68, low: 236, close: 244.29, volume: 92420.2 },
+        ];
+        const daily: OHLCVData[] = [
+            { time: Math.floor(Date.parse("2026-06-11T13:30:00.000Z") / 1000) as OHLCVData["time"], open: 220.85, high: 243.13, low: 220.63, close: 241.16, volume: 1015875 },
+            { time: Math.floor(Date.parse("2026-06-12T13:30:00.000Z") / 1000) as OHLCVData["time"], open: 238.53, high: 254.93, low: 236, close: 254.54, volume: 624640.6 },
+        ];
+
+        const adjusted = adjustIntradayCandlesToDailyScale(intraday, daily, "30m");
+
+        assert.equal(adjusted[0]!.open, 220.85);
+        assert.equal(adjusted[0]!.high, 230.4);
+        assert.equal(adjusted[0]!.low, 220.628);
+        assert.equal(adjusted[0]!.close, 228.957);
+        assert.equal(adjusted[0]!.volume, 137698);
+        assert.equal(adjusted[1]!.close, 241.026);
+        assert.equal(adjusted[1]!.volume, 192606);
+        assert.equal(adjusted[2]!.close, 244.29);
+        assert.equal(adjusted[2]!.volume, 92420.2);
+    });
+
+    it("leaves non-split mismatches unchanged instead of inventing an adjustment", () => {
+        const intraday: OHLCVData[] = [
+            { time: Math.floor(Date.parse("2026-06-11T19:30:00.000Z") / 1000) as OHLCVData["time"], open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+        ];
+        const daily: OHLCVData[] = [
+            { time: Math.floor(Date.parse("2026-06-11T13:30:00.000Z") / 1000) as OHLCVData["time"], open: 95, high: 101, low: 94, close: 97, volume: 1200 },
+        ];
+
+        assert.deepEqual(adjustIntradayCandlesToDailyScale(intraday, daily, "30m"), intraday);
+        assert.deepEqual(adjustIntradayCandlesToDailyScale(intraday, daily, "1d"), intraday);
     });
 });
 

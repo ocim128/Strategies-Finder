@@ -619,6 +619,97 @@ export function mergeCandlesByTime(candles: OHLCVData[]): OHLCVData[] {
     return Array.from(byTime.values()).sort((a, b) => Number(a.time) - Number(b.time));
 }
 
+function toUtcDateKey(time: OHLCVData["time"]): string | null {
+    const seconds = parseTimeToUnixSeconds(time);
+    if (seconds === null) return null;
+    return new Date(seconds * 1000).toISOString().slice(0, 10);
+}
+
+const COMMON_SPLIT_PRICE_FACTORS = [
+    1 / 100, 1 / 50, 1 / 40, 1 / 30, 1 / 25, 1 / 20, 1 / 15, 1 / 12,
+    1 / 10, 1 / 8, 1 / 7, 1 / 5, 1 / 4, 1 / 3, 1 / 2, 2 / 3,
+    1,
+    3 / 2, 2, 3, 4, 5, 7, 8, 10, 12, 15, 20, 25, 30, 40, 50, 100,
+] as const;
+const SPLIT_FACTOR_TOLERANCE = 0.025;
+
+function snapSplitPriceFactor(rawFactor: number): number | null {
+    if (!Number.isFinite(rawFactor) || rawFactor <= 0) return null;
+    let best: number | null = null;
+    let bestDelta = Infinity;
+    for (const candidate of COMMON_SPLIT_PRICE_FACTORS) {
+        const delta = Math.abs(rawFactor - candidate) / candidate;
+        if (delta < bestDelta) {
+            best = candidate;
+            bestDelta = delta;
+        }
+    }
+    return best !== null && bestDelta <= SPLIT_FACTOR_TOLERANCE ? best : null;
+}
+
+function roundScaled(value: number, digits: number): number {
+    const scale = 10 ** digits;
+    return Math.round(value * scale) / scale;
+}
+
+export function adjustIntradayCandlesToDailyScale(
+    intradayCandles: readonly OHLCVData[],
+    dailyCandles: readonly OHLCVData[],
+    interval: string
+): OHLCVData[] {
+    if (interval === "1d" || intradayCandles.length === 0 || dailyCandles.length === 0) {
+        return [...intradayCandles];
+    }
+
+    const dailyByDate = new Map<string, OHLCVData>();
+    for (const candle of dailyCandles) {
+        const dateKey = toUtcDateKey(candle.time);
+        if (dateKey) dailyByDate.set(dateKey, candle);
+    }
+
+    const intradayLastByDate = new Map<string, OHLCVData>();
+    for (const candle of intradayCandles) {
+        const dateKey = toUtcDateKey(candle.time);
+        if (!dateKey) continue;
+        const existing = intradayLastByDate.get(dateKey);
+        if (!existing || Number(candle.time) >= Number(existing.time)) {
+            intradayLastByDate.set(dateKey, candle);
+        }
+    }
+
+    const priceFactorByDate = new Map<string, number>();
+    for (const [dateKey, intraday] of intradayLastByDate) {
+        const daily = dailyByDate.get(dateKey);
+        if (!daily || intraday.close <= 0 || daily.close <= 0) continue;
+        const priceFactor = snapSplitPriceFactor(daily.close / intraday.close);
+        if (priceFactor === null || priceFactor === 1) continue;
+        priceFactorByDate.set(dateKey, priceFactor);
+    }
+
+    if (priceFactorByDate.size === 0) return [...intradayCandles];
+
+    return intradayCandles.map((candle) => {
+        const dateKey = toUtcDateKey(candle.time);
+        const priceFactor = dateKey ? priceFactorByDate.get(dateKey) : undefined;
+        if (priceFactor === undefined) return { ...candle };
+        const volumeFactor = 1 / priceFactor;
+        return {
+            ...candle,
+            open: roundScaled(candle.open * priceFactor, 10),
+            high: roundScaled(candle.high * priceFactor, 10),
+            low: roundScaled(candle.low * priceFactor, 10),
+            close: roundScaled(candle.close * priceFactor, 10),
+            volume: roundScaled((candle.volume ?? 0) * volumeFactor, 6),
+        };
+    });
+}
+
+function adjustIntradayCandlesFromDailyCsv(symbol: string, interval: string, candles: OHLCVData[]): OHLCVData[] {
+    if (interval === "1d") return candles;
+    const daily = readCsvCandles(symbol, "1d");
+    return adjustIntradayCandlesToDailyScale(candles, daily, interval);
+}
+
 export function getCsvPath(symbol: string, interval: string): string {
     return resolve(IBKR_CSV_DIR, interval, `${symbol}.csv`);
 }
@@ -961,7 +1052,7 @@ async function syncOneSymbol(
     }
 
     const existing = syncOnly ? readCsvCandles(symbol, interval) : [];
-    const merged = mergeCandlesByTime([...existing, ...fetched]);
+    const merged = adjustIntradayCandlesFromDailyCsv(symbol, interval, mergeCandlesByTime([...existing, ...fetched]));
     writeCsv(symbol, interval, merged);
     const catalogEntry = upsertCatalogEntry(catalog, { symbol, interval, candles: merged, resolved });
     debugLogger.info("ibkr.sync.symbol", {
