@@ -33,7 +33,7 @@ export type BatchStreamEvent =
         interval: string;
         totals: { loadedSymbols: number; failedSymbols: number };
         summary: string;
-        /** True when the server retains per-row artifacts (data/signals/trades) for Mine. */
+        /** True when the server retains per-row artifacts (data/signals/trades) for Mine/Stability Mine. */
         serverHasArtifacts: boolean;
         /** Fingerprint of the run settings; Mine must match it before starting. */
         fingerprint: string | null;

@@ -47,6 +47,25 @@
         </button>
     </div>
 
+    <div class="section-body" style="margin-top: 8px;">
+        <div class="finder-strategy-actions" role="group" aria-label="Batch stability mine controls">
+            <label class="param-label" for="batchBacktestStabilitySubsetSize">Subset</label>
+            <input class="param-input compact-input" id="batchBacktestStabilitySubsetSize" type="number" min="10" max="10000" step="10" value="200">
+            <label class="param-label" for="batchBacktestStabilityReruns">Reruns</label>
+            <input class="param-input compact-input" id="batchBacktestStabilityReruns" type="number" min="1" max="200" step="1" value="50">
+            <label class="param-label" for="batchBacktestStabilitySeed">Seed</label>
+            <input class="param-input compact-input" id="batchBacktestStabilitySeed" type="number" min="1" step="1" value="1">
+            <button class="btn btn-secondary btn-compact" id="batchBacktestStabilityMineBtn" type="button" disabled
+                title="Repeatedly mine random pair subsets from the latest Batch run">
+                Stability Mine
+            </button>
+            <button class="btn btn-secondary btn-compact" id="batchBacktestCopyStabilityBtn" type="button" disabled
+                title="Copy the latest stability miner summary">
+                Copy Stability
+            </button>
+        </div>
+    </div>
+
     <div class="progress-container" id="batchBacktestProgress">
         <div class="progress-bar">
             <div class="progress-fill" id="batchBacktestProgressFill"></div>

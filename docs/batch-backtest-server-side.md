@@ -75,20 +75,31 @@ running on the server. Use Stop to cancel it.
 ## Mine Timing on the server
 
 In server-side mode, the per-row artifacts (`data` / `signals` /
-`result.trades`) stay on the server. The Mine Timing button is enabled when
-the run's `done` event reports `serverHasArtifacts: true` (i.e. at least one
-completed synthetic-pair row).
+`result.trades`) are written to a temporary server-side artifact directory.
+The Mine Timing button is enabled when the run's `done` event reports
+`serverHasArtifacts: true` (i.e. at least one completed synthetic-pair row was
+stored).
 
-Clicking Mine streams verdicts back via `POST /api/batch-backtest/mine`. After
-Mine completes, the server releases its artifact copy. Re-mining the same run
-requires a fresh Run — the same fingerprint guard the browser path uses.
+Mine does not load all stored pairs into memory at once. It derives the target
+assets from artifact metadata, then for each target loads only the synthetic
+pairs linked to that target, computes that target's verdict, and releases the
+linked artifact objects before moving to the next target. This keeps 6700-pair
+Mine runs bounded by the largest single target's linked pair set rather than
+the full pair universe.
+
+Clicking Mine streams verdicts back via `POST /api/batch-backtest/mine`.
+Clicking Stability Mine streams randomized subset progress via
+`POST /api/batch-backtest/stability-mine`. After either miner completes, the
+server releases its artifact copy. Re-mining the same run requires a fresh Run
+— the same fingerprint guard the browser path uses.
 
 ## Artifact retention and TTL
 
-The server holds the per-row artifacts (`lastResults`) until one of:
+When artifacts are retained, the server keeps the temporary artifact directory
+until one of:
 
-1. Successful Mine completion (after streaming `done`).
-2. A new Run starting (`POST /run` resets `lastResults` first).
+1. Successful Mine or Stability Mine completion (after streaming `done`).
+2. A new Run starting (`POST /run` removes the prior artifact directory first).
 3. **A bounded TTL of 10 minutes** after the Run's `done` event with no Mine
    click.
 

@@ -12,10 +12,10 @@
  * Timing step. That workload OOMs a browser tab; Node can use main RAM
  * directly. The browser tab keeps only rendered scalars and DOM rows.
  *
- * Memory contract: the plugin holds `lastResults` (the full per-row artifacts
- * needed for Mine Timing) until one of three release triggers fires:
+ * Memory contract: the plugin writes per-row Mine artifacts to a temp
+ * directory until one of three release triggers fires:
  *   1. Successful Mine completion (after streaming `done`).
- *   2. A new Run starting (`POST /run` resets `lastResults = []` first).
+ *   2. A new Run starting (`POST /run` removes the prior artifact directory).
  *   3. A bounded TTL (default 10 minutes after the Run's `done` event with no
  *      Mine click) so a user who walks away doesn't leave ~5 GB pinned.
  *
@@ -25,10 +25,20 @@
 
 import type { Plugin } from "vite";
 import { getHeapStatistics } from "node:v8";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { debugLogger } from "../debug-logger";
 import { beginNdjsonStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, sendJson, type ViteHttpResponse } from "../vite-http-utils";
 import { runBatchBacktest, type BatchBacktestRunInput, type BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import { clearServerBatchDatasetCaches, loadServerBatchDataset } from "./server-batch-data-loader";
+import {
+    addStabilityVerdicts,
+    clampInt,
+    createStabilityAggregate,
+    finalizeStabilityAggregate,
+    sampleItems,
+} from "./batch-stability-mine";
 import {
     runBatchSyntheticStateMiner,
     resolveBatchSyntheticTargetSymbol,
@@ -65,7 +75,8 @@ let minerOwner = RUN_OWNER_NONE;
 let minerOwnerGen = 0;
 
 let runState: BatchRunSnapshot | null = null;
-let lastResults: BatchBacktestSymbolResult[] = [];
+let lastMineArtifacts: StoredMineArtifactMeta[] = [];
+let mineArtifactDir: string | null = null;
 let lastRunFingerprint: string | null = null;
 let lastRunInterval: string | null = null;
 let lastRunStrategyKey: string | null = null;
@@ -84,6 +95,15 @@ export type BatchRunSnapshot = {
     cancelled: boolean;
     rows: BatchBacktestSymbolResult[];
 };
+
+interface StoredMineArtifactMeta {
+    symbol: string;
+    baseAsset: string;
+    quoteAsset: string;
+    baseSymbol?: string;
+    quoteSymbol?: string;
+    filePath: string;
+}
 
 // ---------------------------------------------------------------------------
 // Run helpers
@@ -107,14 +127,51 @@ function buildRunFingerprint(args: {
     });
 }
 
-/**
- * Strip `data` / `signals` from a per-row result so it is safe to retain for
- * Mine while still being scalars-only on the wire. The runner already drops
- * `signals` for non-synthetic rows and prunes post-Mine; here we keep whatever
- * the runner produced so Mine can read it.
- */
-function retainArtifacts(row: BatchBacktestSymbolResult): BatchBacktestSymbolResult {
-    return row;
+function ensureMineArtifactDir(): string {
+    if (!mineArtifactDir) {
+        mineArtifactDir = mkdtempSync(join(tmpdir(), "strategies-finder-batch-mine-"));
+    }
+    return mineArtifactDir;
+}
+
+function storeMineArtifact(index: number, row: BatchBacktestSymbolResult): void {
+    if (!row.result || !row.data || !row.signals) return;
+    const parsed = parsePortfolioSyntheticPairSymbol(row.symbol);
+    if (!parsed) return;
+
+    const dir = ensureMineArtifactDir();
+    const filePath = join(dir, `${String(index).padStart(6, "0")}.json`);
+    const artifact: BatchSyntheticPairArtifact = {
+        symbol: row.symbol,
+        baseAsset: parsed.baseAsset,
+        quoteAsset: parsed.quoteAsset,
+        baseSymbol: parsed.baseSymbol,
+        quoteSymbol: parsed.quoteSymbol,
+        data: row.data,
+        signals: row.signals,
+        result: row.result,
+    };
+    writeFileSync(filePath, JSON.stringify(artifact), "utf8");
+    lastMineArtifacts[index] = {
+        symbol: row.symbol,
+        baseAsset: parsed.baseAsset,
+        quoteAsset: parsed.quoteAsset,
+        baseSymbol: parsed.baseSymbol,
+        quoteSymbol: parsed.quoteSymbol,
+        filePath,
+    };
+}
+
+function loadStoredMineArtifact(meta: StoredMineArtifactMeta): BatchSyntheticPairArtifact {
+    return JSON.parse(readFileSync(meta.filePath, "utf8")) as BatchSyntheticPairArtifact;
+}
+
+function collectStoredMineArtifactMetas(): StoredMineArtifactMeta[] {
+    return lastMineArtifacts.filter((meta): meta is StoredMineArtifactMeta => Boolean(meta));
+}
+
+function hasStoredMineArtifacts(): boolean {
+    return collectStoredMineArtifactMetas().length > 0;
 }
 
 function clearArtifactReleaseTimer(): void {
@@ -129,17 +186,22 @@ function clearArtifactReleaseTimer(): void {
  * browser-side post-Mine prune (commit 6401a53) plus the TTL defense-in-depth
  * the browser got for free via tab reload.
  *
- * Idempotent: safe to call when `lastResults` is already empty.
+ * Idempotent: safe to call when no artifacts are retained.
  */
 function releaseLastResults(reason: string): void {
     clearArtifactReleaseTimer();
-    if (lastResults.length === 0) return;
+    const rows = lastMineArtifacts.length;
+    if (rows === 0 && !mineArtifactDir) return;
     debugLogger.info("batch.server.artifacts_released", {
         reason,
-        rows: lastResults.length,
+        rows,
         heapUsedMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
     });
-    lastResults = [];
+    lastMineArtifacts = [];
+    if (mineArtifactDir) {
+        rmSync(mineArtifactDir, { recursive: true, force: true });
+        mineArtifactDir = null;
+    }
     lastRunFingerprint = null;
     lastRunInterval = null;
     lastRunStrategyKey = null;
@@ -226,7 +288,7 @@ export async function processRunBatch(
     let cancelled = false;
 
     try {
-        const output = await runBatchBacktest(input, {
+        const output = await runBatchBacktest({ ...input, pruneResultArtifacts: true }, {
             setProgress: (percent, text) => {
                 if (lostOwnership()) return;
                 writer({ type: "progress", percent, text, status: text });
@@ -241,8 +303,7 @@ export async function processRunBatch(
                     snapshot.completed = index + 1;
                     snapshot.rows.push(toScalarRow(result));
                 }
-                // Server retains the full artifacts for Mine Timing.
-                lastResults[index] = retainArtifacts(result);
+                storeMineArtifact(index, result);
                 writer({ type: "symbol", index, total, row: toScalarRow(result) });
             },
             isCancelled: () => {
@@ -266,9 +327,6 @@ export async function processRunBatch(
             if (runState === snapshot && snapshot.rows[i] === undefined) {
                 snapshot.rows.push(toScalarRow(row));
             }
-            if (lastResults[i] === undefined) {
-                lastResults[i] = retainArtifacts(row);
-            }
         }
 
         if (runState === snapshot) {
@@ -282,6 +340,7 @@ export async function processRunBatch(
         lastRunInterval = input.interval;
         lastRunStrategyKey = input.strategyKey;
 
+        const artifactsAvailable = hasStoredMineArtifacts();
         writer({
             type: "done",
             ok: output.failedSymbols.length === 0 && !cancelled,
@@ -289,14 +348,14 @@ export async function processRunBatch(
             interval: input.interval,
             totals: { loadedSymbols: output.loadedSymbols, failedSymbols: output.failedSymbols.length },
             summary: `Done — ${output.results.length} pairs${output.failedSymbols.length > 0 ? `, ${output.failedSymbols.length} failed` : ""}${cancelled ? ", cancelled" : ""}`,
-            serverHasArtifacts: hasMineableArtifacts(lastResults),
+            serverHasArtifacts: artifactsAvailable,
             fingerprint,
         });
 
         // Schedule the TTL release only if the run produced mineable
         // artifacts. Empty / fully-failed runs release immediately so the
         // server heap doesn't retain a placeholder.
-        if (hasMineableArtifacts(lastResults)) {
+        if (artifactsAvailable) {
             scheduleArtifactTtl();
         } else {
             releaseLastResults("run_no_artifacts");
@@ -327,8 +386,8 @@ export async function processMine(
     writer: MinerStreamWriter,
     owner: number,
 ): Promise<void> {
-    const artifacts = collectMinerPairArtifacts();
-    if (artifacts.length === 0) {
+    const artifactMetas = collectStoredMineArtifactMetas();
+    if (artifactMetas.length === 0) {
         writer({ type: "done", ok: true, cancelled: false, summary: "No completed synthetic pair artifacts to mine.", totals: { verdicts: 0 } });
         return;
     }
@@ -337,14 +396,15 @@ export async function processMine(
         return;
     }
 
-    minerState = { running: true, startedAt: Date.now(), assets: 0, pairs: artifacts.length, verdicts: 0, cancelled: false };
+    minerState = { running: true, startedAt: Date.now(), assets: 0, pairs: artifactMetas.length, verdicts: 0, cancelled: false };
     const snapshot = minerState;
     const lostOwnership = () => minerOwner !== owner;
+    clearArtifactReleaseTimer();
 
     try {
-        const targets = await loadMinerTargets(artifacts, interval);
+        const targets = await loadMinerTargets(artifactMetas, interval);
         snapshot.assets = targets.length;
-        writer({ type: "start", assets: targets.length, pairs: artifacts.length });
+        writer({ type: "start", assets: targets.length, pairs: artifactMetas.length });
         if (lostOwnership()) {
             snapshot.cancelled = true;
             snapshot.running = false;
@@ -356,28 +416,34 @@ export async function processMine(
             writer({ type: "done", ok: true, cancelled: false, summary: "No target asset candles loaded.", totals: { verdicts: 0 } });
             return;
         }
-        const result = runBatchSyntheticStateMiner({ interval, targets, artifacts });
-        snapshot.verdicts = result.verdicts.length;
-        snapshot.running = false;
-        if (lostOwnership()) {
-            snapshot.cancelled = true;
-            writer({ type: "done", ok: false, cancelled: true, summary: "Mining cancelled.", totals: { verdicts: result.verdicts.length } });
-            return;
-        }
-        for (const verdict of result.verdicts) {
+        let verdictCount = 0;
+        for (const target of targets) {
             if (lostOwnership()) {
                 snapshot.cancelled = true;
-                writer({ type: "done", ok: false, cancelled: true, summary: "Mining cancelled.", totals: { verdicts: result.verdicts.length } });
+                writer({ type: "done", ok: false, cancelled: true, summary: "Mining cancelled.", totals: { verdicts: verdictCount } });
                 return;
             }
-            writer({ type: "verdict", verdict });
+            const linkedMetas = artifactMetas.filter((meta) => meta.baseAsset === target.asset || meta.quoteAsset === target.asset);
+            const linkedArtifacts = linkedMetas.map(loadStoredMineArtifact);
+            const result = runBatchSyntheticStateMiner({ interval, targets: [target], artifacts: linkedArtifacts });
+            for (const verdict of result.verdicts) {
+                if (lostOwnership()) {
+                    snapshot.cancelled = true;
+                    writer({ type: "done", ok: false, cancelled: true, summary: "Mining cancelled.", totals: { verdicts: verdictCount } });
+                    return;
+                }
+                verdictCount += 1;
+                snapshot.verdicts = verdictCount;
+                writer({ type: "verdict", verdict });
+            }
         }
+        snapshot.running = false;
         writer({
             type: "done",
             ok: true,
             cancelled: false,
-            summary: `Miner | Assets ${result.verdicts.length}`,
-            totals: { verdicts: result.verdicts.length },
+            summary: `Miner | Assets ${verdictCount}`,
+            totals: { verdicts: verdictCount },
         });
         // Mine was the last consumer of the per-row artifacts. Release them.
         releaseLastResults("mine_completed");
@@ -390,31 +456,90 @@ export async function processMine(
         if (minerState === snapshot) {
             snapshot.running = false;
         }
+        if (hasStoredMineArtifacts()) {
+            scheduleArtifactTtl();
+        }
     }
 }
 
-function collectMinerPairArtifacts(): BatchSyntheticPairArtifact[] {
-    const artifacts: BatchSyntheticPairArtifact[] = [];
-    for (const row of lastResults) {
-        if (!row.result || !row.data || !row.signals) continue;
-        const parsed = parsePortfolioSyntheticPairSymbol(row.symbol);
-        if (!parsed) continue;
-        artifacts.push({
-            symbol: row.symbol,
-            baseAsset: parsed.baseAsset,
-            quoteAsset: parsed.quoteAsset,
-            baseSymbol: parsed.baseSymbol,
-            quoteSymbol: parsed.quoteSymbol,
-            data: row.data,
-            signals: row.signals,
-            result: row.result,
-        });
+export async function processStabilityMine(
+    fingerprint: string | null,
+    interval: string | null,
+    subsetSizeRaw: number,
+    rerunsRaw: number,
+    seedRaw: number,
+    writer: MinerStreamWriter,
+    owner: number,
+    loadTargets: (pairArtifacts: readonly StoredMineArtifactMeta[], interval: string) => Promise<BatchSyntheticTargetArtifact[]> = loadMinerTargets,
+): Promise<void> {
+    const artifactMetas = collectStoredMineArtifactMetas();
+    if (artifactMetas.length === 0) {
+        writer({ type: "fatal", error: "Run Batch before stability mining; no artifacts on server." });
+        return;
     }
-    return artifacts;
+    if (!fingerprint || fingerprint !== lastRunFingerprint || !interval) {
+        writer({ type: "fatal", error: "Rerun Batch before stability mining; settings or symbols changed." });
+        return;
+    }
+
+    const subsetSize = clampInt(subsetSizeRaw, 200, 10, artifactMetas.length);
+    const reruns = clampInt(rerunsRaw, 50, 1, 200);
+    const seed = clampInt(seedRaw, 1, 1, Number.MAX_SAFE_INTEGER);
+    minerState = { running: true, startedAt: Date.now(), assets: 0, pairs: artifactMetas.length, verdicts: 0, cancelled: false };
+    const snapshot = minerState;
+    const lostOwnership = () => minerOwner !== owner;
+    clearArtifactReleaseTimer();
+
+    try {
+        const targets = await loadTargets(artifactMetas, interval);
+        snapshot.assets = targets.length;
+        if (targets.length === 0) {
+            writer({ type: "fatal", error: "No target asset candles loaded." });
+            return;
+        }
+
+        const aggregate = createStabilityAggregate(reruns, subsetSize, seed, artifactMetas.length);
+        for (let runIndex = 0; runIndex < reruns; runIndex += 1) {
+            if (lostOwnership()) {
+                snapshot.cancelled = true;
+                writer({ type: "fatal", error: "Stability mining cancelled." });
+                return;
+            }
+            const subsetMetas = sampleItems(artifactMetas, subsetSize, seed + runIndex);
+            const subsetArtifacts = subsetMetas.map(loadStoredMineArtifact);
+            const subsetAssets = new Set(subsetMetas.flatMap((artifact) => [artifact.baseAsset, artifact.quoteAsset]));
+            const subsetTargets = targets.filter((target) => subsetAssets.has(target.asset));
+            const result = runBatchSyntheticStateMiner({
+                interval,
+                targets: subsetTargets,
+                artifacts: subsetArtifacts,
+            });
+            addStabilityVerdicts(aggregate, result.verdicts);
+            snapshot.verdicts = aggregate.hitEvents;
+            writer({ type: "progress", run: runIndex + 1, reruns, hits: aggregate.hitEvents });
+        }
+
+        const finalResult = finalizeStabilityAggregate(aggregate);
+        snapshot.running = false;
+        writer({ type: "done", ok: true, result: finalResult });
+        releaseLastResults("stability_mine_completed");
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        debugLogger.warn("batch.server.stability_mine.fatal", { error: message });
+        snapshot.running = false;
+        writer({ type: "fatal", error: message });
+    } finally {
+        if (minerState === snapshot) {
+            snapshot.running = false;
+        }
+        if (hasStoredMineArtifacts()) {
+            scheduleArtifactTtl();
+        }
+    }
 }
 
 async function loadMinerTargets(
-    pairArtifacts: readonly BatchSyntheticPairArtifact[],
+    pairArtifacts: readonly StoredMineArtifactMeta[],
     interval: string,
 ): Promise<BatchSyntheticTargetArtifact[]> {
     const assets = Array.from(new Set(
@@ -491,8 +616,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
 
     const owner = ++runOwnerGen;
     runOwner = owner;
-    clearArtifactReleaseTimer();
-    lastResults = [];
+    releaseLastResults("new_run");
     lastRunFingerprint = null;
     lastRunInterval = null;
     lastRunStrategyKey = null;
@@ -570,7 +694,7 @@ async function handleMineRequest(res: ViteHttpResponse, body: Record<string, unk
     if (runOwner !== RUN_OWNER_NONE) {
         throw new HttpStatusError(409, "A batch backtest is running. Use Stop first.");
     }
-    if (lastResults.length === 0) {
+    if (!hasStoredMineArtifacts()) {
         throw new HttpStatusError(400, "Run Batch before mining; no artifacts on server.");
     }
     const owner = ++minerOwnerGen;
@@ -582,6 +706,50 @@ async function handleMineRequest(res: ViteHttpResponse, body: Record<string, unk
         await processMine(
             typeof body.fingerprint === "string" ? body.fingerprint : null,
             typeof body.interval === "string" ? body.interval : lastRunInterval,
+            (event) => stream!.write(event),
+            owner,
+        );
+        stream.end();
+    } catch (error) {
+        if (!stream) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        try {
+            stream.end({ type: "fatal", error: message });
+        } catch {
+            /* best-effort */
+        }
+    } finally {
+        if (minerOwner === owner) {
+            minerOwner = RUN_OWNER_NONE;
+        }
+        if (minerState && minerOwner === RUN_OWNER_NONE) {
+            minerState.running = false;
+        }
+    }
+}
+
+async function handleStabilityMineRequest(res: ViteHttpResponse, body: Record<string, unknown>): Promise<void> {
+    if (minerOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "Mine Timing is already running.");
+    }
+    if (runOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "A batch backtest is running. Use Stop first.");
+    }
+    if (!hasStoredMineArtifacts()) {
+        throw new HttpStatusError(400, "Run Batch before stability mining; no artifacts on server.");
+    }
+    const owner = ++minerOwnerGen;
+    minerOwner = owner;
+
+    let stream: ReturnType<typeof beginNdjsonStream> | null = null;
+    try {
+        stream = beginNdjsonStream(res);
+        await processStabilityMine(
+            typeof body.fingerprint === "string" ? body.fingerprint : null,
+            typeof body.interval === "string" ? body.interval : lastRunInterval,
+            Number(body.subsetSize),
+            Number(body.reruns),
+            Number(body.seed),
             (event) => stream!.write(event),
             owner,
         );
@@ -621,13 +789,13 @@ function handleStatusRequest(): unknown {
                 rows: runState.rows,
             }
             : null,
-        lastRun: lastResults.length > 0
+        lastRun: hasStoredMineArtifacts()
             ? {
                 interval: lastRunInterval,
                 strategyKey: lastRunStrategyKey,
                 fingerprint: lastRunFingerprint,
-                rowCount: lastResults.length,
-                hasArtifacts: hasMineableArtifacts(lastResults),
+                rowCount: collectStoredMineArtifactMetas().length,
+                hasArtifacts: hasStoredMineArtifacts(),
             }
             : null,
         miner: minerState && minerOwner !== RUN_OWNER_NONE
@@ -719,6 +887,19 @@ export function batchBacktestVitePlugin(): Plugin {
             }
         });
 
+        middlewares.use("/api/batch-backtest/stability-mine", async (req: any, res: any) => {
+            if (req.method !== "POST") {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            try {
+                rememberLocalApiOriginFromRequest(req);
+                await handleStabilityMineRequest(res as ViteHttpResponse, await readJsonBody(req));
+            } catch (error) {
+                sendCaughtErrorJson(res, error);
+            }
+        });
+
         middlewares.use("/api/batch-backtest/status", async (req: any, res: any) => {
             if (req.method !== "GET") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
@@ -739,13 +920,15 @@ export function batchBacktestVitePlugin(): Plugin {
     };
 }
 
-// Exported for tests only. `processRunBatch` and `processMine` consult
+// Exported for tests only. `processRunBatch`, `processMine`, and
+// `processStabilityMine` consult
 // module-scope `runOwner` / `minerOwner` for cancellation, mirroring the IBKR
 // sync pattern. The HTTP handlers set those before invoking the factored
 // functions; tests need a way to do the same without spinning up Vite.
 export const __testInternals = {
     releaseLastResults,
     hasMineableArtifacts,
+    hasStoredMineArtifacts,
     DEFAULT_ARTIFACT_RETENTION_MS,
     setRunOwnerForTests(owner: number): void {
         runOwner = owner;

@@ -104,6 +104,12 @@ export interface BatchBacktestRunInput {
      * value to keep deterministic fixtures compact.
      */
     minUsableBars?: number;
+    /**
+     * Store scalar-only rows in the returned `results` array after
+     * `onSymbolComplete` has seen the full row. Server-side Batch uses this so
+     * completed rows can be garbage-collected during very large runs.
+     */
+    pruneResultArtifacts?: boolean;
 }
 
 export interface BatchBacktestRunCallbacks {
@@ -298,8 +304,8 @@ export async function runBatchBacktest(
             });
             if (cancelCheck()) break;
             const result = buildSymbolResult(symbol, data, output.result, output.signals);
-            results[i] = result;
             callbacks.onSymbolComplete?.(i, result);
+            results[i] = input.pruneResultArtifacts ? pruneResultArtifacts(result) : result;
         } catch (error) {
             if (cancelCheck()) break;
             const message = error instanceof Error ? error.message : String(error);
@@ -336,6 +342,15 @@ export async function runBatchBacktest(
         results,
         loadedSymbols,
         failedSymbols,
+    };
+}
+
+function pruneResultArtifacts(row: BatchBacktestSymbolResult): BatchBacktestSymbolResult {
+    return {
+        ...row,
+        data: undefined,
+        signals: undefined,
+        result: row.result ? { ...row.result, trades: [] } : undefined,
     };
 }
 

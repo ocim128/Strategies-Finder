@@ -42,6 +42,14 @@ import {
     type BatchSyntheticPairArtifact,
     type BatchSyntheticTargetArtifact,
 } from "./batch-synthetic-state-miner";
+import {
+    addStabilityVerdicts,
+    createStabilityAggregate,
+    finalizeStabilityAggregate,
+    sampleItems,
+    type BatchStabilityMineResult,
+    type BatchStabilityRow,
+} from "./batch-stability-mine";
 import type { Strategy, StrategyParams, BacktestSettings } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 
@@ -51,6 +59,7 @@ class BatchBacktestService {
     private cancelled = false;
     private lastResults: BatchBacktestSymbolResult[] = [];
     private lastMinerResult: BatchSyntheticMinerResult | null = null;
+    private lastStabilityResult: BatchStabilityMineResult | null = null;
     private lastRunFingerprint: string | null = null;
     private lastRunInterval: string | null = null;
     // Number of result rows already appended to the DOM via onSymbolComplete.
@@ -108,6 +117,12 @@ class BatchBacktestService {
         });
         dom.batchBacktestCopyMinerBtn.addEventListener("click", () => {
             void this.copyMinerResults();
+        });
+        dom.batchBacktestStabilityMineBtn.addEventListener("click", () => {
+            void this.runStabilityMine();
+        });
+        dom.batchBacktestCopyStabilityBtn.addEventListener("click", () => {
+            void this.copyStabilityResults();
         });
         dom.batchBacktestUseCurrent.addEventListener("click", () => {
             const current = state.currentSymbol?.trim().toUpperCase();
@@ -170,6 +185,7 @@ class BatchBacktestService {
         setVisible(dom.batchBacktestStopBtn, true);
         dom.batchBacktestCopyBtn.disabled = true;
         dom.batchBacktestMineBtn.disabled = true;
+        dom.batchBacktestStabilityMineBtn.disabled = true;
         this.clearMinerResults(dom);
         setVisible(dom.batchBacktestEmpty, false);
         dom.batchBacktestResults.replaceChildren();
@@ -207,6 +223,9 @@ class BatchBacktestService {
                 // (set by the `done` event), not on `row.data !== undefined`
                 // (the browser never holds `row.data` in this mode).
                 dom.batchBacktestMineBtn.disabled = useServerMode
+                    ? !this.serverHasArtifacts
+                    : !this.hasMineableArtifacts();
+                dom.batchBacktestStabilityMineBtn.disabled = useServerMode
                     ? !this.serverHasArtifacts
                     : !this.hasMineableArtifacts();
                 this.updateSummary(dom);
@@ -355,7 +374,7 @@ class BatchBacktestService {
                     this.serverHasArtifacts = event.serverHasArtifacts === true;
                     doneSummary = event.summary;
                     setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
-                    dom.batchBacktestStatus.textContent = event.summary;
+                    dom.batchBacktestStatus.textContent = doneSummary;
                 },
                 onFatal: (event: Extract<BatchStreamEvent, { type: "fatal" }>) => {
                     if (token !== this.runToken) return;
@@ -408,6 +427,7 @@ class BatchBacktestService {
             this.serverHasArtifacts = lastRun.hasArtifacts === true;
             setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
             dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
+            dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
             const rowCount = this.lastResults.length || Math.max(0, Math.floor(Number(lastRun.rowCount ?? 0)));
             return `Done (${rowCount} pairs)`;
         } catch (error) {
@@ -511,6 +531,7 @@ class BatchBacktestService {
             debugLogger.error("batch_synthetic_miner.failed", { error: message });
         } finally {
             dom.batchBacktestMineBtn.disabled = !this.hasMineableArtifacts();
+            dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts && !this.hasMineableArtifacts();
             // The leg/pair caches existed to feed Mine; the miner reads
             // pairArtifacts into its own working set on entry, so the shared
             // LRU no longer needs the resolved arrays. Drop them so the next
@@ -578,6 +599,7 @@ class BatchBacktestService {
             debugLogger.error("batch_synthetic_miner.server_failed", { error: message });
         } finally {
             dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts && !this.hasMineableArtifacts();
+            dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts && !this.hasMineableArtifacts();
         }
     }
 
@@ -655,8 +677,11 @@ class BatchBacktestService {
                         this.lastRunFingerprint = payload.lastRun.fingerprint;
                         this.lastRunInterval = payload.lastRun.interval ?? null;
                         // The browser does not have the per-row scalars for the
-                        // prior run (the tab reloaded); only enable Mine.
+                        // prior run (the tab reloaded), but server-side Mine
+                        // and Stability Mine can still consume retained
+                        // artifacts before their TTL expires.
                         this.getDom().batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
+                        this.getDom().batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
                     }
                     return;
                 }
@@ -697,6 +722,154 @@ class BatchBacktestService {
     private async copyMinerResults(): Promise<void> {
         if (!this.lastMinerResult) return;
         const text = formatMinerCopy(this.lastMinerResult);
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch {
+            // Clipboard can fail in non-secure contexts; fall back silently.
+        }
+    }
+
+    private async runStabilityMine(): Promise<void> {
+        const dom = this.getDom();
+        if (this.lastResults.length === 0 && !this.serverHasArtifacts) {
+            dom.batchBacktestMinerSummary.textContent = "Run Batch first.";
+            return;
+        }
+        const currentFingerprint = this.buildCurrentRunFingerprint();
+        if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
+            dom.batchBacktestMinerSummary.textContent = "Rerun Batch before stability mining; settings or symbols changed.";
+            dom.batchBacktestCopyStabilityBtn.disabled = true;
+            return;
+        }
+        const pairArtifacts = this.buildMinerPairArtifacts();
+        if (this.serverHasArtifacts && pairArtifacts.length === 0) {
+            await this.runStabilityMineServer(dom);
+            return;
+        }
+        if (pairArtifacts.length === 0) {
+            dom.batchBacktestMinerSummary.textContent = "No completed synthetic pair artifacts to stability mine.";
+            dom.batchBacktestCopyStabilityBtn.disabled = true;
+            return;
+        }
+
+        const subsetSize = this.readClampedInt(dom.batchBacktestStabilitySubsetSize.value, 200, 10, pairArtifacts.length);
+        const reruns = this.readClampedInt(dom.batchBacktestStabilityReruns.value, 50, 1, 200);
+        const seed = this.readClampedInt(dom.batchBacktestStabilitySeed.value, 1, 1, Number.MAX_SAFE_INTEGER);
+        dom.batchBacktestStabilitySubsetSize.value = String(subsetSize);
+        dom.batchBacktestStabilityReruns.value = String(reruns);
+        dom.batchBacktestStabilitySeed.value = String(seed);
+
+        dom.batchBacktestMineBtn.disabled = true;
+        dom.batchBacktestStabilityMineBtn.disabled = true;
+        dom.batchBacktestCopyMinerBtn.disabled = true;
+        dom.batchBacktestCopyStabilityBtn.disabled = true;
+        dom.batchBacktestMinerSummary.textContent = "Loading target assets for stability mine...";
+        dom.batchBacktestMinerResults.replaceChildren();
+
+        try {
+            const targets = await this.loadMinerTargets(pairArtifacts, this.lastRunInterval ?? state.currentInterval);
+            if (targets.length === 0) {
+                this.lastStabilityResult = null;
+                dom.batchBacktestMinerSummary.textContent = "No target asset candles loaded.";
+                return;
+            }
+
+            const aggregate = createStabilityAggregate(reruns, subsetSize, seed, pairArtifacts.length);
+            for (let runIndex = 0; runIndex < reruns; runIndex += 1) {
+                const subset = sampleItems(pairArtifacts, subsetSize, seed + runIndex);
+                const subsetAssets = new Set(subset.flatMap((artifact) => [artifact.baseAsset, artifact.quoteAsset]));
+                const subsetTargets = targets.filter((target) => subsetAssets.has(target.asset));
+                const result = runBatchSyntheticStateMiner({
+                    interval: this.lastRunInterval ?? state.currentInterval,
+                    targets: subsetTargets,
+                    artifacts: subset,
+                });
+                addStabilityVerdicts(aggregate, result.verdicts);
+                dom.batchBacktestMinerSummary.textContent = `Stability mining ${runIndex + 1}/${reruns} | hits ${aggregate.hitEvents}`;
+                if ((runIndex + 1) % 5 === 0) {
+                    await yieldToUi();
+                }
+            }
+
+            this.lastStabilityResult = finalizeStabilityAggregate(aggregate);
+            this.renderStabilityResult(dom, this.lastStabilityResult);
+            dom.batchBacktestCopyStabilityBtn.disabled = this.lastStabilityResult.rows.length === 0;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.lastStabilityResult = null;
+            dom.batchBacktestMinerSummary.textContent = `Stability miner error: ${message}`;
+            debugLogger.error("batch_stability_miner.failed", { error: message });
+        } finally {
+            dom.batchBacktestMineBtn.disabled = !this.hasMineableArtifacts();
+            dom.batchBacktestStabilityMineBtn.disabled = !this.hasMineableArtifacts();
+            clearBatchDatasetCaches();
+        }
+    }
+
+    private async runStabilityMineServer(dom: BatchBacktestDom): Promise<void> {
+        const subsetSize = this.readClampedInt(dom.batchBacktestStabilitySubsetSize.value, 200, 10, Number.MAX_SAFE_INTEGER);
+        const reruns = this.readClampedInt(dom.batchBacktestStabilityReruns.value, 50, 1, 200);
+        const seed = this.readClampedInt(dom.batchBacktestStabilitySeed.value, 1, 1, Number.MAX_SAFE_INTEGER);
+        dom.batchBacktestStabilitySubsetSize.value = String(subsetSize);
+        dom.batchBacktestStabilityReruns.value = String(reruns);
+        dom.batchBacktestStabilitySeed.value = String(seed);
+
+        dom.batchBacktestMineBtn.disabled = true;
+        dom.batchBacktestStabilityMineBtn.disabled = true;
+        dom.batchBacktestCopyMinerBtn.disabled = true;
+        dom.batchBacktestCopyStabilityBtn.disabled = true;
+        dom.batchBacktestMinerSummary.textContent = "Stability mining on server...";
+        dom.batchBacktestMinerResults.replaceChildren();
+
+        try {
+            const response = await fetch("/api/batch-backtest/stability-mine", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    fingerprint: this.lastRunFingerprint,
+                    interval: this.lastRunInterval ?? state.currentInterval,
+                    subsetSize,
+                    reruns,
+                    seed,
+                }),
+            });
+            if (!response.ok || !response.body) {
+                const text = await response.text().catch(() => "");
+                throw new Error(text || `HTTP ${response.status}`);
+            }
+            const received: { result: BatchStabilityMineResult | null } = { result: null };
+            await consumeNdjsonStream(response.body, {
+                onProgress: (event: { run?: number; reruns?: number; hits?: number }) => {
+                    dom.batchBacktestMinerSummary.textContent = `Stability mining on server ${event.run ?? 0}/${event.reruns ?? reruns} | hits ${event.hits ?? 0}`;
+                },
+                onDone: (event: { result?: BatchStabilityMineResult }) => {
+                    received.result = event.result ?? null;
+                },
+                onFatal: (event: { error?: string }) => {
+                    throw new Error(event.error || "Server stability mine failed.");
+                },
+            });
+            if (!received.result) {
+                throw new Error("Server stability mine did not return a result.");
+            }
+            this.lastStabilityResult = received.result;
+            this.renderStabilityResult(dom, received.result);
+            dom.batchBacktestCopyStabilityBtn.disabled = received.result.rows.length === 0;
+            this.serverHasArtifacts = false;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.lastStabilityResult = null;
+            dom.batchBacktestMinerSummary.textContent = `Stability miner error: ${message}`;
+            debugLogger.error("batch_stability_miner.server_failed", { error: message });
+        } finally {
+            dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts && !this.hasMineableArtifacts();
+            dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts && !this.hasMineableArtifacts();
+        }
+    }
+
+    private async copyStabilityResults(): Promise<void> {
+        if (!this.lastStabilityResult) return;
+        const text = formatStabilityCopy(this.lastStabilityResult);
         try {
             await navigator.clipboard.writeText(text);
         } catch {
@@ -832,9 +1005,11 @@ class BatchBacktestService {
 
     private clearMinerResults(dom: BatchBacktestDom): void {
         this.lastMinerResult = null;
+        this.lastStabilityResult = null;
         dom.batchBacktestMinerSummary.textContent = "Miner idle";
         dom.batchBacktestMinerResults.replaceChildren();
         dom.batchBacktestCopyMinerBtn.disabled = true;
+        dom.batchBacktestCopyStabilityBtn.disabled = true;
     }
 
     private renderMinerResult(dom: BatchBacktestDom, result: BatchSyntheticMinerResult): void {
@@ -856,6 +1031,21 @@ class BatchBacktestService {
         return line;
     }
 
+    private renderStabilityResult(dom: BatchBacktestDom, result: BatchStabilityMineResult): void {
+        dom.batchBacktestMinerResults.replaceChildren();
+        dom.batchBacktestMinerSummary.textContent = formatStabilitySummary(result);
+        for (const row of result.rows) {
+            const line = document.createElement("div");
+            line.className = "finder-sub finder-symbol-row";
+            const badge = document.createElement("span");
+            badge.className = "finder-verdict finder-verdict-strong";
+            badge.textContent = row.direction;
+            line.appendChild(badge);
+            line.appendChild(document.createTextNode(` ${formatStabilityRow(row, result.reruns)}`));
+            dom.batchBacktestMinerResults.appendChild(line);
+        }
+    }
+
     // --------------------------------------------------------------------
     // Rendering
     // --------------------------------------------------------------------
@@ -870,6 +1060,7 @@ class BatchBacktestService {
         this.lastRunInterval = null;
         this.serverHasArtifacts = false;
         dom.batchBacktestMineBtn.disabled = true;
+        dom.batchBacktestStabilityMineBtn.disabled = true;
         if (this.lastResults.length === 0) return;
         this.lastResults = [];
         this.appendedCount = 0;
@@ -912,6 +1103,52 @@ class BatchBacktestService {
         const count = parseBatchSymbols(dom.batchBacktestSymbols.value).length;
         dom.batchBacktestSummary.textContent = `${count} pair${count === 1 ? "" : "s"}`;
     }
+
+    private readClampedInt(raw: string, fallback: number, min: number, max: number): number {
+        const parsed = Number.parseInt(raw, 10);
+        const value = Number.isFinite(parsed) ? parsed : fallback;
+        return Math.max(min, Math.min(max, Math.floor(value)));
+    }
+}
+
+function yieldToUi(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function formatStabilitySummary(result: BatchStabilityMineResult): string {
+    return [
+        "Stability",
+        `Runs ${result.reruns}`,
+        `Subset ${result.subsetSize}/${result.totalPairs}`,
+        `Seed ${result.seed}`,
+        `Signals ${result.rows.length}`,
+        `Hits ${result.hitEvents}`,
+    ].join(" | ");
+}
+
+function formatStabilityRow(row: BatchStabilityRow, reruns: number): string {
+    return [
+        row.asset,
+        `Dir ${row.direction}`,
+        `Hit ${row.hits}/${reruns} (${formatPercent((row.hits / Math.max(1, reruns)) * 100)})`,
+        `High ${row.high}`,
+        `Med ${row.medium}`,
+        `Low ${row.low}`,
+        `Ret ${formatSignedPercent(row.medianRetPct)}`,
+        `Lift ${formatSignedPercent(row.medianLiftPct)}`,
+        `RR ${formatRatio(row.medianRr)}`,
+        `Dist ${formatNumber(row.medianDist, 2)}`,
+        `HMaxLift ${formatSignedPercent(row.medianHmaxLiftPct)}`,
+        `PairWarn ${row.pairWarnings}`,
+    ].join(" | ");
+}
+
+function formatStabilityCopy(result: BatchStabilityMineResult): string {
+    const lines = [formatStabilitySummary(result)];
+    for (const row of result.rows) {
+        lines.push(`STABILITY | ${formatStabilityRow(row, result.reruns)}`);
+    }
+    return lines.join("\n");
 }
 
 interface BatchOverallStats {

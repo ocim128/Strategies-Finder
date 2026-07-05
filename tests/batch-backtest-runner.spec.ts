@@ -169,6 +169,41 @@ describe("runBatchBacktest", () => {
         expect(result.result!.totalTrades).to.be.greaterThan(0);
     });
 
+    it("can prune returned row artifacts after the completion callback receives them", async () => {
+        let callbackRowDataLength = 0;
+        let callbackTradeCount = 0;
+        const output = await runBatchBacktest(
+            {
+                interval: "5m",
+                strategyKey: "batch_test",
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols: ["UP+DOWN"],
+                loadDataset: () => Promise.resolve(makeCandles([100, 105, 110, 115, 120])),
+                minUsableBars: 1,
+                pruneResultArtifacts: true,
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                onSymbolComplete: (_index, row) => {
+                    callbackRowDataLength = row.data?.length ?? 0;
+                    callbackTradeCount = row.result?.trades.length ?? 0;
+                },
+                isCancelled: () => false,
+            },
+        );
+
+        expect(callbackRowDataLength).to.equal(5);
+        expect(callbackTradeCount).to.be.greaterThan(0);
+        const stored = output.results[0]!;
+        expect(stored.data).to.equal(undefined);
+        expect(stored.signals).to.equal(undefined);
+        expect(stored.result?.trades).to.deep.equal([]);
+    });
+
     it("stops the loop and fills remaining slots on cancel", async () => {
         let calls = 0;
         const datasets = new Map<string, OHLCVData[]>([

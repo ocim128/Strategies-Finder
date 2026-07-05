@@ -168,7 +168,7 @@ This ordering matters because Finder, Scanner, and repeated backtests depend on 
 
 ### Server-Side Batch Backtest
 
-The Batch Backtest tab can run its workload in the Vite dev-server (Node) process instead of the browser tab, so 1000+ IBKR 4H synthetic-pair runs stop OOM-ing the browser. The browser tab holds only rendered scalars and DOM rows; Node holds the full OHLCV / signals / trades arrays that Mine Timing needs.
+The Batch Backtest tab can run its workload in the Vite dev-server (Node) process instead of the browser tab, so 1000+ IBKR 4H synthetic-pair runs stop OOM-ing the browser. The browser tab holds only rendered scalars and DOM rows; Node writes Mine Timing artifacts to temporary disk storage and loads linked pairs back per target during Mine.
 
 Toggle via `Settings → Backend Engine → Batch Execution Mode` (default: Server-Side). For large runs, start the dev server with extra heap:
 
