@@ -214,6 +214,15 @@ const DEFAULT_OPTIONS: BatchSyntheticMinerOptions = {
     minMfeMaeRatio: 1.25,
 };
 
+/**
+ * Exported so server-side Mine consumers can reconstruct a syntactically valid
+ * `BatchSyntheticMinerResult` for the browser-side Copy button without
+ * duplicating the options shape. The actual miner options used by the server
+ * run are not sent back over the wire (the browser only needs the verdicts for
+ * display + copy).
+ */
+export const BATCH_SYNTHETIC_MINER_DEFAULT_OPTIONS: Readonly<BatchSyntheticMinerOptions> = DEFAULT_OPTIONS;
+
 const TRANSITION_LOOKBACK_BARS = 6;
 
 export function runBatchSyntheticStateMiner(input: BatchSyntheticMinerInput): BatchSyntheticMinerResult {

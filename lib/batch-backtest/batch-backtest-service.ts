@@ -12,6 +12,7 @@
 
 import { ensureBuiltInStrategyLoaded } from "../strategies/built-in-catalog";
 import { backtestService } from "../backtest-service";
+import { shouldUseRustEngine } from "../engine-preferences";
 import { paramManager } from "../param-manager";
 import { state } from "../state";
 import { strategyRegistry } from "../../strategyRegistry";
@@ -23,21 +24,26 @@ import type { BacktestResult, OHLCVData, Time } from "../types/strategies";
 import { parsePortfolioSyntheticPairSymbol, stripKnownQuoteSuffix } from "../portfolioLab/portfolio-lab-synthetic";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
 import { clearBatchDatasetCaches, loadBatchDataset } from "./batch-backtest-loader";
+import { consumeNdjsonStream } from "../ndjson-stream";
 import { mapWithConcurrencyLimit } from "../async-pool";
 import {
     parseBatchSymbols,
     runBatchBacktest,
     type BatchBacktestSymbolResult,
 } from "./batch-backtest-runner";
+import type { BatchStreamEvent, BatchMinerStreamEvent } from "./batch-backtest-stream-types";
 import {
     resolveBatchSyntheticTargetSymbol,
     runBatchSyntheticStateMiner,
+    BATCH_SYNTHETIC_MINER_DEFAULT_OPTIONS,
     type BatchSyntheticAssetVerdict,
     type BatchSyntheticMinerResult,
     type BatchSyntheticPairContribution,
     type BatchSyntheticPairArtifact,
     type BatchSyntheticTargetArtifact,
 } from "./batch-synthetic-state-miner";
+import type { Strategy, StrategyParams, BacktestSettings } from "../types/strategies";
+import type { CapitalSettings } from "../types/backtest";
 
 class BatchBacktestService {
     private dom: BatchBacktestDom | null = null;
@@ -57,6 +63,14 @@ class BatchBacktestService {
     // sees its token as stale and stops writing DOM/state, preventing two
     // concurrent runs from racing on `this.lastResults` and the results list.
     private runToken = 0;
+    // True when the most recent server-side Run finished with artifacts still
+    // on the server (the Mine Timing button is enabled on this flag, NOT on
+    // `row.data !== undefined`, because in server-side mode the browser never
+    // holds `row.data`).
+    private serverHasArtifacts = false;
+    // Reattach polling timer id (set when this tab is observing a server-side
+    // run that started before page load).
+    private reattachTimer: ReturnType<typeof setTimeout> | null = null;
 
     private getDom(): BatchBacktestDom {
         return this.dom ??= createBatchBacktestDom();
@@ -71,6 +85,11 @@ class BatchBacktestService {
         this.updateSummary(dom);
         this.resetProgress(dom);
         this.initialized = true;
+        // Reattach to a server-side run that started before page load. Mirrors
+        // IBKR sync's `reattachToInProgressSync` poll on init. Polls every 2s
+        // and renders the snapshot rows accumulated server-side so a tab reload
+        // mid-run still shows the live progress (2s granularity, not per-symbol).
+        void this.reattachToInProgressServerRun();
     }
 
     private bindEvents(dom: BatchBacktestDom): void {
@@ -79,6 +98,7 @@ class BatchBacktestService {
         });
         dom.batchBacktestStopBtn.addEventListener("click", () => {
             this.cancelled = true;
+            void this.stopServerRun();
         });
         dom.batchBacktestCopyBtn.addEventListener("click", () => {
             void this.copyResults();
@@ -144,6 +164,8 @@ class BatchBacktestService {
         this.lastRunFingerprint = null;
         this.lastRunInterval = null;
         this.appendedCount = 0;
+        this.serverHasArtifacts = false;
+        this.stopReattachPoll();
         dom.batchBacktestRunBtn.disabled = true;
         setVisible(dom.batchBacktestStopBtn, true);
         dom.batchBacktestCopyBtn.disabled = true;
@@ -152,53 +174,23 @@ class BatchBacktestService {
         setVisible(dom.batchBacktestEmpty, false);
         dom.batchBacktestResults.replaceChildren();
 
+        // Server-side mode runs the workload in the Vite dev server process so
+        // the browser tab stays bounded for 1000+ pair runs. Browser-side is
+        // the legacy in-tab path; retained as a fallback for environments with
+        // no dev server (e.g. `vite preview`). See
+        // `docs/batch-backtest-server-side.md` for the full contract.
+        //
+        // `batchExecutionMode` lives on `BacktestSettingsData` (persistence
+        // type), not on the narrower `BacktestSettings` runtime type that
+        // `backtestService.getBacktestSettings()` returns. Read the DOM select
+        // directly — it's the source of truth the user just toggled.
+        const useServerMode = this.readBatchExecutionMode() === "server";
         try {
-            const output = await runBatchBacktest(
-                {
-                    interval,
-                    strategyKey,
-                    strategy,
-                    strategyParams,
-                    backtestSettings,
-                    capitalSettings,
-                    symbols,
-                    loadDataset: (sym, intv, signal) => loadBatchDataset(sym, intv, signal),
-                },
-                {
-                    setProgress: (percent, text) => {
-                        if (token !== this.runToken) return;
-                        this.setProgress(dom, percent, text);
-                    },
-                    setStatus: (text) => {
-                        if (token !== this.runToken) return;
-                        dom.batchBacktestStatus.textContent = text;
-                    },
-                    onSymbolComplete: (_index, result) => {
-                        if (token !== this.runToken) return;
-                        this.lastResults.push(result);
-                        this.appendedCount += 1;
-                        this.appendResultRow(dom, result);
-                    },
-                    isCancelled: () => token !== this.runToken || this.cancelled,
-                },
-            );
-            // A newer run has taken over; leave all UI state to that run.
-            if (token !== this.runToken) return;
-            this.lastResults = output.results;
-            this.lastRunFingerprint = runFingerprint;
-            this.lastRunInterval = interval;
-            // The runner emits onSymbolComplete in strict input order, so every
-            // processed row is already in the DOM. Only the cancelled back-fill
-            // tail (slots never processed because Stop broke the loop) needs to
-            // be appended here. Avoids a full O(N) rebuild + reflow per run.
-            for (let i = this.appendedCount; i < output.results.length; i += 1) {
-                this.appendResultRow(dom, output.results[i]);
+            if (useServerMode) {
+                await this.runBatchServer(dom, token, symbols, strategyKey, strategyParams, backtestSettings, capitalSettings, interval, runFingerprint);
+            } else {
+                await this.runBatchBrowser(dom, token, symbols, strategyKey, strategy, strategyParams, backtestSettings, capitalSettings, interval, runFingerprint);
             }
-            this.appendedCount = output.results.length;
-            setVisible(dom.batchBacktestEmpty, output.results.length === 0);
-            dom.batchBacktestStatus.textContent = this.cancelled
-                ? `Stopped (${output.results.length}/${symbols.length} pairs)`
-                : `Done (${output.results.length} pairs, ${output.failedSymbols.length} failed)`;
         } catch (error) {
             if (token !== this.runToken) return;
             const message = error instanceof Error ? error.message : String(error);
@@ -210,7 +202,13 @@ class BatchBacktestService {
                 dom.batchBacktestRunBtn.disabled = false;
                 setVisible(dom.batchBacktestStopBtn, false);
                 dom.batchBacktestCopyBtn.disabled = this.lastResults.length === 0;
-                dom.batchBacktestMineBtn.disabled = !this.hasMineableArtifacts();
+                // In server-side mode the artifacts stay on the server; the
+                // Mine button must be gated on the `serverHasArtifacts` flag
+                // (set by the `done` event), not on `row.data !== undefined`
+                // (the browser never holds `row.data` in this mode).
+                dom.batchBacktestMineBtn.disabled = useServerMode
+                    ? !this.serverHasArtifacts
+                    : !this.hasMineableArtifacts();
                 this.updateSummary(dom);
                 this.setProgress(dom, 100, this.cancelled ? "Stopped" : "Done");
                 // The leg/pair LRU was a within-run dedup layer (e.g. ZEC
@@ -221,6 +219,202 @@ class BatchBacktestService {
                 // clicks Mine next, loadMinerTargets will refetch on miss.
                 clearBatchDatasetCaches();
             }
+        }
+    }
+
+    private async runBatchBrowser(
+        dom: BatchBacktestDom,
+        token: number,
+        symbols: string[],
+        strategyKey: string,
+        strategy: Strategy,
+        strategyParams: StrategyParams,
+        backtestSettings: BacktestSettings,
+        capitalSettings: CapitalSettings,
+        interval: string,
+        runFingerprint: string,
+    ): Promise<void> {
+        const output = await runBatchBacktest(
+            {
+                interval,
+                strategyKey,
+                strategy,
+                strategyParams,
+                backtestSettings,
+                capitalSettings,
+                symbols,
+                loadDataset: (sym, intv, signal) => loadBatchDataset(sym, intv, signal),
+            },
+            {
+                setProgress: (percent, text) => {
+                    if (token !== this.runToken) return;
+                    this.setProgress(dom, percent, text);
+                },
+                setStatus: (text) => {
+                    if (token !== this.runToken) return;
+                    dom.batchBacktestStatus.textContent = text;
+                },
+                onSymbolComplete: (_index, result) => {
+                    if (token !== this.runToken) return;
+                    this.lastResults.push(result);
+                    this.appendedCount += 1;
+                    this.appendResultRow(dom, result);
+                },
+                isCancelled: () => token !== this.runToken || this.cancelled,
+            },
+        );
+        // A newer run has taken over; leave all UI state to that run.
+        if (token !== this.runToken) return;
+        this.lastResults = output.results;
+        this.lastRunFingerprint = runFingerprint;
+        this.lastRunInterval = interval;
+        // The runner emits onSymbolComplete in strict input order, so every
+        // processed row is already in the DOM. Only the cancelled back-fill
+        // tail (slots never processed because Stop broke the loop) needs to
+        // be appended here. Avoids a full O(N) rebuild + reflow per run.
+        for (let i = this.appendedCount; i < output.results.length; i += 1) {
+            this.appendResultRow(dom, output.results[i]);
+        }
+        this.appendedCount = output.results.length;
+        setVisible(dom.batchBacktestEmpty, output.results.length === 0);
+        dom.batchBacktestStatus.textContent = this.cancelled
+            ? `Stopped (${output.results.length}/${symbols.length} pairs)`
+            : `Done (${output.results.length} pairs, ${output.failedSymbols.length} failed)`;
+    }
+
+    /**
+     * Server-side run path: POST to `/api/batch-backtest/run`, consume the
+     * NDJSON stream, and populate `lastResults` with SCALARS ONLY (no `data`,
+     * `signals`, or `result.trades`). The server retains the heavy arrays for
+     * Mine Timing; the browser tab stays bounded regardless of pair count.
+     *
+     * Consequence: in this mode the Copy summary renders WITHOUT the B&H rows
+     * block and WITHOUT the OPEN_SCORE line (those read array fields). The
+     * remaining sections (medians, profitable/losing rows, concentration,
+     * robustness) match exactly. See `docs/batch-backtest-server-side.md`.
+     */
+    private async runBatchServer(
+        dom: BatchBacktestDom,
+        token: number,
+        symbols: string[],
+        strategyKey: string,
+        strategyParams: StrategyParams,
+        backtestSettings: BacktestSettings,
+        capitalSettings: CapitalSettings,
+        interval: string,
+        runFingerprint: string,
+    ): Promise<void> {
+        const response = await fetch("/api/batch-backtest/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                symbols,
+                interval,
+                strategyKey,
+                strategyParams,
+                backtestSettings,
+                capitalSettings,
+                useRustEnginePreference: shouldUseRustEngine(),
+            }),
+        });
+        if (!response.ok || !response.body) {
+            const text = await response.text();
+            let payload: { error?: string } = {};
+            try { payload = JSON.parse(text); } catch { /* ignore */ }
+            throw new Error(payload.error ?? `Server run failed (${response.status}).`);
+        }
+
+        let doneSummary: string | null = null;
+        try {
+            await consumeNdjsonStream<BatchStreamEvent>(response.body, {
+                onStart: (event: Extract<BatchStreamEvent, { type: "start" }>) => {
+                    if (token !== this.runToken) return;
+                    dom.batchBacktestStatus.textContent = `Server: 0/${event.total}`;
+                },
+                onProgress: (event: Extract<BatchStreamEvent, { type: "progress" }>) => {
+                    if (token !== this.runToken) return;
+                    this.setProgress(dom, event.percent, event.text);
+                    dom.batchBacktestStatus.textContent = event.status;
+                },
+                onSymbol: (event: Extract<BatchStreamEvent, { type: "symbol" }>) => {
+                    if (token !== this.runToken) return;
+                    this.lastResults.push(event.row);
+                    this.appendedCount += 1;
+                    this.appendResultRow(dom, event.row);
+                },
+                onSymbolFailed: (event: Extract<BatchStreamEvent, { type: "symbol_failed" }>) => {
+                    if (token !== this.runToken) return;
+                    debugLogger.warn("batch.server.symbol_failed", {
+                        symbol: event.symbol, index: event.index, error: event.error,
+                    });
+                },
+                onDone: (event: Extract<BatchStreamEvent, { type: "done" }>) => {
+                    if (token !== this.runToken) return;
+                    this.lastRunFingerprint = runFingerprint;
+                    this.lastRunInterval = interval;
+                    this.serverHasArtifacts = event.serverHasArtifacts === true;
+                    doneSummary = event.summary;
+                    setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
+                    dom.batchBacktestStatus.textContent = event.summary;
+                },
+                onFatal: (event: Extract<BatchStreamEvent, { type: "fatal" }>) => {
+                    if (token !== this.runToken) return;
+                    throw new Error(event.error);
+                },
+            });
+        } catch (error) {
+            if (token !== this.runToken) return;
+            if (doneSummary === null) {
+                const recovered = await this.recoverCompletedServerRun(dom, runFingerprint, interval);
+                if (!recovered) {
+                    throw error;
+                }
+                doneSummary = recovered;
+            } else {
+                debugLogger.warn("batch.server.stream_closed_after_done", {
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
+        if (token !== this.runToken) return;
+        if (doneSummary !== null) {
+            dom.batchBacktestStatus.textContent = doneSummary;
+        }
+    }
+
+    private async recoverCompletedServerRun(
+        dom: BatchBacktestDom,
+        runFingerprint: string,
+        interval: string,
+    ): Promise<string | null> {
+        try {
+            const response = await fetch("/api/batch-backtest/status", { cache: "no-store" });
+            if (!response.ok) return null;
+            const payload = await response.json() as {
+                running?: boolean;
+                lastRun?: {
+                    rowCount?: number;
+                    hasArtifacts?: boolean;
+                    fingerprint?: string | null;
+                    interval?: string | null;
+                } | null;
+            };
+            const lastRun = payload.lastRun;
+            if (payload.running || !lastRun || lastRun.fingerprint !== runFingerprint) {
+                return null;
+            }
+            this.lastRunFingerprint = runFingerprint;
+            this.lastRunInterval = lastRun.interval ?? interval;
+            this.serverHasArtifacts = lastRun.hasArtifacts === true;
+            setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
+            dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
+            const rowCount = this.lastResults.length || Math.max(0, Math.floor(Number(lastRun.rowCount ?? 0)));
+            return `Done (${rowCount} pairs)`;
+        } catch (error) {
+            debugLogger.warn("batch.server.recover_completed_run_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return null;
         }
     }
 
@@ -236,14 +430,35 @@ class BatchBacktestService {
 
     private async runMiner(): Promise<void> {
         const dom = this.getDom();
-        if (this.lastResults.length === 0) {
+        if (this.lastResults.length === 0 && !this.serverHasArtifacts) {
             dom.batchBacktestMinerSummary.textContent = "Run Batch first.";
             return;
         }
-        const currentFingerprint = this.buildCurrentRunFingerprint();
-        if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
+        if (!this.lastRunFingerprint) {
             dom.batchBacktestMinerSummary.textContent = "Rerun Batch before mining; settings or symbols changed.";
             dom.batchBacktestCopyMinerBtn.disabled = true;
+            return;
+        }
+        if (!this.serverHasArtifacts) {
+            const currentFingerprint = this.buildCurrentRunFingerprint();
+            if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
+                dom.batchBacktestMinerSummary.textContent = "Rerun Batch before mining; settings or symbols changed.";
+                dom.batchBacktestCopyMinerBtn.disabled = true;
+                return;
+            }
+        }
+
+        dom.batchBacktestMineBtn.disabled = true;
+        dom.batchBacktestCopyMinerBtn.disabled = true;
+        dom.batchBacktestMinerSummary.textContent = this.serverHasArtifacts ? "Mining on server..." : "Loading target assets...";
+        dom.batchBacktestMinerResults.replaceChildren();
+
+        // Server-side mode: artifacts live on the server. Stream verdicts back
+        // via the `/api/batch-backtest/mine` NDJSON endpoint. The browser only
+        // reconstructs the per-verdict rows; it never holds the pair artifacts
+        // (data/signals/result.trades) that the server-side Run kept.
+        if (this.serverHasArtifacts) {
+            await this.runMinerServer(dom);
             return;
         }
 
@@ -253,11 +468,6 @@ class BatchBacktestService {
             dom.batchBacktestCopyMinerBtn.disabled = true;
             return;
         }
-
-        dom.batchBacktestMineBtn.disabled = true;
-        dom.batchBacktestCopyMinerBtn.disabled = true;
-        dom.batchBacktestMinerSummary.textContent = "Loading target assets...";
-        dom.batchBacktestMinerResults.replaceChildren();
 
         try {
             const targets = await this.loadMinerTargets(pairArtifacts, this.lastRunInterval ?? state.currentInterval);
@@ -306,6 +516,181 @@ class BatchBacktestService {
             // LRU no longer needs the resolved arrays. Drop them so the next
             // action (Copy, new Run, tab work) doesn't carry them.
             clearBatchDatasetCaches();
+        }
+    }
+
+    /**
+     * Server-side Mine path: stream verdicts from `/api/batch-backtest/mine`.
+     * The server retains artifacts from the run; the browser only reconstructs
+     * per-verdict rows for display. After completion the server releases its
+     * artifact copy and the browser-side `serverHasArtifacts` flag is cleared
+     * so the user must Run again before re-mining (mirrors the fingerprint
+     * guard on the browser path).
+     */
+    private async runMinerServer(dom: BatchBacktestDom): Promise<void> {
+        try {
+            const response = await fetch("/api/batch-backtest/mine", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    fingerprint: this.lastRunFingerprint,
+                    interval: this.lastRunInterval,
+                }),
+            });
+            if (!response.ok || !response.body) {
+                const text = await response.text();
+                let payload: { error?: string } = {};
+                try { payload = JSON.parse(text); } catch { /* ignore */ }
+                throw new Error(payload.error ?? `Server mine failed (${response.status}).`);
+            }
+            const verdicts: BatchSyntheticAssetVerdict[] = [];
+            let minerInterval = this.lastRunInterval ?? state.currentInterval;
+            await consumeNdjsonStream<BatchMinerStreamEvent>(response.body, {
+                onStart: (event: Extract<BatchMinerStreamEvent, { type: "start" }>) => {
+                    dom.batchBacktestMinerSummary.textContent = `Mining on server — ${event.assets} assets / ${event.pairs} pairs`;
+                },
+                onVerdict: (event: Extract<BatchMinerStreamEvent, { type: "verdict" }>) => {
+                    verdicts.push(event.verdict);
+                    dom.batchBacktestMinerResults.appendChild(this.createMinerRow(event.verdict));
+                },
+                onDone: (event: Extract<BatchMinerStreamEvent, { type: "done" }>) => {
+                    dom.batchBacktestMinerSummary.textContent = event.summary;
+                },
+                onFatal: (event: Extract<BatchMinerStreamEvent, { type: "fatal" }>) => {
+                    throw new Error(event.error);
+                },
+            });
+            this.lastMinerResult = {
+                interval: minerInterval,
+                options: BATCH_SYNTHETIC_MINER_DEFAULT_OPTIONS,
+                verdicts,
+                diagnostics: [],
+            };
+            dom.batchBacktestMinerSummary.textContent = formatMinerSummary(this.lastMinerResult);
+            dom.batchBacktestCopyMinerBtn.disabled = verdicts.length === 0;
+            // Server has released its artifacts; Mine cannot run again until a
+            // new server-side Run produces them.
+            this.serverHasArtifacts = false;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.lastMinerResult = null;
+            dom.batchBacktestMinerSummary.textContent = `Miner error: ${message}`;
+            debugLogger.error("batch_synthetic_miner.server_failed", { error: message });
+        } finally {
+            dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts && !this.hasMineableArtifacts();
+        }
+    }
+
+    private async stopServerRun(): Promise<void> {
+        try {
+            await fetch("/api/batch-backtest/stop", { method: "POST" });
+        } catch (error) {
+            debugLogger.warn("batch.server.stop_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+
+    /**
+     * Read the `batchExecutionMode` select. Mirrors how `getEnginePreference`
+     * reads `useRustEngineToggle` directly from the DOM — both ids live in the
+     * `Backend Engine` settings section. Returns `"server"` when the select is
+     * missing (default is server-side; see settings-model.ts).
+     */
+    private readBatchExecutionMode(): "server" | "browser" {
+        const select = document.getElementById("batchExecutionMode") as HTMLSelectElement | null;
+        if (!select) return "server";
+        return select.value === "browser" ? "browser" : "server";
+    }
+
+    private stopReattachPoll(): void {
+        if (this.reattachTimer) {
+            clearTimeout(this.reattachTimer);
+            this.reattachTimer = null;
+        }
+    }
+
+    /**
+     * Polls `GET /api/batch-backtest/status` on init. If a run is in flight on
+     * the server (started before this tab opened), renders the snapshot rows
+     * accumulated so far and long-polls every 2s until the run ends, then
+     * renders the final summary. Mirrors IBKR sync's reattach pattern.
+     *
+     * Granularity is 2s (not per-symbol) because the server's NDJSON stream is
+     * owned by the connection that started the run; this poll snapshots the
+     * shared in-progress state instead of tapping the stream from a second
+     * connection. Single-user dev server, so a multi-subscriber stream tap is
+     * not worth the complexity.
+     */
+    private async reattachToInProgressServerRun(): Promise<void> {
+        const POLL_INTERVAL_MS = 2000;
+        const MAX_POLLS = 150; // 5 minutes, matching IBKR sync's cap.
+        try {
+            for (let poll = 0; poll < MAX_POLLS; poll += 1) {
+                const response = await fetch("/api/batch-backtest/status", { cache: "no-store" });
+                const payload = await response.json() as {
+                    running?: boolean;
+                    run?: {
+                        total: number;
+                        completed: number;
+                        failed: number;
+                        currentSymbol: string | null;
+                        cancelled: boolean;
+                        interval: string;
+                        strategyKey: string;
+                        rows: BatchBacktestSymbolResult[];
+                    } | null;
+                    lastRun?: {
+                        rowCount: number;
+                        hasArtifacts: boolean;
+                        fingerprint: string | null;
+                        interval?: string | null;
+                    } | null;
+                };
+                if (!payload.running || !payload.run) {
+                    // Adopt any leftover server-side artifacts (Mine Timing
+                    // can still run against the prior run if it hasn't TTL'd).
+                    if (payload.lastRun && payload.lastRun.hasArtifacts && payload.lastRun.fingerprint && this.lastResults.length === 0) {
+                        this.serverHasArtifacts = true;
+                        this.lastRunFingerprint = payload.lastRun.fingerprint;
+                        this.lastRunInterval = payload.lastRun.interval ?? null;
+                        // The browser does not have the per-row scalars for the
+                        // prior run (the tab reloaded); only enable Mine.
+                        this.getDom().batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
+                    }
+                    return;
+                }
+                const run = payload.run;
+                this.serverHasArtifacts = false; // still running; Mine not yet available.
+                const dom = this.getDom();
+                dom.batchBacktestRunBtn.disabled = true;
+                setVisible(dom.batchBacktestStopBtn, true);
+                if (this.lastResults.length === 0 && run.rows.length > 0) {
+                    dom.batchBacktestResults.replaceChildren();
+                }
+                if (run.rows.length > this.lastResults.length) {
+                    for (let i = this.lastResults.length; i < run.rows.length; i += 1) {
+                        const row = run.rows[i]!;
+                        this.lastResults.push(row);
+                        this.appendedCount += 1;
+                        this.appendResultRow(dom, row);
+                    }
+                }
+                const seen = run.completed + run.failed;
+                const current = run.currentSymbol ? ` — ${run.currentSymbol}` : "";
+                dom.batchBacktestStatus.textContent = `Server run ${seen}/${run.total}${current}`;
+                this.setProgress(dom, run.total > 0 ? (seen / run.total) * 100 : 0, `${seen}/${run.total}`);
+                await new Promise((resolve) => {
+                    this.reattachTimer = setTimeout(resolve, POLL_INTERVAL_MS);
+                });
+            }
+            this.getDom().batchBacktestStatus.textContent = "Server run still in progress after 5 min — stopped watching. Click Stop or retry.";
+        } catch (error) {
+            debugLogger.warn("batch.server.reattach_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
+        } finally {
+            this.stopReattachPoll();
         }
     }
 
@@ -483,6 +868,7 @@ class BatchBacktestService {
         this.clearMinerResults(dom);
         this.lastRunFingerprint = null;
         this.lastRunInterval = null;
+        this.serverHasArtifacts = false;
         dom.batchBacktestMineBtn.disabled = true;
         if (this.lastResults.length === 0) return;
         this.lastResults = [];

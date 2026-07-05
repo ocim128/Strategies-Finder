@@ -68,7 +68,8 @@ export type BacktestDomSettingParser =
     | "martingaleBaseSize"
     | "secureFMethod"
     | "strategyKey"
-    | "strategyParams";
+    | "strategyParams"
+    | "batchExecutionMode";
 
 export type SettingSupportLevel = "supported" | "unsupported" | "conditional" | "ui_only";
 
@@ -350,6 +351,11 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         rustSupport: "unsupported",
         workerSupport: "unsupported",
     }),
+    createField("batchExecutionMode", {
+        parser: "batchExecutionMode",
+        rustSupport: "ui_only",
+        workerSupport: "ui_only",
+    }),
 ];
 
 export const BACKTEST_SETTINGS_DOM_CONTRACTS: readonly BacktestDomSettingContract[] = Object.freeze([
@@ -498,6 +504,11 @@ export function coerceBacktestDomSettingValue(
             return resolveMartingaleBaseSize(value);
         case "secureFMethod":
             return resolveSecureFMethod(value);
+        case "batchExecutionMode":
+            // Case-sensitive ("server" | "browser"); do NOT use the generic
+            // "string" parser which uppercases. Mirrors the persistence
+            // normalizer in settings-model.ts.
+            return value === "browser" ? "browser" : "server";
         case "boolean":
             return readBooleanValue(value, Boolean(contract.fallbackValue ?? (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[contract.settingKey] ?? false));
         case "string": {

@@ -3,6 +3,7 @@ import { dataManager } from "../data-manager";
 import { finderManager } from "../finder-manager";
 import { uiManager } from "../ui-manager";
 import { clearBatchDatasetCaches } from "../batch-backtest/batch-backtest-loader";
+import { consumeNdjsonStream } from "../ndjson-stream";
 import { createIbkrDataDom, type IbkrDataDom } from "./ibkr-data-dom";
 
 type IbkrStreamEvent =
@@ -220,12 +221,12 @@ class IbkrDataService {
                 return;
             }
 
-            await this.consumeNdjsonStream(response.body, {
-                onStart: (event) => {
+            await consumeNdjsonStream<IbkrStreamEvent>(response.body, {
+                onStart: (event: Extract<IbkrStreamEvent, { type: "start" }>) => {
                     total = event.total;
                     this.setStatus(`IBKR ${event.mode ?? "request"}: 0/${total}`);
                 },
-                onSymbol: (event) => {
+                onSymbol: (event: Extract<IbkrStreamEvent, { type: "symbol" }>) => {
                     seen = event.index + 1;
                     // Accumulate as we go so partial-fatal invalidation works.
                     const marked = event.markedSymbol ?? markIbkrSymbol(event.symbol);
@@ -236,17 +237,17 @@ class IbkrDataService {
                     const deltaLabel = delta > 0 ? ` +${delta} bar${delta === 1 ? "" : "s"}` : "";
                     this.setStatus(`IBKR ${seen}/${total}: ${event.symbol}${deltaLabel}`);
                 },
-                onSymbolFailed: (event) => {
+                onSymbolFailed: (event: Extract<IbkrStreamEvent, { type: "symbol_failed" }>) => {
                     seen = event.index + 1;
                     this.setStatus(`IBKR ${seen}/${total}: ${event.symbol} failed — ${event.error}`);
                 },
-                onDone: (event) => {
+                onDone: (event: Extract<IbkrStreamEvent, { type: "done" }>) => {
                     aggregated.ok = event.ok;
                     aggregated.results = event.results ?? [];
                     aggregated.failed = event.failed ?? [];
                     this.writeOutput(event);
                 },
-                onFatal: (event) => {
+                onFatal: (event: Extract<IbkrStreamEvent, { type: "fatal" }>) => {
                     aggregated.error = event.error;
                     this.writeOutput(event);
                 },
@@ -280,49 +281,11 @@ class IbkrDataService {
     }
 
     /**
-     * Reads an NDJSON (`application/x-ndjson`) response body stream, parses
-     * each newline-delimited JSON event, and dispatches to the typed
-     * callbacks. Tolerates partial trailing chunks by buffering until the
-     * next newline. Used by `runAction` for incremental progress.
+     * NDJSON stream consumption is provided by the shared
+     * {@link consumeNdjsonStream} helper in `lib/ndjson-stream.ts`, imported at
+     * the top of this module. The previous private copy was extracted so the
+     * new Batch Backtest server-side plugin can consume the same shape.
      */
-    private async consumeNdjsonStream(
-        body: ReadableStream<Uint8Array>,
-        handlers: {
-            onStart: (event: Extract<IbkrStreamEvent, { type: "start" }>) => void;
-            onSymbol: (event: Extract<IbkrStreamEvent, { type: "symbol" }>) => void;
-            onSymbolFailed: (event: Extract<IbkrStreamEvent, { type: "symbol_failed" }>) => void;
-            onDone: (event: Extract<IbkrStreamEvent, { type: "done" }>) => void;
-            onFatal: (event: Extract<IbkrStreamEvent, { type: "fatal" }>) => void;
-        }
-    ): Promise<void> {
-        const reader = body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            let newlineIndex: number;
-            while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
-                const line = buffer.slice(0, newlineIndex).trim();
-                buffer = buffer.slice(newlineIndex + 1);
-                if (!line) continue;
-                let event: IbkrStreamEvent;
-                try {
-                    event = JSON.parse(line) as IbkrStreamEvent;
-                } catch {
-                    continue;
-                }
-                switch (event.type) {
-                    case "start": handlers.onStart(event); break;
-                    case "symbol": handlers.onSymbol(event); break;
-                    case "symbol_failed": handlers.onSymbolFailed(event); break;
-                    case "done": handlers.onDone(event); break;
-                    case "fatal": handlers.onFatal(event); break;
-                }
-            }
-        }
-    }
 
     private async stopSync(): Promise<void> {
         try {

@@ -149,6 +149,18 @@ export interface BacktestSettingsData {
     polymarketProtectionStopLossCents: number;
     /** Resolved secondary symbol for cross-symbol strategies. Empty string means use strategy default. */
     crossSymbolSecondary: string;
+
+    /**
+     * Where the Batch Backtest tab runs its heavy per-symbol workload.
+     * - "server": the Vite dev server (Node) — keeps the browser tab bounded
+     *   regardless of pair count. Default since moving the workload off-browser
+     *   is the whole point of the server-side path.
+     * - "browser": the original in-tab path. Retained as a fallback for
+     *   environments without the dev server (e.g. `vite preview`).
+     *
+     * UI-only: not consumed by Rust or worker surfaces.
+     */
+    batchExecutionMode: "server" | "browser";
 }
 
 export interface StrategyConfig {
@@ -247,6 +259,10 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     // Cross-symbol
     crossSymbolSecondary: "",
 
+    // Batch execution mode (server vs browser). Server is the default; see
+    // field doc on BacktestSettingsData for rationale.
+    batchExecutionMode: "server",
+
     // Signal confirmation
     confirmationStrategiesToggle: false,
     confirmationStrategies: [],
@@ -336,6 +352,7 @@ const UI_ONLY_BACKTEST_SETTING_KEYS = new Set<keyof BacktestSettingsData>([
     'useRustEngine',
     'riskSettingsToggle',
     'confirmationStrategiesToggle',
+    'batchExecutionMode',
 ]);
 
 export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsData {
@@ -431,6 +448,13 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
         ? source.exitStrategyKey.trim()
         : '';
     normalized.exitStrategyParams = normalizeStrategyParams(source.exitStrategyParams);
+
+    // Batch execution mode: accept "browser" verbatim; anything else (including
+    // missing) falls back to the default "server". Kept narrow so an unknown
+    // future value never silently switches a user to the in-browser path.
+    normalized.batchExecutionMode = source.batchExecutionMode === "browser"
+        ? "browser"
+        : DEFAULT_BACKTEST_SETTINGS.batchExecutionMode;
 
     return normalized;
 }

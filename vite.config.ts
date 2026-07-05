@@ -8,6 +8,7 @@ import { executionLabVitePlugin } from './lib/execution-lab/execution-lab-vite-p
 import { ibkrDataVitePlugin } from './lib/ibkr-data/ibkr-data-vite-plugin';
 import { localSqlitePlugin } from './lib/local-sqlite-vite-plugin';
 import { secondMarketApiPlugin } from './lib/second-market-vite-plugin';
+import { batchBacktestVitePlugin } from './lib/batch-backtest/batch-backtest-vite-plugin';
 import { sendCaughtErrorJson, sendJson, proxyUpstreamJson } from './lib/vite-http-utils';
 import { configurePolymarketNodeDns } from './lib/polymarket-node-dns';
 import { STOCK_MARKET_SYMBOL_SUFFIX } from './lib/local-daily-datasets';
@@ -348,6 +349,7 @@ export default defineConfig({
         strategyLibraryAuditPlugin(),
         strategyLibraryAdminPlugin(),
         backtestEndpointPlugin(),
+        batchBacktestVitePlugin(),
     ],
     server: {
         fs: {

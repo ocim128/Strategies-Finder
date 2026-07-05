@@ -28,6 +28,7 @@ import { CHART_MANAGER_REQUIRED_IDS } from "../lib/chart-manager-dom";
 import { STRATEGY_PANEL_REQUIRED_IDS } from "../lib/strategy-panel-dom";
 import { ASSET_LEADERSHIP_REQUIRED_IDS } from "../lib/asset-leadership-dom";
 import { LAZY_STRATEGY_PANEL_TAB_IDS } from "../lib/strategy-panel-tab-markup";
+import { BACKTEST_DOM_SETTING_IDS } from "../lib/backtest-settings-resolver";
 
 const PARTIALS_DIR = path.join(process.cwd(), "html-partials");
 
@@ -120,6 +121,24 @@ describe("Feature DOM contracts", () => {
             .filter(tabId => !htmlIds.has(`${tabId}Tab`));
 
         expect(missingPanels).to.deep.equal([]);
+    });
+
+    describe("backtest setting DOM ids", () => {
+        // WHY: a backtest setting id in BACKTEST_DOM_SETTING_IDS but missing
+        // from the partials means the resolver reads `undefined` from DOM and
+        // the setting silently falls back to its default — the "DOM checked,
+        // settings false" footgun documented in AGENTS.md. Registered in both
+        // the resolver and the DOM contract (see backtest-settings-id-parity),
+        // but neither of those checks the HTML partial actually defines the id.
+        it("every BACKTEST_DOM_SETTING_ID exists in html partials", () => {
+            const missingIds = [...BACKTEST_DOM_SETTING_IDS].filter(
+                (id) => !htmlIds.has(id)
+            );
+            expect(
+                missingIds,
+                `backtest setting ids missing from html partials: ${missingIds.join(", ")}`
+            ).to.deep.equal([]);
+        });
     });
 
     describe("lazy strategy panel tab contracts", () => {

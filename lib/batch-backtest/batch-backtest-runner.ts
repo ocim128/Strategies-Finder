@@ -84,6 +84,14 @@ export interface BatchBacktestRunInput {
     backtestSettings: BacktestSettings;
     capitalSettings: CapitalSettings;
     symbols: string[];
+    /**
+     * Server-side Rust engine opt-in. Mirrors the browser DOM toggle so the
+     * server-side path can use the Rust engine when the user has it enabled.
+     * Browser callers leave this undefined; `engineMode: "auto"` falls back to
+     * `shouldUseRustEngine()` (DOM toggle) in the executor. See
+     * `shouldAttemptRust` in `lib/backtest-executor.ts` for the full rationale.
+     */
+    useRustEnginePreference?: boolean;
     /** Loads one symbol's OHLCV series without touching the live chart. */
     loadDataset: (symbol: string, interval: string, signal?: AbortSignal) => Promise<OHLCVData[]>;
     /**
@@ -278,6 +286,7 @@ export async function runBatchBacktest(
                     blockRange: null,
                     annotatePolymarket: false,
                     engineMode: "auto",
+                    useRustEnginePreference: input.useRustEnginePreference,
                     nowSec,
                 },
                 backtestRunOptions: {

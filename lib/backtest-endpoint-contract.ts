@@ -63,6 +63,17 @@ export interface BacktestExecutionContext {
      * "rust_preferred" attempts Rust but falls back on failure.
      */
     engineMode: EngineMode;
+
+    /**
+     * Server-side explicit Rust preference, mirroring the browser DOM toggle
+     * (`useRustEngineToggle`). When the executor runs in Node (no DOM), the
+     * `engineMode: "auto"` path cannot read the toggle, so an explicit value
+     * here is the only way for a server-side caller (Batch Backtest plugin) to
+     * opt into the Rust engine. Ignored when `engineMode` is `"typescript"` or
+     * `"rust_preferred"`. Browser callers leave this undefined; the DOM toggle
+     * still wins there.
+     */
+    useRustEnginePreference?: boolean;
 }
 
 // ============================================================================

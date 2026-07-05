@@ -13,6 +13,7 @@ interface CheckAvailabilityOptions {
 }
 
 const availabilityByKey = new Map<string, AvailabilityRecord>();
+let runtimeLocalApiOrigin: string | null = null;
 
 function getRecord(key: string): AvailabilityRecord {
     let record = availabilityByKey.get(key);
@@ -59,10 +60,49 @@ export function isAbortLikeError(error: unknown): boolean {
 export async function fetchLocalApi(input: string, init: RequestInit = {}, timeoutMs: number): Promise<Response> {
     const timeout = createTimeoutSignal(init.signal ?? undefined, timeoutMs);
     try {
-        return await fetch(input, { ...init, signal: timeout.signal });
+        return await fetch(resolveLocalApiUrl(input), { ...init, signal: timeout.signal });
     } finally {
         timeout.cleanup();
     }
+}
+
+export function setRuntimeLocalApiOrigin(origin: string | null): void {
+    if (!origin) {
+        runtimeLocalApiOrigin = null;
+        return;
+    }
+
+    try {
+        const parsed = new URL(origin);
+        runtimeLocalApiOrigin = parsed.origin;
+    } catch {
+        runtimeLocalApiOrigin = null;
+    }
+}
+
+/**
+ * Resolve a relative `/api/...` URL against the local dev-server origin.
+ *
+ * Browser `fetch` resolves relative URLs against `window.location` automatically.
+ * Node's `fetch` does not — passing `"/api/sqlite/load-ohlcv"` to Node's global
+ * `fetch` throws `TypeError: Invalid URL` because there is no implicit base.
+ * Server-side surfaces (Batch Backtest plugin, server data loader) call into
+ * the same SQLite/second-market helpers the browser does, so they need the
+ * same origin resolution.
+ *
+ * The origin defaults to `http://127.0.0.1:5173` (Vite's default port). The
+ * Batch Backtest Vite plugin sets a runtime origin from the incoming request
+ * Host header so Node-side loads follow the actual dev-server port; an
+ * explicit `VITE_DEV_SERVER_ORIGIN` env var still wins for manual overrides.
+ * Absolute URLs pass through unchanged.
+ */
+export function resolveLocalApiUrl(input: string): string {
+    if (typeof window !== "undefined") return input;
+    if (!input.startsWith("/")) return input;
+    const origin = (typeof process !== "undefined" && process.env && process.env.VITE_DEV_SERVER_ORIGIN)
+        || runtimeLocalApiOrigin
+        || "http://127.0.0.1:5173";
+    return `${origin}${input}`;
 }
 
 export async function checkLocalApiAvailable(options: CheckAvailabilityOptions): Promise<boolean> {

@@ -438,6 +438,7 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "polymarketProtectionStopLossEnabled",
     "polymarketProtectionStopLossCents",
     "crossSymbolSecondary",
+    "batchExecutionMode",
 ]);
 
 const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_flip_loss_2", "combined"]);

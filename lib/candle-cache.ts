@@ -3,6 +3,7 @@ import type { OHLCVData } from "./types/index";
 import { normalizeTradFiDailyCandles } from "./data/data-interval-utils";
 import { debugLogger } from "./debug-logger";
 import { parseTimeToUnixSeconds } from "./time-normalization";
+import { fetchLocalApi } from "./local-api-transport";
 import {
     LOCAL_DAILY_DATASETS,
     isIbkrDatasetKey,
@@ -431,10 +432,15 @@ async function loadLocalDailyDatasetCandles(
             ? `${dataset.candlesBasePath}/${encodeURIComponent(baseInterval)}/${encodeURIComponent(candidate)}.csv`
             : `${dataset.candlesBasePath}/${encodeURIComponent(candidate)}.csv`;
         try {
-            const response = await fetch(filePath, {
+            // `fetchLocalApi` resolves relative `/price-data/...` URLs against
+            // the dev-server origin in Node (browser fetch does this implicitly).
+            // Without it, server-side batch loads of IBKR / stock_market_data
+            // seed CSVs return 0 bars and surface as "Quote bars must contain
+            // at least one aligned candle" downstream.
+            const response = await fetchLocalApi(filePath, {
                 signal,
                 cache: 'no-store',
-            });
+            }, 30_000);
 
             if (response.status === 404) {
                 rememberMissing(missingLocalDailyCsvFiles, cacheKey);
@@ -702,10 +708,12 @@ export async function loadSeedCandlesFromPriceData(
         const fileName = `${normalizedSymbol}-${normalizedInterval}.json`;
         const filePath = `/price-data/${fileName}`;
         try {
-            const response = await fetch(filePath, {
+            // `fetchLocalApi` for Node-side origin resolution; see
+            // loadLocalDailyDatasetCandles for the same fix.
+            const response = await fetchLocalApi(filePath, {
                 signal,
                 cache: 'no-store',
-            });
+            }, 30_000);
 
             if (response.status === 404) {
                 markMissing = true;

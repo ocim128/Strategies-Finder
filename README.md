@@ -93,6 +93,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Scanner: `lib/scanner/*`
 - Data Mining / feature export: `lib/data-mining-manager.ts`, `lib/featureLab/*`
 - Strategy Ensemble Lab: `lib/strategy-ensemble-service.ts`
+- Batch Backtest: `lib/batch-backtest/batch-backtest-service.ts` (browser), `lib/batch-backtest/batch-backtest-vite-plugin.ts` (server-side; see [docs/batch-backtest-server-side.md](docs/batch-backtest-server-side.md))
 - Polymarket research / scoring: `lib/polymarket-outcome-evaluator.ts`, `lib/polymarket-signal-exit-evaluator.ts`, `lib/polymarket-price-points-ingest.ts`, `scripts/polymarket-sync-outcomes.ts`
 
 ### Alerts / Worker
@@ -164,6 +165,18 @@ If you rename a UI id, update the partial, the feature DOM contract, and the con
 4. remote fetch from provider
 
 This ordering matters because Finder, Scanner, and repeated backtests depend on fast warm-cache reads.
+
+### Server-Side Batch Backtest
+
+The Batch Backtest tab can run its workload in the Vite dev-server (Node) process instead of the browser tab, so 1000+ IBKR 4H synthetic-pair runs stop OOM-ing the browser. The browser tab holds only rendered scalars and DOM rows; Node holds the full OHLCV / signals / trades arrays that Mine Timing needs.
+
+Toggle via `Settings → Backend Engine → Batch Execution Mode` (default: Server-Side). For large runs, start the dev server with extra heap:
+
+```bash
+NODE_OPTIONS=--max-old-space-size=16384 npm run dev
+```
+
+Reattach after a tab reload is automatic (2s poll). Copy summary in server-side mode omits the B&H rows and OPEN_SCORE sections (documented degradation; see [docs/batch-backtest-server-side.md](docs/batch-backtest-server-side.md)).
 
 ## Important Contracts
 

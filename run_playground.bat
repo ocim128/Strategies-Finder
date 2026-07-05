@@ -121,6 +121,15 @@ if defined CLOUDFLARED_EXE (
 )
 
 echo Starting Lightweight Charts Playground...
+echo !NODE_OPTIONS! | findstr /C:"--max-old-space-size" >nul 2>&1
+if errorlevel 1 (
+    if defined NODE_OPTIONS (
+        set "NODE_OPTIONS=--max-old-space-size=16384 !NODE_OPTIONS!"
+    ) else (
+        set "NODE_OPTIONS=--max-old-space-size=16384"
+    )
+    echo [node] NODE_OPTIONS=!NODE_OPTIONS!
+)
 call npx vite
 pause
 exit /b 0

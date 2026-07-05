@@ -316,7 +316,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     const resolvedCapital = req.preResolvedCapital ?? resolveCapitalSettingsFromRaw(capitalSettings as Record<string, unknown>);
 
     const requireTs = requiresTypescriptEngine(resolvedSettings) || isSmartTradeSizingMode(resolvedCapital.sizingMode);
-    if (shouldAttemptRust(req.context.engineMode ?? "auto", requireTs)) {
+    if (shouldAttemptRust(req.context.engineMode ?? "auto", requireTs, req.context.useRustEnginePreference)) {
         const rustResult = await tryRustBacktest(backtestData, mergedSignals, resolvedCapital, resolvedSettings);
         if (rustResult && isResultConsistent(rustResult)) {
             let result = rustResult;
@@ -470,13 +470,29 @@ function isBrowser(): boolean {
     return typeof document !== "undefined";
 }
 
+/**
+ * Decide whether to attempt the Rust engine for this run.
+ *
+ * Browser path: read the DOM toggle (`shouldUseRustEngine`). The
+ * `useRustEnginePreference` argument is ignored so an HTTP/worker caller that
+ * also runs in a browser tab never accidentally overrides the user's toggle.
+ *
+ * Node path (server-side Batch Backtest plugin, etc.): there is no DOM, so the
+ * toggle is unreadable. An explicit `useRustEnginePreference === true` from the
+ * caller (mirroring the user's UI toggle via the request context) opts in. This
+ * is the fix for the "Rust silently skipped server-side" trap: without it, a
+ * user who runs Rust in browser mode would see a silent perf regression the
+ * moment they switch to server-side mode.
+ */
 function shouldAttemptRust(
     engineMode: BacktestExecutionContext["engineMode"],
-    requireTs: boolean
+    requireTs: boolean,
+    useRustEnginePreference?: boolean
 ): boolean {
     if (requireTs || engineMode === "typescript") return false;
     if (engineMode === "rust_preferred") return true;
-    return isBrowser() && shouldUseRustEngine();
+    if (isBrowser()) return shouldUseRustEngine();
+    return useRustEnginePreference === true;
 }
 
 export function resolveExecutorBacktestSettings(
