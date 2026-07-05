@@ -71,6 +71,7 @@ export interface BatchSyntheticStateSnapshot {
     direction: BatchSyntheticDirection | null;
     timeKey: string;
     barIndex: number;
+    close: number | null;
     activePeerCount: number;
     agreementCount: number;
     oppositionCount: number;
@@ -606,6 +607,7 @@ function buildSnapshotAt(
             direction: null,
             timeKey: key,
             barIndex: targetIndex,
+            close: Number.isFinite(targetBar.close) ? targetBar.close : null,
             activePeerCount: 0,
             agreementCount: 0,
             oppositionCount: 0,
@@ -649,6 +651,7 @@ function buildSnapshotAt(
         direction,
         timeKey: key,
         barIndex: targetIndex,
+        close: Number.isFinite(targetBar.close) ? targetBar.close : null,
         activePeerCount: states.length,
         agreementCount: agreeing.length,
         oppositionCount: opposing.length,

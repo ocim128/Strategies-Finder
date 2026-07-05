@@ -1016,6 +1016,7 @@ function formatMinerRowPipe(verdict: BatchSyntheticAssetVerdict): string {
     const direction = verdict.direction ? verdict.direction.toUpperCase() : "--";
     const reason = verdict.reasons[0] ?? "";
     const mfeMaeRatio = computeMinerMfeMaeRatio(evidence.expectedMfePct, evidence.expectedMaePct);
+    const invalidationPrice = computeMinerInvalidationPrice(verdict);
     const horizonLabel = evidence.horizonBarsAll.length > 1
         ? `Hrz [${evidence.horizonBarsAll.join(",")}]`
         : `Hrz ${evidence.horizonBars}`;
@@ -1023,6 +1024,7 @@ function formatMinerRowPipe(verdict: BatchSyntheticAssetVerdict): string {
         verdict.asset,
         `Dir ${direction}`,
         `Conf ${verdict.confidence}`,
+        `AsOf ${verdict.currentSnapshot?.timeKey ?? "--"}`,
         horizonLabel,
         `Analogs ${evidence.analogCount}/${evidence.candidateCount}`,
         `Pre ${evidence.selectionCount}`,
@@ -1033,6 +1035,7 @@ function formatMinerRowPipe(verdict: BatchSyntheticAssetVerdict): string {
         `MFE ${formatSignedPercent(evidence.expectedMfePct)}`,
         `MAE ${formatSignedPercent(evidence.expectedMaePct)}`,
         `RR ${formatRatio(mfeMaeRatio)}`,
+        `Inv ${formatInvalidationPrice(verdict.direction, invalidationPrice)}`,
         `HMax ${evidence.longestHorizonBars ?? "--"}b Ret ${formatSignedPercent(evidence.longestOosForwardReturnPct)} Lift ${formatSignedPercent(evidence.longestOosLiftPct)}`,
         `Dist ${formatNumber(evidence.avgDistance, 2)}`,
         reason,
@@ -1067,6 +1070,37 @@ function computeMinerMfeMaeRatio(mfePct: number | null, maePct: number | null): 
         return mfePct > 0 ? Number.POSITIVE_INFINITY : null;
     }
     return mfePct / adverse;
+}
+
+function computeMinerInvalidationPrice(verdict: BatchSyntheticAssetVerdict): number | null {
+    const close = verdict.currentSnapshot?.close;
+    const maePct = verdict.evidence.expectedMaePct;
+    if (!verdict.direction || close === null || close === undefined || maePct === null || !Number.isFinite(close) || !Number.isFinite(maePct) || close <= 0) {
+        return null;
+    }
+    const adversePct = Math.abs(maePct) / 100;
+    if (verdict.direction === "long") {
+        return close * (1 - adversePct);
+    }
+    return close * (1 + adversePct);
+}
+
+function formatInvalidationPrice(direction: BatchSyntheticAssetVerdict["direction"], value: number | null): string {
+    if (!direction || value === null || !Number.isFinite(value)) {
+        return "--";
+    }
+    const comparator = direction === "long" ? "<" : ">";
+    return `${comparator}${formatPrice(value)}`;
+}
+
+function formatPrice(value: number): string {
+    if (Math.abs(value) >= 100) {
+        return value.toFixed(2);
+    }
+    if (Math.abs(value) >= 1) {
+        return value.toFixed(4);
+    }
+    return value.toPrecision(4);
 }
 
 function formatRatio(value: number | null): string {
