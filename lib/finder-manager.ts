@@ -281,7 +281,11 @@ const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
     "totalTrades",
     "activeSymbols",
 ] as const;
-const UNIVERSE_DATASET_CACHE_MAX_ENTRIES = 512;
+// Each entry holds a finished OHLCV series (up to DATA_CHART_TOTAL_LIMIT = 100k
+// bars, ~5-10 MB). The cap is by entry count, not bytes, so a high cap can hold
+// multiple GB steady-state on large universes. 128 covers typical multi-strategy
+// reuse for universes up to ~100 pairs without pinning 1000-pair runs in memory.
+const UNIVERSE_DATASET_CACHE_MAX_ENTRIES = 128;
 // Synthetic universe runs reuse the same source symbols (e.g. BNBUSDT 1m) across
 // many pairs. A typical universe has <50 unique source symbols, so a small LRU
 // is enough to dedup 200+ source reads down to the unique set per run.

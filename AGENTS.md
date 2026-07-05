@@ -286,6 +286,18 @@ Strategy-lib failure modes seen repeatedly:
 - Preserve cache decisions and deterministic seeded behavior
 - If touching robust mode, keep explicit `PASS`/`FAIL` decision semantics
 
+### Memory budget (Finder Universe and Batch Backtest)
+- Each OHLCV dataset is ~5–10 MB at the 100k-bar cap. The dominant retention is N symbols × full dataset held simultaneously, not per-run allocations.
+- Finder Universe (`lib/finder/finder-runner-universe.ts`): `loadedSymbols[i].data` plus `closedDataBySymbol` hold every universe symbol's data for the whole evaluation. They are released after the candidate loop ends; do not add new consumers that extend their lifetime. The `universeDatasetCache` (`lib/finder-manager.ts`) is LRU-bounded and cleared only by `invalidateLocalDataCaches()`.
+- Batch (`lib/batch-backtest/batch-backtest-runner.ts`): `BatchBacktestSymbolResult` carries `data`, `signals`, and `result.trades` per row. These are required for Mine Timing on synthetic pair rows and are pruned after Mine runs; non-synthetic rows omit `signals`. Don't add post-Mine reads of these arrays — use `tradeSummary` or scalars off `result` instead.
+- Realistic browser heap limits: 1000+ synthetic pairs exceed a default 8 GB V8 heap. Recommend running with `--max-old-space-size=12288+` and/or splitting into chunks of 200–400 pairs per run.
+- Cache caps to respect (lower only with cause; raise only after checking steady-state footprint):
+  - `UNIVERSE_DATASET_CACHE_MAX_ENTRIES` in `lib/finder-manager.ts` (default 128)
+  - `MAX_CACHE_ENTRIES` in `lib/data/data-cache.ts` (default 64)
+  - `legCache` / `pairCache` in `lib/batch-backtest/batch-backtest-loader.ts` (default 24 / 16)
+  - These are cleared at Batch run end and after Mine runs; Finder Universe relies on cross-strategy reuse, so do not clear mid-run.
+- IBKR 4H synthetic pairs require the 30m seed CSVs at `price-data/ibkr/csv/30m/`. Do NOT try to "optimize" synthetic pairs by loading pre-aggregated 4H legs — the ratio must be computed at the seed interval (30m) and *then* aggregated, not the other way around. Computing `base.high/quote.high` from 4H bars conflates extremes from different moments within the bucket and inflates the bar range (see comment at `scripts/lib/synthetic-pair.ts` `buildSyntheticPairDataset`). `npm run ibkr:aggregate` exists to write `4h/*.csv` for **single-symbol IBKR 4H charts** (where no ratio is involved); it does not help and must not be used for synthetic-pair legs.
+
 ### Modify Exit Strategy Override
 - Keep it gated on `disableSignalExits`; when normal signal exits are enabled, the override is inert
 - Preserve `Signal.exitOnly` through signal preparation and every TS engine signal loop; exit-only signals close opposite positions but never open new positions

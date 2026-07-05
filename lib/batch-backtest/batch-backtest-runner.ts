@@ -28,6 +28,7 @@ import type {
 import type { CapitalSettings } from "../types/backtest";
 import { timeKey } from "../strategies";
 import { parseTimeToUnixSeconds } from "../time-normalization";
+import { parsePortfolioSyntheticPairSymbol } from "../portfolioLab/portfolio-lab-synthetic";
 
 // ============================================================================
 // Public types
@@ -350,6 +351,13 @@ function buildSymbolResult(
         status = "flat";
     }
 
+    // `signals` is only consumed by Mine Timing, and Mine only runs on
+    // synthetic pair rows (parsePortfolioSyntheticPairSymbol gates it in
+    // buildMinerPairArtifacts / hasMineableArtifacts). For non-synthetic
+    // rows the array has no remaining reader, so drop it to free the
+    // per-row Signal[] allocation across large batches.
+    const isSyntheticPair = parsePortfolioSyntheticPairSymbol(symbol) !== null;
+
     return {
         symbol,
         status,
@@ -358,7 +366,7 @@ function buildSymbolResult(
         lastTime: data[data.length - 1]?.time,
         result,
         data,
-        signals,
+        signals: isSyntheticPair ? signals : undefined,
         tradeSummary: buildTradeSummary(data, result),
     };
 }

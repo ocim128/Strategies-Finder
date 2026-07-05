@@ -13,7 +13,10 @@ export type CacheEntry = CacheEntryMetadata & {
 };
 
 export class DataCache {
-    private readonly MAX_CACHE_ENTRIES = 256;
+	// Each entry holds a full candles array (up to ~100k bars, ~5-10 MB).
+	// Capped by entry count rather than bytes; 64 keeps steady-state within
+	// ~hundreds of MB while still covering typical symbol/interval churn.
+	private readonly MAX_CACHE_ENTRIES = 64;
     // Map iterates in insertion order; re-inserting a key (delete + set) moves
     // it to the most-recently-used position. This gives O(1) LRU eviction
     // without the prior O(MAX_CACHE_ENTRIES) timestamp scan on every overflow.

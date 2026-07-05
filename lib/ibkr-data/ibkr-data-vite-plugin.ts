@@ -619,11 +619,11 @@ export function mergeCandlesByTime(candles: OHLCVData[]): OHLCVData[] {
     return Array.from(byTime.values()).sort((a, b) => Number(a.time) - Number(b.time));
 }
 
-function getCsvPath(symbol: string, interval: string): string {
+export function getCsvPath(symbol: string, interval: string): string {
     return resolve(IBKR_CSV_DIR, interval, `${symbol}.csv`);
 }
 
-function writeCsv(symbol: string, interval: string, candles: OHLCVData[]): void {
+export function writeCsv(symbol: string, interval: string, candles: OHLCVData[]): void {
     const filePath = getCsvPath(symbol, interval);
     mkdirSync(dirname(filePath), { recursive: true });
     const rows = ["time,open,high,low,close,volume"];

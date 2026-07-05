@@ -41,10 +41,13 @@ import {
     buildPairCacheKey,
 } from "./synthetic-leg-cache";
 
-// Finder uses 64 for legs and 512 for finished datasets; Batch lists are
-// smaller than a universe sweep, so 64 legs / 128 pairs is a comfortable bound.
-const legCache = new SyntheticLegCache<OHLCVData[]>(64);
-const pairCache = new SyntheticLegCache<OHLCVData[]>(128);
+// Each leg/pair entry holds a full OHLCV array (~5-10 MB at 100k bars).
+// Batch's serial loop only needs PREFETCH_AHEAD + 1 = 5 working entries of
+// each kind; the small caps bound steady-state retention without starving the
+// pipeline. Raise again only if re-running overlapping synthetic lists
+// frequently and seeing refetch cost dominate.
+const legCache = new SyntheticLegCache<OHLCVData[]>(24);
+const pairCache = new SyntheticLegCache<OHLCVData[]>(16);
 
 // A cached dataset below this many bars is almost certainly incomplete — either
 // a stale streaming/gap-fill leftover (e.g. 16 bars over a single day) or a

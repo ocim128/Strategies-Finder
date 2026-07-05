@@ -22,7 +22,8 @@ import { computePerformanceVerdict } from "../finder/finder-universe-metrics";
 import type { BacktestResult, OHLCVData, Time } from "../types/strategies";
 import { parsePortfolioSyntheticPairSymbol, stripKnownQuoteSuffix } from "../portfolioLab/portfolio-lab-synthetic";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
-import { loadBatchDataset } from "./batch-backtest-loader";
+import { clearBatchDatasetCaches, loadBatchDataset } from "./batch-backtest-loader";
+import { mapWithConcurrencyLimit } from "../async-pool";
 import {
     parseBatchSymbols,
     runBatchBacktest,
@@ -33,6 +34,7 @@ import {
     runBatchSyntheticStateMiner,
     type BatchSyntheticAssetVerdict,
     type BatchSyntheticMinerResult,
+    type BatchSyntheticPairContribution,
     type BatchSyntheticPairArtifact,
     type BatchSyntheticTargetArtifact,
 } from "./batch-synthetic-state-miner";
@@ -211,6 +213,13 @@ class BatchBacktestService {
                 dom.batchBacktestMineBtn.disabled = !this.hasMineableArtifacts();
                 this.updateSummary(dom);
                 this.setProgress(dom, 100, this.cancelled ? "Stopped" : "Done");
+                // The leg/pair LRU was a within-run dedup layer (e.g. ZEC
+                // appearing in many pairs fetched once). The run is over, and
+                // Mine Timing repopulates only the target-asset datasets it
+                // needs. Drop the resolved OHLCV arrays now so they don't sit
+                // in memory across Copy / new Run / tab work. If the user
+                // clicks Mine next, loadMinerTargets will refetch on miss.
+                clearBatchDatasetCaches();
             }
         }
     }
@@ -271,6 +280,20 @@ class BatchBacktestService {
                 targets: targets.length,
                 verdicts: result.verdicts.length,
             });
+            // The miner was the last consumer of the per-row OHLCV / signal /
+            // trade arrays. Drop them so a 1000-pair run doesn't keep ~5 GB
+            // of artifacts alive after Mine. Scalars, tradeSummary, and the
+            // DOM rows are unaffected, so the result list and Copy summary
+            // (minus the OPEN_SCORE line, which read result.trades) still
+            // render. Re-mining the same run now requires a fresh Run, which
+            // matches the existing fingerprint guard.
+            for (const row of this.lastResults) {
+                row.data = undefined;
+                row.signals = undefined;
+                if (row.result) {
+                    row.result.trades = [];
+                }
+            }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.lastMinerResult = null;
@@ -278,6 +301,11 @@ class BatchBacktestService {
             debugLogger.error("batch_synthetic_miner.failed", { error: message });
         } finally {
             dom.batchBacktestMineBtn.disabled = !this.hasMineableArtifacts();
+            // The leg/pair caches existed to feed Mine; the miner reads
+            // pairArtifacts into its own working set on entry, so the shared
+            // LRU no longer needs the resolved arrays. Drop them so the next
+            // action (Copy, new Run, tab work) doesn't carry them.
+            clearBatchDatasetCaches();
         }
     }
 
@@ -344,15 +372,20 @@ class BatchBacktestService {
                 }
             }
         }
-        // Load all target datasets concurrently. Each load is independent
-        // (loadBatchDataset goes through the shared LRU caches and
+        // Load target datasets with bounded concurrency. Each load is
+        // independent (loadBatchDataset goes through the shared LRU caches and
         // dataManager.fetchDataDetached, both safe under concurrency), and the
-        // previous sequential `for...await` serialized ~16 network reads. On
-        // 4H each target has a deep history, so this was the dominant wall
-        // clock cost of Mine. Per-target errors are isolated so one failed
-        // asset does not reject the batch.
-        const loaded = await Promise.all(
-            assets.map(async (asset) => {
+        // previous sequential `for...await` serialized ~16 network reads. On 4H
+        // each target has a deep history, so this was the dominant wall clock
+        // cost of Mine. Bounded at 8 in flight so an 80-asset IBKR/stock batch
+        // doesn't pin ~80 full datasets in memory at the same instant.
+        // Per-target errors are isolated so one failed asset does not reject
+        // the batch.
+        const BATCH_MINER_TARGET_LOAD_CONCURRENCY = 8;
+        const loaded = await mapWithConcurrencyLimit(
+            assets,
+            BATCH_MINER_TARGET_LOAD_CONCURRENCY,
+            async (asset): Promise<BatchSyntheticTargetArtifact | null> => {
                 const symbol = markedSymbolByAsset.get(asset) ?? resolveBatchSyntheticTargetSymbol(asset);
                 try {
                     const data = await loadBatchDataset(symbol, interval);
@@ -368,7 +401,7 @@ class BatchBacktestService {
                     });
                     return null;
                 }
-            }),
+            },
         );
         // Preserve the sorted asset order; drop failed/empty loads.
         return loaded.filter((entry): entry is BatchSyntheticTargetArtifact => entry !== null);
@@ -982,6 +1015,7 @@ function formatMinerRowPipe(verdict: BatchSyntheticAssetVerdict): string {
     const evidence = verdict.evidence;
     const direction = verdict.direction ? verdict.direction.toUpperCase() : "--";
     const reason = verdict.reasons[0] ?? "";
+    const mfeMaeRatio = computeMinerMfeMaeRatio(evidence.expectedMfePct, evidence.expectedMaePct);
     const horizonLabel = evidence.horizonBarsAll.length > 1
         ? `Hrz [${evidence.horizonBarsAll.join(",")}]`
         : `Hrz ${evidence.horizonBars}`;
@@ -990,7 +1024,7 @@ function formatMinerRowPipe(verdict: BatchSyntheticAssetVerdict): string {
         `Dir ${direction}`,
         `Conf ${verdict.confidence}`,
         horizonLabel,
-        `Samples ${evidence.analogCount}/${evidence.candidateCount}`,
+        `Analogs ${evidence.analogCount}/${evidence.candidateCount}`,
         `Pre ${evidence.selectionCount}`,
         `PreRet ${formatSignedPercent(evidence.selectionForwardReturnPct)}`,
         `OOS ${evidence.oosCount}`,
@@ -998,7 +1032,8 @@ function formatMinerRowPipe(verdict: BatchSyntheticAssetVerdict): string {
         `Lift ${formatSignedPercent(evidence.oosLiftPct)}`,
         `MFE ${formatSignedPercent(evidence.expectedMfePct)}`,
         `MAE ${formatSignedPercent(evidence.expectedMaePct)}`,
-        `Long ${evidence.longestHorizonBars ?? "--"}b ${formatSignedPercent(evidence.longestOosForwardReturnPct)}/${formatSignedPercent(evidence.longestOosLiftPct)}`,
+        `RR ${formatRatio(mfeMaeRatio)}`,
+        `HMax ${evidence.longestHorizonBars ?? "--"}b Ret ${formatSignedPercent(evidence.longestOosForwardReturnPct)} Lift ${formatSignedPercent(evidence.longestOosLiftPct)}`,
         `Dist ${formatNumber(evidence.avgDistance, 2)}`,
         reason,
     ].filter(Boolean);
@@ -1015,12 +1050,38 @@ function formatMinerCopy(result: BatchSyntheticMinerResult): string {
         const warnings = verdict.pairContributions
             .filter((entry) => entry.label === "dominating" || entry.label === "harmful" || entry.label === "opposing")
             .slice(0, 3)
-            .map((entry) => `${entry.symbol}:${entry.label}`);
+            .map(formatPairContributionWarning);
         if (warnings.length > 0) {
             lines.push(`PAIR_CHECK | ${verdict.asset} | ${warnings.join(", ")}`);
         }
     }
     return lines.join("\n");
+}
+
+function computeMinerMfeMaeRatio(mfePct: number | null, maePct: number | null): number | null {
+    if (mfePct === null || maePct === null || !Number.isFinite(mfePct) || !Number.isFinite(maePct)) {
+        return null;
+    }
+    const adverse = Math.abs(maePct);
+    if (adverse <= 1e-9) {
+        return mfePct > 0 ? Number.POSITIVE_INFINITY : null;
+    }
+    return mfePct / adverse;
+}
+
+function formatRatio(value: number | null): string {
+    if (value === null || Number.isNaN(value)) {
+        return "--";
+    }
+    if (!Number.isFinite(value)) {
+        return "Inf";
+    }
+    return value.toFixed(value >= 10 ? 1 : 2);
+}
+
+function formatPairContributionWarning(entry: BatchSyntheticPairContribution): string {
+    return `${entry.symbol}:${entry.label}`
+        + `(n=${entry.oosCountWithout}, ret=${formatSignedPercent(entry.oosReturnWithoutPct)}, delta=${formatSignedPercent(entry.returnDeltaPct)})`;
 }
 
 function getMinerVerdictClass(verdict: BatchSyntheticAssetVerdict["verdict"]): string {

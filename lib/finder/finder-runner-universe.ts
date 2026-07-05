@@ -925,6 +925,17 @@ export async function runFinderUniverseExecution(
         await maybeYieldDuringEvaluation();
     }
 
+    // All candidate plans have finished consuming per-symbol OHLCV data.
+    // Release the loaded datasets and the prepared closed-candle map so the
+    // final ranking, diagnostics, and the caller's downstream work (Apply,
+    // OOS pass, next strategy iteration) don't carry N full symbol arrays.
+    // The survivor candidates in `results` only retain scalar metrics, so
+    // nothing past this point reads `loadedSymbols[i].data` or the closed map.
+    for (const sym of loadedSymbols) {
+        sym.data = [] as OHLCVData[];
+    }
+    closedDataBySymbol.clear();
+
     const finalRankingStartedAt = performance.now();
     const results = getSortedSurvivors(input.options.topN);
     addElapsed(timings, "resultRanking", finalRankingStartedAt);

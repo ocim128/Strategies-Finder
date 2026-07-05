@@ -29,6 +29,7 @@
     "mine:1s:verify": "esno scripts/second-market-miner.ts --mode verify",
     "alpha:surgical": "esno scripts/surgical-optimization.ts",
     "synthetic:pair": "esno scripts/build-synthetic-pair.ts",
+    "ibkr:aggregate": "esno scripts/ibkr-aggregate-csv.ts",
     "strategies:sync-manifest": "esno scripts/sync-strategy-manifest.ts",
     "strategies:audit-prepared": "esno scripts/audit-prepared-strategies.ts",
     "build:types": "tsc -p tsconfig.types.json",
