@@ -127,11 +127,17 @@ The Batch tab persists the latest completed output through
 `playground_batch_backtest_latest_results`, using the same envelope helper as
 Finder result snapshots. Persisted rows are scalar-only: `data`, `signals`,
 `result.trades`, and `result.equityCurve` are stripped before writing to
-localStorage. Reloading restores the rendered rows and Copy Results output.
+localStorage. Reloading restores the rendered rows, Copy Results output, and
+the latest Stability Mine output when one exists.
 
 Mine Timing is not restored from localStorage because it needs heavy per-row
 artifacts. In server-side mode, the reattach status endpoint can still re-enable
-Mine while the server artifact TTL is valid and the fingerprint matches.
+Mine while the server artifact TTL is valid and the fingerprint matches. Before
+server-side Stability Mine starts, the browser refreshes artifact status from
+the server so a stale local flag cannot call the endpoint after artifacts were
+released or expired. Stability Mine does not release artifacts, so it can be
+rerun with different subset/rerun/seed values until TTL expiry, a new Batch Run,
+or Mine Timing releases them.
 
 ## Single in-flight run per dev server
 

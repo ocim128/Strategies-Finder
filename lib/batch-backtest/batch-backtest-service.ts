@@ -772,6 +772,12 @@ class BatchBacktestService {
         }
         const pairArtifacts = this.buildMinerPairArtifacts();
         if (this.serverHasArtifacts && pairArtifacts.length === 0) {
+            const hasServerArtifacts = await this.refreshServerArtifactState(currentFingerprint);
+            if (!hasServerArtifacts) {
+                dom.batchBacktestMinerSummary.textContent = "Rerun Batch before stability mining; no artifacts on server.";
+                dom.batchBacktestStabilityMineBtn.disabled = true;
+                return;
+            }
             await this.runStabilityMineServer(dom);
             return;
         }
@@ -823,6 +829,7 @@ class BatchBacktestService {
             this.lastStabilityResult = finalizeStabilityAggregate(aggregate);
             this.renderStabilityResult(dom, this.lastStabilityResult);
             dom.batchBacktestCopyStabilityBtn.disabled = this.lastStabilityResult.rows.length === 0;
+            this.saveLatestResultsSnapshot();
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.lastStabilityResult = null;
@@ -864,7 +871,12 @@ class BatchBacktestService {
             });
             if (!response.ok || !response.body) {
                 const text = await response.text().catch(() => "");
-                throw new Error(text || `HTTP ${response.status}`);
+                let payload: { error?: string } = {};
+                try { payload = JSON.parse(text); } catch { /* ignore */ }
+                if (response.status === 400 && payload.error?.includes("no artifacts on server")) {
+                    this.serverHasArtifacts = false;
+                }
+                throw new Error(payload.error ?? (text || `HTTP ${response.status}`));
             }
             const received: { result: BatchStabilityMineResult | null } = { result: null };
             await consumeNdjsonStream(response.body, {
@@ -884,7 +896,8 @@ class BatchBacktestService {
             this.lastStabilityResult = received.result;
             this.renderStabilityResult(dom, received.result);
             dom.batchBacktestCopyStabilityBtn.disabled = received.result.rows.length === 0;
-            this.serverHasArtifacts = false;
+            this.serverHasArtifacts = true;
+            this.saveLatestResultsSnapshot();
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.lastStabilityResult = null;
@@ -893,6 +906,37 @@ class BatchBacktestService {
         } finally {
             dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts && !this.hasMineableArtifacts();
             dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts && !this.hasMineableArtifacts();
+        }
+    }
+
+    private async refreshServerArtifactState(expectedFingerprint: string): Promise<boolean> {
+        try {
+            const response = await fetch("/api/batch-backtest/status", { cache: "no-store" });
+            if (!response.ok) {
+                this.serverHasArtifacts = false;
+                return false;
+            }
+            const payload = await response.json() as {
+                lastRun?: {
+                    hasArtifacts?: boolean;
+                    fingerprint?: string | null;
+                    interval?: string | null;
+                } | null;
+            };
+            const lastRun = payload.lastRun;
+            const hasArtifacts = lastRun?.hasArtifacts === true && lastRun.fingerprint === expectedFingerprint;
+            this.serverHasArtifacts = hasArtifacts;
+            if (hasArtifacts) {
+                this.lastRunFingerprint = expectedFingerprint;
+                this.lastRunInterval = lastRun?.interval ?? this.lastRunInterval;
+            }
+            return hasArtifacts;
+        } catch (error) {
+            this.serverHasArtifacts = false;
+            debugLogger.warn("batch.server.artifact_status_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return false;
         }
     }
 
@@ -1041,6 +1085,7 @@ class BatchBacktestService {
         if (!snapshot) return;
 
         this.lastResults = snapshot.results;
+        this.lastStabilityResult = snapshot.stabilityResult ?? null;
         this.lastRunFingerprint = snapshot.fingerprint;
         this.lastRunInterval = snapshot.interval || null;
         this.appendedCount = snapshot.results.length;
@@ -1057,6 +1102,10 @@ class BatchBacktestService {
         dom.batchBacktestCopyBtn.disabled = this.lastResults.length === 0;
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
+        if (this.lastStabilityResult) {
+            this.renderStabilityResult(dom, this.lastStabilityResult);
+            dom.batchBacktestCopyStabilityBtn.disabled = this.lastStabilityResult.rows.length === 0;
+        }
         dom.batchBacktestStatus.textContent = `Restored last Batch run (${this.lastResults.length} pairs)`;
         this.setProgress(dom, 100, "Restored");
         debugLogger.event("batch_backtest.latest_results_restored", {
@@ -1076,6 +1125,7 @@ class BatchBacktestService {
             fingerprint: this.lastRunFingerprint,
             serverHasArtifacts: this.serverHasArtifacts,
             results: this.lastResults,
+            stabilityResult: this.lastStabilityResult,
         });
         writePersistedJson({
             ...BATCH_RESULTS_STORAGE,

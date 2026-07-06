@@ -342,7 +342,7 @@ describe("batch-backtest server plugin processMine", () => {
 });
 
 describe("batch-backtest server plugin processStabilityMine", () => {
-    it("consumes stored synthetic artifacts and releases them after a successful stability mine", async () => {
+    it("keeps stored synthetic artifacts available for repeated stability mines", async () => {
         const pairData = makeCandles([100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]);
         const targetData = makeCandles([100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120, 122]);
         const datasets = new Map<string, OHLCVData[]>([["UP+DOWN", pairData]]);
@@ -393,7 +393,33 @@ describe("batch-backtest server plugin processStabilityMine", () => {
         expect(last.type).to.equal("done");
         expect(last.ok).to.equal(true);
         expect(last.result?.rows).to.be.an("array");
-        expect(hasStoredMineArtifacts()).to.equal(false);
+        expect(hasStoredMineArtifacts()).to.equal(true);
+
+        setMinerOwnerForTests(0);
+        const secondMinerOwner = 9012;
+        setMinerOwnerForTests(secondMinerOwner);
+        const secondMineEvents: unknown[] = [];
+        try {
+            await processStabilityMine(
+                done.fingerprint,
+                "5m",
+                1,
+                1,
+                2,
+                (event) => secondMineEvents.push(event),
+                secondMinerOwner,
+                async () => [
+                    { asset: "UP", symbol: "UP", data: targetData },
+                    { asset: "DOWN", symbol: "DOWN", data: targetData },
+                ],
+            );
+        } finally {
+            setMinerOwnerForTests(0);
+        }
+        const secondLast = secondMineEvents[secondMineEvents.length - 1] as { type: string; ok?: boolean };
+        expect(secondLast.type).to.equal("done");
+        expect(secondLast.ok).to.equal(true);
+        expect(hasStoredMineArtifacts()).to.equal(true);
 
         releaseLastResults("test_end");
     });

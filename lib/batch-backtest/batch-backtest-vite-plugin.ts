@@ -584,7 +584,6 @@ export async function processStabilityMine(
         const finalResult = finalizeStabilityAggregate(aggregate);
         snapshot.running = false;
         writer({ type: "done", ok: true, result: finalResult });
-        releaseLastResults("stability_mine_completed");
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         debugLogger.warn("batch.server.stability_mine.fatal", { error: message });

@@ -67,6 +67,29 @@ describe("Batch backtest result snapshots", () => {
             fingerprint: "abc",
             serverHasArtifacts: true,
             results: Array.from({ length: BATCH_RESULT_SNAPSHOT_LIMIT + 5 }, (_, index) => makeResult(index)),
+            stabilityResult: {
+                reruns: 20,
+                subsetSize: 5,
+                seed: 1,
+                totalPairs: 10,
+                hitEvents: 1,
+                rows: [
+                    {
+                        asset: "wld",
+                        direction: "LONG",
+                        hits: 1,
+                        high: 1,
+                        medium: 0,
+                        low: 0,
+                        medianRetPct: 2,
+                        medianLiftPct: 3,
+                        medianRr: 4,
+                        medianDist: 5,
+                        medianHmaxLiftPct: 6,
+                        pairWarnings: 0,
+                    },
+                ],
+            },
         });
 
         expect(snapshot.results).to.have.length(BATCH_RESULT_SNAPSHOT_LIMIT);
@@ -76,6 +99,7 @@ describe("Batch backtest result snapshots", () => {
         expect(snapshot.results[0]!.result?.equityCurve).to.deep.equal([]);
         expect(snapshot.results[0]!.buyHoldPct).to.be.closeTo(10, 1e-9);
         expect(snapshot.results[0]!.openTradeAssetScores?.map((s) => `${s.asset}:${s.score}`)).to.deep.equal(["BTC:-1", "WLD:1"]);
+        expect(snapshot.stabilityResult?.rows[0]?.asset).to.equal("WLD");
     });
 
     it("rejects malformed snapshots", () => {
@@ -91,10 +115,19 @@ describe("Batch backtest result snapshots", () => {
             fingerprint: "abc",
             serverHasArtifacts: false,
             results: [makeResult(1)],
+            stabilityResult: {
+                reruns: 1,
+                subsetSize: 1,
+                seed: 1,
+                totalPairs: 1,
+                hitEvents: 1,
+                rows: [{ asset: "BTC", direction: "SHORT", hits: 1, high: 0, medium: 1, low: 0, medianRetPct: null, medianLiftPct: null, medianRr: null, medianDist: null, medianHmaxLiftPct: null, pairWarnings: 0 }],
+            },
         });
 
         expect(normalized?.interval).to.equal("1h");
         expect(normalized?.results[0]?.data).to.equal(undefined);
         expect(normalized?.results[0]?.result?.trades).to.deep.equal([]);
+        expect(normalized?.stabilityResult?.rows[0]?.direction).to.equal("SHORT");
     });
 });
