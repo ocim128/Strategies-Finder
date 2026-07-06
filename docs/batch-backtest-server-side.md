@@ -110,28 +110,28 @@ reload. Without it, a user who runs 1000 pairs and walks away would leave
 The TTL value is `DEFAULT_ARTIFACT_RETENTION_MS = 10 * 60 * 1000` in
 `lib/batch-backtest/batch-backtest-vite-plugin.ts`.
 
-## Copy summary differences
+## Copy summary parity
 
-In server-side mode, the Copy summary renders **without** the B&H rows block
-and **without** the OPEN_SCORE line. This is a documented consequence of the
-scalar-only wire transport:
+In server-side mode, the `symbol` event still strips `data`, `signals`, and
+`result.trades`, but it keeps tiny derived scalars for Copy Results:
 
-- `buildBuyHoldRows` reads `row.data` via `computeBuyAndHoldPct`. With
-  `data === undefined`, `computeBuyAndHoldPct` returns `null` and the B&H
-  rows block is skipped.
-- `computeOpenTradeAssetScores` reads `row.result.trades`. With `trades === []`,
-  the helper no-ops and the OPEN_SCORE line is omitted.
+- `buyHoldPct` preserves the B&H / alpha sections.
+- `openTradeAssetScores` preserves the OPEN_SCORE sections.
 
-The remaining summary sections (medians, profitable/losing rows, concentration,
-robustness) match the browser-side output exactly.
+The browser tab still avoids heavy per-row arrays, while copied summaries match
+the browser-side Batch path for these sections.
 
-If you need B&H / OPEN_SCORE in server-side mode, the follow-up remedies are:
-- (a) add `POST /api/batch-backtest/copy-summary` that computes the full
-  summary server-side and returns just the formatted text; or
-- (b) extend the `symbol` event with `firstClose` / `lastClose` and the
-  open-trade summary as extra scalars.
+## Reload persistence
 
-Both are out of scope for v1.
+The Batch tab persists the latest completed output through
+`playground_batch_backtest_latest_results`, using the same envelope helper as
+Finder result snapshots. Persisted rows are scalar-only: `data`, `signals`,
+`result.trades`, and `result.equityCurve` are stripped before writing to
+localStorage. Reloading restores the rendered rows and Copy Results output.
+
+Mine Timing is not restored from localStorage because it needs heavy per-row
+artifacts. In server-side mode, the reattach status endpoint can still re-enable
+Mine while the server artifact TTL is valid and the fingerprint matches.
 
 ## Single in-flight run per dev server
 

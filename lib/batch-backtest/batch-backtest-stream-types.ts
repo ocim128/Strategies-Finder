@@ -11,15 +11,12 @@
  * browser reconstructs a `BatchBacktestSymbolResult` with those array fields
  * left `undefined`.
  *
- * Consequence: in server-side mode, the browser-side Copy summary renders
- * WITHOUT the B&H rows block (reads `row.data` via `computeBuyAndHoldPct`) and
- * WITHOUT the OPEN_SCORE line (reads `row.result.trades` via
- * `computeOpenTradeAssetScores`). Both helpers gracefully no-op on
- * `undefined`. This graceful degradation mirrors the post-Mine prune (commit
- * 6401a53) and is documented in `docs/batch-backtest-server-side.md`.
+ * Copy parity is preserved by adding tiny derived scalars (`buyHoldPct` and
+ * `openTradeAssetScores`) before stripping the heavy arrays.
  */
 
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
+import { computeBuyAndHoldPct, computeOpenTradeAssetScores } from "./batch-row-scalars";
 
 export type BatchStreamEvent =
     | { type: "start"; total: number; interval: string; strategyKey: string }
@@ -55,9 +52,12 @@ export function toScalarRow(row: BatchBacktestSymbolResult): BatchBacktestSymbol
         // `result` carries a `trades` array internally; that array can be large
         // for high-trade-count pairs, so drop the whole result trades slice.
         // Keep the scalar metrics so the verdict / Copy summary still render.
-        result: row.result ? { ...row.result, trades: [] } : undefined,
-        // Intentionally omit `data` and `signals`.
+        result: row.result ? { ...row.result, trades: [], equityCurve: [] } : undefined,
+        // Intentionally omit `data` and `signals`; keep only derived scalars
+        // needed by Copy Results.
         tradeSummary: row.tradeSummary,
+        buyHoldPct: row.buyHoldPct ?? computeBuyAndHoldPct(row.data),
+        openTradeAssetScores: row.openTradeAssetScores ?? computeOpenTradeAssetScores([row]),
         error: row.error,
     };
 }

@@ -29,6 +29,7 @@ import type { CapitalSettings } from "../types/backtest";
 import { timeKey } from "../strategies";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { parsePortfolioSyntheticPairSymbol } from "../portfolioLab/portfolio-lab-synthetic";
+export { parseBatchSymbols } from "./batch-run-contract";
 
 // ============================================================================
 // Public types
@@ -65,6 +66,8 @@ export interface BatchBacktestSymbolResult {
     data?: OHLCVData[];
     signals?: Signal[];
     tradeSummary?: BatchBacktestTradeSummary;
+    buyHoldPct?: number | null;
+    openTradeAssetScores?: { asset: string; score: number }[];
     error?: string;
 }
 
@@ -128,26 +131,6 @@ export interface BatchBacktestRunOutput {
 // ============================================================================
 // Public API
 // ============================================================================
-
-/**
- * Normalize a raw symbol list: trim, uppercase, split on newlines / commas /
- * whitespace, drop empties, dedupe while preserving first-seen order.
- *
- * Mirrors the Finder universe textarea contract so a user can paste the same
- * list in either place.
- */
-export function parseBatchSymbols(raw: string): string[] {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const piece of raw.split(/[\s,]+/)) {
-        const normalized = piece.trim().toUpperCase();
-        if (!normalized) continue;
-        if (seen.has(normalized)) continue;
-        seen.add(normalized);
-        out.push(normalized);
-    }
-    return out;
-}
 
 export async function runBatchBacktest(
     input: BatchBacktestRunInput,

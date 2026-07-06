@@ -52,6 +52,7 @@ import type { BacktestSettings, Strategy, StrategyParams } from "../types/strate
 import type { CapitalSettings } from "../types/backtest";
 import { toScalarRow, type BatchStreamEvent } from "./batch-backtest-stream-types";
 import { setRuntimeLocalApiOrigin } from "../local-api-transport";
+import { buildBatchRunFingerprint, normalizeBatchSymbols } from "./batch-run-contract";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -116,24 +117,6 @@ interface StoredMineArtifactMeta {
 // ---------------------------------------------------------------------------
 // Run helpers
 // ---------------------------------------------------------------------------
-
-function buildRunFingerprint(args: {
-    symbols: readonly string[];
-    strategyKey: string;
-    strategyParams: unknown;
-    backtestSettings: unknown;
-    capitalSettings: unknown;
-    interval: string;
-}): string {
-    return JSON.stringify({
-        symbols: args.symbols,
-        strategyKey: args.strategyKey,
-        strategyParams: args.strategyParams,
-        backtestSettings: args.backtestSettings,
-        capitalSettings: args.capitalSettings,
-        interval: args.interval,
-    });
-}
 
 function ensureMineArtifactDir(): string {
     if (!mineArtifactDir) {
@@ -329,7 +312,7 @@ export async function processRunBatch(
         rows: [],
     };
     const snapshot = runState;
-    const fingerprint = buildRunFingerprint({
+    const fingerprint = buildBatchRunFingerprint({
         symbols: input.symbols,
         strategyKey: input.strategyKey,
         strategyParams: input.strategyParams,
@@ -416,6 +399,18 @@ export async function processRunBatch(
         } else {
             releaseLastResults("run_no_artifacts");
         }
+        debugLogger.event("batch.server.run.complete", {
+            symbols: input.symbols.length,
+            loadedSymbols: output.loadedSymbols,
+            failedSymbols: output.failedSymbols.length,
+            cancelled,
+            artifacts: collectStoredMineArtifactMetas().length,
+            durationMs: Date.now() - snapshot.startedAt,
+            heapUsedMb: Math.round(process.memoryUsage().heapUsed / HEAP_MB),
+            heapLimitMb: getV8HeapLimitMb(),
+            interval: input.interval,
+            strategyKey: input.strategyKey,
+        });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         debugLogger.warn("batch.server.run.fatal", { error: message });
@@ -673,7 +668,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
     }
 
     const symbolsRaw = body.symbols;
-    const symbols = parseSymbolsFromRequest(symbolsRaw);
+    const symbols = normalizeBatchSymbols(symbolsRaw);
     if (symbols.length === 0) {
         throw new HttpStatusError(400, "At least one symbol is required.");
     }
@@ -854,7 +849,8 @@ async function handleStabilityMineRequest(res: ViteHttpResponse, body: Record<st
     }
 }
 
-function handleStatusRequest(): unknown {
+function handleStatusRequest(afterRow = 0): unknown {
+    const rowOffset = Math.max(0, Math.floor(Number.isFinite(afterRow) ? afterRow : 0));
     return {
         ok: true,
         running: runState !== null && runOwner !== RUN_OWNER_NONE,
@@ -868,7 +864,9 @@ function handleStatusRequest(): unknown {
                 failed: runState.failed,
                 currentSymbol: runState.currentSymbol,
                 cancelled: runState.cancelled,
-                rows: runState.rows,
+                rows: runState.rows.slice(rowOffset),
+                rowOffset,
+                rowCount: runState.rows.length,
             }
             : null,
         lastRun: hasStoredMineArtifacts()
@@ -895,20 +893,6 @@ function handleStatusRequest(): unknown {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function parseSymbolsFromRequest(value: unknown): string[] {
-    const raw = Array.isArray(value) ? value : String(value ?? "").split(/[\s,]+/);
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const item of raw) {
-        const text = String(item ?? "").trim().toUpperCase();
-        if (!text) continue;
-        if (seen.has(text)) continue;
-        seen.add(text);
-        out.push(text);
-    }
-    return out;
-}
 
 async function resolveStrategy(strategyKey: string): Promise<Strategy> {
     // Use `loadBuiltInStrategyByKey` (not `ensureBuiltInStrategyLoaded`) so the
@@ -987,7 +971,9 @@ export function batchBacktestVitePlugin(): Plugin {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
                 return;
             }
-            sendJson(res, 200, handleStatusRequest());
+            const parsedUrl = new URL(req.url ?? "/api/batch-backtest/status", "http://localhost");
+            const after = Number(parsedUrl.searchParams.get("after") ?? 0);
+            sendJson(res, 200, handleStatusRequest(after));
         });
     };
 
@@ -1014,6 +1000,7 @@ export const __testInternals = {
     hasMineableArtifacts,
     hasStoredMineArtifacts,
     DEFAULT_ARTIFACT_RETENTION_MS,
+    handleStatusRequest,
     setRunOwnerForTests(owner: number): void {
         runOwner = owner;
         if (owner === RUN_OWNER_NONE) {

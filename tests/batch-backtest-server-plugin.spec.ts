@@ -22,6 +22,7 @@ const {
     setRunOwnerForTests,
     setMinerOwnerForTests,
     getRunStateForTests,
+    handleStatusRequest,
 } = __testInternals;
 
 function makeCandles(closes: number[]): OHLCVData[] {
@@ -212,6 +213,40 @@ describe("batch-backtest server plugin processRunBatch", () => {
         const done = events[events.length - 1] as Extract<BatchStreamEvent, { type: "done" }>;
         expect(done.serverHasArtifacts).to.equal(true);
         expect(hasStoredMineArtifacts()).to.equal(true);
+
+        setRunOwnerForTests(0);
+        releaseLastResults("test_end");
+    });
+
+    it("status snapshot can return only rows after the requested offset", async () => {
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP", makeCandles([100, 105, 110, 115, 120])],
+            ["DOWN", makeCandles([100, 95, 90, 85, 80])],
+            ["FLAT", makeCandles([100, 100, 100, 100, 100])],
+        ]);
+        const owner = 9012;
+        setRunOwnerForTests(owner);
+
+        await processRunBatch(
+            {
+                interval: "5m",
+                strategyKey: STRATEGY_KEY,
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols: ["UP", "DOWN", "FLAT"],
+                loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                minUsableBars: 1,
+            },
+            () => {},
+            owner,
+        );
+
+        const snapshot = handleStatusRequest(2) as { run?: { rows: { symbol: string }[]; rowOffset: number; rowCount: number } | null };
+        expect(snapshot.run?.rowOffset).to.equal(2);
+        expect(snapshot.run?.rowCount).to.equal(3);
+        expect(snapshot.run?.rows.map((row) => row.symbol)).to.deep.equal(["FLAT"]);
 
         setRunOwnerForTests(0);
         releaseLastResults("test_end");

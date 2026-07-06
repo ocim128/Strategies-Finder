@@ -4,11 +4,13 @@ import {
     buildBuyHoldRows,
     computeBuyAndHoldPct,
     computeOpenTradeAssetScores,
+    formatBatchOverallSummary,
     summarizeOpenScoreConcentration,
     summarizeProfitConcentration,
     summarizeRegimeSplit,
     summarizeRobustness,
-} from "../lib/batch-backtest/batch-backtest-service";
+} from "../lib/batch-backtest/batch-backtest-summary";
+import { toScalarRow } from "../lib/batch-backtest/batch-backtest-stream-types";
 import type { BatchBacktestSymbolResult } from "../lib/batch-backtest/batch-backtest-runner";
 import type { OHLCVData, Time, Trade } from "../lib/types/strategies";
 
@@ -208,6 +210,28 @@ describe("buildBuyHoldRows", () => {
         expect(buildBuyHoldRows([resultRow("AAA", { netProfitPercent: 5 })])).to.have.length(0);
         // No result -> dropped.
         expect(buildBuyHoldRows([{ ...resultRow("AAA"), result: undefined }])).to.have.length(0);
+    });
+});
+
+describe("server scalar batch rows", () => {
+    it("preserve Copy B&H and OPEN_SCORE sections without candle or trade arrays", () => {
+        const scalar = toScalarRow({
+            ...openTradeRow("WLD+BTC", "long", {
+                data: candles([100, 110]),
+            }),
+        });
+
+        expect(scalar.data).to.equal(undefined);
+        expect(scalar.result?.trades).to.deep.equal([]);
+        expect(buildBuyHoldRows([scalar])[0]?.bh).to.be.closeTo(10, 1e-9);
+
+        const scores = computeOpenTradeAssetScores([scalar]);
+        expect(scores.map((s) => `${s.asset}:${s.score}`)).to.deep.equal(["BTC:-1", "WLD:1"]);
+
+        const lines = formatBatchOverallSummary([scalar]);
+        expect(lines.some((line) => line.startsWith("B&H Compare"))).to.equal(false);
+        expect(lines.some((line) => line.startsWith("SUMMARY | B&H Compare"))).to.equal(true);
+        expect(lines.some((line) => line.startsWith("OPEN_SCORE |"))).to.equal(true);
     });
 });
 

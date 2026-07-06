@@ -63,6 +63,16 @@ export class SyntheticLegCache<T> {
         this.missCounts.clear();
     }
 
+    delete(key: string): void {
+        this.store.delete(key);
+    }
+
+    deleteIfValue(key: string, promise: Promise<T>): void {
+        if (this.store.get(key) === promise) {
+            this.store.delete(key);
+        }
+    }
+
     get size(): number {
         return this.store.size;
     }

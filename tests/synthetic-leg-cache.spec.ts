@@ -114,6 +114,30 @@ describe("SyntheticLegCache", () => {
         expect(await second).to.equal(42);
         expect(producerCalls, "retry must invoke the producer again").to.equal(2);
     });
+
+    it("can delete a single cached promise without clearing the whole LRU", async () => {
+        const cache = new SyntheticLegCache<number>(4);
+        cache.set("aborted", Promise.resolve(1));
+        cache.set("healthy", Promise.resolve(2));
+
+        cache.delete("aborted");
+
+        expect(cache.get("aborted"), "aborted entry must be removed").to.equal(undefined);
+        expect(await cache.get("healthy")).to.equal(2);
+        expect(cache.size).to.equal(1);
+    });
+
+    it("does not delete a newer promise when evicting an older one by identity", async () => {
+        const cache = new SyntheticLegCache<number>(4);
+        const oldPromise = Promise.resolve(1);
+        const newPromise = Promise.resolve(2);
+        cache.set("same-key", oldPromise);
+        cache.set("same-key", newPromise);
+
+        cache.deleteIfValue("same-key", oldPromise);
+
+        expect(await cache.get("same-key")).to.equal(2);
+    });
 });
 
 describe("synthetic cache keys", () => {

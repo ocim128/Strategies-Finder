@@ -176,7 +176,7 @@ Toggle via `Settings → Backend Engine → Batch Execution Mode` (default: Serv
 NODE_OPTIONS=--max-old-space-size=16384 npm run dev
 ```
 
-Reattach after a tab reload is automatic (2s poll). Copy summary in server-side mode omits the B&H rows and OPEN_SCORE sections (documented degradation; see [docs/batch-backtest-server-side.md](docs/batch-backtest-server-side.md)).
+Reattach after a tab reload is automatic (2s poll). The last completed Batch output is restored from a compact local snapshot after reload, and Copy summary in server-side mode preserves B&H and OPEN_SCORE sections through scalar summary fields; see [docs/batch-backtest-server-side.md](docs/batch-backtest-server-side.md).
 
 ## Important Contracts
 
