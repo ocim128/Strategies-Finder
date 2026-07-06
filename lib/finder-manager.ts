@@ -198,6 +198,7 @@ type FinderPersistedUiState = {
 	rangePercent: number;
 	steps: number;
 	freezeRiskManagement: boolean;
+	randomizePathExitParams: boolean;
 	exitStrategyOverrideEnabled: boolean;
 	tradeFilterEnabled: boolean;
 	minTrades: number;
@@ -251,6 +252,7 @@ const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	rangePercent: 555,
 	steps: 3,
 	freezeRiskManagement: false,
+	randomizePathExitParams: false,
 	exitStrategyOverrideEnabled: false,
 	tradeFilterEnabled: true,
 	minTrades: 40,
@@ -430,6 +432,7 @@ function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		rangePercent: normalizeNumber(source.rangePercent, DEFAULT_FINDER_UI_STATE.rangePercent, 0),
 		steps: Math.round(normalizeNumber(source.steps, DEFAULT_FINDER_UI_STATE.steps, 2)),
 		freezeRiskManagement: source.freezeRiskManagement === true,
+		randomizePathExitParams: source.randomizePathExitParams === true,
 		exitStrategyOverrideEnabled: source.exitStrategyOverrideEnabled === true,
 		tradeFilterEnabled: source.tradeFilterEnabled !== false,
 		minTrades: Math.round(normalizeNumber(source.minTrades, DEFAULT_FINDER_UI_STATE.minTrades, 0)),
@@ -930,6 +933,7 @@ export class FinderManager {
 		dom.finderRange.value = String(this.uiState.rangePercent);
 		dom.finderSteps.value = String(this.uiState.steps);
 		dom.finderFreezeRiskManagementToggle.checked = this.uiState.freezeRiskManagement;
+		dom.finderRandomizePathExitToggle.checked = this.uiState.randomizePathExitParams;
 		dom.finderExitStrategyOverrideToggle.checked = this.uiState.exitStrategyOverrideEnabled;
 		dom.finderTradesToggle.checked = this.uiState.tradeFilterEnabled;
 		dom.finderTradesMin.value = String(this.uiState.minTrades);
@@ -1351,6 +1355,7 @@ export class FinderManager {
 			dom.finderRange,
 			dom.finderSteps,
 			dom.finderFreezeRiskManagementToggle,
+			dom.finderRandomizePathExitToggle,
 			dom.finderExitStrategyOverrideToggle,
 			dom.finderTradesToggle,
 			dom.finderTradesMin,
@@ -1385,6 +1390,7 @@ export class FinderManager {
 		this.uiState.rangePercent = this.readFinderNumberInput(dom.finderRange, DEFAULT_FINDER_UI_STATE.rangePercent, 0);
 		this.uiState.steps = Math.round(this.readFinderNumberInput(dom.finderSteps, DEFAULT_FINDER_UI_STATE.steps, 2));
 		this.uiState.freezeRiskManagement = dom.finderFreezeRiskManagementToggle.checked;
+		this.uiState.randomizePathExitParams = dom.finderRandomizePathExitToggle.checked;
 		this.uiState.exitStrategyOverrideEnabled = dom.finderExitStrategyOverrideToggle.checked;
 		this.uiState.tradeFilterEnabled = dom.finderTradesToggle.checked;
 		this.uiState.minTrades = Math.round(this.readFinderNumberInput(dom.finderTradesMin, DEFAULT_FINDER_UI_STATE.minTrades, 0));
@@ -2439,6 +2445,7 @@ export class FinderManager {
 			? Math.round(this.readFinderNumberInput(dom.finderTradesMax, Number.POSITIVE_INFINITY, 0))
 			: Number.POSITIVE_INFINITY;
 		const freezeRiskManagement = dom.finderFreezeRiskManagementToggle.checked;
+		const randomizePathExitParams = dom.finderRandomizePathExitToggle.checked;
 		const finderExitStrategyToggleOn = dom.finderExitStrategyOverrideToggle.checked;
 		const exitStrategyOverrideEnabled = finderExitStrategyToggleOn
 			&& backtestSettings.disableSignalExits === true
@@ -2473,6 +2480,7 @@ export class FinderManager {
 			minTrades,
 			maxTrades,
 			freezeRiskManagement,
+			randomizePathExitParams,
 			polymarketScoringEnabled,
 			polymarketRankMode,
 			polymarketMinScoredPredictions,

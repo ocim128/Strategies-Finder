@@ -827,6 +827,16 @@
 
 }
 
+.exit-reason-badge--path-exit {
+
+    color: var(--accent-light);
+
+    background: hsl(var(--hsl-accent) / 0.16);
+
+    border: 1px solid hsl(var(--hsl-accent) / 0.32);
+
+}
+
 .exit-reason-badge--probation-fail {
 
     color: var(--warning);

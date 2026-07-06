@@ -624,7 +624,8 @@ class SettingsManager {
             'stopLossToggle',
             'takeProfitToggle',
             'riskMinHoldToggle',
-            'riskMaxHoldToggle'
+            'riskMaxHoldToggle',
+            'pathExitEnabled'
         ];
 
         triggerSettingsChangeEvents(toggleIds);

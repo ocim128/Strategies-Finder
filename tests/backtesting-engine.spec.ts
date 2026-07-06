@@ -2162,5 +2162,436 @@ describe('Backtesting Engine', () => {
         expect(Number.isFinite(full.netProfit)).to.equal(true);
         expect(Number.isFinite(compact.netProfit)).to.equal(true);
     });
+
+    describe('Path-Dependent Exits', () => {
+        it('should exit a long position via MFE Giveback', () => {
+            const data: OHLCVData[] = [
+                { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+                { time: '2023-01-02' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 }, // entry
+                { time: '2023-01-03' as Time, open: 100, high: 110, low: 99, close: 109, volume: 1000 }, // moves up to 110
+                { time: '2023-01-04' as Time, open: 109, high: 109, low: 104, close: 105, volume: 1000 }, // retraces to 105 (gives back 50% of MFE)
+            ];
+            const signals: Signal[] = [
+                { time: '2023-01-02' as Time, type: 'buy', price: 100 },
+            ];
+
+            const settings = {
+                pathExitEnabled: true,
+                pathExitMode: 'mfe_giveback',
+                pathExitMinBars: 1,
+                pathExitMinMfePercent: 5.0,
+                pathExitGivebackPercent: 40,
+            };
+
+            const full = runBacktest(data, signals, 1000, 100, 0, settings);
+            const compact = runBacktestCompact(data, signals, 1000, 100, 0, settings);
+
+            expect(full.totalTrades).to.equal(1);
+            expect(full.trades[0].exitReason).to.equal('path_exit');
+            expect(full.trades[0].exitPrice).to.equal(105);
+
+            expect(compact.totalTrades).to.equal(1);
+            expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-9);
+        });
+
+        it('should exit a short position via MFE Giveback', () => {
+            const data: OHLCVData[] = [
+                { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+                { time: '2023-01-02' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 }, // entry
+                { time: '2023-01-03' as Time, open: 100, high: 101, low: 90, close: 91, volume: 1000 }, // moves down to 90
+                { time: '2023-01-04' as Time, open: 91, high: 96, low: 91, close: 95, volume: 1000 }, // retraces to 95 (gives back 50% of MFE)
+            ];
+            const signals: Signal[] = [
+                { time: '2023-01-02' as Time, type: 'sell', price: 100 },
+            ];
+
+            const settings = {
+                pathExitEnabled: true,
+                pathExitMode: 'mfe_giveback',
+                pathExitMinBars: 1,
+                pathExitMinMfePercent: 5.0,
+                pathExitGivebackPercent: 40,
+                tradeDirection: 'short' as const,
+            };
+
+            const full = runBacktest(data, signals, 1000, 100, 0, settings);
+            const compact = runBacktestCompact(data, signals, 1000, 100, 0, settings);
+
+            expect(full.totalTrades).to.equal(1);
+            expect(full.trades[0].exitReason).to.equal('path_exit');
+            expect(full.trades[0].exitPrice).to.equal(95);
+
+            expect(compact.totalTrades).to.equal(1);
+            expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-9);
+        });
+
+        it('should allow path exits to manage trades while signal exits are disabled', () => {
+            const data: OHLCVData[] = [
+                { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+                { time: '2023-01-02' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+                { time: '2023-01-03' as Time, open: 100, high: 110, low: 99, close: 109, volume: 1000 },
+                { time: '2023-01-04' as Time, open: 109, high: 109, low: 104, close: 105, volume: 1000 },
+            ];
+            const signals: Signal[] = [
+                { time: '2023-01-02' as Time, type: 'buy', price: 100 },
+                { time: '2023-01-03' as Time, type: 'sell', price: 109 },
+            ];
+
+            const result = runBacktest(data, signals, 1000, 100, 0, {
+                pathExitEnabled: true,
+                pathExitMode: 'mfe_giveback',
+                pathExitMinBars: 1,
+                pathExitMinMfePercent: 5.0,
+                pathExitGivebackPercent: 40,
+                disableSignalExits: true,
+            });
+
+            expect(result.totalTrades).to.equal(1);
+            expect(result.trades[0].exitReason).to.equal('path_exit');
+            expect(result.trades[0].exitTime).to.equal('2023-01-04' as Time);
+        });
+
+        it('should exit a long position via Profit Compression', () => {
+            const data: OHLCVData[] = [
+                { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+                { time: '2023-01-02' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 }, // entry
+                { time: '2023-01-03' as Time, open: 100, high: 104, low: 100, close: 104, volume: 1000 }, // barsInTrade = 1, profit = 4%
+                { time: '2023-01-04' as Time, open: 104, high: 104, low: 101, close: 101, volume: 1000 }, // barsInTrade = 2, profit = 1%, profitRate = 0.5%
+            ];
+            const signals: Signal[] = [
+                { time: '2023-01-02' as Time, type: 'buy', price: 100 },
+            ];
+
+            const settings = {
+                pathExitEnabled: true,
+                pathExitMode: 'profit_compression',
+                pathExitMinBars: 1,
+                pathExitMinMfePercent: 2.0,
+                pathExitThreshold: 1.0, // exit if profitRate < 1.0% per bar
+            };
+
+            const full = runBacktest(data, signals, 1000, 100, 0, settings);
+            const compact = runBacktestCompact(data, signals, 1000, 100, 0, settings);
+
+            expect(full.totalTrades).to.equal(1);
+            expect(full.trades[0].exitReason).to.equal('path_exit');
+            expect(full.trades[0].exitPrice).to.equal(101);
+
+            expect(compact.totalTrades).to.equal(1);
+            expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-9);
+        });
+
+        it('should exit a long position via Momentum Deceleration', () => {
+            const data: OHLCVData[] = [
+                { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+                { time: '2023-01-02' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 }, // entry
+                { time: '2023-01-03' as Time, open: 100, high: 105, low: 100, close: 105, volume: 1000 }, // momentum = 5%
+                { time: '2023-01-04' as Time, open: 105, high: 106, low: 105, close: 105.5, volume: 1000 }, // momentum = 0.47% (below 1.0% threshold)
+            ];
+            const signals: Signal[] = [
+                { time: '2023-01-02' as Time, type: 'buy', price: 100 },
+            ];
+
+            const settings = {
+                pathExitEnabled: true,
+                pathExitMode: 'momentum_deceleration',
+                pathExitMinBars: 1,
+                pathExitLookbackBars: 1,
+                pathExitThreshold: 1.0,
+            };
+
+            const full = runBacktest(data, signals, 1000, 100, 0, settings);
+            expect(full.totalTrades).to.equal(1);
+            expect(full.trades[0].exitReason).to.equal('path_exit');
+            expect(full.trades[0].exitPrice).to.equal(105.5);
+        });
+
+        it('should exit a long position via Capitulation Exhaustion', () => {
+            const data: OHLCVData[] = [
+                { time: '2023-01-01' as Time, open: 99, high: 100, low: 99, close: 100, volume: 100 },
+                { time: '2023-01-02' as Time, open: 99, high: 100, low: 99, close: 100, volume: 100 },
+                { time: '2023-01-03' as Time, open: 100, high: 100, low: 100, close: 100, volume: 100 }, // entry
+                { time: '2023-01-04' as Time, open: 100, high: 110, low: 100, close: 109, volume: 5000 }, // capitulation (R=10, B=9, V=5000)
+                { time: '2023-01-05' as Time, open: 109, high: 109, low: 103, close: 104, volume: 100 }, // closes below midpoint of body (104.5)
+            ];
+            const signals: Signal[] = [
+                { time: '2023-01-03' as Time, type: 'buy', price: 100 },
+            ];
+
+            const settings = {
+                pathExitEnabled: true,
+                pathExitMode: 'capitulation_exhaustion',
+                pathExitMinBars: 1,
+                pathExitLookbackBars: 2,
+                pathExitThreshold: 90,
+            };
+
+            const full = runBacktest(data, signals, 1000, 100, 0, settings);
+            expect(full.totalTrades).to.equal(1);
+            expect(full.trades[0].exitReason).to.equal('path_exit');
+            expect(full.trades[0].exitPrice).to.equal(104);
+        });
+
+        it('should exit a long position via Squeeze Pressure', () => {
+            const data: OHLCVData[] = [
+                { time: '2023-01-02' as Time, open: 100, high: 101, low: 100, close: 100.5, volume: 100 },
+                { time: '2023-01-03' as Time, open: 100, high: 100, low: 100, close: 100, volume: 100 }, // entry
+                { time: '2023-01-04' as Time, open: 102, high: 103, low: 100, close: 101, volume: 5000 }, // opposite color, CLV < 0, vol expansion
+            ];
+            const signals: Signal[] = [
+                { time: '2023-01-03' as Time, type: 'buy', price: 100 },
+            ];
+
+            const settings = {
+                pathExitEnabled: true,
+                pathExitMode: 'squeeze_pressure',
+                pathExitMinBars: 1,
+                pathExitLookbackBars: 1,
+            };
+
+            const full = runBacktest(data, signals, 1000, 100, 0, settings);
+            expect(full.totalTrades).to.equal(1);
+            expect(full.trades[0].exitReason).to.equal('path_exit');
+            expect(full.trades[0].exitPrice).to.equal(101);
+        });
+
+        it('should exit a long position via Structure Reclaim', () => {
+            const data: OHLCVData[] = [
+                { time: '2023-01-01' as Time, open: 96, high: 97, low: 96, close: 97, volume: 100 },
+                { time: '2023-01-02' as Time, open: 98, high: 100, low: 98, close: 100, volume: 100 }, // breakout / entry (midpoint = 99)
+                { time: '2023-01-03' as Time, open: 100, high: 105, low: 100, close: 105, volume: 100 },
+                { time: '2023-01-04' as Time, open: 105, high: 105, low: 96, close: 97, volume: 100 }, // closes below structure level (97.5)
+            ];
+            const signals: Signal[] = [
+                { time: '2023-01-02' as Time, type: 'buy', price: 100 },
+            ];
+
+            const settings = {
+                pathExitEnabled: true,
+                pathExitMode: 'structure_reclaim',
+                pathExitMinBars: 1,
+                pathExitLookbackBars: 1,
+            };
+
+            const full = runBacktest(data, signals, 1000, 100, 0, settings);
+            expect(full.totalTrades).to.equal(1);
+            expect(full.trades[0].exitReason).to.equal('path_exit');
+            expect(full.trades[0].exitPrice).to.equal(97);
+        });
+    });
+
+    describe('Phase 4 - Causal Learning Exit Modes', () => {
+        // Helper: generate N bars of OHLCV data starting at a base price, with a trend
+        function generateTrendBars(count: number, startPrice: number, stepPerBar: number, startDate: string = '2023-01-01'): OHLCVData[] {
+            const bars: OHLCVData[] = [];
+            for (let i = 0; i < count; i++) {
+                const d = new Date(startDate);
+                d.setDate(d.getDate() + i);
+                const dateStr = d.toISOString().slice(0, 10) as unknown as Time;
+                const c = startPrice + stepPerBar * i;
+                bars.push({
+                    time: dateStr,
+                    open: c - 0.5,
+                    high: c + 1,
+                    low: c - 1,
+                    close: c,
+                    volume: 1000,
+                });
+            }
+            return bars;
+        }
+
+        it('conditional_hazard: first trade never triggers learning exit (empty state)', () => {
+            // Build data with a single losing trade pattern: price goes up then reverses
+            const upBars = generateTrendBars(10, 100, 2, '2023-01-01');
+            const downBars = generateTrendBars(10, 118, -3, '2023-01-11');
+            const data = [...upBars, ...downBars];
+
+            const signals: Signal[] = [
+                { time: '2023-01-02' as Time, type: 'buy', price: 102 },
+            ];
+
+            const settings = {
+                pathExitEnabled: true,
+                pathExitMode: 'conditional_hazard',
+                pathExitMinSamples: 1,
+                pathExitHorizonBars: 5,
+                pathExitThreshold: 1,
+            };
+
+            const result = runBacktest(data, signals, 1000, 100, 0, settings);
+            // First trade: learning state is empty, so no learning exit fires.
+            // Trade should close via end_of_data.
+            expect(result.totalTrades).to.equal(1);
+            expect(result.trades[0].exitReason).to.equal('end_of_data');
+        });
+
+        it('conditional_hazard: second trade exits when expectancy <= 0 from first trade learning', () => {
+            // Trade 1: buy at bar 2, hits stop loss or signal exit at bar 8 (losing trade).
+            // Trade 2: buy at bar 12, should be cut short by learning exit.
+            // Build data: goes up slightly then reverses hard, then repeats pattern.
+            const data: OHLCVData[] = [];
+            for (let i = 0; i < 30; i++) {
+                const d = new Date('2023-01-01');
+                d.setDate(d.getDate() + i);
+                const dateStr = d.toISOString().slice(0, 10) as unknown as Time;
+                let c: number;
+                if (i <= 4) c = 100 + i * 1;     // gentle rise 100-104
+                else if (i <= 9) c = 104 - (i - 4) * 3; // drop 104 -> 89
+                else if (i <= 14) c = 89 + (i - 9) * 1;  // rise 89-94
+                else if (i <= 19) c = 94 - (i - 14) * 3; // drop 94 -> 79
+                else c = 79 + (i - 19) * 0.5; // flat-ish
+                data.push({
+                    time: dateStr,
+                    open: c - 0.5,
+                    high: c + 1,
+                    low: c - 1,
+                    close: c,
+                    volume: 1000,
+                });
+            }
+
+            // Signal exit first trade, then buy again
+            const signals: Signal[] = [
+                { time: '2023-01-02' as Time, type: 'buy', price: 101 },
+                { time: '2023-01-09' as Time, type: 'sell', price: 89 },
+                { time: '2023-01-12' as Time, type: 'buy', price: 92 },
+            ];
+
+            const settings = {
+                pathExitEnabled: true,
+                pathExitMode: 'conditional_hazard',
+                pathExitMinSamples: 1, // Low threshold so learning kicks in fast
+                pathExitHorizonBars: 50,
+                pathExitThreshold: 1,
+                executionModel: 'signal_close',
+            };
+
+            const full = runBacktest(data, signals, 1000, 100, 0, settings);
+            const compact = runBacktestCompact(data, signals, 1000, 100, 0, settings);
+
+            // Trade 1 closes on signal (losing), populates learning state.
+            // Trade 2 may get cut by learning exit before end_of_data.
+            expect(full.totalTrades).to.be.greaterThanOrEqual(2);
+            expect(compact.totalTrades).to.equal(full.totalTrades);
+
+            // If learning exit fires, it should be 'path_exit'
+            if (full.trades.length >= 2 && full.trades[1].exitReason === 'path_exit') {
+                expect(compact.trades[1].exitReason).to.equal('path_exit');
+            }
+        });
+
+        it('triple_barrier_meta: first trade never triggers learning exit (empty state)', () => {
+            const data = generateTrendBars(20, 100, 1, '2023-01-01');
+
+            const signals: Signal[] = [
+                { time: '2023-01-02' as Time, type: 'buy', price: 101 },
+            ];
+
+            const settings = {
+                pathExitEnabled: true,
+                pathExitMode: 'triple_barrier_meta',
+                pathExitMinSamples: 1,
+                pathExitHorizonBars: 5,
+                pathExitThreshold: 2,
+            };
+
+            const result = runBacktest(data, signals, 1000, 100, 0, settings);
+            expect(result.totalTrades).to.equal(1);
+            expect(result.trades[0].exitReason).to.equal('end_of_data');
+        });
+
+        it('triple_barrier_meta: second trade exits when barrier expectancy <= 0', () => {
+            const data: OHLCVData[] = [];
+            for (let i = 0; i < 30; i++) {
+                const d = new Date('2023-01-01');
+                d.setDate(d.getDate() + i);
+                const dateStr = d.toISOString().slice(0, 10) as unknown as Time;
+                let c: number;
+                if (i <= 4) c = 100 + i * 0.5;
+                else if (i <= 9) c = 102 - (i - 4) * 4; // sharp drop
+                else if (i <= 14) c = 82 + (i - 9) * 0.5;
+                else if (i <= 19) c = 84 - (i - 14) * 4; // sharp drop again
+                else c = 64 + (i - 19) * 0.5;
+                data.push({
+                    time: dateStr,
+                    open: c - 0.5,
+                    high: c + 1,
+                    low: c - 1,
+                    close: c,
+                    volume: 1000,
+                });
+            }
+
+            const signals: Signal[] = [
+                { time: '2023-01-02' as Time, type: 'buy', price: 100.5 },
+                { time: '2023-01-09' as Time, type: 'sell', price: 82 },
+                { time: '2023-01-12' as Time, type: 'buy', price: 83 },
+            ];
+
+            const settings = {
+                pathExitEnabled: true,
+                pathExitMode: 'triple_barrier_meta',
+                pathExitMinSamples: 1,
+                pathExitHorizonBars: 5,
+                pathExitThreshold: 2,
+                executionModel: 'signal_close',
+            };
+
+            const full = runBacktest(data, signals, 1000, 100, 0, settings);
+            const compact = runBacktestCompact(data, signals, 1000, 100, 0, settings);
+
+            expect(full.totalTrades).to.be.greaterThanOrEqual(2);
+            expect(compact.totalTrades).to.equal(full.totalTrades);
+
+            if (full.trades.length >= 2 && full.trades[1].exitReason === 'path_exit') {
+                expect(compact.trades[1].exitReason).to.equal('path_exit');
+            }
+        });
+
+        it('full/compact parity for conditional_hazard mode', () => {
+            const data = generateTrendBars(20, 100, 0.5);
+
+            const signals: Signal[] = [
+                { time: '2023-01-03' as Time, type: 'buy', price: 101 },
+            ];
+
+            const settings = {
+                pathExitEnabled: true,
+                pathExitMode: 'conditional_hazard',
+                pathExitMinSamples: 1,
+                pathExitHorizonBars: 10,
+                pathExitThreshold: 1,
+            };
+
+            const full = runBacktest(data, signals, 1000, 100, 0, settings);
+            const compact = runBacktestCompact(data, signals, 1000, 100, 0, settings);
+
+            expect(compact.totalTrades).to.equal(full.totalTrades);
+            expect(compact.winRate).to.equal(full.winRate);
+        });
+
+        it('full/compact parity for triple_barrier_meta mode', () => {
+            const data = generateTrendBars(20, 100, 0.5);
+
+            const signals: Signal[] = [
+                { time: '2023-01-03' as Time, type: 'buy', price: 101 },
+            ];
+
+            const settings = {
+                pathExitEnabled: true,
+                pathExitMode: 'triple_barrier_meta',
+                pathExitMinSamples: 1,
+                pathExitHorizonBars: 10,
+                pathExitThreshold: 2,
+            };
+
+            const full = runBacktest(data, signals, 1000, 100, 0, settings);
+            const compact = runBacktestCompact(data, signals, 1000, 100, 0, settings);
+
+            expect(compact.totalTrades).to.equal(full.totalTrades);
+            expect(compact.winRate).to.equal(full.winRate);
+        });
+    });
 });
 

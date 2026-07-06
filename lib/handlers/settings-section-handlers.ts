@@ -416,4 +416,18 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     applyTradeSizingMode();
 
     setupExitStrategyOverride(dom);
+    setupPathDependentExits(dom);
+}
+
+function setupPathDependentExits(dom: UiEventHandlersDom): void {
+    const toggle = dom.pathExitEnabled;
+    const config = dom.pathExitConfig;
+    if (!toggle || !config) return;
+
+    const applyVisibility = (): void => {
+        config.style.display = toggle.checked ? "" : "none";
+    };
+
+    toggle.addEventListener("change", applyVisibility);
+    applyVisibility();
 }

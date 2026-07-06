@@ -446,6 +446,7 @@ export class TradesRenderer {
             end_of_data: { label: 'EOD', className: 'exit-reason-badge--end-of-data', icon: 'EOD' },
             polymarket_take_profit: { label: 'Poly TP', className: 'exit-reason-badge--take-profit', icon: 'PTP' },
             polymarket_stop_loss: { label: 'Poly SL', className: 'exit-reason-badge--stop-loss', icon: 'PSL' },
+            path_exit: { label: 'Path Exit', className: 'exit-reason-badge--path-exit', icon: 'PTH' },
         };
 
         const info = reasonMap[exitReason];

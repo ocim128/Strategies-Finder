@@ -20,7 +20,7 @@ import {
     type PolymarketLimitExitPriceMode,
 } from "./polymarket-post-signal-limit-entry";
 
-import type { BacktestSettings, ConfirmationMode, ExecutionModel, MarketMode, PercentageTakeProfitMode, StrategyParams, TradeDirection } from "./types/strategies";
+import type { BacktestSettings, ConfirmationMode, ExecutionModel, MarketMode, PercentageTakeProfitMode, StrategyParams, TradeDirection, PathExitMode } from "./types/strategies";
 import { isTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from "./types/backtest";
 import {
     CAPITAL_DEFAULTS,
@@ -100,6 +100,15 @@ export interface BacktestSettingsData {
     exitStrategyKey: string;
     /** Params for the exit strategy referenced by exitStrategyKey. */
     exitStrategyParams: Record<string, number>;
+    pathExitEnabled: boolean;
+    pathExitMode: PathExitMode;
+    pathExitMinBars: number;
+    pathExitMinMfePercent: number;
+    pathExitGivebackPercent: number;
+    pathExitLookbackBars: number;
+    pathExitThreshold: number;
+    pathExitMinSamples: number;
+    pathExitHorizonBars: number;
     marketMode: MarketMode;
 
     // Trade direction
@@ -255,6 +264,17 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     exitStrategyOverrideEnabled: false,
     exitStrategyKey: "",
     exitStrategyParams: {},
+
+    // Path-dependent exits
+    pathExitEnabled: false,
+    pathExitMode: "off",
+    pathExitMinBars: 10,
+    pathExitMinMfePercent: 2.0,
+    pathExitGivebackPercent: 25,
+    pathExitLookbackBars: 20,
+    pathExitThreshold: 0,
+    pathExitMinSamples: 30,
+    pathExitHorizonBars: 50,
 
     // Cross-symbol
     crossSymbolSecondary: "",

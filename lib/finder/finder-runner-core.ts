@@ -55,10 +55,18 @@ export type RandomBenchmarkMeta = {
 };
 
 type TakeProfitMode = NonNullable<BacktestSettings["takeProfitMode"]>;
+type PathExitMode = NonNullable<BacktestSettings["pathExitMode"]>;
 
 type TpParamSpec = {
     key: keyof BacktestSettings & string;
     mode?: TakeProfitMode;
+    clamp: (value: number) => number;
+};
+
+type PathExitParamSpec = {
+    key: keyof BacktestSettings & string;
+    modes: readonly PathExitMode[];
+    value?: (settings: BacktestSettings) => unknown;
     clamp: (value: number) => number;
 };
 
@@ -154,6 +162,28 @@ function clampTakeProfitMfeBootstrapPercentile(value: number): number {
     return clampPercentValue(value, 1, 99);
 }
 
+function clampPathExitMinBars(value: number): number {
+    if (!Number.isFinite(value)) return 1;
+    return Math.max(1, Math.round(value));
+}
+
+function clampPathExitMinSamples(value: number): number {
+    if (!Number.isFinite(value)) return 5;
+    return Math.max(5, Math.round(value));
+}
+
+function clampPathExitThreshold(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return clampPercentValue(value, 0, 100);
+}
+
+function defaultPathExitThreshold(settings: BacktestSettings): number {
+    if (Number.isFinite(settings.pathExitThreshold) && Number(settings.pathExitThreshold) > 0) {
+        return Number(settings.pathExitThreshold);
+    }
+    return settings.pathExitMode === "capitulation_exhaustion" ? 90 : 1;
+}
+
 const TP_PARAM_SPECS: readonly TpParamSpec[] = [
     { key: "takeProfitMfeBootstrapPercentile", mode: "mfe_bootstrap", clamp: clampTakeProfitMfeBootstrapPercentile },
     { key: "takeProfitAdaptiveLookbackTrades", mode: "expectancy_optimal", clamp: clampAtrPeriod },
@@ -182,6 +212,27 @@ const TP_PARAM_SPECS: readonly TpParamSpec[] = [
     { key: "takeProfitAdaptiveIcScale", mode: "information_coefficient", clamp: (value) => clampPercentValue(value, 0, 2) },
 ];
 
+const ALL_PATH_EXIT_MODES: readonly PathExitMode[] = [
+    "mfe_giveback",
+    "profit_compression",
+    "momentum_deceleration",
+    "capitulation_exhaustion",
+    "squeeze_pressure",
+    "structure_reclaim",
+    "conditional_hazard",
+    "triple_barrier_meta",
+];
+
+const PATH_EXIT_PARAM_SPECS: readonly PathExitParamSpec[] = [
+    { key: "pathExitMinBars", modes: ALL_PATH_EXIT_MODES, clamp: clampPathExitMinBars },
+    { key: "pathExitMinMfePercent", modes: ["mfe_giveback", "profit_compression"], clamp: (value) => clampPercentValue(value, 0, 100) },
+    { key: "pathExitGivebackPercent", modes: ["mfe_giveback"], clamp: (value) => clampPercentValue(value, 1, 100) },
+    { key: "pathExitLookbackBars", modes: ["momentum_deceleration", "capitulation_exhaustion", "squeeze_pressure", "structure_reclaim"], clamp: clampPathExitMinBars },
+    { key: "pathExitThreshold", modes: ["profit_compression", "momentum_deceleration", "capitulation_exhaustion", "triple_barrier_meta"], value: defaultPathExitThreshold, clamp: clampPathExitThreshold },
+    { key: "pathExitMinSamples", modes: ["conditional_hazard", "triple_barrier_meta"], clamp: clampPathExitMinSamples },
+    { key: "pathExitHorizonBars", modes: ["triple_barrier_meta"], clamp: clampPathExitMinBars },
+];
+
 function addBaseParamIfFinite(
     baseParams: StrategyParams,
     key: keyof BacktestSettings & string,
@@ -198,6 +249,30 @@ function addModeSpecificTakeProfitSearchParams(baseParams: StrategyParams, setti
             continue;
         }
         addBaseParamIfFinite(baseParams, spec.key, settings[spec.key], spec.clamp);
+    }
+}
+
+function isActivePathExit(settings: BacktestSettings): settings is BacktestSettings & { pathExitMode: PathExitMode } {
+    return settings.pathExitEnabled === true
+        && settings.pathExitMode !== undefined
+        && settings.pathExitMode !== "off";
+}
+
+function shouldRandomizePathExitParams(
+    settings: BacktestSettings,
+    options?: Pick<FinderOptions, "randomizePathExitParams">
+): boolean {
+    return options?.randomizePathExitParams === true && isActivePathExit(settings);
+}
+
+function addPathExitSearchParams(baseParams: StrategyParams, settings: BacktestSettings): void {
+    if (!isActivePathExit(settings)) return;
+    for (const spec of PATH_EXIT_PARAM_SPECS) {
+        if (!spec.modes.includes(settings.pathExitMode)) {
+            continue;
+        }
+        const value = spec.value ? spec.value(settings) : settings[spec.key];
+        addBaseParamIfFinite(baseParams, spec.key, value, spec.clamp);
     }
 }
 
@@ -228,6 +303,26 @@ function applyModeSpecificTakeProfitOverrides(
     return hasOverrides;
 }
 
+function applyPathExitOverrides(
+    settings: BacktestSettings,
+    params: StrategyParams,
+    backtestOverrides: Partial<BacktestSettings>,
+    options?: Pick<FinderOptions, "randomizePathExitParams">
+): boolean {
+    if (!shouldRandomizePathExitParams(settings, options)) {
+        return false;
+    }
+
+    let hasOverrides = false;
+    for (const spec of PATH_EXIT_PARAM_SPECS) {
+        if (!isActivePathExit(settings) || !spec.modes.includes(settings.pathExitMode)) {
+            continue;
+        }
+        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, spec.key, spec.clamp) || hasOverrides;
+    }
+    return hasOverrides;
+}
+
 function usesAtrRiskSettings(settings: BacktestSettings): boolean {
     if (settings.riskMode !== "simple") {
         return false;
@@ -247,7 +342,7 @@ function isRiskManagementFrozen(options?: Pick<FinderOptions, "freezeRiskManagem
 export function buildFinderSearchBaseParams(
     strategy: Strategy,
     settings: BacktestSettings,
-    options?: Pick<FinderOptions, "freezeRiskManagement" | "exitStrategyBaseParams">
+    options?: Pick<FinderOptions, "freezeRiskManagement" | "exitStrategyBaseParams" | "randomizePathExitParams">
 ): StrategyParams {
     const baseParams: StrategyParams = { ...strategy.defaultParams };
     if (isRiskManagementFrozen(options)) {
@@ -260,6 +355,10 @@ export function buildFinderSearchBaseParams(
 
     if (settings.riskMaxHoldEnabled && Number.isFinite(settings.riskMaxHoldBars)) {
         baseParams.riskMaxHoldBars = clampMaxHoldBars(Number(settings.riskMaxHoldBars));
+    }
+
+    if (shouldRandomizePathExitParams(settings, options)) {
+        addPathExitSearchParams(baseParams, settings);
     }
 
     if (settings.riskMode !== "percentage") {
@@ -344,7 +443,7 @@ export function resolveFinderRiskOverrides(
     settings: BacktestSettings,
     rustSettings: BacktestSettings,
     params: StrategyParams,
-    options?: Pick<FinderOptions, "freezeRiskManagement">
+    options?: Pick<FinderOptions, "freezeRiskManagement" | "randomizePathExitParams">
 ): { backtestSettings: BacktestSettings; rustBacktestSettings: BacktestSettings } {
     if (isRiskManagementFrozen(options)) {
         return {
@@ -372,6 +471,7 @@ export function resolveFinderRiskOverrides(
     }
 
     if (settings.riskMode !== "percentage") {
+        hasBacktestOverrides = applyPathExitOverrides(settings, params, backtestOverrides, options) || hasBacktestOverrides;
         return {
             backtestSettings: hasBacktestOverrides ? { ...settings, ...backtestOverrides } : settings,
             rustBacktestSettings: hasRustOverrides ? { ...rustSettings, ...rustOverrides } : rustSettings,
@@ -395,6 +495,7 @@ export function resolveFinderRiskOverrides(
     }
 
     hasBacktestOverrides = applyModeSpecificTakeProfitOverrides(settings, params, backtestOverrides) || hasBacktestOverrides;
+    hasBacktestOverrides = applyPathExitOverrides(settings, params, backtestOverrides, options) || hasBacktestOverrides;
 
     return {
         backtestSettings: hasBacktestOverrides ? { ...settings, ...backtestOverrides } : settings,
@@ -407,7 +508,7 @@ export function mergeFinderRiskParamsIntoBacktestSettings<
 >(
     settings: T,
     params: StrategyParams,
-    options?: Pick<FinderOptions, "freezeRiskManagement">
+    options?: Pick<FinderOptions, "freezeRiskManagement" | "randomizePathExitParams">
 ): T {
     const merged = { ...settings };
     if (isRiskManagementFrozen(options)) {
@@ -441,6 +542,19 @@ export function mergeFinderRiskParamsIntoBacktestSettings<
 
     if (Number.isFinite(params.riskMaxHoldBars)) {
         merged.riskMaxHoldBars = Number(params.riskMaxHoldBars);
+    }
+
+    if (shouldRandomizePathExitParams(settings, options)) {
+        for (const spec of PATH_EXIT_PARAM_SPECS) {
+            if (!isActivePathExit(settings) || !spec.modes.includes(settings.pathExitMode)) {
+                continue;
+            }
+            const rawValue = params[spec.key];
+            if (!Number.isFinite(rawValue)) {
+                continue;
+            }
+            mergedRecord[spec.key] = spec.clamp(Number(rawValue));
+        }
     }
 
     return merged;
@@ -535,7 +649,7 @@ export function extractRustFinderCandidates(
 export function buildRustFinderBaseParams(
     strategy: Strategy,
     settings: BacktestSettings,
-    options?: Pick<FinderOptions, "freezeRiskManagement">
+    options?: Pick<FinderOptions, "freezeRiskManagement" | "randomizePathExitParams">
 ): StrategyParams {
     return buildFinderSearchBaseParams(strategy, settings, options);
 }

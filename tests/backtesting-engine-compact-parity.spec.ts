@@ -203,4 +203,47 @@ describe('Backtesting Engine - compact vs full parity', () => {
         const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings);
         assertMetricsParity(full, compact, { netProfit: 1e-6 });
     });
+
+    it('matches with path-dependent exits (MFE Giveback and Profit Compression)', () => {
+        const data = makeData(100);
+        const signals = buyEveryNSignal(data, 10);
+        const settings = {
+            pathExitEnabled: true,
+            pathExitMode: 'mfe_giveback' as const,
+            pathExitMinBars: 2,
+            pathExitMinMfePercent: 1.0,
+            pathExitGivebackPercent: 20,
+            maxOpenTrades: 1,
+        };
+
+        const full = runBacktest(data, signals, 10000, 100, 0, settings);
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings);
+        assertMetricsParity(full, compact, { netProfit: 1e-6 });
+    });
+
+    it('matches when conditional hazard learning exits a later trade', () => {
+        const data: OHLCVData[] = Array.from({ length: 19 }, (_, idx) => {
+            const time = (idx + 1) as Time;
+            const close = idx === 10 ? 90 : idx === 18 ? 80 : 100;
+            return { time, open: close, high: close, low: close, close, volume: 1000 };
+        });
+        const signals: Signal[] = [
+            { time: 1 as Time, type: 'buy', price: 100 },
+            { time: 11 as Time, type: 'sell', price: 90 },
+            { time: 12 as Time, type: 'buy', price: 100 },
+        ];
+        const settings = {
+            executionModel: 'signal_close' as const,
+            pathExitEnabled: true,
+            pathExitMode: 'conditional_hazard' as const,
+            pathExitMinBars: 1,
+            pathExitMinSamples: 5,
+        };
+
+        const full = runBacktest(data, signals, 10000, 100, 0, settings);
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings);
+
+        expect(full.trades[1]?.exitReason).to.equal('path_exit');
+        assertMetricsParity(full, compact, { netProfit: 1e-6 });
+    });
 });

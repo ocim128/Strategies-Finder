@@ -40,6 +40,11 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         (settings.polymarketProtectionTakeProfitEnabled === true && (settings.polymarketProtectionTakeProfitCents ?? 0) > 0)
         || (settings.polymarketProtectionStopLossEnabled === true && (settings.polymarketProtectionStopLossCents ?? 0) > 0);
 
+    const usesPathExit =
+        settings.pathExitEnabled === true
+        && settings.pathExitMode !== undefined
+        && settings.pathExitMode !== 'off';
+
     return usesRealismConstraints
         || usesCombinedDirection
         || usesNonAllMarketMode
@@ -50,12 +55,22 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         || usesMultiPosition
         || usesSignalExitMode
         || usesDisableSignalExits
-        || usesPolymarketProtection;
+        || usesPolymarketProtection
+        || usesPathExit;
 }
 
 export const SNAPSHOT_FILTER_SETTING_KEYS = [] as const;
 
 export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
+    "pathExitEnabled",
+    "pathExitMode",
+    "pathExitMinBars",
+    "pathExitMinMfePercent",
+    "pathExitGivebackPercent",
+    "pathExitLookbackBars",
+    "pathExitThreshold",
+    "pathExitMinSamples",
+    "pathExitHorizonBars",
     "executionModel",
     "allowSameBarExit",
     "slippageBps",

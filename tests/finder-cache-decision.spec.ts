@@ -576,6 +576,137 @@ describe('Finder ATR risk randomization support', () => {
         expect(merged.takeProfitPercent).to.equal(6);
         expect(merged.riskMaxHoldBars).to.equal(4);
     });
+
+    it('keeps path-dependent exit params fixed unless Finder path-exit randomization is enabled', () => {
+        const strategy = {
+            defaultParams: {
+                lookback: 20,
+            },
+        } as any;
+        const settings: BacktestSettings = {
+            pathExitEnabled: true,
+            pathExitMode: 'mfe_giveback',
+            pathExitMinBars: 3,
+            pathExitMinMfePercent: 1.5,
+            pathExitGivebackPercent: 40,
+        };
+
+        const fixed = buildFinderSearchBaseParams(strategy, settings);
+        const randomized = buildFinderSearchBaseParams(strategy, settings, { randomizePathExitParams: true });
+
+        expect('pathExitMinBars' in fixed).to.equal(false);
+        expect(randomized.pathExitMinBars).to.equal(3);
+        expect(randomized.pathExitMinMfePercent).to.equal(1.5);
+        expect(randomized.pathExitGivebackPercent).to.equal(40);
+    });
+
+    it('adds only active-mode path-dependent exit params to Finder search params', () => {
+        const strategy = {
+            defaultParams: {
+                lookback: 20,
+            },
+        } as any;
+        const baseParams = buildFinderSearchBaseParams(strategy, {
+            pathExitEnabled: true,
+            pathExitMode: 'momentum_deceleration',
+            pathExitMinBars: 2,
+            pathExitLookbackBars: 12,
+            pathExitThreshold: 0,
+            pathExitGivebackPercent: 40,
+        }, { randomizePathExitParams: true });
+
+        expect(baseParams.lookback).to.equal(20);
+        expect(baseParams.pathExitMinBars).to.equal(2);
+        expect(baseParams.pathExitLookbackBars).to.equal(12);
+        expect(baseParams.pathExitThreshold).to.equal(1);
+        expect('pathExitGivebackPercent' in baseParams).to.equal(false);
+    });
+
+    it('applies path-dependent exit Finder overrides only to TypeScript settings', () => {
+        const settings: BacktestSettings = {
+            pathExitEnabled: true,
+            pathExitMode: 'mfe_giveback',
+            pathExitMinBars: 3,
+            pathExitMinMfePercent: 1.5,
+            pathExitGivebackPercent: 40,
+        };
+        const rustSettings: BacktestSettings = {};
+
+        const resolved = resolveFinderRiskOverrides(settings, rustSettings, {
+            pathExitMinBars: 7,
+            pathExitMinMfePercent: 2.25,
+            pathExitGivebackPercent: 65,
+        }, { randomizePathExitParams: true });
+
+        expect(resolved.backtestSettings.pathExitMinBars).to.equal(7);
+        expect(resolved.backtestSettings.pathExitMinMfePercent).to.equal(2.25);
+        expect(resolved.backtestSettings.pathExitGivebackPercent).to.equal(65);
+        expect('pathExitMinBars' in resolved.rustBacktestSettings).to.equal(false);
+    });
+
+    it('random mode can vary path-dependent exit params once they are part of the search params', () => {
+        const paramSpace = new FinderParamSpace();
+        const combos = paramSpace.generateParamSets(
+            {
+                lookback: 20,
+                pathExitMinBars: 4,
+                pathExitGivebackPercent: 40,
+            },
+            {
+                mode: 'random',
+                sortPriority: ['netProfit'],
+                useAdvancedSort: false,
+                multiTimeframeEnabled: false,
+                timeframes: [],
+                topN: 10,
+                steps: 3,
+                rangePercent: 50,
+                maxRuns: 12,
+                tradeFilterEnabled: false,
+                minTrades: 0,
+                maxTrades: Number.POSITIVE_INFINITY,
+                comboEnabled: false,
+                randomSeed: 42,
+                randomizePathExitParams: true,
+            }
+        );
+
+        const minBars = new Set(combos.map((combo) => combo.pathExitMinBars));
+        const givebacks = new Set(combos.map((combo) => combo.pathExitGivebackPercent));
+
+        expect(minBars.size).to.be.greaterThan(1);
+        expect(givebacks.size).to.be.greaterThan(1);
+        expect(combos.every((combo) => (combo.pathExitMinBars ?? 0) >= 1)).to.equal(true);
+        expect(combos.every((combo) => (combo.pathExitGivebackPercent ?? 0) >= 1 && (combo.pathExitGivebackPercent ?? 101) <= 100)).to.equal(true);
+    });
+
+    it('merges sampled path-dependent exit params back into settings when applying Finder results', () => {
+        const settings: BacktestSettings & { riskSettingsToggle?: boolean } = {
+            riskSettingsToggle: true,
+            pathExitEnabled: true,
+            pathExitMode: 'triple_barrier_meta',
+            pathExitMinBars: 3,
+            pathExitThreshold: 2,
+            pathExitMinSamples: 30,
+            pathExitHorizonBars: 50,
+        };
+
+        const merged = mergeFinderRiskParamsIntoBacktestSettings(
+            settings,
+            {
+                pathExitMinBars: 6,
+                pathExitThreshold: 4.5,
+                pathExitMinSamples: 12,
+                pathExitHorizonBars: 25,
+            },
+            { randomizePathExitParams: true }
+        );
+
+        expect(merged.pathExitMinBars).to.equal(6);
+        expect(merged.pathExitThreshold).to.equal(4.5);
+        expect(merged.pathExitMinSamples).to.equal(12);
+        expect(merged.pathExitHorizonBars).to.equal(25);
+    });
 });
 
 describe('Finder selection metrics', () => {

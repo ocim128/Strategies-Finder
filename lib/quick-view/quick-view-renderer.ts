@@ -474,6 +474,7 @@ export function formatExitReason(reason: string): string {
     'end_of_data': 'EOD',
     'signal': 'SIG',
     'timeout': 'TO',
+    'path_exit': 'PTH',
   };
   const label = labels[reason] || reason.slice(0, 4).toUpperCase();
   return `<span class="qv-exit-badge">${label}</span>`;

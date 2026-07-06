@@ -220,6 +220,7 @@ function getExitReasonBadge(exitReason: string | null | undefined): string {
         partial: { label: "Partial", color: "#06b6d4" },
         probation_fail: { label: "Weak-Start Guard", color: "#ec4899" },
         end_of_data: { label: "End of Data", color: "#f97316" },
+        path_exit: { label: "Path Exit", color: "#14b8a6" },
     };
 
     const info = reasonMap[exitReason];

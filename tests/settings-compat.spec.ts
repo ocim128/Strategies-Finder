@@ -1175,4 +1175,41 @@ describe('backtest settings Rust-support contract audit', () => {
             .map(c => ({ settingKey: c.settingKey, declared: c.rustSupport }));
         expect(conflicting).to.deep.equal([]);
     });
+
+    it('normalizes path-dependent exit settings and forces TypeScript fallback when enabled', () => {
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitEnabled).to.equal(false);
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitMode).to.equal('off');
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitMinBars).to.equal(10);
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitMinMfePercent).to.equal(2.0);
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitGivebackPercent).to.equal(25);
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitLookbackBars).to.equal(20);
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitThreshold).to.equal(0);
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitMinSamples).to.equal(30);
+        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitHorizonBars).to.equal(50);
+
+        const resolved = resolveBacktestSettingsFromRaw({
+            pathExitEnabled: true,
+            pathExitMode: 'mfe_giveback',
+            disableSignalExits: true,
+        } as unknown as BacktestSettings);
+        expect(resolved.pathExitEnabled).to.equal(true);
+        expect(resolved.pathExitMode).to.equal('mfe_giveback');
+        expect(resolved.disableSignalExits).to.equal(true);
+        expect(normalizeBacktestSettings(resolved).disableSignalExits).to.equal(true);
+
+        expect(requiresTypescriptEngine(resolved)).to.equal(true);
+        expect('pathExitEnabled' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
+
+        const inert = resolveBacktestSettingsFromRaw({
+            pathExitEnabled: true,
+            pathExitMode: 'off',
+            disableSignalExits: true,
+        } as unknown as BacktestSettings);
+        expect(inert.disableSignalExits).to.equal(false);
+
+        const contract = getBacktestDomSettingContract('pathExitMode');
+        expect(contract).to.not.equal(undefined);
+        expect(coerceBacktestDomSettingValue(contract!, 'MFE_GIVEBACK')).to.equal('mfe_giveback');
+        expect(coerceBacktestDomSettingValue(contract!, 'invalid-mode')).to.equal('off');
+    });
 });

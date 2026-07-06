@@ -23,6 +23,7 @@ import {
     updateAdaptiveTakeProfitPosition,
     updateAdaptiveTakeProfitHistory,
 } from './adaptive-take-profit';
+import { PathExitEvaluationContext, PathExitLearningState, learnFromClosedTrade } from './path-exit-rules';
 import { createKellySizingState, updateKellyState } from '../sizing/kelly-criterion';
 import { createMartingaleState, updateMartingaleState } from '../sizing/martingale';
 import { createOptimalFState, updateOptimalFState } from '../sizing/optimal-f';
@@ -404,7 +405,8 @@ function hasBarBasedExitRules(config: NormalizedSettings): boolean {
         || config.breakEvenAtR > 0
         || config.breakEvenPercent > 0
         || hasRiskMaxHold
-        || config.timeStopBars > 0;
+        || config.timeStopBars > 0
+        || (config.pathExitEnabled && config.pathExitMode !== 'off');
 }
 
 function canUseSignalOnlyFinderFastPath(
@@ -451,6 +453,10 @@ function runSinglePositionFinderFastPath(args: {
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
     const trades: Trade[] = [];
+    const learningState: PathExitLearningState = {
+        hazardSamples: new Map(),
+        barrierSamples: new Map(),
+    };
     diagnostics && (diagnostics.counts.fastPathRuns = 1);
     let capital = initialCapital;
     let peakEquity = initialCapital;
@@ -461,6 +467,7 @@ function runSinglePositionFinderFastPath(args: {
     let position = null as PositionState | null;
     let positionEntryBarIndex = -1;
     let signalExitReentryCooldownUntilBarIndex = -1;
+    let currentBarIndex = 0;
     const skipDrawdown = options?.skipDrawdown === true;
 
     const recordExit = (
@@ -491,9 +498,22 @@ function runSinglePositionFinderFastPath(args: {
         pos.realizedPnl += d.totalPnl;
         pos.size -= d.size;
         const fullyClosed = pos.size <= 0;
-        if (fullyClosed && position === pos) {
-            position = null;
-            positionEntryBarIndex = -1;
+        if (fullyClosed) {
+            if (config.pathExitEnabled && (config.pathExitMode === 'conditional_hazard' || config.pathExitMode === 'triple_barrier_meta')) {
+                learnFromClosedTrade(
+                    pos,
+                    pos.openedBarIndex ?? positionEntryBarIndex ?? 0,
+                    currentBarIndex,
+                    exitPrice,
+                    data,
+                    learningState,
+                    config
+                );
+            }
+            if (position === pos) {
+                position = null;
+                positionEntryBarIndex = -1;
+            }
         }
         return { fullyClosed };
     };
@@ -529,10 +549,17 @@ function runSinglePositionFinderFastPath(args: {
 
     const processCurrentPositionExit = (
         candle: OHLCVData,
+        barIndex: number,
         options?: Parameters<typeof processPositionExits>[4]
     ): boolean => {
         if (!position) return false;
-        const exitTrigger = processPositionExits(candle, position, config, slippageRate, options);
+        const pathExitContext: PathExitEvaluationContext | undefined = config.pathExitEnabled ? {
+            data,
+            barIndex,
+            atrValue: indicatorSeries.atr ? indicatorSeries.atr[barIndex] : null,
+            learningState,
+        } : undefined;
+        const exitTrigger = processPositionExits(candle, position, config, slippageRate, options, pathExitContext);
         if (!exitTrigger) return false;
         return recordExit(position, candle, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason).fullyClosed;
     };
@@ -652,6 +679,7 @@ function runSinglePositionFinderFastPath(args: {
     }
 
     for (let i = 0; i < data.length; i++) {
+        currentBarIndex = i;
         if (!position) {
             const nextSignalBarIndex = preparedSignalBarIndexes[signalIdx];
             if (nextSignalBarIndex === undefined) {
@@ -674,7 +702,7 @@ function runSinglePositionFinderFastPath(args: {
         let openedThisBar: PositionState | null = null;
 
         if (config.executionModel === "next_open") {
-            processCurrentPositionExit(candle, OPEN_ONLY_POSITION_EXIT_OPTIONS);
+            processCurrentPositionExit(candle, i, OPEN_ONLY_POSITION_EXIT_OPTIONS);
 
             while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
@@ -689,9 +717,9 @@ function runSinglePositionFinderFastPath(args: {
                 position.barsInTrade += 1;
             }
             if (config.executionModel === "next_open" && position === openedThisBar && !config.allowSameBarExit) {
-                processCurrentPositionExit(candle, STOP_LOSS_ONLY_POSITION_EXIT_OPTIONS);
+                processCurrentPositionExit(candle, i, STOP_LOSS_ONLY_POSITION_EXIT_OPTIONS);
             } else {
-                processCurrentPositionExit(candle);
+                processCurrentPositionExit(candle, i);
             }
         }
 
@@ -1334,6 +1362,11 @@ export function runBacktestCompact(
 
     const config = normalizeBacktestSettings(settings);
     const omitEquityCurve = options?.omitEquityCurve === true && options?.includeSharpeRatio === false;
+    const learningState: PathExitLearningState = {
+        hazardSamples: new Map(),
+        barrierSamples: new Map(),
+    };
+    let currentBarIndex = 0;
     const skipDrawdown = options?.skipDrawdown === true;
     const shouldTrackEquity = !skipDrawdown;
     const sizingMode = sizing?.mode ?? 'percent';
@@ -1442,6 +1475,17 @@ export function runBacktestCompact(
             sizingMode,
             advancedSizing
         );
+        if (config.pathExitEnabled && (config.pathExitMode === 'conditional_hazard' || config.pathExitMode === 'triple_barrier_meta')) {
+            learnFromClosedTrade(
+                position,
+                position.openedBarIndex ?? 0,
+                currentBarIndex,
+                exitPrice,
+                data,
+                learningState,
+                config
+            );
+        }
     };
 
     const flushAdaptiveTakeProfitUpdates = () => {
@@ -1497,7 +1541,13 @@ export function runBacktestCompact(
 
     const tryProcessExitsAfterEntry = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
         updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
-        const exitTrigger = processPositionExits(candle, pos, config, slippageRate);
+        const pathExitContext: PathExitEvaluationContext | undefined = config.pathExitEnabled ? {
+            data,
+            barIndex,
+            atrValue: indicatorSeries.atr[barIndex],
+            learningState,
+        } : undefined;
+        const exitTrigger = processPositionExits(candle, pos, config, slippageRate, undefined, pathExitContext);
         let fullyClosed = false;
         if (exitTrigger) {
             ({ fullyClosed } = recordExit(pos, exitTrigger.exitPrice, exitTrigger.exitSize));
@@ -1558,6 +1608,7 @@ export function runBacktestCompact(
 
     const tradeSimulationStartedAt = performance.now();
     for (let i = 0; i < data.length; i++) {
+        currentBarIndex = i;
         if (omitEquityCurve && positions.length === 0 && pendingAdaptiveTakeProfitExits.size === 0) {
             const nextSignalBarIndex = preparedSignalBarIndexes[signalIdx];
             if (nextSignalBarIndex === undefined) {
@@ -1683,7 +1734,13 @@ export function runBacktestCompact(
             }
 
             updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
-            const exitTrigger = processPositionExits(candle, pos, config, slippageRate);
+            const pathExitContext: PathExitEvaluationContext | undefined = config.pathExitEnabled ? {
+                data,
+                barIndex: i,
+                atrValue: indicatorSeries.atr[i],
+                learningState,
+            } : undefined;
+            const exitTrigger = processPositionExits(candle, pos, config, slippageRate, undefined, pathExitContext);
             let fullyClosed = false;
             if (exitTrigger) {
                 ({ fullyClosed } = recordExit(pos, exitTrigger.exitPrice, exitTrigger.exitSize));
@@ -1869,6 +1926,11 @@ export function runBacktest(
 
     const config = normalizeBacktestSettings(settings);
     const omitEquityCurve = options?.omitEquityCurve === true && options?.includeSharpeRatio === false;
+    const learningState: PathExitLearningState = {
+        hazardSamples: new Map(),
+        barrierSamples: new Map(),
+    };
+    let currentBarIndex = 0;
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
     const advancedSizing = sizing?.advancedSizing;
@@ -1971,6 +2033,17 @@ export function runBacktest(
             sizingMode,
             advancedSizing
         );
+        if (config.pathExitEnabled && (config.pathExitMode === 'conditional_hazard' || config.pathExitMode === 'triple_barrier_meta')) {
+            learnFromClosedTrade(
+                position,
+                position.openedBarIndex ?? 0,
+                currentBarIndex,
+                exitPrice,
+                data,
+                learningState,
+                config
+            );
+        }
     };
 
     const flushAdaptiveTakeProfitUpdates = () => {
@@ -2041,7 +2114,13 @@ export function runBacktest(
 
     const tryProcessExitsAfterEntryFull = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
         updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
-        const exitTrigger = processPositionExits(candle, pos, config, slippageRate);
+        const pathExitContext: PathExitEvaluationContext | undefined = config.pathExitEnabled ? {
+            data,
+            barIndex,
+            atrValue: indicatorSeries.atr[barIndex],
+            learningState,
+        } : undefined;
+        const exitTrigger = processPositionExits(candle, pos, config, slippageRate, undefined, pathExitContext);
         let fullyClosed = false;
         if (exitTrigger) {
             ({ fullyClosed } = recordExitFull(pos, candle, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason));
@@ -2102,6 +2181,7 @@ export function runBacktest(
 
     const tradeSimulationStartedAt = performance.now();
     for (let i = 0; i < data.length; i++) {
+        currentBarIndex = i;
         if (omitEquityCurve && positions.length === 0 && pendingAdaptiveTakeProfitExits.size === 0) {
             const nextSignalBarIndex = preparedSignalBarIndexes[signalIdx];
             if (nextSignalBarIndex === undefined) {
@@ -2223,7 +2303,13 @@ export function runBacktest(
             }
 
             updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
-            const exitTrigger = processPositionExits(candle, pos, config, slippageRate);
+            const pathExitContext: PathExitEvaluationContext | undefined = config.pathExitEnabled ? {
+                data,
+                barIndex: i,
+                atrValue: indicatorSeries.atr[i],
+                learningState,
+            } : undefined;
+            const exitTrigger = processPositionExits(candle, pos, config, slippageRate, undefined, pathExitContext);
             let fullyClosed = false;
             if (exitTrigger) {
                 ({ fullyClosed } = recordExitFull(pos, candle, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason));

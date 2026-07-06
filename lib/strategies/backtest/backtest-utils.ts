@@ -1,5 +1,5 @@
 
-import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection } from '../../types/index';
+import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection, PathExitMode } from '../../types/index';
 import { NormalizedSettings } from '../../types/backtest';
 import { toTimeKey } from '../../time-key';
 import { parseTimeToUnixSeconds } from '../../time-normalization';
@@ -29,6 +29,10 @@ function hasActiveChartTakeProfitOrStopLoss(config: Pick<NormalizedSettings,
     return config.stopLossAtr > 0 || config.takeProfitAtr > 0;
 }
 
+function hasActivePathExit(config: Pick<NormalizedSettings, 'pathExitEnabled' | 'pathExitMode'>): boolean {
+    return config.pathExitEnabled === true && config.pathExitMode !== 'off';
+}
+
 function hasActiveExitStrategyOverride(settings?: BacktestSettings): boolean {
     return settings?.exitStrategyOverrideEnabled === true
         && typeof settings.exitStrategyKey === 'string'
@@ -41,6 +45,18 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         ? rawExecutionModel
         : 'signal_close';
     const riskMode = settings?.riskMode === 'percentage' ? 'percentage' : 'simple';
+
+    const rawPathExitMode = settings?.pathExitMode;
+    const pathExitMode: PathExitMode = rawPathExitMode === 'mfe_giveback'
+        || rawPathExitMode === 'momentum_deceleration'
+        || rawPathExitMode === 'capitulation_exhaustion'
+        || rawPathExitMode === 'squeeze_pressure'
+        || rawPathExitMode === 'conditional_hazard'
+        || rawPathExitMode === 'triple_barrier_meta'
+        || rawPathExitMode === 'structure_reclaim'
+        || rawPathExitMode === 'profit_compression'
+        ? rawPathExitMode
+        : 'off';
 
     const config: NormalizedSettings = {
         atrPeriod: Math.max(1, toNumberOr(settings?.atrPeriod, 14)),
@@ -75,6 +91,15 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         riskWinStreakStopLossAfterWins: 3,
         riskWinStreakStopLossPercent: 0,
         disableSignalExits: false,
+        pathExitEnabled: settings?.pathExitEnabled ?? false,
+        pathExitMode,
+        pathExitMinBars: Math.max(1, toNumberOr(settings?.pathExitMinBars, 10)),
+        pathExitMinMfePercent: Math.max(0, toNumberOr(settings?.pathExitMinMfePercent, 2.0)),
+        pathExitGivebackPercent: clamp(toNumberOr(settings?.pathExitGivebackPercent, 25), 1, 100),
+        pathExitLookbackBars: Math.max(1, toNumberOr(settings?.pathExitLookbackBars, 20)),
+        pathExitThreshold: toNumberOr(settings?.pathExitThreshold, 0),
+        pathExitMinSamples: Math.max(5, toNumberOr(settings?.pathExitMinSamples, 30)),
+        pathExitHorizonBars: Math.max(1, toNumberOr(settings?.pathExitHorizonBars, 50)),
         flipAfterConsecutiveLosses: Math.max(1, Math.round(toNumberOr(settings?.flipAfterConsecutiveLosses, 2))),
         flipCooldownTrades: Math.max(0, Math.round(toNumberOr(settings?.flipCooldownTrades, 0))),
         minTradesBeforeFirstFlip: Math.max(0, Math.round(toNumberOr(settings?.minTradesBeforeFirstFlip, 0))),
@@ -94,7 +119,7 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         maxOpenTrades: clamp(Math.round(toNumberOr(settings?.maxOpenTrades, 1)), 1, 2),
     };
     config.disableSignalExits = settings?.disableSignalExits === true
-        && (hasActiveChartTakeProfitOrStopLoss(config) || hasActiveExitStrategyOverride(settings));
+        && (hasActiveChartTakeProfitOrStopLoss(config) || hasActivePathExit(config) || hasActiveExitStrategyOverride(settings));
     return config;
 }
 

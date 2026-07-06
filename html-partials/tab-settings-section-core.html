@@ -467,6 +467,84 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Path-Dependent Exits -->
+                <div class="param-row">
+                    <div class="param-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Path-Dependent Exits</label>
+                            <label class="section-toggle section-toggle--sm" aria-label="Toggle path-dependent exits">
+                                <input type="checkbox" id="pathExitEnabled">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">Enable experimental, path-dependent exits to manage open trade risk dynamically.</div>
+                    </div>
+                </div>
+
+                <div id="pathExitConfig" style="display: none; margin-top: 8px;">
+                    <div class="param-row">
+                        <div class="param-group">
+                            <label class="param-label">Exit Mode</label>
+                            <select class="param-input" id="pathExitMode">
+                                <option value="off" selected>Off</option>
+                                <option value="mfe_giveback">MFE Giveback</option>
+                                <option value="momentum_deceleration">Momentum Deceleration</option>
+                                <option value="capitulation_exhaustion">Capitulation Exhaustion</option>
+                                <option value="squeeze_pressure">Squeeze Pressure</option>
+                                <option value="conditional_hazard">Conditional Hazard (Learning)</option>
+                                <option value="triple_barrier_meta">Triple Barrier Meta (Learning)</option>
+                                <option value="structure_reclaim">Structure Reclaim</option>
+                                <option value="profit_compression">Profit Compression</option>
+                            </select>
+                            <div class="param-hint">Select the active path exit rule. Only one mode is evaluated at a time.</div>
+                        </div>
+                    </div>
+
+                    <div class="param-row">
+                        <div class="param-group">
+                            <label class="param-label">Min Hold Bars</label>
+                            <input type="number" class="param-input" id="pathExitMinBars" value="10" min="1" step="1">
+                            <div class="param-hint">Minimum duration before path-exit rules can trigger.</div>
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Min MFE (%)</label>
+                            <input type="number" class="param-input" id="pathExitMinMfePercent" value="2.0" min="0" step="0.1">
+                            <div class="param-hint">Minimum favorable excursion (%) before tracking giveback.</div>
+                        </div>
+                    </div>
+
+                    <div class="param-row">
+                        <div class="param-group">
+                            <label class="param-label">Giveback (%)</label>
+                            <input type="number" class="param-input" id="pathExitGivebackPercent" value="25" min="1" max="100" step="1">
+                            <div class="param-hint">Percent of MFE given back that triggers exit.</div>
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Lookback (bars)</label>
+                            <input type="number" class="param-input" id="pathExitLookbackBars" value="20" min="1" step="1">
+                            <div class="param-hint">Window size for momentum/exhaustion indicators.</div>
+                        </div>
+                    </div>
+
+                    <div class="param-row">
+                        <div class="param-group">
+                            <label class="param-label">Threshold</label>
+                            <input type="number" class="param-input" id="pathExitThreshold" value="0" step="0.01">
+                            <div class="param-hint">Rule-specific trigger cutoff.</div>
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Min Samples</label>
+                            <input type="number" class="param-input" id="pathExitMinSamples" value="30" min="5" step="1">
+                            <div class="param-hint">Minimum closed trades before learning modes activate.</div>
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">Horizon (bars)</label>
+                            <input type="number" class="param-input" id="pathExitHorizonBars" value="50" min="1" step="1">
+                            <div class="param-hint">Target window for meta-label evaluation.</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

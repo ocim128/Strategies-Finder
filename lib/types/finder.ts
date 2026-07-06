@@ -73,6 +73,7 @@ export interface FinderOptions {
     minTrades: number;
     maxTrades: number;
     freezeRiskManagement?: boolean;
+    randomizePathExitParams?: boolean;
     comboEnabled?: boolean;
     comboPrimaryConfigName?: string;
     polymarketScoringEnabled?: boolean;

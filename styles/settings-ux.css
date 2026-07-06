@@ -601,7 +601,7 @@
 .section-body.accordion-body {
     overflow: hidden;
     transition: max-height 0.2s var(--ease-out-expo), opacity 0.15s ease;
-    max-height: 800px;
+    max-height: 2400px;
     opacity: 1;
     will-change: max-height;
 }

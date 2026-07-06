@@ -131,6 +131,7 @@ describe("Finder manager logic", () => {
             minTrades: 30,
             maxTrades: 10,
             freezeRiskManagement: false,
+            randomizePathExitParams: true,
             polymarketScoringEnabled: true,
             polymarketRankMode: "balanced",
             polymarketMinScoredPredictions: -5,
@@ -142,9 +143,45 @@ describe("Finder manager logic", () => {
         expect(options.dataSlice).to.equal("5");
         expect(options.maxTrades).to.equal(30);
         expect(options.freezeRiskManagement).to.equal(true);
+        expect(options.randomizePathExitParams).to.equal(false);
         expect(options.polymarketMinScoredPredictions).to.equal(0);
         expect(options.polymarketLockOffset).to.equal(true);
         expect(options.polymarketAfterTakeProfitOnly).to.equal(true);
+    });
+
+    it("keeps path-exit randomization only when Finder risk management is not frozen", () => {
+        const base = {
+            useAdvancedSort: false,
+            advancedSortValues: [],
+            primarySort: "expectancy" as const,
+            secondarySort: "profitFactor" as const,
+            mode: "random" as const,
+            dataSlice: "all" as const,
+            topN: 10,
+            steps: 3,
+            rangePercent: 100,
+            maxRuns: 100,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            polymarketScoringEnabled: false,
+            polymarketRankMode: "balanced" as const,
+            polymarketMinScoredPredictions: 0,
+            polymarketLockOffset: false,
+            polymarketAfterTakeProfitOnly: false,
+        };
+
+        expect(buildFinderOptions({
+            ...base,
+            freezeRiskManagement: false,
+            randomizePathExitParams: true,
+        }).randomizePathExitParams).to.equal(true);
+
+        expect(buildFinderOptions({
+            ...base,
+            freezeRiskManagement: true,
+            randomizePathExitParams: true,
+        }).randomizePathExitParams).to.equal(false);
     });
 
     it("switches polymarket sort priority by selected rank mode", () => {

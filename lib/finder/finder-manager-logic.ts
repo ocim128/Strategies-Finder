@@ -29,6 +29,7 @@ export interface FinderOptionsInput {
     minTrades: number;
     maxTrades: number;
     freezeRiskManagement: boolean;
+    randomizePathExitParams?: boolean;
     polymarketScoringEnabled: boolean;
     polymarketRankMode: PolymarketFinderRankMode;
     polymarketMinScoredPredictions: number;
@@ -204,6 +205,9 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
         minTrades,
         maxTrades,
         freezeRiskManagement: input.freezeRiskManagement || input.polymarketScoringEnabled,
+        randomizePathExitParams: !input.polymarketScoringEnabled
+            && !input.freezeRiskManagement
+            && input.randomizePathExitParams === true,
         polymarketScoringEnabled: input.polymarketScoringEnabled,
         polymarketRankMode: input.polymarketRankMode,
         polymarketMinScoredPredictions: Math.max(0, input.polymarketMinScoredPredictions),

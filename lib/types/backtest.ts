@@ -1,4 +1,4 @@
-import { Time, MarketMode, PercentageTakeProfitMode } from './strategies';
+import { Time, MarketMode, PercentageTakeProfitMode, PathExitMode } from './strategies';
 
 export interface NormalizedSettings {
     atrPeriod: number;
@@ -34,6 +34,15 @@ export interface NormalizedSettings {
     riskWinStreakStopLossAfterWins: number;
     riskWinStreakStopLossPercent: number;
     disableSignalExits: boolean;
+    pathExitEnabled: boolean;
+    pathExitMode: PathExitMode;
+    pathExitMinBars: number;
+    pathExitMinMfePercent: number;
+    pathExitGivebackPercent: number;
+    pathExitLookbackBars: number;
+    pathExitThreshold: number;
+    pathExitMinSamples: number;
+    pathExitHorizonBars: number;
     flipAfterConsecutiveLosses: number;
     flipCooldownTrades: number;
     minTradesBeforeFirstFlip: number;

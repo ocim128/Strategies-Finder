@@ -64,6 +64,16 @@ export function computeParamRange(
     } else if (key === "takeProfitAdaptiveIcScale") {
         min = Math.max(0, min);
         max = Math.min(2, max);
+    } else if (key === "pathExitMinBars" || key === "pathExitLookbackBars" || key === "pathExitHorizonBars") {
+        min = Math.max(1, min);
+    } else if (key === "pathExitMinSamples") {
+        min = Math.max(5, min);
+    } else if (key === "pathExitMinMfePercent" || key === "pathExitThreshold") {
+        min = Math.max(0, min);
+        max = Math.min(100, max);
+    } else if (key === "pathExitGivebackPercent") {
+        min = Math.max(1, min);
+        max = Math.min(100, max);
     } else if (key === "takeProfitPercent") {
         min = Math.max(0, min);
         max = Math.min(100, max);
@@ -100,6 +110,14 @@ export function normalizeParamValue(
         next = Math.min(1, Math.max(0, Number(next.toFixed(3))));
     } else if (key === "takeProfitAdaptiveIcScale") {
         next = Math.min(2, Math.max(0, Number(next.toFixed(3))));
+    } else if (key === "pathExitMinBars" || key === "pathExitLookbackBars" || key === "pathExitHorizonBars") {
+        next = Math.max(1, Math.round(next));
+    } else if (key === "pathExitMinSamples") {
+        next = Math.max(5, Math.round(next));
+    } else if (key === "pathExitMinMfePercent" || key === "pathExitThreshold") {
+        next = Math.min(100, Math.max(0, Number(next.toFixed(2))));
+    } else if (key === "pathExitGivebackPercent") {
+        next = Math.min(100, Math.max(1, Number(next.toFixed(2))));
     } else if (options.includeFinderExtraBounds && (key === "crossThreshold" || key === "minRangePct")) {
         next = Math.min(0.05, Math.max(0, Number(next.toFixed(4))));
     } else if (periodLike) {
@@ -141,7 +159,14 @@ export function normalizeParamValue(
         key === "takeProfitAdaptiveMinMultiplier" ||
         key === "takeProfitAdaptiveMaxMultiplier" ||
         key === "takeProfitAdaptiveRegimeBlend" ||
-        key === "takeProfitAdaptiveIcScale"
+        key === "takeProfitAdaptiveIcScale" ||
+        key === "pathExitMinBars" ||
+        key === "pathExitLookbackBars" ||
+        key === "pathExitHorizonBars" ||
+        key === "pathExitMinSamples" ||
+        key === "pathExitMinMfePercent" ||
+        key === "pathExitThreshold" ||
+        key === "pathExitGivebackPercent"
     ) {
         next = Number(next.toFixed(2));
     } else if (!Number.isInteger(defaultValue)) {

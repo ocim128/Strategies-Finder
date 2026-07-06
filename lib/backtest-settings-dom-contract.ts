@@ -34,7 +34,7 @@ import {
 import { clampPolymarketProtectionCents } from "./polymarket-protection-settings";
 import { RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS } from "./rust-settings-sanitizer";
 import { resolveTakeProfitMode } from "./take-profit-settings";
-import type { BacktestSettings, StrategyParams } from "./types/strategies";
+import type { BacktestSettings, StrategyParams, PathExitMode } from "./types/strategies";
 
 export type BacktestDomSettingKey = keyof BacktestSettingsData;
 export type BacktestDomSettingParser =
@@ -69,7 +69,8 @@ export type BacktestDomSettingParser =
     | "secureFMethod"
     | "strategyKey"
     | "strategyParams"
-    | "batchExecutionMode";
+    | "batchExecutionMode"
+    | "pathExitMode";
 
 export type SettingSupportLevel = "supported" | "unsupported" | "conditional" | "ui_only";
 
@@ -134,6 +135,8 @@ function inferParser(settingKey: BacktestDomSettingKey): BacktestDomSettingParse
             return "martingaleBaseSize";
         case "secureFMethod":
             return "secureFMethod";
+        case "pathExitMode":
+            return "pathExitMode";
         default: {
             const fallback = (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[settingKey];
             if (typeof fallback === "number") {
@@ -270,6 +273,20 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("exitStrategyOverrideEnabled", { rustSupport: "unsupported" }),
     createField("exitStrategyKey", { rustSupport: "unsupported" }),
     createField("exitStrategyParams", { rustSupport: "unsupported" }),
+    createField("pathExitEnabled", {
+        settingKey: "pathExitEnabled",
+        parser: "boolean",
+        legacyAliases: ["pathExitToggle"],
+        rustSupport: "unsupported",
+    }),
+    createField("pathExitMode", { parser: "pathExitMode", rustSupport: "unsupported" }),
+    createField("pathExitMinBars", { rustSupport: "unsupported" }),
+    createField("pathExitMinMfePercent", { rustSupport: "unsupported" }),
+    createField("pathExitGivebackPercent", { rustSupport: "unsupported" }),
+    createField("pathExitLookbackBars", { rustSupport: "unsupported" }),
+    createField("pathExitThreshold", { rustSupport: "unsupported" }),
+    createField("pathExitMinSamples", { rustSupport: "unsupported" }),
+    createField("pathExitHorizonBars", { rustSupport: "unsupported" }),
     createField("tradeDirection", {
         parser: "tradeDirection",
         rustSupport: "conditional",
@@ -509,6 +526,24 @@ export function coerceBacktestDomSettingValue(
             // "string" parser which uppercases. Mirrors the persistence
             // normalizer in settings-model.ts.
             return value === "browser" ? "browser" : "server";
+        case "pathExitMode":
+            if (typeof value === "string") {
+                const normalized = value.trim().toLowerCase();
+                if (
+                    normalized === "off"
+                    || normalized === "mfe_giveback"
+                    || normalized === "momentum_deceleration"
+                    || normalized === "capitulation_exhaustion"
+                    || normalized === "squeeze_pressure"
+                    || normalized === "conditional_hazard"
+                    || normalized === "triple_barrier_meta"
+                    || normalized === "structure_reclaim"
+                    || normalized === "profit_compression"
+                ) {
+                    return normalized as PathExitMode;
+                }
+            }
+            return "off";
         case "boolean":
             return readBooleanValue(value, Boolean(contract.fallbackValue ?? (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[contract.settingKey] ?? false));
         case "string": {

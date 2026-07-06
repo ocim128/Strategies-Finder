@@ -5,6 +5,7 @@ import type {
     MarketMode,
     StrategyParams,
     TradeDirection,
+    PathExitMode,
 } from "./types/strategies";
 import {
     readBoolean as readBooleanValue,
@@ -123,6 +124,15 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     polymarketProtectionTakeProfitCents: DEFAULT_POLYMARKET_PROTECTION_TAKE_PROFIT_CENTS,
     polymarketProtectionStopLossEnabled: DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_ENABLED,
     polymarketProtectionStopLossCents: DEFAULT_POLYMARKET_PROTECTION_STOP_LOSS_CENTS,
+    pathExitEnabled: false,
+    pathExitMode: "off" as PathExitMode,
+    pathExitMinBars: 10,
+    pathExitMinMfePercent: 2.0,
+    pathExitGivebackPercent: 25,
+    pathExitLookbackBars: 20,
+    pathExitThreshold: 0,
+    pathExitMinSamples: 30,
+    pathExitHorizonBars: 50,
     crossSymbolSecondary: "",
 });
 
@@ -171,7 +181,14 @@ type NumericResolverKey =
     | "polymarketBacktestSlippageCents"
     | "polymarketEntryCutoffSeconds"
     | "polymarketProtectionTakeProfitCents"
-    | "polymarketProtectionStopLossCents";
+    | "polymarketProtectionStopLossCents"
+    | "pathExitMinBars"
+    | "pathExitMinMfePercent"
+    | "pathExitGivebackPercent"
+    | "pathExitLookbackBars"
+    | "pathExitThreshold"
+    | "pathExitMinSamples"
+    | "pathExitHorizonBars";
 
 type BooleanResolverKey =
     | "stopLossEnabled"
@@ -185,7 +202,8 @@ type BooleanResolverKey =
     | "polymarketEntryCutoffEnabled"
     | "disableSignalExits"
     | "polymarketProtectionTakeProfitEnabled"
-    | "polymarketProtectionStopLossEnabled";
+    | "polymarketProtectionStopLossEnabled"
+    | "pathExitEnabled";
 
 type NumericResolverRule = {
     key: NumericResolverKey;
@@ -311,6 +329,13 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
             EFFECTIVE_BACKTEST_DEFAULTS.polymarketProtectionStopLossCents
         ),
     },
+    { key: "pathExitMinBars", guard: "useRiskManagement", disabledValue: 10 },
+    { key: "pathExitMinMfePercent", guard: "useRiskManagement", disabledValue: 2.0 },
+    { key: "pathExitGivebackPercent", guard: "useRiskManagement", disabledValue: 25 },
+    { key: "pathExitLookbackBars", guard: "useRiskManagement", disabledValue: 20 },
+    { key: "pathExitThreshold", guard: "useRiskManagement", disabledValue: 0 },
+    { key: "pathExitMinSamples", guard: "useRiskManagement", disabledValue: 30 },
+    { key: "pathExitHorizonBars", guard: "useRiskManagement", disabledValue: 50 },
 ] as const;
 
 const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
@@ -331,6 +356,7 @@ const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
     { key: "disableSignalExits", keys: ["disableSignalExits"] },
     { key: "polymarketProtectionTakeProfitEnabled", keys: ["polymarketProtectionTakeProfitEnabled"] },
     { key: "polymarketProtectionStopLossEnabled", keys: ["polymarketProtectionStopLossEnabled"] },
+    { key: "pathExitEnabled", keys: ["pathExitEnabled", "pathExitToggle"], guard: "useRiskManagement", disabledValue: false },
 ] as const;
 
 function resolveNumericSettingRules(
@@ -398,6 +424,15 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "exitStrategyOverrideEnabled",
     "exitStrategyKey",
     "exitStrategyParams",
+    "pathExitEnabled",
+    "pathExitMode",
+    "pathExitMinBars",
+    "pathExitMinMfePercent",
+    "pathExitGivebackPercent",
+    "pathExitLookbackBars",
+    "pathExitThreshold",
+    "pathExitMinSamples",
+    "pathExitHorizonBars",
     "tradeDirection",
     "invertSignalsToggle",
     "flipAfterConsecutiveLosses",
@@ -471,6 +506,26 @@ function coerceDeepValue(rawValue: unknown): unknown {
         return normalized;
     }
     return coerceScalar(rawValue);
+}
+
+function resolvePathExitMode(rawValue: unknown): PathExitMode {
+    if (typeof rawValue === "string") {
+        const mode = rawValue.trim().toLowerCase() as PathExitMode;
+        if (
+            mode === "off" ||
+            mode === "mfe_giveback" ||
+            mode === "momentum_deceleration" ||
+            mode === "capitulation_exhaustion" ||
+            mode === "squeeze_pressure" ||
+            mode === "conditional_hazard" ||
+            mode === "triple_barrier_meta" ||
+            mode === "structure_reclaim" ||
+            mode === "profit_compression"
+        ) {
+            return mode;
+        }
+    }
+    return "off";
 }
 
 function readNumber(raw: Record<string, unknown>, key: string, fallback: number): number {
@@ -613,14 +668,16 @@ function hasActiveChartTakeProfitOrStopLoss(settings: Record<string, unknown>): 
         || (toFiniteNumber(settings.takeProfitAtr) ?? 0) > 0;
 }
 
+function hasActivePathExit(settings: Record<string, unknown>): boolean {
+    return settings.pathExitEnabled === true && resolvePathExitMode(settings.pathExitMode) !== "off";
+}
+
 function applyDerivedBacktestSettingGuards(settings: Record<string, unknown>): Record<string, unknown> {
-    // Preserve disableSignalExits when there is any active exit path: chart TP/SL, a fully
-    // configured Exit Strategy Override (toggle on + key picked), or the override toggle
-    // alone (lets the user finish configuring the key without the guard stripping
-    // disable-signal-exits first — chicken-and-egg otherwise).
+    // Keep disableSignalExits only when another chart-managed exit can close the trade.
     if (
         settings.disableSignalExits === true
         && !hasActiveChartTakeProfitOrStopLoss(settings)
+        && !hasActivePathExit(settings)
         && !settings.exitStrategyOverrideEnabled
     ) {
         settings.disableSignalExits = false;
@@ -697,6 +754,8 @@ export function resolveBacktestSettingsFromRaw(
         coerced.exitStrategyOverrideEnabled = readBoolean(raw, "exitStrategyOverrideEnabled", false);
         coerced.exitStrategyKey = typeof raw["exitStrategyKey"] === "string" ? raw["exitStrategyKey"].trim() : "";
         coerced.exitStrategyParams = readStrategyParams(raw["exitStrategyParams"]);
+        coerced.pathExitEnabled = readBoolean(raw, "pathExitEnabled", EFFECTIVE_BACKTEST_DEFAULTS.pathExitEnabled);
+        coerced.pathExitMode = resolvePathExitMode(raw["pathExitMode"]);
         Object.assign(coerced, resolvePolymarketPostSignalLimitSettingFields(
             raw,
             (key, fallback) => readBoolean(raw, key, fallback)
@@ -800,6 +859,9 @@ export function resolveBacktestSettingsFromRaw(
         exitStrategyOverrideEnabled: readBoolean(raw, "exitStrategyOverrideEnabled", false),
         exitStrategyKey: typeof raw["exitStrategyKey"] === "string" ? raw["exitStrategyKey"].trim() : "",
         exitStrategyParams: readStrategyParams(raw["exitStrategyParams"]),
+        pathExitMode: riskEnabled
+            ? resolvePathExitMode(raw["pathExitMode"])
+            : "off",
         polymarketAnnotationEnabled: readBoolean(raw, "polymarketAnnotationEnabled", EFFECTIVE_BACKTEST_DEFAULTS.polymarketAnnotationEnabled),
         polymarketOutcomeSymbol: readString(raw, "polymarketOutcomeSymbol", EFFECTIVE_BACKTEST_DEFAULTS.polymarketOutcomeSymbol),
         polymarketOutcomeInterval: resolvePolymarketOutcomeInterval(raw["polymarketOutcomeInterval"]),
