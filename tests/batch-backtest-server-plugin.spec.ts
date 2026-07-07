@@ -212,6 +212,7 @@ describe("batch-backtest server plugin processRunBatch", () => {
         );
         const done = events[events.length - 1] as Extract<BatchStreamEvent, { type: "done" }>;
         expect(done.serverHasArtifacts).to.equal(true);
+        expect(done.cacheStats?.disk.writes).to.be.a("number");
         expect(hasStoredMineArtifacts()).to.equal(true);
 
         setRunOwnerForTests(0);

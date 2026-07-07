@@ -23,17 +23,49 @@ const STALE_FRAGMENT_MIN_THRESHOLD = 200;
 export interface BatchDatasetLoaderCore {
     load(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]>;
     clearCaches(): void;
+    /** Snapshot of in-memory + disk cache counters for benchmark diagnostics. */
+    getCacheStats(): BatchDatasetCacheStats;
+}
+
+export interface BatchDatasetCacheStats {
+    leg: { hits: number; misses: number; size: number; max: number };
+    pair: { hits: number; misses: number; size: number; max: number };
+    disk: { hits: number; misses: number; writes: number };
+}
+
+/** Args passed to disk-cache hooks; mirror the in-memory pairCache key inputs. */
+export interface SyntheticPairDiskCacheArgs {
+    pairKey: string;
+    syntheticSymbol: string;
+    baseSymbol: string;
+    quoteSymbol: string;
+    interval: string;
+    sourceInterval: string;
+    sourceBars: number;
 }
 
 interface BatchDatasetLoaderCoreOptions {
     logPrefix: string;
     fetchDetached(symbol: string, interval: string, options?: { signal?: AbortSignal; offline?: boolean }): Promise<OHLCVData[]>;
     fetchHistorical(symbol: string, interval: string, limit: number, options?: { signal?: AbortSignal; offline?: boolean }): Promise<OHLCVData[]>;
+    /**
+     * Optional server-side disk cache hook. When set, the loader consults the
+     * disk cache before rebuilding a synthetic pair in-memory. Returns null on
+     * miss / invalid fingerprint / browser mode (no hook supplied). Async
+     * because fingerprint computation may query the SQLite plugin.
+     */
+    loadCachedSyntheticPair?(args: SyntheticPairDiskCacheArgs): Promise<{ bars: OHLCVData[] } | null>;
+    /**
+     * Optional server-side disk cache write hook. Called after a fresh
+     * in-memory build succeeds. Returns true only when a file was written.
+     */
+    storeSyntheticPair?(args: SyntheticPairDiskCacheArgs, bars: OHLCVData[]): Promise<boolean>;
 }
 
 export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOptions): BatchDatasetLoaderCore {
     const legCache = new SyntheticLegCache<OHLCVData[]>(24);
     const pairCache = new SyntheticLegCache<OHLCVData[]>(16);
+    const diskStats = { hits: 0, misses: 0, writes: 0 };
 
     async function load(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
         const synthParts = parseSyntheticPairToken(symbol);
@@ -115,6 +147,32 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
             return cachedPair;
         }
 
+        // Server-side disk cache (optional). Skipped in browser mode (no hook).
+        // On hit, seed the in-memory pairCache so subsequent calls dedupe normally.
+        const diskArgs: SyntheticPairDiskCacheArgs = {
+            pairKey, syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
+        };
+        if (options.loadCachedSyntheticPair) {
+            try {
+                const cached = await options.loadCachedSyntheticPair(diskArgs);
+                if (cached) {
+                    diskStats.hits += 1;
+                    debugLogger.event(`${options.logPrefix}.synthetic_pair_disk_cache_hit`, {
+                        syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
+                    });
+                    const diskPromise = Promise.resolve(cached.bars);
+                    pairCache.set(pairKey, diskPromise);
+                    return diskPromise;
+                }
+                diskStats.misses += 1;
+            } catch (error) {
+                debugLogger.warn(`${options.logPrefix}.synthetic_pair_disk_cache_read_failed`, {
+                    syntheticSymbol, error: error instanceof Error ? error.message : String(error),
+                });
+                diskStats.misses += 1;
+            }
+        }
+
         const promise = (async (): Promise<OHLCVData[]> => {
             if (signal?.aborted) return [];
             const result = await buildSyntheticPairFromLegs({
@@ -127,6 +185,20 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                     getSourceSeries(legSymbol, legInterval, legBars, signal),
             });
             if (signal?.aborted) return [];
+            // Write to disk cache (fire-and-forget; failures logged, never thrown).
+            // Done here inside the producer so the write happens once per true miss,
+            // not on every consumer awaiting the same deduped promise.
+            if (options.storeSyntheticPair && result.bars.length > 0) {
+                try {
+                    if (await options.storeSyntheticPair(diskArgs, result.bars)) {
+                        diskStats.writes += 1;
+                    }
+                } catch (error) {
+                    debugLogger.warn(`${options.logPrefix}.synthetic_pair_disk_cache_write_failed`, {
+                        syntheticSymbol, error: error instanceof Error ? error.message : String(error),
+                    });
+                }
+            }
             return result.bars;
         })();
 
@@ -174,6 +246,16 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         clearCaches() {
             legCache.clear();
             pairCache.clear();
+            diskStats.hits = 0;
+            diskStats.misses = 0;
+            diskStats.writes = 0;
+        },
+        getCacheStats(): BatchDatasetCacheStats {
+            return {
+                leg: { hits: legCache.hitCount(), misses: legCache.missCount(), size: legCache.size, max: 24 },
+                pair: { hits: pairCache.hitCount(), misses: pairCache.missCount(), size: pairCache.size, max: 16 },
+                disk: { ...diskStats },
+            };
         },
     };
 }

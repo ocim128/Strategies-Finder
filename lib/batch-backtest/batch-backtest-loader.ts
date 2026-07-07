@@ -8,7 +8,7 @@
 
 import { dataManager } from "../data-manager";
 import type { OHLCVData } from "../types/strategies";
-import { createBatchDatasetLoaderCore } from "./batch-dataset-loader-core";
+import { createBatchDatasetLoaderCore, type BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 
 const loader = createBatchDatasetLoaderCore({
     logPrefix: "batch",
@@ -30,4 +30,9 @@ export function __clearBatchDatasetCachesForTests(): void {
 
 export function clearBatchDatasetCaches(): void {
     loader.clearCaches();
+}
+
+/** Snapshot of in-memory + disk cache counters; disk counters stay 0 in browser mode. */
+export function getBatchDatasetCacheStats(): BatchDatasetCacheStats {
+    return loader.getCacheStats();
 }

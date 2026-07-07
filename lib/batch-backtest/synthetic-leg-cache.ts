@@ -17,6 +17,7 @@
 export class SyntheticLegCache<T> {
     private readonly store = new Map<string, Promise<T>>();
     private readonly missCounts = new Map<string, number>();
+    private totalHits = 0;
 
     constructor(private readonly maxEntries: number) {}
 
@@ -31,6 +32,7 @@ export class SyntheticLegCache<T> {
             // Re-insert to mark most-recently-used (Map iterates in insertion order).
             this.store.delete(key);
             this.store.set(key, value);
+            this.totalHits += 1;
         }
         return value;
     }
@@ -58,9 +60,15 @@ export class SyntheticLegCache<T> {
         return total;
     }
 
+    /** Number of times `get` returned a cached value (cache hits). */
+    hitCount(): number {
+        return this.totalHits;
+    }
+
     clear(): void {
         this.store.clear();
         this.missCounts.clear();
+        this.totalHits = 0;
     }
 
     delete(key: string): void {

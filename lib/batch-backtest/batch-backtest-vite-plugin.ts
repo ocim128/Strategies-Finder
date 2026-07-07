@@ -32,7 +32,7 @@ import { debugLogger } from "../debug-logger";
 import { beginNdjsonStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, sendJson, type ViteHttpResponse } from "../vite-http-utils";
 import { mapWithConcurrencyLimit } from "../async-pool";
 import { runBatchBacktest, type BatchBacktestRunInput, type BatchBacktestSymbolResult } from "./batch-backtest-runner";
-import { clearServerBatchDatasetCaches, loadServerBatchDataset } from "./server-batch-data-loader";
+import { clearServerBatchDatasetCaches, getServerBatchDatasetCacheStats, loadServerBatchDataset } from "./server-batch-data-loader";
 import {
     addStabilityVerdicts,
     clampInt,
@@ -50,6 +50,7 @@ import { parsePortfolioSyntheticPairSymbol } from "../portfolioLab/portfolio-lab
 import { loadBuiltInStrategyByKey } from "../../strategyRegistry";
 import type { BacktestSettings, Strategy, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
+import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import { toScalarRow, type BatchStreamEvent } from "./batch-backtest-stream-types";
 import { setRuntimeLocalApiOrigin } from "../local-api-transport";
 import { buildBatchRunFingerprint, normalizeBatchSymbols } from "./batch-run-contract";
@@ -89,6 +90,7 @@ let mineArtifactDir: string | null = null;
 let lastRunFingerprint: string | null = null;
 let lastRunInterval: string | null = null;
 let lastRunStrategyKey: string | null = null;
+let lastRunCacheStats: BatchDatasetCacheStats | null = null;
 let abortController: AbortController | null = null;
 let artifactReleaseTimer: ReturnType<typeof setTimeout> | null = null;
 let minerState: { running: boolean; startedAt: number; assets: number; pairs: number; verdicts: number; cancelled: boolean } | null = null;
@@ -208,6 +210,7 @@ function releaseLastResults(reason: string): void {
     lastRunFingerprint = null;
     lastRunInterval = null;
     lastRunStrategyKey = null;
+    lastRunCacheStats = null;
     clearServerBatchDatasetCaches();
 }
 
@@ -380,6 +383,8 @@ export async function processRunBatch(
         lastRunStrategyKey = input.strategyKey;
 
         const artifactsAvailable = hasStoredMineArtifacts();
+        const cacheStats = getServerBatchDatasetCacheStats();
+        lastRunCacheStats = cacheStats;
         writer({
             type: "done",
             ok: output.failedSymbols.length === 0 && !cancelled,
@@ -389,6 +394,7 @@ export async function processRunBatch(
             summary: `Done — ${output.results.length} pairs${output.failedSymbols.length > 0 ? `, ${output.failedSymbols.length} failed` : ""}${cancelled ? ", cancelled" : ""}`,
             serverHasArtifacts: artifactsAvailable,
             fingerprint,
+            cacheStats,
         });
 
         // Schedule the TTL release only if the run produced mineable
@@ -696,6 +702,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
     lastRunFingerprint = null;
     lastRunInterval = null;
     lastRunStrategyKey = null;
+    lastRunCacheStats = null;
     abortController = new AbortController();
 
     let stream: ReturnType<typeof beginNdjsonStream> | null = null;
@@ -875,6 +882,7 @@ function handleStatusRequest(afterRow = 0): unknown {
                 fingerprint: lastRunFingerprint,
                 rowCount: collectStoredMineArtifactMetas().length,
                 hasArtifacts: hasStoredMineArtifacts(),
+                cacheStats: lastRunCacheStats,
             }
             : null,
         miner: minerState && minerOwner !== RUN_OWNER_NONE

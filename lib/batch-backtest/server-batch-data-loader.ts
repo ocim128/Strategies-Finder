@@ -12,7 +12,8 @@ import { DataFetcher } from "../data/data-fetcher";
 import { DataPersistence } from "../data/data-persistence";
 import { DataProviderRouter } from "../data/data-provider-router";
 import type { OHLCVData } from "../types/strategies";
-import { createBatchDatasetLoaderCore } from "./batch-dataset-loader-core";
+import { createBatchDatasetLoaderCore, type BatchDatasetCacheStats } from "./batch-dataset-loader-core";
+import { loadCachedSyntheticPair, storeSyntheticPair } from "./synthetic-pair-disk-cache";
 
 const providerRouter = new DataProviderRouter();
 const dataCache = new DataCache();
@@ -36,6 +37,10 @@ const loader = createBatchDatasetLoaderCore({
         createServerDataFetcher().fetchDataDetached(symbol, interval, options),
     fetchHistorical: (symbol, interval, limit, options) =>
         createServerDataFetcher().fetchHistoricalData(symbol, interval, limit, options),
+    // Server-side disk cache. File-backed legs use seed CSV mtimes; Binance
+    // legs use SQLite series metadata as the fingerprint.
+    loadCachedSyntheticPair: (args) => loadCachedSyntheticPair(args),
+    storeSyntheticPair: (args, bars) => storeSyntheticPair(args, bars),
 });
 
 export async function loadServerBatchDataset(
@@ -48,4 +53,8 @@ export async function loadServerBatchDataset(
 
 export function clearServerBatchDatasetCaches(): void {
     loader.clearCaches();
+}
+
+export function getServerBatchDatasetCacheStats(): BatchDatasetCacheStats {
+    return loader.getCacheStats();
 }

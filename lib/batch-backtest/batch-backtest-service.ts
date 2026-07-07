@@ -18,12 +18,13 @@ import { state } from "../state";
 import { strategyRegistry } from "../../strategyRegistry";
 import { setVisible } from "../dom-utils";
 import { debugLogger } from "../debug-logger";
+import { uiManager } from "../ui-manager";
 import { computePerformanceVerdict } from "../finder/finder-universe-metrics";
 import { parsePortfolioSyntheticPairSymbol } from "../portfolioLab/portfolio-lab-synthetic";
 import { copyToClipboard } from "../browser-transfer";
 import { readPersistedJson, writePersistedJson } from "../persisted-json";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
-import { clearBatchDatasetCaches, loadBatchDataset } from "./batch-backtest-loader";
+import { clearBatchDatasetCaches, getBatchDatasetCacheStats, loadBatchDataset } from "./batch-backtest-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { mapWithConcurrencyLimit } from "../async-pool";
 import {
@@ -41,6 +42,18 @@ import {
     normalizeBatchBacktestResultsSnapshot,
     type BatchBacktestResultsSnapshot,
 } from "./batch-backtest-snapshot";
+import {
+    BATCH_BENCHMARK_SCHEMA,
+    buildBatchBenchmarkBottlenecks,
+    buildCacheStatsFromLoader,
+    type BatchBenchmarkCacheSource,
+    type BatchBenchmarkCacheStats,
+    type BatchBenchmarkMinePhase,
+    type BatchBenchmarkRunPhase,
+    type BatchBenchmarkSnapshot,
+    type BatchBenchmarkStabilityPhase,
+} from "./batch-benchmark-snapshot";
+import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import type { BatchStreamEvent, BatchMinerStreamEvent } from "./batch-backtest-stream-types";
 import {
     resolveBatchSyntheticTargetSymbol,
@@ -96,6 +109,11 @@ class BatchBacktestService {
     // Reattach polling timer id (set when this tab is observing a server-side
     // run that started before page load).
     private reattachTimer: ReturnType<typeof setTimeout> | null = null;
+    // Benchmark snapshot for the Copy Benchmark button. Each phase (run/mine/
+    // stability) records wall clock + cache stats on completion; missing phases
+    // stay null. `null` until at least one phase has completed in this session.
+    private lastBenchmark: BatchBenchmarkSnapshot | null = null;
+    private pendingServerRunCacheStats: BatchBenchmarkCacheStats | null = null;
 
     private getDom(): BatchBacktestDom {
         return this.dom ??= createBatchBacktestDom();
@@ -128,6 +146,9 @@ class BatchBacktestService {
         });
         dom.batchBacktestCopyBtn.addEventListener("click", () => {
             void this.copyResults();
+        });
+        dom.batchBacktestCopyBenchmarkBtn.addEventListener("click", () => {
+            void this.copyBenchmarkPerformance();
         });
         dom.batchBacktestMineBtn.addEventListener("click", () => {
             void this.runMiner();
@@ -202,6 +223,7 @@ class BatchBacktestService {
         dom.batchBacktestRunBtn.disabled = true;
         setVisible(dom.batchBacktestStopBtn, true);
         dom.batchBacktestCopyBtn.disabled = true;
+        dom.batchBacktestCopyBenchmarkBtn.disabled = true;
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
         this.clearMinerResults(dom);
@@ -219,6 +241,12 @@ class BatchBacktestService {
         // `backtestService.getBacktestSettings()` returns. Read the DOM select
         // directly — it's the source of truth the user just toggled.
         const useServerMode = this.readBatchExecutionMode() === "server";
+        // Reset the prior run's server cache stats so they can't leak into the
+        // next run's benchmark if the `done` event never arrives (cancel /
+        // crash). `recordRunBenchmark` re-populates this from the `done` event
+        // or the recovery/reattach path.
+        this.pendingServerRunCacheStats = null;
+        const runStartedAt = performance.now();
         try {
             if (useServerMode) {
                 await this.runBatchServer(dom, token, symbols, strategyKey, strategyParams, backtestSettings, capitalSettings, interval, runFingerprint);
@@ -248,6 +276,7 @@ class BatchBacktestService {
                     : !this.hasMineableArtifacts();
                 this.updateSummary(dom);
                 this.setProgress(dom, 100, this.cancelled ? "Stopped" : "Done");
+                this.recordRunBenchmark(useServerMode ? "server" : "browser", strategyKey, interval, runStartedAt);
                 // The leg/pair LRU was a within-run dedup layer (e.g. ZEC
                 // appearing in many pairs fetched once). The run is over, and
                 // Mine Timing repopulates only the target-asset datasets it
@@ -389,6 +418,9 @@ class BatchBacktestService {
                     this.lastRunFingerprint = runFingerprint;
                     this.lastRunInterval = interval;
                     this.serverHasArtifacts = event.serverHasArtifacts === true;
+                    this.pendingServerRunCacheStats = event.cacheStats
+                        ? buildCacheStatsFromLoader(event.cacheStats)
+                        : null;
                     doneSummary = event.summary;
                     setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
                     dom.batchBacktestStatus.textContent = doneSummary;
@@ -434,6 +466,7 @@ class BatchBacktestService {
                     hasArtifacts?: boolean;
                     fingerprint?: string | null;
                     interval?: string | null;
+                    cacheStats?: BatchDatasetCacheStats | null;
                 } | null;
             };
             const lastRun = payload.lastRun;
@@ -443,6 +476,9 @@ class BatchBacktestService {
             this.lastRunFingerprint = runFingerprint;
             this.lastRunInterval = lastRun.interval ?? interval;
             this.serverHasArtifacts = lastRun.hasArtifacts === true;
+            this.pendingServerRunCacheStats = lastRun.cacheStats
+                ? buildCacheStatsFromLoader(lastRun.cacheStats)
+                : null;
             setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
             dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
             dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
@@ -454,6 +490,132 @@ class BatchBacktestService {
                 error: error instanceof Error ? error.message : String(error),
             });
             return null;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Benchmark capture. Each phase records wall clock + cache stats; the
+    // Copy Benchmark button pretty-prints the accumulated snapshot to the
+    // clipboard as JSON (mirrors Finder's Copy Diagnostics).
+    // ─────────────────────────────────────────────────────────────────────
+
+    private recordRunBenchmark(
+        mode: "browser" | "server",
+        strategyKey: string,
+        interval: string,
+        startedAt: number,
+    ): void {
+        const totalMs = performance.now() - startedAt;
+        // Classify pairs by synthetic vs real. parsePortfolioSyntheticPairSymbol
+        // returns non-null only for `BASE+QUOTE` tokens.
+        let synthetic = 0;
+        let real = 0;
+        for (const row of this.lastResults) {
+            if (parsePortfolioSyntheticPairSymbol(row.symbol)) synthetic += 1;
+            else real += 1;
+        }
+        const loaded = this.lastResults.filter((r) => r.status !== "load_failed" && r.status !== "run_failed").length;
+        const failed = this.lastResults.length - loaded;
+        const phase: BatchBenchmarkRunPhase = { totalMs, loaded, failed, synthetic, real };
+        const cacheSource = this.resolveCacheSource(mode);
+        const cache = cacheSource === "server_stream" && this.pendingServerRunCacheStats
+            ? this.pendingServerRunCacheStats
+            : cacheSource === "browser_loader"
+                ? this.currentCacheStats()
+                : this.emptyCacheStats();
+        const existing = this.lastBenchmark;
+        const snapshot: BatchBenchmarkSnapshot = {
+            schema: BATCH_BENCHMARK_SCHEMA,
+            run: {
+                mode,
+                strategy: strategyKey,
+                interval,
+                engineMode: shouldUseRustEngine() ? "rust_preferred" : "typescript",
+                executedAt: new Date().toISOString(),
+            },
+            cacheSource,
+            phases: { run: phase, mine: existing?.phases.mine ?? null, stability: existing?.phases.stability ?? null },
+            cache,
+            bottlenecks: [],
+        };
+        snapshot.bottlenecks = buildBatchBenchmarkBottlenecks(snapshot.phases, snapshot.cache, snapshot.cacheSource);
+        this.lastBenchmark = snapshot;
+        const dom = this.dom;
+        if (dom) dom.batchBacktestCopyBenchmarkBtn.disabled = false;
+    }
+
+    private recordMineBenchmark(startedAt: number, targetCount: number): void {
+        const totalMs = performance.now() - startedAt;
+        const verdicts = this.lastMinerResult?.verdicts.length ?? 0;
+        const phase: BatchBenchmarkMinePhase = {
+            totalMs,
+            targets: Math.max(0, Math.floor(targetCount)),
+            verdicts,
+        };
+        this.mergePhase({ mine: phase });
+    }
+
+    private recordStabilityBenchmark(startedAt: number): void {
+        const totalMs = performance.now() - startedAt;
+        const result = this.lastStabilityResult;
+        if (!result) return;
+        const phase: BatchBenchmarkStabilityPhase = {
+            totalMs,
+            reruns: result.reruns,
+            subsetSize: result.subsetSize,
+            targets: result.rows.length,
+            verdicts: result.rows.length,
+        };
+        this.mergePhase({ stability: phase });
+    }
+
+    private mergePhase(patch: { mine?: BatchBenchmarkMinePhase } | { stability?: BatchBenchmarkStabilityPhase }): void {
+        const existing = this.lastBenchmark;
+        if (!existing) {
+            // No run phase yet (shouldn't happen because Mine/Stability require
+            // a prior Run, but be defensive). Drop the patch.
+            return;
+        }
+        const phases = { ...existing.phases, ...patch };
+        // Browser Mine can add local loader traffic. Server Mine runs in Node
+        // and the browser cannot observe its loader counters, so preserve the
+        // server stats captured at run completion.
+        const cache = existing.run.mode === "server" ? existing.cache : this.currentCacheStats();
+        const snapshot: BatchBenchmarkSnapshot = { ...existing, phases, cache, bottlenecks: [] };
+        snapshot.bottlenecks = buildBatchBenchmarkBottlenecks(snapshot.phases, snapshot.cache, snapshot.cacheSource);
+        this.lastBenchmark = snapshot;
+    }
+
+    private resolveCacheSource(mode: "browser" | "server"): BatchBenchmarkCacheSource {
+        if (mode === "browser") return "browser_loader";
+        return this.pendingServerRunCacheStats ? "server_stream" : "unavailable";
+    }
+
+    private currentCacheStats(): BatchBenchmarkCacheStats {
+        // Browser path: in-memory LRU populated; disk counters stay 0. Server
+        // runs pass server-side stats through `pendingServerRunCacheStats`.
+        return buildCacheStatsFromLoader(getBatchDatasetCacheStats());
+    }
+
+    private emptyCacheStats(): BatchBenchmarkCacheStats {
+        return buildCacheStatsFromLoader({
+            leg: { hits: 0, misses: 0, size: 0, max: 24 },
+            pair: { hits: 0, misses: 0, size: 0, max: 16 },
+            disk: { hits: 0, misses: 0, writes: 0 },
+        });
+    }
+
+    private async copyBenchmarkPerformance(): Promise<void> {
+        if (!this.lastBenchmark) {
+            uiManager.showToast("No benchmark to copy", "info");
+            return;
+        }
+        const text = JSON.stringify(this.lastBenchmark, null, 2);
+        const copied = await copyToClipboard(text);
+        if (copied) {
+            uiManager.showToast("Benchmark copied", "success");
+        } else {
+            this.getDom().batchBacktestStatus.textContent = "Copy failed.";
         }
     }
 
@@ -496,7 +658,9 @@ class BatchBacktestService {
         // reconstructs the per-verdict rows; it never holds the pair artifacts
         // (data/signals/result.trades) that the server-side Run kept.
         if (this.serverHasArtifacts) {
-            await this.runMinerServer(dom);
+            const mineStartedAt = performance.now();
+            const targetCount = await this.runMinerServer(dom);
+            this.recordMineBenchmark(mineStartedAt, targetCount);
             return;
         }
 
@@ -515,6 +679,7 @@ class BatchBacktestService {
                 return;
             }
             dom.batchBacktestMinerSummary.textContent = "Mining timing analogs...";
+            const mineStartedAt = performance.now();
             const result = runBatchSyntheticStateMiner({
                 interval: this.lastRunInterval ?? state.currentInterval,
                 targets,
@@ -523,6 +688,7 @@ class BatchBacktestService {
             this.lastMinerResult = result;
             this.renderMinerResult(dom, result);
             dom.batchBacktestCopyMinerBtn.disabled = result.verdicts.length === 0;
+            this.recordMineBenchmark(mineStartedAt, targets.length);
             debugLogger.event("batch_synthetic_miner.complete", {
                 pairs: pairArtifacts.length,
                 targets: targets.length,
@@ -565,7 +731,11 @@ class BatchBacktestService {
      * so the user must Run again before re-mining (mirrors the fingerprint
      * guard on the browser path).
      */
-    private async runMinerServer(dom: BatchBacktestDom): Promise<void> {
+    private async runMinerServer(dom: BatchBacktestDom): Promise<number> {
+        // Returns the target asset count (from the `start` event) so the
+        // caller can pass it to `recordMineBenchmark`. Defaults to 0 on error.
+        // Declared outside `try` so the `finally`-adjacent return can read it.
+        let targetCount = 0;
         try {
             const response = await fetch("/api/batch-backtest/mine", {
                 method: "POST",
@@ -583,8 +753,11 @@ class BatchBacktestService {
             }
             const verdicts: BatchSyntheticAssetVerdict[] = [];
             let minerInterval = this.lastRunInterval ?? state.currentInterval;
+            // targetCount declared on the function scope; updated in the
+            // `start` event handler below.
             await consumeNdjsonStream<BatchMinerStreamEvent>(response.body, {
                 onStart: (event: Extract<BatchMinerStreamEvent, { type: "start" }>) => {
+                    targetCount = Math.max(0, Math.floor(event.assets ?? 0));
                     dom.batchBacktestMinerSummary.textContent = `Mining on server — ${event.assets} assets / ${event.pairs} pairs`;
                 },
                 onVerdict: (event: Extract<BatchMinerStreamEvent, { type: "verdict" }>) => {
@@ -618,6 +791,7 @@ class BatchBacktestService {
             dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts && !this.hasMineableArtifacts();
             dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts && !this.hasMineableArtifacts();
         }
+        return targetCount;
     }
 
     private async stopServerRun(): Promise<void> {
@@ -686,6 +860,7 @@ class BatchBacktestService {
                         hasArtifacts: boolean;
                         fingerprint: string | null;
                         interval?: string | null;
+                        cacheStats?: BatchDatasetCacheStats | null;
                     } | null;
                 };
                 if (!payload.running || !payload.run) {
@@ -700,6 +875,12 @@ class BatchBacktestService {
                         this.serverHasArtifacts = true;
                         this.lastRunFingerprint = payload.lastRun.fingerprint;
                         this.lastRunInterval = payload.lastRun.interval ?? null;
+                        // Adopt the server-side cache counters so a tab-reload
+                        // reattach still produces a useful benchmark snapshot
+                        // (mirrors `recoverCompletedServerRun`'s handling).
+                        this.pendingServerRunCacheStats = payload.lastRun.cacheStats
+                            ? buildCacheStatsFromLoader(payload.lastRun.cacheStats)
+                            : null;
                         // The browser does not have the per-row scalars for the
                         // prior run (the tab reloaded), but server-side Mine
                         // and Stability Mine can still consume retained
@@ -778,7 +959,9 @@ class BatchBacktestService {
                 dom.batchBacktestStabilityMineBtn.disabled = true;
                 return;
             }
+            const stabilityStartedAt = performance.now();
             await this.runStabilityMineServer(dom);
+            this.recordStabilityBenchmark(stabilityStartedAt);
             return;
         }
         if (pairArtifacts.length === 0) {
@@ -809,6 +992,7 @@ class BatchBacktestService {
                 return;
             }
 
+            const stabilityStartedAt = performance.now();
             const aggregate = createStabilityAggregate(reruns, subsetSize, seed, pairArtifacts.length);
             for (let runIndex = 0; runIndex < reruns; runIndex += 1) {
                 const subset = sampleItems(pairArtifacts, subsetSize, seed + runIndex);
@@ -829,6 +1013,7 @@ class BatchBacktestService {
             this.lastStabilityResult = finalizeStabilityAggregate(aggregate);
             this.renderStabilityResult(dom, this.lastStabilityResult);
             dom.batchBacktestCopyStabilityBtn.disabled = this.lastStabilityResult.rows.length === 0;
+            this.recordStabilityBenchmark(stabilityStartedAt);
             this.saveLatestResultsSnapshot();
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);

@@ -16,6 +16,7 @@
  */
 
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
+import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import { computeBuyAndHoldPct, computeOpenTradeAssetScores } from "./batch-row-scalars";
 
 export type BatchStreamEvent =
@@ -34,6 +35,8 @@ export type BatchStreamEvent =
         serverHasArtifacts: boolean;
         /** Fingerprint of the run settings; Mine must match it before starting. */
         fingerprint: string | null;
+        /** Server-side loader cache counters captured at run completion. */
+        cacheStats?: BatchDatasetCacheStats;
     }
     | { type: "fatal"; error: string };
 

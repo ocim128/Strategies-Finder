@@ -541,6 +541,79 @@ export function localSqlitePlugin(): Plugin {
                     return;
                 }
 
+                if (method === 'GET' && path === '/series-meta') {
+                    // Per-series rollup used as a content fingerprint for
+                    // disk-cached synthetic pairs. Returns the row from
+                    // `series_meta` if present; `null` fields signal a cold
+                    // cache (no data synced yet for this symbol+interval).
+                    const symbol = (requestUrl.searchParams.get('symbol') || '').trim().toUpperCase();
+                    const interval = (requestUrl.searchParams.get('interval') || '').trim().toLowerCase();
+                    if (!symbol || !interval) {
+                        sendJson(res, 400, { ok: false, error: 'symbol and interval are required' });
+                        return;
+                    }
+                    getSqliteDb();
+                    let row = getPreparedStatement(`
+                        SELECT bars_count, first_time, last_time, updated_at
+                        FROM series_meta
+                        WHERE symbol = ? AND interval = ?
+                    `).get(symbol, interval) as
+                        | { bars_count?: number; first_time?: number; last_time?: number; updated_at?: number }
+                        | undefined;
+                    if (!row) {
+                        const summary = getPreparedStatement(`
+                            SELECT
+                                COUNT(*) AS count,
+                                MIN(time) AS firstTime,
+                                MAX(time) AS lastTime,
+                                MAX(updated_at) AS updatedAt,
+                                MAX(provider) AS provider
+                            FROM candles
+                            WHERE symbol = ? AND interval = ?
+                        `).get(symbol, interval) as
+                            | { count?: number; firstTime?: number; lastTime?: number; updatedAt?: number; provider?: string | null }
+                            | undefined;
+                        const count = Number(summary?.count ?? 0);
+                        if (count > 0) {
+                            const nowSec = Math.floor(Date.now() / 1000);
+                            getPreparedStatement(`
+                                INSERT INTO series_meta (symbol, interval, provider, bars_count, first_time, last_time, updated_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                                ON CONFLICT(symbol, interval) DO UPDATE SET
+                                    provider = excluded.provider,
+                                    bars_count = excluded.bars_count,
+                                    first_time = excluded.first_time,
+                                    last_time = excluded.last_time,
+                                    updated_at = excluded.updated_at
+                            `).run(
+                                symbol,
+                                interval,
+                                typeof summary?.provider === 'string' ? summary.provider : null,
+                                count,
+                                Number(summary?.firstTime) || null,
+                                Number(summary?.lastTime) || null,
+                                Number(summary?.updatedAt) || nowSec
+                            );
+                            row = {
+                                bars_count: count,
+                                first_time: Number(summary?.firstTime) || undefined,
+                                last_time: Number(summary?.lastTime) || undefined,
+                                updated_at: Number(summary?.updatedAt) || nowSec,
+                            };
+                        }
+                    }
+                    sendJson(res, 200, {
+                        ok: true,
+                        symbol,
+                        interval,
+                        barsCount: row?.bars_count != null ? Number(row.bars_count) : null,
+                        firstTime: row?.first_time != null ? Number(row.first_time) : null,
+                        lastTime: row?.last_time != null ? Number(row.last_time) : null,
+                        updatedAt: row?.updated_at != null ? Number(row.updated_at) : null,
+                    });
+                    return;
+                }
+
                 if (method === 'POST' && path === '/store-ohlcv') {
                     const contentType = req.headers['content-type'] || '';
                     const isBinary = contentType.includes('application/octet-stream');
