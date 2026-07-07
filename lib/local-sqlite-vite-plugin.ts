@@ -412,50 +412,58 @@ function getSqliteDb(): DatabaseSync {
             ON polymarket_price_points(series_id, event_start_ts, ts);
         CREATE INDEX IF NOT EXISTS idx_pm_price_points_series_time
             ON polymarket_price_points(series_id, ts);
-        CREATE TABLE IF NOT EXISTS asset_leadership_runs (
+        CREATE TABLE IF NOT EXISTS mine_timing_runs (
             run_id TEXT NOT NULL PRIMARY KEY,
             created_at INTEGER NOT NULL,
             interval TEXT NOT NULL,
-            strategy_preset TEXT,
-            strategy_count INTEGER NOT NULL,
-            universe_symbol_count INTEGER NOT NULL,
-            top_n INTEGER NOT NULL,
-            candidates_json TEXT NOT NULL
+            strategy_key TEXT NOT NULL,
+            source TEXT NOT NULL,
+            pair_count INTEGER NOT NULL,
+            reruns INTEGER NOT NULL DEFAULT 0,
+            subset_size INTEGER NOT NULL DEFAULT 0,
+            seed INTEGER NOT NULL DEFAULT 0
         );
-        CREATE TABLE IF NOT EXISTS asset_leadership_observations (
+        CREATE TABLE IF NOT EXISTS mine_timing_verdicts (
             run_id TEXT NOT NULL,
             run_created_at INTEGER NOT NULL,
             interval TEXT NOT NULL,
-            asset_a TEXT NOT NULL,
-            asset_b TEXT NOT NULL,
-            symbol TEXT NOT NULL,
-            status TEXT NOT NULL,
-            strategy_key TEXT NOT NULL,
-            strategy_name TEXT NOT NULL,
-            candidate_rank INTEGER NOT NULL,
-            profitable INTEGER NOT NULL,
-            top_decile INTEGER NOT NULL,
-            net_profit REAL NOT NULL,
-            expectancy REAL NOT NULL,
-            sharpe_ratio REAL NOT NULL,
-            profit_factor REAL NOT NULL,
-            total_trades INTEGER NOT NULL,
-            profitable_active_ratio REAL NOT NULL,
-            active_symbols INTEGER NOT NULL,
-            total_universe_trades INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL,
-            PRIMARY KEY(run_id, asset_a, asset_b, strategy_key, symbol)
+            asset TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            direction TEXT,
+            confidence TEXT NOT NULL,
+            timing_edge_score REAL NOT NULL DEFAULT 0,
+            median_diversity REAL NOT NULL DEFAULT 0,
+            dominant_pair TEXT,
+            dominant_pair_share REAL NOT NULL DEFAULT 0,
+            close REAL,
+            median_bars_held REAL,
+            agreement_transition REAL,
+            as_of_time_key TEXT,
+            horizon_bars INTEGER,
+            longest_horizon_bars INTEGER,
+            expected_forward_return_pct REAL,
+            oos_lift_pct REAL,
+            longest_oos_forward_return_pct REAL,
+            expected_mfe_pct REAL,
+            expected_mae_pct REAL,
+            median_lift_pct REAL,
+            median_rr REAL,
+            median_hmax_lift_pct REAL,
+            median_dist REAL,
+            analog_count INTEGER,
+            candidate_count INTEGER,
+            pair_warnings INTEGER NOT NULL DEFAULT 0,
+            hits INTEGER NOT NULL DEFAULT 0,
+            high INTEGER NOT NULL DEFAULT 0,
+            medium INTEGER NOT NULL DEFAULT 0,
+            low INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(run_id, asset, verdict)
         );
-        CREATE INDEX IF NOT EXISTS idx_al_obs_asset_time
-            ON asset_leadership_observations(asset_a, run_created_at);
-        CREATE INDEX IF NOT EXISTS idx_al_obs_asset_b_time
-            ON asset_leadership_observations(asset_b, run_created_at);
+        CREATE INDEX IF NOT EXISTS idx_mt_verdicts_asset_time
+            ON mine_timing_verdicts(asset, run_created_at);
+        CREATE INDEX IF NOT EXISTS idx_mt_runs_created
+            ON mine_timing_runs(created_at);
     `);
-    try {
-        db.exec('ALTER TABLE asset_leadership_runs ADD COLUMN strategy_preset TEXT');
-    } catch {
-        // Existing databases already have the column.
-    }
     sqliteDb = db;
     return db;
 }
@@ -1107,18 +1115,19 @@ export function localSqlitePlugin(): Plugin {
                     return;
                 }
 
-                if (method === 'POST' && path === '/store-asset-leadership') {
+                if (method === 'POST' && path === '/store-mine-timing') {
                     const payload = await readJsonBody(req as IncomingMessage);
                     const runId = String(payload?.runId || '').trim();
                     const createdAt = Number(payload?.createdAt) || 0;
                     const interval = String(payload?.interval || '').trim().toLowerCase();
-                    const strategyPresetRaw = String(payload?.strategyPreset || '').trim().toLowerCase();
-                    const strategyPreset = ['follow', 'reversion', 'custom'].includes(strategyPresetRaw) ? strategyPresetRaw : null;
-                    const strategyCount = Number(payload?.strategyCount) || 0;
-                    const universeSymbolCount = Number(payload?.universeSymbolCount) || 0;
-                    const topN = Number(payload?.topN) || 0;
-                    const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
-                    const observations = Array.isArray(payload?.observations) ? payload.observations : [];
+                    const strategyKey = String(payload?.strategyKey || '').trim();
+                    const sourceRaw = String(payload?.source || '').trim().toLowerCase();
+                    const source = sourceRaw === 'stability' ? 'stability' : 'mine';
+                    const pairCount = Math.max(0, Math.floor(Number(payload?.pairCount) || 0));
+                    const reruns = Math.max(0, Math.floor(Number(payload?.reruns) || 0));
+                    const subsetSize = Math.max(0, Math.floor(Number(payload?.subsetSize) || 0));
+                    const seed = Math.max(0, Math.floor(Number(payload?.seed) || 0));
+                    const verdicts = Array.isArray(payload?.verdicts) ? payload.verdicts : [];
 
                     if (!runId || !interval) {
                         sendJson(res, 400, { ok: false, error: 'runId and interval are required' });
@@ -1126,57 +1135,100 @@ export function localSqlitePlugin(): Plugin {
                     }
 
                     const db = getSqliteDb();
-                    const nowSec = Math.floor(Date.now() / 1000);
 
                     db.exec('BEGIN');
                     try {
                         getPreparedStatement(`
-                            INSERT INTO asset_leadership_runs (run_id, created_at, interval, strategy_preset, strategy_count, universe_symbol_count, top_n, candidates_json)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            INSERT INTO mine_timing_runs (run_id, created_at, interval, strategy_key, source, pair_count, reruns, subset_size, seed)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                             ON CONFLICT(run_id) DO UPDATE SET
                                 created_at = excluded.created_at,
                                 interval = excluded.interval,
-                                strategy_preset = excluded.strategy_preset,
-                                strategy_count = excluded.strategy_count,
-                                universe_symbol_count = excluded.universe_symbol_count,
-                                top_n = excluded.top_n,
-                                candidates_json = excluded.candidates_json
-                        `).run(runId, createdAt, interval, strategyPreset, strategyCount, universeSymbolCount, topN, JSON.stringify(candidates));
+                                strategy_key = excluded.strategy_key,
+                                source = excluded.source,
+                                pair_count = excluded.pair_count,
+                                reruns = excluded.reruns,
+                                subset_size = excluded.subset_size,
+                                seed = excluded.seed
+                        `).run(runId, createdAt, interval, strategyKey, source, pairCount, reruns, subsetSize, seed);
 
-                        const obsUpsert = getPreparedStatement(`
-                            INSERT INTO asset_leadership_observations (
-                                run_id, run_created_at, interval, asset_a, asset_b, symbol, status,
-                                strategy_key, strategy_name, candidate_rank, profitable, top_decile,
-                                net_profit, expectancy, sharpe_ratio, profit_factor, total_trades,
-                                profitable_active_ratio, active_symbols, total_universe_trades, updated_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ON CONFLICT(run_id, asset_a, asset_b, strategy_key, symbol) DO UPDATE SET
+                        const verdictUpsert = getPreparedStatement(`
+                            INSERT INTO mine_timing_verdicts (
+                                run_id, run_created_at, interval, asset, verdict, direction, confidence,
+                                timing_edge_score, median_diversity, dominant_pair, dominant_pair_share,
+                                close, median_bars_held, agreement_transition, as_of_time_key,
+                                horizon_bars, longest_horizon_bars,
+                                expected_forward_return_pct, oos_lift_pct, longest_oos_forward_return_pct,
+                                expected_mfe_pct, expected_mae_pct,
+                                median_lift_pct, median_rr, median_hmax_lift_pct, median_dist,
+                                analog_count, candidate_count, pair_warnings, hits, high, medium, low
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(run_id, asset, verdict) DO UPDATE SET
                                 run_created_at = excluded.run_created_at,
-                                status = excluded.status,
-                                candidate_rank = excluded.candidate_rank,
-                                profitable = excluded.profitable,
-                                top_decile = excluded.top_decile,
-                                net_profit = excluded.net_profit,
-                                expectancy = excluded.expectancy,
-                                sharpe_ratio = excluded.sharpe_ratio,
-                                profit_factor = excluded.profit_factor,
-                                total_trades = excluded.total_trades,
-                                profitable_active_ratio = excluded.profitable_active_ratio,
-                                active_symbols = excluded.active_symbols,
-                                total_universe_trades = excluded.total_universe_trades,
-                                updated_at = excluded.updated_at
+                                direction = excluded.direction,
+                                confidence = excluded.confidence,
+                                timing_edge_score = excluded.timing_edge_score,
+                                median_diversity = excluded.median_diversity,
+                                dominant_pair = excluded.dominant_pair,
+                                dominant_pair_share = excluded.dominant_pair_share,
+                                close = excluded.close,
+                                median_bars_held = excluded.median_bars_held,
+                                agreement_transition = excluded.agreement_transition,
+                                as_of_time_key = excluded.as_of_time_key,
+                                horizon_bars = excluded.horizon_bars,
+                                longest_horizon_bars = excluded.longest_horizon_bars,
+                                expected_forward_return_pct = excluded.expected_forward_return_pct,
+                                oos_lift_pct = excluded.oos_lift_pct,
+                                longest_oos_forward_return_pct = excluded.longest_oos_forward_return_pct,
+                                expected_mfe_pct = excluded.expected_mfe_pct,
+                                expected_mae_pct = excluded.expected_mae_pct,
+                                median_lift_pct = excluded.median_lift_pct,
+                                median_rr = excluded.median_rr,
+                                median_hmax_lift_pct = excluded.median_hmax_lift_pct,
+                                median_dist = excluded.median_dist,
+                                analog_count = excluded.analog_count,
+                                candidate_count = excluded.candidate_count,
+                                pair_warnings = excluded.pair_warnings,
+                                hits = excluded.hits,
+                                high = excluded.high,
+                                medium = excluded.medium,
+                                low = excluded.low
                         `);
 
-                        for (const obs of observations) {
-                            obsUpsert.run(
+                        for (const v of verdicts) {
+                            const direction = v?.direction === null ? null : String(v?.direction || '').trim().toLowerCase() || null;
+                            verdictUpsert.run(
                                 runId, createdAt, interval,
-                                String(obs.assetA || ''), String(obs.assetB || ''), String(obs.symbol || ''),
-                                String(obs.status || ''), String(obs.strategyKey || ''), String(obs.strategyName || ''),
-                                Number(obs.candidateRank) || 0, obs.profitable ? 1 : 0, obs.topDecile ? 1 : 0,
-                                Number(obs.netProfit) || 0, Number(obs.expectancy) || 0, Number(obs.sharpeRatio) || 0,
-                                Number(obs.profitFactor) || 0, Number(obs.totalTrades) || 0,
-                                Number(obs.profitableActiveRatio) || 0, Number(obs.activeSymbols) || 0,
-                                Number(obs.totalUniverseTrades) || 0, nowSec
+                                String(v?.asset || '').trim().toUpperCase(),
+                                String(v?.verdict || '').trim().toUpperCase(),
+                                direction,
+                                String(v?.confidence || 'low').trim().toLowerCase(),
+                                Number(v?.timingEdgeScore) || 0,
+                                Number(v?.medianDiversity) || 0,
+                                v?.dominantPair ? String(v.dominantPair).trim().toUpperCase() : null,
+                                Number(v?.dominantPairShare) || 0,
+                                v?.close === null || v?.close === undefined ? null : Number(v.close),
+                                v?.medianBarsHeld === null || v?.medianBarsHeld === undefined ? null : Number(v.medianBarsHeld),
+                                v?.agreementTransition === null || v?.agreementTransition === undefined ? null : Number(v.agreementTransition),
+                                v?.asOfTimeKey ? String(v.asOfTimeKey) : null,
+                                v?.horizonBars === null || v?.horizonBars === undefined ? null : Math.max(0, Math.floor(Number(v.horizonBars))),
+                                v?.longestHorizonBars === null || v?.longestHorizonBars === undefined ? null : Math.max(0, Math.floor(Number(v.longestHorizonBars))),
+                                v?.expectedForwardReturnPct === null || v?.expectedForwardReturnPct === undefined ? null : Number(v.expectedForwardReturnPct),
+                                v?.oosLiftPct === null || v?.oosLiftPct === undefined ? null : Number(v.oosLiftPct),
+                                v?.longestOosForwardReturnPct === null || v?.longestOosForwardReturnPct === undefined ? null : Number(v.longestOosForwardReturnPct),
+                                v?.expectedMfePct === null || v?.expectedMfePct === undefined ? null : Number(v.expectedMfePct),
+                                v?.expectedMaePct === null || v?.expectedMaePct === undefined ? null : Number(v.expectedMaePct),
+                                v?.medianLiftPct === null || v?.medianLiftPct === undefined ? null : Number(v.medianLiftPct),
+                                v?.medianRr === null || v?.medianRr === undefined ? null : Number(v.medianRr),
+                                v?.medianHmaxLiftPct === null || v?.medianHmaxLiftPct === undefined ? null : Number(v.medianHmaxLiftPct),
+                                v?.medianDist === null || v?.medianDist === undefined ? null : Number(v.medianDist),
+                                v?.analogCount === null || v?.analogCount === undefined ? null : Math.max(0, Math.floor(Number(v.analogCount))),
+                                v?.candidateCount === null || v?.candidateCount === undefined ? null : Math.max(0, Math.floor(Number(v.candidateCount))),
+                                Math.max(0, Math.floor(Number(v?.pairWarnings) || 0)),
+                                Math.max(0, Math.floor(Number(v?.hits) || 0)),
+                                Math.max(0, Math.floor(Number(v?.high) || 0)),
+                                Math.max(0, Math.floor(Number(v?.medium) || 0)),
+                                Math.max(0, Math.floor(Number(v?.low) || 0)),
                             );
                         }
 
@@ -1186,38 +1238,56 @@ export function localSqlitePlugin(): Plugin {
                         throw error;
                     }
 
-                    sendJson(res, 200, { ok: true, runId, observationsStored: observations.length });
+                    sendJson(res, 200, { ok: true, runId, verdictsStored: verdicts.length });
                     return;
                 }
 
-                if (method === 'GET' && path === '/load-asset-leadership') {
+                if (method === 'GET' && path === '/load-mine-timing') {
                     const limit = Math.max(1, Math.min(200, Math.floor(Number(requestUrl.searchParams.get('limit')) || 50)));
                     const runRows = getPreparedStatement(`
-                        SELECT run_id, created_at, interval, strategy_preset, strategy_count, universe_symbol_count, top_n, candidates_json
-                        FROM asset_leadership_runs
+                        SELECT run_id, created_at, interval, strategy_key, source, pair_count, reruns, subset_size, seed
+                        FROM mine_timing_runs
                         ORDER BY created_at DESC
                         LIMIT ?
                     `).all(limit) as Array<{
                         run_id: string;
                         created_at: number;
                         interval: string;
-                        strategy_preset: string | null;
-                        strategy_count: number;
-                        universe_symbol_count: number;
-                        top_n: number;
-                        candidates_json: string;
+                        strategy_key: string;
+                        source: string;
+                        pair_count: number;
+                        reruns: number;
+                        subset_size: number;
+                        seed: number;
                     }>;
-
+                    const runIds = runRows.map((row) => row.run_id);
+                    const verdictsByRun = new Map<string, unknown[]>();
+                    if (runIds.length > 0) {
+                        // node:sqlite's prepared statements do not accept arrays
+                        // directly; use IN(...) with positional placeholders.
+                        const placeholders = runIds.map(() => '?').join(',');
+                        const verdictRows = getPreparedStatement(`
+                            SELECT * FROM mine_timing_verdicts
+                            WHERE run_id IN (${placeholders})
+                        `).all(...runIds) as Array<Record<string, unknown>>;
+                        for (const row of verdictRows) {
+                            const list = verdictsByRun.get(String(row.run_id)) ?? [];
+                            list.push(row);
+                            verdictsByRun.set(String(row.run_id), list);
+                        }
+                    }
                     const runs = runRows
                         .map((row) => ({
                             runId: row.run_id,
                             createdAt: row.created_at,
                             interval: row.interval,
-                            strategyPreset: row.strategy_preset || undefined,
-                            strategyCount: row.strategy_count,
-                            universeSymbolCount: row.universe_symbol_count,
-                            topN: row.top_n,
-                            candidates: JSON.parse(row.candidates_json || '[]'),
+                            strategyKey: row.strategy_key,
+                            source: row.source,
+                            pairCount: row.pair_count,
+                            reruns: row.reruns,
+                            subsetSize: row.subset_size,
+                            seed: row.seed,
+                            verdicts: (verdictsByRun.get(row.run_id) ?? []).map((v) => normalizeMineTimingVerdictRow(v as Record<string, unknown>)),
                         }))
                         .reverse();
 
@@ -1225,12 +1295,12 @@ export function localSqlitePlugin(): Plugin {
                     return;
                 }
 
-                if (method === 'POST' && path === '/clear-asset-leadership') {
+                if (method === 'POST' && path === '/clear-mine-timing') {
                     const db = getSqliteDb();
                     db.exec('BEGIN');
                     try {
-                        db.exec('DELETE FROM asset_leadership_observations');
-                        db.exec('DELETE FROM asset_leadership_runs');
+                        db.exec('DELETE FROM mine_timing_verdicts');
+                        db.exec('DELETE FROM mine_timing_runs');
                         db.exec('COMMIT');
                     } catch (error) {
                         db.exec('ROLLBACK');
@@ -1257,5 +1327,62 @@ export function localSqlitePlugin(): Plugin {
             register(server.middlewares);
             server.httpServer?.once('close', closeSqliteDb);
         },
+    };
+}
+
+/**
+ * Map a snake_case `mine_timing_verdicts` row to the camelCase shape the
+ * browser-side `TimingEdgeVerdictSnapshot` expects. Lives here (next to the
+ * route that produces the rows) instead of in a shared module so the plugin
+ * stays self-contained and doesn't import from browser-bound code (per
+ * AGENTS.md "Server-side import hygiene").
+ */
+function normalizeMineTimingVerdictRow(row: Record<string, unknown>) {
+    const num = (key: string): number | null => {
+        const value = row[key];
+        // Guard NULL/undefined BEFORE Number(): `Number(null) === 0` (finite),
+        // which would collapse a SQL NULL to 0 on the load path and silently
+        // break the null-sentinel contract on `TimingEdgeVerdictSnapshot`
+        // (downstream `??` fallbacks and `!== null` checks would mis-fire).
+        if (value === null || value === undefined) return null;
+        const n = Number(value);
+        return Number.isFinite(n) ? n : null;
+    };
+    const int = (key: string): number => Math.max(0, Math.floor(Number(row[key]) || 0));
+    const str = (key: string): string | null => {
+        const value = row[key];
+        return typeof value === 'string' && value ? value : null;
+    };
+    return {
+        asset: String(row.asset ?? '').trim().toUpperCase(),
+        verdict: String(row.verdict ?? '').trim().toUpperCase(),
+        direction: typeof row.direction === 'string' ? row.direction : null,
+        confidence: String(row.confidence ?? 'low').toLowerCase(),
+        close: num('close'),
+        medianBarsHeld: num('median_bars_held'),
+        agreementTransition: num('agreement_transition'),
+        asOfTimeKey: str('as_of_time_key'),
+        horizonBars: num('horizon_bars'),
+        longestHorizonBars: num('longest_horizon_bars'),
+        expectedForwardReturnPct: num('expected_forward_return_pct'),
+        oosLiftPct: num('oos_lift_pct'),
+        longestOosForwardReturnPct: num('longest_oos_forward_return_pct'),
+        expectedMfePct: num('expected_mfe_pct'),
+        expectedMaePct: num('expected_mae_pct'),
+        analogCount: num('analog_count'),
+        candidateCount: num('candidate_count'),
+        pairWarnings: int('pair_warnings'),
+        timingEdgeScore: num('timing_edge_score') ?? 0,
+        medianDiversity: num('median_diversity') ?? 0,
+        dominantPair: str('dominant_pair'),
+        dominantPairShare: num('dominant_pair_share') ?? 0,
+        hits: int('hits'),
+        high: int('high'),
+        medium: int('medium'),
+        low: int('low'),
+        medianLiftPct: num('median_lift_pct'),
+        medianRr: num('median_rr'),
+        medianHmaxLiftPct: num('median_hmax_lift_pct'),
+        medianDist: num('median_dist'),
     };
 }

@@ -115,25 +115,6 @@ const FINDER_REVERSION_STRATEGY_KEYS = [
 	"range_expansion_exhaustion_reversion",
 	"probability_boundary_eigen_shift",
 ] as const;
-type FinderStrategyPreset = "follow" | "reversion" | "custom";
-
-function sameStrategySet(keys: readonly string[], preset: readonly string[]): boolean {
-	if (keys.length !== preset.length) {
-		return false;
-	}
-	const selected = new Set(keys);
-	return preset.every((key) => selected.has(key));
-}
-
-function resolveFinderStrategyPreset(keys: readonly string[]): FinderStrategyPreset {
-	if (sameStrategySet(keys, FINDER_FOLLOW_STRATEGY_KEYS)) {
-		return "follow";
-	}
-	if (sameStrategySet(keys, FINDER_REVERSION_STRATEGY_KEYS)) {
-		return "reversion";
-	}
-	return "custom";
-}
 
 function resolveToBinanceSymbol(token: string): string {
 	const upper = token.toUpperCase();
@@ -2397,23 +2378,6 @@ export class FinderManager {
 			}
 			segments.push(`${Math.round(performance.now() - startTime)}ms`);
 			this.setStatus(segments.join(' | '));
-
-			// Persist universe results for Asset Leadership analysis
-			try {
-				const { assetLeadershipService } = await import("./asset-leadership-service");
-				void assetLeadershipService.persistUniverseRun({
-					interval: state.currentInterval,
-					strategyPreset: resolveFinderStrategyPreset(selectedStrategies.map((selection) => selection.key)),
-					strategyCount: selectedStrategies.length,
-					universeSymbolCount: totalSymbols,
-					topN: options.topN,
-					candidates: this.getUniverseResults(),
-				});
-			} catch (error) {
-				debugLogger.error("finder.asset_leadership_persist_failed", {
-					error: error instanceof Error ? error.message : String(error),
-				});
-			}
 		}
 		return true;
 	}

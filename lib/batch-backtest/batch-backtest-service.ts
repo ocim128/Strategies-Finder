@@ -73,6 +73,13 @@ import {
     type BatchStabilityMineResult,
     type BatchStabilityRow,
 } from "./batch-stability-mine";
+import {
+    projectMineVerdictToSnapshot,
+    projectStabilityRowToSnapshot,
+    type TimingEdgePersistedRun,
+} from "./mine-timing-persistence";
+import { storeMineTimingRun } from "../local-sqlite-mine-timing-api";
+import { computeMinerAgeTag, computeMinerTargetPrice, formatTargetPrice } from "./miner-verdict-format-helpers";
 import type { Strategy, StrategyParams, BacktestSettings } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 
@@ -91,6 +98,11 @@ class BatchBacktestService {
     private lastStabilityResult: BatchStabilityMineResult | null = null;
     private lastRunFingerprint: string | null = null;
     private lastRunInterval: string | null = null;
+    // The strategy key that governed the last Run, captured at run start so
+    // server-side Mine persists the strategy that actually ran — not whatever
+    // is selected in `state` at Mine-click time. Without this, switching
+    // strategy between Run and Mine would write the wrong strategyKey.
+    private lastRunStrategyKey: string | null = null;
     // Number of result rows already appended to the DOM via onSymbolComplete.
     // Tracked so the post-run path only appends the cancelled back-fill tail
     // instead of rebuilding every row (the runner emits onSymbolComplete in
@@ -216,6 +228,7 @@ class BatchBacktestService {
         this.lastResults = [];
         this.lastRunFingerprint = null;
         this.lastRunInterval = null;
+        this.lastRunStrategyKey = null;
         this.appendedCount = 0;
         this.serverHasArtifacts = false;
         this.clearPersistedLatestResults();
@@ -334,6 +347,7 @@ class BatchBacktestService {
         this.lastResults = output.results;
         this.lastRunFingerprint = runFingerprint;
         this.lastRunInterval = interval;
+        this.lastRunStrategyKey = strategyKey;
         // The runner emits onSymbolComplete in strict input order, so every
         // processed row is already in the DOM. Only the cancelled back-fill
         // tail (slots never processed because Stop broke the loop) needs to
@@ -417,6 +431,7 @@ class BatchBacktestService {
                     if (token !== this.runToken) return;
                     this.lastRunFingerprint = runFingerprint;
                     this.lastRunInterval = interval;
+                    this.lastRunStrategyKey = strategyKey;
                     this.serverHasArtifacts = event.serverHasArtifacts === true;
                     this.pendingServerRunCacheStats = event.cacheStats
                         ? buildCacheStatsFromLoader(event.cacheStats)
@@ -628,6 +643,83 @@ class BatchBacktestService {
         }
     }
 
+    /**
+     * Persist the latest Mine Timing verdicts to the local SQLite store so the
+     * Assets tab can rank assets by timing edge. Fire-and-forget on purpose —
+     * persistence failure must not block the Mine UI path; the user already
+     * has the verdicts rendered. Strategy key comes from `lastRunStrategyKey`
+     * (captured at run start) so it reflects the strategy that actually
+     * governed the run, not whatever is selected at Mine-click time.
+     */
+    private persistMineTimingResult(source: "mine" | "stability"): void {
+        const interval = this.lastRunInterval ?? state.currentInterval;
+        // Fall back to currentStrategyKey only when no run has been captured
+        // (defensive; should not happen in normal flow because Mine requires
+        // a prior Run).
+        const strategyKey = this.lastRunStrategyKey ?? state.currentStrategyKey;
+        const runId = `mt-${source}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        // Build the run descriptor for the given source, then hand it to the
+        // shared persistence path. Splitting by source here keeps the snapshot
+        // projection (mine vs stability) explicit; the store/load path is
+        // identical for both.
+        let run: TimingEdgePersistedRun;
+        if (source === "mine") {
+            if (!this.lastMinerResult || this.lastMinerResult.verdicts.length === 0) return;
+            run = {
+                runId,
+                createdAt: Date.now(),
+                interval,
+                strategyKey,
+                source: "mine",
+                pairCount: this.lastResults.length,
+                reruns: 0,
+                subsetSize: 0,
+                seed: 0,
+                verdicts: this.lastMinerResult.verdicts.map(projectMineVerdictToSnapshot),
+            };
+        } else {
+            if (!this.lastStabilityResult || this.lastStabilityResult.rows.length === 0) return;
+            run = {
+                runId,
+                createdAt: Date.now(),
+                interval,
+                strategyKey,
+                source: "stability",
+                pairCount: this.lastResults.length,
+                reruns: this.lastStabilityResult.reruns,
+                subsetSize: this.lastStabilityResult.subsetSize,
+                seed: this.lastStabilityResult.seed,
+                verdicts: this.lastStabilityResult.rows.map(projectStabilityRowToSnapshot),
+            };
+        }
+        // storeMineTimingRun RESOLVES FALSE on HTTP failure (it doesn't throw),
+        // so a `.catch` alone swallows the most common failure mode silently.
+        // Await the boolean and log loudly when persistence fails — silent
+        // failure here looks exactly like "empty Assets tab" in the UI.
+        void storeMineTimingRun(run).then((ok) => {
+            if (!ok) {
+                debugLogger.warn("batch.mine_timing.persist_failed", {
+                    source,
+                    runId,
+                    verdicts: run.verdicts.length,
+                    reason: "store returned false (HTTP error, server route missing, or SQLite unavailable)",
+                });
+            } else {
+                debugLogger.event("batch.mine_timing.persisted", {
+                    source,
+                    runId,
+                    verdicts: run.verdicts.length,
+                });
+            }
+        }).catch((error) => {
+            debugLogger.warn("batch.mine_timing.persist_threw", {
+                source,
+                runId,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        });
+    }
+
     private async runMiner(): Promise<void> {
         const dom = this.getDom();
         if (this.lastResults.length === 0 && !this.serverHasArtifacts) {
@@ -689,6 +781,7 @@ class BatchBacktestService {
             this.renderMinerResult(dom, result);
             dom.batchBacktestCopyMinerBtn.disabled = result.verdicts.length === 0;
             this.recordMineBenchmark(mineStartedAt, targets.length);
+            this.persistMineTimingResult("mine");
             debugLogger.event("batch_synthetic_miner.complete", {
                 pairs: pairArtifacts.length,
                 targets: targets.length,
@@ -779,6 +872,7 @@ class BatchBacktestService {
             };
             dom.batchBacktestMinerSummary.textContent = formatMinerSummary(this.lastMinerResult);
             dom.batchBacktestCopyMinerBtn.disabled = verdicts.length === 0;
+            this.persistMineTimingResult("mine");
             // Server has released its artifacts; Mine cannot run again until a
             // new server-side Run produces them.
             this.serverHasArtifacts = false;
@@ -1014,6 +1108,7 @@ class BatchBacktestService {
             this.renderStabilityResult(dom, this.lastStabilityResult);
             dom.batchBacktestCopyStabilityBtn.disabled = this.lastStabilityResult.rows.length === 0;
             this.recordStabilityBenchmark(stabilityStartedAt);
+            this.persistMineTimingResult("stability");
             this.saveLatestResultsSnapshot();
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -1083,6 +1178,7 @@ class BatchBacktestService {
             dom.batchBacktestCopyStabilityBtn.disabled = received.result.rows.length === 0;
             this.serverHasArtifacts = true;
             this.saveLatestResultsSnapshot();
+            this.persistMineTimingResult("stability");
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.lastStabilityResult = null;
@@ -1393,6 +1489,7 @@ class BatchBacktestService {
         this.clearMinerResults(dom);
         this.lastRunFingerprint = null;
         this.lastRunInterval = null;
+        this.lastRunStrategyKey = null;
         this.serverHasArtifacts = false;
         this.clearPersistedLatestResults();
         dom.batchBacktestMineBtn.disabled = true;
@@ -1468,6 +1565,9 @@ function formatStabilityRow(row: BatchStabilityRow, reruns: number): string {
     return [
         row.asset,
         `Dir ${row.direction}`,
+        `Score ${formatNumber(row.timingEdgeScore, 1)}`,
+        `Div ${(row.medianDiversity * 100).toFixed(0)}%`,
+        `Anchor ${row.dominantPair ?? "--"}:${(row.dominantPairShare * 100).toFixed(0)}%`,
         `Hit ${row.hits}/${reruns} (${formatPercent((row.hits / Math.max(1, reruns)) * 100)})`,
         `High ${row.high}`,
         `Med ${row.medium}`,
@@ -1509,6 +1609,7 @@ function formatMinerRowPipe(verdict: BatchSyntheticAssetVerdict): string {
     const reason = verdict.reasons[0] ?? "";
     const mfeMaeRatio = computeMinerMfeMaeRatio(evidence.expectedMfePct, evidence.expectedMaePct);
     const invalidationPrice = computeMinerInvalidationPrice(verdict);
+    const targetPrice = computeMinerTargetPrice(verdict);
     const horizonLabel = evidence.horizonBarsAll.length > 1
         ? `Hrz [${evidence.horizonBarsAll.join(",")}]`
         : `Hrz ${evidence.horizonBars}`;
@@ -1516,6 +1617,7 @@ function formatMinerRowPipe(verdict: BatchSyntheticAssetVerdict): string {
         verdict.asset,
         `Dir ${direction}`,
         `Conf ${verdict.confidence}`,
+        `Age ${computeMinerAgeTag(verdict)}`,
         `AsOf ${verdict.currentSnapshot?.timeKey ?? "--"}`,
         horizonLabel,
         `Analogs ${evidence.analogCount}/${evidence.candidateCount}`,
@@ -1527,6 +1629,8 @@ function formatMinerRowPipe(verdict: BatchSyntheticAssetVerdict): string {
         `MFE ${formatSignedPercent(evidence.expectedMfePct)}`,
         `MAE ${formatSignedPercent(evidence.expectedMaePct)}`,
         `RR ${formatRatio(mfeMaeRatio)}`,
+        `Entry @${formatPrice(verdict.currentSnapshot?.close ?? null)}`,
+        `Target ${formatTargetPrice(verdict.direction, targetPrice, evidence.longestHorizonBars, formatPrice)}`,
         `Inv ${formatInvalidationPrice(verdict.direction, invalidationPrice)}`,
         `HMax ${evidence.longestHorizonBars ?? "--"}b Ret ${formatSignedPercent(evidence.longestOosForwardReturnPct)} Lift ${formatSignedPercent(evidence.longestOosLiftPct)}`,
         `Dist ${formatNumber(evidence.avgDistance, 2)}`,
@@ -1585,7 +1689,10 @@ function formatInvalidationPrice(direction: BatchSyntheticAssetVerdict["directio
     return `${comparator}${formatPrice(value)}`;
 }
 
-function formatPrice(value: number): string {
+function formatPrice(value: number | null | undefined): string {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+        return "--";
+    }
     if (Math.abs(value) >= 100) {
         return value.toFixed(2);
     }

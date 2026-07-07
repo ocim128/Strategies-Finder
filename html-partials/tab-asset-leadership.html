@@ -1,9 +1,9 @@
-<!-- Asset Leadership Tab -->
+<!-- Asset Leadership Tab (repointed to Mine Timing edge data) -->
 <div id="assetleadershipTab">
     <div class="section-title">Asset Leadership</div>
     <div class="param-hint" id="assetLeadershipStatus">
-        Analyze which assets repeatedly appear in winning Finder universe strategies.
-        Run the Finder in Symbol Universe mode to generate leadership data.
+        Assets ranked by Mine Timing edge quality from the Batch Backtest tab.
+        Run Mine Timing or Stability Mine to populate this view.
     </div>
 
     <div class="finder-actions" style="margin-top: 8px;">
@@ -25,44 +25,44 @@
     </div>
 
     <div class="section-header" style="margin-top: 16px;">
-        <div class="section-title">Current Leaders</div>
+        <div class="section-title">Top Timing Edge</div>
     </div>
-    <div class="param-hint">Assets with highest composite leadership score.</div>
+    <div class="param-hint">Assets with the highest timing-edge score (lift × RR × horizon persistence × independence).</div>
     <div id="assetLeadershipCurrentLeaders" class="finder-list" style="margin-top: 6px;">
     </div>
 
     <div class="section-header" style="margin-top: 16px;">
-        <div class="section-title">Strong Now</div>
+        <div class="section-title">Long Triggers</div>
     </div>
-    <div class="param-hint">Directional leaders from the trailing 96-bar synthetic ratio move: long these against weak assets.</div>
+    <div class="param-hint">Assets whose latest Mine Timing verdict is LONG, ranked by score.</div>
     <div id="assetLeadershipStrongNow" class="finder-list" style="margin-top: 6px;">
     </div>
 
     <div class="section-header" style="margin-top: 16px;">
-        <div class="section-title">Weak Now</div>
+        <div class="section-title">Short Triggers</div>
     </div>
-    <div class="param-hint">Directional laggards from the trailing 96-bar synthetic ratio move: short these against strong assets.</div>
+    <div class="param-hint">Assets whose latest Mine Timing verdict is SHORT, ranked by score.</div>
     <div id="assetLeadershipWeakNow" class="finder-list" style="margin-top: 6px;">
     </div>
 
     <div class="section-header" style="margin-top: 16px;">
-        <div class="section-title">Emerging Leaders</div>
+        <div class="section-title">Rising Edge</div>
     </div>
-    <div class="param-hint">Assets gaining leadership strength across recent runs.</div>
+    <div class="param-hint">Assets whose timing-edge score has trended up across recent runs.</div>
     <div id="assetLeadershipEmergingLeaders" class="finder-list" style="margin-top: 6px;">
     </div>
 
     <div class="section-header" style="margin-top: 16px;">
-        <div class="section-title">Falling Leaders</div>
+        <div class="section-title">Fading Edge</div>
     </div>
-    <div class="param-hint">Assets losing leadership strength across recent runs.</div>
+    <div class="param-hint">Assets whose timing-edge score has trended down across recent runs.</div>
     <div id="assetLeadershipFallingLeaders" class="finder-list" style="margin-top: 6px;">
     </div>
 
     <div class="section-header" style="margin-top: 16px;">
-        <div class="section-title">Most Consistent Leaders</div>
+        <div class="section-title">Diverse &amp; Stable</div>
     </div>
-    <div class="param-hint">Assets that appear in consecutive Finder runs with sustained quality.</div>
+    <div class="param-hint">Assets with high cross-rerun independence (Jaccard diversity ≥ 50%) and a profitable majority of appearances — the highest-trust signals.</div>
     <div id="assetLeadershipConsistentLeaders" class="finder-list" style="margin-top: 6px;">
     </div>
 

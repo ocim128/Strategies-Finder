@@ -1,8 +1,15 @@
-import type { AssetLeadershipObservation, AssetLeadershipPersistedRun } from "./types/finder";
+import type { TimingEdgePersistedRun } from "./batch-backtest/mine-timing-persistence";
 import {
     checkLocalApiAvailable,
     fetchLocalApi,
 } from "./local-api-transport";
+
+/**
+ * Browser-side transport for Mine Timing persistence. Mirrors the
+ * asset-leadership transport 1:1 (same availability cache, same timeout
+ * bands, same `ok: boolean` envelope). The Assets tab consumes loaded runs
+ * via `loadMineTimingRuns`.
+ */
 
 const AVAILABILITY_CACHE_MS = 60000;
 const SQLITE_REQUEST_TIMEOUT_MS = 8000;
@@ -18,18 +25,18 @@ async function checkAvailable(): Promise<boolean> {
     });
 }
 
-export async function loadAssetLeadershipRuns(limit = 50): Promise<AssetLeadershipPersistedRun[]> {
+export async function loadMineTimingRuns(limit = 50): Promise<TimingEdgePersistedRun[]> {
     const available = await checkAvailable();
     if (!available) return [];
 
     try {
         const response = await fetchLocalApi(
-            `/api/sqlite/load-asset-leadership?limit=${limit}`,
+            `/api/sqlite/load-mine-timing?limit=${limit}`,
             { method: "GET", headers: { Accept: "application/json" } },
             SQLITE_REQUEST_TIMEOUT_MS
         );
         if (!response.ok) return [];
-        const payload = (await response.json()) as { ok?: boolean; runs?: AssetLeadershipPersistedRun[] };
+        const payload = (await response.json()) as { ok?: boolean; runs?: TimingEdgePersistedRun[] };
         if (!payload?.ok || !Array.isArray(payload.runs)) return [];
         return payload.runs;
     } catch {
@@ -37,24 +44,25 @@ export async function loadAssetLeadershipRuns(limit = 50): Promise<AssetLeadersh
     }
 }
 
-export async function storeAssetLeadershipRun(run: AssetLeadershipPersistedRun, observations: readonly AssetLeadershipObservation[]): Promise<boolean> {
+export async function storeMineTimingRun(run: TimingEdgePersistedRun): Promise<boolean> {
     const available = await checkAvailable();
     if (!available) return false;
 
     try {
-        const response = await fetchLocalApi("/api/sqlite/store-asset-leadership", {
+        const response = await fetchLocalApi("/api/sqlite/store-mine-timing", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 runId: run.runId,
                 createdAt: run.createdAt,
                 interval: run.interval,
-                strategyPreset: run.strategyPreset,
-                strategyCount: run.strategyCount,
-                universeSymbolCount: run.universeSymbolCount,
-                topN: run.topN,
-                candidates: run.candidates,
-                observations,
+                strategyKey: run.strategyKey,
+                source: run.source,
+                pairCount: run.pairCount,
+                reruns: run.reruns,
+                subsetSize: run.subsetSize,
+                seed: run.seed,
+                verdicts: run.verdicts,
             }),
         }, SQLITE_STORE_TIMEOUT_MS);
         if (!response.ok) return false;
@@ -65,12 +73,12 @@ export async function storeAssetLeadershipRun(run: AssetLeadershipPersistedRun, 
     }
 }
 
-export async function clearAssetLeadershipRuns(): Promise<boolean> {
+export async function clearMineTimingRuns(): Promise<boolean> {
     const available = await checkAvailable();
     if (!available) return false;
 
     try {
-        const response = await fetchLocalApi("/api/sqlite/clear-asset-leadership", {
+        const response = await fetchLocalApi("/api/sqlite/clear-mine-timing", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
         }, SQLITE_REQUEST_TIMEOUT_MS);

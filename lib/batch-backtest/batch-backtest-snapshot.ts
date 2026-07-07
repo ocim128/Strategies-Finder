@@ -67,6 +67,10 @@ function compactStabilityResult(result: BatchStabilityMineResult): BatchStabilit
                     medianDist: finiteOrNull(row.medianDist),
                     medianHmaxLiftPct: finiteOrNull(row.medianHmaxLiftPct),
                     pairWarnings: Math.max(0, Math.floor(Number(row.pairWarnings) || 0)),
+                    timingEdgeScore: Math.max(0, Number(row.timingEdgeScore) || 0),
+                    medianDiversity: Math.max(0, Math.min(1, Number(row.medianDiversity) || 0)),
+                    dominantPair: typeof row.dominantPair === "string" && row.dominantPair.trim() ? row.dominantPair.trim().toUpperCase() : null,
+                    dominantPairShare: Math.max(0, Math.min(1, Number(row.dominantPairShare) || 0)),
                 }))
                 .filter((row) => row.asset)
             : [],
