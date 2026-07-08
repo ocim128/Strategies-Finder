@@ -44,6 +44,7 @@ import {
 } from "./batch-backtest-snapshot";
 import {
     BATCH_BENCHMARK_SCHEMA,
+    benchmarkRatio,
     buildBatchBenchmarkBottlenecks,
     buildCacheStatsFromLoader,
     type BatchBenchmarkCacheSource,
@@ -56,7 +57,11 @@ import {
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import type { BatchStreamEvent, BatchMinerStreamEvent } from "./batch-backtest-stream-types";
 import {
+    createBatchSyntheticMinerProfile,
+    prepareBatchSyntheticPairArtifacts,
+    prepareBatchSyntheticTargetArtifacts,
     resolveBatchSyntheticTargetSymbol,
+    runPreparedBatchSyntheticStateMiner,
     runBatchSyntheticStateMiner,
     BATCH_SYNTHETIC_MINER_DEFAULT_OPTIONS,
     type BatchSyntheticAssetVerdict,
@@ -531,7 +536,14 @@ class BatchBacktestService {
         }
         const loaded = this.lastResults.filter((r) => r.status !== "load_failed" && r.status !== "run_failed").length;
         const failed = this.lastResults.length - loaded;
-        const phase: BatchBenchmarkRunPhase = { totalMs, loaded, failed, synthetic, real };
+        const phase: BatchBenchmarkRunPhase = {
+            totalMs,
+            loaded,
+            failed,
+            synthetic,
+            real,
+            avgMsPerLoaded: benchmarkRatio(totalMs, loaded),
+        };
         const cacheSource = this.resolveCacheSource(mode);
         const cache = cacheSource === "server_stream" && this.pendingServerRunCacheStats
             ? this.pendingServerRunCacheStats
@@ -566,6 +578,8 @@ class BatchBacktestService {
             totalMs,
             targets: Math.max(0, Math.floor(targetCount)),
             verdicts,
+            avgMsPerTarget: benchmarkRatio(totalMs, targetCount),
+            avgMsPerVerdict: benchmarkRatio(totalMs, verdicts),
         };
         this.mergePhase({ mine: phase });
     }
@@ -574,12 +588,23 @@ class BatchBacktestService {
         const totalMs = performance.now() - startedAt;
         const result = this.lastStabilityResult;
         if (!result) return;
+        const sampledPairEvaluations = Math.max(0, Math.floor(result.reruns * result.subsetSize));
+        const hitEvents = Math.max(0, Math.floor(result.hitEvents));
         const phase: BatchBenchmarkStabilityPhase = {
             totalMs,
             reruns: result.reruns,
             subsetSize: result.subsetSize,
+            totalPairs: result.totalPairs,
+            sampledPairEvaluations,
+            targetAssets: result.targetAssets,
             targets: result.rows.length,
             verdicts: result.rows.length,
+            hitEvents,
+            avgMsPerRerun: benchmarkRatio(totalMs, result.reruns),
+            avgMsPerSampledPair: benchmarkRatio(totalMs, sampledPairEvaluations),
+            hitEventsPerRerun: benchmarkRatio(hitEvents, result.reruns, 3),
+            hitEventsPerSampledPair: benchmarkRatio(hitEvents, sampledPairEvaluations, 5),
+            minerProfile: result.minerProfile ?? null,
         };
         this.mergePhase({ stability: phase });
     }
@@ -1087,15 +1112,25 @@ class BatchBacktestService {
             }
 
             const stabilityStartedAt = performance.now();
-            const aggregate = createStabilityAggregate(reruns, subsetSize, seed, pairArtifacts.length);
+            const aggregate = createStabilityAggregate(reruns, subsetSize, seed, pairArtifacts.length, targets.length);
+            const minerProfile = createBatchSyntheticMinerProfile();
+            let profileStartedAt = performance.now();
+            const preparedTargets = prepareBatchSyntheticTargetArtifacts(targets);
+            minerProfile.prepareTargetsMs += performance.now() - profileStartedAt;
+            profileStartedAt = performance.now();
+            const preparedPairs = prepareBatchSyntheticPairArtifacts(pairArtifacts);
+            minerProfile.preparePairsMs += performance.now() - profileStartedAt;
             for (let runIndex = 0; runIndex < reruns; runIndex += 1) {
-                const subset = sampleItems(pairArtifacts, subsetSize, seed + runIndex);
+                const subset = sampleItems(preparedPairs, subsetSize, seed + runIndex);
                 const subsetAssets = new Set(subset.flatMap((artifact) => [artifact.baseAsset, artifact.quoteAsset]));
-                const subsetTargets = targets.filter((target) => subsetAssets.has(target.asset));
-                const result = runBatchSyntheticStateMiner({
+                profileStartedAt = performance.now();
+                const subsetTargets = preparedTargets.filter((target) => subsetAssets.has(target.asset));
+                minerProfile.subsetTargetFilterMs += performance.now() - profileStartedAt;
+                const result = runPreparedBatchSyntheticStateMiner({
                     interval: this.lastRunInterval ?? state.currentInterval,
                     targets: subsetTargets,
                     artifacts: subset,
+                    profile: minerProfile,
                 });
                 addStabilityVerdicts(aggregate, result.verdicts);
                 dom.batchBacktestMinerSummary.textContent = `Stability mining ${runIndex + 1}/${reruns} | hits ${aggregate.hitEvents}`;
@@ -1105,6 +1140,7 @@ class BatchBacktestService {
             }
 
             this.lastStabilityResult = finalizeStabilityAggregate(aggregate);
+            this.lastStabilityResult.minerProfile = minerProfile;
             this.renderStabilityResult(dom, this.lastStabilityResult);
             dom.batchBacktestCopyStabilityBtn.disabled = this.lastStabilityResult.rows.length === 0;
             this.recordStabilityBenchmark(stabilityStartedAt);

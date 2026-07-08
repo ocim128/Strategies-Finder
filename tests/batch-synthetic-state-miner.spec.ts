@@ -1,7 +1,10 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
+    prepareBatchSyntheticPairArtifacts,
+    prepareBatchSyntheticTargetArtifacts,
     resolveBatchSyntheticTargetSymbol,
+    runPreparedBatchSyntheticStateMiner,
     runBatchSyntheticStateMiner,
     type BatchSyntheticPairArtifact,
     type BatchSyntheticTargetArtifact,
@@ -86,6 +89,42 @@ function makePair(symbol: string, baseAsset: string, quoteAsset: string, signals
 describe("batch synthetic state miner", () => {
     it("resolves v1 target symbols as USDT pairs", () => {
         expect(resolveBatchSyntheticTargetSymbol("zec")).to.equal("ZECUSDT");
+    });
+
+    it("keeps prepared miner output aligned with the normal miner path", () => {
+        const signalIndexes = [10, 20, 30, 40, 50, 60, 70, 80, 90, 99];
+        const target: BatchSyntheticTargetArtifact = {
+            asset: "ZEC",
+            symbol: "ZECUSDT",
+            data: makeEventLiftCandles(100, signalIndexes),
+        };
+        const artifacts = [
+            makePair("ZEC+APT", "ZEC", "APT", makeSignals(target.data, signalIndexes, "buy")),
+            makePair("ZEC+BTC", "ZEC", "BTC", makeSignals(target.data, signalIndexes, "buy")),
+        ];
+        const options = {
+            horizons: [2],
+            lagBars: 0,
+            minSamples: 2,
+            minOosSamples: 1,
+            neighborCountMin: 2,
+            neighborCountMax: 12,
+        };
+
+        const normal = runBatchSyntheticStateMiner({
+            interval: "5m",
+            targets: [target],
+            artifacts,
+            options,
+        });
+        const prepared = runPreparedBatchSyntheticStateMiner({
+            interval: "5m",
+            targets: prepareBatchSyntheticTargetArtifacts([target]),
+            artifacts: prepareBatchSyntheticPairArtifacts(artifacts),
+            options,
+        });
+
+        expect(prepared.verdicts).to.deep.equal(normal.verdicts);
     });
 
     it("produces a long verdict from repeated OOS-positive shared-leg analogs", () => {

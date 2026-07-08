@@ -1,10 +1,11 @@
-import type { BatchSyntheticAssetVerdict } from "./batch-synthetic-state-miner";
+import type { BatchSyntheticAssetVerdict, BatchSyntheticMinerProfile } from "./batch-synthetic-state-miner";
 
 export interface BatchStabilityAccumulator {
     reruns: number;
     subsetSize: number;
     seed: number;
     totalPairs: number;
+    targetAssets: number;
     hitEvents: number;
     rows: Map<string, BatchStabilityRowAccumulator>;
 }
@@ -37,7 +38,9 @@ export interface BatchStabilityMineResult {
     subsetSize: number;
     seed: number;
     totalPairs: number;
+    targetAssets: number;
     hitEvents: number;
+    minerProfile?: BatchSyntheticMinerProfile | null;
     rows: BatchStabilityRow[];
 }
 
@@ -82,13 +85,15 @@ export function createStabilityAggregate(
     reruns: number,
     subsetSize: number,
     seed: number,
-    totalPairs: number
+    totalPairs: number,
+    targetAssets = 0,
 ): BatchStabilityAccumulator {
     return {
         reruns,
         subsetSize,
         seed,
         totalPairs,
+        targetAssets,
         hitEvents: 0,
         rows: new Map(),
     };
@@ -188,6 +193,7 @@ export function finalizeStabilityAggregate(acc: BatchStabilityAccumulator): Batc
         subsetSize: acc.subsetSize,
         seed: acc.seed,
         totalPairs: acc.totalPairs,
+        targetAssets: acc.targetAssets,
         hitEvents: acc.hitEvents,
         rows,
     };

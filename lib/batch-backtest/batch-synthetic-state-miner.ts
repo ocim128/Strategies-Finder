@@ -1,8 +1,6 @@
 import { timeKey } from "../strategies";
 import type { BacktestResult, OHLCVData, Signal, Trade } from "../types/strategies";
 import {
-    computeAdverseExcursionAtr,
-    computeAtrAt,
     computeDirectionalAtrDistance,
     computeDirectionalPercentMove,
 } from "../portfolioLab/portfolio-lab-statistics";
@@ -66,6 +64,15 @@ export interface BatchSyntheticMinerInput {
     options?: Partial<BatchSyntheticMinerOptions>;
 }
 
+export interface BatchSyntheticPreparedMinerInput {
+    interval: string;
+    targets: BatchSyntheticPreparedTargetArtifact[];
+    artifacts: BatchSyntheticPreparedPairArtifact[];
+    options?: Partial<BatchSyntheticMinerOptions>;
+    diagnostics?: string[];
+    profile?: BatchSyntheticMinerProfile;
+}
+
 export interface BatchSyntheticStateSnapshot {
     asset: string;
     direction: BatchSyntheticDirection | null;
@@ -95,13 +102,20 @@ export interface BatchSyntheticCandidateSample {
     futureMfePct: number;
     futureMaePct: number;
     /**
-     * Per-horizon outcomes keyed by horizon in bars. The primary
+     * Per-horizon outcomes sorted by horizon in bars. The primary
      * (`forwardReturnPct`/`futureMfePct`/`futureMaePct`) fields always mirror
      * the shortest configured horizon for backward compatibility; the verdict
-     * engine reads the longest horizon from this map to check the edge
+     * engine reads the longest horizon from this compact array to check the edge
      * survives to exit scale.
      */
-    outcomesByHorizon: Map<number, { forwardReturnPct: number; futureMfePct: number; futureMaePct: number }>;
+    outcomesByHorizon: HorizonOutcome[];
+}
+
+interface HorizonOutcome {
+    horizon: number;
+    forwardReturnPct: number;
+    futureMfePct: number;
+    futureMaePct: number;
 }
 
 export interface BatchSyntheticVerdictEvidence {
@@ -159,21 +173,57 @@ export interface BatchSyntheticMinerResult {
     diagnostics: string[];
 }
 
-interface TradeRange {
+export interface BatchSyntheticMinerProfile {
+    prepareTargetsMs: number;
+    preparePairsMs: number;
+    subsetTargetFilterMs: number;
+    runPreparedMs: number;
+    buildVerdictsMs: number;
+    sortVerdictsMs: number;
+    linkedPairFilterMs: number;
+    horizonMs: number;
+    currentSnapshotMs: number;
+    candidateSamplesMs: number;
+    windowingMs: number;
+    distanceScaleMs: number;
+    analogSelectionMs: number;
+    summarizeMs: number;
+    pairContributionsMs: number;
+    classifyMs: number;
+    targetsEvaluated: number;
+    artifactsEvaluated: number;
+    linkedPairsEvaluated: number;
+    candidateSamples: number;
+    preOosSamples: number;
+    oosSamples: number;
+    earlyNoLinkedPairs: number;
+    earlyShortTargetHistory: number;
+    earlyNoCurrentState: number;
+    earlyNotEnoughCandidates: number;
+}
+
+export interface TradeRange {
     trade: Trade;
     entryIndex: number;
     exitIndex: number;
 }
 
-interface IndexedSignal {
+export interface IndexedSignal {
     signal: Signal;
     index: number;
     direction: BatchSyntheticDirection;
 }
 
-interface PreparedPairArtifact extends BatchSyntheticPairArtifact {
+export interface BatchSyntheticPreparedTargetArtifact extends BatchSyntheticTargetArtifact {
     timeIndex: Map<string, number>;
+}
+
+export interface BatchSyntheticPreparedPairArtifact extends BatchSyntheticPairArtifact {
+    timeIndex: Map<string, number>;
+    atrByIndex: Array<number | null>;
     openTradeByIndex: Array<TradeRange | null>;
+    openTradeAdverseAtrByIndex: Array<number | null>;
+    stateIndexesByLag: Map<number, PairStateIndexes>;
     /**
      * Closed trade ranges (entry/exit both present). Used to derive an
      * unbiased median hold for auto-horizons. `openTradeByIndex` only carries
@@ -192,6 +242,16 @@ interface PairState {
     moveSinceEntryPct: number;
     moveSinceEntryAtr: number;
     adverseExcursionAtr: number;
+}
+
+interface PairStateIndexes {
+    baseByIndex: Array<PairState | null>;
+    quoteByIndex: Array<PairState | null>;
+}
+
+interface CandidateStateIndex {
+    candidateIndexes: number[];
+    statesByTargetIndex: Map<number, PairState[]>;
 }
 
 interface LabeledAnalog {
@@ -225,11 +285,112 @@ export const BATCH_SYNTHETIC_MINER_DEFAULT_OPTIONS: Readonly<BatchSyntheticMiner
 
 const TRANSITION_LOOKBACK_BARS = 6;
 
+export function createBatchSyntheticMinerProfile(): BatchSyntheticMinerProfile {
+    return {
+        prepareTargetsMs: 0,
+        preparePairsMs: 0,
+        subsetTargetFilterMs: 0,
+        runPreparedMs: 0,
+        buildVerdictsMs: 0,
+        sortVerdictsMs: 0,
+        linkedPairFilterMs: 0,
+        horizonMs: 0,
+        currentSnapshotMs: 0,
+        candidateSamplesMs: 0,
+        windowingMs: 0,
+        distanceScaleMs: 0,
+        analogSelectionMs: 0,
+        summarizeMs: 0,
+        pairContributionsMs: 0,
+        classifyMs: 0,
+        targetsEvaluated: 0,
+        artifactsEvaluated: 0,
+        linkedPairsEvaluated: 0,
+        candidateSamples: 0,
+        preOosSamples: 0,
+        oosSamples: 0,
+        earlyNoLinkedPairs: 0,
+        earlyShortTargetHistory: 0,
+        earlyNoCurrentState: 0,
+        earlyNotEnoughCandidates: 0,
+    };
+}
+
+function nowMs(): number {
+    return typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+}
+
+function addProfileMs(
+    profile: BatchSyntheticMinerProfile | undefined,
+    key: keyof Pick<BatchSyntheticMinerProfile,
+        "prepareTargetsMs"
+        | "preparePairsMs"
+        | "subsetTargetFilterMs"
+        | "runPreparedMs"
+        | "buildVerdictsMs"
+        | "sortVerdictsMs"
+        | "linkedPairFilterMs"
+        | "horizonMs"
+        | "currentSnapshotMs"
+        | "candidateSamplesMs"
+        | "windowingMs"
+        | "distanceScaleMs"
+        | "analogSelectionMs"
+        | "summarizeMs"
+        | "pairContributionsMs"
+        | "classifyMs"
+    >,
+    startedAt: number,
+): void {
+    if (!profile) return;
+    profile[key] += nowMs() - startedAt;
+}
+
 export function runBatchSyntheticStateMiner(input: BatchSyntheticMinerInput): BatchSyntheticMinerResult {
-    const options = resolveOptions(input.options);
     const diagnostics: string[] = [];
-    const preparedPairs = preparePairArtifacts(input.artifacts, diagnostics);
-    const targets = input.targets
+    return runPreparedBatchSyntheticStateMiner({
+        interval: input.interval,
+        targets: prepareBatchSyntheticTargetArtifacts(input.targets, diagnostics),
+        artifacts: prepareBatchSyntheticPairArtifacts(input.artifacts, diagnostics),
+        options: input.options,
+        diagnostics,
+    });
+}
+
+export function runPreparedBatchSyntheticStateMiner(input: BatchSyntheticPreparedMinerInput): BatchSyntheticMinerResult {
+    const runStartedAt = nowMs();
+    const options = resolveOptions(input.options);
+    const diagnostics = [...(input.diagnostics ?? [])];
+    const profile = input.profile;
+    if (profile) {
+        profile.targetsEvaluated += input.targets.length;
+        profile.artifactsEvaluated += input.artifacts.length;
+    }
+
+    const buildStartedAt = nowMs();
+    const verdicts = input.targets
+        .map((target) => buildAssetVerdict(target, input.artifacts, options, profile));
+    addProfileMs(profile, "buildVerdictsMs", buildStartedAt);
+    const sortStartedAt = nowMs();
+    verdicts.sort((a, b) => verdictRank(a.verdict) - verdictRank(b.verdict) || a.asset.localeCompare(b.asset));
+    addProfileMs(profile, "sortVerdictsMs", sortStartedAt);
+    addProfileMs(profile, "runPreparedMs", runStartedAt);
+
+    return {
+        interval: input.interval,
+        options,
+        verdicts,
+        diagnostics,
+    };
+}
+
+export function prepareBatchSyntheticTargetArtifacts(
+    targets: readonly BatchSyntheticTargetArtifact[],
+    diagnostics: string[] = [],
+): BatchSyntheticPreparedTargetArtifact[] {
+    return targets
         .map((target) => ({
             ...target,
             asset: normalizeAsset(target.asset),
@@ -242,17 +403,6 @@ export function runBatchSyntheticStateMiner(input: BatchSyntheticMinerInput): Ba
             }
             return true;
         });
-
-    const verdicts = targets
-        .map((target) => buildAssetVerdict(target, preparedPairs, options))
-        .sort((a, b) => verdictRank(a.verdict) - verdictRank(b.verdict) || a.asset.localeCompare(b.asset));
-
-    return {
-        interval: input.interval,
-        options,
-        verdicts,
-        diagnostics,
-    };
 }
 
 function resolveOptions(raw?: Partial<BatchSyntheticMinerOptions>): BatchSyntheticMinerOptions {
@@ -281,11 +431,11 @@ function resolveOptions(raw?: Partial<BatchSyntheticMinerOptions>): BatchSynthet
     };
 }
 
-function preparePairArtifacts(
+export function prepareBatchSyntheticPairArtifacts(
     artifacts: readonly BatchSyntheticPairArtifact[],
-    diagnostics: string[]
-): PreparedPairArtifact[] {
-    const prepared: PreparedPairArtifact[] = [];
+    diagnostics: string[] = [],
+): BatchSyntheticPreparedPairArtifact[] {
+    const prepared: BatchSyntheticPreparedPairArtifact[] = [];
     for (const artifact of artifacts) {
         const baseAsset = normalizeAsset(artifact.baseAsset);
         const quoteAsset = normalizeAsset(artifact.quoteAsset);
@@ -295,12 +445,17 @@ function preparePairArtifacts(
         }
         const timeIndex = buildTimeIndex(artifact.data);
         const trades = artifact.result.trades ?? [];
+        const atrByIndex = buildAtrIndex(artifact.data);
+        const openTradeIndexes = buildOpenTradeIndexes(trades, artifact.data, timeIndex, atrByIndex);
         prepared.push({
             ...artifact,
             baseAsset,
             quoteAsset,
             timeIndex,
-            openTradeByIndex: buildOpenTradeIndex(trades, artifact.data, timeIndex),
+            atrByIndex,
+            openTradeByIndex: openTradeIndexes.openTradeByIndex,
+            openTradeAdverseAtrByIndex: openTradeIndexes.openTradeAdverseAtrByIndex,
+            stateIndexesByLag: new Map(),
             closedTradeRanges: buildClosedTradeRanges(trades, timeIndex),
             signalsByIndex: buildSignalIndex(artifact.signals ?? [], artifact.data, timeIndex),
         });
@@ -310,33 +465,47 @@ function preparePairArtifacts(
 
 function buildAssetVerdict(
     target: BatchSyntheticTargetArtifact & { timeIndex: Map<string, number> },
-    pairs: readonly PreparedPairArtifact[],
-    options: BatchSyntheticMinerOptions
+    pairs: readonly BatchSyntheticPreparedPairArtifact[],
+    options: BatchSyntheticMinerOptions,
+    profile?: BatchSyntheticMinerProfile,
 ): BatchSyntheticAssetVerdict {
+    const linkedFilterStartedAt = nowMs();
     const linkedPairs = pairs.filter((pair) => pair.baseAsset === target.asset || pair.quoteAsset === target.asset);
+    addProfileMs(profile, "linkedPairFilterMs", linkedFilterStartedAt);
+    if (profile) profile.linkedPairsEvaluated += linkedPairs.length;
     const diagnostics: string[] = [];
     // Resolve the per-target horizon set. Auto-horizons derive from the median
     // hold of linked synthetic-pair trades, because the strategy edge lives at
     // the strategy's hold scale. A fixed 6-bar label silently misses the edge
     // on higher timeframes (4H median hold 315b vs 6b = 24h label).
+    const horizonStartedAt = nowMs();
     const horizons = resolveHorizonsForTarget(options, linkedPairs, target.data.length);
+    addProfileMs(profile, "horizonMs", horizonStartedAt);
     const primaryHorizon = horizons[0] ?? 6;
     const longestHorizon = horizons[horizons.length - 1] ?? primaryHorizon;
     const emptyEvidence = createEmptyEvidence(primaryHorizon, horizons);
     if (linkedPairs.length === 0) {
+        if (profile) profile.earlyNoLinkedPairs += 1;
         return createAssetVerdict(target.asset, "INCONCLUSIVE", null, null, emptyEvidence, [], [`No linked synthetic pairs for ${target.asset}.`], diagnostics);
     }
     if (target.data.length <= longestHorizon + 2) {
+        if (profile) profile.earlyShortTargetHistory += 1;
         return createAssetVerdict(target.asset, "INCONCLUSIVE", null, null, emptyEvidence, [], [`Not enough target candles for horizon ${longestHorizon}.`], diagnostics);
     }
 
+    const currentSnapshotStartedAt = nowMs();
     const currentSnapshot = buildSnapshotAt(target.asset, target.data.length - 1, target.data, linkedPairs, options);
+    addProfileMs(profile, "currentSnapshotMs", currentSnapshotStartedAt);
     if (!currentSnapshot || !currentSnapshot.direction) {
+        if (profile) profile.earlyNoCurrentState += 1;
         return createAssetVerdict(target.asset, "INCONCLUSIVE", null, currentSnapshot, emptyEvidence, [], ["No active current synthetic state."], diagnostics);
     }
 
-    const samples = buildCandidateSamples(target.asset, target.data, linkedPairs, options, horizons)
+    const candidateStartedAt = nowMs();
+    const samples = buildCandidateSamples(target, linkedPairs, options, horizons)
         .filter((sample) => sample.snapshot.direction === currentSnapshot.direction);
+    addProfileMs(profile, "candidateSamplesMs", candidateStartedAt);
+    if (profile) profile.candidateSamples += samples.length;
     // Window split MUST be by bar position over the CANDIDATE span, not sample
     // ordinal and not the full target history. Candidates can only exist in
     // bars [0, length-1-longestHorizon] (a sample at bar i needs i+longestHorizon
@@ -345,10 +514,13 @@ function buildAssetVerdict(
     // selection and OOS is starved ("Pre 24, OOS 0"). Splitting over the
     // candidate span keeps the OOS band reachable.
     const candidateSpan = Math.max(1, target.data.length - longestHorizon);
+    const windowStartedAt = nowMs();
     for (const sample of samples) {
         sample.window = resolveWindow(sample.snapshot.barIndex, candidateSpan);
     }
+    addProfileMs(profile, "windowingMs", windowStartedAt);
     if (samples.length < options.minSamples) {
+        if (profile) profile.earlyNotEnoughCandidates += 1;
         return createAssetVerdict(
             target.asset,
             "INCONCLUSIVE",
@@ -366,21 +538,32 @@ function buildAssetVerdict(
     // (the plan forbids tuning on the eval window). Scales are frozen here
     // before any analog selection.
     const preOosSamples = samples.filter((sample) => sample.window !== "oos");
+    const oosSamples = samples.filter((sample) => sample.window === "oos");
+    if (profile) {
+        profile.preOosSamples += preOosSamples.length;
+        profile.oosSamples += oosSamples.length;
+    }
+    const scaleStartedAt = nowMs();
     const distanceScales = calibrateDistanceScales(preOosSamples);
+    addProfileMs(profile, "distanceScaleMs", scaleStartedAt);
 
+    const analogStartedAt = nowMs();
     const selectionAnalogs = selectAnalogs(currentSnapshot, preOosSamples, options, distanceScales);
     const oosAnalogs = selectAnalogs(
         currentSnapshot,
-        samples.filter((sample) => sample.window === "oos"),
+        oosSamples,
         options,
         distanceScales
     );
+    addProfileMs(profile, "analogSelectionMs", analogStartedAt);
     const analogs = [...selectionAnalogs, ...oosAnalogs];
-    const oosBaseline = summarizeSamples(samples.filter((sample) => sample.window === "oos"), primaryHorizon);
+    const summarizeStartedAt = nowMs();
+    const oosBaseline = summarizeSamples(oosSamples, primaryHorizon);
     const selectionSummary = summarizeSamples(selectionAnalogs.map((analog) => analog.sample), primaryHorizon);
     const analogSummary = summarizeSamples(oosAnalogs.map((analog) => analog.sample), primaryHorizon);
     const longestOosSummary = summarizeSamples(oosAnalogs.map((analog) => analog.sample), longestHorizon);
-    const longestOosBaseline = summarizeSamples(samples.filter((sample) => sample.window === "oos"), longestHorizon);
+    const longestOosBaseline = summarizeSamples(oosSamples, longestHorizon);
+    addProfileMs(profile, "summarizeMs", summarizeStartedAt);
     const evidence: BatchSyntheticVerdictEvidence = {
         horizonBars: primaryHorizon,
         horizonBarsAll: horizons,
@@ -407,9 +590,13 @@ function buildAssetVerdict(
     };
 
     const reasons: string[] = [];
+    const pairContributionsStartedAt = nowMs();
     const pairContributions = buildPairContributions(currentSnapshot, oosAnalogs, evidence);
+    addProfileMs(profile, "pairContributionsMs", pairContributionsStartedAt);
+    const classifyStartedAt = nowMs();
     const verdict = classifyVerdict(evidence, currentSnapshot, options, reasons);
     const confidence = classifyConfidence(verdict, evidence, options);
+    addProfileMs(profile, "classifyMs", classifyStartedAt);
     return createAssetVerdict(
         target.asset,
         verdict,
@@ -434,7 +621,7 @@ function buildAssetVerdict(
  */
 function resolveHorizonsForTarget(
     options: BatchSyntheticMinerOptions,
-    linkedPairs: readonly PreparedPairArtifact[],
+    linkedPairs: readonly BatchSyntheticPreparedPairArtifact[],
     targetLength: number
 ): number[] {
     const fallback = options.horizons;
@@ -483,16 +670,17 @@ function clampHorizonsToCandidateSpan(horizons: number[], targetLength: number):
 }
 
 function buildCandidateSamples(
-    asset: string,
-    targetData: OHLCVData[],
-    linkedPairs: readonly PreparedPairArtifact[],
+    target: BatchSyntheticPreparedTargetArtifact,
+    linkedPairs: readonly BatchSyntheticPreparedPairArtifact[],
     options: BatchSyntheticMinerOptions,
-    horizons: number[]
+    horizons: number[],
 ): BatchSyntheticCandidateSample[] {
     const samples: BatchSyntheticCandidateSample[] = [];
     const longestHorizon = horizons[horizons.length - 1] ?? 1;
-    const lastIndex = targetData.length - 1 - longestHorizon;
-    for (let index = 0; index <= lastIndex; index += 1) {
+    const lastIndex = target.data.length - 1 - longestHorizon;
+    const candidateStateIndex = buildCandidateStateIndex(target, linkedPairs, options.lagBars, lastIndex);
+    const candidateIndexes = candidateStateIndex.candidateIndexes;
+    for (const index of candidateIndexes) {
         // Carry-in trades ARE allowed historically. The current snapshot uses
         // carry-in too (an open BTC+APT short entered 200 bars ago is a valid
         // current state on 4H). Forbidding carry-in historically while allowing
@@ -500,7 +688,15 @@ function buildCandidateSamples(
         // state it is trying to match, which suppresses analogs precisely on
         // the higher timeframes where the edge lives. Trade age is exposed as
         // a distance feature so old samples are not conflated with fresh ones.
-        const snapshot = buildSnapshotAt(asset, index, targetData, linkedPairs, options);
+        const snapshot = buildSnapshotFromStates(
+            target.asset,
+            index,
+            target.data,
+            candidateStateIndex.statesByTargetIndex.get(index) ?? [],
+            candidateStateIndex.statesByTargetIndex.get(Math.max(0, index - TRANSITION_LOOKBACK_BARS)) ?? [],
+            linkedPairs,
+            options,
+        );
         if (!snapshot?.direction) {
             continue;
         }
@@ -510,11 +706,11 @@ function buildCandidateSamples(
         // horizons [24,48,96] this cuts MFE/MAE work ~1.75x; on [150,300,600]
         // ~1.75x. Each horizon "snaps" its outcome as the scan crosses its
         // boundary, using the running MFE/MAE extrema.
-        const outcomesByHorizon = buildAllHorizonOutcomes(targetData, index, snapshot.direction, horizons);
+        const outcomesByHorizon = buildAllHorizonOutcomes(target.data, index, snapshot.direction, horizons);
         if (!outcomesByHorizon) {
             continue;
         }
-        const shortestOutcome = outcomesByHorizon.get(horizons[0]!);
+        const shortestOutcome = outcomesByHorizon[0];
         if (!shortestOutcome) {
             continue;
         }
@@ -549,14 +745,14 @@ function buildAllHorizonOutcomes(
     index: number,
     direction: BatchSyntheticDirection,
     horizons: number[]
-): Map<number, { forwardReturnPct: number; futureMfePct: number; futureMaePct: number }> | null {
+): HorizonOutcome[] | null {
     const basis = data[index];
     const longest = horizons[horizons.length - 1] ?? 1;
     const endLong = data[index + longest];
     if (!basis || !endLong || !isFinitePositive(basis.close)) {
         return null;
     }
-    const result = new Map<number, { forwardReturnPct: number; futureMfePct: number; futureMaePct: number }>();
+    const result: HorizonOutcome[] = [];
     let futureMfePct = 0;
     let futureMaePct = 0;
     let horizonIdx = 0;
@@ -577,7 +773,7 @@ function buildAllHorizonOutcomes(
             const forwardReturnPct = endBar
                 ? computeDirectionalPercentMove(basis.close, endBar.close, direction)
                 : 0;
-            result.set(h, { forwardReturnPct, futureMfePct, futureMaePct });
+            result.push({ horizon: h, forwardReturnPct, futureMfePct, futureMaePct });
             horizonIdx += 1;
         }
     }
@@ -585,9 +781,10 @@ function buildAllHorizonOutcomes(
     // `cursor` skipping past a boundary via `continue`), fill any missing
     // entries so the caller's contract holds.
     for (const h of horizons) {
-        if (!result.has(h)) {
+        if (!getOutcomeByHorizon(result, h)) {
             const endBar = data[index + h];
-            result.set(h, {
+            result.push({
+                horizon: h,
                 forwardReturnPct: endBar ? computeDirectionalPercentMove(basis.close, endBar.close, direction) : 0,
                 futureMfePct,
                 futureMaePct,
@@ -597,11 +794,50 @@ function buildAllHorizonOutcomes(
     return result;
 }
 
+function buildCandidateStateIndex(
+    target: BatchSyntheticPreparedTargetArtifact,
+    linkedPairs: readonly BatchSyntheticPreparedPairArtifact[],
+    lagBars: number,
+    lastIndex: number,
+): CandidateStateIndex {
+    const statesByTargetIndex = new Map<number, PairState[]>();
+    for (const pair of linkedPairs) {
+        const side = pair.baseAsset === target.asset ? "base" : pair.quoteAsset === target.asset ? "quote" : null;
+        if (!side) continue;
+        const indexes = getPairStateIndexes(pair, lagBars);
+        const states = side === "base" ? indexes.baseByIndex : indexes.quoteByIndex;
+        for (let pairIndex = 0; pairIndex < states.length; pairIndex += 1) {
+            if (!states[pairIndex]) continue;
+            const pairBar = pair.data[pairIndex];
+            if (!pairBar) continue;
+            const targetIndex = target.timeIndex.get(timeKey(pairBar.time));
+            if (targetIndex !== undefined && targetIndex >= 0 && targetIndex <= lastIndex) {
+                const state = states[pairIndex];
+                if (!state) continue;
+                const list = statesByTargetIndex.get(targetIndex);
+                if (list) list.push(state);
+                else statesByTargetIndex.set(targetIndex, [state]);
+            }
+        }
+    }
+    return {
+        candidateIndexes: Array.from(statesByTargetIndex.keys()).sort((a, b) => a - b),
+        statesByTargetIndex,
+    };
+}
+
+function getOutcomeByHorizon(outcomes: readonly HorizonOutcome[], horizon: number): HorizonOutcome | null {
+    for (const outcome of outcomes) {
+        if (outcome.horizon === horizon) return outcome;
+    }
+    return null;
+}
+
 function buildSnapshotAt(
     asset: string,
     targetIndex: number,
     targetData: OHLCVData[],
-    linkedPairs: readonly PreparedPairArtifact[],
+    linkedPairs: readonly BatchSyntheticPreparedPairArtifact[],
     options: BatchSyntheticMinerOptions
 ): BatchSyntheticStateSnapshot | null {
     const targetBar = targetData[targetIndex];
@@ -610,6 +846,26 @@ function buildSnapshotAt(
     }
     const key = timeKey(targetBar.time);
     const states = getPairStatesAt(asset, key, linkedPairs, options.lagBars);
+    const previousIndex = Math.max(0, targetIndex - TRANSITION_LOOKBACK_BARS);
+    const previousKey = timeKey(targetData[previousIndex]?.time ?? targetBar.time);
+    const previousStates = getPairStatesAt(asset, previousKey, linkedPairs, options.lagBars);
+    return buildSnapshotFromStates(asset, targetIndex, targetData, states, previousStates, linkedPairs, options);
+}
+
+function buildSnapshotFromStates(
+    asset: string,
+    targetIndex: number,
+    targetData: OHLCVData[],
+    states: readonly PairState[],
+    previousStates: readonly PairState[],
+    linkedPairs: readonly BatchSyntheticPreparedPairArtifact[],
+    options: BatchSyntheticMinerOptions
+): BatchSyntheticStateSnapshot | null {
+    const targetBar = targetData[targetIndex];
+    if (!targetBar) {
+        return null;
+    }
+    const key = timeKey(targetBar.time);
     if (states.length === 0) {
         return {
             asset,
@@ -634,26 +890,49 @@ function buildSnapshotAt(
         };
     }
 
-    const longStates = states.filter((state) => state.direction === "long");
-    const shortStates = states.filter((state) => state.direction === "short");
-    const direction: BatchSyntheticDirection | null = longStates.length > shortStates.length
+    let longCount = 0;
+    let shortCount = 0;
+    for (const state of states) {
+        if (state.direction === "long") longCount += 1;
+        else shortCount += 1;
+    }
+    const direction: BatchSyntheticDirection | null = longCount > shortCount
         ? "long"
-        : shortStates.length > longStates.length
+        : shortCount > longCount
             ? "short"
             : null;
-    const agreeing = direction === "long" ? longStates : direction === "short" ? shortStates : [];
-    const opposing = direction === "long" ? shortStates : direction === "short" ? longStates : [];
+    const agreeingSymbols: string[] = [];
+    const opposingSymbols: string[] = [];
+    const agreeingBarsHeld: number[] = [];
+    const agreeingMovePct: number[] = [];
+    const agreeingMoveAtr: number[] = [];
+    const agreeingAdverseAtr: number[] = [];
+    let agreementCount = 0;
+    let oppositionCount = 0;
+    if (direction) {
+        for (const state of states) {
+            if (state.direction === direction) {
+                agreementCount += 1;
+                agreeingSymbols.push(state.symbol);
+                agreeingBarsHeld.push(state.barsHeld);
+                agreeingMovePct.push(state.moveSinceEntryPct);
+                agreeingMoveAtr.push(state.moveSinceEntryAtr);
+                agreeingAdverseAtr.push(state.adverseExcursionAtr);
+            } else {
+                oppositionCount += 1;
+                opposingSymbols.push(state.symbol);
+            }
+        }
+        agreeingSymbols.sort();
+        opposingSymbols.sort();
+    }
     const netAgreement = direction
-        ? agreeing.length - opposing.length
-        : Math.abs(longStates.length - shortStates.length);
-    const previousIndex = Math.max(0, targetIndex - TRANSITION_LOOKBACK_BARS);
-    const previousKey = timeKey(targetData[previousIndex]?.time ?? targetBar.time);
-    const previousStates = getPairStatesAt(asset, previousKey, linkedPairs, options.lagBars);
-    const previousLong = previousStates.filter((state) => state.direction === "long").length;
-    const previousShort = previousStates.filter((state) => state.direction === "short").length;
+        ? agreementCount - oppositionCount
+        : Math.abs(longCount - shortCount);
+    const previousCounts = countLongShortStates(previousStates);
     const directionFactor = direction === "short" ? -1 : 1;
-    const currentRawNet = longStates.length - shortStates.length;
-    const previousRawNet = previousLong - previousShort;
+    const currentRawNet = longCount - shortCount;
+    const previousRawNet = previousCounts.long - previousCounts.short;
 
     return {
         asset,
@@ -662,26 +941,26 @@ function buildSnapshotAt(
         barIndex: targetIndex,
         close: Number.isFinite(targetBar.close) ? targetBar.close : null,
         activePeerCount: states.length,
-        agreementCount: agreeing.length,
-        oppositionCount: opposing.length,
-        agreementRatio: states.length > 0 ? agreeing.length / states.length : 0,
-        oppositionRatio: states.length > 0 ? opposing.length / states.length : 0,
+        agreementCount,
+        oppositionCount,
+        agreementRatio: states.length > 0 ? agreementCount / states.length : 0,
+        oppositionRatio: states.length > 0 ? oppositionCount / states.length : 0,
         netAgreement,
         agreementTransition: direction ? (currentRawNet - previousRawNet) * directionFactor : 0,
-        medianBarsHeld: median(agreeing.map((state) => state.barsHeld)),
-        medianMoveSinceEntryPct: median(agreeing.map((state) => state.moveSinceEntryPct)),
-        medianMoveSinceEntryAtr: median(agreeing.map((state) => state.moveSinceEntryAtr)),
-        medianAdverseExcursionAtr: median(agreeing.map((state) => state.adverseExcursionAtr)),
+        medianBarsHeld: median(agreeingBarsHeld),
+        medianMoveSinceEntryPct: median(agreeingMovePct),
+        medianMoveSinceEntryAtr: median(agreeingMoveAtr),
+        medianAdverseExcursionAtr: median(agreeingAdverseAtr),
         breadthPersistence: computeBreadthPersistence(asset, targetIndex, targetData, linkedPairs, options, direction),
-        agreeingSymbols: agreeing.map((state) => state.symbol).sort(),
-        opposingSymbols: opposing.map((state) => state.symbol).sort(),
+        agreeingSymbols,
+        opposingSymbols,
     };
 }
 
 function getPairStatesAt(
     asset: string,
     key: string,
-    linkedPairs: readonly PreparedPairArtifact[],
+    linkedPairs: readonly BatchSyntheticPreparedPairArtifact[],
     lagBars: number
 ): PairState[] {
     const states: PairState[] = [];
@@ -694,21 +973,51 @@ function getPairStatesAt(
         if (!side) {
             continue;
         }
-        const open = pair.openTradeByIndex[pairIndex];
-        if (open) {
-            states.push(buildTradePairState(pair, open, pairIndex, side));
-            continue;
-        }
-        const signal = findLatestSignal(pair.signalsByIndex, pairIndex, lagBars);
-        if (signal) {
-            states.push(buildSignalPairState(pair, signal, pairIndex, side));
+        const indexes = getPairStateIndexes(pair, lagBars);
+        const state = side === "base" ? indexes.baseByIndex[pairIndex] : indexes.quoteByIndex[pairIndex];
+        if (state) {
+            states.push(state);
         }
     }
     return states;
 }
 
+function countLongShortStates(states: readonly PairState[]): { long: number; short: number } {
+    let long = 0;
+    let short = 0;
+    for (const state of states) {
+        if (state?.direction === "long") long += 1;
+        else if (state?.direction === "short") short += 1;
+    }
+    return { long, short };
+}
+
+function getPairStateIndexes(pair: BatchSyntheticPreparedPairArtifact, lagBars: number): PairStateIndexes {
+    const key = Math.max(0, Math.floor(lagBars));
+    const cached = pair.stateIndexesByLag.get(key);
+    if (cached) return cached;
+    const baseByIndex: Array<PairState | null> = Array.from({ length: pair.data.length }, () => null);
+    const quoteByIndex: Array<PairState | null> = Array.from({ length: pair.data.length }, () => null);
+    for (let pairIndex = 0; pairIndex < pair.data.length; pairIndex += 1) {
+        const open = pair.openTradeByIndex[pairIndex];
+        if (open) {
+            baseByIndex[pairIndex] = buildTradePairState(pair, open, pairIndex, "base");
+            quoteByIndex[pairIndex] = buildTradePairState(pair, open, pairIndex, "quote");
+            continue;
+        }
+        const signal = findLatestSignal(pair.signalsByIndex, pairIndex, key);
+        if (signal) {
+            baseByIndex[pairIndex] = buildSignalPairState(pair, signal, pairIndex, "base");
+            quoteByIndex[pairIndex] = buildSignalPairState(pair, signal, pairIndex, "quote");
+        }
+    }
+    const indexes = { baseByIndex, quoteByIndex };
+    pair.stateIndexesByLag.set(key, indexes);
+    return indexes;
+}
+
 function buildTradePairState(
-    pair: PreparedPairArtifact,
+    pair: BatchSyntheticPreparedPairArtifact,
     range: TradeRange,
     pairIndex: number,
     side: "base" | "quote"
@@ -716,19 +1025,19 @@ function buildTradePairState(
     const pairDirection = range.trade.type;
     const direction = mapPairDirectionToAsset(pairDirection, side);
     const candle = pair.data[pairIndex];
-    const atr = computeAtrAt(pair.data, pairIndex) ?? Math.max(1e-9, range.trade.entryPrice * 0.01);
+    const atr = pair.atrByIndex[pairIndex] ?? Math.max(1e-9, range.trade.entryPrice * 0.01);
     return {
         symbol: pair.symbol,
         direction,
         barsHeld: Math.max(0, pairIndex - range.entryIndex),
         moveSinceEntryPct: computeDirectionalPercentMove(range.trade.entryPrice, candle?.close ?? range.trade.entryPrice, pairDirection),
         moveSinceEntryAtr: computeDirectionalAtrDistance(range.trade.entryPrice, candle?.close ?? range.trade.entryPrice, pairDirection, atr),
-        adverseExcursionAtr: computeAdverseExcursionAtr(pair.data, range.entryIndex, pairIndex, pairDirection, range.trade.entryPrice, atr),
+        adverseExcursionAtr: pair.openTradeAdverseAtrByIndex[pairIndex] ?? 0,
     };
 }
 
 function buildSignalPairState(
-    pair: PreparedPairArtifact,
+    pair: BatchSyntheticPreparedPairArtifact,
     signal: IndexedSignal,
     pairIndex: number,
     side: "base" | "quote"
@@ -737,14 +1046,14 @@ function buildSignalPairState(
     const direction = mapPairDirectionToAsset(pairDirection, side);
     const candle = pair.data[pairIndex];
     const entryPrice = signal.signal.price || pair.data[signal.index]?.close || candle?.close || 0;
-    const atr = computeAtrAt(pair.data, pairIndex) ?? Math.max(1e-9, entryPrice * 0.01);
+    const atr = pair.atrByIndex[pairIndex] ?? Math.max(1e-9, entryPrice * 0.01);
     return {
         symbol: pair.symbol,
         direction,
         barsHeld: Math.max(0, pairIndex - signal.index),
         moveSinceEntryPct: computeDirectionalPercentMove(entryPrice, candle?.close ?? entryPrice, pairDirection),
         moveSinceEntryAtr: computeDirectionalAtrDistance(entryPrice, candle?.close ?? entryPrice, pairDirection, atr),
-        adverseExcursionAtr: computeAdverseExcursionAtr(pair.data, signal.index, pairIndex, pairDirection, entryPrice, atr),
+        adverseExcursionAtr: computeAdverseExcursionAtrScan(pair.data, signal.index, pairIndex, pairDirection, entryPrice, atr),
     };
 }
 
@@ -785,7 +1094,7 @@ function computeBreadthPersistence(
     asset: string,
     targetIndex: number,
     targetData: OHLCVData[],
-    linkedPairs: readonly PreparedPairArtifact[],
+    linkedPairs: readonly BatchSyntheticPreparedPairArtifact[],
     options: BatchSyntheticMinerOptions,
     direction: BatchSyntheticDirection | null
 ): number {
@@ -823,7 +1132,7 @@ function computeBreadthPersistence(
 function getPairDirectionCountsAt(
     asset: string,
     key: string,
-    linkedPairs: readonly PreparedPairArtifact[],
+    linkedPairs: readonly BatchSyntheticPreparedPairArtifact[],
     lagBars: number,
     targetDirection: BatchSyntheticDirection
 ): { same: number; opposite: number; total: number } {
@@ -838,16 +1147,9 @@ function getPairDirectionCountsAt(
         if (!side) {
             continue;
         }
-        let pairDirection: BatchSyntheticDirection | null = null;
-        const open = pair.openTradeByIndex[pairIndex];
-        if (open) {
-            pairDirection = mapPairDirectionToAsset(open.trade.type, side);
-        } else {
-            const signal = findLatestSignal(pair.signalsByIndex, pairIndex, lagBars);
-            if (signal) {
-                pairDirection = mapPairDirectionToAsset(signal.direction, side);
-            }
-        }
+        const indexes = getPairStateIndexes(pair, lagBars);
+        const state = side === "base" ? indexes.baseByIndex[pairIndex] : indexes.quoteByIndex[pairIndex];
+        const pairDirection = state?.direction ?? null;
         if (pairDirection === targetDirection) {
             same += 1;
         } else if (pairDirection !== null) {
@@ -1154,8 +1456,8 @@ function summarizeSamples(
     // the shortest-horizon fields mirrored on the sample).
     if (horizon !== undefined) {
         const resolved = samples
-            .map((sample) => sample.outcomesByHorizon.get(horizon))
-            .filter((value): value is { forwardReturnPct: number; futureMfePct: number; futureMaePct: number } => Boolean(value));
+            .map((sample) => getOutcomeByHorizon(sample.outcomesByHorizon, horizon))
+            .filter((value): value is HorizonOutcome => Boolean(value));
         if (resolved.length > 0) {
             return {
                 count: resolved.length,
@@ -1173,12 +1475,17 @@ function summarizeSamples(
     };
 }
 
-function buildOpenTradeIndex(
+function buildOpenTradeIndexes(
     trades: readonly Trade[],
     data: readonly OHLCVData[],
-    timeIndex: ReadonlyMap<string, number>
-): Array<TradeRange | null> {
+    timeIndex: ReadonlyMap<string, number>,
+    atrByIndex: readonly (number | null)[],
+): {
+    openTradeByIndex: Array<TradeRange | null>;
+    openTradeAdverseAtrByIndex: Array<number | null>;
+} {
     const openByIndex = Array.from({ length: data.length }, () => null as TradeRange | null);
+    const adverseByIndex = Array.from({ length: data.length }, () => null as number | null);
     for (const trade of trades) {
         const entryIndex = timeIndex.get(timeKey(trade.entryTime));
         const exitIndex = timeIndex.get(timeKey(trade.exitTime));
@@ -1187,11 +1494,22 @@ function buildOpenTradeIndex(
         }
         const range = { trade, entryIndex, exitIndex };
         const last = trade.exitReason === "end_of_data" ? exitIndex : Math.max(entryIndex, exitIndex - 1);
+        let adversePrice = trade.entryPrice;
         for (let index = entryIndex; index <= last && index < openByIndex.length; index += 1) {
+            const candle = data[index];
+            if (candle) {
+                adversePrice = trade.type === "long"
+                    ? Math.min(adversePrice, candle.low)
+                    : Math.max(adversePrice, candle.high);
+            }
+            const atr = atrByIndex[index] ?? Math.max(1e-9, trade.entryPrice * 0.01);
             openByIndex[index] = range;
+            adverseByIndex[index] = trade.type === "long"
+                ? Math.max(0, (trade.entryPrice - adversePrice) / atr)
+                : Math.max(0, (adversePrice - trade.entryPrice) / atr);
         }
     }
-    return openByIndex;
+    return { openTradeByIndex: openByIndex, openTradeAdverseAtrByIndex: adverseByIndex };
 }
 
 /**
@@ -1238,6 +1556,65 @@ function buildSignalIndex(
         });
     }
     return byIndex;
+}
+
+function buildAtrIndex(data: readonly OHLCVData[], period = 14): Array<number | null> {
+    const atrByIndex: Array<number | null> = Array.from({ length: data.length }, () => null);
+    const trueRanges: Array<number | null> = Array.from({ length: data.length }, () => null);
+    for (let index = 1; index < data.length; index += 1) {
+        const current = data[index];
+        const previous = data[index - 1];
+        if (!current || !previous) continue;
+        const trueRange = Math.max(
+            current.high - current.low,
+            Math.abs(current.high - previous.close),
+            Math.abs(current.low - previous.close)
+        );
+        trueRanges[index] = Number.isFinite(trueRange) ? trueRange : null;
+    }
+    let rollingSum = 0;
+    let rollingCount = 0;
+    for (let index = 1; index < data.length; index += 1) {
+        const incoming = trueRanges[index];
+        if (incoming !== null) {
+            rollingSum += incoming;
+            rollingCount += 1;
+        }
+        const outgoingIndex = index - period;
+        if (outgoingIndex >= 1) {
+            const outgoing = trueRanges[outgoingIndex];
+            if (outgoing !== null) {
+                rollingSum -= outgoing;
+                rollingCount -= 1;
+            }
+        }
+        atrByIndex[index] = rollingCount > 0 ? rollingSum / rollingCount : null;
+    }
+    return atrByIndex;
+}
+
+function computeAdverseExcursionAtrScan(
+    data: readonly OHLCVData[],
+    entryIndex: number,
+    barIndex: number,
+    direction: Trade["type"],
+    entryPrice: number,
+    atr: number,
+): number {
+    if (!Number.isFinite(atr) || atr <= 0 || barIndex < entryIndex) {
+        return 0;
+    }
+    let adversePrice = entryPrice;
+    for (let index = entryIndex; index <= barIndex; index += 1) {
+        const candle = data[index];
+        if (!candle) continue;
+        adversePrice = direction === "long"
+            ? Math.min(adversePrice, candle.low)
+            : Math.max(adversePrice, candle.high);
+    }
+    return direction === "long"
+        ? Math.max(0, (entryPrice - adversePrice) / atr)
+        : Math.max(0, (adversePrice - entryPrice) / atr);
 }
 
 function buildTimeIndex(data: readonly OHLCVData[]): Map<string, number> {

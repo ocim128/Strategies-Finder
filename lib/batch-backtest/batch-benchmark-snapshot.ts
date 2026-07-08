@@ -14,6 +14,7 @@
  */
 
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
+import type { BatchSyntheticMinerProfile } from "./batch-synthetic-state-miner";
 
 export const BATCH_BENCHMARK_SCHEMA = "batch.benchmark.v1" as const;
 
@@ -39,20 +40,32 @@ export interface BatchBenchmarkRunPhase {
     failed: number;
     synthetic: number;
     real: number;
+    avgMsPerLoaded: number | null;
 }
 
 export interface BatchBenchmarkMinePhase {
     totalMs: number;
     targets: number;
     verdicts: number;
+    avgMsPerTarget: number | null;
+    avgMsPerVerdict: number | null;
 }
 
 export interface BatchBenchmarkStabilityPhase {
     totalMs: number;
     reruns: number;
     subsetSize: number;
+    totalPairs: number;
+    sampledPairEvaluations: number;
+    targetAssets: number;
     targets: number;
     verdicts: number;
+    hitEvents: number;
+    avgMsPerRerun: number | null;
+    avgMsPerSampledPair: number | null;
+    hitEventsPerRerun: number | null;
+    hitEventsPerSampledPair: number | null;
+    minerProfile: BatchSyntheticMinerProfile | null;
 }
 
 export interface BatchBenchmarkSnapshot {
@@ -77,6 +90,35 @@ export interface BatchBenchmarkSnapshot {
 function rate(hits: number, misses: number): number {
     const total = hits + misses;
     return total > 0 ? Number((hits / total).toFixed(4)) : 0;
+}
+
+export function benchmarkRatio(numerator: number, denominator: number, decimals = 2): number | null {
+    if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) {
+        return null;
+    }
+    return Number((numerator / denominator).toFixed(decimals));
+}
+
+function largestMinerSubphase(profile: BatchSyntheticMinerProfile | null): { name: string; ms: number } | null {
+    if (!profile) return null;
+    const candidates: Array<[string, number]> = [
+        ["prepare pairs", profile.preparePairsMs],
+        ["linked pair filter", profile.linkedPairFilterMs],
+        ["horizon selection", profile.horizonMs],
+        ["current snapshot", profile.currentSnapshotMs],
+        ["candidate samples", profile.candidateSamplesMs],
+        ["windowing", profile.windowingMs],
+        ["distance scale", profile.distanceScaleMs],
+        ["analog selection", profile.analogSelectionMs],
+        ["summaries", profile.summarizeMs],
+        ["pair contributions", profile.pairContributionsMs],
+        ["classification", profile.classifyMs],
+    ];
+    const valid = candidates
+        .filter(([, ms]) => Number.isFinite(ms) && ms > 0)
+        .sort((a, b) => b[1] - a[1]);
+    const top = valid[0];
+    return top ? { name: top[0], ms: top[1] } : null;
 }
 
 export function buildCacheStatsFromLoader(stats: BatchDatasetCacheStats): BatchBenchmarkCacheStats {
@@ -156,14 +198,27 @@ export function buildBatchBenchmarkBottlenecks(
         }
     }
 
-    // Stability amplification: each rerun rebuilds per-pair indices from
-    // scratch today. A high reruns × subsetSize product relative to run total
-    // signals the Stability hot path is the bottleneck.
+    // Stability amplification: each rerun reevaluates a sampled prepared pair
+    // subset. A high reruns x subsetSize product relative to run total signals
+    // the Stability hot path is the bottleneck.
     if (phases.stability && phases.run && phases.run.totalMs > 0) {
         const stabilityRatio = phases.stability.totalMs / phases.run.totalMs;
         if (stabilityRatio >= 2) {
+            const workload = phases.stability.sampledPairEvaluations > 0
+                ? `; workload ${phases.stability.sampledPairEvaluations} sampled pair-reruns`
+                : "";
+            const avgRerun = phases.stability.avgMsPerRerun !== null
+                ? `; avg ${phases.stability.avgMsPerRerun.toFixed(0)} ms/rerun`
+                : "";
+            const avgPair = phases.stability.avgMsPerSampledPair !== null
+                ? `, ${phases.stability.avgMsPerSampledPair.toFixed(2)} ms/sampled pair`
+                : "";
+            const topSubphase = largestMinerSubphase(phases.stability.minerProfile);
+            const profileNote = topSubphase
+                ? `; top miner subphase ${topSubphase.name} ${topSubphase.ms.toFixed(0)} ms`
+                : "";
             notes.push(
-                `stability mine took ${stabilityRatio.toFixed(1)}x the run phase (${phases.stability.totalMs.toFixed(0)} ms / ${phases.run.totalMs.toFixed(0)} ms) — index rebuild across reruns is the suspected cost`,
+                `stability mine took ${stabilityRatio.toFixed(1)}x the run phase (${phases.stability.totalMs.toFixed(0)} ms / ${phases.run.totalMs.toFixed(0)} ms)${workload}${avgRerun}${avgPair}${profileNote} - inspect phases.stability.minerProfile for the exact split`,
             );
         }
     }

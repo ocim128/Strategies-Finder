@@ -41,6 +41,10 @@ import {
     sampleItems,
 } from "./batch-stability-mine";
 import {
+    createBatchSyntheticMinerProfile,
+    prepareBatchSyntheticPairArtifacts,
+    prepareBatchSyntheticTargetArtifacts,
+    runPreparedBatchSyntheticStateMiner,
     runBatchSyntheticStateMiner,
     resolveBatchSyntheticTargetSymbol,
     type BatchSyntheticPairArtifact,
@@ -566,21 +570,30 @@ export async function processStabilityMine(
             return;
         }
 
-        const aggregate = createStabilityAggregate(reruns, subsetSize, seed, artifactMetas.length);
+        const aggregate = createStabilityAggregate(reruns, subsetSize, seed, artifactMetas.length, targets.length);
+        const minerProfile = createBatchSyntheticMinerProfile();
+        let profileStartedAt = performance.now();
+        const preparedTargets = prepareBatchSyntheticTargetArtifacts(targets);
+        minerProfile.prepareTargetsMs += performance.now() - profileStartedAt;
+        profileStartedAt = performance.now();
+        const preparedPairs = prepareBatchSyntheticPairArtifacts(artifactMetas.map(loadStoredMineArtifact));
+        minerProfile.preparePairsMs += performance.now() - profileStartedAt;
         for (let runIndex = 0; runIndex < reruns; runIndex += 1) {
             if (lostOwnership()) {
                 snapshot.cancelled = true;
                 writer({ type: "fatal", error: "Stability mining cancelled." });
                 return;
             }
-            const subsetMetas = sampleItems(artifactMetas, subsetSize, seed + runIndex);
-            const subsetArtifacts = subsetMetas.map(loadStoredMineArtifact);
-            const subsetAssets = new Set(subsetMetas.flatMap((artifact) => [artifact.baseAsset, artifact.quoteAsset]));
-            const subsetTargets = targets.filter((target) => subsetAssets.has(target.asset));
-            const result = runBatchSyntheticStateMiner({
+            const subsetArtifacts = sampleItems(preparedPairs, subsetSize, seed + runIndex);
+            const subsetAssets = new Set(subsetArtifacts.flatMap((artifact) => [artifact.baseAsset, artifact.quoteAsset]));
+            profileStartedAt = performance.now();
+            const subsetTargets = preparedTargets.filter((target) => subsetAssets.has(target.asset));
+            minerProfile.subsetTargetFilterMs += performance.now() - profileStartedAt;
+            const result = runPreparedBatchSyntheticStateMiner({
                 interval,
                 targets: subsetTargets,
                 artifacts: subsetArtifacts,
+                profile: minerProfile,
             });
             addStabilityVerdicts(aggregate, result.verdicts);
             snapshot.verdicts = aggregate.hitEvents;
@@ -588,6 +601,7 @@ export async function processStabilityMine(
         }
 
         const finalResult = finalizeStabilityAggregate(aggregate);
+        finalResult.minerProfile = minerProfile;
         snapshot.running = false;
         writer({ type: "done", ok: true, result: finalResult });
     } catch (error) {

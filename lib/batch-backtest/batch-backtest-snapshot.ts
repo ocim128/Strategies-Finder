@@ -1,6 +1,7 @@
 import { toScalarRow } from "./batch-backtest-stream-types";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import type { BatchStabilityMineResult } from "./batch-stability-mine";
+import type { BatchSyntheticMinerProfile } from "./batch-synthetic-state-miner";
 
 export const BATCH_RESULT_SNAPSHOT_LIMIT = 2_000;
 
@@ -52,7 +53,9 @@ function compactStabilityResult(result: BatchStabilityMineResult): BatchStabilit
         subsetSize: Math.max(0, Math.floor(Number(result.subsetSize) || 0)),
         seed: Math.max(0, Math.floor(Number(result.seed) || 0)),
         totalPairs: Math.max(0, Math.floor(Number(result.totalPairs) || 0)),
+        targetAssets: Math.max(0, Math.floor(Number(result.targetAssets) || 0)),
         hitEvents: Math.max(0, Math.floor(Number(result.hitEvents) || 0)),
+        minerProfile: compactMinerProfile(result.minerProfile),
         rows: Array.isArray(result.rows)
             ? result.rows.map((row): BatchStabilityMineResult["rows"][number] => ({
                     asset: String(row.asset ?? "").trim().toUpperCase(),
@@ -77,6 +80,38 @@ function compactStabilityResult(result: BatchStabilityMineResult): BatchStabilit
     };
 }
 
+function compactMinerProfile(profile: BatchSyntheticMinerProfile | null | undefined): BatchSyntheticMinerProfile | null {
+    if (!profile || typeof profile !== "object") return null;
+    return {
+        prepareTargetsMs: finiteOrZero(profile.prepareTargetsMs),
+        preparePairsMs: finiteOrZero(profile.preparePairsMs),
+        subsetTargetFilterMs: finiteOrZero(profile.subsetTargetFilterMs),
+        runPreparedMs: finiteOrZero(profile.runPreparedMs),
+        buildVerdictsMs: finiteOrZero(profile.buildVerdictsMs),
+        sortVerdictsMs: finiteOrZero(profile.sortVerdictsMs),
+        linkedPairFilterMs: finiteOrZero(profile.linkedPairFilterMs),
+        horizonMs: finiteOrZero(profile.horizonMs),
+        currentSnapshotMs: finiteOrZero(profile.currentSnapshotMs),
+        candidateSamplesMs: finiteOrZero(profile.candidateSamplesMs),
+        windowingMs: finiteOrZero(profile.windowingMs),
+        distanceScaleMs: finiteOrZero(profile.distanceScaleMs),
+        analogSelectionMs: finiteOrZero(profile.analogSelectionMs),
+        summarizeMs: finiteOrZero(profile.summarizeMs),
+        pairContributionsMs: finiteOrZero(profile.pairContributionsMs),
+        classifyMs: finiteOrZero(profile.classifyMs),
+        targetsEvaluated: intOrZero(profile.targetsEvaluated),
+        artifactsEvaluated: intOrZero(profile.artifactsEvaluated),
+        linkedPairsEvaluated: intOrZero(profile.linkedPairsEvaluated),
+        candidateSamples: intOrZero(profile.candidateSamples),
+        preOosSamples: intOrZero(profile.preOosSamples),
+        oosSamples: intOrZero(profile.oosSamples),
+        earlyNoLinkedPairs: intOrZero(profile.earlyNoLinkedPairs),
+        earlyShortTargetHistory: intOrZero(profile.earlyShortTargetHistory),
+        earlyNoCurrentState: intOrZero(profile.earlyNoCurrentState),
+        earlyNotEnoughCandidates: intOrZero(profile.earlyNotEnoughCandidates),
+    };
+}
+
 function normalizeStabilityResult(value: unknown): BatchStabilityMineResult | null {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         return null;
@@ -88,4 +123,14 @@ function normalizeStabilityResult(value: unknown): BatchStabilityMineResult | nu
 function finiteOrNull(value: unknown): number | null {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : null;
+}
+
+function finiteOrZero(value: unknown): number {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function intOrZero(value: unknown): number {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.max(0, Math.floor(numeric)) : 0;
 }
