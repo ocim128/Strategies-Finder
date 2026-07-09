@@ -14,7 +14,7 @@
  */
 
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
-import type { BatchSyntheticMinerProfile } from "./batch-synthetic-state-miner";
+import type { BatchMinerEngine, BatchSyntheticMinerProfile } from "./batch-synthetic-state-miner";
 
 export const BATCH_BENCHMARK_SCHEMA = "batch.benchmark.v1" as const;
 
@@ -66,6 +66,19 @@ export interface BatchBenchmarkStabilityPhase {
     hitEventsPerRerun: number | null;
     hitEventsPerSampledPair: number | null;
     minerProfile: BatchSyntheticMinerProfile | null;
+    /**
+     * Which miner engine actually ran (Phase 6 reporting). `typescript` is the
+     * sequential reference; `typescript_parallel` is the Node worker path;
+     * `rust` is the Rust/Rayon backend; `rust_fallback` means Rust was
+     * attempted and fell back to a TypeScript path. Null when no Stability
+     * ran (so the field is informational, not load-bearing).
+     */
+    engine: BatchMinerEngine | null;
+    /**
+     * Human-readable fallback reason when `engine === "rust_fallback"`
+     * (e.g. "rust_unavailable", "schema_mismatch", "timeout"). Null otherwise.
+     */
+    rustFallbackReason: string | null;
 }
 
 export interface BatchBenchmarkSnapshot {
@@ -113,12 +126,25 @@ function largestMinerSubphase(profile: BatchSyntheticMinerProfile | null): { nam
         ["summaries", profile.summarizeMs],
         ["pair contributions", profile.pairContributionsMs],
         ["classification", profile.classifyMs],
+        // Phase 2/4 diagnostics: surface compact-artifact conversion cost and
+        // Rust transfer/processing time so the benchmark can tell whether the
+        // bottleneck moved across the TS/Rust boundary.
+        ["artifact conversion", profile.artifactConversionMs],
+        ["rust request", profile.rustRequestMs],
+        ["rust processing", profile.rustProcessingMs],
+        ["rust response", profile.rustResponseMs],
     ];
     const valid = candidates
         .filter(([, ms]) => Number.isFinite(ms) && ms > 0)
         .sort((a, b) => b[1] - a[1]);
     const top = valid[0];
     return top ? { name: top[0], ms: top[1] } : null;
+}
+
+function parallelWallEquivalent(ms: number, profile: BatchSyntheticMinerProfile | null, engine: string | null): number {
+    if (engine !== "typescript_parallel" || !profile) return ms;
+    const workers = Math.max(1, Math.floor(profile.parallelWorkerCount || 0));
+    return workers > 1 ? ms / workers : ms;
 }
 
 export function buildCacheStatsFromLoader(stats: BatchDatasetCacheStats): BatchBenchmarkCacheStats {
@@ -220,6 +246,49 @@ export function buildBatchBenchmarkBottlenecks(
             notes.push(
                 `stability mine took ${stabilityRatio.toFixed(1)}x the run phase (${phases.stability.totalMs.toFixed(0)} ms / ${phases.run.totalMs.toFixed(0)} ms)${workload}${avgRerun}${avgPair}${profileNote} - inspect phases.stability.minerProfile for the exact split`,
             );
+        }
+    }
+
+    // Engine / fallback reporting (Phase 6). Surface which miner engine ran
+    // and — when Rust was attempted but fell back — why. This is diagnostic-
+    // only: it never blocks the run, it just makes "why didn't Rust kick in"
+    // answerable from the benchmark without server logs.
+    if (phases.stability && phases.stability.engine === "rust_fallback" && phases.stability.rustFallbackReason) {
+        notes.push(
+            `rust miner fell back to typescript (${phases.stability.rustFallbackReason}) - see docs/batch-backtest-server-side.md troubleshooting`,
+        );
+    }
+
+    // Artifact load/conversion cost (Phase 2/3). On the sequential path this
+    // is the one-time artifact load plus optional compact->raw conversion; on
+    // the parallel path it is summed across workers and includes each worker's
+    // disk read/deserialization of the sampled artifact subset, so normalize
+    // by worker count before comparing to wall-clock Stability time.
+    if (phases.stability && phases.stability.minerProfile && phases.stability.totalMs > 0) {
+        const convMs = phases.stability.minerProfile.artifactConversionMs;
+        if (Number.isFinite(convMs) && convMs > 0) {
+            const comparableMs = parallelWallEquivalent(convMs, phases.stability.minerProfile, phases.stability.engine);
+            const convPct = comparableMs / phases.stability.totalMs;
+            if (convPct >= 0.2) {
+                const rawNote = comparableMs !== convMs
+                    ? `, summed worker CPU ${convMs.toFixed(0)} ms`
+                    : "";
+                notes.push(
+                    `artifact load/conversion was ${(convPct * 100).toFixed(1)}% of stability (${comparableMs.toFixed(0)} ms wall-equivalent${rawNote}) - reduce worker duplicate loads or disable compact storage if compact artifacts are enabled`,
+                );
+            }
+        }
+    }
+
+    if (phases.stability?.engine === "typescript_parallel" && phases.stability.minerProfile && phases.stability.totalMs > 0) {
+        const topSubphase = largestMinerSubphase(phases.stability.minerProfile);
+        if (topSubphase) {
+            const comparableMs = parallelWallEquivalent(topSubphase.ms, phases.stability.minerProfile, phases.stability.engine);
+            if (comparableMs / phases.stability.totalMs >= 0.35) {
+                notes.push(
+                    `parallel worker CPU is dominated by ${topSubphase.name} (${topSubphase.ms.toFixed(0)} ms summed, ~${comparableMs.toFixed(0)} ms wall-equivalent)`,
+                );
+            }
         }
     }
 

@@ -605,6 +605,11 @@ class BatchBacktestService {
             hitEventsPerRerun: benchmarkRatio(hitEvents, result.reruns, 3),
             hitEventsPerSampledPair: benchmarkRatio(hitEvents, sampledPairEvaluations, 5),
             minerProfile: result.minerProfile ?? null,
+            // Phase 6 engine reporting. Default the omitted/legacy field to the
+            // sequential TypeScript engine so the benchmark always reports a
+            // concrete engine, even for results produced before this field existed.
+            engine: result.engine ?? "typescript",
+            rustFallbackReason: result.rustFallbackReason ?? null,
         };
         this.mergePhase({ stability: phase });
     }

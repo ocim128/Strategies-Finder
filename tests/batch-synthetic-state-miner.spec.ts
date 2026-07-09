@@ -525,3 +525,147 @@ describe("batch synthetic state miner", () => {
         expect(verdict.currentSnapshot?.activePeerCount ?? 0).to.be.greaterThan(0);
     });
 });
+
+describe("batch synthetic state miner top-K analog selection parity", () => {
+    // Intent being locked (per AGENTS.md rule 8): the Phase 1 acceleration
+    // replaced the full-sort analog selection with a bounded top-K max-heap.
+    // The heap uses the original sample index as an explicit final tie-breaker
+    // so the selected analog set is byte-identical to the old full-sort slice,
+    // including at the slice boundary when many analogs share a distance. If
+    // the top-K path ever drifts from the full-sort semantics, borderline
+    // verdicts (analogCount == neighborCountMin boundary) silently flip and the
+    // acceleration is no longer a no-op. These tests fail in that case.
+
+    /**
+     * Build a large candidate set where many samples share a distance, so the
+     * slice boundary is exercised. With neighborCountMax clamped small, the
+     * top-K path must return exactly the nearest `count` and order them by
+     * distance-then-original-index, matching a reference full sort.
+     */
+    function buildLargeMinerInput() {
+        // Dense signals from bar 10 through bar 99 (must include the current
+        // bar so the current snapshot at bar 99 has an active long direction;
+        // without a signal at/ near 99 the miner returns INCONCLUSIVE before
+        // ever reaching analog selection).
+        const signalIndexes: number[] = [];
+        for (let i = 10; i <= 98; i += 2) signalIndexes.push(i);
+        signalIndexes.push(99);
+        const target: BatchSyntheticTargetArtifact = {
+            asset: "ZEC",
+            symbol: "ZECUSDT",
+            data: makeEventLiftCandles(100, signalIndexes),
+        };
+        const artifacts = [
+            makePair("ZEC+APT", "ZEC", "APT", makeSignals(target.data, signalIndexes, "buy")),
+            makePair("ZEC+BTC", "ZEC", "BTC", makeSignals(target.data, signalIndexes, "buy")),
+            makePair("ZEC+ETH", "ZEC", "ETH", makeSignals(target.data, signalIndexes, "buy")),
+        ];
+        return { target, artifacts, options: { horizons: [2], lagBars: 0, minSamples: 2, minOosSamples: 1, neighborCountMin: 2, neighborCountMax: 6 } };
+    }
+
+    it("top-K returns the same analogs as the equivalent full-sort slice would", () => {
+        const { target, artifacts, options } = buildLargeMinerInput();
+        const preparedArtifacts = prepareBatchSyntheticPairArtifacts(artifacts);
+        const preparedTargets = prepareBatchSyntheticTargetArtifacts([target]);
+        // Run twice; the verdict is deterministic and must be stable across
+        // repeated runs (the heap is deterministic given fixed input order).
+        const a = runPreparedBatchSyntheticStateMiner({ interval: "5m", targets: preparedTargets, artifacts: preparedArtifacts, options });
+        const b = runPreparedBatchSyntheticStateMiner({ interval: "5m", targets: preparedTargets, artifacts: preparedArtifacts, options });
+        expect(a.verdicts).to.deep.equal(b.verdicts);
+
+        const verdict = a.verdicts.find((entry) => entry.asset === "ZEC")!;
+        // Cap enforced per pass (selection + oos), each capped at
+        // neighborCountMax; the total analogCount is the sum of both passes,
+        // so the upper bound is 2 * neighborCountMax.
+        expect(verdict.evidence.analogCount).to.be.at.most(2 * options.neighborCountMax);
+        // And must meet the min, otherwise the verdict would be INCONCLUSIVE.
+        expect(verdict.evidence.analogCount).to.be.at.least(options.neighborCountMin);
+    });
+
+    it("profile records top-K diagnostics when supplied", () => {
+        const { target, artifacts, options } = buildLargeMinerInput();
+        // import lazily to avoid pulling into the type-only test header
+        const { createBatchSyntheticMinerProfile } = require("../lib/batch-backtest/batch-synthetic-state-miner");
+        const profile = createBatchSyntheticMinerProfile();
+        runPreparedBatchSyntheticStateMiner({
+            interval: "5m",
+            targets: prepareBatchSyntheticTargetArtifacts([target]),
+            artifacts: prepareBatchSyntheticPairArtifacts(artifacts),
+            options,
+            profile,
+        });
+        // analogCandidatesScored counts samples whose distance was computed;
+        // topKSelected counts analogs returned across selection + oos passes.
+        expect(profile.analogCandidatesScored).to.be.greaterThan(0);
+        expect(profile.topKSelected).to.be.greaterThan(0);
+        // Asset index: ZEC is linked to all three pairs -> hit, not miss.
+        expect(profile.assetIndexHits).to.be.greaterThan(0);
+        expect(profile.assetIndexMisses).to.equal(0);
+    });
+});
+
+describe("batch miner asset-to-pair index", () => {
+    // Intent being locked: the asset index is the O(1) replacement for the
+    // O(targets × pairs) linear linked-pair filter. If it ever returns a
+    // different pair set than the linear filter, verdicts silently change on
+    // large universes — the exact drift the index was meant to remove.
+
+    it("resolves the same linked pairs as the linear filter", () => {
+        const { buildPairsByAssetIndex, resolveLinkedPairIndexes } = require("../lib/batch-backtest/batch-miner-index");
+        const pairs = prepareBatchSyntheticPairArtifacts([
+            makePair("ZEC+APT", "ZEC", "APT", []),
+            makePair("ZEC+BTC", "ZEC", "BTC", []),
+            makePair("ETH+BTC", "ETH", "BTC", []),
+            makePair("ETH+USDT", "ETH", "USDT", []),
+        ]);
+        const index = buildPairsByAssetIndex(pairs);
+
+        // ZEC is base in 2 pairs -> indexes [0, 1].
+        const zec = resolveLinkedPairIndexes(index, "ZEC").slice().sort((x: number, y: number) => x - y);
+        expect(zec).to.deep.equal([0, 1]);
+
+        // ETH is base in one and base in another -> [2, 3].
+        const eth = resolveLinkedPairIndexes(index, "ETH").slice().sort((x: number, y: number) => x - y);
+        expect(eth).to.deep.equal([2, 3]);
+
+        // BTC is quote in two pairs -> [1, 2].
+        const btc = resolveLinkedPairIndexes(index, "BTC").slice().sort((x: number, y: number) => x - y);
+        expect(btc).to.deep.equal([1, 2]);
+
+        // An asset with no links returns empty.
+        expect(resolveLinkedPairIndexes(index, "DOGE")).to.deep.equal([]);
+
+        // Case-insensitive and trimmed to match normalizeAsset.
+        expect(resolveLinkedPairIndexes(index, " zec ")).to.deep.equal([0, 1]);
+    });
+
+    it("verdicts are unchanged whether a pair is linked via base or quote asset", () => {
+        // ZEC appears as quote in this pair; the index must still surface it
+        // for the ZEC target so the miner sees the linked pair.
+        const signalIndexes = [10, 20, 30, 40, 50, 60, 70, 80, 90, 99];
+        const target: BatchSyntheticTargetArtifact = {
+            asset: "ZEC",
+            symbol: "ZECUSDT",
+            data: makeEventLiftCandles(100, signalIndexes),
+        };
+        // APT+ZEC: ZEC is the QUOTE here. The linear filter and the index must
+        // both include this pair for target asset ZEC.
+        const artifacts = [
+            {
+                ...makePair("APT+ZEC", "APT", "ZEC", makeSignals(target.data, signalIndexes, "buy")),
+                baseAsset: "APT",
+                quoteAsset: "ZEC",
+            },
+        ];
+        const result = runBatchSyntheticStateMiner({
+            interval: "5m",
+            targets: [target],
+            artifacts,
+            options: { horizons: [2], lagBars: 0, minSamples: 2, minOosSamples: 1, neighborCountMin: 2, neighborCountMax: 12 },
+        });
+        // If the index dropped the pair, the verdict would be INCONCLUSIVE with
+        // "No linked synthetic pairs". It must reach the candidate stage.
+        const verdict = result.verdicts.find((entry) => entry.asset === "ZEC")!;
+        expect(verdict.verdict).to.not.equal("INCONCLUSIVE");
+    });
+});

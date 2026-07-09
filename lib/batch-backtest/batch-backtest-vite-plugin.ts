@@ -58,6 +58,26 @@ import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import { toScalarRow, type BatchStreamEvent } from "./batch-backtest-stream-types";
 import { setRuntimeLocalApiOrigin } from "../local-api-transport";
 import { buildBatchRunFingerprint, normalizeBatchSymbols } from "./batch-run-contract";
+import {
+    fromCompactPairArtifact,
+    isCompactPairArtifact,
+    toCompactTargetArtifact,
+    toCompactPairArtifact,
+    type CompactPairArtifact,
+} from "./batch-miner-artifact";
+import {
+    buildFileManifestStabilityRequest,
+    RustMinerClient,
+    rustMiner,
+    type RustMinerFallbackReason,
+    type RustMinerFileManifest,
+    type RustStabilityMineResponse,
+} from "./batch-rust-miner-client";
+import {
+    mergeStabilityAccumulators,
+    runParallelStability,
+    type ParallelStabilityOutcome,
+} from "./batch-stability-parallel";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -71,9 +91,78 @@ const VERY_LARGE_RUN_SYMBOL_THRESHOLD = 800;
 const LARGE_RUN_MIN_HEAP_MB = 8192;
 const VERY_LARGE_RUN_MIN_HEAP_MB = 12288;
 
+/**
+ * Phase 2 compact-artifact storage gate. When true, `storeMineArtifact`
+ * converts the raw `BatchSyntheticPairArtifact` to the compact SoA shape
+ * (`toCompactPairArtifact`) before writing to disk.
+ *
+ * DEFAULT IS FALSE. A real 448-pair / 4H benchmark (2026-07-08) showed that
+ * converting at store time adds ~29M `localTimeKey` string allocations during
+ * the Run phase (Run went 15.3s → 29.0s, +89%), and the compact→raw
+ * reconversion at Mine load adds another ~1.4s (`artifactConversionMs`). On
+ * the TS-only path (the only path that exists today — no Rust backend) that is
+ * a net ~13s regression for zero benefit: the compact shape only pays off when
+ * a Rust backend reads it via file-manifest handoff. The plan's own Phase 2
+ * exit criterion is "artifact preparation time and heap usage do not regress";
+ * this gate defaulted to true violated it.
+ *
+ * Toggle to true ONLY when a Rust miner backend is actually deployed and the
+ * file-manifest handoff's lower transfer cost outweighs the store-time tax.
+ * `loadStoredMineArtifact` handles both shapes transparently, so mixed
+ * artifacts (e.g. across a toggle) still load correctly.
+ */
+const BATCH_MINER_COMPACT_ARTIFACTS_ENABLED_DEFAULT = false;
+let BATCH_MINER_COMPACT_ARTIFACTS_ENABLED = BATCH_MINER_COMPACT_ARTIFACTS_ENABLED_DEFAULT;
+
+/**
+ * Phase 4 Rust miner routing gate. When true, `processStabilityMine` first
+ * probes the Rust miner backend and routes to it when healthy + schema-
+ * compatible + file-manifest-capable. On any fallback reason (unavailable,
+ * schema mismatch, timeout, transport unsupported) it runs the TypeScript
+ * sequential path and stamps `engine: "rust_fallback"` + the reason on the
+ * result so the Phase 6 benchmark surfaces it.
+ *
+ * The gate is independent of `BATCH_MINER_COMPACT_ARTIFACTS_ENABLED` but
+ * depends on it at runtime: Rust file-manifest handoff only works when the
+ * stored artifacts are compact (the backend reads the compact shape). If
+ * compact storage is off, the router skips Rust and falls straight through.
+ */
+const BATCH_MINER_RUST_ROUTING_ENABLED_DEFAULT = true;
+let BATCH_MINER_RUST_ROUTING_ENABLED = BATCH_MINER_RUST_ROUTING_ENABLED_DEFAULT;
+
+/**
+ * Phase 3 parallel-Stability gate. When true AND Rust fell back, the server
+ * plugin partitions the rerun range across Node worker_threads before falling
+ * through to the sequential TypeScript loop. The worker path reads artifacts
+ * (compact OR raw) from disk independently, so the structured-clone cost at
+ * worker startup stays bounded regardless of pair count (plan §"Risks/Blockers").
+ *
+ * DEFAULT IS TRUE. The worker is bundled to `.js` on first use via esbuild
+ * (see `resolveWorkerPath()` in `batch-stability-parallel.ts`), so Node
+ * `worker_threads` can load it under `vite dev` without a TS-aware loader.
+ * On any worker error (spawn failure, crash, timeout), the orchestrator
+ * returns `ok: false` and the plugin falls back to the sequential TypeScript
+ * loop, so a parallel-path bug never breaks Stability.
+ *
+ * Only engages when `reruns >= PARALLEL_STABILITY_MIN_RERUNS` (below that,
+ * worker startup + merge overhead exceeds the parallelism win) and only on the
+ * server-side path. The deterministic merge is parity-locked by
+ * `tests/batch-stability-parallel.spec.ts`.
+ */
+const BATCH_MINER_PARALLEL_STABILITY_ENABLED_DEFAULT = true;
+let BATCH_MINER_PARALLEL_STABILITY_ENABLED = BATCH_MINER_PARALLEL_STABILITY_ENABLED_DEFAULT;
+const PARALLEL_STABILITY_MIN_RERUNS = 4;
+
 // ---------------------------------------------------------------------------
 // Module-scope state — single in-flight run per dev server (single-owner model)
 // ---------------------------------------------------------------------------
+
+/**
+ * Rust miner client holder. Defaults to the singleton; tests swap it via
+ * `__testInternals.setRustMinerClientForTests(...)` to inject a mock without
+ * touching the real network. Production code never mutates this.
+ */
+let rustMinerClient: RustMinerClient = rustMiner;
 
 const RUN_OWNER_NONE = 0;
 let runOwner = RUN_OWNER_NONE;
@@ -89,7 +178,13 @@ let lastMineArtifacts: StoredMineArtifactMeta[] = [];
 // ~10,000 disk reads + JSON parses of multi-MB files. The cache is bounded
 // by the artifact count and cleared in `releaseLastResults`, so steady-state
 // heap footprint is unchanged.
-const parsedArtifactCache = new Map<string, BatchSyntheticPairArtifact>();
+//
+// Phase 2: when `BATCH_MINER_COMPACT_ARTIFACTS_ENABLED`, the cache stores the
+// on-disk compact shape (`CompactPairArtifact`), and `loadStoredMineArtifact`
+// adapts compact -> raw on read. This keeps the compact shape (the smaller,
+// GC-friendly one) resident across reruns and only pays the raw-reconstruction
+// cost when the TypeScript miner actually runs.
+const parsedArtifactCache = new Map<string, CompactPairArtifact | BatchSyntheticPairArtifact>();
 let mineArtifactDir: string | null = null;
 let lastRunFingerprint: string | null = null;
 let lastRunInterval: string | null = null;
@@ -150,12 +245,19 @@ function storeMineArtifact(index: number, row: BatchBacktestSymbolResult): void 
         signals: row.signals,
         result: row.result,
     };
+    // Phase 2: convert to the compact SoA shape before serializing when the
+    // gate is on. v8.serialize preserves Float64Array / Uint8Array typed
+    // arrays natively, so the compact artifact survives disk round-trip
+    // without per-element bookkeeping. The raw shape remains available by
+    // toggling BATCH_MINER_COMPACT_ARTIFACTS_ENABLED off.
+    const stored: CompactPairArtifact | BatchSyntheticPairArtifact =
+        BATCH_MINER_COMPACT_ARTIFACTS_ENABLED ? toCompactPairArtifact(artifact) : artifact;
     // v8 serialize is ~2-4x faster than JSON.stringify on numeric-heavy
     // OHLCV/trade payloads and produces smaller files. Paired with the parse
     // cache in loadStoredMineArtifact, Stability Mine no longer blocks on
     // (de)serialization for rerun subsets.
-    writeFileSync(filePath, serialize(artifact));
-    parsedArtifactCache.set(filePath, artifact);
+    writeFileSync(filePath, serialize(stored));
+    parsedArtifactCache.set(filePath, stored);
     lastMineArtifacts[index] = {
         symbol: row.symbol,
         baseAsset: parsed.baseAsset,
@@ -168,10 +270,18 @@ function storeMineArtifact(index: number, row: BatchBacktestSymbolResult): void 
 
 function loadStoredMineArtifact(meta: StoredMineArtifactMeta): BatchSyntheticPairArtifact {
     const cached = parsedArtifactCache.get(meta.filePath);
-    if (cached) return cached;
-    const parsed = deserialize(readFileSync(meta.filePath)) as BatchSyntheticPairArtifact;
-    parsedArtifactCache.set(meta.filePath, parsed);
-    return parsed;
+    if (cached) {
+        // Cache may hold either shape; adapt compact -> raw on the fly.
+        return isCompactPairArtifact(cached) ? fromCompactPairArtifact(cached) : cached;
+    }
+    const deserialized = deserialize(readFileSync(meta.filePath)) as CompactPairArtifact | BatchSyntheticPairArtifact;
+    parsedArtifactCache.set(meta.filePath, deserialized);
+    if (isCompactPairArtifact(deserialized)) {
+        return fromCompactPairArtifact(deserialized);
+    }
+    // Legacy raw artifact (written before compact storage shipped, or when the
+    // gate is toggled off). Return as-is.
+    return deserialized;
 }
 
 function collectStoredMineArtifactMetas(): StoredMineArtifactMeta[] {
@@ -570,13 +680,141 @@ export async function processStabilityMine(
             return;
         }
 
+        // Phase 4: attempt the Rust miner backend first when both gates are on.
+        // On success, the backend returns a finalized result (rows already
+        // scored); stream a single progress + done and skip the TypeScript
+        // rerun loop. On any fallback reason, fall through to TypeScript and
+        // stamp the reason on the result so the benchmark can explain it.
+        // Cancellation is preserved by checking ownership after the await.
+        let rustFallback: { reason: RustMinerFallbackReason; message: string } | null = null;
+        if (BATCH_MINER_RUST_ROUTING_ENABLED && BATCH_MINER_COMPACT_ARTIFACTS_ENABLED && !lostOwnership()) {
+            const route = await tryRustStabilityMine({
+                interval,
+                targets,
+                subsetSize,
+                reruns,
+                seed,
+            });
+            if (lostOwnership()) {
+                snapshot.cancelled = true;
+                writer({ type: "fatal", error: "Stability mining cancelled." });
+                return;
+            }
+            if (route.ok) {
+                const rustResult = route.result;
+                // The backend returns the full BatchStabilityMineResult shape.
+                // Surface engine + timings so the benchmark distinguishes Rust
+                // from TypeScript end-to-end.
+                rustResult.engine = "rust";
+                rustResult.rustFallbackReason = null;
+                // Surface Rust timings on the miner profile so the benchmark
+                // can compare TS vs Rust end-to-end. The backend is expected to
+                // populate `processingTimeMs`; if it omitted a minerProfile
+                // entirely, attach a fresh one so the engine + timings are
+                // always visible to the Phase 6 benchmark builder.
+                if (!rustResult.minerProfile) {
+                    rustResult.minerProfile = createBatchSyntheticMinerProfile();
+                }
+                rustResult.minerProfile.rustRequestMs = route.requestMs;
+                rustResult.minerProfile.rustProcessingMs = rustResult.processingTimeMs;
+                snapshot.verdicts = rustResult.hitEvents;
+                writer({ type: "progress", run: reruns, reruns, hits: rustResult.hitEvents });
+                snapshot.running = false;
+                writer({ type: "done", ok: true, result: rustResult });
+                // Rust was the last consumer of the per-row artifacts.
+                releaseLastResults("mine_completed");
+                return;
+            }
+            rustFallback = { reason: route.reason, message: route.message };
+            debugLogger.info("batch.rust_miner.fallback_to_typescript", rustFallback);
+        }
+
+        // Phase 3: when Rust was unavailable AND the rerun count justifies it,
+        // partition the rerun range across Node worker_threads. This is the
+        // fallback acceleration path (plan §"Phase 3"). Each worker reads
+        // artifact files (compact OR raw) from disk independently, so worker
+        // startup cost stays bounded regardless of pair count. On any worker
+        // failure, fall through to the sequential TypeScript loop (single
+        // retry, per plan §"Failure Handling": "Worker crash: retry sequential
+        // TS once"). NOTE: parallel is decoupled from the compact-storage
+        // gate because workers handle both on-disk shapes; but it IS gated by
+        // `BATCH_MINER_PARALLEL_STABILITY_ENABLED`, which defaults true after
+        // the worker bundling/parity tests locked the loading story.
+        if (
+            BATCH_MINER_PARALLEL_STABILITY_ENABLED
+            && reruns >= PARALLEL_STABILITY_MIN_RERUNS
+            && !lostOwnership()
+        ) {
+            const parallelStartedAt = performance.now();
+            const manifest = buildStabilityManifest();
+            const parallelOutcome: ParallelStabilityOutcome = await runParallelStability({
+                artifactFiles: manifest?.pairArtifactFiles ?? [],
+                targets,
+                interval,
+                subsetSize,
+                reruns,
+                seed,
+                isCancelled: () => lostOwnership(),
+                onProgress: (completedReruns, totalReruns) => {
+                    if (lostOwnership()) return;
+                    // Hits are not aggregated until merge completes (each worker
+                    // holds its own partial accumulator); emit 0 for in-flight
+                    // progress and the real total on the final `done`.
+                    writer({ type: "progress", run: completedReruns, reruns: totalReruns, hits: 0 });
+                },
+            });
+            if (lostOwnership()) {
+                snapshot.cancelled = true;
+                writer({ type: "fatal", error: "Stability mining cancelled." });
+                return;
+            }
+            if (parallelOutcome.ok) {
+                const merged = mergeStabilityAccumulators(
+                    parallelOutcome.result,
+                    reruns,
+                    subsetSize,
+                    seed,
+                    artifactMetas.length,
+                    targets.length,
+                );
+                const parallelProfile = merged.profile;
+                parallelProfile.parallelWorkerCount = parallelOutcome.workerCount;
+                // Stamp the parallel-orchestration wall-clock onto the merged
+                // profile so the benchmark can see worker startup + merge cost
+                // separately from per-worker compute.
+                parallelProfile.runPreparedMs += performance.now() - parallelStartedAt;
+                const parallelResult = finalizeStabilityAggregate(merged.accumulator);
+                parallelResult.minerProfile = parallelProfile;
+                parallelResult.engine = "typescript_parallel";
+                parallelResult.rustFallbackReason = rustFallback ? rustFallback.reason : null;
+                snapshot.verdicts = parallelResult.hitEvents;
+                writer({ type: "progress", run: reruns, reruns, hits: parallelResult.hitEvents });
+                snapshot.running = false;
+                writer({ type: "done", ok: true, result: parallelResult });
+                releaseLastResults("mine_completed");
+                return;
+            }
+            debugLogger.info("batch.parallel_stability.fallback_to_sequential", {
+                reason: parallelOutcome.reason,
+                message: parallelOutcome.message,
+            });
+        }
+
         const aggregate = createStabilityAggregate(reruns, subsetSize, seed, artifactMetas.length, targets.length);
         const minerProfile = createBatchSyntheticMinerProfile();
         let profileStartedAt = performance.now();
         const preparedTargets = prepareBatchSyntheticTargetArtifacts(targets);
         minerProfile.prepareTargetsMs += performance.now() - profileStartedAt;
+        // Split the artifact load (compact->raw reconstruction when the gate
+        // is on) from the prepare step (ATR/trade/signal index building) so
+        // `artifactConversionMs` reports disk artifact load separately from
+        // preparation. On raw artifacts this is v8 deserialize/cache time; on
+        // compact artifacts it also includes compact->raw reconstruction.
         profileStartedAt = performance.now();
-        const preparedPairs = prepareBatchSyntheticPairArtifacts(artifactMetas.map(loadStoredMineArtifact));
+        const loadedPairs = artifactMetas.map(loadStoredMineArtifact);
+        minerProfile.artifactConversionMs += performance.now() - profileStartedAt;
+        profileStartedAt = performance.now();
+        const preparedPairs = prepareBatchSyntheticPairArtifacts(loadedPairs);
         minerProfile.preparePairsMs += performance.now() - profileStartedAt;
         for (let runIndex = 0; runIndex < reruns; runIndex += 1) {
             if (lostOwnership()) {
@@ -602,6 +840,11 @@ export async function processStabilityMine(
 
         const finalResult = finalizeStabilityAggregate(aggregate);
         finalResult.minerProfile = minerProfile;
+        // Phase 6 engine reporting. If Rust was attempted and fell back, stamp
+        // `rust_fallback` + the reason so the benchmark surfaces it; otherwise
+        // this is a clean TypeScript run (Rust never attempted — gate off).
+        finalResult.engine = rustFallback ? "rust_fallback" : "typescript";
+        finalResult.rustFallbackReason = rustFallback ? rustFallback.reason : null;
         snapshot.running = false;
         writer({ type: "done", ok: true, result: finalResult });
     } catch (error) {
@@ -672,6 +915,89 @@ async function loadMinerTargets(
         },
     );
     return loaded.filter((entry): entry is BatchSyntheticTargetArtifact => entry !== null);
+}
+
+// ---------------------------------------------------------------------------
+// Rust miner routing (Phase 4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Outcome of a Rust Stability attempt. The router returns either the backend's
+ * finalized result + timing, or a fallback reason the caller stamps onto the
+ * TypeScript result so the Phase 6 benchmark can explain why Rust was not used.
+ */
+type RustStabilityRouteOutcome =
+    | { ok: true; result: RustStabilityMineResponse; requestMs: number }
+    | { ok: false; reason: RustMinerFallbackReason; message: string };
+
+/**
+ * Build the file-manifest envelope from the current stored artifacts + loaded
+ * targets. Rust reads compact pair + target files directly from the server temp
+ * directory (plan §"API And Contracts": preferred transport is file-manifest
+ * handoff; only enable when the backend is local and trusted).
+ */
+function buildStabilityManifest(targets?: readonly BatchSyntheticTargetArtifact[]): RustMinerFileManifest | null {
+    if (!mineArtifactDir) return null;
+    const metas = collectStoredMineArtifactMetas();
+    if (metas.length === 0) return null;
+    const targetArtifactFiles = (targets ?? []).map((target, index) => {
+        const filePath = join(mineArtifactDir!, `target-${String(index).padStart(4, "0")}.bin`);
+        writeFileSync(filePath, serialize(toCompactTargetArtifact(target)));
+        return filePath;
+    });
+    return {
+        pairArtifactFiles: metas.map((meta) => meta.filePath),
+        targetArtifactFiles,
+        artifactDirectory: mineArtifactDir,
+    };
+}
+
+/**
+ * Attempt a Rust Stability Mine. Returns the backend result on success or a
+ * structured fallback reason on any failure. Never throws — the caller routes
+ * to TypeScript on `ok: false`.
+ *
+ * Pre-conditions (checked by the caller, not here):
+ *   - `BATCH_MINER_RUST_ROUTING_ENABLED` is true
+ *   - `BATCH_MINER_COMPACT_ARTIFACTS_ENABLED` is true (file-manifest handoff
+ *     requires the compact on-disk shape)
+ *   - artifacts are still retained (not TTL-released)
+ */
+async function tryRustStabilityMine(args: {
+    interval: string;
+    targets: BatchSyntheticTargetArtifact[];
+    subsetSize: number;
+    reruns: number;
+    seed: number;
+}): Promise<RustStabilityRouteOutcome> {
+    const manifest = buildStabilityManifest(args.targets);
+    if (!manifest) {
+        return { ok: false, reason: "rust_unavailable", message: "no compact artifacts available for file-manifest handoff" };
+    }
+    const request = buildFileManifestStabilityRequest({
+        interval: args.interval,
+        // The Rust backend must reproduce TypeScript miner behavior, so pass
+        // the default options (no partial overrides) — the backend applies the
+        // same DEFAULT_OPTIONS the TypeScript miner resolves.
+        options: {},
+        manifest,
+        targets: args.targets.map((target) => ({ asset: target.asset, symbol: target.symbol })),
+        subsetSize: args.subsetSize,
+        reruns: args.reruns,
+        seed: args.seed,
+    });
+    const requestStartedAt = performance.now();
+    const outcome = await rustMinerClient.runStabilityMine(request);
+    const requestMs = performance.now() - requestStartedAt;
+    if (!outcome.ok) {
+        return { ok: false, reason: outcome.reason, message: outcome.message };
+    }
+    debugLogger.info("batch.rust_miner.stability_ok", {
+        processingTimeMs: outcome.value.processingTimeMs,
+        requestMs,
+        rows: outcome.value.rows.length,
+    });
+    return { ok: true, result: outcome.value, requestMs };
 }
 
 // ---------------------------------------------------------------------------
@@ -1033,5 +1359,37 @@ export const __testInternals = {
     },
     getRunStateForTests(): BatchRunSnapshot | null {
         return runState;
+    },
+    /**
+     * Swap the Rust miner client for a mock during tests. Pass the singleton
+     * `rustMiner` (or call `resetRustMinerClientForTests()`) to restore. Used
+     * by the Phase 4 mocked-routing tests to avoid touching the network.
+     */
+    setRustMinerClientForTests(client: RustMinerClient): void {
+        rustMinerClient = client;
+    },
+    resetRustMinerClientForTests(): void {
+        rustMinerClient = rustMiner;
+    },
+    /**
+     * Toggle the miner-acceleration gates during tests. The Rust and compact
+     * paths default OFF in production (no Rust backend; compact store-time
+     * tax is a net loss on the TS-only path), but the tests that lock those
+     * paths must opt them ON. Always restore via resetMinerGatesForTests() in
+     * finally so a toggled gate cannot leak into unrelated tests.
+     */
+    setMinerGatesForTests(args: {
+        compactArtifacts?: boolean;
+        rustRouting?: boolean;
+        parallelStability?: boolean;
+    }): void {
+        if (args.compactArtifacts !== undefined) BATCH_MINER_COMPACT_ARTIFACTS_ENABLED = args.compactArtifacts;
+        if (args.rustRouting !== undefined) BATCH_MINER_RUST_ROUTING_ENABLED = args.rustRouting;
+        if (args.parallelStability !== undefined) BATCH_MINER_PARALLEL_STABILITY_ENABLED = args.parallelStability;
+    },
+    resetMinerGatesForTests(): void {
+        BATCH_MINER_COMPACT_ARTIFACTS_ENABLED = BATCH_MINER_COMPACT_ARTIFACTS_ENABLED_DEFAULT;
+        BATCH_MINER_RUST_ROUTING_ENABLED = BATCH_MINER_RUST_ROUTING_ENABLED_DEFAULT;
+        BATCH_MINER_PARALLEL_STABILITY_ENABLED = BATCH_MINER_PARALLEL_STABILITY_ENABLED_DEFAULT;
     },
 };

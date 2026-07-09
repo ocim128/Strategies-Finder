@@ -1,4 +1,4 @@
-import type { BatchSyntheticAssetVerdict, BatchSyntheticMinerProfile } from "./batch-synthetic-state-miner";
+import type { BatchMinerEngine, BatchSyntheticAssetVerdict, BatchSyntheticMinerProfile } from "./batch-synthetic-state-miner";
 
 export interface BatchStabilityAccumulator {
     reruns: number;
@@ -33,6 +33,14 @@ interface BatchStabilityRowAccumulator {
     agreeingSets: string[][];
 }
 
+/**
+ * Re-exported so the Phase 3 parallel orchestrator (`batch-stability-parallel.ts`)
+ * can type its merge of per-worker row accumulators. Exported as a type alias
+ * (the interface is intentionally not part of the public result contract; the
+ * finalized `BatchStabilityRow` is what crosses out of this module).
+ */
+export type { BatchStabilityRowAccumulator };
+
 export interface BatchStabilityMineResult {
     reruns: number;
     subsetSize: number;
@@ -41,6 +49,17 @@ export interface BatchStabilityMineResult {
     targetAssets: number;
     hitEvents: number;
     minerProfile?: BatchSyntheticMinerProfile | null;
+    /**
+     * Which miner engine actually ran (Phase 6 reporting). Omitted on the
+     * sequential TypeScript path for backward-compatible default JSON; the
+     * benchmark builder normalizes missing -> "typescript".
+     */
+    engine?: BatchMinerEngine;
+    /**
+     * Human-readable fallback reason when `engine === "rust_fallback"`.
+     * Omitted/null otherwise.
+     */
+    rustFallbackReason?: string | null;
     rows: BatchStabilityRow[];
 }
 

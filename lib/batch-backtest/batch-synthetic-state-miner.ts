@@ -4,6 +4,11 @@ import {
     computeDirectionalAtrDistance,
     computeDirectionalPercentMove,
 } from "../portfolioLab/portfolio-lab-statistics";
+import {
+    buildPairsByAssetIndex,
+    resolveLinkedPairIndexes,
+    type PairsByAssetIndex,
+} from "./batch-miner-index";
 
 export type BatchSyntheticDirection = "long" | "short";
 export type BatchSyntheticVerdict = "LONG" | "SHORT" | "WATCH" | "SKIP" | "INCONCLUSIVE";
@@ -200,7 +205,44 @@ export interface BatchSyntheticMinerProfile {
     earlyShortTargetHistory: number;
     earlyNoCurrentState: number;
     earlyNotEnoughCandidates: number;
+    /**
+     * Top-K analog selection diagnostics (Phase 1 acceleration). `analogCandidatesScored`
+     * counts samples whose distance was actually computed (after direction filtering);
+     * `topKSelected` counts analogs returned across both selection+oos passes. On the
+     * old full-sort path these were always (samples - filtered) and (sum of `count`s).
+     */
+    analogCandidatesScored: number;
+    topKSelected: number;
+    /**
+     * Asset-to-pair index diagnostics. `assetIndexHits` counts O(1) lookups
+     * that returned at least one linked pair; `assetIndexMisses` counts O(1)
+     * lookups where the target asset was not present in the current pair set.
+     */
+    assetIndexHits: number;
+    assetIndexMisses: number;
+    /**
+     * Server-side artifact load/conversion time. Raw artifacts count v8
+     * deserialize/cache time; compact artifacts also count compact->raw
+     * reconstruction. Parallel Stability sums this across workers.
+     */
+    artifactConversionMs: number;
+    /**
+     * Rust miner timings (Phase 4). All 0 on the TypeScript path. `rustFallbackReason`
+     * is non-null only when Rust was attempted and fell back.
+     */
+    rustRequestMs: number;
+    rustProcessingMs: number;
+    rustResponseMs: number;
+    /**
+     * Number of worker_threads used by the parallel TypeScript Stability path.
+     * 0 on sequential TypeScript and Rust paths. Timing fields are summed
+     * across workers, so benchmark diagnostics divide by this count when they
+     * need a wall-clock-equivalent estimate.
+     */
+    parallelWorkerCount: number;
 }
+
+export type BatchMinerEngine = "typescript" | "typescript_parallel" | "rust" | "rust_fallback";
 
 export interface TradeRange {
     trade: Trade;
@@ -313,6 +355,15 @@ export function createBatchSyntheticMinerProfile(): BatchSyntheticMinerProfile {
         earlyShortTargetHistory: 0,
         earlyNoCurrentState: 0,
         earlyNotEnoughCandidates: 0,
+        analogCandidatesScored: 0,
+        topKSelected: 0,
+        assetIndexHits: 0,
+        assetIndexMisses: 0,
+        artifactConversionMs: 0,
+        rustRequestMs: 0,
+        rustProcessingMs: 0,
+        rustResponseMs: 0,
+        parallelWorkerCount: 0,
     };
 }
 
@@ -369,9 +420,17 @@ export function runPreparedBatchSyntheticStateMiner(input: BatchSyntheticPrepare
         profile.artifactsEvaluated += input.artifacts.length;
     }
 
+    // Build the asset -> pair-index lookup once per run. The old path scanned
+    // the full pair array once per target (O(targets × pairs) string compares);
+    // on a 1000-pair / 80-asset Stability rerun this collapsed ~80k compares
+    // into ~2k during index build, and each target's linked lookup is now O(1).
+    // `buildPairsByAssetIndex` itself is O(pairs); the index is shared read-only
+    // across every `buildAssetVerdict` call below.
+    const pairsByAsset = buildPairsByAssetIndex(input.artifacts);
+
     const buildStartedAt = nowMs();
     const verdicts = input.targets
-        .map((target) => buildAssetVerdict(target, input.artifacts, options, profile));
+        .map((target) => buildAssetVerdict(target, input.artifacts, pairsByAsset, options, profile));
     addProfileMs(profile, "buildVerdictsMs", buildStartedAt);
     const sortStartedAt = nowMs();
     verdicts.sort((a, b) => verdictRank(a.verdict) - verdictRank(b.verdict) || a.asset.localeCompare(b.asset));
@@ -466,13 +525,26 @@ export function prepareBatchSyntheticPairArtifacts(
 function buildAssetVerdict(
     target: BatchSyntheticTargetArtifact & { timeIndex: Map<string, number> },
     pairs: readonly BatchSyntheticPreparedPairArtifact[],
+    pairsByAsset: PairsByAssetIndex,
     options: BatchSyntheticMinerOptions,
     profile?: BatchSyntheticMinerProfile,
 ): BatchSyntheticAssetVerdict {
     const linkedFilterStartedAt = nowMs();
-    const linkedPairs = pairs.filter((pair) => pair.baseAsset === target.asset || pair.quoteAsset === target.asset);
+    const linkedIndexes = resolveLinkedPairIndexes(pairsByAsset, target.asset);
+    const linkedPairs = linkedIndexes.map((index) => pairs[index]!).filter((pair): pair is BatchSyntheticPreparedPairArtifact => Boolean(pair));
     addProfileMs(profile, "linkedPairFilterMs", linkedFilterStartedAt);
-    if (profile) profile.linkedPairsEvaluated += linkedPairs.length;
+    if (profile) {
+        // Track index effectiveness. When the index is populated, every lookup
+        // is an O(1) hit; a miss (asset not present in the current pair set) is
+        // still O(1) and returns the frozen EMPTY list. There is no full-scan
+        // fallback in the prepared path.
+        if (linkedIndexes.length > 0) {
+            profile.assetIndexHits += 1;
+        } else {
+            profile.assetIndexMisses += 1;
+        }
+        profile.linkedPairsEvaluated += linkedPairs.length;
+    }
     const diagnostics: string[] = [];
     // Resolve the per-target horizon set. Auto-horizons derive from the median
     // hold of linked synthetic-pair trades, because the strategy edge lives at
@@ -548,12 +620,13 @@ function buildAssetVerdict(
     addProfileMs(profile, "distanceScaleMs", scaleStartedAt);
 
     const analogStartedAt = nowMs();
-    const selectionAnalogs = selectAnalogs(currentSnapshot, preOosSamples, options, distanceScales);
+    const selectionAnalogs = selectAnalogs(currentSnapshot, preOosSamples, options, distanceScales, profile);
     const oosAnalogs = selectAnalogs(
         currentSnapshot,
         oosSamples,
         options,
-        distanceScales
+        distanceScales,
+        profile,
     );
     addProfileMs(profile, "analogSelectionMs", analogStartedAt);
     const analogs = [...selectionAnalogs, ...oosAnalogs];
@@ -1163,18 +1236,122 @@ function selectAnalogs(
     current: BatchSyntheticStateSnapshot,
     samples: readonly BatchSyntheticCandidateSample[],
     options: BatchSyntheticMinerOptions,
-    scales: DistanceScales
+    scales: DistanceScales,
+    profile?: BatchSyntheticMinerProfile
 ): LabeledAnalog[] {
-    const ranked = samples
-        .filter((sample) => sample.snapshot.direction === current.direction)
-        .map((sample) => ({
-            sample,
-            distance: measureSnapshotDistance(current, sample.snapshot, scales),
-        }))
-        .filter((item) => Number.isFinite(item.distance))
-        .sort((a, b) => a.distance - b.distance);
-    const count = Math.min(options.neighborCountMax, Math.max(options.neighborCountMin, Math.ceil(Math.sqrt(ranked.length))));
-    return ranked.slice(0, count);
+    // Phase 1 acceleration: top-K selection instead of full sort.
+    //
+    // The old path was O(N log N): filter -> map distance -> full sort -> slice.
+    // For N = candidate samples per target (hundreds to low thousands on 4H),
+    // the full sort dominated `analogSelectionMs`. The new path:
+    //   1. compute `count` up front from the candidate size (before selection)
+    //   2. keep only the nearest `count` finite-distance analogs via a bounded
+    //      max-heap of size K — O(N log K)
+    //   3. sort ONLY the final K slice by (distance asc, original sample index
+    //      asc) for deterministic output
+    //
+    // Tie semantics: V8's Array.prototype.sort is stable (TimSort), so on the
+    // old full-sort path equal-distance analogs kept their pre-sort order (the
+    // order they appeared in `samples`). The top-K heap below uses the original
+    // sample index as the explicit final tie-breaker, so the sorted K-slice is
+    // byte-identical to the old full-sort slice. Parity is locked by the
+    // `top-K analog selection returns the same nearest analogs as full sort`
+    // spec in tests/batch-synthetic-state-miner.spec.ts.
+    const finite: Array<{ sample: BatchSyntheticCandidateSample; distance: number; order: number }> = [];
+    for (let i = 0; i < samples.length; i += 1) {
+        const sample = samples[i]!;
+        if (sample.snapshot.direction !== current.direction) continue;
+        const distance = measureSnapshotDistance(current, sample.snapshot, scales);
+        if (!Number.isFinite(distance)) continue;
+        finite.push({ sample, distance, order: i });
+    }
+    if (profile) profile.analogCandidatesScored += finite.length;
+    const count = Math.min(options.neighborCountMax, Math.max(options.neighborCountMin, Math.ceil(Math.sqrt(finite.length))));
+    if (finite.length <= count) {
+        // Nothing to prune — just sort the whole set. Still must apply the same
+        // (distance, order) comparator so output matches the heap path exactly.
+        finite.sort(compareAnalogByDistanceThenOrder);
+        if (profile) profile.topKSelected += finite.length;
+        return finite.map((item) => ({ sample: item.sample, distance: item.distance }));
+    }
+    // Bounded max-heap of size `count`: keep the `count` SMALLEST distances.
+    // The heap root holds the LARGEST distance among the current top-K, so a
+    // new candidate only enters when it beats the worst-kept. Comparator is
+    // inverted relative to the final sort: "greater" = should be evicted first.
+    const heap: typeof finite = [];
+    for (const item of finite) {
+        if (heap.length < count) {
+            heap.push(item);
+            siftUp(heap, heap.length - 1);
+        } else if (compareAnalogByDistanceThenOrder(item, heap[0]!) < 0) {
+            // item is "smaller" than the current worst (heap root) -> replace.
+            heap[0] = item;
+            siftDown(heap, 0, heap.length);
+        }
+    }
+    heap.sort(compareAnalogByDistanceThenOrder);
+    if (profile) profile.topKSelected += heap.length;
+    return heap.map((item) => ({ sample: item.sample, distance: item.distance }));
+}
+
+/**
+ * Final-order comparator for analogs: distance ascending, then original sample
+ * index ascending. The sample-index tie-breaker reproduces V8's stable-sort
+ * behavior on the old full-sort path exactly, so the top-K slice is identical
+ * to the old slice even when multiple analogs share a distance.
+ */
+function compareAnalogByDistanceThenOrder(
+    a: { distance: number; order: number },
+    b: { distance: number; order: number },
+): number {
+    if (a.distance !== b.distance) return a.distance - b.distance;
+    return a.order - b.order;
+}
+
+/**
+ * Max-heap sift-up (toward root at 0). "Largest" by the final-order comparator
+ * sits at the root, so it is the first eviction candidate. Indices > 0 hold
+ * progressively "smaller" kept items.
+ */
+function siftUp(
+    heap: Array<{ sample: BatchSyntheticCandidateSample; distance: number; order: number }>,
+    index: number,
+): void {
+    let i = index;
+    while (i > 0) {
+        const parent = (i - 1) >> 1;
+        if (compareAnalogByDistanceThenOrder(heap[i]!, heap[parent]!) > 0) {
+            const tmp = heap[i]!;
+            heap[i] = heap[parent]!;
+            heap[parent] = tmp;
+            i = parent;
+        } else {
+            break;
+        }
+    }
+}
+
+/**
+ * Max-heap sift-down. Restores the heap invariant after the root is replaced.
+ */
+function siftDown(
+    heap: Array<{ sample: BatchSyntheticCandidateSample; distance: number; order: number }>,
+    index: number,
+    size: number,
+): void {
+    let i = index;
+    while (true) {
+        const left = 2 * i + 1;
+        const right = 2 * i + 2;
+        let largest = i;
+        if (left < size && compareAnalogByDistanceThenOrder(heap[left]!, heap[largest]!) > 0) largest = left;
+        if (right < size && compareAnalogByDistanceThenOrder(heap[right]!, heap[largest]!) > 0) largest = right;
+        if (largest === i) break;
+        const tmp = heap[i]!;
+        heap[i] = heap[largest]!;
+        heap[largest] = tmp;
+        i = largest;
+    }
 }
 
 interface DistanceScales {
