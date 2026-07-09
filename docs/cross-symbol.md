@@ -1,10 +1,8 @@
 # Cross-Symbol Support
 
-This document describes the current cross-symbol contract in the repo as of May 12, 2026.
+This document describes the current cross-symbol contract in this repo.
 
 Use it when you need to change cross-symbol behavior, add support to a new surface, or debug a run that depends on a secondary symbol.
-
-For rollout history and the original implementation plan, see [`docs/cross-symbol-plan.md`](./cross-symbol-plan.md).
 
 ## Core Rules
 

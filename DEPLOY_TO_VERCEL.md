@@ -1,6 +1,6 @@
 # Deploying to Vercel
 
-This directory (`debug/playground/test-chart.d`) is now configured to be deployable to Vercel.
+This Vite app can be deployed to Vercel from the repository root that contains this `package.json`.
 
 ## Deployment Steps
 
@@ -9,8 +9,7 @@ This directory (`debug/playground/test-chart.d`) is now configured to be deploya
     *   Go to your Vercel dashboard and click "Add New... > Project".
     *   Select your repository.
 3.  **Configure Project Settings**:
-    *   **Root Directory**: Leave this as the default (root directory).
-        > **Note**: Since we pushed the `test-chart.d` folder directly to the root of the GitHub repository, you do NOT need to select a subdirectory. The files like `package.json` are already at the top level of this repository.
+    *   **Root Directory**: Use the directory containing this `package.json`.
     *   **Framework Preset**: Select `Vite`.
     *   **Build Command**: `npm run build` (This should auto-detect, but verify).
     *   **Output Directory**: `dist` (This should also auto-detect).
@@ -46,7 +45,6 @@ How it works:
 You can simulate the build locally by running:
 
 ```bash
-cd debug/playground/test-chart.d
 npm install
 npm run build
 npx vite preview

@@ -224,7 +224,7 @@ Core files:
 - `lib/execution-lab/live-trade-request.ts`
 - `lib/execution-lab/live-executor-adapter.ts`
 - `lib/execution-lab/execution-lab-vite-plugin.ts`
-- `docs/live-trade-plan.md`
+- `docs/execution-lab-live-trading.md`
 
 ## Exit Modes
 
@@ -504,9 +504,7 @@ Price points are different:
 - they are ensured on demand by the scoring surfaces that need them
 - they are fetched from Polymarket history by event and cached into `polymarket_price_points`
 
-1-second Polymarket research has a separate implementation plan:
-
-- [1-Second Polymarket Data Plan](second-polymarket-data-plan.md)
+1-second Polymarket research uses the second-market modules listed above and the `mine:1s*` scripts in `package.json`.
 
 ## Finder And Hunt Behavior
 

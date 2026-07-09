@@ -300,7 +300,7 @@ Operational contract:
 - limit cancel-on-exit targets known posted Strategy Finder order ids by default; broad account cancellation requires explicit scope configuration and is shown in UI status and logs
 - rejected or failed exits can retry with fresh request ids while the event remains tradeable; ambiguous accepted states such as `delayed` or `posted_live` stop blind retries until reconciled
 
-Use [`docs/live-trade-plan.md`](docs/live-trade-plan.md) for the Strategy Finder side and `STRATEGY_FINDER_LIVE_TRADE.md` in the Polymarket bot repo for the executor side.
+Use [`docs/execution-lab-live-trading.md`](docs/execution-lab-live-trading.md) for the Strategy Finder side and `STRATEGY_FINDER_LIVE_TRADE.md` in the Polymarket bot repo for the executor side.
 
 ### Export Latest Entry Signal
 Use the CLI exporter to produce a small local JSON contract for downstream consumers such as the Polymarket bot `external_signal` mode.
@@ -390,10 +390,15 @@ Useful extras:
 ## Specialized Project Docs
 
 These are intentionally narrower than the repo itself:
+- `docs/README.md`: maintained documentation index
 - `AGENTS.md`: safe-change handbook for coding agents
 - `docs/backtest-endpoint.md`: local backtest endpoint usage and request contract
 - `docs/polymarket.md`: Polymarket scoring, signal-exit, diagnostics, bridge, and Execution Lab live-trade contracts
-- `docs/live-trade-plan.md`: Execution Lab live-trade executor boundary, request/response schema, and safety plan
+- `docs/execution-lab-live-trading.md`: Execution Lab live-trade executor boundary, request/response schema, and safety rules
+- `docs/batch-backtest-server-side.md`: server-side Batch Backtest, artifact retention, Mine/Stability acceleration, and memory budget
+- `docs/cross-symbol.md`: cross-symbol strategy runtime and support matrix
+- `docs/synthetic-pairs.md`: synthetic pair generation and supported surfaces
+- `docs/path-dependent-exits.md`: path-dependent Risk Management exits
 - `docs/strategy-authoring.md`: built-in strategy authoring guide
 - `workers/README.md`: Worker endpoints, cron behavior, D1 setup, Telegram
 - `DEPLOY_TO_VERCEL.md`: deployment notes

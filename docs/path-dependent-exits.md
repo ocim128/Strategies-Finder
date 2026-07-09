@@ -10,10 +10,10 @@ Path-dependent exits add experimental exit logic to Risk Management that evaluat
 |---------|------|---------|-------------|
 | `pathExitEnabled` | boolean | `false` | Master toggle |
 | `pathExitMode` | select | `off` | Which exit rule to use |
-| `pathExitMinBars` | number | `3` | Minimum bars before path exit can fire |
-| `pathExitMinMfePercent` | number | `0.5` | Minimum MFE % required (giveback/compression) |
-| `pathExitGivebackPercent` | number | `50` | MFE giveback threshold % |
-| `pathExitLookbackBars` | number | `10` | Rolling lookback window |
+| `pathExitMinBars` | number | `10` | Minimum bars before path exit can fire |
+| `pathExitMinMfePercent` | number | `2.0` | Minimum MFE % required (giveback/compression) |
+| `pathExitGivebackPercent` | number | `25` | MFE giveback threshold % |
+| `pathExitLookbackBars` | number | `20` | Rolling lookback window |
 | `pathExitThreshold` | number | `0.1` | Mode-specific threshold |
 | `pathExitMinSamples` | number | `30` | Minimum closed-trade samples for learning modes |
 | `pathExitHorizonBars` | number | `50` | Forward horizon for triple-barrier labeling |

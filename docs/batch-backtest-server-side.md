@@ -154,8 +154,7 @@ out of scope.
 Server-side mode preserves Rust engine parity. The user's `useRustEngine`
 toggle is forwarded to the server as `useRustEnginePreference` in the run
 request body, and `shouldAttemptRust` consults it when running in Node
-(where there is no DOM toggle to read). See the "Rust-engine trap" doc in
-`docs/batch-backtest-server-side-plan.md` for the full rationale.
+(where there is no DOM toggle to read).
 
 Without this fix, server-side mode would silently use the TypeScript engine
 even when the user has Rust enabled — a perf regression vs browser mode.

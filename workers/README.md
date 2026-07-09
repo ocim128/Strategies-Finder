@@ -48,7 +48,7 @@ It deduplicates signals in D1, so the same entry is only produced once.
 ```
 
 Notes:
-- Send at least 200 candles per call by default (configurable via `MIN_CLOSED_CANDLES` for worker-side evaluation).
+- Send at least `MIN_CLOSED_CANDLES` closed candles per call. The code fallback is `200`; `wrangler.toml` currently sets `120`.
 - `time` can be unix seconds, unix milliseconds, ISO string, or business-day object.
 - Subscription `backtestSettings` preserve the surviving percentage take-profit modes: `fixed` and `mfe_bootstrap`.
 
@@ -98,14 +98,19 @@ Create subscription example:
 2. Apply migration:
 
 ```bash
-wrangler d1 migrations apply strategy_signals --local
-wrangler d1 migrations apply strategy_signals --remote
+wrangler d1 migrations apply signal --local
+wrangler d1 migrations apply signal --remote
 ```
 
 Migration file:
 - `workers/migrations/0001_entry_signals.sql`
 - `workers/migrations/0002_signal_subscriptions.sql`
 - `workers/migrations/0003_exit_alerts.sql`
+- `workers/migrations/0004_rename_candle_time_col.sql`
+- `workers/migrations/0005_actionable_entry_signal_index.sql`
+- `workers/migrations/0006_committee_state_columns.sql`
+- `workers/migrations/0007_committee_tag.sql`
+- `workers/migrations/0008_committee_alert_rules.sql`
 
 ## Strategy Support Contract
 
@@ -142,5 +147,5 @@ https://api.mexc.com,https://api.binance.us,https://data-api.binance.vision
 ## Optional Env: Minimum Closed Candles
 
 - `MIN_CLOSED_CANDLES`
-  - Default: `200`
-  - Example override for newer symbols: `120`
+  - Code fallback: `200`
+  - Current `wrangler.toml` value: `120`
