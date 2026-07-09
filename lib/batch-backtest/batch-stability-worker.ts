@@ -12,10 +12,10 @@
  * zero cross-worker coupling. Partitioning by pairs would require every worker
  * to see every target and would couple the accumulator merge to pair-sets.
  *
- * Each worker reads the compact artifact FILES from disk independently (plan
+ * Each worker reads the artifact FILES from disk independently (plan
  * §"Risks/Blockers": "prefer file references plus per-worker subset loading").
- * The compact shape (Phase 2) is what makes this cheap — typed arrays parse
- * fast and the OS file cache absorbs the repeated reads across workers.
+ * The OS file cache absorbs the repeated reads across workers on the same
+ * temp directory.
  *
  * Browser-safety: this module is imported by `worker_threads`, NOT by the
  * browser bundle. It stays on the same leaf-only import diet as
@@ -32,11 +32,6 @@ import {
     sampleItems,
     type BatchStabilityAccumulator,
 } from "./batch-stability-mine";
-import {
-    fromCompactPairArtifact,
-    isCompactPairArtifact,
-    type CompactPairArtifact,
-} from "./batch-miner-artifact";
 import {
     createBatchSyntheticMinerProfile,
     prepareBatchSyntheticPairArtifacts,
@@ -99,11 +94,10 @@ function nowMs(): number {
 }
 
 /**
- * Load compact artifact files and reconstruct the raw shapes the TypeScript
- * miner consumes. Mirrors the server plugin's `loadStoredMineArtifact` but
- * reads directly from disk (the worker has no access to the plugin's in-memory
- * parse cache). The OS file cache absorbs the repeated reads across workers
- * on the same temp directory.
+ * Load artifact files from disk. Mirrors the server plugin's
+ * `loadStoredMineArtifact` but reads directly from disk (the worker has no
+ * access to the plugin's in-memory parse cache). The OS file cache absorbs the
+ * repeated reads across workers on the same temp directory.
  */
 function loadArtifactsFromDisk(
     files: readonly string[],
@@ -113,11 +107,8 @@ function loadArtifactsFromDisk(
     for (const index of indexes) {
         const file = files[index];
         if (!file) continue;
-        const deserialized = deserialize(readFileSync(file)) as CompactPairArtifact | BatchSyntheticPairArtifact;
-        out.push({
-            index,
-            artifact: isCompactPairArtifact(deserialized) ? fromCompactPairArtifact(deserialized) : deserialized,
-        });
+        const deserialized = deserialize(readFileSync(file)) as BatchSyntheticPairArtifact;
+        out.push({ index, artifact: deserialized });
     }
     return out;
 }

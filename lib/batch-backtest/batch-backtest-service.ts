@@ -611,7 +611,6 @@ class BatchBacktestService {
             // sequential TypeScript engine so the benchmark always reports a
             // concrete engine, even for results produced before this field existed.
             engine: result.engine ?? "typescript",
-            rustFallbackReason: result.rustFallbackReason ?? null,
         };
         this.mergePhase({ stability: phase });
     }

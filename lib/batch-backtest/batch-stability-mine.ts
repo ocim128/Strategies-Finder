@@ -55,11 +55,6 @@ export interface BatchStabilityMineResult {
      * benchmark builder normalizes missing -> "typescript".
      */
     engine?: BatchMinerEngine;
-    /**
-     * Human-readable fallback reason when `engine === "rust_fallback"`.
-     * Omitted/null otherwise.
-     */
-    rustFallbackReason?: string | null;
     rows: BatchStabilityRow[];
 }
 

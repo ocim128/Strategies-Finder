@@ -48,7 +48,6 @@ describe("batch benchmark bottlenecks", () => {
                 hitEventsPerSampledPair: 0.019,
                 minerProfile: profile,
                 engine: "typescript_parallel",
-                rustFallbackReason: null,
             },
         };
 

@@ -9,14 +9,6 @@ import {
     __testInternals,
 } from "../lib/batch-backtest/batch-backtest-vite-plugin";
 import type { BatchStreamEvent } from "../lib/batch-backtest/batch-backtest-stream-types";
-import type {
-    RustMinerCapability,
-    RustMinerClient,
-    RustMinerResult,
-    RustStabilityMineRequest,
-    RustStabilityMineResponse,
-} from "../lib/batch-backtest/batch-rust-miner-client";
-import type { BatchStabilityMineResult } from "../lib/batch-backtest/batch-stability-mine";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
 
@@ -33,50 +25,7 @@ const {
     getRunStateForTests,
     handleStatusRequest,
     handleStopRequest,
-    setRustMinerClientForTests,
-    resetRustMinerClientForTests,
-    setMinerGatesForTests,
-    resetMinerGatesForTests,
 } = __testInternals;
-
-/**
- * Build a stub RustMinerClient with canned capability + runStabilityMine
- * behavior. Avoids touching the network in tests; lets Phase 4 tests simulate
- * "backend healthy + returns a result", "backend unavailable", etc.
- */
-function makeStubRustMinerClient(args: {
-    capability: RustMinerCapability;
-    stabilityOutcome: (req: RustStabilityMineRequest) => RustMinerResult<RustStabilityMineResponse>;
-}): RustMinerClient {
-    return {
-        checkCapability: async () => args.capability,
-        runMine: async () => ({ ok: false as const, reason: "mine_not_supported" as const, message: "stub" }),
-        runStabilityMine: async (req: RustStabilityMineRequest) => args.stabilityOutcome(req),
-        invalidateCapabilityCache: () => {},
-    } as unknown as RustMinerClient;
-}
-
-/** Capability response for a healthy backend that supports Stability + file-manifest. */
-const HEALTHY_CAPABILITY: RustMinerCapability = {
-    available: true,
-    minerApiVersion: "0.1.0-test",
-    compactArtifactSchemaVersion: 1,
-    supportsMine: true,
-    supportsStability: true,
-    transports: ["file_manifest", "binary"],
-    backendVersion: "test",
-};
-
-/** Capability response for an unavailable backend (no server running). */
-const UNAVAILABLE_CAPABILITY: RustMinerCapability = {
-    available: false,
-    minerApiVersion: null,
-    compactArtifactSchemaVersion: null,
-    supportsMine: false,
-    supportsStability: false,
-    transports: [],
-    backendVersion: null,
-};
 
 function makeCandles(closes: number[]): OHLCVData[] {
     return closes.map((close, index) => ({
@@ -124,27 +73,10 @@ const STRATEGY_KEY = "server_batch_test";
 
 before(() => {
     strategyRegistry.register(STRATEGY_KEY, testStrategy);
-    // Default: no Rust backend in the test environment. Install an always-
-    // unavailable stub so the router falls back instantly instead of paying
-    // a 2s health-probe timeout per Stability test. Individual tests that
-    // need a healthy (mock) backend call setRustMinerClientForTests(...) and
-    // resetRustMinerClientForTests() in their own finally block.
-    setRustMinerClientForTests(
-        makeStubRustMinerClient({
-            capability: UNAVAILABLE_CAPABILITY,
-            stabilityOutcome: () => ({ ok: false, reason: "rust_unavailable", message: "stub unavailable" }),
-        }),
-    );
-    // Production gates default OFF (compact store-time tax; Rust/parallel need
-    // infra that doesn't exist in CI). Reset here so a toggled gate from one
-    // test cannot leak into another.
-    resetMinerGatesForTests();
 });
 
 after(() => {
     strategyRegistry.unregister(STRATEGY_KEY);
-    resetRustMinerClientForTests();
-    resetMinerGatesForTests();
     releaseLastResults("test_cleanup");
 });
 
@@ -660,197 +592,6 @@ describe("batch-backtest server plugin processStabilityMine", () => {
         expect(hasStoredMineArtifacts()).to.equal(true);
 
         releaseLastResults("test_end");
-    });
-
-    it("Phase 2: stability result carries a populated minerProfile (compact-artifact path) with Rust unavailable fallback", async () => {
-        // Intent being locked: server-side Mine can store COMPACT artifacts on
-        // disk and reconstruct raw shapes for the TypeScript miner on load
-        // (Phase 2 acceleration). Phase 4 adds a Rust router that probes a
-        // backend; when no backend is available it MUST fall back to the
-        // TypeScript path instantly (no multi-second network timeout in tests
-        // or when the user has no Rust backend) and stamp `rust_fallback` +
-        // reason on the result. This test opts INTO the compact + Rust gates
-        // (both default off in production) and injects an always-unavailable
-        // stub so the fallback path is exercised deterministically.
-        setMinerGatesForTests({ compactArtifacts: true, rustRouting: true });
-        setRustMinerClientForTests(
-            makeStubRustMinerClient({
-                capability: UNAVAILABLE_CAPABILITY,
-                stabilityOutcome: () => ({ ok: false, reason: "rust_unavailable", message: "stub unavailable" }),
-            }),
-        );
-        try {
-            const pairData = makeCandles([100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]);
-            const targetData = makeCandles([100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120, 122]);
-            const datasets = new Map<string, OHLCVData[]>([["UP+DOWN", pairData]]);
-            const owner = 9020;
-            setRunOwnerForTests(owner);
-            const runEvents = await collectEvents((ev) =>
-                processRunBatch(
-                    {
-                        interval: "5m",
-                        strategyKey: STRATEGY_KEY,
-                        strategy: testStrategy,
-                        strategyParams: { threshold: 1 },
-                        backtestSettings: settings,
-                        capitalSettings,
-                        symbols: ["UP+DOWN"],
-                        loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
-                        minUsableBars: 1,
-                    },
-                    (event) => ev.push(event),
-                    owner,
-                ),
-            );
-            setRunOwnerForTests(0);
-            const done = runEvents[runEvents.length - 1] as Extract<BatchStreamEvent, { type: "done" }>;
-            expect(done.serverHasArtifacts).to.equal(true);
-
-            const minerOwner = 9021;
-            setMinerOwnerForTests(minerOwner);
-            const mineEvents: unknown[] = [];
-            await processStabilityMine(
-                done.fingerprint,
-                "5m",
-                1,
-                1,
-                1,
-                (event) => mineEvents.push(event),
-                minerOwner,
-                async () => [
-                    { asset: "UP", symbol: "UP", data: targetData },
-                    { asset: "DOWN", symbol: "DOWN", data: targetData },
-                ],
-            );
-            setMinerOwnerForTests(0);
-
-            const last = mineEvents[mineEvents.length - 1] as {
-                type: string;
-                ok?: boolean;
-                result?: {
-                    engine?: string;
-                    rustFallbackReason?: string | null;
-                    minerProfile?: { artifactConversionMs?: number };
-                };
-            };
-            expect(last.type).to.equal("done");
-            expect(last.ok).to.equal(true);
-            // Rust was attempted and the backend was unavailable -> the router
-            // fell back to TypeScript and stamped the reason. Phase 6 benchmark
-            // reporting surfaces this so "why didn't Rust kick in?" is
-            // answerable without server logs.
-            expect(last.result?.engine).to.equal("rust_fallback");
-            expect(last.result?.rustFallbackReason).to.equal("rust_unavailable");
-            // Phase 2 profile field must exist (compact->raw conversion is timed).
-            expect(last.result?.minerProfile).to.have.property("artifactConversionMs");
-
-            releaseLastResults("test_end");
-        } finally {
-            resetRustMinerClientForTests();
-            resetMinerGatesForTests();
-        }
-    });
-
-    it("Phase 4: routes to Rust and stamps engine=rust when the backend accepts the request", async () => {
-        // Intent being locked: when the Rust miner backend is healthy +
-        // schema-compatible + file-manifest-capable, the server plugin MUST
-        // delegate Stability to it and stream its result back unchanged with
-        // `engine: "rust"`. This is the acceleration contract — if routing
-        // ever fails to delegate (or delegates but mislabels the engine), the
-        // benchmark cannot tell which backend actually ran.
-        const rustResult: BatchStabilityMineResult = {
-            reruns: 1,
-            subsetSize: 1,
-            seed: 1,
-            totalPairs: 1,
-            targetAssets: 2,
-            hitEvents: 1,
-            rows: [
-                { asset: "UP", direction: "LONG", hits: 1, high: 1, medium: 0, low: 0,
-                  medianRetPct: 1.5, medianLiftPct: 1, medianRr: 2, medianDist: 0.5,
-                  medianHmaxLiftPct: 0.8, pairWarnings: 0, timingEdgeScore: 40,
-                  medianDiversity: 0.5, dominantPair: "UP+DOWN", dominantPairShare: 1 },
-            ],
-        };
-        setMinerGatesForTests({ compactArtifacts: true, rustRouting: true });
-        let rustRequest: RustStabilityMineRequest | null = null;
-        setRustMinerClientForTests(
-            makeStubRustMinerClient({
-                capability: HEALTHY_CAPABILITY,
-                stabilityOutcome: (request) => {
-                    rustRequest = request;
-                    return {
-                        ok: true,
-                        value: { ...rustResult, processingTimeMs: 42 },
-                    };
-                },
-            }),
-        );
-        try {
-            const pairData = makeCandles([100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]);
-            const targetData = makeCandles([100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120, 122]);
-            const datasets = new Map<string, OHLCVData[]>([["UP+DOWN", pairData]]);
-            const owner = 9030;
-            setRunOwnerForTests(owner);
-            const runEvents = await collectEvents((ev) =>
-                processRunBatch(
-                    {
-                        interval: "5m",
-                        strategyKey: STRATEGY_KEY,
-                        strategy: testStrategy,
-                        strategyParams: { threshold: 1 },
-                        backtestSettings: settings,
-                        capitalSettings,
-                        symbols: ["UP+DOWN"],
-                        loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
-                        minUsableBars: 1,
-                    },
-                    (event) => ev.push(event),
-                    owner,
-                ),
-            );
-            setRunOwnerForTests(0);
-            const done = runEvents[runEvents.length - 1] as Extract<BatchStreamEvent, { type: "done" }>;
-
-            const minerOwner = 9031;
-            setMinerOwnerForTests(minerOwner);
-            const mineEvents: unknown[] = [];
-            await processStabilityMine(
-                done.fingerprint,
-                "5m",
-                1,
-                1,
-                1,
-                (event) => mineEvents.push(event),
-                minerOwner,
-                async () => [
-                    { asset: "UP", symbol: "UP", data: targetData },
-                    { asset: "DOWN", symbol: "DOWN", data: targetData },
-                ],
-            );
-            setMinerOwnerForTests(0);
-
-            const last = mineEvents[mineEvents.length - 1] as {
-                type: string;
-                ok?: boolean;
-                result?: { engine?: string; rustFallbackReason?: string | null; rows?: unknown[]; minerProfile?: { rustProcessingMs?: number } };
-            };
-            expect(last.type).to.equal("done");
-            expect(last.ok).to.equal(true);
-            // Routed to Rust: engine is "rust", no fallback reason, and the
-            // Rust-produced rows pass through unchanged.
-            expect(last.result?.engine).to.equal("rust");
-            expect(last.result?.rustFallbackReason).to.equal(null);
-            expect(last.result?.rows?.length).to.equal(1);
-            expect(last.result?.minerProfile?.rustProcessingMs).to.equal(42);
-            const manifest = (rustRequest as { manifest: { pairArtifactFiles: unknown[]; targetArtifactFiles: unknown[] } } | null)?.manifest;
-            expect(manifest?.pairArtifactFiles).to.have.length(1);
-            expect(manifest?.targetArtifactFiles).to.have.length(2);
-        } finally {
-            resetRustMinerClientForTests();
-            resetMinerGatesForTests();
-            releaseLastResults("test_end");
-        }
     });
 
     it("Stop aborts in-flight miner target loads via the abort signal (Finding 7)", async () => {

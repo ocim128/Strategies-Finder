@@ -221,28 +221,20 @@ export interface BatchSyntheticMinerProfile {
     assetIndexHits: number;
     assetIndexMisses: number;
     /**
-     * Server-side artifact load/conversion time. Raw artifacts count v8
-     * deserialize/cache time; compact artifacts also count compact->raw
-     * reconstruction. Parallel Stability sums this across workers.
+     * Server-side artifact load/deserialize time. Parallel Stability sums this
+     * across workers.
      */
     artifactConversionMs: number;
     /**
-     * Rust miner timings (Phase 4). All 0 on the TypeScript path. `rustFallbackReason`
-     * is non-null only when Rust was attempted and fell back.
-     */
-    rustRequestMs: number;
-    rustProcessingMs: number;
-    rustResponseMs: number;
-    /**
      * Number of worker_threads used by the parallel TypeScript Stability path.
-     * 0 on sequential TypeScript and Rust paths. Timing fields are summed
-     * across workers, so benchmark diagnostics divide by this count when they
-     * need a wall-clock-equivalent estimate.
+     * 0 on the sequential TypeScript path. Timing fields are summed across
+     * workers, so benchmark diagnostics divide by this count when they need a
+     * wall-clock-equivalent estimate.
      */
     parallelWorkerCount: number;
 }
 
-export type BatchMinerEngine = "typescript" | "typescript_parallel" | "rust" | "rust_fallback";
+export type BatchMinerEngine = "typescript" | "typescript_parallel";
 
 export interface TradeRange {
     trade: Trade;
@@ -360,9 +352,6 @@ export function createBatchSyntheticMinerProfile(): BatchSyntheticMinerProfile {
         assetIndexHits: 0,
         assetIndexMisses: 0,
         artifactConversionMs: 0,
-        rustRequestMs: 0,
-        rustProcessingMs: 0,
-        rustResponseMs: 0,
         parallelWorkerCount: 0,
     };
 }

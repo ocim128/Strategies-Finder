@@ -114,9 +114,6 @@ function compactMinerProfile(profile: BatchSyntheticMinerProfile | null | undefi
         assetIndexHits: intOrZero(profile.assetIndexHits),
         assetIndexMisses: intOrZero(profile.assetIndexMisses),
         artifactConversionMs: finiteOrZero(profile.artifactConversionMs),
-        rustRequestMs: finiteOrZero(profile.rustRequestMs),
-        rustProcessingMs: finiteOrZero(profile.rustProcessingMs),
-        rustResponseMs: finiteOrZero(profile.rustResponseMs),
         parallelWorkerCount: intOrZero(profile.parallelWorkerCount),
     };
 }

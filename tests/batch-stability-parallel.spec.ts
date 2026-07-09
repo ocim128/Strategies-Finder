@@ -8,7 +8,6 @@ import {
 } from "../lib/batch-backtest/batch-stability-parallel";
 import { runStabilityRerunRange } from "../lib/batch-backtest/batch-stability-worker";
 import { finalizeStabilityAggregate } from "../lib/batch-backtest/batch-stability-mine";
-import { toCompactPairArtifact } from "../lib/batch-backtest/batch-miner-artifact";
 import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-state-miner";
 import type { BatchStabilityMineResult } from "../lib/batch-backtest/batch-stability-mine";
 import type { BacktestResult, OHLCVData, Signal, Time } from "../lib/types/strategies";
@@ -53,12 +52,12 @@ function makeResult(): BacktestResult {
     };
 }
 
-function buildFixtures(format: "compact" | "raw" = "compact"): {
+function buildFixtures(): {
     artifactFiles: string[];
     targets: { asset: string; symbol: string; data: OHLCVData[] }[];
     cleanup: () => void;
 } {
-    const dir = mkdtempSync(join(tmpdir(), `stability-parity-${format}-`));
+    const dir = mkdtempSync(join(tmpdir(), "stability-parity-"));
     const mkPair = (sym: string, base: string, quote: string, seed: number): BatchSyntheticPairArtifact => {
         const data = makeCandles(120, seed);
         const signals: Signal[] = [];
@@ -75,12 +74,9 @@ function buildFixtures(format: "compact" | "raw" = "compact"): {
     ];
     const artifactFiles: string[] = [];
     pairs.forEach((pair, index) => {
-        // Write the shape the server plugin would store under the corresponding
-        // gate. `compact` mirrors BATCH_MINER_COMPACT_ARTIFACTS_ENABLED=true;
-        // `raw` mirrors the production default. The worker MUST handle both.
-        const payload = format === "compact" ? toCompactPairArtifact(pair) : pair;
+        // Write the raw shape the server plugin stores on disk (v8-serialized).
         const file = join(dir, `${String(index).padStart(6, "0")}.bin`);
-        writeFileSync(file, serialize(payload));
+        writeFileSync(file, serialize(pair));
         artifactFiles.push(file);
     });
     const targets = [
@@ -197,7 +193,7 @@ describe("batch stability parallel vs sequential parity", () => {
     });
 
     it("worker loads only the sampled artifact union when selected indexes are provided", () => {
-        const fixtures = buildFixtures("raw");
+        const fixtures = buildFixtures();
         try {
             // Corrupt an artifact that is intentionally NOT sampled. If the
             // worker regresses to loading the full universe, deserialize will
@@ -232,10 +228,9 @@ describe("batch stability parallel worker spawn (end-to-end)", () => {
     // `resolveWorkerPath()` is what makes the worker loadable; this test
     // proves it.
 
-    it("runParallelStability spawns workers and merges results matching the sequential reference (raw artifacts, production default)", async () => {
-        // RAW artifacts: matches the production default (compact storage off).
-        // The worker must handle this shape, not just compact.
-        const fixtures = buildFixtures("raw");
+    it("runParallelStability spawns workers and merges results matching the sequential reference", async () => {
+        // Raw v8-serialized artifacts: matches the production on-disk shape.
+        const fixtures = buildFixtures();
         try {
             const reruns = 6;
             const subsetSize = 3;

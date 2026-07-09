@@ -195,7 +195,6 @@ function emptyProfile(): BatchSyntheticMinerProfile {
         earlyNoLinkedPairs: 0, earlyShortTargetHistory: 0, earlyNoCurrentState: 0,
         earlyNotEnoughCandidates: 0, analogCandidatesScored: 0, topKSelected: 0,
         assetIndexHits: 0, assetIndexMisses: 0, artifactConversionMs: 0,
-        rustRequestMs: 0, rustProcessingMs: 0, rustResponseMs: 0,
         parallelWorkerCount: 0,
     } as BatchSyntheticMinerProfile;
 }
