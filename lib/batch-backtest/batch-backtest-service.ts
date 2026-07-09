@@ -55,7 +55,7 @@ import {
     type BatchBenchmarkStabilityPhase,
 } from "./batch-benchmark-snapshot";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
-import type { BatchStreamEvent, BatchMinerStreamEvent } from "./batch-backtest-stream-types";
+import type { BatchStreamEvent, BatchMinerStreamEvent, BatchStabilityMineStreamEvent } from "./batch-backtest-stream-types";
 import {
     createBatchSyntheticMinerProfile,
     prepareBatchSyntheticPairArtifacts,
@@ -978,6 +978,7 @@ class BatchBacktestService {
                         rows: BatchBacktestSymbolResult[];
                         rowOffset?: number;
                         rowCount?: number;
+                        nextOffset?: number | null;
                     } | null;
                     lastRun?: {
                         rowCount: number;
@@ -1026,15 +1027,41 @@ class BatchBacktestService {
                 if (rowOffset === 0 && this.lastResults.length === 0 && run.rows.length > 0) {
                     dom.batchBacktestResults.replaceChildren();
                 }
-                if (run.rows.length > 0) {
-                    for (let i = 0; i < run.rows.length; i += 1) {
-                        const absoluteIndex = rowOffset + i;
-                        if (absoluteIndex < this.lastResults.length) continue;
-                        const row = run.rows[i]!;
+                // Drain pages until the server signals no more rows for this
+                // tick. The status endpoint bounds rows-per-response (default
+                // 250) and returns `nextOffset` when more remain; without this
+                // drain a late reload would catch up at one page per 2s poll.
+                // Reconciliation is unchanged (absolute index, skip seen), so
+                // any page boundary is safe. New rows accumulate in a buffer
+                // and append as one DocumentFragment (see appendResultRows).
+                // Paged responses only need the reconcile fields, so the
+                // structural type here is intentionally narrower than the
+                // initial `run` shape (which carries status scalars too).
+                const pendingRows: BatchBacktestSymbolResult[] = [];
+                let page: { rows: BatchBacktestSymbolResult[]; rowOffset?: number; nextOffset?: number | null } = run;
+                for (;;) {
+                    const pageOffset = Math.max(0, Math.floor(Number(page.rowOffset ?? 0)));
+                    for (let i = 0; i < page.rows.length; i += 1) {
+                        const absoluteIndex = pageOffset + i;
+                        if (absoluteIndex < this.lastResults.length + pendingRows.length) continue;
+                        pendingRows.push(page.rows[i]!);
+                    }
+                    const nextOffset = page.nextOffset;
+                    if (nextOffset === null || nextOffset === undefined) break;
+                    if (nextOffset <= pageOffset + page.rows.length) break; // guard against non-progressing cursors
+                    if (!payload.running || !payload.run) break;
+                    const nextResponse = await fetch(`/api/batch-backtest/status?after=${nextOffset}&limit=250`, { cache: "no-store" });
+                    if (!nextResponse.ok) break;
+                    const nextPayload = await nextResponse.json() as { run?: { rows: BatchBacktestSymbolResult[]; rowOffset?: number; nextOffset?: number | null } | null };
+                    if (!nextPayload.run) break;
+                    page = nextPayload.run;
+                }
+                if (pendingRows.length > 0) {
+                    for (const row of pendingRows) {
                         this.lastResults.push(row);
                         this.appendedCount += 1;
-                        this.appendResultRow(dom, row);
                     }
+                    this.appendResultRows(dom, pendingRows);
                 }
                 const seen = run.completed + run.failed;
                 const current = run.currentSymbol ? ` — ${run.currentSymbol}` : "";
@@ -1177,6 +1204,7 @@ class BatchBacktestService {
         dom.batchBacktestCopyStabilityBtn.disabled = true;
         dom.batchBacktestMinerSummary.textContent = "Stability mining on server...";
         dom.batchBacktestMinerResults.replaceChildren();
+        this.lastStabilityResult = null;
 
         try {
             const response = await fetch("/api/batch-backtest/stability-mine", {
@@ -1199,18 +1227,30 @@ class BatchBacktestService {
                 }
                 throw new Error(payload.error ?? (text || `HTTP ${response.status}`));
             }
-            const received: { result: BatchStabilityMineResult | null } = { result: null };
-            await consumeNdjsonStream(response.body, {
-                onProgress: (event: { run?: number; reruns?: number; hits?: number }) => {
-                    dom.batchBacktestMinerSummary.textContent = `Stability mining on server ${event.run ?? 0}/${event.reruns ?? reruns} | hits ${event.hits ?? 0}`;
+            const received: { result: BatchStabilityMineResult | null; cancelledSummary: string | null } = {
+                result: null,
+                cancelledSummary: null,
+            };
+            await consumeNdjsonStream<BatchStabilityMineStreamEvent>(response.body, {
+                onProgress: (event: Extract<BatchStabilityMineStreamEvent, { type: "progress" }>) => {
+                    dom.batchBacktestMinerSummary.textContent = `Stability mining on server ${event.run}/${event.reruns} | hits ${event.hits}`;
                 },
-                onDone: (event: { result?: BatchStabilityMineResult }) => {
-                    received.result = event.result ?? null;
+                onDone: (event: Extract<BatchStabilityMineStreamEvent, { type: "done" }>) => {
+                    if (event.ok) {
+                        received.result = event.result;
+                    } else {
+                        received.cancelledSummary = event.summary;
+                    }
                 },
-                onFatal: (event: { error?: string }) => {
-                    throw new Error(event.error || "Server stability mine failed.");
+                onFatal: (event: Extract<BatchStabilityMineStreamEvent, { type: "fatal" }>) => {
+                    throw new Error(event.error);
                 },
             });
+            if (received.cancelledSummary) {
+                this.lastStabilityResult = null;
+                dom.batchBacktestMinerSummary.textContent = received.cancelledSummary;
+                return;
+            }
             if (!received.result) {
                 throw new Error("Server stability mine did not return a result.");
             }
@@ -1417,9 +1457,7 @@ class BatchBacktestService {
         this.serverHasArtifacts = false;
 
         dom.batchBacktestResults.replaceChildren();
-        for (const row of this.lastResults) {
-            this.appendResultRow(dom, row);
-        }
+        this.appendResultRows(dom, this.lastResults);
         setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
         dom.batchBacktestCopyBtn.disabled = this.lastResults.length === 0;
         dom.batchBacktestMineBtn.disabled = true;
@@ -1487,9 +1525,12 @@ class BatchBacktestService {
     private renderMinerResult(dom: BatchBacktestDom, result: BatchSyntheticMinerResult): void {
         dom.batchBacktestMinerResults.replaceChildren();
         dom.batchBacktestMinerSummary.textContent = formatMinerSummary(result);
+        if (result.verdicts.length === 0) return;
+        const fragment = document.createDocumentFragment();
         for (const verdict of result.verdicts) {
-            dom.batchBacktestMinerResults.appendChild(this.createMinerRow(verdict));
+            fragment.appendChild(this.createMinerRow(verdict));
         }
+        dom.batchBacktestMinerResults.appendChild(fragment);
     }
 
     private createMinerRow(verdict: BatchSyntheticAssetVerdict): HTMLDivElement {
@@ -1506,6 +1547,8 @@ class BatchBacktestService {
     private renderStabilityResult(dom: BatchBacktestDom, result: BatchStabilityMineResult): void {
         dom.batchBacktestMinerResults.replaceChildren();
         dom.batchBacktestMinerSummary.textContent = formatStabilitySummary(result);
+        if (result.rows.length === 0) return;
+        const fragment = document.createDocumentFragment();
         for (const row of result.rows) {
             const line = document.createElement("div");
             line.className = "finder-sub finder-symbol-row";
@@ -1514,8 +1557,9 @@ class BatchBacktestService {
             badge.textContent = row.direction;
             line.appendChild(badge);
             line.appendChild(document.createTextNode(` ${formatStabilityRow(row, result.reruns)}`));
-            dom.batchBacktestMinerResults.appendChild(line);
+            fragment.appendChild(line);
         }
+        dom.batchBacktestMinerResults.appendChild(fragment);
     }
 
     // --------------------------------------------------------------------
@@ -1524,6 +1568,22 @@ class BatchBacktestService {
 
     private appendResultRow(dom: BatchBacktestDom, result: BatchBacktestSymbolResult): void {
         dom.batchBacktestResults.appendChild(this.createResultRow(result));
+    }
+
+    /**
+     * Append many result rows in one DocumentFragment so restore / reattach
+     * paths that render hundreds of rows synchronously do a single reflow
+     * instead of one per row. Output is identical to calling appendResultRow
+     * per element; this is purely a layout-cost optimization for bulk paths.
+     * The live server stream stays on appendResultRow (one row per event).
+     */
+    private appendResultRows(dom: BatchBacktestDom, results: readonly BatchBacktestSymbolResult[]): void {
+        if (results.length === 0) return;
+        const fragment = document.createDocumentFragment();
+        for (const result of results) {
+            fragment.appendChild(this.createResultRow(result));
+        }
+        dom.batchBacktestResults.appendChild(fragment);
     }
 
     private clearStaleResults(dom: BatchBacktestDom): void {

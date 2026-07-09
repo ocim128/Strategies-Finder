@@ -29,8 +29,10 @@ const {
     hasStoredMineArtifacts,
     setRunOwnerForTests,
     setMinerOwnerForTests,
+    setMinerAbortControllerForTests,
     getRunStateForTests,
     handleStatusRequest,
+    handleStopRequest,
     setRustMinerClientForTests,
     resetRustMinerClientForTests,
     setMinerGatesForTests,
@@ -312,10 +314,177 @@ describe("batch-backtest server plugin processRunBatch", () => {
             owner,
         );
 
-        const snapshot = handleStatusRequest(2) as { run?: { rows: { symbol: string }[]; rowOffset: number; rowCount: number } | null };
+        const snapshot = handleStatusRequest(2) as { run?: { rows: { symbol: string }[]; rowOffset: number; rowCount: number; nextOffset: number | null } | null };
         expect(snapshot.run?.rowOffset).to.equal(2);
         expect(snapshot.run?.rowCount).to.equal(3);
         expect(snapshot.run?.rows.map((row) => row.symbol)).to.deep.equal(["FLAT"]);
+        // Only one row remains past offset 2, so the cursor is exhausted.
+        expect(snapshot.run?.nextOffset).to.equal(null);
+
+        setRunOwnerForTests(0);
+        releaseLastResults("test_end");
+    });
+
+    it("status snapshot paginates rows via nextOffset when a limit truncates", async () => {
+        // Build a 5-symbol run, then request a small page so the response is
+        // truncated and nextOffset points at the remaining rows.
+        const datasets = new Map<string, OHLCVData[]>();
+        const symbols = ["AAA", "BBB", "CCC", "DDD", "EEE"];
+        for (const sym of symbols) {
+            datasets.set(sym, makeCandles([100, 105, 110, 115, 120]));
+        }
+        const owner = 9013;
+        setRunOwnerForTests(owner);
+        await processRunBatch(
+            {
+                interval: "5m",
+                strategyKey: STRATEGY_KEY,
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols,
+                loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                minUsableBars: 1,
+            },
+            () => {},
+            owner,
+        );
+
+        // Page 1: after=0, limit=2 → first two symbols, nextOffset=2.
+        const page1 = handleStatusRequest(0, 2) as { run?: { rows: { symbol: string }[]; rowOffset: number; rowCount: number; nextOffset: number | null } | null };
+        expect(page1.run?.rowOffset).to.equal(0);
+        expect(page1.run?.rowCount).to.equal(5);
+        expect(page1.run?.rows.map((row) => row.symbol)).to.deep.equal(["AAA", "BBB"]);
+        expect(page1.run?.nextOffset).to.equal(2);
+
+        // Page 2: after=2, limit=2 → next two symbols, nextOffset=4.
+        const page2 = handleStatusRequest(2, 2) as { run?: { rows: { symbol: string }[]; rowOffset: number; rowCount: number; nextOffset: number | null } | null };
+        expect(page2.run?.rows.map((row) => row.symbol)).to.deep.equal(["CCC", "DDD"]);
+        expect(page2.run?.nextOffset).to.equal(4);
+
+        // Page 3: after=4, limit=2 → last symbol, cursor exhausted (null).
+        const page3 = handleStatusRequest(4, 2) as { run?: { rows: { symbol: string }[]; rowOffset: number; rowCount: number; nextOffset: number | null } | null };
+        expect(page3.run?.rows.map((row) => row.symbol)).to.deep.equal(["EEE"]);
+        expect(page3.run?.nextOffset).to.equal(null);
+
+        setRunOwnerForTests(0);
+        releaseLastResults("test_end");
+    });
+
+    it("setStatus preserves the last real percent instead of resetting to 0", async () => {
+        // The runner calls setProgress(real%) then setStatus(symbol text) in the
+        // same tick. Before the fix, setStatus emitted percent: 0, snapping the
+        // bar back. Now it must echo the last real percent set by setProgress.
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP", makeCandles([100, 105, 110, 115, 120])],
+            ["DOWN", makeCandles([100, 95, 90, 85, 80])],
+        ]);
+        const owner = 9014;
+        setRunOwnerForTests(owner);
+
+        const events = await collectEvents((ev) =>
+            processRunBatch(
+                {
+                    interval: "5m",
+                    strategyKey: STRATEGY_KEY,
+                    strategy: testStrategy,
+                    strategyParams: { threshold: 1 },
+                    backtestSettings: settings,
+                    capitalSettings,
+                    symbols: ["UP", "DOWN"],
+                    loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                    minUsableBars: 1,
+                },
+                (event) => ev.push(event),
+                owner,
+            ),
+        );
+
+        const progressEvents = events.filter((e): e is Extract<BatchStreamEvent, { type: "progress" }> => e.type === "progress");
+        // The second symbol starts at 50%; before the fix, the immediately
+        // following setStatus("Backtesting DOWN...") event reset percent to 0.
+        let maxSeen = 0;
+        let checkedPositiveStatus = false;
+        for (const ev of progressEvents) {
+            if (ev.percent > 0) maxSeen = Math.max(maxSeen, ev.percent);
+            if (maxSeen > 0 && ev.text.startsWith("Backtesting")) {
+                expect(ev.percent).to.equal(maxSeen, `setStatus-driven progress must preserve last percent, got ${ev.percent} after ${maxSeen}`);
+                checkedPositiveStatus = true;
+            }
+        }
+        expect(checkedPositiveStatus).to.equal(true);
+
+        setRunOwnerForTests(0);
+        releaseLastResults("test_end");
+    });
+
+    it("onSymbolStart populates currentSymbol in the run snapshot mid-run", async () => {
+        // Finding 6: the server plugin wires onSymbolStart to set
+        // snapshot.currentSymbol so a reattached tab sees which pair is active.
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP", makeCandles([100, 105, 110, 115, 120])],
+            ["DOWN", makeCandles([100, 95, 90, 85, 80])],
+        ]);
+        const owner = 9015;
+        setRunOwnerForTests(owner);
+
+        // Drive the run with a controllable loader so we can observe
+        // currentSymbol mid-run (after the first symbol starts, before the
+        // second completes). We resolve datasets one at a time via a gate.
+        let firstStarted = false;
+        const gate = { releaseSecond: false };
+        const loader = (symbol: string): Promise<OHLCVData[]> => {
+            if (symbol === "UP") {
+                firstStarted = true;
+                return Promise.resolve(datasets.get(symbol) ?? []);
+            }
+            // Block the second symbol's load until we snapshot.
+            return new Promise<OHLCVData[]>((resolve) => {
+                const check = () => {
+                    if (gate.releaseSecond) resolve(datasets.get(symbol) ?? []);
+                    else setTimeout(check, 5);
+                };
+                check();
+            });
+        };
+
+        const runPromise = processRunBatch(
+            {
+                interval: "5m",
+                strategyKey: STRATEGY_KEY,
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols: ["UP", "DOWN"],
+                loadDataset: loader,
+                minUsableBars: 1,
+            },
+            () => {},
+            owner,
+        );
+
+        // Wait until the runner has started the first symbol, then poll the
+        // snapshot for a non-null currentSymbol before the run finishes.
+        await new Promise<void>((resolve) => {
+            const tick = () => {
+                if (firstStarted) resolve();
+                else setTimeout(tick, 5);
+            };
+            tick();
+        });
+        // Give the runner a moment to set currentSymbol for whichever symbol
+        // is currently atop the loop (UP first, then DOWN).
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        const midRunSymbol = getRunStateForTests()?.currentSymbol;
+        expect(["UP", "DOWN"]).to.include(midRunSymbol, "currentSymbol should be populated mid-run");
+
+        gate.releaseSecond = true;
+        await runPromise;
+
+        // After completion, currentSymbol is cleared.
+        expect(getRunStateForTests()?.currentSymbol).to.equal(null);
 
         setRunOwnerForTests(0);
         releaseLastResults("test_end");
@@ -679,6 +848,102 @@ describe("batch-backtest server plugin processStabilityMine", () => {
         } finally {
             resetRustMinerClientForTests();
             resetMinerGatesForTests();
+            releaseLastResults("test_end");
+        }
+    });
+
+    it("Stop aborts in-flight miner target loads via the abort signal (Finding 7)", async () => {
+        // Verify the server plugin forwards minerAbortController.signal into
+        // loadTargets, and that handleStopRequest aborts it so a Stop click
+        // cancels up to TARGET_LOAD_CONCURRENCY target dataset loads instead of
+        // letting them run to completion after the user clicked Stop.
+        const pairData = makeCandles([100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]);
+        const datasets = new Map<string, OHLCVData[]>([["UP+DOWN", pairData]]);
+        const owner = 9040;
+        setRunOwnerForTests(owner);
+        const runEvents = await collectEvents((ev) =>
+            processRunBatch(
+                {
+                    interval: "5m",
+                    strategyKey: STRATEGY_KEY,
+                    strategy: testStrategy,
+                    strategyParams: { threshold: 1 },
+                    backtestSettings: settings,
+                    capitalSettings,
+                    symbols: ["UP+DOWN"],
+                    loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                    minUsableBars: 1,
+                },
+                (event) => ev.push(event),
+                owner,
+            ),
+        );
+        setRunOwnerForTests(0);
+        const done = runEvents[runEvents.length - 1] as Extract<BatchStreamEvent, { type: "done" }>;
+
+        const minerOwner = 9041;
+        setMinerOwnerForTests(minerOwner);
+        const abortController = new AbortController();
+        setMinerAbortControllerForTests(abortController);
+
+        let receivedSignal: AbortSignal | undefined;
+        let observedAborted = false;
+        try {
+            const mineEvents: unknown[] = [];
+            const minePromise = processStabilityMine(
+                done.fingerprint,
+                "5m",
+                1,
+                1,
+                1,
+                (event) => mineEvents.push(event),
+                minerOwner,
+                async (_pairArtifacts, _interval, signal?: AbortSignal) => {
+                    receivedSignal = signal;
+                    // Block until the signal aborts; the miner should report a
+                    // cancellation, not surface the abort as a fatal error.
+                    return new Promise<never>((_resolve, reject) => {
+                        if (!signal) return reject(new Error("no signal forwarded"));
+                        if (signal.aborted) {
+                            observedAborted = true;
+                            return reject(new Error("aborted"));
+                        }
+                        signal.addEventListener("abort", () => {
+                            observedAborted = true;
+                            reject(new Error("aborted"));
+                        });
+                    });
+                },
+            );
+
+            // Wait until the stub has captured the signal, then fire Stop.
+            await new Promise<void>((resolve) => {
+                const tick = () => {
+                    if (receivedSignal) resolve();
+                    else setTimeout(tick, 5);
+                };
+                tick();
+            });
+            expect(receivedSignal).to.not.equal(undefined, "loadTargets should receive an AbortSignal");
+
+            await handleStopRequest();
+            expect(abortController.signal.aborted).to.equal(true);
+
+            // The blocked loader should now reject via the abort listener, and
+            // the miner should emit a cancelled done event instead of fatal.
+            await minePromise;
+            expect(observedAborted).to.equal(true, "the forwarded signal should have aborted");
+            const last = mineEvents[mineEvents.length - 1] as { type?: string; ok?: boolean; cancelled?: boolean; summary?: string; error?: string };
+            expect(last).to.deep.include({
+                type: "done",
+                ok: false,
+                cancelled: true,
+                summary: "Stability mining cancelled.",
+            });
+            expect(last.error).to.equal(undefined);
+        } finally {
+            setMinerAbortControllerForTests(null);
+            setMinerOwnerForTests(0);
             releaseLastResults("test_end");
         }
     });

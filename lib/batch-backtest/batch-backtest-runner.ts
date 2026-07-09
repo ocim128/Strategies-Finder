@@ -119,6 +119,14 @@ export interface BatchBacktestRunCallbacks {
     setProgress: (percent: number, text: string) => void;
     setStatus: (text: string) => void;
     onSymbolComplete?: (index: number, result: BatchBacktestSymbolResult) => void;
+    /**
+     * Fired once per attempted symbol at the top of the iteration, before
+     * load/backtest. Lets a caller (the server-side plugin) surface which pair
+     * is currently active for reattach UI. Skipped on cancel-bail at the loop
+     * head. Fires for every symbol the runner actually attempts, including
+     * `load_failed` / `run_failed` branches.
+     */
+    onSymbolStart?: (index: number, symbol: string) => void;
     isCancelled: () => boolean;
 }
 
@@ -185,6 +193,7 @@ export async function runBatchBacktest(
         }
 
         const symbol = symbols[i];
+        callbacks.onSymbolStart?.(i, symbol);
         callbacks.setProgress((i / total) * 100, `Running ${symbol} (${i + 1}/${total})...`);
         callbacks.setStatus(`Backtesting ${symbol}...`);
 

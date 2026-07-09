@@ -92,6 +92,17 @@ const LARGE_RUN_MIN_HEAP_MB = 8192;
 const VERY_LARGE_RUN_MIN_HEAP_MB = 12288;
 
 /**
+ * Pagination cap for `GET /api/batch-backtest/status` row payloads. A tab that
+ * reloads late into a 1000+ pair run would otherwise receive every accumulated
+ * row in one JSON response (one large parse + DOM append burst). The browser
+ * reattach loop drains pages via `nextOffset` until it sees `null`, so catch-up
+ * latency is unchanged; each response stays bounded. Clamped to `[1, 1000]` so
+ * a malformed `?limit=` cannot request an unbounded or empty page.
+ */
+const DEFAULT_STATUS_ROW_LIMIT = 250;
+const MAX_STATUS_ROW_LIMIT = 1000;
+
+/**
  * Phase 2 compact-artifact storage gate. When true, `storeMineArtifact`
  * converts the raw `BatchSyntheticPairArtifact` to the compact SoA shape
  * (`toCompactPairArtifact`) before writing to disk.
@@ -191,6 +202,14 @@ let lastRunInterval: string | null = null;
 let lastRunStrategyKey: string | null = null;
 let lastRunCacheStats: BatchDatasetCacheStats | null = null;
 let abortController: AbortController | null = null;
+// Abort controller for in-flight Mine / Stability Mine target dataset loads.
+// Mirrors `abortController` (Run path): created when a Mine starts, aborted in
+// `handleStopRequest`, nulled in the handlers' `finally`. The server-side
+// `loadMinerTargets` forwards this signal to `loadServerBatchDataset`, which
+// already accepts an optional AbortSignal — so Stop now cancels up to
+// `TARGET_LOAD_CONCURRENCY` (=8) target loads that would otherwise keep
+// running after the user clicks Stop.
+let minerAbortController: AbortController | null = null;
 let artifactReleaseTimer: ReturnType<typeof setTimeout> | null = null;
 let minerState: { running: boolean; startedAt: number; assets: number; pairs: number; verdicts: number; cancelled: boolean } | null = null;
 
@@ -442,25 +461,41 @@ export async function processRunBatch(
 
     const lostOwnership = () => runOwner !== owner;
     let cancelled = false;
+    // Remember the last real percent emitted by `setProgress` so `setStatus`
+    // (which the runner calls per-symbol with symbol-specific text like
+    // `Backtesting ${symbol}...`) can preserve the bar instead of resetting it
+    // to 0. Without this, every symbol visually snaps the bar back to 0 on the
+    // server path because the runner calls setProgress then setStatus in the
+    // same tick. The browser path's setStatus is label-only, so this asymmetry
+    // only existed server-side.
+    let lastPercent = 0;
 
     try {
         const output = await runBatchBacktest({ ...input, pruneResultArtifacts: true }, {
             setProgress: (percent, text) => {
                 if (lostOwnership()) return;
+                lastPercent = percent;
                 writer({ type: "progress", percent, text, status: text });
             },
             setStatus: (text) => {
                 if (lostOwnership()) return;
-                writer({ type: "progress", percent: 0, text, status: text });
+                writer({ type: "progress", percent: lastPercent, text, status: text });
+            },
+            onSymbolStart: (_index, symbol) => {
+                if (lostOwnership()) return;
+                if (runState === snapshot) {
+                    snapshot.currentSymbol = symbol;
+                }
             },
             onSymbolComplete: (index, result) => {
                 if (lostOwnership()) return;
+                const scalarRow = toScalarRow(result);
                 if (runState === snapshot) {
                     snapshot.completed = index + 1;
-                    snapshot.rows.push(toScalarRow(result));
+                    snapshot.rows.push(scalarRow);
                 }
                 storeMineArtifact(index, result);
-                writer({ type: "symbol", index, total, row: toScalarRow(result) });
+                writer({ type: "symbol", index, total, row: scalarRow });
             },
             isCancelled: () => {
                 if (lostOwnership()) {
@@ -573,7 +608,7 @@ export async function processMine(
     clearArtifactReleaseTimer();
 
     try {
-        const targets = await loadMinerTargets(artifactMetas, interval);
+        const targets = await loadMinerTargets(artifactMetas, interval, minerAbortController?.signal);
         snapshot.assets = targets.length;
         writer({ type: "start", assets: targets.length, pairs: artifactMetas.length });
         if (lostOwnership()) {
@@ -652,7 +687,7 @@ export async function processStabilityMine(
     seedRaw: number,
     writer: MinerStreamWriter,
     owner: number,
-    loadTargets: (pairArtifacts: readonly StoredMineArtifactMeta[], interval: string) => Promise<BatchSyntheticTargetArtifact[]> = loadMinerTargets,
+    loadTargets: (pairArtifacts: readonly StoredMineArtifactMeta[], interval: string, signal?: AbortSignal) => Promise<BatchSyntheticTargetArtifact[]> = loadMinerTargets,
 ): Promise<void> {
     const artifactMetas = collectStoredMineArtifactMetas();
     if (artifactMetas.length === 0) {
@@ -672,9 +707,19 @@ export async function processStabilityMine(
     const lostOwnership = () => minerOwner !== owner;
     clearArtifactReleaseTimer();
 
+    const writeCancelled = () => {
+        snapshot.cancelled = true;
+        snapshot.running = false;
+        writer({ type: "done", ok: false, cancelled: true, summary: "Stability mining cancelled." });
+    };
+
     try {
-        const targets = await loadTargets(artifactMetas, interval);
+        const targets = await loadTargets(artifactMetas, interval, minerAbortController?.signal);
         snapshot.assets = targets.length;
+        if (lostOwnership()) {
+            writeCancelled();
+            return;
+        }
         if (targets.length === 0) {
             writer({ type: "fatal", error: "No target asset candles loaded." });
             return;
@@ -696,8 +741,7 @@ export async function processStabilityMine(
                 seed,
             });
             if (lostOwnership()) {
-                snapshot.cancelled = true;
-                writer({ type: "fatal", error: "Stability mining cancelled." });
+                writeCancelled();
                 return;
             }
             if (route.ok) {
@@ -764,8 +808,7 @@ export async function processStabilityMine(
                 },
             });
             if (lostOwnership()) {
-                snapshot.cancelled = true;
-                writer({ type: "fatal", error: "Stability mining cancelled." });
+                writeCancelled();
                 return;
             }
             if (parallelOutcome.ok) {
@@ -818,8 +861,7 @@ export async function processStabilityMine(
         minerProfile.preparePairsMs += performance.now() - profileStartedAt;
         for (let runIndex = 0; runIndex < reruns; runIndex += 1) {
             if (lostOwnership()) {
-                snapshot.cancelled = true;
-                writer({ type: "fatal", error: "Stability mining cancelled." });
+                writeCancelled();
                 return;
             }
             const subsetArtifacts = sampleItems(preparedPairs, subsetSize, seed + runIndex);
@@ -848,6 +890,10 @@ export async function processStabilityMine(
         snapshot.running = false;
         writer({ type: "done", ok: true, result: finalResult });
     } catch (error) {
+        if (lostOwnership()) {
+            writeCancelled();
+            return;
+        }
         const message = error instanceof Error ? error.message : String(error);
         debugLogger.warn("batch.server.stability_mine.fatal", { error: message });
         snapshot.running = false;
@@ -865,6 +911,7 @@ export async function processStabilityMine(
 async function loadMinerTargets(
     pairArtifacts: readonly StoredMineArtifactMeta[],
     interval: string,
+    signal?: AbortSignal,
 ): Promise<BatchSyntheticTargetArtifact[]> {
     const assets = Array.from(new Set(
         pairArtifacts.flatMap((artifact) => [artifact.baseAsset, artifact.quoteAsset])
@@ -900,12 +947,15 @@ async function loadMinerTargets(
             if (minerOwner === RUN_OWNER_NONE) return null;
             const symbol = markedSymbolByAsset.get(asset) ?? resolveBatchSyntheticTargetSymbol(asset);
             try {
-                const data = await loadServerBatchDataset(symbol, interval);
+                const data = await loadServerBatchDataset(symbol, interval, signal);
                 if (Array.isArray(data) && data.length > 0) {
                     return { asset, symbol, data };
                 }
                 return null;
             } catch (error) {
+                if (signal?.aborted || minerOwner === RUN_OWNER_NONE) {
+                    return null;
+                }
                 debugLogger.warn("batch.server.mine.target_load_failed", {
                     asset, symbol,
                     error: error instanceof Error ? error.message : String(error),
@@ -1103,6 +1153,16 @@ async function handleStopRequest(): Promise<{ ok: boolean; stopped: boolean }> {
             /* best-effort */
         }
     }
+    // Abort in-flight Mine / Stability Mine target loads so Stop is responsive
+    // on large asset universes (up to TARGET_LOAD_CONCURRENCY=8 loads survive
+    // Stop otherwise). Loads swallow AbortError via the per-target try/catch.
+    if (minerAbortController) {
+        try {
+            minerAbortController.abort();
+        } catch {
+            /* best-effort */
+        }
+    }
     const runWasActive = runOwner !== RUN_OWNER_NONE;
     const minerWasActive = minerOwner !== RUN_OWNER_NONE;
     runOwner = RUN_OWNER_NONE;
@@ -1122,6 +1182,7 @@ async function handleMineRequest(res: ViteHttpResponse, body: Record<string, unk
     }
     const owner = ++minerOwnerGen;
     minerOwner = owner;
+    minerAbortController = new AbortController();
 
     let stream: ReturnType<typeof beginNdjsonStream> | null = null;
     try {
@@ -1148,6 +1209,7 @@ async function handleMineRequest(res: ViteHttpResponse, body: Record<string, unk
         if (minerState && minerOwner === RUN_OWNER_NONE) {
             minerState.running = false;
         }
+        minerAbortController = null;
     }
 }
 
@@ -1163,6 +1225,7 @@ async function handleStabilityMineRequest(res: ViteHttpResponse, body: Record<st
     }
     const owner = ++minerOwnerGen;
     minerOwner = owner;
+    minerAbortController = new AbortController();
 
     let stream: ReturnType<typeof beginNdjsonStream> | null = null;
     try {
@@ -1192,11 +1255,22 @@ async function handleStabilityMineRequest(res: ViteHttpResponse, body: Record<st
         if (minerState && minerOwner === RUN_OWNER_NONE) {
             minerState.running = false;
         }
+        minerAbortController = null;
     }
 }
 
-function handleStatusRequest(afterRow = 0): unknown {
+function handleStatusRequest(afterRow = 0, limitRaw?: number): unknown {
     const rowOffset = Math.max(0, Math.floor(Number.isFinite(afterRow) ? afterRow : 0));
+    // Bound the page so a late-reattach tab never receives every accumulated
+    // row in one response. Default to DEFAULT_STATUS_ROW_LIMIT; clamp a
+    // caller-supplied limit to [1, MAX]. `rowCount` stays the TOTAL server row
+    // count (not the slice length) so the browser can reconcile absolute index.
+    const requestedLimit = Math.floor(Number.isFinite(limitRaw as number) ? (limitRaw as number) : DEFAULT_STATUS_ROW_LIMIT);
+    const limit = Math.max(1, Math.min(MAX_STATUS_ROW_LIMIT, requestedLimit));
+    const rowCount = runState?.rows.length ?? 0;
+    const sliceEnd = Math.min(rowOffset + limit, rowCount);
+    const rows = runState?.rows.slice(rowOffset, sliceEnd) ?? [];
+    const nextOffset = sliceEnd < rowCount ? sliceEnd : null;
     return {
         ok: true,
         running: runState !== null && runOwner !== RUN_OWNER_NONE,
@@ -1210,9 +1284,10 @@ function handleStatusRequest(afterRow = 0): unknown {
                 failed: runState.failed,
                 currentSymbol: runState.currentSymbol,
                 cancelled: runState.cancelled,
-                rows: runState.rows.slice(rowOffset),
+                rows,
                 rowOffset,
-                rowCount: runState.rows.length,
+                rowCount,
+                nextOffset,
             }
             : null,
         lastRun: hasStoredMineArtifacts()
@@ -1320,7 +1395,9 @@ export function batchBacktestVitePlugin(): Plugin {
             }
             const parsedUrl = new URL(req.url ?? "/api/batch-backtest/status", "http://localhost");
             const after = Number(parsedUrl.searchParams.get("after") ?? 0);
-            sendJson(res, 200, handleStatusRequest(after));
+            const limitParam = parsedUrl.searchParams.get("limit");
+            const limit = limitParam === null ? undefined : Number(limitParam);
+            sendJson(res, 200, handleStatusRequest(after, limit));
         });
     };
 
@@ -1348,6 +1425,7 @@ export const __testInternals = {
     hasStoredMineArtifacts,
     DEFAULT_ARTIFACT_RETENTION_MS,
     handleStatusRequest,
+    handleStopRequest,
     setRunOwnerForTests(owner: number): void {
         runOwner = owner;
         if (owner === RUN_OWNER_NONE) {
@@ -1356,6 +1434,16 @@ export const __testInternals = {
     },
     setMinerOwnerForTests(owner: number): void {
         minerOwner = owner;
+    },
+    /**
+     * Set the Mine abort controller during tests. The HTTP handlers create it
+     * (`minerAbortController = new AbortController()`), but tests that call
+     * `processMine` / `processStabilityMine` directly bypass the handlers, so
+     * they must install one to exercise the Stop-aborts-target-loads path.
+     * Pass null to clear.
+     */
+    setMinerAbortControllerForTests(controller: AbortController | null): void {
+        minerAbortController = controller;
     },
     getRunStateForTests(): BatchRunSnapshot | null {
         return runState;

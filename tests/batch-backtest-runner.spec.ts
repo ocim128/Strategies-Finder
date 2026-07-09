@@ -283,5 +283,83 @@ describe("runBatchBacktest", () => {
         // and well below any real full-length dataset (~65k).
         expect(BATCH_MIN_USABLE_BARS).to.equal(200);
     });
+
+    it("fires onSymbolStart once per attempted symbol before load/backtest", async () => {
+        // Finding 6: onSymbolStart must fire exactly once per symbol the runner
+        // attempts, in order, including load_failed rows (so the server plugin
+        // can surface currentSymbol mid-run). It is skipped for symbols never
+        // reached because of a cancel-bail at the loop head.
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP", makeCandles([100, 105, 110, 115, 120])],
+            ["DOWN", makeCandles([100, 95, 90, 85, 80])],
+            // MISSING -> load_failed; onSymbolStart must still fire for it.
+        ]);
+        const starts: Array<{ index: number; symbol: string }> = [];
+
+        const output = await runBatchBacktest(
+            {
+                interval: "5m",
+                strategyKey: "batch_test",
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols: ["UP", "DOWN", "MISSING"],
+                loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                minUsableBars: 1,
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                onSymbolStart: (index, symbol) => starts.push({ index, symbol }),
+                isCancelled: () => false,
+            },
+        );
+
+        expect(output.results.map((r) => r.symbol)).to.deep.equal(["UP", "DOWN", "MISSING"]);
+        // Fires once per symbol, in order, with the correct index.
+        expect(starts).to.deep.equal([
+            { index: 0, symbol: "UP" },
+            { index: 1, symbol: "DOWN" },
+            { index: 2, symbol: "MISSING" },
+        ]);
+    });
+
+    it("does not fire onSymbolStart for symbols never reached due to cancel", async () => {
+        // When isCancelled flips true at the loop head, the iteration breaks
+        // before reading its symbol, so onSymbolStart must NOT fire for it.
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP", makeCandles([100, 105, 110, 115, 120])],
+            ["DOWN", makeCandles([100, 95, 90, 85, 80])],
+            ["FLAT", makeCandles([100, 100, 100, 100, 100])],
+        ]);
+        const starts: string[] = [];
+        let calls = 0;
+
+        await runBatchBacktest(
+            {
+                interval: "5m",
+                strategyKey: "batch_test",
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols: ["UP", "DOWN", "FLAT"],
+                loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                minUsableBars: 1,
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                onSymbolStart: (_i, symbol) => starts.push(symbol),
+                // Cancel at the loop head of the 2nd iteration: the 1st symbol
+                // runs (start fires), the 2nd is cancelled at the loop head
+                // before its symbol is read (no start), the 3rd never reached.
+                isCancelled: () => (calls += 1) >= 2,
+            },
+        );
+
+        expect(starts).to.deep.equal(["UP"]);
+    });
 });
 

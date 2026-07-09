@@ -70,6 +70,7 @@ export function toScalarRow(row: BatchBacktestSymbolResult): BatchBacktestSymbol
 // ---------------------------------------------------------------------------
 
 import type { BatchSyntheticAssetVerdict } from "./batch-synthetic-state-miner";
+import type { BatchStabilityMineResult } from "./batch-stability-mine";
 
 export type BatchMinerStreamEvent =
     | { type: "start"; assets: number; pairs: number }
@@ -81,4 +82,22 @@ export type BatchMinerStreamEvent =
         summary: string;
         totals: { verdicts: number };
       }
+    | { type: "fatal"; error: string };
+
+/**
+ * Stream event contract for the Stability Mine server-side plugin
+ * (`POST /api/batch-backtest/stability-mine`). Distinct from
+ * {@link BatchMinerStreamEvent} because Stability Mine streams `progress`
+ * (per-rerun hits) and a `done` carrying the full
+ * {@link BatchStabilityMineResult} — no `start` / `verdict` events. The
+ * consumer (`BatchBacktestService.runStabilityMineServer`) reads it via
+ * `consumeNdjsonStream<BatchStabilityMineStreamEvent>`. Dispatch in
+ * `consumeNdjsonStream` is by `event.type` → camelCase handler key and is
+ * non-exhaustive, so this union exists for compiler coverage at the consumer,
+ * not for runtime enforcement.
+ */
+export type BatchStabilityMineStreamEvent =
+    | { type: "progress"; run: number; reruns: number; hits: number }
+    | { type: "done"; ok: true; result: BatchStabilityMineResult }
+    | { type: "done"; ok: false; cancelled: true; summary: string }
     | { type: "fatal"; error: string };
