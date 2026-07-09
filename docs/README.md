@@ -22,6 +22,7 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 
 - [../workers/README.md](../workers/README.md) - Cloudflare Worker endpoints, D1 migrations, cron, and Telegram support.
 - [../DEPLOY_TO_VERCEL.md](../DEPLOY_TO_VERCEL.md) - Vercel deployment and password protection.
+- [../artifacts/batch-bench/README.md](../artifacts/batch-bench/README.md) - batch backtest benchmarking protocol and schema.
 
 ## Maintenance Rules
 

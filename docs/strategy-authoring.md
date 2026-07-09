@@ -205,7 +205,7 @@ See [synthetic-pairs.md](synthetic-pairs.md) for generation and support details.
 - `npm run strategies:sync-manifest` was run
 - `npm run strategies:audit-prepared` was run if the strategy uses rolling statistics, VWAP, or cross-symbol state
 - `npm run typecheck` passes
-- `strategies.spec.ts` or a focused strategy spec was added/updated if behavior is non-trivial
+- `tests/new-strategy-lib-smoke.spec.ts` passes (smoke-tests every manifest strategy), and a focused strategy spec was added/updated if normalization, Finder, or WFA behavior is non-trivial
 - the strategy appears in the UI dropdown
 
 ## Common Mistakes

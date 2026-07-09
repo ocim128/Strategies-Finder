@@ -237,7 +237,7 @@ Strategy-lib contract notes:
 - If you add `prepareFinderData(...)`, keep `executePrepared(...)` behavior identical to `execute(...)`
 
 Recommended strategy-lib skeleton:
-Read `lib/strategies/lib/robust_median_channel_breakout.ts` for a simple implementation or `lib/strategies/lib/rolling_vwap_center.ts` for a Finder-prepared implementation.
+Read `lib/strategies/lib/close_location_median_alignment.ts` for a simple implementation or `lib/strategies/lib/rolling_vwap_center.ts` for a Finder-prepared implementation.
 
 Useful helper maps:
 - `lib/strategies/strategy-helpers.ts`: Core signals (`createSignalLoop`, `createBuySignal`, `createSellSignal`) & base OHLCV array extractors (`getCloses`, `getHighs`, `getVolumes`, `ensureCleanData`).
@@ -251,7 +251,7 @@ Important Type and Dependency Gotchas:
 - Array indexing: ensure you loop against generic padding `if (i < lookback || indicator[i] === null) return null;` securely within closures.
 
 Useful examples:
-- `lib/strategies/lib/robust_median_channel_breakout.ts`
+- `lib/strategies/lib/close_location_median_alignment.ts`
   - small strategy with explicit normalization and direct `execute(...)` use
 - `lib/strategies/lib/rolling_vwap_center.ts`
   - Finder-safe prepared-data reuse with normalized params
@@ -268,7 +268,7 @@ Strategy-lib checklist before you stop:
 - `execute(...)` uses normalized params if bounds or trigger semantics depend on them
 - `npm run strategies:sync-manifest` run so `lib/strategies/manifest.ts` is up to date
 - `npm run typecheck` passes
-- add or update `strategies.spec.ts` if normalization, Finder, or WFA behavior is non-trivial
+- add or update a focused strategy spec if normalization, Finder, or WFA behavior is non-trivial; run `tests/new-strategy-lib-smoke.spec.ts` as baseline sanity
 - manually confirm the strategy appears in the dropdown if UI behavior changed
 
 Strategy-lib failure modes seen repeatedly:
