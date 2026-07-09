@@ -178,3 +178,57 @@ export async function fetchWithTimeoutAndRetry(
 
     throw lastError ?? new Error('Fetch failed');
 }
+
+/**
+ * Reads a response body as JSON if the content-type advertises it (or if the
+ * text body parses as JSON), otherwise as raw text. Returns `{ json, text }`
+ * where exactly one is non-null on success (text is also returned alongside a
+ * JSON parse from a non-JSON content-type so callers can use it as a fallback
+ * message). Browser- and Node-safe.
+ *
+ * Consolidates the per-module `readApiBody`/body-sniffing logic that was
+ * duplicated across alert-service, execution-lab, local-api-transport, and
+ * provider helpers. The shape matches alert-service's `readApiBody` exactly so
+ * it is a drop-in for the largest existing caller.
+ */
+export async function readJsonOrText(response: Response): Promise<{ json: unknown | null; text: string | null }> {
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+
+    if (contentType.includes('application/json')) {
+        try {
+            return { json: await response.json(), text: null };
+        } catch {
+            return { json: null, text: null };
+        }
+    }
+
+    try {
+        const text = await response.text();
+        if (!text.trim()) return { json: null, text: null };
+        try {
+            return { json: JSON.parse(text), text };
+        } catch {
+            return { json: null, text };
+        }
+    } catch {
+        return { json: null, text: null };
+    }
+}
+
+/**
+ * Extracts a trimmed `.error` string from a parsed API error payload (the
+ * `{ ok: false, error: "..." }` shape used across the local API, alert
+ * worker, and Execution Lab), falling back to `fallback` when the payload has
+ * no usable error string. Returns `null` only when both the payload and the
+ * fallback are empty, so callers can chain their own fallback (e.g. an HTTP
+ * status line).
+ */
+export function extractApiError(payload: unknown, fallback: string | null = null): string | null {
+    if (payload && typeof payload === 'object') {
+        const message = (payload as Record<string, unknown>).error;
+        if (typeof message === 'string' && message.trim()) {
+            return message.trim();
+        }
+    }
+    return fallback;
+}

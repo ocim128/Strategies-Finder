@@ -186,7 +186,7 @@ test("file-backed round-trip: store then load returns the same bars", async () =
 // --------------------------------------------------------------------------
 
 test("binance fingerprint uses series_meta.lastTime and barsCount", async () => {
-    __setSeriesMetaFetcherForTests(async (symbol, _interval) => ({
+    __setSeriesMetaFetcherForTests(async (_symbol, _interval) => ({
         ok: true,
         lastTime: 1782914400,
         barsCount: 65003,

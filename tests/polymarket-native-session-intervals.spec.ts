@@ -2,7 +2,7 @@ import { expect } from "chai";
 import { afterEach, describe, it } from "node:test";
 import { resetLocalSqlitePolymarketApiAvailabilityForTests } from "../lib/local-sqlite-polymarket-api";
 import { annotateBacktestResultWithPolymarketOutcomes } from "../lib/polymarket-trade-annotations";
-import type { BacktestResult, OHLCVData, Trade } from "../lib/types/strategies";
+import type { BacktestResult, OHLCVData, Time, Trade } from "../lib/types/strategies";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -10,9 +10,9 @@ function makeTrade(id: number, type: Trade["type"], entryTs: number, pnl: number
     return {
         id,
         type,
-        entryTime: entryTs,
+        entryTime: entryTs as Time,
         entryPrice: 30_000,
-        exitTime: entryTs + 300,
+        exitTime: (entryTs + 300) as Time,
         exitPrice: pnl >= 0 ? 30_100 : 29_900,
         pnl,
         pnlPercent: pnl >= 0 ? 0.3 : -0.3,
@@ -44,7 +44,7 @@ function makeBacktestResult(trades: Trade[]): BacktestResult {
 
 function makeBars(count: number, intervalSec: number, startTs: number): OHLCVData[] {
     return Array.from({ length: count }, (_, index) => ({
-        time: startTs + index * intervalSec,
+        time: (startTs + index * intervalSec) as Time,
         open: 30_000,
         high: 30_100,
         low: 29_900,
@@ -184,7 +184,7 @@ describe("Polymarket native outcome sessions", () => {
         const tradeEntryTs = eventStartTs + 1800;
         const requestedSeriesIds: string[] = [];
 
-        globalThis.fetch = (async (input, init) => {
+        globalThis.fetch = (async (input, _init) => {
             const url = new URL(
                 typeof input === "string"
                     ? input
@@ -378,7 +378,7 @@ describe("Polymarket native outcome sessions", () => {
         const signalTrade: Trade = {
             ...makeTrade(1, "long", tradeEntryTs, 9),
             exitReason: "signal",
-            exitTime: tradeEntryTs + 120,
+            exitTime: (tradeEntryTs + 120) as Time,
         };
 
         const result = await annotateBacktestResultWithPolymarketOutcomes(

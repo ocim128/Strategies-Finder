@@ -191,6 +191,8 @@ describe('Finder candidate parameter normalization', () => {
                 losingTrades: 0,
                 winRate: 0,
                 avgTrade: 0,
+                avgWin: 0,
+                avgLoss: 0,
                 maxDrawdown: 0,
                 maxDrawdownPercent: 0,
                 profitFactor: 0,
@@ -537,7 +539,6 @@ describe('Finder ATR risk randomization support', () => {
 
     it('reapplies mode-specific TP params back into backtest settings when a finder row is applied', () => {
         const baseSettings: BacktestSettings = {
-            riskSettingsToggle: true,
             riskMode: 'percentage',
             takeProfitEnabled: true,
             takeProfitPercent: 6,

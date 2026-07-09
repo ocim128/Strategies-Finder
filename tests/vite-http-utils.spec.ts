@@ -63,7 +63,7 @@ describe("Vite HTTP utilities", () => {
 
 describe("proxyUpstreamJson", () => {
     function makeResponse(): { res: ViteHttpResponse; capture: { status: number; headers: Record<string, string>; body: string } } {
-        const capture = { status: 0, headers: {}, body: "" };
+        const capture: { status: number; headers: Record<string, string>; body: string } = { status: 0, headers: {}, body: "" };
         const res: ViteHttpResponse = {
             statusCode: 0,
             setHeader(name: string, value: string) {

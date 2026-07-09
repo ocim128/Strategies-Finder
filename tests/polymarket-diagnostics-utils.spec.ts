@@ -5,16 +5,27 @@ import {
     rankPolymarketFeatureSuggestions,
     resolvePolymarketSelectedEntryOffset,
 } from "../lib/polymarket-diagnostics-utils";
-import type { BacktestResult, Trade } from "../lib/types/strategies";
-import type { PolymarketFeatureAnalysis } from "../lib/types/polymarket-outcomes";
+import type { BacktestResult, Time, Trade } from "../lib/types/strategies";
+
+type PolymarketFeatureAnalysis = {
+    feature: string;
+    label: string;
+    winStats?: { mean: number; median: number; stddev: number; count: number };
+    lossStats?: { mean: number; median: number; stddev: number; count: number };
+    separationScore: number;
+    suggestedFilter: { direction: "above" | "below"; threshold: number } | null;
+    winRateIfFiltered: number;
+    expectancyIfFiltered: number;
+    tradesRemovedPercent: number;
+};
 
 function makeTrade(id: number, entryOffset?: number): Trade {
     return {
         id,
         type: "long",
-        entryTime: 1_700_000_000 + id * 60,
+        entryTime: (1_700_000_000 + id * 60) as Time,
         entryPrice: 30_000,
-        exitTime: 1_700_000_060 + id * 60,
+        exitTime: (1_700_000_060 + id * 60) as Time,
         exitPrice: 30_100,
         pnl: 5,
         pnlPercent: 0.5,

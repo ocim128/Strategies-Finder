@@ -8,12 +8,13 @@ import { state } from "../lib/state";
 import type {
     OHLCVData,
     StrategyExecutionContext,
+    Time,
 } from "../lib/types/strategies";
 import { relative_strength_mean_reversion } from "../lib/strategies/lib/relative_strength_mean_reversion";
 
 function bar(time: number, close: number): OHLCVData {
     return {
-        time,
+        time: time as Time,
         open: close,
         high: close,
         low: close,

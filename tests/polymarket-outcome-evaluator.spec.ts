@@ -18,7 +18,7 @@
 
 import { evaluatePolymarketOutcomes } from "../lib/polymarket-outcome-evaluator";
 import { parseTimeToUnixSeconds } from "../lib/time-normalization";
-import type { OHLCVData, Strategy, StrategyParams, Signal } from "../lib/types/strategies";
+import type { OHLCVData, Strategy, Signal } from "../lib/types/strategies";
 import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────

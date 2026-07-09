@@ -5,6 +5,7 @@ import type {
     Polymarket1sGammaContextRow,
     Polymarket1sQuoteContextRow,
     Polymarket1sRuntimeContext,
+    Time,
 } from "../lib/types/strategies";
 import {
     buildPolymarket1sActionabilityMask,
@@ -24,7 +25,7 @@ const EVENT_END = EVENT_START + 300;
 
 function candle(offsetSec: number, close: number): OHLCVData {
     return {
-        time: EVENT_START + offsetSec,
+        time: (EVENT_START + offsetSec) as Time,
         open: close,
         high: close,
         low: close,

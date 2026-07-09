@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { PolymarketOutcomeLoader } from "../lib/polymarket-outcome-loader";
-import type { BacktestResult } from "../lib/types/strategies";
+import type { BacktestResult, Time } from "../lib/types/strategies";
 import type { PolymarketEntrySelectionMode } from "../lib/polymarket-entry-selection-mode";
 import type { PolymarketOutcomeInterval } from "../lib/polymarket-outcome-interval";
 import type { PolymarketExitMode } from "../lib/polymarket-exit-mode";
@@ -12,9 +12,9 @@ function makeResult(overrides: Partial<BacktestResult> = {}): BacktestResult {
             {
                 id: 1,
                 type: "long",
-                entryTime: 1_700_000_000,
+                entryTime: 1_700_000_000 as Time,
                 entryPrice: 100,
-                exitTime: 1_700_000_300,
+                exitTime: 1_700_000_300 as Time,
                 exitPrice: 101,
                 pnl: 1,
                 pnlPercent: 1,
@@ -39,6 +39,9 @@ function makeResult(overrides: Partial<BacktestResult> = {}): BacktestResult {
         marketContext: {
             symbol: "BTCUSDT",
             interval: "1m",
+            candleCount: 0,
+            firstCandleTime: null,
+            lastCandleTime: null,
         },
         ...overrides,
     };
@@ -101,10 +104,9 @@ describe("PolymarketOutcomeLoader result signature", () => {
                 entryTimeFilteredTrades: 0,
                 evaluationMode: "signal_exit_same_event",
                 signalExitAllowMultipleTradesPerEvent: false,
-                wins: 1,
-                losses: 0,
+                profitableTrades: 1,
+                losingTrades: 0,
                 neutralTrades: 0,
-                winRate: 1,
                 expectancy: 0.4,
                 avgEntryPrice: 0.6,
                 netPnl: 0.4,

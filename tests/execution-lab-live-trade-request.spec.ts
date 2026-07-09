@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import type { ExecutionLabOpenPaperPosition, ExecutionLabSessionSnapshot } from "../lib/execution-lab/execution-lab-model";
+import type { LiveTradeSubmitRequest } from "../lib/execution-lab/execution-lab-model";
 import {
     buildLiveExitSubmitRequest,
     buildLiveTakeProfitSubmitRequest,
@@ -17,7 +18,7 @@ import {
     validateLiveTradeSubmitRequest,
 } from "../lib/execution-lab/live-trade-request";
 import { resolvePolymarketEntryCutoff } from "../lib/polymarket-entry-cutoff";
-import type { Trade } from "../lib/types/strategies";
+import type { Time, Trade } from "../lib/types/strategies";
 
 const EVENT_START = 1_700_000_000;
 const EVENT_END = EVENT_START + 300;
@@ -53,9 +54,9 @@ function sourceTrade(type: Trade["type"]): Trade {
     return {
         id: 1,
         type,
-        entryTime: EVENT_START + 10,
+        entryTime: (EVENT_START + 10) as Time,
         entryPrice: 100,
-        exitTime: EVENT_END,
+        exitTime: EVENT_END as Time,
         exitPrice: 101,
         pnl: 1,
         pnlPercent: 1,
@@ -286,7 +287,7 @@ describe("Execution Lab live trade request", () => {
     });
 
     it("builds and validates live exit requests with a floor below paper exit price", () => {
-        const exitArgs = {
+        const exitArgs: Parameters<typeof buildLiveExitSubmitRequest>[0] = {
             snapshot: snapshot(),
             entryRequestId: "live-entry-1",
             paperTradeId: "paper-yes",
@@ -318,11 +319,11 @@ describe("Execution Lab live trade request", () => {
             nowSec: EVENT_START + 51,
             maxStakeUsd: 1,
         }).ok).to.equal(true);
-        expect(validateLiveTradeSubmitRequest({ ...request, shares: 0 }, {
+        expect(validateLiveTradeSubmitRequest({ ...request, shares: 0 } as LiveTradeSubmitRequest, {
             nowSec: EVENT_START + 51,
             maxStakeUsd: 10,
         }).ok).to.equal(false);
-        expect(validateLiveTradeSubmitRequest({ ...request, attempt: 0 }, {
+        expect(validateLiveTradeSubmitRequest({ ...request, attempt: 0 } as LiveTradeSubmitRequest, {
             nowSec: EVENT_START + 51,
             maxStakeUsd: 10,
         }).ok).to.equal(false);
@@ -614,28 +615,19 @@ describe("Execution Lab live trade request", () => {
 
     it("only attempts a protective exit when a posted limit entry cannot be canceled", () => {
         expect(shouldAttemptLiveExitAfterLimitCancel({
-            ok: true,
-            requestId: "cancel-1",
             status: "rejected",
             reason: "not_canceled",
-            scope: "session",
             canceledCount: 0,
         })).to.equal(true);
 
         expect(shouldAttemptLiveExitAfterLimitCancel({
-            ok: true,
-            requestId: "cancel-2",
             status: "submitted",
-            scope: "session",
             canceledCount: 1,
         })).to.equal(false);
 
         expect(shouldAttemptLiveExitAfterLimitCancel({
-            ok: true,
-            requestId: "cancel-3",
             status: "failed",
             reason: "executor_unavailable",
-            scope: "session",
             canceledCount: 0,
         })).to.equal(false);
     });

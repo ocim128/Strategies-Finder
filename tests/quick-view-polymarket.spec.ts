@@ -21,13 +21,13 @@ const ORIGINAL_FETCH = globalThis.fetch;
 const ORIGINAL_DOCUMENT = (globalThis as { document?: Document }).document;
 const ORIGINAL_HTML_SELECT_ELEMENT = (globalThis as { HTMLSelectElement?: typeof HTMLSelectElement }).HTMLSelectElement;
 
-function makeTrade(id: number, isWin: boolean | null, overrides: Partial<Trade> = {}): Trade {
+function makeTrade(id: number, isWin: boolean | null, overrides: Partial<Trade> & { entrySnapshot?: unknown } = {}): Trade {
     return {
         id,
         type: "long",
-        entryTime: 1_700_000_000 + id * 300,
+        entryTime: (1_700_000_000 + id * 300 as TestTime),
         entryPrice: 30_000,
-        exitTime: 1_700_000_300 + id * 300,
+        exitTime: (1_700_000_300 + id * 300 as TestTime),
         exitPrice: 30_100,
         pnl: isWin === false ? -10 : 10,
         pnlPercent: isWin === false ? -0.3 : 0.3,
@@ -352,7 +352,7 @@ describe("Quick View Polymarket streak summary", () => {
         const result = {
             trades: [
                 makeTrade(1, true, {
-                    entryTime: 1_699_999_800,
+                    entryTime: (1_699_999_800 as TestTime),
                     pnl: -100,
                     polymarketOutcome: {
                         ...makeTrade(1, true).polymarketOutcome!,
@@ -361,7 +361,7 @@ describe("Quick View Polymarket streak summary", () => {
                     entrySnapshot: { priceRangePos: 0.9 },
                 }),
                 makeTrade(2, false, {
-                    entryTime: 1_699_999_860,
+                    entryTime: (1_699_999_860 as TestTime),
                     pnl: 100,
                     polymarketOutcome: {
                         ...makeTrade(2, false).polymarketOutcome!,
@@ -445,6 +445,9 @@ describe("Quick View Polymarket streak summary", () => {
             marketContext: {
                 symbol: "BTCUSDT",
                 interval: "5m",
+                candleCount: 0,
+                firstCandleTime:( null as unknown as TestTime),
+                lastCandleTime:( null as unknown as TestTime),
             },
             polymarketTradeSummary: {
                 seriesId: "10684",
@@ -497,6 +500,9 @@ describe("Quick View Polymarket streak summary", () => {
             marketContext: {
                 symbol: "BTCUSDT",
                 interval: "5m",
+                candleCount: 0,
+                firstCandleTime:( null as unknown as TestTime),
+                lastCandleTime:( null as unknown as TestTime),
             },
             polymarketTradeSummary: {
                 seriesId: "10684",
@@ -551,6 +557,9 @@ describe("Quick View Polymarket streak summary", () => {
             marketContext: {
                 symbol: "BTCUSDT",
                 interval: "1s",
+                candleCount: 0,
+                firstCandleTime:( null as unknown as TestTime),
+                lastCandleTime:( null as unknown as TestTime),
             },
             polymarketTradeSummary: {
                 seriesId: "10684",
@@ -618,6 +627,9 @@ describe("Quick View Polymarket streak summary", () => {
             marketContext: {
                 symbol: "BTCUSDT",
                 interval: "1s",
+                candleCount: 0,
+                firstCandleTime:( null as unknown as TestTime),
+                lastCandleTime:( null as unknown as TestTime),
             },
             polymarketTradeSummary: {
                 seriesId: "10684",
@@ -649,7 +661,7 @@ describe("Quick View Polymarket streak summary", () => {
         const result = {
             trades: [
                 makeTrade(1, true, {
-                    entryTime: 1_700_000_000,
+                    entryTime: (1_700_000_000 as TestTime),
                     polymarketOutcome: {
                         ...makeTrade(1, true).polymarketOutcome!,
                         marketEntryPrice: 0.45,
@@ -738,7 +750,7 @@ describe("Quick View Polymarket streak summary", () => {
         (globalThis as { HTMLSelectElement?: typeof HTMLSelectElement }).HTMLSelectElement = class {} as typeof HTMLSelectElement;
         (globalThis as { document?: Document }).document = {
             getElementById: () => null,
-        } as Document;
+        } as unknown as Document;
 
         globalThis.fetch = (async (input) => {
             const url = new URL(
@@ -790,8 +802,8 @@ describe("Quick View Polymarket streak summary", () => {
         const enriched = await (quickViewManager as any).ensurePolymarketOutcomes({
             trades: [
                 makeTrade(1, true, {
-                    entryTime,
-                    exitTime: entryTime + 60,
+                    entryTime: entryTime as TestTime,
+                    exitTime: (entryTime + 60 as TestTime),
                     polymarketOutcome: undefined,
                 }),
             ],
@@ -813,6 +825,9 @@ describe("Quick View Polymarket streak summary", () => {
             marketContext: {
                 symbol: "XRPUSDT",
                 interval: "1m",
+                candleCount: 0,
+                firstCandleTime:( null as unknown as TestTime),
+                lastCandleTime:( null as unknown as TestTime),
             },
             polymarketTradeSummary: {
                 seriesId: "10422",
@@ -1535,8 +1550,8 @@ describe("Quick View Polymarket streak summary", () => {
         const enriched = await (quickViewManager as any).ensurePolymarketOutcomes({
             trades: [
                 makeTrade(1, true, {
-                    entryTime: tradeEntryTs,
-                    exitTime: tradeExitTs,
+                    entryTime: (tradeEntryTs as TestTime),
+                    exitTime: (tradeExitTs as TestTime),
                     exitReason: "signal",
                     polymarketOutcome: {
                         ...makeTrade(1, true).polymarketOutcome!,
@@ -1566,6 +1581,9 @@ describe("Quick View Polymarket streak summary", () => {
             marketContext: {
                 symbol: "BTCUSDT",
                 interval: "1s",
+                candleCount: 0,
+                firstCandleTime:( null as unknown as TestTime),
+                lastCandleTime:( null as unknown as TestTime),
             },
             polymarketTradeSummary: {
                 seriesId: "10684",
@@ -1730,8 +1748,8 @@ describe("Quick View Polymarket streak summary", () => {
         const enriched = await (quickViewManager as any).ensurePolymarketOutcomes({
             trades: [
                 makeTrade(1, true, {
-                    entryTime: tradeEntryTs,
-                    exitTime: tradeExitTs,
+                    entryTime: (tradeEntryTs as TestTime),
+                    exitTime: (tradeExitTs as TestTime),
                     exitReason: "signal",
                     polymarketOutcome: undefined,
                 }),
@@ -1756,8 +1774,8 @@ describe("Quick View Polymarket streak summary", () => {
                 interval: "1s",
                 binanceMarketType: "futures",
                 candleCount: 30,
-                firstCandleTime: eventStartTs,
-                lastCandleTime: eventStartTs + 30,
+                firstCandleTime: (eventStartTs as TestTime),
+                lastCandleTime: (eventStartTs + 30 as TestTime),
             },
         } satisfies BacktestResult);
 
@@ -1890,8 +1908,8 @@ describe("Quick View Polymarket streak summary", () => {
         const result = {
             trades: [
                 makeTrade(1, true, {
-                    entryTime: tradeEntryTs,
-                    exitTime: tradeEntryTs + 120,
+                    entryTime: (tradeEntryTs as TestTime),
+                    exitTime: (tradeEntryTs + 120 as TestTime),
                     exitReason: "signal",
                     polymarketOutcome: undefined,
                 }),
@@ -1914,6 +1932,9 @@ describe("Quick View Polymarket streak summary", () => {
             marketContext: {
                 symbol: "XRPUSDT",
                 interval: "1m",
+                candleCount: 0,
+                firstCandleTime:( null as unknown as TestTime),
+                lastCandleTime:( null as unknown as TestTime),
             },
             polymarketTradeSummary: {
                 seriesId: "10422",

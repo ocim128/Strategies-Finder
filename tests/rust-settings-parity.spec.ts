@@ -18,7 +18,7 @@ import { RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS } from "../lib/rust-settings-san
 
 describe("Rust/TS settings parity", () => {
     it("never marks a setting rustSupport 'supported' while the sanitizer lists it unsupported", () => {
-        const rustUnsupported = new Set(RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS);
+        const rustUnsupported = new Set<string>(RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS);
         const contradictions: string[] = [];
 
         for (const contract of BACKTEST_SETTINGS_DOM_CONTRACTS) {
@@ -37,7 +37,7 @@ describe("Rust/TS settings parity", () => {
     });
 
     it("sanitizes every contract entry the contract marks rustSupport 'unsupported'", () => {
-        const rustUnsupported = new Set(RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS);
+        const rustUnsupported = new Set<string>(RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS);
         const unsanitized = BACKTEST_SETTINGS_DOM_CONTRACTS
             .filter(
                 (contract) =>

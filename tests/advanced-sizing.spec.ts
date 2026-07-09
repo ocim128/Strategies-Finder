@@ -168,6 +168,7 @@ describe("Advanced sizing", () => {
                 name: "Finder Kelly passthrough",
                 description: "Regression test",
                 defaultParams: {},
+                paramLabels: {},
                 execute: () => signals,
             },
             data,
@@ -199,6 +200,8 @@ describe("Advanced sizing", () => {
                     winRate: 0,
                     avgTrade: 0,
                     avgBarsInTrade: 0,
+                    avgWin: 0,
+                    avgLoss: 0,
                     maxDrawdown: 0,
                     maxDrawdownPercent: 0,
                     profitFactor: 0,
@@ -207,7 +210,7 @@ describe("Advanced sizing", () => {
                     trades: [],
                     equityCurve: [],
                 };
-            }) as typeof runBacktest,
+            }) as unknown as typeof runBacktest,
         });
 
         expect(captured).to.have.length(1);

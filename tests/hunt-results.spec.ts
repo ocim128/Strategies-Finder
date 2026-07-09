@@ -15,6 +15,8 @@ import {
 } from "../lib/hunt/hunt-results";
 import type { FinderResult } from "../lib/types/finder";
 import type { BacktestResult } from "../lib/types/strategies";
+import type { BacktestSettingsData } from "../lib/settings-model";
+import type { CapitalSettings } from "../lib/types/backtest";
 
 function makeBacktestResult(expectancy: number, profitFactor: number, totalTrades: number, maxDrawdownPercent: number): BacktestResult {
     return {
@@ -79,13 +81,14 @@ function makeProfile(id: string, name: string): HuntProfile {
             positionSize: 10,
             commission: 0.1,
             fixedTradeToggle: false,
-        },
+        } as unknown as BacktestSettingsData,
         capitalSettings: {
             initialCapital: 1_000,
             positionSize: 10,
             commission: 0.1,
             sizingMode: "percent",
-        },
+            fixedTradeAmount: 0,
+        } as CapitalSettings,
     };
 }
 

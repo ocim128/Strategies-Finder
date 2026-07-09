@@ -5,6 +5,8 @@ import {
     type LegScoreRow,
 } from "../lib/signal-committee-score";
 
+type TestLegScoreRow = LegScoreRow & { voteDirection?: "long" | "short" | null };
+
 /**
  * Per-leg decomposition tests.
  *
@@ -18,15 +20,15 @@ import {
  * drift from the ratio-pair convention.
  */
 
-function openLong(overrides: Partial<LegScoreRow> = {}): LegScoreRow {
+function openLong(overrides: Partial<TestLegScoreRow> = {}): TestLegScoreRow {
     return {
         streamId: "s",
         ok: true,
         latestTrade: { entryTimeSec: 1, entryPrice: 100, isOpen: true },
         latestClose: 110,
-        voteDirection: "long",
         symbol: "BTCUSDT",
         syntheticPair: null,
+        voteDirection: "long",
         ...overrides,
     };
 }
@@ -36,7 +38,7 @@ describe("signal-committee / aggregateLegScores", () => {
         // The user's headline example: shorting the ZEC/APT ratio pair is
         // short ZEC and long APT. Three such members should net to -3 / +3,
         // not collapse to a single -3.
-        const rows: LegScoreRow[] = [1, 2, 3].map((i) => openLong({
+        const rows: TestLegScoreRow[] = [1, 2, 3].map((i) => openLong({
             streamId: `s${i}`,
             symbol: "ZECAPT",
             syntheticPair: { baseSymbol: "ZEC", quoteSymbol: "APT" },
@@ -53,10 +55,9 @@ describe("signal-committee / aggregateLegScores", () => {
     it("decomposes a long APTZEC synthetic into APT +1 and ZEC -1", () => {
         // Second example, with base/quote flipped: long APT/ZEC is long APT,
         // short ZEC.
-        const rows: LegScoreRow[] = [openLong({
+        const rows: TestLegScoreRow[] = [openLong({
             symbol: "APTZEC",
             syntheticPair: { baseSymbol: "APT", quoteSymbol: "ZEC" },
-            voteDirection: "long",
         })];
         const legs = aggregateLegScores(rows);
         const bySymbol = new Map(legs.map((l) => [l.symbol, l]));
@@ -65,10 +66,9 @@ describe("signal-committee / aggregateLegScores", () => {
     });
 
     it("counts a non-synthetic member directly under its own symbol", () => {
-        const rows: LegScoreRow[] = [openLong({
+        const rows: TestLegScoreRow[] = [openLong({
             symbol: "BTCUSDT",
             syntheticPair: null,
-            voteDirection: "long",
         })];
         const legs = aggregateLegScores(rows);
         const bySymbol = new Map(legs.map((l) => [l.symbol, l]));
@@ -78,10 +78,9 @@ describe("signal-committee / aggregateLegScores", () => {
     });
 
     it("marks legs as syntheticOnly when no direct member voted on them", () => {
-        const rows: LegScoreRow[] = [openLong({
+        const rows: TestLegScoreRow[] = [openLong({
             symbol: "ZECAPT",
             syntheticPair: { baseSymbol: "ZEC", quoteSymbol: "APT" },
-            voteDirection: "long",
         })];
         const legs = aggregateLegScores(rows);
         const bySymbol = new Map(legs.map((l) => [l.symbol, l]));
@@ -95,12 +94,11 @@ describe("signal-committee / aggregateLegScores", () => {
         // pair (e.g. "BTC"), while a direct member's symbol is the full pair
         // (e.g. "BTCUSDT"). They are different strings and must NOT merge,
         // otherwise unrelated symbols would silently combine.
-        const rows: LegScoreRow[] = [
+        const rows: TestLegScoreRow[] = [
             openLong({
                 streamId: "direct",
                 symbol: "BTCUSDT",
                 syntheticPair: null,
-                voteDirection: "long",
             }),
             openLong({
                 streamId: "synthetic",
@@ -121,13 +119,12 @@ describe("signal-committee / aggregateLegScores", () => {
     });
 
     it("skips flat and excluded members", () => {
-        const rows: LegScoreRow[] = [
-            openLong({ voteDirection: "long", symbol: "BTCUSDT" }),
-            openLong({ ok: false, voteDirection: null, symbol: "ETHUSDT" }),
+        const rows: TestLegScoreRow[] = [
+            openLong({ symbol: "BTCUSDT" }),
+            openLong({ ok: false, symbol: "ETHUSDT" }),
             openLong({
                 // closed trade -> flat -> no vote
                 latestTrade: { entryTimeSec: 1, entryPrice: 100, isOpen: false },
-                voteDirection: "long",
                 symbol: "SOLUSDT",
             }),
         ];
@@ -137,11 +134,11 @@ describe("signal-committee / aggregateLegScores", () => {
     });
 
     it("sorts by absolute score desc, then alphabetically", () => {
-        const rows: LegScoreRow[] = [
-            openLong({ streamId: "a", symbol: "AAA", voteDirection: "long" }),
+        const rows: TestLegScoreRow[] = [
+            openLong({ streamId: "a", symbol: "AAA" }),
             openLong({ streamId: "b", symbol: "BBB", voteDirection: "short" }),
-            openLong({ streamId: "c", symbol: "CCC", voteDirection: "long" }),
-            openLong({ streamId: "d", symbol: "DDD", voteDirection: "long" }),
+            openLong({ streamId: "c", symbol: "CCC" }),
+            openLong({ streamId: "d", symbol: "DDD" }),
         ];
         const legs = aggregateLegScores(rows);
         // AAA +1, CCC +1, DDD +1 tie at |1| -> alphabetical (AAA, CCC, DDD);

@@ -15,6 +15,12 @@ import {
 } from "./alert-storage";
 import type { OHLCVData } from "./types/strategies";
 import { debugLogger } from "./debug-logger";
+import {
+    createFetchTimeoutSignal,
+    readJsonOrText,
+    extractApiError,
+    isAbortError,
+} from "./dataProviders/fetch-helpers";
 
 export const ALERT_WORKER_URL_CHANGED_EVENT = 'alert-worker-url-changed';
 const API_FETCH_TIMEOUT_MS = 10_000;
@@ -237,76 +243,15 @@ function truncateText(value: string, maxLen = 320): string {
     return `${trimmed.slice(0, Math.max(0, maxLen - 3))}...`;
 }
 
-function extractErrorMessage(body: unknown): string | null {
-    if (!body || typeof body !== 'object') return null;
-    const message = (body as Record<string, unknown>).error;
-    return typeof message === 'string' && message.trim() ? message.trim() : null;
-}
-
-async function readApiBody(res: Response): Promise<{ json: unknown | null; text: string | null }> {
-    const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
-
-    if (contentType.includes('application/json')) {
-        try {
-            return { json: await res.json(), text: null };
-        } catch {
-            return { json: null, text: null };
-        }
-    }
-
-    try {
-        const text = await res.text();
-        if (!text.trim()) return { json: null, text: null };
-        try {
-            return { json: JSON.parse(text), text };
-        } catch {
-            return { json: null, text };
-        }
-    } catch {
-        return { json: null, text: null };
-    }
-}
-
-function createTimedRequestSignal(sourceSignal?: AbortSignal): {
-    signal: AbortSignal;
-    cleanup: () => void;
-    didTimeout: () => boolean;
-} {
-    const controller = new AbortController();
-    let timedOut = false;
-    const timeoutId = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-    }, API_FETCH_TIMEOUT_MS);
-
-    const abortFromSource = () => {
-        controller.abort();
-    };
-
-    if (sourceSignal) {
-        if (sourceSignal.aborted) {
-            abortFromSource();
-        } else {
-            sourceSignal.addEventListener('abort', abortFromSource, { once: true });
-        }
-    }
-
-    return {
-        signal: controller.signal,
-        cleanup: () => {
-            clearTimeout(timeoutId);
-            sourceSignal?.removeEventListener('abort', abortFromSource);
-        },
-        didTimeout: () => timedOut,
-    };
-}
-
 async function fetchWithTimeout(input: string, options?: RequestInit): Promise<Response> {
-    const timeout = createTimedRequestSignal(options?.signal ?? undefined);
+    const timeout = createFetchTimeoutSignal(options?.signal ?? undefined, API_FETCH_TIMEOUT_MS);
     try {
         return await fetch(input, { ...options, signal: timeout.signal });
     } catch (error) {
-        if (timeout.didTimeout() && !(options?.signal?.aborted)) {
+        // createFetchTimeoutSignal aborts on timeout; distinguish a real timeout
+        // from a caller-initiated abort so the error message stays informative.
+        const callerAborted = options?.signal?.aborted === true;
+        if (!callerAborted && isAbortError(error)) {
             throw new Error(`Request timed out after ${API_FETCH_TIMEOUT_MS}ms.`);
         }
         throw error;
@@ -326,10 +271,10 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
             ...(options?.headers ?? {}),
         },
     });
-    const body = await readApiBody(res);
+    const body = await readJsonOrText(res);
 
     if (!res.ok) {
-        const message = extractErrorMessage(body.json)
+        const message = extractApiError(body.json)
             ?? (body.text ? truncateText(body.text) : null)
             ?? `HTTP ${res.status}`;
         throw new Error(message);
@@ -352,11 +297,11 @@ export const alertService = {
         try {
             const base = requireUrl();
             const res = await fetchWithTimeout(`${base}/health`);
-            const body = await readApiBody(res);
+            const body = await readJsonOrText(res);
             if (!res.ok) {
                 return {
                     ok: false,
-                    error: extractErrorMessage(body.json)
+                    error: extractApiError(body.json)
                         ?? (body.text ? truncateText(body.text) : `HTTP ${res.status}`),
                 };
             }

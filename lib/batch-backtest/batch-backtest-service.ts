@@ -126,6 +126,8 @@ class BatchBacktestService {
     // Reattach polling timer id (set when this tab is observing a server-side
     // run that started before page load).
     private reattachTimer: ReturnType<typeof setTimeout> | null = null;
+    private reattachTimerResolve: (() => void) | null = null;
+    private reattachPollingStopped = false;
     // Benchmark snapshot for the Copy Benchmark button. Each phase (run/mine/
     // stability) records wall clock + cache stats on completion; missing phases
     // stay null. `null` until at least one phase has completed in this session.
@@ -941,9 +943,14 @@ class BatchBacktestService {
     }
 
     private stopReattachPoll(): void {
+        this.reattachPollingStopped = true;
         if (this.reattachTimer) {
             clearTimeout(this.reattachTimer);
             this.reattachTimer = null;
+        }
+        if (this.reattachTimerResolve) {
+            this.reattachTimerResolve();
+            this.reattachTimerResolve = null;
         }
     }
 
@@ -958,12 +965,24 @@ class BatchBacktestService {
      * shared in-progress state instead of tapping the stream from a second
      * connection. Single-user dev server, so a multi-subscriber stream tap is
      * not worth the complexity.
+     *
+     * Polling is unbounded: a 1000-pair server-side run can outlast the prior
+     * 5-minute cap, which stranded the UI while Node kept working. Lifetime is
+     * gated by the server's `running` flag, `stopReattachPoll()` (Stop button /
+     * dispose / a new Run), and a 2s→5s step-down after 5 minutes to shed idle
+     * load on very long runs.
      */
     private async reattachToInProgressServerRun(): Promise<void> {
         const POLL_INTERVAL_MS = 2000;
-        const MAX_POLLS = 150; // 5 minutes, matching IBKR sync's cap.
+        const LONG_POLL_INTERVAL_MS = 5000;
+        const FAST_POLL_COUNT = 150; // 5 minutes at 2s before stepping down to 5s.
+        this.reattachPollingStopped = false;
         try {
-            for (let poll = 0; poll < MAX_POLLS; poll += 1) {
+            for (let poll = 0; ; poll += 1) {
+                if (this.reattachPollingStopped) {
+                    // stopReattachPoll() ran between iterations (Stop / dispose / new Run).
+                    return;
+                }
                 const response = await fetch(`/api/batch-backtest/status?after=${this.lastResults.length}`, { cache: "no-store" });
                 const payload = await response.json() as {
                     running?: boolean;
@@ -1067,11 +1086,14 @@ class BatchBacktestService {
                 const current = run.currentSymbol ? ` — ${run.currentSymbol}` : "";
                 dom.batchBacktestStatus.textContent = `Server run ${seen}/${run.total}${current}`;
                 this.setProgress(dom, run.total > 0 ? (seen / run.total) * 100 : 0, `${seen}/${run.total}`);
-                await new Promise((resolve) => {
-                    this.reattachTimer = setTimeout(resolve, POLL_INTERVAL_MS);
+                const delay = poll < FAST_POLL_COUNT ? POLL_INTERVAL_MS : LONG_POLL_INTERVAL_MS;
+                await new Promise<void>((resolve) => {
+                    this.reattachTimerResolve = resolve;
+                    this.reattachTimer = setTimeout(resolve, delay);
                 });
+                this.reattachTimer = null;
+                this.reattachTimerResolve = null;
             }
-            this.getDom().batchBacktestStatus.textContent = "Server run still in progress after 5 min — stopped watching. Click Stop or retry.";
         } catch (error) {
             debugLogger.warn("batch.server.reattach_failed", {
                 error: error instanceof Error ? error.message : String(error),

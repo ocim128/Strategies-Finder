@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { countRealtimeGapBars, findFirstGapAnchorTime } from '../lib/realtime-gap-utils';
+import type { OHLCVData, Time } from '../lib/types/strategies';
 
 describe('DataManager realtime gap detection', () => {
     it('returns zero for same-bar and adjacent-bar updates', () => {
@@ -22,12 +23,12 @@ describe('DataManager realtime gap detection', () => {
     });
 
     it('finds the candle before the first internal cached gap', () => {
-        const candles = [
-            { time: Date.UTC(2026, 2, 24, 22, 45, 0) / 1000, open: 1, high: 1, low: 1, close: 1, volume: 1 },
-            { time: Date.UTC(2026, 2, 24, 22, 50, 0) / 1000, open: 1, high: 1, low: 1, close: 1, volume: 1 },
-            { time: Date.UTC(2026, 2, 24, 22, 55, 0) / 1000, open: 1, high: 1, low: 1, close: 1, volume: 1 },
-            { time: Date.UTC(2026, 2, 25, 7, 55, 0) / 1000, open: 1, high: 1, low: 1, close: 1, volume: 1 },
-            { time: Date.UTC(2026, 2, 25, 8, 0, 0) / 1000, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+        const candles: OHLCVData[] = [
+            { time: (Date.UTC(2026, 2, 24, 22, 45, 0) / 1000) as Time, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+            { time: (Date.UTC(2026, 2, 24, 22, 50, 0) / 1000) as Time, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+            { time: (Date.UTC(2026, 2, 24, 22, 55, 0) / 1000) as Time, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+            { time: (Date.UTC(2026, 2, 25, 7, 55, 0) / 1000) as Time, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+            { time: (Date.UTC(2026, 2, 25, 8, 0, 0) / 1000) as Time, open: 1, high: 1, low: 1, close: 1, volume: 1 },
         ];
 
         assert.equal(

@@ -17,6 +17,7 @@ import {
     setMockChartModel,
     setStrategyTimeframeSettings,
 } from "../lib/state-actions";
+import type { Time } from "../lib/types/strategies";
 
 describe("State domains", () => {
     it("slices a state instance into domain snapshots", () => {
@@ -24,7 +25,7 @@ describe("State domains", () => {
         localState.currentSymbol = "BTCUSDT";
         localState.currentInterval = "4h";
         localState.binanceMarketType = "futures";
-        localState.ohlcvData = [{ time: 1, open: 1, high: 2, low: 0.5, close: 1.5, volume: 10 }];
+        localState.ohlcvData = [{ time: 1 as Time, open: 1, high: 2, low: 0.5, close: 1.5, volume: 10 }];
         localState.mockChartModel = "v5";
         localState.mockChartBars = 1234;
         localState.chartMode = "heikin-ashi";

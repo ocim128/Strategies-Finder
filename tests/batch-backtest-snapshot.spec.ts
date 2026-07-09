@@ -72,6 +72,7 @@ describe("Batch backtest result snapshots", () => {
                 subsetSize: 5,
                 seed: 1,
                 totalPairs: 10,
+                targetAssets: 1,
                 hitEvents: 1,
                 rows: [
                     {
@@ -86,6 +87,10 @@ describe("Batch backtest result snapshots", () => {
                         medianRr: 4,
                         medianDist: 5,
                         medianHmaxLiftPct: 6,
+                        timingEdgeScore: 7,
+                        medianDiversity: 1,
+                        dominantPair: "BTC",
+                        dominantPairShare: 1,
                         pairWarnings: 0,
                     },
                 ],

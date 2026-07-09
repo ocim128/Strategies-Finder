@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { selectBestNonBinanceLocalCandidate } from "../lib/data/data-persistence";
-import type { OHLCVData } from "../lib/types/strategies";
+import type { OHLCVData, Time } from "../lib/types/strategies";
 
 function candles(count: number): OHLCVData[] {
     return Array.from({ length: count }, (_, index) => ({
-        time: index + 1,
+        time: (index + 1) as Time,
         open: index + 1,
         high: index + 2,
         low: index,

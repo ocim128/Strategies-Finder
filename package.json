@@ -33,6 +33,7 @@
     "strategies:sync-manifest": "esno scripts/sync-strategy-manifest.ts",
     "strategies:audit-prepared": "esno scripts/audit-prepared-strategies.ts",
     "build:types": "tsc -p tsconfig.types.json",
+    "build:check": "vite build && esno scripts/check-bundle-budget.ts",
     "dev": "vite",
     "build": "vite build"
   },

@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import { executeBacktest, executeBacktestFromSignals, getManifestFingerprint } from "../lib/backtest-executor";
-import type { OHLCVData, BacktestSettings, Signal, Strategy } from "../lib/types/strategies";
+import type { OHLCVData, BacktestSettings, Strategy } from "../lib/types/strategies";
 import type { CapitalSettings } from "../lib/types/backtest";
 import { strategyManifest } from "../lib/strategies/manifest-eager";
 

@@ -15,12 +15,13 @@ import type {
     BacktestResult,
     OHLCVData,
     Strategy,
+    Time,
     Trade,
 } from "../lib/types/strategies";
 
 function createCandle(time: number): OHLCVData {
     return {
-        time,
+        time: time as Time,
         open: 100,
         high: 101,
         low: 99,
@@ -33,8 +34,8 @@ function createTrade(entryTime: number, type: "long" | "short"): Trade {
     return {
         id: entryTime,
         type,
-        entryTime,
-        exitTime: entryTime + 300,
+        entryTime: entryTime as Time,
+        exitTime: (entryTime + 300) as Time,
         entryPrice: 100,
         exitPrice: type === "long" ? 101 : 99,
         pnl: type === "long" ? 1 : -1,
@@ -141,7 +142,7 @@ function createDeps(
         }),
         evaluateSignalsOnData: async (_candles, _interval, signals, settings) => {
             if (capturedSignalExecutionModels) {
-                capturedSignalExecutionModels.push(settings.executionModel);
+                capturedSignalExecutionModels.push(settings.executionModel ?? "");
             }
 
             return {

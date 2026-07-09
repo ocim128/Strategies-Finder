@@ -8,9 +8,20 @@ import {
     resetBybitTradFiSymbolSupportForTests,
 } from "../lib/dataProviders/bybit";
 import { resetLocalApiAvailability } from "../lib/local-api-transport";
-import type { OHLCVData } from "../lib/types/strategies";
+import type { OHLCVData, Time } from "../lib/types/strategies";
 
 const originalFetch = globalThis.fetch;
+
+function toBinanceKline(timeSec: number, price: number) {
+    return [
+        timeSec * 1000,
+        String(price),
+        String(price + 1),
+        String(price - 1),
+        String(price + 0.5),
+        "1000",
+    ];
+}
 
 afterEach(() => {
     globalThis.fetch = originalFetch;
@@ -22,7 +33,7 @@ function makeCandles(count: number): OHLCVData[] {
     return Array.from({ length: count }, (_, index) => {
         const base = index + 1;
         return {
-            time: base * 60,
+            time: (base * 60) as Time,
             open: base,
             high: base + 1,
             low: Math.max(0.1, base - 0.5),
@@ -251,11 +262,11 @@ describe("DataFetcher chart lookback", () => {
     it("sanitizes unaligned Binance candles from the in-memory cache", async () => {
         const cache = new DataCache();
         const candles: OHLCVData[] = [
-            { time: 0, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
-            { time: 1_800, open: 101, high: 102, low: 100, close: 101, volume: 1000 },
-            { time: 3_600, open: 102, high: 103, low: 101, close: 102, volume: 1000 },
-            { time: 5_400, open: 103, high: 104, low: 102, close: 103, volume: 1000 },
-            { time: 7_200, open: 104, high: 105, low: 103, close: 104, volume: 1000 },
+            { time: 0 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 1_800 as Time, open: 101, high: 102, low: 100, close: 101, volume: 1000 },
+            { time: 3_600 as Time, open: 102, high: 103, low: 101, close: 102, volume: 1000 },
+            { time: 5_400 as Time, open: 103, high: 104, low: 102, close: 103, volume: 1000 },
+            { time: 7_200 as Time, open: 104, high: 105, low: 103, close: 104, volume: 1000 },
         ];
         cache.set("ETHUSDT::1h", candles, "network");
 
@@ -393,14 +404,6 @@ describe("DataFetcher chart lookback", () => {
 
     it("offline detached load on a fully cold symbol still falls back to remote (cold-symbol safety net)", async () => {
         resetLocalApiAvailability();
-        const toBinanceKline = (timeSec: number, price: number) => ([
-            timeSec * 1000,
-            String(price),
-            String(price + 1),
-            String(price - 1),
-            String(price + 0.5),
-            "1000",
-        ]);
         let binanceHits = 0;
 
         globalThis.fetch = async (input) => {
@@ -455,14 +458,6 @@ describe("DataFetcher chart lookback", () => {
                 volume: 1000 + index,
             };
         });
-        const toBinanceKline = (timeSec: number, price: number) => ([
-            timeSec * 1000,
-            String(price),
-            String(price + 1),
-            String(price - 1),
-            String(price + 0.5),
-            "1000",
-        ]);
         let binanceHits = 0;
 
         globalThis.fetch = async (input) => {

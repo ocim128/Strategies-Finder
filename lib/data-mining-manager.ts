@@ -10,6 +10,7 @@ import { debugLogger } from "./debug-logger";
 import { clearAll } from "./app-actions";
 import { commitOhlcvData } from "./state-actions";
 import { OHLCVData, HistoricalFetchProgress } from "./types/index";
+import { getSyntheticPairMetadata, setSyntheticPairMetadata } from "./synthetic-pair-session";
 
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { parseIntervalSeconds } from "./interval-utils";
@@ -37,7 +38,6 @@ export class DataMiningManager {
     private isGeneratingSynthetic = false;
     private lastSymbolValue: string | null = null;
     private lastIntervalValue: string | null = null;
-    private lastSyntheticPair: { baseSymbol: string; quoteSymbol: string } | null = null;
     private diagnosticLog: string[] = [];
     private readonly DIAGNOSTIC_MAX_ENTRIES = 60;
 
@@ -46,13 +46,14 @@ export class DataMiningManager {
     }
 
     public getSyntheticPairMetadata(): { baseSymbol: string; quoteSymbol: string } | null {
-        return this.lastSyntheticPair;
+        return getSyntheticPairMetadata();
     }
 
     public async regenerateSyntheticPair(baseSymbol: string, quoteSymbol: string, interval: string): Promise<void> {
+        const currentPair = getSyntheticPairMetadata();
         if (
-            this.lastSyntheticPair
-            && isSyntheticSymbol(state.currentSymbol, this.lastSyntheticPair)
+            currentPair
+            && isSyntheticSymbol(state.currentSymbol, currentPair)
             && isSyntheticSymbol(state.currentSymbol, { baseSymbol, quoteSymbol })
             && state.currentInterval === interval
             && state.ohlcvData.length > 0
@@ -112,10 +113,11 @@ export class DataMiningManager {
     }
 
     private clearSyntheticPairIfStale(): void {
-        if (!this.lastSyntheticPair) return;
-        const derived = deriveSyntheticSymbol(this.lastSyntheticPair.baseSymbol, this.lastSyntheticPair.quoteSymbol);
+        const currentPair = getSyntheticPairMetadata();
+        if (!currentPair) return;
+        const derived = deriveSyntheticSymbol(currentPair.baseSymbol, currentPair.quoteSymbol);
         if (state.currentSymbol !== derived) {
-            this.lastSyntheticPair = null;
+            setSyntheticPairMetadata(null);
         }
     }
 
@@ -582,7 +584,7 @@ export class DataMiningManager {
 
     private getProviderLabel(symbol: string): string {
         if (dataManager.isMockSymbol(symbol)) return 'Mock';
-        if (isSyntheticSymbol(symbol, this.lastSyntheticPair)) return 'Synthetic';
+        if (isSyntheticSymbol(symbol, getSyntheticPairMetadata())) return 'Synthetic';
 
         const provider = dataManager.getProvider(symbol);
         if (provider === 'binance') return 'Binance Spot';
@@ -882,7 +884,7 @@ export class DataMiningManager {
 
         commitOhlcvData(bars, 'synthetic_pair');
         dataManager.registerImportedData(syntheticSymbol, interval, bars);
-        this.lastSyntheticPair = { baseSymbol, quoteSymbol };
+        setSyntheticPairMetadata({ baseSymbol, quoteSymbol });
     }
 
     private async importJsonFile(): Promise<void> {

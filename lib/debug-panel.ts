@@ -60,6 +60,7 @@ export function initDebugPanel() {
     let lag: LagSnapshot = { lastLagMs: 0, maxLagMs: 0 };
     let lastLagLoggedAt = 0;
     let lastTick = Date.now();
+    let renderScheduled = false;
     debugPanelInitialized = true;
     debugPanelAbortController = new AbortController();
     const listenerOptions = { signal: debugPanelAbortController.signal };
@@ -150,10 +151,17 @@ export function initDebugPanel() {
     }, listenerOptions);
 
     unsubscribeDebugLogger = debugLogger.subscribe(() => {
-        if (isVisible()) {
+        if (!isVisible() || renderScheduled) return;
+        // Finder/Batch emit high-frequency cache/progress events; without
+        // coalescing, every event rebuilds the full 200-row log DOM. Batch
+        // per-frame with requestAnimationFrame so N events in one frame cost
+        // one render, not N.
+        renderScheduled = true;
+        requestAnimationFrame(() => {
+            renderScheduled = false;
             renderLogs();
             renderPerf();
-        }
+        });
     });
 
     document.addEventListener('keydown', (event) => {

@@ -7,7 +7,7 @@ import type { FinderRunCallbacks, FinderRunInput } from '../lib/finder/finder-ru
 import type { CapitalSettings } from '../lib/types/backtest';
 import type { FinderOptions } from '../lib/types/finder';
 import type { PolymarketOutcomeRow } from '../lib/types/polymarket-outcomes';
-import type { OHLCVData, Signal, Strategy, StrategyParams } from '../lib/types/strategies';
+import type { OHLCVData, Signal, Strategy, StrategyParams, Time } from '../lib/types/strategies';
 
 const ORIGINAL_FETCH = globalThis.fetch;
 let prepareFinderCalls = 0;
@@ -398,10 +398,10 @@ describe('Finder Polymarket runner', () => {
 
     it('can score only entries that follow a take-profit exit', async () => {
         const bars: OHLCVData[] = [
-            { time: 1_700_000_000, open: 100, high: 100, low: 100, close: 100, volume: 100 },
-            { time: 1_700_000_300, open: 100, high: 102, low: 99.5, close: 101.5, volume: 100 },
-            { time: 1_700_000_600, open: 101, high: 101.4, low: 99.5, close: 100, volume: 100 },
-            { time: 1_700_000_900, open: 100, high: 100.2, low: 99, close: 99.8, volume: 100 },
+            { time: 1_700_000_000 as Time, open: 100, high: 100, low: 100, close: 100, volume: 100 },
+            { time: 1_700_000_300 as Time, open: 100, high: 102, low: 99.5, close: 101.5, volume: 100 },
+            { time: 1_700_000_600 as Time, open: 101, high: 101.4, low: 99.5, close: 100, volume: 100 },
+            { time: 1_700_000_900 as Time, open: 100, high: 100.2, low: 99, close: 99.8, volume: 100 },
         ];
         installOutcomeFetch([
             makeOutcomeRow(Number(bars[1].time), 1, '10684', { yes_open_price: 0.4 }),

@@ -1,4 +1,5 @@
 import type { OHLCVData } from "../types/strategies";
+import { createFetchTimeoutSignal } from "../dataProviders/fetch-helpers";
 import { loadSecondMarketClobQuotes } from "../second-market/api";
 import type { PolymarketClob1sQuoteRow, SecondMarketPolymarketEvent, SecondMarketSymbol } from "../second-market/types";
 import type { PolymarketOutcomeInterval } from "../polymarket-outcome-interval";
@@ -89,21 +90,19 @@ async function fetchWithTimeout(
     init: RequestInit,
     timeoutMs: number
 ): Promise<Response> {
-    const controller = new AbortController();
-    let timedOut = false;
-    const timer = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-    }, timeoutMs);
+    // Delegate timeout/abort wiring to the shared helper so this module no
+    // longer open-codes its own AbortController+timer dance. The endpoint
+    // string is preserved in the thrown timeout message for diagnosis.
+    const timeout = createFetchTimeoutSignal(init.signal ?? undefined, timeoutMs);
     try {
-        return await fetch(input, { ...init, signal: controller.signal });
+        return await fetch(input, { ...init, signal: timeout.signal });
     } catch (error) {
-        if (timedOut || isAbortLikeError(error)) {
+        if (isAbortLikeError(error)) {
             throw new Error(`${endpoint} timed out after ${timeoutMs}ms`);
         }
         throw error;
     } finally {
-        clearTimeout(timer);
+        timeout.cleanup();
     }
 }
 

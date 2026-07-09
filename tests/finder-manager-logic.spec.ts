@@ -137,6 +137,7 @@ describe("Finder manager logic", () => {
             polymarketMinScoredPredictions: -5,
             polymarketLockOffset: true,
             polymarketAfterTakeProfitOnly: true,
+            polymarketExitMode: "resolve_hold",
         });
 
         expect(options.sortPriority).to.deep.equal(["polyScore", "polyWinRate", "polyPredictions"]);
@@ -169,6 +170,7 @@ describe("Finder manager logic", () => {
             polymarketMinScoredPredictions: 0,
             polymarketLockOffset: false,
             polymarketAfterTakeProfitOnly: false,
+            polymarketExitMode: "resolve_hold" as const,
         };
 
         expect(buildFinderOptions({

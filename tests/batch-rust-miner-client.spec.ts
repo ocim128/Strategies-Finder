@@ -4,10 +4,7 @@ import {
     RustMinerClient,
     buildFileManifestMineRequest,
     buildFileManifestStabilityRequest,
-    type RustMinerCapability,
-    type RustMinerResult,
     type RustStabilityMineRequest,
-    type RustStabilityMineResponse,
 } from "../lib/batch-backtest/batch-rust-miner-client";
 import { COMPACT_MINER_ARTIFACT_SCHEMA_VERSION } from "../lib/batch-backtest/batch-miner-artifact";
 
@@ -21,16 +18,6 @@ import { COMPACT_MINER_ARTIFACT_SCHEMA_VERSION } from "../lib/batch-backtest/bat
  * plugin's fallback routing breaks and a missing Rust binary takes down
  * Stability Mine entirely. These tests stub `fetch` to exercise every gate.
  */
-
-const HEALTHY: RustMinerCapability = {
-    available: true,
-    minerApiVersion: "0.1.0",
-    compactArtifactSchemaVersion: COMPACT_MINER_ARTIFACT_SCHEMA_VERSION,
-    supportsMine: true,
-    supportsStability: true,
-    transports: ["file_manifest", "binary"],
-    backendVersion: "test",
-};
 
 function withFetch<T>(impl: typeof globalThis.fetch, run: () => Promise<T>): Promise<T> {
     const original = globalThis.fetch;

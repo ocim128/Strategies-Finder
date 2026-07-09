@@ -3,15 +3,15 @@ import { describe, it } from "node:test";
 import { analyzePolymarketFillability } from "../lib/polymarket-fill-analysis";
 import type { PolymarketFillHistorySummary } from "../lib/polymarket-fill-history";
 import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
-import type { Trade } from "../lib/types/strategies";
+import type { Time, Trade } from "../lib/types/strategies";
 
 function makeTrade(id: number, type: Trade["type"], entryTs: number): Trade {
     return {
         id,
         type,
-        entryTime: entryTs,
+        entryTime: entryTs as Time,
         entryPrice: 30_000,
-        exitTime: entryTs + 300,
+        exitTime: (entryTs + 300) as Time,
         exitPrice: 30_100,
         pnl: 10,
         pnlPercent: 0.3,

@@ -240,8 +240,8 @@ console.log("\n=== SAME_EVENT_SUPPORTED_RANK_MODES ===");
 
 ok(SAME_EVENT_SUPPORTED_RANK_MODES.has("expectancy"), "expectancy is supported");
 ok(SAME_EVENT_SUPPORTED_RANK_MODES.has("profitFactor"), "profitFactor is supported");
-ok(!SAME_EVENT_SUPPORTED_RANK_MODES.has("balanced"), "balanced is not supported");
-ok(!SAME_EVENT_SUPPORTED_RANK_MODES.has("accuracy"), "accuracy is not supported");
+ok(!SAME_EVENT_SUPPORTED_RANK_MODES.has("balanced" as any), "balanced is not supported");
+ok(!SAME_EVENT_SUPPORTED_RANK_MODES.has("accuracy" as any), "accuracy is not supported");
 
 console.log("\n=== price point indexing ===");
 
@@ -403,7 +403,7 @@ console.log("\n=== evaluateSignalExitTrades: short enters and exits by signal ==
         makePricePoint({ ts: 1050, yes_price: 0.40, no_price: 0.60 }),
     ];
 
-    const { results, summary } = evaluateSignalExitTrades({
+    const { results } = evaluateSignalExitTrades({
         trades: [trade],
         outcomes: [pricePoints.length > 0 ? outcome : outcome],
         pricePoints,
@@ -1086,6 +1086,7 @@ console.log("\n=== buildTradeAnnotationFromSignalExitResult ===");
         isWin: true,
     });
 
+    if (annotation === null) throw new Error("expected signal-exit annotation");
     eq(annotation.evaluationMode, "signal_exit_same_event", "mode is signal_exit_same_event");
     eq(annotation.marketExitSource, "signal", "exit source is signal");
     approx(annotation.marketPnl!, 0.10, 0.001, "pnl annotated");
@@ -1130,7 +1131,7 @@ console.log("\n=== settings resolver: polymarketExitMode ===");
 
     const withDefault = resolveBacktestSettingsFromRaw({
         riskSettingsToggle: true,
-    });
+    } as any);
     eq(withDefault.polymarketExitMode, "resolve_hold", "default is resolve_hold");
     eq(withDefault.polymarketSignalExitAllowMultipleTradesPerEvent, false, "multi-trade default is false");
 

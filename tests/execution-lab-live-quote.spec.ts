@@ -28,7 +28,7 @@ type MockHandler = (req: NodeJS.ReadableStream & { method?: string; url?: string
 function createHandler(): MockHandler {
     let handler: MockHandler | null = null;
     const plugin = executionLabVitePlugin();
-    plugin.configurePreviewServer?.({
+    (plugin.configurePreviewServer as ((server: never) => void) | undefined)?.({
         middlewares: {
             use(prefix: string, registered: MockHandler) {
                 if (prefix === "/api/execution-lab") handler = registered;
@@ -42,7 +42,7 @@ function createHandler(): MockHandler {
 function createDevHandler(): MockHandler {
     let handler: MockHandler | null = null;
     const plugin = executionLabVitePlugin();
-    plugin.configureServer?.({
+    (plugin.configureServer as ((server: never) => void) | undefined)?.({
         middlewares: {
             use(prefix: string, registered: MockHandler) {
                 if (prefix === "/api/execution-lab") handler = registered;
@@ -97,9 +97,9 @@ function trade(id: number, entryTime: number, exitTime: number, exitReason: Trad
     return {
         id,
         type: "long",
-        entryTime,
+        entryTime: entryTime as Time,
         entryPrice: 100,
-        exitTime,
+        exitTime: exitTime as Time,
         exitPrice: 101,
         pnl: 1,
         pnlPercent: 1,
@@ -303,8 +303,9 @@ describe("Execution Lab live helpers", () => {
             );
 
             expect(response.statusCode).to.equal(200);
-            expect(requestedUrl?.searchParams.get("end_date_min")).to.not.equal(null);
-            expect(requestedUrl?.searchParams.get("start_date_min")).to.equal(null);
+            const url = requestedUrl as URL | null;
+            expect(url?.searchParams.get("end_date_min")).to.not.equal(null);
+            expect(url?.searchParams.get("start_date_min")).to.equal(null);
             expect(response.json.outcomes).to.have.length(1);
             expect(response.json.outcomes[0].event_end_ts).to.equal(1_700_000_400);
         } finally {

@@ -1,8 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { calculateBacktestStats, OHLCVData, Signal, Time, Trade } from '../lib/strategies/index';
+import { calculateBacktestStats, OHLCVData, Signal, Time, Trade, type BacktestSettings } from '../lib/strategies/index';
 import { calculateSharpeRatioFromEquityCurve } from '../lib/strategies/performance-metrics';
-import { calculateEMA } from '../lib/strategies/indicators';
 import { runBacktest, runBacktestCompact } from '../lib/strategies/index';
 import { precomputeIndicators } from '../lib/strategies/backtest';
 import { normalizeBacktestSettings } from '../lib/strategies/backtest/backtest-utils';
@@ -1458,7 +1457,7 @@ describe('Backtesting Engine', () => {
                 riskSettingsToggle: true,
                 riskMode: 'percentage',
                 stopLossPercent: 5,
-            },
+            } as unknown as BacktestSettings,
         });
 
         expect(targets.stopLossPrice).to.equal(95);
@@ -1475,7 +1474,7 @@ describe('Backtesting Engine', () => {
                 riskSettingsToggle: true,
                 riskMode: 'percentage',
                 takeProfitPercent: 5,
-            },
+            } as unknown as BacktestSettings,
         });
 
         expect(targets.takeProfitPrice).to.equal(105);
@@ -2175,7 +2174,7 @@ describe('Backtesting Engine', () => {
                 { time: '2023-01-02' as Time, type: 'buy', price: 100 },
             ];
 
-            const settings = {
+            const settings: BacktestSettings = {
                 pathExitEnabled: true,
                 pathExitMode: 'mfe_giveback',
                 pathExitMinBars: 1,
@@ -2205,7 +2204,7 @@ describe('Backtesting Engine', () => {
                 { time: '2023-01-02' as Time, type: 'sell', price: 100 },
             ];
 
-            const settings = {
+            const settings: BacktestSettings = {
                 pathExitEnabled: true,
                 pathExitMode: 'mfe_giveback',
                 pathExitMinBars: 1,
@@ -2262,7 +2261,7 @@ describe('Backtesting Engine', () => {
                 { time: '2023-01-02' as Time, type: 'buy', price: 100 },
             ];
 
-            const settings = {
+            const settings: BacktestSettings = {
                 pathExitEnabled: true,
                 pathExitMode: 'profit_compression',
                 pathExitMinBars: 1,
@@ -2292,7 +2291,7 @@ describe('Backtesting Engine', () => {
                 { time: '2023-01-02' as Time, type: 'buy', price: 100 },
             ];
 
-            const settings = {
+            const settings: BacktestSettings = {
                 pathExitEnabled: true,
                 pathExitMode: 'momentum_deceleration',
                 pathExitMinBars: 1,
@@ -2318,7 +2317,7 @@ describe('Backtesting Engine', () => {
                 { time: '2023-01-03' as Time, type: 'buy', price: 100 },
             ];
 
-            const settings = {
+            const settings: BacktestSettings = {
                 pathExitEnabled: true,
                 pathExitMode: 'capitulation_exhaustion',
                 pathExitMinBars: 1,
@@ -2342,7 +2341,7 @@ describe('Backtesting Engine', () => {
                 { time: '2023-01-03' as Time, type: 'buy', price: 100 },
             ];
 
-            const settings = {
+            const settings: BacktestSettings = {
                 pathExitEnabled: true,
                 pathExitMode: 'squeeze_pressure',
                 pathExitMinBars: 1,
@@ -2366,7 +2365,7 @@ describe('Backtesting Engine', () => {
                 { time: '2023-01-02' as Time, type: 'buy', price: 100 },
             ];
 
-            const settings = {
+            const settings: BacktestSettings = {
                 pathExitEnabled: true,
                 pathExitMode: 'structure_reclaim',
                 pathExitMinBars: 1,
@@ -2411,7 +2410,7 @@ describe('Backtesting Engine', () => {
                 { time: '2023-01-02' as Time, type: 'buy', price: 102 },
             ];
 
-            const settings = {
+            const settings: BacktestSettings = {
                 pathExitEnabled: true,
                 pathExitMode: 'conditional_hazard',
                 pathExitMinSamples: 1,
@@ -2458,7 +2457,7 @@ describe('Backtesting Engine', () => {
                 { time: '2023-01-12' as Time, type: 'buy', price: 92 },
             ];
 
-            const settings = {
+            const settings: BacktestSettings = {
                 pathExitEnabled: true,
                 pathExitMode: 'conditional_hazard',
                 pathExitMinSamples: 1, // Low threshold so learning kicks in fast
@@ -2488,7 +2487,7 @@ describe('Backtesting Engine', () => {
                 { time: '2023-01-02' as Time, type: 'buy', price: 101 },
             ];
 
-            const settings = {
+            const settings: BacktestSettings = {
                 pathExitEnabled: true,
                 pathExitMode: 'triple_barrier_meta',
                 pathExitMinSamples: 1,
@@ -2529,7 +2528,7 @@ describe('Backtesting Engine', () => {
                 { time: '2023-01-12' as Time, type: 'buy', price: 83 },
             ];
 
-            const settings = {
+            const settings: BacktestSettings = {
                 pathExitEnabled: true,
                 pathExitMode: 'triple_barrier_meta',
                 pathExitMinSamples: 1,
@@ -2556,7 +2555,7 @@ describe('Backtesting Engine', () => {
                 { time: '2023-01-03' as Time, type: 'buy', price: 101 },
             ];
 
-            const settings = {
+            const settings: BacktestSettings = {
                 pathExitEnabled: true,
                 pathExitMode: 'conditional_hazard',
                 pathExitMinSamples: 1,
@@ -2578,7 +2577,7 @@ describe('Backtesting Engine', () => {
                 { time: '2023-01-03' as Time, type: 'buy', price: 101 },
             ];
 
-            const settings = {
+            const settings: BacktestSettings = {
                 pathExitEnabled: true,
                 pathExitMode: 'triple_barrier_meta',
                 pathExitMinSamples: 1,

@@ -2,7 +2,7 @@ import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import type { OHLCVData, StrategyParams } from '../../lib/strategies';
+import type { OHLCVData, StrategyParams, Time } from '../../lib/strategies';
 import { strategyManifest } from '../../lib/strategies/manifest-eager';
 
 function buildBars(length: number): OHLCVData[] {
@@ -16,7 +16,7 @@ function buildBars(length: number): OHLCVData[] {
         const low = Math.min(open, close) - 1.1 - (i % 2) * 0.1;
 
         bars.push({
-            time: i + 1,
+            time: (i + 1) as Time,
             open,
             high,
             low,

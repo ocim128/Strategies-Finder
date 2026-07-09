@@ -7,7 +7,7 @@ import {
 } from "../lib/polymarket-trade-annotations";
 import { TradesRenderer } from "../lib/renderers/tradesRenderer";
 import { ensurePricePointsForOutcomes } from "../lib/polymarket-price-points-ingest";
-import type { BacktestResult, OHLCVData, Trade } from "../lib/types/strategies";
+import type { BacktestResult, OHLCVData, Time, Trade } from "../lib/types/strategies";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -15,9 +15,9 @@ function makeTrade(id: number, type: Trade["type"], entryTs: number, pnl: number
     return {
         id,
         type,
-        entryTime: entryTs,
+        entryTime: entryTs as Time,
         entryPrice: 30_000,
-        exitTime: entryTs + 300,
+        exitTime: (entryTs + 300) as Time,
         exitPrice: pnl >= 0 ? 30_100 : 29_900,
         pnl,
         pnlPercent: pnl >= 0 ? 0.3 : -0.3,
@@ -49,7 +49,7 @@ function makeBacktestResult(trades: Trade[]): BacktestResult {
 
 function makeBars(count: number, startTs = 1_700_000_000): OHLCVData[] {
     return Array.from({ length: count }, (_, index) => ({
-        time: startTs + index * 300,
+        time: (startTs + index * 300) as Time,
         open: 30_000,
         high: 30_100,
         low: 29_900,
@@ -60,7 +60,7 @@ function makeBars(count: number, startTs = 1_700_000_000): OHLCVData[] {
 
 function makeMinuteBars(count: number, startTs = 1_700_000_000): OHLCVData[] {
     return Array.from({ length: count }, (_, index) => ({
-        time: startTs + index * 60,
+        time: (startTs + index * 60) as Time,
         open: 30_000,
         high: 30_100,
         low: 29_900,
@@ -689,7 +689,7 @@ describe("Polymarket backtest trade annotations", () => {
             makeBacktestResult([
                 {
                     ...makeTrade(1, "long", entryTs, 10),
-                    exitTime: exitTs,
+                    exitTime: exitTs as Time,
                     exitReason: "signal",
                 },
             ]),
@@ -785,12 +785,12 @@ describe("Polymarket backtest trade annotations", () => {
             makeBacktestResult([
                 {
                     ...makeTrade(1, "long", firstEntryTs, 10),
-                    exitTime: firstExitTs,
+                    exitTime: firstExitTs as Time,
                     exitReason: "signal",
                 },
                 {
                     ...makeTrade(2, "long", secondEntryTs, 10),
-                    exitTime: secondExitTs,
+                    exitTime: secondExitTs as Time,
                     exitReason: "signal",
                 },
             ]),
@@ -891,7 +891,7 @@ describe("Polymarket backtest trade annotations", () => {
             makeBacktestResult([
                 {
                     ...makeTrade(1, "long", entryTs, 10),
-                    exitTime: entryTs + 120,
+                    exitTime: (entryTs + 120) as Time,
                     exitReason: "signal",
                 },
             ]),
@@ -1069,7 +1069,7 @@ describe("Polymarket backtest trade annotations", () => {
             makeBacktestResult([
                 {
                     ...makeTrade(1, "long", entryTs, 10),
-                    exitTime: entryTs + 120,
+                    exitTime: (entryTs + 120) as Time,
                     exitReason: "signal",
                 },
             ]),
@@ -1119,7 +1119,7 @@ describe("Polymarket backtest trade annotations", () => {
             makeBacktestResult([
                 {
                     ...makeTrade(1, "long", entryTs, 10),
-                    exitTime: entryTs + 120,
+                    exitTime: (entryTs + 120) as Time,
                     exitReason: "signal",
                 },
             ]),
@@ -1196,7 +1196,7 @@ describe("Polymarket backtest trade annotations", () => {
             makeBacktestResult([
                 {
                     ...makeTrade(1, "long", entryTs, 10),
-                    exitTime: exitTs,
+                    exitTime: exitTs as Time,
                     exitReason: "signal",
                 },
             ]),
@@ -1282,7 +1282,7 @@ describe("Polymarket backtest trade annotations", () => {
             makeBacktestResult([
                 {
                     ...makeTrade(1, "long", entryTs, 10),
-                    exitTime: entryTs + 120,
+                    exitTime: (entryTs + 120) as Time,
                     exitReason: "take_profit",
                 },
             ]),
@@ -1821,10 +1821,7 @@ describe("Polymarket backtest trade annotations", () => {
                 resolution_source: "test",
                 updated_at: 1,
             },
-        ], "10684", {
-            startTs: 1_700_000_300,
-            endTs: 1_700_000_360,
-        });
+        ], "10684");
 
         expect(points.map((point) => point.ts)).to.deep.equal([1_700_000_360, 1_700_000_580]);
     });

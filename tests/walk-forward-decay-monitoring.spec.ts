@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import type { BacktestResult, Time } from "../lib/strategies";
+import type { BacktestResult } from "../lib/strategies";
 import type { ParameterRange, WalkForwardResult, WalkForwardWindow } from "../lib/strategies/walk-forward";
 import { buildWalkForwardDecayMonitoring, withWalkForwardDecayMonitoring } from "../lib/strategies/walk-forward-decay";
 

@@ -547,7 +547,7 @@ describe("Execution Lab live executor adapter", () => {
             "console.log(JSON.stringify({ ok: true, requestId: req.requestId, status: aligned ? 'dry_run' : 'failed' }));",
             "});",
         ].join("");
-        const response = await submitLiveTradeToExecutor({ ...request(), orderType: "FOK" }, {
+        const response = await submitLiveTradeToExecutor({ ...request(), orderType: "FOK" } as LiveTradeSubmitRequest, {
             executorPath: process.execPath,
             executorArgs: ["-e", script],
             liveEnabled: false,

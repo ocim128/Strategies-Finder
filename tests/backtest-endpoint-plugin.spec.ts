@@ -32,7 +32,7 @@ type MockHandler = (req: MockRequest, res: {
 function createHandler(): MockHandler {
     let handler: MockHandler | null = null;
     const plugin = backtestEndpointPlugin();
-    plugin.configurePreviewServer?.({
+    (plugin.configurePreviewServer as ((server: never) => void) | undefined)?.({
         middlewares: {
             use(prefix: string, registered: MockHandler) {
                 if (prefix === "/api/backtest") {

@@ -17,7 +17,7 @@ import {
 } from "../lib/polymarket-deployability-analysis";
 import type { PolymarketFillHistorySummary } from "../lib/polymarket-fill-history";
 import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
-import type { Trade } from "../lib/types/strategies";
+import type { Time, Trade } from "../lib/types/strategies";
 
 function createMockTrade(
     entryTime: number,
@@ -27,8 +27,8 @@ function createMockTrade(
     return {
         id: entryTime,
         type,
-        entryTime,
-        exitTime: entryTime + 300,
+        entryTime: entryTime as Time,
+        exitTime: (entryTime + 300) as Time,
         entryPrice,
         exitPrice: entryPrice + (type === "long" ? 50 : -50),
         pnl: 10,
@@ -365,6 +365,13 @@ describe("Polymarket deployability analysis", () => {
                 eligibleTrades: 100,
                 targetPriceCents: 40,
                 scope: "all",
+                alwaysYesBaseline: 0.5,
+                alwaysNoBaseline: 0.5,
+                bestBaseline: 0.5,
+                bestBaselineLabel: "YES",
+                deltaVsBestBaseline: 0.1,
+                breakEvenWinRate: 0.4,
+                edgeVsBreakEven: 0.2,
             },
             {}
         );

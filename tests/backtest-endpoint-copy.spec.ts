@@ -24,6 +24,11 @@ assert.ok(defaultStrategyEntry, "Expected at least one non-cross-symbol strategy
 const defaultStrategyKey = defaultStrategyEntry!.key;
 const defaultStrategyParams = { ...defaultStrategyEntry!.strategy.defaultParams };
 
+function datasetRef(dataset: { ref: string } | { candles: OHLCVData[] }): string {
+    assert.ok("ref" in dataset);
+    return dataset.ref;
+}
+
 function buildSnapshot(engineUsed: "rust" | "typescript"): UiBacktestEndpointSnapshot {
     return {
         symbol: "BTCUSDT",
@@ -119,7 +124,7 @@ describe("backtest endpoint copy helpers", () => {
         assert.strictEqual(bundle.url, `http://localhost:5173/api/backtest/${defaultStrategyKey}`);
         assert.strictEqual(bundle.method, "POST");
         assert.strictEqual(bundle.datasetUploadUrl, "http://localhost:5173/api/backtest/datasets");
-        assert.strictEqual(bundle.payload.dataset.ref, BACKTEST_ENDPOINT_DATASET_REF_PLACEHOLDER);
+        assert.strictEqual(datasetRef(bundle.payload.dataset), BACKTEST_ENDPOINT_DATASET_REF_PLACEHOLDER);
         assert.deepStrictEqual(bundle.payload.strategyParams, snapshot.strategyParams);
         assert.ok(!("snapshotRsiMin" in bundle.payload.backtestSettings));
         assert.ok(!("snapshotRsiMax" in bundle.payload.backtestSettings));
@@ -135,7 +140,7 @@ describe("backtest endpoint copy helpers", () => {
             "cache_abc123"
         );
 
-        assert.strictEqual(bundle.payload.dataset.ref, "cache_abc123");
+        assert.strictEqual(datasetRef(bundle.payload.dataset), "cache_abc123");
     });
 
     it("includes a cached cross-symbol dataset ref when provided", () => {
@@ -239,7 +244,7 @@ describe("backtest endpoint copy helpers", () => {
             assert.strictEqual(prepared.candleCount, candles.length);
             assert.match(prepared.datasetUploadError ?? "", /Backtest endpoint is unavailable/);
             assert.strictEqual(
-                prepared.bundle.payload.dataset.ref,
+                datasetRef(prepared.bundle.payload.dataset),
                 BACKTEST_ENDPOINT_DATASET_REF_PLACEHOLDER
             );
         } finally {

@@ -356,7 +356,7 @@ describe("formatTimingEdgeReportRow", () => {
     it("renders '--' for missing numeric fields (no NaN propagation)", () => {
         const report = buildTimingEdgeReport({ runs: [makeStabilityRun({
             createdAt: 1,
-            verdicts: [{ asset: "X", verdict: "LONG", timingEdgeScore: 0, medianLiftPct: null, dominantPair: null }],
+            verdicts: [{ asset: "X", verdict: "LONG", timingEdgeScore: 0, medianLiftPct: undefined, dominantPair: undefined }],
         })] });
         const line = formatTimingEdgeReportRow(report.topTimingEdge[0]!);
         expect(line).to.not.include("NaN");

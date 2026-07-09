@@ -10,6 +10,7 @@ import { localSqlitePlugin } from './lib/local-sqlite-vite-plugin';
 import { secondMarketApiPlugin } from './lib/second-market-vite-plugin';
 import { batchBacktestVitePlugin } from './lib/batch-backtest/batch-backtest-vite-plugin';
 import { sendCaughtErrorJson, sendJson, proxyUpstreamJson } from './lib/vite-http-utils';
+import { debugLogger } from './lib/debug-logger';
 import { configurePolymarketNodeDns } from './lib/polymarket-node-dns';
 import { STOCK_MARKET_SYMBOL_SUFFIX } from './lib/local-daily-datasets';
 
@@ -166,7 +167,8 @@ function tradFiKlineProxyPlugin(): Plugin {
                         ret_code: 10002,
                         ret_msg: 'TradFi proxy request failed',
                     }),
-                }
+                },
+                debugLogger
             );
         });
     };
@@ -211,7 +213,8 @@ function polymarketProxyPlugin(): Plugin {
                         ok: false,
                         error: 'Polymarket event proxy request failed',
                     }),
-                }
+                },
+                debugLogger
             );
         });
 
@@ -253,7 +256,8 @@ function polymarketProxyPlugin(): Plugin {
                         ok: false,
                         error: 'Polymarket history proxy request failed',
                     }),
-                }
+                },
+                debugLogger
             );
         });
     };

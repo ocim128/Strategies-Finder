@@ -1,15 +1,15 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { resolveOpenTradeDisplayMetrics } from "../lib/open-trade-display";
-import type { OHLCVData, Trade } from "../lib/types/strategies";
+import type { OHLCVData, Time, Trade } from "../lib/types/strategies";
 
 function makeTrade(overrides: Partial<Trade> = {}): Trade {
     return {
         id: 1,
         type: "long",
-        entryTime: 1_700_000_000,
+        entryTime: 1_700_000_000 as Time,
         entryPrice: 100,
-        exitTime: 1_700_000_240,
+        exitTime: 1_700_000_240 as Time,
         exitPrice: 101,
         pnl: 1,
         pnlPercent: 1,
@@ -22,7 +22,7 @@ function makeTrade(overrides: Partial<Trade> = {}): Trade {
 
 function makeCandle(time: number, close: number, high: number = close, low: number = close): OHLCVData {
     return {
-        time,
+        time: time as Time,
         open: close,
         high,
         low,
@@ -34,8 +34,8 @@ function makeCandle(time: number, close: number, high: number = close, low: numb
 describe("Open trade display", () => {
     it("uses the last loaded candle time instead of wall-clock time for end-of-data trades", () => {
         const trade = makeTrade({
-            entryTime: 1_700_000_000,
-            exitTime: 1_700_000_240,
+            entryTime: 1_700_000_000 as Time,
+            exitTime: 1_700_000_240 as Time,
             exitPrice: 101,
             pnl: 1,
             pnlPercent: 1,
@@ -53,8 +53,8 @@ describe("Open trade display", () => {
 
     it("keeps stale end-of-data trades closed when newer candles exist", () => {
         const trade = makeTrade({
-            entryTime: 1_700_000_000,
-            exitTime: 1_700_000_240,
+            entryTime: 1_700_000_000 as Time,
+            exitTime: 1_700_000_240 as Time,
             exitPrice: 101,
             pnl: 1,
             pnlPercent: 1,

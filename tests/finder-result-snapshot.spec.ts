@@ -6,7 +6,7 @@ import {
     normalizeFinderLatestResultsSnapshot,
 } from "../lib/finder/finder-result-snapshot";
 import type { FinderLatestResults, FinderResult, FinderUniverseCandidate } from "../lib/types/finder";
-import type { BacktestResult } from "../lib/types/strategies";
+import type { BacktestResult, Time } from "../lib/types/strategies";
 
 function makeBacktestResult(overrides: Partial<BacktestResult> = {}): BacktestResult {
     return {
@@ -25,7 +25,7 @@ function makeBacktestResult(overrides: Partial<BacktestResult> = {}): BacktestRe
         avgWin: 5,
         avgLoss: 3,
         sharpeRatio: 1.2,
-        equityCurve: [{ time: 1, value: 1000 }],
+        equityCurve: [{ time: 1 as Time, value: 1000 }],
         ...overrides,
     };
 }

@@ -5,7 +5,7 @@ import { state } from "../lib/state";
 import { buildAlertStreamId } from "../lib/alert-service";
 import { livePositionsService } from "../lib/live-positions-service";
 import type { PolymarketExitMode } from "../lib/polymarket-exit-mode";
-import type { BacktestResult, Trade } from "../lib/types/strategies";
+import type { BacktestResult, Time, Trade } from "../lib/types/strategies";
 
 const PREVIOUS_STATE = {
     currentBacktestResult: state.currentBacktestResult,
@@ -23,9 +23,9 @@ function makeTrade(id: number, exitReason: Trade["exitReason"] = "end_of_data"):
     return {
         id,
         type: "long",
-        entryTime: baseTs + id * 60,
+        entryTime: (baseTs + id * 60) as Time,
         entryPrice: 30_000,
-        exitTime: baseTs + 60 + id * 60,
+        exitTime: (baseTs + 60 + id * 60) as Time,
         exitPrice: 30_050,
         pnl: 5,
         pnlPercent: 0.1,
@@ -65,6 +65,9 @@ function makeBacktestResult(
         marketContext: {
             symbol: "BTCUSDT",
             interval: "1m",
+            candleCount: 0,
+            firstCandleTime: null,
+            lastCandleTime: null,
         },
     };
 }
@@ -137,7 +140,7 @@ describe("Current-bucket unresolved Polymarket badges", () => {
         state.currentBacktestResultSource = "backtest";
         state.ohlcvData = [
             {
-                time: 1_699_999_999,
+                time: 1_699_999_999 as Time,
                 open: 1,
                 high: 1,
                 low: 1,
@@ -182,7 +185,7 @@ describe("Current-bucket unresolved Polymarket badges", () => {
         state.currentBacktestResultSource = "backtest";
         state.ohlcvData = [
             {
-                time: 1_699_999_999,
+                time: 1_699_999_999 as Time,
                 open: 1,
                 high: 1,
                 low: 1,
@@ -211,7 +214,7 @@ describe("Current-bucket unresolved Polymarket badges", () => {
         state.currentBacktestResultSource = "backtest";
         state.ohlcvData = [
             {
-                time: 1_699_999_999,
+                time: 1_699_999_999 as Time,
                 open: 1,
                 high: 1,
                 low: 1,
@@ -251,7 +254,7 @@ describe("Current-bucket unresolved Polymarket badges", () => {
         state.currentBacktestResultSource = "backtest";
         state.ohlcvData = [
             {
-                time: 1_699_999_999,
+                time: 1_699_999_999 as Time,
                 open: 1,
                 high: 1,
                 low: 1,
@@ -285,7 +288,7 @@ describe("Current-bucket unresolved Polymarket badges", () => {
                 prediction: "yes" as const,
                 actualOutcomeUp: 0 as const,
                 isWin: false,
-                evaluationMode: "signal_exit_same_event",
+                evaluationMode: "signal_exit_same_event" as const,
                 isProfitable: false,
                 marketEntryPrice: 0.62,
                 marketExitPrice: 1,
@@ -301,7 +304,7 @@ describe("Current-bucket unresolved Polymarket badges", () => {
         state.currentBacktestResultSource = "backtest";
         state.ohlcvData = [
             {
-                time: 1_699_999_999,
+                time: 1_699_999_999 as Time,
                 open: 1,
                 high: 1,
                 low: 1,
@@ -332,7 +335,7 @@ describe("Current-bucket unresolved Polymarket badges", () => {
         state.currentBacktestResultSource = "backtest";
         state.ohlcvData = [
             {
-                time: 1_699_999_999,
+                time: 1_699_999_999 as Time,
                 open: 1,
                 high: 1,
                 low: 1,
@@ -376,7 +379,7 @@ describe("Current-bucket unresolved Polymarket badges", () => {
         state.currentBacktestResultSource = "backtest";
         state.ohlcvData = [
             {
-                time: 1_700_000_180,
+                time: 1_700_000_180 as Time,
                 open: 1,
                 high: 1,
                 low: 1,

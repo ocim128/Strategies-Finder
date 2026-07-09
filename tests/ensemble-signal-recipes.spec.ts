@@ -8,13 +8,13 @@ import {
     type EnsembleRecipeSignalArtifact,
 } from "../lib/ensemble-signal-recipes";
 import { DEFAULT_BACKTEST_SETTINGS, type EnsembleSignalRecipe, type StrategyConfig } from "../lib/settings-model";
-import { timeKey, type Signal, type Strategy } from "../lib/strategies";
+import { timeKey, type Signal, type Strategy, type Time } from "../lib/strategies";
 import type { EnsembleEntryPresence } from "../lib/strategy-ensemble-types";
 import type { OHLCVData } from "../lib/strategies";
 
 function createSignal(time: number, type: Signal["type"], barIndex: number): Signal {
     return {
-        time,
+        time: time as Time,
         type,
         price: 100,
         barIndex,
@@ -23,7 +23,7 @@ function createSignal(time: number, type: Signal["type"], barIndex: number): Sig
 
 function createCandle(time: number): OHLCVData {
     return {
-        time,
+        time: time as Time,
         open: 100,
         high: 101,
         low: 99,
@@ -59,7 +59,7 @@ function createStrategy(name: string): Strategy {
 function createPresenceLookup(entries: Array<{ time: number; longEntry?: boolean; shortEntry?: boolean }>): Map<string, EnsembleEntryPresence> {
     return new Map(
         entries.map((entry) => [
-            timeKey(entry.time),
+            timeKey(entry.time as Time),
             {
                 longEntry: entry.longEntry === true,
                 shortEntry: entry.shortEntry === true,

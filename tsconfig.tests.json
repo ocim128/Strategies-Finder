@@ -6,19 +6,10 @@
 	},
 	"include": [
 		"vite-env.d.ts",
-		"tests/app-timing.spec.ts",
-		"tests/async-pool.spec.ts",
-		"tests/data-cache.spec.ts",
-		"tests/entry-signal-worker.spec.ts",
-		"tests/fetch-helpers.spec.ts",
-		"tests/latest-load-guard.spec.ts",
-		"tests/lazy-feature-init.spec.ts",
-		"tests/listener-fault-isolation.spec.ts",
-		"tests/local-sqlite-api.spec.ts",
-		"tests/persisted-json.spec.ts",
-		"tests/polymarket-price-points-ingest.spec.ts",
-		"tests/simple-storage.spec.ts",
-		"tests/statistics-utils.spec.ts",
-		"tests/strategy-manifest-sync.spec.ts"
+		"tests/**/*.d.ts",
+		"tests/**/*.spec.ts"
+	],
+	"exclude": [
+		"tests/e2e.spec.ts"
 	]
 }

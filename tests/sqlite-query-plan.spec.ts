@@ -41,11 +41,6 @@ function extractIndexNames(plan: Array<Record<string, unknown>>): string[] {
         .filter(Boolean);
 }
 
-/** Check if any plan step uses a covering index (USING COVERING INDEX). */
-function usesCoveringIndex(plan: Array<Record<string, unknown>>): boolean {
-    return plan.some((row) => String(row.detail ?? "").includes("USING COVERING INDEX"));
-}
-
 /** Check if the plan includes a temp sort B-tree (indicates missing order-covering index). */
 function hasTempSort(plan: Array<Record<string, unknown>>): boolean {
     return plan.some((row) => String(row.detail ?? "").includes("USE TEMP B-TREE FOR ORDER BY"));

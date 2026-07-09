@@ -1,8 +1,24 @@
 import type { IncomingMessage } from "node:http";
-import { debugLogger } from "./debug-logger";
 import { createFetchTimeoutSignal, isAbortError } from "./dataProviders/fetch-helpers";
 
 export const DEFAULT_MAX_BODY_BYTES = 80 * 1024 * 1024;
+
+/**
+ * Minimal logger surface for Vite plugin helpers. Injected by callers (Vite
+ * plugins pass `debugLogger`) so this Node-only utility does not have to import
+ * the browser-coupled `debug-logger` module — that import was pulling
+ * browser/Vite-runtime assumptions into the server config bundle and tripping
+ * Vite's CJS/import-meta warnings during `vite build`.
+ */
+export interface ViteHttpLogger {
+    info(message: string, data?: unknown): void;
+    warn(message: string, data?: unknown): void;
+}
+
+const noopLogger: ViteHttpLogger = {
+    info: () => undefined,
+    warn: () => undefined,
+};
 
 export interface ViteHttpResponse {
     statusCode: number;
@@ -151,7 +167,8 @@ export async function proxyUpstreamJson(
     url: string,
     timeoutMs: number,
     label: string,
-    handlers: ProxyUpstreamJsonHandlers
+    handlers: ProxyUpstreamJsonHandlers,
+    logger: ViteHttpLogger = noopLogger
 ): Promise<void> {
     const startedAt = Date.now();
     const timeout = createFetchTimeoutSignal(undefined, timeoutMs);
@@ -165,7 +182,7 @@ export async function proxyUpstreamJson(
         res.setHeader("Content-Type", upstream.headers.get("content-type") || "application/json");
         res.setHeader("Cache-Control", "no-store");
         res.end(body);
-        debugLogger.info("proxy.upstream", {
+        logger.info("proxy.upstream", {
             target: label,
             url,
             status: upstream.status,
@@ -174,7 +191,7 @@ export async function proxyUpstreamJson(
         });
     } catch (error) {
         const timedOut = isAbortError(error);
-        debugLogger.warn("proxy.upstream.failed", {
+        logger.warn("proxy.upstream.failed", {
             target: label,
             url,
             timedOut,

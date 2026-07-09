@@ -171,7 +171,7 @@ describe("computeTimingEdgeScore", () => {
     it("returns 0 when lift / hmax / rr is null (insufficient analog evidence)", () => {
         const base = {
             hits: 10, high: 10, medium: 0, low: 0,
-            pairWarnings: 0, medianDiversity: 1, medianRr: 3, medianHmaxLiftPct: 5,
+            pairWarnings: 0, medianDiversity: 1, medianLiftPct: 5, medianRr: 3, medianHmaxLiftPct: 5,
         };
         expect(computeTimingEdgeScore({ ...base, medianLiftPct: null })).to.equal(0);
         expect(computeTimingEdgeScore({ ...base, medianHmaxLiftPct: null })).to.equal(0);

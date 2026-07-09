@@ -843,8 +843,9 @@ describe("batch-backtest server plugin processStabilityMine", () => {
             expect(last.result?.rustFallbackReason).to.equal(null);
             expect(last.result?.rows?.length).to.equal(1);
             expect(last.result?.minerProfile?.rustProcessingMs).to.equal(42);
-            expect(rustRequest?.manifest.pairArtifactFiles).to.have.length(1);
-            expect(rustRequest?.manifest.targetArtifactFiles).to.have.length(2);
+            const manifest = (rustRequest as { manifest: { pairArtifactFiles: unknown[]; targetArtifactFiles: unknown[] } } | null)?.manifest;
+            expect(manifest?.pairArtifactFiles).to.have.length(1);
+            expect(manifest?.targetArtifactFiles).to.have.length(2);
         } finally {
             resetRustMinerClientForTests();
             resetMinerGatesForTests();

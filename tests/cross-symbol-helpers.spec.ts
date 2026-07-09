@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import type { OHLCVData } from '../lib/types/strategies';
+import type { OHLCVData, Time } from '../lib/types/strategies';
 import {
     alignSecondaryToPrimary,
     trimAlignedPair,
@@ -14,7 +14,7 @@ import {
 // ============================================================================
 
 function bar(time: number, close: number, volume: number = 100): OHLCVData {
-    return { time, open: close, high: close, low: close, close, volume };
+    return { time: time as Time, open: close, high: close, low: close, close, volume };
 }
 
 // ============================================================================

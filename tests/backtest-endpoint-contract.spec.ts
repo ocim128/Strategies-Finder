@@ -1,15 +1,15 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { toSlimSingleResult } from "../lib/backtest-endpoint-contract";
-import type { BacktestResult, Trade } from "../lib/types/strategies";
+import type { BacktestResult, Time, Trade } from "../lib/types/strategies";
 
 function makeTrade(id: number, isWin: boolean | null, marketEntryPrice = 0.4): Trade {
     return {
         id,
         type: "long",
-        entryTime: 1_700_000_000 + id * 300,
+        entryTime: (1_700_000_000 + id * 300) as Time,
         entryPrice: 30_000,
-        exitTime: 1_700_000_300 + id * 300,
+        exitTime: (1_700_000_300 + id * 300) as Time,
         exitPrice: 30_100,
         pnl: isWin === false ? -10 : 10,
         pnlPercent: isWin === false ? -0.3 : 0.3,

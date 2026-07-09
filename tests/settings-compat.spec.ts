@@ -37,8 +37,8 @@ describe('Backtest settings compatibility', () => {
     it('ignores removed tradeFilterMode when provided', () => {
         const normalized = normalizeBacktestSettings({
             tradeFilterMode: 'rsi',
-        });
-        expect('tradeFilterMode' in (normalized as Record<string, unknown>)).to.equal(false);
+        } as unknown as BacktestSettings);
+        expect('tradeFilterMode' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
     });
 
     it('ignores legacy entryConfirmation and trade filter toggles in stored settings', () => {
@@ -51,10 +51,10 @@ describe('Backtest settings compatibility', () => {
             entryConfirmation: 'trend',
         });
 
-        expect('tradeFilterMode' in (resolved as Record<string, unknown>)).to.equal(false);
-        expect('tradeFilterMode' in (normalized as Record<string, unknown>)).to.equal(false);
-        expect('tradeFilterSettingsToggle' in (normalized as Record<string, unknown>)).to.equal(false);
-        expect('entryConfirmation' in (normalized as Record<string, unknown>)).to.equal(false);
+        expect('tradeFilterMode' in (resolved as unknown as Record<string, unknown>)).to.equal(false);
+        expect('tradeFilterMode' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
+        expect('tradeFilterSettingsToggle' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
+        expect('entryConfirmation' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
     });
 
     it('keeps polymarketExitMode in canonical lowercase form when read from DOM contracts', () => {
@@ -515,8 +515,8 @@ describe('Backtest settings compatibility', () => {
             tradeFilterMode: 'trend_persistence',
         });
 
-        expect('tradeFilterMode' in (resolved as Record<string, unknown>)).to.equal(false);
-        expect('tradeFilterMode' in (normalized as Record<string, unknown>)).to.equal(false);
+        expect('tradeFilterMode' in (resolved as unknown as Record<string, unknown>)).to.equal(false);
+        expect('tradeFilterMode' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
     });
 
     it('preserves guarded resolver semantics across schema-driven numeric and boolean fields', () => {
@@ -546,7 +546,7 @@ describe('Backtest settings compatibility', () => {
         } as unknown as BacktestSettings);
 
         expect(disabled.stopLossAtr).to.equal(0);
-        expect('htfBiasEmaPeriod' in (disabled as Record<string, unknown>)).to.equal(false);
+        expect('htfBiasEmaPeriod' in (disabled as unknown as Record<string, unknown>)).to.equal(false);
     });
 
     it('hydrates subscription execution defaults to the UI-compatible semantics', () => {
@@ -569,12 +569,12 @@ describe('Backtest settings compatibility', () => {
             executionModel: 'next_close',
         } as unknown as BacktestSettings);
 
-        expect((resolved as Record<string, unknown>).initialCapital).to.equal(25000);
-        expect((resolved as Record<string, unknown>).positionSize).to.equal(50);
-        expect((resolved as Record<string, unknown>).commission).to.equal(0.2);
-        expect((resolved as Record<string, unknown>).sizingMode).to.equal('smart_fixed_velocity_memory');
-        expect((resolved as Record<string, unknown>).fixedTradeToggle).to.equal(true);
-        expect((resolved as Record<string, unknown>).fixedTradeAmount).to.equal(1200);
+        expect((resolved as unknown as Record<string, unknown>).initialCapital).to.equal(25000);
+        expect((resolved as unknown as Record<string, unknown>).positionSize).to.equal(50);
+        expect((resolved as unknown as Record<string, unknown>).commission).to.equal(0.2);
+        expect((resolved as unknown as Record<string, unknown>).sizingMode).to.equal('smart_fixed_velocity_memory');
+        expect((resolved as unknown as Record<string, unknown>).fixedTradeToggle).to.equal(true);
+        expect((resolved as unknown as Record<string, unknown>).fixedTradeAmount).to.equal(1200);
         expect(resolved.executionModel).to.equal('next_close');
     });
 
@@ -667,11 +667,11 @@ describe('Backtest settings compatibility', () => {
 
         expect(normalized.takeProfitMode).to.equal('fixed');
         expect(normalized.takeProfitMfeBootstrapPercentile).to.equal(73);
-        expect('takeProfitVelocityFastBars' in (normalized as Record<string, unknown>)).to.equal(false);
-        expect('takeProfitVelocitySlowBars' in (normalized as Record<string, unknown>)).to.equal(false);
-        expect('takeProfitVelocityProgressPercent' in (normalized as Record<string, unknown>)).to.equal(false);
-        expect('takeProfitVelocityExpandMultiplier' in (normalized as Record<string, unknown>)).to.equal(false);
-        expect('takeProfitVelocityShrinkMultiplier' in (normalized as Record<string, unknown>)).to.equal(false);
+        expect('takeProfitVelocityFastBars' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
+        expect('takeProfitVelocitySlowBars' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
+        expect('takeProfitVelocityProgressPercent' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
+        expect('takeProfitVelocityExpandMultiplier' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
+        expect('takeProfitVelocityShrinkMultiplier' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
     });
 
     it('keeps legacy fixed toggle compatibility while upgrading legacy smart sizing mode', () => {
@@ -726,9 +726,9 @@ describe('Backtest settings compatibility', () => {
             snapshotAtrPercentMax: 2.2,
         });
 
-        expect('snapshotAtrFilterToggle' in (normalized as Record<string, unknown>)).to.equal(false);
-        expect('snapshotAtrPercentMin' in (normalized as Record<string, unknown>)).to.equal(false);
-        expect('snapshotAtrPercentMax' in (normalized as Record<string, unknown>)).to.equal(false);
+        expect('snapshotAtrFilterToggle' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
+        expect('snapshotAtrPercentMin' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
+        expect('snapshotAtrPercentMax' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
     });
 
     it('exposes worker strategy compatibility checks for alert subscriptions', () => {
@@ -820,9 +820,9 @@ describe('Backtest settings compatibility', () => {
     });
 
     it('does not expose removed snapshot filter defaults', () => {
-        expect('snapshotAtrFilterToggle' in (DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)).to.equal(false);
-        expect('snapshotAtrPercentMin' in (DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)).to.equal(false);
-        expect('snapshotAtrPercentMax' in (DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)).to.equal(false);
+        expect('snapshotAtrFilterToggle' in (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)).to.equal(false);
+        expect('snapshotAtrPercentMin' in (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)).to.equal(false);
+        expect('snapshotAtrPercentMax' in (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)).to.equal(false);
     });
 
     it('keeps shared UI defaults aligned with engine defaults except for explicit UI overrides', () => {
@@ -836,7 +836,7 @@ describe('Backtest settings compatibility', () => {
                 continue;
             }
 
-            expect((DEFAULT_BACKTEST_SETTINGS as Record<string, unknown>)[key]).to.equal(value);
+            expect((DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[key]).to.equal(value);
         }
     });
 
@@ -918,8 +918,8 @@ describe('Backtest settings compatibility', () => {
         expect(normalized?.strategyKey).to.equal(DEFAULT_BUILT_IN_STRATEGY_KEY);
         expect(normalized?.strategyParams).to.deep.equal({ foo: 42 });
         expect(normalized?.backtestSettings.initialCapital).to.equal(25000);
-        expect('tradeFilterMode' in (normalized?.backtestSettings as Record<string, unknown>)).to.equal(false);
-        expect('tradeFilterSettingsToggle' in (normalized?.backtestSettings as Record<string, unknown>)).to.equal(false);
+        expect('tradeFilterMode' in (normalized?.backtestSettings as unknown as Record<string, unknown>)).to.equal(false);
+        expect('tradeFilterSettingsToggle' in (normalized?.backtestSettings as unknown as Record<string, unknown>)).to.equal(false);
         expect(normalized?.backtestSettings.polymarketOutcomeSymbol).to.equal('ETHUSDT');
         expect(normalizeStoredStrategyConfig({ strategyKey: 'missing-name' })).to.equal(null);
     });
@@ -1106,7 +1106,7 @@ describe('Backtest settings compatibility', () => {
             crossSymbolSecondary: 'ETHUSDT',
         } as BacktestSettings;
         const sanitized = sanitizeBacktestSettingsForRust(settings);
-        expect('crossSymbolSecondary' in (sanitized as Record<string, unknown>)).to.equal(false);
+        expect('crossSymbolSecondary' in (sanitized as unknown as Record<string, unknown>)).to.equal(false);
     });
 
     it('resolves crossSymbolSecondary from raw backtest settings', () => {

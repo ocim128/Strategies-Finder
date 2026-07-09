@@ -2,7 +2,7 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import type { PolymarketClob1sQuoteRow } from "../lib/second-market/types";
 import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
-import type { Signal, Trade } from "../lib/types/strategies";
+import type { Signal, Time, Trade } from "../lib/types/strategies";
 import type {
     ExecutionLabOpenPaperPosition,
     ExecutionLabSessionSnapshot,
@@ -128,9 +128,9 @@ function trade(id: number, type: Trade["type"], entryTs: number, exitTs = EVENT_
     return {
         id,
         type,
-        entryTime: entryTs,
+        entryTime: entryTs as Time,
         entryPrice: 100,
-        exitTime: exitTs,
+        exitTime: exitTs as Time,
         exitPrice: 101,
         pnl: 1,
         pnlPercent: 1,
@@ -141,7 +141,7 @@ function trade(id: number, type: Trade["type"], entryTs: number, exitTs = EVENT_
 
 function signal(type: Signal["type"], ts: number): Signal {
     return {
-        time: ts,
+        time: ts as Time,
         type,
         price: 100,
     };
@@ -158,7 +158,7 @@ function tick(args: {
     return evaluateExecutionLabPaperTick(args.state, {
         latestCandleTimeSec: args.latestTs,
         latestCandle: {
-            time: args.latestTs,
+            time: args.latestTs as Time,
             open: 100,
             high: 101,
             low: 99,

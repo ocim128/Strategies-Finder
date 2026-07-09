@@ -27,7 +27,7 @@ import {
     pickSourceInterval,
     resolveSyntheticSourceBars,
 } from "../scripts/lib/synthetic-pair";
-import { dataMiningManager } from "./data-mining-manager";
+import { getSyntheticPairMetadata } from "./synthetic-pair-session";
 import { settingsManager } from "./settings-manager";
 import { state } from "./state";
 import { chartManager } from "./chart-manager";
@@ -658,7 +658,7 @@ class SignalCommitteeService {
         // ZECAPT chart is open).
         let bestReason: string | null = null;
 
-        const currentPair = dataMiningManager.getSyntheticPairMetadata();
+        const currentPair = getSyntheticPairMetadata();
         if (currentPair && matchesSyntheticSymbol(state.currentSymbol, currentPair)) {
             if (matchesSyntheticSymbol(member.symbol, currentPair)) {
                 return { pair: currentPair, source: "chart", reason: null };
@@ -996,7 +996,7 @@ class SignalCommitteeService {
      * Accept display separators too, so ZEC+APT matches the derived ZECAPT key.
      */
     private isCurrentSymbolSynthetic(): boolean {
-        const pair = dataMiningManager.getSyntheticPairMetadata();
+        const pair = getSyntheticPairMetadata();
         return matchesSyntheticSymbol(state.currentSymbol, pair);
     }
 
@@ -1056,7 +1056,7 @@ class SignalCommitteeService {
         records: readonly LocalSyntheticMemberRecord[]
     ): Promise<Map<string, CommitteeMemberState>> {
         const states = new Map<string, CommitteeMemberState>();
-        const currentPair = dataMiningManager.getSyntheticPairMetadata();
+        const currentPair = getSyntheticPairMetadata();
         const latestCandle = state.ohlcvData[state.ohlcvData.length - 1] ?? null;
         const latestClose = latestCandle && Number.isFinite(latestCandle.close) ? latestCandle.close : null;
         const closedCandleTimeSec = latestCandle ? this.candleToSec(latestCandle) : Number.NaN;
@@ -1615,7 +1615,7 @@ class SignalCommitteeService {
 
     private resolveSyntheticPairForConfig(config: StrategyConfig): { baseSymbol: string; quoteSymbol: string } | null {
         if (config.syntheticPair) return config.syntheticPair;
-        const currentPair = dataMiningManager.getSyntheticPairMetadata();
+        const currentPair = getSyntheticPairMetadata();
         const configSymbol = config.symbol ?? "";
         return matchesSyntheticSymbol(state.currentSymbol, currentPair)
             && configSymbol
@@ -1631,7 +1631,7 @@ class SignalCommitteeService {
         if (!configSymbol) return false;
         if (symbolsMatch(configSymbol, state.currentSymbol)) return true;
 
-        const currentPair = dataMiningManager.getSyntheticPairMetadata();
+        const currentPair = getSyntheticPairMetadata();
         return matchesSyntheticSymbol(state.currentSymbol, currentPair)
             && (
                 matchesSyntheticSymbol(configSymbol, currentPair)
@@ -1956,7 +1956,7 @@ class SignalCommitteeService {
             const existingConfig = settingsManager.loadStrategyConfig(trimmed);
             let savedConfig = settingsManager.saveStrategyConfig(trimmed);
             const existingSyntheticPair = existingConfig?.syntheticPair ?? null;
-            const currentSyntheticPair = dataMiningManager.getSyntheticPairMetadata();
+            const currentSyntheticPair = getSyntheticPairMetadata();
             const shouldUseSyntheticWorker =
                 this.isCurrentSymbolSynthetic()
                 || matchesSyntheticSymbol(state.currentSymbol, existingSyntheticPair);

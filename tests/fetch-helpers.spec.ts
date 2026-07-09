@@ -1,6 +1,12 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createFetchTimeoutSignal, fetchWithTimeoutAndRetry, isAbortError } from '../lib/dataProviders/fetch-helpers';
+import {
+    createFetchTimeoutSignal,
+    fetchWithTimeoutAndRetry,
+    isAbortError,
+    readJsonOrText,
+    extractApiError,
+} from '../lib/dataProviders/fetch-helpers';
 
 const originalFetch = globalThis.fetch;
 
@@ -64,5 +70,60 @@ describe('fetch helper abort handling', () => {
 
         assert.equal(response.status, 200);
         assert.equal(calls, 2);
+    });
+});
+
+describe('readJsonOrText', () => {
+    it('parses a JSON content-type body as json, leaving text null', async () => {
+        const response = new Response(JSON.stringify({ ok: false, error: 'boom' }), {
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+        });
+        const result = await readJsonOrText(response);
+        assert.deepEqual(result.json, { ok: false, error: 'boom' });
+        assert.equal(result.text, null);
+    });
+
+    it('returns text and a parsed json when a non-JSON body parses as JSON', async () => {
+        // Workers/proxies sometimes answer with a text/html error page that is
+        // actually valid JSON; both fields let the caller render a useful message.
+        const response = new Response(JSON.stringify({ error: 'still works' }), {
+            headers: { 'content-type': 'text/html' },
+        });
+        const result = await readJsonOrText(response);
+        assert.deepEqual(result.json, { error: 'still works' });
+        assert.equal(result.text, JSON.stringify({ error: 'still works' }));
+    });
+
+    it('returns text only when the body is not parseable as JSON', async () => {
+        const response = new Response('<html>gateway down</html>', {
+            headers: { 'content-type': 'text/html' },
+        });
+        const result = await readJsonOrText(response);
+        assert.equal(result.json, null);
+        assert.equal(result.text, '<html>gateway down</html>');
+    });
+
+    it('returns null/null for an empty body', async () => {
+        const response = new Response('', { headers: { 'content-type': 'text/plain' } });
+        const result = await readJsonOrText(response);
+        assert.equal(result.json, null);
+        assert.equal(result.text, null);
+    });
+});
+
+describe('extractApiError', () => {
+    it('pulls a trimmed .error string from an { ok, error } payload', () => {
+        assert.equal(extractApiError({ ok: false, error: '  nope  ' }), 'nope');
+    });
+
+    it('falls back to the supplied fallback when no usable error string is present', () => {
+        assert.equal(extractApiError({ ok: false }, 'HTTP 502'), 'HTTP 502');
+        assert.equal(extractApiError({ error: '   ' }, 'HTTP 502'), 'HTTP 502');
+        assert.equal(extractApiError(null, 'HTTP 502'), 'HTTP 502');
+    });
+
+    it('returns null when neither payload nor fallback has a message', () => {
+        assert.equal(extractApiError({ ok: false }), null);
+        assert.equal(extractApiError({}, null), null);
     });
 });

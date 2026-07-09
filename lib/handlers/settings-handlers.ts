@@ -11,7 +11,6 @@ import { state } from "../state";
 import { setCurrentInterval, setCurrentSymbol } from "../state-actions";
 import { backtestService } from "../backtest-service";
 import { dataManager } from "../data-manager";
-import { dataMiningManager } from "../data-mining-manager";
 import {
     createStrategyShareLink,
     parseStrategyConfigFromCurrentUrl,
@@ -27,6 +26,14 @@ const STRATEGY_CONFIGS_CHANGED_EVENT = "strategy-configs:changed";
 
 const SHARED_DEFAULT_SYMBOL = 'ETHUSDT';
 const SHARED_DEFAULT_INTERVAL = '120m';
+
+// Dynamic import keeps data-mining-manager (the entire Data Mining UI) out of
+// the startup chunk — see lib/synthetic-pair-session.ts. Both call sites are
+// async, so this thin wrapper is the only seam.
+async function regenerateSyntheticPair(baseSymbol: string, quoteSymbol: string, interval: string): Promise<void> {
+    const { dataMiningManager } = await import("../data-mining-manager");
+    await dataMiningManager.regenerateSyntheticPair(baseSymbol, quoteSymbol, interval);
+}
 
 function notifyStrategyConfigsChanged(): void {
     window.dispatchEvent(new Event(STRATEGY_CONFIGS_CHANGED_EVENT));
@@ -87,7 +94,7 @@ export async function applySharedStrategyConfig(
     }
 
     if (plan.syntheticPair) {
-        await dataMiningManager.regenerateSyntheticPair(
+        await regenerateSyntheticPair(
             plan.syntheticPair.baseSymbol,
             plan.syntheticPair.quoteSymbol,
             plan.nextInterval
@@ -116,7 +123,7 @@ async function applyUserStrategyConfig(config: StrategyConfig): Promise<void> {
         setCurrentInterval(context.interval);
     }
     if (hasSyntheticPair) {
-        await dataMiningManager.regenerateSyntheticPair(
+        await regenerateSyntheticPair(
             config.syntheticPair!.baseSymbol,
             config.syntheticPair!.quoteSymbol,
             context.interval!

@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import type { OHLCVData, StrategyExecutionContext } from "../../lib/types/strategies";
+import type { OHLCVData, StrategyExecutionContext, StrategyParams, Time } from "../../lib/types/strategies";
 import { strategyManifest } from "../../lib/strategies/manifest-eager";
 import { entropy_volume_gated_no_adverse } from "../../lib/strategies/lib/entropy_volume_gated_no_adverse";
 import { midpoint_deviation_no_adverse } from "../../lib/strategies/lib/midpoint_deviation_no_adverse";
@@ -17,7 +17,7 @@ function sampleBars(length: number): OHLCVData[] {
         const close = 100 + i * 0.05 + Math.sin(i / 4);
         const open = close - Math.cos(i / 5) * 0.4;
         bars.push({
-            time: i + 1,
+            time: (i + 1) as Time,
             open,
             high: Math.max(open, close) + 0.8,
             low: Math.min(open, close) - 0.8,
@@ -92,32 +92,32 @@ describe("generated Polymarket 1s strategies", () => {
             {
                 key: "volume_skewness_acceleration_no_adverse",
                 strategy: volume_skewness_acceleration_no_adverse,
-                params: { lookback: 16, skewThreshold: 0 },
+                params: { lookback: 16, skewThreshold: 0 } as StrategyParams,
             },
             {
                 key: "midpoint_deviation_no_adverse",
                 strategy: midpoint_deviation_no_adverse,
-                params: { lookback: 16, devThreshold: 0.5 },
+                params: { lookback: 16, devThreshold: 0.5 } as StrategyParams,
             },
             {
                 key: "price_volume_correlation_break_gamma",
                 strategy: price_volume_correlation_break_gamma,
-                params: { lookback: 16, volZThreshold: 0 },
+                params: { lookback: 16, volZThreshold: 0 } as StrategyParams,
             },
             {
                 key: "micro_wick_exhaustion_executable_agreement",
                 strategy: micro_wick_exhaustion_executable_agreement,
-                params: { lookback: 16, wickRatio: 0.1 },
+                params: { lookback: 16, wickRatio: 0.1 } as StrategyParams,
             },
             {
                 key: "entropy_volume_gated_no_adverse",
                 strategy: entropy_volume_gated_no_adverse,
-                params: { lookback: 16, entropyThreshold: 1 },
+                params: { lookback: 16, entropyThreshold: 1 } as StrategyParams,
             },
             {
                 key: "vw_typical_dispersion_no_adverse",
                 strategy: vw_typical_dispersion_no_adverse,
-                params: { lookback: 16, threshold: 0.5 },
+                params: { lookback: 16, threshold: 0.5 } as StrategyParams,
             },
         ];
 

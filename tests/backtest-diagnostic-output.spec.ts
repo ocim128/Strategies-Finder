@@ -2,15 +2,15 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import { buildBacktestDiagnosticOutput } from "../lib/backtest-diagnostic-output";
 import type { UiBacktestEndpointSnapshot } from "../lib/backtest-endpoint-copy";
-import type { BacktestResult, Trade } from "../lib/types/strategies";
+import type { BacktestResult, Time, Trade } from "../lib/types/strategies";
 
 function makeTrade(id: number, overrides: Partial<Trade> = {}): Trade {
     return {
         id,
         type: "long",
-        entryTime: 1_700_000_000 + id * 60,
+        entryTime: (1_700_000_000 + id * 60) as Time,
         entryPrice: 100,
-        exitTime: 1_700_000_030 + id * 60,
+        exitTime: (1_700_000_030 + id * 60) as Time,
         exitPrice: 101,
         pnl: 1,
         pnlPercent: 1,
@@ -43,8 +43,8 @@ function makeResult(overrides: Partial<BacktestResult> = {}): BacktestResult {
             symbol: "BTCUSDT",
             interval: "1m",
             candleCount: 100,
-            firstCandleTime: 1_700_000_000,
-            lastCandleTime: 1_700_006_000,
+            firstCandleTime: 1_700_000_000 as Time,
+            lastCandleTime: 1_700_006_000 as Time,
         },
         ...overrides,
     };

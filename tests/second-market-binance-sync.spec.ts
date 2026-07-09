@@ -78,7 +78,7 @@ describe("second market Binance 1s sync", () => {
                 mode: "live",
                 symbols: ["BTCUSDT"],
                 marketType: "futures",
-                outcomeInterval: "5m",
+                outcomeIntervals: ["5m"],
                 startTs: 0,
                 endTs: 0,
                 durationSec: null,
@@ -88,6 +88,7 @@ describe("second market Binance 1s sync", () => {
                 includeGamma: false,
                 referenceSources: ["crypto_prices"],
                 requestDelayMs: 0,
+                binanceDns: "system",
             }, db, controller.signal, undefined);
 
             await new Promise((resolve) => setTimeout(resolve, 0));

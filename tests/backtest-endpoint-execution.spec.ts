@@ -69,8 +69,9 @@ describe("backtest endpoint execution helpers", () => {
         assert.deepStrictEqual(request.context.blockRange, snapshot.blockRange);
         assert.strictEqual(request.context.nowSec, snapshot.nowSec);
         assert.strictEqual(request.context.annotatePolymarket, true);
-        assert.strictEqual(request.backtestSettings.symbol, snapshot.symbol);
-        assert.strictEqual(request.backtestSettings.interval, snapshot.interval);
+        const requestSettings = request.backtestSettings as Record<string, unknown>;
+        assert.strictEqual(requestSettings.symbol, snapshot.symbol);
+        assert.strictEqual(requestSettings.interval, snapshot.interval);
         assert.strictEqual(request.backtestSettings.polymarketAnnotationEnabled, true);
         assert.ok(!("allowSameBarExit" in request.backtestSettings));
         assert.ok(!("marketMode" in request.backtestSettings));

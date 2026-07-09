@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { describe, it, beforeEach } from "node:test";
 import { PolymarketOutcomeLoader } from "../lib/polymarket-outcome-loader";
-import type { BacktestResult, Trade } from "../lib/types/strategies";
+import type { BacktestResult, Time, Trade } from "../lib/types/strategies";
 import type { PolymarketOutcomeRow } from "../lib/types/polymarket-outcomes";
 import type { PolymarketEntrySelectionMode } from "../lib/polymarket-entry-selection-mode";
 import type { PolymarketOutcomeInterval } from "../lib/polymarket-outcome-interval";
@@ -28,6 +28,9 @@ function makeResult(trades: Trade[], overrides: Partial<BacktestResult> = {}): B
         marketContext: {
             symbol: "BTCUSDT",
             interval: "1m",
+            candleCount: 0,
+            firstCandleTime: null,
+            lastCandleTime: null,
         },
         ...overrides,
     };
@@ -37,9 +40,9 @@ function makeTrade(id: number, time: number, price = 100): Trade {
     return {
         id,
         type: "long",
-        entryTime: time,
+        entryTime: time as Time,
         entryPrice: price,
-        exitTime: time + 300,
+        exitTime: (time + 300) as Time,
         exitPrice: price + 1,
         pnl: 1,
         pnlPercent: 1,

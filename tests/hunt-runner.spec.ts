@@ -80,7 +80,7 @@ describe("Hunt runner", () => {
     it("dataset cache deduplicates same symbol+interval via Promise sharing", async () => {
         let fetchCount = 0;
         const cache = new Map<string, Promise<string[]>>();
-        const fetch = async (key: string): Promise<string[]> => {
+        const fetch = async (_key: string): Promise<string[]> => {
             fetchCount++;
             return ["candle"];
         };

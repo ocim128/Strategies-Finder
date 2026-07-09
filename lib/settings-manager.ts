@@ -13,7 +13,7 @@ import { loadBuiltInStrategyByKey, strategyRegistry } from "../strategyRegistry"
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
 import { uiManager } from "./ui-manager";
-import { dataMiningManager } from "./data-mining-manager";
+import { getSyntheticPairMetadata } from "./synthetic-pair-session";
 import {
     triggerSettingsChangeEvents,
 } from "./settings-dom";
@@ -283,7 +283,7 @@ class SettingsManager {
     public saveStrategyConfig(name: string): StrategyConfig {
         const strategy = strategyRegistry.get(state.currentStrategyKey);
         const strategyParams = strategy ? paramManager.getValues(strategy) : {};
-        const syntheticMetadata = dataMiningManager.getSyntheticPairMetadata();
+        const syntheticMetadata = getSyntheticPairMetadata();
 
         const config: StrategyConfig = {
             name,
@@ -359,8 +359,11 @@ class SettingsManager {
     public async applyStrategyConfig(config: StrategyConfig): Promise<void> {
         this.autoSaveEnabled = false;
         try {
-            // Regenerate synthetic pair first if needed (loads chart data)
+            // Regenerate synthetic pair first if needed (loads chart data).
+            // Dynamic import keeps data-mining-manager (the entire Data Mining
+            // UI) out of the startup chunk — see lib/synthetic-pair-session.ts.
             if (config.syntheticPair && config.interval) {
+                const { dataMiningManager } = await import("./data-mining-manager");
                 await dataMiningManager.regenerateSyntheticPair(
                     config.syntheticPair.baseSymbol,
                     config.syntheticPair.quoteSymbol,

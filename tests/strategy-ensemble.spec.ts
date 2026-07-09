@@ -6,12 +6,12 @@ import {
     type EnsembleRuleEvaluation,
 } from "../lib/strategy-ensemble-rule-selection";
 import type { ConfigRunArtifact, EnsembleEntryPresence } from "../lib/strategy-ensemble-types";
-import type { BacktestResult, OHLCVData, Signal, Strategy, Trade } from "../lib/strategies";
+import type { BacktestResult, OHLCVData, Signal, Strategy, Time, Trade } from "../lib/strategies";
 import { buildEnsembleRows, type StrategyEnsembleRulesRuntime } from "../lib/strategy-ensemble-rules";
 
 function createSignal(time: number, type: Signal["type"], barIndex: number): Signal {
     return {
-        time,
+        time: time as Time,
         type,
         price: 100,
         barIndex,
@@ -20,22 +20,16 @@ function createSignal(time: number, type: Signal["type"], barIndex: number): Sig
 
 function createTrade(entryTime: number, type: Trade["type"], pnl: number, pnlPercent: number): Trade {
     return {
-        entryTime,
-        exitTime: entryTime + 1,
+        id: entryTime,
+        entryTime: entryTime as Time,
+        exitTime: (entryTime + 1) as Time,
         entryPrice: 100,
         exitPrice: 100 + pnl,
         type,
         pnl,
         pnlPercent,
-        barsHeld: 1,
-        entryReason: "test",
-        exitReason: "test",
-        runUp: pnl,
-        drawdown: Math.min(0, pnl),
-        runUpPercent: pnlPercent,
-        drawdownPercent: Math.min(0, pnlPercent),
-        maePercent: Math.min(0, pnlPercent),
-        mfePercent: Math.max(0, pnlPercent),
+        exitReason: "signal",
+        size: 1,
     };
 }
 
@@ -221,10 +215,10 @@ describe("Strategy Ensemble selection", () => {
 
     it("adds explicit conflict-skip and best-primary-veto simulations to the builder rows", async () => {
         const candles: OHLCVData[] = [
-            { time: 100, open: 100, high: 101, low: 99, close: 100, volume: 1 },
-            { time: 200, open: 100, high: 101, low: 99, close: 100, volume: 1 },
-            { time: 300, open: 100, high: 101, low: 99, close: 100, volume: 1 },
-            { time: 400, open: 100, high: 101, low: 99, close: 100, volume: 1 },
+            { time: 100 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1 },
+            { time: 200 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1 },
+            { time: 300 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1 },
+            { time: 400 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1 },
         ];
         const baselineSignals = [
             createSignal(100, "buy", 0),

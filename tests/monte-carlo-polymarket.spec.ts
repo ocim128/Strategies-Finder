@@ -11,7 +11,7 @@ import {
     runPolymarketMonteCarloSimulation,
     type MonteCarloSettings,
 } from "../lib/strategies/monte-carlo";
-import type { BacktestResult, Trade } from "../lib/types/strategies";
+import type { BacktestResult, Time, Trade } from "../lib/types/strategies";
 import type { BacktestPolymarketTradeSummary, TradePolymarketOutcome } from "../lib/types/polymarket-outcomes";
 
 const BASE_TIME = Date.UTC(2024, 0, 1, 0, 0, 0);
@@ -24,9 +24,9 @@ function createTrade(
     const trade: Trade = {
         id,
         type: id % 2 === 0 ? "short" : "long",
-        entryTime: exitTime - 60_000,
+        entryTime: (exitTime - 60_000) as Time,
         entryPrice: 100,
-        exitTime,
+        exitTime: exitTime as Time,
         exitPrice: 101,
         pnl: 1,
         pnlPercent: 1,
@@ -203,11 +203,11 @@ describe("polymarket monte carlo engine", () => {
     it("uses a fixed stake per trade and triggers ruin thresholds", async () => {
         const input = {
             trades: [
-                { entryPrice: 0.5, sharePnl: -0.5, exitTime: BASE_TIME + 60_000 },
-                { entryPrice: 0.5, sharePnl: 0.5, exitTime: BASE_TIME + 120_000 },
-                { entryPrice: 0.5, sharePnl: -0.5, exitTime: BASE_TIME + 180_000 },
-                { entryPrice: 0.5, sharePnl: 0.5, exitTime: BASE_TIME + 240_000 },
-                { entryPrice: 0.5, sharePnl: 0, exitTime: BASE_TIME + 300_000 },
+                { entryPrice: 0.5, sharePnl: -0.5, exitTime: (BASE_TIME + 60_000) as Time },
+                { entryPrice: 0.5, sharePnl: 0.5, exitTime: (BASE_TIME + 120_000) as Time },
+                { entryPrice: 0.5, sharePnl: -0.5, exitTime: (BASE_TIME + 180_000) as Time },
+                { entryPrice: 0.5, sharePnl: 0.5, exitTime: (BASE_TIME + 240_000) as Time },
+                { entryPrice: 0.5, sharePnl: 0, exitTime: (BASE_TIME + 300_000) as Time },
             ],
             hasTradeLevelAnnotations: true,
             evaluationMode: "signal_exit_same_event" as const,
@@ -243,10 +243,10 @@ describe("polymarket monte carlo engine", () => {
     it("requires at least five usable polymarket trades", async () => {
         const input = {
             trades: [
-                { entryPrice: 0.5, sharePnl: 0.5, exitTime: BASE_TIME + 60_000 },
-                { entryPrice: 0.5, sharePnl: -0.5, exitTime: BASE_TIME + 120_000 },
-                { entryPrice: 0.5, sharePnl: 0.5, exitTime: BASE_TIME + 180_000 },
-                { entryPrice: 0.5, sharePnl: -0.5, exitTime: BASE_TIME + 240_000 },
+                { entryPrice: 0.5, sharePnl: 0.5, exitTime: (BASE_TIME + 60_000) as Time },
+                { entryPrice: 0.5, sharePnl: -0.5, exitTime: (BASE_TIME + 120_000) as Time },
+                { entryPrice: 0.5, sharePnl: 0.5, exitTime: (BASE_TIME + 180_000) as Time },
+                { entryPrice: 0.5, sharePnl: -0.5, exitTime: (BASE_TIME + 240_000) as Time },
             ],
             hasTradeLevelAnnotations: true,
             evaluationMode: "resolve_hold" as const,
@@ -275,12 +275,12 @@ describe("polymarket monte carlo engine", () => {
     it("is deterministic for the same seed and settings", async () => {
         const input = {
             trades: [
-                { entryPrice: 0.4, sharePnl: 0.2, exitTime: BASE_TIME + 60_000 },
-                { entryPrice: 0.5, sharePnl: -0.5, exitTime: BASE_TIME + 120_000 },
-                { entryPrice: 0.35, sharePnl: 0.65, exitTime: BASE_TIME + 180_000 },
-                { entryPrice: 0.55, sharePnl: -0.55, exitTime: BASE_TIME + 240_000 },
-                { entryPrice: 0.45, sharePnl: 0.1, exitTime: BASE_TIME + 300_000 },
-                { entryPrice: 0.6, sharePnl: 0.4, exitTime: BASE_TIME + 360_000 },
+                { entryPrice: 0.4, sharePnl: 0.2, exitTime: (BASE_TIME + 60_000) as Time },
+                { entryPrice: 0.5, sharePnl: -0.5, exitTime: (BASE_TIME + 120_000) as Time },
+                { entryPrice: 0.35, sharePnl: 0.65, exitTime: (BASE_TIME + 180_000) as Time },
+                { entryPrice: 0.55, sharePnl: -0.55, exitTime: (BASE_TIME + 240_000) as Time },
+                { entryPrice: 0.45, sharePnl: 0.1, exitTime: (BASE_TIME + 300_000) as Time },
+                { entryPrice: 0.6, sharePnl: 0.4, exitTime: (BASE_TIME + 360_000) as Time },
             ],
             hasTradeLevelAnnotations: true,
             evaluationMode: "signal_exit_same_event" as const,

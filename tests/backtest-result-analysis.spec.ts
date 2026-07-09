@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import {
     buildExpectancyBreakdown,
 } from "../lib/backtest-result-analysis";
-import type { BacktestResult, Trade } from "../lib/types/strategies";
+import type { BacktestResult, Time, Trade } from "../lib/types/strategies";
 
 function makeTrade(
     id: number,
@@ -24,9 +24,9 @@ function makeTrade(
     return {
         id,
         type,
-        entryTime: options?.entryTime ?? (1_700_000_000 + id * 300),
+        entryTime: (options?.entryTime ?? (1_700_000_000 + id * 300)) as Time,
         entryPrice: 100,
-        exitTime: (options?.entryTime ?? (1_700_000_000 + id * 300)) + 300,
+        exitTime: ((options?.entryTime ?? (1_700_000_000 + id * 300)) + 300) as Time,
         exitPrice: 100 + pnl,
         pnl,
         pnlPercent: pnl,
@@ -77,7 +77,7 @@ function makeTrade(
                 isWin: polymarketIsWin,
                 marketEntryPrice,
             },
-    };
+    } as unknown as Trade;
 }
 
 function makeResult(trades: Trade[]): BacktestResult {

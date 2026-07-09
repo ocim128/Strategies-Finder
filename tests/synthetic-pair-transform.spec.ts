@@ -429,7 +429,6 @@ describe('buildSyntheticPairFromLegs', () => {
 
     it('honors tailSliceBars to trim the output to the most recent N bars', async () => {
         const base = [bar(0), bar(60), bar(120), bar(180)];
-        const quote = [bar(0), bar(60), bar(120), bar(180)];
 
         const result = await buildSyntheticPairFromLegs({
             baseSymbol: 'BASE',

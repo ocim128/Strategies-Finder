@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import type { OHLCVData, Strategy, BacktestSettings } from '../lib/types/strategies';
+import type { OHLCVData, Strategy, BacktestSettings, Time } from '../lib/types/strategies';
 import {
     resolveCrossSymbolExecution,
     resolveCrossSymbolExecutionSync,
@@ -10,7 +10,7 @@ import {
 import { CrossSymbolAlignmentError } from '../lib/strategies/lib/cross-symbol-helpers';
 
 function bar(time: number, close: number): OHLCVData {
-    return { time, open: close, high: close, low: close, close, volume: 100 };
+    return { time: time as Time, open: close, high: close, low: close, close, volume: 100 };
 }
 
 function makeStrategy(withCrossSymbol = true): Strategy {

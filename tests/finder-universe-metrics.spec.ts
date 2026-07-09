@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import { buildFinderUniverseCandidate, computePerformanceVerdict, computeStrategyVerdict, computeUniverseOosAggregate, computeUniverseSymbolOosVerdict, passesFinderUniverseFilters, sortFinderUniverseCandidates, updateFinderUniverseCandidateScores } from "../lib/finder/finder-universe-metrics";
 import type { FinderUniverseSymbolMetrics, FinderUniverseSymbolResult } from "../lib/types/finder";
+import type { Time } from "../lib/types/strategies";
 
 function makeBacktestResult(netProfit: number, expectancy: number, totalTrades: number, sharpeRatio = 0, profitFactor = 0, compositeEdgeRatio?: number): FinderUniverseSymbolMetrics {
     const sharpeRatioAvailable = arguments.length >= 4;
@@ -30,8 +31,8 @@ function makeSymbol(symbol: string, status: FinderUniverseSymbolResult["status"]
         symbol,
         status,
         barCount: 100,
-        firstTime: 1700000000,
-        lastTime: 1700003600,
+        firstTime: 1700000000 as Time,
+        lastTime: 1700003600 as Time,
         result,
     };
 }

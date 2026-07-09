@@ -19,7 +19,6 @@ import {
 import {
     buildSyntheticPairFromLegs,
     deriveSyntheticSymbol,
-    pickSourceInterval,
     resolveEffectiveIntervalForSynthetic,
 } from '../scripts/lib/synthetic-pair';
 import { parseSyntheticPairToken } from '../lib/finder-manager';
