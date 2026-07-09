@@ -9,6 +9,7 @@ import { ibkrDataVitePlugin } from './lib/ibkr-data/ibkr-data-vite-plugin';
 import { localSqlitePlugin } from './lib/local-sqlite-vite-plugin';
 import { secondMarketApiPlugin } from './lib/second-market-vite-plugin';
 import { batchBacktestVitePlugin } from './lib/batch-backtest/batch-backtest-vite-plugin';
+import { finderVitePlugin } from './lib/finder/server/finder-vite-plugin';
 import { sendCaughtErrorJson, sendJson, proxyUpstreamJson } from './lib/vite-http-utils';
 import { debugLogger } from './lib/debug-logger';
 import { configurePolymarketNodeDns } from './lib/polymarket-node-dns';
@@ -354,6 +355,7 @@ export default defineConfig({
         strategyLibraryAdminPlugin(),
         backtestEndpointPlugin(),
         batchBacktestVitePlugin(),
+        finderVitePlugin(),
     ],
     server: {
         fs: {

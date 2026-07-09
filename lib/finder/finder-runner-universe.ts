@@ -45,7 +45,7 @@ import {
     toFinderStrategyDiagnostics,
     type FinderStrategyDiagnosticsStats,
 } from "./finder-diagnostics";
-import { buildFinderUniverseCandidate, passesFinderUniverseFilters, sortFinderUniverseCandidates } from "./finder-universe-metrics";
+import { buildFinderUniverseCandidate, passesFinderUniverseFilters, FinderUniverseSurvivorRanker } from "./finder-universe-metrics";
 import type { FinderSelectedStrategy } from "./finder-runner";
 
 const UNIVERSE_DATA_LOAD_CONCURRENCY = 12;
@@ -53,6 +53,15 @@ const UNIVERSE_DATA_LOAD_YIELD_EVERY = 8;
 const UNIVERSE_EVALUATION_YIELD_EVERY_RUNS = 256;
 const UNIVERSE_EVALUATION_YIELD_MIN_MS = 1000;
 const UNIVERSE_UI_UPDATE_MIN_MS = 250;
+/**
+ * Minimum interval between `onResultsUpdate` dispatches during the candidate
+ * loop. The previous path fired onResultsUpdate (which re-sorted and re-rendered)
+ * once per surviving candidate — on a 100-symbol × 1000-candidate run that was
+ * hundreds of full re-sorts + DOM rebuilds of the survivor table. Throttling
+ * matches the current-chart Finder's 750ms results-update cadence; the final
+ * getSortedSurvivors(topN) at loop end is still the source of truth for ranking.
+ */
+const UNIVERSE_RESULTS_UPDATE_MIN_MS = 750;
 const UNIVERSE_ZERO_SIGNAL_BAIL_THRESHOLD = 5;
 const DIRECTIONAL_LOOKBACK_BARS = 96;
 
@@ -80,6 +89,15 @@ export interface FinderUniverseRunInput {
     generateParamSets: (defaultParams: Record<string, number>, options: FinderOptions) => Record<string, number>[];
     /** Candidate exit strategies Finder may sample for Exit Strategy Override. */
     exitStrategyCandidates?: FinderSelectedStrategy[];
+    /**
+     * Mirrors the user's Rust-engine UI toggle for the server-side path. In the
+     * browser, `shouldAttemptRust` reads the DOM directly and ignores this; in
+     * Node (server-side plugin) there is no DOM, so an explicit `true` here is
+     * the only way Rust is attempted — the documented "Rust-engine trap" fix
+     * (see `shouldAttemptRust` in `lib/backtest-executor.ts`). Left undefined by
+     * the browser caller; set by the server plugin from the request body.
+     */
+    useRustEnginePreference?: boolean;
 }
 
 export interface FinderUniverseRunCallbacks {
@@ -672,20 +690,24 @@ export async function runFinderUniverseExecution(
     const requiresCompositeEdgeRatio = !hasCrossSymbol
         && universe.sortPriority.includes("medianCompositeEdgeRatio");
     const maxStoredSurvivors = Math.max(input.options.topN, 50);
-    const survivors: FinderUniverseCandidate[] = [];
+    // Bounded top-K survivor store (see FinderUniverseSurvivorRanker). Replaces
+    // the push-then-full-sort-and-trim buffer: every passing candidate used to
+    // trigger getSortedSurvivors(topN) (a full sort of up to maxStoredSurvivors
+    // entries) on onResultsUpdate. The ranker keeps survivor SET parity with the
+    // old path via an explicit insertion-order tie-breaker.
+    const survivorRanker = new FinderUniverseSurvivorRanker(maxStoredSurvivors, universe.sortPriority);
     let keptCandidateCount = 0;
+    // -Infinity so the FIRST surviving candidate always fires onResultsUpdate
+    // immediately (now - (-Infinity) >= throttle is always true). Subsequent
+    // fires respect UNIVERSE_RESULTS_UPDATE_MIN_MS. The final render at loop
+    // end (caller does setLatestResults + renderLatestResults) is the source of
+    // truth, so a stale mid-run view between throttle windows is acceptable.
+    let lastResultsUpdateAt = Number.NEGATIVE_INFINITY;
     const getSortedSurvivors = (limit: number): FinderUniverseCandidate[] =>
-        sortFinderUniverseCandidates(survivors, universe.sortPriority)
-            .slice(0, Math.max(1, limit));
+        survivorRanker.toSortedArray(limit);
     const offerSurvivor = (candidate: FinderUniverseCandidate): void => {
-        survivors.push(candidate);
+        survivorRanker.offer(candidate);
         keptCandidateCount += 1;
-        if (survivors.length <= maxStoredSurvivors) {
-            return;
-        }
-        const trimmed = getSortedSurvivors(maxStoredSurvivors);
-        survivors.length = 0;
-        survivors.push(...trimmed);
     };
     const totalPossibleTrades = loadedSymbols.reduce((sum, item) => sum + item.maxPossibleTrades, 0);
     const totalInputBars = loadedSymbols.reduce((sum, item) => sum + item.barCount, 0);
@@ -802,6 +824,11 @@ export async function runFinderUniverseExecution(
                         blockRange: null,
                         annotatePolymarket: false,
                         engineMode: "auto",
+                        // Thread the server-side Rust preference through. In the
+                        // browser this is undefined (shouldAttemptRust reads the
+                        // DOM); in Node it's the only signal that opts in to
+                        // Rust (the documented Rust-engine trap fix).
+                        useRustEnginePreference: input.useRustEnginePreference,
                         nowSec: runNowSec,
                     },
                     backtestRunOptions: {
@@ -913,12 +940,20 @@ export async function runFinderUniverseExecution(
         if (passesFinderUniverseFilters(candidate, universe)) {
             const rankingStartedAt = performance.now();
             offerSurvivor(candidate);
-            const updatedResults = getSortedSurvivors(input.options.topN);
             addElapsed(timings, "resultRanking", rankingStartedAt);
+            // Throttle the (re-sort + render) callback to a time budget instead
+            // of firing once per surviving candidate. The final
+            // getSortedSurvivors(topN) at loop end is still the source of truth
+            // for ranking, so a stale mid-run view is acceptable. The sort
+            // itself only happens inside onResultsUpdate when it actually fires.
             if (callbacks.onResultsUpdate) {
-                const uiStartedAt = performance.now();
-                callbacks.onResultsUpdate(updatedResults);
-                addElapsed(timings, "uiUpdates", uiStartedAt);
+                const now = performance.now();
+                if (now - lastResultsUpdateAt >= UNIVERSE_RESULTS_UPDATE_MIN_MS) {
+                    lastResultsUpdateAt = now;
+                    const uiStartedAt = performance.now();
+                    callbacks.onResultsUpdate(getSortedSurvivors(input.options.topN));
+                    addElapsed(timings, "uiUpdates", uiStartedAt);
+                }
             }
         }
 

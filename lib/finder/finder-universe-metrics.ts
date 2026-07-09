@@ -371,6 +371,138 @@ export function sortFinderUniverseCandidates(
     return [...results].sort((left, right) => compareFinderUniverseCandidates(left, right, sortPriority));
 }
 
+/**
+ * Bounded top-K survivor store for the universe runner. Replaces the old
+ * push-then-full-sort-and-slice (`survivors.push(...); getSortedSurvivors(50)`)
+ * which re-sorted the entire survivor buffer on every passing candidate.
+ *
+ * Parity contract: for a fixed seed, the survivor SET produced by this ranker
+ * MUST be identical to the old push-then-trim path. The risk is tie-breaker
+ * drift — when two candidates tie on every metric AND every param string,
+ * `Array.prototype.sort` (stable in modern V8) keeps the earlier-pushed one.
+ * A naive heap would evict whichever tied element lands at the root, diverging
+ * from stable-sort-keeps-first. The mitigation mirrors Batch's
+ * `compareAnalogByDistanceThenOrder`: an explicit monotonically-increasing
+ * insertion index is the final tie-breaker, so on a tie the LATER-inserted
+ * element is "worse" (sits at the root, gets evicted on overflow), preserving
+ * the earlier one exactly as stable-sort-and-slice did.
+ *
+ * `toSortedArray` orders output by (metric comparator, then insertion order),
+ * matching `[...results].sort(compareFinderUniverseCandidates)` on a stable
+ * runtime — so both the kept SET and the intermediate display order match the
+ * pre-heap path. Locked by `tests/finder-universe-runner.spec.ts`.
+ */
+export class FinderUniverseSurvivorRanker {
+    private readonly maxSize: number;
+    private readonly sortPriority: readonly FinderUniverseMetric[];
+    private insertOrder = 0;
+    // Min-heap by "worst" (the worst candidate sits at index 0 so overflow
+    // evicts it in O(log K)). Entries carry their insertion index for the
+    // tie-breaker described above.
+    private readonly heap: Array<{ candidate: FinderUniverseCandidate; order: number }> = [];
+
+    constructor(maxSize: number, sortPriority: readonly FinderUniverseMetric[]) {
+        this.maxSize = Math.max(1, Math.floor(maxSize));
+        this.sortPriority = sortPriority;
+    }
+
+    offer(candidate: FinderUniverseCandidate): void {
+        const entry = { candidate, order: this.insertOrder++ };
+        if (this.heap.length < this.maxSize) {
+            this.heap.push(entry);
+            this.siftUp(this.heap.length - 1);
+            return;
+        }
+        if (this.heap.length === 0) return;
+        // Root holds the current worst survivor. If the newcomer is worse than
+        // or ties with the worst, it would not survive a full-sort-and-slice
+        // (stable sort keeps the earlier-inserted survivor), so drop it.
+        if (this.isWorseOrEqual(entry, this.heap[0]!)) {
+            return;
+        }
+        // Newcomer beats the worst: replace root and restore the heap.
+        this.heap[0] = entry;
+        this.siftDown(0);
+    }
+
+    /** Current survivor count (pre-trim; bounded by maxSize). */
+    get size(): number {
+        return this.heap.length;
+    }
+
+    /**
+     * Return survivors ordered best-first by the metric comparator, with
+     * insertion order as the final tie-breaker. Matches the old
+     * `sortFinderUniverseCandidates(survivors, sortPriority).slice(0, limit)`.
+     */
+    toSortedArray(limit: number): FinderUniverseCandidate[] {
+        const sorted = [...this.heap].sort((a, b) => {
+            const cmp = compareFinderUniverseCandidates(a.candidate, b.candidate, this.sortPriority);
+            if (cmp !== 0) return cmp;
+            // Stable-sort parity: earlier-inserted first on a tie.
+            return a.order - b.order;
+        });
+        return sorted.slice(0, Math.max(1, limit)).map((entry) => entry.candidate);
+    }
+
+    /**
+     * "a is worse than b" — drives the min-heap so the worst survivor sits at
+     * the root. A higher metric-comparator value means worse (since the metric
+     * comparator returns positive when the left candidate ranks lower). On a
+     * metric tie, the LATER-inserted entry is considered worse so it is the one
+     * evicted on overflow — matching stable-sort-keeps-first semantics.
+     */
+    private isWorse(a: { candidate: FinderUniverseCandidate; order: number }, b: { candidate: FinderUniverseCandidate; order: number }): boolean {
+        const cmp = compareFinderUniverseCandidates(a.candidate, b.candidate, this.sortPriority);
+        if (cmp > 0) return true;
+        if (cmp < 0) return false;
+        return a.order > b.order;
+    }
+
+    private isWorseOrEqual(a: { candidate: FinderUniverseCandidate; order: number }, b: { candidate: FinderUniverseCandidate; order: number }): boolean {
+        const cmp = compareFinderUniverseCandidates(a.candidate, b.candidate, this.sortPriority);
+        if (cmp > 0) return true;
+        if (cmp < 0) return false;
+        // Tie: the newcomer (a) has a strictly greater order index than any
+        // already-heap element (b), so it is "worse" and would not survive a
+        // stable sort + slice. Equal order is impossible here because a was
+        // just allocated a fresh index.
+        return a.order > b.order;
+    }
+
+    private siftUp(index: number): void {
+        let idx = index;
+        while (idx > 0) {
+            const parent = Math.floor((idx - 1) / 2);
+            if (!this.isWorse(this.heap[idx]!, this.heap[parent]!)) break;
+            const tmp = this.heap[idx]!;
+            this.heap[idx] = this.heap[parent]!;
+            this.heap[parent] = tmp;
+            idx = parent;
+        }
+    }
+
+    private siftDown(index: number): void {
+        let idx = index;
+        while (true) {
+            const left = idx * 2 + 1;
+            const right = left + 1;
+            let worst = idx;
+            if (left < this.heap.length && this.isWorse(this.heap[left]!, this.heap[worst]!)) {
+                worst = left;
+            }
+            if (right < this.heap.length && this.isWorse(this.heap[right]!, this.heap[worst]!)) {
+                worst = right;
+            }
+            if (worst === idx) break;
+            const tmp = this.heap[idx]!;
+            this.heap[idx] = this.heap[worst]!;
+            this.heap[worst] = tmp;
+            idx = worst;
+        }
+    }
+}
+
 export function passesFinderUniverseFilters(
     candidate: FinderUniverseCandidate,
     universe: FinderUniverseOptions

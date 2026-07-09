@@ -1,0 +1,97 @@
+/**
+ * Node-side dataset loader for server-side Finder Symbol Universe.
+ *
+ * Thin wrapper that reuses {@link createBatchDatasetLoaderCore} — the same
+ * shared core the Batch server loader uses — so the synthetic-pair pipeline,
+ * `SyntheticLegCache` caps, `DATA_CHART_TOTAL_LIMIT` cap, stale-fragment
+ * refetch, and offline-first gap-fill are identical to the Batch server path
+ * BY CONSTRUCTION. This is the parity mitigation called out in AGENTS.md
+ * §"Loader parity": the browser `loadUniverseDataset` path must not diverge
+ * from the server path, and routing both through the same core is how the
+ * Batch tab already achieved that.
+ *
+ * Server-side import hygiene (the documented bundle trap, AGENTS.md
+ * §"Server-Side Batch Backtest"): this module imports ONLY leaf modules —
+ * `data-fetcher`, `data-cache`, `data-persistence`, `data-provider-router`,
+ * `data/constants`, and the synthetic-pair disk cache. It must NOT import from
+ * `lib/finder-manager.ts`, `lib/data-manager.ts`, `lib/settings-manager.ts`,
+ * or anything that transitively reaches `lib/constants.ts` or `lib/chart-manager.ts`
+ * (both pull `lightweight-charts`, which is ESM-only and breaks the cjs config
+ * bundle when Vite bundles `vite.config.ts`).
+ */
+
+import { DATA_CHART_TOTAL_LIMIT } from "../../data/constants";
+import { DataCache } from "../../data/data-cache";
+import { DataFetcher } from "../../data/data-fetcher";
+import { DataPersistence } from "../../data/data-persistence";
+import { DataProviderRouter } from "../../data/data-provider-router";
+import type { OHLCVData } from "../../types/strategies";
+import {
+    createBatchDatasetLoaderCore,
+    type BatchDatasetCacheStats,
+} from "../../batch-backtest/batch-dataset-loader-core";
+import { loadCachedSyntheticPair, storeSyntheticPair } from "../../batch-backtest/synthetic-pair-disk-cache";
+
+const providerRouter = new DataProviderRouter();
+const dataCache = new DataCache();
+const dataPersistence = new DataPersistence();
+const emptyImportedData = new Map<string, OHLCVData[]>();
+
+function createServerDataFetcher(): DataFetcher {
+    return new DataFetcher(
+        providerRouter,
+        dataCache,
+        dataPersistence,
+        () => emptyImportedData,
+        () => DATA_CHART_TOTAL_LIMIT,
+        {},
+    );
+}
+
+const loader = createBatchDatasetLoaderCore({
+    logPrefix: "finder.server",
+    fetchDetached: (symbol, interval, options) =>
+        createServerDataFetcher().fetchDataDetached(symbol, interval, options),
+    fetchHistorical: (symbol, interval, limit, options) =>
+        createServerDataFetcher().fetchHistoricalData(symbol, interval, limit, options),
+    // Server-side disk cache. Same hooks as the Batch server loader so a
+    // synthetic pair built once is reused across FINDER runs. NOTE: the Finder
+    // and Batch loaders construct SEPARATE in-memory `loader` cores, so a pair
+    // built by Batch is NOT reused by Finder (and vice versa) — only the
+    // disk-backed cache (file fingerprints) is shared, on a cache miss the
+    // in-memory core rebuilds. This is acceptable duplication; consolidating
+    // the two loaders is a follow-up.
+    loadCachedSyntheticPair: (args) => loadCachedSyntheticPair(args),
+    storeSyntheticPair: (args, bars) => storeSyntheticPair(args, bars),
+});
+
+/**
+ * Load a universe symbol dataset server-side. Mirrors the browser
+ * `FinderManager.loadUniverseDataset` contract (returns the sliced/offline-
+ * first OHLCV series, throws on a hard failure, respects the abort signal).
+ *
+ * NOTE: the browser `loadDataset` callback in
+ * `FinderManager.runUniverseFinder` additionally applies
+ * `sliceFinderDataWindow(data, options.dataSlice)` to the raw series and
+ * records data-window stats. That slicing is a pure transform over the
+ * already-loaded array; the SERVER caller (the future plugin) must apply the
+ * same slice after this load so the browser-side data-window diagnostics
+ * remain parity-identical. Keeping the slice at the call site (not in this
+ * loader) preserves the loader's symmetry with the Batch loader, which does
+ * not slice.
+ */
+export async function loadServerFinderDataset(
+    symbol: string,
+    interval: string,
+    signal?: AbortSignal,
+): Promise<OHLCVData[]> {
+    return loader.load(symbol, interval, signal);
+}
+
+export function clearServerFinderDatasetCaches(): void {
+    loader.clearCaches();
+}
+
+export function getServerFinderDatasetCacheStats(): BatchDatasetCacheStats {
+    return loader.getCacheStats();
+}

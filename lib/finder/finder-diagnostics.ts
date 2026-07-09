@@ -370,14 +370,26 @@ export function buildFinderDiagnosticsBottlenecks(args: {
     rustFallbackRuns?: number;
     backtest?: FinderBacktestDiagnostics;
 }): string[] {
+    // Every populated timing phase is eligible so universe runs (which populate
+    // closedDataSelection / preparedData / paramGeneration) and current-chart
+    // runs (which populate resultEnrichment / reconciliation) both surface their
+    // real bottleneck instead of being silently omitted. Adding a key to
+    // createEmptyFinderDiagnosticsTimings without listing it here produces a
+    // misleading 0% row in the copied diagnostics.
     const phases = [
         { label: "data loading", value: args.timingsMs.dataLoading },
         { label: "price point loading", value: args.timingsMs.pricePointLoading },
+        { label: "parameter generation", value: args.timingsMs.paramGeneration },
+        { label: "closed-candle selection", value: args.timingsMs.closedDataSelection },
+        { label: "indicator precompute", value: args.timingsMs.indicatorPrecompute },
+        { label: "prepared data", value: args.timingsMs.preparedData },
         { label: "signal generation", value: args.timingsMs.signalGeneration },
         { label: "backtest", value: args.timingsMs.backtest },
         { label: "Polymarket evaluation", value: args.timingsMs.polymarketEvaluation },
         { label: "Rust request", value: args.timingsMs.rustRequest },
+        { label: "result enrichment", value: args.timingsMs.resultEnrichment },
         { label: "result ranking", value: args.timingsMs.resultRanking },
+        { label: "reconciliation", value: args.timingsMs.reconciliation },
         { label: "UI updates", value: args.timingsMs.uiUpdates },
         { label: "yielding", value: args.timingsMs.yielding },
     ].filter((phase) => phase.value > 0)

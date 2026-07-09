@@ -253,4 +253,70 @@ describe("Finder compact diagnostics", () => {
             "1 Rust run fell back to TypeScript",
         ]);
     });
+
+    it("surfaces universe-specific timing phases (preparedData, closed-candle selection, parameter generation) in bottlenecks when populated", () => {
+        // Phase 1: every populated timing phase must be eligible for a
+        // bottleneck line. The universe path populates closedDataSelection,
+        // indicatorPrecompute, preparedData, and paramGeneration; before Phase 1
+        // these were silently omitted, hiding the real bottleneck behind a
+        // misleading "No single phase exceeded 10%" line.
+        const timings: FinderDiagnostics["timingsMs"] = {
+            total: 1000,
+            paramGeneration: 150,       // 15% — should surface
+            dataLoading: 0,
+            pricePointLoading: 0,
+            closedDataSelection: 50,    // 5% — below 10% threshold, omitted
+            indicatorPrecompute: 0,
+            preparedData: 300,          // 30% — should surface
+            signalGeneration: 0,
+            backtest: 0,
+            polymarketEvaluation: 0,
+            rustRequest: 0,
+            resultEnrichment: 0,
+            resultRanking: 0,
+            reconciliation: 0,
+            uiUpdates: 0,
+            yielding: 0,
+        };
+        const bottlenecks = buildFinderDiagnosticsBottlenecks({
+            timingsMs: timings,
+            strategyBreakdown: [],
+            failedRuns: 0,
+        });
+        const text = bottlenecks.join("\n");
+        expect(text).to.contain("prepared data used 30.0% of measured runtime");
+        expect(text).to.contain("parameter generation used 15.0% of measured runtime");
+        expect(text).to.not.contain("closed-candle selection"); // below 10%
+    });
+
+    it("surfaces result enrichment and reconciliation phases from the current-chart path", () => {
+        // Current-chart runs populate resultEnrichment and reconciliation;
+        // those phases must also be eligible for bottleneck lines.
+        const timings: FinderDiagnostics["timingsMs"] = {
+            total: 500,
+            paramGeneration: 0,
+            dataLoading: 0,
+            pricePointLoading: 0,
+            closedDataSelection: 0,
+            indicatorPrecompute: 0,
+            preparedData: 0,
+            signalGeneration: 0,
+            backtest: 0,
+            polymarketEvaluation: 0,
+            rustRequest: 0,
+            resultEnrichment: 250,  // 50%
+            resultRanking: 0,
+            reconciliation: 100,    // 20%
+            uiUpdates: 0,
+            yielding: 0,
+        };
+        const bottlenecks = buildFinderDiagnosticsBottlenecks({
+            timingsMs: timings,
+            strategyBreakdown: [],
+            failedRuns: 0,
+        });
+        const text = bottlenecks.join("\n");
+        expect(text).to.contain("result enrichment used 50.0% of measured runtime");
+        expect(text).to.contain("reconciliation used 20.0% of measured runtime");
+    });
 });

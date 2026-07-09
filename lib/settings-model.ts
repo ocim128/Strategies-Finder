@@ -170,6 +170,19 @@ export interface BacktestSettingsData {
      * UI-only: not consumed by Rust or worker surfaces.
      */
     batchExecutionMode: "server" | "browser";
+
+    /**
+     * Where the Finder Symbol Universe runs its heavy multi-symbol evaluation.
+     * - "server": the Vite dev server (Node) — keeps the browser tab bounded
+     *   for large universes (N full OHLCV datasets held for the whole loop).
+     *   Default, matching batchExecutionMode's rationale.
+     * - "browser": the original in-tab path. Retained as a fallback for
+     *   environments without the dev server.
+     *
+     * UI-only: not consumed by Rust or worker surfaces. Applies to the
+     * Symbol Universe scope only; the current-chart Finder is always in-tab.
+     */
+    finderUniverseExecutionMode: "server" | "browser";
 }
 
 export interface StrategyConfig {
@@ -283,6 +296,10 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     // field doc on BacktestSettingsData for rationale.
     batchExecutionMode: "server",
 
+    // Finder Symbol Universe execution mode. Server is the default, matching
+    // batchExecutionMode (off-browser is the whole point of the server path).
+    finderUniverseExecutionMode: "server",
+
     // Signal confirmation
     confirmationStrategiesToggle: false,
     confirmationStrategies: [],
@@ -373,6 +390,7 @@ const UI_ONLY_BACKTEST_SETTING_KEYS = new Set<keyof BacktestSettingsData>([
     'riskSettingsToggle',
     'confirmationStrategiesToggle',
     'batchExecutionMode',
+    'finderUniverseExecutionMode',
 ]);
 
 export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsData {
@@ -475,6 +493,11 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
     normalized.batchExecutionMode = source.batchExecutionMode === "browser"
         ? "browser"
         : DEFAULT_BACKTEST_SETTINGS.batchExecutionMode;
+
+    // Finder Symbol Universe execution mode: same rule as batchExecutionMode.
+    normalized.finderUniverseExecutionMode = source.finderUniverseExecutionMode === "browser"
+        ? "browser"
+        : DEFAULT_BACKTEST_SETTINGS.finderUniverseExecutionMode;
 
     return normalized;
 }

@@ -151,6 +151,19 @@ interface UniverseDatasetWindowStats {
 
 type UniverseDataWindowDiagnostics = NonNullable<FinderDiagnostics["universe"]>["dataWindow"];
 
+/**
+ * Outcome of a server-side Finder Universe run, returned by
+ * `runUniverseFinderServer`. The caller feeds `results` into the shared OOS
+ * + status tail (the same one the in-tab path uses) so server-mode runs still
+ * get the browser-side OOS pass on the returned survivors.
+ */
+interface ServerUniverseRunOutcome {
+	results: FinderUniverseCandidate[];
+	diagnostics: FinderDiagnostics | null;
+	loadedSymbols: number;
+	failedSymbolCount: number;
+}
+
 import { isSameEventPolymarketExitMode } from "./polymarket-exit-mode";
 import { resolvePolymarketDomSettings } from "./polymarket-dom-reader";
 import {
@@ -162,6 +175,9 @@ import {
 } from "./polymarket-post-signal-limit-entry";
 import { finderSortRequiresTradeTimingQuality } from "./trade-timing-quality";
 import { isSecondMarketPolymarketSupported } from "./second-market/evaluation";
+import { consumeNdjsonStream } from "./ndjson-stream";
+import { shouldUseRustEngine } from "./engine-preferences";
+import type { FinderStreamEvent } from "./finder/server/finder-stream-types";
 
 type FinderPersistedUiState = {
 	scope: FinderScope;
@@ -941,6 +957,19 @@ export class FinderManager {
 
 		dom.stopFinder.addEventListener('click', () => {
 			this.isCancelled = true;
+			// Server-side Finder Universe: the runner lives in the dev server,
+			// so `this.isCancelled` alone does NOT stop it — the server checks
+			// ownership loss + abort via POST /api/finder/stop. Fire-and-forget;
+			// the browser-side OOS pass (which runs in-tab on the returned
+			// survivors) also sees `this.isCancelled` and stops promptly.
+			// Only POST when a run is actually in flight (this.isRunning) AND in
+			// server universe scope, so a stray click doesn't spam the endpoint.
+			if (this.isRunning && this.isUniverseScope() && this.readFinderUniverseExecutionMode() === 'server') {
+				void fetch('/api/finder/stop', { method: 'POST' }).catch(() => {
+					// Network/endpoint errors are expected on vite preview (no
+					// dev server plugin); the in-tab fallback already handled the run.
+				});
+			}
 		});
 
 		dom.resetFinderSettings.addEventListener('click', () => {
@@ -1776,32 +1805,41 @@ export class FinderManager {
 			if (this.isCancelled && (message.includes('stopped') || message.includes('cancel'))) {
 				this.setStatus('Finder stopped by user.');
 				uiManager.showToast('Finder stopped.', 'info');
-			} else {
-				debugLogger.error('finder.run_failed', {
-					scope: options.scope ?? 'current_chart',
-					symbol: state.currentSymbol,
-					interval: state.currentInterval,
-					mode: options.mode,
-					polymarketScoringEnabled: options.polymarketScoringEnabled,
-					error: message,
-				});
-				this.setStatus(`Finder failed. ${message}`);
-				uiManager.showToast('Finder run failed. Check the status panel for details.', 'error');
-				// When the universe loader throws, latestDiagnostics stays null
-				// and the Copy Diagnostics button is silently disabled — exactly
-				// when the user needs it most. Build a minimal diagnostics from
-				// the per-symbol loadFailures map attached to the thrown error
-				// so the user can copy and share WHY each symbol failed.
-				const loadFailures = (error as Error & { loadFailures?: Map<string, { error?: string }> }).loadFailures;
-				if (loadFailures && loadFailures.size > 0) {
-					this.latestDiagnostics = this.buildLoadFailureDiagnostics({
-						options,
-						elapsedMs: performance.now() - startTime,
-						loadFailures,
+				} else {
+					debugLogger.error('finder.run_failed', {
+						scope: options.scope ?? 'current_chart',
+						symbol: state.currentSymbol,
+						interval: state.currentInterval,
+						mode: options.mode,
+						polymarketScoringEnabled: options.polymarketScoringEnabled,
+						error: message,
 					});
+					this.setStatus(`Finder failed. ${message}`);
+					uiManager.showToast('Finder run failed. Check the status panel for details.', 'error');
+					// latestDiagnostics stays null on any mid-run failure, which
+					// silently disables the Copy Diagnostics button exactly when
+					// the user needs it most. Build a minimal diagnostics so the
+					// user can copy and share why the run failed. Universe load
+					// failures carry a per-symbol loadFailures map (richer detail);
+					// any other failure (engine throw, OOS re-load error, etc.)
+					// gets a minimal diagnostics with the error reason surfaced as
+					// a bottleneck line.
+					const loadFailures = (error as Error & { loadFailures?: Map<string, { error?: string }> }).loadFailures;
+					if (loadFailures && loadFailures.size > 0) {
+						this.latestDiagnostics = this.buildLoadFailureDiagnostics({
+							options,
+							elapsedMs: performance.now() - startTime,
+							loadFailures,
+						});
+					} else {
+						this.latestDiagnostics = this.buildRunFailureDiagnostics({
+							options,
+							elapsedMs: performance.now() - startTime,
+							error: message,
+						});
+					}
 					this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics;
 				}
-			}
 		} finally {
 			if (!progressFinalized) {
 				finalizeProgress(0, '');
@@ -2259,11 +2297,66 @@ export class FinderManager {
 		}
 		const exitStrategyCandidates = await this.resolveExitStrategyCandidates(options, selectedStrategies);
 
+		// Server-side dispatch: when the Finder Universe Execution Mode setting
+		// is "server", POST the run to the Vite dev server plugin
+		// (lib/finder/server/finder-vite-plugin.ts) and consume the NDJSON stream
+		// of scalar survivor candidates — mirrors BatchBacktestService.runBatch
+		// dispatching on batchExecutionMode. The server holds the N full OHLCV
+		// datasets; the browser tab keeps only rendered scalar rows.
+		//
+		// On a successful server run we populate the same shared locals the
+		// in-tab path builds (allResults / failedSymbols / maxLoadedSymbols /
+		// diagnosticsParts) and then FALL THROUGH to the shared OOS-validation
+		// + status tail below — so server-mode runs still get the browser-side
+		// OOS pass on the returned survivors. Returning directly here (the
+		// prior bug) skipped OOS entirely.
 		const allResults: FinderUniverseCandidate[] = [];
 		const failedSymbols = new Set<string>();
 		const diagnosticsParts: FinderDiagnostics[] = [];
 		let maxLoadedSymbols = 0;
+		// Hoisted: the server path and the shared OOS tail both need `settings`.
 		const settings = backtestService.getBacktestSettings();
+		// Explicit flag — NOT allResults.length — for whether the server path
+		// executed. A valid server run can legitimately produce zero survivors
+		// (every candidate filtered out, or all symbols failed to load but the
+		// run completed). Using result count as the discriminator would rerun
+		// the entire workload in-tab in that case — a correctness bug (different
+		// random path) and a performance regression (defeats server-side). Only
+		// a `null` outcome (server unavailable, e.g. vite preview) falls through
+		// to the in-tab loop.
+		let serverRan = false;
+
+		if (this.readFinderUniverseExecutionMode() === 'server' && selectedStrategies.length === 1) {
+			const serverOutcome = await this.runUniverseFinderServer(options, selectedStrategies[0]!, exitStrategyCandidates, startTime);
+			if (serverOutcome !== null) {
+				serverRan = true;
+				allResults.push(...serverOutcome.results);
+				maxLoadedSymbols = serverOutcome.loadedSymbols;
+				for (let i = 0; i < serverOutcome.failedSymbolCount; i += 1) {
+					// The server reports only the count (not symbol names) on the
+					// wire; track the count so the status tail's failure segment
+					// renders. Symbol names aren't needed downstream.
+					failedSymbols.add(`__server_failed_${i}`);
+				}
+				if (serverOutcome.diagnostics) {
+					diagnosticsParts.push(serverOutcome.diagnostics);
+				}
+				// Fall through to the shared OOS + status tail below.
+			}
+			// null => server path was unavailable; fall through to the in-browser
+			// path (e.g. vite preview with no dev server).
+		}
+
+		if (this.isCancelled) {
+			return true;
+		}
+
+		// In-tab path: run the per-strategy browser loop ONLY when the server
+		// path did not execute (unavailable: vite preview) OR when multiple
+		// entry strategies are selected (the server plugin takes one strategy
+		// per request in v1). A server run that produced zero survivors must NOT
+		// fall through here — that would rerun the workload in-tab.
+		if (!serverRan) {
 		const capitalSettings = backtestService.getCapitalSettings();
 		const dataWindowStats = new Map<string, UniverseDatasetWindowStats>();
 		const loadDataset = async (symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> => {
@@ -2334,11 +2427,14 @@ export class FinderManager {
 				break;
 			}
 		}
+			} // end in-tab per-strategy loop (only when server path did not execute)
 
 		// Per-symbol OOS pass on the finalized survivors. Loads the complementary
 		// half of each symbol's data (cache hit on universeDatasetCache) and
 		// re-runs each survivor strategy via executeBacktest. Candidates whose
-		// OOS breadth collapses are filtered out.
+		// OOS breadth collapses are filtered out. Runs for BOTH the server path
+		// (on the returned survivors — datasets fetched client-side) and the
+		// in-tab path.
 		const universeResults = sortFinderUniverseCandidates(allResults, options.universe.sortPriority).slice(0, options.topN);
 		const oosRemovedCount = await this.applyUniverseOosValidationIfNeeded({
 			results: universeResults,
@@ -2380,6 +2476,160 @@ export class FinderManager {
 			this.setStatus(segments.join(' | '));
 		}
 		return true;
+	}
+
+	/**
+	 * Read the `finderUniverseExecutionMode` select. Mirrors
+	 * `BatchBacktestService.readBatchExecutionMode`: the id lives in the
+	 * `Backend Engine` settings section. Returns `"server"` when the select is
+	 * missing (default is server-side; see settings-model.ts).
+	 */
+	private readFinderUniverseExecutionMode(): 'server' | 'browser' {
+		const select = document.getElementById('finderUniverseExecutionMode') as HTMLSelectElement | null;
+		if (!select) return 'server';
+		return select.value === 'browser' ? 'browser' : 'server';
+	}
+
+	/**
+	 * Server-side Finder Universe path: POST to `/api/finder/universe-run`,
+	 * consume the NDJSON stream of scalar survivor candidates, and reconstruct
+	 * the terminal survivor slice + diagnostics in-browser. The server holds
+	 * the N full OHLCV datasets; the browser tab keeps only rendered scalars.
+	 *
+	 * Returns:
+	 *   - `null` when the server endpoint is unavailable (404/405, e.g. `vite
+	 *     preview` with no dev server) so the caller falls through to the in-tab
+	 *     path instead of erroring.
+	 *   - Otherwise a {@link ServerUniverseRunOutcome} carrying the terminal
+	 *     survivors + diagnostics + loaded/failed counts. The caller feeds these
+	 *     into the SHARED OOS-validation + status tail (the same one the in-tab
+	 *     path uses), so server-mode runs still get the browser-side OOS pass on
+	 *     the returned survivors (datasets are fetched client-side via
+	 *     loadUniverseDataset — cache-warm on universeDatasetCache).
+	 *
+	 * v1 runs a single selected entry strategy; multiple entry strategies fall
+	 * back to the in-tab path (the server plugin takes one strategy per request,
+	 * mirroring BatchBacktestService).
+	 */
+	private async runUniverseFinderServer(
+		options: FinderOptions,
+		selectedStrategy: FinderSelectedStrategy,
+		exitStrategyCandidates: FinderSelectedStrategy[] | undefined,
+		startTime: number,
+	): Promise<ServerUniverseRunOutcome | null> {
+		const settings = backtestService.getBacktestSettings();
+		const capitalSettings = backtestService.getCapitalSettings();
+		const response = await fetch('/api/finder/universe-run', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				symbols: options.universe?.symbols ?? [],
+				interval: state.currentInterval,
+				options,
+				settings,
+				capitalSettings,
+				strategyKey: selectedStrategy.key,
+				exitStrategyKeys: exitStrategyCandidates?.map((c) => c.key),
+				useRustEnginePreference: shouldUseRustEngine(),
+			}),
+		});
+
+		// 404 / 405 => no dev server plugin (e.g. vite preview). Return null so
+		// the caller falls through to the in-tab path instead of erroring.
+		if (response.status === 404 || response.status === 405) {
+			return null;
+		}
+		if (!response.ok || !response.body) {
+			const text = await response.text();
+			let payload: { error?: string } = {};
+			try { payload = JSON.parse(text); } catch { /* ignore */ }
+			throw new Error(payload.error ?? `Server Finder run failed (${response.status}).`);
+		}
+
+		// Incremental merge of streamed candidates for live display. The
+		// terminal slice in `done.candidates` is authoritative (the 750ms
+		// throttle can skip the final passers), so on `done` we ADOPT that
+		// slice instead of the merged map.
+		const survivorByKey = new Map<string, FinderUniverseCandidate>();
+		const identityKey = (c: FinderUniverseCandidate) =>
+			`${c.strategyKey}|${JSON.stringify(c.params)}|${c.exitStrategyKey ?? ''}|${JSON.stringify(c.exitStrategyParams ?? {})}`;
+		const sortPriority = options.universe?.sortPriority ?? [];
+		let terminalDiagnostics: FinderDiagnostics | null = null;
+		let terminalCandidates: FinderUniverseCandidate[] | null = null;
+		let loadedSymbols = 0;
+		let failedSymbolCount = 0;
+
+		const renderMerged = (): void => {
+			const merged = sortFinderUniverseCandidates([...survivorByKey.values()], sortPriority)
+				.slice(0, options.topN);
+			this.setLatestResults({ scope: 'symbol_universe', results: merged });
+			this.renderLatestResults();
+		};
+
+		try {
+			await consumeNdjsonStream<FinderStreamEvent>(response.body, {
+				onStart: (event) => {
+					this.setStatus(`Server: 0/${event.totalSymbols} symbols (evaluating ~${event.totalCandidates} candidates)...`);
+				},
+				onProgress: (event) => {
+					this.setProgress(true, event.percent, event.text);
+					this.setStatus(event.status);
+				},
+				onCandidate: (event) => {
+					// Merge incrementally; the server emits survivors as they pass
+					// the throttle window. Each candidate is already scalar-only.
+					survivorByKey.set(identityKey(event.candidate), event.candidate);
+					renderMerged();
+				},
+				onSymbolFailed: (event) => {
+					debugLogger.warn('finder.server.symbol_failed', { symbol: event.symbol, error: event.error });
+				},
+				onDone: (event) => {
+					terminalDiagnostics = event.diagnostics;
+					loadedSymbols = event.totals?.loadedSymbols ?? 0;
+					failedSymbolCount = event.totals?.failedSymbols ?? 0;
+					// Adopt the authoritative terminal slice; the merged map may
+					// include intermediates later evicted by the runner's final
+					// sort+slice, and may MISS late passers the throttle never
+					// flushed. The server's done.candidates is the source of truth.
+					terminalCandidates = event.candidates ?? null;
+					if (terminalCandidates) {
+						this.setLatestResults({ scope: 'symbol_universe', results: terminalCandidates });
+						this.renderLatestResults();
+					}
+				},
+				onFatal: (event) => {
+					throw new Error(event.error);
+				},
+			});
+		} catch (error) {
+			// Network error mid-stream: surface but keep any partial survivor set
+			// already rendered. Re-throw so the caller's catch reports it.
+			const message = error instanceof Error ? error.message : String(error);
+			this.setStatus(`Server Finder failed: ${message}`);
+			throw error;
+		}
+
+		// If the server didn't ship a terminal slice (older / unexpected shape),
+		// fall back to the merged map so the run still finalizes.
+		const finalResults = terminalCandidates
+			?? sortFinderUniverseCandidates([...survivorByKey.values()], sortPriority).slice(0, options.topN);
+
+		// Store terminal diagnostics so Copy Diagnostics works; the server uses
+		// the same diagnostics builder, so the shape matches the in-tab path.
+		this.latestDiagnostics = terminalDiagnostics;
+		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics;
+
+		if (!this.isCancelled) {
+			this.setStatus(`Server Finder: ${finalResults.length} survivors (${Math.round(performance.now() - startTime)}ms)`);
+		}
+
+		return {
+			results: finalResults,
+			diagnostics: terminalDiagnostics,
+			loadedSymbols,
+			failedSymbolCount,
+		};
 	}
 
 	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'polymarketExitMode' | 'polymarketSignalExitAllowMultipleTradesPerEvent' | 'executionModel' | 'polymarketEntryDelayBars' | 'polymarketEntryPriceFilterCents' | 'polymarketBacktestSlippageCents' | 'polymarketPostSignalLimitEntryEnabled' | 'polymarketPostSignalLimitEntryMode' | 'polymarketPostSignalLimitEntryPriceCents' | 'polymarketPostSignalLimitEntryOffsetCents' | 'polymarketPostSignalLimitExitEnabled' | 'polymarketPostSignalLimitExitMode' | 'polymarketPostSignalLimitExitPriceCents' | 'polymarketPostSignalLimitExitOffsetCents' | 'disableSignalExits' | 'exitStrategyOverrideEnabled'>): FinderOptions {
@@ -2586,6 +2836,60 @@ export class FinderManager {
 				failedSymbols,
 			},
 		});
+	}
+
+	/**
+	 * Minimal diagnostics for any non-load failure path (engine throw, OOS
+	 * re-load error, etc.). Without this, latestDiagnostics stays null on a
+	 * mid-run failure and the Copy Diagnostics button is silently disabled.
+	 * The error reason is surfaced as the first bottleneck line so the user
+	 * can copy and share why the run failed.
+	 */
+	private buildRunFailureDiagnostics(args: {
+		options: FinderOptions;
+		elapsedMs: number;
+		error: string;
+	}): FinderDiagnostics {
+		const timings = createEmptyFinderDiagnosticsTimings();
+		timings.total = args.elapsedMs;
+		const engineMode = args.options.polymarketScoringEnabled
+			? (isSecondMarketPolymarketSupported(state.currentSymbol, state.currentInterval) ? 'second_market_polymarket' : 'polymarket')
+			: args.options.mode === 'genetic'
+				? 'genetic'
+				: 'typescript';
+		const truncatedError = args.error.length > 220 ? `${args.error.slice(0, 217)}...` : args.error;
+		const universeDiagnostics = args.options.scope === 'symbol_universe' && args.options.universe
+			? {
+				totalSymbols: args.options.universe.symbols.length,
+				loadedSymbols: 0,
+				failedSymbols: [] as Array<{ symbol: string; reason: string }>,
+			}
+			: undefined;
+		const base = buildFinderDiagnostics({
+			runId: createFinderRunId('finder-run-failure'),
+			symbol: state.currentSymbol,
+			interval: state.currentInterval,
+			mode: args.options.mode,
+			engineMode,
+			inputBars: 0,
+			evaluationBars: 0,
+			selectedStrategies: 0,
+			totalParamRuns: 0,
+			batchSize: 0,
+			processedRuns: 0,
+			filteredRuns: 0,
+			shownResults: 0,
+			endpointAdjusted: 0,
+			failedRuns: 0,
+			skippedRuns: 0,
+			timings,
+			strategyBreakdown: [],
+			universeDiagnostics,
+		});
+		// buildFinderDiagnostics already emits a fallback bottleneck line; prepend
+		// the error reason so it is the first thing the user sees when copying.
+		base.bottlenecks = [`Finder run failed: ${truncatedError}`, ...base.bottlenecks];
+		return base;
 	}
 
 	private buildFallbackDiagnostics(args: {

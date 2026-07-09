@@ -70,6 +70,7 @@ export type BacktestDomSettingParser =
     | "strategyKey"
     | "strategyParams"
     | "batchExecutionMode"
+    | "finderUniverseExecutionMode"
     | "pathExitMode";
 
 export type SettingSupportLevel = "supported" | "unsupported" | "conditional" | "ui_only";
@@ -373,6 +374,11 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         rustSupport: "ui_only",
         workerSupport: "ui_only",
     }),
+    createField("finderUniverseExecutionMode", {
+        parser: "finderUniverseExecutionMode",
+        rustSupport: "ui_only",
+        workerSupport: "ui_only",
+    }),
 ];
 
 export const BACKTEST_SETTINGS_DOM_CONTRACTS: readonly BacktestDomSettingContract[] = Object.freeze([
@@ -525,6 +531,11 @@ export function coerceBacktestDomSettingValue(
             // Case-sensitive ("server" | "browser"); do NOT use the generic
             // "string" parser which uppercases. Mirrors the persistence
             // normalizer in settings-model.ts.
+            return value === "browser" ? "browser" : "server";
+        case "finderUniverseExecutionMode":
+            // Case-sensitive ("server" | "browser"); same rationale as
+            // batchExecutionMode. Server is the default so new users get the
+            // bounded-tab path; browser is the in-tab fallback.
             return value === "browser" ? "browser" : "server";
         case "pathExitMode":
             if (typeof value === "string") {

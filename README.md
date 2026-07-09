@@ -84,7 +84,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Backtest analysis helpers: `lib/backtest-result-analysis.ts`
 
 ### Research tools
-- Finder: `lib/finder-manager.ts`, `lib/finder/*`
+- Finder: `lib/finder-manager.ts`, `lib/finder/*` (server-side Symbol Universe in `lib/finder/server/*`; see [docs/finder-server-side.md](docs/finder-server-side.md))
 - Hunt: `lib/hunt/*`
 - Walk Forward: `lib/walk-forward-service.ts`
 - Monte Carlo: `lib/monte-carlo-service.ts`, `lib/strategies/monte-carlo/*`
@@ -396,6 +396,7 @@ These are intentionally narrower than the repo itself:
 - `docs/polymarket.md`: Polymarket scoring, signal-exit, diagnostics, bridge, and Execution Lab live-trade contracts
 - `docs/execution-lab-live-trading.md`: Execution Lab live-trade executor boundary, request/response schema, and safety rules
 - `docs/batch-backtest-server-side.md`: server-side Batch Backtest, artifact retention, Mine/Stability acceleration, and memory budget
+- `docs/finder-server-side.md`: server-side Finder Symbol Universe, heap budget, scalar-only wire contract, and Stop semantics (tab-reload reattach is not yet supported)
 - `docs/cross-symbol.md`: cross-symbol strategy runtime and support matrix
 - `docs/synthetic-pairs.md`: synthetic pair generation and supported surfaces
 - `docs/path-dependent-exits.md`: path-dependent Risk Management exits
