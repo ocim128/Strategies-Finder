@@ -1,0 +1,44 @@
+<!-- Crypto Data Tab -->
+<div id="cryptodataTab">
+    <div class="section-title">Crypto Data</div>
+    <p class="section-desc">Download and sync Binance candles into local SQLite + CSV under <code>price-data/crypto</code>. Synthetic pairs (<code>SOL+TRX</code>) automatically store their USDT legs at both the selected timeframe and the finer seed timeframe used by Batch and Finder.</p>
+
+    <div class="data-mining-actions">
+        <button class="btn btn-primary" id="cryptoDataDownloadBtn" type="button">Download CSV</button>
+        <button class="btn btn-secondary" id="cryptoDataSyncBtn" type="button">Sync Latest</button>
+        <button class="btn btn-secondary" id="cryptoDataStopBtn" type="button">Stop</button>
+        <button class="btn btn-secondary" id="cryptoDataCopyBtn" type="button">Copy Symbols</button>
+    </div>
+
+    <div class="section-body">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label" for="cryptoDataSymbols">Symbols</label>
+                <textarea class="param-input" id="cryptoDataSymbols" rows="6" placeholder="BTCUSDT&#10;SOLUSDT&#10;SOL+TRX"></textarea>
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label" for="cryptoDataInterval">Timeframe</label>
+                <select class="param-input" id="cryptoDataInterval">
+                    <option value="1d">1d</option>
+                    <option value="4h" selected>4h</option>
+                    <option value="1h">1h</option>
+                    <option value="30m">30m</option>
+                    <option value="15m">15m</option>
+                    <option value="1m">1m</option>
+                </select>
+            </div>
+            <div class="param-group">
+                <label class="param-label" for="cryptoDataMarketType">Market</label>
+                <select class="param-input" id="cryptoDataMarketType">
+                    <option value="spot" selected>spot</option>
+                    <option value="futures">futures</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <div class="data-mining-status" id="cryptoDataStatus">Ready</div>
+    <pre class="data-mining-diagnostics" id="cryptoDataOutput">Waiting for crypto action...</pre>
+</div>

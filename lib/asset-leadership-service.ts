@@ -1,9 +1,10 @@
 import { createAssetLeadershipDom, type AssetLeadershipDom } from "./asset-leadership-dom";
 import { buildTimingEdgeReport, formatTimingEdgeReportRow, type TimingEdgeAssetRow, type TimingEdgeReport } from "./finder/timing-edge-report";
 import type { TimingEdgePersistedRun } from "./batch-backtest/mine-timing-persistence";
-import { clearMineTimingRuns, loadMineTimingRuns, storeMineTimingRun } from "./local-sqlite-mine-timing-api";
+import { clearMineTimingRuns, loadMineTimingRuns } from "./local-sqlite-mine-timing-api";
 import { debugLogger } from "./debug-logger";
 import { uiManager } from "./ui-manager";
+import { escapeHtml } from "./html-escape";
 
 /**
  * Asset Leadership service — repurposed.
@@ -45,28 +46,6 @@ class AssetLeadershipService {
     public destroy(): void {
         this.initialized = false;
         this.dom = null;
-    }
-
-    /**
-     * Public entry for tests and the (defunct) Finder call site. The Finder
-     * no longer calls this — Mine Timing data is persisted by the Batch
-     * service directly — but the method is retained so a programmatic caller
-     * (test, future feature) can inject a run without going through SQLite.
-     */
-    public async ingestRun(run: TimingEdgePersistedRun): Promise<void> {
-        try {
-            await storeMineTimingRun(run);
-        } catch (error) {
-            debugLogger.error("asset_leadership.persist_failed", {
-                error: error instanceof Error ? error.message : String(error),
-            });
-        }
-        this.runs.push(run);
-        if (this.runs.length > RUN_LIMIT) {
-            this.runs = this.runs.slice(-RUN_LIMIT);
-        }
-        this.report = buildTimingEdgeReport({ runs: this.runs });
-        this.renderReport();
     }
 
     private bindEvents(): void {
@@ -130,12 +109,12 @@ class AssetLeadershipService {
         this.renderOverviewMetrics(dom, overview);
         dom.derived.innerHTML = "";
 
-        this.renderTable(dom.currentLeaders, report.topTimingEdge, ["Asset", "Dir", "Score", "Conf", "Appr.", "Profit%", "AvgLift", "AvgRR", "AvgDiv"]);
-        this.renderTable(dom.strongNow, report.longTriggers, ["Asset", "Score", "Latest Lift", "HMax Lift", "Appr.", "Profit%"], "trigger");
-        this.renderTable(dom.weakNow, report.shortTriggers, ["Asset", "Score", "Latest Lift", "HMax Lift", "Appr.", "Profit%"], "trigger");
+        this.renderTable(dom.currentLeaders, report.topTimingEdge, ["Asset", "Dir", "Score", "Fresh", "First", "Move", "Conf", "Appr.", "AvgLift", "AvgDiv"]);
+        this.renderTable(dom.strongNow, report.longTriggers, ["Asset", "Score", "Fresh", "Move", "Latest Lift", "HMax Lift", "Appr."], "trigger");
+        this.renderTable(dom.weakNow, report.shortTriggers, ["Asset", "Score", "Fresh", "Move", "Latest Lift", "HMax Lift", "Appr."], "trigger");
         this.renderTable(dom.emergingLeaders, report.risingEdge, ["Asset", "ΔScore", "Trend", "Latest Lift", "Appr."], "trend");
         this.renderTable(dom.fallingLeaders, report.fallingEdge, ["Asset", "ΔScore", "Trend", "Latest Lift", "Appr."], "trend");
-        this.renderTable(dom.consistentLeaders, report.diverseStable, ["Asset", "Score", "Diversity", "Profit%", "Pair", "Appr."], "diverse");
+        this.renderTable(dom.consistentLeaders, report.diverseStable, ["Asset", "Score", "Fresh", "Diversity", "Move", "Pair", "Appr."], "diverse");
         this.renderRecentRuns(dom);
     }
 
@@ -222,23 +201,37 @@ class AssetLeadershipService {
             (v === null || v === undefined || !Number.isFinite(v)) ? "--" : v.toFixed(d);
         const pct = (v: number | null | undefined) =>
             (v === null || v === undefined || !Number.isFinite(v)) ? "--" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+        const seen = row.firstAsOfTimeKey ?? (Number.isFinite(row.firstSeenAt) ? new Date(row.firstSeenAt).toLocaleDateString() : "--");
+        const fresh = row.hasActiveConflict ? "CONFLICT" : row.freshness;
+        const asset = escapeHtml(row.asset);
+        const direction = escapeHtml(row.latestDirection ?? "--");
+        const seenText = escapeHtml(seen);
+        const freshText = escapeHtml(fresh);
+        const confidence = escapeHtml(row.latestConfidence);
+        const strongestPair = escapeHtml(row.strongestPair ?? "--");
         const dirColor = row.latestDirection === "LONG" ? "var(--color-green)" : row.latestDirection === "SHORT" ? "var(--color-red)" : "var(--text-muted)";
         const trendIcon = row.trend === "up" ? "▲" : row.trend === "down" ? "▼" : "─";
         const trendColor = row.trend === "up" ? "var(--color-green)" : row.trend === "down" ? "var(--color-red)" : "var(--text-muted)";
+        const freshColor = row.hasActiveConflict || row.freshness === "LATE" || row.freshness === "STALE"
+            ? "var(--color-red)"
+            : row.freshness === "AGING" || row.freshness === "UNKNOWN"
+                ? "var(--warning)"
+                : "var(--color-green)";
 
         switch (mode) {
             case "trigger":
                 return [
-                    `<td style="font-weight:600;color:${dirColor};">${row.asset}</td>`,
+                    `<td style="font-weight:600;color:${dirColor};">${asset}</td>`,
                     `<td style="text-align:right;font-weight:600;">${r(row.score, 1)}</td>`,
+                    `<td style="text-align:right;color:${freshColor};">${freshText}</td>`,
+                    `<td style="text-align:right;">${pct(row.moveSinceFirstPct)}</td>`,
                     `<td style="text-align:right;">${pct(row.latestLiftPct)}</td>`,
                     `<td style="text-align:right;">${pct(row.latestHmaxLiftPct)}</td>`,
                     `<td style="text-align:right;">${row.appearances}</td>`,
-                    `<td style="text-align:right;">${(row.profitableRate * 100).toFixed(0)}%</td>`,
                 ].join("");
             case "trend":
                 return [
-                    `<td style="font-weight:600;">${row.asset} <span style="color:${dirColor};font-weight:400;font-size:11px;">${row.latestDirection ?? "--"}</span></td>`,
+                    `<td style="font-weight:600;">${asset} <span style="color:${dirColor};font-weight:400;font-size:11px;">${direction}</span></td>`,
                     `<td style="text-align:right;color:${trendColor};">${row.scoreChange >= 0 ? "+" : ""}${r(row.scoreChange)}</td>`,
                     `<td style="text-align:right;color:${trendColor};">${trendIcon}</td>`,
                     `<td style="text-align:right;">${pct(row.latestLiftPct)}</td>`,
@@ -246,23 +239,25 @@ class AssetLeadershipService {
                 ].join("");
             case "diverse":
                 return [
-                    `<td style="font-weight:600;">${row.asset} <span style="color:${dirColor};font-weight:400;font-size:11px;">${row.latestDirection ?? "--"}</span></td>`,
+                    `<td style="font-weight:600;">${asset} <span style="color:${dirColor};font-weight:400;font-size:11px;">${direction}</span></td>`,
                     `<td style="text-align:right;font-weight:600;">${r(row.score, 1)}</td>`,
+                    `<td style="text-align:right;color:${freshColor};">${freshText}</td>`,
                     `<td style="text-align:right;">${(row.latestDiversity * 100).toFixed(0)}%</td>`,
-                    `<td style="text-align:right;">${(row.profitableRate * 100).toFixed(0)}%</td>`,
-                    `<td style="text-align:right;">${row.strongestPair ?? "--"}</td>`,
+                    `<td style="text-align:right;">${pct(row.moveSinceFirstPct)}</td>`,
+                    `<td style="text-align:right;">${strongestPair}</td>`,
                     `<td style="text-align:right;">${row.appearances}</td>`,
                 ].join("");
             default:
                 return [
-                    `<td style="font-weight:600;">${row.asset}</td>`,
-                    `<td style="text-align:right;color:${dirColor};">${row.latestDirection ?? "--"}</td>`,
+                    `<td style="font-weight:600;">${asset}</td>`,
+                    `<td style="text-align:right;color:${dirColor};">${direction}</td>`,
                     `<td style="text-align:right;font-weight:600;">${r(row.score, 1)}</td>`,
-                    `<td style="text-align:right;">${row.latestConfidence}</td>`,
+                    `<td style="text-align:right;color:${freshColor};">${freshText}</td>`,
+                    `<td style="text-align:right;">${seenText}</td>`,
+                    `<td style="text-align:right;">${pct(row.moveSinceFirstPct)}</td>`,
+                    `<td style="text-align:right;">${confidence}</td>`,
                     `<td style="text-align:right;">${row.appearances}</td>`,
-                    `<td style="text-align:right;">${(row.profitableRate * 100).toFixed(0)}%</td>`,
                     `<td style="text-align:right;">${pct(row.avgLiftPct)}</td>`,
-                    `<td style="text-align:right;">${r(row.avgRr)}</td>`,
                     `<td style="text-align:right;">${(row.avgDiversity * 100).toFixed(0)}%</td>`,
                 ].join("");
         }
@@ -278,20 +273,20 @@ class AssetLeadershipService {
             const date = new Date(run.createdAt).toLocaleString();
             const verdictCount = run.verdicts.filter((v) => v.verdict === "LONG" || v.verdict === "SHORT").length;
             return `<div style="font-size:11px;padding:3px 0;border-bottom:1px solid var(--glass-border);display:flex;gap:8px;">`
-                + `<span style="color:var(--text-secondary);">${date}</span>`
-                + `<span>${run.source}</span>`
-                + `<span>${run.strategyKey || "--"}</span>`
+                + `<span style="color:var(--text-secondary);">${escapeHtml(date)}</span>`
+                + `<span>${escapeHtml(run.source)}</span>`
+                + `<span>${escapeHtml(run.strategyKey || "--")}</span>`
                 + `<span>${run.pairCount} pairs</span>`
                 + (run.source === "stability" ? `<span>${run.reruns}×${run.subsetSize}</span>` : "")
                 + `<span>${verdictCount} verdicts</span>`
-                + `<span style="color:var(--text-muted);">${run.interval}</span>`
+                + `<span style="color:var(--text-muted);">${escapeHtml(run.interval)}</span>`
                 + `</div>`;
         });
         dom.recentRuns.innerHTML = rows.join("");
     }
 
     private chip(text: string): string {
-        return `<span style="background:var(--bg-tertiary);border:1px solid var(--glass-border);border-radius:6px;padding:2px 8px;font-size:11px;">${text}</span>`;
+        return `<span style="background:var(--bg-tertiary);border:1px solid var(--glass-border);border-radius:6px;padding:2px 8px;font-size:11px;">${escapeHtml(text)}</span>`;
     }
 
     private async copyReport(): Promise<void> {

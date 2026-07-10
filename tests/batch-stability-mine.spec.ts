@@ -33,6 +33,8 @@ function verdict(args: {
     hmaxLiftPct?: number;
     agreeingSymbols?: string[];
     pairWarnings?: number;
+    medianBarsHeld?: number | null;
+    agreementTransition?: number;
 }): BatchSyntheticAssetVerdict {
     const confidence = args.confidence ?? "medium";
     const lift = args.liftPct ?? 1.5;
@@ -56,8 +58,8 @@ function verdict(args: {
             agreementRatio: 1,
             oppositionRatio: 0,
             netAgreement: args.agreeingSymbols?.length ?? 1,
-            agreementTransition: 1,
-            medianBarsHeld: 5,
+            agreementTransition: args.agreementTransition ?? 1,
+            medianBarsHeld: args.medianBarsHeld === undefined ? 5 : args.medianBarsHeld,
             medianMoveSinceEntryPct: 1,
             medianMoveSinceEntryAtr: 1,
             medianAdverseExcursionAtr: -0.5,
@@ -272,6 +274,28 @@ describe("computeTimingEdgeScore", () => {
 });
 
 describe("finalizeStabilityAggregate end-to-end sort", () => {
+    it("aggregates age and fresh-hit evidence across reruns instead of keeping the last hit", () => {
+        const aggregate = createStabilityAggregate(3, 2, 1, 4);
+        addStabilityVerdicts(aggregate, [verdict({
+            asset: "SOL", verdict: "LONG", medianBarsHeld: 1, agreementTransition: 1,
+        })]);
+        addStabilityVerdicts(aggregate, [verdict({
+            asset: "SOL", verdict: "LONG", medianBarsHeld: 9, agreementTransition: 0,
+        })]);
+        addStabilityVerdicts(aggregate, [verdict({
+            asset: "SOL", verdict: "LONG", medianBarsHeld: 5, agreementTransition: 1,
+        })]);
+        addStabilityVerdicts(aggregate, [verdict({
+            asset: "SOL", verdict: "LONG", medianBarsHeld: null, agreementTransition: 1,
+        })]);
+
+        const row = finalizeStabilityAggregate(aggregate).rows[0]!;
+        expect(row.medianBarsHeld).to.equal(5);
+        expect(row.agreementTransition).to.equal(1);
+        // Unknown age must not inflate actionable fresh-hit evidence.
+        expect(row.freshHits).to.equal(1);
+    });
+
     it("ranks a diverse strong-edge row above a repetitive strong-edge row even when the repetitive row has more hits", () => {
         // Row A: 6 hits, every hit from the SAME agreeing pair (pure repetition)
         // Row B: 4 hits, every hit from a DIFFERENT agreeing pair (genuine diverse recurrence)
@@ -335,7 +359,15 @@ describe("finalizeStabilityAggregate end-to-end sort", () => {
         expect(row).to.have.property("medianDiversity");
         expect(row).to.have.property("dominantPair");
         expect(row).to.have.property("dominantPairShare");
+        expect(row).to.have.property("asOfTimeKey");
+        expect(row).to.have.property("close");
+        expect(row).to.have.property("medianBarsHeld");
+        expect(row).to.have.property("agreementTransition");
         expect(typeof row.timingEdgeScore).to.equal("number");
         expect(typeof row.medianDiversity).to.equal("number");
+        expect(row.asOfTimeKey).to.equal("t");
+        expect(row.close).to.equal(100);
+        expect(row.medianBarsHeld).to.equal(5);
+        expect(row.agreementTransition).to.equal(1);
     });
 });

@@ -23,6 +23,11 @@ interface BatchStabilityRowAccumulator {
     dist: number[];
     hmaxLiftPct: number[];
     pairWarnings: number;
+    asOfTimeKey: string | null;
+    close: number | null;
+    barsHeld: number[];
+    agreementTransitions: number[];
+    freshHits: number;
     /**
      * One agreeing-pair set per hit. Used to detect the "stable but repeating
      * the same pair" failure mode: with 400 pairs / 200-per-rerun × N reruns,
@@ -85,6 +90,12 @@ export interface BatchStabilityRow {
      * diverse). The dominant signal of whether "stable" is real or repeat.
      */
     medianDiversity: number;
+    asOfTimeKey: string | null;
+    close: number | null;
+    medianBarsHeld: number | null;
+    agreementTransition: number | null;
+    /** Hits whose current agreement newly emerged within the last 3 bars. */
+    freshHits: number;
     /**
      * The single pair that appeared in the most hits, plus its share
      * `appearances/hits` in [0, 1]. Secondary readable signal — Jaccard
@@ -138,6 +149,11 @@ export function addStabilityVerdicts(
                 dist: [],
                 hmaxLiftPct: [],
                 pairWarnings: 0,
+                asOfTimeKey: null,
+                close: null,
+                barsHeld: [],
+                agreementTransitions: [],
+                freshHits: 0,
                 agreeingSets: [],
             };
             acc.rows.set(key, row);
@@ -152,6 +168,19 @@ export function addStabilityVerdicts(
         pushFinite(row.rr, computeMfeMaeRatio(verdict.evidence.expectedMfePct, verdict.evidence.expectedMaePct));
         pushFinite(row.dist, verdict.evidence.avgDistance);
         pushFinite(row.hmaxLiftPct, verdict.evidence.longestOosLiftPct);
+        const snapshot = verdict.currentSnapshot;
+        if (snapshot) {
+            row.asOfTimeKey = snapshot.timeKey || row.asOfTimeKey;
+            row.close = finiteOrExisting(snapshot.close, row.close);
+            pushFinite(row.barsHeld, snapshot.medianBarsHeld);
+            pushFinite(row.agreementTransitions, snapshot.agreementTransition);
+            if (snapshot.agreementTransition > 0
+                && snapshot.medianBarsHeld !== null
+                && Number.isFinite(snapshot.medianBarsHeld)
+                && snapshot.medianBarsHeld <= 3) {
+                row.freshHits += 1;
+            }
+        }
         // Capture the agreeing-pair set per hit so finalize can compute Jaccard
         // diversity. Empty / missing agreeing lists still count as a hit but
         // contribute an empty set; pairwise Jaccard against an empty set is 1
@@ -184,6 +213,11 @@ export function finalizeStabilityAggregate(acc: BatchStabilityAccumulator): Batc
                 medianHmaxLiftPct: medianOrNull(row.hmaxLiftPct),
                 pairWarnings: row.pairWarnings,
                 medianDiversity,
+                asOfTimeKey: row.asOfTimeKey,
+                close: row.close,
+                medianBarsHeld: medianOrNull(row.barsHeld),
+                agreementTransition: medianOrNull(row.agreementTransitions),
+                freshHits: row.freshHits,
                 dominantPair: dominant.pair,
                 dominantPairShare: dominant.share,
             };
@@ -384,6 +418,10 @@ function pushFinite(values: number[], value: number | null | undefined): void {
     if (value !== null && value !== undefined && Number.isFinite(value)) {
         values.push(value);
     }
+}
+
+function finiteOrExisting(value: number | null | undefined, existing: number | null): number | null {
+    return value !== null && value !== undefined && Number.isFinite(value) ? value : existing;
 }
 
 function medianOrNull(values: readonly number[]): number | null {

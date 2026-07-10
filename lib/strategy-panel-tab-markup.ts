@@ -7,6 +7,7 @@ const LAZY_STRATEGY_PANEL_TAB_LOADERS = {
     alerts: () => import('../html-partials/tab-alerts.html?raw'),
     datamining: () => import('../html-partials/tab-datamining.html?raw'),
     ibkrdata: () => import('../html-partials/tab-ibkr-data.html?raw'),
+    cryptodata: () => import('../html-partials/tab-crypto-data.html?raw'),
     hunt: () => import('../html-partials/tab-hunt.html?raw'),
     batchbacktest: () => import('../html-partials/tab-batch-backtest.html?raw'),
     polymarket: () => import('../html-partials/tab-polymarket.html?raw'),

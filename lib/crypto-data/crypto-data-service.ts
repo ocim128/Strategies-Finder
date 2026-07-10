@@ -1,0 +1,366 @@
+/**
+ * Crypto Data tab browser service. Mirrors `lib/ibkr-data/ibkr-data-service.ts`.
+ *
+ * Browser-side, so it CAN import heavy modules (it's code-split via the lazy
+ * feature registry, not bundled into `vite.config.ts`). Responsibilities:
+ *   - parse the symbols textarea and expand synthetic pairs (`SOL+TRX`) into
+ *     their underlying Binance USDT legs (`SOLUSDT`, `TRXUSDT`)
+ *   - POST to `/api/crypto/download` or `/api/crypto/sync`, consume the NDJSON
+ *     progress stream, and update the status/output elements
+ *   - invalidate local caches after a successful sync so the freshly-stored
+ *     SQLite data is picked up by the chart, Finder, and Batch
+ *   - reattach to a sync still running after a tab reload
+ */
+
+import { clearLocalDailyAssetCaches } from "../local-daily-datasets";
+import { dataManager } from "../data-manager";
+import { finderManager } from "../finder-manager";
+import { uiManager } from "../ui-manager";
+import { clearBatchDatasetCaches } from "../batch-backtest/batch-backtest-loader";
+import { DATA_CHART_TOTAL_LIMIT, SYNTHETIC_TARGET_BARS } from "../data/constants";
+import { consumeNdjsonStream } from "../ndjson-stream";
+import { parsePortfolioSyntheticPairSymbol, PORTFOLIO_QUOTE_SUFFIXES } from "../portfolioLab/portfolio-lab-synthetic";
+import { pickSourceInterval } from "../../scripts/lib/synthetic-pair";
+import { createCryptoDataDom, type CryptoDataDom } from "./crypto-data-dom";
+
+/**
+ * Append `USDT` to a bare token that does not already end in a known quote
+ * suffix. Mirrors `resolveToBinanceSymbol` in `portfolio-lab-synthetic.ts`,
+ * which is not exported. Used for plain (non-synthetic) symbols so a bare
+ * `ETH` resolves to `ETHUSDT` exactly as it would inside a synthetic pair.
+ */
+function ensureBinanceSymbol(token: string): string {
+    const upper = token.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!upper) return "";
+    if (PORTFOLIO_QUOTE_SUFFIXES.some((suffix) => upper.endsWith(suffix) && upper.length > suffix.length)) {
+        return upper;
+    }
+    return `${upper}USDT`;
+}
+
+type CryptoStreamEvent =
+    | { type: "start"; total: number; interval?: string; marketType?: string; mode?: string }
+    | { type: "symbol"; index: number; total: number; symbol: string; interval: string; bars?: number; fetchedBars?: number; lastTime?: number | null }
+    | { type: "symbol_failed"; index: number; total: number; symbol: string; interval: string; error: string }
+    | { type: "done"; ok: boolean; cancelled?: boolean; interval?: string; totals?: { bars: number; fetchedBars: number }; results?: unknown[]; failed?: unknown[] }
+    | { type: "fatal"; error: string };
+
+type CryptoSyncRunSnapshot = {
+    startedAt: string;
+    mode: "sync" | "download";
+    interval: string;
+    marketType: string;
+    total: number;
+    index: number;
+    completed: number;
+    failed: number;
+    currentSymbol: string | null;
+    currentInterval: string | null;
+    failedSymbols: Array<{ symbol: string; error: string }>;
+    cancelled: boolean;
+};
+
+/**
+ * Expand a flat symbol list (which may contain synthetic pairs like `SOL+TRX`)
+ * into the underlying Binance instruments. `SOL+TRX` → `["SOLUSDT","TRXUSDT"]`;
+ * a plain `BTCUSDT` passes through. Deduped, uppercased. Exported so the
+ * expansion can be unit-tested directly.
+ */
+export function expandCryptoSymbols(raw: string): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const token of raw.split(/[\s,]+/)) {
+        const trimmed = token.trim().toUpperCase();
+        if (!trimmed) continue;
+        const parsed = parsePortfolioSyntheticPairSymbol(trimmed);
+        // Synthetic pairs already resolve legs to USDT form; plain symbols get
+        // USDT appended unless they already carry a known quote suffix.
+        const legs = parsed ? [parsed.baseSymbol, parsed.quoteSymbol] : [ensureBinanceSymbol(trimmed)];
+        for (const leg of legs) {
+            const upper = leg.toUpperCase();
+            if (upper && !seen.has(upper)) {
+                seen.add(upper);
+                out.push(upper);
+            }
+        }
+    }
+    return out;
+}
+
+export interface CryptoSyncRequestPlan {
+    symbols: string[];
+    interval: string;
+    totalBars?: number;
+}
+
+/** Plan both target snapshots and finer seeds consumed by Batch/Finder miners. */
+export function buildCryptoSyncRequestPlans(raw: string, targetInterval: string): CryptoSyncRequestPlan[] {
+    const normalizedTarget = targetInterval.trim().toLowerCase() || "4h";
+    const plans = new Map<string, { symbols: Set<string>; interval: string; totalBars?: number }>();
+
+    const add = (symbol: string, interval: string, totalBars?: number): void => {
+        const key = `${interval}|${totalBars ?? "default"}`;
+        let plan = plans.get(key);
+        if (!plan) {
+            plan = { symbols: new Set<string>(), interval, ...(totalBars ? { totalBars } : {}) };
+            plans.set(key, plan);
+        }
+        plan.symbols.add(symbol);
+    };
+
+    for (const token of raw.split(/[\s,]+/)) {
+        const trimmed = token.trim().toUpperCase();
+        if (!trimmed) continue;
+        const pair = parsePortfolioSyntheticPairSymbol(trimmed);
+        if (!pair) {
+            const symbol = ensureBinanceSymbol(trimmed);
+            if (symbol) add(symbol, normalizedTarget);
+            continue;
+        }
+
+        const legs = [pair.baseSymbol.toUpperCase(), pair.quoteSymbol.toUpperCase()];
+        // Mine/Stability loads each underlying asset at the selected interval
+        // to build its current snapshot, independently of synthetic-pair data.
+        for (const leg of legs) add(leg, normalizedTarget);
+
+        // Batch reconstructs ratios below the selected timeframe so each OHLC
+        // component comes from matched moments. Store that source series too.
+        const source = pickSourceInterval(normalizedTarget);
+        if (source && source.sourceInterval !== normalizedTarget) {
+            const totalBars = Math.min(SYNTHETIC_TARGET_BARS * source.ratio, DATA_CHART_TOTAL_LIMIT);
+            for (const leg of legs) add(leg, source.sourceInterval, totalBars);
+        }
+    }
+
+    return Array.from(plans.values(), (plan) => ({
+        symbols: Array.from(plan.symbols),
+        interval: plan.interval,
+        ...(plan.totalBars ? { totalBars: plan.totalBars } : {}),
+    }));
+}
+
+class CryptoDataService {
+    private dom: CryptoDataDom | null = null;
+    private initialized = false;
+    private lastSyncedSymbols: string[] = [];
+    private reattached = false;
+
+    init(): void {
+        if (this.initialized) return;
+        this.initialized = true;
+        const dom = this.getDom();
+        dom.cryptoDataDownloadBtn.addEventListener("click", () => void this.runAction("/api/crypto/download"));
+        dom.cryptoDataSyncBtn.addEventListener("click", () => void this.runAction("/api/crypto/sync"));
+        dom.cryptoDataStopBtn.addEventListener("click", () => void this.stopSync());
+        dom.cryptoDataCopyBtn.addEventListener("click", () => void this.copySymbols());
+        // Stop stays enabled at startup so it can recover a stuck server-side
+        // sync lock without a server restart (mirrors IBKR).
+        void this.reattachToInProgressSync();
+    }
+
+    private async reattachToInProgressSync(): Promise<void> {
+        const POLL_INTERVAL_MS = 2000;
+        try {
+            while (true) {
+                const response = await fetch("/api/crypto/sync/status", { cache: "no-store" });
+                const payload = await response.json() as { running?: boolean; run?: CryptoSyncRunSnapshot };
+                if (!payload.running || !payload.run) {
+                    if (this.reattached) {
+                        this.reattached = false;
+                        this.setBusy(false);
+                        this.setStatus("Crypto sync finished (reattached).");
+                    }
+                    return;
+                }
+                if (!this.reattached) {
+                    this.reattached = true;
+                    this.setBusy(true);
+                }
+                this.renderRunSnapshot(payload.run);
+                await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+            }
+        } catch (error) {
+            if (this.reattached) {
+                this.reattached = false;
+                this.setBusy(false);
+            }
+            this.setStatus(error instanceof Error ? `Sync reattach failed: ${error.message}` : "Sync reattach failed.");
+        }
+    }
+
+    private renderRunSnapshot(run: CryptoSyncRunSnapshot): void {
+        const seen = run.completed + run.failed;
+        const current = run.currentSymbol
+            ? ` — syncing ${run.currentSymbol}${run.currentInterval ? ` ${run.currentInterval}` : ""}`
+            : "";
+        const failLabel = run.failed > 0 ? `, ${run.failed} failed` : "";
+        const cancelLabel = run.cancelled ? " (stopping)" : "";
+        this.setStatus(`Crypto ${run.mode} ${seen}/${run.total}${failLabel}${cancelLabel}${current}`);
+    }
+
+    private getDom(): CryptoDataDom {
+        return this.dom ??= createCryptoDataDom();
+    }
+
+    private parseSymbols(): string[] {
+        const symbols = expandCryptoSymbols(this.getDom().cryptoDataSymbols.value);
+        if (symbols.length > 0) this.lastSyncedSymbols = symbols;
+        return symbols;
+    }
+
+    private getRequestBody(): Record<string, unknown> {
+        const dom = this.getDom();
+        const raw = dom.cryptoDataSymbols.value;
+        const symbols = expandCryptoSymbols(raw);
+        if (symbols.length > 0) this.lastSyncedSymbols = symbols;
+        const targets = buildCryptoSyncRequestPlans(raw, dom.cryptoDataInterval.value)
+            .flatMap((plan) => plan.symbols.map((symbol) => ({
+                symbol,
+                interval: plan.interval,
+                ...(plan.totalBars ? { totalBars: plan.totalBars } : {}),
+            })));
+        return {
+            targets,
+            marketType: dom.cryptoDataMarketType.value,
+        };
+    }
+
+    private setBusy(busy: boolean): void {
+        const dom = this.getDom();
+        dom.cryptoDataDownloadBtn.disabled = busy;
+        dom.cryptoDataSyncBtn.disabled = busy;
+        dom.cryptoDataCopyBtn.disabled = busy;
+        dom.cryptoDataStopBtn.disabled = false;
+    }
+
+    private setStatus(message: string): void {
+        this.getDom().cryptoDataStatus.textContent = message;
+    }
+
+    private writeOutput(payload: unknown): void {
+        this.getDom().cryptoDataOutput.textContent = typeof payload === "string"
+            ? payload
+            : JSON.stringify(payload, null, 2);
+    }
+
+    private async runAction(url: string): Promise<void> {
+        const body = this.getRequestBody();
+        const targets = Array.isArray(body.targets) ? body.targets : [];
+        if (targets.length === 0) {
+            this.setStatus("Add at least one symbol.");
+            return;
+        }
+
+        this.setBusy(true);
+        this.setStatus("Running crypto request...");
+        const aggregated: { ok: boolean; results: unknown[]; failed: unknown[]; error?: string } = {
+            ok: true,
+            results: [],
+            failed: [],
+        };
+        const syncedByInterval = new Map<string, Set<string>>();
+        let seen = 0;
+        const total = targets.length;
+        try {
+            const response = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+            if (!response.ok || !response.body) {
+                const text = await response.text();
+                let payload: { error?: string } = {};
+                try { payload = JSON.parse(text); } catch { /* ignore */ }
+                aggregated.ok = false;
+                aggregated.error = payload.error ?? `Crypto request failed (${response.status}).`;
+            } else {
+                await consumeNdjsonStream<CryptoStreamEvent>(response.body, {
+                    onStart: (event) => {
+                        this.setStatus(`Crypto ${event.mode ?? "request"}: 0/${total}`);
+                    },
+                    onSymbol: (event) => {
+                        seen = event.index + 1;
+                        const symbols = syncedByInterval.get(event.interval) ?? new Set<string>();
+                        symbols.add(event.symbol);
+                        syncedByInterval.set(event.interval, symbols);
+                        const delta = event.fetchedBars ?? 0;
+                        const deltaLabel = delta > 0 ? ` +${delta} bar${delta === 1 ? "" : "s"}` : "";
+                        this.setStatus(`Crypto ${seen}/${total}: ${event.symbol} ${event.interval}${deltaLabel}`);
+                    },
+                    onSymbolFailed: (event) => {
+                        seen = event.index + 1;
+                        this.setStatus(`Crypto ${seen}/${total}: ${event.symbol} ${event.interval} failed — ${event.error}`);
+                    },
+                    onDone: (event) => {
+                        aggregated.ok = event.ok;
+                        aggregated.results = event.results ?? [];
+                        aggregated.failed = event.failed ?? [];
+                    },
+                    onFatal: (event) => {
+                        aggregated.ok = false;
+                        aggregated.error = event.error;
+                    },
+                });
+            }
+
+            for (const [interval, symbols] of syncedByInterval) {
+                this.invalidateSyncedData(Array.from(symbols), interval);
+            }
+            this.writeOutput(aggregated);
+            if (aggregated.error) {
+                this.setStatus(aggregated.error);
+                return;
+            }
+            if (!aggregated.ok) {
+                this.setStatus("Crypto request completed with failures.");
+                return;
+            }
+            this.setStatus(`Crypto request complete — ${seen}/${total} symbol${total === 1 ? "" : "s"}.`);
+        } catch (error) {
+            this.writeOutput(error instanceof Error ? error.message : String(error));
+            this.setStatus("Crypto request failed.");
+        } finally {
+            this.setBusy(false);
+        }
+    }
+
+    private invalidateSyncedData(symbols: readonly string[], interval: unknown): void {
+        if (symbols.length === 0) return;
+        const normalizedInterval = String(interval ?? "").trim().toLowerCase();
+        clearLocalDailyAssetCaches();
+        dataManager.invalidateLocalSeries(symbols, normalizedInterval ? [normalizedInterval] : undefined);
+        finderManager.invalidateLocalDataCaches();
+        clearBatchDatasetCaches();
+    }
+
+    private async stopSync(): Promise<void> {
+        try {
+            await fetch("/api/crypto/stop", { method: "POST" });
+            this.setStatus("Stopping crypto sync...");
+        } catch (error) {
+            this.writeOutput(error instanceof Error ? error.message : String(error));
+            this.setStatus("Failed to request stop.");
+        }
+    }
+
+    private async copySymbols(): Promise<void> {
+        const symbols = this.lastSyncedSymbols.length > 0
+            ? this.lastSyncedSymbols
+            : this.parseSymbols();
+        if (symbols.length === 0) {
+            this.setStatus("No symbols to copy.");
+            return;
+        }
+        const text = symbols.join("\n");
+        try {
+            await navigator.clipboard.writeText(text);
+            this.setStatus(`Copied ${symbols.length} crypto symbol${symbols.length === 1 ? "" : "s"}.`);
+            uiManager.showToast("Crypto symbols copied.", "success");
+        } catch {
+            this.writeOutput(text);
+            this.setStatus("Clipboard unavailable; symbols written to output.");
+        }
+    }
+}
+
+export const cryptoDataService = new CryptoDataService();

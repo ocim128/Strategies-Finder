@@ -59,6 +59,12 @@ describe("batch-backtest server loader parity", () => {
         expect(server.includes("new DataFetcher(")).to.equal(true);
     });
 
+    it("clears the server DataCache so a new run observes freshly synced SQLite candles", () => {
+        const server = readSource(SERVER_LOADER);
+        expect(server).to.include("clearServerBatchDatasetCaches");
+        expect(server).to.include("dataCache.clear()");
+    });
+
     it("keeps server wire-row scalars out of the full copy-summary formatter", () => {
         const streamTypes = readSource(STREAM_TYPES);
         const rowScalars = readSource(ROW_SCALARS);

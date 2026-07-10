@@ -118,6 +118,11 @@ function mergeAccumulatorRows(
             target.hmaxLiftPct.push(...row.hmaxLiftPct);
             target.agreeingSets.push(...row.agreeingSets);
             target.pairWarnings += row.pairWarnings;
+            target.asOfTimeKey = row.asOfTimeKey || target.asOfTimeKey;
+            target.close = finiteOrExisting(row.close, target.close);
+            target.barsHeld.push(...row.barsHeld);
+            target.agreementTransitions.push(...row.agreementTransitions);
+            target.freshHits += row.freshHits;
         }
     }
     return {
@@ -144,6 +149,11 @@ interface MergedRowShell {
     dist: number[];
     hmaxLiftPct: number[];
     pairWarnings: number;
+    asOfTimeKey: string | null;
+    close: number | null;
+    barsHeld: number[];
+    agreementTransitions: number[];
+    freshHits: number;
     agreeingSets: string[][];
 }
 
@@ -152,8 +162,14 @@ function createRowShell(asset: string, direction: "LONG" | "SHORT"): MergedRowSh
         asset, direction,
         hits: 0, high: 0, medium: 0, low: 0,
         retPct: [], liftPct: [], rr: [], dist: [], hmaxLiftPct: [],
-        pairWarnings: 0, agreeingSets: [],
+        pairWarnings: 0,
+        asOfTimeKey: null, close: null, barsHeld: [], agreementTransitions: [], freshHits: 0,
+        agreeingSets: [],
     };
+}
+
+function finiteOrExisting(value: number | null | undefined, existing: number | null): number | null {
+    return value !== null && value !== undefined && Number.isFinite(value) ? value : existing;
 }
 
 /**
@@ -472,10 +488,16 @@ function spawnOneWorker(workerPath: string, data: StabilityWorkerData): ActiveSt
         }, 5 * 60 * 1000);
         worker.on("message", (message: unknown) => {
             if (message && typeof message === "object" && "error" in (message as Record<string, unknown>)) {
-                finish(() => reject(new Error((message as { error: string }).error)));
+                finish(() => {
+                    void worker?.terminate().catch(() => {});
+                    reject(new Error((message as { error: string }).error));
+                });
                 return;
             }
-            finish(() => resolve(message as StabilityWorkerResult));
+            finish(() => {
+                resolve(message as StabilityWorkerResult);
+                void worker?.terminate().catch(() => {});
+            });
         });
         worker.on("error", (error) => {
             finish(() => reject(error));

@@ -53,6 +53,11 @@ export async function loadServerBatchDataset(
 
 export function clearServerBatchDatasetCaches(): void {
     loader.clearCaches();
+    // Crypto/IBKR sync can update SQLite between Batch runs. The shared
+    // DataCache otherwise keeps serving the pre-sync target timeframe even
+    // after the synthetic leg/pair LRUs are cleared, which makes Stability
+    // report DATA_STALE against freshly stored candles.
+    dataCache.clear();
 }
 
 export function getServerBatchDatasetCacheStats(): BatchDatasetCacheStats {

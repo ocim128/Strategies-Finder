@@ -6,6 +6,7 @@ import { strategyLibraryAdminPlugin } from './lib/strategy-library-admin-plugin'
 import { strategyLibraryAuditPlugin } from './lib/strategy-library-audit-plugin';
 import { executionLabVitePlugin } from './lib/execution-lab/execution-lab-vite-plugin';
 import { ibkrDataVitePlugin } from './lib/ibkr-data/ibkr-data-vite-plugin';
+import { cryptoDataVitePlugin } from './lib/crypto-data/crypto-data-vite-plugin';
 import { localSqlitePlugin } from './lib/local-sqlite-vite-plugin';
 import { secondMarketApiPlugin } from './lib/second-market-vite-plugin';
 import { batchBacktestVitePlugin } from './lib/batch-backtest/batch-backtest-vite-plugin';
@@ -347,6 +348,7 @@ export default defineConfig({
         tradFiKlineProxyPlugin(),
         polymarketProxyPlugin(),
         ibkrDataVitePlugin(),
+        cryptoDataVitePlugin(),
         localPriceDataCatalogPlugin(),
         secondMarketApiPlugin(),
         executionLabVitePlugin(),

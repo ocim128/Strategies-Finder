@@ -660,6 +660,11 @@ export async function processStabilityMine(
         ) {
             const parallelStartedAt = performance.now();
             const manifest = buildStabilityManifest();
+            // Workers deserialize artifacts from disk independently. Keeping
+            // the parent copies adds another full prepared-universe footprint
+            // during the peak and is unnecessary; sequential fallback reloads
+            // them through loadStoredMineArtifact if worker startup fails.
+            parsedArtifactCache.clear();
             const parallelOutcome: ParallelStabilityOutcome = await runParallelStability({
                 artifactFiles: manifest?.pairArtifactFiles ?? [],
                 targets,

@@ -346,6 +346,7 @@ function registerLazyFeatures(): void {
     registerLazyFeature("rank-pairs", async () => (await import("./rank-pairs/rank-pairs-service")).rankPairsService.init());
     registerLazyFeature("data-mining", async () => (await import("./data-mining-manager")).dataMiningManager.init());
     registerLazyFeature("ibkr-data", async () => (await import("./ibkr-data/ibkr-data-service")).ibkrDataService.init());
+    registerLazyFeature("crypto-data", async () => (await import("./crypto-data/crypto-data-service")).cryptoDataService.init());
     registerLazyFeature("walk-forward", async () => (await import("./walk-forward-service")).walkForwardService.initUI());
     registerLazyFeature("portfolio-lab", async () => (await import("./portfolio-lab-service")).portfolioLabService.init());
     registerLazyFeature("strategy-ensemble", async () => (await import("./strategy-ensemble-service")).strategyEnsembleService.init());

@@ -27,6 +27,8 @@ import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-
 import { clearBatchDatasetCaches, getBatchDatasetCacheStats, loadBatchDataset } from "./batch-backtest-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { mapWithConcurrencyLimit } from "../async-pool";
+import { parseIntervalSeconds } from "../interval-utils";
+import { parseTimeToUnixSeconds } from "../time-normalization";
 import {
     runBatchBacktest,
     type BatchBacktestSymbolResult,
@@ -84,7 +86,17 @@ import {
     type TimingEdgePersistedRun,
 } from "./mine-timing-persistence";
 import { storeMineTimingRun } from "../local-sqlite-mine-timing-api";
-import { computeMinerAgeTag, computeMinerTargetPrice, formatTargetPrice } from "./miner-verdict-format-helpers";
+import {
+    computeMinerAgeTag,
+    computeMinerTargetPrice,
+    computeStabilityAction,
+    computeStabilityAgeTag,
+    computeStabilityDataLagBars,
+    computeStabilityGate,
+    formatTargetPrice,
+    STABILITY_DATA_STALE_THRESHOLD_BARS,
+    summarizeStabilityDataFreshness,
+} from "./miner-verdict-format-helpers";
 import type { Strategy, StrategyParams, BacktestSettings } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 
@@ -696,6 +708,10 @@ class BatchBacktestService {
         let run: TimingEdgePersistedRun;
         if (source === "mine") {
             if (!this.lastMinerResult || this.lastMinerResult.verdicts.length === 0) return;
+            const validVerdicts = this.lastMinerResult.verdicts.filter((verdict) => {
+                const lag = computeStabilityDataLagBars(verdict.currentSnapshot?.timeKey ?? null, interval);
+                return lag !== null && lag <= STABILITY_DATA_STALE_THRESHOLD_BARS;
+            });
             run = {
                 runId,
                 createdAt: Date.now(),
@@ -706,10 +722,14 @@ class BatchBacktestService {
                 reruns: 0,
                 subsetSize: 0,
                 seed: 0,
-                verdicts: this.lastMinerResult.verdicts.map(projectMineVerdictToSnapshot),
+                verdicts: validVerdicts.map(projectMineVerdictToSnapshot),
             };
         } else {
             if (!this.lastStabilityResult || this.lastStabilityResult.rows.length === 0) return;
+            const validRows = this.lastStabilityResult.rows.filter((row) => {
+                const action = computeStabilityAction(row, this.lastStabilityResult!.reruns, interval).action;
+                return action === "ENTER" || action === "WATCH";
+            });
             run = {
                 runId,
                 createdAt: Date.now(),
@@ -720,7 +740,7 @@ class BatchBacktestService {
                 reruns: this.lastStabilityResult.reruns,
                 subsetSize: this.lastStabilityResult.subsetSize,
                 seed: this.lastStabilityResult.seed,
-                verdicts: this.lastStabilityResult.rows.map(projectStabilityRowToSnapshot),
+                verdicts: validRows.map(projectStabilityRowToSnapshot),
             };
         }
         // storeMineTimingRun RESOLVES FALSE on HTTP failure (it doesn't throw),
@@ -1164,6 +1184,17 @@ class BatchBacktestService {
                 return;
             }
 
+            // Pre-run freshness warning. Each target's last bar IS the AsOf the
+            // miner will snapshot, so its lag predicts whether every row will be
+            // vetoed `INVALID | DATA_STALE` before we spend ~60s on reruns. This
+            // only warns — the run continues so the analog distribution can still
+            // be inspected while iterating on the algorithm.
+            const interval = this.lastRunInterval ?? state.currentInterval;
+            const maxLagBars = computeMaxTargetLagBars(targets, interval);
+            if (maxLagBars !== null && maxLagBars > STABILITY_DATA_STALE_THRESHOLD_BARS) {
+                dom.batchBacktestMinerSummary.textContent = `Data STALE — max lag ${maxLagBars.toFixed(1)}b (threshold ${STABILITY_DATA_STALE_THRESHOLD_BARS}b). Stability run continuing, but every Action will be INVALID until OHLCV is refreshed.`;
+            }
+
             const stabilityStartedAt = performance.now();
             const aggregate = createStabilityAggregate(reruns, subsetSize, seed, pairArtifacts.length, targets.length);
             const minerProfile = createBatchSyntheticMinerProfile();
@@ -1325,7 +1356,11 @@ class BatchBacktestService {
 
     private async copyStabilityResults(): Promise<void> {
         if (!this.lastStabilityResult) return;
-        const text = formatStabilityCopy(this.lastStabilityResult);
+        const text = formatStabilityCopy(this.lastStabilityResult, {
+            interval: this.lastRunInterval ?? state.currentInterval,
+            strategyKey: this.lastRunStrategyKey,
+            fingerprint: this.lastRunFingerprint,
+        });
         const copied = await copyToClipboard(text);
         if (!copied) {
             this.getDom().batchBacktestMinerSummary.textContent = "Copy stability failed.";
@@ -1567,17 +1602,23 @@ class BatchBacktestService {
 
     private renderStabilityResult(dom: BatchBacktestDom, result: BatchStabilityMineResult): void {
         dom.batchBacktestMinerResults.replaceChildren();
-        dom.batchBacktestMinerSummary.textContent = formatStabilitySummary(result);
+        const interval = this.lastRunInterval ?? state.currentInterval;
+        dom.batchBacktestMinerSummary.textContent = formatStabilitySummary(result, {
+            interval,
+            strategyKey: this.lastRunStrategyKey,
+            fingerprint: this.lastRunFingerprint,
+        });
         if (result.rows.length === 0) return;
         const fragment = document.createDocumentFragment();
         for (const row of result.rows) {
+            const decision = computeStabilityAction(row, result.reruns, interval);
             const line = document.createElement("div");
             line.className = "finder-sub finder-symbol-row";
             const badge = document.createElement("span");
-            badge.className = "finder-verdict finder-verdict-strong";
-            badge.textContent = row.direction;
+            badge.className = `finder-verdict ${getStabilityActionClass(decision.action)}`;
+            badge.textContent = decision.action;
             line.appendChild(badge);
-            line.appendChild(document.createTextNode(` ${formatStabilityRow(row, result.reruns)}`));
+            line.appendChild(document.createTextNode(` ${formatStabilityRow(row, result.reruns, interval)}`));
             fragment.appendChild(line);
         }
         dom.batchBacktestMinerResults.appendChild(fragment);
@@ -1672,22 +1713,75 @@ function yieldToUi(): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function formatStabilitySummary(result: BatchStabilityMineResult): string {
+/**
+ * Max OHLCV lag in bars across miner targets, using each target's last bar as
+ * its AsOf. Returns null when no target's last-bar time or the interval can be
+ * parsed. Reuses `parseTimeToUnixSeconds` + `parseIntervalSeconds` rather than
+ * the row-level `computeStabilityDataLagBars` because pre-run we have raw
+ * target datasets, not finalized rows with `asOfTimeKey`.
+ */
+function computeMaxTargetLagBars(
+    targets: readonly BatchSyntheticTargetArtifact[],
+    interval: string,
+    nowMs = Date.now(),
+): number | null {
+    const intervalSeconds = parseIntervalSeconds(interval);
+    if (intervalSeconds === null) return null;
+    let maxLag: number | null = null;
+    for (const target of targets) {
+        const lastBar = target.data[target.data.length - 1];
+        if (!lastBar) continue;
+        const asOfSeconds = parseTimeToUnixSeconds(lastBar.time);
+        if (asOfSeconds === null) continue;
+        const lag = Math.max(0, (nowMs / 1000 - asOfSeconds) / intervalSeconds);
+        if (maxLag === null || lag > maxLag) maxLag = lag;
+    }
+    return maxLag;
+}
+
+interface StabilityFormatContext {
+    interval: string;
+    strategyKey: string | null;
+    fingerprint: string | null;
+}
+
+function formatStabilitySummary(result: BatchStabilityMineResult, context: StabilityFormatContext): string {
+    const workers = Math.max(0, Math.floor(result.minerProfile?.parallelWorkerCount ?? 0));
+    const freshness = summarizeStabilityDataFreshness(result.rows, context.interval);
     return [
         "Stability",
+        `Interval ${context.interval}`,
+        `Strategy ${context.strategyKey ?? "--"}`,
+        `Context ${shortFingerprint(context.fingerprint)}`,
+        `Engine ${result.engine ?? "typescript"}/${workers}`,
         `Runs ${result.reruns}`,
         `Subset ${result.subsetSize}/${result.totalPairs}`,
         `Seed ${result.seed}`,
         `Signals ${result.rows.length}`,
         `Hits ${result.hitEvents}`,
+        `Data ${freshness.status}`,
     ].join(" | ");
 }
 
-function formatStabilityRow(row: BatchStabilityRow, reruns: number): string {
+function formatStabilityRow(row: BatchStabilityRow, reruns: number, interval: string): string {
+    const decision = computeStabilityAction(row, reruns, interval);
+    const freshHits = Math.max(0, Math.floor(Number(row.freshHits) || 0));
+    const barsHeld = row.medianBarsHeld === null || !Number.isFinite(row.medianBarsHeld)
+        ? "--"
+        : `${formatNumber(row.medianBarsHeld, 1)}b`;
+    const dataLag = decision.dataLagBars === null ? "--" : `${formatNumber(decision.dataLagBars, 1)}b`;
     return [
         row.asset,
         `Dir ${row.direction}`,
+        `Action ${decision.action}`,
+        `Why ${decision.reason}`,
         `Score ${formatNumber(row.timingEdgeScore, 1)}`,
+        `Gate ${computeStabilityGate(row)}`,
+        `AsOf ${row.asOfTimeKey ?? "--"}`,
+        `Lag ${dataLag}`,
+        `Age ${computeStabilityAgeTag(row)}:${barsHeld}`,
+        `Fresh ${freshHits}/${row.hits}`,
+        `Px ${formatPrice(row.close)}`,
         `Div ${(row.medianDiversity * 100).toFixed(0)}%`,
         `Anchor ${row.dominantPair ?? "--"}:${(row.dominantPairShare * 100).toFixed(0)}%`,
         `Hit ${row.hits}/${reruns} (${formatPercent((row.hits / Math.max(1, reruns)) * 100)})`,
@@ -1703,12 +1797,26 @@ function formatStabilityRow(row: BatchStabilityRow, reruns: number): string {
     ].join(" | ");
 }
 
-function formatStabilityCopy(result: BatchStabilityMineResult): string {
-    const lines = [formatStabilitySummary(result)];
+function formatStabilityCopy(result: BatchStabilityMineResult, context: StabilityFormatContext): string {
+    const lines = [formatStabilitySummary(result, context)];
+    const freshness = summarizeStabilityDataFreshness(result.rows, context.interval);
+    if (freshness.status !== "FRESH") {
+        lines.push(freshness.text);
+    }
     for (const row of result.rows) {
-        lines.push(`STABILITY | ${formatStabilityRow(row, result.reruns)}`);
+        lines.push(`STABILITY | ${formatStabilityRow(row, result.reruns, context.interval)}`);
     }
     return lines.join("\n");
+}
+
+function shortFingerprint(value: string | null): string {
+    if (!value) return "--";
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
 function formatMinerSummary(result: BatchSyntheticMinerResult): string {
@@ -1851,6 +1959,22 @@ function getMinerVerdictClass(verdict: BatchSyntheticAssetVerdict["verdict"]): s
         case "INCONCLUSIVE":
         default:
             return "finder-verdict-thin";
+    }
+}
+
+function getStabilityActionClass(action: ReturnType<typeof computeStabilityAction>["action"]): string {
+    switch (action) {
+        case "ENTER":
+            return "finder-verdict-strong";
+        case "WATCH":
+            return "finder-verdict-marginal";
+        case "WAIT":
+            return "finder-verdict-thin";
+        case "INVALID":
+            return "finder-verdict-thin";
+        case "REJECT":
+        default:
+            return "finder-verdict-losing";
     }
 }
 

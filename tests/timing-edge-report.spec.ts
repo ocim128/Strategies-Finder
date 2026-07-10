@@ -30,14 +30,18 @@ function makeStabilityRun(args: {
         hits?: number;
         pairWarnings?: number;
         direction?: "LONG" | "SHORT";
+        close?: number | null;
+        asOfTimeKey?: string | null;
+        expectedForwardReturnPct?: number | null;
     }>;
     interval?: string;
+    strategyKey?: string;
 }): TimingEdgePersistedRun {
     return {
         runId: `run-${args.createdAt}`,
         createdAt: args.createdAt,
         interval: args.interval ?? "1h",
-        strategyKey: "test_strategy",
+        strategyKey: args.strategyKey ?? "test_strategy",
         source: "stability",
         pairCount: 100,
         reruns: 25,
@@ -48,13 +52,13 @@ function makeStabilityRun(args: {
             verdict: v.verdict ?? "LONG",
             direction: v.direction ?? (v.verdict === "SHORT" ? "short" : "long"),
             confidence: v.confidence ?? "medium",
-            close: null,
+            close: v.close ?? null,
             medianBarsHeld: null,
             agreementTransition: null,
-            asOfTimeKey: "t",
+            asOfTimeKey: v.asOfTimeKey ?? "t",
             horizonBars: null,
             longestHorizonBars: null,
-            expectedForwardReturnPct: null,
+            expectedForwardReturnPct: v.expectedForwardReturnPct ?? null,
             oosLiftPct: v.medianLiftPct ?? null,
             longestOosForwardReturnPct: null,
             expectedMfePct: null,
@@ -208,6 +212,69 @@ describe("buildTimingEdgeReport", () => {
         expect(x!.score).to.equal(30); // latest
     });
 
+    it("tracks first seen, age, and direction-aware move since the first signal", () => {
+        // Intent: a timing edge can be real but no longer tradable if price
+        // already moved most of the expected edge after the first signal.
+        // The Assets report must surface that lateness instead of showing only
+        // the latest score.
+        const report = buildTimingEdgeReport({ runs: [
+            makeStabilityRun({
+                createdAt: 1,
+                verdicts: [{ asset: "ZEC", verdict: "LONG", timingEdgeScore: 20, medianLiftPct: 20, close: 100, asOfTimeKey: "2026-07-10T00:00:00Z" }],
+            }),
+            makeStabilityRun({
+                createdAt: 2,
+                verdicts: [{ asset: "ZEC", verdict: "LONG", timingEdgeScore: 50, medianLiftPct: 20, close: 112, asOfTimeKey: "2026-07-10T04:00:00Z" }],
+            }),
+        ] });
+        const zec = report.topTimingEdge[0]!;
+        expect(zec.asset).to.equal("ZEC");
+        expect(zec.firstAsOfTimeKey).to.equal("2026-07-10T00:00:00Z");
+        expect(zec.latestAsOfTimeKey).to.equal("2026-07-10T04:00:00Z");
+        expect(zec.ageRuns).to.equal(1);
+        expect(zec.moveSinceFirstPct).to.be.closeTo(12, 1e-9);
+        expect(zec.freshness).to.equal("LATE");
+    });
+
+    it("marks stale rows when the edge did not appear in the latest loaded run", () => {
+        const report = buildTimingEdgeReport({ runs: [
+            makeStabilityRun({
+                createdAt: 1,
+                verdicts: [{ asset: "OLD", verdict: "LONG", timingEdgeScore: 30, medianLiftPct: 10, close: 100 }],
+            }),
+            makeStabilityRun({
+                createdAt: 2,
+                verdicts: [{ asset: "NEW", verdict: "LONG", timingEdgeScore: 20, medianLiftPct: 10, close: 100 }],
+            }),
+        ] });
+        const old = report.topTimingEdge.find((r) => r.asset === "OLD")!;
+        expect(old.freshness).to.equal("STALE");
+    });
+
+    it("uses an empty latest run to expire prior timing edges", () => {
+        const report = buildTimingEdgeReport({ runs: [
+            makeStabilityRun({
+                createdAt: 1,
+                verdicts: [{ asset: "OLD", verdict: "LONG", timingEdgeScore: 30, medianLiftPct: 10, close: 100 }],
+            }),
+            makeStabilityRun({ createdAt: 2, verdicts: [] }),
+        ] });
+        expect(report.topTimingEdge[0]!.asset).to.equal("OLD");
+        expect(report.topTimingEdge[0]!.freshness).to.equal("STALE");
+    });
+
+    it("uses runId ordering when two runs share the same millisecond", () => {
+        const first = makeStabilityRun({
+            createdAt: 1,
+            verdicts: [{ asset: "OLD", verdict: "LONG", timingEdgeScore: 30, medianLiftPct: 10, close: 100 }],
+        });
+        first.runId = "a";
+        const second = makeStabilityRun({ createdAt: 1, verdicts: [] });
+        second.runId = "b";
+        const report = buildTimingEdgeReport({ runs: [second, first] });
+        expect(report.topTimingEdge[0]!.freshness).to.equal("STALE");
+    });
+
     it("buildTimingEdgeReport never mutates input runs (sorts a copy)", () => {
         const runs = [
             makeStabilityRun({ createdAt: 200, verdicts: [{ asset: "A", verdict: "LONG", timingEdgeScore: 1 }] }),
@@ -216,6 +283,40 @@ describe("buildTimingEdgeReport", () => {
         const original = runs.map((r) => r.createdAt);
         buildTimingEdgeReport({ runs });
         expect(runs.map((r) => r.createdAt)).to.deep.equal(original);
+    });
+
+    it("scopes freshness history to the latest strategy and interval", () => {
+        const report = buildTimingEdgeReport({ runs: [
+            makeStabilityRun({
+                createdAt: 1,
+                strategyKey: "old_strategy",
+                verdicts: [{ asset: "WLD", verdict: "LONG", timingEdgeScore: 60, close: 100 }],
+            }),
+            makeStabilityRun({
+                createdAt: 2,
+                strategyKey: "new_strategy",
+                verdicts: [{ asset: "WLD", verdict: "LONG", timingEdgeScore: 30, close: 120 }],
+            }),
+        ] });
+        expect(report.overview.totalRuns).to.equal(1);
+        expect(report.topTimingEdge[0]!.appearances).to.equal(1);
+        expect(report.topTimingEdge[0]!.firstClose).to.equal(120);
+        expect(report.topTimingEdge[0]!.moveSinceFirstPct).to.equal(0);
+    });
+
+    it("flags active LONG/SHORT conflicts on the same asset in the latest run", () => {
+        // Intent: per-direction rows are correct for research, but a trading
+        // decision needs a loud warning when both directions are live now.
+        const report = buildTimingEdgeReport({ runs: [
+            makeStabilityRun({ createdAt: 1, verdicts: [
+                { asset: "SUI", verdict: "LONG", timingEdgeScore: 20, medianLiftPct: 5, close: 100 },
+                { asset: "SUI", verdict: "SHORT", timingEdgeScore: 25, medianLiftPct: 5, close: 100 },
+            ] }),
+        ] });
+        const suiRows = report.topTimingEdge.filter((r) => r.asset === "SUI");
+        expect(suiRows.length).to.equal(2);
+        expect(suiRows.every((row) => row.hasActiveConflict)).to.equal(true);
+        expect(formatTimingEdgeReportRow(suiRows[0]!)).to.include("Fresh CONFLICT");
     });
 
     describe("per-direction keying (the 'asset flips direction across runs' fix)", () => {
@@ -322,10 +423,9 @@ describe("buildTimingEdgeReport", () => {
             expect(report.overview.topAsset).to.equal("WLD SHORT");
         });
 
-        it("two strategy libs each producing the same-direction edge on the same asset aggregates into one row (not two)", () => {
-            // Sanity: per-direction keying should NOT split same-direction
-            // appearances. If strategy A and strategy B both say WLD-LONG,
-            // that's one WLD-LONG row with appearances=2.
+        it("same-strategy same-direction appearances aggregate into one row", () => {
+            // Per-direction keying should not split repeated same-direction
+            // appearances within the currently scoped workflow.
             const report = buildTimingEdgeReport({ runs: [
                 makeStabilityRun({ createdAt: 1, verdicts: [{ asset: "WLD", verdict: "LONG", timingEdgeScore: 30, medianLiftPct: 4 }] }),
                 makeStabilityRun({ createdAt: 2, verdicts: [{ asset: "WLD", verdict: "LONG", timingEdgeScore: 40, medianLiftPct: 6 }] }),

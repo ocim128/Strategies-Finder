@@ -8,13 +8,16 @@
  *
  * Design notes:
  * - Source-aware: stability runs contribute scored rows; one-shot mine runs
- *   contribute directional snapshots. Both roll up to the same row shape.
+ *   contribute directional snapshots. History is scoped to the latest run's
+ *   strategy, interval, and source so incompatible workflows are not blended.
  * - "Top Timing Edge" ranks by score (stability) or by OOS lift (mine).
  * - "Rising/Falling" compares recent-window score vs previous-window score
  *   per asset, mirroring the leadership report's trend semantics.
  */
 
 import type { TimingEdgePersistedRun, TimingEdgeVerdictSnapshot } from "../batch-backtest/mine-timing-persistence";
+
+export type TimingEdgeFreshness = "NEW" | "FRESH" | "AGING" | "LATE" | "STALE" | "UNKNOWN";
 
 export interface TimingEdgeAssetRow {
     asset: string;
@@ -41,6 +44,16 @@ export interface TimingEdgeAssetRow {
     latestLiftPct: number | null;
     latestHmaxLiftPct: number | null;
     latestDiversity: number;
+    firstSeenAt: number;
+    latestSeenAt: number;
+    firstAsOfTimeKey: string | null;
+    latestAsOfTimeKey: string | null;
+    firstClose: number | null;
+    latestClose: number | null;
+    moveSinceFirstPct: number | null;
+    ageRuns: number;
+    freshness: TimingEdgeFreshness;
+    hasActiveConflict: boolean;
 }
 
 export interface TimingEdgeReport {
@@ -112,9 +125,34 @@ function rrOrNan(snapshot: TimingEdgeVerdictSnapshot): number {
     return mfe / adverse;
 }
 
+function directionMovePct(direction: "LONG" | "SHORT" | null, firstClose: number | null, latestClose: number | null): number | null {
+    if (!direction || firstClose === null || latestClose === null || firstClose <= 0 || latestClose <= 0) {
+        return null;
+    }
+    return direction === "LONG"
+        ? ((latestClose / firstClose) - 1) * 100
+        : ((firstClose / latestClose) - 1) * 100;
+}
+
+function classifyFreshness(args: {
+    isFirstAppearance: boolean;
+    latestSeenInCurrentRun: boolean;
+    moveSinceFirstPct: number | null;
+    expectedPct: number | null;
+}): TimingEdgeFreshness {
+    if (!args.latestSeenInCurrentRun) return "STALE";
+    if (args.isFirstAppearance) return "NEW";
+    if (args.moveSinceFirstPct === null || args.expectedPct === null || args.expectedPct <= 0) return "UNKNOWN";
+    const favorableMove = Math.max(0, args.moveSinceFirstPct);
+    if (favorableMove >= args.expectedPct * 0.5) return "LATE";
+    if (favorableMove >= args.expectedPct * 0.25) return "AGING";
+    return "FRESH";
+}
+
 function buildAssetRow(
     asset: string,
     contributions: Array<{ run: TimingEdgePersistedRun; verdict: TimingEdgeVerdictSnapshot }>,
+    allRuns: readonly TimingEdgePersistedRun[],
 ): TimingEdgeAssetRow {
     // Contributions sorted oldest → newest so the "latest" is the last element.
     // Tiebreak on runId so two runs with identical createdAt (rare, but a
@@ -123,7 +161,9 @@ function buildAssetRow(
     const sorted = [...contributions].sort((a, b) =>
         a.run.createdAt - b.run.createdAt || a.run.runId.localeCompare(b.run.runId)
     );
+    const first = sorted[0]!;
     const latest = sorted[sorted.length - 1]!;
+    const firstVerdict = first.verdict;
     const latestVerdict = latest.verdict;
 
     const scores = sorted.map((c) => verdictScore(c.verdict, c.run.source));
@@ -158,6 +198,14 @@ function buildAssetRow(
     }
 
     const profitableAppearances = scores.filter((s) => s > 0).length;
+    const latestRun = allRuns[allRuns.length - 1] ?? latest.run;
+    const firstSeenAt = first.run.createdAt;
+    const latestSeenAt = latest.run.createdAt;
+    const latestDirection = latestVerdict.verdict === "LONG" ? "LONG" : latestVerdict.verdict === "SHORT" ? "SHORT" : null;
+    const moveSinceFirstPct = directionMovePct(latestDirection, firstVerdict.close, latestVerdict.close);
+    const expectedPct = latestVerdict.medianLiftPct ?? latestVerdict.oosLiftPct ?? latestVerdict.expectedForwardReturnPct;
+    const firstRunIndex = allRuns.findIndex((run) => run.runId === first.run.runId);
+    const ageRuns = firstRunIndex < 0 ? 0 : allRuns.length - firstRunIndex - 1;
 
     return {
         asset,
@@ -169,7 +217,7 @@ function buildAssetRow(
         avgLiftPct: avg(lifts),
         avgRr: avg(rrs),
         avgDiversity: avg(diversities),
-        latestDirection: latestVerdict.verdict === "LONG" ? "LONG" : latestVerdict.verdict === "SHORT" ? "SHORT" : null,
+        latestDirection,
         latestConfidence: latestVerdict.confidence,
         strongestPair,
         latestPairWarnings: latestVerdict.pairWarnings,
@@ -177,6 +225,21 @@ function buildAssetRow(
         latestLiftPct: latestVerdict.medianLiftPct ?? latestVerdict.oosLiftPct,
         latestHmaxLiftPct: latestVerdict.medianHmaxLiftPct ?? latestVerdict.longestOosForwardReturnPct,
         latestDiversity: latestVerdict.medianDiversity ?? 0,
+        firstSeenAt,
+        latestSeenAt,
+        firstAsOfTimeKey: firstVerdict.asOfTimeKey,
+        latestAsOfTimeKey: latestVerdict.asOfTimeKey,
+        firstClose: firstVerdict.close,
+        latestClose: latestVerdict.close,
+        moveSinceFirstPct,
+        ageRuns: Math.max(0, ageRuns),
+        freshness: classifyFreshness({
+            isFirstAppearance: sorted.length === 1,
+            latestSeenInCurrentRun: latest.run.runId === latestRun.runId,
+            moveSinceFirstPct,
+            expectedPct,
+        }),
+        hasActiveConflict: false,
     };
 }
 
@@ -195,7 +258,15 @@ function sortByScoreDesc(rows: TimingEdgeAssetRow[]): TimingEdgeAssetRow[] {
 }
 
 export function buildTimingEdgeReport(input: { runs: TimingEdgePersistedRun[] }): TimingEdgeReport {
-    const runs = [...input.runs].sort((a, b) => a.createdAt - b.createdAt);
+    const allRuns = [...input.runs].sort((a, b) => a.createdAt - b.createdAt || a.runId.localeCompare(b.runId));
+    const latestRun = allRuns[allRuns.length - 1];
+    const runs = latestRun
+        ? allRuns.filter((run) =>
+            run.strategyKey === latestRun.strategyKey
+            && run.interval === latestRun.interval
+            && run.source === latestRun.source
+        )
+        : [];
     // Key by `${asset}|${direction}`, NOT just asset. A LONG verdict from
     // strategy A and a SHORT verdict from strategy B on the same asset are
     // independent edges — averaging their lifts cancels signal (a +5% long
@@ -215,7 +286,23 @@ export function buildTimingEdgeReport(input: { runs: TimingEdgePersistedRun[] })
             byAssetDirection.set(key, entry);
         }
     }
-    const allRows = Array.from(byAssetDirection.values()).map((entry) => buildAssetRow(entry.asset, entry.contributions));
+    const baseRows = Array.from(byAssetDirection.values()).map((entry) => buildAssetRow(entry.asset, entry.contributions, runs));
+    const activeDirectionsByAsset = new Map<string, Set<"LONG" | "SHORT">>();
+    for (const row of baseRows) {
+        if (row.freshness === "STALE" || row.score <= 0 || !row.latestDirection) continue;
+        const directions = activeDirectionsByAsset.get(row.asset) ?? new Set<"LONG" | "SHORT">();
+        directions.add(row.latestDirection);
+        activeDirectionsByAsset.set(row.asset, directions);
+    }
+    const conflictAssets = new Set(
+        Array.from(activeDirectionsByAsset.entries())
+            .filter(([, directions]) => directions.size > 1)
+            .map(([asset]) => asset)
+    );
+    const allRows = baseRows.map((row) => ({
+        ...row,
+        hasActiveConflict: conflictAssets.has(row.asset) && row.freshness !== "STALE",
+    }));
 
     const topTimingEdge = sortByScoreDesc(allRows).slice(0, TOP_LIMIT);
     const longTriggers = sortByScoreDesc(allRows.filter((r) => r.latestDirection === "LONG")).slice(0, TOP_LIMIT);
@@ -288,8 +375,18 @@ export function formatTimingEdgeReportRow(row: TimingEdgeAssetRow): string {
         `AvgLift ${fmtPct(row.avgLiftPct)}`,
         `AvgRR ${fmt(row.avgRr)}`,
         `AvgDiv ${(row.avgDiversity * 100).toFixed(0)}%`,
+        `Fresh ${row.hasActiveConflict ? "CONFLICT" : row.freshness}`,
+        `First ${formatSeenLabel(row.firstSeenAt, row.firstAsOfTimeKey)}`,
+        `Age ${row.ageRuns}r`,
+        `Move ${fmtPct(row.moveSinceFirstPct)}`,
         `Latest ${fmtPct(row.latestLiftPct)} lift / ${fmtPct(row.latestHmaxLiftPct)} hmax`,
         `Pair ${row.strongestPair ?? "--"}`,
         `Warn ${row.latestPairWarnings}/${row.latestHits}`,
     ].join(" | ");
+}
+
+function formatSeenLabel(createdAt: number, asOfTimeKey: string | null): string {
+    if (asOfTimeKey) return asOfTimeKey;
+    if (!Number.isFinite(createdAt) || createdAt <= 0) return "--";
+    return new Date(createdAt).toISOString();
 }
