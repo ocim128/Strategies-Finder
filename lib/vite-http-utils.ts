@@ -121,8 +121,8 @@ export async function readBodyBuffer(
     return Buffer.concat(chunks);
 }
 
-export async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-    const buffer = await readBodyBuffer(req);
+export async function readJsonBody(req: IncomingMessage, maxBytes?: number): Promise<Record<string, unknown>> {
+    const buffer = await readBodyBuffer(req, maxBytes);
     const text = buffer.toString("utf8").trim();
     if (!text) return {};
     let parsed: unknown;

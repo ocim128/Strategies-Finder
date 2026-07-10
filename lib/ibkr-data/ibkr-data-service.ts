@@ -5,28 +5,12 @@ import { uiManager } from "../ui-manager";
 import { clearBatchDatasetCaches } from "../batch-backtest/batch-backtest-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { createIbkrDataDom, type IbkrDataDom } from "./ibkr-data-dom";
+import type { IbkrStreamEvent, IbkrSyncRunSnapshot } from "./ibkr-data-stream-types";
 
-type IbkrStreamEvent =
-    | { type: "start"; total: number; interval?: string; mode?: string }
-    | { type: "symbol"; index: number; total: number; symbol: string; markedSymbol?: string; bars?: number; fetchedBars?: number }
-    | { type: "symbol_failed"; index: number; total: number; symbol: string; error: string }
-    | { type: "done"; ok: boolean; cancelled?: boolean; interval?: string; totals?: { bars: number; fetchedBars: number }; results?: unknown[]; failed?: unknown[] }
-    | { type: "fatal"; error: string };
-
-// Shape of GET /api/ibkr/sync/status `run` payload, used by reattach polling.
-type IbkrSyncRunSnapshot = {
-    startedAt: string;
-    mode: "sync" | "download";
-    interval: string;
-    period: string | null;
-    total: number;
-    index: number;
-    completed: number;
-    failed: number;
-    currentSymbol: string | null;
-    failedSymbols: Array<{ symbol: string; error: string }>;
-    cancelled: boolean;
-};
+// Re-export the shared wire types so existing imports of them from this module
+// keep resolving — the source of truth now lives in the leaf
+// `ibkr-data-stream-types` module shared with the server plugin.
+export type { IbkrStreamEvent, IbkrSyncRunSnapshot };
 
 class IbkrDataService {
     private dom: IbkrDataDom | null = null;
@@ -57,25 +41,40 @@ class IbkrDataService {
     /**
      * Polls GET /api/ibkr/sync/status on init. If a sync is running, locks
      * the UI to busy (so the user can't start a conflicting sync) and updates
-     * the status text on each poll until the run ends, then unlocks. Falls
-     * back to a single fire-and-forget request if fetch is unavailable.
+     * the status text on each poll until the run ends, then unlocks and
+     * invalidates caches for the symbols the server reports as completed.
+     *
+     * Progress watchdog: a healthy sync advances `(index, currentSymbol,
+     * completed)` between polls; each advance resets the no-progress
+     * countdown. Only 150 consecutive *no-progress* polls (~5 min of a hung
+     * gateway fetch) cause us to stop watching — previously a healthy long
+     * backfill would trip the fixed 150-poll cap and unlock while the server
+     * still owned the sync.
      */
     private async reattachToInProgressSync(): Promise<void> {
         const POLL_INTERVAL_MS = 2000;
-        // Bounded poll count: a healthy sync processes at least one symbol
-        // within ~5 minutes; if the server hasn't made progress in 150 polls
-        // (5 minutes), the gateway fetch is almost certainly hung (no fetch
-        // timeout exists in requestGatewayText) and continuing to poll just
-        // leaks fetches. The user can still click Stop.
-        const MAX_POLLS = 150;
+        const NO_PROGRESS_POLL_LIMIT = 150;
         try {
-            for (let poll = 0; poll < MAX_POLLS; poll += 1) {
+            let lastProgressKey = "";
+            let stalledPolls = 0;
+            // Tracks the last snapshot we saw with `running: true`, so that
+            // when the run ends we can invalidate exactly the symbols the
+            // server completed while we were watching.
+            let lastRunningSnapshot: IbkrSyncRunSnapshot | null = null;
+            for (;;) {
                 const response = await fetch("/api/ibkr/sync/status", { cache: "no-store" });
                 const payload = await response.json() as { running?: boolean; run?: IbkrSyncRunSnapshot };
                 if (!payload.running || !payload.run) {
                     if (this.reattached) {
                         this.reattached = false;
                         this.setBusy(false);
+                        // Invalidate the symbols the server reported complete
+                        // so newly written CSVs are not hidden behind stale
+                        // in-memory chart/Finder/Batch caches.
+                        const completed = lastRunningSnapshot?.completedSymbols ?? [];
+                        if (completed.length > 0) {
+                            this.invalidateSyncedData(completed, lastRunningSnapshot?.interval);
+                        }
                         this.setStatus("IBKR sync finished (reattached).");
                     }
                     return;
@@ -85,15 +84,27 @@ class IbkrDataService {
                     this.reattached = true;
                     this.setBusy(true);
                 }
-                this.renderRunSnapshot(payload.run);
+                const run = payload.run;
+                lastRunningSnapshot = run;
+                this.renderRunSnapshot(run);
+                // Progress watchdog: reset the countdown whenever the run
+                // advances; only count consecutive no-progress polls.
+                const progressKey = `${run.index}|${run.currentSymbol ?? ""}|${run.completed}`;
+                if (progressKey !== lastProgressKey) {
+                    lastProgressKey = progressKey;
+                    stalledPolls = 0;
+                } else {
+                    stalledPolls += 1;
+                    if (stalledPolls >= NO_PROGRESS_POLL_LIMIT) {
+                        // No progress for ~5 min: the gateway fetch is almost
+                        // certainly hung. Keep the UI locked (the server still
+                        // owns the sync; the user can still click Stop) but
+                        // stop polling so we don't leak fetches.
+                        this.setStatus("IBKR sync stalled (no progress for 5 min) — still running. Click Stop or wait.");
+                        return;
+                    }
+                }
                 await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-            }
-            // Loop exhausted: surface that we stopped watching. The server
-            // may still be syncing, but we won't observe it from this tab.
-            if (this.reattached) {
-                this.reattached = false;
-                this.setBusy(false);
-                this.setStatus("IBKR sync still running after 5 min — stopped watching. Click Stop or retry.");
             }
         } catch (error) {
             if (this.reattached) {
@@ -202,8 +213,12 @@ class IbkrDataService {
             failed: [],
         };
         const markedSymbolsAcc: string[] = [];
+        let hadWarning = false;
         let seen = 0;
         let total = 0;
+        // Whether the streaming POST succeeded (opened a stream). Used by the
+        // finally block to decide whether to invalidate partial results.
+        let streamOpened = false;
         try {
             const response = await fetch(url, {
                 method: "POST",
@@ -220,6 +235,7 @@ class IbkrDataService {
                 this.setStatus(aggregated.error);
                 return;
             }
+            streamOpened = true;
 
             await consumeNdjsonStream<IbkrStreamEvent>(response.body, {
                 onStart: (event: Extract<IbkrStreamEvent, { type: "start" }>) => {
@@ -241,6 +257,17 @@ class IbkrDataService {
                     seen = event.index + 1;
                     this.setStatus(`IBKR ${seen}/${total}: ${event.symbol} failed — ${event.error}`);
                 },
+                onSymbolWarning: (event: Extract<IbkrStreamEvent, { type: "symbol_warning" }>) => {
+                    hadWarning = true;
+                    seen = event.index + 1;
+                    // A partial-max symbol still lands data, so accumulate it
+                    // for invalidation like a normal success.
+                    const marked = markIbkrSymbol(event.symbol);
+                    if (!markedSymbolsAcc.includes(marked)) {
+                        markedSymbolsAcc.push(marked);
+                    }
+                    this.setStatus(`IBKR ${seen}/${total}: ${event.symbol} incomplete — ${event.reason}`);
+                },
                 onDone: (event: Extract<IbkrStreamEvent, { type: "done" }>) => {
                     aggregated.ok = event.ok;
                     aggregated.results = event.results ?? [];
@@ -253,16 +280,6 @@ class IbkrDataService {
                 },
             });
 
-            // Use the accumulated marked symbols so partial-fatal still
-            // invalidates the symbols that landed before the fatal. Fall back
-            // to captureMarkedSymbols (which reads `aggregated.results`) when
-            // the full done event landed cleanly.
-            const markedSymbols = markedSymbolsAcc.length > 0
-                ? markedSymbolsAcc
-                : this.captureMarkedSymbols(aggregated);
-            if (invalidate && markedSymbols.length > 0) {
-                this.invalidateSyncedData(markedSymbols, body.interval);
-            }
             if (aggregated.error) {
                 this.setStatus(aggregated.error);
                 return;
@@ -271,11 +288,28 @@ class IbkrDataService {
                 this.setStatus("IBKR request completed with failures.");
                 return;
             }
+            if (hadWarning) {
+                this.setStatus(`IBKR request complete with warnings — ${seen}/${total} symbol${total === 1 ? "" : "s"} (some partial).`);
+                return;
+            }
             this.setStatus(`IBKR request complete — ${seen}/${total} symbol${total === 1 ? "" : "s"}.`);
         } catch (error) {
             this.writeOutput(error instanceof Error ? error.message : String(error));
             this.setStatus("IBKR request failed.");
         } finally {
+            // Invalidate in `finally` so a mid-stream network failure (which
+            // throws out of consumeNdjsonStream) still invalidates the symbols
+            // that landed before the connection dropped. Previously this ran
+            // only on the clean-end path, so a dropped stream left newly
+            // written CSVs hidden behind stale in-memory caches.
+            if (streamOpened && invalidate) {
+                const markedSymbols = markedSymbolsAcc.length > 0
+                    ? markedSymbolsAcc
+                    : this.captureMarkedSymbols(aggregated);
+                if (markedSymbols.length > 0) {
+                    this.invalidateSyncedData(markedSymbols, body.interval);
+                }
+            }
             this.setBusy(false);
         }
     }

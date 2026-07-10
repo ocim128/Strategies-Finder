@@ -5,7 +5,9 @@ import {
     adjustIntradayCandlesToDailyScale,
     computeIncrementalStartTime,
     describeIbkrMarketDataReadiness,
+    isAllowedIbkrCaller,
     mergeCandlesByTime,
+    normalizePeriod,
     normalizeSymbol,
     parseCsvCandleLines,
     parseHistoryCandles,
@@ -17,6 +19,7 @@ import {
     shouldUseIncrementalIbkrSync,
     type SyncRunState,
 } from "../lib/ibkr-data/ibkr-data-vite-plugin";
+import type { IbkrSyncRunSnapshot } from "../lib/ibkr-data/ibkr-data-stream-types";
 import { beginNdjsonStream, HttpStatusError } from "../lib/vite-http-utils";
 import type { OHLCVData } from "../lib/types/strategies";
 
@@ -540,9 +543,10 @@ describe("beginNdjsonStream", () => {
 
 describe("ibkr SyncRunState (sync/status contract)", () => {
     // Pins the field names and shape that GET /api/ibkr/sync/status returns.
-    // The browser-side IbkrSyncRunSnapshot mirrors this shape, so any field
-    // rename here must be reflected in ibkr-data-service.ts — this test makes
-    // such drift fail loudly instead of silently breaking reattach polling.
+    // `SyncRunState` is now an alias for the shared `IbkrSyncRunSnapshot` wire
+    // type (single source of truth in ibkr-data-stream-types.ts). The
+    // assignability assertion below makes any field drift between server and
+    // browser a compile-time failure instead of a silent reattach regression.
     it("exposes the documented fields with the documented types", () => {
         const snapshot: SyncRunState = {
             startedAt: "2026-07-04T00:00:00.000Z",
@@ -556,6 +560,8 @@ describe("ibkr SyncRunState (sync/status contract)", () => {
             currentSymbol: "NVDA",
             failedSymbols: [],
             cancelled: false,
+            completedSymbols: ["IBKR:NVDA"],
+            updatedAt: "2026-07-04T00:00:01.000Z",
         };
         // No assertions on values needed; if the literal above fails to type-
         // check or any field is removed/renamed in SyncRunState, this test
@@ -565,6 +571,14 @@ describe("ibkr SyncRunState (sync/status contract)", () => {
         assert.equal(snapshot.currentSymbol, "NVDA");
         assert.equal(snapshot.cancelled, false);
         assert.deepEqual(snapshot.failedSymbols, []);
+    });
+
+    it("server SyncRunState is assignable to the shared browser IbkrSyncRunSnapshot", () => {
+        // Compile-time guard: if server and browser wire types drift, this
+        // assignment fails to type-check. Runtime no-op.
+        const serverSnapshot: SyncRunState = { ...minimalSnapshot() };
+        const browserSnapshot: IbkrSyncRunSnapshot = serverSnapshot;
+        assert.equal(browserSnapshot.mode, "sync");
     });
 
     it("accepts both 'sync' and 'download' modes", () => {
@@ -599,4 +613,51 @@ describe("ibkr SyncRunState (sync/status contract)", () => {
             cancelled: false,
         };
     }
+});
+
+describe("ibkr normalizePeriod", () => {
+    it("accepts max and all (case-insensitive)", () => {
+        assert.equal(normalizePeriod("max"), "max");
+        assert.equal(normalizePeriod("ALL"), "all");
+    });
+    it("accepts positive count + d/w/m/y", () => {
+        assert.equal(normalizePeriod("1d"), "1d");
+        assert.equal(normalizePeriod("2w"), "2w");
+        assert.equal(normalizePeriod("6m"), "6m");
+        assert.equal(normalizePeriod("1y"), "1y");
+    });
+    it("rejects malformed periods", () => {
+        assert.throws(() => normalizePeriod("garbage"), HttpStatusError);
+        assert.throws(() => normalizePeriod("0d"), HttpStatusError);
+        assert.throws(() => normalizePeriod("-3m"), HttpStatusError);
+        assert.throws(() => normalizePeriod("1x"), HttpStatusError);
+    });
+});
+
+describe("ibkr isAllowedIbkrCaller (loopback gate)", () => {
+    it("allows same-origin localhost callers without a token", () => {
+        assert.equal(isAllowedIbkrCaller({ headers: { origin: "http://localhost:5173" } }), true);
+        assert.equal(isAllowedIbkrCaller({ headers: { referer: "http://127.0.0.1:5173/x" } }), true);
+    });
+    it("rejects non-local callers when no token is configured", () => {
+        assert.equal(isAllowedIbkrCaller({ headers: { origin: "https://example.com" } }), false);
+        assert.equal(isAllowedIbkrCaller({ headers: {} }), false);
+    });
+    it("requires the bearer token for non-local callers when configured", () => {
+        const prev = process.env.LOCAL_PROXY_TOKEN;
+        process.env.LOCAL_PROXY_TOKEN = "secret";
+        try {
+            assert.equal(
+                isAllowedIbkrCaller({ headers: { origin: "https://example.com", authorization: "Bearer secret" } }),
+                true,
+            );
+            assert.equal(
+                isAllowedIbkrCaller({ headers: { origin: "https://example.com", authorization: "Bearer wrong" } }),
+                false,
+            );
+        } finally {
+            if (prev === undefined) delete process.env.LOCAL_PROXY_TOKEN;
+            else process.env.LOCAL_PROXY_TOKEN = prev;
+        }
+    });
 });

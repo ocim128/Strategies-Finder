@@ -7,6 +7,14 @@ import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { OHLCVData } from "../types/strategies";
 import { beginNdjsonStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, sendJson, type ViteHttpResponse } from "../vite-http-utils";
+import { createFetchTimeoutSignal, isAbortError } from "../dataProviders/fetch-helpers";
+import type { IbkrIntervalMeta, IbkrStreamEvent, IbkrSyncRunSnapshot } from "./ibkr-data-stream-types";
+
+// Re-export so existing imports of the wire types and snapshot type from the
+// plugin module keep resolving. The single source of truth now lives in the
+// shared leaf `ibkr-data-stream-types` module imported by both server and
+// browser.
+export type { IbkrStreamEvent, IbkrSyncRunSnapshot };
 
 const APP_ROOT = process.cwd();
 const IBKR_DATA_DIR = resolve(APP_ROOT, "price-data", "ibkr");
@@ -78,19 +86,33 @@ const IBKR_AUTH_RECOVERY_DELAY_MS = 3_000;
 // comfortably shorter than `IBKR_KEEPALIVE_INTERVAL_MS` and is invalidated
 // immediately on a 401 in the retry path below.
 const IBKR_AUTH_CACHE_TTL_MS = 30_000;
+// Per-gateway-request timeout. The Gateway is a local HTTPS service with no
+// inherent request deadline — without this cap, a wedged Gateway hangs sync,
+// Stop completion, status, and keepalive indefinitely. Composed with the
+// active sync's abort signal inside `requestGatewayText` via
+// `createFetchTimeoutSignal`, so both Stop-abort and a slow Gateway abort the
+// fetch.
+const IBKR_GATEWAY_TIMEOUT_MS = 45_000;
 // Cached-conid TTL: bounds how long `syncOneSymbol` will trust a catalog
 // entry's conid before re-resolving. Conids can change on corporate actions
 // / ticker remaps; the 0-bars fallback below covers the rare stale case.
 const IBKR_CONID_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-let stopRequested = false;
+// IBKR mutation routes (sync/download/resolve/stop) are local-control-plane
+// operations: the IBKR Gateway itself is https://localhost:5000 and the only
+// documented remote path (the Cloudflare Tunnel in run_playground.bat) is for
+// candle proxying, gated on LOCAL_PROXY_TOKEN. Reject any non-loopback caller
+// that doesn't present the shared bearer token, so the tunnel can't be used
+// to drive auth recovery / CSV writes / Stop remotely.
+const IBKR_BODY_LIMIT_BYTES = 64 * 1024;
+const IBKR_MAX_SYNC_SYMBOLS = 500;
+let syncAbortController: AbortController | null = null;
 // Sync lock: instead of a bare boolean, an owner-generation counter. Stop
-// force-resets the lock by bumping `syncOwnerGen` to a new sentinel value
-// (SYNC_OWNER_NONE) so a stuck/hung sync can always be recovered without a
-// server restart. A stuck sync's late `finally` only writes its own (stale)
+// aborts the in-flight run via `syncAbortController` but does NOT release
+// ownership here — the run's own `finally` is the only place the lock is
+// released, so an aborted run's late per-symbol writes cannot overlap a new
+// run's writes. A stuck sync's late `finally` only writes its own (stale)
 // owner value back to SYNC_OWNER_NONE, so it cannot clobber a newer sync
-// that has since acquired the lock with a newer generation. Bare booleans
-// cannot distinguish "my lock" from "their lock" — that's how force-reset
-// would race.
+// that has since acquired the lock with a newer generation.
 const SYNC_OWNER_NONE = 0;
 let syncOwner = SYNC_OWNER_NONE;
 let syncOwnerGen = 0;
@@ -99,21 +121,17 @@ let syncOwnerGen = 0;
 // ends. Used by GET /api/ibkr/sync/status so a browser reload can show the
 // running batch instead of "Ready" — the server keeps syncing after the
 // NDJSON response stream is gone, this is how the UI reattaches.
-export type SyncRunState = {
-    startedAt: string;
-    mode: "sync" | "download";
-    interval: string;
-    period: string | null;
-    total: number;
-    index: number;          // index of the next symbol to process
-    completed: number;      // successful symbols so far
-    failed: number;
-    currentSymbol: string | null;
-    failedSymbols: Array<{ symbol: string; error: string }>;
-    cancelled: boolean;
-};
+//
+// `SyncRunState` is now a alias for the shared `IbkrSyncRunSnapshot` wire type
+// (single source of truth in `ibkr-data-stream-types.ts`). The two were
+// structurally identical before; the alias makes any future field drift a
+// compile-time failure on both server and browser instead of a silent
+// reattach-polling regression.
+export type SyncRunState = IbkrSyncRunSnapshot;
 let syncRunState: SyncRunState | null = null;
 let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+let keepAliveInFlight = false;
+let authRecoveryInFlight: Promise<unknown> | null = null;
 let lastKeepAliveAt: string | null = null;
 let lastKeepAliveError: string | null = null;
 let cachedAuthExpiry = 0;
@@ -125,7 +143,7 @@ type IbkrCatalogEntry = {
     exchange?: string;
     primaryExchange?: string;
     currency?: string;
-    intervals: Record<string, { firstTime: string | null; lastTime: string | null; bars: number; lastSyncAt: string }>;
+    intervals: Record<string, IbkrIntervalMeta>;
 };
 
 type IbkrCatalog = {
@@ -175,7 +193,24 @@ function normalizeSymbols(value: unknown): string[] {
     if (symbols.length === 0) {
         throw new HttpStatusError(400, "At least one symbol is required.");
     }
+    if (symbols.length > IBKR_MAX_SYNC_SYMBOLS) {
+        throw new HttpStatusError(400, `Too many IBKR symbols; maximum is ${IBKR_MAX_SYNC_SYMBOLS}.`);
+    }
     return symbols;
+}
+
+/**
+ * Validates a sync `period` against the shapes IBKR actually accepts:
+ * `max` / `all` (full backfill) or a positive count + d/w/m/y unit. Rejects
+ * arbitrary strings so a malformed period can't flow silently into the
+ * fetch window math (where it would otherwise be treated as "unbounded").
+ */
+export function normalizePeriod(period: string): string {
+    const trimmed = period.trim();
+    if (/^(max|all)$/i.test(trimmed) || /^[1-9]\d*[dwmy]$/i.test(trimmed)) {
+        return trimmed.toLowerCase();
+    }
+    throw new HttpStatusError(400, `Invalid IBKR period "${period}". Expected max, all, or e.g. 1d/2w/3m/1y.`);
 }
 
 function getGatewayUrl(): string {
@@ -189,6 +224,14 @@ async function fetchGatewayJson(path: string, init?: RequestInit): Promise<unkno
     try {
         response = await requestGatewayText(url, init);
     } catch (error) {
+        // Let caller aborts (Stop / newer sync) propagate as-is so the sync
+        // loop can recognize them via `signal?.aborted` and mark the run
+        // cancelled instead of treating it as a Gateway failure. A pure
+        // IBKR_GATEWAY_TIMEOUT_MS expiry (signal not aborted) is reported as a
+        // 502 so the user sees "Gateway timed out" rather than a cancel.
+        if (init?.signal && init.signal.aborted) {
+            throw error;
+        }
         const message = error instanceof Error ? error.message : String(error);
         debugLogger.warn("ibkr.gateway.failed", {
             target: "ibkr",
@@ -231,16 +274,25 @@ function requestGatewayText(url: string, init?: RequestInit): Promise<{ status: 
     const isLocalhost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "::1";
     const dispatcher = parsed.protocol === "https:" && isLocalhost ? getLocalhostTlsDispatcher() : undefined;
 
+    // Compose the per-request timeout with the caller's abort signal (e.g. the
+    // active sync's AbortController). Either one aborting the fetch is enough;
+    // `cleanup()` clears the timeout and detaches the listener. Without this
+    // cap a wedged Gateway hangs sync/Stop/status/keepalive indefinitely.
+    const callerSignal = init?.signal ?? undefined;
+    const timeout = createFetchTimeoutSignal(callerSignal, IBKR_GATEWAY_TIMEOUT_MS);
     return fetch(url, {
         method: init?.method ?? "GET",
         headers,
         body,
+        signal: timeout.signal,
         ...(dispatcher ? { dispatcher } : {}),
     } as RequestInit & { dispatcher?: unknown }).then(async (response) => {
         return {
             status: response.status,
             text: await response.text(),
         };
+    }).finally(() => {
+        timeout.cleanup();
     });
 }
 
@@ -308,8 +360,28 @@ async function tickleGateway(): Promise<unknown> {
     return payload;
 }
 
-function wait(ms: number): Promise<void> {
-    return new Promise((resolveWait) => setTimeout(resolveWait, ms));
+/**
+ * Abortable sleep. Resolves after `ms` unless `signal` aborts first, in which
+ * case it rejects with the signal's abort reason (an AbortError-shaped error).
+ * Used for retry/backoff waits inside `fetchHistorical` so a Stop abort is
+ * observed within one event-loop tick rather than after the full delay.
+ */
+function wait(ms: number, signal?: AbortSignal): Promise<void> {
+    if (ms <= 0) return Promise.resolve();
+    if (signal?.aborted) {
+        return Promise.reject((signal as AbortSignal & { reason?: unknown }).reason ?? new Error("Aborted"));
+    }
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve();
+        }, ms);
+        const onAbort = () => {
+            clearTimeout(timeout);
+            reject((signal as AbortSignal & { reason?: unknown })?.reason ?? new Error("Aborted"));
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+    });
 }
 
 type IbkrKeepAliveDependencies = {
@@ -346,6 +418,12 @@ export async function runIbkrKeepAliveCycle(dependencies: IbkrKeepAliveDependenc
 function startKeepAlive(): void {
     if (keepAliveTimer) return;
     keepAliveTimer = setInterval(() => {
+        // Skip if a previous cycle is still in flight. Without this guard a
+        // wedged Gateway (each cycle now bounded to 45s but still slow) would
+        // let overlapping `setInterval` ticks queue concurrent keepalive
+        // fetches and concurrent auth-recovery attempts.
+        if (keepAliveInFlight) return;
+        keepAliveInFlight = true;
         void runIbkrKeepAliveCycle({
             tickle: tickleGateway,
             recover: recoverBrokerageSession,
@@ -353,8 +431,30 @@ function startKeepAlive(): void {
             lastKeepAliveError = null;
         }).catch((error) => {
             lastKeepAliveError = error instanceof Error ? error.message : String(error);
+        }).finally(() => {
+            keepAliveInFlight = false;
         });
     }, IBKR_KEEPALIVE_INTERVAL_MS);
+    // Don't let the keepalive interval keep the Node process alive on its own
+    // (e.g. after the Vite dev server closes). `unref()` is a no-op if the
+    // timer has already cleared.
+    keepAliveTimer.unref?.();
+}
+
+/**
+ * Clears the keepalive interval and aborts any in-flight sync, for the Vite
+ * server `close` hook (mirrors `local-sqlite-vite-plugin.ts`'s close-cleanup
+ * idiom). Defense-in-depth: the run's own `finally` is the primary owner of
+ * lock release, but clearing the timer here prevents a late keepalive tick
+ * from firing after shutdown.
+ */
+function stopIbkrServerState(): void {
+    if (keepAliveTimer) {
+        clearInterval(keepAliveTimer);
+        keepAliveTimer = null;
+    }
+    keepAliveInFlight = false;
+    syncAbortController?.abort();
 }
 
 async function initializeBrokerageSession(): Promise<void> {
@@ -372,47 +472,66 @@ async function reauthenticateBrokerageSession(): Promise<void> {
 }
 
 async function recoverBrokerageSession(trigger: string): Promise<unknown> {
-    let lastError: unknown = null;
-    try {
-        await initializeBrokerageSession();
-        await wait(IBKR_AUTH_RECOVERY_DELAY_MS);
-        const status = await fetchGatewayJson("/iserver/auth/status");
-        if (isAuthenticatedBrokerageSession(status)) {
-            debugLogger.info("ibkr.auth.recovered", { target: "ibkr", trigger, method: "ssodh-init" });
-            startKeepAlive();
-            return status;
-        }
-        lastError = new Error("IBKR ssodh/init completed, but the brokerage session remained unauthenticated.");
-    } catch (error) {
-        if (!(error instanceof HttpStatusError) || (error.status !== 401 && error.status !== 403)) {
-            throw error;
-        }
-        lastError = error;
+    // Single-flight: keepalive and an in-flight sync can independently observe
+    // a 401 and both call recovery. Dedupe to one in-flight recovery so we
+    // don't fire overlapping ssodh/init + reauthenticate round-trips against
+    // the Gateway. The `trigger` of the first caller wins for logging.
+    if (authRecoveryInFlight) {
+        return authRecoveryInFlight;
     }
-
-    try {
-        await reauthenticateBrokerageSession();
-        await wait(IBKR_AUTH_RECOVERY_DELAY_MS);
-        const status = await fetchGatewayJson("/iserver/auth/status");
-        if (isAuthenticatedBrokerageSession(status)) {
-            debugLogger.info("ibkr.auth.recovered", { target: "ibkr", trigger, method: "reauthenticate" });
-            startKeepAlive();
-            return status;
+    const promise = (async (): Promise<unknown> => {
+        let lastError: unknown = null;
+        try {
+            await initializeBrokerageSession();
+            await wait(IBKR_AUTH_RECOVERY_DELAY_MS);
+            const status = await fetchGatewayJson("/iserver/auth/status");
+            if (isAuthenticatedBrokerageSession(status)) {
+                debugLogger.info("ibkr.auth.recovered", { target: "ibkr", trigger, method: "ssodh-init" });
+                startKeepAlive();
+                return status;
+            }
+            lastError = new Error("IBKR ssodh/init completed, but the brokerage session remained unauthenticated.");
+        } catch (error) {
+            if (!(error instanceof HttpStatusError) || (error.status !== 401 && error.status !== 403)) {
+                throw error;
+            }
+            lastError = error;
         }
-        const detail = lastError instanceof Error ? lastError.message : String(lastError ?? "");
-        throw new HttpStatusError(
-            401,
-            `IBKR brokerage session remained unauthenticated after automatic recovery.${detail ? ` Previous recovery error: ${detail}` : ""}`
-        );
-    } catch (error) {
-        if (error instanceof HttpStatusError && (error.status === 401 || error.status === 403)) {
+
+        try {
+            await reauthenticateBrokerageSession();
+            await wait(IBKR_AUTH_RECOVERY_DELAY_MS);
+            const status = await fetchGatewayJson("/iserver/auth/status");
+            if (isAuthenticatedBrokerageSession(status)) {
+                debugLogger.info("ibkr.auth.recovered", { target: "ibkr", trigger, method: "reauthenticate" });
+                startKeepAlive();
+                return status;
+            }
             const detail = lastError instanceof Error ? lastError.message : String(lastError ?? "");
             throw new HttpStatusError(
-                error.status,
-                `IBKR brokerage session is no longer authenticated and automatic recovery failed. /sso/ping may still be alive, but /iserver/auth/status is returning ${error.status}; reopen the Client Portal Gateway browser login and retry.${detail ? ` Previous recovery error: ${detail}` : ""}`
+                401,
+                `IBKR brokerage session remained unauthenticated after automatic recovery.${detail ? ` Previous recovery error: ${detail}` : ""}`
             );
+        } catch (error) {
+            if (error instanceof HttpStatusError && (error.status === 401 || error.status === 403)) {
+                const detail = lastError instanceof Error ? lastError.message : String(lastError ?? "");
+                throw new HttpStatusError(
+                    error.status,
+                    `IBKR brokerage session is no longer authenticated and automatic recovery failed. /sso/ping may still be alive, but /iserver/auth/status is returning ${error.status}; reopen the Client Portal Gateway browser login and retry.${detail ? ` Previous recovery error: ${detail}` : ""}`
+                );
+            }
+            throw error;
         }
-        throw error;
+    })();
+    authRecoveryInFlight = promise;
+    try {
+        return await promise;
+    } finally {
+        // Identity guard: don't clobber a newer recovery a concurrent caller
+        // may have started after this one's await resolved.
+        if (authRecoveryInFlight === promise) {
+            authRecoveryInFlight = null;
+        }
     }
 }
 
@@ -532,7 +651,11 @@ function writeCatalog(catalog: IbkrCatalog): void {
     renameSync(tempPath, IBKR_CATALOG_PATH);
 }
 
-function summarizeCandles(candles: OHLCVData[], lastSyncAt: string): IbkrCatalogEntry["intervals"][string] {
+function summarizeCandles(
+    candles: OHLCVData[],
+    lastSyncAt: string,
+    completeness?: { complete: boolean; stopReason: IbkrIntervalMeta["stopReason"] }
+): IbkrCatalogEntry["intervals"][string] {
     const first = candles[0];
     const last = candles[candles.length - 1];
     return {
@@ -540,6 +663,7 @@ function summarizeCandles(candles: OHLCVData[], lastSyncAt: string): IbkrCatalog
         lastTime: last ? new Date(Number(last.time) * 1000).toISOString() : null,
         bars: candles.length,
         lastSyncAt,
+        ...(completeness ? { complete: completeness.complete, stopReason: completeness.stopReason } : {}),
     };
 }
 
@@ -586,6 +710,7 @@ function upsertCatalogEntry(catalog: IbkrCatalog, args: {
     interval: string;
     candles: OHLCVData[];
     resolved?: IbkrResolvedContract;
+    completeness?: { complete: boolean; stopReason: IbkrIntervalMeta["stopReason"] };
 }): IbkrCatalogEntry {
     const nowIso = new Date().toISOString();
     const markedSymbol = markIbkrSymbol(args.symbol);
@@ -606,7 +731,7 @@ function upsertCatalogEntry(catalog: IbkrCatalog, args: {
         entry.currency = args.resolved.currency;
         if (!entry.symbol) entry.symbol = args.resolved.symbol;
     }
-    entry.intervals[args.interval] = summarizeCandles(args.candles, nowIso);
+    entry.intervals[args.interval] = summarizeCandles(args.candles, nowIso, args.completeness);
     catalog.entries.sort((a, b) => a.symbol.localeCompare(b.symbol));
     catalog.updatedAt = nowIso;
     return entry;
@@ -908,7 +1033,8 @@ async function fetchHistoricalChunk(
     resolved: IbkrResolvedContract,
     interval: string,
     period: string,
-    startTime?: number
+    startTime?: number,
+    signal?: AbortSignal
 ): Promise<OHLCVData[]> {
     const params = new URLSearchParams({
         conid: resolved.conid,
@@ -919,7 +1045,10 @@ async function fetchHistoricalChunk(
     if (startTime !== undefined) {
         params.set("startTime", formatIbkrStartTime(startTime));
     }
-    const payload = await fetchGatewayJsonAuthenticated(`/iserver/marketdata/history?${params.toString()}`);
+    const payload = await fetchGatewayJsonAuthenticated(
+        `/iserver/marketdata/history?${params.toString()}`,
+        signal ? { signal } : undefined
+    );
     return parseHistoryCandles(payload);
 }
 
@@ -943,12 +1072,27 @@ function isRetryableHistoryError(error: unknown): error is HttpStatusError {
         && (error.status === 429 || error.status === 500 || error.status === 502 || error.status === 503 || error.status === 504);
 }
 
+/**
+ * Result of a historical fetch. `complete` is true only when the fetch covered
+ * the full requested window without hitting the retry/chunk ceiling or being
+ * cancelled — so the catalog and UI can distinguish a true full backfill from
+ * a partial one instead of reporting every landed dataset as `ok: true`.
+ */
+export type HistoricalFetchResult = {
+    candles: OHLCVData[];
+    complete: boolean;
+    stopReason: IbkrIntervalMeta["stopReason"];
+    chunks: number;
+    retries: number;
+};
+
 async function fetchHistorical(
     resolved: IbkrResolvedContract,
     interval: string,
     period: string,
-    incrementalFromTime?: number
-): Promise<OHLCVData[]> {
+    incrementalFromTime?: number,
+    signal?: AbortSignal
+): Promise<HistoricalFetchResult> {
     const maxSync = isMaxHistoryPeriod(period);
     const requestPeriod = maxSync
         ? MAX_SYNC_CHUNK_PERIOD_BY_INTERVAL[interval] ?? DEFAULT_PERIOD_BY_INTERVAL[interval] ?? "1y"
@@ -969,25 +1113,68 @@ async function fetchHistorical(
     let oldestTime = Infinity;
     let newestTime = -Infinity;
     let previousFirstTime: number | null = null;
+    let chunkCount = 0;
+    let retryCount = 0;
 
     for (let i = 0; i < maxChunks; i += 1) {
-        if (stopRequested) break;
+        // Observe Stop / newer-sync abort at the top of every iteration so the
+        // backward walk bails within one event-loop tick of the abort rather
+        // than waiting for the next chunk's gateway round-trip.
+        if (signal?.aborted) {
+            return {
+                candles: mergeSortedFromMap(byTime),
+                complete: false,
+                stopReason: "cancelled",
+                chunks: chunkCount,
+                retries: retryCount,
+            };
+        }
         const pageStartTime = resolveIbkrHistoryPageStartTime(i, previousFirstTime);
         let chunk: OHLCVData[] | null = null;
         try {
-            chunk = await fetchHistoricalChunk(resolved, interval, requestPeriod, pageStartTime);
+            chunk = await fetchHistoricalChunk(resolved, interval, requestPeriod, pageStartTime, signal);
         } catch (error) {
+            // Propagate aborts immediately as a `cancelled` result.
+            if (signal?.aborted) {
+                return {
+                    candles: mergeSortedFromMap(byTime),
+                    complete: false,
+                    stopReason: "cancelled",
+                    chunks: chunkCount,
+                    retries: retryCount,
+                };
+            }
             if (!maxSync || !isRetryableHistoryError(error)) {
                 throw error;
             }
             let recovered = false;
             for (let retryIndex = 0; retryIndex < IBKR_HISTORY_RETRY_DELAYS_MS.length; retryIndex += 1) {
-                await wait(IBKR_HISTORY_RETRY_DELAYS_MS[retryIndex]!);
+                await wait(IBKR_HISTORY_RETRY_DELAYS_MS[retryIndex]!, signal);
+                retryCount += 1;
+                // The abortable wait rejects on abort; surface as cancelled.
+                if (signal?.aborted) {
+                    return {
+                        candles: mergeSortedFromMap(byTime),
+                        complete: false,
+                        stopReason: "cancelled",
+                        chunks: chunkCount,
+                        retries: retryCount,
+                    };
+                }
                 try {
-                    chunk = await fetchHistoricalChunk(resolved, interval, requestPeriod, pageStartTime);
+                    chunk = await fetchHistoricalChunk(resolved, interval, requestPeriod, pageStartTime, signal);
                     recovered = true;
                     break;
                 } catch (retryError) {
+                    if (signal?.aborted) {
+                        return {
+                            candles: mergeSortedFromMap(byTime),
+                            complete: false,
+                            stopReason: "cancelled",
+                            chunks: chunkCount,
+                            retries: retryCount,
+                        };
+                    }
                     if (!isRetryableHistoryError(retryError) || retryIndex === IBKR_HISTORY_RETRY_DELAYS_MS.length - 1) {
                         if (byTime.size > 0) {
                             debugLogger.warn("ibkr.history.partialMax", {
@@ -999,7 +1186,13 @@ async function fetchHistorical(
                                 bars: byTime.size,
                                 error: retryError instanceof Error ? retryError.message : String(retryError),
                             });
-                            return mergeSortedFromMap(byTime);
+                            return {
+                                candles: mergeSortedFromMap(byTime),
+                                complete: false,
+                                stopReason: "retry_exhausted",
+                                chunks: chunkCount,
+                                retries: retryCount,
+                            };
                         }
                         throw retryError;
                     }
@@ -1008,7 +1201,18 @@ async function fetchHistorical(
             if (!recovered) break;
         }
         if (chunk === null) break;
-        if (chunk.length === 0) break;
+        if (chunk.length === 0) {
+            // Empty chunk: the backward walk has reached available history.
+            // For a max sync this is the normal "no more data" stop.
+            return {
+                candles: maxSync ? mergeSortedFromMap(byTime) : trimCandlesToPeriod(mergeSortedFromMap(byTime), requestPeriod),
+                complete: true,
+                stopReason: "no_more_data",
+                chunks: chunkCount,
+                retries: retryCount,
+            };
+        }
+        chunkCount += 1;
 
         for (const bar of chunk) {
             const time = Number(bar.time);
@@ -1022,7 +1226,13 @@ async function fetchHistorical(
             && Number.isFinite(oldestTime)
             && Number.isFinite(newestTime)
             && oldestTime * 1000 <= newestTime * 1000 - periodMs) {
-            return trimCandlesToPeriod(mergeSortedFromMap(byTime), period);
+            return {
+                candles: trimCandlesToPeriod(mergeSortedFromMap(byTime), period),
+                complete: true,
+                stopReason: "covered",
+                chunks: chunkCount,
+                retries: retryCount,
+            };
         }
         // Incremental stop: we've reached the start of data we already have.
         // No need to page further backward.
@@ -1038,12 +1248,47 @@ async function fetchHistorical(
         if (previousFirstTime !== null && firstTime >= previousFirstTime) break;
         previousFirstTime = firstTime;
         if (maxSync) {
-            await wait(IBKR_HISTORY_CHUNK_DELAY_MS);
+            // The abortable wait rejects on abort; catch that and break so the
+            // fall-through return below classifies the run as cancelled. The
+            // other abortable wait (retry backoff) is already inside a
+            // try/catch that returns cancelled directly.
+            try {
+                await wait(IBKR_HISTORY_CHUNK_DELAY_MS, signal);
+            } catch {
+                if (signal?.aborted) break;
+                throw new Error("Unexpected non-abort rejection from abortable wait.");
+            }
         }
     }
 
+    // Loop fell through without an explicit early-exit return. An abort that
+    // broke out of the chunk-delay wait lands here — classify it as cancelled
+    // before anything else so the caller's no-write-on-cancel invariant holds.
+    if (signal?.aborted) {
+        return {
+            candles: maxSync ? mergeSortedFromMap(byTime) : trimCandlesToPeriod(mergeSortedFromMap(byTime), requestPeriod),
+            complete: false,
+            stopReason: "cancelled",
+            chunks: chunkCount,
+            retries: retryCount,
+        };
+    }
     const merged = mergeSortedFromMap(byTime);
-    return maxSync ? merged : trimCandlesToPeriod(merged, requestPeriod);
+    const candles = maxSync ? merged : trimCandlesToPeriod(merged, requestPeriod);
+    // `chunk_limit`: we exhausted the chunk ceiling without the gateway
+    // signalling no-more-data or full coverage. Only the max-sync path can
+    // land here for a bounded period (`covered` returns early), so this is the
+    // "incomplete max backfill" the catalog/UI must flag. A bounded-period
+    // run that exhausted chunks is effectively complete for its window too —
+    // but mark it incomplete to be safe, since we can't prove coverage.
+    const hitChunkLimit = chunkCount >= maxChunks;
+    return {
+        candles,
+        complete: maxSync ? !hitChunkLimit : true,
+        stopReason: maxSync && hitChunkLimit ? "chunk_limit" : (maxSync ? "no_more_data" : "covered"),
+        chunks: chunkCount,
+        retries: retryCount,
+    };
 }
 
 function mergeSortedFromMap(byTime: Map<number, OHLCVData>): OHLCVData[] {
@@ -1055,7 +1300,8 @@ async function syncOneSymbol(
     symbol: string,
     interval: string,
     period: string,
-    syncOnly: boolean
+    syncOnly: boolean,
+    signal?: AbortSignal
 ): Promise<Record<string, unknown>> {
     const startedAt = Date.now();
     const existingEntry = findCatalogEntry(catalog, symbol);
@@ -1077,8 +1323,8 @@ async function syncOneSymbol(
         incrementalFromTime = computeIncrementalStartTime(interval, lastIso) ?? undefined;
     }
 
-    let fetched = await fetchHistorical(resolved, interval, period, incrementalFromTime);
-    if (fetched.length === 0 && usedCachedConid) {
+    let result = await fetchHistorical(resolved, interval, period, incrementalFromTime, signal);
+    if (result.candles.length === 0 && usedCachedConid) {
         debugLogger.info("ibkr.sync.conidFallback", {
             target: "ibkr",
             symbol,
@@ -1087,16 +1333,51 @@ async function syncOneSymbol(
         });
         resolved = await resolveSymbol(symbol);
         usedCachedConid = false;
-        fetched = await fetchHistorical(resolved, interval, period, incrementalFromTime);
+        result = await fetchHistorical(resolved, interval, period, incrementalFromTime, signal);
     }
-    if (fetched.length === 0) {
+
+    // Cancellation invariant: if the fetch was aborted (Stop / newer sync),
+    // do NOT write CSV or catalog. Ownership may already belong to a newer
+    // run; writing here would race that run's writes. Surface as a cancelled
+    // result so the batch loop can mark the run cancelled and move on.
+    if (result.stopReason === "cancelled" || signal?.aborted) {
+        debugLogger.info("ibkr.sync.symbol.cancelled", {
+            target: "ibkr",
+            symbol,
+            interval,
+            bars: result.candles.length,
+            durationMs: Date.now() - startedAt,
+        });
+        return {
+            symbol,
+            markedSymbol: markIbkrSymbol(symbol),
+            interval,
+            bars: 0,
+            fetchedBars: 0,
+            firstTime: null,
+            lastTime: null,
+            filePath: getCsvPath(symbol, interval),
+            conid: resolved.conid,
+            cancelled: true,
+            complete: false,
+            stopReason: "cancelled" as const,
+        };
+    }
+    if (result.candles.length === 0) {
         throw new HttpStatusError(502, `IBKR returned no ${interval} bars for ${symbol}.`);
     }
 
+    const fetched = result.candles;
     const existing = syncOnly ? readCsvCandles(symbol, interval) : [];
     const merged = adjustIntradayCandlesFromDailyCsv(symbol, interval, mergeCandlesByTime([...existing, ...fetched]));
     writeCsv(symbol, interval, merged);
-    const catalogEntry = upsertCatalogEntry(catalog, { symbol, interval, candles: merged, resolved });
+    const catalogEntry = upsertCatalogEntry(catalog, {
+        symbol,
+        interval,
+        candles: merged,
+        resolved,
+        completeness: { complete: result.complete, stopReason: result.stopReason },
+    });
     debugLogger.info("ibkr.sync.symbol", {
         target: "ibkr",
         symbol,
@@ -1106,6 +1387,8 @@ async function syncOneSymbol(
         fetchedBars: fetched.length,
         incremental: incrementalFromTime !== undefined,
         cachedConid: usedCachedConid,
+        complete: result.complete,
+        stopReason: result.stopReason,
         durationMs: Date.now() - startedAt,
     });
     return {
@@ -1118,7 +1401,23 @@ async function syncOneSymbol(
         lastTime: catalogEntry.intervals[interval]?.lastTime ?? null,
         filePath: getCsvPath(symbol, interval),
         conid: resolved.conid,
+        complete: result.complete,
+        stopReason: result.stopReason,
+        ...(result.complete ? {} : { warning: describeIncompleteStopReason(result.stopReason) }),
     };
+}
+
+/**
+ * Human-readable reason for an incomplete max backfill, surfaced in the
+ * `symbol_warning` stream event so the UI can show "completed with warnings".
+ */
+function describeIncompleteStopReason(stopReason: IbkrIntervalMeta["stopReason"]): string {
+    switch (stopReason) {
+        case "retry_exhausted": return "Late retries failed after partial data was fetched.";
+        case "chunk_limit": return "Hit the maximum chunk ceiling before the full history was covered.";
+        case "cancelled": return "Fetch was cancelled mid-backfill.";
+        default: return "History fetch did not complete.";
+    }
 }
 
 function readCatalogAssets(): Array<{ symbol: string; name: string; sector?: string; intervals?: string[] }> {
@@ -1157,6 +1456,13 @@ function readCatalogAssets(): Array<{ symbol: string; name: string; sector?: str
 type SyncStreamEvent = Record<string, unknown> & { type: string };
 type SyncStreamWriter = (event: SyncStreamEvent) => void;
 
+type ProcessSyncBatchOptions = {
+    /** Override the per-symbol worker (test seam — mirrors crypto's fetcher). */
+    fetcher?: typeof syncOneSymbol;
+    /** Abort signal from the run's AbortController; Stop aborts this. */
+    signal?: AbortSignal;
+};
+
 /**
  * Core batch loop, factored out of the HTTP handler so it can be tested and
  * so the NDJSON writer is the only thing that depends on the HTTP response.
@@ -1165,17 +1471,21 @@ type SyncStreamWriter = (event: SyncStreamEvent) => void;
  * catalog is read once and mutated in place across all symbols; a write
  * fires after each successful symbol (atomic temp+rename) so completed
  * symbols survive an interrupted batch. The `owner` param keys cancellation:
- * the loop bails as soon as `syncOwner !== owner` (Stop or a newer sync).
+ * the loop bails as soon as `syncOwner !== owner` (Stop or a newer sync) OR
+ * the run's abort signal fires — whichever the caller observes first.
  */
-async function processSyncBatch(
+export async function processSyncBatch(
     body: Record<string, unknown>,
     syncOnly: boolean,
     writer: SyncStreamWriter,
-    owner: number
+    owner: number,
+    options?: ProcessSyncBatchOptions
 ): Promise<void> {
+    const fetcher = options?.fetcher ?? syncOneSymbol;
+    const signal = options?.signal;
     const symbols = normalizeSymbols(body.symbols ?? body.symbol);
     const interval = normalizeInterval(body.interval);
-    const period = String(body.period ?? DEFAULT_PERIOD_BY_INTERVAL[interval] ?? "1y").trim();
+    const period = normalizePeriod(String(body.period ?? DEFAULT_PERIOD_BY_INTERVAL[interval] ?? "1y").trim());
 
     // Populate the in-progress snapshot so a browser reload can reattach via
     // GET /api/ibkr/sync/status. Cleared in handleSyncRequest's finally when
@@ -1192,6 +1502,8 @@ async function processSyncBatch(
         currentSymbol: null,
         failedSymbols: [],
         cancelled: false,
+        completedSymbols: [],
+        updatedAt: new Date().toISOString(),
     };
     // Capture the run-state object by identity. Cancellation checks below
     // branch on `syncOwner !== owner`, and the snapshot mutations check
@@ -1199,6 +1511,9 @@ async function processSyncBatch(
     // late iteration from corrupting a new owner's lock or snapshot — the
     // hazard that the bare `stopRequested` boolean could not prevent.
     const runState = syncRunState;
+    const touchRunState = () => {
+        if (syncRunState === runState) runState.updatedAt = new Date().toISOString();
+    };
 
     writer({ type: "start", total: symbols.length, interval, period: period || null, mode: syncOnly ? "sync" : "download" });
 
@@ -1207,15 +1522,17 @@ async function processSyncBatch(
     let cancelled = false;
     const catalog = readCatalog();
 
-    // `lostOwnership` is true once Stop force-resets the lock or a newer sync
-    // takes it. Subsequent iterations observe this and break ASAP. The
-    // per-iteration `syncOwner !== owner` re-check covers the case where
-    // ownership changed during the await.
+    // `lostOwnership()` is true only when a *newer* sync has taken the lock
+    // (Stop no longer force-resets it — see /api/ibkr/stop). The per-iteration
+    // re-check covers ownership changing during the await. The abort signal is
+    // the primary cancellation path: Stop aborts it, which surfaces either as
+    // `signal.aborted` or as a thrown AbortError caught below.
     const lostOwnership = () => syncOwner !== owner;
+    const wasCancelled = () => lostOwnership() || signal?.aborted === true;
 
     try {
         for (let index = 0; index < symbols.length; index += 1) {
-            if (lostOwnership()) {
+            if (wasCancelled()) {
                 cancelled = true;
                 if (syncRunState === runState) runState.cancelled = true;
                 break;
@@ -1226,24 +1543,57 @@ async function processSyncBatch(
                 runState.currentSymbol = symbol;
             }
             try {
-                const result = await syncOneSymbol(catalog, symbol, interval, period, syncOnly);
-                // Re-check ownership after the await: a Stop or newer sync
-                // may have arrived mid-fetch. If so, drop this result and
+                const result = await fetcher(catalog, symbol, interval, period, syncOnly, signal);
+                // Re-check ownership/abort after the await: a Stop or newer
+                // sync may have arrived mid-fetch. If so, drop this result and
                 // break without writing — the new owner owns the catalog.
-                if (lostOwnership()) {
+                if (wasCancelled()) {
+                    cancelled = true;
+                    if (syncRunState === runState) runState.cancelled = true;
+                    break;
+                }
+                // A cancelled per-symbol result (fetch aborted mid-symbol but
+                // observed before ownership changed) also ends the run.
+                if ((result as Record<string, unknown>).cancelled === true) {
                     cancelled = true;
                     if (syncRunState === runState) runState.cancelled = true;
                     break;
                 }
                 results.push(result);
-                if (syncRunState === runState) runState.completed += 1;
+                const marked = String((result as Record<string, unknown>).markedSymbol ?? "");
+                if (syncRunState === runState) {
+                    runState.completed += 1;
+                    if (marked && !runState.completedSymbols!.includes(marked)) {
+                        runState.completedSymbols!.push(marked);
+                    }
+                }
                 // Per-symbol catalog write: ensures completed symbols appear
                 // in the catalog even if the batch is interrupted (reload,
                 // crash, fatal on a later symbol). The atomic temp+rename in
                 // writeCatalog keeps each individual write safe.
                 writeCatalog(catalog);
                 writer({ type: "symbol", index, total: symbols.length, ...result });
+                // Partial-max warning: a landed dataset that didn't cover the
+                // full window still counts as success, but the UI must not
+                // treat it as a complete history.
+                if ((result as Record<string, unknown>).complete === false) {
+                    writer({
+                        type: "symbol_warning",
+                        index,
+                        total: symbols.length,
+                        symbol,
+                        reason: String((result as Record<string, unknown>).warning ?? "History fetch did not complete."),
+                        complete: false,
+                    });
+                }
+                touchRunState();
             } catch (error) {
+                // Abort during a fetch: mark cancelled, not failed, and break.
+                if (signal?.aborted || isAbortError(error)) {
+                    cancelled = true;
+                    if (syncRunState === runState) runState.cancelled = true;
+                    break;
+                }
                 const message = error instanceof Error ? error.message : String(error);
                 debugLogger.warn("ibkr.sync.symbol.failed", {
                     target: "ibkr",
@@ -1258,12 +1608,14 @@ async function processSyncBatch(
                     runState.failedSymbols.push({ symbol, error: message });
                 }
                 writer({ type: "symbol_failed", index, total: symbols.length, symbol, error: message });
+                touchRunState();
             }
         }
     } finally {
         if (syncRunState === runState) {
             runState.index = runState.completed + runState.failed;
             runState.currentSymbol = null;
+            touchRunState();
         }
     }
 
@@ -1289,14 +1641,17 @@ async function handleSyncRequest(res: ViteHttpResponse, body: Record<string, unk
     }
     const owner = ++syncOwnerGen;
     syncOwner = owner;
-    // Note: we do NOT reset `stopRequested` here. Cancellation keys off
-    // ownership (`syncOwner !== owner`) inside processSyncBatch, not the
-    // boolean. `stopRequested` is now only consulted by fetchHistorical's
-    // inner chunk loop and remains meaningful for in-flight requests.
+    // One AbortController per run. Stop aborts it (cancels in-flight gateway
+    // fetches within one event-loop tick) but does NOT release ownership —
+    // the run's own `finally` below is the only place the lock is released,
+    // so an aborted run's late per-symbol writes cannot overlap a new run's
+    // writes. This mirrors the crypto-data plugin's pattern exactly.
+    const abortController = new AbortController();
+    syncAbortController = abortController;
     let stream: ReturnType<typeof beginNdjsonStream> | null = null;
     try {
         stream = beginNdjsonStream(res);
-        await processSyncBatch(body, syncOnly, stream.write, owner);
+        await processSyncBatch(body, syncOnly, stream.write, owner, { signal: abortController.signal });
         stream.end();
     } catch (error) {
         if (!stream) throw error;
@@ -1318,20 +1673,51 @@ async function handleSyncRequest(res: ViteHttpResponse, body: Record<string, unk
             // Best-effort: the connection is likely already gone.
         }
     } finally {
-        // Only release the lock if we still own it. If Stop force-bumped the
-        // generation and a newer sync has since taken the lock, our stale
+        // Only release the lock if we still own it. If a newer sync has since
+        // taken the lock (Stop aborted us and the user restarted), our stale
         // owner value no longer matches `syncOwner` — leave it alone so we
-        // don't clobber the newer sync's lock.
+        // don't clobber the newer sync's lock. This is the single place the
+        // lock is released: not in /stop, not on abort.
         if (syncOwner === owner) {
             syncOwner = SYNC_OWNER_NONE;
         }
+        // Clear the controller if it's still ours.
+        if (syncAbortController === abortController) {
+            syncAbortController = null;
+        }
         // Clear the in-progress snapshot only if we still own it. A newer
-        // sync that started after a Stop force-reset will have repopulated
+        // sync that started after a Stop will have repopulated
         // `syncRunState` itself; don't wipe its state.
         if (syncRunState && syncOwner === SYNC_OWNER_NONE) {
             syncRunState = null;
         }
     }
+}
+
+/**
+ * Loopback gate for IBKR mutation/control routes. Allows same-origin callers
+ * (Origin/Referer on localhost/127.0.0.1) without a token, and requires the
+ * shared `LOCAL_PROXY_TOKEN` bearer for any non-local caller — the same
+ * secret the Cloudflare Tunnel candle-proxy workflow already uses (see
+ * run_playground.bat). Returns true when the caller is allowed; the caller
+ * sends the 401 itself so it can match the rest of the route's response shape.
+ *
+ * Mirrors `isTrustedLocalRequest` from `local-sqlite-vite-plugin.ts`, the
+ * established repo idiom for this gate.
+ */
+export function isAllowedIbkrCaller(req: { headers?: Record<string, unknown> }): boolean {
+    const origin = String(req.headers?.origin ?? "");
+    const referer = String(req.headers?.referer ?? "");
+    const isLocal = origin.startsWith("http://localhost")
+        || origin.startsWith("http://127.0.0.1")
+        || referer.startsWith("http://localhost")
+        || referer.startsWith("http://127.0.0.1");
+    if (isLocal) return true;
+    // Non-local: require the documented shared secret.
+    const token = process.env.LOCAL_PROXY_TOKEN?.trim();
+    if (!token) return false;
+    const auth = String(req.headers?.authorization ?? "");
+    return auth === `Bearer ${token}`;
 }
 
 export function ibkrDataVitePlugin(): Plugin {
@@ -1355,6 +1741,10 @@ export function ibkrDataVitePlugin(): Plugin {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
                 return;
             }
+            // Raw auth/tickle payloads leak session internals; only include
+            // them in diagnostic mode. The default status check only needs the
+            // derived booleans + market-data readiness.
+            const diagnostic = String(req.url ?? "").includes("diagnostic=1");
             try {
                 const payload = await ensureBrokerageSession();
                 const brokerageOk = isAuthenticatedBrokerageSession(payload);
@@ -1383,8 +1773,7 @@ export function ibkrDataVitePlugin(): Plugin {
                         lastError: lastKeepAliveError,
                     },
                     marketData,
-                    payload,
-                    ticklePayload,
+                    ...(diagnostic ? { payload, ticklePayload } : {}),
                     ...(brokerageOk && marketData && !marketData.ok && marketData.error
                         ? { error: marketData.error }
                         : {}),
@@ -1410,8 +1799,12 @@ export function ibkrDataVitePlugin(): Plugin {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
                 return;
             }
+            if (!isAllowedIbkrCaller(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: IBKR routes are local-only." });
+                return;
+            }
             try {
-                const body = await readJsonBody(req);
+                const body = await readJsonBody(req, IBKR_BODY_LIMIT_BYTES);
                 const symbols = normalizeSymbols(body.symbols ?? body.symbol);
                 const stream = beginNdjsonStream(res);
                 const results = [];
@@ -1440,42 +1833,22 @@ export function ibkrDataVitePlugin(): Plugin {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
                 return;
             }
+            if (!isAllowedIbkrCaller(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: IBKR routes are local-only." });
+                return;
+            }
             try {
-                await handleSyncRequest(res as ViteHttpResponse, await readJsonBody(req), false);
+                await handleSyncRequest(res as ViteHttpResponse, await readJsonBody(req, IBKR_BODY_LIMIT_BYTES), false);
             } catch (error) {
                 sendCaughtErrorJson(res, error);
             }
         });
 
-        middlewares.use("/api/ibkr/sync", async (req: any, res: any) => {
-            if (req.method !== "POST") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            try {
-                await handleSyncRequest(res as ViteHttpResponse, await readJsonBody(req), true);
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
-        });
-
-        middlewares.use("/api/ibkr/stop", async (req: any, res: any) => {
-            if (req.method !== "POST") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            stopRequested = true;
-            // Force-reset the sync lock so a stuck/hung sync can be recovered
-            // without a server restart. The in-flight processSyncBatch checks
-            // `syncOwner !== owner` between symbols and after each await, so
-            // dropping the lock here causes the running batch to bail at the
-            // next observation point. A new sync can then acquire the lock
-            // immediately (`++syncOwnerGen` produces a value > any prior
-            // owner, so the old batch's late `finally` won't clobber it).
-            syncOwner = SYNC_OWNER_NONE;
-            sendJson(res, 200, { ok: true, stopped: true });
-        });
-
+        // NOTE: Vite's Connect `use(path)` prefix-matches, so the more-specific
+        // `/api/ibkr/sync/status` MUST be registered before `/api/ibkr/sync` —
+        // otherwise the /sync handler claims GET /sync/status and returns 405,
+        // breaking browser reattach. (Same hazard documented in the crypto-data
+        // plugin; this was a latent bug in the prior IBKR route order.)
         middlewares.use("/api/ibkr/sync/status", async (req: any, res: any) => {
             if (req.method !== "GET") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
@@ -1491,15 +1864,85 @@ export function ibkrDataVitePlugin(): Plugin {
                 run: syncRunState,
             });
         });
+
+        middlewares.use("/api/ibkr/sync", async (req: any, res: any) => {
+            if (req.method !== "POST") {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            if (!isAllowedIbkrCaller(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: IBKR routes are local-only." });
+                return;
+            }
+            try {
+                await handleSyncRequest(res as ViteHttpResponse, await readJsonBody(req, IBKR_BODY_LIMIT_BYTES), true);
+            } catch (error) {
+                sendCaughtErrorJson(res, error);
+            }
+        });
+
+        middlewares.use("/api/ibkr/stop", async (req: any, res: any) => {
+            if (req.method !== "POST") {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            if (!isAllowedIbkrCaller(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: IBKR routes are local-only." });
+                return;
+            }
+            // Abort the in-flight run. This cancels gateway fetches within one
+            // event-loop tick (the AbortSignal threads all the way down to the
+            // per-chunk fetch and the abortable retry waits). We intentionally
+            // do NOT release ownership here: the run's own `finally` is the
+            // only place the lock is released, so an aborted run's late
+            // per-symbol writes cannot overlap a new run's writes. A new sync
+            // is rejected (409) until the aborted run unwinds.
+            const stopped = syncOwner !== SYNC_OWNER_NONE;
+            syncAbortController?.abort();
+            sendJson(res, 200, { ok: true, stopped });
+        });
     };
 
     return {
         name: "ibkr-data",
         configureServer(server) {
             register(server.middlewares);
+            // Clear the keepalive interval and abort any in-flight sync when
+            // the dev server closes — mirrors the close-cleanup idiom in
+            // `local-sqlite-vite-plugin.ts`. Defense-in-depth: the run's own
+            // `finally` is the primary lock owner.
+            server.httpServer?.once("close", stopIbkrServerState);
         },
         configurePreviewServer(server) {
             register(server.middlewares);
+            server.httpServer?.once("close", stopIbkrServerState);
         },
     };
+}
+
+// ---------------------------------------------------------------------------
+// Test seams. Mirrors the crypto-data plugin's `__resetCryptoSyncStateForTests`
+// / `__acquireCryptoSyncOwnerForTests` exports, used by the lifecycle spec to
+// drive `processSyncBatch` with an injected fetcher without real I/O.
+// ---------------------------------------------------------------------------
+
+/** Reset all module-level sync state. Exported for test isolation. */
+export function __resetIbkrSyncStateForTests(): void {
+    syncAbortController?.abort();
+    syncOwner = SYNC_OWNER_NONE;
+    syncOwnerGen = 0;
+    syncRunState = null;
+    syncAbortController = null;
+}
+
+/**
+ * Acquire the sync lock for `processSyncBatch` in tests. Mirrors what
+ * `handleSyncRequest` does (bumps the generation and sets the owner) so the
+ * batch's `lostOwnership()` check doesn't immediately bail. Pair with
+ * `__resetIbkrSyncStateForTests` in `beforeEach`/`afterEach`.
+ */
+export function __acquireIbkrSyncOwnerForTests(): number {
+    const owner = ++syncOwnerGen;
+    syncOwner = owner;
+    return owner;
 }
