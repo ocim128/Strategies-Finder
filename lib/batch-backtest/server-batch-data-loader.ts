@@ -7,10 +7,12 @@
  */
 
 import { DATA_CHART_TOTAL_LIMIT } from "../data/constants";
+import { clearLocalDailyCsvCachesForSymbols, loadFreshIbkrCandlesFromPriceData } from "../candle-cache";
 import { DataCache } from "../data/data-cache";
 import { DataFetcher } from "../data/data-fetcher";
 import { DataPersistence } from "../data/data-persistence";
 import { DataProviderRouter } from "../data/data-provider-router";
+import { isIbkrSymbol } from "../local-daily-datasets";
 import type { OHLCVData } from "../types/strategies";
 import { createBatchDatasetLoaderCore, type BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import { loadCachedSyntheticPair, storeSyntheticPair } from "./synthetic-pair-disk-cache";
@@ -31,12 +33,29 @@ function createServerDataFetcher(): DataFetcher {
     );
 }
 
+async function fetchServerHistoricalData(
+    symbol: string,
+    interval: string,
+    limit: number,
+    options?: { signal?: AbortSignal; offline?: boolean },
+): Promise<OHLCVData[]> {
+    if (isIbkrSymbol(symbol)) {
+        // Correctness boundary: every true leg-LRU miss must read the current
+        // IBKR CSV. Large batches exceed the 24-leg LRU, so a once-per-run or
+        // DataCache fallback can reintroduce a pre-sync leg after eviction.
+        // Warm pair-disk hits never reach this path.
+        const candles = await loadFreshIbkrCandlesFromPriceData(symbol, interval, options?.signal);
+        if (!candles) return [];
+        return candles.length > limit ? candles.slice(-limit) : candles;
+    }
+    return createServerDataFetcher().fetchHistoricalData(symbol, interval, limit, options);
+}
+
 const loader = createBatchDatasetLoaderCore({
     logPrefix: "batch.server",
     fetchDetached: (symbol, interval, options) =>
         createServerDataFetcher().fetchDataDetached(symbol, interval, options),
-    fetchHistorical: (symbol, interval, limit, options) =>
-        createServerDataFetcher().fetchHistoricalData(symbol, interval, limit, options),
+    fetchHistorical: fetchServerHistoricalData,
     // Server-side disk cache. File-backed legs use seed CSV mtimes; Binance
     // legs use SQLite series metadata as the fingerprint.
     loadCachedSyntheticPair: (args) => loadCachedSyntheticPair(args),
@@ -58,6 +77,11 @@ export function clearServerBatchDatasetCaches(): void {
     // after the synthetic leg/pair LRUs are cleared, which makes Stability
     // report DATA_STALE against freshly stored candles.
     dataCache.clear();
+    // IBKR sync writes CSVs in the Vite server process, while the browser-side
+    // sync completion hook can only invalidate the browser module cache. Clear
+    // the Node-side parsed CSV cache before another Batch run so a fresh file
+    // mtime cannot be paired with stale in-memory candles in the disk cache.
+    clearLocalDailyCsvCachesForSymbols();
 }
 
 export function getServerBatchDatasetCacheStats(): BatchDatasetCacheStats {

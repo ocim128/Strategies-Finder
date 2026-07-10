@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { clearLocalDailyCsvCachesForSymbols, loadCachedCandles, loadSeedCandlesFromPriceData, mergeCandles, saveCachedCandles } from '../lib/candle-cache';
+import { clearLocalDailyCsvCachesForSymbols, loadCachedCandles, loadFreshIbkrCandlesFromPriceData, loadSeedCandlesFromPriceData, mergeCandles, saveCachedCandles } from '../lib/candle-cache';
 
 type StoredRecord = {
     key: string;
@@ -249,6 +249,36 @@ describe('Candle cache', () => {
         expect(dailyAgain?.[0].close).to.equal(101);
         expect(requestedPaths.filter((path) => path.includes('/price-data/ibkr/csv/1d/NVDA.csv'))).to.have.length(1);
         expect(requestedPaths.filter((path) => path.includes('/price-data/ibkr/csv/4h/NVDA.csv'))).to.have.length(1);
+    });
+
+    it('can bypass a retained IBKR CSV entry when a server synthetic leg needs authoritative data', async () => {
+        let close = 101;
+        let requests = 0;
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+            const path = String(input);
+            if (!path.includes('/price-data/ibkr/csv/30m/NVDA.csv')) {
+                return { status: 404, ok: false } as Response;
+            }
+            requests += 1;
+            return {
+                status: 200,
+                ok: true,
+                text: async () => [
+                    'time,open,high,low,close,volume',
+                    `2026-07-09T19:30:00.000Z,100,210,90,${close},1000`,
+                ].join('\n'),
+            } as Response;
+        }) as typeof fetch;
+
+        const cached = await loadSeedCandlesFromPriceData('NVDA\u2022', '30m');
+        close = 202;
+        const cachedAgain = await loadSeedCandlesFromPriceData('NVDA\u2022', '30m');
+        const fresh = await loadFreshIbkrCandlesFromPriceData('NVDA\u2022', '30m');
+
+        expect(cached?.[0].close).to.equal(101);
+        expect(cachedAgain?.[0].close).to.equal(101);
+        expect(fresh?.[0].close).to.equal(202);
+        expect(requests).to.equal(2);
     });
 
     it('returns the write-sanitized IndexedDB payload without changing its candle ordering on read', async () => {

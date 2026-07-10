@@ -394,7 +394,8 @@ async function loadLocalDailyDatasetCandles(
     dataset: LocalDailyDatasetConfig,
     symbol: string,
     interval: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    bypassCache = false,
 ): Promise<OHLCVData[] | null> {
     const baseInterval = interval.trim().toLowerCase().split('@')[0];
     const isIbkr = isIbkrDatasetKey(dataset.key);
@@ -420,12 +421,14 @@ async function loadLocalDailyDatasetCandles(
         const cacheKey = isIbkr
             ? `${dataset.key}:${baseInterval}:${candidate}`
             : `${dataset.key}:${candidate}`;
-        const cachedCandles = getLocalDailyCsvCache(cacheKey);
-        if (cachedCandles) {
-            return cachedCandles;
-        }
-        if (missingLocalDailyCsvFiles.has(cacheKey)) {
-            continue;
+        if (!bypassCache) {
+            const cachedCandles = getLocalDailyCsvCache(cacheKey);
+            if (cachedCandles) {
+                return cachedCandles;
+            }
+            if (missingLocalDailyCsvFiles.has(cacheKey)) {
+                continue;
+            }
         }
 
         const filePath = isIbkr
@@ -473,6 +476,23 @@ async function loadLocalDailyDatasetCandles(
     }
 
     return null;
+}
+
+/**
+ * Load an IBKR CSV from the authoritative file response without consulting
+ * the parsed-CSV cache. Server-side synthetic-pair cache misses use this path
+ * so a fresh pair artifact cannot be rebuilt from a retained pre-sync leg.
+ */
+export async function loadFreshIbkrCandlesFromPriceData(
+    symbol: string,
+    interval: string,
+    signal?: AbortSignal,
+): Promise<OHLCVData[] | null> {
+    if (!isIbkrSymbol(symbol)) return null;
+    const dataset = LOCAL_DAILY_DATASETS.find((candidate) => isIbkrDatasetKey(candidate.key));
+    return dataset
+        ? loadLocalDailyDatasetCandles(dataset, symbol, interval, signal, true)
+        : null;
 }
 
 async function loadLocalDailyCandles(

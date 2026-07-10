@@ -13,6 +13,8 @@ import {
     parseHistoryCandles,
     parsePeriodToMs,
     parseResolvedContracts,
+    isStaleIbkrSyncWithoutAdvance,
+    selectPreferredResolvedContract,
     resolveFromCatalog,
     resolveIbkrHistoryPageStartTime,
     runIbkrKeepAliveCycle,
@@ -198,6 +200,24 @@ describe("ibkr parseResolvedContracts", () => {
     it("falls back to symbol name when neither companyName nor description is present", () => {
         const rows = parseResolvedContracts("AAPL", [{ conid: "123" }]);
         assert.equal(rows[0]!.name, "AAPL");
+    });
+});
+
+describe("ibkr selectPreferredResolvedContract", () => {
+    it("prefers the US stock listing over an ambiguous derivative-exchange match", () => {
+        const selected = selectPreferredResolvedContract([
+            { symbol: "STX", conid: "wrong", name: "STX", exchange: "EUREX", primaryExchange: "", currency: "USD" },
+            { symbol: "STX", conid: "right", name: "Seagate", exchange: "Seagate Technology", primaryExchange: "NASDAQ", currency: "USD" },
+        ]);
+        assert.equal(selected?.conid, "right");
+    });
+
+    it("preserves response order when no preferred listing signal exists", () => {
+        const selected = selectPreferredResolvedContract([
+            { symbol: "ABC", conid: "first", name: "ABC", exchange: "LSE", primaryExchange: "", currency: "GBP" },
+            { symbol: "ABC", conid: "second", name: "ABC", exchange: "TSE", primaryExchange: "", currency: "JPY" },
+        ]);
+        assert.equal(selected?.conid, "first");
     });
 });
 
@@ -419,6 +439,28 @@ describe("ibkr shouldUseIncrementalIbkrSync", () => {
     });
 });
 
+describe("ibkr stale sync advancement", () => {
+    it("flags an old source when a successful fetch does not advance its last candle", () => {
+        const existing = "2026-07-02T19:30:00.000Z";
+        const fetched = [{
+            time: (Date.parse(existing) / 1000) as OHLCVData["time"],
+            open: 1, high: 1, low: 1, close: 1, volume: 1,
+        }];
+        assert.equal(isStaleIbkrSyncWithoutAdvance(existing, fetched, Date.parse("2026-07-10T12:00:00.000Z")), true);
+    });
+
+    it("accepts a fetch that advances and tolerates a short weekend-sized gap", () => {
+        const existing = "2026-07-02T19:30:00.000Z";
+        const advanced = [{
+            time: (Date.parse("2026-07-06T13:30:00.000Z") / 1000) as OHLCVData["time"],
+            open: 1, high: 1, low: 1, close: 1, volume: 1,
+        }];
+        const unchanged = [{ ...advanced[0]!, time: (Date.parse(existing) / 1000) as OHLCVData["time"] }];
+        assert.equal(isStaleIbkrSyncWithoutAdvance(existing, advanced, Date.parse("2026-07-10T12:00:00.000Z")), false);
+        assert.equal(isStaleIbkrSyncWithoutAdvance(existing, unchanged, Date.parse("2026-07-06T12:00:00.000Z")), false);
+    });
+});
+
 describe("ibkr resolveFromCatalog", () => {
     const baseEntry = {
         symbol: "AAPL",
@@ -441,6 +483,14 @@ describe("ibkr resolveFromCatalog", () => {
 
     it("returns null when the entry has no conid", () => {
         const resolved = resolveFromCatalog({ ...baseEntry, conid: undefined }, Date.parse("2024-01-12"));
+        assert.equal(resolved, null);
+    });
+
+    it("rejects a derivative-exchange contract cached for a stock symbol", () => {
+        const resolved = resolveFromCatalog(
+            { ...baseEntry, exchange: "EUREX", currency: "USD" },
+            Date.parse("2024-01-12"),
+        );
         assert.equal(resolved, null);
     });
 

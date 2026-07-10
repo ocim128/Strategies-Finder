@@ -121,6 +121,7 @@ if defined CLOUDFLARED_EXE (
 )
 
 echo Starting Lightweight Charts Playground...
+cd /d "%~dp0"
 echo !NODE_OPTIONS! | findstr /C:"--max-old-space-size" >nul 2>&1
 if errorlevel 1 (
     if defined NODE_OPTIONS (

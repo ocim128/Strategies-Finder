@@ -37,7 +37,11 @@ import type { SyntheticPairDiskCacheArgs } from "./batch-dataset-loader-core";
  *  - `SYNTHETIC_TARGET_BARS` / `DATA_CHART_TOTAL_LIMIT` resolution that
  *    changes the slice length
  */
-export const SYNTHETIC_PAIR_CACHE_VERSION = 1;
+// v6 rejects files that may have been stamped with a fresh IBKR seed mtime
+// while still containing candles from the stale Node-side parsed CSV cache.
+// Earlier versions were produced before every true IBKR leg-LRU miss bypassed
+// the parsed/persistence caches, so they cannot be trusted after a sync.
+export const SYNTHETIC_PAIR_CACHE_VERSION = 6;
 
 const CACHE_DIR_NAME = "synthetic-cache";
 const SERIES_META_TIMEOUT_MS = 2_000;

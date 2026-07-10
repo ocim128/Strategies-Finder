@@ -248,7 +248,13 @@ function clearArtifactReleaseTimer(): void {
 function releaseLastResults(reason: string): void {
     clearArtifactReleaseTimer();
     const rows = lastMineArtifacts.length;
-    if (rows === 0 && !mineArtifactDir) return;
+    if (rows === 0 && !mineArtifactDir) {
+        // `new_run` also comes through here. Cache invalidation must not depend
+        // on Mine artifacts existing: IBKR CSVs may have changed since a prior
+        // non-mineable/expired run while the server-side parsed CSV cache lived.
+        clearServerBatchDatasetCaches();
+        return;
+    }
     debugLogger.info("batch.server.artifacts_released", {
         reason,
         rows,

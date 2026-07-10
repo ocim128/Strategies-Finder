@@ -97,6 +97,7 @@ const IBKR_GATEWAY_TIMEOUT_MS = 45_000;
 // entry's conid before re-resolving. Conids can change on corporate actions
 // / ticker remaps; the 0-bars fallback below covers the rare stale case.
 const IBKR_CONID_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const IBKR_NO_ADVANCE_STALE_MS = 5 * 24 * 60 * 60 * 1000;
 // IBKR mutation routes (sync/download/resolve/stop) are local-control-plane
 // operations: the IBKR Gateway itself is https://localhost:5000 and the only
 // documented remote path (the Cloudflare Tunnel in run_playground.bat) is for
@@ -683,6 +684,7 @@ export function resolveFromCatalog(
     nowMs: number = Date.now()
 ): IbkrResolvedContract | null {
     if (!entry || !entry.conid) return null;
+    if (isDerivativeExchange(entry.exchange) || isDerivativeExchange(entry.primaryExchange)) return null;
     const intervals = entry.intervals ?? {};
     const lastSyncAt = Object.values(intervals)
         .map((info) => info?.lastSyncAt ? Date.parse(info.lastSyncAt) : NaN)
@@ -907,6 +909,34 @@ export function parseResolvedContracts(symbol: string, payload: unknown): IbkrRe
         .filter((item): item is IbkrResolvedContract => item !== null);
 }
 
+const PREFERRED_US_STOCK_EXCHANGES = new Set(["NASDAQ", "NYSE", "AMEX", "ARCA", "BATS", "IEX"]);
+const DERIVATIVE_EXCHANGES = new Set(["EUREX", "CME", "CBOT", "NYMEX", "COMEX", "GLOBEX"]);
+
+function normalizeExchange(value: string | undefined): string {
+    return String(value ?? "").trim().toUpperCase();
+}
+
+function isDerivativeExchange(value: string | undefined): boolean {
+    return DERIVATIVE_EXCHANGES.has(normalizeExchange(value));
+}
+
+export function selectPreferredResolvedContract(
+    contracts: readonly IbkrResolvedContract[],
+): IbkrResolvedContract | null {
+    if (contracts.length === 0) return null;
+    const scored = contracts.map((contract, index) => {
+        const primary = normalizeExchange(contract.primaryExchange);
+        const exchange = normalizeExchange(contract.exchange);
+        const score = (PREFERRED_US_STOCK_EXCHANGES.has(primary) ? 100 : 0)
+            + (PREFERRED_US_STOCK_EXCHANGES.has(exchange) ? 50 : 0)
+            + (normalizeExchange(contract.currency) === "USD" ? 10 : 0)
+            - (isDerivativeExchange(primary) || isDerivativeExchange(exchange) ? 1_000 : 0);
+        return { contract, index, score };
+    });
+    scored.sort((a, b) => b.score - a.score || a.index - b.index);
+    return scored[0]?.contract ?? null;
+}
+
 async function resolveSymbol(symbol: string): Promise<IbkrResolvedContract> {
     const params = new URLSearchParams({ symbol, sectype: "STK" });
     const payload = await fetchGatewayJsonAuthenticated(`/iserver/secdef/search?${params.toString()}`, {
@@ -914,7 +944,7 @@ async function resolveSymbol(symbol: string): Promise<IbkrResolvedContract> {
         body: "{}",
     });
     const contracts = parseResolvedContracts(symbol, payload);
-    const resolved = contracts[0];
+    const resolved = selectPreferredResolvedContract(contracts);
     if (!resolved) {
         throw new HttpStatusError(404, `IBKR could not resolve ${symbol}.`);
     }
@@ -940,6 +970,19 @@ export function parseHistoryCandles(payload: unknown): OHLCVData[] {
         candles.push({ time: time as OHLCVData["time"], open, high, low, close, volume: Number.isFinite(volume) ? volume : 0 });
     }
     return mergeCandlesByTime(candles);
+}
+
+export function isStaleIbkrSyncWithoutAdvance(
+    existingLastTime: string | null | undefined,
+    fetched: readonly OHLCVData[],
+    nowMs: number = Date.now(),
+): boolean {
+    if (!existingLastTime || fetched.length === 0) return false;
+    const existingTime = Date.parse(existingLastTime);
+    const fetchedTime = parseTimeToUnixSeconds(fetched[fetched.length - 1]?.time);
+    if (!Number.isFinite(existingTime) || fetchedTime === null) return false;
+    return nowMs - existingTime > IBKR_NO_ADVANCE_STALE_MS
+        && fetchedTime * 1000 <= existingTime;
 }
 
 export function parsePeriodToMs(period: string): number | null {
@@ -1309,11 +1352,18 @@ async function syncOneSymbol(
     // Cached conid: skip `resolveSymbol` when the catalog has a fresh one.
     // Falls back to a fresh resolve if the cached conid returns 0 bars
     // (handles corporate actions / stale conids without silent wrong data).
-    let resolved: IbkrResolvedContract | null = resolveFromCatalog(existingEntry);
-    let usedCachedConid = resolved !== null;
-    if (!resolved) {
-        resolved = await resolveSymbol(symbol);
-    }
+    const cachedResolved = resolveFromCatalog(existingEntry);
+    let usedCachedConid = cachedResolved !== null;
+    let resolved: IbkrResolvedContract = cachedResolved ?? await resolveSymbol(symbol);
+    const assertContractStableForSync = (): void => {
+        if (syncOnly && existingEntry?.conid && existingEntry.conid !== resolved.conid) {
+            throw new HttpStatusError(
+                409,
+                `IBKR resolved ${symbol} to a different contract (${existingEntry.conid} -> ${resolved.conid}). Use Download with period=max to replace the old contract data instead of merging incompatible histories.`,
+            );
+        }
+    };
+    assertContractStableForSync();
 
     // Incremental sync: for bounded periods with a known last bar, narrow the
     // fetch window. `max` must still walk backward for a full backfill.
@@ -1324,7 +1374,8 @@ async function syncOneSymbol(
     }
 
     let result = await fetchHistorical(resolved, interval, period, incrementalFromTime, signal);
-    if (result.candles.length === 0 && usedCachedConid) {
+    const isCancelled = (): boolean => result.stopReason === "cancelled" || signal?.aborted === true;
+    if (!isCancelled() && result.candles.length === 0 && usedCachedConid) {
         debugLogger.info("ibkr.sync.conidFallback", {
             target: "ibkr",
             symbol,
@@ -1333,14 +1384,37 @@ async function syncOneSymbol(
         });
         resolved = await resolveSymbol(symbol);
         usedCachedConid = false;
+        assertContractStableForSync();
         result = await fetchHistorical(resolved, interval, period, incrementalFromTime, signal);
+    }
+
+    const existingLastTime = existingEntry?.intervals[interval]?.lastTime;
+    if (!isCancelled() && syncOnly && isStaleIbkrSyncWithoutAdvance(existingLastTime, result.candles)) {
+        if (usedCachedConid) {
+            debugLogger.info("ibkr.sync.staleNoAdvanceReresolve", {
+                target: "ibkr",
+                symbol,
+                interval,
+                existingLastTime,
+            });
+            resolved = await resolveSymbol(symbol);
+            usedCachedConid = false;
+            assertContractStableForSync();
+            result = await fetchHistorical(resolved, interval, period, incrementalFromTime, signal);
+        }
+        if (!isCancelled() && isStaleIbkrSyncWithoutAdvance(existingLastTime, result.candles)) {
+            throw new HttpStatusError(
+                502,
+                `IBKR returned no ${interval} candles newer than ${existingLastTime} for ${symbol}, even after contract re-resolution.`,
+            );
+        }
     }
 
     // Cancellation invariant: if the fetch was aborted (Stop / newer sync),
     // do NOT write CSV or catalog. Ownership may already belong to a newer
     // run; writing here would race that run's writes. Surface as a cancelled
     // result so the batch loop can mark the run cancelled and move on.
-    if (result.stopReason === "cancelled" || signal?.aborted) {
+    if (isCancelled()) {
         debugLogger.info("ibkr.sync.symbol.cancelled", {
             target: "ibkr",
             symbol,
