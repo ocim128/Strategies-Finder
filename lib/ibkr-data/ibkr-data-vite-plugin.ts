@@ -70,6 +70,7 @@ const IBKR_HISTORY_MAX_SYNC_CHUNKS = 80;
 const IBKR_HISTORY_CHUNK_DELAY_MS = 1_500;
 const IBKR_HISTORY_RETRY_DELAYS_MS = [5_000, 15_000, 30_000] as const;
 const IBKR_KEEPALIVE_INTERVAL_MS = 60_000;
+const IBKR_AUTH_RECOVERY_DELAY_MS = 3_000;
 // Auth-cache TTL: `fetchGatewayJsonAuthenticated` previously called
 // `ensureBrokerageSession()` before every gateway request, and that helper
 // makes an HTTP round-trip to /iserver/auth/status. For a 20-symbol sync
@@ -311,25 +312,47 @@ function wait(ms: number): Promise<void> {
     return new Promise((resolveWait) => setTimeout(resolveWait, ms));
 }
 
-function stopKeepAlive(): void {
-    if (keepAliveTimer) {
-        clearInterval(keepAliveTimer);
-        keepAliveTimer = null;
+type IbkrKeepAliveDependencies = {
+    tickle: () => Promise<unknown>;
+    recover: (trigger: string) => Promise<unknown>;
+};
+
+export async function runIbkrKeepAliveCycle(dependencies: IbkrKeepAliveDependencies): Promise<void> {
+    let payload: unknown;
+    try {
+        payload = await dependencies.tickle();
+    } catch (error) {
+        if (!(error instanceof HttpStatusError) || (error.status !== 401 && error.status !== 403)) {
+            throw error;
+        }
+        cachedAuthExpiry = 0;
+        const recoveredStatus = await dependencies.recover(`keepalive-${error.status}`);
+        if (!isAuthenticatedBrokerageSession(recoveredStatus)) {
+            throw new HttpStatusError(error.status, "IBKR keepalive could not recover the brokerage session.");
+        }
+        return;
+    }
+
+    const authStatus = getTickleAuthStatus(payload);
+    if (authStatus && !isAuthenticatedBrokerageSession(authStatus)) {
+        cachedAuthExpiry = 0;
+        const recoveredStatus = await dependencies.recover("keepalive-status");
+        if (!isAuthenticatedBrokerageSession(recoveredStatus)) {
+            throw new HttpStatusError(401, "IBKR keepalive could not recover the brokerage session.");
+        }
     }
 }
 
 function startKeepAlive(): void {
     if (keepAliveTimer) return;
     keepAliveTimer = setInterval(() => {
-        void tickleGateway().then((payload) => {
-            const authStatus = getTickleAuthStatus(payload);
-            if (authStatus && !isAuthenticatedBrokerageSession(authStatus)) {
-                lastKeepAliveError = "IBKR tickle returned an unauthenticated brokerage session.";
-                stopKeepAlive();
-            }
+        void runIbkrKeepAliveCycle({
+            tickle: tickleGateway,
+            recover: recoverBrokerageSession,
+        }).then(() => {
+            lastKeepAliveError = null;
         }).catch((error) => {
             lastKeepAliveError = error instanceof Error ? error.message : String(error);
-            stopKeepAlive();
         });
     }, IBKR_KEEPALIVE_INTERVAL_MS);
 }
@@ -352,13 +375,14 @@ async function recoverBrokerageSession(trigger: string): Promise<unknown> {
     let lastError: unknown = null;
     try {
         await initializeBrokerageSession();
-        await wait(750);
+        await wait(IBKR_AUTH_RECOVERY_DELAY_MS);
         const status = await fetchGatewayJson("/iserver/auth/status");
         if (isAuthenticatedBrokerageSession(status)) {
             debugLogger.info("ibkr.auth.recovered", { target: "ibkr", trigger, method: "ssodh-init" });
             startKeepAlive();
+            return status;
         }
-        return status;
+        lastError = new Error("IBKR ssodh/init completed, but the brokerage session remained unauthenticated.");
     } catch (error) {
         if (!(error instanceof HttpStatusError) || (error.status !== 401 && error.status !== 403)) {
             throw error;
@@ -368,13 +392,18 @@ async function recoverBrokerageSession(trigger: string): Promise<unknown> {
 
     try {
         await reauthenticateBrokerageSession();
-        await wait(3_000);
+        await wait(IBKR_AUTH_RECOVERY_DELAY_MS);
         const status = await fetchGatewayJson("/iserver/auth/status");
         if (isAuthenticatedBrokerageSession(status)) {
             debugLogger.info("ibkr.auth.recovered", { target: "ibkr", trigger, method: "reauthenticate" });
             startKeepAlive();
+            return status;
         }
-        return status;
+        const detail = lastError instanceof Error ? lastError.message : String(lastError ?? "");
+        throw new HttpStatusError(
+            401,
+            `IBKR brokerage session remained unauthenticated after automatic recovery.${detail ? ` Previous recovery error: ${detail}` : ""}`
+        );
     } catch (error) {
         if (error instanceof HttpStatusError && (error.status === 401 || error.status === 403)) {
             const detail = lastError instanceof Error ? lastError.message : String(lastError ?? "");

@@ -12,10 +12,11 @@ import {
     parsePeriodToMs,
     parseResolvedContracts,
     resolveFromCatalog,
+    runIbkrKeepAliveCycle,
     shouldUseIncrementalIbkrSync,
     type SyncRunState,
 } from "../lib/ibkr-data/ibkr-data-vite-plugin";
-import { beginNdjsonStream } from "../lib/vite-http-utils";
+import { beginNdjsonStream, HttpStatusError } from "../lib/vite-http-utils";
 import type { OHLCVData } from "../lib/types/strategies";
 
 describe("ibkr describeIbkrMarketDataReadiness", () => {
@@ -50,6 +51,64 @@ describe("ibkr describeIbkrMarketDataReadiness", () => {
 
         assert.equal(readiness.ok, false);
         assert.match(readiness.error ?? "", /not connected\/authenticated/);
+    });
+});
+
+describe("ibkr keepalive", () => {
+    const authenticatedStatus = { authenticated: true, connected: true };
+
+    it("leaves an authenticated brokerage session alone", async () => {
+        let recoverCalls = 0;
+        await runIbkrKeepAliveCycle({
+            tickle: async () => ({ iserver: { authStatus: authenticatedStatus } }),
+            recover: async () => {
+                recoverCalls += 1;
+                return authenticatedStatus;
+            },
+        });
+        assert.equal(recoverCalls, 0);
+    });
+
+    it("recovers when tickle reports that brokerage auth was lost", async () => {
+        let recoverTrigger = "";
+        await runIbkrKeepAliveCycle({
+            tickle: async () => ({
+                iserver: { authStatus: { authenticated: false, connected: true } },
+            }),
+            recover: async (trigger) => {
+                recoverTrigger = trigger;
+                return authenticatedStatus;
+            },
+        });
+        assert.equal(recoverTrigger, "keepalive-status");
+    });
+
+    it("recovers after an expired-session 401 from tickle", async () => {
+        let recoverTrigger = "";
+        await runIbkrKeepAliveCycle({
+            tickle: async () => {
+                throw new HttpStatusError(401, "expired");
+            },
+            recover: async (trigger) => {
+                recoverTrigger = trigger;
+                return authenticatedStatus;
+            },
+        });
+        assert.equal(recoverTrigger, "keepalive-401");
+    });
+
+    it("surfaces transient tickle failures without attempting auth recovery", async () => {
+        let recoverCalls = 0;
+        await assert.rejects(() => runIbkrKeepAliveCycle({
+            tickle: async () => {
+                throw new HttpStatusError(502, "gateway unavailable");
+            },
+            recover: async () => {
+                recoverCalls += 1;
+                return authenticatedStatus;
+            },
+        }), /gateway unavailable/);
+        assert.equal(recoverCalls, 0);
     });
 });
 
