@@ -53,10 +53,17 @@ describe("finder server loader parity", () => {
         expect(finderLoader.includes('from "../../finder-manager"')).to.equal(false);
         expect(finderLoader.includes('from "../../constants"')).to.equal(false);
         expect(finderLoader.includes('from "../../chart-manager"')).to.equal(false);
-        // Leaf-only imports it IS allowed to use.
-        expect(finderLoader.includes('from "../../data/data-fetcher"')).to.equal(true);
-        expect(finderLoader.includes('from "../../data/data-cache"')).to.equal(true);
-        expect(finderLoader.includes('new DataFetcher(')).to.equal(true);
+        // The DataFetcher setup lives in the shared leaf factory
+        // (server-data-fetcher-factory.ts), so the loader imports that factory
+        // instead of constructing DataFetcher itself. Verify the factory is a
+        // leaf module with no browser-bound imports.
+        expect(finderLoader.includes('from "../../data/server-data-fetcher-factory"')).to.equal(true);
+        const factory = readSource(path.join(APP_ROOT, "lib", "data", "server-data-fetcher-factory.ts"));
+        expect(factory.includes('from "./data-fetcher"')).to.equal(true);
+        expect(factory.includes('new DataFetcher(')).to.equal(true);
+        expect(factory.includes('from "../data-manager"')).to.equal(false);
+        expect(factory.includes('from "../chart-manager"')).to.equal(false);
+        expect(factory.includes('from "../constants"')).to.equal(false);
     });
 
     it("shared core holds the synthetic-pair pipeline + cache caps", () => {

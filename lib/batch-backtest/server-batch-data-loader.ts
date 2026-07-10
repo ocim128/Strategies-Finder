@@ -6,32 +6,23 @@
  * imported by the Vite plugin is bundled into the dev-server config path.
  */
 
-import { DATA_CHART_TOTAL_LIMIT } from "../data/constants";
 import { clearLocalDailyCsvCachesForSymbols, loadFreshIbkrCandlesFromPriceData } from "../candle-cache";
-import { DataCache } from "../data/data-cache";
-import { DataFetcher } from "../data/data-fetcher";
-import { DataPersistence } from "../data/data-persistence";
-import { DataProviderRouter } from "../data/data-provider-router";
 import { isIbkrSymbol } from "../local-daily-datasets";
 import type { OHLCVData } from "../types/strategies";
 import { createBatchDatasetLoaderCore, type BatchDatasetCacheStats } from "./batch-dataset-loader-core";
-import { loadCachedSyntheticPair, storeSyntheticPair } from "./synthetic-pair-disk-cache";
+import {
+    loadCachedSyntheticPair,
+    storeSyntheticPair,
+} from "./synthetic-pair-disk-cache";
+import { clearServerDataCache, createServerDataFetcher } from "../data/server-data-fetcher-factory";
 
-const providerRouter = new DataProviderRouter();
-const dataCache = new DataCache();
-const dataPersistence = new DataPersistence();
-const emptyImportedData = new Map<string, OHLCVData[]>();
+// Reuse a single long-lived DataFetcher for the whole server loader (Finding 8).
+const serverDataFetcher = createServerDataFetcher();
 
-function createServerDataFetcher(): DataFetcher {
-    return new DataFetcher(
-        providerRouter,
-        dataCache,
-        dataPersistence,
-        () => emptyImportedData,
-        () => DATA_CHART_TOTAL_LIMIT,
-        {},
-    );
-}
+// The bounded-cache startup prune is triggered lazily by the disk-cache module
+// on the first write (see `storeSyntheticPair` → `maybePruneAfterWrite`), NOT at
+// import time. Running it at import time would prune the real cache directory
+// as a side-effect of importing this module in tests.
 
 async function fetchServerHistoricalData(
     symbol: string,
@@ -48,13 +39,13 @@ async function fetchServerHistoricalData(
         if (!candles) return [];
         return candles.length > limit ? candles.slice(-limit) : candles;
     }
-    return createServerDataFetcher().fetchHistoricalData(symbol, interval, limit, options);
+    return serverDataFetcher.fetchHistoricalData(symbol, interval, limit, options);
 }
 
 const loader = createBatchDatasetLoaderCore({
     logPrefix: "batch.server",
     fetchDetached: (symbol, interval, options) =>
-        createServerDataFetcher().fetchDataDetached(symbol, interval, options),
+        serverDataFetcher.fetchDataDetached(symbol, interval, options),
     fetchHistorical: fetchServerHistoricalData,
     // Server-side disk cache. File-backed legs use seed CSV mtimes; Binance
     // legs use SQLite series metadata as the fingerprint.
@@ -76,7 +67,7 @@ export function clearServerBatchDatasetCaches(): void {
     // DataCache otherwise keeps serving the pre-sync target timeframe even
     // after the synthetic leg/pair LRUs are cleared, which makes Stability
     // report DATA_STALE against freshly stored candles.
-    dataCache.clear();
+    clearServerDataCache();
     // IBKR sync writes CSVs in the Vite server process, while the browser-side
     // sync completion hook can only invalidate the browser module cache. Clear
     // the Node-side parsed CSV cache before another Batch run so a fresh file

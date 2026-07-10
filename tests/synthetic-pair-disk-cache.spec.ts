@@ -13,10 +13,11 @@
  */
 
 import * as assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
 import { dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { deserialize as v8Deserialize, serialize as v8Serialize } from "node:v8";
 import type { OHLCVData } from "../lib/types/strategies";
 import type { SyntheticPairDiskCacheArgs } from "../lib/batch-backtest/batch-dataset-loader-core";
 import {
@@ -26,7 +27,12 @@ import {
     __setSeriesMetaFetcherForTests,
     __setSyntheticPairCacheDirForTests,
     computeSeedFingerprint,
+    getSyntheticPairCacheSize,
     loadCachedSyntheticPair,
+    MAX_CACHE_BYTES,
+    MAX_CACHE_FILES,
+    pruneOnStartup,
+    pruneSyntheticPairDiskCache,
     storeSyntheticPair,
 } from "../lib/batch-backtest/synthetic-pair-disk-cache";
 
@@ -268,25 +274,59 @@ test("version mismatch causes a cache miss", async () => {
     const args = makeArgs();
     assert.equal(await storeSyntheticPair(args, makeBars(3)), true);
 
-    // Corrupt the file by flipping the version after write.
+    // Corrupt the v2 (.bin) file by flipping the version after write.
     const filePath = __cacheFilePathForTests(args);
-    const raw = readFileSync(filePath, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = v8Deserialize(readFileSync(filePath)) as { version: number };
     parsed.version = SYNTHETIC_PAIR_CACHE_VERSION + 999;
-    writeFileSync(filePath, JSON.stringify(parsed), "utf8");
+    writeFileSync(filePath, v8Serialize(parsed));
 
     const loaded = await loadCachedSyntheticPair(args);
     assert.equal(loaded, null, "version mismatch must invalidate");
 });
 
-test("malformed JSON in cache file causes a cache miss (no throw)", async () => {
+test("malformed v2 cache file causes a cache miss (no throw)", async () => {
     const args = makeArgs();
     const filePath = __cacheFilePathForTests(args);
     mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, "{not valid json", "utf8");
+    writeFileSync(filePath, Buffer.from([0xff, 0xfe, 0xfd, 0xfc, 0x00, 0x01, 0x02, 0x03]));
 
     const loaded = await loadCachedSyntheticPair(args);
     assert.equal(loaded, null);
+});
+
+test("legacy v1 JSON cache is still read and upgraded to v2 on next store", async () => {
+    const args = makeArgs();
+    const legacyPath = `${__cacheFilePathForTests(args).replace(/\.bin$/, "")}.json`;
+    const legacyPayload = {
+        version: SYNTHETIC_PAIR_CACHE_VERSION,
+        fingerprint: await computeSeedFingerprint(args.baseSymbol, args.quoteSymbol, args.sourceInterval),
+        generatedAt: new Date().toISOString(),
+        sourceInterval: args.sourceInterval,
+        bars: 2,
+        data: makeBars(2).map((bar) => ({
+            time: Number(bar.time),
+            open: bar.open,
+            high: bar.high,
+            low: bar.low,
+            close: bar.close,
+            volume: bar.volume,
+        })),
+    };
+    mkdirSync(dirname(legacyPath), { recursive: true });
+    writeFileSync(legacyPath, JSON.stringify(legacyPayload), "utf8");
+
+    // v1 read succeeds.
+    const loaded = await loadCachedSyntheticPair(args);
+    assert.ok(loaded !== null);
+    assert.equal(loaded!.bars.length, 2);
+
+    // Next store writes v2 (.bin) and removes the legacy .json.
+    assert.equal(await storeSyntheticPair(args, makeBars(4)), true);
+    assert.equal(existsSync(legacyPath), false, "legacy .json must be removed on upgrade write");
+    assert.equal(existsSync(__cacheFilePathForTests(args)), true, "v2 .bin must exist after upgrade write");
+    const reloaded = await loadCachedSyntheticPair(args);
+    assert.ok(reloaded !== null);
+    assert.equal(reloaded!.bars.length, 4);
 });
 
 test("load returns null when no cache file exists", async () => {
@@ -304,7 +344,88 @@ test("storeSyntheticPair on crypto legs with cold series_meta is a no-op (no fil
 test("cache file path encodes the pair key without pipe characters", () => {
     const args = makeArgs();
     const filePath = __cacheFilePathForTests(args);
-    assert.ok(filePath.endsWith(".json"));
+    assert.ok(filePath.endsWith(".bin"), "v2 cache files use the .bin extension");
     assert.ok(!filePath.includes("|"), "pipe must be replaced for shell-safety");
     assert.ok(filePath.includes(cacheDir), `file should live under ${cacheDir}`);
 });
+
+// --------------------------------------------------------------------------
+// Bounded-cache pruning (Finding 1)
+// --------------------------------------------------------------------------
+
+function seedCacheFiles(count: number): { paths: string[]; totalBytes: number } {
+    const paths: string[] = [];
+    let totalBytes = 0;
+    for (let i = 0; i < count; i += 1) {
+        const p = resolve(cacheDir, `seed-${i}.bin`);
+        // Each file is ~12 bytes so byte-cap tests can use a tiny threshold.
+        const buf = Buffer.alloc(12, i);
+        writeFileSync(p, buf);
+        paths.push(p);
+        totalBytes += buf.length;
+    }
+    return { paths, totalBytes };
+}
+
+function touchFile(path: string, mtimeSecondsAgo: number): void {
+    const atime = (Date.now() / 1000);
+    const mtime = atime - mtimeSecondsAgo;
+    utimesSync(path, atime, mtime);
+}
+
+test("pruneSyntheticPairDiskCache evicts oldest-mtime files first by file-count cap", () => {
+    const { paths } = seedCacheFiles(5);
+    // Make the order deterministic: index 0 is oldest, 4 is newest.
+    paths.forEach((p, i) => touchFile(p, 100 - i));
+    const before = getSyntheticPairCacheSize();
+    assert.equal(before.files, 5);
+
+    const result = pruneSyntheticPairDiskCache({ maxFiles: 3, maxBytes: MAX_CACHE_BYTES });
+    assert.equal(result.files, 3, "should leave 3 files after prune");
+    assert.equal(result.evictedFiles, 2, "should evict 2 oldest files");
+    assert.equal(existsSync(paths[0]!), false, "oldest file evicted");
+    assert.equal(existsSync(paths[1]!), false, "second-oldest file evicted");
+    assert.equal(existsSync(paths[4]!), true, "newest file kept");
+});
+
+test("pruneSyntheticPairDiskCache evicts by byte cap when bytes exceed the limit", () => {
+    const { totalBytes } = seedCacheFiles(10);
+    // Cap to half the total bytes; oldest files must be evicted until under cap.
+    const byteCap = Math.floor(totalBytes / 2);
+    const result = pruneSyntheticPairDiskCache({ maxBytes: byteCap, maxFiles: MAX_CACHE_FILES });
+    assert.ok(result.bytes <= byteCap, `bytes (${result.bytes}) must be under cap (${byteCap})`);
+    assert.ok(result.evictedFiles > 0, "should evict some files to meet the byte cap");
+    assert.equal(result.evictedBytes, totalBytes - result.bytes);
+});
+
+test("pruneSyntheticPairDiskCache is a no-op when under both caps", () => {
+    seedCacheFiles(2);
+    const result = pruneSyntheticPairDiskCache({ maxFiles: 10, maxBytes: 1024 * 1024 });
+    assert.equal(result.files, 2);
+    assert.equal(result.evictedFiles, 0);
+});
+
+test("pruneOnStartup is idempotent across calls (runs at most once per process)", () => {
+    // __setSyntheticPairCacheDirForTests resets the startup guard, so the first
+    // call here actually prunes. A second call must NOT prune again (it just
+    // measures).
+    seedCacheFiles(4);
+    const first = pruneOnStartup();
+    assert.equal(first.files, 4);
+
+    // Add a file after the startup prune; a second pruneOnStartup must not evict it.
+    writeFileSync(resolve(cacheDir, "post-startup.bin"), Buffer.alloc(8));
+    const second = pruneOnStartup();
+    assert.equal(second.files, 5, "second startup-prune call must be a no-op (just measure)");
+});
+
+test("pruneSyntheticPairDiskCache treats corrupt/vanished files gracefully", () => {
+    writeFileSync(resolve(cacheDir, "note.txt"), "not a cache file");
+    seedCacheFiles(2);
+    const result = pruneSyntheticPairDiskCache({ maxFiles: MAX_CACHE_FILES, maxBytes: MAX_CACHE_BYTES });
+    // .txt files are ignored by the cache (only .bin/.json counted).
+    assert.equal(result.files, 2);
+    assert.equal(result.evictedFiles, 0);
+    assert.equal(readdirSync(cacheDir).filter((f) => f.endsWith(".txt")).length, 1);
+});
+

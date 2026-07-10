@@ -56,15 +56,22 @@ describe("batch-backtest server loader parity", () => {
         expect(server.includes('from "../finder-manager"')).to.equal(false);
         expect(core.includes('from "../finder-manager"')).to.equal(false);
         expect(core.includes('from "../synthetic-pair-token"')).to.equal(true);
-        expect(server.includes("new DataFetcher(")).to.equal(true);
+        // The DataFetcher setup lives in the shared leaf factory
+        // (server-data-fetcher-factory.ts), imported by both server loaders.
+        expect(server.includes('from "../data/server-data-fetcher-factory"')).to.equal(true);
+        expect(server.includes('from "../data/data-fetcher"')).to.equal(false);
     });
 
     it("clears server data and parsed CSV caches so a new run observes freshly synced candles", () => {
         const server = readSource(SERVER_LOADER);
         expect(server).to.include("clearServerBatchDatasetCaches");
-        expect(server).to.include("dataCache.clear()");
+        // The shared data cache is cleared through the factory helper.
+        expect(server).to.include("clearServerDataCache()");
         expect(server).to.include("clearLocalDailyCsvCachesForSymbols()");
         expect(server).to.include("loadFreshIbkrCandlesFromPriceData");
+        // The factory helper owns the actual dataCache.clear() call.
+        const factory = readSource(path.join(APP_ROOT, "lib", "data", "server-data-fetcher-factory.ts"));
+        expect(factory).to.include("dataCache.clear()");
     });
 
     it("keeps server wire-row scalars out of the full copy-summary formatter", () => {

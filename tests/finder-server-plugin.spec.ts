@@ -174,6 +174,46 @@ describe("finder server plugin processFinderUniverseRun", () => {
         }
     });
 
+    it("F2 regression: streams each candidate identity at most once across updates", async () => {
+        // The runner re-emits the FULL survivor set on every throttled
+        // onResultsUpdate. The server MUST dedup by identity so each candidate
+        // is streamed exactly once; otherwise at topN=100 a single update can
+        // re-ship up to 100 redundant wire events + browser DOM rebuilds.
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP", makeCandles([100, 105, 110, 115, 120])],
+            ["DOWN", makeCandles([100, 95, 90, 85, 80])],
+        ]);
+        const owner = 7201;
+        setRunOwnerForTests(owner);
+
+        const events = await collectEvents((ev) =>
+            processFinderUniverseRun(
+                {
+                    interval: "5m",
+                    symbols: ["UP", "DOWN"],
+                    options: makeOptions(["UP", "DOWN"]),
+                    settings,
+                    capitalSettings,
+                    selectedStrategy: { key: STRATEGY_KEY, name: testStrategy.name, strategy: testStrategy },
+                    loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                    generateParamSets: () => [{ threshold: 1 }, { threshold: 2 }],
+                },
+                (event) => ev.push(event),
+                owner,
+            ),
+        );
+
+        const candidateEvents = events.filter((e) => e.type === "candidate") as Array<Extract<FinderStreamEvent, { type: "candidate" }>>;
+        const identityCounts = new Map<string, number>();
+        for (const { candidate } of candidateEvents) {
+            const key = `${candidate.strategyKey}|${JSON.stringify(candidate.params)}|${candidate.exitStrategyKey ?? ""}|${JSON.stringify(candidate.exitStrategyParams ?? {})}`;
+            identityCounts.set(key, (identityCounts.get(key) ?? 0) + 1);
+        }
+        for (const [key, count] of identityCounts) {
+            expect(count, `candidate identity "${key}" must be streamed at most once`).to.be.at.most(1);
+        }
+    });
+
     it("F1 regression: produces candidates only when generateParamSets is supplied", async () => {
         // The core falls back to () => [] when generateParamSets is missing,
         // producing zero candidates ("No valid parameter combinations

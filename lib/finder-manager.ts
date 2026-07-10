@@ -2519,11 +2519,21 @@ export class FinderManager {
 	): Promise<ServerUniverseRunOutcome | null> {
 		const settings = backtestService.getBacktestSettings();
 		const capitalSettings = backtestService.getCapitalSettings();
+		// Send a symbol -> provider map so the server's cross-symbol mismatch
+		// guard matches the browser's `dataManager.getProvider` classification.
+		// Without this the server returned a constant provider for every symbol
+		// and silently allowed cross-provider pairs the browser rejects
+		// (Finding 4: cross-provider parity).
+		const universeSymbols = options.universe?.symbols ?? [];
+		const providerBySymbol: Record<string, string> = {};
+		for (const symbol of universeSymbols) {
+			providerBySymbol[symbol] = dataManager.getProvider(symbol);
+		}
 		const response = await fetch('/api/finder/universe-run', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				symbols: options.universe?.symbols ?? [],
+				symbols: universeSymbols,
 				interval: state.currentInterval,
 				options,
 				settings,
@@ -2531,6 +2541,7 @@ export class FinderManager {
 				strategyKey: selectedStrategy.key,
 				exitStrategyKeys: exitStrategyCandidates?.map((c) => c.key),
 				useRustEnginePreference: shouldUseRustEngine(),
+				providerBySymbol,
 			}),
 		});
 
@@ -2565,6 +2576,37 @@ export class FinderManager {
 			this.setLatestResults({ scope: 'symbol_universe', results: merged });
 			this.renderLatestResults();
 		};
+		// Coalesce candidate arrivals into a single render per animation frame.
+		// The server dedups identities, but a throttled snapshot can still ship
+		// several candidate events back-to-back in one chunk; rendering once per
+		// event re-sorts the whole survivor set and rebuilds the DOM each time.
+		// Flushing on the next animation frame batches them into one render.
+		//
+		// `finalized` guards a race: a single NDJSON chunk can contain candidate
+		// event(s) immediately followed by the terminal `done` event. `onDone`
+		// renders the authoritative terminal slice synchronously, but the deferred
+		// render scheduled by the preceding `onCandidate` would fire AFTER `done`
+		// and clobber that slice with the lower-quality incremental merge (which
+		// may include intermediates the runner's final sort+slice evicted). Once
+		// the run finalizes, any pending deferred render is suppressed.
+		let renderScheduled = false;
+		let finalized = false;
+		const scheduleRender = (): void => {
+			if (renderScheduled || finalized) return;
+			renderScheduled = true;
+			const flush = (): void => {
+				renderScheduled = false;
+				if (finalized) return;
+				renderMerged();
+			};
+			if (typeof requestAnimationFrame === 'function') {
+				requestAnimationFrame(flush);
+			} else {
+				// Node/test environment without rAF — flush on the microtask
+				// queue so the render still coalesces within the chunk.
+				Promise.resolve().then(flush);
+			}
+		};
 
 		try {
 			await consumeNdjsonStream<FinderStreamEvent>(response.body, {
@@ -2576,10 +2618,10 @@ export class FinderManager {
 					this.setStatus(event.status);
 				},
 				onCandidate: (event) => {
-					// Merge incrementally; the server emits survivors as they pass
-					// the throttle window. Each candidate is already scalar-only.
+					// Merge incrementally; the server emits each survivor identity
+					// at most once. Coalesce the render to one per animation frame.
 					survivorByKey.set(identityKey(event.candidate), event.candidate);
-					renderMerged();
+					scheduleRender();
 				},
 				onSymbolFailed: (event) => {
 					debugLogger.warn('finder.server.symbol_failed', { symbol: event.symbol, error: event.error });
@@ -2597,6 +2639,10 @@ export class FinderManager {
 						this.setLatestResults({ scope: 'symbol_universe', results: terminalCandidates });
 						this.renderLatestResults();
 					}
+					// Mark finalized so a deferred incremental render scheduled by
+					// a candidate event in the SAME chunk can't fire after `done`
+					// and clobber the authoritative terminal slice.
+					finalized = true;
 				},
 				onFatal: (event) => {
 					throw new Error(event.error);

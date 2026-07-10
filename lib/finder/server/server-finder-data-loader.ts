@@ -20,40 +20,31 @@
  * bundle when Vite bundles `vite.config.ts`).
  */
 
-import { DATA_CHART_TOTAL_LIMIT } from "../../data/constants";
-import { DataCache } from "../../data/data-cache";
-import { DataFetcher } from "../../data/data-fetcher";
-import { DataPersistence } from "../../data/data-persistence";
-import { DataProviderRouter } from "../../data/data-provider-router";
 import type { OHLCVData } from "../../types/strategies";
 import {
     createBatchDatasetLoaderCore,
     type BatchDatasetCacheStats,
 } from "../../batch-backtest/batch-dataset-loader-core";
-import { loadCachedSyntheticPair, storeSyntheticPair } from "../../batch-backtest/synthetic-pair-disk-cache";
+import {
+    loadCachedSyntheticPair,
+    storeSyntheticPair,
+} from "../../batch-backtest/synthetic-pair-disk-cache";
+import { createServerDataFetcher } from "../../data/server-data-fetcher-factory";
 
-const providerRouter = new DataProviderRouter();
-const dataCache = new DataCache();
-const dataPersistence = new DataPersistence();
-const emptyImportedData = new Map<string, OHLCVData[]>();
+// Reuse a single long-lived DataFetcher for the whole server loader (Finding 8).
+const serverDataFetcher = createServerDataFetcher();
 
-function createServerDataFetcher(): DataFetcher {
-    return new DataFetcher(
-        providerRouter,
-        dataCache,
-        dataPersistence,
-        () => emptyImportedData,
-        () => DATA_CHART_TOTAL_LIMIT,
-        {},
-    );
-}
+// The bounded-cache startup prune is triggered lazily by the disk-cache module
+// on the first write (see `storeSyntheticPair` → `maybePruneAfterWrite`), NOT at
+// import time. Running it at import time would prune the real cache directory
+// as a side-effect of importing this module in tests.
 
 const loader = createBatchDatasetLoaderCore({
     logPrefix: "finder.server",
     fetchDetached: (symbol, interval, options) =>
-        createServerDataFetcher().fetchDataDetached(symbol, interval, options),
+        serverDataFetcher.fetchDataDetached(symbol, interval, options),
     fetchHistorical: (symbol, interval, limit, options) =>
-        createServerDataFetcher().fetchHistoricalData(symbol, interval, limit, options),
+        serverDataFetcher.fetchHistoricalData(symbol, interval, limit, options),
     // Server-side disk cache. Same hooks as the Batch server loader so a
     // synthetic pair built once is reused across FINDER runs. NOTE: the Finder
     // and Batch loaders construct SEPARATE in-memory `loader` cores, so a pair

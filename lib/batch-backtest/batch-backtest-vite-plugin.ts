@@ -30,6 +30,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { debugLogger } from "../debug-logger";
 import { beginNdjsonStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, sendJson, type ViteHttpResponse } from "../vite-http-utils";
+import { FINDER_BATCH_MAX_BODY_BYTES } from "../server-request-limits";
 import { mapWithConcurrencyLimit } from "../async-pool";
 import { runBatchBacktest, type BatchBacktestRunInput, type BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import { clearServerBatchDatasetCaches, getServerBatchDatasetCacheStats, loadServerBatchDataset } from "./server-batch-data-loader";
@@ -56,7 +57,7 @@ import type { BacktestSettings, Strategy, StrategyParams } from "../types/strate
 import type { CapitalSettings } from "../types/backtest";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import { toScalarRow, type BatchStreamEvent } from "./batch-backtest-stream-types";
-import { setRuntimeLocalApiOrigin } from "../local-api-transport";
+import { rememberLoopbackOriginFromRequest } from "../local-api-transport";
 import { buildBatchRunFingerprint, normalizeBatchSymbols } from "./batch-run-contract";
 import {
     mergeStabilityAccumulators,
@@ -937,17 +938,10 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
     }
 }
 
-function rememberLocalApiOriginFromRequest(req: { headers?: Record<string, unknown> }): void {
-    const hostHeader = req.headers?.host;
-    const host = Array.isArray(hostHeader) ? hostHeader[0] : hostHeader;
-    if (typeof host !== "string" || !host.trim()) return;
-
-    const protoHeader = req.headers?.["x-forwarded-proto"];
-    const protoValue = Array.isArray(protoHeader) ? protoHeader[0] : protoHeader;
-    const proto = typeof protoValue === "string" && protoValue.split(",")[0]?.trim().toLowerCase() === "https"
-        ? "https"
-        : "http";
-    setRuntimeLocalApiOrigin(`${proto}://${host.trim()}`);
+function rememberLocalApiOriginFromRequest(req: { headers?: Record<string, unknown>; socket?: { localAddress?: string; localPort?: number } | null }): void {
+    // Derive the origin from the server's bound socket, not the spoofable Host
+    // header (Finding 6). See `rememberLoopbackOriginFromRequest`.
+    rememberLoopbackOriginFromRequest(req);
 }
 
 async function handleStopRequest(): Promise<{ ok: boolean; stopped: boolean }> {
@@ -1150,7 +1144,7 @@ export function batchBacktestVitePlugin(): Plugin {
             }
             try {
                 rememberLocalApiOriginFromRequest(req);
-                await handleRunRequest(res as ViteHttpResponse, await readJsonBody(req));
+                await handleRunRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
             } catch (error) {
                 sendCaughtErrorJson(res, error);
             }
@@ -1176,7 +1170,7 @@ export function batchBacktestVitePlugin(): Plugin {
             }
             try {
                 rememberLocalApiOriginFromRequest(req);
-                await handleMineRequest(res as ViteHttpResponse, await readJsonBody(req));
+                await handleMineRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
             } catch (error) {
                 sendCaughtErrorJson(res, error);
             }
@@ -1189,7 +1183,7 @@ export function batchBacktestVitePlugin(): Plugin {
             }
             try {
                 rememberLocalApiOriginFromRequest(req);
-                await handleStabilityMineRequest(res as ViteHttpResponse, await readJsonBody(req));
+                await handleStabilityMineRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
             } catch (error) {
                 sendCaughtErrorJson(res, error);
             }

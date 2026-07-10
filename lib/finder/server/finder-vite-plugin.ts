@@ -70,7 +70,11 @@ import {
     type FinderStreamEvent,
 } from "./finder-stream-types";
 import { resolveFinderUniverseHeapWarning } from "./finder-server-heap-guard";
-import { setRuntimeLocalApiOrigin } from "../../local-api-transport";
+import { rememberLoopbackOriginFromRequest } from "../../local-api-transport";
+import {
+    clampFinderOptions,
+    FINDER_BATCH_MAX_BODY_BYTES,
+} from "../../server-request-limits";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -198,10 +202,16 @@ export async function processFinderUniverseRun(
     // Track the latest progress percent so `setStatus`-style status updates
     // (which the runner emits per-symbol) don't reset the bar to 0 server-side.
     let lastPercent = 0;
-    // Defensive: dedup survivors by identity key so a re-emit can't double-count
-    // in the snapshot. The runner emits each survivor once via onResultsUpdate,
-    // but the throttled cadence means we see incremental slices; we merge by key.
+    // Dedup survivors by identity key. The runner re-emits the FULL survivor
+    // set on every throttled `onResultsUpdate` (not just newly-passed ones),
+    // so without per-identity tracking the same candidate is streamed once per
+    // update — at topN=100 and a 750ms cadence that is up to 100 redundant wire
+    // events + 100 browser sorts/DOM rebuilds per snapshot. Track which
+    // identities have already been streamed so each is emitted AT MOST ONCE.
+    // The terminal `done.candidates` slice remains authoritative, so a missed
+    // incremental emit never loses a survivor.
     const survivorByKey = new Map<string, FinderUniverseCandidate>();
+    const emittedKeys = new Set<string>();
     const identityKey = (c: FinderUniverseCandidate) =>
         `${c.strategyKey}|${JSON.stringify(c.params)}|${c.exitStrategyKey ?? ""}|${JSON.stringify(c.exitStrategyParams ?? {})}`;
 
@@ -241,9 +251,15 @@ export async function processFinderUniverseRun(
                     writer({ type: "progress", percent: lastPercent, text, status: text });
                 },
                 yieldControl: async () => {
-                    // Node has no event-loop "don't block the DOM" concern; the
-                    // universe runner's yields are a no-op server-side. Kept in
-                    // the callback shape so the core is unchanged.
+                    // Actually yield to the Node event loop so pending control
+                    // requests (/api/finder/stop, /status, /api/sqlite/*) get
+                    // serviced. Without this the universe runner's deliberate
+                    // yield cadence (every 256 evaluations or 1s) was a no-op,
+                    // and CPU-bound strategy/backtest work could keep the Vite
+                    // dev server from processing Stop until the run completed.
+                    // `setImmediate` schedules after I/O but before timers, which
+                    // is the right phase to interleave with incoming requests.
+                    await new Promise<void>((resolve) => setImmediate(resolve));
                 },
                 isCancelled: () => {
                     if (lostOwnership()) {
@@ -264,16 +280,22 @@ export async function processFinderUniverseRun(
                     for (let i = 0; i < snapshot.candidates.length; i += 1) {
                         indexByKey.set(identityKey(snapshot.candidates[i]!), i);
                     }
-                    // Emit only the NEWLY observed scalar survivors since the
-                    // last flush. The browser keeps its own merged view keyed
-                    // the same way; re-emitting the full set on every update
-                    // would defeat the throttle's purpose.
+                    // Emit ONLY candidates whose identity has not been streamed
+                    // yet. The runner re-emits the full survivor slice on every
+                    // throttled update; without this guard, each update
+                    // re-streams every survivor (up to topN events per update)
+                    // and the browser rebuilds the DOM that many times. The
+                    // terminal `done.candidates` slice is the authoritative
+                    // finalization, so skipping a re-emit cannot drop a survivor.
                     for (const candidate of results) {
+                        const key = identityKey(candidate);
+                        if (emittedKeys.has(key)) continue;
+                        emittedKeys.add(key);
                         const scalar = toScalarCandidate(candidate);
                         assertCandidateIsScalar(scalar);
                         writer({
                             type: "candidate",
-                            index: indexByKey.get(identityKey(candidate)) ?? -1,
+                            index: indexByKey.get(key) ?? -1,
                             totalCandidates: candidatePlansEstimate,
                             candidate: scalar,
                         });
@@ -368,6 +390,14 @@ interface FinderUniverseRequestBody {
     strategyKey: unknown;
     exitStrategyKeys?: unknown;
     useRustEnginePreference?: unknown;
+    /**
+     * Browser-supplied provider map (symbol -> provider label) for the
+     * cross-symbol mismatch guard. The browser builds this from
+     * `dataManager.getProvider(symbol)`; the server has no browser state, so
+     * without this map it would have to return a constant and silently allow
+     * provider-mismatched cross-symbol pairs the browser rejects. See Finding 4.
+     */
+    providerBySymbol?: unknown;
 }
 
 async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseRequestBody): Promise<void> {
@@ -398,6 +428,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
         strategy,
     };
     const exitStrategyCandidates = await resolveExitStrategyCandidates(body.exitStrategyKeys);
+    const providerBySymbol = parseProviderBySymbol(body.providerBySymbol);
 
     const owner = ++runOwnerGen;
     runOwner = owner;
@@ -428,7 +459,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
                 exitStrategyCandidates,
                 useRustEnginePreference,
                 loadDataset: loadDatasetWithSlice,
-                getProvider: resolveServerProvider,
+                getProvider: (symbol) => resolveServerProvider(symbol, providerBySymbol),
                 generateParamSets: (defaultParams, finderOptions) =>
                     paramSpace.generateParamSets(defaultParams, finderOptions),
             },
@@ -452,16 +483,10 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
     }
 }
 
-function rememberLocalApiOriginFromRequest(req: { headers?: Record<string, unknown> }): void {
-    const hostHeader = req.headers?.host;
-    const host = Array.isArray(hostHeader) ? hostHeader[0] : hostHeader;
-    if (typeof host !== "string" || !host.trim()) return;
-    const protoHeader = req.headers?.["x-forwarded-proto"];
-    const protoValue = Array.isArray(protoHeader) ? protoHeader[0] : protoHeader;
-    const proto = typeof protoValue === "string" && protoValue.split(",")[0]?.trim().toLowerCase() === "https"
-        ? "https"
-        : "http";
-    setRuntimeLocalApiOrigin(`${proto}://${host.trim()}`);
+function rememberLocalApiOriginFromRequest(req: { headers?: Record<string, unknown>; socket?: { localAddress?: string; localPort?: number } | null }): void {
+    // Derive the origin from the server's bound socket, not the spoofable Host
+    // header (Finding 6). See `rememberLoopbackOriginFromRequest`.
+    rememberLoopbackOriginFromRequest(req);
 }
 
 async function handleStopRequest(): Promise<{ ok: boolean; stopped: boolean }> {
@@ -553,7 +578,11 @@ function parseOptions(raw: unknown): FinderOptions {
     // The browser serializes the full FinderOptions object; trust its shape but
     // surface a clear error if the universe block is missing (Universe mode is
     // the only supported scope server-side).
-    return raw as FinderOptions;
+    const options = raw as FinderOptions;
+    // Clamp topN/maxRuns to the UI-declared range so a typed/persisted/direct-
+    // API value can't request a 1000× workload (Finding 5). Symbols/universe
+    // blocks are validated by `assertUniverseOptions` below.
+    return clampFinderOptions(options);
 }
 
 function assertUniverseOptions(options: FinderOptions): void {
@@ -593,23 +622,49 @@ async function resolveExitStrategyCandidates(
 }
 
 /**
+ * Parse the browser-supplied provider map (symbol -> provider label). Returns
+ * a normalized map keyed by uppercased symbol. Rejects (400) a non-object or
+ * a map with non-string values so a malformed payload can't silently turn the
+ * mismatch guard into an allow-all.
+ *
+ * The map is advisory: a symbol absent from the map falls back to the default
+ * provider (the browser's default is spot Binance). This matches the browser's
+ * own `dataManager.getProvider` behavior, which returns the default for an
+ * unrecognized symbol.
+ */
+function parseProviderBySymbol(raw: unknown): Map<string, string> {
+    const out = new Map<string, string>();
+    if (raw === undefined || raw === null) return out;
+    if (typeof raw !== "object" || Array.isArray(raw)) {
+        throw new HttpStatusError(400, "providerBySymbol must be an object mapping symbol -> provider.");
+    }
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+        if (typeof value !== "string") {
+            throw new HttpStatusError(400, `providerBySymbol["${key}"] must be a string provider label.`);
+        }
+        const normalized = key.trim().toUpperCase();
+        if (normalized) out.set(normalized, value);
+    }
+    return out;
+}
+
+/**
  * Provider label for cross-symbol strategies' provider-mismatch guard
  * (`crossSymbolDataFetcher.getProvider`). The browser uses
  * `dataManager.getProvider` → `DataProviderRouter`, which reads browser `state`
  * (binanceMarketType) and would break the cjs config bundle if imported here.
- * Cross-symbol Universe runs are rare, and the guard only checks that primary
- * and secondary share a provider — it doesn't affect data loading (that goes
- * through `loadServerFinderDataset`, which has its own provider routing via
- * `DataFetcher`). Returning a constant means the mismatch guard always passes
- * server-side; a cross-symbol pair that the browser would reject as
- * provider-mismatched will be allowed server-side. That is a known parity gap,
- * not a wrong-data bug. If cross-symbol Universe server-side becomes common,
- * thread the real provider label from the request body instead.
+ *
+ * The browser now sends a `providerBySymbol` map with the request so the server
+ * applies the SAME mismatch guard the browser does (Finding 4: cross-provider
+ * parity). A symbol present in the map resolves to its real provider; a symbol
+ * absent from the map falls back to the default (`binance`), mirroring the
+ * browser's `DataProviderRouter.getProvider` default. This keeps browser/server
+ * results aligned for mixed Binance / IBKR / local-daily / TradFi / Polymarket
+ * cross-symbol runs that previously diverged silently.
  */
-function resolveServerProvider(_symbol: string): string {
-    // `_symbol` ignored — see doc above. Returning a constant so the
-    // cross-symbol mismatch guard sees primary === secondary.
-    return "binance";
+function resolveServerProvider(symbol: string, providerBySymbol: Map<string, string>): string {
+    const normalized = symbol.trim().toUpperCase();
+    return providerBySymbol.get(normalized) ?? "binance";
 }
 
 // ---------------------------------------------------------------------------
@@ -625,7 +680,7 @@ export function finderVitePlugin(): Plugin {
             }
             try {
                 rememberLocalApiOriginFromRequest(req);
-                await handleRunRequest(res as ViteHttpResponse, await readJsonBody(req) as unknown as FinderUniverseRequestBody);
+                await handleRunRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES) as unknown as FinderUniverseRequestBody);
             } catch (error) {
                 sendCaughtErrorJson(res, error);
             }
