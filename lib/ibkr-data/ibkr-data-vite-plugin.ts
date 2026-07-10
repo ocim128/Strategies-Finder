@@ -923,6 +923,21 @@ async function fetchHistoricalChunk(
     return parseHistoryCandles(payload);
 }
 
+/**
+ * IBKR's `startTime` is the end of a backward-looking history window. The
+ * first incremental page must therefore omit it so the response is anchored
+ * at the latest available candle. Later pages use the oldest prior candle to
+ * continue walking backward until the saved CSV overlap is reached.
+ */
+export function resolveIbkrHistoryPageStartTime(
+    pageIndex: number,
+    previousFirstTime: number | null
+): number | undefined {
+    return pageIndex > 0 && previousFirstTime !== null
+        ? previousFirstTime
+        : undefined;
+}
+
 function isRetryableHistoryError(error: unknown): error is HttpStatusError {
     return error instanceof HttpStatusError
         && (error.status === 429 || error.status === 500 || error.status === 502 || error.status === 503 || error.status === 504);
@@ -947,21 +962,20 @@ async function fetchHistorical(
     // sort once at the end. The break conditions and period-coverage early
     // exit behave identically to the prior implementation.
     //
-    // Incremental sync: when `incrementalFromTime` is supplied (repeat sync),
-    // the first chunk is requested with that startTime so we only fetch bars
-    // newer than what's already on disk. The break condition below stops the
-    // backward walk as soon as a chunk reaches existing data.
+    // Incremental sync: the first request intentionally omits `startTime` so
+    // IBKR anchors the backward-looking window at the latest available bar.
+    // Subsequent pages walk backward until a chunk reaches existing data.
     const byTime = new Map<number, OHLCVData>();
     let oldestTime = Infinity;
     let newestTime = -Infinity;
-    let nextStartTime: number | undefined = incrementalFromTime;
     let previousFirstTime: number | null = null;
 
     for (let i = 0; i < maxChunks; i += 1) {
         if (stopRequested) break;
+        const pageStartTime = resolveIbkrHistoryPageStartTime(i, previousFirstTime);
         let chunk: OHLCVData[] | null = null;
         try {
-            chunk = await fetchHistoricalChunk(resolved, interval, requestPeriod, nextStartTime);
+            chunk = await fetchHistoricalChunk(resolved, interval, requestPeriod, pageStartTime);
         } catch (error) {
             if (!maxSync || !isRetryableHistoryError(error)) {
                 throw error;
@@ -970,7 +984,7 @@ async function fetchHistorical(
             for (let retryIndex = 0; retryIndex < IBKR_HISTORY_RETRY_DELAYS_MS.length; retryIndex += 1) {
                 await wait(IBKR_HISTORY_RETRY_DELAYS_MS[retryIndex]!);
                 try {
-                    chunk = await fetchHistoricalChunk(resolved, interval, requestPeriod, nextStartTime);
+                    chunk = await fetchHistoricalChunk(resolved, interval, requestPeriod, pageStartTime);
                     recovered = true;
                     break;
                 } catch (retryError) {
@@ -981,7 +995,7 @@ async function fetchHistorical(
                                 conid: resolved.conid,
                                 interval,
                                 period,
-                                startTime: nextStartTime ?? null,
+                                startTime: pageStartTime ?? null,
                                 bars: byTime.size,
                                 error: retryError instanceof Error ? retryError.message : String(retryError),
                             });
@@ -1023,7 +1037,6 @@ async function fetchHistorical(
         if (!Number.isFinite(firstTime)) break;
         if (previousFirstTime !== null && firstTime >= previousFirstTime) break;
         previousFirstTime = firstTime;
-        nextStartTime = firstTime;
         if (maxSync) {
             await wait(IBKR_HISTORY_CHUNK_DELAY_MS);
         }

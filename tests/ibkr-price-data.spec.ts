@@ -12,6 +12,7 @@ import {
     parsePeriodToMs,
     parseResolvedContracts,
     resolveFromCatalog,
+    resolveIbkrHistoryPageStartTime,
     runIbkrKeepAliveCycle,
     shouldUseIncrementalIbkrSync,
     type SyncRunState,
@@ -388,6 +389,20 @@ describe("ibkr computeIncrementalStartTime", () => {
 
     it("falls back when lastTime cannot be parsed", () => {
         assert.equal(computeIncrementalStartTime("1d", "not-a-date", 1_700_000_000), null);
+    });
+});
+
+describe("ibkr history paging", () => {
+    it("anchors the first incremental page at the latest available candle", () => {
+        const savedOverlapTime = Math.floor(Date.parse("2026-07-02T18:30:00.000Z") / 1000);
+
+        assert.equal(resolveIbkrHistoryPageStartTime(0, savedOverlapTime), undefined);
+    });
+
+    it("uses the prior page's oldest candle only for backward pagination", () => {
+        const priorPageOldest = Math.floor(Date.parse("2026-06-01T13:30:00.000Z") / 1000);
+
+        assert.equal(resolveIbkrHistoryPageStartTime(1, priorPageOldest), priorPageOldest);
     });
 });
 
