@@ -17,6 +17,7 @@ import { paramManager } from "../param-manager";
 import { state } from "../state";
 import { strategyRegistry } from "../../strategyRegistry";
 import { setVisible } from "../dom-utils";
+import { ensureLazyStylesheet } from "../lazy-styles";
 import { debugLogger } from "../debug-logger";
 import { uiManager } from "../ui-manager";
 import { computePerformanceVerdict } from "../finder/finder-universe-metrics";
@@ -36,7 +37,8 @@ import { buildBatchRunFingerprint, parseBatchSymbols } from "./batch-run-contrac
 import {
     formatBatchOverallSummary,
     formatBatchSummaryLine,
-    formatResultRowPipe,
+    buildBatchSummaryCells,
+    buildResultRowGrid,
 } from "./batch-backtest-summary";
 import {
     compactBatchBacktestResultsSnapshot,
@@ -95,6 +97,7 @@ import {
     formatTargetPrice,
     STABILITY_DATA_STALE_THRESHOLD_BARS,
     summarizeStabilityDataFreshness,
+    type StabilityActionDecision,
 } from "./miner-verdict-format-helpers";
 import type { Strategy, StrategyParams, BacktestSettings } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
@@ -150,6 +153,7 @@ class BatchBacktestService {
     }
 
     public init(): void {
+        ensureLazyStylesheet("batch-backtest-styles", new URL("../../styles/batch-backtest.css", import.meta.url).href);
         if (this.initialized) {
             return;
         }
@@ -257,6 +261,7 @@ class BatchBacktestService {
         dom.batchBacktestCopyBenchmarkBtn.disabled = true;
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
+        this.setRunBusy(dom, true);
         this.clearMinerResults(dom);
         setVisible(dom.batchBacktestEmpty, false);
         dom.batchBacktestResults.replaceChildren();
@@ -307,6 +312,7 @@ class BatchBacktestService {
                     : !this.hasMineableArtifacts();
                 this.updateSummary(dom);
                 this.setProgress(dom, 100, this.cancelled ? "Stopped" : "Done");
+                this.setRunBusy(dom, false);
                 this.recordRunBenchmark(useServerMode ? "server" : "browser", strategyKey, interval, runStartedAt);
                 // The leg/pair LRU was a within-run dedup layer (e.g. ZEC
                 // appearing in many pairs fetched once). The run is over, and
@@ -1202,6 +1208,20 @@ class BatchBacktestService {
                     if (this.lastResults.length > 0) {
                         this.saveLatestResultsSnapshot();
                     }
+                    // Only restore Run/Stop/busy if reattach is still the active
+                    // task. A user clicking Run while this fetch was in-flight
+                    // calls stopReattachPoll(); in that case the user's Run owns
+                    // the button/busy state now and we must not clobber it
+                    // (re-reenabling Run / hiding Stop / clearing is-running
+                    // mid-run). The loop-top check at line start does not cover
+                    // the await above, so guard the DOM writes explicitly.
+                    if (!this.reattachPollingStopped) {
+                        const dom = this.getDom();
+                        dom.batchBacktestRunBtn.disabled = false;
+                        setVisible(dom.batchBacktestStopBtn, false);
+                        this.setRunBusy(dom, false);
+                        this.updateSummary(dom);
+                    }
                     return;
                 }
                 const run = payload.run;
@@ -1216,6 +1236,7 @@ class BatchBacktestService {
                 const dom = this.getDom();
                 dom.batchBacktestRunBtn.disabled = true;
                 setVisible(dom.batchBacktestStopBtn, true);
+                this.setRunBusy(dom, true);
                 const rowOffset = Math.max(0, Math.floor(Number(run.rowOffset ?? 0)));
                 if (rowOffset === 0 && this.lastResults.length === 0 && run.rows.length > 0) {
                     dom.batchBacktestResults.replaceChildren();
@@ -1684,6 +1705,7 @@ class BatchBacktestService {
         }
         dom.batchBacktestStatus.textContent = `Restored last Batch run (${this.lastResults.length} pairs)`;
         this.setProgress(dom, 100, "Restored");
+        this.renderSummaryGrid(dom);
         debugLogger.event("batch_backtest.latest_results_restored", {
             count: this.lastResults.length,
             interval: this.lastRunInterval,
@@ -1733,7 +1755,10 @@ class BatchBacktestService {
     private clearMinerResults(dom: BatchBacktestDom): void {
         this.lastMinerResult = null;
         this.lastStabilityResult = null;
-        dom.batchBacktestMinerSummary.textContent = "Miner idle";
+        // Clear rather than show "Miner idle": an empty .batch-miner-status
+        // collapses via CSS (:empty) so the run-state region does not show a
+        // noise strip before any mining has happened (point 7 of the refactor).
+        dom.batchBacktestMinerSummary.textContent = "";
         dom.batchBacktestMinerResults.replaceChildren();
         dom.batchBacktestCopyMinerBtn.disabled = true;
         dom.batchBacktestCopyStabilityBtn.disabled = true;
@@ -1752,13 +1777,107 @@ class BatchBacktestService {
 
     private createMinerRow(verdict: BatchSyntheticAssetVerdict): HTMLDivElement {
         const line = document.createElement("div");
-        line.className = "finder-sub finder-symbol-row";
+        line.className = "batch-miner-row";
+        const evidence = verdict.evidence;
+        const direction = verdict.direction ? verdict.direction.toUpperCase() : "--";
+        const mfeMaeRatio = computeMinerMfeMaeRatio(evidence.expectedMfePct, evidence.expectedMaePct);
+        const targetPrice = computeMinerTargetPrice(verdict);
+        const invalidationPrice = computeMinerInvalidationPrice(verdict);
+
+        // Primary: verdict + asset + direction + age/confidence.
+        const primary = document.createElement("div");
+        primary.className = "batch-miner-primary";
         const badge = document.createElement("span");
         badge.className = `finder-verdict ${getMinerVerdictClass(verdict.verdict)}`;
         badge.textContent = verdict.verdict;
-        line.appendChild(badge);
-        line.appendChild(document.createTextNode(` ${formatMinerRowPipe(verdict)}`));
+        const asset = document.createElement("span");
+        asset.className = "batch-miner-asset";
+        asset.textContent = verdict.asset;
+        const dir = document.createElement("span");
+        dir.className = "batch-miner-direction";
+        dir.textContent = direction;
+        primary.appendChild(badge);
+        primary.appendChild(asset);
+        primary.appendChild(dir);
+        primary.appendChild(this.createMinerMetric("Age", computeMinerAgeTag(verdict)));
+        primary.appendChild(this.createMinerMetric("Conf", verdict.confidence));
+        primary.appendChild(this.createMinerMetric(
+            "Lift",
+            formatSignedPercent(evidence.oosLiftPct),
+            evidence.oosLiftPct,
+        ));
+        primary.appendChild(this.createMinerMetric(
+            "RR",
+            formatRatio(mfeMaeRatio),
+        ));
+        primary.appendChild(this.createMinerMetric(
+            "Ret",
+            formatSignedPercent(evidence.expectedForwardReturnPct),
+            evidence.expectedForwardReturnPct,
+        ));
+        primary.appendChild(this.createMinerMetric(
+            "Analogs",
+            `${evidence.analogCount}/${evidence.candidateCount}`,
+        ));
+        line.appendChild(primary);
+
+        // Secondary: edge diagnostics (distance, target/invalidation, horizons).
+        const metrics = document.createElement("div");
+        metrics.className = "batch-miner-metrics";
+        const horizonLabel = evidence.horizonBarsAll.length > 1
+            ? `[${evidence.horizonBarsAll.join(",")}]`
+            : `${evidence.horizonBars}`;
+        metrics.appendChild(this.createMinerMetric("Hrz", horizonLabel));
+        metrics.appendChild(this.createMinerMetric("Dist", formatNumber(evidence.avgDistance, 2)));
+        metrics.appendChild(this.createMinerMetric(
+            "Entry",
+            formatPrice(verdict.currentSnapshot?.close ?? null),
+        ));
+        metrics.appendChild(this.createMinerMetric(
+            "Target",
+            formatTargetPrice(verdict.direction, targetPrice, evidence.longestHorizonBars, formatPrice),
+        ));
+        metrics.appendChild(this.createMinerMetric(
+            "Inv",
+            formatInvalidationPrice(verdict.direction, invalidationPrice),
+        ));
+        if (evidence.oosCount > 0) {
+            metrics.appendChild(this.createMinerMetric("OOS", `${evidence.oosCount}`));
+        }
+        line.appendChild(metrics);
+
+        // Disclosure: the first reason (the "why" behind the verdict).
+        const reason = verdict.reasons[0];
+        if (reason) {
+            const reasonEl = document.createElement("div");
+            reasonEl.className = "batch-miner-reason";
+            reasonEl.textContent = reason;
+            line.appendChild(reasonEl);
+        }
         return line;
+    }
+
+    private createMinerMetric(
+        label: string,
+        value: string,
+        signedValue?: number | null,
+    ): HTMLSpanElement {
+        const wrap = document.createElement("span");
+        wrap.className = "batch-miner-metric";
+        const labelEl = document.createElement("span");
+        labelEl.className = "batch-miner-metric-label";
+        labelEl.textContent = label;
+        const valueEl = document.createElement("span");
+        let cls = "batch-miner-metric-value";
+        if (signedValue !== null && signedValue !== undefined && Number.isFinite(signedValue)) {
+            if (signedValue > 0) cls += " is-profit";
+            else if (signedValue < 0) cls += " is-loss";
+        }
+        valueEl.className = cls;
+        valueEl.textContent = value;
+        wrap.appendChild(labelEl);
+        wrap.appendChild(valueEl);
+        return wrap;
     }
 
     private renderStabilityResult(dom: BatchBacktestDom, result: BatchStabilityMineResult): void {
@@ -1773,16 +1892,88 @@ class BatchBacktestService {
         const fragment = document.createDocumentFragment();
         for (const row of result.rows) {
             const decision = computeStabilityAction(row, result.reruns, interval);
-            const line = document.createElement("div");
-            line.className = "finder-sub finder-symbol-row";
-            const badge = document.createElement("span");
-            badge.className = `finder-verdict ${getStabilityActionClass(decision.action)}`;
-            badge.textContent = decision.action;
-            line.appendChild(badge);
-            line.appendChild(document.createTextNode(` ${formatStabilityRow(row, result.reruns, interval)}`));
-            fragment.appendChild(line);
+            fragment.appendChild(this.createStabilityRow(row, decision, result.reruns));
         }
         dom.batchBacktestMinerResults.appendChild(fragment);
+    }
+
+    /**
+     * Two-level Stability row (point 6 of the Batch UI refactor). Primary line
+     * carries the decision surface (asset, direction, action, score, hit rate,
+     * freshness); secondary line carries edge diagnostics; the row is flagged
+     * stale when the underlying data lag invalidates the action. The pipe
+     * formatter stays for clipboard / Copy Stability output.
+     */
+    private createStabilityRow(
+        row: BatchStabilityRow,
+        decision: StabilityActionDecision,
+        reruns: number,
+    ): HTMLDivElement {
+        const line = document.createElement("div");
+        line.className = "batch-miner-row";
+        const isStale = decision.action === "INVALID";
+        if (isStale) line.classList.add("is-stale");
+
+        // Primary: action + asset + direction + score + hit rate + freshness.
+        const primary = document.createElement("div");
+        primary.className = "batch-miner-primary";
+        const badge = document.createElement("span");
+        badge.className = `finder-verdict ${getStabilityActionClass(decision.action)}`;
+        badge.textContent = decision.action;
+        const asset = document.createElement("span");
+        asset.className = "batch-miner-asset";
+        asset.textContent = row.asset;
+        const dir = document.createElement("span");
+        dir.className = "batch-miner-direction";
+        dir.textContent = row.direction;
+        primary.appendChild(badge);
+        primary.appendChild(asset);
+        primary.appendChild(dir);
+        primary.appendChild(this.createMinerMetric("Score", formatNumber(row.timingEdgeScore, 1)));
+        primary.appendChild(this.createMinerMetric(
+            "Hits",
+            `${row.hits}/${reruns} (${formatPercent((row.hits / Math.max(1, reruns)) * 100)})`,
+        ));
+        primary.appendChild(this.createMinerMetric(
+            "Fresh",
+            `${Math.max(0, Math.floor(Number(row.freshHits) || 0))}/${row.hits}`,
+        ));
+        primary.appendChild(this.createMinerMetric("Gate", computeStabilityGate(row)));
+        line.appendChild(primary);
+
+        // Secondary: edge metrics + anchor concentration + age.
+        const metrics = document.createElement("div");
+        metrics.className = "batch-miner-metrics";
+        metrics.appendChild(this.createMinerMetric("Ret", formatSignedPercent(row.medianRetPct), row.medianRetPct));
+        metrics.appendChild(this.createMinerMetric("Lift", formatSignedPercent(row.medianLiftPct), row.medianLiftPct));
+        metrics.appendChild(this.createMinerMetric("RR", formatRatio(row.medianRr)));
+        metrics.appendChild(this.createMinerMetric(
+            "Anchor",
+            row.dominantPair ? `${row.dominantPair}:${(row.dominantPairShare * 100).toFixed(0)}%` : "--",
+        ));
+        metrics.appendChild(this.createMinerMetric(
+            "Div",
+            `${(row.medianDiversity * 100).toFixed(0)}%`,
+        ));
+        const barsHeld = row.medianBarsHeld === null || !Number.isFinite(row.medianBarsHeld)
+            ? "--"
+            : `${formatNumber(row.medianBarsHeld, 1)}b`;
+        metrics.appendChild(this.createMinerMetric("Age", `${computeStabilityAgeTag(row)}:${barsHeld}`));
+        const dataLag = decision.dataLagBars === null ? "--" : `${formatNumber(decision.dataLagBars, 1)}b`;
+        metrics.appendChild(this.createMinerMetric("Lag", dataLag));
+        metrics.appendChild(this.createMinerMetric("Px", formatPrice(row.close)));
+        line.appendChild(metrics);
+
+        // Disclosure: reason + H/M/L confidence counts + pair warnings.
+        const diag = document.createElement("div");
+        diag.className = "batch-miner-metrics";
+        diag.appendChild(this.createMinerMetric("Why", decision.reason));
+        diag.appendChild(this.createMinerMetric("H/M/L", `${row.high}/${row.medium}/${row.low}`));
+        if (row.pairWarnings > 0) {
+            diag.appendChild(this.createMinerMetric("PairWarn", `${row.pairWarnings}`));
+        }
+        line.appendChild(diag);
+        return line;
     }
 
     // --------------------------------------------------------------------
@@ -1828,16 +2019,78 @@ class BatchBacktestService {
 
     private createResultRow(result: BatchBacktestSymbolResult): HTMLDivElement {
         const line = document.createElement("div");
-        line.className = "finder-sub finder-symbol-row";
+        line.className = "batch-result-row";
 
         const verdict = computePerformanceVerdict(result.result, result.status);
+        const grid = buildResultRowGrid(result);
+
+        // Column 1: verdict badge + symbol + status.
+        const identity = document.createElement("div");
+        identity.className = "batch-result-identity";
         const badge = document.createElement("span");
         badge.className = `finder-verdict ${verdict.cssClass}`;
         badge.textContent = verdict.label;
-        line.appendChild(badge);
+        const symbol = document.createElement("span");
+        symbol.className = "batch-result-symbol";
+        symbol.textContent = grid.symbol;
+        const status = document.createElement("span");
+        status.className = "batch-result-status";
+        status.textContent = grid.status;
+        identity.appendChild(badge);
+        identity.appendChild(symbol);
+        identity.appendChild(status);
+        line.appendChild(identity);
 
-        line.appendChild(document.createTextNode(` ${formatResultRowPipe(result)}`));
+        // Columns 2-5: stable metric columns (Net+Exp / PF+Sharpe / DD / Trades).
+        line.appendChild(this.createMetricCell("Net", grid.net.text, grid.net.sign));
+        line.appendChild(this.createMetricCell("Exp", grid.expectancy.text, grid.expectancy.sign));
+        line.appendChild(this.createMetricCell("PF", grid.profitFactor, "neutral", grid.sharpe, "Sharpe"));
+        line.appendChild(this.createMetricCell("DD", grid.drawdown, "neutral", grid.trades, "Trades"));
+
+        // Optional secondary metadata line: bars, hold, exposure, range.
+        if (grid.secondary.length > 0) {
+            const secondary = document.createElement("div");
+            secondary.className = "batch-result-secondary";
+            for (const [label, value] of grid.secondary) {
+                const pair = document.createElement("span");
+                pair.textContent = `${label} ${value}`;
+                secondary.appendChild(pair);
+            }
+            line.appendChild(secondary);
+        }
+
+        if (grid.error) {
+            const errorEl = document.createElement("div");
+            errorEl.className = "batch-result-error";
+            errorEl.textContent = grid.error;
+            line.appendChild(errorEl);
+        }
         return line;
+    }
+
+    /**
+     * One metric column for a result row. Accepts an optional second value/label
+     * so two tightly-related metrics (e.g. PF + Sharpe) share a column under a
+     * combined label, keeping the grid to five columns.
+     */
+    private createMetricCell(
+        label: string,
+        value: string,
+        sign: "profit" | "loss" | "neutral",
+        secondValue?: string,
+        secondLabel?: string,
+    ): HTMLDivElement {
+        const cell = document.createElement("div");
+        cell.className = "batch-result-metric";
+        const valueEl = document.createElement("span");
+        valueEl.className = `batch-result-metric-value${sign === "profit" ? " is-profit" : sign === "loss" ? " is-loss" : ""}`;
+        valueEl.textContent = secondValue ? `${value} / ${secondValue}` : value;
+        const labelEl = document.createElement("span");
+        labelEl.className = "batch-result-metric-label";
+        labelEl.textContent = secondLabel ? `${label} / ${secondLabel}` : label;
+        cell.appendChild(valueEl);
+        cell.appendChild(labelEl);
+        return cell;
     }
 
     // --------------------------------------------------------------------
@@ -1849,18 +2102,63 @@ class BatchBacktestService {
         dom.batchBacktestProgressText.textContent = text;
     }
 
+    /**
+     * Toggle the tab root's `is-running` class. The progress bar is hidden by
+     * default and only shown while this class is present (see
+     * styles/batch-backtest.css). The generic `.progress-container.active` path
+     * used by Finder is never toggled for the Batch tab, so without this class
+     * hook the Batch progress bar would stay invisible for the entire run.
+     */
+    private setRunBusy(dom: BatchBacktestDom, busy: boolean): void {
+        dom.batchbacktestTab.classList.toggle("is-running", busy);
+    }
+
     private resetProgress(dom: BatchBacktestDom): void {
         this.setProgress(dom, 0, "Ready");
         dom.batchBacktestStatus.textContent = "Idle";
+        this.setRunBusy(dom, false);
     }
 
     private updateSummary(dom: BatchBacktestDom): void {
         if (this.lastResults.length > 0) {
             dom.batchBacktestSummary.textContent = formatBatchSummaryLine(this.lastResults);
+            this.renderSummaryGrid(dom);
             return;
         }
         const count = parseBatchSymbols(dom.batchBacktestSymbols.value).length;
         dom.batchBacktestSummary.textContent = `${count} pair${count === 1 ? "" : "s"}`;
+        dom.batchBacktestSummaryGrid.replaceChildren();
+        dom.batchBacktestSummaryGrid.hidden = true;
+    }
+
+    /**
+     * Render the completed-run summary as a compact metric grid (point 7 of the
+     * Batch UI refactor): stable cells instead of a long pipe-delimited strip.
+     * The full pipe summary stays the clipboard / Copy Results surface.
+     */
+    private renderSummaryGrid(dom: BatchBacktestDom): void {
+        const cells = buildBatchSummaryCells(this.lastResults);
+        if (cells === null) {
+            dom.batchBacktestSummaryGrid.replaceChildren();
+            dom.batchBacktestSummaryGrid.hidden = true;
+            return;
+        }
+        const fragment = document.createDocumentFragment();
+        for (const [label, value] of cells) {
+            const cell = document.createElement("div");
+            cell.className = "batch-summary-cell";
+            const labelEl = document.createElement("span");
+            labelEl.className = "batch-summary-cell-label";
+            labelEl.textContent = label;
+            const valueEl = document.createElement("span");
+            valueEl.className = "batch-summary-cell-value";
+            valueEl.textContent = value;
+            cell.appendChild(labelEl);
+            cell.appendChild(valueEl);
+            fragment.appendChild(cell);
+        }
+        dom.batchBacktestSummaryGrid.replaceChildren(fragment);
+        dom.batchBacktestSummaryGrid.hidden = false;
     }
 
     private readClampedInt(raw: string, fallback: number, min: number, max: number): number {

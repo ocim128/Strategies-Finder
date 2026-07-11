@@ -1,5 +1,5 @@
 import { computePerformanceVerdict } from "../finder/finder-universe-metrics";
-import type { BacktestResult, Time } from "../types/strategies";
+import type { Time } from "../types/strategies";
 import { formatProfitFactor } from "../ui-formatters";
 import { computeBuyAndHoldPct, computeOpenTradeAssetScores } from "./batch-row-scalars";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
@@ -34,6 +34,27 @@ export function formatBatchSummaryLine(results: readonly BatchBacktestSymbolResu
         `Avg/Trade ${formatCurrency(resolveAggregateExpectancy(stats))}`,
         `Med Exposure ${formatPercent(medianMetric(stats.resultRows, (row) => row.tradeSummary?.exposurePercent ?? null))}`,
     ].join(" | ");
+}
+
+/**
+ * Structured label/value cells for the Batch run-state summary grid. Same
+ * reductions as {@link formatBatchSummaryLine}, but as stable cells instead of
+ * a pipe-delimited strip so the UI can render a scannable grid (the pipe form
+ * stays the clipboard/Copy surface). Returns null when no row produced a result.
+ */
+export function buildBatchSummaryCells(
+    results: readonly BatchBacktestSymbolResult[],
+): ReadonlyArray<readonly [string, string]> | null {
+    const stats = summarizeBatchResults(results);
+    if (stats.resultRows.length === 0) return null;
+    return [
+        ["Tested", `${stats.resultRows.length}`],
+        ["Profitable", `${stats.profitableRows.length}`],
+        ["Losing", `${stats.losingRows.length}`],
+        ["Net", formatCurrency(stats.totalNet)],
+        ["Trades", `${stats.totalTrades}`],
+        ["Avg/Trade", formatCurrency(resolveAggregateExpectancy(stats))],
+    ];
 }
 
 export function formatBatchOverallSummary(results: readonly BatchBacktestSymbolResult[]): string[] {
@@ -164,30 +185,56 @@ export function formatBatchOverallSummary(results: readonly BatchBacktestSymbolR
     return lines;
 }
 
-export function formatResultRowPipe(result: BatchBacktestSymbolResult): string {
-    const parts: string[] = [result.symbol, formatStatus(result.status)];
-    parts.push(`Bars ${result.barCount}`);
-    if (result.result) {
-        const r: BacktestResult = result.result;
-        parts.push(`Net ${formatCurrency(r.netProfit)}`);
-        parts.push(`Exp ${r.expectancy.toFixed(2)}`);
-        parts.push(`PF ${formatProfitFactor(r.profitFactor)}`);
-        parts.push(`WR ${r.winRate.toFixed(0)}%`);
-        parts.push(`Sharpe ${Number.isFinite(r.sharpeRatio) ? r.sharpeRatio.toFixed(2) : "--"}`);
-        parts.push(
-            Number.isFinite(r.maxDrawdownPercent)
-                ? `DD ${r.maxDrawdownPercent.toFixed(2)}%`
-                : "DD --",
-        );
-        parts.push(`Trades ${r.totalTrades}`);
-        parts.push(`AvgTrade ${formatCurrency(r.avgTrade)}`);
-        parts.push(`Hold ${formatHold(result)}`);
-        parts.push(`Exposure ${formatPercent(result.tradeSummary?.exposurePercent)}`);
+/**
+ * Structured grid cells for one Batch result row (point 5 of the Batch UI
+ * refactor): split into stable columns so the UI can render a scannable metric
+ * grid instead of a pipe-delimited string. `error` is surfaced separately so
+ * the grid can render it as a row-level note rather than mid-pipe text.
+ */
+export interface ResultRowGrid {
+    symbol: string;
+    status: string;
+    net: { text: string; sign: "profit" | "loss" | "neutral" };
+    expectancy: { text: string; sign: "profit" | "loss" | "neutral" };
+    profitFactor: string;
+    sharpe: string;
+    drawdown: string;
+    trades: string;
+    secondary: ReadonlyArray<readonly [string, string]>;
+    error: string | null;
+}
+
+export function buildResultRowGrid(result: BatchBacktestSymbolResult): ResultRowGrid {
+    const r = result.result;
+    const secondary: Array<[string, string]> = [[ "Bars", `${result.barCount}` ]];
+    if (r) {
+        secondary.push(["Hold", formatHold(result)]);
+        secondary.push(["Exposure", formatPercent(result.tradeSummary?.exposurePercent)]);
+        secondary.push(["AvgTrade", formatCurrency(r.avgTrade)]);
+        secondary.push(["WR", `${r.winRate.toFixed(0)}%`]);
     }
-    if (result.error) parts.push(result.error);
     const range = formatTimeRange(result.firstTime, result.lastTime);
-    if (range) parts.push(range);
-    return parts.join(" | ");
+    if (range) secondary.push(["Range", range]);
+    return {
+        symbol: result.symbol,
+        status: formatStatus(result.status),
+        net: signedCurrencyCell(r?.netProfit),
+        expectancy: signedCurrencyCell(r?.expectancy),
+        profitFactor: r ? formatProfitFactor(r.profitFactor) : "--",
+        sharpe: r && Number.isFinite(r.sharpeRatio) ? r.sharpeRatio.toFixed(2) : "--",
+        drawdown: r && Number.isFinite(r.maxDrawdownPercent) ? `${r.maxDrawdownPercent.toFixed(2)}%` : "--",
+        trades: r ? `${r.totalTrades}` : "--",
+        secondary,
+        error: result.error ?? null,
+    };
+}
+
+function signedCurrencyCell(value: number | null | undefined): { text: string; sign: "profit" | "loss" | "neutral" } {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+        return { text: "--", sign: "neutral" };
+    }
+    const sign: "profit" | "loss" | "neutral" = value > 0 ? "profit" : value < 0 ? "loss" : "neutral";
+    return { text: formatCurrency(value), sign };
 }
 
 export interface BuyHoldRow {

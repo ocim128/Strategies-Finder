@@ -1,0 +1,578 @@
+/*
+ * Batch Backtest tab — layout and presentation owner.
+ *
+ * Scope: everything under #batchbacktestTab. Keeps shared buttons, inputs,
+ * tokens, and verdict colors from the global stylesheets; this file only
+ * owns Batch-specific layout + presentation so the screen stops inheriting
+ * unrelated drift from Finder/settings/onboarding/progress stylesheets.
+ *
+ * Scoped to #batchbacktestTab so it cannot leak into other tabs.
+ */
+
+#batchbacktestTab {
+
+    /* ------------------------------------------------------------------
+     * Page header (point 3)
+     * Replaces the tiny .section-title + long doc paragraph with a real
+     * page anchor: normal-size title + one concise subtitle.
+     * ------------------------------------------------------------------ */
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+
+    --batch-symbol-col: minmax(140px, 1.4fr);
+    --batch-metric-col: 92px;
+    --batch-narrow: 540px;
+}
+
+.batch-header {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+}
+
+.batch-title {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-bold);
+    color: var(--text-primary);
+    margin: 0;
+    line-height: var(--line-height-tight);
+}
+
+.batch-subtitle {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: var(--line-height-relaxed);
+}
+
+.batch-subtitle code {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+    background: hsl(var(--hsl-surface-3) / 0.5);
+    padding: 0 4px;
+    border-radius: var(--radius-xs);
+}
+
+/* ------------------------------------------------------------------
+ * Sectioned layout (point 4)
+ * Markets (pair entry) and Stability analysis are distinct sections with
+ * a subtle surface change, not nested glass cards.
+ * ------------------------------------------------------------------ */
+
+.batch-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-3-5);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+    background: hsl(var(--hsl-surface-2) / 0.35);
+}
+
+.batch-section-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+
+.batch-section-title {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    margin: 0;
+    letter-spacing: var(--tracking-medium);
+}
+
+.batch-section-note {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    margin: 0;
+}
+
+.batch-section-note code,
+.batch-section-hint code {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-2xs);
+}
+
+.batch-section-hint {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    margin: 0;
+    line-height: var(--line-height-normal);
+}
+
+.batch-symbol-helpers {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+/* Pair count readout beside the textarea heading */
+.batch-symbol-count {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    font-family: var(--font-family-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------
+ * Action groups (point 2)
+ * Primary (Run/Stop) / Analysis (Mine/Stability) / Export (Copy *).
+ * Keep Run as the only filled primary; exports are quiet text buttons.
+ * ------------------------------------------------------------------ */
+
+.batch-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.batch-action-group {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.batch-action-group--primary {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.batch-action-group--primary .run-btn,
+.batch-action-group--primary .stop-btn {
+    flex: 1 1 auto;
+    min-width: 120px;
+}
+
+.batch-action-group--divider {
+    flex: 0 0 auto;
+    width: 1px;
+    align-self: stretch;
+    background: var(--glass-border);
+    margin: 2px 0;
+}
+
+.batch-action-group--exports {
+    flex: 0 1 auto;
+}
+
+/* Quiet text-style export buttons (still use shared .btn base) */
+.batch-action-group--exports .btn,
+.batch-action-group--analysis .btn:not(.run-btn):not(.stop-btn) {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    color: var(--text-secondary);
+    padding: var(--space-1-5) var(--space-2-5);
+    min-height: 0;
+    font-size: var(--font-size-sm);
+}
+
+.batch-action-group--exports .btn:not(:disabled):hover,
+.batch-action-group--analysis .btn:not(:disabled):not(.run-btn):not(.stop-btn):hover {
+    color: var(--text-primary);
+    background: hsl(var(--hsl-surface-3) / 0.5);
+}
+
+/* ------------------------------------------------------------------
+ * Stability controls (point 1)
+ * Wraps each label/input in a field group and gives numeric fields a
+ * deliberate width instead of the undefined .compact-input.
+ * ------------------------------------------------------------------ */
+
+.batch-stability-controls {
+    display: flex;
+    gap: var(--space-2-5);
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.batch-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+}
+
+.batch-field-label {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    line-height: var(--line-height-tight);
+}
+
+.batch-field-input {
+    width: 80px;
+    padding: var(--space-1-5) var(--space-2);
+    min-height: 32px;
+    border-radius: var(--radius-s);
+    border: 1px solid var(--field-border);
+    background: var(--field-bg);
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    font-family: var(--font-family-mono);
+    font-variant-numeric: tabular-nums;
+    box-shadow: var(--shadow-xs);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.batch-field-input:hover {
+    border-color: hsl(var(--hsl-accent) / 0.35);
+}
+
+.batch-field-input:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: var(--focus-ring-soft);
+}
+
+/* ------------------------------------------------------------------
+ * Run-state region (point 7)
+ * One panel: state + pair progress on top, progress bar only while
+ * active, completed-run metrics in a summary grid.
+ * ------------------------------------------------------------------ */
+
+.batch-run-state {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-2-5) var(--space-3);
+    border-radius: var(--radius-m);
+    border: 1px solid var(--glass-border);
+    background: hsl(var(--hsl-surface-3) / 0.3);
+}
+
+.batch-run-state-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+
+.batch-run-state-label {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    font-family: var(--font-family-mono);
+}
+
+/* Show the progress bar only while a run is active. */
+#batchBacktestProgress {
+    display: none;
+    margin-top: 0;
+    border: none;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    padding: 0;
+}
+
+#batchbacktestTab.is-running #batchBacktestProgress {
+    display: block;
+}
+
+/* Completed-run summary grid (replaces stacked muted strips). */
+.batch-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: var(--space-1-5) var(--space-3);
+    font-size: var(--font-size-xs);
+    font-family: var(--font-family-mono);
+    color: var(--text-secondary);
+}
+
+.batch-summary-grid[hidden] {
+    display: none;
+}
+
+.batch-summary-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.batch-summary-cell-label {
+    font-size: var(--font-size-2xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-tertiary);
+}
+
+.batch-summary-cell-value {
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Mine/Stability status line — lives inside the run-state region once a
+ * mine/stability run produces a summary. Collapses to nothing when empty so
+ * the run-state region does not show a "Miner idle" strip before any mining
+ * has happened (point 7). */
+.batch-miner-status {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    font-family: var(--font-family-mono);
+    line-height: var(--line-height-normal);
+    word-break: break-word;
+}
+
+.batch-miner-status:empty {
+    display: none;
+}
+
+/* ------------------------------------------------------------------
+ * Result rows: compact metric grid (point 5)
+ * Stable columns instead of pipe-delimited text. The pipe formatters
+ * stay for clipboard output only.
+ * ------------------------------------------------------------------ */
+
+.batch-result-row {
+    display: grid;
+    grid-template-columns:
+        var(--batch-symbol-col)
+        var(--batch-metric-col)
+        var(--batch-metric-col)
+        var(--batch-metric-col)
+        var(--batch-metric-col);
+    column-gap: var(--space-3);
+    align-items: center;
+    padding: var(--space-1-5) var(--space-2);
+    border-bottom: 1px solid hsl(var(--hsl-surface-3) / 0.4);
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height-tight);
+}
+
+.batch-result-row:last-child {
+    border-bottom: none;
+}
+
+.batch-result-row:hover {
+    background: hsl(var(--hsl-surface-3) / 0.3);
+}
+
+.batch-result-identity {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.batch-result-symbol {
+    font-family: var(--font-family-mono);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.batch-result-status {
+    font-size: var(--font-size-2xs);
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    flex-shrink: 0;
+}
+
+.batch-result-metric {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    font-family: var(--font-family-mono);
+    font-variant-numeric: tabular-nums;
+    min-width: 0;
+}
+
+.batch-result-metric-value {
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.batch-result-metric-label {
+    font-size: var(--font-size-2xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-tertiary);
+}
+
+.batch-result-metric-value.is-profit { color: var(--green); }
+.batch-result-metric-value.is-loss { color: var(--red); }
+
+.batch-result-secondary {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    margin-top: var(--space-1);
+    font-size: var(--font-size-2xs);
+    font-family: var(--font-family-mono);
+    color: var(--text-tertiary);
+    font-variant-numeric: tabular-nums;
+}
+
+.batch-result-error {
+    grid-column: 1 / -1;
+    margin-top: var(--space-1);
+    color: var(--red);
+    font-size: var(--font-size-2xs);
+}
+
+/* ------------------------------------------------------------------
+ * Miner + Stability rows: two-level decision surface (point 6)
+ * Primary: identity + action + score; Secondary: edge metrics;
+ * Disclosure: diagnostics.
+ * ------------------------------------------------------------------ */
+
+.batch-miner-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-2);
+    border-bottom: 1px solid hsl(var(--hsl-surface-3) / 0.4);
+}
+
+.batch-miner-row:last-child {
+    border-bottom: none;
+}
+
+.batch-miner-primary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+.batch-miner-asset {
+    font-family: var(--font-family-mono);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+}
+
+.batch-miner-direction {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-2xs);
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    padding: 0 4px;
+    border-radius: var(--radius-xs);
+    background: hsl(var(--hsl-surface-3) / 0.5);
+}
+
+.batch-miner-metrics {
+    display: flex;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    font-family: var(--font-family-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.batch-miner-metric {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 3px;
+}
+
+.batch-miner-metric-label {
+    color: var(--text-tertiary);
+    font-size: var(--font-size-2xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+}
+
+.batch-miner-metric-value.is-profit { color: var(--green); }
+.batch-miner-metric-value.is-loss { color: var(--red); }
+
+.batch-miner-reason {
+    font-size: var(--font-size-2xs);
+    color: var(--text-tertiary);
+    margin-top: var(--space-1);
+    font-family: var(--font-family-mono);
+}
+
+/* Stale / unknown data invalidates the action — flag at row level. */
+.batch-miner-row.is-stale {
+    background: hsl(var(--hsl-warning) / 0.06);
+}
+
+.batch-miner-row.is-stale .batch-miner-asset::after {
+    content: "stale data";
+    margin-left: var(--space-2);
+    font-size: var(--font-size-2xs);
+    color: var(--warning);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    font-weight: var(--font-weight-semibold);
+}
+
+/* ------------------------------------------------------------------
+ * Motion (point 8)
+ * Disable shimmer/glow specifically for Batch. The generic progress bar
+ * always animates a shimmer + accent glow; the Batch tab is a dense
+ * analytical surface where persistent motion competes with changing
+ * numbers. Reserve motion for indeterminate loading only.
+ * ------------------------------------------------------------------ */
+
+#batchBacktestProgress .progress-fill::after {
+    animation: none;
+    background: none;
+}
+
+#batchBacktestProgress.active .progress-fill,
+#batchbacktestTab.is-running .progress-fill {
+    box-shadow: none;
+}
+
+/* Static, smaller, lower-contrast empty-state icon. */
+#batchBacktestEmpty .empty-state-icon {
+    width: 40px;
+    height: 40px;
+    margin-bottom: var(--space-3);
+    opacity: 0.35;
+    animation: none;
+}
+
+/* ------------------------------------------------------------------
+ * Responsive (points 5, 6)
+ * Collapse the metric grid to a compact card on narrow panels.
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 540px) {
+    #batchbacktestTab {
+        --batch-symbol-col: 1fr;
+    }
+
+    .batch-result-row {
+        grid-template-columns: 1fr 1fr;
+        row-gap: var(--space-1);
+    }
+
+    .batch-result-identity {
+        grid-column: 1 / -1;
+    }
+
+    .batch-stability-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .batch-stability-controls .btn {
+        width: 100%;
+    }
+}
