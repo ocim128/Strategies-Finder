@@ -17,6 +17,7 @@ import {
     getPersistedAlertSignalEntryPrice,
 } from './alert-signal-utils';
 import { fetchBybitTradFiLatest } from './dataProviders/bybit';
+import { fetchWithTimeoutAndRetry } from './dataProviders/fetch-helpers';
 import { parseIntervalSeconds } from './interval-utils';
 import { parseTimeToUnixSeconds } from './time-normalization';
 import { state } from './state';
@@ -783,7 +784,18 @@ class LivePositionsService {
                     const endpoint = provider === 'binance-futures'
                         ? 'https://fapi.binance.com/fapi/v1/ticker/price'
                         : 'https://api.binance.com/api/v3/ticker/price';
-                    const response = await fetch(`${endpoint}?symbol=${normalizedSymbol}`);
+                    // Cap the price-ticker fetch so a stalled Binance request can't
+                    // retain PRICE_REQUESTS indefinitely and delay price refresh.
+                    const response = await fetchWithTimeoutAndRetry(
+                        `${endpoint}?symbol=${normalizedSymbol}`,
+                        {},
+                        {
+                            timeoutMs: 5_000,
+                            maxAttempts: 2,
+                            retryStatuses: [429, 500, 502, 503, 504],
+                            baseDelayMs: 250,
+                        },
+                    );
                     if (!response.ok) throw new Error('Price fetch failed');
 
                     const data = await response.json() as { price: string };
@@ -795,7 +807,16 @@ class LivePositionsService {
                 }
             } catch (err) {
                 try {
-                    const response = await fetch(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${normalizedSymbol}`);
+                    const response = await fetchWithTimeoutAndRetry(
+                        `https://api.bybit.com/v5/market/tickers?category=linear&symbol=${normalizedSymbol}`,
+                        {},
+                        {
+                            timeoutMs: 5_000,
+                            maxAttempts: 2,
+                            retryStatuses: [429, 500, 502, 503, 504],
+                            baseDelayMs: 250,
+                        },
+                    );
                     if (!response.ok) throw new Error('Bybit price fetch failed');
 
                     const data = await response.json() as { result?: { list?: Array<{ lastPrice: string }> } };

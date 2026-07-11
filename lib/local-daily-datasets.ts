@@ -1,4 +1,5 @@
 import type { DataProvider } from "./types/data-providers";
+import { fetchWithTimeoutAndRetry } from "./dataProviders/fetch-helpers";
 
 export type LocalDailyDatasetKey =
     | "sp500"
@@ -315,7 +316,14 @@ async function loadDatasetAssets(config: LocalDailyDatasetConfig): Promise<Local
 
     const nextLoad = (async () => {
         try {
-            const response = await fetch(config.catalogUrl, { cache: "no-store" });
+            // Local catalog assets are same-origin but a stalled dev-server
+            // response would otherwise hold pendingLoadByDataset indefinitely.
+            // Single attempt, 5s cap — no retry since these are local reads.
+            const response = await fetchWithTimeoutAndRetry(
+                config.catalogUrl,
+                { cache: "no-store" },
+                { timeoutMs: 5_000, maxAttempts: 1 },
+            );
             if (!response.ok) return [];
 
             const assets = config.catalogFormat === "csv"
