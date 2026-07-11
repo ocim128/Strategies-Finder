@@ -145,7 +145,8 @@
         height: 100px;
     }
 
-    .panel-tab {
+    .panel-tab,
+    .panel-more-trigger {
         min-height: var(--min-touch-target);
     }
 
@@ -342,7 +343,8 @@
         display: none;
     }
 
-    .panel-tab {
+    .panel-tab,
+    .panel-more-trigger {
         padding: var(--space-2);
         font-size: 11px;
     }
@@ -475,6 +477,8 @@
     .btn,
     .tool-btn,
     .panel-tab,
+    .panel-more-trigger,
+    .panel-more-menu button[role="menuitem"],
     .timeframe-tab,
     .dropdown-item {
         min-height: 44px;

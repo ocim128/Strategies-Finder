@@ -153,7 +153,6 @@
     --tab-hover-bg: hsl(var(--hsl-surface-4) / 0.25);
     --tab-active-bg: hsl(var(--hsl-accent) / 0.14);
     --tab-active-border: var(--accent-light);
-    --tab-secondary-bg: transparent;
 
     /* Spacing tokens */
     --space-1: 4px;
@@ -341,7 +340,6 @@
     --tab-hover-bg: hsl(219 63% 95%);
     --tab-active-bg: hsl(221 82% 95%);
     --tab-active-border: hsl(var(--hsl-accent));
-    --tab-secondary-bg: hsl(220 24% 97%);
 
     --float-gap: 10px;
     --float-radius: 12px;

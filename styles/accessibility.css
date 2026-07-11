@@ -106,6 +106,7 @@ textarea:focus-visible {
     /* Keep essential transitions but make them instant */
     .btn,
     .panel-tab,
+    .panel-more-trigger,
     .trade-item,
     .finder-row {
         transition: none !important;
@@ -168,6 +169,8 @@ body.finder-running .scanner-panel__scan-btn.scanner-panel__scan-btn--cancel {
     .finder-row,
     .btn,
     .panel-tab,
+    .panel-more-trigger,
+    .panel-more-menu,
     .dropdown-menu {
         border-width: 2px;
     }

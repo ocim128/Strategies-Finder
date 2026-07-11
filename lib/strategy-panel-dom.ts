@@ -6,6 +6,8 @@ export const STRATEGY_PANEL_REQUIRED_IDS = [
     "strategyTabs",
     "panelContent",
     "panelResizeHandle",
+    "panelMoreTrigger",
+    "panelMoreMenu",
 ] as const;
 
 export function createStrategyPanelDom() {
@@ -15,6 +17,8 @@ export function createStrategyPanelDom() {
         strategyTabs: getRequiredElement("strategyTabs"),
         panelContent: getRequiredElement("panelContent"),
         panelResizeHandle: getRequiredElement("panelResizeHandle"),
+        panelMoreTrigger: getRequiredElement("panelMoreTrigger"),
+        panelMoreMenu: getRequiredElement("panelMoreMenu"),
     };
 }
 
