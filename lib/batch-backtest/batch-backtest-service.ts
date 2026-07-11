@@ -36,7 +36,6 @@ import {
 import { buildBatchRunFingerprint, parseBatchSymbols } from "./batch-run-contract";
 import {
     formatBatchOverallSummary,
-    formatBatchSummaryLine,
     buildBatchSummaryCells,
     buildResultRowGrid,
 } from "./batch-backtest-summary";
@@ -2121,7 +2120,8 @@ class BatchBacktestService {
 
     private updateSummary(dom: BatchBacktestDom): void {
         if (this.lastResults.length > 0) {
-            dom.batchBacktestSummary.textContent = formatBatchSummaryLine(this.lastResults);
+            const count = this.lastResults.length;
+            dom.batchBacktestSummary.textContent = `${count} pair${count === 1 ? "" : "s"}`;
             this.renderSummaryGrid(dom);
             return;
         }

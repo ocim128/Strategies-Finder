@@ -1,7 +1,9 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
+    buildBatchSummaryCells,
     buildBuyHoldRows,
+    buildResultRowGrid,
     computeBuyAndHoldPct,
     computeOpenTradeAssetScores,
     formatBatchOverallSummary,
@@ -121,6 +123,41 @@ describe("computeBuyAndHoldPct", () => {
     it("returns null for empty / undefined input", () => {
         expect(computeBuyAndHoldPct([])).to.equal(null);
         expect(computeBuyAndHoldPct(undefined)).to.equal(null);
+    });
+});
+
+describe("Batch UI summary projections", () => {
+    it("projects completed results into stable summary cells", () => {
+        const cells = buildBatchSummaryCells([
+            resultRow("AAA", { netProfit: 25, totalTrades: 2 }),
+            resultRow("BBB", { netProfit: -5, totalTrades: 3 }),
+        ]);
+
+        expect(cells).to.deep.equal([
+            ["Tested", "2"],
+            ["Profitable", "1"],
+            ["Losing", "1"],
+            ["Net", "+$20.00"],
+            ["Trades", "5"],
+            ["Avg/Trade", "+$4.00"],
+        ]);
+    });
+
+    it("projects one result into grid metrics without changing copy data", () => {
+        const row = resultRow("AAA", { netProfit: -12, totalTrades: 4, sharpeRatio: 1.25 });
+        row.result!.expectancy = 3.5;
+        row.result!.profitFactor = 1.8;
+        row.result!.maxDrawdownPercent = 6.25;
+
+        const grid = buildResultRowGrid(row);
+
+        expect(grid.symbol).to.equal("AAA");
+        expect(grid.net).to.deep.equal({ text: "$-12.00", sign: "loss" });
+        expect(grid.expectancy).to.deep.equal({ text: "+$3.50", sign: "profit" });
+        expect(grid.profitFactor).to.equal("1.80");
+        expect(grid.sharpe).to.equal("1.25");
+        expect(grid.drawdown).to.equal("6.25%");
+        expect(grid.trades).to.equal("4");
     });
 });
 

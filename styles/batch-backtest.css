@@ -19,10 +19,10 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+    container-type: inline-size;
 
     --batch-symbol-col: minmax(140px, 1.4fr);
     --batch-metric-col: 92px;
-    --batch-narrow: 540px;
 }
 
 .batch-header {
@@ -553,11 +553,7 @@
  * Collapse the metric grid to a compact card on narrow panels.
  * ------------------------------------------------------------------ */
 
-@media (max-width: 540px) {
-    #batchbacktestTab {
-        --batch-symbol-col: 1fr;
-    }
-
+@container (max-width: 540px) {
     .batch-result-row {
         grid-template-columns: 1fr 1fr;
         row-gap: var(--space-1);
