@@ -138,17 +138,19 @@ class ArtifactWriteSemaphore {
             this.active += 1;
             return;
         }
+        // Wait for a slot. The resolver does nothing beyond waking this waiter;
+        // the releasing task's slot is TRANSFERRED (active stays constant on
+        // handoff). `active` is only decremented when a release finds no waiter.
         await new Promise<void>((resolve) => {
-            this.waiters.push(() => {
-                this.active += 1;
-                resolve();
-            });
+            this.waiters.push(resolve);
         });
     }
 
     release(): void {
         const next = this.waiters.shift();
         if (next) {
+            // Transfer this slot to the next waiter — do NOT decrement; the
+            // waiter resumes without re-incrementing so the count stays exact.
             next();
         } else {
             this.active -= 1;
