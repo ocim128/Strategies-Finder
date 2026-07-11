@@ -88,7 +88,7 @@ start "Rust Trading Engine" cmd /k "cd /d "%~dp0..\..\..\trading-engine" && carg
 ::      `wrangler secret put LOCAL_CANDLE_PROXY_TOKEN`.
 ::
 :: If either prerequisite is missing, this block is skipped silently and
-:: Vite still launches normally — the tunnel is opt-in.
+:: Vite still launches normally - the tunnel is opt-in.
 set "TUNNEL_NAME="
 set "LOCAL_PROXY_TOKEN="
 if exist "%~dp0.env" (
@@ -112,11 +112,11 @@ if defined CLOUDFLARED_EXE (
             start "cloudflared tunnel" cmd /k ""!CLOUDFLARED_EXE!" tunnel run !TUNNEL_NAME!"
         )
     ) else (
-        echo [tunnel] TUNNEL_NAME not set in .env — skipping cloudflared.
+        echo [tunnel] TUNNEL_NAME not set in .env - skipping cloudflared.
         echo [tunnel] See comments in run_playground.bat for one-time setup.
     )
 ) else (
-    echo [tunnel] cloudflared.exe not found — skipping tunnel.
+    echo [tunnel] cloudflared.exe not found - skipping tunnel.
     echo [tunnel] Install with: winget install cloudflare.cloudflared
 )
 
@@ -131,7 +131,16 @@ if errorlevel 1 (
     )
     echo [node] NODE_OPTIONS=!NODE_OPTIONS!
 )
-call npx vite
+:: Invoke the workspace-installed Vite shim directly. `npx vite` asks npm to
+:: remap every workspace first and aborts when sibling Git worktrees contain
+:: another package with the same name.
+set "VITE_CMD=%~dp0..\node_modules\.bin\vite.cmd"
+if exist "!VITE_CMD!" (
+    call "!VITE_CMD!"
+) else (
+    echo [vite] Workspace Vite shim not found at !VITE_CMD! - falling back to npx.
+    call npx --no-install vite
+)
 pause
 exit /b 0
 
@@ -156,7 +165,7 @@ for /f "delims=" %%j in ('where java 2^>nul') do (
     )
 )
 if not defined KEYTOOL (
-    echo [ibkr-cert] keytool.exe not found next to java.exe — skipping cert trust.
+    echo [ibkr-cert] keytool.exe not found next to java.exe - skipping cert trust.
     exit /b 0
 )
 
@@ -165,7 +174,7 @@ if not defined KEYTOOL (
 :: cert is present, 0 if absent.
 powershell -NoProfile -Command "$c = Get-ChildItem Cert:\LocalMachine\Root -ErrorAction SilentlyContinue | Where-Object { $_.Subject -like '*CN=localhost*' -and $_.Issuer -like '*CN=localhost*' }; if (-not $c) { exit 0 } else { exit 1 }" 2>nul
 if errorlevel 1 (
-    echo [ibkr-cert] Cert already trusted in LocalMachine\Root — skipping.
+    echo [ibkr-cert] Cert already trusted in LocalMachine\Root - skipping.
     exit /b 0
 )
 
@@ -174,10 +183,14 @@ if errorlevel 1 (
 :: and exits; we wait for it before continuing.
 net session >nul 2>&1
 if errorlevel 1 (
-    echo [ibkr-cert] Cert install requires admin — requesting elevation...
-    :: Pass the bat path as a separate argv element to avoid quote-mangling.
-    :: PowerShell's Start-Process takes -ArgumentList as an array of strings.
-    powershell -NoProfile -Command "try { Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', ('\"' + '%~f0' + '\" _CERT_INSTALL') -Verb RunAs -Wait -WindowStyle Normal -ErrorAction Stop; exit 0 } catch { exit 1 }"
+    echo [ibkr-cert] Cert install requires admin - requesting elevation...
+    :: Pass the batch path through the environment so PowerShell/cmd do not
+    :: have to parse it through another nested quoting layer. Explicitly set
+    :: the working directory because an elevated process cannot use a mapped
+    :: or otherwise unavailable drive inherited from the parent shell.
+    set "_IBKR_CERT_BAT=%~f0"
+    powershell -NoProfile -Command "try { $bat = $env:_IBKR_CERT_BAT; Start-Process -FilePath $bat -ArgumentList '_CERT_INSTALL' -WorkingDirectory (Split-Path -Parent $bat) -Verb RunAs -Wait -WindowStyle Normal -ErrorAction Stop; exit 0 } catch { Write-Host '[ibkr-cert] Elevation failed:' $_.Exception.Message; exit 1 }"
+    set "_IBKR_CERT_BAT="
     if errorlevel 1 (
         echo [ibkr-cert] UAC declined or unavailable. The browser will reject the gateway cert
         echo [ibkr-cert] until you run this bat as admin once, or manually trust the cert.
@@ -187,7 +200,7 @@ if errorlevel 1 (
         if not errorlevel 1 (
             echo [ibkr-cert] Cert trusted via elevated install.
         ) else (
-            echo [ibkr-cert] Elevated child did not leave a trusted cert — re-run as admin to diagnose.
+            echo [ibkr-cert] Elevated child did not leave a trusted cert - re-run as admin to diagnose.
         )
     )
     exit /b 0
@@ -212,7 +225,7 @@ for /f "delims=" %%j in ('where java 2^>nul') do (
     )
 )
 if not defined KEYTOOL (
-    echo [ibkr-cert] keytool.exe not found next to java.exe — cannot install cert.
+    echo [ibkr-cert] keytool.exe not found next to java.exe - cannot install cert.
     exit /b 1
 )
 
@@ -228,7 +241,7 @@ if not exist "%JKS%.orig" (
 :: the same alias/password the gateway config expects (localhost / mywebapi).
 "%KEYTOOL%" -genkeypair -alias localhost -keyalg RSA -keysize 2048 -sigalg SHA256withRSA -validity 3650 -keystore "%JKS%" -storetype JKS -storepass mywebapi -keypass mywebapi -dname "CN=localhost, OU=Client Portal, O=Local Dev, L=Local, ST=Local, C=US" -ext SAN=dns:localhost,ip:127.0.0.1,ip:::1 >nul 2>&1
 if errorlevel 1 (
-    echo [ibkr-cert] keytool failed to generate new keystore — restoring original.
+    echo [ibkr-cert] keytool failed to generate new keystore - restoring original.
     if exist "%JKS%.orig" copy /y "%JKS%.orig" "%JKS%" >nul
     exit /b 0
 )
