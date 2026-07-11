@@ -182,6 +182,24 @@ describe("Stability copy diagnostics", () => {
         expect(decision.dataLagBars).to.equal(10);
     });
 
+    it("keeps current IBKR 4H data fresh after the close and overnight", () => {
+        const decision = computeStabilityAction(makeStabilityRow({
+            asOfTimeKey: "1783699200", // 2026-07-10 16:00 UTC aggregate bucket start
+            dominantPair: "XOM•+QCOM•",
+        }), 50, "4h", Date.parse("2026-07-11T04:17:00Z"));
+        expect(decision.dataLagBars).to.equal(0);
+        expect(decision.reason).to.not.equal("DATA_STALE");
+    });
+
+    it("still invalidates IBKR data after more than two completed market buckets", () => {
+        const decision = computeStabilityAction(makeStabilityRow({
+            asOfTimeKey: "1783699200", // Friday 2026-07-10 final aggregate bucket
+            dominantPair: "XOM•+QCOM•",
+        }), 50, "4h", Date.parse("2026-07-14T20:30:00Z"));
+        expect(decision.dataLagBars).to.equal(4);
+        expect(decision.reason).to.equal("DATA_STALE");
+    });
+
     it("watches sparse recurrence and waits on an old state", () => {
         const nowMs = 1_700_003_600_000;
         const sparse = computeStabilityAction(makeStabilityRow({
@@ -196,9 +214,42 @@ describe("Stability copy diagnostics", () => {
             asOfTimeKey: "1700000000",
             medianBarsHeld: 80,
             freshHits: 0,
+            high: 0,
         }), 50, "1h", nowMs);
         expect(old.action).to.equal("WAIT");
         expect(old.reason).to.equal("OLD_STATE");
+    });
+
+    it("enters an old state only when current-state continuation evidence is strong", () => {
+        const decision = computeStabilityAction(makeStabilityRow({
+            asOfTimeKey: "1700000000",
+            medianBarsHeld: 120,
+            agreementTransition: 0,
+            freshHits: 0,
+            hits: 8,
+            high: 6,
+            medianLiftPct: 8,
+            medianRr: 3,
+            medianDist: 1,
+        }), 50, "1h", 1_700_003_600_000);
+        expect(decision.action).to.equal("ENTER");
+        expect(decision.reason).to.equal("CONTINUATION_EDGE");
+    });
+
+    it("keeps an old state non-actionable when continuation quality is insufficient", () => {
+        const decision = computeStabilityAction(makeStabilityRow({
+            asOfTimeKey: "1700000000",
+            medianBarsHeld: 120,
+            agreementTransition: 0,
+            freshHits: 0,
+            hits: 8,
+            high: 6,
+            medianLiftPct: 4,
+            medianRr: 3,
+            medianDist: 1,
+        }), 50, "1h", 1_700_003_600_000);
+        expect(decision.action).to.equal("WAIT");
+        expect(decision.reason).to.equal("OLD_STATE");
     });
 
     it("rejects failed evidence before considering timing", () => {
@@ -248,6 +299,16 @@ describe("summarizeStabilityDataFreshness", () => {
         expect(summary.staleCount).to.equal(0);
         expect(summary.freshCount).to.equal(2);
         expect(summary.text).to.contain("fresh");
+    });
+
+    it("does not mark current IBKR aggregate buckets stale during a weekend", () => {
+        const summary = summarizeStabilityDataFreshness(
+            [{ asOfTimeKey: "1783699200", dominantPair: "XOM•+QCOM•" }],
+            "4h",
+            Date.parse("2026-07-12T18:00:00Z"),
+        );
+        expect(summary.status).to.equal("FRESH");
+        expect(summary.maxLagBars).to.equal(0);
     });
 
     it("treats a row exactly at the threshold as FRESH (veto is strictly greater-than)", () => {

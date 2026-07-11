@@ -64,6 +64,9 @@ function compactStabilityResult(result: BatchStabilityMineResult): BatchStabilit
         targetAssets: Math.max(0, Math.floor(Number(result.targetAssets) || 0)),
         hitEvents: Math.max(0, Math.floor(Number(result.hitEvents) || 0)),
         minerProfile: compactMinerProfile(result.minerProfile),
+        ...(result.engine === "typescript" || result.engine === "typescript_parallel"
+            ? { engine: result.engine }
+            : {}),
         rows: Array.isArray(result.rows)
             ? result.rows.map((row): BatchStabilityMineResult["rows"][number] => ({
                     asset: String(row.asset ?? "").trim().toUpperCase(),

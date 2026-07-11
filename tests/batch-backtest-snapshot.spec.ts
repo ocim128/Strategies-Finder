@@ -75,6 +75,7 @@ describe("Batch backtest result snapshots", () => {
                 totalPairs: 10,
                 targetAssets: 1,
                 hitEvents: 1,
+                engine: "typescript_parallel",
                 rows: [
                     {
                         asset: "wld",
@@ -111,6 +112,7 @@ describe("Batch backtest result snapshots", () => {
         expect(snapshot.results[0]!.buyHoldPct).to.be.closeTo(10, 1e-9);
         expect(snapshot.results[0]!.openTradeAssetScores?.map((s) => `${s.asset}:${s.score}`)).to.deep.equal(["BTC:-1", "WLD:1"]);
         expect(snapshot.stabilityResult?.rows[0]?.asset).to.equal("WLD");
+        expect(snapshot.stabilityResult?.engine).to.equal("typescript_parallel");
     });
 
     it("rejects malformed snapshots", () => {

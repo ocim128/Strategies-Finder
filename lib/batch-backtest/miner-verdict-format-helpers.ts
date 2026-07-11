@@ -20,6 +20,7 @@ import type { BatchSyntheticAssetVerdict } from "./batch-synthetic-state-miner";
 import type { BatchStabilityRow } from "./batch-stability-mine";
 import { parseIntervalSeconds } from "../interval-utils";
 import { parseTimeToUnixSeconds } from "../time-normalization";
+import { IBKR_SYMBOL_SUFFIX } from "../local-daily-datasets";
 
 export type StabilityAction = "ENTER" | "WATCH" | "WAIT" | "REJECT" | "INVALID";
 
@@ -30,6 +31,11 @@ export interface StabilityActionDecision {
     recurrenceRate: number;
     freshHitRate: number;
 }
+
+const CONTINUATION_MIN_LIFT_PCT = 5;
+const CONTINUATION_MIN_RR = 2;
+const CONTINUATION_MAX_DISTANCE = 1.5;
+const CONTINUATION_MIN_HIGH_CONFIDENCE_SHARE = 0.5;
 
 /**
  * Signal-age tag.
@@ -93,7 +99,12 @@ export function computeStabilityAction(
 ): StabilityActionDecision {
     const recurrenceRate = row.hits / Math.max(1, reruns);
     const freshHitRate = Math.max(0, Number(row.freshHits) || 0) / Math.max(1, row.hits);
-    const dataLagBars = computeStabilityDataLagBars(row.asOfTimeKey, interval, nowMs);
+    const dataLagBars = computeStabilityDataLagBars(
+        row.asOfTimeKey,
+        interval,
+        nowMs,
+        isIbkrStabilityRow(row) ? "us_equities" : "continuous",
+    );
     const gate = computeStabilityGate(row);
 
     if (dataLagBars === null) {
@@ -105,15 +116,26 @@ export function computeStabilityAction(
     if (gate !== "PASS") {
         return { action: "REJECT", reason: gate, dataLagBars, recurrenceRate, freshHitRate };
     }
-    const ageTag = computeStabilityAgeTag(row);
-    if (ageTag === "Stale") {
-        return { action: "WAIT", reason: "OLD_STATE", dataLagBars, recurrenceRate, freshHitRate };
-    }
     if (row.hits < 5 || recurrenceRate < 0.1) {
         return { action: "WATCH", reason: "LOW_RECURRENCE", dataLagBars, recurrenceRate, freshHitRate };
     }
+    const ageTag = computeStabilityAgeTag(row);
     if (ageTag === "Fresh" && freshHitRate >= 0.5) {
         return { action: "ENTER", reason: "FRESH_STABLE", dataLagBars, recurrenceRate, freshHitRate };
+    }
+    const continuationQualityPasses = row.high / Math.max(1, row.hits) >= CONTINUATION_MIN_HIGH_CONFIDENCE_SHARE
+        && row.medianLiftPct !== null && row.medianLiftPct >= CONTINUATION_MIN_LIFT_PCT
+        && row.medianRr !== null && row.medianRr >= CONTINUATION_MIN_RR
+        && row.medianDist !== null && row.medianDist <= CONTINUATION_MAX_DISTANCE;
+    if (continuationQualityPasses) {
+        // Analog selection already matches the current snapshot on age and
+        // move-since-entry before estimating forward return. A second absolute
+        // extension veto duplicates that conditioning and can contradict the
+        // remaining-edge evidence this action is meant to summarize.
+        return { action: "ENTER", reason: "CONTINUATION_EDGE", dataLagBars, recurrenceRate, freshHitRate };
+    }
+    if (ageTag === "Stale") {
+        return { action: "WAIT", reason: "OLD_STATE", dataLagBars, recurrenceRate, freshHitRate };
     }
     return { action: "WATCH", reason: "AGING_STATE", dataLagBars, recurrenceRate, freshHitRate };
 }
@@ -122,11 +144,73 @@ export function computeStabilityDataLagBars(
     asOfTimeKey: string | null,
     interval: string,
     nowMs = Date.now(),
+    market: "continuous" | "us_equities" = "continuous",
 ): number | null {
     const asOfSeconds = parseTimeToUnixSeconds(asOfTimeKey);
     const intervalSeconds = parseIntervalSeconds(interval);
     if (asOfSeconds === null || intervalSeconds === null) return null;
+    if (market === "us_equities") {
+        return countUsEquityAggregateBucketsAfter(asOfSeconds, intervalSeconds, nowMs);
+    }
     return Math.max(0, ((nowMs / 1000) - asOfSeconds) / intervalSeconds);
+}
+
+function isIbkrStabilityRow(row: Pick<BatchStabilityRow, "dominantPair">): boolean {
+    return row.dominantPair?.includes(IBKR_SYMBOL_SUFFIX) ?? false;
+}
+
+/**
+ * Count completed US regular-session aggregate buckets after the stored bar.
+ * IBKR 4H CSVs store the bucket start (for example 16:00 UTC) even though that
+ * bucket contains 30m candles through the 20:00 UTC close. Counting distinct
+ * completed RTH buckets avoids treating that coverage, overnight, and weekends
+ * as missing market bars. The standard post-2007 US DST rule is sufficient for
+ * the exchange session; a single weekday holiday contributes at most two 4H
+ * buckets, which remains inside the existing two-bar freshness allowance.
+ */
+function countUsEquityAggregateBucketsAfter(
+    asOfSeconds: number,
+    intervalSeconds: number,
+    nowMs: number,
+): number {
+    if (nowMs / 1000 <= asOfSeconds) return 0;
+    const completedBuckets = new Set<number>();
+    const start = new Date(asOfSeconds * 1000);
+    const end = new Date(nowMs);
+    const startDate = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
+    const endDate = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
+
+    for (let dateMs = startDate; dateMs <= endDate; dateMs += 86_400_000) {
+        const date = new Date(dateMs);
+        const weekday = date.getUTCDay();
+        if (weekday === 0 || weekday === 6) continue;
+        const year = date.getUTCFullYear();
+        const month = date.getUTCMonth();
+        const day = date.getUTCDate();
+        const easternOffsetHours = isUsEasternDstDate(year, month, day) ? -4 : -5;
+        const sessionOpenSeconds = Date.UTC(year, month, day, 9 - easternOffsetHours, 30) / 1000;
+        for (let slot = 0; slot < 13; slot += 1) {
+            const barOpenSeconds = sessionOpenSeconds + slot * 30 * 60;
+            const barCloseMs = (barOpenSeconds + 30 * 60) * 1000;
+            if (barCloseMs > nowMs) break;
+            const bucketStart = Math.floor(barOpenSeconds / intervalSeconds) * intervalSeconds;
+            if (bucketStart > asOfSeconds) completedBuckets.add(bucketStart);
+        }
+    }
+    return completedBuckets.size;
+}
+
+function isUsEasternDstDate(year: number, month: number, day: number): boolean {
+    if (month < 2 || month > 10) return false;
+    if (month > 2 && month < 10) return true;
+    if (month === 2) return day >= nthSundayOfMonth(year, month, 2);
+    return day < nthSundayOfMonth(year, month, 1);
+}
+
+function nthSundayOfMonth(year: number, month: number, occurrence: number): number {
+    const firstWeekday = new Date(Date.UTC(year, month, 1)).getUTCDay();
+    const firstSunday = 1 + ((7 - firstWeekday) % 7);
+    return firstSunday + (occurrence - 1) * 7;
 }
 
 /**
@@ -167,7 +251,7 @@ export interface StabilityDataFreshnessSummary {
  * unit-testable.
  */
 export function summarizeStabilityDataFreshness(
-    rows: readonly { asOfTimeKey: string | null }[],
+    rows: readonly { asOfTimeKey: string | null; dominantPair?: string | null }[],
     interval: string,
     nowMs = Date.now(),
 ): StabilityDataFreshnessSummary {
@@ -177,7 +261,12 @@ export function summarizeStabilityDataFreshness(
     let freshCount = 0;
     let unknownCount = 0;
     for (const row of rows) {
-        const lag = computeStabilityDataLagBars(row.asOfTimeKey, interval, nowMs);
+        const lag = computeStabilityDataLagBars(
+            row.asOfTimeKey,
+            interval,
+            nowMs,
+            row.dominantPair?.includes(IBKR_SYMBOL_SUFFIX) ? "us_equities" : "continuous",
+        );
         if (lag === null) {
             unknownCount += 1;
             continue;

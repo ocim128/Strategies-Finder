@@ -27,8 +27,7 @@ import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-
 import { clearBatchDatasetCaches, getBatchDatasetCacheStats, loadBatchDataset } from "./batch-backtest-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { mapWithConcurrencyLimit } from "../async-pool";
-import { parseIntervalSeconds } from "../interval-utils";
-import { parseTimeToUnixSeconds } from "../time-normalization";
+import { isIbkrSymbol } from "../local-daily-datasets";
 import {
     runBatchBacktest,
     type BatchBacktestSymbolResult,
@@ -1878,24 +1877,25 @@ function yieldToUi(): Promise<void> {
 /**
  * Max OHLCV lag in bars across miner targets, using each target's last bar as
  * its AsOf. Returns null when no target's last-bar time or the interval can be
- * parsed. Reuses `parseTimeToUnixSeconds` + `parseIntervalSeconds` rather than
- * the row-level `computeStabilityDataLagBars` because pre-run we have raw
- * target datasets, not finalized rows with `asOfTimeKey`.
+ * parsed. Uses the same market-aware lag helper as finalized Stability rows;
+ * the target symbol selects IBKR session buckets versus continuous crypto time.
  */
 function computeMaxTargetLagBars(
     targets: readonly BatchSyntheticTargetArtifact[],
     interval: string,
     nowMs = Date.now(),
 ): number | null {
-    const intervalSeconds = parseIntervalSeconds(interval);
-    if (intervalSeconds === null) return null;
     let maxLag: number | null = null;
     for (const target of targets) {
         const lastBar = target.data[target.data.length - 1];
         if (!lastBar) continue;
-        const asOfSeconds = parseTimeToUnixSeconds(lastBar.time);
-        if (asOfSeconds === null) continue;
-        const lag = Math.max(0, (nowMs / 1000 - asOfSeconds) / intervalSeconds);
+        const lag = computeStabilityDataLagBars(
+            String(lastBar.time),
+            interval,
+            nowMs,
+            isIbkrSymbol(target.symbol) ? "us_equities" : "continuous",
+        );
+        if (lag === null) continue;
         if (maxLag === null || lag > maxLag) maxLag = lag;
     }
     return maxLag;
