@@ -15,8 +15,12 @@ type TestRunResult = {
     signal: NodeJS.Signals | null;
     timedOut: boolean;
     logFile: string;
-    stdout: string;
-    stderr: string;
+    /**
+     * Cleaned tail lines (last FAILURE_TAIL_LINE_COUNT) for compact failure
+     * output. The full output is streamed to `logFile` incrementally; only the
+     * bounded tail is retained in memory. Empty on PASS.
+     */
+    tailLines: string[];
 };
 
 type OutputMode = "compact" | "verbose" | "silent";
@@ -52,6 +56,57 @@ const EXCLUDED_TEST_FILES = new Set([
     "tests/e2e.spec.ts",
 ]);
 const DEFAULT_MAX_JOBS = 6;
+
+/**
+ * Bounded ring buffer of cleaned output lines for compact failure output.
+ *
+ * Replaces the prior design of buffering each child process's complete stdout
+ * and stderr in JS strings (up to 64 MiB per test × 6 concurrent jobs ≈
+ * 384 MiB). Only the last `capacity` cleaned lines are retained; the full
+ * output is streamed to the per-test log file by the runner.
+ */
+class LineRingBuffer {
+    private readonly capacity: number;
+    private readonly lines: string[] = [];
+    private pending = "";
+
+    constructor(capacity: number) {
+        this.capacity = Math.max(1, Math.floor(capacity));
+    }
+
+    pushChunk(chunk: string): void {
+        this.pending += chunk;
+        let newlineIndex: number;
+        while ((newlineIndex = this.pending.indexOf("\n")) !== -1) {
+            const line = this.pending.slice(0, newlineIndex).replace(/\r$/, "");
+            this.pending = this.pending.slice(newlineIndex + 1);
+            const trimmed = line.trimEnd();
+            if (trimmed.length > 0) {
+                this.pushLine(trimmed);
+            }
+        }
+    }
+
+    pushLine(line: string): void {
+        const trimmed = line.trimEnd();
+        if (trimmed.length === 0) return;
+        if (this.lines.length >= this.capacity) {
+            this.lines.shift();
+        }
+        this.lines.push(trimmed.length > FAILURE_LINE_WIDTH
+            ? `${trimmed.slice(0, FAILURE_LINE_WIDTH - 3)}...`
+            : trimmed);
+    }
+
+    flush(): string[] {
+        const trailing = this.pending.trimEnd();
+        if (trailing.length > 0) {
+            this.pushLine(trailing);
+            this.pending = "";
+        }
+        return [...this.lines];
+    }
+}
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const scriptDir = path.dirname(currentFilePath);
@@ -105,25 +160,9 @@ function formatDuration(durationMs: number): string {
     return `${(durationMs / 1000).toFixed(1)}s`;
 }
 
-function formatOutputForLog(stdout: string, stderr: string): string {
-    const lines = [
-        stdout ? "[stdout]" : "",
-        stdout,
-        stderr ? "[stderr]" : "",
-        stderr,
-    ].filter((part) => part !== "");
-    return `${lines.join("\n")}\n`;
-}
-
-function getFailureTail(stdout: string, stderr: string): string[] {
-    const cleanOutput = stripAnsi([stdout, stderr].filter(Boolean).join("\n"))
-        .split(/\r?\n/)
-        .map((line) => line.trimEnd())
-        .filter((line) => line.length > 0);
-
-    return cleanOutput
-        .slice(-FAILURE_TAIL_LINE_COUNT)
-        .map((line) => (line.length > FAILURE_LINE_WIDTH ? `${line.slice(0, FAILURE_LINE_WIDTH - 3)}...` : line));
+function openTestLog(file: string): fs.WriteStream {
+    const logFile = path.join(latestLogsDir, `${sanitizeLogName(file)}.log`);
+    return fs.createWriteStream(logFile, { encoding: "utf8" });
 }
 
 function ensureLatestLogsDir(): void {
@@ -206,21 +245,15 @@ function selectTests(testFiles: readonly string[], filters: string[]): string[] 
     return [...selected];
 }
 
-function writeTestLog(file: string, stdout: string, stderr: string): string {
-    const logFile = path.join(latestLogsDir, `${sanitizeLogName(file)}.log`);
-    fs.writeFileSync(logFile, formatOutputForLog(stdout, stderr), "utf8");
-    return logFile;
+function resolveTestLogPath(file: string): string {
+    return path.join(latestLogsDir, `${sanitizeLogName(file)}.log`);
 }
 
 function printTestResult(result: TestRunResult, outputMode: OutputMode): void {
     if (outputMode === "verbose") {
-        console.log(`\n[${result.status}] ${result.file} (${formatDuration(result.durationMs)})`);
-        if (result.stdout.trim().length > 0) {
-            process.stdout.write(result.stdout.endsWith("\n") ? result.stdout : `${result.stdout}\n`);
-        }
-        if (result.stderr.trim().length > 0) {
-            process.stderr.write(result.stderr.endsWith("\n") ? result.stderr : `${result.stderr}\n`);
-        }
+        // Verbose output is streamed live to the console during the run (see
+        // `runSingleTest`); only the status line is emitted post-completion.
+        console.log(`[${result.status}] ${result.file} (${formatDuration(result.durationMs)})`);
         return;
     }
 
@@ -228,9 +261,8 @@ function printTestResult(result: TestRunResult, outputMode: OutputMode): void {
 
     console.log(`${result.status} ${result.file} (${formatDuration(result.durationMs)})`);
     if (result.status === "FAIL") {
-        const tail = getFailureTail(result.stdout, result.stderr);
-        if (tail.length > 0) {
-            for (const line of tail) {
+        if (result.tailLines.length > 0) {
+            for (const line of result.tailLines) {
                 console.log(`  ${line}`);
             }
         } else {
@@ -239,48 +271,66 @@ function printTestResult(result: TestRunResult, outputMode: OutputMode): void {
     }
 }
 
-async function runSingleTest(file: string, timeoutMs: number): Promise<TestRunResult> {
+async function runSingleTest(
+    file: string,
+    timeoutMs: number,
+    outputMode: OutputMode,
+): Promise<TestRunResult> {
     const startedAt = Date.now();
-    let stdout = "";
-    let stderr = "";
+    const logPath = resolveTestLogPath(file);
+    const log = openTestLog(file);
+    const tail = new LineRingBuffer(FAILURE_TAIL_LINE_COUNT);
     let capturedBytes = 0;
     let outputTruncated = false;
     let timedOut = false;
     let spawnError: unknown = null;
+    const verbose = outputMode === "verbose";
 
     const child = spawn(process.execPath, [esnoCliPath, file], {
         cwd: repoRoot,
         stdio: ["ignore", "pipe", "pipe"],
     });
 
-    const capture = (chunk: Buffer, streamName: "stdout" | "stderr"): void => {
+    const writeRunnerMessage = (message: string): void => {
+        log.write(message);
+        tail.pushChunk(message);
+        if (verbose) {
+            process.stderr.write(message);
+        }
+    };
+
+    const handleChunk = (chunk: Buffer, stream: "stdout" | "stderr"): void => {
         capturedBytes += chunk.byteLength;
         if (capturedBytes > MAX_CAPTURE_BUFFER_BYTES) {
             if (!outputTruncated) {
                 const message = `\n[runner-error]\nCaptured output exceeded ${MAX_CAPTURE_BUFFER_BYTES} bytes. Test process was terminated.\n`;
-                stderr += message;
+                writeRunnerMessage(message);
                 outputTruncated = true;
                 child.kill();
             }
             return;
         }
 
-        if (streamName === "stdout") {
-            stdout += chunk.toString("utf8");
-        } else {
-            stderr += chunk.toString("utf8");
+        const text = chunk.toString("utf8");
+        log.write(text);
+        // ANSI is stripped from tail lines so the compact failure output stays
+        // readable; the log file retains the raw chunk verbatim.
+        tail.pushChunk(stripAnsi(text));
+        if (verbose) {
+            const target = stream === "stdout" ? process.stdout : process.stderr;
+            target.write(text);
         }
     };
 
-    child.stdout?.on("data", (chunk: Buffer) => capture(chunk, "stdout"));
-    child.stderr?.on("data", (chunk: Buffer) => capture(chunk, "stderr"));
+    child.stdout?.on("data", (chunk: Buffer) => handleChunk(chunk, "stdout"));
+    child.stderr?.on("data", (chunk: Buffer) => handleChunk(chunk, "stderr"));
     child.on("error", (error) => {
         spawnError = error;
     });
 
     const timeoutId = setTimeout(() => {
         timedOut = true;
-        stderr += `\n[runner-error]\nTest exceeded ${timeoutMs}ms and was terminated.\n`;
+        writeRunnerMessage(`\n[runner-error]\nTest exceeded ${timeoutMs}ms and was terminated.\n`);
         child.kill();
     }, timeoutMs);
 
@@ -291,21 +341,37 @@ async function runSingleTest(file: string, timeoutMs: number): Promise<TestRunRe
         });
     });
 
-    const durationMs = Date.now() - startedAt;
-    const runErrorText = spawnError
-        ? `\n[runner-error]\n${spawnError instanceof Error ? String(spawnError.stack || spawnError.message) : String(spawnError)}\n`
-        : "";
-    stderr = `${stderr}${runErrorText}`;
-    const status: TestRunStatus = exitCode === 0 && !spawnError && !outputTruncated && !timedOut ? "PASS" : "FAIL";
-    const logFile = writeTestLog(file, stdout, stderr);
+    if (spawnError) {
+        const runErrorText = `\n[runner-error]\n${spawnError instanceof Error ? String(spawnError.stack || spawnError.message) : String(spawnError)}\n`;
+        writeRunnerMessage(runErrorText);
+    }
 
-    return { file, status, durationMs, exitCode, signal, timedOut, logFile, stdout, stderr };
+    // End the log stream and wait for it to flush so the file is complete
+    // before the summary points at it.
+    await new Promise<void>((resolve) => {
+        log.end(() => resolve());
+    });
+
+    const durationMs = Date.now() - startedAt;
+    const status: TestRunStatus = exitCode === 0 && !spawnError && !outputTruncated && !timedOut ? "PASS" : "FAIL";
+
+    return {
+        file,
+        status,
+        durationMs,
+        exitCode,
+        signal,
+        timedOut,
+        logFile: logPath,
+        tailLines: status === "FAIL" ? tail.flush() : [],
+    };
 }
 
 async function runTestsInPool(
     selectedTests: readonly string[],
     jobs: number,
     timeoutMs: number,
+    outputMode: OutputMode,
     onResult?: (result: TestRunResult) => void
 ): Promise<TestRunResult[]> {
     const results: TestRunResult[] = new Array(selectedTests.length);
@@ -316,7 +382,7 @@ async function runTestsInPool(
         while (nextIndex < selectedTests.length) {
             const index = nextIndex;
             nextIndex += 1;
-            const result = await runSingleTest(selectedTests[index], timeoutMs);
+            const result = await runSingleTest(selectedTests[index], timeoutMs, outputMode);
             results[index] = result;
             onResult?.(result);
         }
@@ -433,7 +499,7 @@ async function main(): Promise<void> {
     const startedAt = Date.now();
     const outputMode: OutputMode = json ? "silent" : verbose ? "verbose" : "compact";
     const jobs = runInBand ? 1 : requestedJobs ?? resolveDefaultJobCount();
-    const results = await runTestsInPool(selectedTests, jobs, timeoutMs, (result) => {
+    const results = await runTestsInPool(selectedTests, jobs, timeoutMs, outputMode, (result) => {
         printTestResult(result, outputMode);
     });
     const durationMs = Date.now() - startedAt;

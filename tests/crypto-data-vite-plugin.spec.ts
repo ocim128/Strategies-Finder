@@ -1,5 +1,7 @@
-import { readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { afterEach, describe, it, beforeEach } from "node:test";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { expect } from "chai";
 import {
     __acquireCryptoSyncOwnerForTests,
@@ -11,15 +13,19 @@ import {
 } from "../lib/crypto-data/crypto-data-vite-plugin";
 import { buildCryptoSyncRequestPlans, expandCryptoSymbols } from "../lib/crypto-data/crypto-data-service";
 
-// `writeCryptoCsv` writes under `price-data/crypto/csv/<interval>/` relative to
-// process.cwd(). Clean up the test-symbol files so the spec leaves no residue.
-const TEST_CSV_SYMBOL_INTERVALS: Array<[string, string]> = [
-    ["TESTROUNDTRIP", "4h"],
-    ["TESTHEADER", "1h"],
-];
+// Per-spec tempdir root for `writeCryptoCsv` round-trip fixtures. Previously
+// these wrote under `price-data/crypto/csv/<interval>/` relative to cwd, which
+// is the warmed production tree (audit Finding 3). Passing `csvRoot` to
+// `writeCryptoCsv`/`getCryptoCsvPath` keeps the fixtures inside this tempdir,
+// which is removed wholesale in `afterEach`.
+let csvRoot = "";
+beforeEach(() => {
+    csvRoot = mkdtempSync(resolve(tmpdir(), "sf-crypto-csv-test-"));
+});
 afterEach(() => {
-    for (const [symbol, interval] of TEST_CSV_SYMBOL_INTERVALS) {
-        rmSync(getCryptoCsvPath(symbol, interval), { force: true });
+    if (csvRoot) {
+        rmSync(csvRoot, { recursive: true, force: true });
+        csvRoot = "";
     }
 });
 
@@ -49,8 +55,8 @@ describe("crypto-data CSV helpers", () => {
             { time: 1700000000, open: 100, high: 110, low: 95, close: 105, volume: 1.5 },
             { time: 1700001440, open: 105, high: 115, low: 100, close: 110, volume: 2.25 },
         ];
-        writeCryptoCsv("TESTROUNDTRIP", "4h", candles);
-        const written = getCryptoCsvPath("TESTROUNDTRIP", "4h");
+        writeCryptoCsv("TESTROUNDTRIP", "4h", candles, csvRoot);
+        const written = getCryptoCsvPath("TESTROUNDTRIP", "4h", csvRoot);
         // Read via the same parser the incremental Sync path uses.
         const lines = readFileSync(written, "utf8").split(/\r?\n/);
         const parsed = parseCryptoCsvCandleLines(lines);
@@ -63,8 +69,8 @@ describe("crypto-data CSV helpers", () => {
 
     it("emits the IBKR header line and ISO timestamps", () => {
         const candles = [{ time: 1700000000, open: 1, high: 2, low: 0.5, close: 1.5, volume: 3 }];
-        writeCryptoCsv("TESTHEADER", "1h", candles);
-        const content = readFileSync(getCryptoCsvPath("TESTHEADER", "1h"), "utf8");
+        writeCryptoCsv("TESTHEADER", "1h", candles, csvRoot);
+        const content = readFileSync(getCryptoCsvPath("TESTHEADER", "1h", csvRoot), "utf8");
         const lines = content.split("\n");
         expect(lines[0]).to.equal("time,open,high,low,close,volume");
         // time is ISO-8601 UTC, derivable back to unix seconds.

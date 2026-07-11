@@ -1,13 +1,14 @@
 import { expect } from "chai";
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { Readable } from "node:stream";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { executeBacktest } from "../lib/backtest-executor";
 import { buildExecutionLabStrategyExecutionContext } from "../lib/execution-lab/execution-lab-strategy-context";
 import { startExecutionLabMiner } from "../lib/execution-lab/execution-lab-api";
 import {
+    __setLogRootForTests,
     buildExecutionLabMinerProcessArgs,
     executionLabVitePlugin,
     isFreshStoredLiveQuote,
@@ -253,6 +254,23 @@ function withEnv<T>(updates: Record<string, string | undefined>, run: () => Prom
         }
     });
 }
+
+// Redirect session-log writes to a per-spec tempdir so the spec that exercises
+// `/session/start` + `/logs` never writes into or removes the production
+// `logs/paper-execution/` tree (audit Finding 3). The seam is cleared in
+// `afterEach` so other tests are unaffected.
+let logRoot = "";
+beforeEach(() => {
+    logRoot = mkdtempSync(resolve(tmpdir(), "sf-execution-lab-log-"));
+    __setLogRootForTests(logRoot);
+});
+afterEach(() => {
+    __setLogRootForTests(null);
+    if (logRoot) {
+        rmSync(logRoot, { recursive: true, force: true });
+        logRoot = "";
+    }
+});
 
 describe("Execution Lab live helpers", () => {
     it("preserves zero CLOB prices as valid boundary prices", () => {

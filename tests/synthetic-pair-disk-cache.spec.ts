@@ -7,9 +7,10 @@
  * loader's disk-cache hook relies on.
  *
  * The Binance path uses a test seam (`__setSeriesMetaFetcherForTests`) so the
- * tests don't need the dev server running. File-backed legs still hit the
- * real filesystem under `price-data/ibkr/csv/30m/` so seed mtime sensitivity
- * is tested against actual `statSync`.
+ * tests don't need the dev server running. File-backed legs resolve seed CSVs
+ * against a per-spec tempdir via `__setSeedDirForTests` so seed mtime
+ * sensitivity is tested against real `statSync` without writing fixtures into
+ * the warmed `price-data/ibkr/csv/30m/` production tree (audit Finding 3).
  */
 
 import * as assert from "node:assert/strict";
@@ -24,6 +25,7 @@ import {
     SYNTHETIC_PAIR_CACHE_VERSION,
     __cacheFilePathForTests,
     __clearSyntheticPairDiskCacheForTests,
+    __setSeedDirForTests,
     __setSeriesMetaFetcherForTests,
     __setSyntheticPairCacheDirForTests,
     computeSeedFingerprint,
@@ -41,11 +43,16 @@ const BULLET = "\u2022"; // IBKR marker
 const BASE_SYMBOL = `AAPL${BULLET}`;
 const QUOTE_SYMBOL = `MSFT${BULLET}`;
 const SOURCE_INTERVAL = "30m";
-const SEED_DIR = resolve(process.cwd(), "price-data", "ibkr", "csv", SOURCE_INTERVAL);
+// Per-spec tempdir root for file-backed seed CSVs. Previously this resolved
+// against `process.cwd()/price-data/ibkr/csv/30m/`, which wrote test fixtures
+// into the warmed production seed tree (audit Finding 3). The seed root is now
+// injected via `__setSeedDirForTests` so the fingerprint `statSync` path also
+// resolves here, and the whole tree is removed in `afterEach`.
+let seedDir = "";
 let cacheDir = "";
 
 function seedPath(bare: string): string {
-    return resolve(SEED_DIR, `${bare}.csv`);
+    return resolve(seedDir, SOURCE_INTERVAL, `${bare}.csv`);
 }
 
 function writeSeed(bare: string, contents: string): void {
@@ -109,18 +116,14 @@ function makeBars(n: number): OHLCVData[] {
     return bars;
 }
 
-// Save original seed contents so tests don't clobber real data accidentally.
-const originalSeeds = new Map<string, string>();
-
 beforeEach(() => {
     cacheDir = mkdtempSync(resolve(tmpdir(), "sf-synthetic-cache-test-"));
+    seedDir = mkdtempSync(resolve(tmpdir(), "sf-synthetic-seed-test-"));
     __setSyntheticPairCacheDirForTests(cacheDir);
+    __setSeedDirForTests(seedDir);
     __clearSyntheticPairDiskCacheForTests();
     __setSeriesMetaFetcherForTests(null);
     for (const bare of ["AAPL", "MSFT"]) {
-        if (existsSync(seedPath(bare))) {
-            originalSeeds.set(bare, readFileSync(seedPath(bare), "utf8"));
-        }
         writeSeed(bare, `test-seed-${bare}\n`);
     }
 });
@@ -128,20 +131,16 @@ beforeEach(() => {
 afterEach(() => {
     __clearSyntheticPairDiskCacheForTests();
     __setSyntheticPairCacheDirForTests(null);
+    __setSeedDirForTests(null);
     if (cacheDir) {
         rmSync(cacheDir, { recursive: true, force: true });
         cacheDir = "";
     }
-    __setSeriesMetaFetcherForTests(null);
-    for (const bare of ["AAPL", "MSFT"]) {
-        const original = originalSeeds.get(bare);
-        if (original !== undefined) {
-            writeFileSync(seedPath(bare), original, "utf8");
-        }
-        // If there was no original seed, leave the test artifact — it's under
-        // price-data/ which is gitignored and won't pollute the repo.
+    if (seedDir) {
+        rmSync(seedDir, { recursive: true, force: true });
+        seedDir = "";
     }
-    originalSeeds.clear();
+    __setSeriesMetaFetcherForTests(null);
 });
 
 // --------------------------------------------------------------------------

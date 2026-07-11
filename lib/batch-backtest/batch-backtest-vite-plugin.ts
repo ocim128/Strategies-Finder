@@ -25,7 +25,8 @@
 
 import type { Plugin } from "vite";
 import { getHeapStatistics, deserialize, serialize } from "node:v8";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { debugLogger } from "../debug-logger";
@@ -111,6 +112,51 @@ const BATCH_MINER_PARALLEL_STABILITY_ENABLED_DEFAULT = true;
 let BATCH_MINER_PARALLEL_STABILITY_ENABLED = BATCH_MINER_PARALLEL_STABILITY_ENABLED_DEFAULT;
 const PARALLEL_STABILITY_MIN_RERUNS = 4;
 
+/**
+ * Max concurrent `writeFile` calls for Mine artifact persistence. Each artifact
+ * is a v8-serialized multi-MB payload; unbounded concurrency would let a
+ * 1000-pair run dispatch 1000 writes at once and exhaust file descriptors / RAM
+ * before the event loop could drain them. 4 is enough to keep disk throughput
+ * saturated without blocking the Vite event loop (audit Finding 4).
+ */
+const ARTIFACT_WRITE_CONCURRENCY = 4;
+
+/**
+ * Minimal counting semaphore capping concurrent async artifact writes across
+ * `storeMineArtifact` submissions. `acquire` blocks (returns a waiting promise)
+ * once `ARTIFACT_WRITE_CONCURRENCY` writes are in flight; `release` drains the
+ * queue in FIFO order. The pending-writes array in `storeMineArtifact` is the
+ * single flush seam — `flushPendingArtifactWrites` awaits every submitted
+ * promise, so even a queued-but-not-yet-acquired write is tracked.
+ */
+class ArtifactWriteSemaphore {
+    private active = 0;
+    private readonly waiters: Array<() => void> = [];
+
+    async acquire(): Promise<void> {
+        if (this.active < ARTIFACT_WRITE_CONCURRENCY) {
+            this.active += 1;
+            return;
+        }
+        await new Promise<void>((resolve) => {
+            this.waiters.push(() => {
+                this.active += 1;
+                resolve();
+            });
+        });
+    }
+
+    release(): void {
+        const next = this.waiters.shift();
+        if (next) {
+            next();
+        } else {
+            this.active -= 1;
+        }
+    }
+}
+const artifactWriteSemaphore = new ArtifactWriteSemaphore();
+
 // ---------------------------------------------------------------------------
 // Module-scope state — single in-flight run per dev server (single-owner model)
 // ---------------------------------------------------------------------------
@@ -130,6 +176,11 @@ let lastMineArtifacts: StoredMineArtifactMeta[] = [];
 // by the artifact count and cleared in `releaseLastResults`, so steady-state
 // heap footprint is unchanged.
 const parsedArtifactCache = new Map<string, BatchSyntheticPairArtifact>();
+// Pending async artifact writes from `storeMineArtifact`. The `done` event and
+// `releaseLastResults` both await this so artifacts are durable before the
+// browser is told `serverHasArtifacts: true` and before the temp dir is
+// deleted (audit Finding 4). Cleared in `releaseLastResults`.
+let pendingArtifactWrites: Promise<void>[] = [];
 let mineArtifactDir: string | null = null;
 let lastRunFingerprint: string | null = null;
 let lastRunInterval: string | null = null;
@@ -179,6 +230,17 @@ function ensureMineArtifactDir(): string {
     return mineArtifactDir;
 }
 
+/**
+ * Persist a per-row Mine artifact asynchronously so the Vite event loop stays
+ * responsive to NDJSON progress, status polling, and Stop requests during heavy
+ * disk activity (audit Finding 4).
+ *
+ * The in-memory `parsedArtifactCache` is populated synchronously so same-run
+ * Mine reads hit the cache without waiting on the disk write; the disk write is
+ * enqueued through a bounded pool (ARTIFACT_WRITE_CONCURRENCY) and tracked in
+ * `pendingArtifactWrites` so `flushPendingArtifactWrites` can make the `done`
+ * event and `releaseLastResults` wait for durability before proceeding.
+ */
 function storeMineArtifact(index: number, row: BatchBacktestSymbolResult): void {
     if (!row.result || !row.data || !row.signals) return;
     const parsed = parsePortfolioSyntheticPairSymbol(row.symbol);
@@ -201,8 +263,9 @@ function storeMineArtifact(index: number, row: BatchBacktestSymbolResult): void 
     // v8 serialize is ~2-4x faster than JSON.stringify on numeric-heavy
     // OHLCV/trade payloads and produces smaller files. Paired with the parse
     // cache in loadStoredMineArtifact, Stability Mine no longer blocks on
-    // (de)serialization for rerun subsets.
-    writeFileSync(filePath, serialize(artifact));
+    // (de)serialization for rerun subsets. The serialized buffer is computed
+    // synchronously (CPU work) and only the disk write is deferred.
+    const buffer = serialize(artifact);
     parsedArtifactCache.set(filePath, artifact);
     lastMineArtifacts[index] = {
         symbol: row.symbol,
@@ -212,14 +275,30 @@ function storeMineArtifact(index: number, row: BatchBacktestSymbolResult): void 
         quoteSymbol: parsed.quoteSymbol,
         filePath,
     };
+    pendingArtifactWrites.push(
+        (async () => {
+            await artifactWriteSemaphore.acquire();
+            try {
+                await mkdir(dir, { recursive: true });
+                await writeFile(filePath, buffer);
+            } catch (error) {
+                debugLogger.warn("batch.server.artifact_store_failed", {
+                    filePath,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            } finally {
+                artifactWriteSemaphore.release();
+            }
+        })(),
+    );
 }
 
-function loadStoredMineArtifact(meta: StoredMineArtifactMeta): BatchSyntheticPairArtifact {
+async function loadStoredMineArtifact(meta: StoredMineArtifactMeta): Promise<BatchSyntheticPairArtifact> {
     const cached = parsedArtifactCache.get(meta.filePath);
     if (cached) {
         return cached;
     }
-    const deserialized = deserialize(readFileSync(meta.filePath)) as BatchSyntheticPairArtifact;
+    const deserialized = deserialize(await readFile(meta.filePath)) as BatchSyntheticPairArtifact;
     parsedArtifactCache.set(meta.filePath, deserialized);
     return deserialized;
 }
@@ -230,6 +309,20 @@ function collectStoredMineArtifactMetas(): StoredMineArtifactMeta[] {
 
 function hasStoredMineArtifacts(): boolean {
     return collectStoredMineArtifactMetas().length > 0;
+}
+
+/**
+ * Wait for all in-flight `storeMineArtifact` writes to flush. Called before the
+ * `done` event (so `serverHasArtifacts` is truthful) and before
+ * `releaseLastResults` deletes the temp dir (so a write isn't left pointing at
+ * a deleted path).
+ */
+async function flushPendingArtifactWrites(): Promise<void> {
+    const writes = pendingArtifactWrites;
+    pendingArtifactWrites = [];
+    if (writes.length > 0) {
+        await Promise.all(writes);
+    }
 }
 
 function clearArtifactReleaseTimer(): void {
@@ -244,10 +337,16 @@ function clearArtifactReleaseTimer(): void {
  * browser-side post-Mine prune (commit 6401a53) plus the TTL defense-in-depth
  * the browser got for free via tab reload.
  *
+ * Async because artifact writes (`storeMineArtifact`) and the recursive temp
+ * dir removal (`rm`) are offloaded to `fs/promises` so a multi-GB cleanup does
+ * not block the Vite event loop (audit Finding 4). Awaits any pending writes
+ * first so a slow write isn't left referencing a deleted path.
+ *
  * Idempotent: safe to call when no artifacts are retained.
  */
-function releaseLastResults(reason: string): void {
+async function releaseLastResults(reason: string): Promise<void> {
     clearArtifactReleaseTimer();
+    await flushPendingArtifactWrites();
     const rows = lastMineArtifacts.length;
     if (rows === 0 && !mineArtifactDir) {
         // `new_run` also comes through here. Cache invalidation must not depend
@@ -264,7 +363,7 @@ function releaseLastResults(reason: string): void {
     lastMineArtifacts = [];
     parsedArtifactCache.clear();
     if (mineArtifactDir) {
-        rmSync(mineArtifactDir, { recursive: true, force: true });
+        await rm(mineArtifactDir, { recursive: true, force: true });
         mineArtifactDir = null;
     }
     lastRunFingerprint = null;
@@ -277,7 +376,7 @@ function releaseLastResults(reason: string): void {
 function scheduleArtifactTtl(): void {
     clearArtifactReleaseTimer();
     artifactReleaseTimer = setTimeout(() => {
-        releaseLastResults("ttl_expired");
+        void releaseLastResults("ttl_expired");
     }, DEFAULT_ARTIFACT_RETENTION_MS);
 }
 
@@ -291,7 +390,7 @@ function scheduleArtifactTtl(): void {
  * Idempotent and safe to call at plugin registration. Only matches the
  * exact `mkdtempSync` prefix in `ensureMineArtifactDir`.
  */
-function sweepOrphanedMineArtifactDirs(): void {
+async function sweepOrphanedMineArtifactDirs(): Promise<void> {
     let tmp: string;
     try {
         tmp = tmpdir();
@@ -300,14 +399,14 @@ function sweepOrphanedMineArtifactDirs(): void {
     }
     let entries: string[];
     try {
-        entries = readdirSync(tmp);
+        entries = await readdir(tmp);
     } catch {
         return;
     }
     for (const entry of entries) {
         if (!entry.startsWith("strategies-finder-batch-mine-")) continue;
         try {
-            rmSync(join(tmp, entry), { recursive: true, force: true });
+            await rm(join(tmp, entry), { recursive: true, force: true });
         } catch (error) {
             debugLogger.warn("batch.server.orphan_sweep_failed", {
                 entry,
@@ -458,6 +557,10 @@ export async function processRunBatch(
         lastRunInterval = input.interval;
         lastRunStrategyKey = input.strategyKey;
 
+        // Flush in-flight artifact writes before the `done` event so
+        // `serverHasArtifacts` is truthful — the browser gates the Mine button
+        // on that flag, and Mine reads the artifacts from disk (audit Finding 4).
+        await flushPendingArtifactWrites();
         const artifactsAvailable = hasStoredMineArtifacts();
         const cacheStats = getServerBatchDatasetCacheStats();
         lastRunCacheStats = cacheStats;
@@ -479,7 +582,7 @@ export async function processRunBatch(
         if (artifactsAvailable) {
             scheduleArtifactTtl();
         } else {
-            releaseLastResults("run_no_artifacts");
+            await releaseLastResults("run_no_artifacts");
         }
         debugLogger.event("batch.server.run.complete", {
             symbols: input.symbols.length,
@@ -497,7 +600,7 @@ export async function processRunBatch(
         const message = error instanceof Error ? error.message : String(error);
         debugLogger.warn("batch.server.run.fatal", { error: message });
         writer({ type: "fatal", error: message });
-        releaseLastResults("run_fatal");
+        await releaseLastResults("run_fatal");
     } finally {
         abortController = null;
     }
@@ -568,7 +671,7 @@ export async function processMine(
                 return;
             }
             const linkedMetas = metasByAsset.get(target.asset) ?? [];
-            const linkedArtifacts = linkedMetas.map(loadStoredMineArtifact);
+            const linkedArtifacts = await Promise.all(linkedMetas.map(loadStoredMineArtifact));
             const result = runBatchSyntheticStateMiner({ interval, targets: [target], artifacts: linkedArtifacts });
             for (const verdict of result.verdicts) {
                 if (lostOwnership()) {
@@ -590,7 +693,7 @@ export async function processMine(
             totals: { verdicts: verdictCount },
         });
         // Mine was the last consumer of the per-row artifacts. Release them.
-        releaseLastResults("mine_completed");
+        await releaseLastResults("mine_completed");
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         debugLogger.warn("batch.server.mine.fatal", { error: message });
@@ -714,7 +817,7 @@ export async function processStabilityMine(
                 writer({ type: "progress", run: reruns, reruns, hits: parallelResult.hitEvents });
                 snapshot.running = false;
                 writer({ type: "done", ok: true, result: parallelResult });
-                releaseLastResults("mine_completed");
+                await releaseLastResults("mine_completed");
                 return;
             }
             debugLogger.info("batch.parallel_stability.fallback_to_sequential", {
@@ -732,7 +835,7 @@ export async function processStabilityMine(
         // (ATR/trade/signal index building) so `artifactConversionMs` reports
         // disk artifact load separately from preparation.
         profileStartedAt = performance.now();
-        const loadedPairs = artifactMetas.map(loadStoredMineArtifact);
+        const loadedPairs = await Promise.all(artifactMetas.map(loadStoredMineArtifact));
         minerProfile.artifactConversionMs += performance.now() - profileStartedAt;
         profileStartedAt = performance.now();
         const preparedPairs = prepareBatchSyntheticPairArtifacts(loadedPairs);
@@ -896,7 +999,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
 
     const owner = ++runOwnerGen;
     runOwner = owner;
-    releaseLastResults("new_run");
+    await releaseLastResults("new_run");
     lastRunFingerprint = null;
     lastRunInterval = null;
     lastRunStrategyKey = null;
@@ -1217,11 +1320,13 @@ export function batchBacktestVitePlugin(): Plugin {
     return {
         name: "batch-backtest",
         configureServer(server) {
-            sweepOrphanedMineArtifactDirs();
+            // Best-effort: sweep orphaned dirs from a prior crash without
+            // blocking dev-server registration (audit Finding 4).
+            void sweepOrphanedMineArtifactDirs();
             register(server.middlewares);
         },
         configurePreviewServer(server) {
-            sweepOrphanedMineArtifactDirs();
+            void sweepOrphanedMineArtifactDirs();
             register(server.middlewares);
         },
     };

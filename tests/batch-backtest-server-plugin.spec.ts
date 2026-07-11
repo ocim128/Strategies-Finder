@@ -76,9 +76,9 @@ before(() => {
     strategyRegistry.register(STRATEGY_KEY, testStrategy);
 });
 
-after(() => {
+after(async () => {
     strategyRegistry.unregister(STRATEGY_KEY);
-    releaseLastResults("test_cleanup");
+    await releaseLastResults("test_cleanup");
 });
 
 function collectEvents(runner: (events: BatchStreamEvent[]) => Promise<void>): Promise<BatchStreamEvent[]> {
@@ -121,7 +121,7 @@ describe("batch-backtest server plugin processRunBatch", () => {
         expect(symbols.length).to.equal(2);
 
         setRunOwnerForTests(0);
-        releaseLastResults("test_end");
+        await releaseLastResults("test_end");
     });
 
     it("scalar-only wire transport: row.data and row.signals are undefined", async () => {
@@ -157,7 +157,7 @@ describe("batch-backtest server plugin processRunBatch", () => {
         expect(symbolEvent.row.result!.trades).to.deep.equal([]);
 
         setRunOwnerForTests(0);
-        releaseLastResults("test_end");
+        await releaseLastResults("test_end");
     });
 
     it("done event carries serverHasArtifacts=false when no synthetic pairs ran", async () => {
@@ -219,7 +219,7 @@ describe("batch-backtest server plugin processRunBatch", () => {
         expect(hasStoredMineArtifacts()).to.equal(true);
 
         setRunOwnerForTests(0);
-        releaseLastResults("test_end");
+        await releaseLastResults("test_end");
     });
 
     it("status snapshot can return only rows after the requested offset", async () => {
@@ -255,7 +255,7 @@ describe("batch-backtest server plugin processRunBatch", () => {
         expect(snapshot.run?.nextOffset).to.equal(null);
 
         setRunOwnerForTests(0);
-        releaseLastResults("test_end");
+        await releaseLastResults("test_end");
     });
 
     it("status snapshot paginates rows via nextOffset when a limit truncates", async () => {
@@ -302,7 +302,7 @@ describe("batch-backtest server plugin processRunBatch", () => {
         expect(page3.run?.nextOffset).to.equal(null);
 
         setRunOwnerForTests(0);
-        releaseLastResults("test_end");
+        await releaseLastResults("test_end");
     });
 
     it("lastRun paginates completed scalar rows + carries strategyKey for recovery (audit findings 3 & 5)", async () => {
@@ -370,7 +370,7 @@ describe("batch-backtest server plugin processRunBatch", () => {
 
         // Full reset for test isolation: null runState AND release artifacts.
         setRunOwnerForTests(0);
-        releaseLastResults("test_end");
+        await releaseLastResults("test_end");
     });
 
     it("lastRun pagination cursor returns nextOffset across multiple pages (audit finding 3 regression guard)", async () => {
@@ -423,7 +423,7 @@ describe("batch-backtest server plugin processRunBatch", () => {
         expect(page2.lastRun?.nextOffset).to.equal(null);
 
         setRunOwnerForTests(0);
-        releaseLastResults("test_end");
+        await releaseLastResults("test_end");
     });
 
     it("setStatus preserves the last real percent instead of resetting to 0", async () => {
@@ -470,7 +470,7 @@ describe("batch-backtest server plugin processRunBatch", () => {
         expect(checkedPositiveStatus).to.equal(true);
 
         setRunOwnerForTests(0);
-        releaseLastResults("test_end");
+        await releaseLastResults("test_end");
     });
 
     it("onSymbolStart populates currentSymbol in the run snapshot mid-run", async () => {
@@ -541,7 +541,7 @@ describe("batch-backtest server plugin processRunBatch", () => {
         expect(getRunStateForTests()?.currentSymbol).to.equal(null);
 
         setRunOwnerForTests(0);
-        releaseLastResults("test_end");
+        await releaseLastResults("test_end");
     });
 
     it("Stop force-bumps the run owner (lost-ownership propagation)", async () => {
@@ -559,9 +559,9 @@ describe("batch-backtest server plugin processRunBatch", () => {
 });
 
 describe("batch-backtest server plugin releaseLastResults", () => {
-    it("is idempotent and safe to call when nothing is retained", () => {
-        releaseLastResults("test_idempotent_1");
-        releaseLastResults("test_idempotent_2");
+    it("is idempotent and safe to call when nothing is retained", async () => {
+        await releaseLastResults("test_idempotent_1");
+        await releaseLastResults("test_idempotent_2");
         // No throw + heapUsedMb is logged internally; nothing to assert beyond
         // survival, since the retained state is module-private.
         expect(true).to.equal(true);
@@ -587,7 +587,7 @@ describe("batch-backtest server plugin heap guard", () => {
 
 describe("batch-backtest server plugin processMine", () => {
     it("rejects Mine when no prior run artifacts exist on the server", async () => {
-        releaseLastResults("pre_test");
+        await releaseLastResults("pre_test");
         const events: unknown[] = [];
         await processMine("any-fingerprint", "5m", (event) => events.push(event), 99);
         // The first event is a done (no artifacts) — Mine never started.
@@ -629,7 +629,7 @@ describe("batch-backtest server plugin processMine", () => {
         expect(first.type).to.equal("done");
         expect(first.summary).to.match(/no completed synthetic pair artifacts/i);
 
-        releaseLastResults("test_end");
+        await releaseLastResults("test_end");
     });
 });
 
@@ -713,7 +713,7 @@ describe("batch-backtest server plugin processStabilityMine", () => {
         expect(secondLast.ok).to.equal(true);
         expect(hasStoredMineArtifacts()).to.equal(true);
 
-        releaseLastResults("test_end");
+        await releaseLastResults("test_end");
     });
 
     it("Stop aborts in-flight miner target loads via the abort signal (Finding 7)", async () => {
@@ -808,7 +808,7 @@ describe("batch-backtest server plugin processStabilityMine", () => {
         } finally {
             setMinerAbortControllerForTests(null);
             setMinerOwnerForTests(0);
-            releaseLastResults("test_end");
+            await releaseLastResults("test_end");
         }
     });
 });

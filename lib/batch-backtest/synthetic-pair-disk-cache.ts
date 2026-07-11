@@ -82,6 +82,13 @@ const PRUNE_THROTTLE_MS = 60_000;
 export const LRU_TOUCH_THROTTLE_MS = 5 * 60_000;
 
 let cacheDirForTests: string | null = null;
+/**
+ * Test-only override for the file-backed (IBKR / stock-market) seed CSV root.
+ * Production resolves seeds against `process.cwd()/price-data/ibkr/csv/`. Tests
+ * that exercise `computeSeedFingerprint`'s `statSync` sensitivity redirect
+ * this to a per-spec tempdir so they never touch warmed production seeds.
+ */
+let seedDirForTests: string | null = null;
 let lastPruneAt = 0;
 let startupPruneDone = false;
 
@@ -221,6 +228,9 @@ async function loadSeriesMeta(symbol: string, interval: string): Promise<SeriesM
  * to keep this module free of the vite plugin's `vite` import.
  */
 function seedCsvPath(bareSymbol: string, interval: string): string {
+    if (seedDirForTests) {
+        return resolve(seedDirForTests, interval, `${bareSymbol}.csv`);
+    }
     return resolve(process.cwd(), "price-data", "ibkr", "csv", interval, `${bareSymbol}.csv`);
 }
 
@@ -427,6 +437,16 @@ export function __setSyntheticPairCacheDirForTests(dir: string | null): void {
     cacheDirForTests = dir;
     lastPruneAt = 0;
     startupPruneDone = false;
+}
+
+/**
+ * Test seam: redirect file-backed (IBKR / stock-market) seed CSV resolution to
+ * a per-spec tempdir so fingerprint tests don't write to or `statSync` against
+ * warmed production seeds under `price-data/ibkr/csv/`. Pass `null` to restore
+ * the production root.
+ */
+export function __setSeedDirForTests(dir: string | null): void {
+    seedDirForTests = dir;
 }
 
 /** Wipe the cache directory. Test-only — production invalidation is by fingerprint. */

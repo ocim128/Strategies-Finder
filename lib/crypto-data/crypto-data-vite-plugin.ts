@@ -80,7 +80,7 @@ const BINANCE_NATIVE_INTERVALS = new Set([
 // CSV helpers (mirror IBKR's writeCsv / getCsvPath / parseCsvCandleLines)
 // ---------------------------------------------------------------------
 
-export function getCryptoCsvPath(symbol: string, interval: string): string {
+export function getCryptoCsvPath(symbol: string, interval: string, root: string = CRYPTO_CSV_DIR): string {
     const normalizedSymbol = symbol.trim().toUpperCase();
     const normalizedInterval = interval.trim();
     if (!BINANCE_SYMBOL_PATTERN.test(normalizedSymbol)) {
@@ -89,16 +89,20 @@ export function getCryptoCsvPath(symbol: string, interval: string): string {
     if (!BINANCE_NATIVE_INTERVALS.has(normalizedInterval)) {
         throw new Error(`Invalid Binance interval: ${interval}`);
     }
-    return resolve(CRYPTO_CSV_DIR, normalizedInterval, `${normalizedSymbol}.csv`);
+    return resolve(root, normalizedInterval, `${normalizedSymbol}.csv`);
 }
 
 /**
  * Atomic CSV write (temp + rename), identical format to IBKR so the same
  * loaders/inspection tools work: header `time,open,high,low,close,volume`,
  * `time` as ISO-8601 UTC, trailing newline. Exported so tests can round-trip.
+ *
+ * `root` defaults to the production `price-data/crypto/csv` tree; tests pass a
+ * per-spec tempdir so round-trip fixtures never land in the warmed production
+ * directory (audit Finding 3).
  */
-export function writeCryptoCsv(symbol: string, interval: string, candles: readonly CryptoCandle[]): void {
-    const filePath = getCryptoCsvPath(symbol, interval);
+export function writeCryptoCsv(symbol: string, interval: string, candles: readonly CryptoCandle[], root: string = CRYPTO_CSV_DIR): void {
+    const filePath = getCryptoCsvPath(symbol, interval, root);
     mkdirSync(dirname(filePath), { recursive: true });
     const rows = ["time,open,high,low,close,volume"];
     for (const candle of candles) {

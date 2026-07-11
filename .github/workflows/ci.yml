@@ -1,0 +1,33 @@
+name: CI
+
+# Activates the existing `npm run ci` gate (verify + build:check) on pushes
+# and pull requests. `verify` runs application typechecking, test typechecking,
+# the runtime spec suite, and `build:check` runs the production build plus the
+# bundle-budget gate. `cancel-in-progress` avoids paying for obsolete runs
+# after rapid pushes, and `cache: npm` reuses the npm cache across runs.
+#
+# The repo has no Node engine pin in package.json; Node 20 LTS is the
+# documented baseline for Vite 5 + the dev-server plugins. Bump in lockstep
+# with the local `run_playground.bat`/README if that changes.
+
+on:
+  push:
+    branches: [main, "chore/**", "fix/**", "feat/**"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run ci

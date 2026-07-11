@@ -45,7 +45,20 @@ import {
 } from "../second-market/binance-dns";
 import { readJsonBody, sendCaughtErrorJson } from "../vite-http-utils";
 
-const LOG_ROOT = resolve(process.cwd(), "logs", "paper-execution");
+const DEFAULT_LOG_ROOT = resolve(process.cwd(), "logs", "paper-execution");
+// Test-only override so the session-log spec can redirect log writes to a
+// per-spec tempdir instead of the production `logs/paper-execution/` tree
+// (audit Finding 3). `null` resolves to the production root.
+let logRootForTests: string | null = null;
+
+function logRoot(): string {
+    return logRootForTests ?? DEFAULT_LOG_ROOT;
+}
+
+/** Test seam: redirect session-log writes to a per-spec tempdir. */
+export function __setLogRootForTests(dir: string | null): void {
+    logRootForTests = dir;
+}
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_LOG_BATCH_RECORDS = 100;
 const LIVE_TRADE_LEDGER_TTL_MS = 60_000;
@@ -1367,7 +1380,7 @@ export function executionLabVitePlugin(): Plugin {
                     const day = new Date(Number.isFinite(parsedStarted) ? parsedStarted : Date.now()).toISOString().slice(0, 10);
                     const sessionId = randomUUID();
                     const logPath = resolve(
-                        LOG_ROOT,
+                        logRoot(),
                         sanitizeExecutionLabPathPart(strategyKey),
                         sanitizeExecutionLabPathPart(symbol),
                         day,
