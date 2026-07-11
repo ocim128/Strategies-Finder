@@ -2608,7 +2608,15 @@ export class FinderManager {
 			}
 		};
 
+		let streamError: unknown = null;
 		try {
+			// `requireTerminal: true` converts a clean EOF before `done` into a
+			// thrown `StreamEndedBeforeTerminalError`. Without it, a truncated
+			// stream resolved normally with `terminalCandidates === null` and
+			// the run finalized against the provisional incremental map —
+			// adopting intermediates the runner's final sort+slice had evicted
+			// and missing late passers the throttle never flushed (audit
+			// finding 2).
 			await consumeNdjsonStream<FinderStreamEvent>(response.body, {
 				onStart: (event) => {
 					this.setStatus(`Server: 0/${event.totalSymbols} symbols (evaluating ~${event.totalCandidates} candidates)...`);
@@ -2647,17 +2655,53 @@ export class FinderManager {
 				onFatal: (event) => {
 					throw new Error(event.error);
 				},
-			});
+			}, { requireTerminal: true });
 		} catch (error) {
-			// Network error mid-stream: surface but keep any partial survivor set
-			// already rendered. Re-throw so the caller's catch reports it.
-			const message = error instanceof Error ? error.message : String(error);
-			this.setStatus(`Server Finder failed: ${message}`);
-			throw error;
+			// Defer decision until after the cancellation check; a stale run
+			// that lost ownership must not mutate UI state.
+			streamError = error;
 		}
 
-		// If the server didn't ship a terminal slice (older / unexpected shape),
-		// fall back to the merged map so the run still finalizes.
+		// If no terminal `done` arrived, the stream either threw mid-flight OR
+		// resolved cleanly before `done` (truncated response). Previously this
+		// silently fell back to the incremental map. Now: attempt recovery via
+		// `/api/finder/status`, which exposes the authoritative terminal slice
+		// from the server's retained `runState` after completion. Only if
+		// recovery also fails do we surface the error.
+		if (terminalCandidates === null) {
+			const recovered = await this.recoverUniverseServerRun();
+			if (recovered) {
+				terminalCandidates = recovered.candidates;
+				if (terminalDiagnostics === null) {
+					terminalDiagnostics = recovered.diagnostics;
+				}
+				if (loadedSymbols === 0) loadedSymbols = recovered.loadedSymbols;
+				if (failedSymbolCount === 0) failedSymbolCount = recovered.failedSymbolCount;
+				if (terminalCandidates) {
+					this.setLatestResults({ scope: 'symbol_universe', results: terminalCandidates });
+					this.renderLatestResults();
+				}
+				finalized = true;
+				// Recovery succeeded — the run genuinely completed on the server.
+				// Discard any stream error; it's informational.
+				streamError = null;
+			}
+		}
+
+		if (streamError !== null) {
+			// Recovery did not succeed and we have no terminal slice. Surface
+			// the original stream error so the caller's catch reports it; keep
+			// any partial survivor set already rendered for diagnostics.
+			const message = streamError instanceof Error ? streamError.message : String(streamError);
+			this.setStatus(`Server Finder failed: ${message}`);
+			throw streamError;
+		}
+
+		// terminalCandidates is now guaranteed by the `requireTerminal`
+		// invariant + recovery; the provisional incremental map is no longer
+		// an acceptable final state. (If recovery sets candidates to [], that
+		// is a legitimate "zero survivors" outcome, distinct from "no terminal
+		// slice".)
 		const finalResults = terminalCandidates
 			?? sortFinderUniverseCandidates([...survivorByKey.values()], sortPriority).slice(0, options.topN);
 
@@ -2677,6 +2721,69 @@ export class FinderManager {
 			failedSymbolCount,
 		};
 	}
+
+		/**
+		 * Recovery path for a truncated Universe server stream. When the run
+		 * stream ends before its terminal `done` event (network drop, clean EOF
+		 * on a partial response), the server may still have completed: Universe
+		 * has no TTL/Mine surface, so `runState` persists after completion until
+		 * the next run overwrites it. `/api/finder/status` exposes the terminal
+		 * candidate slice + diagnostics via its `lastRun` branch. This adopts
+		 * that authoritative slice instead of presenting provisional incremental
+		 * candidates as final (audit finding 2).
+		 *
+		 * Returns `null` if the server is still running, has no `lastRun`, or the
+		 * request fails — the caller then surfaces the original stream error.
+		 */
+		private async recoverUniverseServerRun(
+		): Promise<{
+			candidates: FinderUniverseCandidate[] | null;
+			diagnostics: FinderDiagnostics | null;
+			loadedSymbols: number;
+			failedSymbolCount: number;
+		} | null> {
+			try {
+				const response = await fetch('/api/finder/status', { cache: "no-store" });
+				if (!response.ok) return null;
+				const payload = await response.json() as {
+					running?: boolean;
+					lastRun?: {
+						candidates?: FinderUniverseCandidate[];
+						diagnostics?: FinderDiagnostics | null;
+						totals?: { loadedSymbols?: number; failedSymbols?: number } | null;
+						// Non-null only when the run reached its terminal
+						// reconciliation (success or cancel). After a fatal the
+						// server leaves summary null and runState.candidates holds
+						// only the partial provisional set — adopting that would
+						// reintroduce the very bug (provisional candidates treated
+						// as authoritative) that finding 2 fixes.
+						summary?: string | null;
+					} | null;
+				};
+				if (payload.running || !payload.lastRun) return null;
+				const lastRun = payload.lastRun;
+				// summary === null => run crashed (fatal) before reconciling its
+				// terminal survivor slice; the candidates array is provisional.
+				// Refuse recovery so the caller surfaces the original stream error.
+				if (typeof lastRun.summary !== "string" || !lastRun.summary) return null;
+				const candidates = Array.isArray(lastRun.candidates) ? lastRun.candidates : null;
+				if (candidates === null) return null;
+				debugLogger.warn('finder.server.stream_recovered_via_status', {
+					survivors: candidates.length,
+				});
+				return {
+					candidates,
+					diagnostics: lastRun.diagnostics ?? null,
+					loadedSymbols: lastRun.totals?.loadedSymbols ?? 0,
+					failedSymbolCount: lastRun.totals?.failedSymbols ?? 0,
+				};
+			} catch (error) {
+				debugLogger.warn('finder.server.recover_universe_run_failed', {
+					error: error instanceof Error ? error.message : String(error),
+				});
+				return null;
+			}
+		}
 
 	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'polymarketExitMode' | 'polymarketSignalExitAllowMultipleTradesPerEvent' | 'executionModel' | 'polymarketEntryDelayBars' | 'polymarketEntryPriceFilterCents' | 'polymarketBacktestSlippageCents' | 'polymarketPostSignalLimitEntryEnabled' | 'polymarketPostSignalLimitEntryMode' | 'polymarketPostSignalLimitEntryPriceCents' | 'polymarketPostSignalLimitEntryOffsetCents' | 'polymarketPostSignalLimitExitEnabled' | 'polymarketPostSignalLimitExitMode' | 'polymarketPostSignalLimitExitPriceCents' | 'polymarketPostSignalLimitExitOffsetCents' | 'disableSignalExits' | 'exitStrategyOverrideEnabled'>): FinderOptions {
 		const dom = this.getDom();
@@ -3328,13 +3435,43 @@ export class FinderManager {
 		}
 	}
 
+	/**
+	 * Resolve a Finder result's strategy, lazy-loading the built-in if it isn't
+	 * registered yet (the common case after a tab reload — only the
+	 * startup/current built-ins are eagerly registered, so restored Finder rows
+	 * for other built-ins reference strategies that aren't loaded). Returns
+	 * `null` if the strategy genuinely does not exist (deleted custom strategy
+	 * or unknown key) so Apply can surface a visible error instead of silently
+	 * no-op'ing (audit finding 4).
+	 *
+	 * Both Apply paths (current-chart + Universe) share this seam so the
+	 * lazy-load + missing-strategy behavior is identical.
+	 */
+	private async resolveFinderResultStrategy(strategyKey: string): Promise<NonNullable<ReturnType<typeof strategyRegistry.get>> | null> {
+		const strategy = strategyRegistry.get(strategyKey)
+			?? await loadBuiltInStrategyByKey(strategyKey);
+		return strategy ?? null;
+	}
+
 	private async applyCurrentChartResult(result: FinderResult): Promise<void> {
 		const isPolymarketResult = Boolean(result.polymarketEval);
 
+		// Load the strategy BEFORE mutating currentStrategyKey / dropdown so a
+		// missing strategy leaves the prior selection unchanged (audit finding
+		// 4). Previously the key was flipped first and Apply then silently
+		// returned if the registry lookup failed, leaving the UI in a
+		// half-updated state with the wrong strategy active.
+		const strategy = await this.resolveFinderResultStrategy(result.key);
+		if (!strategy) {
+			uiManager.showToast(
+				`Strategy no longer available: ${result.key}. Apply aborted; current strategy unchanged.`,
+				'error',
+			);
+			debugLogger.warn('finder.apply_strategy_missing', { strategyKey: result.key });
+			return;
+		}
 		setCurrentStrategyKey(result.key);
 		uiManager.updateStrategyDropdown(result.key);
-		const strategy = strategyRegistry.get(result.key);
-		if (!strategy) return;
 		paramManager.render(strategy);
 		paramManager.setValues(strategy, result.params);
 
@@ -3372,10 +3509,19 @@ export class FinderManager {
 	}
 
 	private async applyUniverseCandidate(candidate: FinderUniverseCandidate): Promise<void> {
+		// Load the strategy BEFORE mutating currentStrategyKey / dropdown (same
+		// reasoning as `applyCurrentChartResult`; audit finding 4).
+		const strategy = await this.resolveFinderResultStrategy(candidate.strategyKey);
+		if (!strategy) {
+			uiManager.showToast(
+				`Strategy no longer available: ${candidate.strategyKey}. Apply aborted; current strategy unchanged.`,
+				'error',
+			);
+			debugLogger.warn('finder.apply_universe_strategy_missing', { strategyKey: candidate.strategyKey });
+			return;
+		}
 		setCurrentStrategyKey(candidate.strategyKey);
 		uiManager.updateStrategyDropdown(candidate.strategyKey);
-		const strategy = strategyRegistry.get(candidate.strategyKey);
-		if (!strategy) return;
 
 		paramManager.render(strategy);
 		paramManager.setValues(strategy, candidate.params);

@@ -1091,14 +1091,26 @@ function handleStatusRequest(afterRow = 0, limitRaw?: number): unknown {
                 nextOffset,
             }
             : null,
-        lastRun: hasStoredMineArtifacts()
+        // After a run completes (`runOwner` flips to NONE but `runState` is
+        // retained for the artifact lifetime), expose the completed scalar
+        // rows via the SAME `?after=&limit=` pagination as the in-progress
+        // `run` branch. This lets `recoverCompletedServerRun` page back the
+        // rows a truncated stream dropped so Copy / benchmark / snapshot
+        // describe the complete run, not just the streamed prefix (audit
+        // finding 3). `rowCount` here is the true scalar row count
+        // (`runState.rows.length`), matching its meaning on the `run` branch;
+        // the artifact count stays available via `hasArtifacts` + Mine APIs.
+        lastRun: hasStoredMineArtifacts() && runState
             ? {
                 interval: lastRunInterval,
                 strategyKey: lastRunStrategyKey,
                 fingerprint: lastRunFingerprint,
-                rowCount: collectStoredMineArtifactMetas().length,
+                rowCount,
                 hasArtifacts: hasStoredMineArtifacts(),
                 cacheStats: lastRunCacheStats,
+                rows,
+                rowOffset,
+                nextOffset,
             }
             : null,
         miner: minerState && minerOwner !== RUN_OWNER_NONE
@@ -1232,6 +1244,17 @@ export const __testInternals = {
         if (owner === RUN_OWNER_NONE) {
             runState = null;
         }
+    },
+    /**
+     * Simulate the production HTTP handler's `finally` for a completed run:
+     * release ownership (`runOwner = NONE`) but PRESERVE `runState` as the
+     * `lastRun` snapshot for status reattach / recovery. This is the faithful
+     * post-completion state; `setRunOwnerForTests(0)` additionally nulls
+     * `runState` (a stricter reset that some tests rely on for isolation), so
+     * it cannot be used to test the completed-run `lastRun` branch.
+     */
+    completeRunForTests(): void {
+        runOwner = RUN_OWNER_NONE;
     },
     setMinerOwnerForTests(owner: number): void {
         minerOwner = owner;

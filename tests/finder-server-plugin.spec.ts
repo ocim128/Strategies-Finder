@@ -342,6 +342,19 @@ describe("finder server plugin processFinderUniverseRun", () => {
         const fatal = events[events.length - 1] as Extract<FinderStreamEvent, { type: "fatal" }>;
         expect(fatal.type).to.equal("fatal");
         expect(fatal.error).to.contain("No universe symbols could be loaded");
+
+        // Audit finding 2 recovery guard: after a fatal, runState persists with
+        // only the provisional (pre-reconciliation) candidate set and
+        // `summary === null`. Browser recovery (`recoverUniverseServerRun`)
+        // refuses to adopt candidates unless `summary` is a non-empty string,
+        // so a crashed run cannot be presented as a completed one. Lock the
+        // server side of that contract here.
+        setRunOwnerForTests(0);
+        const status = handleStatusRequest() as {
+            lastRun: { summary: string | null; candidates: unknown[] } | null;
+        };
+        expect(status.lastRun).to.not.equal(null);
+        expect(status.lastRun!.summary).to.equal(null);
     });
 
     it("stops emitting after ownership is lost (Stop semantics)", async () => {
@@ -408,11 +421,24 @@ describe("finder server plugin processFinderUniverseRun", () => {
         setRunOwnerForTests(0);
         const status = handleStatusRequest() as {
             running: boolean;
-            lastRun: { candidateCount: number; diagnostics: { engineMode: string } | null } | null;
+            lastRun: {
+                candidateCount: number;
+                candidates: { strategyKey: string }[] | null;
+                totals: { survivors: number } | null;
+                diagnostics: { engineMode: string } | null;
+            } | null;
         };
         expect(status.running).to.equal(false);
         expect(status.lastRun).to.not.equal(null);
         expect(status.lastRun!.candidateCount).to.be.greaterThanOrEqual(0);
+        // Audit finding 2 recovery seam: the terminal candidate slice must be
+        // exposed on lastRun so a browser that lost the run stream mid-flight
+        // can adopt the authoritative survivors instead of provisional ones.
+        // `candidates` length must agree with `candidateCount`, and the totals
+        // block carries the survivor count for status-message reconstruction.
+        expect(status.lastRun!.candidates).to.be.an("array");
+        expect(status.lastRun!.candidates!.length).to.equal(status.lastRun!.candidateCount);
+        expect(status.lastRun!.totals?.survivors).to.equal(status.lastRun!.candidateCount);
     });
 });
 

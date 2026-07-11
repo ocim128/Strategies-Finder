@@ -503,11 +503,15 @@ async function handleStopRequest(): Promise<{ ok: boolean; stopped: boolean }> {
 }
 
 /**
- * Snapshot of in-progress / last-run state for `GET /api/finder/status`. Used
- * only for ad-hoc `curl` introspection — the browser does NOT reattach via
- * this endpoint in v1 (unlike Batch). Returns the scalar candidate snapshot;
- * for a large universe that means a large JSON response, which is acceptable
- * for a manual debugging call (not an automated poll loop).
+ * Snapshot of in-progress / last-run state for `GET /api/finder/status`.
+ * Originally ad-hoc `curl` introspection only; now ALSO the recovery seam for
+ * `FinderManager.runUniverseFinderServer` when the run stream truncates before
+ * its terminal `done` event (audit finding 2). Universe has no TTL/Mine
+ * surface, so `runState` persists indefinitely after completion until the next
+ * run overwrites it — `lastRun.candidates` is therefore always available for
+ * recovery within the same dev-server process. Returns the scalar candidate
+ * snapshot; for a large universe that means a large JSON response, acceptable
+ * for a recovery call (one-shot, not an automated poll loop).
  */
 function handleStatusRequest(): unknown {
     return {
@@ -529,6 +533,20 @@ function handleStatusRequest(): unknown {
                 interval: runState.interval,
                 strategyKey: runState.strategyKey,
                 candidateCount: runState.candidates.length,
+                // Ship the terminal candidate slice so a browser that lost the
+                // run stream mid-flight can recover the authoritative survivors
+                // (the throttled `candidate` events are explicitly NOT
+                // authoritative — see `runUniverseFinderServer`). Without this
+                // field, recovery could only see the count, not the survivors.
+                candidates: runState.candidates,
+                totals: {
+                    // runState does not retain loaded/failed counts after the
+                    // run ends; the recovery caller defends against missing
+                    // fields (defaults to 0). Diagnostics carry the real detail.
+                    loadedSymbols: 0,
+                    failedSymbols: 0,
+                    survivors: runState.candidates.length,
+                },
                 summary: runState.summary,
                 diagnostics: runState.diagnostics,
             }

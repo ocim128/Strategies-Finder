@@ -9,6 +9,12 @@ export interface BatchBacktestResultsSnapshot {
     savedAt: number;
     interval: string;
     fingerprint: string | null;
+    // The strategy that governed the Run that produced these results. Mine /
+    // Stability Mine persist timing-edge verdicts labeled with this key; if it
+    // is lost (older snapshots predate the field), Mine persistence is skipped
+    // rather than silently attributing verdicts to the currently-selected UI
+    // strategy. See `persistMineTimingResult`.
+    strategyKey: string | null;
     serverHasArtifacts: boolean;
     results: BatchBacktestSymbolResult[];
     stabilityResult?: BatchStabilityMineResult | null;
@@ -21,6 +27,7 @@ export function compactBatchBacktestResultsSnapshot(
         savedAt: Number.isFinite(snapshot.savedAt) ? snapshot.savedAt : Date.now(),
         interval: snapshot.interval,
         fingerprint: typeof snapshot.fingerprint === "string" ? snapshot.fingerprint : null,
+        strategyKey: typeof snapshot.strategyKey === "string" && snapshot.strategyKey ? snapshot.strategyKey : null,
         serverHasArtifacts: snapshot.serverHasArtifacts === true,
         results: snapshot.results
             .slice(0, BATCH_RESULT_SNAPSHOT_LIMIT)
@@ -41,6 +48,7 @@ export function normalizeBatchBacktestResultsSnapshot(value: unknown): BatchBack
         savedAt: typeof candidate.savedAt === "number" ? candidate.savedAt : 0,
         interval: typeof candidate.interval === "string" ? candidate.interval : "",
         fingerprint: typeof candidate.fingerprint === "string" ? candidate.fingerprint : null,
+        strategyKey: typeof candidate.strategyKey === "string" && candidate.strategyKey ? candidate.strategyKey : null,
         serverHasArtifacts: candidate.serverHasArtifacts === true,
         results: candidate.results as BatchBacktestSymbolResult[],
         stabilityResult: normalizeStabilityResult(candidate.stabilityResult),

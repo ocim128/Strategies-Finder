@@ -20,6 +20,7 @@ const {
     hasMineableArtifacts,
     hasStoredMineArtifacts,
     setRunOwnerForTests,
+    completeRunForTests,
     setMinerOwnerForTests,
     setMinerAbortControllerForTests,
     getRunStateForTests,
@@ -299,6 +300,127 @@ describe("batch-backtest server plugin processRunBatch", () => {
         const page3 = handleStatusRequest(4, 2) as { run?: { rows: { symbol: string }[]; rowOffset: number; rowCount: number; nextOffset: number | null } | null };
         expect(page3.run?.rows.map((row) => row.symbol)).to.deep.equal(["EEE"]);
         expect(page3.run?.nextOffset).to.equal(null);
+
+        setRunOwnerForTests(0);
+        releaseLastResults("test_end");
+    });
+
+    it("lastRun paginates completed scalar rows + carries strategyKey for recovery (audit findings 3 & 5)", async () => {
+        // After a run completes (runOwner -> NONE) but before its artifacts TTL,
+        // the server retains the full scalar row list in runState. Recovery from
+        // a truncated stream needs both the rows (to reconstruct the result
+        // table) and the governing strategyKey (so Mine provenance is correct).
+        // Use synthetic pairs so artifacts (and thus lastRun) are retained.
+        const datasets = new Map<string, OHLCVData[]>();
+        const symbols = ["AAA+BBB", "CCC+DDD", "EEE+FFF"];
+        for (const sym of symbols) {
+            datasets.set(sym, makeCandles([100, 105, 110, 115, 120]));
+        }
+        const owner = 9020;
+        setRunOwnerForTests(owner);
+        await processRunBatch(
+            {
+                interval: "5m",
+                strategyKey: STRATEGY_KEY,
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols,
+                loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                minUsableBars: 1,
+            },
+            () => {},
+            owner,
+        );
+        // Simulate run completion: the HTTP handler's `finally` releases
+        // ownership while preserving runState as the lastRun snapshot. Use
+        // `completeRunForTests` (NOT `setRunOwnerForTests(0)`, which also
+        // nulls runState — a stricter reset that prevents the lastRun branch
+        // from being exercised).
+        completeRunForTests();
+
+        const status = handleStatusRequest() as {
+            running?: boolean;
+            lastRun?: {
+                rowCount?: number;
+                strategyKey?: string | null;
+                fingerprint?: string | null;
+                rows?: { symbol: string }[];
+                rowOffset?: number;
+                nextOffset?: number | null;
+            } | null;
+        };
+        // Running is false now; lastRun must carry the completed snapshot.
+        expect(status.running).to.equal(false);
+        expect(status.lastRun).to.not.equal(null);
+        expect(status.lastRun?.strategyKey).to.equal(STRATEGY_KEY);
+        expect(status.lastRun?.rowCount).to.equal(3);
+        // Default page returns the leading rows with a cursor when truncated.
+        expect(status.lastRun?.rows?.map((r) => r.symbol)).to.deep.equal(symbols);
+        expect(status.lastRun?.rowOffset).to.equal(0);
+        expect(status.lastRun?.nextOffset).to.equal(null); // all rows fit one page
+
+        // Pagination: after=2 returns only the last row.
+        const page = handleStatusRequest(2) as {
+            lastRun?: { rows?: { symbol: string }[]; rowOffset?: number; nextOffset?: number | null } | null;
+        };
+        expect(page.lastRun?.rows?.map((r) => r.symbol)).to.deep.equal(["EEE+FFF"]);
+        expect(page.lastRun?.nextOffset).to.equal(null);
+
+        // Full reset for test isolation: null runState AND release artifacts.
+        setRunOwnerForTests(0);
+        releaseLastResults("test_end");
+    });
+
+    it("lastRun pagination cursor returns nextOffset across multiple pages (audit finding 3 regression guard)", async () => {
+        // Regression guard for a bug where the browser recovery loop condition
+        // was `nextOffset > lastResults.length`, which exited one page early:
+        // after fetching rows [N, 2N), nextOffset === 2N === lastResults.length,
+        // so `2N > 2N` was false and the loop stopped with rows remaining.
+        // The server-side half: with > DEFAULT_STATUS_ROW_LIMIT (250) rows, the
+        // first page must carry a non-null nextOffset pointing at the next page.
+        const datasets = new Map<string, OHLCVData[]>();
+        const symbols: string[] = [];
+        // 260 synthetic pairs → first page (default 250) + a second page of 10.
+        for (let i = 0; i < 260; i += 1) {
+            const sym = `A${i}+B${i}`;
+            symbols.push(sym);
+            datasets.set(sym, makeCandles([100, 105, 110, 115, 120]));
+        }
+        const owner = 9021;
+        setRunOwnerForTests(owner);
+        await processRunBatch(
+            {
+                interval: "5m",
+                strategyKey: STRATEGY_KEY,
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols,
+                loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                minUsableBars: 1,
+            },
+            () => {},
+            owner,
+        );
+        completeRunForTests();
+
+        // Page 1 (default limit 250): nextOffset must point at 250, not null.
+        const page1 = handleStatusRequest() as {
+            lastRun?: { rowCount?: number; rows?: { symbol: string }[]; rowOffset?: number; nextOffset?: number | null } | null;
+        };
+        expect(page1.lastRun?.rowCount).to.equal(260);
+        expect(page1.lastRun?.rows?.length).to.equal(250);
+        expect(page1.lastRun?.nextOffset).to.equal(250);
+
+        // Page 2 (after=250): the final 10 rows, cursor exhausted.
+        const page2 = handleStatusRequest(250) as {
+            lastRun?: { rows?: { symbol: string }[]; rowOffset?: number; nextOffset?: number | null } | null;
+        };
+        expect(page2.lastRun?.rows?.length).to.equal(10);
+        expect(page2.lastRun?.nextOffset).to.equal(null);
 
         setRunOwnerForTests(0);
         releaseLastResults("test_end");

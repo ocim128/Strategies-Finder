@@ -423,6 +423,11 @@ class BatchBacktestService {
         }
 
         let doneSummary: string | null = null;
+        // `requireTerminal: true` converts a clean-EOF-before-done into a
+        // thrown `StreamEndedBeforeTerminalError`. Without this, a truncated
+        // stream resolved normally with `doneSummary === null` and the run was
+        // finalized as "Done" at 100% with partial data (audit finding 1).
+        let streamError: unknown = null;
         try {
             await consumeNdjsonStream<BatchStreamEvent>(response.body, {
                 onStart: (event: Extract<BatchStreamEvent, { type: "start" }>) => {
@@ -463,20 +468,34 @@ class BatchBacktestService {
                     if (token !== this.runToken) return;
                     throw new Error(event.error);
                 },
-            });
+            }, { requireTerminal: true });
         } catch (error) {
-            if (token !== this.runToken) return;
-            if (doneSummary === null) {
-                const recovered = await this.recoverCompletedServerRun(dom, runFingerprint, interval);
-                if (!recovered) {
-                    throw error;
-                }
-                doneSummary = recovered;
-            } else {
-                debugLogger.warn("batch.server.stream_closed_after_done", {
-                    error: error instanceof Error ? error.message : String(error),
-                });
+            // Defer to after the token check. A stale run that lost ownership
+            // mid-stream must not mutate UI state.
+            streamError = error;
+        }
+        if (token !== this.runToken) return;
+        if (doneSummary === null) {
+            // No terminal `done` arrived — either the stream threw mid-flight
+            // OR it resolved cleanly before `done` (truncated response). Both
+            // must attempt recovery against `/status` before presenting success;
+            // if the server actually completed we adopt its authoritative rows.
+            const recovered = await this.recoverCompletedServerRun(dom, runFingerprint, interval);
+            if (recovered === null) {
+                // Recovery did not match / found an still-running server: surface
+                // the original stream error (or a synthesized one for clean EOF).
+                const message = streamError instanceof Error
+                    ? streamError.message
+                    : (streamError ? String(streamError) : "Server stream ended before completion.");
+                throw new Error(message);
             }
+            doneSummary = recovered;
+        } else if (streamError !== null) {
+            // Terminal `done` was processed before the stream later errored —
+            // the run is complete; the trailing error is informational only.
+            debugLogger.warn("batch.server.stream_closed_after_done", {
+                error: streamError instanceof Error ? streamError.message : String(streamError),
+            });
         }
         if (token !== this.runToken) return;
         if (doneSummary !== null) {
@@ -491,34 +510,134 @@ class BatchBacktestService {
         interval: string,
     ): Promise<string | null> {
         try {
-            const response = await fetch("/api/batch-backtest/status", { cache: "no-store" });
-            if (!response.ok) return null;
-            const payload = await response.json() as {
+            // Draining recovered rows may take several paged requests. Bound
+            // the page size and the absolute row count we'll pull so a
+            // misbehaving server cannot make the browser loop forever.
+            const PAGE_LIMIT = 250;
+            const MAX_ROWS_TO_RECONSTRUCT = 10_000;
+            const firstResponse = await fetch("/api/batch-backtest/status", { cache: "no-store" });
+            if (!firstResponse.ok) return null;
+            const firstPayload = await firstResponse.json() as {
                 running?: boolean;
                 lastRun?: {
                     rowCount?: number;
                     hasArtifacts?: boolean;
                     fingerprint?: string | null;
                     interval?: string | null;
+                    strategyKey?: string | null;
                     cacheStats?: BatchDatasetCacheStats | null;
+                    rows?: BatchBacktestSymbolResult[];
+                    rowOffset?: number;
+                    nextOffset?: number | null;
                 } | null;
             };
-            const lastRun = payload.lastRun;
-            if (payload.running || !lastRun || lastRun.fingerprint !== runFingerprint) {
+            const lastRun = firstPayload.lastRun;
+            if (firstPayload.running || !lastRun || lastRun.fingerprint !== runFingerprint) {
                 return null;
             }
             this.lastRunFingerprint = runFingerprint;
             this.lastRunInterval = lastRun.interval ?? interval;
+            // Adopt the strategy that actually governed the run so Mine
+            // provenance survives a mid-stream disconnect (audit finding 5).
+            // The server returns `lastRun.strategyKey`; only fall back to the
+            // caller-supplied interval (already handled above) — never to the
+            // mutable current-UI strategy, which may have changed by now.
+            if (typeof lastRun.strategyKey === "string" && lastRun.strategyKey) {
+                this.lastRunStrategyKey = lastRun.strategyKey;
+            }
             this.serverHasArtifacts = lastRun.hasArtifacts === true;
             this.pendingServerRunCacheStats = lastRun.cacheStats
                 ? buildCacheStatsFromLoader(lastRun.cacheStats)
                 : null;
+
+            // Reconcile missing rows. The browser holds the streamed prefix
+            // (whatever arrived before the disconnect); the server retains the
+            // FULL scalar row list in `runState.rows` for the artifact lifetime
+            // and now exposes it via `lastRun` pagination. Page from the current
+            // browser offset up to the server rowCount so Copy / benchmark /
+            // snapshot describe the complete run, not just the prefix that
+            // reached the browser (audit finding 3).
+            const serverRowCount = Math.max(0, Math.floor(Number(lastRun.rowCount ?? 0)));
+            let firstDelivered: BatchBacktestSymbolResult[] = [];
+            let nextOffset: number | null = null;
+            if (Array.isArray(lastRun.rows)) {
+                const rowOffset = Math.max(0, Math.floor(Number(lastRun.rowOffset ?? 0)));
+                firstDelivered = lastRun.rows;
+                nextOffset = lastRun.nextOffset === undefined ? null : lastRun.nextOffset;
+                for (let i = 0; i < firstDelivered.length; i += 1) {
+                    const absoluteIndex = rowOffset + i;
+                    if (absoluteIndex < this.lastResults.length) continue;
+                    this.lastResults.push(firstDelivered[i]!);
+                    this.appendedCount += 1;
+                }
+            }
+            if (firstDelivered.length > 0) {
+                this.appendResultRows(dom, firstDelivered);
+            }
+
+            // Drain remaining pages from the server offset until the server
+            // signals no more rows (`nextOffset === null`). The status endpoint
+            // bounds rows-per-response and returns `nextOffset` only when more
+            // remain; the non-progressing-cursor guard below + the absolute
+            // row-count / iteration caps prevent a misbehaving server from
+            // looping the browser forever.
+            let guard = 0;
+            while (
+                typeof nextOffset === "number"
+                && this.lastResults.length < serverRowCount
+                && this.lastResults.length < MAX_ROWS_TO_RECONSTRUCT
+                && guard < MAX_ROWS_TO_RECONSTRUCT
+            ) {
+                guard += 1;
+                const pageResponse = await fetch(
+                    `/api/batch-backtest/status?after=${nextOffset}&limit=${PAGE_LIMIT}`,
+                    { cache: "no-store" },
+                );
+                if (!pageResponse.ok) break;
+                const pagePayload = await pageResponse.json() as {
+                    lastRun?: {
+                        rows?: BatchBacktestSymbolResult[];
+                        rowOffset?: number;
+                        nextOffset?: number | null;
+                    } | null;
+                };
+                const page = pagePayload.lastRun;
+                if (!page || !Array.isArray(page.rows) || page.rows.length === 0) break;
+                const pageOffset = Math.max(0, Math.floor(Number(page.rowOffset ?? nextOffset)));
+                const pageRows: BatchBacktestSymbolResult[] = [];
+                for (let i = 0; i < page.rows.length; i += 1) {
+                    const absoluteIndex = pageOffset + i;
+                    if (absoluteIndex < this.lastResults.length + pageRows.length) continue;
+                    pageRows.push(page.rows[i]!);
+                }
+                for (const row of pageRows) {
+                    this.lastResults.push(row);
+                    this.appendedCount += 1;
+                }
+                if (pageRows.length > 0) {
+                    this.appendResultRows(dom, pageRows);
+                }
+                nextOffset = page.nextOffset === undefined ? null : page.nextOffset;
+                if (page.nextOffset !== null && page.nextOffset !== undefined
+                    && page.nextOffset <= pageOffset + page.rows.length) {
+                    break; // non-progressing cursor guard
+                }
+            }
+
             setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
             dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
             dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
-            const rowCount = this.lastResults.length || Math.max(0, Math.floor(Number(lastRun.rowCount ?? 0)));
             this.saveLatestResultsSnapshot();
-            return `Done (${rowCount} pairs)`;
+            if (serverRowCount > 0 && this.lastResults.length < serverRowCount) {
+                // Reconstruction could not reach the server's row count — surface
+                // the gap visibly instead of presenting partial data as complete.
+                debugLogger.warn("batch.server.recover_rows_incomplete", {
+                    recovered: this.lastResults.length,
+                    serverRowCount,
+                });
+                return `Done (incomplete: ${this.lastResults.length}/${serverRowCount} pairs — stream truncated, some rows unrecoverable)`;
+            }
+            return `Done (${this.lastResults.length} pairs)`;
         } catch (error) {
             debugLogger.warn("batch.server.recover_completed_run_failed", {
                 error: error instanceof Error ? error.message : String(error),
@@ -696,10 +815,24 @@ class BatchBacktestService {
      */
     private persistMineTimingResult(source: "mine" | "stability"): void {
         const interval = this.lastRunInterval ?? state.currentInterval;
-        // Fall back to currentStrategyKey only when no run has been captured
-        // (defensive; should not happen in normal flow because Mine requires
-        // a prior Run).
-        const strategyKey = this.lastRunStrategyKey ?? state.currentStrategyKey;
+        // Mine verdicts must be labeled with the strategy that actually
+        // governed the Run. Previously this fell back to `state.currentStrategyKey`
+        // when `lastRunStrategyKey` was null — which after a tab reload (before
+        // this fix, the snapshot never stored the key) silently attributed
+        // verdicts to whatever strategy the user happened to select next,
+        // corrupting the Assets/timing-edge history (audit finding 5).
+        //
+        // Refuse + warn: skip persistence entirely when provenance cannot be
+        // established. Mine verdicts still render in the UI (persistence is
+        // fire-and-forget); the Assets DB simply does not gain mislabeled rows.
+        if (!this.lastRunStrategyKey) {
+            debugLogger.warn("batch.mine_timing.persist_skipped_no_strategy_key", {
+                source,
+                reason: "lastRunStrategyKey is null — Run provenance not captured (reload before snapshot stored the key, or Run never completed). Skipping persistence instead of attributing verdicts to the current UI strategy.",
+            });
+            return;
+        }
+        const strategyKey = this.lastRunStrategyKey;
         const runId = `mt-${source}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
         // Build the run descriptor for the given source, then hand it to the
         // shared persistence path. Splitting by source here keeps the snapshot
@@ -897,6 +1030,14 @@ class BatchBacktestService {
             }
             const verdicts: BatchSyntheticAssetVerdict[] = [];
             let minerInterval = this.lastRunInterval ?? state.currentInterval;
+            // `requireTerminal: true` enforces the protocol invariant: a clean
+            // EOF before `done`/`fatal` throws `StreamEndedBeforeTerminalError`,
+            // so reaching the line after `consumeNdjsonStream` resolves proves
+            // `done` was processed (the only terminal that doesn't throw via
+            // `onFatal`). Without this, a truncated stream resolved normally and
+            // partial verdicts were committed as a complete Mine run (same root
+            // cause as the Batch Run path). Mirrors the Stability Mine path's
+            // `received.result` guard.
             // targetCount declared on the function scope; updated in the
             // `start` event handler below.
             await consumeNdjsonStream<BatchMinerStreamEvent>(response.body, {
@@ -914,7 +1055,7 @@ class BatchBacktestService {
                 onFatal: (event: Extract<BatchMinerStreamEvent, { type: "fatal" }>) => {
                     throw new Error(event.error);
                 },
-            });
+            }, { requireTerminal: true });
             this.lastMinerResult = {
                 interval: minerInterval,
                 options: BATCH_SYNTHETIC_MINER_DEFAULT_OPTIONS,
@@ -1023,6 +1164,7 @@ class BatchBacktestService {
                         hasArtifacts: boolean;
                         fingerprint: string | null;
                         interval?: string | null;
+                        strategyKey?: string | null;
                         cacheStats?: BatchDatasetCacheStats | null;
                     } | null;
                 };
@@ -1038,6 +1180,13 @@ class BatchBacktestService {
                         this.serverHasArtifacts = true;
                         this.lastRunFingerprint = payload.lastRun.fingerprint;
                         this.lastRunInterval = payload.lastRun.interval ?? null;
+                        // Adopt the governing strategy so Mine provenance survives
+                        // a tab reload (audit finding 5). The server already
+                        // emits `lastRun.strategyKey`; previously it was dropped
+                        // here, so Mine fell back to the current UI strategy.
+                        if (typeof payload.lastRun.strategyKey === "string" && payload.lastRun.strategyKey) {
+                            this.lastRunStrategyKey = payload.lastRun.strategyKey;
+                        }
                         // Adopt the server-side cache counters so a tab-reload
                         // reattach still produces a useful benchmark snapshot
                         // (mirrors `recoverCompletedServerRun`'s handling).
@@ -1058,6 +1207,13 @@ class BatchBacktestService {
                 }
                 const run = payload.run;
                 this.serverHasArtifacts = false; // still running; Mine not yet available.
+                // Adopt the in-progress run's governing strategy so Mine
+                // provenance is correct even on the very first reattach tick
+                // (audit finding 5). `run.strategyKey` is always present while
+                // a run is active.
+                if (typeof run.strategyKey === "string" && run.strategyKey) {
+                    this.lastRunStrategyKey = run.strategyKey;
+                }
                 const dom = this.getDom();
                 dom.batchBacktestRunBtn.disabled = true;
                 setVisible(dom.batchBacktestStopBtn, true);
@@ -1506,6 +1662,11 @@ class BatchBacktestService {
         this.lastStabilityResult = snapshot.stabilityResult ?? null;
         this.lastRunFingerprint = snapshot.fingerprint;
         this.lastRunInterval = snapshot.interval || null;
+        // Restore the strategy that governed the Run so Mine provenance survives
+        // a tab reload (audit finding 5). Older snapshots (pre-`strategyKey`)
+        // normalize to `null`; `persistMineTimingResult` skips persistence in
+        // that case rather than attributing verdicts to the wrong strategy.
+        this.lastRunStrategyKey = snapshot.strategyKey ?? null;
         this.appendedCount = snapshot.results.length;
         // LocalStorage cannot prove server artifact TTL is still valid, and
         // browser-mode heavy arrays are intentionally not restored. Reattach
@@ -1539,6 +1700,7 @@ class BatchBacktestService {
             savedAt: Date.now(),
             interval: this.lastRunInterval ?? state.currentInterval,
             fingerprint: this.lastRunFingerprint,
+            strategyKey: this.lastRunStrategyKey,
             serverHasArtifacts: this.serverHasArtifacts,
             results: this.lastResults,
             stabilityResult: this.lastStabilityResult,
