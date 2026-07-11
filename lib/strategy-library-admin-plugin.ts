@@ -7,6 +7,7 @@ import {
     type StrategyModuleDefinition,
 } from "../scripts/strategy-manifest-generator";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
+import { isLoopbackHost } from "./local-api-transport";
 import { sendJson } from "./http-response-utils";
 
 const STRATEGY_EXPORT_PATTERN = /export\s+const\s+([a-zA-Z][a-zA-Z0-9_]*)\s*:\s*Strategy\s*=/g;
@@ -456,7 +457,66 @@ export function archiveAndDeleteBuiltInStrategy(
     };
 }
 
+/**
+ * Loopback/same-origin gate for the destructive strategy-admin mutation
+ * routes. Mirrors the established IBKR idiom (`isAllowedIbkrCaller` in
+ * `ibkr-data-vite-plugin.ts`): a same-origin browser caller (Origin/Referer on
+ * a loopback host) is trusted without a token; any other caller must present
+ * the shared `LOCAL_PROXY_TOKEN` bearer (the same secret the Cloudflare Tunnel
+ * candle-proxy workflow uses).
+ *
+ * Audit Finding 1: `/api/strategy-library/delete*` previously accepted ANY
+ * request — a cross-origin `fetch(..., {mode:"no-cors"})` with a `text/plain`
+ * body bypassed the CORS preflight and silently deleted repo source files.
+ *
+ * Loopback host parsing goes through `isLoopbackHost` (IPv6-aware, unlike the
+ * IBKR gate which predates the `[::1]` fix in Finding 5). Returns true when the
+ * caller is allowed; the route sends the 403 itself so the response shape
+ * matches the rest of the handler.
+ */
+export function isAllowedStrategyAdminCaller(req: { headers?: Record<string, unknown> }): boolean {
+    const origin = String(req.headers?.origin ?? "");
+    const referer = String(req.headers?.referer ?? "");
+    if (isLoopbackUrl(origin) || isLoopbackUrl(referer)) return true;
+    // Non-local caller: require the documented shared secret.
+    const token = process.env.LOCAL_PROXY_TOKEN?.trim();
+    if (!token) return false;
+    const auth = String(req.headers?.authorization ?? "");
+    return auth === `Bearer ${token}`;
+}
+
+/**
+ * True if `url` (an absolute `http(s)://host[:port]/...` string) points at a
+ * loopback origin. Empty or non-absolute values are not loopback. Uses
+ * `isLoopbackHost` for the authority check so bracketed IPv6
+ * (`http://[::1]:5173`) is recognized.
+ */
+function isLoopbackUrl(url: string): boolean {
+    if (!url) return false;
+    let parsed: URL;
+    try {
+        parsed = new URL(url);
+    } catch {
+        return false;
+    }
+    return parsed.protocol === "http:" && isLoopbackHost(parsed.host);
+}
+
+/**
+ * Read and JSON-parse the request body. Rejects non-JSON Content-Types so a
+ * CSRF `text/plain` body (CORS-simple, no preflight) cannot reach the deletion
+ * handlers — defense in depth on top of {@link isAllowedStrategyAdminCaller}.
+ * Empty bodies parse to `{}` for handlers that accept no payload.
+ */
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+    const contentType = String(req.headers["content-type"] ?? "").toLowerCase();
+    if (!contentType.includes("application/json")) {
+        throw new StrategyLibraryAdminError(
+            "Content-Type must be application/json.",
+            415,
+        );
+    }
+
     const chunks: Uint8Array[] = [];
     let total = 0;
     const maxBodyBytes = 1024 * 1024;
@@ -498,6 +558,17 @@ export function strategyLibraryAdminPlugin(): Plugin {
             const requestUrl = new URL(req.url || "/", "http://localhost");
 
             try {
+                // Finding 1: gate destructive routes before any work. A 403 here
+                // means a cross-origin / unauthenticated caller (e.g. a CSRF
+                // no-cors fetch) never reaches the deletion handlers.
+                if (!isAllowedStrategyAdminCaller(req as { headers?: Record<string, unknown> })) {
+                    sendJson(res, 403, {
+                        ok: false,
+                        error: "Forbidden: strategy-library admin routes allow same-origin loopback callers or a valid LOCAL_PROXY_TOKEN bearer only.",
+                    });
+                    return;
+                }
+
                 if (method === "POST" && requestUrl.pathname === "/delete") {
                     const payload = await readJsonBody(req as IncomingMessage);
                     const key = typeof payload.key === "string" ? payload.key : "";
@@ -545,8 +616,9 @@ export function strategyLibraryAdminPlugin(): Plugin {
             devServer = server;
             register(server.middlewares);
         },
-        configurePreviewServer(server) {
-            register(server.middlewares);
-        },
+        // Intentionally NO configurePreviewServer: the strategy-admin routes
+        // delete repository source files and resync manifests — destructive
+        // operations that have no place in a preview/production-style build.
+        // Dev-only is the documented defense-in-depth posture (audit Finding 1).
     };
 }

@@ -5,6 +5,7 @@ import {
     processFinderUniverseRun,
     __testInternals,
 } from "../lib/finder/server/finder-vite-plugin";
+import { HttpStatusError } from "../lib/vite-http-utils";
 import { resolveFinderUniverseHeapWarning } from "../lib/finder/server/finder-server-heap-guard";
 import {
     assertCandidateIsScalar,
@@ -19,7 +20,7 @@ import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/s
 
 // The plugin holds module-scope state (runOwner). Each test must reset it via
 // the test internals, mirroring the Batch plugin spec.
-const { setRunOwnerForTests, resetRunStateForTests, handleStatusRequest } = __testInternals;
+const { setRunOwnerForTests, resetRunStateForTests, handleStatusRequest, assertUniverseOptions } = __testInternals;
 
 function makeCandles(closes: number[]): OHLCVData[] {
     return closes.map((close, index) => ({
@@ -486,5 +487,68 @@ describe("finder server plugin toScalarCandidate (Phase 4 wire contract)", () =>
         expect(scalar.totalTrades).to.equal(candidate.totalTrades);
         expect(scalar.symbols).to.have.length(1);
         expect(scalar.symbols[0]!.symbol).to.equal("X");
+    });
+});
+
+// Audit Finding 4: a malformed nested options object used to dereference
+// `.universe.symbols.length` after only a truthy check on `universe`, throwing
+// a TypeError that surfaced as a 500. Each malformed shape must now throw a
+// deliberate 400.
+describe("assertUniverseOptions nested validation", () => {
+    function expect400(partial: unknown, messageMatch: RegExp): void {
+        // The function reads `options.scope` and `options.universe` only; cast
+        // the partial through the same path production uses (FinderOptions).
+        let caught: unknown;
+        try {
+            assertUniverseOptions(partial as FinderOptions);
+        } catch (err) {
+            caught = err;
+        }
+        expect(caught).to.be.instanceof(HttpStatusError);
+        expect((caught as HttpStatusError).status).to.equal(400, "must be 400, not a 500");
+        expect((caught as HttpStatusError).message).to.match(messageMatch);
+    }
+
+    it("rejects a non-symbol_universe scope with 400", () => {
+        expect400(
+            { scope: "current_chart", universe: { symbols: ["X"] } },
+            /symbol_universe/,
+        );
+    });
+
+    it("rejects a missing universe with 400 (not 500 TypeError)", () => {
+        expect400({ scope: "symbol_universe" }, /options\.universe must be an object/);
+    });
+
+    it("rejects an empty universe object with 400", () => {
+        expect400({ scope: "symbol_universe", universe: {} }, /symbols must be an array/);
+    });
+
+    it("rejects a non-array symbols with 400", () => {
+        expect400(
+            { scope: "symbol_universe", universe: { symbols: 42 } },
+            /symbols must be an array/,
+        );
+    });
+
+    it("rejects an empty symbols array with 400", () => {
+        expect400(
+            { scope: "symbol_universe", universe: { symbols: [] } },
+            /non-empty array/,
+        );
+    });
+
+    it("rejects a non-string symbol member with 400", () => {
+        expect400(
+            { scope: "symbol_universe", universe: { symbols: ["OK", 42] } },
+            /symbols\[1\] must be a string/,
+        );
+    });
+
+    it("accepts a well-formed universe options object without throwing", () => {
+        expect(() => assertUniverseOptions({
+            scope: "symbol_universe",
+            universe: { symbols: ["BTCUSDT", "ETHUSDT"] },
+        } as FinderOptions)).to.not.throw();
     });
 });

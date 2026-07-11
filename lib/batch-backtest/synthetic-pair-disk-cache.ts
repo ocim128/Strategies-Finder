@@ -32,7 +32,7 @@
  * only causes a rebuild (see AGENTS.md §"synthetic-pair disk cache").
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { serialize as v8Serialize, deserialize as v8Deserialize } from "node:v8";
 import type { OHLCVData } from "../types/strategies";
@@ -72,6 +72,14 @@ export const MAX_CACHE_BYTES = 2 * 1024 ** 3; // 2 GiB
 export const MAX_CACHE_FILES = 2_000;
 /** Post-write prune is throttled so a burst of writes doesn't stat the dir per file. */
 const PRUNE_THROTTLE_MS = 60_000;
+/**
+ * A cache HIT bumps the file mtime at most once per this interval so the
+ * prune sort (oldest-mtime-first) reflects actual access, not just write
+ * time. Without this, a hot pair that hasn't been rewritten would be evicted
+ * before a cold newer one — FIFO dressed as LRU (audit Finding 3). The
+ * throttle bounds disk writes: at most one `utimesSync` per file per window.
+ */
+export const LRU_TOUCH_THROTTLE_MS = 5 * 60_000;
 
 let cacheDirForTests: string | null = null;
 let lastPruneAt = 0;
@@ -97,6 +105,11 @@ interface SeriesMetaResponse {
     ok?: boolean;
     lastTime?: number | null;
     barsCount?: number | null;
+    // `updated_at` from `series_meta`. The SQLite endpoint returns this; folding
+    // it into the fingerprint invalidates a cached pair when a historical bar is
+    // corrected (rewritten) without changing last_time or row count (audit
+    // Finding 2). Null on cold caches / older endpoints → falls back to 0.
+    updatedAt?: number | null;
 }
 
 /**
@@ -145,9 +158,16 @@ async function binanceBackedSegment(symbol: string, sourceInterval: string): Pro
     const meta = await loadSeriesMeta(symbol, sourceInterval);
     if (!meta || meta.lastTime == null) return null;
     // Fold barsCount in to detect historical rewrites (rare for Binance but
-    // cheap insurance — both are indexed PK lookups).
+    // cheap insurance — both are indexed PK lookups). Fold updatedAt in too so
+    // a same-row-count correction (a bar's OHLC rewritten in place via
+    // `/store-ohlcv`) bumps `series_meta.updated_at` and invalidates the cached
+    // pair — without this, last_time + bars_count alone would serve stale bars
+    // after a repair (audit Finding 2). Coerce null → 0 so a cold-cache leg
+    // (no series_meta row yet) still produces a stable fingerprint instead of
+    // breaking the cache for every lookup.
     const bars = meta.barsCount ?? 0;
-    return `binance:${symbol}:${sourceInterval}:${meta.lastTime}:${bars}`;
+    const updatedAt = typeof meta.updatedAt === "number" && Number.isFinite(meta.updatedAt) ? meta.updatedAt : 0;
+    return `binance:${symbol}:${sourceInterval}:${meta.lastTime}:${bars}:${updatedAt}`;
 }
 
 /**
@@ -257,12 +277,18 @@ export async function loadCachedSyntheticPair(
     const fingerprint = await computeSeedFingerprint(args.baseSymbol, args.quoteSymbol, args.sourceInterval);
     if (fingerprint === null) return null;
 
-    const parsed = readCacheFile(args);
-    if (parsed === null) return null;
+    const entry = readCacheFile(args);
+    if (entry === null) return null;
+    const parsed = entry.data;
 
     if (parsed.version !== SYNTHETIC_PAIR_CACHE_VERSION) return null;
     if (parsed.fingerprint !== fingerprint) return null;
     if (!Array.isArray(parsed.data)) return null;
+
+    // Refresh the file's mtime (throttled) so the oldest-mtime-first prune
+    // reflects actual access and a hot pair survives eviction. Without this,
+    // eviction was oldest-WRITE-first regardless of reads (audit Finding 3).
+    touchCacheFileForLru(entry.path);
 
     // Cast `time` to the lightweight-charts `Time` branded number. The
     // disk format stores a plain number (mirrors `buildSyntheticPairPayload`
@@ -272,21 +298,45 @@ export async function loadCachedSyntheticPair(
 }
 
 /**
- * Read and decode a cache file, preferring v2 (`.bin`) and falling back to v1
- * (`.json`). Returns null on any miss or decode failure — never throws.
+ * Best-effort, throttled mtime bump so a cache HIT survives LRU-by-mtime
+ * pruning. Touches the file at most once per {@link LRU_TOUCH_THROTTLE_MS};
+ * a `statSync` decides whether the (more expensive) `utimesSync` is needed,
+ * so the common case is a single stat per lookup. Swallows all errors — the
+ * cache is advisory and a failed touch must not turn a hit into an exception.
  */
-function readCacheFile(args: SyntheticPairDiskCacheArgs): CachedSyntheticPairFile | null {
+function touchCacheFileForLru(filePath: string): void {
+    try {
+        const now = Date.now();
+        const mtimeMs = statSync(filePath).mtimeMs;
+        if (now - mtimeMs < LRU_TOUCH_THROTTLE_MS) return;
+        const nowSec = now / 1000;
+        utimesSync(filePath, nowSec, nowSec);
+    } catch {
+        // Locked file, vanished between read and touch, permission error —
+        // leave the mtime alone. Pruning will still work; it just won't see
+        // this hit until the next successful touch.
+    }
+}
+
+/**
+ * Read and decode a cache file, preferring v2 (`.bin`) and falling back to v1
+ * (`.json`). Returns null on any miss or decode failure — never throws. Also
+ * returns the path that was read so the caller can refresh its mtime for
+ * LRU-by-mtime pruning (audit Finding 3).
+ */
+function readCacheFile(args: SyntheticPairDiskCacheArgs): { path: string; data: CachedSyntheticPairFile } | null {
     const binPath = cacheFilePath(args);
     try {
         const buffer = readFileSync(binPath);
-        return decodeV2(buffer);
+        const decoded = decodeV2(buffer);
+        if (decoded) return { path: binPath, data: decoded };
     } catch {
         // Fall through to legacy JSON.
     }
     const jsonPath = legacyJsonPath(args);
     try {
         const raw = readFileSync(jsonPath, "utf8");
-        return JSON.parse(raw) as CachedSyntheticPairFile;
+        return { path: jsonPath, data: JSON.parse(raw) as CachedSyntheticPairFile };
     } catch {
         return null;
     }

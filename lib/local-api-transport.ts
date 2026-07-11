@@ -138,13 +138,43 @@ function normalizeLoopbackAddress(address: string | undefined): string {
     return address;
 }
 
-/** True if `host` (with optional port) names a loopback destination. */
-function isLoopbackHost(host: string): boolean {
-    const bare = host.split(":")[0]!.trim().toLowerCase();
-    return bare === "localhost"
-        || bare === "127.0.0.1"
-        || bare === "::1"
-        || bare.startsWith("127.");
+/**
+ * True if `host` (an authority `host[:port]`, no scheme) names a loopback
+ * destination. Handles IPv6 bracket form (`[::1]:5173`, `[::1]`) explicitly —
+ * `host.split(":")[0]` would yield `"["` for `[::1]:5173` and reject a real
+ * loopback (audit Finding 5). Uses `URL` for the non-bracketed path so a bare
+ * IPv6 (`::1`) and a `host:port` pair are parsed without manual colon logic.
+ */
+const IPV4_LOOPBACK_OCTET = "(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)";
+const IPV4_LOOPBACK_RE = new RegExp(`^127\\.${IPV4_LOOPBACK_OCTET}\\.${IPV4_LOOPBACK_OCTET}\\.${IPV4_LOOPBACK_OCTET}$`);
+
+export function isLoopbackHost(host: string): boolean {
+    const trimmed = host.trim().toLowerCase();
+    if (!trimmed) return false;
+
+    // Bracketed IPv6: `[::1]` or `[::1]:5173`. Validate the closing bracket is
+    // present before slicing; a malformed `[::1` must not be accepted.
+    if (trimmed.startsWith("[")) {
+        const close = trimmed.indexOf("]");
+        if (close <= 0) return false;
+        return trimmed.slice(1, close) === "::1";
+    }
+
+    // Delegate to URL so a bare IPv6 (`::1`) or `host:port` parse without
+    // ad-hoc colon logic. URL.hostname strips the port and IPv6 brackets and
+    // lowercases. A new URL is a few allocations — fine for the fallback path
+    // (socket-derived origin is the hot path and never reaches here).
+    let hostname: string;
+    try {
+        hostname = new URL(`http://${trimmed}`).hostname;
+    } catch {
+        return false;
+    }
+    if (hostname === "localhost" || hostname === "::1") return true;
+    // 127.0.0.0/8 dotted quad ONLY — a plain `startsWith("127.")` would also
+    // match a public hostname like `127.0.0.1.evil.test`, which is not
+    // loopback and must not be trusted as same-origin.
+    return IPV4_LOOPBACK_RE.test(hostname);
 }
 
 /**

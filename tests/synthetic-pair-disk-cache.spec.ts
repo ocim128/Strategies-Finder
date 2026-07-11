@@ -29,6 +29,7 @@ import {
     computeSeedFingerprint,
     getSyntheticPairCacheSize,
     loadCachedSyntheticPair,
+    LRU_TOUCH_THROTTLE_MS,
     MAX_CACHE_BYTES,
     MAX_CACHE_FILES,
     pruneOnStartup,
@@ -191,16 +192,48 @@ test("file-backed round-trip: store then load returns the same bars", async () =
 // Binance (crypto) legs
 // --------------------------------------------------------------------------
 
-test("binance fingerprint uses series_meta.lastTime and barsCount", async () => {
+test("binance fingerprint uses series_meta.lastTime, barsCount, and updatedAt", async () => {
     __setSeriesMetaFetcherForTests(async (_symbol, _interval) => ({
+        ok: true,
+        lastTime: 1782914400,
+        barsCount: 65003,
+        updatedAt: 1778000000,
+    }));
+    const fp = await computeSeedFingerprint("BTCUSDT", "PAXGUSDT", "1h");
+    assert.equal(typeof fp, "string");
+    assert.ok(fp!.includes("binance:BTCUSDT:1h:1782914400:65003:1778000000"));
+    assert.ok(fp!.includes("binance:PAXGUSDT:1h:1782914400:65003:1778000000"));
+});
+
+test("binance fingerprint folds updatedAt=0 when series_meta omits it (cold cache / older endpoint)", async () => {
+    // updatedAt intentionally absent — every field on SeriesMetaResponse is
+    // optional, so the bare object is a valid response.
+    __setSeriesMetaFetcherForTests(async () => ({
         ok: true,
         lastTime: 1782914400,
         barsCount: 65003,
     }));
     const fp = await computeSeedFingerprint("BTCUSDT", "PAXGUSDT", "1h");
     assert.equal(typeof fp, "string");
-    assert.ok(fp!.includes("binance:BTCUSDT:1h:1782914400:65003"));
-    assert.ok(fp!.includes("binance:PAXGUSDT:1h:1782914400:65003"));
+    assert.ok(fp!.includes("binance:BTCUSDT:1h:1782914400:65003:0"));
+});
+
+test("binance fingerprint changes when updatedAt moves but lastTime and barsCount stay fixed (Finding 2)", async () => {
+    // Same row count, same last bar, but a historical bar was corrected via
+    // /store-ohlcv (which bumps series_meta.updated_at). The old fingerprint
+    // keyed only on lastTime+barsCount would NOT change here, serving stale
+    // bars — updatedAt closes that gap.
+    let updatedAt = 1778000000;
+    __setSeriesMetaFetcherForTests(async () => ({
+        ok: true,
+        lastTime: 1782914400,
+        barsCount: 65003,
+        updatedAt,
+    }));
+    const before = await computeSeedFingerprint("BTCUSDT", "PAXGUSDT", "1h");
+    updatedAt = 1778000100; // a repair bumped updated_at, nothing else moved
+    const after = await computeSeedFingerprint("BTCUSDT", "PAXGUSDT", "1h");
+    assert.notEqual(before, after, "fingerprint must change when updatedAt moves");
 });
 
 test("binance fingerprint returns null when series_meta is cold (no rows)", async () => {
@@ -254,7 +287,7 @@ test("mixed pair fingerprint combines file: and binance: segments", async () => 
     const fp = await computeSeedFingerprint(BASE_SYMBOL, "BTCUSDT", SOURCE_INTERVAL);
     assert.equal(typeof fp, "string");
     assert.ok(fp!.includes(`file:AAPL:${SOURCE_INTERVAL}:`));
-    assert.ok(fp!.includes(`binance:BTCUSDT:${SOURCE_INTERVAL}:1782914400:65003`));
+    assert.ok(fp!.includes(`binance:BTCUSDT:${SOURCE_INTERVAL}:1782914400:65003:0`));
 });
 
 test("mixed pair round-trip works", async () => {
@@ -427,5 +460,97 @@ test("pruneSyntheticPairDiskCache treats corrupt/vanished files gracefully", () 
     assert.equal(result.files, 2);
     assert.equal(result.evictedFiles, 0);
     assert.equal(readdirSync(cacheDir).filter((f) => f.endsWith(".txt")).length, 1);
+});
+
+// --------------------------------------------------------------------------
+// LRU-by-mtime hit refresh (Finding 3): a cache HIT must update eviction
+// priority so a hot pair survives pruning even if it hasn't been rewritten.
+// --------------------------------------------------------------------------
+
+test("a cache HIT refreshes mtime so a hot pair survives oldest-mtime pruning (Finding 3)", async () => {
+    // Three crypto pairs with stable fingerprints (fixed series_meta).
+    __setSeriesMetaFetcherForTests(async () => ({ ok: true, lastTime: 1782914400, barsCount: 65003, updatedAt: 1 }));
+    const argsA = makeCryptoArgs();
+    const argsB = makeCryptoArgs();
+    const argsC = makeCryptoArgs();
+    // Distinct pair keys → distinct cache files.
+    argsA.pairKey = "A|BTCUSDT|PAXGUSDT|1h|1h|50000|synthetic";
+    argsB.pairKey = "B|BTCUSDT|PAXGUSDT|1h|1h|50000|synthetic";
+    argsC.pairKey = "C|BTCUSDT|PAXGUSDT|1h|1h|50000|synthetic";
+    for (const a of [argsA, argsB, argsC]) {
+        assert.equal(await storeSyntheticPair(a, makeBars(2)), true);
+    }
+
+    // Make A the OLDEST write so that without LRU-touch it would be evicted
+    // first. All three are set well OUTSIDE the throttle window so a hit on A
+    // WILL refresh its mtime (a hit inside the window is throttled by design).
+    const pathA = __cacheFilePathForTests(argsA);
+    const pathB = __cacheFilePathForTests(argsB);
+    const pathC = __cacheFilePathForTests(argsC);
+    const throttleSec = LRU_TOUCH_THROTTLE_MS / 1000;
+    touchFile(pathA, throttleSec + 600); // oldest, well above throttle
+    touchFile(pathB, throttleSec + 300);
+    touchFile(pathC, throttleSec + 60);  // newest, still above throttle
+
+    // Sanity: A is currently the oldest by mtime.
+    const mtimeA = statSync(pathA).mtimeMs;
+
+    // Repeatedly load A — each hit should refresh its mtime.
+    const hit = await loadCachedSyntheticPair(argsA);
+    assert.ok(hit !== null, "A must be a cache hit");
+
+    const mtimeAAfter = statSync(pathA).mtimeMs;
+    assert.ok(mtimeAAfter > mtimeA, "a hit must refresh the file mtime");
+
+    // Now prune to 2 files. Before the fix, A (oldest write, hottest) would be
+    // evicted. After the fix, A was just touched so it survives; the OLDEST
+    // untouched entry (B) is evicted instead.
+    const result = pruneSyntheticPairDiskCache({ maxFiles: 2, maxBytes: MAX_CACHE_BYTES });
+    assert.equal(result.files, 2);
+    assert.equal(existsSync(pathA), true, "hot pair A must survive after a hit");
+    assert.equal(existsSync(pathB), false, "B (now oldest untouched) is evicted");
+    assert.equal(existsSync(pathC), true, "C (newest) kept");
+});
+
+test("a cache HIT is throttled: a second hit within the window does not touch mtime (Finding 3)", async () => {
+    __setSeriesMetaFetcherForTests(async () => ({ ok: true, lastTime: 1782914400, barsCount: 65003, updatedAt: 1 }));
+    const args = makeCryptoArgs();
+    args.pairKey = "THROTTLE|BTCUSDT|PAXGUSDT|1h|1h|50000|synthetic";
+    assert.equal(await storeSyntheticPair(args, makeBars(2)), true);
+
+    const p = __cacheFilePathForTests(args);
+    // Push the file's mtime well OUTSIDE the throttle window first. Otherwise
+    // the store itself just set the mtime to ~now and the first hit would be
+    // throttled too — which would make this test pass for the wrong reason.
+    touchFile(p, (LRU_TOUCH_THROTTLE_MS / 1000) + 300);
+    const beforeFirst = statSync(p).mtimeMs;
+
+    // First hit (outside the window) MUST refresh the mtime.
+    assert.ok((await loadCachedSyntheticPair(args)) !== null);
+    const afterFirst = statSync(p).mtimeMs;
+    assert.ok(afterFirst > beforeFirst, "first hit outside the window must refresh mtime");
+
+    // A second hit immediately after is now WITHIN the window → must NOT touch.
+    assert.ok((await loadCachedSyntheticPair(args)) !== null);
+    const afterSecond = statSync(p).mtimeMs;
+    assert.equal(afterSecond, afterFirst, "throttle prevents a second utimesSync within the window");
+});
+
+test("a cache MISS does not refresh mtime (touch only fires on a validated hit)", async () => {
+    __setSeriesMetaFetcherForTests(async () => ({ ok: true, lastTime: 1782914400, barsCount: 65003, updatedAt: 1 }));
+    const args = makeCryptoArgs();
+    args.pairKey = "MISS|BTCUSDT|PAXGUSDT|1h|1h|50000|synthetic";
+    assert.equal(await storeSyntheticPair(args, makeBars(2)), true);
+    const p = __cacheFilePathForTests(args);
+
+    // Change the fingerprint so the next load is a MISS (stale fingerprint).
+    __setSeriesMetaFetcherForTests(async () => ({ ok: true, lastTime: 9999999999, barsCount: 65003, updatedAt: 1 }));
+    touchFile(p, 100);
+    const mtimeBefore = statSync(p).mtimeMs;
+
+    assert.equal(await loadCachedSyntheticPair(args), null);
+
+    const mtimeAfter = statSync(p).mtimeMs;
+    assert.equal(mtimeAfter, mtimeBefore, "a miss must not refresh mtime");
 });
 

@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { describe, it } from "node:test";
+import { describe, it, afterEach } from "node:test";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +7,7 @@ import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "../lib/strategy-defaults";
 import {
     archiveAndDeleteBuiltInStrategies,
     archiveAndDeleteBuiltInStrategy,
+    isAllowedStrategyAdminCaller,
     syncStrategyManifestForRepo,
 } from "../lib/strategy-library-admin-plugin";
 
@@ -192,5 +193,71 @@ describe("Strategy library admin plugin", () => {
         } finally {
             rmSync(repoRoot, { recursive: true, force: true });
         }
+    });
+});
+
+// Audit Finding 1: the destructive /api/strategy-library/delete* routes must
+// only accept same-origin loopback callers (or a LOCAL_PROXY_TOKEN bearer).
+// These exercise the gate function directly so they don't need a live Vite
+// server — the route wiring above calls this exact function before any work.
+describe("isAllowedStrategyAdminCaller", () => {
+    const ORIGINAL_TOKEN = process.env.LOCAL_PROXY_TOKEN;
+
+    afterEach(() => {
+        if (ORIGINAL_TOKEN === undefined) {
+            delete process.env.LOCAL_PROXY_TOKEN;
+        } else {
+            process.env.LOCAL_PROXY_TOKEN = ORIGINAL_TOKEN;
+        }
+    });
+
+    it("allows same-origin localhost and 127.0.0.1 Origin/Referer without a token", () => {
+        delete process.env.LOCAL_PROXY_TOKEN;
+        expect(isAllowedStrategyAdminCaller({ headers: { origin: "http://localhost:5173" } })).to.equal(true);
+        expect(isAllowedStrategyAdminCaller({ headers: { origin: "http://127.0.0.1:5173" } })).to.equal(true);
+        expect(isAllowedStrategyAdminCaller({ headers: { referer: "http://localhost:5173/" } })).to.equal(true);
+        expect(isAllowedStrategyAdminCaller({ headers: { referer: "http://127.0.0.1:5173/" } })).to.equal(true);
+    });
+
+    it("allows bracketed IPv6 loopback origin (Finding 5 parity)", () => {
+        delete process.env.LOCAL_PROXY_TOKEN;
+        expect(isAllowedStrategyAdminCaller({ headers: { origin: "http://[::1]:5173" } })).to.equal(true);
+    });
+
+    it("rejects a cross-origin caller with no token (the CSRF vector)", () => {
+        delete process.env.LOCAL_PROXY_TOKEN;
+        expect(isAllowedStrategyAdminCaller({ headers: { origin: "https://evil.test" } })).to.equal(false);
+        expect(isAllowedStrategyAdminCaller({ headers: { referer: "https://evil.test/csrf" } })).to.equal(false);
+    });
+
+    it("rejects a request with no Origin/Referer when no token is configured", () => {
+        delete process.env.LOCAL_PROXY_TOKEN;
+        expect(isAllowedStrategyAdminCaller({ headers: {} })).to.equal(false);
+        expect(isAllowedStrategyAdminCaller({})).to.equal(false);
+    });
+
+    it("rejects a non-loopback host even if it looks local-ish", () => {
+        delete process.env.LOCAL_PROXY_TOKEN;
+        // A public host must NOT be trusted regardless of port.
+        expect(isAllowedStrategyAdminCaller({ headers: { origin: "http://example.test:5173" } })).to.equal(false);
+        // 127.0.0.1 embedded as a substring of another host is not loopback.
+        expect(isAllowedStrategyAdminCaller({ headers: { origin: "http://127.0.0.1.evil.test" } })).to.equal(false);
+    });
+
+    it("allows a non-local caller presenting the configured LOCAL_PROXY_TOKEN bearer", () => {
+        process.env.LOCAL_PROXY_TOKEN = "secret-value";
+        expect(isAllowedStrategyAdminCaller({
+            headers: { origin: "https://evil.test", authorization: "Bearer secret-value" },
+        })).to.equal(true);
+    });
+
+    it("rejects a non-local caller with the wrong bearer", () => {
+        process.env.LOCAL_PROXY_TOKEN = "secret-value";
+        expect(isAllowedStrategyAdminCaller({
+            headers: { origin: "https://evil.test", authorization: "Bearer wrong" },
+        })).to.equal(false);
+        expect(isAllowedStrategyAdminCaller({
+            headers: { origin: "https://evil.test", authorization: "secret-value" },
+        })).to.equal(false);
     });
 });

@@ -585,12 +585,32 @@ function parseOptions(raw: unknown): FinderOptions {
     return clampFinderOptions(options);
 }
 
+/**
+ * Structural validation of the nested universe block BEFORE any field is
+ * dereferenced. Audit Finding 4: `parseOptions` casts an arbitrary object to
+ * `FinderOptions`, so `options.universe.symbols.length` threw a `TypeError`
+ * (caught as a 500) when `universe` was `{}` or `symbols` was non-array /
+ * missing. Each check throws an intentional 400 with a specific message.
+ */
 function assertUniverseOptions(options: FinderOptions): void {
     if (options.scope !== "symbol_universe") {
         throw new HttpStatusError(400, "Server-side Finder requires scope 'symbol_universe'.");
     }
-    if (!options.universe || options.universe.symbols.length === 0) {
+    const universe = options.universe as unknown;
+    if (!universe || typeof universe !== "object" || Array.isArray(universe)) {
+        throw new HttpStatusError(400, "options.universe must be an object.");
+    }
+    const symbols = (universe as { symbols?: unknown }).symbols;
+    if (!Array.isArray(symbols)) {
+        throw new HttpStatusError(400, "options.universe.symbols must be an array.");
+    }
+    if (symbols.length === 0) {
         throw new HttpStatusError(400, "options.universe.symbols must be a non-empty array.");
+    }
+    for (let i = 0; i < symbols.length; i += 1) {
+        if (typeof symbols[i] !== "string") {
+            throw new HttpStatusError(400, `options.universe.symbols[${i}] must be a string.`);
+        }
     }
 }
 
@@ -727,6 +747,7 @@ export const __testInternals = {
     handleStopRequest,
     handleStatusRequest,
     clearServerFinderDatasetCaches,
+    assertUniverseOptions,
     setRunOwnerForTests(owner: number): void {
         // Mirrors the Batch plugin: sets the lock so processFinderUniverseRun's
         // lostOwnership() check behaves. Does NOT clear runState (the HTTP
