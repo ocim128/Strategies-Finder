@@ -19,7 +19,7 @@ import { collectExecutionLabTradeQuoteTimes } from "../lib/execution-lab/trade-q
 import type { PolymarketClob1sQuoteRow } from "../lib/second-market/types";
 import type { OHLCVData, Strategy, Time, Trade } from "../lib/types/strategies";
 
-type MockHandler = (req: NodeJS.ReadableStream & { method?: string; url?: string }, res: {
+type MockHandler = (req: NodeJS.ReadableStream & { method?: string; url?: string; headers?: Record<string, string> }, res: {
     statusCode: number;
     setHeader(name: string, value: string): void;
     end(body?: string): void;
@@ -55,9 +55,10 @@ function createDevHandler(): MockHandler {
 
 async function invoke(handler: MockHandler, path: string): Promise<{ statusCode: number; json: any }> {
     return await new Promise((resolve, reject) => {
-        const request = Readable.from([]) as NodeJS.ReadableStream & { method?: string; url?: string };
+        const request = Readable.from([]) as NodeJS.ReadableStream & { method?: string; url?: string; headers?: Record<string, string> };
         request.method = "GET";
         request.url = path;
+        request.headers = {};
         const response = {
             statusCode: 200,
             setHeader() {},
@@ -75,15 +76,44 @@ async function invoke(handler: MockHandler, path: string): Promise<{ statusCode:
 
 async function invokePost(handler: MockHandler, path: string, body: unknown): Promise<{ statusCode: number; json: any }> {
     return await new Promise((resolve, reject) => {
-        const request = Readable.from([JSON.stringify(body)]) as NodeJS.ReadableStream & { method?: string; url?: string };
+        const request = Readable.from([JSON.stringify(body)]) as NodeJS.ReadableStream & { method?: string; url?: string; headers?: Record<string, string> };
         request.method = "POST";
         request.url = path;
+        request.headers = {};
         const response = {
             statusCode: 200,
             setHeader() {},
             end(rawBody?: string) {
                 try {
                     resolve({ statusCode: response.statusCode, json: rawBody ? JSON.parse(rawBody) : null });
+                } catch (error) {
+                    reject(error);
+                }
+            },
+        };
+        Promise.resolve(handler(request, response)).catch(reject);
+    });
+}
+
+// Posts a raw (pre-serialized or malformed) body with explicit headers, so the
+// parser's 400/413 paths can be exercised. See audit finding 3.
+async function invokePostRaw(
+    handler: MockHandler,
+    path: string,
+    rawBody: string,
+    headers: Record<string, string> = {}
+): Promise<{ statusCode: number; json: any }> {
+    return await new Promise((resolve, reject) => {
+        const request = Readable.from([rawBody]) as NodeJS.ReadableStream & { method?: string; url?: string; headers?: Record<string, string> };
+        request.method = "POST";
+        request.url = path;
+        request.headers = headers;
+        const response = {
+            statusCode: 200,
+            setHeader() {},
+            end(rawEndBody?: string) {
+                try {
+                    resolve({ statusCode: response.statusCode, json: rawEndBody ? JSON.parse(rawEndBody) : null });
                 } catch (error) {
                     reject(error);
                 }
@@ -1170,5 +1200,39 @@ describe("Execution Lab live helpers", () => {
     it("classifies live fetch timeouts as transient poll errors", () => {
         expect(isExecutionLabTransientPollError(new Error("The operation was aborted due to timeout"))).to.equal(true);
         expect(isExecutionLabTransientPollError(new Error("Strategy changed. Stop and start a new Execution Lab session."))).to.equal(false);
+    });
+});
+
+// Audit finding 3: malformed/oversized request bodies previously mapped to
+// HTTP 500 (generic server error) because the outer handler catch was
+// unconditional. The shared readJsonBody throws HttpStatusError with the
+// correct 4xx status, which the catch now forwards verbatim.
+describe("Execution Lab body parser status codes", () => {
+    it("returns 400 for malformed JSON instead of 500", async () => {
+        const handler = createHandler();
+        const response = await invokePostRaw(handler, "/miner/start", "{not-json");
+        expect(response.statusCode).to.equal(400);
+        expect(response.json).to.deep.include({ ok: false, error: "Invalid JSON body." });
+    });
+
+    it("returns 413 when a declared Content-Length exceeds the 1 MiB cap", async () => {
+        const handler = createHandler();
+        // Declared content-length over the cap, empty stream — preflight rejects
+        // before consuming the body (the old parser could not do this).
+        const response = await invokePostRaw(handler, "/miner/start", "", {
+            "content-length": String((1024 * 1024) + 1),
+        });
+        expect(response.statusCode).to.equal(413);
+        expect(response.json.ok).to.equal(false);
+        expect(String(response.json.error ?? "")).to.match(/too large/i);
+    });
+
+    it("returns 413 when a streaming body crosses the 1 MiB cap", async () => {
+        const handler = createHandler();
+        // Send a body just over 1 MiB. The shared parser rejects mid-stream.
+        const over = Buffer.alloc((1024 * 1024) + 16, 0x61).toString("utf8");
+        const response = await invokePostRaw(handler, "/miner/start", over);
+        expect(response.statusCode).to.equal(413);
+        expect(response.json.ok).to.equal(false);
     });
 });

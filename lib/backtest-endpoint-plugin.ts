@@ -36,6 +36,7 @@ import { BACKTEST_ENDPOINT_CAPITAL_SETTINGS, toCompactMetrics, toSlimSingleResul
 import { stripEndpointIgnoredBacktestSettings } from "./backtest-endpoint-settings";
 import { buildBacktestEndpointExecutorRequest } from "./backtest-endpoint-execution";
 import { sendJson } from "./http-response-utils";
+import { readJsonBody, sendCaughtErrorJson } from "./vite-http-utils";
 import type { OHLCVData, BacktestResult, StrategyParams } from "./types/strategies";
 import { strategies as builtInStrategies } from "./strategies/library";
 import { parseTimeToUnixSeconds } from "./time-normalization";
@@ -156,21 +157,9 @@ function toUnixSeconds(t: OHLCVData["time"]): number | null {
 // JSON helpers
 // ============================================================================
 
-async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    const MAX_BODY = 100 * 1024 * 1024; // 100 MB
-    for await (const chunk of req) {
-        const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-        total += bytes.length;
-        if (total > MAX_BODY) throw new Error("Request body too large");
-        chunks.push(bytes);
-    }
-    const text = Buffer.concat(chunks).toString("utf8").trim();
-    if (!text) return {};
-    const parsed = JSON.parse(text);
-    return (parsed && typeof parsed === "object") ? parsed as Record<string, unknown> : {};
-}
+// Backtest dataset uploads can carry large inline candle arrays, so this cap is
+// intentionally much larger than the default 80 MiB used by other plugins.
+const BACKTEST_MAX_BODY_BYTES = 100 * 1024 * 1024; // 100 MB
 
 function errorResponse(res: any, status: number, message: string, code?: string): void {
     sendJson(res, status, { ok: false, error: message, code } satisfies BacktestErrorResponse);
@@ -765,7 +754,7 @@ export function backtestEndpointPlugin(): Plugin {
 
                 // POST /api/backtest/datasets
                 if (method === "POST" && pathParts.length === 1 && pathParts[0] === "datasets") {
-                    const body = await readJsonBody(req as IncomingMessage);
+                    const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
                     const uploadReq = body as unknown as DatasetUploadRequest;
                     if (!Array.isArray(uploadReq.candles) || uploadReq.candles.length === 0) {
                         errorResponse(res, 400, "candles array is required");
@@ -792,7 +781,7 @@ export function backtestEndpointPlugin(): Plugin {
                 // POST /api/backtest/:strategyKey
                 if (method === "POST" && pathParts.length === 1) {
                     const strategyKey = pathParts[0];
-                    const body = await readJsonBody(req as IncomingMessage);
+                    const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
                     const result = await handleSingleBacktest(strategyKey, body, req as IncomingMessage);
                     const status = result.ok ? 200 : (result as BacktestErrorResponse).code === "EXECUTION_ERROR" ? 500 : 400;
                     sendJson(res, status, result);
@@ -802,7 +791,7 @@ export function backtestEndpointPlugin(): Plugin {
                 // POST /api/backtest/:strategyKey/batch
                 if (method === "POST" && pathParts.length === 2 && pathParts[1] === "batch") {
                     const strategyKey = pathParts[0];
-                    const body = await readJsonBody(req as IncomingMessage);
+                    const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
                     const result = await handleBatchBacktest(strategyKey, body, req as IncomingMessage);
                     const status = result.ok ? 200 : 400;
                     sendJson(res, status, result);
@@ -812,7 +801,7 @@ export function backtestEndpointPlugin(): Plugin {
                 // POST /api/backtest/:strategyKey/search/random
                 if (method === "POST" && pathParts.length === 3 && pathParts[1] === "search" && pathParts[2] === "random") {
                     const strategyKey = pathParts[0];
-                    const body = await readJsonBody(req as IncomingMessage);
+                    const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
                     const result = await handleRandomSearch(strategyKey, body, req as IncomingMessage);
                     const status = result.ok ? 200 : 400;
                     sendJson(res, status, result);
@@ -821,8 +810,9 @@ export function backtestEndpointPlugin(): Plugin {
 
                 sendJson(res, 404, { ok: false, error: "Not found" });
             } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
-                sendJson(res, 500, { ok: false, error: message });
+                // sendCaughtErrorJson maps HttpStatusError (400/413/415 from the
+                // shared readJsonBody) to its own status and everything else to 500.
+                sendCaughtErrorJson(res, err);
             }
         });
     };

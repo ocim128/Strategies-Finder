@@ -43,6 +43,7 @@ import {
     resolveBinanceDnsMode,
     type BinanceDnsMode,
 } from "../second-market/binance-dns";
+import { readJsonBody, sendCaughtErrorJson } from "../vite-http-utils";
 
 const LOG_ROOT = resolve(process.cwd(), "logs", "paper-execution");
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -146,21 +147,6 @@ export function buildExecutionLabMinerProcessArgs(marketType: ExecutionLabMinerM
 
 function payloadHash(value: unknown): string {
     return createHash("sha256").update(stableStringify(value)).digest("hex");
-}
-
-async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    for await (const chunk of req) {
-        const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-        total += bytes.length;
-        if (total > MAX_BODY_BYTES) throw new Error("Request body too large");
-        chunks.push(bytes);
-    }
-    const text = Buffer.concat(chunks).toString("utf8").trim();
-    if (!text) return {};
-    const parsed = JSON.parse(text);
-    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
 }
 
 function readLiveUiConfigFromPayload(payload: Record<string, unknown>): ExecutionLabLiveUiConfig | undefined {
@@ -1261,7 +1247,7 @@ export function executionLabVitePlugin(): Plugin {
                 }
 
                 if (path === "/miner/start") {
-                    const payload = await readJsonBody(req as IncomingMessage);
+                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES);
                     sendJson(res, 200, startMiner(parseMinerMarketType(payload.marketType)));
                     return;
                 }
@@ -1272,7 +1258,7 @@ export function executionLabVitePlugin(): Plugin {
                 }
 
                 if (path === "/live/config/resolve") {
-                    const payload = await readJsonBody(req as IncomingMessage);
+                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES);
                     const liveUiConfig = readLiveUiConfigFromPayload(payload)
                         ?? normalizeExecutionLabLiveUiConfig(payload);
                     sendJson(res, 200, loadLiveExecutorStatus(undefined, liveUiConfig));
@@ -1284,7 +1270,7 @@ export function executionLabVitePlugin(): Plugin {
                         sendJson(res, 404, { ok: false, error: "Live trade submission is not registered in preview mode." });
                         return;
                     }
-                    const payload = await readJsonBody(req as IncomingMessage);
+                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES);
                     const sessionId = readSessionIdFromPayload(payload);
                     if (!sessionId || !sessions.has(sessionId)) {
                         sendJson(res, 404, { ok: false, error: "Unknown execution lab session" });
@@ -1345,7 +1331,7 @@ export function executionLabVitePlugin(): Plugin {
                         sendJson(res, 404, { ok: false, error: "Live cancel-all submission is not registered in preview mode." });
                         return;
                     }
-                    const payload = await readJsonBody(req as IncomingMessage);
+                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES);
                     const sessionId = readSessionIdFromPayload(payload);
                     if (!sessionId || !sessions.has(sessionId)) {
                         sendJson(res, 404, { ok: false, error: "Unknown execution lab session" });
@@ -1369,7 +1355,7 @@ export function executionLabVitePlugin(): Plugin {
                 }
 
                 if (path === "/session/start") {
-                    const payload = await readJsonBody(req as IncomingMessage);
+                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES);
                     const strategyKey = typeof payload.strategyKey === "string" ? payload.strategyKey : "";
                     const symbol = parseSymbol(typeof payload.symbol === "string" ? payload.symbol : "");
                     const startedAtIso = typeof payload.startedAtIso === "string" ? payload.startedAtIso : "";
@@ -1395,7 +1381,7 @@ export function executionLabVitePlugin(): Plugin {
                 }
 
                 if (path === "/log") {
-                    const payload = await readJsonBody(req as IncomingMessage);
+                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES);
                     const validation = validateExecutionLabRecord(payload);
                     if (!validation.ok) {
                         sendJson(res, 400, { ok: false, error: validation.error });
@@ -1411,7 +1397,7 @@ export function executionLabVitePlugin(): Plugin {
                 }
 
                 if (path === "/logs") {
-                    const payload = await readJsonBody(req as IncomingMessage);
+                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES);
                     const rawRecords = Array.isArray(payload.records) ? payload.records : null;
                     if (!rawRecords) {
                         sendJson(res, 400, { ok: false, error: "records must be an array" });
@@ -1441,7 +1427,9 @@ export function executionLabVitePlugin(): Plugin {
 
                 sendJson(res, 404, { ok: false, error: "Not found" });
             } catch (error) {
-                sendJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+                // sendCaughtErrorJson maps HttpStatusError (400/413 from the
+                // shared readJsonBody) to its own status and everything else to 500.
+                sendCaughtErrorJson(res, error);
             }
         });
     };

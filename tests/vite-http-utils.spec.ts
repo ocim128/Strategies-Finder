@@ -59,6 +59,44 @@ describe("Vite HTTP utilities", () => {
             )
         );
     });
+
+    it("rejects non-JSON Content-Type with 415 when requireJsonContentType is set", async () => {
+        // A CSRF text/plain body is CORS-simple (no preflight); the 415 gate
+        // keeps it off destructive admin routes. See audit finding 3.
+        const request = makeRequest(
+            [Buffer.from(JSON.stringify({ key: "alpha_strategy" }))],
+            { "content-type": "text/plain" }
+        );
+
+        await assert.rejects(
+            () => readJsonBody(request, 1024 * 1024, { requireJsonContentType: true }),
+            (error) => (
+                error instanceof HttpStatusError
+                && error.status === 415
+                && /Content-Type must be application\/json/.test(error.message)
+            )
+        );
+    });
+
+    it("accepts application/json Content-Type when requireJsonContentType is set", async () => {
+        const request = makeRequest(
+            [Buffer.from(JSON.stringify({ ok: true }))],
+            { "content-type": "application/json" }
+        );
+
+        const body = await readJsonBody(request, 1024 * 1024, { requireJsonContentType: true });
+        assert.deepEqual(body, { ok: true });
+    });
+
+    it("does not enforce Content-Type by default (backward compatible)", async () => {
+        const request = makeRequest(
+            [Buffer.from(JSON.stringify({ ok: true }))],
+            { "content-type": "text/plain" }
+        );
+
+        const body = await readJsonBody(request);
+        assert.deepEqual(body, { ok: true });
+    });
 });
 
 describe("proxyUpstreamJson", () => {

@@ -9,6 +9,7 @@ import {
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 import { isLoopbackHost } from "./local-api-transport";
 import { sendJson } from "./http-response-utils";
+import { readJsonBody, sendCaughtErrorJson } from "./vite-http-utils";
 
 const STRATEGY_EXPORT_PATTERN = /export\s+const\s+([a-zA-Z][a-zA-Z0-9_]*)\s*:\s*Strategy\s*=/g;
 const MANIFEST_KEY_PATTERN = /key:\s*"([^"]+)"/g;
@@ -502,41 +503,19 @@ function isLoopbackUrl(url: string): boolean {
     return parsed.protocol === "http:" && isLoopbackHost(parsed.host);
 }
 
+const STRATEGY_ADMIN_MAX_BODY_BYTES = 1024 * 1024;
+
 /**
  * Read and JSON-parse the request body. Rejects non-JSON Content-Types so a
  * CSRF `text/plain` body (CORS-simple, no preflight) cannot reach the deletion
  * handlers — defense in depth on top of {@link isAllowedStrategyAdminCaller}.
  * Empty bodies parse to `{}` for handlers that accept no payload.
  */
-async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-    const contentType = String(req.headers["content-type"] ?? "").toLowerCase();
-    if (!contentType.includes("application/json")) {
-        throw new StrategyLibraryAdminError(
-            "Content-Type must be application/json.",
-            415,
-        );
-    }
-
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    const maxBodyBytes = 1024 * 1024;
-
-    for await (const chunk of req) {
-        const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-        total += bytes.length;
-        if (total > maxBodyBytes) {
-            throw new StrategyLibraryAdminError("Request body too large.", 413);
-        }
-        chunks.push(bytes);
-    }
-
-    const text = Buffer.concat(chunks).toString("utf8").trim();
-    if (!text) {
-        return {};
-    }
-
-    const parsed = JSON.parse(text);
-    return (parsed && typeof parsed === "object") ? parsed as Record<string, unknown> : {};
+async function readAdminJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+    // `requireJsonContentType` throws HttpStatusError(415) for non-JSON bodies;
+    // the catch in the handler maps both HttpStatusError and the domain
+    // StrategyLibraryAdminError to their status codes.
+    return readJsonBody(req, STRATEGY_ADMIN_MAX_BODY_BYTES, { requireJsonContentType: true });
 }
 
 function invalidateStrategyLibraryServerState(server: ViteDevServer | null): void {
@@ -570,7 +549,7 @@ export function strategyLibraryAdminPlugin(): Plugin {
                 }
 
                 if (method === "POST" && requestUrl.pathname === "/delete") {
-                    const payload = await readJsonBody(req as IncomingMessage);
+                    const payload = await readAdminJsonBody(req as IncomingMessage);
                     const key = typeof payload.key === "string" ? payload.key : "";
                     const result = archiveAndDeleteBuiltInStrategy(key);
                     invalidateStrategyLibraryServerState(devServer);
@@ -582,7 +561,7 @@ export function strategyLibraryAdminPlugin(): Plugin {
                 }
 
                 if (method === "POST" && requestUrl.pathname === "/delete-batch") {
-                    const payload = await readJsonBody(req as IncomingMessage);
+                    const payload = await readAdminJsonBody(req as IncomingMessage);
                     const keys = Array.isArray(payload.keys)
                         ? payload.keys.filter((value): value is string => typeof value === "string")
                         : [];
@@ -601,11 +580,9 @@ export function strategyLibraryAdminPlugin(): Plugin {
                     sendJson(res, error.status, { ok: false, error: error.message });
                     return;
                 }
-
-                sendJson(res, 500, {
-                    ok: false,
-                    error: error instanceof Error ? error.message : String(error),
-                });
+                // HttpStatusError (415 non-JSON Content-Type, 413 oversized,
+                // 400 malformed) and any unexpected error.
+                sendCaughtErrorJson(res, error);
             }
         });
     };

@@ -121,7 +121,17 @@ export async function readBodyBuffer(
     return Buffer.concat(chunks);
 }
 
-export async function readJsonBody(req: IncomingMessage, maxBytes?: number): Promise<Record<string, unknown>> {
+export async function readJsonBody(
+    req: IncomingMessage,
+    maxBytes?: number,
+    options?: { requireJsonContentType?: boolean }
+): Promise<Record<string, unknown>> {
+    if (options?.requireJsonContentType) {
+        const contentType = String(req.headers["content-type"] ?? "").toLowerCase();
+        if (!contentType.includes("application/json")) {
+            throw new HttpStatusError(415, "Content-Type must be application/json.");
+        }
+    }
     const buffer = await readBodyBuffer(req, maxBytes);
     const text = buffer.toString("utf8").trim();
     if (!text) return {};

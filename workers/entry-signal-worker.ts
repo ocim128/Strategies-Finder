@@ -293,6 +293,11 @@ const RESPONSE_SNIPPET_MAX = 320;
 const SCHEDULE_TARGET_SECOND = 10;
 const MAX_SCHEDULED_CONCURRENCY = 4;
 const MAX_TELEGRAM_RETRIES = 5;
+// Cap on per-subscription error records emitted in the scheduled cron log.
+// Successful and skipped runs are aggregated into counts; only failures are
+// sampled (with streamId) so operators can see actionable errors without the
+// log growing linearly with total subscription count. See finding 5.
+const SCHEDULED_LOG_MAX_ERRORS = 20;
 
 function parseTelegramFailCount(status: string | null): number {
     if (!status) return 0;
@@ -2496,6 +2501,46 @@ async function runScheduledSubscriptions(env: Env): Promise<Record<string, unkno
     };
 }
 
+// Builds the bounded observability payload emitted by the cron `scheduled`
+// handler. The full `runs` array (one entry per subscription) is kept on the
+// `runScheduledSubscriptions` return value for any authenticated diagnostic
+// surface; this helper collapses it into aggregate counts plus a bounded
+// sample of failures so the per-minute log no longer grows with subscription
+// count. See finding 5.
+export function buildScheduledCronSummary(summary: Record<string, unknown>): Record<string, unknown> {
+    const runs = Array.isArray(summary.runs) ? summary.runs as Array<Record<string, unknown>> : [];
+    const counts: Record<string, number> = {};
+    const errors: Array<{ streamId: unknown; status: unknown }> = [];
+    let errorCount = 0;
+    for (const run of runs) {
+        const status = typeof run.status === "string" ? run.status : "unknown";
+        // Normalize `error:<detail>` → `error` for the aggregate bucket so the
+        // count stays actionable, but keep the full status in the sample below.
+        const bucket = status.startsWith("error:") ? "error" : status;
+        counts[bucket] = (counts[bucket] ?? 0) + 1;
+        if (bucket === "error") {
+            errorCount += 1;
+            if (errors.length < SCHEDULED_LOG_MAX_ERRORS) {
+                errors.push({ streamId: run.streamId, status });
+            }
+        }
+    }
+    return {
+        ok: summary.ok,
+        scanned: summary.scanned,
+        eligible: summary.eligible,
+        skippedNotDue: summary.skippedNotDue,
+        counts,
+        errorCount,
+        errorsTruncated: Math.max(0, errorCount - errors.length),
+        errors,
+        // Preserve a top-level error reason when the summary itself failed
+        // (e.g. missing SIGNALS_DB binding) so the cron log stays diagnostic.
+        ...(typeof summary.error === "string" ? { error: summary.error } : {}),
+        at: summary.at,
+    };
+}
+
 export default {
     async fetch(request: Request, env: Env): Promise<Response> {
         if (request.method === "OPTIONS") {
@@ -2585,7 +2630,7 @@ export default {
         const summary = await runScheduledSubscriptions(env);
         console.info(JSON.stringify({
             event: "scheduled_run_summary",
-            ...summary,
+            ...buildScheduledCronSummary(summary),
         }));
 
         // Phase 4: opt-in committee aggregate-score alerts. Runs after the

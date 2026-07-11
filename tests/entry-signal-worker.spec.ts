@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import worker, {
     buildLatestActionableEntrySignalQuery,
+    buildScheduledCronSummary,
     decideCommitteeAlert,
 } from '../workers/entry-signal-worker';
 
@@ -658,5 +659,123 @@ describe('Committee alert rules endpoints', () => {
             env
         );
         expect(res.status).to.equal(401);
+    });
+});
+
+// The cron `scheduled` handler logs a summary every minute. The full per-run
+// array grows linearly with subscription count; buildScheduledCronSummary
+// collapses it into aggregate counts + a bounded error sample so the log
+// stays bounded regardless of subscription volume. See audit finding 5.
+describe('buildScheduledCronSummary', () => {
+    it('aggregates runs into status counts and omits the full runs array', () => {
+        const summary = buildScheduledCronSummary({
+            ok: true,
+            scanned: 3,
+            eligible: 2,
+            skippedNotDue: 1,
+            at: '2026-07-11T00:00:00.000Z',
+            runs: [
+                { streamId: 'a', status: 'no_new_closed_candle' },
+                { streamId: 'b', status: 'skipped_interval_not_due' },
+                { streamId: 'c', status: 'signal:long' },
+            ],
+        });
+
+        expect(summary).to.deep.equal({
+            ok: true,
+            scanned: 3,
+            eligible: 2,
+            skippedNotDue: 1,
+            counts: {
+                no_new_closed_candle: 1,
+                skipped_interval_not_due: 1,
+                'signal:long': 1,
+            },
+            errorCount: 0,
+            errorsTruncated: 0,
+            errors: [],
+            at: '2026-07-11T00:00:00.000Z',
+        });
+        // The unbounded runs array must not leak into the cron log payload.
+        expect(summary).to.not.have.property('runs');
+    });
+
+    it('normalizes error:<detail> into an error bucket but preserves full status in the sample', () => {
+        const summary = buildScheduledCronSummary({
+            ok: true,
+            scanned: 2,
+            eligible: 2,
+            skippedNotDue: 0,
+            at: '2026-07-11T00:00:00.000Z',
+            runs: [
+                { streamId: 'a', status: 'error:fetch_failed:timeout' },
+                { streamId: 'b', status: 'error:binance_5xx' },
+            ],
+        }) as { counts: Record<string, number>; errors: Array<{ streamId: string; status: string }>; errorCount: number };
+
+        // Both distinct error details collapse into one aggregate `error` bucket.
+        expect(summary.counts).to.deep.equal({ error: 2 });
+        expect(summary.errorCount).to.equal(2);
+        expect(summary.errors).to.have.length(2);
+        expect(summary.errors[0]).to.deep.equal({ streamId: 'a', status: 'error:fetch_failed:timeout' });
+        expect(summary.errors[1]).to.deep.equal({ streamId: 'b', status: 'error:binance_5xx' });
+    });
+
+    it('truncates the error sample and reports errorsTruncated when failures exceed the cap', () => {
+        const runs = Array.from({ length: 100 }, (_, i) => ({
+            streamId: `s${i}`,
+            status: `error:detail_${i}`,
+        }));
+        const summary = buildScheduledCronSummary({
+            ok: true,
+            scanned: 100,
+            eligible: 100,
+            skippedNotDue: 0,
+            at: '2026-07-11T00:00:00.000Z',
+            runs,
+        }) as { errorCount: number; errorsTruncated: number; errors: unknown[]; counts: Record<string, number> };
+
+        expect(summary.errorCount).to.equal(100);
+        // Sample is capped; the remainder is reported explicitly.
+        expect(summary.errors).to.have.length(20);
+        expect(summary.errorsTruncated).to.equal(80);
+        expect(summary.counts).to.deep.equal({ error: 100 });
+    });
+
+    it('handles an empty run set', () => {
+        const summary = buildScheduledCronSummary({
+            ok: true,
+            scanned: 0,
+            eligible: 0,
+            skippedNotDue: 0,
+            at: '2026-07-11T00:00:00.000Z',
+            runs: [],
+        });
+
+        expect(summary).to.deep.equal({
+            ok: true,
+            scanned: 0,
+            eligible: 0,
+            skippedNotDue: 0,
+            counts: {},
+            errorCount: 0,
+            errorsTruncated: 0,
+            errors: [],
+            at: '2026-07-11T00:00:00.000Z',
+        });
+    });
+
+    it('treats a missing runs array as empty and preserves a top-level error reason (defensive)', () => {
+        const summary = buildScheduledCronSummary({
+            ok: false,
+            error: 'Missing SIGNALS_DB binding',
+        }) as { errorCount: number; errors: unknown[]; counts: Record<string, number>; error?: string };
+
+        expect(summary.errorCount).to.equal(0);
+        expect(summary.errors).to.deep.equal([]);
+        expect(summary.counts).to.deep.equal({});
+        // The error reason must survive into the cron log so a failed summary
+        // is still diagnosable from logs alone.
+        expect(summary.error).to.equal('Missing SIGNALS_DB binding');
     });
 });
