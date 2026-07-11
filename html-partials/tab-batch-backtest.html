@@ -78,6 +78,11 @@
             <p class="batch-section-note">Repeatedly resamples pair subsets of the latest Batch run to test whether timing verdicts are stable.</p>
         </div>
         <div class="batch-stability-controls">
+            <label class="section-toggle section-toggle--sm" title="Automatically run Stability Mine after a successful Batch run">
+                <input id="batchBacktestAutoRunStability" type="checkbox">
+                <span class="section-toggle-track"></span>
+                <span>Auto-run Stability</span>
+            </label>
             <div class="batch-field">
                 <label class="batch-field-label" for="batchBacktestStabilitySubsetSize">Subset</label>
                 <input class="batch-field-input" id="batchBacktestStabilitySubsetSize" type="number" min="10" max="10000" step="10" value="200">

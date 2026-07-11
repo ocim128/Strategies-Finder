@@ -25,6 +25,11 @@ import { parsePortfolioSyntheticPairSymbol } from "../portfolioLab/portfolio-lab
 import { copyToClipboard } from "../browser-transfer";
 import { readPersistedJson, writePersistedJson } from "../persisted-json";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
+import {
+    readBatchAutoRunStability,
+    shouldAutoRunBatchStability,
+    writeBatchAutoRunStability,
+} from "./batch-auto-stability-preference";
 import { clearBatchDatasetCaches, getBatchDatasetCacheStats, loadBatchDataset } from "./batch-backtest-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { mapWithConcurrencyLimit } from "../async-pool";
@@ -157,6 +162,7 @@ class BatchBacktestService {
             return;
         }
         const dom = this.getDom();
+        dom.batchBacktestAutoRunStability.checked = readBatchAutoRunStability();
         this.bindEvents(dom);
         this.resetProgress(dom);
         this.loadPersistedLatestResults(dom);
@@ -191,6 +197,9 @@ class BatchBacktestService {
         });
         dom.batchBacktestStabilityMineBtn.addEventListener("click", () => {
             void this.runStabilityMine();
+        });
+        dom.batchBacktestAutoRunStability.addEventListener("change", () => {
+            writeBatchAutoRunStability(dom.batchBacktestAutoRunStability.checked);
         });
         dom.batchBacktestCopyStabilityBtn.addEventListener("click", () => {
             void this.copyStabilityResults();
@@ -320,6 +329,16 @@ class BatchBacktestService {
                 // in memory across Copy / new Run / tab work. If the user
                 // clicks Mine next, loadMinerTargets will refetch on miss.
                 clearBatchDatasetCaches();
+                const hasMineableArtifacts = useServerMode
+                    ? this.serverHasArtifacts
+                    : this.hasMineableArtifacts();
+                if (shouldAutoRunBatchStability(
+                    dom.batchBacktestAutoRunStability.checked,
+                    this.cancelled,
+                    hasMineableArtifacts,
+                )) {
+                    await this.runStabilityMine();
+                }
             }
         }
     }
