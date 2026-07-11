@@ -265,9 +265,11 @@ function storeMineArtifact(index: number, row: BatchBacktestSymbolResult): void 
     // v8 serialize is ~2-4x faster than JSON.stringify on numeric-heavy
     // OHLCV/trade payloads and produces smaller files. Paired with the parse
     // cache in loadStoredMineArtifact, Stability Mine no longer blocks on
-    // (de)serialization for rerun subsets. The serialized buffer is computed
-    // synchronously (CPU work) and only the disk write is deferred.
-    const buffer = serialize(artifact);
+    // (de)serialization for rerun subsets. The buffer is serialized INSIDE the
+    // IIFE (after acquire) rather than synchronously here — computing it here
+    // would retain 1000 multi-MB buffers in `pendingArtifactWrites` until the
+    // post-run flush, ~5 GB of extra peak heap on a 1000-pair run. Deferring
+    // to the IIFE caps live buffers at ARTIFACT_WRITE_CONCURRENCY (4).
     parsedArtifactCache.set(filePath, artifact);
     lastMineArtifacts[index] = {
         symbol: row.symbol,
@@ -282,7 +284,7 @@ function storeMineArtifact(index: number, row: BatchBacktestSymbolResult): void 
             await artifactWriteSemaphore.acquire();
             try {
                 await mkdir(dir, { recursive: true });
-                await writeFile(filePath, buffer);
+                await writeFile(filePath, serialize(artifact));
             } catch (error) {
                 debugLogger.warn("batch.server.artifact_store_failed", {
                     filePath,
@@ -344,6 +346,12 @@ function clearArtifactReleaseTimer(): void {
  * not block the Vite event loop (audit Finding 4). Awaits any pending writes
  * first so a slow write isn't left referencing a deleted path.
  *
+ * Re-entrancy: the module state (`mineArtifactDir`, `lastMineArtifacts`,
+ * `parsedArtifactCache`) is cleared SYNCHRONOUSLY before the async `rm`, so a
+ * concurrent release (TTL timer racing a new Run's `new_run` release) takes
+ * the early-return path instead of issuing a second `rm` that could clobber a
+ * dir a new run already created.
+ *
  * Idempotent: safe to call when no artifacts are retained.
  */
 async function releaseLastResults(reason: string): Promise<void> {
@@ -362,17 +370,35 @@ async function releaseLastResults(reason: string): Promise<void> {
         rows,
         heapUsedMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
     });
+    // Snapshot the dir and null the module variable SYNCHRONOUSLY before the
+    // async `rm` so a concurrent release (TTL timer racing a new Run's
+    // `new_run` release) sees `mineArtifactDir === null` and takes the
+    // early-return above instead of issuing a second `rm` that clobbers a
+    // dir a new run may have already created.
+    const dirToRemove = mineArtifactDir;
     lastMineArtifacts = [];
     parsedArtifactCache.clear();
-    if (mineArtifactDir) {
-        await rm(mineArtifactDir, { recursive: true, force: true });
-        mineArtifactDir = null;
-    }
+    mineArtifactDir = null;
     lastRunFingerprint = null;
     lastRunInterval = null;
     lastRunStrategyKey = null;
     lastRunCacheStats = null;
     clearServerBatchDatasetCaches();
+    if (dirToRemove) {
+        // `force: true` suppresses ENOENT but NOT EBUSY/EPERM (e.g. an AV
+        // scanner holding a file on Windows). Swallowing is correct: the
+        // sweepOrphanedMineArtifactDirs startup sweep reclaims what's left,
+        // and a rejection here must NOT crash the dev server via the TTL
+        // timer's `void` caller or fail an in-flight Run/Mine.
+        try {
+            await rm(dirToRemove, { recursive: true, force: true });
+        } catch (error) {
+            debugLogger.warn("batch.server.artifact_release_rm_failed", {
+                dir: dirToRemove,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
 }
 
 function scheduleArtifactTtl(): void {

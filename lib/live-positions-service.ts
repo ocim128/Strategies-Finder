@@ -825,10 +825,14 @@ class LivePositionsService {
                         PRICE_CACHE.set(normalizedSymbol, { symbol: normalizedSymbol, price, timestamp: Date.now() });
                         return price;
                     }
-                } catch {
+                } catch (bybitErr) {
+                    // Log both the primary (Binance) and fallback (Bybit)
+                    // failures so a cross-exchange retry isn't masked by the
+                    // first error alone.
                     debugLogger.warn("[LivePositions] Failed to fetch price", {
                         symbol: normalizedSymbol,
-                        error: err instanceof Error ? err.message : String(err),
+                        binanceError: err instanceof Error ? err.message : String(err),
+                        bybitError: bybitErr instanceof Error ? bybitErr.message : String(bybitErr),
                     });
                 }
             }

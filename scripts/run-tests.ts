@@ -347,8 +347,14 @@ async function runSingleTest(
     }
 
     // End the log stream and wait for it to flush so the file is complete
-    // before the summary points at it.
+    // before the summary points at it. Without the 'error' listener, a
+    // mid-stream write failure (disk full, EPERM) would emit an unhandled
+    // 'error' event, crashing the runner and losing every concurrent result.
+    // Resolving on error too — the test outcome is decided by exit code, not
+    // log integrity; a missing log is reported via the "No captured output"
+    // fallback in printTestResult.
     await new Promise<void>((resolve) => {
+        log.on("error", () => resolve());
         log.end(() => resolve());
     });
 
