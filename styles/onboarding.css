@@ -221,9 +221,7 @@
    ---------------------------------------- */
 
 .welcome-card {
-    background: linear-gradient(135deg,
-            hsl(var(--hsl-accent) / 0.1) 0%,
-            hsl(var(--hsl-premium) / 0.08) 100%);
+    background: var(--card-bg);
     border: 1px solid hsl(var(--hsl-accent) / 0.2);
     border-radius: var(--radius-xl);
     padding: var(--space-6);
@@ -239,7 +237,7 @@
     left: 0;
     right: 0;
     height: 3px;
-    background: var(--gradient-accent);
+    background: var(--accent-color);
 }
 
 .welcome-card-icon {
@@ -348,7 +346,7 @@
     border: 1px solid var(--border-color);
     border-radius: var(--radius-xs);
     font-family: var(--font-family-mono);
-    font-size: 10px;
+    font-size: 11px;
     box-shadow: 0 1px 0 var(--border-color);
     margin: 0 2px;
 }
@@ -385,7 +383,7 @@
 .feature-spotlight-badge {
     display: inline-block;
     padding: var(--space-1) var(--space-3);
-    background: var(--gradient-premium);
+    background: var(--accent-color);
     color: white;
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-bold);
@@ -449,7 +447,7 @@
 
 .getting-started-fill {
     height: 100%;
-    background: var(--gradient-accent);
+    background: var(--accent-color);
     border-radius: var(--radius-pill);
     transition: width 0.5s ease;
 }
@@ -542,7 +540,7 @@
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
     color: var(--text-secondary);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: var(--font-weight-bold);
     cursor: help;
     transition: all 0.15s ease;

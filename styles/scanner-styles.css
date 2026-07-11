@@ -18,10 +18,7 @@
     -webkit-backdrop-filter: blur(24px);
     border: 1px solid var(--glass-border-strong);
     border-radius: var(--radius-xl);
-    box-shadow:
-        var(--shadow-floating),
-        0 0 0 1px hsl(0 0% 100% / 0.03) inset,
-        var(--glow-subtle);
+    box-shadow: var(--shadow-floating);
     z-index: 1000;
     display: flex;
     flex-direction: column;
@@ -152,7 +149,7 @@
     width: 100%;
     margin-top: var(--space-4-5);
     padding: var(--space-3-5) var(--space-6);
-    background: var(--gradient-accent);
+    background: var(--accent-color);
     border: none;
     border-radius: var(--radius-xl);
     color: var(--text-on-accent);
@@ -160,28 +157,23 @@
     font-weight: var(--font-weight-semibold);
     letter-spacing: 0.3px;
     cursor: pointer;
-    transition: all 0.25s ease;
-    box-shadow: 0 4px 16px hsl(var(--hsl-accent) / 0.25);
+    transition: background 0.15s ease, color 0.15s ease;
 }
 
 .scanner-panel__scan-btn:hover {
-    background: linear-gradient(135deg, var(--accent-hover), var(--accent-color));
-    box-shadow: 0 6px 24px hsl(var(--hsl-accent) / 0.35);
-    transform: translateY(-1px);
+    background: var(--accent-hover);
 }
 
 .scanner-panel__scan-btn:active {
-    transform: translateY(0);
+    filter: brightness(0.94);
 }
 
 .scanner-panel__scan-btn--cancel {
-    background: var(--gradient-danger);
-    box-shadow: 0 4px 16px hsl(var(--hsl-danger) / 0.25);
+    background: var(--red);
 }
 
 .scanner-panel__scan-btn--cancel:hover {
-    background: linear-gradient(135deg, var(--red), hsl(2 79% 50%));
-    box-shadow: 0 6px 24px hsl(var(--hsl-danger) / 0.35);
+    background: hsl(2 79% 50%);
 }
 
 /* ============================================================================
@@ -205,10 +197,9 @@
 
 .scanner-panel__progress-fill {
     height: 100%;
-    background: var(--gradient-accent);
+    background: var(--accent-color);
     border-radius: var(--radius-pill);
     transition: width 0.3s ease;
-    box-shadow: var(--glow-accent);
 }
 
 .scanner-panel__progress-text {
@@ -455,8 +446,6 @@
     opacity: 1;
     background: var(--accent-soft);
     border-color: hsl(var(--hsl-accent) / 0.35);
-    box-shadow: var(--glow-subtle);
-    transform: scale(1.15);
 }
 
 @media (prefers-reduced-motion: reduce) {

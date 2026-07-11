@@ -344,7 +344,7 @@
 
     .panel-tab {
         padding: var(--space-2);
-        font-size: 10px;
+        font-size: 11px;
     }
 
     /* Stack symbol info */
@@ -369,7 +369,7 @@
     }
 
     .stat-label {
-        font-size: 10px;
+        font-size: 11px;
     }
 
     .stat-value {

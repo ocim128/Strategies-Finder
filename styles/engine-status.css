@@ -13,7 +13,7 @@
     font-weight: 600;
     margin-left: 8px;
     cursor: pointer;
-    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
     user-select: none;
     border: 1px solid transparent;
     line-height: 1;
@@ -24,25 +24,21 @@
 }
 
 .engine-status.engine-rust {
-    background: linear-gradient(135deg, var(--warning), var(--warning-hover));
+    background: var(--warning);
     color: var(--text-on-accent);
-    box-shadow: 0 2px 8px hsl(var(--hsl-warning) / 0.24);
 }
 
 .engine-status.engine-rust:hover {
-    box-shadow: 0 4px 12px hsl(var(--hsl-warning) / 0.30);
-    transform: translateY(-1px);
+    background: var(--warning-hover);
 }
 
 .engine-status.engine-typescript {
-    background: var(--gradient-accent);
+    background: var(--accent-color);
     color: var(--text-on-accent);
-    box-shadow: 0 2px 8px hsl(var(--hsl-accent) / 0.24);
 }
 
 .engine-status.engine-typescript:hover {
-    box-shadow: 0 4px 12px hsl(var(--hsl-accent) / 0.30);
-    transform: translateY(-1px);
+    background: var(--accent-hover);
 }
 
 /* Disconnected/checking state */
@@ -67,9 +63,5 @@
 @media (prefers-reduced-motion: reduce) {
     .engine-status.engine-checking {
         animation: none;
-    }
-
-    .engine-status:hover {
-        transform: none;
     }
 }

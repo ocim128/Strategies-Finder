@@ -33,10 +33,9 @@
     border-radius: var(--float-radius);
     min-height: 58px;
     flex-shrink: 0;
-    animation: panelEnter 0.4s var(--ease-out-expo) both;
     position: relative;
     z-index: 20;
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow-sm);
     overflow: visible;
     color: var(--header-ink);
 }
@@ -133,10 +132,7 @@
     padding: var(--space-3) 0;
     gap: var(--space-1-5);
     flex-shrink: 0;
-    animation: panelEnter 0.55s var(--ease-out-expo) 0.05s both;
-    box-shadow:
-        var(--shadow-lg),
-        var(--shadow-inner-soft);
+    box-shadow: var(--shadow-sm);
 }
 
 /* Chart area */
@@ -159,10 +155,7 @@
     border-radius: var(--float-radius);
     border: 1px solid hsl(var(--hsl-border) / 0.72);
     background: var(--card-bg);
-    box-shadow:
-        var(--shadow-elevated),
-        var(--shadow-inner-soft);
-    animation: panelEnter 0.55s var(--ease-out-expo) 0.08s both;
+    box-shadow: var(--shadow-sm);
     position: relative;
 }
 
@@ -195,11 +188,8 @@
     flex-direction: column;
     flex-shrink: 0;
     overflow: hidden;
-    animation: panelEnter 0.55s var(--ease-out-expo) 0.12s both;
     position: relative;
-    box-shadow:
-        var(--shadow-floating),
-        var(--shadow-inner-soft);
+    box-shadow: var(--shadow-md);
     transition: width 0.35s var(--ease-out-expo),
         transform 0.35s var(--ease-out-expo),
         box-shadow 0.3s ease,
@@ -373,7 +363,6 @@
     min-height: 32px;
     height: auto;
     flex-shrink: 0;
-    animation: panelEnter 0.4s var(--ease-out-expo) 0.12s both;
     box-shadow: var(--shadow-xs);
 }
 

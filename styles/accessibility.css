@@ -22,7 +22,7 @@
 .btn-primary:focus-visible {
     outline: 2px solid var(--accent-color);
     outline-offset: 2px;
-    box-shadow: var(--focus-ring), var(--glow-accent);
+    box-shadow: var(--focus-ring);
 }
 
 /* Subtle focus for inputs */
@@ -404,7 +404,7 @@ body.light-theme {
     display: inline-block;
     padding: 2px 6px;
     font-family: var(--font-family-mono);
-    font-size: 10px;
+    font-size: 11px;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-xs);

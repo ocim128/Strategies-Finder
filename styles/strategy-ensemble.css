@@ -144,13 +144,12 @@
     display: grid;
     gap: 3px;
     cursor: pointer;
-    transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+    transition: border-color 120ms ease, background 120ms ease;
 }
 
 .ensemble-lab__target-option:hover {
     border-color: hsl(var(--hsl-accent) / 0.2);
     background: var(--field-bg-hover);
-    transform: translateY(-1px);
 }
 
 .ensemble-lab__target-option.is-selected {
@@ -276,13 +275,12 @@
     border: 1px solid transparent;
     background: transparent;
     cursor: pointer;
-    transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+    transition: background 120ms ease, border-color 120ms ease;
 }
 
 .ensemble-lab__config-item:hover {
     border-color: var(--card-border);
     background: var(--card-bg-muted);
-    transform: translateY(-1px);
 }
 
 .ensemble-lab__config-item.is-target {
