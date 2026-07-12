@@ -39,6 +39,7 @@ import {
     type BatchBacktestSymbolResult,
 } from "./batch-backtest-runner";
 import { buildBatchRunFingerprint, parseBatchSymbols } from "./batch-run-contract";
+import { BATCH_SYMBOL_TEMPLATES, type BatchSymbolTemplateKey } from "./batch-symbol-templates";
 import {
     formatBatchOverallSummary,
     buildBatchSummaryCells,
@@ -228,6 +229,15 @@ class BatchBacktestService {
         });
         dom.batchBacktestCopyStabilityBtn.addEventListener("click", () => {
             void this.copyStabilityResults();
+        });
+        dom.batchBacktestSymbolTemplate.addEventListener("change", () => {
+            const key = dom.batchBacktestSymbolTemplate.value as BatchSymbolTemplateKey;
+            const template = BATCH_SYMBOL_TEMPLATES[key];
+            if (!template) return;
+            dom.batchBacktestSymbols.value = template;
+            dom.batchBacktestSymbolTemplate.value = "";
+            this.clearStaleResults(dom);
+            this.updateSummary(dom);
         });
         dom.batchBacktestUseCurrent.addEventListener("click", () => {
             const current = state.currentSymbol?.trim().toUpperCase();

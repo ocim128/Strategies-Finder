@@ -15,6 +15,12 @@
             <p class="batch-section-note">One pair per line, or comma / whitespace separated.</p>
         </div>
         <div class="batch-symbol-helpers">
+            <select class="param-input" id="batchBacktestSymbolTemplate" aria-label="Batch symbol template">
+                <option value="">Load template...</option>
+                <option value="uptrend_crypto">Uptrend Crypto</option>
+                <option value="chop_crypto">Chop Crypto</option>
+                <option value="downtrend">Downtrend</option>
+            </select>
             <button class="btn btn-secondary btn-compact" id="batchBacktestUseCurrent" type="button">Use Current</button>
             <button class="btn btn-secondary btn-compact" id="batchBacktestClear" type="button">Clear</button>
         </div>

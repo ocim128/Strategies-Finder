@@ -12,6 +12,7 @@ import { getRequiredElement } from "../dom-utils";
 export const BATCH_BACKTEST_REQUIRED_IDS = [
     "batchbacktestTab",
     "batchBacktestSymbols",
+    "batchBacktestSymbolTemplate",
     "batchBacktestUseCurrent",
     "batchBacktestClear",
     "batchBacktestRunBtn",
@@ -42,6 +43,7 @@ export function createBatchBacktestDom() {
     return {
         batchbacktestTab: getRequiredElement("batchbacktestTab"),
         batchBacktestSymbols: getRequiredElement<HTMLTextAreaElement>("batchBacktestSymbols"),
+        batchBacktestSymbolTemplate: getRequiredElement<HTMLSelectElement>("batchBacktestSymbolTemplate"),
         batchBacktestUseCurrent: getRequiredElement<HTMLButtonElement>("batchBacktestUseCurrent"),
         batchBacktestClear: getRequiredElement<HTMLButtonElement>("batchBacktestClear"),
         batchBacktestRunBtn: getRequiredElement<HTMLButtonElement>("batchBacktestRunBtn"),

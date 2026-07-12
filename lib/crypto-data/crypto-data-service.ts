@@ -23,6 +23,7 @@ import { parsePortfolioSyntheticPairSymbol, PORTFOLIO_QUOTE_SUFFIXES } from "../
 import { pickSourceInterval } from "../../scripts/lib/synthetic-pair";
 import { createCryptoDataDom, type CryptoDataDom } from "./crypto-data-dom";
 import type { CryptoCompletedTarget, CryptoStreamEvent, CryptoSyncRunSnapshot } from "./crypto-data-stream-types";
+import { CRYPTO_SYMBOL_TEMPLATE } from "./crypto-symbol-template";
 
 // Re-export the shared wire types so existing imports of them from this module
 // keep resolving — the source of truth now lives in the leaf
@@ -138,6 +139,10 @@ class CryptoDataService {
         dom.cryptoDataSyncBtn.addEventListener("click", () => void this.runAction("/api/crypto/sync"));
         dom.cryptoDataStopBtn.addEventListener("click", () => void this.stopSync());
         dom.cryptoDataCopyBtn.addEventListener("click", () => void this.copySymbols());
+        dom.cryptoDataLoadSymbolTemplateBtn.addEventListener("click", () => {
+            dom.cryptoDataSymbols.value = CRYPTO_SYMBOL_TEMPLATE;
+            this.setStatus("Symbol template loaded.");
+        });
         // Stop stays enabled at startup so it can recover a stuck server-side
         // sync lock without a server restart (mirrors IBKR).
         void this.reattachToInProgressSync();
