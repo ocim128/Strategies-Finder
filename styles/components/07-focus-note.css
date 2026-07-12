@@ -8,7 +8,7 @@
     color: var(--text-secondary);
 }
 
-:where(button, input, select, textarea, .symbol-selector, .dropdown-item, .timeframe-tab, .panel-tab, .tool-btn, .theme-toggle, .open-editor-btn, .finder-row, .trade-item, .preset-item, .preset-delete, .indicator-remove):focus-visible {
+:where(button, input, select, textarea, .symbol-selector, .dropdown-item, .timeframe-tab, .panel-tab, .panel-more-trigger, .panel-more-menu button[role="menuitem"], .tool-btn, .theme-toggle, .open-editor-btn, .finder-row, .trade-item, .preset-item, .preset-delete, .indicator-remove):focus-visible {
     outline: none;
     box-shadow: var(--focus-ring-soft), var(--focus-ring);
 }

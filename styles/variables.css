@@ -24,10 +24,6 @@
     --hsl-shadow: 225 45% 4%;
     --hsl-glass: 225 30% 10%;
 
-    /* Premium purple accent for special elements */
-    --hsl-premium: 268 88% 60%;
-    --hsl-premium-strong: 268 88% 52%;
-
     /* Trading signal strength colors */
     --hsl-buy-strong: 145 72% 42%;
     --hsl-buy-weak: 145 52% 55%;
@@ -58,8 +54,6 @@
     --warning-hover: hsl(var(--hsl-warning-strong));
     --yellow-light: hsl(var(--hsl-warning) / 0.92);
     --text-on-accent: hsl(0 0% 100%);
-    --premium-color: hsl(var(--hsl-premium));
-    --premium-hover: hsl(var(--hsl-premium-strong));
     --text-muted: var(--text-tertiary);
 
     /* Semantic trading colors */
@@ -75,7 +69,6 @@
     --accent-soft-strong: hsl(var(--hsl-accent) / 0.26);
     --success-soft: hsl(var(--hsl-success) / 0.2);
     --danger-soft: hsl(var(--hsl-danger) / 0.2);
-    --premium-soft: hsl(var(--hsl-premium) / 0.16);
 
     /* Rank medal colors — fixed across themes */
     --rank-gold-bg: linear-gradient(135deg, hsl(45 80% 55%), hsl(35 90% 45%));
@@ -106,7 +99,6 @@
     --shadow-dramatic: 0 28px 72px hsl(var(--hsl-shadow) / 0.65);
 
     /* Inner shadows for tactile controls */
-    --shadow-inner-soft: inset 0 1px 2px hsl(var(--hsl-shadow) / 0.22);
     --shadow-inner: inset 0 1px 3px hsl(var(--hsl-shadow) / 0.3);
     --shadow-inner-strong: inset 0 2px 5px hsl(var(--hsl-shadow) / 0.4);
 
@@ -114,17 +106,12 @@
     --glow-accent: 0 0 24px hsl(var(--hsl-accent) / 0.45);
     --glow-success: 0 0 24px hsl(var(--hsl-success) / 0.45);
     --glow-danger: 0 0 24px hsl(var(--hsl-danger) / 0.45);
-    --glow-premium: 0 0 28px hsl(var(--hsl-premium) / 0.55);
     --glow-subtle: 0 0 14px hsl(var(--hsl-accent) / 0.28);
 
     --focus-ring: 0 0 0 2px hsl(var(--hsl-accent) / 0.5);
     --focus-ring-soft: 0 0 0 4px hsl(var(--hsl-accent) / 0.2);
 
     /* Gradient accents */
-    --gradient-accent: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-accent-strong)));
-    --gradient-success: linear-gradient(135deg, hsl(var(--hsl-success)), hsl(var(--hsl-success-strong)));
-    --gradient-danger: linear-gradient(135deg, hsl(var(--hsl-danger-light)), hsl(var(--hsl-danger)));
-    --gradient-premium: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-premium)));
     --gradient-warm: linear-gradient(135deg, hsl(var(--hsl-warning)), hsl(var(--hsl-danger)));
     --gradient-cool: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-success)));
 
@@ -162,17 +149,6 @@
     --tab-hover-bg: hsl(var(--hsl-surface-4) / 0.25);
     --tab-active-bg: hsl(var(--hsl-accent) / 0.14);
     --tab-active-border: var(--accent-light);
-    --tab-secondary-bg: transparent;
-
-    --page-gradient: radial-gradient(1400px 900px at 8% -12%,
-            hsl(var(--hsl-accent) / 0.12),
-            transparent 55%),
-        radial-gradient(1000px 800px at 95% 5%,
-            hsl(var(--hsl-premium) / 0.10),
-            transparent 55%),
-        radial-gradient(700px 500px at 50% 105%,
-            hsl(var(--hsl-success) / 0.06),
-            transparent 50%);
 
     /* Spacing tokens */
     --space-1: 4px;
@@ -204,7 +180,7 @@
     --font-family-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-family-base: var(--font-family-sans);
     --font-family-mono: 'JetBrains Mono', 'Consolas', monospace;
-    --font-size-2xs: 10px;
+    --font-size-2xs: 11px;
     --font-size-xs: 11px;
     --font-size-sm: 12px;
     --font-size-md: 13px;
@@ -255,8 +231,6 @@
     --hsl-warning-strong: 35 92% 43%;
     --hsl-shadow: 220 26% 36%;
     --hsl-glass: 220 33% 97%;
-    --hsl-premium: 268 75% 52%;
-    --hsl-premium-strong: 268 75% 45%;
 
     --bg-primary: hsl(var(--hsl-surface-1));
     --bg-secondary: hsl(var(--hsl-surface-2));
@@ -279,8 +253,6 @@
     --red-light: hsl(var(--hsl-danger-light));
     --warning: hsl(var(--hsl-warning));
     --warning-hover: hsl(var(--hsl-warning-strong));
-    --premium-color: hsl(var(--hsl-premium));
-    --premium-hover: hsl(var(--hsl-premium-strong));
     --buy-strong: hsl(var(--hsl-buy-strong));
     --buy-weak: hsl(var(--hsl-buy-weak));
     --sell-strong: hsl(var(--hsl-sell-strong));
@@ -293,7 +265,6 @@
     --accent-soft-strong: hsl(var(--hsl-accent) / 0.18);
     --success-soft: hsl(var(--hsl-success) / 0.14);
     --danger-soft: hsl(var(--hsl-danger) / 0.14);
-    --premium-soft: hsl(var(--hsl-premium) / 0.12);
 
     --overlay-bg: hsl(220 20% 20% / 0.35);
     --glass-surface-floating: hsl(var(--hsl-surface-1) / 0.84);
@@ -311,7 +282,6 @@
     --shadow-dramatic: 0 25px 60px hsl(220 30% 40% / 0.3);
 
     /* Inner shadows for tactile controls */
-    --shadow-inner-soft: inset 0 1px 1px hsl(var(--hsl-shadow) / 0.05);
     --shadow-inner: inset 0 1px 2px hsl(var(--hsl-shadow) / 0.08);
     --shadow-inner-strong: inset 0 2px 4px hsl(var(--hsl-shadow) / 0.14);
 
@@ -319,15 +289,10 @@
     --glow-accent: 0 0 16px hsl(var(--hsl-accent) / 0.25);
     --glow-success: 0 0 16px hsl(var(--hsl-success) / 0.25);
     --glow-danger: 0 0 16px hsl(var(--hsl-danger) / 0.25);
-    --glow-premium: 0 0 20px hsl(var(--hsl-premium) / 0.3);
     --glow-subtle: 0 0 10px hsl(var(--hsl-accent) / 0.15);
     --focus-ring: 0 0 0 2px hsl(var(--hsl-accent) / 0.35);
     --focus-ring-soft: 0 0 0 4px hsl(var(--hsl-accent) / 0.12);
 
-    --gradient-accent: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-accent-strong)));
-    --gradient-success: linear-gradient(135deg, hsl(var(--hsl-success)), hsl(var(--hsl-success-strong)));
-    --gradient-danger: linear-gradient(135deg, hsl(var(--hsl-danger-light)), hsl(var(--hsl-danger)));
-    --gradient-premium: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-premium)));
     --gradient-warm: linear-gradient(135deg, hsl(var(--hsl-warning)), hsl(var(--hsl-danger)));
     --gradient-cool: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-success)));
 
@@ -367,17 +332,6 @@
     --tab-hover-bg: hsl(219 63% 95%);
     --tab-active-bg: hsl(221 82% 95%);
     --tab-active-border: hsl(var(--hsl-accent));
-    --tab-secondary-bg: hsl(220 24% 97%);
-
-    --page-gradient: radial-gradient(900px 600px at 10% -10%,
-            hsl(var(--hsl-accent) / 0.10),
-            transparent 60%),
-        radial-gradient(700px 500px at 100% 0%,
-            hsl(var(--hsl-premium) / 0.08),
-            transparent 55%),
-        radial-gradient(500px 350px at 50% 100%,
-            hsl(var(--hsl-success) / 0.05),
-            transparent 50%);
 
     --float-gap: 10px;
     --float-radius: 12px;

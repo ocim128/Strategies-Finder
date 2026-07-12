@@ -149,17 +149,17 @@
 
 .progress-mini-fill {
     height: 100%;
-    background: var(--gradient-accent);
+    background: var(--accent-color);
     border-radius: var(--radius-pill);
     transition: width 0.3s ease;
 }
 
 .progress-mini-fill.success {
-    background: var(--gradient-success);
+    background: var(--green);
 }
 
 .progress-mini-fill.danger {
-    background: var(--gradient-danger);
+    background: var(--red);
 }
 
 /* Win rate visualization */
@@ -190,12 +190,10 @@
     background: var(--bg-tertiary);
     border-radius: var(--radius-m);
     border: 1px solid var(--border-color);
-    transition: all 0.2s ease;
 }
 
 .metric-card:hover {
     background: var(--bg-elevated);
-    transform: translateY(-1px);
 }
 
 .metric-card-icon {

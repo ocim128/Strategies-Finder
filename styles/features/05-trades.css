@@ -34,8 +34,6 @@
 
     gap: 4px;
 
-    transition: all 0.2s ease;
-
 }
 
 
@@ -44,15 +42,13 @@
 
     background: var(--bg-elevated);
 
-    transform: translateY(-1px);
-
 }
 
 
 
 .summary-label {
 
-    font-size: 10px;
+    font-size: 11px;
 
     text-transform: uppercase;
 
@@ -509,7 +505,7 @@
 
     justify-content: center;
 
-    font-size: 10px;
+    font-size: 11px;
 
     font-weight: 800;
 
@@ -613,7 +609,7 @@
 
 .price-arrow {
 
-    font-size: 10px;
+    font-size: 11px;
 
     color: var(--text-tertiary);
 
@@ -733,7 +729,7 @@
 
     justify-content: center;
 
-    font-size: 10px;
+    font-size: 11px;
 
     padding: 2px 6px;
 
@@ -809,11 +805,11 @@
 
 .exit-reason-badge--time-stop {
 
-    color: var(--premium-color);
+    color: var(--text-secondary);
 
-    background: hsl(var(--hsl-premium) / 0.16);
+    background: hsl(var(--hsl-surface-4) / 0.4);
 
-    border: 1px solid hsl(var(--hsl-premium) / 0.32);
+    border: 1px solid var(--border-color);
 
 }
 
@@ -939,7 +935,7 @@
 
     opacity: 0.7;
 
-    font-size: 10px;
+    font-size: 11px;
 
 }
 

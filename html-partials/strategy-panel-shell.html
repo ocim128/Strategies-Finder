@@ -35,8 +35,8 @@
     </div>
 
     <div class="panel-body">
-        <nav class="panel-tabs" id="strategyTabs" role="tablist" aria-label="Strategy panel navigation">
-            <div class="panel-tabs-row panel-tabs-row--primary">
+        <nav class="panel-navigation" aria-label="Strategy panel">
+            <div class="panel-tabs" id="strategyTabs" role="tablist" aria-label="Strategy panel navigation">
                 <button class="panel-tab active" data-tab="settings" data-shortcut="1" title="Alt+1" role="tab"
                     aria-selected="true">Settings</button>
                 <button class="panel-tab" data-tab="results" data-shortcut="4" title="Alt+4" role="tab"
@@ -46,43 +46,46 @@
                     Trades
                     <span class="badge" id="tradeBadge">0</span>
                 </button>
-
                 <button class="panel-tab" data-tab="finder" data-shortcut="2" title="Alt+2" role="tab"
                     aria-selected="false">Finder</button>
-                <button class="panel-tab" data-tab="assetleadership" title="Asset Leadership" role="tab"
-                    aria-selected="false">Assets</button>
                 <button class="panel-tab" data-tab="hunt" data-shortcut="8" title="Alt+8" role="tab"
                     aria-selected="false">Hunt</button>
                 <button class="panel-tab" data-tab="batchbacktest" title="Batch Backtest" role="tab"
                     aria-selected="false">Batch</button>
             </div>
-            <div class="panel-tabs-row panel-tabs-row--secondary">
-                <button class="panel-tab" data-tab="walkforward" data-shortcut="3" title="Alt+3" role="tab"
-                    aria-selected="false">WFA</button>
-                <button class="panel-tab" data-tab="montecarlo" title="Monte Carlo Simulation" role="tab"
-                    aria-selected="false">Monte Carlo</button>
-                <button class="panel-tab" data-tab="portfolio" data-shortcut="6" title="Alt+6" role="tab"
-                    aria-selected="false">Portfolio</button>
-                <button class="panel-tab" data-tab="ensemble" data-shortcut="7" title="Alt+7" role="tab"
-                    aria-selected="false">Ensemble</button>
-                <button class="panel-tab" data-tab="polymarket" title="Polymarket Entry Fillability" role="tab"
-                    aria-selected="false">Polymarket</button>
-                <button class="panel-tab" data-tab="executionlab" title="Execution Lab" role="tab"
-                    aria-selected="false">Execution</button>
-                <button class="panel-tab" data-tab="datamining" title="Data Mining" role="tab"
-                    aria-selected="false">Data</button>
-                <button class="panel-tab" data-tab="ibkrdata" title="IBKR Price Data" role="tab"
-                    aria-selected="false">IBKR</button>
-                <button class="panel-tab" data-tab="cryptodata" title="Crypto Price Data" role="tab"
-                    aria-selected="false">Crypto</button>
-                <button class="panel-tab" data-tab="libraryaudit" title="Library Audit" role="tab"
-                    aria-selected="false">Audit</button>
-                <button class="panel-tab" data-tab="alerts" title="Alert Subscriptions" role="tab"
-                    aria-selected="false">Alerts</button>
-                <button class="panel-tab" data-tab="signalcommittee" title="Signal Committee" role="tab"
-                    aria-selected="false">Committee</button>
-                <button class="panel-tab" data-tab="rankpairs" title="Rank Pairs by Relative Strength" role="tab"
-                    aria-selected="false">Rank</button>
+            <div class="panel-more">
+                <button class="panel-more-trigger" id="panelMoreTrigger" type="button"
+                    aria-haspopup="menu" aria-expanded="false" title="More tools">
+                    <span id="panelMoreLabel">More</span>
+                    <svg class="panel-more-chevron" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg>
+                </button>
+                <div class="panel-more-menu is-hidden" id="panelMoreMenu" role="menu">
+                    <div class="panel-more-group">
+                        <div class="panel-more-heading">Research &amp; validation</div>
+                        <button type="button" role="menuitem" data-tab="assetleadership">Asset Leadership</button>
+                        <button type="button" role="menuitem" data-tab="walkforward" data-shortcut="3">Walk Forward</button>
+                        <button type="button" role="menuitem" data-tab="montecarlo">Monte Carlo</button>
+                        <button type="button" role="menuitem" data-tab="portfolio" data-shortcut="6">Portfolio Lab</button>
+                        <button type="button" role="menuitem" data-tab="ensemble" data-shortcut="7">Strategy Ensemble</button>
+                        <button type="button" role="menuitem" data-tab="signalcommittee">Signal Committee</button>
+                        <button type="button" role="menuitem" data-tab="rankpairs">Rank Pairs</button>
+                    </div>
+                    <div class="panel-more-group">
+                        <div class="panel-more-heading">Markets &amp; execution</div>
+                        <button type="button" role="menuitem" data-tab="polymarket">Polymarket</button>
+                        <button type="button" role="menuitem" data-tab="executionlab">Execution Lab</button>
+                        <button type="button" role="menuitem" data-tab="datamining">Data Mining</button>
+                        <button type="button" role="menuitem" data-tab="ibkrdata">IBKR Data</button>
+                        <button type="button" role="menuitem" data-tab="cryptodata">Crypto Data</button>
+                    </div>
+                    <div class="panel-more-group">
+                        <div class="panel-more-heading">Operations</div>
+                        <button type="button" role="menuitem" data-tab="alerts">Alerts</button>
+                        <button type="button" role="menuitem" data-tab="libraryaudit">Library Audit</button>
+                    </div>
+                </div>
             </div>
         </nav>
 

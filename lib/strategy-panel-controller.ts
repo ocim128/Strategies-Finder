@@ -36,6 +36,8 @@ class StrategyPanelController {
     private orderedTabIds: string[] = [];
     private tabButtons = new Map<string, HTMLButtonElement>();
     private tabPanels = new Map<string, HTMLElement>();
+    private moreItems = new Map<string, HTMLButtonElement>();
+    private secondaryPanels = new Map<string, HTMLElement>();
     private allowedTabs: Set<string> | null = null;
     private activeTabId: string | null = null;
     private isResizing = false;
@@ -48,6 +50,11 @@ class StrategyPanelController {
     private togglePanelClickListener: (() => void) | null = null;
     private panelResizeHandlePointerDownListener: ((event: PointerEvent) => void) | null = null;
     private pendingChartSyncFrame: number | null = null;
+    private moreMenuOpen = false;
+    private moreTriggerClickListener: (() => void) | null = null;
+    private moreMenuItemClickListener = new Map<string, () => void>();
+    private moreMenuKeydownListener: ((event: KeyboardEvent) => void) | null = null;
+    private documentClickListenerForMore: ((event: MouseEvent) => void) | null = null;
 
     public init(): void {
         if (this.initialized) {
@@ -56,6 +63,7 @@ class StrategyPanelController {
 
         this.dom = createStrategyPanelDom();
         this.captureTabs();
+        this.captureMoreItems();
         this.bindEvents();
         this.restoreLayoutState();
         this.initialized = true;
@@ -84,12 +92,36 @@ class StrategyPanelController {
             if (this.panelResizeHandlePointerDownListener) {
                 dom.panelResizeHandle.removeEventListener("pointerdown", this.panelResizeHandlePointerDownListener as EventListener);
             }
+
+            if (this.moreTriggerClickListener) {
+                dom.panelMoreTrigger.removeEventListener("click", this.moreTriggerClickListener);
+            }
+
+            this.moreItems.forEach((item, tabId) => {
+                const listener = this.moreMenuItemClickListener.get(tabId);
+                if (listener) {
+                    item.removeEventListener("click", listener);
+                }
+            });
+
+            if (this.moreMenuKeydownListener) {
+                dom.panelMoreMenu.removeEventListener("keydown", this.moreMenuKeydownListener as EventListener);
+            }
+        }
+
+        if (this.documentClickListenerForMore) {
+            document.removeEventListener("click", this.documentClickListenerForMore);
         }
 
         this.tabClickListeners.clear();
         this.tabKeydownListeners.clear();
         this.togglePanelClickListener = null;
         this.panelResizeHandlePointerDownListener = null;
+        this.moreTriggerClickListener = null;
+        this.moreMenuItemClickListener.clear();
+        this.moreMenuKeydownListener = null;
+        this.documentClickListenerForMore = null;
+        this.moreMenuOpen = false;
 
         if (this.handlePointerMove) {
             window.removeEventListener("pointermove", this.handlePointerMove as EventListener);
@@ -113,9 +145,14 @@ class StrategyPanelController {
 
     public switchTab(tabId: string, options: SwitchTabOptions = {}): boolean {
         const dom = this.dom;
+        if (!dom || !this.isTabAllowed(tabId)) {
+            return false;
+        }
+
         const nextTab = this.tabButtons.get(tabId);
-        const nextPanel = this.tabPanels.get(tabId);
-        if (!dom || !nextTab || !nextPanel || !this.isTabAllowed(tabId)) {
+        const nextPanel = this.tabPanels.get(tabId)
+            ?? dom.panelContent.querySelector<HTMLElement>(`#${tabId}Tab`);
+        if (!nextPanel) {
             return false;
         }
 
@@ -151,6 +188,27 @@ class StrategyPanelController {
             }
         });
 
+        // Secondary destinations are reached via the More menu, not via the
+        // persistent tab list, so the loop above only manages persistent
+        // panels. Remember any secondary panel we show so it can be hidden
+        // again when the user switches back to a persistent tab.
+        if (!this.tabPanels.has(tabId)) {
+            this.secondaryPanels.set(tabId, nextPanel);
+        }
+        this.secondaryPanels.forEach((panel, id) => {
+            const isActive = id === tabId;
+            panel.hidden = !isActive;
+            panel.style.display = isActive ? "block" : "none";
+        });
+
+        if (focus && !nextTab) {
+            // A More-menu destination has no persistent tab to focus; keep focus
+            // on the trigger so keyboard users land somewhere sensible.
+            dom.panelMoreTrigger.focus();
+        }
+
+        this.syncMoreTrigger(tabId);
+
         if (persist) {
             this.saveLayoutState();
         }
@@ -168,6 +226,9 @@ class StrategyPanelController {
         const tabId = this.orderedTabIds.find((id) => {
             const tab = this.tabButtons.get(id);
             return tab?.dataset.shortcut === shortcut && this.isTabAllowed(id);
+        }) ?? Array.from(this.moreItems.keys()).find((id) => {
+            const item = this.moreItems.get(id);
+            return item?.dataset.shortcut === shortcut && this.isTabAllowed(id);
         });
 
         if (!tabId) {
@@ -182,6 +243,7 @@ class StrategyPanelController {
     }
 
     public setVisibleTabs(tabIds: Iterable<string> | null): void {
+        const dom = this.dom;
         this.allowedTabs = tabIds ? new Set(tabIds) : null;
 
         this.orderedTabIds.forEach((id) => {
@@ -196,6 +258,19 @@ class StrategyPanelController {
             tab.disabled = !isVisible;
         });
 
+        // Hide the More trigger when the view is restricted (e.g. shared-link
+        // mode) to a subset that excludes every secondary destination.
+        if (dom) {
+            const anySecondaryAllowed = Array.from(this.moreItems.keys()).some((id) => this.isTabAllowed(id));
+            const moreContainer = dom.panelMoreTrigger.parentElement;
+            if (moreContainer) {
+                moreContainer.style.display = anySecondaryAllowed ? "" : "none";
+            }
+            if (!anySecondaryAllowed) {
+                this.closeMoreMenu();
+            }
+        }
+
         const activeTabStillVisible = this.activeTabId ? this.isTabAllowed(this.activeTabId) : false;
         if (activeTabStillVisible && this.activeTabId) {
             this.switchTab(this.activeTabId, { persist: false, revealPanel: false });
@@ -206,6 +281,10 @@ class StrategyPanelController {
         if (!fallbackTabId) {
             this.activeTabId = null;
             this.tabPanels.forEach((panel) => {
+                panel.hidden = true;
+                panel.style.display = "none";
+            });
+            this.secondaryPanels.forEach((panel) => {
                 panel.hidden = true;
                 panel.style.display = "none";
             });
@@ -234,6 +313,54 @@ class StrategyPanelController {
         if (!dom) return;
 
         this.setCollapsed(!dom.strategyPanel.classList.contains("collapsed"));
+    }
+
+    private toggleMoreMenu(): void {
+        if (this.moreMenuOpen) {
+            this.closeMoreMenu();
+        } else {
+            this.openMoreMenu();
+        }
+    }
+
+    private openMoreMenu(): void {
+        const dom = this.dom;
+        if (!dom || this.moreMenuOpen) return;
+
+        this.moreMenuOpen = true;
+        dom.panelMoreTrigger.setAttribute("aria-expanded", "true");
+        dom.panelMoreMenu.classList.remove("is-hidden");
+    }
+
+    private closeMoreMenu(): void {
+        const dom = this.dom;
+        if (!dom || !this.moreMenuOpen) return;
+
+        this.moreMenuOpen = false;
+        dom.panelMoreTrigger.setAttribute("aria-expanded", "false");
+        dom.panelMoreMenu.classList.add("is-hidden");
+    }
+
+    private syncMoreTrigger(tabId: string): void {
+        const dom = this.dom;
+        if (!dom) return;
+
+        const isMoreTab = !this.tabButtons.has(tabId);
+        const matchedItem = this.moreItems.get(tabId);
+
+        dom.panelMoreTrigger.classList.toggle("is-more-active", isMoreTab);
+
+        this.moreItems.forEach((item, id) => {
+            item.classList.toggle("active", id === tabId);
+            item.setAttribute("aria-current", id === tabId ? "page" : "false");
+        });
+
+        if (isMoreTab && matchedItem) {
+            const label = matchedItem.textContent?.trim() ?? "More";
+            dom.panelMoreTrigger.querySelector<HTMLSpanElement>("#panelMoreLabel")?.replaceChildren(label);
+        } else {
+            dom.panelMoreTrigger.querySelector<HTMLSpanElement>("#panelMoreLabel")?.replaceChildren("More");
+        }
     }
 
     private captureTabs(): void {
@@ -265,6 +392,21 @@ class StrategyPanelController {
             this.orderedTabIds.push(tabId);
             this.tabButtons.set(tabId, tab);
             this.tabPanels.set(tabId, panel);
+        });
+    }
+
+    private captureMoreItems(): void {
+        const dom = this.dom;
+        if (!dom) return;
+
+        this.moreItems.clear();
+        const items = Array.from(dom.panelMoreMenu.querySelectorAll<HTMLButtonElement>("button[data-tab]"));
+        items.forEach((item) => {
+            const tabId = item.dataset.tab?.trim();
+            if (!tabId) {
+                return;
+            }
+            this.moreItems.set(tabId, item);
         });
     }
 
@@ -341,6 +483,44 @@ class StrategyPanelController {
         };
         dom.panelResizeHandle.addEventListener("pointerdown", this.panelResizeHandlePointerDownListener);
 
+        this.moreTriggerClickListener = () => {
+            this.toggleMoreMenu();
+        };
+        dom.panelMoreTrigger.addEventListener("click", this.moreTriggerClickListener);
+
+        this.moreItems.forEach((item, tabId) => {
+            const itemClickListener = () => {
+                this.switchTab(tabId);
+                this.closeMoreMenu();
+            };
+            this.moreMenuItemClickListener.set(tabId, itemClickListener);
+            item.addEventListener("click", itemClickListener);
+        });
+
+        this.moreMenuKeydownListener = (event: KeyboardEvent) => {
+            if (event.key === "Escape" && this.moreMenuOpen) {
+                event.preventDefault();
+                this.closeMoreMenu();
+                dom.panelMoreTrigger.focus();
+            }
+        };
+        dom.panelMoreMenu.addEventListener("keydown", this.moreMenuKeydownListener);
+
+        this.documentClickListenerForMore = (event: MouseEvent) => {
+            if (!this.moreMenuOpen) {
+                return;
+            }
+            const target = event.target as Node | null;
+            if (target && dom.panelMoreMenu.contains(target)) {
+                return;
+            }
+            if (target && dom.panelMoreTrigger.contains(target)) {
+                return;
+            }
+            this.closeMoreMenu();
+        };
+        document.addEventListener("click", this.documentClickListenerForMore);
+
         this.handlePointerMove = (event: PointerEvent) => {
             if (!this.isResizing || !this.dom) {
                 return;
@@ -396,9 +576,14 @@ class StrategyPanelController {
 
         this.setCollapsed(savedState.collapsed, false);
 
+        const savedTabKnown =
+            typeof savedState.activeTabId === "string"
+            && (this.tabButtons.has(savedState.activeTabId) || this.moreItems.has(savedState.activeTabId))
+            && this.isTabAllowed(savedState.activeTabId);
+
         const initialTabId =
-            (savedState.activeTabId && this.tabButtons.has(savedState.activeTabId) && this.isTabAllowed(savedState.activeTabId)
-                ? savedState.activeTabId
+            (savedTabKnown
+                ? savedState.activeTabId!
                 : this.orderedTabIds.find((id) => this.tabButtons.get(id)?.classList.contains("active") && this.isTabAllowed(id)))
             ?? this.getFirstVisibleTabId();
 

@@ -145,7 +145,8 @@
         height: 100px;
     }
 
-    .panel-tab {
+    .panel-tab,
+    .panel-more-trigger {
         min-height: var(--min-touch-target);
     }
 
@@ -342,9 +343,10 @@
         display: none;
     }
 
-    .panel-tab {
+    .panel-tab,
+    .panel-more-trigger {
         padding: var(--space-2);
-        font-size: 10px;
+        font-size: 11px;
     }
 
     /* Stack symbol info */
@@ -369,7 +371,7 @@
     }
 
     .stat-label {
-        font-size: 10px;
+        font-size: 11px;
     }
 
     .stat-value {
@@ -475,6 +477,8 @@
     .btn,
     .tool-btn,
     .panel-tab,
+    .panel-more-trigger,
+    .panel-more-menu button[role="menuitem"],
     .timeframe-tab,
     .dropdown-item {
         min-height: 44px;
