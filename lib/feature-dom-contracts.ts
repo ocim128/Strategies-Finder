@@ -2,7 +2,6 @@ export * from "./handlers/ui-event-handlers-dom";
 export * from "./handlers/settings-handlers-dom";
 export * from "./strategy-panel-dom";
 export * from "./strategy-library-admin-dom";
-export * from "./strategy-library-audit-dom";
 export * from "./chart-manager-dom";
 export * from "./editor-manager-dom";
 export * from "./ui-manager-dom";

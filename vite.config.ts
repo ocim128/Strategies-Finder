@@ -3,7 +3,6 @@ import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import { backtestEndpointPlugin } from './lib/backtest-endpoint-plugin';
 import { strategyLibraryAdminPlugin } from './lib/strategy-library-admin-plugin';
-import { strategyLibraryAuditPlugin } from './lib/strategy-library-audit-plugin';
 import { executionLabVitePlugin } from './lib/execution-lab/execution-lab-vite-plugin';
 import { ibkrDataVitePlugin } from './lib/ibkr-data/ibkr-data-vite-plugin';
 import { cryptoDataVitePlugin } from './lib/crypto-data/crypto-data-vite-plugin';
@@ -353,7 +352,6 @@ export default defineConfig({
         secondMarketApiPlugin(),
         executionLabVitePlugin(),
         localSqlitePlugin(),
-        strategyLibraryAuditPlugin(),
         strategyLibraryAdminPlugin(),
         backtestEndpointPlugin(),
         batchBacktestVitePlugin(),

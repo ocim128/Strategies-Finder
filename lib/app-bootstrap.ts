@@ -354,7 +354,6 @@ function registerLazyFeatures(): void {
     registerLazyFeature("execution-lab", async () => (await import("./execution-lab/execution-lab-service")).executionLabService.init());
     registerLazyFeature("monte-carlo", async () => (await import("./monte-carlo-service")).initMonteCarloService());
     registerLazyFeature("strategy-library-admin", async () => (await import("./strategy-library-admin-service")).strategyLibraryAdminService.init());
-    registerLazyFeature("strategy-library-audit", async () => (await import("./strategy-library-audit-service")).strategyLibraryAuditService.init());
     registerLazyFeature("signal-committee", async () => (await import("./handlers/signal-committee-handlers")).initSignalCommitteeHandlers());
 }
 

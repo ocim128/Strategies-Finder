@@ -31,7 +31,6 @@ const TAB_TO_FEATURE: Record<string, string> = {
     datamining: "data-mining",
     ibkrdata: "ibkr-data",
     cryptodata: "crypto-data",
-    libraryaudit: "strategy-library-audit",
     signalcommittee: "signal-committee",
     rankpairs: "rank-pairs",
 };

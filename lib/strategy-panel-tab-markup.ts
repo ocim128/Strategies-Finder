@@ -16,7 +16,6 @@ const LAZY_STRATEGY_PANEL_TAB_LOADERS = {
     montecarlo: () => import('../html-partials/tab-monte-carlo.html?raw'),
     portfolio: () => import('../html-partials/tab-portfolio.html?raw'),
     ensemble: () => import('../html-partials/tab-ensemble.html?raw'),
-    libraryaudit: () => import('../html-partials/tab-library-audit.html?raw'),
     signalcommittee: () => import('../html-partials/tab-signal-committee.html?raw'),
     rankpairs: () => import('../html-partials/tab-rank-pairs.html?raw'),
 } as const;
