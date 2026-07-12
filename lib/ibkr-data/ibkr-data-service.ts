@@ -95,14 +95,14 @@ class IbkrDataService {
                 }
                 const run = payload.run;
                 lastRunningSnapshot = run;
-                this.renderRunSnapshot(run);
                 // Progress watchdog: reset the countdown whenever the run
                 // advances; only count consecutive no-progress polls. Include
                 // `updatedAt` so the server's snapshot heartbeat (any mutation,
                 // including a per-symbol catalog write) still counts as
                 // progress even when the indexed cursor hasn't moved.
                 const progressKey = `${run.index}|${run.currentSymbol ?? ""}|${run.completed}|${run.updatedAt ?? ""}`;
-                if (progressKey !== lastProgressKey) {
+                const advanced = progressKey !== lastProgressKey;
+                if (advanced) {
                     lastProgressKey = progressKey;
                     stalledPolls = 0;
                     if (stalledSlowMode) {
@@ -121,8 +121,16 @@ class IbkrDataService {
                         // recovery or completion is still observed and the
                         // post-sync cache invalidation still fires.
                         stalledSlowMode = true;
-                        this.setStatus("IBKR sync stalled (no progress for 5 min) — slowing polls; still running. Click Stop or wait.");
                     }
+                }
+                // Only render the snapshot progress when it advances or we are
+                // still in fast mode. Once in slow mode with no advance, the
+                // stalled warning is the more useful signal — renderRunSnapshot
+                // would overwrite it with the unchanged `seen/total` line.
+                if (advanced || !stalledSlowMode) {
+                    this.renderRunSnapshot(run);
+                } else {
+                    this.setStatus("IBKR sync stalled (no progress for 5 min) — slowing polls; still running. Click Stop or wait.");
                 }
                 const delay = stalledSlowMode ? STALLED_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
                 await new Promise((resolve) => setTimeout(resolve, delay));

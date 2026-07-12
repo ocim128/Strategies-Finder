@@ -1235,15 +1235,18 @@ class BatchBacktestService {
                         error: error instanceof Error ? error.message : String(error),
                     });
                     if (this.reattachConsecutiveFailures > MAX_REATTACH_CONSECUTIVE_FAILURES) {
-                        // Give up retrying but do NOT strand the UI: restore
-                        // the Run button so the user can re-click to reattach.
-                        // The server may still own the run; a fresh in-tab
-                        // reattach cycle starts on the next init/Run click.
+                        // Give up retrying but do NOT strand the UI: restore the
+                        // Run button so the tab isn't stuck on stale busy state.
+                        // The server may still own the run or have finished it
+                        // with retained artifacts; reloading the page re-runs
+                        // init()'s reattach, which picks up either outcome.
+                        // Mirrors the normal-completion DOM restore below.
                         const dom = this.getDom();
                         dom.batchBacktestRunBtn.disabled = false;
                         setVisible(dom.batchBacktestStopBtn, false);
                         this.setRunBusy(dom, false);
-                        dom.batchBacktestStatus.textContent = "Server connection lost — click Run to reattach.";
+                        this.updateSummary(dom);
+                        dom.batchBacktestStatus.textContent = "Server connection lost — reload to reattach, or click Run to start over.";
                         return;
                     }
                     // Keep the last known progress visible alongside the

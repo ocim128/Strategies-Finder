@@ -514,6 +514,11 @@ const SYNC_OWNER_NONE = 0;
 let syncOwner = SYNC_OWNER_NONE;
 let syncOwnerGen = 0;
 let syncRunState: CryptoSyncRunState | null = null;
+// True only while a run is actively in flight. The status endpoint reports
+// this (NOT `syncRunState !== null`) so the brief post-completion retention
+// of `syncRunState` for reattach invalidation (audit Finding 1) does not lie
+// to polling tabs about the run still being alive.
+let syncRunActive = false;
 let syncAbortController: AbortController | null = null;
 
 type SyncStreamWriter = (event: CryptoStreamEvent) => void;
@@ -638,6 +643,7 @@ export async function processCryptoSyncBatch(
         completedTargets: [],
         updatedAt: new Date().toISOString(),
     };
+    syncRunActive = true;
     const runState = syncRunState;
     const touchRunState = (): void => {
         if (syncRunState === runState) runState.updatedAt = new Date().toISOString();
@@ -764,6 +770,10 @@ async function handleCryptoSyncRequest(
     } finally {
         if (syncOwner === owner) {
             syncOwner = SYNC_OWNER_NONE;
+            // Only the owning run deactivates the active flag. A newer run
+            // that took over via Stop kept `syncRunActive = true`; clearing it
+            // here would make the status endpoint lie about the newer run.
+            syncRunActive = false;
         }
         if (syncAbortController === abortController) {
             syncAbortController = null;
@@ -771,12 +781,11 @@ async function handleCryptoSyncRequest(
         // Preserve the final snapshot briefly so a reattach poll that arrives
         // just after the run ended can still read `completedTargets` and
         // invalidate exactly the caches the server refreshed (audit Finding 1).
-        // The IBKR plugin clears the snapshot here unconditionally; the Crypto
-        // plugin instead transitions it to a TTL'd "last run" snapshot: the
-        // status endpoint reports `running: false` while still returning the
-        // final `completedTargets`, so a tab that reloaded mid-sync doesn't
-        // silently skip invalidation. The TTL reclaims the memory after a
-        // grace window; a new run repopulates `syncRunState` immediately.
+        // The status endpoint reports `running: syncRunActive` (false here), so
+        // a polling tab sees the run as finished and reads `completedTargets`
+        // from the retained snapshot instead of being told the run is still
+        // alive. The TTL reclaims the memory after a grace window; a new run
+        // repopulates `syncRunState` and re-sets `syncRunActive` immediately.
         if (syncRunState && syncOwner === SYNC_OWNER_NONE) {
             retainFinalSyncRunStateBriefly();
         }
@@ -815,6 +824,7 @@ export function __resetCryptoSyncStateForTests(): void {
     syncOwner = SYNC_OWNER_NONE;
     syncOwnerGen = 0;
     syncRunState = null;
+    syncRunActive = false;
     syncAbortController = null;
     if (finalRunSnapshotClearTimer) {
         clearTimeout(finalRunSnapshotClearTimer);
@@ -887,7 +897,13 @@ export function cryptoDataVitePlugin(): Plugin {
             }
             sendJson(res, 200, {
                 ok: true,
-                running: syncRunState !== null,
+                // `running` is gated on the active flag, not on `syncRunState`,
+                // so the brief post-completion retention of `syncRunState`
+                // (audit Finding 1) does not make polling tabs see a phantom
+                // "still running" state. The retained snapshot is still
+                // returned as `run` so a reattach poll can read
+                // `completedTargets` for invalidation.
+                running: syncRunActive,
                 run: syncRunState,
             });
         });
