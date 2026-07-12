@@ -21,7 +21,7 @@ import {
     deriveSyntheticSymbol,
     resolveEffectiveIntervalForSynthetic,
 } from '../scripts/lib/synthetic-pair';
-import { parseSyntheticPairToken } from '../lib/finder-manager';
+import { parseSyntheticPairToken } from '../lib/synthetic-pair-token';
 import { parsePortfolioSyntheticPairSymbol } from '../lib/portfolioLab/portfolio-lab-synthetic';
 import type { OHLCVData } from '../lib/types/strategies';
 

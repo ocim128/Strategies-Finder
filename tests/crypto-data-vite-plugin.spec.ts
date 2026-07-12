@@ -12,7 +12,7 @@ import {
     processCryptoSyncBatch,
     writeCryptoCsv,
 } from "../lib/crypto-data/crypto-data-vite-plugin";
-import { buildCryptoSyncRequestPlans, expandCryptoSymbols } from "../lib/crypto-data/crypto-data-service";
+import { buildCryptoSyncRequestPlans, expandCryptoSymbols } from "../lib/crypto-data/crypto-symbol-plans";
 
 // Per-spec tempdir root for `writeCryptoCsv` round-trip fixtures. Previously
 // these wrote under `price-data/crypto/csv/<interval>/` relative to cwd, which

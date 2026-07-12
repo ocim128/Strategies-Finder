@@ -17,113 +17,19 @@ import { dataManager } from "../data-manager";
 import { finderManager } from "../finder-manager";
 import { uiManager } from "../ui-manager";
 import { clearBatchDatasetCaches } from "../batch-backtest/batch-backtest-loader";
-import { DATA_CHART_TOTAL_LIMIT, SYNTHETIC_TARGET_BARS } from "../data/constants";
 import { consumeNdjsonStream } from "../ndjson-stream";
-import { parsePortfolioSyntheticPairSymbol, PORTFOLIO_QUOTE_SUFFIXES } from "../portfolioLab/portfolio-lab-synthetic";
-import { pickSourceInterval } from "../../scripts/lib/synthetic-pair";
 import { createCryptoDataDom, type CryptoDataDom } from "./crypto-data-dom";
 import type { CryptoCompletedTarget, CryptoStreamEvent, CryptoSyncRunSnapshot } from "./crypto-data-stream-types";
 import { CRYPTO_SYMBOL_TEMPLATE } from "./crypto-symbol-template";
+import { buildCryptoSyncRequestPlans, expandCryptoSymbols } from "./crypto-symbol-plans";
+
+export { buildCryptoSyncRequestPlans, expandCryptoSymbols } from "./crypto-symbol-plans";
 
 // Re-export the shared wire types so existing imports of them from this module
 // keep resolving — the source of truth now lives in the leaf
 // `crypto-data-stream-types` module shared with the server plugin (audit
 // Finding 6).
 export type { CryptoStreamEvent, CryptoSyncRunSnapshot };
-
-/**
- * Append `USDT` to a bare token that does not already end in a known quote
- * suffix. Mirrors `resolveToBinanceSymbol` in `portfolio-lab-synthetic.ts`,
- * which is not exported. Used for plain (non-synthetic) symbols so a bare
- * `ETH` resolves to `ETHUSDT` exactly as it would inside a synthetic pair.
- */
-function ensureBinanceSymbol(token: string): string {
-    const upper = token.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (!upper) return "";
-    if (PORTFOLIO_QUOTE_SUFFIXES.some((suffix) => upper.endsWith(suffix) && upper.length > suffix.length)) {
-        return upper;
-    }
-    return `${upper}USDT`;
-}
-
-/**
- * Expand a flat symbol list (which may contain synthetic pairs like `SOL+TRX`)
- * into the underlying Binance instruments. `SOL+TRX` → `["SOLUSDT","TRXUSDT"]`;
- * a plain `BTCUSDT` passes through. Deduped, uppercased. Exported so the
- * expansion can be unit-tested directly.
- */
-export function expandCryptoSymbols(raw: string): string[] {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const token of raw.split(/[\s,]+/)) {
-        const trimmed = token.trim().toUpperCase();
-        if (!trimmed) continue;
-        const parsed = parsePortfolioSyntheticPairSymbol(trimmed);
-        // Synthetic pairs already resolve legs to USDT form; plain symbols get
-        // USDT appended unless they already carry a known quote suffix.
-        const legs = parsed ? [parsed.baseSymbol, parsed.quoteSymbol] : [ensureBinanceSymbol(trimmed)];
-        for (const leg of legs) {
-            const upper = leg.toUpperCase();
-            if (upper && !seen.has(upper)) {
-                seen.add(upper);
-                out.push(upper);
-            }
-        }
-    }
-    return out;
-}
-
-export interface CryptoSyncRequestPlan {
-    symbols: string[];
-    interval: string;
-    totalBars?: number;
-}
-
-/** Plan both target snapshots and finer seeds consumed by Batch/Finder miners. */
-export function buildCryptoSyncRequestPlans(raw: string, targetInterval: string): CryptoSyncRequestPlan[] {
-    const normalizedTarget = targetInterval.trim().toLowerCase() || "4h";
-    const plans = new Map<string, { symbols: Set<string>; interval: string; totalBars?: number }>();
-
-    const add = (symbol: string, interval: string, totalBars?: number): void => {
-        const key = `${interval}|${totalBars ?? "default"}`;
-        let plan = plans.get(key);
-        if (!plan) {
-            plan = { symbols: new Set<string>(), interval, ...(totalBars ? { totalBars } : {}) };
-            plans.set(key, plan);
-        }
-        plan.symbols.add(symbol);
-    };
-
-    for (const token of raw.split(/[\s,]+/)) {
-        const trimmed = token.trim().toUpperCase();
-        if (!trimmed) continue;
-        const pair = parsePortfolioSyntheticPairSymbol(trimmed);
-        if (!pair) {
-            const symbol = ensureBinanceSymbol(trimmed);
-            if (symbol) add(symbol, normalizedTarget);
-            continue;
-        }
-
-        const legs = [pair.baseSymbol.toUpperCase(), pair.quoteSymbol.toUpperCase()];
-        // Mine/Stability loads each underlying asset at the selected interval
-        // to build its current snapshot, independently of synthetic-pair data.
-        for (const leg of legs) add(leg, normalizedTarget);
-
-        // Batch reconstructs ratios below the selected timeframe so each OHLC
-        // component comes from matched moments. Store that source series too.
-        const source = pickSourceInterval(normalizedTarget);
-        if (source && source.sourceInterval !== normalizedTarget) {
-            const totalBars = Math.min(SYNTHETIC_TARGET_BARS * source.ratio, DATA_CHART_TOTAL_LIMIT);
-            for (const leg of legs) add(leg, source.sourceInterval, totalBars);
-        }
-    }
-
-    return Array.from(plans.values(), (plan) => ({
-        symbols: Array.from(plan.symbols),
-        interval: plan.interval,
-        ...(plan.totalBars ? { totalBars: plan.totalBars } : {}),
-    }));
-}
 
 class CryptoDataService {
     private dom: CryptoDataDom | null = null;
