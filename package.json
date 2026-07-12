@@ -40,7 +40,9 @@
     "build": "vite build"
   },
   "devDependencies": {
+    "@types/chai": "^5.2.1",
     "@types/node": "^25.0.9",
+    "chai": "^5.2.0",
     "esno": "^4.8.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
