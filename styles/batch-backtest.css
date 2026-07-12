@@ -521,6 +521,43 @@
     font-weight: var(--font-weight-semibold);
 }
 
+/* Top Pick callout — the single best trade decision in this run, prepended
+ * above the row list. STRONG conviction (a high-score, fresh ENTER) uses the
+ * success token; a promoted WATCH (no ENTER in the run) or a WEAK ENTER
+ * (low-score / stale / zero-fresh — a stand-aside candidate) uses the warning
+ * token so neither can be mistaken for a green "enter now" signal. Mirrors
+ * the `is-stale` modifier pattern above. */
+.batch-miner-row.batch-miner-top-pick {
+    background: hsl(var(--hsl-success) / 0.08);
+    border-left: 3px solid hsl(var(--hsl-success) / 0.6);
+}
+
+.batch-miner-row.batch-miner-top-pick.is-watch,
+.batch-miner-row.batch-miner-top-pick.is-weak {
+    background: hsl(var(--hsl-warning) / 0.08);
+    border-left-color: hsl(var(--hsl-warning) / 0.6);
+}
+
+.batch-miner-row.batch-miner-top-pick::before {
+    content: "TOP PICK";
+    display: block;
+    font-size: var(--font-size-2xs);
+    color: var(--green);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    font-weight: var(--font-weight-semibold);
+}
+
+.batch-miner-row.batch-miner-top-pick.is-watch::before {
+    content: "TOP PICK · WATCH (not yet actionable)";
+    color: var(--warning);
+}
+
+.batch-miner-row.batch-miner-top-pick.is-weak::before {
+    content: "TOP PICK · WEAK (stand-aside candidate)";
+    color: var(--warning);
+}
+
 /* ------------------------------------------------------------------
  * Motion (point 8)
  * Disable shimmer/glow specifically for Batch. The generic progress bar

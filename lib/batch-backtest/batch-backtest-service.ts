@@ -104,6 +104,13 @@ import {
     summarizeStabilityDataFreshness,
     type StabilityActionDecision,
 } from "./miner-verdict-format-helpers";
+import {
+    isStabilityTargetSuppressed,
+    pickStabilityTopTrade,
+    projectStabilityTarget,
+    stabilityHorizonBars,
+    type StabilityTopPick,
+} from "./stability-top-pick";
 import type { Strategy, StrategyParams, BacktestSettings } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 
@@ -2043,10 +2050,29 @@ class BatchBacktestService {
             fingerprint: this.lastRunFingerprint,
         });
         if (result.rows.length === 0) return;
+        const decisions = result.rows.map((row) => computeStabilityAction(row, result.reruns, interval));
         const fragment = document.createDocumentFragment();
-        for (const row of result.rows) {
-            const decision = computeStabilityAction(row, result.reruns, interval);
-            fragment.appendChild(this.createStabilityRow(row, decision, result.reruns));
+        const topPick = pickStabilityTopTrade(result.rows, decisions);
+        let skipKey: string | null = null;
+        if (topPick !== null) {
+            // Reuse the same row renderer so the callout's metrics match the
+            // list below — the only difference is the modifier classes. The
+            // picked row is then skipped in the list loop so it isn't shown
+            // twice (callout + sorted position).
+            const topRow = this.createStabilityRow(topPick.row, topPick.decision, result.reruns);
+            topRow.classList.add("batch-miner-top-pick");
+            // WATCH and WEAK are mutually exclusive classes: a WATCH pick is
+            // always conviction=WEAK, but "WATCH (not yet actionable)" is the
+            // more specific signal — don't let the WEAK label override it.
+            if (topPick.tier === "WATCH") topRow.classList.add("is-watch");
+            else if (topPick.conviction === "WEAK") topRow.classList.add("is-weak");
+            skipKey = `${topPick.row.asset}|${topPick.row.direction}`;
+            fragment.appendChild(topRow);
+        }
+        for (let i = 0; i < result.rows.length; i += 1) {
+            const row = result.rows[i]!;
+            if (skipKey !== null && `${row.asset}|${row.direction}` === skipKey) continue;
+            fragment.appendChild(this.createStabilityRow(row, decisions[i]!, result.reruns));
         }
         dom.batchBacktestMinerResults.appendChild(fragment);
     }
@@ -2467,10 +2493,54 @@ function formatStabilityCopy(result: BatchStabilityMineResult, context: Stabilit
     if (freshness.status !== "FRESH") {
         lines.push(freshness.text);
     }
+    const decisions = result.rows.map((row) => computeStabilityAction(row, result.reruns, context.interval));
+    const topPick = pickStabilityTopTrade(result.rows, decisions);
+    if (topPick !== null) {
+        lines.push(formatStabilityTopPickLine(topPick));
+    }
     for (const row of result.rows) {
         lines.push(`STABILITY | ${formatStabilityRow(row, result.reruns, context.interval)}`);
     }
     return lines.join("\n");
+}
+
+/**
+ * Single-line "best trade decision now" summary for the Copy Stability output.
+ * Mirrors what the highlighted Top Pick callout shows in the DOM: asset,
+ * direction, tier (ENTER vs a promoted WATCH), conviction, the decision
+ * reason, the research score, current price, and a projected target with
+ * horizon. The target is suppressed for stale analog states (the projection
+ * extends a historical median from a state that fired ≥ 50 bars ago and would
+ * overstate conviction — `>881.87@271b` on a 271-bar-stale row is not a level
+ * to aim at).
+ */
+function formatStabilityTopPickLine(pick: StabilityTopPick): string {
+    const { row, decision, tier, conviction } = pick;
+    const targetSuppressed = isStabilityTargetSuppressed(row);
+    const target = targetSuppressed ? null : projectStabilityTarget(row);
+    const horizon = targetSuppressed ? null : stabilityHorizonBars(row);
+    const targetText = targetSuppressed
+        ? "-- (stale analog)"
+        : formatTargetPrice(
+            row.direction === "LONG" ? "long" : "short",
+            target,
+            horizon,
+            formatPrice,
+        );
+    const tierLabel = tier === "ENTER"
+        ? (conviction === "STRONG" ? "ENTER" : "ENTER · WEAK (stand-aside candidate)")
+        : "WATCH (promoted, not yet actionable)";
+    return [
+        "STABILITY TOP PICK",
+        row.asset,
+        `Dir ${row.direction}`,
+        `Tier ${tierLabel}`,
+        `Action ${decision.action}`,
+        `Why ${decision.reason}`,
+        `Score ${formatNumber(row.timingEdgeScore, 1)}`,
+        `Px ${formatPrice(row.close)}`,
+        `Target ${targetText}`,
+    ].join(" | ");
 }
 
 function shortFingerprint(value: string | null): string {
