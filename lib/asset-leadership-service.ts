@@ -1,7 +1,7 @@
 import { createAssetLeadershipDom, type AssetLeadershipDom } from "./asset-leadership-dom";
 import { buildTimingEdgeReport, formatTimingEdgeReportRow, type TimingEdgeAssetRow, type TimingEdgeReport } from "./finder/timing-edge-report";
 import type { TimingEdgePersistedRun } from "./batch-backtest/mine-timing-persistence";
-import { clearMineTimingRuns, loadMineTimingRuns } from "./local-sqlite-mine-timing-api";
+import { clearMineTimingRuns, loadMineTimingRunsResult } from "./local-sqlite-mine-timing-api";
 import { debugLogger } from "./debug-logger";
 import { uiManager } from "./ui-manager";
 import { escapeHtml } from "./html-escape";
@@ -34,6 +34,27 @@ class AssetLeadershipService {
     private runs: TimingEdgePersistedRun[] = [];
     private report: TimingEdgeReport | null = null;
     private initialized = false;
+    /**
+     * Last load failure reason (Finding 3). `null` when the last load
+     * succeeded (including a successful empty result). The empty-state
+     * renderer reads this to show "Local SQLite service unavailable…" vs
+     * "No timing-edge data yet." instead of collapsing every failure into
+     * the empty-database message.
+     */
+    private loadError: { reason: "unavailable" | "timeout" | "http" | "invalid_response"; message?: string } | null = null;
+    /**
+     * Monotonic request generation (Finding 5). `loadAndRender` captures the
+     * value before its await; after the await it commits state only if the
+     * generation is still current. `clearData` increments it to invalidate
+     * any in-flight load so a stale Refresh response can't repopulate the UI
+     * after Clear emptied it. Repeated Refresh clicks likewise let only the
+     * latest response win.
+     */
+    private requestGeneration = 0;
+    /** True while a Refresh load is in flight (prevents duplicate Refresh). */
+    private loading = false;
+    /** True while a Clear is in flight (prevents duplicate Clear). */
+    private clearing = false;
 
     public init(): void {
         if (this.initialized) return;
@@ -67,30 +88,90 @@ class AssetLeadershipService {
     }
 
     private async loadAndRender(): Promise<void> {
+        // Prevent duplicate Refresh requests, but do NOT block Clear — Clear
+        // increments requestGeneration to invalidate this load and wins.
+        if (this.loading) return;
+        this.loading = true;
+        const generation = ++this.requestGeneration;
         const dom = this.getDom();
+        dom.refresh.disabled = true;
         dom.status.textContent = "Loading timing-edge data...";
         try {
-            this.runs = await loadMineTimingRuns(RUN_LIMIT);
+            const result = await loadMineTimingRunsResult(RUN_LIMIT);
+            // Finding 5: a newer load or a Clear invalidated this load. Drop
+            // the stale response so it can't overwrite in-memory state or
+            // repopulate the screen after Clear emptied it.
+            if (generation !== this.requestGeneration || !this.initialized) return;
+            this.runs = result.ok ? result.runs : [];
+            this.loadError = result.ok ? null : { reason: result.reason, message: result.message };
             this.report = buildTimingEdgeReport({ runs: this.runs });
             this.renderReport();
         } catch (error) {
+            if (generation !== this.requestGeneration || !this.initialized) return;
             debugLogger.error("asset_leadership.load_failed", {
                 error: error instanceof Error ? error.message : String(error),
             });
+            this.loadError = { reason: "unavailable", message: error instanceof Error ? error.message : String(error) };
             dom.status.textContent = "Failed to load timing-edge data.";
+        } finally {
+            // `loading` is THIS load's own flag — always reset it, even if a
+            // newer operation superseded this load. The generation check above
+            // guards state COMMITMENT (runs/report/render); the flag reset
+            // must be unconditional or `syncButtonState` leaves Refresh
+            // permanently disabled after a Clear-interrupted load.
+            this.loading = false;
+            if (generation === this.requestGeneration) {
+                this.syncButtonState();
+            }
         }
     }
 
     private async clearData(): Promise<void> {
-        const ok = await clearMineTimingRuns();
-        if (!ok) {
-            uiManager.showToast("Failed to clear timing-edge data.", "error");
-            return;
+        // Prevent duplicate Clear requests. Does NOT check `loading` — Clear
+        // must interrupt a pending Refresh (it invalidates via generation).
+        if (this.clearing) return;
+        this.clearing = true;
+        // Invalidate any in-flight Refresh so its stale response can't
+        // repopulate the UI after Clear empties it (Finding 5).
+        const generation = ++this.requestGeneration;
+        const dom = this.getDom();
+        dom.clear.disabled = true;
+        try {
+            const ok = await clearMineTimingRuns();
+            // A Refresh clicked during Clear's await bumped generation; don't
+            // commit the empty state over the in-flight Refresh's result.
+            if (generation !== this.requestGeneration || !this.initialized) return;
+            if (!ok) {
+                uiManager.showToast("Failed to clear timing-edge data.", "error");
+                return;
+            }
+            this.runs = [];
+            this.report = null;
+            // After a successful clear the database is genuinely empty — not in a
+            // load-error state. Reset so the empty-state shows the "No timing-edge
+            // data yet" hint instead of a stale load-failure diagnostic.
+            this.loadError = null;
+            this.renderReport();
+            uiManager.showToast("Timing-edge data cleared.", "success");
+        } finally {
+            this.clearing = false;
+            if (generation === this.requestGeneration) {
+                this.syncButtonState();
+            }
         }
-        this.runs = [];
-        this.report = null;
-        this.renderReport();
-        uiManager.showToast("Timing-edge data cleared.", "success");
+    }
+
+    /**
+     * Re-enable Refresh/Clear based on current state. Render paths already
+     * manage Clear's disabled state against `runs.length`; this only lifts
+     * the per-operation disable set during load/clear. Called when an
+     * operation finishes and still owns the current generation.
+     */
+    private syncButtonState(): void {
+        if (!this.dom) return;
+        this.dom.refresh.disabled = this.loading;
+        // Clear stays disabled when there's nothing to clear or a clear is in flight.
+        this.dom.clear.disabled = this.clearing || this.runs.length === 0;
     }
 
     private renderReport(): void {
@@ -129,9 +210,19 @@ class AssetLeadershipService {
         } catch {
             hasSeenMigration = false;
         }
-        const baseHint = this.runs.length === 0
-            ? "No timing-edge data yet. Run Mine Timing or Stability Mine in the Batch Backtest tab to populate."
-            : `Data loaded (${this.runs.length} runs), but no LONG/SHORT verdicts were produced.`;
+        // Finding 3: distinguish a genuinely empty database from a load
+        // failure. Pre-fix, every failure collapsed to `runs: []` and the
+        // empty-state message said "No timing-edge data yet" even when the
+        // real problem was a missing dev-server route or a SQLite failure.
+        // The discriminated load result carries an actionable reason.
+        let baseHint: string;
+        if (this.loadError) {
+            baseHint = this.formatLoadError(this.loadError);
+        } else if (this.runs.length === 0) {
+            baseHint = "No timing-edge data yet. Run Mine Timing or Stability Mine in the Batch Backtest tab to populate.";
+        } else {
+            baseHint = `Data loaded (${this.runs.length} runs), but no LONG/SHORT verdicts were produced.`;
+        }
         const migrationHint = hasSeenMigration
             ? ""
             : `<div class="param-hint" style="margin-top:6px;color:var(--text-secondary);">`
@@ -153,7 +244,25 @@ class AssetLeadershipService {
         dom.consistentLeaders.innerHTML = "";
         dom.recentRuns.innerHTML = "";
         dom.copy.disabled = true;
+        // Clear is only meaningful when there's actually data to clear. A load
+        // failure with no loaded runs leaves nothing to clear.
         dom.clear.disabled = this.runs.length === 0;
+    }
+
+    private formatLoadError(error: { reason: "unavailable" | "timeout" | "http" | "invalid_response"; message?: string }): string {
+        // Actionable diagnostics per Finding 3. The unavailable path is by far
+        // the most common (vite preview, or the SQLite route not registered),
+        // so it gets the most explicit instruction.
+        switch (error.reason) {
+            case "unavailable":
+                return "Local SQLite service unavailable; run through the Vite dev server to load timing-edge data.";
+            case "timeout":
+                return `Timing-edge load timed out${error.message ? `: ${escapeHtml(error.message)}` : ""}. Try Refresh.`;
+            case "http":
+                return `Timing-edge load failed (${escapeHtml(error.message ?? "HTTP error")}). Check the dev server console.`;
+            case "invalid_response":
+                return "Timing-edge load returned an unexpected response. Check the dev server console.";
+        }
     }
 
     private renderOverviewMetrics(dom: AssetLeadershipDom, overview: TimingEdgeReport["overview"]): void {

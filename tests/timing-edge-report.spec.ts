@@ -217,6 +217,10 @@ describe("buildTimingEdgeReport", () => {
         // already moved most of the expected edge after the first signal.
         // The Assets report must surface that lateness instead of showing only
         // the latest score.
+        //
+        // `nowMs` is pinned to one interval (1h) after the latest asOfTimeKey
+        // so the data-age lag gate (Finding 2) classifies the data as current
+        // and the movement-based LATE classification is the one exercised here.
         const report = buildTimingEdgeReport({ runs: [
             makeStabilityRun({
                 createdAt: 1,
@@ -226,7 +230,7 @@ describe("buildTimingEdgeReport", () => {
                 createdAt: 2,
                 verdicts: [{ asset: "ZEC", verdict: "LONG", timingEdgeScore: 50, medianLiftPct: 20, close: 112, asOfTimeKey: "2026-07-10T04:00:00Z" }],
             }),
-        ] });
+        ], nowMs: Date.parse("2026-07-10T05:00:00Z") });
         const zec = report.topTimingEdge[0]!;
         expect(zec.asset).to.equal("ZEC");
         expect(zec.firstAsOfTimeKey).to.equal("2026-07-10T00:00:00Z");
@@ -434,6 +438,93 @@ describe("buildTimingEdgeReport", () => {
             expect(wldRows.length).to.equal(1);
             expect(wldRows[0]!.appearances).to.equal(2);
             expect(wldRows[0]!.avgLiftPct).to.equal(5); // (4+6)/2 — same-direction avg IS valid
+        });
+    });
+
+    describe("data-age freshness (Finding 2: freshness depends on candle age, not just latest-run presence)", () => {
+        // Intent being locked (AGENTS.md rule 8): NEW / FRESH / AGING / LATE
+        // used to mean "present in the latest stored run," not "current market
+        // data." A weeks-old database whose newest record contains an asset
+        // displayed it as NEW or FRESH even though asOfTimeKey + interval were
+        // available to prove the data was stale. The fix threads the report
+        // interval + nowMs into freshness classification and forces STALE when
+        // the latest verdict's asOfTimeKey lags more than two bars — reusing
+        // the exact lag math the Batch Stability `Action` veto uses
+        // (computeStabilityDataLagBars) so Asset Leadership and Batch agree.
+        const NOW_MS = Date.parse("2026-07-12T12:00:00Z");
+        const interval = "1h";
+
+        it("classifies as FRESH when the latest asOfTimeKey is within two bars of nowMs", () => {
+            // 1h interval, latest bar 1h ago → lag 1 bar ≤ 2 → not stale.
+            // First appearance would normally be NEW, but we add a prior run
+            // so the movement-based classifier runs and (with no favorable
+            // move) returns FRESH.
+            const report = buildTimingEdgeReport({ runs: [
+                makeStabilityRun({
+                    createdAt: 1,
+                    interval,
+                    verdicts: [{ asset: "ABC", verdict: "LONG", timingEdgeScore: 30, medianLiftPct: 10, close: 100, asOfTimeKey: "2026-07-12T10:00:00Z" }],
+                }),
+                makeStabilityRun({
+                    createdAt: 2,
+                    interval,
+                    verdicts: [{ asset: "ABC", verdict: "LONG", timingEdgeScore: 30, medianLiftPct: 10, close: 100, asOfTimeKey: "2026-07-12T11:00:00Z" }],
+                }),
+            ], nowMs: NOW_MS });
+            expect(report.topTimingEdge[0]!.freshness).to.equal("FRESH");
+        });
+
+        it("forces STALE when the latest asOfTimeKey lags more than two bars", () => {
+            // 1h interval, latest bar 5h ago → lag 5 bars > 2 → STALE even
+            // though the asset is present in the latest run and the movement-
+            // based classifier would otherwise say FRESH. This is the core
+            // regression: stale data must not be advertised as current.
+            const report = buildTimingEdgeReport({ runs: [
+                makeStabilityRun({
+                    createdAt: 1,
+                    interval,
+                    verdicts: [{ asset: "ABC", verdict: "LONG", timingEdgeScore: 30, medianLiftPct: 10, close: 100, asOfTimeKey: "2026-07-12T07:00:00Z" }],
+                }),
+                makeStabilityRun({
+                    createdAt: 2,
+                    interval,
+                    verdicts: [{ asset: "ABC", verdict: "LONG", timingEdgeScore: 30, medianLiftPct: 10, close: 100, asOfTimeKey: "2026-07-12T07:00:00Z" }],
+                }),
+            ], nowMs: NOW_MS });
+            expect(report.topTimingEdge[0]!.freshness).to.equal("STALE");
+        });
+
+        it("returns UNKNOWN when the asOfTimeKey cannot be parsed", () => {
+            // Unparseable asOfTimeKey → computeStabilityDataLagBars returns null
+            // → UNKNOWN. Asset present in latest run, so this is not the
+            // absent-from-latest-run STALE; it's the "can't tell" UNKNOWN.
+            const report = buildTimingEdgeReport({ runs: [
+                makeStabilityRun({
+                    createdAt: 1,
+                    interval,
+                    verdicts: [{ asset: "ABC", verdict: "LONG", timingEdgeScore: 30, medianLiftPct: 10, close: 100, asOfTimeKey: "not-a-timestamp" }],
+                }),
+                makeStabilityRun({
+                    createdAt: 2,
+                    interval,
+                    verdicts: [{ asset: "ABC", verdict: "LONG", timingEdgeScore: 30, medianLiftPct: 10, close: 100, asOfTimeKey: null }],
+                }),
+            ], nowMs: NOW_MS });
+            expect(report.topTimingEdge[0]!.freshness).to.equal("UNKNOWN");
+        });
+
+        it("a historical snapshot (weeks old) is STALE even on first appearance, not NEW", () => {
+            // The pre-fix bug: a weeks-old database whose newest record contains
+            // an asset displayed it as NEW on first appearance. The lag gate
+            // must override NEW when the data is stale.
+            const report = buildTimingEdgeReport({ runs: [
+                makeStabilityRun({
+                    createdAt: 1,
+                    interval,
+                    verdicts: [{ asset: "OLD", verdict: "LONG", timingEdgeScore: 30, medianLiftPct: 10, close: 100, asOfTimeKey: "2026-06-01T00:00:00Z" }],
+                }),
+            ], nowMs: NOW_MS });
+            expect(report.topTimingEdge[0]!.freshness).to.equal("STALE");
         });
     });
 });

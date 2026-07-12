@@ -126,6 +126,18 @@ const POLYMARKET_PRICE_HISTORY_TIMEOUT_MS = 8000;
 const POLYMARKET_PRICE_POINT_BATCH_SIZE = 24;
 const MAX_POLYMARKET_PRICE_POINT_ENSURE_OUTCOMES = 100;
 
+/**
+ * Maximum number of Mine Timing runs retained in SQLite (Finding 4). Reads
+ * are capped at 50 (`load-mine-timing` LIMIT), but nothing deleted older
+ * runs — `mine_timing_runs` and `mine_timing_verdicts` grew indefinitely.
+ * Each Stability run can add one wide verdict row per asset, so unbounded
+ * retention eventually left the table dominated by unread operational
+ * baggage. 200 retains 4× the report's read window; cleanup runs inside
+ * the store transaction so child verdicts are removed before parent runs
+ * (FK-style integrity without an actual FK constraint).
+ */
+const MINE_TIMING_RUN_RETENTION_COUNT = 200;
+
 async function fetchPolymarketYesHistory(outcome: PolymarketOutcomeDbRow): Promise<PolymarketHistoryPoint[]> {
     if (!outcome.yes_token_id) {
         return [];
@@ -1134,163 +1146,14 @@ export function localSqlitePlugin(): Plugin {
                         return;
                     }
 
-                    const db = getSqliteDb();
-
-                    db.exec('BEGIN');
-                    try {
-                        getPreparedStatement(`
-                            INSERT INTO mine_timing_runs (run_id, created_at, interval, strategy_key, source, pair_count, reruns, subset_size, seed)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ON CONFLICT(run_id) DO UPDATE SET
-                                created_at = excluded.created_at,
-                                interval = excluded.interval,
-                                strategy_key = excluded.strategy_key,
-                                source = excluded.source,
-                                pair_count = excluded.pair_count,
-                                reruns = excluded.reruns,
-                                subset_size = excluded.subset_size,
-                                seed = excluded.seed
-                        `).run(runId, createdAt, interval, strategyKey, source, pairCount, reruns, subsetSize, seed);
-
-                        const verdictUpsert = getPreparedStatement(`
-                            INSERT INTO mine_timing_verdicts (
-                                run_id, run_created_at, interval, asset, verdict, direction, confidence,
-                                timing_edge_score, median_diversity, dominant_pair, dominant_pair_share,
-                                close, median_bars_held, agreement_transition, as_of_time_key,
-                                horizon_bars, longest_horizon_bars,
-                                expected_forward_return_pct, oos_lift_pct, longest_oos_forward_return_pct,
-                                expected_mfe_pct, expected_mae_pct,
-                                median_lift_pct, median_rr, median_hmax_lift_pct, median_dist,
-                                analog_count, candidate_count, pair_warnings, hits, high, medium, low
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ON CONFLICT(run_id, asset, verdict) DO UPDATE SET
-                                run_created_at = excluded.run_created_at,
-                                direction = excluded.direction,
-                                confidence = excluded.confidence,
-                                timing_edge_score = excluded.timing_edge_score,
-                                median_diversity = excluded.median_diversity,
-                                dominant_pair = excluded.dominant_pair,
-                                dominant_pair_share = excluded.dominant_pair_share,
-                                close = excluded.close,
-                                median_bars_held = excluded.median_bars_held,
-                                agreement_transition = excluded.agreement_transition,
-                                as_of_time_key = excluded.as_of_time_key,
-                                horizon_bars = excluded.horizon_bars,
-                                longest_horizon_bars = excluded.longest_horizon_bars,
-                                expected_forward_return_pct = excluded.expected_forward_return_pct,
-                                oos_lift_pct = excluded.oos_lift_pct,
-                                longest_oos_forward_return_pct = excluded.longest_oos_forward_return_pct,
-                                expected_mfe_pct = excluded.expected_mfe_pct,
-                                expected_mae_pct = excluded.expected_mae_pct,
-                                median_lift_pct = excluded.median_lift_pct,
-                                median_rr = excluded.median_rr,
-                                median_hmax_lift_pct = excluded.median_hmax_lift_pct,
-                                median_dist = excluded.median_dist,
-                                analog_count = excluded.analog_count,
-                                candidate_count = excluded.candidate_count,
-                                pair_warnings = excluded.pair_warnings,
-                                hits = excluded.hits,
-                                high = excluded.high,
-                                medium = excluded.medium,
-                                low = excluded.low
-                        `);
-
-                        for (const v of verdicts) {
-                            const direction = v?.direction === null ? null : String(v?.direction || '').trim().toLowerCase() || null;
-                            verdictUpsert.run(
-                                runId, createdAt, interval,
-                                String(v?.asset || '').trim().toUpperCase(),
-                                String(v?.verdict || '').trim().toUpperCase(),
-                                direction,
-                                String(v?.confidence || 'low').trim().toLowerCase(),
-                                Number(v?.timingEdgeScore) || 0,
-                                Number(v?.medianDiversity) || 0,
-                                v?.dominantPair ? String(v.dominantPair).trim().toUpperCase() : null,
-                                Number(v?.dominantPairShare) || 0,
-                                v?.close === null || v?.close === undefined ? null : Number(v.close),
-                                v?.medianBarsHeld === null || v?.medianBarsHeld === undefined ? null : Number(v.medianBarsHeld),
-                                v?.agreementTransition === null || v?.agreementTransition === undefined ? null : Number(v.agreementTransition),
-                                v?.asOfTimeKey ? String(v.asOfTimeKey) : null,
-                                v?.horizonBars === null || v?.horizonBars === undefined ? null : Math.max(0, Math.floor(Number(v.horizonBars))),
-                                v?.longestHorizonBars === null || v?.longestHorizonBars === undefined ? null : Math.max(0, Math.floor(Number(v.longestHorizonBars))),
-                                v?.expectedForwardReturnPct === null || v?.expectedForwardReturnPct === undefined ? null : Number(v.expectedForwardReturnPct),
-                                v?.oosLiftPct === null || v?.oosLiftPct === undefined ? null : Number(v.oosLiftPct),
-                                v?.longestOosForwardReturnPct === null || v?.longestOosForwardReturnPct === undefined ? null : Number(v.longestOosForwardReturnPct),
-                                v?.expectedMfePct === null || v?.expectedMfePct === undefined ? null : Number(v.expectedMfePct),
-                                v?.expectedMaePct === null || v?.expectedMaePct === undefined ? null : Number(v.expectedMaePct),
-                                v?.medianLiftPct === null || v?.medianLiftPct === undefined ? null : Number(v.medianLiftPct),
-                                v?.medianRr === null || v?.medianRr === undefined ? null : Number(v.medianRr),
-                                v?.medianHmaxLiftPct === null || v?.medianHmaxLiftPct === undefined ? null : Number(v.medianHmaxLiftPct),
-                                v?.medianDist === null || v?.medianDist === undefined ? null : Number(v.medianDist),
-                                v?.analogCount === null || v?.analogCount === undefined ? null : Math.max(0, Math.floor(Number(v.analogCount))),
-                                v?.candidateCount === null || v?.candidateCount === undefined ? null : Math.max(0, Math.floor(Number(v.candidateCount))),
-                                Math.max(0, Math.floor(Number(v?.pairWarnings) || 0)),
-                                Math.max(0, Math.floor(Number(v?.hits) || 0)),
-                                Math.max(0, Math.floor(Number(v?.high) || 0)),
-                                Math.max(0, Math.floor(Number(v?.medium) || 0)),
-                                Math.max(0, Math.floor(Number(v?.low) || 0)),
-                            );
-                        }
-
-                        db.exec('COMMIT');
-                    } catch (error) {
-                        db.exec('ROLLBACK');
-                        throw error;
-                    }
-
+                    storeMineTimingRunInDb({ runId, createdAt, interval, strategyKey, source, pairCount, reruns, subsetSize, seed, verdicts });
                     sendJson(res, 200, { ok: true, runId, verdictsStored: verdicts.length });
                     return;
                 }
 
                 if (method === 'GET' && path === '/load-mine-timing') {
                     const limit = Math.max(1, Math.min(200, Math.floor(Number(requestUrl.searchParams.get('limit')) || 50)));
-                    const runRows = getPreparedStatement(`
-                        SELECT run_id, created_at, interval, strategy_key, source, pair_count, reruns, subset_size, seed
-                        FROM mine_timing_runs
-                        ORDER BY created_at DESC
-                        LIMIT ?
-                    `).all(limit) as Array<{
-                        run_id: string;
-                        created_at: number;
-                        interval: string;
-                        strategy_key: string;
-                        source: string;
-                        pair_count: number;
-                        reruns: number;
-                        subset_size: number;
-                        seed: number;
-                    }>;
-                    const runIds = runRows.map((row) => row.run_id);
-                    const verdictsByRun = new Map<string, unknown[]>();
-                    if (runIds.length > 0) {
-                        // node:sqlite's prepared statements do not accept arrays
-                        // directly; use IN(...) with positional placeholders.
-                        const placeholders = runIds.map(() => '?').join(',');
-                        const verdictRows = getPreparedStatement(`
-                            SELECT * FROM mine_timing_verdicts
-                            WHERE run_id IN (${placeholders})
-                        `).all(...runIds) as Array<Record<string, unknown>>;
-                        for (const row of verdictRows) {
-                            const list = verdictsByRun.get(String(row.run_id)) ?? [];
-                            list.push(row);
-                            verdictsByRun.set(String(row.run_id), list);
-                        }
-                    }
-                    const runs = runRows
-                        .map((row) => ({
-                            runId: row.run_id,
-                            createdAt: row.created_at,
-                            interval: row.interval,
-                            strategyKey: row.strategy_key,
-                            source: row.source,
-                            pairCount: row.pair_count,
-                            reruns: row.reruns,
-                            subsetSize: row.subset_size,
-                            seed: row.seed,
-                            verdicts: (verdictsByRun.get(row.run_id) ?? []).map((v) => normalizeMineTimingVerdictRow(v as Record<string, unknown>)),
-                        }))
-                        .reverse();
-
+                    const runs = loadMineTimingRunsFromDb(limit);
                     sendJson(res, 200, { ok: true, runs });
                     return;
                 }
@@ -1328,6 +1191,249 @@ export function localSqlitePlugin(): Plugin {
             server.httpServer?.once('close', closeSqliteDb);
         },
     };
+}
+
+/**
+ * Store one Mine Timing run + its verdicts inside a single transaction
+ * (Finding 7 extraction). The route handler parses the HTTP payload then
+ * delegates here so the store→load→report contract is testable without a
+ * mock HTTP layer. Verdict values are coerced the same way the route always
+ * coerced them (uppercase asset/verdict/pair, lowercase direction/confidence,
+ * NULL preserved for absent optional fields). `pruneMineTimingRuns` runs
+ * inside the same transaction so retention is bounded atomically.
+ */
+function storeMineTimingRunInDb(args: {
+    runId: string;
+    createdAt: number;
+    interval: string;
+    strategyKey: string;
+    source: string;
+    pairCount: number;
+    reruns: number;
+    subsetSize: number;
+    seed: number;
+    verdicts: readonly unknown[];
+}): void {
+    const db = getSqliteDb();
+    db.exec('BEGIN');
+    try {
+        getPreparedStatement(`
+            INSERT INTO mine_timing_runs (run_id, created_at, interval, strategy_key, source, pair_count, reruns, subset_size, seed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET
+                created_at = excluded.created_at,
+                interval = excluded.interval,
+                strategy_key = excluded.strategy_key,
+                source = excluded.source,
+                pair_count = excluded.pair_count,
+                reruns = excluded.reruns,
+                subset_size = excluded.subset_size,
+                seed = excluded.seed
+        `).run(args.runId, args.createdAt, args.interval, args.strategyKey, args.source, args.pairCount, args.reruns, args.subsetSize, args.seed);
+
+        const verdictUpsert = getPreparedStatement(`
+            INSERT INTO mine_timing_verdicts (
+                run_id, run_created_at, interval, asset, verdict, direction, confidence,
+                timing_edge_score, median_diversity, dominant_pair, dominant_pair_share,
+                close, median_bars_held, agreement_transition, as_of_time_key,
+                horizon_bars, longest_horizon_bars,
+                expected_forward_return_pct, oos_lift_pct, longest_oos_forward_return_pct,
+                expected_mfe_pct, expected_mae_pct,
+                median_lift_pct, median_rr, median_hmax_lift_pct, median_dist,
+                analog_count, candidate_count, pair_warnings, hits, high, medium, low
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, asset, verdict) DO UPDATE SET
+                run_created_at = excluded.run_created_at,
+                direction = excluded.direction,
+                confidence = excluded.confidence,
+                timing_edge_score = excluded.timing_edge_score,
+                median_diversity = excluded.median_diversity,
+                dominant_pair = excluded.dominant_pair,
+                dominant_pair_share = excluded.dominant_pair_share,
+                close = excluded.close,
+                median_bars_held = excluded.median_bars_held,
+                agreement_transition = excluded.agreement_transition,
+                as_of_time_key = excluded.as_of_time_key,
+                horizon_bars = excluded.horizon_bars,
+                longest_horizon_bars = excluded.longest_horizon_bars,
+                expected_forward_return_pct = excluded.expected_forward_return_pct,
+                oos_lift_pct = excluded.oos_lift_pct,
+                longest_oos_forward_return_pct = excluded.longest_oos_forward_return_pct,
+                expected_mfe_pct = excluded.expected_mfe_pct,
+                expected_mae_pct = excluded.expected_mae_pct,
+                median_lift_pct = excluded.median_lift_pct,
+                median_rr = excluded.median_rr,
+                median_hmax_lift_pct = excluded.median_hmax_lift_pct,
+                median_dist = excluded.median_dist,
+                analog_count = excluded.analog_count,
+                candidate_count = excluded.candidate_count,
+                pair_warnings = excluded.pair_warnings,
+                hits = excluded.hits,
+                high = excluded.high,
+                medium = excluded.medium,
+                low = excluded.low
+        `);
+
+        for (const raw of args.verdicts) {
+            // One cast per verdict (not 35): the route passes `any[]` from
+            // readJsonBody, the contract test passes `TimingEdgeVerdictSnapshot[]`.
+            // Both satisfy `unknown[]`; cast to a record once so field access
+            // reads cleanly. Coercion helpers mirror the original route's exact
+            // semantics: null/undefined optional fields → SQL NULL (NOT 0),
+            // required numeric fields → floored ≥ 0, strings → trimmed upper/lower.
+            const v = raw as Record<string, unknown>;
+            const num = (key: string): number | null => {
+                const val = v[key];
+                if (val === null || val === undefined) return null;
+                return Number(val);
+            };
+            const int = (key: string): number => Math.max(0, Math.floor(Number(v[key]) || 0));
+            const strUpper = (key: string): string => String(v[key] || '').trim().toUpperCase();
+            const strLower = (key: string, fallback: string): string => String(v[key] || fallback).trim().toLowerCase();
+            const strOrNull = (key: string): string | null => v[key] ? String(v[key]).trim().toUpperCase() : null;
+            const rawStrOrNull = (key: string): string | null => v[key] ? String(v[key]) : null;
+            const direction = v.direction === null ? null : strLower('direction', '') || null;
+            verdictUpsert.run(
+                args.runId, args.createdAt, args.interval,
+                strUpper('asset'),
+                strUpper('verdict'),
+                direction,
+                strLower('confidence', 'low'),
+                Number(v.timingEdgeScore) || 0,
+                Number(v.medianDiversity) || 0,
+                strOrNull('dominantPair'),
+                Number(v.dominantPairShare) || 0,
+                num('close'),
+                num('medianBarsHeld'),
+                num('agreementTransition'),
+                rawStrOrNull('asOfTimeKey'),
+                v.horizonBars === null || v.horizonBars === undefined ? null : Math.max(0, Math.floor(Number(v.horizonBars))),
+                v.longestHorizonBars === null || v.longestHorizonBars === undefined ? null : Math.max(0, Math.floor(Number(v.longestHorizonBars))),
+                num('expectedForwardReturnPct'),
+                num('oosLiftPct'),
+                num('longestOosForwardReturnPct'),
+                num('expectedMfePct'),
+                num('expectedMaePct'),
+                num('medianLiftPct'),
+                num('medianRr'),
+                num('medianHmaxLiftPct'),
+                num('medianDist'),
+                v.analogCount === null || v.analogCount === undefined ? null : Math.max(0, Math.floor(Number(v.analogCount))),
+                v.candidateCount === null || v.candidateCount === undefined ? null : Math.max(0, Math.floor(Number(v.candidateCount))),
+                int('pairWarnings'),
+                int('hits'),
+                int('high'),
+                int('medium'),
+                int('low'),
+            );
+        }
+
+        // Finding 4: bound history within the same transaction.
+        pruneMineTimingRuns();
+
+        db.exec('COMMIT');
+    } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+    }
+}
+
+/**
+ * Load the newest `limit` Mine Timing runs with their verdicts, normalized
+ * back to the camelCase `TimingEdgePersistedRun` shape (Finding 7
+ * extraction). The route handler delegates here so the store→load→report
+ * contract is testable without a mock HTTP layer. Runs are returned oldest
+ * → newest (matching the report builder's expectation).
+ */
+function loadMineTimingRunsFromDb(limit: number): TimingEdgePersistedRunShape[] {
+    const runRows = getPreparedStatement(`
+        SELECT run_id, created_at, interval, strategy_key, source, pair_count, reruns, subset_size, seed
+        FROM mine_timing_runs
+        ORDER BY created_at DESC
+        LIMIT ?
+    `).all(limit) as Array<{
+        run_id: string;
+        created_at: number;
+        interval: string;
+        strategy_key: string;
+        source: string;
+        pair_count: number;
+        reruns: number;
+        subset_size: number;
+        seed: number;
+    }>;
+    const runIds = runRows.map((row) => row.run_id);
+    const verdictsByRun = new Map<string, unknown[]>();
+    if (runIds.length > 0) {
+        // node:sqlite's prepared statements do not accept arrays
+        // directly; use IN(...) with positional placeholders.
+        const placeholders = runIds.map(() => '?').join(',');
+        const verdictRows = getPreparedStatement(`
+            SELECT * FROM mine_timing_verdicts
+            WHERE run_id IN (${placeholders})
+        `).all(...runIds) as Array<Record<string, unknown>>;
+        for (const row of verdictRows) {
+            const list = verdictsByRun.get(String(row.run_id)) ?? [];
+            list.push(row);
+            verdictsByRun.set(String(row.run_id), list);
+        }
+    }
+    return runRows
+        .map((row) => ({
+            runId: row.run_id,
+            createdAt: row.created_at,
+            interval: row.interval,
+            strategyKey: row.strategy_key,
+            // The store narrows source to 'stability' | 'mine' before INSERT,
+            // so the SELECT value is always one of those two. Re-narrow on load
+            // so the returned shape matches TimingEdgePersistedRun.source.
+            source: (row.source === "stability" ? "stability" : "mine") as "mine" | "stability",
+            pairCount: row.pair_count,
+            reruns: row.reruns,
+            subsetSize: row.subset_size,
+            seed: row.seed,
+            verdicts: (verdictsByRun.get(row.run_id) ?? []).map((v) => normalizeMineTimingVerdictRow(v as Record<string, unknown>)),
+        }))
+        .reverse();
+}
+
+/** Structural shape returned by loadMineTimingRunsFromDb (avoids importing the browser-bound type). */
+type TimingEdgePersistedRunShape = ReturnType<typeof normalizeMineTimingVerdictRow> extends infer V
+    ? { runId: string; createdAt: number; interval: string; strategyKey: string; source: "mine" | "stability"; pairCount: number; reruns: number; subsetSize: number; seed: number; verdicts: V[] }
+    : never;
+
+/**
+ * Bound Mine Timing history to the newest MINE_TIMING_RUN_RETENTION_COUNT
+ * runs (Finding 4). Called inside the store transaction so child verdict
+ * rows are deleted before parent runs and no concurrent reader can observe
+ * parentless children. `created_at` ties break on `run_id` ASC for a
+ * deterministic ordering that matches the load path's `ORDER BY created_at
+ * DESC` (the run with the lexicographically smaller run_id is treated as
+ * older, so it is pruned first).
+ */
+function pruneMineTimingRuns(): void {
+    const expiredRunIds = getPreparedStatement(`
+        SELECT run_id FROM mine_timing_runs
+        WHERE run_id NOT IN (
+            SELECT run_id FROM mine_timing_runs
+            ORDER BY created_at DESC, run_id ASC
+            LIMIT ?
+        )
+    `).all(MINE_TIMING_RUN_RETENTION_COUNT) as Array<{ run_id: string }>;
+    if (expiredRunIds.length === 0) return;
+    // node:sqlite prepared statements do not accept arrays directly; build
+    // an IN(...) with positional placeholders. The expired list is bounded
+    // by the retention window (only newly-superseded rows, not the whole
+    // table), so the placeholder count stays modest.
+    const placeholders = expiredRunIds.map(() => '?').join(',');
+    const deleteVerdicts = getPreparedStatement(
+        `DELETE FROM mine_timing_verdicts WHERE run_id IN (${placeholders})`,
+    );
+    deleteVerdicts.run(...expiredRunIds.map((row) => row.run_id));
+    const deleteRuns = getPreparedStatement(
+        `DELETE FROM mine_timing_runs WHERE run_id IN (${placeholders})`,
+    );
+    deleteRuns.run(...expiredRunIds.map((row) => row.run_id));
 }
 
 /**
@@ -1386,3 +1492,27 @@ function normalizeMineTimingVerdictRow(row: Record<string, unknown>) {
         medianDist: num('median_dist'),
     };
 }
+
+/**
+ * Test-only seam for Finding 4 retention test and Finding 7 end-to-end
+ * contract test. `pruneMineTimingRuns` / `storeMineTimingRunInDb` /
+ * `loadMineTimingRunsFromDb` resolve the DB through `getSqliteDb`, so the
+ * test injects a temp DB here, applies the mine_timing schema, and asserts
+ * the contracts directly. Mirrors the `__testInternals` pattern in
+ * `batch-backtest-vite-plugin.ts`.
+ */
+export const __testInternals = {
+    pruneMineTimingRuns,
+    storeMineTimingRunInDb,
+    loadMineTimingRunsFromDb,
+    setSqliteDbForTests(db: DatabaseSync): void {
+        preparedStatements.clear();
+        sqliteDb = db;
+    },
+    resetSqliteDbForTests(): void {
+        preparedStatements.clear();
+        sqliteDb = null;
+    },
+    MINE_TIMING_RUN_RETENTION_COUNT,
+};
+

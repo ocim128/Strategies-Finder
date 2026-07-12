@@ -16,6 +16,11 @@
  */
 
 import type { TimingEdgePersistedRun, TimingEdgeVerdictSnapshot } from "../batch-backtest/mine-timing-persistence";
+import {
+    computeStabilityDataLagBars,
+    STABILITY_DATA_STALE_THRESHOLD_BARS,
+} from "../batch-backtest/miner-verdict-format-helpers";
+import { IBKR_SYMBOL_SUFFIX } from "../local-daily-datasets";
 
 export type TimingEdgeFreshness = "NEW" | "FRESH" | "AGING" | "LATE" | "STALE" | "UNKNOWN";
 
@@ -134,13 +139,34 @@ function directionMovePct(direction: "LONG" | "SHORT" | null, firstClose: number
         : ((firstClose / latestClose) - 1) * 100;
 }
 
+/**
+ * Freshness classifier.
+ *
+ * Two independent staleness signals converge on `STALE`:
+ * 1. `!latestSeenInCurrentRun` — the asset did not produce a verdict in the
+ *    latest loaded run (absent from the latest snapshot).
+ * 2. `dataLagBars > STABILITY_DATA_STALE_THRESHOLD_BARS` — the latest
+ *    verdict's `asOfTimeKey` is older than two bars at the run's interval,
+ *    so the edge is about an old market state, not the current one. Reuses
+ *    the exact lag math the Batch Stability `Action` veto uses
+ *    (`computeStabilityDataLagBars`), so Asset Leadership and Batch never
+ *    disagree about what "stale data" means.
+ *
+ * `dataLagBars === null` (unparseable timestamp) → `UNKNOWN`. A weeks-old
+ * database whose newest record contains an asset used to display it as `NEW`
+ * or `FRESH` purely because the record was present in the latest stored run;
+ * the lag gate prevents stale signals from being advertised as current.
+ */
 function classifyFreshness(args: {
     isFirstAppearance: boolean;
     latestSeenInCurrentRun: boolean;
     moveSinceFirstPct: number | null;
     expectedPct: number | null;
+    dataLagBars: number | null;
 }): TimingEdgeFreshness {
     if (!args.latestSeenInCurrentRun) return "STALE";
+    if (args.dataLagBars === null) return "UNKNOWN";
+    if (args.dataLagBars > STABILITY_DATA_STALE_THRESHOLD_BARS) return "STALE";
     if (args.isFirstAppearance) return "NEW";
     if (args.moveSinceFirstPct === null || args.expectedPct === null || args.expectedPct <= 0) return "UNKNOWN";
     const favorableMove = Math.max(0, args.moveSinceFirstPct);
@@ -153,6 +179,8 @@ function buildAssetRow(
     asset: string,
     contributions: Array<{ run: TimingEdgePersistedRun; verdict: TimingEdgeVerdictSnapshot }>,
     allRuns: readonly TimingEdgePersistedRun[],
+    interval: string,
+    nowMs: number,
 ): TimingEdgeAssetRow {
     // Contributions sorted oldest → newest so the "latest" is the last element.
     // Tiebreak on runId so two runs with identical createdAt (rare, but a
@@ -207,6 +235,18 @@ function buildAssetRow(
     const firstRunIndex = allRuns.findIndex((run) => run.runId === first.run.runId);
     const ageRuns = firstRunIndex < 0 ? 0 : allRuns.length - firstRunIndex - 1;
 
+    // Data-age lag from the latest verdict's asOfTimeKey. Mirrors the Batch
+    // Stability `Action` veto so Asset Leadership and Batch agree on what
+    // "stale data" means. IBKR 4H rows carry the bullet suffix on
+    // `dominantPair`, which selects the US-equity session-aware lag counter
+    // (counts only completed RTH aggregate buckets, not overnight/weekends).
+    const dataLagBars = computeStabilityDataLagBars(
+        latestVerdict.asOfTimeKey,
+        interval,
+        nowMs,
+        latestVerdict.dominantPair?.includes(IBKR_SYMBOL_SUFFIX) ? "us_equities" : "continuous",
+    );
+
     return {
         asset,
         score: latestScore,
@@ -238,6 +278,7 @@ function buildAssetRow(
             latestSeenInCurrentRun: latest.run.runId === latestRun.runId,
             moveSinceFirstPct,
             expectedPct,
+            dataLagBars,
         }),
         hasActiveConflict: false,
     };
@@ -257,7 +298,8 @@ function sortByScoreDesc(rows: TimingEdgeAssetRow[]): TimingEdgeAssetRow[] {
     );
 }
 
-export function buildTimingEdgeReport(input: { runs: TimingEdgePersistedRun[] }): TimingEdgeReport {
+export function buildTimingEdgeReport(input: { runs: TimingEdgePersistedRun[]; nowMs?: number }): TimingEdgeReport {
+    const nowMs = input.nowMs ?? Date.now();
     const allRuns = [...input.runs].sort((a, b) => a.createdAt - b.createdAt || a.runId.localeCompare(b.runId));
     const latestRun = allRuns[allRuns.length - 1];
     const runs = latestRun
@@ -267,6 +309,9 @@ export function buildTimingEdgeReport(input: { runs: TimingEdgePersistedRun[] })
             && run.source === latestRun.source
         )
         : [];
+    // The latest run's interval is the report's interval — every scoped run
+    // shares it (the filter above guarantees it). Used for data-lag freshness.
+    const interval = latestRun?.interval ?? "1h";
     // Key by `${asset}|${direction}`, NOT just asset. A LONG verdict from
     // strategy A and a SHORT verdict from strategy B on the same asset are
     // independent edges — averaging their lifts cancels signal (a +5% long
@@ -286,7 +331,7 @@ export function buildTimingEdgeReport(input: { runs: TimingEdgePersistedRun[] })
             byAssetDirection.set(key, entry);
         }
     }
-    const baseRows = Array.from(byAssetDirection.values()).map((entry) => buildAssetRow(entry.asset, entry.contributions, runs));
+    const baseRows = Array.from(byAssetDirection.values()).map((entry) => buildAssetRow(entry.asset, entry.contributions, runs, interval, nowMs));
     const activeDirectionsByAsset = new Map<string, Set<"LONG" | "SHORT">>();
     for (const row of baseRows) {
         if (row.freshness === "STALE" || row.score <= 0 || !row.latestDirection) continue;

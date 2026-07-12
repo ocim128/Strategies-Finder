@@ -23,6 +23,8 @@ const {
     completeRunForTests,
     setMinerOwnerForTests,
     setMinerAbortControllerForTests,
+    setMinerGatesForTests,
+    resetMinerGatesForTests,
     getRunStateForTests,
     handleStatusRequest,
     handleStopRequest,
@@ -714,6 +716,107 @@ describe("batch-backtest server plugin processStabilityMine", () => {
         expect(hasStoredMineArtifacts()).to.equal(true);
 
         await releaseLastResults("test_end");
+    });
+
+    it("parallel Stability Mine (reruns>=4) retains artifacts for a second run (Finding 1 regression)", async () => {
+        // Intent being locked (AGENTS.md rule 8): the parallel Stability path
+        // (reruns >= PARALLEL_STABILITY_MIN_RERUNS = 4) must NOT release its
+        // artifacts on success. The sequential path retains them via the
+        // `finally`-block TTL so a second Stability run with different
+        // seed/reruns reuses them without recomputing the entire Batch run.
+        // The parallel path used to call `releaseLastResults("mine_completed")`
+        // immediately after `done`, so `serverHasArtifacts` was true but the
+        // artifacts were already deleted — the next Stability click hit
+        // "no artifacts on server". The existing one-rerun test never engaged
+        // the parallel branch (gate is reruns >= 4), so the regression was
+        // invisible. This test turns the gate on with reruns = 4 and asserts
+        // artifacts survive a second parallel Stability run.
+        setMinerGatesForTests({ parallelStability: true });
+        try {
+            const pairData = makeCandles([100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]);
+            const targetData = makeCandles([100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120, 122]);
+            const datasets = new Map<string, OHLCVData[]>([["UP+DOWN", pairData]]);
+            const owner = 9050;
+            setRunOwnerForTests(owner);
+
+            const runEvents = await collectEvents((ev) =>
+                processRunBatch(
+                    {
+                        interval: "5m",
+                        strategyKey: STRATEGY_KEY,
+                        strategy: testStrategy,
+                        strategyParams: { threshold: 1 },
+                        backtestSettings: settings,
+                        capitalSettings,
+                        symbols: ["UP+DOWN"],
+                        loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                        minUsableBars: 1,
+                    },
+                    (event) => ev.push(event),
+                    owner,
+                ),
+            );
+            setRunOwnerForTests(0);
+            const done = runEvents[runEvents.length - 1] as Extract<BatchStreamEvent, { type: "done" }>;
+            expect(done.serverHasArtifacts).to.equal(true);
+            expect(hasStoredMineArtifacts()).to.equal(true);
+
+            // First parallel Stability run (reruns = 4 engages the parallel branch).
+            const minerOwner = 9051;
+            setMinerOwnerForTests(minerOwner);
+            const firstEvents: unknown[] = [];
+            await processStabilityMine(
+                done.fingerprint,
+                "5m",
+                1,
+                4, // reruns >= PARALLEL_STABILITY_MIN_RERUNS
+                1,
+                (event) => firstEvents.push(event),
+                minerOwner,
+                async () => [
+                    { asset: "UP", symbol: "UP", data: targetData },
+                    { asset: "DOWN", symbol: "DOWN", data: targetData },
+                ],
+            );
+            setMinerOwnerForTests(0);
+            const firstLast = firstEvents[firstEvents.length - 1] as { type: string; ok?: boolean };
+            expect(firstLast.type).to.equal("done");
+            expect(firstLast.ok).to.equal(true);
+            // The regression: artifacts MUST still be available after the parallel
+            // path's `done`. Before the fix this assertion failed because the
+            // parallel branch deleted artifacts before returning.
+            expect(hasStoredMineArtifacts()).to.equal(true);
+
+            // Second parallel Stability run reuses the retained artifacts.
+            const secondMinerOwner = 9052;
+            setMinerOwnerForTests(secondMinerOwner);
+            const secondEvents: unknown[] = [];
+            try {
+                await processStabilityMine(
+                    done.fingerprint,
+                    "5m",
+                    1,
+                    4,
+                    2,
+                    (event) => secondEvents.push(event),
+                    secondMinerOwner,
+                    async () => [
+                        { asset: "UP", symbol: "UP", data: targetData },
+                        { asset: "DOWN", symbol: "DOWN", data: targetData },
+                    ],
+                );
+            } finally {
+                setMinerOwnerForTests(0);
+            }
+            const secondLast = secondEvents[secondEvents.length - 1] as { type: string; ok?: boolean };
+            expect(secondLast.type).to.equal("done");
+            expect(secondLast.ok).to.equal(true);
+            expect(hasStoredMineArtifacts()).to.equal(true);
+
+            await releaseLastResults("test_end");
+        } finally {
+            resetMinerGatesForTests();
+        }
     });
 
     it("Stop aborts in-flight miner target loads via the abort signal (Finding 7)", async () => {

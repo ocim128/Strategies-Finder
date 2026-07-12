@@ -112,6 +112,15 @@ const BATCH_RESULTS_STORAGE = {
     version: 1,
 } as const;
 
+/**
+ * Max rows buffered before a synchronous mid-stream flush (Finding 6). The
+ * live stream queues DOM renders and flushes once per animation frame, but a
+ * very fast cached run could queue hundreds of rows before the first frame;
+ * this cap forces a flush so visible progress never lags too far behind the
+ * streamed count. Terminal paths always flush regardless of queue size.
+ */
+const LIVE_RENDER_MAX_BATCH = 50;
+
 class BatchBacktestService {
     private dom: BatchBacktestDom | null = null;
     private initialized = false;
@@ -141,6 +150,16 @@ class BatchBacktestService {
     // `row.data !== undefined`, because in server-side mode the browser never
     // holds `row.data`).
     private serverHasArtifacts = false;
+    // Live-stream DOM render queue (Finding 6). The server stream emits one
+    // `symbol` event per row; appending each to the DOM synchronously caused
+    // one reflow per row (up to ~1000 on a large cached run). Rows are pushed
+    // to `lastResults` immediately (data stays current) but their DOM nodes
+    // are queued here and flushed once per animation frame (or when the batch
+    // hits LIVE_RENDER_MAX_BATCH, to keep very fast streams from deferring
+    // visible progress too long). Terminal paths flush synchronously so the
+    // final row count is always visible immediately on done/cancel/error.
+    private liveRenderQueue: BatchBacktestSymbolResult[] = [];
+    private liveRenderRafId: number | null = null;
     // Reattach polling timer id (set when this tab is observing a server-side
     // run that started before page load).
     private reattachTimer: ReturnType<typeof setTimeout> | null = null;
@@ -260,6 +279,10 @@ class BatchBacktestService {
         // see its token mismatch after its next await and stop mutating state.
         this.runToken += 1;
         const token = this.runToken;
+        // Finding 6: a previous run's pending live-render RAF must not fire
+        // against this new run's freshly-cleared results list.
+        this.cancelLiveRenderRaf();
+        this.liveRenderQueue = [];
         this.cancelled = false;
         this.lastResults = [];
         this.lastRunFingerprint = null;
@@ -470,9 +493,13 @@ class BatchBacktestService {
                 },
                 onSymbol: (event: Extract<BatchStreamEvent, { type: "symbol" }>) => {
                     if (token !== this.runToken) return;
+                    // Finding 6: push to lastResults immediately (data stays
+                    // current for Copy/Stop) but queue the DOM render and
+                    // flush once per animation frame to avoid one reflow per
+                    // row on large cached runs.
                     this.lastResults.push(event.row);
                     this.appendedCount += 1;
-                    this.appendResultRow(dom, event.row);
+                    this.queueLiveRender(dom, event.row, token);
                 },
                 onSymbolFailed: (event: Extract<BatchStreamEvent, { type: "symbol_failed" }>) => {
                     if (token !== this.runToken) return;
@@ -482,6 +509,10 @@ class BatchBacktestService {
                 },
                 onDone: (event: Extract<BatchStreamEvent, { type: "done" }>) => {
                     if (token !== this.runToken) return;
+                    // Finding 6: drain any queued live renders synchronously so
+                    // the final row count is visible immediately on done.
+                    this.cancelLiveRenderRaf();
+                    this.flushLiveRenderNow(dom, token);
                     this.lastRunFingerprint = runFingerprint;
                     this.lastRunInterval = interval;
                     this.lastRunStrategyKey = strategyKey;
@@ -502,6 +533,17 @@ class BatchBacktestService {
             // Defer to after the token check. A stale run that lost ownership
             // mid-stream must not mutate UI state.
             streamError = error;
+        }
+        // Finding 6: drain any queued live renders before the token check /
+        // recovery path. If the stream threw mid-flight, `onDone` never fired
+        // and queued rows would otherwise be lost or double-appended when
+        // recovery rebuilds the DOM. Cancel the pending RAF first so it can't
+        // fire after this synchronous drain.
+        this.cancelLiveRenderRaf();
+        if (token === this.runToken) {
+            this.flushLiveRenderNow(dom, token);
+        } else {
+            this.liveRenderQueue = [];
         }
         if (token !== this.runToken) return;
         if (doneSummary === null) {
@@ -2084,6 +2126,55 @@ class BatchBacktestService {
 
     private appendResultRow(dom: BatchBacktestDom, result: BatchBacktestSymbolResult): void {
         dom.batchBacktestResults.appendChild(this.createResultRow(result));
+    }
+
+    /**
+     * Queue a live-stream row for DOM rendering and schedule a flush once per
+     * animation frame (Finding 6). `lastResults` is already updated by the
+     * caller, so this only defers the DOM mutation. A synchronous flush fires
+     * when the queue hits LIVE_RENDER_MAX_BATCH so very fast cached streams
+     * don't defer visible progress too long. Terminal paths call
+     * `flushLiveRenderNow` to drain the queue synchronously.
+     */
+    private queueLiveRender(dom: BatchBacktestDom, result: BatchBacktestSymbolResult, token: number): void {
+        this.liveRenderQueue.push(result);
+        if (this.liveRenderQueue.length >= LIVE_RENDER_MAX_BATCH) {
+            this.flushLiveRenderNow(dom, token);
+            return;
+        }
+        if (this.liveRenderRafId !== null) return;
+        this.liveRenderRafId = requestAnimationFrame(() => {
+            this.liveRenderRafId = null;
+            this.flushLiveRenderNow(dom, token);
+        });
+    }
+
+    /**
+     * Drain the live render queue through `appendResultRows` (one
+     * DocumentFragment append). Guarded by the run token so a stale run that
+     * lost ownership mid-stream doesn't write DOM after a newer run started.
+     */
+    private flushLiveRenderNow(dom: BatchBacktestDom, token: number): void {
+        if (token !== this.runToken) {
+            this.liveRenderQueue = [];
+            return;
+        }
+        if (this.liveRenderQueue.length === 0) return;
+        const batch = this.liveRenderQueue;
+        this.liveRenderQueue = [];
+        this.appendResultRows(dom, batch);
+    }
+
+    /**
+     * Cancel any pending animation-frame flush and clear the queue. Called on
+     * terminal paths (done/error/cancel) and when a run loses ownership, so a
+     * stale RAF callback can't fire against a newer run's DOM.
+     */
+    private cancelLiveRenderRaf(): void {
+        if (this.liveRenderRafId !== null) {
+            cancelAnimationFrame(this.liveRenderRafId);
+            this.liveRenderRafId = null;
+        }
     }
 
     /**

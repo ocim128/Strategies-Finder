@@ -846,7 +846,16 @@ export async function processStabilityMine(
                 writer({ type: "progress", run: reruns, reruns, hits: parallelResult.hitEvents });
                 snapshot.running = false;
                 writer({ type: "done", ok: true, result: parallelResult });
-                await releaseLastResults("mine_completed");
+                // Do NOT releaseLastResults("mine_completed") here. The sequential
+                // Stability path intentionally retains artifacts so a second
+                // Stability run (different seed / reruns) can reuse them without
+                // recomputing the entire Batch run; its `finally` block schedules
+                // the TTL cleanup. Releasing here deleted artifacts immediately
+                // after the first parallel Stability success, while `done` set
+                // `serverHasArtifacts = true`, so the next Stability click hit
+                // "no artifacts on server". Falling through to `return` lets the
+                // shared `finally` schedule the TTL exactly like the sequential
+                // path — one contract for both accelerated and sequential paths.
                 return;
             }
             debugLogger.info("batch.parallel_stability.fallback_to_sequential", {
