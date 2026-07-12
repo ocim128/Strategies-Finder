@@ -6,9 +6,7 @@ name: CI
 # bundle-budget gate. `cancel-in-progress` avoids paying for obsolete runs
 # after rapid pushes, and `cache: npm` reuses the npm cache across runs.
 #
-# The repo has no Node engine pin in package.json; Node 20 LTS is the
-# documented baseline for Vite 5 + the dev-server plugins. Bump in lockstep
-# with the local `run_playground.bat`/README if that changes.
+# Node 22 is required by the test suite's built-in `node:sqlite` imports.
 
 on:
   push:
@@ -27,7 +25,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run ci
