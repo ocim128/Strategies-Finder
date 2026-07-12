@@ -59,6 +59,7 @@ import type { CapitalSettings } from "../types/backtest";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import { toScalarRow, type BatchStreamEvent } from "./batch-backtest-stream-types";
 import { rememberLoopbackOriginFromRequest } from "../local-api-transport";
+import { isAllowedLocalRequest } from "../local-route-authorization";
 import { buildBatchRunFingerprint, normalizeBatchSymbols } from "./batch-run-contract";
 import {
     mergeStabilityAccumulators,
@@ -1285,6 +1286,14 @@ export function batchBacktestVitePlugin(): Plugin {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
                 return;
             }
+            // Audit Finding 2: gate mutations on the same loopback/bearer
+            // policy the IBKR and strategy-admin routes enforce, so a Vite
+            // server exposed via --host / tunnel / reverse proxy can't be
+            // driven into CPU-heavy 1000-pair backtests remotely.
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
+                return;
+            }
             try {
                 rememberLocalApiOriginFromRequest(req);
                 await handleRunRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
@@ -1296,6 +1305,12 @@ export function batchBacktestVitePlugin(): Plugin {
         middlewares.use("/api/batch-backtest/stop", async (req: any, res: any) => {
             if (req.method !== "POST") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            // Audit Finding 2: gate Stop too — an unauthenticated remote caller
+            // must not be able to cancel a long-running batch.
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
                 return;
             }
             try {
@@ -1311,6 +1326,10 @@ export function batchBacktestVitePlugin(): Plugin {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
                 return;
             }
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
+                return;
+            }
             try {
                 rememberLocalApiOriginFromRequest(req);
                 await handleMineRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
@@ -1322,6 +1341,10 @@ export function batchBacktestVitePlugin(): Plugin {
         middlewares.use("/api/batch-backtest/stability-mine", async (req: any, res: any) => {
             if (req.method !== "POST") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
                 return;
             }
             try {

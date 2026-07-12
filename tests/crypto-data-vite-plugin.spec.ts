@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { expect } from "chai";
 import {
     __acquireCryptoSyncOwnerForTests,
+    __getCryptoSyncRunStateForTests,
     __resetCryptoSyncStateForTests,
     getCryptoCsvPath,
     parseCryptoCsvCandleLines,
@@ -311,3 +312,122 @@ describe("processCryptoSyncBatch", () => {
         }
     });
 });
+
+/**
+ * Audit Finding 1: the snapshot must accumulate `completedTargets` (symbol +
+ * interval) as each target's SQLite/CSV write succeeds, so a reattached tab
+ * (after a reload) can invalidate exactly the caches the server refreshed.
+ * `updatedAt` advances on every snapshot mutation so the browser's reattach
+ * watchdog can distinguish a live run from a wedged one.
+ *
+ * Audit Finding 6: `completedTargets` and `updatedAt` live in the shared
+ * `CryptoSyncRunSnapshot` leaf so the server and browser can't drift apart.
+ */
+describe("processCryptoSyncBatch reattach snapshot (Findings 1 & 6)", () => {
+    beforeEach(() => __resetCryptoSyncStateForTests());
+    afterEach(() => __resetCryptoSyncStateForTests());
+
+    it("records each successful symbol/interval in completedTargets and stamps updatedAt", async () => {
+        const owner = __acquireCryptoSyncOwnerForTests();
+        const stubFetcher = async (symbol: string, interval: string) => ({
+            symbol, interval, bars: 5, fetchedBars: 5, lastTime: 1700000000,
+        });
+        await processCryptoSyncBatch(
+            {
+                targets: [
+                    { symbol: "BTCUSDT", interval: "4h", totalBars: 100 },
+                    { symbol: "BTCUSDT", interval: "30m", totalBars: 200 },
+                    { symbol: "ETHUSDT", interval: "4h", totalBars: 100 },
+                ],
+                marketType: "spot",
+            },
+            false,
+            () => {},
+            owner,
+            { fetcher: stubFetcher as never },
+        );
+        const run = __getCryptoSyncRunStateForTests();
+        // Snapshot is retained briefly after completion (audit Finding 1).
+        expect(run).to.not.equal(null);
+        expect(run!.completedTargets).to.deep.equal([
+            { symbol: "BTCUSDT", interval: "4h" },
+            { symbol: "BTCUSDT", interval: "30m" },
+            { symbol: "ETHUSDT", interval: "4h" },
+        ]);
+        expect(run!.completed).to.equal(3);
+        expect(run!.updatedAt).to.be.a("string");
+        expect(run!.updatedAt!.length).to.be.greaterThan(0);
+    });
+
+    it("does not append to completedTargets when a symbol fails", async () => {
+        const owner = __acquireCryptoSyncOwnerForTests();
+        const stubFetcher = async (symbol: string) => {
+            if (symbol === "BADUSDT") throw new Error("boom");
+            return { symbol, interval: "4h", bars: 1, fetchedBars: 1, lastTime: 1 };
+        };
+        await processCryptoSyncBatch(
+            { symbols: ["BTCUSDT", "BADUSDT"], interval: "4h" },
+            true,
+            () => {},
+            owner,
+            { fetcher: stubFetcher as never },
+        );
+        const run = __getCryptoSyncRunStateForTests();
+        expect(run!.completedTargets).to.deep.equal([
+            { symbol: "BTCUSDT", interval: "4h" },
+        ]);
+        expect(run!.failed).to.equal(1);
+    });
+
+    it("stops appending to completedTargets once ownership is lost (Stop)", async () => {
+        const owner = __acquireCryptoSyncOwnerForTests();
+        const controller = new AbortController();
+        const seen: string[] = [];
+        const stubFetcher = async (symbol: string) => {
+            seen.push(symbol);
+            if (seen.length === 1) controller.abort();
+            if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+            return { symbol, interval: "4h", bars: 1, fetchedBars: 1, lastTime: 1 };
+        };
+        await processCryptoSyncBatch(
+            { symbols: ["BTCUSDT", "ETHUSDT", "ADAUSDT"], interval: "4h" },
+            false,
+            () => {},
+            owner,
+            { fetcher: stubFetcher as never, signal: controller.signal },
+        );
+        const run = __getCryptoSyncRunStateForTests();
+        // Only symbols that actually landed are recorded — Stop must not
+        // inflate completedTargets with cancelled work, or the reattach path
+        // would invalidate caches for data that was never written.
+        for (const target of run!.completedTargets ?? []) {
+            expect(target.symbol).to.not.equal("ADAUSDT");
+        }
+        expect(run!.cancelled).to.equal(true);
+    });
+
+    it("exposes completedTargets on the shared CryptoSyncRunSnapshot contract", () => {
+        // Type-level smoke: the shared leaf must carry the field the browser
+        // reads during reattach. This is a compile-time guarantee; the runtime
+        // coverage above is what locks the behavior.
+        type Snapshot = import("../lib/crypto-data/crypto-data-stream-types").CryptoSyncRunSnapshot;
+        const sample: Snapshot = {
+            startedAt: "2026-07-12T00:00:00.000Z",
+            mode: "sync",
+            interval: "4h",
+            marketType: "spot",
+            total: 1,
+            index: 1,
+            completed: 1,
+            failed: 0,
+            currentSymbol: null,
+            currentInterval: null,
+            failedSymbols: [],
+            cancelled: false,
+            completedTargets: [{ symbol: "BTCUSDT", interval: "4h" }],
+            updatedAt: "2026-07-12T00:00:01.000Z",
+        };
+        expect(sample.completedTargets).to.have.length(1);
+    });
+});
+

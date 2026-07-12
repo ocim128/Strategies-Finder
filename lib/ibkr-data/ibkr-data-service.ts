@@ -45,18 +45,27 @@ class IbkrDataService {
      * invalidates caches for the symbols the server reports as completed.
      *
      * Progress watchdog: a healthy sync advances `(index, currentSymbol,
-     * completed)` between polls; each advance resets the no-progress
-     * countdown. Only 150 consecutive *no-progress* polls (~5 min of a hung
-     * gateway fetch) cause us to stop watching — previously a healthy long
-     * backfill would trip the fixed 150-poll cap and unlock while the server
-     * still owned the sync.
+     * completed, updatedAt)` between polls; each advance resets the no-progress
+     * countdown. After ~5 min of consecutive no-progress polls the loop does
+     * NOT terminate (audit Finding 5) — it steps the polling frequency down
+     * from 2s to 12s so slow historical paging, Gateway retry delays, or a
+     * temporarily unavailable session can still recover naturally, and so the
+     * post-sync cache invalidation eventually fires when the run completes.
+     * `updatedAt` is part of the progress key so the server's snapshot
+     * heartbeat still counts as activity even when the indexed cursor hasn't
+     * moved. The first advance after a stall resumes the 2s cadence.
      */
     private async reattachToInProgressSync(): Promise<void> {
         const POLL_INTERVAL_MS = 2000;
+        const STALLED_POLL_INTERVAL_MS = 12_000;
         const NO_PROGRESS_POLL_LIMIT = 150;
         try {
             let lastProgressKey = "";
             let stalledPolls = 0;
+            // True once we have crossed the no-progress threshold at least
+            // once; used to (a) display the stalled warning and (b) drive the
+            // slow-poll cadence until the run advances again.
+            let stalledSlowMode = false;
             // Tracks the last snapshot we saw with `running: true`, so that
             // when the run ends we can invalidate exactly the symbols the
             // server completed while we were watching.
@@ -88,23 +97,35 @@ class IbkrDataService {
                 lastRunningSnapshot = run;
                 this.renderRunSnapshot(run);
                 // Progress watchdog: reset the countdown whenever the run
-                // advances; only count consecutive no-progress polls.
-                const progressKey = `${run.index}|${run.currentSymbol ?? ""}|${run.completed}`;
+                // advances; only count consecutive no-progress polls. Include
+                // `updatedAt` so the server's snapshot heartbeat (any mutation,
+                // including a per-symbol catalog write) still counts as
+                // progress even when the indexed cursor hasn't moved.
+                const progressKey = `${run.index}|${run.currentSymbol ?? ""}|${run.completed}|${run.updatedAt ?? ""}`;
                 if (progressKey !== lastProgressKey) {
                     lastProgressKey = progressKey;
                     stalledPolls = 0;
+                    if (stalledSlowMode) {
+                        // Recovered: resume the normal 2s cadence.
+                        stalledSlowMode = false;
+                    }
                 } else {
                     stalledPolls += 1;
-                    if (stalledPolls >= NO_PROGRESS_POLL_LIMIT) {
-                        // No progress for ~5 min: the gateway fetch is almost
-                        // certainly hung. Keep the UI locked (the server still
-                        // owns the sync; the user can still click Stop) but
-                        // stop polling so we don't leak fetches.
-                        this.setStatus("IBKR sync stalled (no progress for 5 min) — still running. Click Stop or wait.");
-                        return;
+                    if (stalledPolls >= NO_PROGRESS_POLL_LIMIT && !stalledSlowMode) {
+                        // No progress for ~5 min: a long gateway fetch, retry
+                        // backoff, or temporarily unavailable session. Keep the
+                        // UI locked (the server still owns the sync; the user
+                        // can still click Stop) but shed polling load from
+                        // 2s to 12s. Unlike the prior behavior, we DO NOT
+                        // return here — the loop keeps watching so natural
+                        // recovery or completion is still observed and the
+                        // post-sync cache invalidation still fires.
+                        stalledSlowMode = true;
+                        this.setStatus("IBKR sync stalled (no progress for 5 min) — slowing polls; still running. Click Stop or wait.");
                     }
                 }
-                await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+                const delay = stalledSlowMode ? STALLED_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
+                await new Promise((resolve) => setTimeout(resolve, delay));
             }
         } catch (error) {
             if (this.reattached) {

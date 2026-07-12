@@ -22,6 +22,13 @@ import { consumeNdjsonStream } from "../ndjson-stream";
 import { parsePortfolioSyntheticPairSymbol, PORTFOLIO_QUOTE_SUFFIXES } from "../portfolioLab/portfolio-lab-synthetic";
 import { pickSourceInterval } from "../../scripts/lib/synthetic-pair";
 import { createCryptoDataDom, type CryptoDataDom } from "./crypto-data-dom";
+import type { CryptoCompletedTarget, CryptoStreamEvent, CryptoSyncRunSnapshot } from "./crypto-data-stream-types";
+
+// Re-export the shared wire types so existing imports of them from this module
+// keep resolving — the source of truth now lives in the leaf
+// `crypto-data-stream-types` module shared with the server plugin (audit
+// Finding 6).
+export type { CryptoStreamEvent, CryptoSyncRunSnapshot };
 
 /**
  * Append `USDT` to a bare token that does not already end in a known quote
@@ -37,28 +44,6 @@ function ensureBinanceSymbol(token: string): string {
     }
     return `${upper}USDT`;
 }
-
-type CryptoStreamEvent =
-    | { type: "start"; total: number; interval?: string; marketType?: string; mode?: string }
-    | { type: "symbol"; index: number; total: number; symbol: string; interval: string; bars?: number; fetchedBars?: number; lastTime?: number | null }
-    | { type: "symbol_failed"; index: number; total: number; symbol: string; interval: string; error: string }
-    | { type: "done"; ok: boolean; cancelled?: boolean; interval?: string; totals?: { bars: number; fetchedBars: number }; results?: unknown[]; failed?: unknown[] }
-    | { type: "fatal"; error: string };
-
-type CryptoSyncRunSnapshot = {
-    startedAt: string;
-    mode: "sync" | "download";
-    interval: string;
-    marketType: string;
-    total: number;
-    index: number;
-    completed: number;
-    failed: number;
-    currentSymbol: string | null;
-    currentInterval: string | null;
-    failedSymbols: Array<{ symbol: string; error: string }>;
-    cancelled: boolean;
-};
 
 /**
  * Expand a flat symbol list (which may contain synthetic pairs like `SOL+TRX`)
@@ -161,6 +146,14 @@ class CryptoDataService {
     private async reattachToInProgressSync(): Promise<void> {
         const POLL_INTERVAL_MS = 2000;
         try {
+            // Tracks the last snapshot seen with `running: true`, plus the
+            // final `completedTargets` from the brief post-completion window
+            // the server preserves. Either path feeds invalidation so a tab
+            // that reloaded mid-sync still picks up the freshly written
+            // SQLite/CSV data instead of serving stale chart/Finder/Batch
+            // caches (audit Finding 1).
+            let lastRunningSnapshot: CryptoSyncRunSnapshot | null = null;
+            let invalidatedFinal = false;
             while (true) {
                 const response = await fetch("/api/crypto/sync/status", { cache: "no-store" });
                 const payload = await response.json() as { running?: boolean; run?: CryptoSyncRunSnapshot };
@@ -168,6 +161,19 @@ class CryptoDataService {
                     if (this.reattached) {
                         this.reattached = false;
                         this.setBusy(false);
+                        // The server retains the final snapshot briefly so a
+                        // reattach poll that arrives just after completion can
+                        // still read `completedTargets` and invalidate. If the
+                        // poll caught the run mid-flight at least once, prefer
+                        // the live snapshot's targets; otherwise fall back to
+                        // whatever the post-completion status returned.
+                        const finalTargets = payload.run?.completedTargets
+                            ?? lastRunningSnapshot?.completedTargets
+                            ?? [];
+                        if (!invalidatedFinal && finalTargets.length > 0) {
+                            invalidatedFinal = true;
+                            this.invalidateCompletedTargets(finalTargets);
+                        }
                         this.setStatus("Crypto sync finished (reattached).");
                     }
                     return;
@@ -176,6 +182,7 @@ class CryptoDataService {
                     this.reattached = true;
                     this.setBusy(true);
                 }
+                lastRunningSnapshot = payload.run;
                 this.renderRunSnapshot(payload.run);
                 await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
             }
@@ -185,6 +192,30 @@ class CryptoDataService {
                 this.setBusy(false);
             }
             this.setStatus(error instanceof Error ? `Sync reattach failed: ${error.message}` : "Sync reattach failed.");
+        }
+    }
+
+    /**
+     * Invalidate chart / Finder / Batch caches for the symbol/interval pairs
+     * the server reported as completed, grouped by interval so each call
+     * passes the narrowest interval list to `dataManager`. Mirrors the
+     * per-interval grouping the in-tab streaming path already does. Used by
+     * the reattach path which otherwise sees only the status snapshot
+     * (audit Finding 1).
+     */
+    private invalidateCompletedTargets(targets: readonly CryptoCompletedTarget[]): void {
+        if (targets.length === 0) return;
+        const byInterval = new Map<string, Set<string>>();
+        for (const target of targets) {
+            const interval = String(target.interval ?? "").trim().toLowerCase();
+            const symbol = String(target.symbol ?? "").trim().toUpperCase();
+            if (!symbol) continue;
+            const set = byInterval.get(interval) ?? new Set<string>();
+            set.add(symbol);
+            byInterval.set(interval, set);
+        }
+        for (const [interval, symbols] of byInterval) {
+            this.invalidateSyncedData(Array.from(symbols), interval);
         }
     }
 

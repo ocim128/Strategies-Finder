@@ -31,6 +31,17 @@ import { fetchWithTimeoutAndRetry, isAbortError } from "../dataProviders/fetch-h
 import { fetchLocalApi } from "../local-api-transport";
 import { encodeBinaryOhlcvRows } from "../ohlcv-binary";
 import { beginNdjsonStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, sendJson, type ViteHttpResponse } from "../vite-http-utils";
+import { isAllowedLocalRequest } from "../local-route-authorization";
+import type {
+    CryptoStreamEvent,
+    CryptoSyncRunSnapshot,
+} from "./crypto-data-stream-types";
+
+// Re-export the shared wire types so existing imports of them from this module
+// keep resolving — the source of truth now lives in the leaf
+// `crypto-data-stream-types` module shared with the browser service (audit
+// Finding 6).
+export type { CryptoStreamEvent, CryptoSyncRunSnapshot };
 
 const APP_ROOT = process.cwd();
 const CRYPTO_DATA_DIR = resolve(APP_ROOT, "price-data", "crypto");
@@ -69,6 +80,13 @@ const BINANCE_FETCH_MAX_ATTEMPTS = 3;
 const BINARY_STORE_MIN_ROWS = 1024;
 const MAX_TOTAL_BARS = 100_000;
 const MAX_SYNC_TARGETS = 5_000;
+// Crypto sync/download request bodies carry only symbols, intervals, market
+// type, and bar counts — even the 5_000-target cap is well under 1 MB of JSON.
+// The shared `readJsonBody` default is 80 MB (the SQLite OHLCV store needs it),
+// so pin an explicit 64 KB cap matched to IBKR (`IBKR_BODY_LIMIT_BYTES`) and the
+// strategy-admin plugin. Reduces JSON-parse memory-pressure exposure and makes
+// the contract explicit (audit Finding 3).
+const CRYPTO_BODY_LIMIT_BYTES = 64 * 1024;
 const BINANCE_SYMBOL_PATTERN = /^[A-Z0-9]{2,30}$/;
 const BINANCE_NATIVE_INTERVALS = new Set([
     "1m", "3m", "5m", "15m", "30m",
@@ -474,19 +492,22 @@ async function syncOneSymbol(
 // Owner-lock + NDJSON + status-snapshot (mirrors IBKR plugin)
 // ---------------------------------------------------------------------
 
-export type CryptoSyncRunState = {
-    startedAt: string;
-    mode: "sync" | "download";
+/**
+ * Server-side in-progress run state. The server's `marketType` is a strongly
+ * typed `BinanceMarketType`; the wire `CryptoSyncRunSnapshot` widens it to
+ * `string` because the browser does not need to discriminate the enum. The two
+ * shapes are otherwise identical, so a future field rename is a compile-time
+ * failure on both sides (audit Finding 6).
+ *
+ * `completedTargets` + `updatedAt` were added in audit Finding 1 so a
+ * reattached tab can invalidate exactly the caches the server refreshed after
+ * a reload (previously the reattach path reported only "finished" and never
+ * invalidated, leaving stale chart/Finder/Batch caches in the new tab while
+ * the server kept writing).
+ */
+export type CryptoSyncRunState = Omit<CryptoSyncRunSnapshot, "interval" | "marketType"> & {
     interval: string;
     marketType: BinanceMarketType;
-    total: number;
-    index: number;
-    completed: number;
-    failed: number;
-    currentSymbol: string | null;
-    currentInterval: string | null;
-    failedSymbols: Array<{ symbol: string; error: string }>;
-    cancelled: boolean;
 };
 
 const SYNC_OWNER_NONE = 0;
@@ -495,8 +516,7 @@ let syncOwnerGen = 0;
 let syncRunState: CryptoSyncRunState | null = null;
 let syncAbortController: AbortController | null = null;
 
-type SyncStreamEvent = Record<string, unknown> & { type: string };
-type SyncStreamWriter = (event: SyncStreamEvent) => void;
+type SyncStreamWriter = (event: CryptoStreamEvent) => void;
 
 function normalizeSymbols(value: unknown): string[] {
     const raw = Array.isArray(value) ? value : String(value ?? "").split(/[\s,]+/);
@@ -615,8 +635,13 @@ export async function processCryptoSyncBatch(
         currentInterval: null,
         failedSymbols: [],
         cancelled: false,
+        completedTargets: [],
+        updatedAt: new Date().toISOString(),
     };
     const runState = syncRunState;
+    const touchRunState = (): void => {
+        if (syncRunState === runState) runState.updatedAt = new Date().toISOString();
+    };
 
     writer({ type: "start", total: targets.length, interval: runInterval, marketType, mode: syncOnly ? "sync" : "download" });
 
@@ -638,6 +663,7 @@ export async function processCryptoSyncBatch(
                 runState.index = index;
                 runState.currentSymbol = symbol;
                 runState.currentInterval = interval;
+                touchRunState();
             }
             try {
                 const result = await fetcher(symbol, interval, totalBars, marketType, syncOnly, signal);
@@ -647,7 +673,17 @@ export async function processCryptoSyncBatch(
                     break;
                 }
                 results.push(result);
-                if (syncRunState === runState) runState.completed += 1;
+                if (syncRunState === runState) {
+                    runState.completed += 1;
+                    // Record the symbol/interval pair the server successfully
+                    // wrote to SQLite + CSV so a reattached tab (reload) can
+                    // invalidate exactly those caches. The browser's own
+                    // streamed tally covers the in-tab request, but a tab that
+                    // reloads mid-sync only sees the status snapshot (audit
+                    // Finding 1).
+                    runState.completedTargets!.push({ symbol, interval });
+                    touchRunState();
+                }
                 writer({ type: "symbol", index, total: targets.length, ...result });
             } catch (error) {
                 if (isAbortError(error) || signal?.aborted) {
@@ -666,6 +702,7 @@ export async function processCryptoSyncBatch(
                 if (syncRunState === runState) {
                     runState.failed += 1;
                     runState.failedSymbols.push({ symbol, error: message });
+                    touchRunState();
                 }
                 writer({ type: "symbol_failed", index, total: targets.length, symbol, interval, error: message });
             }
@@ -675,6 +712,7 @@ export async function processCryptoSyncBatch(
             runState.index = runState.completed + runState.failed;
             runState.currentSymbol = null;
             runState.currentInterval = null;
+            touchRunState();
         }
     }
 
@@ -730,10 +768,45 @@ async function handleCryptoSyncRequest(
         if (syncAbortController === abortController) {
             syncAbortController = null;
         }
+        // Preserve the final snapshot briefly so a reattach poll that arrives
+        // just after the run ended can still read `completedTargets` and
+        // invalidate exactly the caches the server refreshed (audit Finding 1).
+        // The IBKR plugin clears the snapshot here unconditionally; the Crypto
+        // plugin instead transitions it to a TTL'd "last run" snapshot: the
+        // status endpoint reports `running: false` while still returning the
+        // final `completedTargets`, so a tab that reloaded mid-sync doesn't
+        // silently skip invalidation. The TTL reclaims the memory after a
+        // grace window; a new run repopulates `syncRunState` immediately.
+        if (syncRunState && syncOwner === SYNC_OWNER_NONE) {
+            retainFinalSyncRunStateBriefly();
+        }
+    }
+}
+
+/**
+ * How long a finished run's snapshot stays queryable via
+ * `GET /api/crypto/sync/status` so a reattached tab can read
+ * `completedTargets` and invalidate caches. Tuned well above the reattach poll
+ * interval (2s) so the first poll after a tab reload catches the final state
+ * without holding the snapshot indefinitely.
+ */
+const FINAL_RUN_SNAPSHOT_RETENTION_MS = 30_000;
+
+let finalRunSnapshotClearTimer: ReturnType<typeof setTimeout> | null = null;
+
+function retainFinalSyncRunStateBriefly(): void {
+    if (finalRunSnapshotClearTimer) {
+        clearTimeout(finalRunSnapshotClearTimer);
+    }
+    finalRunSnapshotClearTimer = setTimeout(() => {
+        finalRunSnapshotClearTimer = null;
+        // Don't clobber a snapshot a newer run has since populated.
         if (syncRunState && syncOwner === SYNC_OWNER_NONE) {
             syncRunState = null;
         }
-    }
+    }, FINAL_RUN_SNAPSHOT_RETENTION_MS);
+    // Don't let the retention timer keep the Node process alive on its own.
+    finalRunSnapshotClearTimer.unref?.();
 }
 
 /** Reset all module-level sync state. Exported for test isolation. */
@@ -743,18 +816,31 @@ export function __resetCryptoSyncStateForTests(): void {
     syncOwnerGen = 0;
     syncRunState = null;
     syncAbortController = null;
+    if (finalRunSnapshotClearTimer) {
+        clearTimeout(finalRunSnapshotClearTimer);
+        finalRunSnapshotClearTimer = null;
+    }
 }
 
 /**
  * Acquire the sync lock for `processCryptoSyncBatch` in tests. Mirrors what
  * `handleCryptoSyncRequest` does (bumps the generation and sets the owner) so
  * the batch's `lostOwnership()` check doesn't immediately bail. Pair with
- * `__resetCryptoSyncStateForTests` in `afterEach`/`beforeEach`.
+ * `__resetCryptoSyncStateForTests` in `beforeEach`/`afterEach`.
  */
 export function __acquireCryptoSyncOwnerForTests(): number {
     const owner = ++syncOwnerGen;
     syncOwner = owner;
     return owner;
+}
+
+/**
+ * Read-only snapshot of the in-progress (or briefly-retained final) run state
+ * for tests. Used to verify `completedTargets` and `updatedAt` accumulate
+ * correctly (audit Finding 1) without spinning up a Vite server.
+ */
+export function __getCryptoSyncRunStateForTests(): CryptoSyncRunState | null {
+    return syncRunState;
 }
 
 // ---------------------------------------------------------------------
@@ -768,8 +854,22 @@ export function cryptoDataVitePlugin(): Plugin {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
                 return;
             }
+            // Audit Finding 2: gate mutations on the same loopback/bearer
+            // policy the IBKR and strategy-admin routes already enforce, so a
+            // Vite server exposed via --host / tunnel / reverse proxy can't be
+            // driven to download Binance data or burn CPU/disk remotely.
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: crypto routes are local-only." });
+                return;
+            }
             try {
-                await handleCryptoSyncRequest(res as ViteHttpResponse, await readJsonBody(req), false);
+                // Audit Finding 3: explicit 64 KB body cap + JSON Content-Type
+                // check instead of the shared 80 MB default.
+                await handleCryptoSyncRequest(
+                    res as ViteHttpResponse,
+                    await readJsonBody(req, CRYPTO_BODY_LIMIT_BYTES, { requireJsonContentType: true }),
+                    false,
+                );
             } catch (error) {
                 sendCaughtErrorJson(res, error);
             }
@@ -797,8 +897,17 @@ export function cryptoDataVitePlugin(): Plugin {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
                 return;
             }
+            // Audit Finding 2: same gate as /download above.
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: crypto routes are local-only." });
+                return;
+            }
             try {
-                await handleCryptoSyncRequest(res as ViteHttpResponse, await readJsonBody(req), true);
+                await handleCryptoSyncRequest(
+                    res as ViteHttpResponse,
+                    await readJsonBody(req, CRYPTO_BODY_LIMIT_BYTES, { requireJsonContentType: true }),
+                    true,
+                );
             } catch (error) {
                 sendCaughtErrorJson(res, error);
             }
@@ -807,6 +916,12 @@ export function cryptoDataVitePlugin(): Plugin {
         middlewares.use("/api/crypto/stop", async (req: any, res: any) => {
             if (req.method !== "POST") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            // Audit Finding 2: gate Stop too — an unauthenticated remote caller
+            // must not be able to cancel a long-running sync.
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: crypto routes are local-only." });
                 return;
             }
             // Keep ownership until the aborted run unwinds. Releasing it here

@@ -146,6 +146,12 @@ class BatchBacktestService {
     private reattachTimer: ReturnType<typeof setTimeout> | null = null;
     private reattachTimerResolve: (() => void) | null = null;
     private reattachPollingStopped = false;
+    // Consecutive failed status polls during a reattach (audit Finding 4).
+    // Reset to 0 on any successful response. A transient Vite restart or
+    // network hiccup no longer strands the tab with stale buttons: the loop
+    // retries with capped backoff until either a response lands or the
+    // generous MAX_REATTACH_CONSECUTIVE_FAILURES threshold is reached.
+    private reattachConsecutiveFailures = 0;
     // Benchmark snapshot for the Copy Benchmark button. Each phase (run/mine/
     // stability) records wall clock + cache stats on completion; missing phases
     // stay null. `null` until at least one phase has completed in this session.
@@ -1154,20 +1160,40 @@ class BatchBacktestService {
      * gated by the server's `running` flag, `stopReattachPoll()` (Stop button /
      * dispose / a new Run), and a 2s→5s step-down after 5 minutes to shed idle
      * load on very long runs.
+     *
+     * Transient failure recovery (audit Finding 4): a thrown fetch or JSON
+     * parse no longer abandons the run. Each poll's fetch+parse is wrapped so a
+     * failure increments `reattachConsecutiveFailures`, surfaces a
+     * "connection interrupted" status alongside the last known snapshot, and
+     * retries with capped backoff (2s → 5s → 10s → 15s). A successful poll
+     * resets the counter. Only after `MAX_REATTACH_CONSECUTIVE_FAILURES`
+     * (~5 min at the 15s ceiling) does the loop give up and restore the Run
+     * button so the user can re-click to reattach — turning a single Vite
+     * restart from a fatal UI failure into a recoverable delay.
      */
     private async reattachToInProgressServerRun(): Promise<void> {
         const POLL_INTERVAL_MS = 2000;
         const LONG_POLL_INTERVAL_MS = 5000;
         const FAST_POLL_COUNT = 150; // 5 minutes at 2s before stepping down to 5s.
+        // Capped backoff for transient status-poll failures (audit Finding 4).
+        const FAILURE_BACKOFF_MS = [2_000, 5_000, 10_000, 15_000] as const;
+        // After this many consecutive failures, stop retrying and surface the
+        // "click Run to reattach" state. ~5 min at the 15s ceiling (20 × 15s)
+        // — comfortably longer than a Vite dev-server restart.
+        const MAX_REATTACH_CONSECUTIVE_FAILURES = 20;
         this.reattachPollingStopped = false;
+        this.reattachConsecutiveFailures = 0;
+        // Last snapshot rendered while the run was healthy, so the
+        // "connection interrupted" branch can keep the last known progress
+        // visible instead of blanking the status line.
+        let lastRunLabel: string | null = null;
         try {
             for (let poll = 0; ; poll += 1) {
                 if (this.reattachPollingStopped) {
                     // stopReattachPoll() ran between iterations (Stop / dispose / new Run).
                     return;
                 }
-                const response = await fetch(`/api/batch-backtest/status?after=${this.lastResults.length}`, { cache: "no-store" });
-                const payload = await response.json() as {
+                let payload: {
                     running?: boolean;
                     run?: {
                         total: number;
@@ -1191,6 +1217,56 @@ class BatchBacktestService {
                         cacheStats?: BatchDatasetCacheStats | null;
                     } | null;
                 };
+                try {
+                    const response = await fetch(`/api/batch-backtest/status?after=${this.lastResults.length}`, { cache: "no-store" });
+                    // Audit Finding 4: a non-2xx status is a transient failure,
+                    // not a parseable payload — treat it the same as a thrown
+                    // fetch so the backoff path engages instead of crashing on
+                    // `await response.json()` of an error body.
+                    if (!response.ok) {
+                        throw new Error(`status ${response.status}`);
+                    }
+                    payload = await response.json() as typeof payload;
+                } catch (error) {
+                    if (this.reattachPollingStopped) return;
+                    this.reattachConsecutiveFailures += 1;
+                    debugLogger.warn("batch.server.reattach_poll_failed", {
+                        consecutive: this.reattachConsecutiveFailures,
+                        error: error instanceof Error ? error.message : String(error),
+                    });
+                    if (this.reattachConsecutiveFailures > MAX_REATTACH_CONSECUTIVE_FAILURES) {
+                        // Give up retrying but do NOT strand the UI: restore
+                        // the Run button so the user can re-click to reattach.
+                        // The server may still own the run; a fresh in-tab
+                        // reattach cycle starts on the next init/Run click.
+                        const dom = this.getDom();
+                        dom.batchBacktestRunBtn.disabled = false;
+                        setVisible(dom.batchBacktestStopBtn, false);
+                        this.setRunBusy(dom, false);
+                        dom.batchBacktestStatus.textContent = "Server connection lost — click Run to reattach.";
+                        return;
+                    }
+                    // Keep the last known progress visible alongside the
+                    // interrupted warning so the user can see the run is
+                    // (probably) still alive on the server.
+                    const prior = lastRunLabel ? ` (${lastRunLabel})` : "";
+                    this.getDom().batchBacktestStatus.textContent
+                        = `Server connection interrupted${prior} — retrying (${this.reattachConsecutiveFailures}/${MAX_REATTACH_CONSECUTIVE_FAILURES})`;
+                    const backoffIndex = Math.min(this.reattachConsecutiveFailures - 1, FAILURE_BACKOFF_MS.length - 1);
+                    const backoffDelay = FAILURE_BACKOFF_MS[backoffIndex]!;
+                    await new Promise<void>((resolve) => {
+                        this.reattachTimerResolve = resolve;
+                        this.reattachTimer = setTimeout(resolve, backoffDelay);
+                    });
+                    this.reattachTimer = null;
+                    this.reattachTimerResolve = null;
+                    // Don't advance `poll` into the long-poll step-down just
+                    // because of retries — backoff already shed load.
+                    poll -= 1;
+                    continue;
+                }
+                // Successful poll: reset the transient-failure counter.
+                this.reattachConsecutiveFailures = 0;
                 if (!payload.running || !payload.run) {
                     // Adopt any leftover server-side artifacts (Mine Timing
                     // can still run against the prior run if it hasn't TTL'd).
@@ -1297,7 +1373,12 @@ class BatchBacktestService {
                 }
                 const seen = run.completed + run.failed;
                 const current = run.currentSymbol ? ` — ${run.currentSymbol}` : "";
-                dom.batchBacktestStatus.textContent = `Server run ${seen}/${run.total}${current}`;
+                const label = `Server run ${seen}/${run.total}${current}`;
+                dom.batchBacktestStatus.textContent = label;
+                // Capture for the transient-failure branch so the
+                // "connection interrupted" message can keep the last known
+                // progress visible (audit Finding 4).
+                lastRunLabel = label;
                 this.setProgress(dom, run.total > 0 ? (seen / run.total) * 100 : 0, `${seen}/${run.total}`);
                 const delay = poll < FAST_POLL_COUNT ? POLL_INTERVAL_MS : LONG_POLL_INTERVAL_MS;
                 await new Promise<void>((resolve) => {
