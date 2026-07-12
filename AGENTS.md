@@ -116,7 +116,7 @@ This codebase is a collection of tightly-coupled subsystems:
 Most breakages come from contract drift, not algorithm bugs.
 
 Recent refactor seams worth preserving:
-- app startup sequencing lives in `lib/app-bootstrap.ts` and `lib/bootstrap-feature-registry.ts`
+- app startup sequencing lives in `lib/app-bootstrap.ts` (explicit ordered `await runBootstrapStep(...)` calls — no declarative dependency graph)
 - shared state still lives in `lib/state.ts`, but app writes should go through `lib/state-actions.ts`
 - blob-style localStorage persistence now routes through `lib/persisted-json.ts`
 - backtest progress/status presentation now lives in `lib/backtest-run-presenter.ts`

@@ -29,10 +29,6 @@ import { getOptionalElement } from "./dom-utils";
 import { initCrossSymbolUI } from "./cross-symbol-ui";
 import { setBinanceMarketType, setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
 import { getLocalDailyAsset, isIbkrSymbol, isStockMarketSymbol } from "./local-daily-datasets";
-import {
-    runBootstrapFeatureStage,
-    type AppBootstrapFeature,
-} from "./bootstrap-feature-registry";
 import { markAppTiming, logAppTimingSnapshot } from "./app-timing";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 import {
@@ -123,191 +119,55 @@ function logScannerLoadError(error: unknown): void {
     debugLogger.error("scanner.load_failed", { error: error instanceof Error ? error.message : String(error) });
 }
 
-export const APP_BOOTSTRAP_FEATURES: readonly AppBootstrapFeature<AppBootstrapContext>[] = [
-    {
-        id: "layout",
-        stage: "pre_restore",
-        init: () => injectLayout(),
-    },
-    {
-        id: "global-errors",
-        stage: "pre_restore",
-        dependsOn: ["layout"],
-        init: () => setupGlobalErrorHandlers(),
-    },
-    {
-        id: "strategy-library",
-        stage: "pre_restore",
-        dependsOn: ["layout"],
-        init: async () => {
-            markAppTiming("manifestLoadStart");
-            await loadBuiltInStrategies([DEFAULT_BUILT_IN_STRATEGY_KEY]);
-            markAppTiming("manifestLoadEnd");
-            restoreCustomStrategies();
-        },
-    },
-    {
-        id: "strategy-registry-subscription",
-        stage: "pre_restore",
-        dependsOn: ["strategy-library"],
-        init: () => {
-            strategyRegistry.subscribe((event: StrategyRegistryEvent) => {
-                uiManager.updateStrategyDropdown(state.currentStrategyKey);
-                if (event.strategyKey === state.currentStrategyKey) {
-                    state.emit("currentStrategyKey", state.currentStrategyKey);
-                    if (state.ohlcvData.length > 0 && state.currentBacktestResult) {
-                        void backtestService.runCurrentBacktest();
-                    }
-                }
+function nowMs(): number {
+    return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
+
+function roundedDurationMs(startedAt: number): number {
+    return Math.round((nowMs() - startedAt) * 10) / 10;
+}
+
+/**
+ * Runs one named startup step, emitting the same `app.bootstrap.feature_complete`
+ * / `app.bootstrap.feature_failed` telemetry the prior declarative registry
+ * produced, so observability and error handling stay identical. Steps are
+ * awaited in the order they appear in {@link bootstrapApp} — no scheduler, no
+ * dependency graph — because startup is strictly sequential and the prior
+ * `dependsOn` declarations were documented as advisory only.
+ */
+async function runBootstrapStep(
+    id: string,
+    stage: "pre_restore" | "post_restore",
+    step: () => void | Promise<void>
+): Promise<void> {
+    const startedAt = nowMs();
+    try {
+        await step();
+        try {
+            debugLogger.event("app.bootstrap.feature_complete", {
+                id,
+                stage,
+                handler: "init",
+                durationMs: roundedDurationMs(startedAt),
             });
-        },
-    },
-    {
-        id: "charts",
-        stage: "pre_restore",
-        dependsOn: ["layout"],
-        init: () => {
-            chartManager.initCharts();
-            let crosshairRaf: number | null = null;
-            state.chart.subscribeCrosshairMove((param) => {
-                if (crosshairRaf !== null) {
-                    cancelAnimationFrame(crosshairRaf);
-                }
-                crosshairRaf = requestAnimationFrame(() => {
-                    handleCrosshairMove(param);
-                    crosshairRaf = null;
-                });
+        } catch {
+            // Bootstrap telemetry must never change bootstrap control flow.
+        }
+    } catch (error) {
+        try {
+            debugLogger.error("app.bootstrap.feature_failed", {
+                id,
+                stage,
+                handler: "init",
+                durationMs: roundedDurationMs(startedAt),
+                error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
             });
-        },
-    },
-    {
-        id: "strategy-panel",
-        stage: "pre_restore",
-        dependsOn: ["charts"],
-        init: () => strategyPanelController.init(),
-    },
-    {
-        id: "state-subscriptions",
-        stage: "pre_restore",
-        dependsOn: ["charts"],
-        init: () => setupStateSubscriptions(),
-    },
-    {
-        id: "ui-events",
-        stage: "pre_restore",
-        dependsOn: ["state-subscriptions"],
-        init: () => setupEventHandlers(),
-    },
-    {
-        id: "block-selector",
-        stage: "pre_restore",
-        dependsOn: ["ui-events"],
-        init: () => blockSelectorManager.init(),
-    },
-    {
-        id: "cross-symbol",
-        stage: "pre_restore",
-        dependsOn: ["ui-events"],
-        init: () => initCrossSymbolUI(),
-    },
-    {
-        id: "live-positions-handlers",
-        stage: "pre_restore",
-        dependsOn: ["ui-events"],
-        init: () => initLivePositionsHandlers(),
-    },
-    {
-        id: "engine-status",
-        stage: "pre_restore",
-        dependsOn: ["layout"],
-        init: () => initEngineStatusIndicator(),
-    },
-    {
-        id: "scanner-shortcut",
-        stage: "pre_restore",
-        dependsOn: ["layout"],
-        init: () => {
-            window.addEventListener("keydown", (event) => {
-                if (event.ctrlKey && event.shiftKey && event.key === "S") {
-                    event.preventDefault();
-                    void toggleScannerPanel().catch(logScannerLoadError);
-                }
-            });
-        },
-    },
-    {
-        id: "scanner-load-symbol",
-        stage: "pre_restore",
-        dependsOn: ["layout"],
-        init: () => {
-            window.addEventListener("scanner:load-symbol", ((event: CustomEvent<{ symbol: string }>) => {
-                setCurrentSymbol(event.detail.symbol);
-                void hideScannerPanel().catch(logScannerLoadError);
-            }) as EventListener);
-        },
-    },
-    {
-        id: "editor",
-        stage: "pre_restore",
-        dependsOn: ["strategy-library"],
-        init: () => {
-            editorManager.init(() => {
-                uiManager.updateStrategyDropdown(state.currentStrategyKey);
-            });
-        },
-    },
-    {
-        id: "initial-ui-sync",
-        stage: "pre_restore",
-        dependsOn: ["editor"],
-        init: () => {
-            uiManager.updateStrategyDropdown(state.currentStrategyKey);
-            uiManager.updateStrategyParams(state.currentStrategyKey);
-        },
-    },
-    {
-        id: "settings-state",
-        stage: "pre_restore",
-        dependsOn: ["initial-ui-sync", "strategy-library"],
-        restore: async (context) => restoreSavedSettings(context),
-    },
-    {
-        id: "settings-handlers",
-        stage: "post_restore",
-        dependsOn: ["settings-state"],
-        init: () => setupSettingsHandlers(),
-    },
-    {
-        id: "settings-ux",
-        stage: "post_restore",
-        dependsOn: ["settings-handlers"],
-        init: () => initSettingsUX(),
-    },
-    {
-        id: "form-accessibility",
-        stage: "post_restore",
-        dependsOn: ["settings-handlers"],
-        init: () => bindFormAccessibility(document),
-    },
-    {
-        id: "settings-autosave",
-        stage: "post_restore",
-        dependsOn: ["settings-handlers"],
-        init: () => settingsManager.setupAutoSave(),
-    },
-    {
-        id: "initial-data-load",
-        stage: "post_restore",
-        dependsOn: ["settings-autosave"],
-        init: async (context) => {
-            if (context.shouldLoadData) {
-                markAppTiming("dataLoadStart");
-                await dataManager.loadData();
-                markAppTiming("dataLoadEnd");
-            }
-        },
-    },
-] as const;
+        } catch {
+            // Bootstrap telemetry must never change bootstrap control flow.
+        }
+        throw error;
+    }
+}
 
 export async function bootstrapApp(): Promise<void> {
     const context: AppBootstrapContext = {
@@ -319,9 +179,117 @@ export async function bootstrapApp(): Promise<void> {
 
     markAppTiming("bootstrapStart");
     debugLogger.event("app.init.start");
-    await runBootstrapFeatureStage(APP_BOOTSTRAP_FEATURES, "pre_restore", "init", context);
-    await runBootstrapFeatureStage(APP_BOOTSTRAP_FEATURES, "pre_restore", "restore", context);
-    await runBootstrapFeatureStage(APP_BOOTSTRAP_FEATURES, "post_restore", "init", context);
+
+    // --- pre_restore: layout, registries, charts, handlers, UI sync ---
+    await runBootstrapStep("layout", "pre_restore", () => injectLayout());
+    await runBootstrapStep("global-errors", "pre_restore", () => setupGlobalErrorHandlers());
+    await runBootstrapStep("strategy-library", "pre_restore", async () => {
+        markAppTiming("manifestLoadStart");
+        await loadBuiltInStrategies([DEFAULT_BUILT_IN_STRATEGY_KEY]);
+        markAppTiming("manifestLoadEnd");
+        restoreCustomStrategies();
+    });
+    await runBootstrapStep("strategy-registry-subscription", "pre_restore", () => {
+        strategyRegistry.subscribe((event: StrategyRegistryEvent) => {
+            uiManager.updateStrategyDropdown(state.currentStrategyKey);
+            if (event.strategyKey === state.currentStrategyKey) {
+                state.emit("currentStrategyKey", state.currentStrategyKey);
+                if (state.ohlcvData.length > 0 && state.currentBacktestResult) {
+                    void backtestService.runCurrentBacktest();
+                }
+            }
+        });
+    });
+    await runBootstrapStep("charts", "pre_restore", () => {
+        chartManager.initCharts();
+        let crosshairRaf: number | null = null;
+        state.chart.subscribeCrosshairMove((param) => {
+            if (crosshairRaf !== null) {
+                cancelAnimationFrame(crosshairRaf);
+            }
+            crosshairRaf = requestAnimationFrame(() => {
+                handleCrosshairMove(param);
+                crosshairRaf = null;
+            });
+        });
+    });
+    await runBootstrapStep("strategy-panel", "pre_restore", () => strategyPanelController.init());
+    await runBootstrapStep("state-subscriptions", "pre_restore", () => setupStateSubscriptions());
+    await runBootstrapStep("ui-events", "pre_restore", () => setupEventHandlers());
+    await runBootstrapStep("block-selector", "pre_restore", () => blockSelectorManager.init());
+    await runBootstrapStep("cross-symbol", "pre_restore", () => initCrossSymbolUI());
+    await runBootstrapStep("live-positions-handlers", "pre_restore", () => initLivePositionsHandlers());
+    await runBootstrapStep("engine-status", "pre_restore", () => initEngineStatusIndicator());
+    await runBootstrapStep("scanner-shortcut", "pre_restore", () => {
+        window.addEventListener("keydown", (event) => {
+            if (event.ctrlKey && event.shiftKey && event.key === "S") {
+                event.preventDefault();
+                void toggleScannerPanel().catch(logScannerLoadError);
+            }
+        });
+    });
+    await runBootstrapStep("scanner-load-symbol", "pre_restore", () => {
+        window.addEventListener("scanner:load-symbol", ((event: CustomEvent<{ symbol: string }>) => {
+            setCurrentSymbol(event.detail.symbol);
+            void hideScannerPanel().catch(logScannerLoadError);
+        }) as EventListener);
+    });
+    await runBootstrapStep("editor", "pre_restore", () => {
+        editorManager.init(() => {
+            uiManager.updateStrategyDropdown(state.currentStrategyKey);
+        });
+    });
+    await runBootstrapStep("initial-ui-sync", "pre_restore", () => {
+        uiManager.updateStrategyDropdown(state.currentStrategyKey);
+        uiManager.updateStrategyParams(state.currentStrategyKey);
+    });
+
+    // pre_restore restore hook: saved-settings load happens after initial UI
+    // sync and strategy library so the dropdown/params are populated before
+    // the saved strategy/symbol/interval are applied.
+    {
+        const startedAt = nowMs();
+        try {
+            await restoreSavedSettings(context);
+            try {
+                debugLogger.event("app.bootstrap.feature_complete", {
+                    id: "settings-state",
+                    stage: "pre_restore",
+                    handler: "restore",
+                    durationMs: roundedDurationMs(startedAt),
+                });
+            } catch {
+                // Bootstrap telemetry must never change bootstrap control flow.
+            }
+        } catch (error) {
+            try {
+                debugLogger.error("app.bootstrap.feature_failed", {
+                    id: "settings-state",
+                    stage: "pre_restore",
+                    handler: "restore",
+                    durationMs: roundedDurationMs(startedAt),
+                    error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+                });
+            } catch {
+                // Bootstrap telemetry must never change bootstrap control flow.
+            }
+            throw error;
+        }
+    }
+
+    // --- post_restore: settings handlers, autosave, initial data load ---
+    await runBootstrapStep("settings-handlers", "post_restore", () => setupSettingsHandlers());
+    await runBootstrapStep("settings-ux", "post_restore", () => initSettingsUX());
+    await runBootstrapStep("form-accessibility", "post_restore", () => bindFormAccessibility(document));
+    await runBootstrapStep("settings-autosave", "post_restore", () => settingsManager.setupAutoSave());
+    await runBootstrapStep("initial-data-load", "post_restore", async () => {
+        if (context.shouldLoadData) {
+            markAppTiming("dataLoadStart");
+            await dataManager.loadData();
+            markAppTiming("dataLoadEnd");
+        }
+    });
+
     bindDirectLazyFeatureTriggers();
     attachTabLazyListener();
     const activeTabId = strategyPanelController.getActiveTabId();

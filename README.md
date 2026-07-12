@@ -51,8 +51,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 
 ### Bootstrap and layout
 - Entry: `index.ts`
-- Bootstrap registry: `lib/app-bootstrap.ts`
-- Dependency/stage runner: `lib/bootstrap-feature-registry.ts`
+- Bootstrap sequencer: `lib/app-bootstrap.ts`
 - Runtime layout injection: `lib/layout-manager.ts`
 - Runtime HTML source: `html-partials/*`
 - Feature wiring: `lib/handlers/*`
