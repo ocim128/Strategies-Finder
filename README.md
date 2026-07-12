@@ -65,7 +65,6 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Versioned localStorage helper: `lib/persisted-json.ts`
 - Shared runtime state: `lib/state.ts`
 - State write surface: `lib/state-actions.ts`
-- Domain selectors: `lib/state-domains.ts`
 
 ### Strategy and backtest engine
 - Strategy registry and loading: `strategyRegistry.ts`

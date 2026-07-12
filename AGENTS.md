@@ -118,7 +118,6 @@ Most breakages come from contract drift, not algorithm bugs.
 Recent refactor seams worth preserving:
 - app startup sequencing lives in `lib/app-bootstrap.ts` and `lib/bootstrap-feature-registry.ts`
 - shared state still lives in `lib/state.ts`, but app writes should go through `lib/state-actions.ts`
-- read-only state slices live in `lib/state-domains.ts`
 - blob-style localStorage persistence now routes through `lib/persisted-json.ts`
 - backtest progress/status presentation now lives in `lib/backtest-run-presenter.ts`
 
