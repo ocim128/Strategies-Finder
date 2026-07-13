@@ -15,16 +15,6 @@
             <div class="param-hint">Prefer Rust for faster backtests when available. Turn off to force TypeScript.</div>
             <div class="param-row" style="margin-top: 12px;">
                 <div class="param-group">
-                    <label class="param-label" for="batchExecutionMode">Batch Execution Mode</label>
-                    <select class="param-input" id="batchExecutionMode">
-                        <option value="server" selected>Server-Side (Node dev server)</option>
-                        <option value="browser">Browser-Tab (TypeScript only)</option>
-                    </select>
-                    <div class="param-hint">Server-Side runs the Batch Backtest workload in the Vite dev server process so the browser tab stays bounded for 1000+ pair runs. Browser-Tab is the legacy in-tab path; use it when no dev server is available (e.g. <code>vite preview</code>).</div>
-                </div>
-            </div>
-            <div class="param-row" style="margin-top: 12px;">
-                <div class="param-group">
                     <label class="param-label" for="finderUniverseExecutionMode">Finder Universe Execution Mode</label>
                     <select class="param-input" id="finderUniverseExecutionMode">
                         <option value="server" selected>Server-Side (Node dev server)</option>

@@ -20,6 +20,7 @@ import { setVisible } from "../dom-utils";
 import { ensureLazyStylesheet } from "../lazy-styles";
 import { debugLogger } from "../debug-logger";
 import { uiManager } from "../ui-manager";
+import { isDirectFractionTradeSizingMode, usesFixedDollarSizing } from "../types/backtest";
 import { computePerformanceVerdict } from "../finder/finder-universe-metrics";
 import { parsePortfolioSyntheticPairSymbol } from "../portfolioLab/portfolio-lab-synthetic";
 import { copyToClipboard } from "../browser-transfer";
@@ -30,14 +31,9 @@ import {
     shouldAutoRunBatchStability,
     writeBatchAutoRunStability,
 } from "./batch-auto-stability-preference";
-import { clearBatchDatasetCaches, getBatchDatasetCacheStats, loadBatchDataset } from "./batch-backtest-loader";
+import { getBatchDatasetCacheStats } from "./batch-backtest-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
-import { mapWithConcurrencyLimit } from "../async-pool";
-import { isIbkrSymbol } from "../local-daily-datasets";
-import {
-    runBatchBacktest,
-    type BatchBacktestSymbolResult,
-} from "./batch-backtest-runner";
+import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import { buildBatchRunFingerprint, parseBatchSymbols } from "./batch-run-contract";
 import { BATCH_SYMBOL_TEMPLATES, type BatchSymbolTemplateKey } from "./batch-symbol-templates";
 import {
@@ -65,27 +61,21 @@ import {
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import type { BatchStreamEvent, BatchMinerStreamEvent, BatchStabilityMineStreamEvent } from "./batch-backtest-stream-types";
 import {
-    createBatchSyntheticMinerProfile,
-    prepareBatchSyntheticPairArtifacts,
-    prepareBatchSyntheticTargetArtifacts,
-    resolveBatchSyntheticTargetSymbol,
-    runPreparedBatchSyntheticStateMiner,
-    runBatchSyntheticStateMiner,
     BATCH_SYNTHETIC_MINER_DEFAULT_OPTIONS,
     type BatchSyntheticAssetVerdict,
     type BatchSyntheticMinerResult,
     type BatchSyntheticPairContribution,
-    type BatchSyntheticPairArtifact,
-    type BatchSyntheticTargetArtifact,
 } from "./batch-synthetic-state-miner";
 import {
-    addStabilityVerdicts,
-    createStabilityAggregate,
-    finalizeStabilityAggregate,
-    sampleItems,
     type BatchStabilityMineResult,
     type BatchStabilityRow,
 } from "./batch-stability-mine";
+import { formatPortfolioFitSummary, shortFingerprint } from "./batch-portfolio-fit-summary";
+import type {
+    BatchPortfolioFitInput,
+    BatchPortfolioFitResult,
+} from "./batch-portfolio-fit-types";
+import type { BatchPortfolioFitStreamEvent } from "./batch-backtest-stream-types";
 import {
     projectMineVerdictToSnapshot,
     projectStabilityRowToSnapshot,
@@ -111,7 +101,7 @@ import {
     stabilityHorizonBars,
     type StabilityTopPick,
 } from "./stability-top-pick";
-import type { Strategy, StrategyParams, BacktestSettings } from "../types/strategies";
+import type { StrategyParams, BacktestSettings } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 
 const BATCH_RESULTS_STORAGE = {
@@ -136,6 +126,7 @@ class BatchBacktestService {
     private lastResults: BatchBacktestSymbolResult[] = [];
     private lastMinerResult: BatchSyntheticMinerResult | null = null;
     private lastStabilityResult: BatchStabilityMineResult | null = null;
+    private lastPortfolioFitResult: BatchPortfolioFitResult | null = null;
     private lastRunFingerprint: string | null = null;
     private lastRunInterval: string | null = null;
     // The strategy key that governed the last Run, captured at run start so
@@ -237,6 +228,12 @@ class BatchBacktestService {
         dom.batchBacktestCopyStabilityBtn.addEventListener("click", () => {
             void this.copyStabilityResults();
         });
+        dom.batchBacktestPortfolioFitBtn.addEventListener("click", () => {
+            void this.runPortfolioFit();
+        });
+        dom.batchBacktestCopyPortfolioFitBtn.addEventListener("click", () => {
+            void this.copyPortfolioFitResults();
+        });
         dom.batchBacktestSymbolTemplate.addEventListener("change", () => {
             const key = dom.batchBacktestSymbolTemplate.value as BatchSymbolTemplateKey;
             const template = BATCH_SYMBOL_TEMPLATES[key];
@@ -320,17 +317,8 @@ class BatchBacktestService {
         setVisible(dom.batchBacktestEmpty, false);
         dom.batchBacktestResults.replaceChildren();
 
-        // Server-side mode runs the workload in the Vite dev server process so
-        // the browser tab stays bounded for 1000+ pair runs. Browser-side is
-        // the legacy in-tab path; retained as a fallback for environments with
-        // no dev server (e.g. `vite preview`). See
-        // `docs/batch-backtest-server-side.md` for the full contract.
-        //
-        // `batchExecutionMode` lives on `BacktestSettingsData` (persistence
-        // type), not on the narrower `BacktestSettings` runtime type that
-        // `backtestService.getBacktestSettings()` returns. Read the DOM select
-        // directly — it's the source of truth the user just toggled.
-        const useServerMode = this.readBatchExecutionMode() === "server";
+        // Batch has one execution path: the Vite dev server streams scalar
+        // rows while retaining heavy Mine artifacts outside the browser tab.
         // Reset the prior run's server cache stats so they can't leak into the
         // next run's benchmark if the `done` event never arrives (cancel /
         // crash). `recordRunBenchmark` re-populates this from the `done` event
@@ -338,11 +326,7 @@ class BatchBacktestService {
         this.pendingServerRunCacheStats = null;
         const runStartedAt = performance.now();
         try {
-            if (useServerMode) {
-                await this.runBatchServer(dom, token, symbols, strategyKey, strategyParams, backtestSettings, capitalSettings, interval, runFingerprint);
-            } else {
-                await this.runBatchBrowser(dom, token, symbols, strategyKey, strategy, strategyParams, backtestSettings, capitalSettings, interval, runFingerprint);
-            }
+            await this.runBatchServer(dom, token, symbols, strategyKey, strategyParams, backtestSettings, capitalSettings, interval, runFingerprint);
         } catch (error) {
             if (token !== this.runToken) return;
             const message = error instanceof Error ? error.message : String(error);
@@ -358,26 +342,13 @@ class BatchBacktestService {
                 // Mine button must be gated on the `serverHasArtifacts` flag
                 // (set by the `done` event), not on `row.data !== undefined`
                 // (the browser never holds `row.data` in this mode).
-                dom.batchBacktestMineBtn.disabled = useServerMode
-                    ? !this.serverHasArtifacts
-                    : !this.hasMineableArtifacts();
-                dom.batchBacktestStabilityMineBtn.disabled = useServerMode
-                    ? !this.serverHasArtifacts
-                    : !this.hasMineableArtifacts();
+                dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
+                dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
                 this.updateSummary(dom);
                 this.setProgress(dom, 100, this.cancelled ? "Stopped" : "Done");
                 this.setRunBusy(dom, false);
-                this.recordRunBenchmark(useServerMode ? "server" : "browser", strategyKey, interval, runStartedAt);
-                // The leg/pair LRU was a within-run dedup layer (e.g. ZEC
-                // appearing in many pairs fetched once). The run is over, and
-                // Mine Timing repopulates only the target-asset datasets it
-                // needs. Drop the resolved OHLCV arrays now so they don't sit
-                // in memory across Copy / new Run / tab work. If the user
-                // clicks Mine next, loadMinerTargets will refetch on miss.
-                clearBatchDatasetCaches();
-                const hasMineableArtifacts = useServerMode
-                    ? this.serverHasArtifacts
-                    : this.hasMineableArtifacts();
+                this.recordRunBenchmark("server", strategyKey, interval, runStartedAt);
+                const hasMineableArtifacts = this.serverHasArtifacts;
                 if (shouldAutoRunBatchStability(
                     dom.batchBacktestAutoRunStability.checked,
                     this.cancelled,
@@ -387,68 +358,6 @@ class BatchBacktestService {
                 }
             }
         }
-    }
-
-    private async runBatchBrowser(
-        dom: BatchBacktestDom,
-        token: number,
-        symbols: string[],
-        strategyKey: string,
-        strategy: Strategy,
-        strategyParams: StrategyParams,
-        backtestSettings: BacktestSettings,
-        capitalSettings: CapitalSettings,
-        interval: string,
-        runFingerprint: string,
-    ): Promise<void> {
-        const output = await runBatchBacktest(
-            {
-                interval,
-                strategyKey,
-                strategy,
-                strategyParams,
-                backtestSettings,
-                capitalSettings,
-                symbols,
-                loadDataset: (sym, intv, signal) => loadBatchDataset(sym, intv, signal),
-            },
-            {
-                setProgress: (percent, text) => {
-                    if (token !== this.runToken) return;
-                    this.setProgress(dom, percent, text);
-                },
-                setStatus: (text) => {
-                    if (token !== this.runToken) return;
-                    dom.batchBacktestStatus.textContent = text;
-                },
-                onSymbolComplete: (_index, result) => {
-                    if (token !== this.runToken) return;
-                    this.lastResults.push(result);
-                    this.appendedCount += 1;
-                    this.appendResultRow(dom, result);
-                },
-                isCancelled: () => token !== this.runToken || this.cancelled,
-            },
-        );
-        // A newer run has taken over; leave all UI state to that run.
-        if (token !== this.runToken) return;
-        this.lastResults = output.results;
-        this.lastRunFingerprint = runFingerprint;
-        this.lastRunInterval = interval;
-        this.lastRunStrategyKey = strategyKey;
-        // The runner emits onSymbolComplete in strict input order, so every
-        // processed row is already in the DOM. Only the cancelled back-fill
-        // tail (slots never processed because Stop broke the loop) needs to
-        // be appended here. Avoids a full O(N) rebuild + reflow per run.
-        for (let i = this.appendedCount; i < output.results.length; i += 1) {
-            this.appendResultRow(dom, output.results[i]);
-        }
-        this.appendedCount = output.results.length;
-        setVisible(dom.batchBacktestEmpty, output.results.length === 0);
-        dom.batchBacktestStatus.textContent = this.cancelled
-            ? `Stopped (${output.results.length}/${symbols.length} pairs)`
-            : `Done (${output.results.length} pairs, ${output.failedSymbols.length} failed)`;
-        this.saveLatestResultsSnapshot();
     }
 
     /**
@@ -994,7 +903,7 @@ class BatchBacktestService {
 
     private async runMiner(): Promise<void> {
         const dom = this.getDom();
-        if (this.lastResults.length === 0 && !this.serverHasArtifacts) {
+        if (!this.serverHasArtifacts) {
             dom.batchBacktestMinerSummary.textContent = "Run Batch first.";
             return;
         }
@@ -1003,89 +912,13 @@ class BatchBacktestService {
             dom.batchBacktestCopyMinerBtn.disabled = true;
             return;
         }
-        if (!this.serverHasArtifacts) {
-            const currentFingerprint = this.buildCurrentRunFingerprint();
-            if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
-                dom.batchBacktestMinerSummary.textContent = "Rerun Batch before mining; settings or symbols changed.";
-                dom.batchBacktestCopyMinerBtn.disabled = true;
-                return;
-            }
-        }
-
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestCopyMinerBtn.disabled = true;
-        dom.batchBacktestMinerSummary.textContent = this.serverHasArtifacts ? "Mining on server..." : "Loading target assets...";
+        dom.batchBacktestMinerSummary.textContent = "Mining on server...";
         dom.batchBacktestMinerResults.replaceChildren();
-
-        // Server-side mode: artifacts live on the server. Stream verdicts back
-        // via the `/api/batch-backtest/mine` NDJSON endpoint. The browser only
-        // reconstructs the per-verdict rows; it never holds the pair artifacts
-        // (data/signals/result.trades) that the server-side Run kept.
-        if (this.serverHasArtifacts) {
-            const mineStartedAt = performance.now();
-            const targetCount = await this.runMinerServer(dom);
-            this.recordMineBenchmark(mineStartedAt, targetCount);
-            return;
-        }
-
-        const pairArtifacts = this.buildMinerPairArtifacts();
-        if (pairArtifacts.length === 0) {
-            dom.batchBacktestMinerSummary.textContent = "No completed synthetic pair artifacts to mine.";
-            dom.batchBacktestCopyMinerBtn.disabled = true;
-            return;
-        }
-
-        try {
-            const targets = await this.loadMinerTargets(pairArtifacts, this.lastRunInterval ?? state.currentInterval);
-            if (targets.length === 0) {
-                this.lastMinerResult = null;
-                dom.batchBacktestMinerSummary.textContent = "No target asset candles loaded.";
-                return;
-            }
-            dom.batchBacktestMinerSummary.textContent = "Mining timing analogs...";
-            const mineStartedAt = performance.now();
-            const result = runBatchSyntheticStateMiner({
-                interval: this.lastRunInterval ?? state.currentInterval,
-                targets,
-                artifacts: pairArtifacts,
-            });
-            this.lastMinerResult = result;
-            this.renderMinerResult(dom, result);
-            dom.batchBacktestCopyMinerBtn.disabled = result.verdicts.length === 0;
-            this.recordMineBenchmark(mineStartedAt, targets.length);
-            this.persistMineTimingResult("mine");
-            debugLogger.event("batch_synthetic_miner.complete", {
-                pairs: pairArtifacts.length,
-                targets: targets.length,
-                verdicts: result.verdicts.length,
-            });
-            // The miner was the last consumer of the per-row OHLCV / signal /
-            // trade arrays. Drop them so a 1000-pair run doesn't keep ~5 GB
-            // of artifacts alive after Mine. Scalars, tradeSummary, and the
-            // DOM rows are unaffected, so the result list and Copy summary
-            // render. Re-mining the same run now requires a fresh Run, which
-            // matches the existing fingerprint guard.
-            for (const row of this.lastResults) {
-                row.data = undefined;
-                row.signals = undefined;
-                if (row.result) {
-                    row.result.trades = [];
-                }
-            }
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.lastMinerResult = null;
-            dom.batchBacktestMinerSummary.textContent = `Miner error: ${message}`;
-            debugLogger.error("batch_synthetic_miner.failed", { error: message });
-        } finally {
-            dom.batchBacktestMineBtn.disabled = !this.hasMineableArtifacts();
-            dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts && !this.hasMineableArtifacts();
-            // The leg/pair caches existed to feed Mine; the miner reads
-            // pairArtifacts into its own working set on entry, so the shared
-            // LRU no longer needs the resolved arrays. Drop them so the next
-            // action (Copy, new Run, tab work) doesn't carry them.
-            clearBatchDatasetCaches();
-        }
+        const mineStartedAt = performance.now();
+        const targetCount = await this.runMinerServer(dom);
+        this.recordMineBenchmark(mineStartedAt, targetCount);
     }
 
     /**
@@ -1162,8 +995,9 @@ class BatchBacktestService {
             dom.batchBacktestMinerSummary.textContent = `Miner error: ${message}`;
             debugLogger.error("batch_synthetic_miner.server_failed", { error: message });
         } finally {
-            dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts && !this.hasMineableArtifacts();
-            dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts && !this.hasMineableArtifacts();
+            dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
+            dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
+            this.updatePortfolioFitButtonState(dom);
         }
         return targetCount;
     }
@@ -1176,18 +1010,6 @@ class BatchBacktestService {
                 error: error instanceof Error ? error.message : String(error),
             });
         }
-    }
-
-    /**
-     * Read the `batchExecutionMode` select. Mirrors how `getEnginePreference`
-     * reads `useRustEngineToggle` directly from the DOM — both ids live in the
-     * `Backend Engine` settings section. Returns `"server"` when the select is
-     * missing (default is server-side; see settings-model.ts).
-     */
-    private readBatchExecutionMode(): "server" | "browser" {
-        const select = document.getElementById("batchExecutionMode") as HTMLSelectElement | null;
-        if (!select) return "server";
-        return select.value === "browser" ? "browser" : "server";
     }
 
     private stopReattachPoll(): void {
@@ -1470,7 +1292,7 @@ class BatchBacktestService {
 
     private async runStabilityMine(): Promise<void> {
         const dom = this.getDom();
-        if (this.lastResults.length === 0 && !this.serverHasArtifacts) {
+        if (!this.serverHasArtifacts || !this.lastRunFingerprint) {
             dom.batchBacktestMinerSummary.textContent = "Run Batch first.";
             return;
         }
@@ -1480,105 +1302,16 @@ class BatchBacktestService {
             dom.batchBacktestCopyStabilityBtn.disabled = true;
             return;
         }
-        const pairArtifacts = this.buildMinerPairArtifacts();
-        if (this.serverHasArtifacts && pairArtifacts.length === 0) {
-            const hasServerArtifacts = await this.refreshServerArtifactState(currentFingerprint);
-            if (!hasServerArtifacts) {
-                dom.batchBacktestMinerSummary.textContent = "Rerun Batch before stability mining; no artifacts on server.";
-                dom.batchBacktestStabilityMineBtn.disabled = true;
-                return;
-            }
-            const stabilityStartedAt = performance.now();
-            await this.runStabilityMineServer(dom);
-            this.recordStabilityBenchmark(stabilityStartedAt);
+        const hasServerArtifacts = await this.refreshServerArtifactState(currentFingerprint);
+        if (!hasServerArtifacts) {
+            dom.batchBacktestMinerSummary.textContent = "Rerun Batch before stability mining; no artifacts on server.";
+            dom.batchBacktestStabilityMineBtn.disabled = true;
             return;
         }
-        if (pairArtifacts.length === 0) {
-            dom.batchBacktestMinerSummary.textContent = "No completed synthetic pair artifacts to stability mine.";
-            dom.batchBacktestCopyStabilityBtn.disabled = true;
-            return;
-        }
-
-        const subsetSize = this.readClampedInt(dom.batchBacktestStabilitySubsetSize.value, 200, 10, pairArtifacts.length);
-        const reruns = this.readClampedInt(dom.batchBacktestStabilityReruns.value, 50, 1, 200);
-        const seed = this.readClampedInt(dom.batchBacktestStabilitySeed.value, 1, 1, Number.MAX_SAFE_INTEGER);
-        dom.batchBacktestStabilitySubsetSize.value = String(subsetSize);
-        dom.batchBacktestStabilityReruns.value = String(reruns);
-        dom.batchBacktestStabilitySeed.value = String(seed);
-
-        dom.batchBacktestMineBtn.disabled = true;
-        dom.batchBacktestStabilityMineBtn.disabled = true;
-        dom.batchBacktestCopyMinerBtn.disabled = true;
-        dom.batchBacktestCopyStabilityBtn.disabled = true;
-        dom.batchBacktestMinerSummary.textContent = "Loading target assets for stability mine...";
-        dom.batchBacktestMinerResults.replaceChildren();
-
-        try {
-            const targets = await this.loadMinerTargets(pairArtifacts, this.lastRunInterval ?? state.currentInterval);
-            if (targets.length === 0) {
-                this.lastStabilityResult = null;
-                dom.batchBacktestMinerSummary.textContent = "No target asset candles loaded.";
-                return;
-            }
-
-            // Pre-run freshness warning. Each target's last bar IS the AsOf the
-            // miner will snapshot, so its lag predicts whether every row will be
-            // vetoed `INVALID | DATA_STALE` before we spend ~60s on reruns. This
-            // only warns — the run continues so the analog distribution can still
-            // be inspected while iterating on the algorithm.
-            const interval = this.lastRunInterval ?? state.currentInterval;
-            const maxLagBars = computeMaxTargetLagBars(targets, interval);
-            if (maxLagBars !== null && maxLagBars > STABILITY_DATA_STALE_THRESHOLD_BARS) {
-                dom.batchBacktestMinerSummary.textContent = `Data STALE — max lag ${maxLagBars.toFixed(1)}b (threshold ${STABILITY_DATA_STALE_THRESHOLD_BARS}b). Stability run continuing, but every Action will be INVALID until OHLCV is refreshed.`;
-            }
-
-            const stabilityStartedAt = performance.now();
-            const aggregate = createStabilityAggregate(reruns, subsetSize, seed, pairArtifacts.length, targets.length);
-            const minerProfile = createBatchSyntheticMinerProfile();
-            let profileStartedAt = performance.now();
-            const preparedTargets = prepareBatchSyntheticTargetArtifacts(targets);
-            minerProfile.prepareTargetsMs += performance.now() - profileStartedAt;
-            profileStartedAt = performance.now();
-            const preparedPairs = prepareBatchSyntheticPairArtifacts(pairArtifacts);
-            minerProfile.preparePairsMs += performance.now() - profileStartedAt;
-            for (let runIndex = 0; runIndex < reruns; runIndex += 1) {
-                const subset = sampleItems(preparedPairs, subsetSize, seed + runIndex);
-                const subsetAssets = new Set(subset.flatMap((artifact) => [artifact.baseAsset, artifact.quoteAsset]));
-                profileStartedAt = performance.now();
-                const subsetTargets = preparedTargets.filter((target) => subsetAssets.has(target.asset));
-                minerProfile.subsetTargetFilterMs += performance.now() - profileStartedAt;
-                const result = runPreparedBatchSyntheticStateMiner({
-                    interval: this.lastRunInterval ?? state.currentInterval,
-                    targets: subsetTargets,
-                    artifacts: subset,
-                    profile: minerProfile,
-                });
-                addStabilityVerdicts(aggregate, result.verdicts);
-                dom.batchBacktestMinerSummary.textContent = `Stability mining ${runIndex + 1}/${reruns} | hits ${aggregate.hitEvents}`;
-                if ((runIndex + 1) % 5 === 0) {
-                    await yieldToUi();
-                }
-            }
-
-            this.lastStabilityResult = finalizeStabilityAggregate(aggregate);
-            this.lastStabilityResult.minerProfile = minerProfile;
-            this.renderStabilityResult(dom, this.lastStabilityResult);
-            dom.batchBacktestCopyStabilityBtn.disabled = this.lastStabilityResult.rows.length === 0;
-            this.recordStabilityBenchmark(stabilityStartedAt);
-            this.persistMineTimingResult("stability");
-            this.saveLatestResultsSnapshot();
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.lastStabilityResult = null;
-            dom.batchBacktestMinerSummary.textContent = `Stability miner error: ${message}`;
-            debugLogger.error("batch_stability_miner.failed", { error: message });
-        } finally {
-            dom.batchBacktestMineBtn.disabled = !this.hasMineableArtifacts();
-            dom.batchBacktestStabilityMineBtn.disabled = !this.hasMineableArtifacts();
-            clearBatchDatasetCaches();
-        }
+        const stabilityStartedAt = performance.now();
+        await this.runStabilityMineServer(dom);
+        this.recordStabilityBenchmark(stabilityStartedAt);
     }
-
     private async runStabilityMineServer(dom: BatchBacktestDom): Promise<void> {
         const subsetSize = this.readClampedInt(dom.batchBacktestStabilitySubsetSize.value, 200, 10, Number.MAX_SAFE_INTEGER);
         const reruns = this.readClampedInt(dom.batchBacktestStabilityReruns.value, 50, 1, 200);
@@ -1646,6 +1379,7 @@ class BatchBacktestService {
             this.lastStabilityResult = received.result;
             this.renderStabilityResult(dom, received.result);
             dom.batchBacktestCopyStabilityBtn.disabled = received.result.rows.length === 0;
+            this.updatePortfolioFitButtonState(dom);
             this.serverHasArtifacts = true;
             this.saveLatestResultsSnapshot();
             this.persistMineTimingResult("stability");
@@ -1655,8 +1389,9 @@ class BatchBacktestService {
             dom.batchBacktestMinerSummary.textContent = `Stability miner error: ${message}`;
             debugLogger.error("batch_stability_miner.server_failed", { error: message });
         } finally {
-            dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts && !this.hasMineableArtifacts();
-            dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts && !this.hasMineableArtifacts();
+            dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
+            dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
+            this.updatePortfolioFitButtonState(dom);
         }
     }
 
@@ -1704,92 +1439,180 @@ class BatchBacktestService {
         }
     }
 
-    private buildMinerPairArtifacts(): BatchSyntheticPairArtifact[] {
-        const artifacts: BatchSyntheticPairArtifact[] = [];
-        for (const row of this.lastResults) {
-            if (!row.result || !row.data || !row.signals) {
-                continue;
-            }
-            const parsed = parsePortfolioSyntheticPairSymbol(row.symbol);
-            if (!parsed) {
-                continue;
-            }
-            artifacts.push({
-                symbol: row.symbol,
-                baseAsset: parsed.baseAsset,
-                quoteAsset: parsed.quoteAsset,
-                baseSymbol: parsed.baseSymbol,
-                quoteSymbol: parsed.quoteSymbol,
-                data: row.data,
-                signals: row.signals,
-                result: row.result,
-            });
+    // -----------------------------------------------------------------------
+    // Portfolio Fit (R16: does not release artifacts; runs after Stability)
+    // -----------------------------------------------------------------------
+
+    private async runPortfolioFit(): Promise<void> {
+        const dom = this.getDom();
+        if (!this.lastStabilityResult || this.lastStabilityResult.rows.length === 0) {
+            dom.batchBacktestPortfolioFitSummary.textContent = "Run Stability Mine before Portfolio Fit.";
+            return;
         }
-        return artifacts;
+        const currentFingerprint = this.buildCurrentRunFingerprint();
+        if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
+            dom.batchBacktestPortfolioFitSummary.textContent = "Rerun Batch before Portfolio Fit; settings or symbols changed.";
+            return;
+        }
+        const hasServerArtifacts = await this.refreshServerArtifactState(currentFingerprint);
+        if (!hasServerArtifacts) {
+            dom.batchBacktestPortfolioFitSummary.textContent = "Rerun Batch before Portfolio Fit; no artifacts on server.";
+            dom.batchBacktestPortfolioFitBtn.disabled = true;
+            return;
+        }
+        await this.runPortfolioFitServer(dom);
     }
 
-    private async loadMinerTargets(
-        pairArtifacts: readonly BatchSyntheticPairArtifact[],
-        interval: string
-    ): Promise<BatchSyntheticTargetArtifact[]> {
-        const assets = Array.from(new Set(
-            pairArtifacts.flatMap((artifact) => [artifact.baseAsset, artifact.quoteAsset])
-                .map((asset) => asset.trim().toUpperCase())
-                .filter(Boolean)
-        )).sort();
-        // Resolve each stripped asset back to the symbol the loader expects.
-        // Crypto pairs (e.g. ZEC+APT) become `ZECUSDT` via the USDT suffix.
-        // Marked legs carry their provider routing inline (bullet `•` for
-        // IBKR, diamond `♦` for stock_market_data); for those, the stripped
-        // `baseAsset`/`quoteAsset` is NOT a Binance ticker, so appending
-        // `USDT` would produce a symbol no provider can serve (the cause of
-        // "No target asset candles loaded." on IBKR batches). Prefer the
-        // original marked symbol when one survives from the parsed pair.
-        const markedSymbolByAsset = new Map<string, string>();
-        for (const artifact of pairArtifacts) {
-            for (const [asset, symbol] of [
-                [artifact.baseAsset, artifact.baseSymbol],
-                [artifact.quoteAsset, artifact.quoteSymbol],
-            ] as const) {
-                const key = asset?.trim().toUpperCase();
-                if (key && symbol && !markedSymbolByAsset.has(key)) {
-                    markedSymbolByAsset.set(key, symbol);
+    private async runPortfolioFitServer(dom: BatchBacktestDom): Promise<void> {
+        dom.batchBacktestPortfolioFitBtn.disabled = true;
+        dom.batchBacktestCopyPortfolioFitBtn.disabled = true;
+        dom.batchBacktestPortfolioFitSummary.textContent = "Running Portfolio Fit on server...";
+        this.lastPortfolioFitResult = null;
+        try {
+            const capital = this.resolvePortfolioFitCapital();
+            const response = await fetch("/api/batch-backtest/portfolio-fit", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    fingerprint: this.lastRunFingerprint,
+                    interval: this.lastRunInterval ?? state.currentInterval,
+                    stability: this.lastStabilityResult,
+                    capital,
+                }),
+            });
+            if (!response.ok || !response.body) {
+                const text = await response.text().catch(() => "");
+                let payload: { error?: string } = {};
+                try { payload = JSON.parse(text); } catch { /* ignore */ }
+                if (response.status === 400 && payload.error?.includes("no artifacts")) {
+                    this.serverHasArtifacts = false;
                 }
+                throw new Error(payload.error ?? (text || `HTTP ${response.status}`));
             }
-        }
-        // Load target datasets with bounded concurrency. Each load is
-        // independent (loadBatchDataset goes through the shared LRU caches and
-        // dataManager.fetchDataDetached, both safe under concurrency), and the
-        // previous sequential `for...await` serialized ~16 network reads. On 4H
-        // each target has a deep history, so this was the dominant wall clock
-        // cost of Mine. Bounded at 8 in flight so an 80-asset IBKR/stock batch
-        // doesn't pin ~80 full datasets in memory at the same instant.
-        // Per-target errors are isolated so one failed asset does not reject
-        // the batch.
-        const BATCH_MINER_TARGET_LOAD_CONCURRENCY = 8;
-        const loaded = await mapWithConcurrencyLimit(
-            assets,
-            BATCH_MINER_TARGET_LOAD_CONCURRENCY,
-            async (asset): Promise<BatchSyntheticTargetArtifact | null> => {
-                const symbol = markedSymbolByAsset.get(asset) ?? resolveBatchSyntheticTargetSymbol(asset);
-                try {
-                    const data = await loadBatchDataset(symbol, interval);
-                    if (Array.isArray(data) && data.length > 0) {
-                        return { asset, symbol, data };
+            const received: { result: BatchPortfolioFitResult | null; cancelledSummary: string | null } = {
+                result: null,
+                cancelledSummary: null,
+            };
+            await consumeNdjsonStream<BatchPortfolioFitStreamEvent>(response.body, {
+                onStart: () => {
+                    dom.batchBacktestPortfolioFitSummary.textContent = "Portfolio Fit running on server...";
+                },
+                onProgress: (event: Extract<BatchPortfolioFitStreamEvent, { type: "progress" }>) => {
+                    dom.batchBacktestPortfolioFitSummary.textContent = `Portfolio Fit ${event.percent}% - ${event.text}`;
+                },
+                onDone: (event: Extract<BatchPortfolioFitStreamEvent, { type: "done" }>) => {
+                    if (event.ok) {
+                        received.result = event.result;
+                    } else {
+                        received.cancelledSummary = event.summary;
                     }
-                    return null;
-                } catch (error) {
-                    debugLogger.warn("batch_synthetic_miner.target_load_failed", {
-                        asset,
-                        symbol,
-                        error: error instanceof Error ? error.message : String(error),
-                    });
-                    return null;
-                }
-            },
-        );
-        // Preserve the sorted asset order; drop failed/empty loads.
-        return loaded.filter((entry): entry is BatchSyntheticTargetArtifact => entry !== null);
+                },
+                onFatal: (event: Extract<BatchPortfolioFitStreamEvent, { type: "fatal" }>) => {
+                    throw new Error(event.error);
+                },
+            }, { requireTerminal: true });
+            if (received.cancelledSummary) {
+                this.lastPortfolioFitResult = null;
+                dom.batchBacktestPortfolioFitSummary.textContent = received.cancelledSummary;
+                return;
+            }
+            if (!received.result) {
+                throw new Error("Server Portfolio Fit did not return a result.");
+            }
+            this.lastPortfolioFitResult = received.result;
+            this.renderPortfolioFitResult(dom, received.result);
+            dom.batchBacktestCopyPortfolioFitBtn.disabled = false;
+            this.serverHasArtifacts = true;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.lastPortfolioFitResult = null;
+            dom.batchBacktestPortfolioFitSummary.textContent = `Portfolio Fit error: ${message}`;
+            debugLogger.error("batch_portfolio_fit.server_failed", { error: message });
+        } finally {
+            this.updatePortfolioFitButtonState(dom);
+        }
+    }
+
+    private resolvePortfolioFitCapital(): BatchPortfolioFitInput["capital"] {
+        const cs = backtestService.getCapitalSettings();
+        const initialCapital = cs.initialCapital > 0 ? cs.initialCapital : 10000;
+        // R6/R11: resolve the base allocation mirroring position-builder.ts:246.
+        // The engine's resolved Kelly/optimal-f fraction is NOT available at
+        // post-analysis time (rolling SmartSizingState is not persisted), so
+        // `kellyFraction` stays null and we record the fallback provenance.
+        const isDirectFraction = isDirectFractionTradeSizingMode(cs.sizingMode);
+        const usePercentBase = (cs.sizingMode === "martingale" || cs.sizingMode === "anti_martingale")
+            && cs.advancedSizing?.martingaleBaseSize === "percent";
+        const preferFixedFallback = isDirectFraction && cs.fixedTradeAmount > 0;
+        const usesFixedDollar = !usePercentBase
+            && (usesFixedDollarSizing(cs.sizingMode) || preferFixedFallback)
+            && cs.fixedTradeAmount > 0;
+
+        let baseAllocation: number;
+        let baseAllocationSource: BatchPortfolioFitInput["capital"]["baseAllocationSource"];
+        if (usesFixedDollar && cs.fixedTradeAmount > 0) {
+            baseAllocation = cs.fixedTradeAmount;
+            baseAllocationSource = isDirectFraction
+                ? "direct_fraction_fallback_fixed"
+                : "fixed";
+        } else {
+            baseAllocation = initialCapital * (cs.positionSize / 100);
+            baseAllocationSource = isDirectFraction
+                ? "direct_fraction_fallback_percent"
+                : "percent";
+        }
+
+        // configuredKellyFraction: surface the user's configured fraction for
+        // transparency when Kelly sizing is active. kellyFraction stays null
+        // because the fraction was NOT applied to resolve baseAllocation
+        // (baseAllocationSource would need to be "resolved_kelly" for that).
+        const configuredKellyFraction: BatchPortfolioFitInput["capital"]["configuredKellyFraction"]
+            = cs.sizingMode === "kelly_criterion"
+                ? (cs.advancedSizing?.kellyFraction ?? "half")
+                : null;
+
+        return {
+            initialCapital,
+            baseAllocation,
+            kellyFraction: null, // never resolved at post-analysis in v1
+            baseAllocationSource,
+            configuredKellyFraction,
+        };
+    }
+
+    private renderPortfolioFitResult(dom: BatchBacktestDom, result: BatchPortfolioFitResult): void {
+        const label = "Portfolio Fit (EXPERIMENTAL - independent validation unavailable)";
+        const accepted = result.rows.filter((r) => r.decision === "ADD" || r.decision === "ADD_SMALL").length;
+        dom.batchBacktestPortfolioFitSummary.textContent =
+            `${label} | ${accepted}/${result.rows.length} accepted | allocated ${(result.portfolio.allocatedFraction * 100).toFixed(1)}%`
+            + ` | sizing: ${result.baseAllocationSource}`
+            + (result.configuredKellyFraction !== null ? ` | Kelly configured: ${result.configuredKellyFraction}` : "")
+            + (result.kellyFraction === null && result.configuredKellyFraction !== null ? " | Kelly resolved: unavailable" : "");
+        const container = dom.batchBacktestPortfolioFitResults;
+        container.replaceChildren();
+        if (result.rows.length === 0) {
+            container.textContent = "No candidates.";
+            return;
+        }
+        for (const row of result.rows) {
+            const el = document.createElement("div");
+            el.className = "batch-miner-row";
+            const reasons = row.reasonCodes.join(", ");
+            const allocationLimit = row.allocationLimitReasonCodes.length > 0
+                ? ` | limited by ${row.allocationLimitReasonCodes.join(", ")}`
+                : "";
+            el.textContent = `${row.asset} ${row.direction} -> ${row.decision} | ${(row.allocationFraction * 100).toFixed(1)}% | ${reasons}${allocationLimit}`;
+            container.appendChild(el);
+        }
+    }
+
+    private async copyPortfolioFitResults(): Promise<void> {
+        if (!this.lastPortfolioFitResult) return;
+        const text = formatPortfolioFitSummary(this.lastPortfolioFitResult).join("\n");
+        const copied = await copyToClipboard(text);
+        if (!copied) {
+            this.getDom().batchBacktestPortfolioFitSummary.textContent = "Copy Portfolio Fit failed.";
+        }
     }
 
     private buildCurrentRunFingerprint(): string | null {
@@ -1841,6 +1664,7 @@ class BatchBacktestService {
 
         this.lastResults = snapshot.results;
         this.lastStabilityResult = snapshot.stabilityResult ?? null;
+        this.lastPortfolioFitResult = null;
         this.lastRunFingerprint = snapshot.fingerprint;
         this.lastRunInterval = snapshot.interval || null;
         // Restore the strategy that governed the Run so Mine provenance survives
@@ -1860,9 +1684,17 @@ class BatchBacktestService {
         dom.batchBacktestCopyBtn.disabled = this.lastResults.length === 0;
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
+        dom.batchBacktestPortfolioFitBtn.disabled = true;
+        dom.batchBacktestCopyPortfolioFitBtn.disabled = true;
         if (this.lastStabilityResult) {
             this.renderStabilityResult(dom, this.lastStabilityResult);
             dom.batchBacktestCopyStabilityBtn.disabled = this.lastStabilityResult.rows.length === 0;
+        }
+        if (this.lastPortfolioFitResult) {
+            // Mark as non-current: artifacts/fingerprint may have expired.
+            this.renderPortfolioFitResult(dom, this.lastPortfolioFitResult);
+            dom.batchBacktestCopyPortfolioFitBtn.disabled = false;
+            dom.batchBacktestPortfolioFitSummary.textContent += " (restored — rerun Batch to confirm current)";
         }
         dom.batchBacktestStatus.textContent = `Restored last Batch run (${this.lastResults.length} pairs)`;
         this.setProgress(dom, 100, "Restored");
@@ -1909,13 +1741,24 @@ class BatchBacktestService {
         }
     }
 
-    private hasMineableArtifacts(): boolean {
-        return this.lastResults.some((row) => Boolean(row.result && row.data && row.signals && parsePortfolioSyntheticPairSymbol(row.symbol)));
+    /**
+     * Portfolio Fit is actionable only after Stability Mine produces actionable
+     * rows AND artifacts are still available (server or browser-held). Mirrors
+     * the Stability Mine button gate so the two stay in sync.
+     */
+    private canRunPortfolioFit(): boolean {
+        return Boolean(this.lastStabilityResult && this.lastStabilityResult.rows.length > 0)
+            && this.serverHasArtifacts;
+    }
+
+    private updatePortfolioFitButtonState(dom: BatchBacktestDom): void {
+        dom.batchBacktestPortfolioFitBtn.disabled = !this.canRunPortfolioFit();
     }
 
     private clearMinerResults(dom: BatchBacktestDom): void {
         this.lastMinerResult = null;
         this.lastStabilityResult = null;
+        this.lastPortfolioFitResult = null;
         // Clear rather than show "Miner idle": an empty .batch-miner-status
         // collapses via CSS (:empty) so the run-state region does not show a
         // noise strip before any mining has happened (point 7 of the refactor).
@@ -1923,17 +1766,10 @@ class BatchBacktestService {
         dom.batchBacktestMinerResults.replaceChildren();
         dom.batchBacktestCopyMinerBtn.disabled = true;
         dom.batchBacktestCopyStabilityBtn.disabled = true;
-    }
-
-    private renderMinerResult(dom: BatchBacktestDom, result: BatchSyntheticMinerResult): void {
-        dom.batchBacktestMinerResults.replaceChildren();
-        dom.batchBacktestMinerSummary.textContent = formatMinerSummary(result);
-        if (result.verdicts.length === 0) return;
-        const fragment = document.createDocumentFragment();
-        for (const verdict of result.verdicts) {
-            fragment.appendChild(this.createMinerRow(verdict));
-        }
-        dom.batchBacktestMinerResults.appendChild(fragment);
+        dom.batchBacktestPortfolioFitBtn.disabled = true;
+        dom.batchBacktestCopyPortfolioFitBtn.disabled = true;
+        dom.batchBacktestPortfolioFitSummary.textContent = "";
+        dom.batchBacktestPortfolioFitResults.replaceChildren();
     }
 
     private createMinerRow(verdict: BatchSyntheticAssetVerdict): HTMLDivElement {
@@ -2159,10 +1995,6 @@ class BatchBacktestService {
     // --------------------------------------------------------------------
     // Rendering
     // --------------------------------------------------------------------
-
-    private appendResultRow(dom: BatchBacktestDom, result: BatchBacktestSymbolResult): void {
-        dom.batchBacktestResults.appendChild(this.createResultRow(result));
-    }
 
     /**
      * Queue a live-stream row for DOM rendering and schedule a flush once per
@@ -2398,37 +2230,6 @@ class BatchBacktestService {
     }
 }
 
-function yieldToUi(): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-/**
- * Max OHLCV lag in bars across miner targets, using each target's last bar as
- * its AsOf. Returns null when no target's last-bar time or the interval can be
- * parsed. Uses the same market-aware lag helper as finalized Stability rows;
- * the target symbol selects IBKR session buckets versus continuous crypto time.
- */
-function computeMaxTargetLagBars(
-    targets: readonly BatchSyntheticTargetArtifact[],
-    interval: string,
-    nowMs = Date.now(),
-): number | null {
-    let maxLag: number | null = null;
-    for (const target of targets) {
-        const lastBar = target.data[target.data.length - 1];
-        if (!lastBar) continue;
-        const lag = computeStabilityDataLagBars(
-            String(lastBar.time),
-            interval,
-            nowMs,
-            isIbkrSymbol(target.symbol) ? "us_equities" : "continuous",
-        );
-        if (lag === null) continue;
-        if (maxLag === null || lag > maxLag) maxLag = lag;
-    }
-    return maxLag;
-}
-
 interface StabilityFormatContext {
     interval: string;
     strategyKey: string | null;
@@ -2541,16 +2342,6 @@ function formatStabilityTopPickLine(pick: StabilityTopPick): string {
         `Px ${formatPrice(row.close)}`,
         `Target ${targetText}`,
     ].join(" | ");
-}
-
-function shortFingerprint(value: string | null): string {
-    if (!value) return "--";
-    let hash = 0x811c9dc5;
-    for (let index = 0; index < value.length; index += 1) {
-        hash ^= value.charCodeAt(index);
-        hash = Math.imul(hash, 0x01000193);
-    }
-    return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
 function formatMinerSummary(result: BatchSyntheticMinerResult): string {

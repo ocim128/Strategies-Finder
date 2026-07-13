@@ -6,7 +6,7 @@ import {
     type UiBacktestEndpointSnapshot,
 } from "./backtest-endpoint-copy";
 import { clearActiveBacktestRerunContext } from "./backtest-rerun-context";
-import { state, type BacktestResultSource, type ChartMode, type MockChartModel } from "./state";
+import { state, type BacktestResultSource, type ChartMode } from "./state";
 import type { BinanceMarketType } from "./binance-market";
 import type { Indicator } from "./types/index";
 import type { BacktestResult, OHLCVData } from "./strategies/index";
@@ -82,10 +82,6 @@ export function setMarketSelection(selection: {
 
 export function setChartMode(mode: ChartMode): void {
     state.set('chartMode', mode);
-}
-
-export function setMockChartModel(model: MockChartModel): void {
-    state.set('mockChartModel', model);
 }
 
 export function setMockChartBars(bars: number): void {

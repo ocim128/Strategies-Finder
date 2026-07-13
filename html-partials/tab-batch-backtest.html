@@ -56,6 +56,10 @@
                 title="Repeatedly mine random pair subsets from the latest Batch run">
                 Stability Mine
             </button>
+            <button class="btn btn-secondary btn-compact" id="batchBacktestPortfolioFitBtn" type="button" disabled
+                title="Post-analysis: which Stability candidates improve the candidate portfolio, with bounded allocation">
+                Portfolio Fit
+            </button>
         </div>
         <div class="batch-action-group batch-action-group--divider" aria-hidden="true"></div>
         <div class="batch-action-group batch-action-group--exports" role="group" aria-label="Batch export">
@@ -70,6 +74,10 @@
             <button class="btn btn-secondary btn-compact" id="batchBacktestCopyStabilityBtn" type="button" disabled
                 title="Copy the latest stability miner summary">
                 Copy Stability
+            </button>
+            <button class="btn btn-secondary btn-compact" id="batchBacktestCopyPortfolioFitBtn" type="button" disabled
+                title="Copy the latest Portfolio Fit recommendation">
+                Copy Portfolio Fit
             </button>
             <button class="btn btn-secondary btn-compact" id="batchBacktestCopyBenchmarkBtn" type="button" disabled
                 title="Copy benchmark diagnostics (timings, cache hit rates) for the latest run / mine / stability as JSON">
@@ -117,12 +125,15 @@
         </div>
         <div class="batch-summary-grid" id="batchBacktestSummaryGrid" hidden></div>
         <div class="batch-miner-status" id="batchBacktestMinerSummary"></div>
+        <div class="batch-miner-status" id="batchBacktestPortfolioFitSummary"></div>
     </div>
 
     <div class="finder-results">
         <div class="finder-list" id="batchBacktestMinerResults">
         </div>
         <div class="finder-list" id="batchBacktestResults">
+        </div>
+        <div class="finder-list" id="batchBacktestPortfolioFitResults">
         </div>
         <div class="empty-state empty-state-illustrated" id="batchBacktestEmpty">
             <div class="empty-state-icon">

@@ -268,7 +268,9 @@ describe("projectStabilityTarget", () => {
         const shortT = projectStabilityTarget(makeRow({ direction: "SHORT", close: 100, medianRetPct: 5 }));
         // LONG: 105, SHORT: 95 — symmetric around the close. Encoding this so a
         // sign-flip regression in either branch is caught.
-        expect(longT + shortT).to.equal(200);
+        expect(longT).to.not.equal(null);
+        expect(shortT).to.not.equal(null);
+        expect(longT! + shortT!).to.equal(200);
     });
 
     it("returns null when close is null", () => {

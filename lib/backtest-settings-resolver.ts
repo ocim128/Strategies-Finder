@@ -473,7 +473,6 @@ export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze([
     "polymarketProtectionStopLossEnabled",
     "polymarketProtectionStopLossCents",
     "crossSymbolSecondary",
-    "batchExecutionMode",
     "finderUniverseExecutionMode",
 ]);
 

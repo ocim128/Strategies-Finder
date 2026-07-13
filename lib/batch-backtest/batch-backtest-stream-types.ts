@@ -101,3 +101,26 @@ export type BatchStabilityMineStreamEvent =
     | { type: "done"; ok: true; result: BatchStabilityMineResult }
     | { type: "done"; ok: false; cancelled: true; summary: string }
     | { type: "fatal"; error: string };
+
+// ---------------------------------------------------------------------------
+// Portfolio Fit stream events
+// ---------------------------------------------------------------------------
+
+import type { BatchPortfolioFitResult } from "./batch-portfolio-fit-types";
+
+/**
+ * Stream event contract for the Portfolio Fit server-side plugin
+ * (`POST /api/batch-backtest/portfolio-fit`). Mirrors the Stability Mine
+ * pattern: `start` → `progress`* → `done`/`fatal`. The `done` event carries
+ * a single scalar-only {@link BatchPortfolioFitResult} — no OHLCV, signal,
+ * trade, or equity-curve arrays cross to the browser (R8, R15).
+ *
+ * The consumer (`BatchBacktestService.runPortfolioFitServer`) reads it via
+ * `consumeNdjsonStream<BatchPortfolioFitStreamEvent>`.
+ */
+export type BatchPortfolioFitStreamEvent =
+    | { type: "start"; candidates: number }
+    | { type: "progress"; percent: number; text: string }
+    | { type: "done"; ok: true; result: BatchPortfolioFitResult; fingerprint: string | null }
+    | { type: "done"; ok: false; cancelled: true; summary: string }
+    | { type: "fatal"; error: string };

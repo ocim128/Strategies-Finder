@@ -2300,8 +2300,7 @@ export class FinderManager {
 		// Server-side dispatch: when the Finder Universe Execution Mode setting
 		// is "server", POST the run to the Vite dev server plugin
 		// (lib/finder/server/finder-vite-plugin.ts) and consume the NDJSON stream
-		// of scalar survivor candidates — mirrors BatchBacktestService.runBatch
-		// dispatching on batchExecutionMode. The server holds the N full OHLCV
+		// of scalar survivor candidates. The server holds the N full OHLCV
 		// datasets; the browser tab keeps only rendered scalar rows.
 		//
 		// On a successful server run we populate the same shared locals the

@@ -169,13 +169,11 @@ export interface BacktestSettingsData {
      *
      * UI-only: not consumed by Rust or worker surfaces.
      */
-    batchExecutionMode: "server" | "browser";
-
     /**
      * Where the Finder Symbol Universe runs its heavy multi-symbol evaluation.
      * - "server": the Vite dev server (Node) — keeps the browser tab bounded
      *   for large universes (N full OHLCV datasets held for the whole loop).
-     *   Default, matching batchExecutionMode's rationale.
+     *   Default for the bounded server path.
      * - "browser": the original in-tab path. Retained as a fallback for
      *   environments without the dev server.
      *
@@ -292,12 +290,8 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     // Cross-symbol
     crossSymbolSecondary: "",
 
-    // Batch execution mode (server vs browser). Server is the default; see
-    // field doc on BacktestSettingsData for rationale.
-    batchExecutionMode: "server",
-
     // Finder Symbol Universe execution mode. Server is the default, matching
-    // batchExecutionMode (off-browser is the whole point of the server path).
+    // the bounded server path.
     finderUniverseExecutionMode: "server",
 
     // Signal confirmation
@@ -389,7 +383,6 @@ const UI_ONLY_BACKTEST_SETTING_KEYS = new Set<keyof BacktestSettingsData>([
     'useRustEngine',
     'riskSettingsToggle',
     'confirmationStrategiesToggle',
-    'batchExecutionMode',
     'finderUniverseExecutionMode',
 ]);
 
@@ -487,14 +480,7 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
         : '';
     normalized.exitStrategyParams = normalizeStrategyParams(source.exitStrategyParams);
 
-    // Batch execution mode: accept "browser" verbatim; anything else (including
-    // missing) falls back to the default "server". Kept narrow so an unknown
-    // future value never silently switches a user to the in-browser path.
-    normalized.batchExecutionMode = source.batchExecutionMode === "browser"
-        ? "browser"
-        : DEFAULT_BACKTEST_SETTINGS.batchExecutionMode;
-
-    // Finder Symbol Universe execution mode: same rule as batchExecutionMode.
+    // Finder Symbol Universe execution mode.
     normalized.finderUniverseExecutionMode = source.finderUniverseExecutionMode === "browser"
         ? "browser"
         : DEFAULT_BACKTEST_SETTINGS.finderUniverseExecutionMode;

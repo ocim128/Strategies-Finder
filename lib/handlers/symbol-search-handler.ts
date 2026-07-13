@@ -1,4 +1,4 @@
-import { state, type ChartMode, type MockChartModel } from "../state";
+import { state, type ChartMode } from "../state";
 import { debugLogger } from "../debug-logger";
 import { debounce } from "../debounce";
 import { MAX_MOCK_BARS, MIN_MOCK_BARS } from "../dataProviders/mock";
@@ -22,7 +22,6 @@ import {
     setCurrentInterval,
     setCurrentSymbol,
     setMockChartBars,
-    setMockChartModel,
 } from "../state-actions";
 import type { UiEventHandlersDom } from "./ui-event-handlers-dom";
 
@@ -37,7 +36,6 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
     const symbolSearchLoading = dom.symbolSearchLoading;
     const symbolSearchEmpty = dom.symbolSearchEmpty;
     const localSp500Select = dom.localSp500Select;
-    const mockModelSelect = dom.mockModelSelect;
     const mockBarsInput = dom.mockBarsInput;
     const chartModeToggle = dom.chartModeToggle;
     const chartModeLabel = dom.chartModeLabel;
@@ -155,17 +153,6 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
         });
 
         void initializeLocalDailyPicker();
-    }
-
-    if (mockModelSelect) {
-        const allowedMockModels = new Set<MockChartModel>(['simple', 'hard', 'v3', 'v4', 'v5', 'v6']);
-        mockModelSelect.value = state.mockChartModel;
-        mockModelSelect.addEventListener('change', () => {
-            const value = mockModelSelect.value;
-            if (allowedMockModels.has(value as MockChartModel)) {
-                setMockChartModel(value as MockChartModel);
-            }
-        });
     }
 
     const syncChartModeToggle = () => {

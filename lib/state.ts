@@ -10,7 +10,6 @@ type NonFunctionPropertyKeys<T> = {
 }[keyof T];
 
 export type StateKey = NonFunctionPropertyKeys<State>;
-export type MockChartModel = 'simple' | 'hard' | 'v3' | 'v4' | 'v5' | 'v6';
 export type ChartMode = 'candlestick' | 'heikin-ashi';
 export type BacktestResultSource = 'backtest' | 'endpoint_preview' | 'ensemble_preview' | 'finder_selection' | 'walk_forward_oos';
 
@@ -23,7 +22,6 @@ export class State {
     public currentSymbol = 'ETHUSDT';
     public currentInterval = '1d';
     public binanceMarketType: BinanceMarketType = 'spot';
-    public mockChartModel: MockChartModel = 'simple';
     public mockChartBars = 30000;
     public chartMode: ChartMode = 'candlestick';
     public isDarkTheme = true;

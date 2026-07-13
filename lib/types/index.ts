@@ -27,7 +27,6 @@ export interface AppState {
     currentInterval: string;
     binanceMarketType: BinanceMarketType;
     isDarkTheme: boolean;
-    mockChartModel: string;
     mockChartBars: number;
     ohlcvData: OHLCVData[];
     indicators: Indicator[];

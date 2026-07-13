@@ -1,24 +1,16 @@
 # Server-Side Batch Backtest
 
-The Batch Backtest tab can run its heavy per-symbol workload either in the
-browser tab (the original path) or in the Vite dev-server (Node) process. The
-server-side path exists because 1000+ IBKR 4H synthetic-pair runs hold
+The Batch Backtest tab runs its heavy per-symbol workload in the Vite
+dev-server (Node) process. This single path exists because 1000+ IBKR 4H
+synthetic-pair runs hold
 ~5–10 GB of per-row artifacts (`data` + `signals` + `result.trades`) for the
 Mine Timing step, which OOMs a browser tab. Node can use main RAM directly;
 the browser tab keeps only rendered scalars and DOM rows.
 
-## When to use server-side mode
+## Runtime requirement
 
-Use **Server-Side** when:
-
-- You run large pair lists (≥200 synthetic pairs, especially IBKR 4H).
-- You Mine Timing on those lists (Mine needs the per-row artifacts in memory).
-- You reattach to a long run after a tab reload.
-
-Use **Browser-Tab** when:
-
-- You are on `vite preview` (no dev server) or a built bundle.
-- You are running small lists and want to skip the dev-server round-trip.
+Batch Run, Mine Timing, Stability, and Portfolio Fit require the Vite dev
+server. `vite preview` and static builds do not provide these endpoints.
 
 ## Starting the dev server with extra heap
 
@@ -49,14 +41,10 @@ headroom for an IBKR sync running concurrently.
 The heap requirement scales with pair count. For 200–400 pair runs,
 `--max-old-space-size=8192` is usually enough.
 
-## The settings toggle
+## Server-only execution
 
-`Settings → Backend Engine → Batch Execution Mode` selects `Server-Side` or
-`Browser-Tab`. The default is **Server-Side**. The toggle is a UI-only setting
-(it is not consumed by Rust or worker surfaces).
-
-If you change the toggle while a server-side run is in flight, the run keeps
-running on the server. Use Stop to cancel it.
+The browser streams scalar results from the server and never retains per-row
+OHLCV, signals, or trades. Use Stop to cancel an in-flight run.
 
 ## Stop vs Cancel vs Reload
 
@@ -171,6 +159,15 @@ All endpoints live under `/api/batch-backtest/*`:
   to call when no run is active.
 - `POST /mine` — NDJSON stream. Body: `{ fingerprint, interval }`. Streams
   `start`, `verdict`, `done`, `fatal` events.
+- `POST /stability-mine` — NDJSON stream. Body: `{ fingerprint, interval,
+  subsetSize, reruns, seed }`. Streams `progress`, `done`, `fatal` events.
+- `POST /portfolio-fit` — NDJSON stream. Body: `{ fingerprint, interval,
+  stability, capital, options? }`. Streams `start`, `progress`, `done`, `fatal`
+  events. The `done` event carries a single scalar-only `BatchPortfolioFitResult`
+  (no OHLCV/signal/trade/equity arrays). Shares the `minerOwner` lock with Mine
+  Timing and Stability Mine (mutually exclusive). Does NOT release artifacts —
+  they survive for a later Stability rerun (R16). See
+  `docs/portfolio-fit-mining-implementation-plan.md`.
 - `GET /status` — JSON snapshot for reattach. Returns `{ running, run, lastRun,
   miner }`.
 

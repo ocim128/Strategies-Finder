@@ -177,7 +177,6 @@ export type UiEventHandlersDom = UiEventRequiredDom & {
     symbolSearchLoading: HTMLElement | null;
     symbolSearchEmpty: HTMLElement | null;
     localSp500Select: HTMLSelectElement | null;
-    mockModelSelect: HTMLSelectElement | null;
     mockBarsInput: HTMLInputElement | null;
     chartModeToggle: HTMLButtonElement | null;
     chartModeLabel: HTMLElement | null;
@@ -220,7 +219,6 @@ export function createUiEventHandlersDom(): UiEventHandlersDom {
         symbolSearchLoading: getOptionalElement("symbolSearchLoading"),
         symbolSearchEmpty: getOptionalElement("symbolSearchEmpty"),
         localSp500Select: getOptionalElement<HTMLSelectElement>("localSp500Select"),
-        mockModelSelect: getOptionalElement<HTMLSelectElement>("mockModelSelect"),
         mockBarsInput: getOptionalElement<HTMLInputElement>("mockBarsInput"),
         chartModeToggle: getOptionalElement<HTMLButtonElement>("chartModeToggle"),
         chartModeLabel: getOptionalElement("chartModeLabel"),

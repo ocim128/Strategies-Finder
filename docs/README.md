@@ -11,7 +11,8 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 
 - [strategy-authoring.md](strategy-authoring.md) - built-in strategy contract, examples, helper surface, prepared execution, cross-symbol and 1s Polymarket strategy rules.
 - [backtest-endpoint.md](backtest-endpoint.md) - local HTTP endpoint request/response contract.
-- [batch-backtest-server-side.md](batch-backtest-server-side.md) - server-side Batch Backtest mode, Mine/Stability artifacts, miner acceleration, and memory budget.
+- [batch-backtest-server-side.md](batch-backtest-server-side.md) - Batch server runtime, Mine/Stability artifacts, miner acceleration, Portfolio Fit endpoint, and memory budget.
+- [portfolio-fit-mining-implementation-plan.md](portfolio-fit-mining-implementation-plan.md) - Portfolio Fit Phase 0 resolutions (R1–R19) governing the shipped allocation engine, validation, and contracts.
 - [cross-symbol.md](cross-symbol.md) - secondary-symbol strategy runtime contract and support matrix.
 - [synthetic-pairs.md](synthetic-pairs.md) - synthetic pair generation, supported surfaces, and state miner notes.
 - [path-dependent-exits.md](path-dependent-exits.md) - Risk Management path-exit modes and TypeScript/Rust compatibility.

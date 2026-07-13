@@ -427,12 +427,6 @@ export function setupStateSubscriptions() {
         scheduleDataReload();
     });
 
-    state.subscribe('mockChartModel', (mockChartModel) => {
-        debugLogger.event('state.mockChartModel', { mockChartModel });
-        if (!dataManager.isMockSymbol(state.currentSymbol)) return;
-        scheduleDataReload();
-    });
-
     state.subscribe('mockChartBars', (mockChartBars) => {
         debugLogger.event('state.mockChartBars', { mockChartBars });
         const input = document.getElementById('mockBarsInput') as HTMLInputElement | null;

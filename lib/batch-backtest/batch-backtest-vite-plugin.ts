@@ -41,6 +41,7 @@ import {
     createStabilityAggregate,
     finalizeStabilityAggregate,
     sampleItems,
+    type BatchStabilityMineResult,
 } from "./batch-stability-mine";
 import {
     createBatchSyntheticMinerProfile,
@@ -66,6 +67,12 @@ import {
     runParallelStability,
     type ParallelStabilityOutcome,
 } from "./batch-stability-parallel";
+import { buildCloseReturnSeries } from "../portfolioLab/portfolio-lab-statistics";
+import { runPortfolioFit } from "./batch-portfolio-fit-engine";
+import type {
+    BatchPortfolioFitInput,
+    PortfolioFitTargetReturnSeries,
+} from "./batch-portfolio-fit-types";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1201,6 +1208,158 @@ async function handleStabilityMineRequest(res: ViteHttpResponse, body: Record<st
     }
 }
 
+// ---------------------------------------------------------------------------
+// Portfolio Fit (R16: does NOT release artifacts; re-arms TTL)
+// ---------------------------------------------------------------------------
+
+/**
+ * Factored Portfolio Fit core, testable without an HTTP response. Mirrors
+ * `processStabilityMine`'s ownership/fingerprint/cancellation pattern but:
+ *  - Does NOT release artifacts (R16): Portfolio Fit preserves them so a later
+ *    Stability rerun can reuse them. Only re-arms the TTL in `finally`.
+ *  - Loads target datasets server-side via `loadMinerTargets` (the same loader
+ *    Mine/Stability use), builds close-to-close return series, and feeds them
+ *    to the pure `runPortfolioFit` engine.
+ *  - Emits a scalar-only `BatchPortfolioFitResult` in the `done` event (R15).
+ *
+ * The `stability` result is passed in from the browser (it holds the completed
+ * Stability Mine output). The fingerprint must match `lastRunFingerprint`.
+ */
+export async function processPortfolioFit(
+    fingerprint: string | null,
+    interval: string | null,
+    stability: BatchStabilityMineResult | null,
+    capital: BatchPortfolioFitInput["capital"] | null,
+    options: BatchPortfolioFitInput["options"],
+    writer: MinerStreamWriter,
+    owner: number,
+    loadTargets: (pairArtifacts: readonly StoredMineArtifactMeta[], interval: string, signal?: AbortSignal) => Promise<BatchSyntheticTargetArtifact[]> = loadMinerTargets,
+): Promise<void> {
+    const artifactMetas = collectStoredMineArtifactMetas();
+    if (artifactMetas.length === 0) {
+        writer({ type: "fatal", error: "Run Batch before Portfolio Fit; no artifacts on server." });
+        return;
+    }
+    if (!fingerprint || fingerprint !== lastRunFingerprint || !interval) {
+        writer({ type: "fatal", error: "Rerun Batch before Portfolio Fit; settings or symbols changed." });
+        return;
+    }
+    if (!stability || !Array.isArray(stability.rows) || stability.rows.length === 0) {
+        writer({ type: "fatal", error: "Run Stability Mine before Portfolio Fit; no actionable candidates." });
+        return;
+    }
+    if (!capital || !Number.isFinite(capital.initialCapital) || capital.initialCapital <= 0) {
+        writer({ type: "fatal", error: "Invalid capital settings; initialCapital must be positive." });
+        return;
+    }
+
+    clearArtifactReleaseTimer();
+    const lostOwnership = () => minerOwner !== owner;
+
+    try {
+        writer({ type: "start", candidates: stability.rows.length });
+        if (lostOwnership()) {
+            writer({ type: "done", ok: false, cancelled: true, summary: "Portfolio Fit cancelled." });
+            return;
+        }
+
+        const targets = await loadTargets(artifactMetas, interval, minerAbortController?.signal);
+        if (lostOwnership()) {
+            writer({ type: "done", ok: false, cancelled: true, summary: "Portfolio Fit cancelled." });
+            return;
+        }
+        writer({ type: "progress", percent: 30, text: `Loaded ${targets.length} target datasets` });
+
+        // Build close-to-close return series keyed by timeKey, one per asset.
+        const targetReturns: PortfolioFitTargetReturnSeries[] = [];
+        for (const target of targets) {
+            const returns = buildCloseReturnSeries(target.data);
+            targetReturns.push({ asset: target.asset, returns });
+        }
+
+        writer({ type: "progress", percent: 60, text: "Running Portfolio Fit engine" });
+        if (lostOwnership()) {
+            writer({ type: "done", ok: false, cancelled: true, summary: "Portfolio Fit cancelled." });
+            return;
+        }
+
+        const engineInput: BatchPortfolioFitInput = {
+            fingerprint,
+            interval,
+            stability,
+            capital,
+            targetReturns,
+            options,
+        };
+        const result = runPortfolioFit(engineInput);
+
+        writer({ type: "progress", percent: 90, text: "Finalizing" });
+        if (lostOwnership()) {
+            writer({ type: "done", ok: false, cancelled: true, summary: "Portfolio Fit cancelled." });
+            return;
+        }
+
+        writer({ type: "done", ok: true, result, fingerprint: lastRunFingerprint });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        debugLogger.warn("batch.server.portfolio_fit.fatal", { error: message });
+        writer({ type: "fatal", error: message });
+    } finally {
+        // R16: do NOT releaseLastResults. Portfolio Fit preserves artifacts for
+        // a later Stability rerun. Re-arm the TTL so they expire if the user
+        // walks away.
+        if (hasStoredMineArtifacts()) {
+            scheduleArtifactTtl();
+        }
+    }
+}
+
+async function handlePortfolioFitRequest(res: ViteHttpResponse, body: Record<string, unknown>): Promise<void> {
+    if (minerOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "Mine Timing is already running.");
+    }
+    if (runOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "A batch backtest is running. Use Stop first.");
+    }
+    if (!hasStoredMineArtifacts()) {
+        throw new HttpStatusError(400, "Run Batch before Portfolio Fit; no artifacts on server.");
+    }
+    const owner = ++minerOwnerGen;
+    minerOwner = owner;
+    minerAbortController = new AbortController();
+
+    let stream: ReturnType<typeof beginNdjsonStream> | null = null;
+    try {
+        stream = beginNdjsonStream(res);
+        await processPortfolioFit(
+            typeof body.fingerprint === "string" ? body.fingerprint : null,
+            typeof body.interval === "string" ? body.interval : lastRunInterval,
+            (body.stability ?? null) as BatchStabilityMineResult | null,
+            (body.capital ?? null) as BatchPortfolioFitInput["capital"] | null,
+            (body.options ?? undefined) as BatchPortfolioFitInput["options"],
+            (event) => stream!.write(event),
+            owner,
+        );
+        stream.end();
+    } catch (error) {
+        if (!stream) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        try {
+            stream.end({ type: "fatal", error: message });
+        } catch {
+            /* best-effort */
+        }
+    } finally {
+        if (minerOwner === owner) {
+            minerOwner = RUN_OWNER_NONE;
+        }
+        if (minerState && minerOwner === RUN_OWNER_NONE) {
+            minerState.running = false;
+        }
+        minerAbortController = null;
+    }
+}
+
 function handleStatusRequest(afterRow = 0, limitRaw?: number): unknown {
     const rowOffset = Math.max(0, Math.floor(Number.isFinite(afterRow) ? afterRow : 0));
     // Bound the page so a late-reattach tab never receives every accumulated
@@ -1364,6 +1523,23 @@ export function batchBacktestVitePlugin(): Plugin {
             }
         });
 
+        middlewares.use("/api/batch-backtest/portfolio-fit", async (req: any, res: any) => {
+            if (req.method !== "POST") {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
+                return;
+            }
+            try {
+                rememberLocalApiOriginFromRequest(req);
+                await handlePortfolioFitRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
+            } catch (error) {
+                sendCaughtErrorJson(res, error);
+            }
+        });
+
         middlewares.use("/api/batch-backtest/status", async (req: any, res: any) => {
             if (req.method !== "GET") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
@@ -1404,6 +1580,7 @@ export const __testInternals = {
     DEFAULT_ARTIFACT_RETENTION_MS,
     handleStatusRequest,
     handleStopRequest,
+    processPortfolioFit,
     setRunOwnerForTests(owner: number): void {
         runOwner = owner;
         if (owner === RUN_OWNER_NONE) {

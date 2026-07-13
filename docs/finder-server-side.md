@@ -43,7 +43,7 @@ Use **Browser-Tab** when:
 ## Selecting the mode
 
 `Settings → Backend Engine → Finder Universe Execution Mode`. Default is
-**Server-Side** (matching `batchExecutionMode`). The select is registered in
+**Server-Side**. The select is registered in
 both DOM-contract systems (`BACKTEST_DOM_SETTING_IDS` and
 `BACKTEST_SETTINGS_DOM_CONTRACTS`) with the case-sensitive
 `finderUniverseExecutionMode` parser; do not switch it to the generic `string`
