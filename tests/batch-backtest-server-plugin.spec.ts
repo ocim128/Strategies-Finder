@@ -970,21 +970,20 @@ describe("batch-backtest server plugin route-level authorization", () => {
         }
     });
 
-    it("allows a loopback-origin GET /status through to handleStatusRequest", async () => {
+    it("allows a loopback same-origin GET /status without Origin/Referer", async () => {
         const routes = captureBatchRoutes();
         const handler = routes.get("/api/batch-backtest/status");
         expect(handler).to.not.equal(undefined);
-        // A same-origin browser caller on a loopback host is trusted without a
-        // token. The handler must reach `handleStatusRequest` and return 200.
         const res = makeRouteResponse();
         await handler!(
-            { method: "GET", url: "/api/batch-backtest/status", headers: { origin: "http://127.0.0.1:5173" } },
+            {
+                method: "GET",
+                url: "/api/batch-backtest/status",
+                headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" },
+            },
             res,
         );
         expect(res.statusCode).to.equal(200);
-        // Body is the status payload (an object, possibly empty when no run is
-        // active). JSON-parseability is the contract; an auth rejection would
-        // produce { ok:false, error: ... } instead.
         const payload = JSON.parse(res.body);
         expect(payload).to.be.an("object");
         expect(payload.ok).to.not.equal(false);

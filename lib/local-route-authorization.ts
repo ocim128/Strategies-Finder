@@ -67,6 +67,12 @@ export function isAllowedLocalRequest(req: AuthorizedRequest): boolean {
     const origin = String(req.headers?.origin ?? "");
     const referer = String(req.headers?.referer ?? "");
     if (isLoopbackUrl(origin) || isLoopbackUrl(referer)) return true;
+    // Privacy settings may strip Origin and Referer from same-origin GETs.
+    // Fetch Metadata is browser-controlled; pair it with the loopback Host so
+    // a remote page served from a non-loopback Vite host is still rejected.
+    const fetchSite = String(req.headers?.["sec-fetch-site"] ?? "").toLowerCase();
+    const host = String(req.headers?.host ?? "");
+    if (fetchSite === "same-origin" && isLoopbackHost(host)) return true;
     // Non-local caller: require the documented shared secret.
     const token = process.env.LOCAL_PROXY_TOKEN?.trim();
     if (!token) return false;

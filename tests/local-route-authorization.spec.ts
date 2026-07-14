@@ -41,6 +41,16 @@ describe("isAllowedLocalRequest (audit Finding 2)", () => {
         expect(isAllowedLocalRequest({ headers: { origin: "http://[::1]:5173" } })).to.equal(true);
     });
 
+    it("allows a loopback same-origin browser GET when privacy settings strip Origin/Referer", () => {
+        delete process.env.LOCAL_PROXY_TOKEN;
+        expect(isAllowedLocalRequest({
+            headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" },
+        })).to.equal(true);
+        expect(isAllowedLocalRequest({
+            headers: { host: "localhost:5173", "sec-fetch-site": "same-origin" },
+        })).to.equal(true);
+    });
+
     it("allows other 127.0.0.0/8 loopback addresses", () => {
         delete process.env.LOCAL_PROXY_TOKEN;
         expect(isAllowedLocalRequest({ headers: { origin: "http://127.1.2.3:5173" } })).to.equal(true);
@@ -64,6 +74,9 @@ describe("isAllowedLocalRequest (audit Finding 2)", () => {
         expect(isAllowedLocalRequest({ headers: { origin: "http://example.test:5173" } })).to.equal(false);
         // 127.0.0.1 embedded as a substring of another host is not loopback.
         expect(isAllowedLocalRequest({ headers: { origin: "http://127.0.0.1.evil.test" } })).to.equal(false);
+        expect(isAllowedLocalRequest({
+            headers: { host: "example.test:5173", "sec-fetch-site": "same-origin" },
+        })).to.equal(false);
     });
 
     it("allows a non-local caller presenting the configured LOCAL_PROXY_TOKEN bearer", () => {

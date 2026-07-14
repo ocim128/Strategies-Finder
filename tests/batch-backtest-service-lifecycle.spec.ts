@@ -220,6 +220,27 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(dom.batchBacktestRunBtn.disabled).to.equal(false);
     });
 
+    it("does not treat a failed status preflight as proof that artifacts were deleted", async () => {
+        setupForAnalysis();
+        let stabilityPosts = 0;
+
+        await withMockFetch((url) => {
+            if (url.includes("/status")) {
+                return { ok: false, status: 401, text: "unauthorized" };
+            }
+            if (url.includes("/stability-mine")) {
+                stabilityPosts += 1;
+                return { ok: true, status: 200, body: ndjsonStream([{ type: "done", ok: true, result: { rows: [{ asset: "BTC" }] } }]) };
+            }
+            return { ok: true, status: 200, text: "{}" };
+        }, async () => {
+            await svc().runStabilityMine();
+        });
+
+        expect(stabilityPosts).to.equal(1);
+        expect(svc().lastStabilityResult).to.not.equal(null);
+    });
+
     it("only one analysis POST is issued after a rapid double-click", async () => {
         setupForAnalysis();
         svc().lastStabilityResult = { rows: [{ asset: "BTC" }] };
@@ -258,10 +279,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             }
             return { ok: true, status: 200, text: "{}" };
         }, async () => {
-            // Start the analysis (the preflight GET is in flight).
             const promise = svc().runStabilityMine();
-            // Click the REAL Stop button — the handler bound by bindEvents
-            // fires, bumping the generation so the post-preflight check aborts.
             const invoked = (dom.batchBacktestStopBtn as any).click();
             expect(invoked, "the real Stop click handler must be bound").to.equal(true);
             await promise;
@@ -297,9 +315,6 @@ describe("BatchBacktestService analysis lifecycle", () => {
             return { ok: true, status: 200, text: "{}" };
         }, async () => {
             const promise = svc().runStabilityMine();
-            // Wait until preflight has passed and the analysis POST is actually
-            // pending, then click the real Stop handler. Keep the first Stop
-            // unresolved to prove the post-ownership reissue is not coalesced.
             await postStarted.promise;
             (dom.batchBacktestStopBtn as any).click();
             postResponse.resolve({
@@ -307,9 +322,6 @@ describe("BatchBacktestService analysis lifecycle", () => {
                 status: 200,
                 body: ndjsonStream([{ type: "done", ok: false, cancelled: true, summary: "cancelled" }]),
             });
-            // Let the original Stop settle only after the second request has
-            // been issued. Until then the guard and operation buttons must
-            // remain locked so a delayed unscoped Stop cannot hit new work.
             while (stopPosts < 2) await Promise.resolve();
             expect(dom.batchBacktestRunBtn.disabled).to.equal(true);
             expect(dom.batchBacktestStabilityMineBtn.disabled).to.equal(true);

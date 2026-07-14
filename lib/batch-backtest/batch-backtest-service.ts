@@ -1486,12 +1486,12 @@ class BatchBacktestService {
     }
 
     private async refreshServerArtifactState(expectedFingerprint: string): Promise<boolean> {
+        const previouslyAvailable = this.serverHasArtifacts;
         try {
             const response = await fetch("/api/batch-backtest/status", { cache: "no-store" });
             if (!response.ok) {
-                this.serverHasArtifacts = false;
-                this.serverTimingSurfaceAvailable = false;
-                return false;
+                debugLogger.warn("batch.server.artifact_status_failed", { status: response.status });
+                return previouslyAvailable;
             }
             const payload = await response.json() as {
                 timingSurfaceAvailable?: boolean;
@@ -1511,12 +1511,10 @@ class BatchBacktestService {
             }
             return hasArtifacts;
         } catch (error) {
-            this.serverHasArtifacts = false;
-            this.serverTimingSurfaceAvailable = false;
             debugLogger.warn("batch.server.artifact_status_failed", {
                 error: error instanceof Error ? error.message : String(error),
             });
-            return false;
+            return previouslyAvailable;
         }
     }
 
