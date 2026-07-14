@@ -14,7 +14,6 @@ import { cloneJsonCompatible } from "./json-utils";
 
 import { FINDER_SORT_OPTIONS, METRIC_FULL_LABELS, UNIVERSE_METRIC_FULL_LABELS } from "./finder/constants";
 import { buildFinderEvaluationData, runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
-import { runFinderUniverseExecution } from "./finder/finder-runner-universe";
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderUI } from "./finder/finder-ui";
 import {
@@ -139,17 +138,6 @@ export function parseSyntheticPairToken(symbol: string): { baseSymbol: string; q
 		quoteSymbol: isMarkedLocalStockSymbol(quoteRaw) ? quoteRaw : resolveToBinanceSymbol(quoteRaw),
 	};
 }
-
-interface UniverseDatasetWindowStats {
-	symbol: string;
-	loadedBars: number;
-	slicedBars: number;
-	firstTime?: OHLCVData["time"];
-	lastTime?: OHLCVData["time"];
-	synthetic: boolean;
-}
-
-type UniverseDataWindowDiagnostics = NonNullable<FinderDiagnostics["universe"]>["dataWindow"];
 
 /**
  * Outcome of a server-side Finder Universe run, returned by
@@ -866,16 +854,6 @@ export class FinderManager {
 		return promise;
 	}
 
-	private async prepareUniverseCrossSymbolProvider(
-		selectedStrategy: FinderSelectedStrategy,
-		settings: ReturnType<typeof backtestService.getBacktestSettings>
-	): Promise<void> {
-		const secondarySymbol = resolveCrossSymbolSecondaryForStrategy(selectedStrategy.strategy, settings);
-		if (secondarySymbol) {
-			await this.prepareUniverseSymbolProvider(secondarySymbol);
-		}
-	}
-
 	private async populateUniverseWithLocalDailySeeds(): Promise<void> {
 		const dom = this.getDom();
 		dom.finderUniverseUseLocalSp500.disabled = true;
@@ -964,10 +942,9 @@ export class FinderManager {
 			// survivors) also sees `this.isCancelled` and stops promptly.
 			// Only POST when a run is actually in flight (this.isRunning) AND in
 			// server universe scope, so a stray click doesn't spam the endpoint.
-			if (this.isRunning && this.isUniverseScope() && this.readFinderUniverseExecutionMode() === 'server') {
+			if (this.isRunning && this.isUniverseScope()) {
 				void fetch('/api/finder/stop', { method: 'POST' }).catch(() => {
-					// Network/endpoint errors are expected on vite preview (no
-					// dev server plugin); the in-tab fallback already handled the run.
+					// The active request will surface an unavailable server endpoint.
 				});
 			}
 		});
@@ -2087,6 +2064,20 @@ export class FinderManager {
 
 		this.setProgress(true, 0, 'Validating universe survivors out-of-sample...');
 		const symbolDataCache = new Map<string, OHLCVData[]>();
+		const loadOosData = async (symbol: string, interval: string): Promise<OHLCVData[]> => {
+			const cacheKey = `${symbol.trim().toUpperCase()}|${interval}`;
+			const cached = symbolDataCache.get(cacheKey);
+			if (cached) return cached;
+			try {
+				const full = await this.loadUniverseDataset(symbol, interval);
+				const sliced = sliceFinderDataWindow(full, oosSlice);
+				symbolDataCache.set(cacheKey, sliced);
+				return sliced;
+			} catch {
+				symbolDataCache.set(cacheKey, []);
+				return [];
+			}
+		};
 
 		for (let candidateIndex = 0; candidateIndex < results.length; candidateIndex += 1) {
 			if (this.isCancelled) break;
@@ -2128,22 +2119,19 @@ export class FinderManager {
 				{ ...(oosBacktestSettings as Record<string, unknown>), interval: state.currentInterval } as BacktestSettings,
 				state.currentInterval,
 			);
+			const crossSymbolDataFetcher = strategy.crossSymbolConfig
+				? {
+					getProvider: (symbol: string) => dataManager.getProvider(symbol),
+					fetchDataDetached: loadOosData,
+				}
+				: undefined;
 
 			for (const symbolResult of candidate.symbols) {
 				if (this.isCancelled) break;
 				if (symbolResult.status === 'load_failed' || symbolResult.status === 'run_failed') {
 					continue;
 				}
-				let oosData = symbolDataCache.get(symbolResult.symbol);
-				if (oosData === undefined) {
-					try {
-						const full = await this.loadUniverseDataset(symbolResult.symbol, state.currentInterval);
-						oosData = sliceFinderDataWindow(full, oosSlice);
-					} catch {
-						oosData = [];
-					}
-					symbolDataCache.set(symbolResult.symbol, oosData);
-				}
+				const oosData = await loadOosData(symbolResult.symbol, state.currentInterval);
 				if (oosData.length === 0) continue;
 
 				try {
@@ -2158,6 +2146,7 @@ export class FinderManager {
 						capitalSettings,
 						preResolvedSettings,
 						preResolvedCapital,
+						dataFetcher: crossSymbolDataFetcher,
 						context: {
 							blockRange: null,
 							annotatePolymarket: false,
@@ -2233,58 +2222,6 @@ export class FinderManager {
 		};
 	}
 
-	private buildUniverseDataWindowDiagnostics(
-		dataSlice: FinderDataSlice,
-		statsBySymbol: Map<string, UniverseDatasetWindowStats>
-	): UniverseDataWindowDiagnostics {
-		const stats = [...statsBySymbol.values()];
-		const emptyBars = { min: 0, max: 0, avg: 0 };
-		if (stats.length === 0) {
-			return {
-				dataSlice,
-				loadedBars: emptyBars,
-				slicedBars: emptyBars,
-				shortestSymbols: [],
-			};
-		}
-
-		const summarizeBars = (values: number[]) => {
-			const sum = values.reduce((total, value) => total + value, 0);
-			return {
-				min: Math.min(...values),
-				max: Math.max(...values),
-				avg: Number((sum / values.length).toFixed(2)),
-			};
-		};
-
-		return {
-			dataSlice,
-			loadedBars: summarizeBars(stats.map((item) => item.loadedBars)),
-			slicedBars: summarizeBars(stats.map((item) => item.slicedBars)),
-			shortestSymbols: stats
-				.slice()
-				.sort((a, b) => a.slicedBars - b.slicedBars || a.loadedBars - b.loadedBars || a.symbol.localeCompare(b.symbol))
-				.slice(0, 8)
-				.map((item) => ({
-					symbol: item.symbol,
-					loadedBars: item.loadedBars,
-					slicedBars: item.slicedBars,
-					firstTime: item.firstTime,
-					lastTime: item.lastTime,
-					synthetic: item.synthetic,
-				})),
-		};
-	}
-
-	private attachUniverseDataWindowDiagnostics(
-		diagnostics: FinderDiagnostics,
-		dataSlice: FinderDataSlice,
-		statsBySymbol: Map<string, UniverseDatasetWindowStats>
-	): void {
-		if (!diagnostics.universe) return;
-		diagnostics.universe.dataWindow = this.buildUniverseDataWindowDiagnostics(dataSlice, statsBySymbol);
-	}
-
 	private async runUniverseFinder(options: FinderOptions, startTime: number): Promise<boolean> {
 		const selectedStrategies = await this.getUniverseSelectedStrategies();
 		if (selectedStrategies.length === 0) {
@@ -2297,143 +2234,44 @@ export class FinderManager {
 		}
 		const exitStrategyCandidates = await this.resolveExitStrategyCandidates(options, selectedStrategies);
 
-		// Server-side dispatch: when the Finder Universe Execution Mode setting
-		// is "server", POST the run to the Vite dev server plugin
-		// (lib/finder/server/finder-vite-plugin.ts) and consume the NDJSON stream
-		// of scalar survivor candidates. The server holds the N full OHLCV
-		// datasets; the browser tab keeps only rendered scalar rows.
-		//
-		// On a successful server run we populate the same shared locals the
-		// in-tab path builds (allResults / failedSymbols / maxLoadedSymbols /
-		// diagnosticsParts) and then FALL THROUGH to the shared OOS-validation
-		// + status tail below — so server-mode runs still get the browser-side
-		// OOS pass on the returned survivors. Returning directly here (the
-		// prior bug) skipped OOS entirely.
+		// The endpoint accepts one entry strategy per request. Sequence selected
+		// strategies and merge their scalar survivors before OOS validation.
 		const allResults: FinderUniverseCandidate[] = [];
-		const failedSymbols = new Set<string>();
 		const diagnosticsParts: FinderDiagnostics[] = [];
 		let maxLoadedSymbols = 0;
-		// Hoisted: the server path and the shared OOS tail both need `settings`.
+		let failedSymbolCount = 0;
 		const settings = backtestService.getBacktestSettings();
-		// Explicit flag — NOT allResults.length — for whether the server path
-		// executed. A valid server run can legitimately produce zero survivors
-		// (every candidate filtered out, or all symbols failed to load but the
-		// run completed). Using result count as the discriminator would rerun
-		// the entire workload in-tab in that case — a correctness bug (different
-		// random path) and a performance regression (defeats server-side). Only
-		// a `null` outcome (server unavailable, e.g. vite preview) falls through
-		// to the in-tab loop.
-		let serverRan = false;
-
-		if (this.readFinderUniverseExecutionMode() === 'server' && selectedStrategies.length === 1) {
-			const serverOutcome = await this.runUniverseFinderServer(options, selectedStrategies[0]!, exitStrategyCandidates, startTime);
-			if (serverOutcome !== null) {
-				serverRan = true;
-				allResults.push(...serverOutcome.results);
-				maxLoadedSymbols = serverOutcome.loadedSymbols;
-				for (let i = 0; i < serverOutcome.failedSymbolCount; i += 1) {
-					// The server reports only the count (not symbol names) on the
-					// wire; track the count so the status tail's failure segment
-					// renders. Symbol names aren't needed downstream.
-					failedSymbols.add(`__server_failed_${i}`);
-				}
-				if (serverOutcome.diagnostics) {
-					diagnosticsParts.push(serverOutcome.diagnostics);
-				}
-				// Fall through to the shared OOS + status tail below.
-			}
-			// null => server path was unavailable; fall through to the in-browser
-			// path (e.g. vite preview with no dev server).
+		for (let strategyIndex = 0; strategyIndex < selectedStrategies.length; strategyIndex += 1) {
+			const serverOutcome = await this.runUniverseFinderServer(
+				options,
+				selectedStrategies[strategyIndex]!,
+				exitStrategyCandidates,
+				startTime,
+				allResults,
+				strategyIndex,
+				selectedStrategies.length,
+			);
+			allResults.push(...serverOutcome.results);
+			maxLoadedSymbols = Math.max(maxLoadedSymbols, serverOutcome.loadedSymbols);
+			failedSymbolCount += serverOutcome.failedSymbolCount;
+			if (serverOutcome.diagnostics) diagnosticsParts.push(serverOutcome.diagnostics);
+			const mergedResults = sortFinderUniverseCandidates(
+				allResults,
+				options.universe.sortPriority,
+			).slice(0, options.topN);
+			this.setLatestResults({ scope: 'symbol_universe', results: mergedResults });
+			this.renderLatestResults();
+			if (this.isCancelled) break;
 		}
 
 		if (this.isCancelled) {
 			return true;
 		}
 
-		// In-tab path: run the per-strategy browser loop ONLY when the server
-		// path did not execute (unavailable: vite preview) OR when multiple
-		// entry strategies are selected (the server plugin takes one strategy
-		// per request in v1). A server run that produced zero survivors must NOT
-		// fall through here — that would rerun the workload in-tab.
-		if (!serverRan) {
-		const capitalSettings = backtestService.getCapitalSettings();
-		const dataWindowStats = new Map<string, UniverseDatasetWindowStats>();
-		const loadDataset = async (symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> => {
-			const data = await this.loadUniverseDataset(symbol, interval, signal);
-			const sliced = sliceFinderDataWindow(data, options.dataSlice ?? "all");
-			const normalizedSymbol = symbol.trim().toUpperCase();
-			dataWindowStats.set(normalizedSymbol, {
-				symbol: normalizedSymbol,
-				loadedBars: data.length,
-				slicedBars: sliced.length,
-				firstTime: sliced[0]?.time,
-				lastTime: sliced[sliced.length - 1]?.time,
-				synthetic: Boolean(parseSyntheticPairToken(symbol)),
-			});
-			return sliced;
-		};
-
-		for (let strategyIndex = 0; strategyIndex < selectedStrategies.length; strategyIndex += 1) {
-			const selectedStrategy = selectedStrategies[strategyIndex]!;
-			await this.prepareUniverseCrossSymbolProvider(selectedStrategy, settings);
-			const output = await runFinderUniverseExecution(
-				{
-					interval: state.currentInterval,
-					options,
-					settings,
-					capitalSettings,
-					selectedStrategy,
-					loadDataset,
-					getProvider: (symbol) => dataManager.getProvider(symbol),
-					generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),
-					exitStrategyCandidates,
-				},
-				{
-					setProgress: (percent, text) => {
-						const scaledPercent = ((strategyIndex + (percent / 100)) / selectedStrategies.length) * 100;
-						this.setProgress(true, scaledPercent, text);
-					},
-					setStatus: (text) => this.setStatus(`[${strategyIndex + 1}/${selectedStrategies.length}] ${selectedStrategy.name}: ${text}`),
-					yieldControl: () => this.taskYielder.yieldControl(),
-					isCancelled: () => this.isCancelled,
-					onResultsUpdate: (results) => {
-						const mergedResults = sortFinderUniverseCandidates(
-							[...allResults, ...results],
-							options.universe?.sortPriority ?? []
-						).slice(0, options.topN);
-						this.setLatestResults({ scope: 'symbol_universe', results: mergedResults });
-						this.renderLatestResults();
-					},
-				}
-			);
-
-			allResults.push(...output.results);
-			if (output.diagnostics) {
-				this.attachUniverseDataWindowDiagnostics(output.diagnostics, options.dataSlice ?? "all", dataWindowStats);
-				diagnosticsParts.push(output.diagnostics);
-			}
-			maxLoadedSymbols = Math.max(maxLoadedSymbols, output.loadedSymbols);
-			output.failedSymbols.forEach((symbol) => failedSymbols.add(symbol));
-
-			const mergedResults = sortFinderUniverseCandidates(
-				allResults,
-				options.universe.sortPriority
-			).slice(0, options.topN);
-			this.setLatestResults({ scope: 'symbol_universe', results: mergedResults });
-			this.renderLatestResults();
-
-			if (this.isCancelled) {
-				break;
-			}
-		}
-			} // end in-tab per-strategy loop (only when server path did not execute)
-
 		// Per-symbol OOS pass on the finalized survivors. Loads the complementary
 		// half of each symbol's data (cache hit on universeDatasetCache) and
 		// re-runs each survivor strategy via executeBacktest. Candidates whose
-		// OOS breadth collapses are filtered out. Runs for BOTH the server path
-		// (on the returned survivors — datasets fetched client-side) and the
-		// in-tab path.
+		// OOS breadth collapses are filtered out.
 		const universeResults = sortFinderUniverseCandidates(allResults, options.universe.sortPriority).slice(0, options.topN);
 		const oosRemovedCount = await this.applyUniverseOosValidationIfNeeded({
 			results: universeResults,
@@ -2458,7 +2296,7 @@ export class FinderManager {
 
 		if (!this.isCancelled) {
 			const totalSymbols = options.universe.symbols.length;
-			const failureCount = failedSymbols.size;
+			const failureCount = failedSymbolCount;
 			const survivors = this.getUniverseResults().length;
 			const segments = [
 				`Universe Finder complete. ${survivors} survivor${survivors === 1 ? '' : 's'}`,
@@ -2478,44 +2316,23 @@ export class FinderManager {
 	}
 
 	/**
-	 * Read the `finderUniverseExecutionMode` select. Mirrors
-	 * `BatchBacktestService.readBatchExecutionMode`: the id lives in the
-	 * `Backend Engine` settings section. Returns `"server"` when the select is
-	 * missing (default is server-side; see settings-model.ts).
-	 */
-	private readFinderUniverseExecutionMode(): 'server' | 'browser' {
-		const select = document.getElementById('finderUniverseExecutionMode') as HTMLSelectElement | null;
-		if (!select) return 'server';
-		return select.value === 'browser' ? 'browser' : 'server';
-	}
-
-	/**
 	 * Server-side Finder Universe path: POST to `/api/finder/universe-run`,
 	 * consume the NDJSON stream of scalar survivor candidates, and reconstruct
 	 * the terminal survivor slice + diagnostics in-browser. The server holds
 	 * the N full OHLCV datasets; the browser tab keeps only rendered scalars.
 	 *
-	 * Returns:
-	 *   - `null` when the server endpoint is unavailable (404/405, e.g. `vite
-	 *     preview` with no dev server) so the caller falls through to the in-tab
-	 *     path instead of erroring.
-	 *   - Otherwise a {@link ServerUniverseRunOutcome} carrying the terminal
-	 *     survivors + diagnostics + loaded/failed counts. The caller feeds these
-	 *     into the SHARED OOS-validation + status tail (the same one the in-tab
-	 *     path uses), so server-mode runs still get the browser-side OOS pass on
-	 *     the returned survivors (datasets are fetched client-side via
-	 *     loadUniverseDataset — cache-warm on universeDatasetCache).
-	 *
-	 * v1 runs a single selected entry strategy; multiple entry strategies fall
-	 * back to the in-tab path (the server plugin takes one strategy per request,
-	 * mirroring BatchBacktestService).
+	 * The caller sequences requests and applies browser-side OOS validation to
+	 * the merged scalar survivors.
 	 */
 	private async runUniverseFinderServer(
 		options: FinderOptions,
 		selectedStrategy: FinderSelectedStrategy,
 		exitStrategyCandidates: FinderSelectedStrategy[] | undefined,
 		startTime: number,
-	): Promise<ServerUniverseRunOutcome | null> {
+		priorResults: readonly FinderUniverseCandidate[],
+		strategyIndex: number,
+		strategyCount: number,
+	): Promise<ServerUniverseRunOutcome> {
 		const settings = backtestService.getBacktestSettings();
 		const capitalSettings = backtestService.getCapitalSettings();
 		// Send a symbol -> provider map so the server's cross-symbol mismatch
@@ -2527,6 +2344,10 @@ export class FinderManager {
 		const providerBySymbol: Record<string, string> = {};
 		for (const symbol of universeSymbols) {
 			providerBySymbol[symbol] = dataManager.getProvider(symbol);
+		}
+		const secondarySymbol = resolveCrossSymbolSecondaryForStrategy(selectedStrategy.strategy, settings);
+		if (secondarySymbol) {
+			providerBySymbol[secondarySymbol] = dataManager.getProvider(secondarySymbol);
 		}
 		const response = await fetch('/api/finder/universe-run', {
 			method: 'POST',
@@ -2544,10 +2365,8 @@ export class FinderManager {
 			}),
 		});
 
-		// 404 / 405 => no dev server plugin (e.g. vite preview). Return null so
-		// the caller falls through to the in-tab path instead of erroring.
 		if (response.status === 404 || response.status === 405) {
-			return null;
+			throw new Error("Finder Universe requires a Vite server runtime; static-only deployments are unsupported.");
 		}
 		if (!response.ok || !response.body) {
 			const text = await response.text();
@@ -2570,7 +2389,7 @@ export class FinderManager {
 		let failedSymbolCount = 0;
 
 		const renderMerged = (): void => {
-			const merged = sortFinderUniverseCandidates([...survivorByKey.values()], sortPriority)
+			const merged = sortFinderUniverseCandidates([...priorResults, ...survivorByKey.values()], sortPriority)
 				.slice(0, options.topN);
 			this.setLatestResults({ scope: 'symbol_universe', results: merged });
 			this.renderLatestResults();
@@ -2618,11 +2437,12 @@ export class FinderManager {
 			// finding 2).
 			await consumeNdjsonStream<FinderStreamEvent>(response.body, {
 				onStart: (event) => {
-					this.setStatus(`Server: 0/${event.totalSymbols} symbols (evaluating ~${event.totalCandidates} candidates)...`);
+					this.setStatus(`[${strategyIndex + 1}/${strategyCount}] ${selectedStrategy.name}: 0/${event.totalSymbols} symbols (evaluating ~${event.totalCandidates} candidates)...`);
 				},
 				onProgress: (event) => {
-					this.setProgress(true, event.percent, event.text);
-					this.setStatus(event.status);
+					const scaledPercent = ((strategyIndex + (event.percent / 100)) / strategyCount) * 100;
+					this.setProgress(true, scaledPercent, event.text);
+					this.setStatus(`[${strategyIndex + 1}/${strategyCount}] ${selectedStrategy.name}: ${event.status}`);
 				},
 				onCandidate: (event) => {
 					// Merge incrementally; the server emits each survivor identity
@@ -2643,7 +2463,9 @@ export class FinderManager {
 					// flushed. The server's done.candidates is the source of truth.
 					terminalCandidates = event.candidates ?? null;
 					if (terminalCandidates) {
-						this.setLatestResults({ scope: 'symbol_universe', results: terminalCandidates });
+						const displayed = sortFinderUniverseCandidates([...priorResults, ...terminalCandidates], sortPriority)
+							.slice(0, options.topN);
+						this.setLatestResults({ scope: 'symbol_universe', results: displayed });
 						this.renderLatestResults();
 					}
 					// Mark finalized so a deferred incremental render scheduled by
@@ -2677,7 +2499,9 @@ export class FinderManager {
 				if (loadedSymbols === 0) loadedSymbols = recovered.loadedSymbols;
 				if (failedSymbolCount === 0) failedSymbolCount = recovered.failedSymbolCount;
 				if (terminalCandidates) {
-					this.setLatestResults({ scope: 'symbol_universe', results: terminalCandidates });
+					const displayed = sortFinderUniverseCandidates([...priorResults, ...terminalCandidates], sortPriority)
+						.slice(0, options.topN);
+					this.setLatestResults({ scope: 'symbol_universe', results: displayed });
 					this.renderLatestResults();
 				}
 				finalized = true;

@@ -9,8 +9,9 @@ the browser tab keeps only rendered scalars and DOM rows.
 
 ## Runtime requirement
 
-Batch Run, Mine Timing, Stability, and Portfolio Fit require the Vite dev
-server. `vite preview` and static builds do not provide these endpoints.
+Batch Run, Mine Timing, Stability, Portfolio Fit, and Timing Surface require
+the Vite server runtime. Both `vite dev` and `vite preview` register these
+endpoints; a static-only deployment does not.
 
 ## Starting the dev server with extra heap
 
@@ -168,8 +169,23 @@ All endpoints live under `/api/batch-backtest/*`:
   Timing and Stability Mine (mutually exclusive). Does NOT release artifacts —
   they survive for a later Stability rerun (R16). See
   `docs/portfolio-fit-mining-implementation-plan.md`.
+- `POST /timing-surface` — NDJSON stream. Body: `{ fingerprint, interval }`
+  (no Stability rows, no cost overrides, no market arrays). Streams `start`,
+  `done`, and `fatal` events. The server derives everything from
+  its retained scalar Stability result + normalized cost model + the active
+  fingerprint; the browser never overrides research thresholds, costs, Stability
+  metadata, or subset seeds. The `done` event carries a single scalar-only
+  `TimingSurfaceResult` (no OHLCV/signal/trade/equity arrays; cells capped at
+  `maxCellsPerResult`). Every Phase 1–4 result carries `evidenceScope:
+  "historical_conditional"` and `exploitEligible: false`. Shares the `minerOwner`
+  lock with Mine Timing, Stability Mine, and Portfolio Fit (mutually exclusive).
+  Does NOT release artifacts — re-arms the TTL in `finally`. See
+  `docs/counterfactual-timing-surface.md`.
 - `GET /status` — JSON snapshot for reattach. Returns `{ running, run, lastRun,
-  miner }`.
+  miner, timingSurfaceAvailable }`. `timingSurfaceAvailable` is true only when
+  artifacts, retained Stability result, retained cost model, and fingerprint are
+  mutually consistent — the browser gates the Timing Surface button on this flag,
+  NOT on a localStorage-restored Stability snapshot.
 
 The `row` sent in `symbol` events contains ONLY scalars — never `data`,
 `signals`, or `result.trades`. Those arrays stay server-side. This is the

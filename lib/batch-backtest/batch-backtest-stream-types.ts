@@ -17,6 +17,7 @@
 
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
+import type { TimingSurfaceResult } from "./batch-timing-surface-types";
 import { computeBuyAndHoldPct, computeOpenTradeAssetScores } from "./batch-row-scalars";
 
 export type BatchStreamEvent =
@@ -122,5 +123,26 @@ export type BatchPortfolioFitStreamEvent =
     | { type: "start"; candidates: number }
     | { type: "progress"; percent: number; text: string }
     | { type: "done"; ok: true; result: BatchPortfolioFitResult; fingerprint: string | null }
+    | { type: "done"; ok: false; cancelled: true; summary: string }
+    | { type: "fatal"; error: string };
+
+// ---------------------------------------------------------------------------
+// Timing Surface stream events
+// ---------------------------------------------------------------------------
+
+/**
+ * Stream event contract for the Timing Surface server-side plugin
+ * (`POST /api/batch-backtest/timing-surface`). The engine is a single grid
+ * evaluation with no meaningful per-rerun progress to stream, so the contract
+ * is `start` → `done`/`fatal` (no `progress` events). The `done` event carries
+ * a single scalar-only {@link TimingSurfaceResult} — no OHLCV, signal, trade,
+ * or equity-curve arrays cross to the browser.
+ *
+ * The consumer (`BatchBacktestService.runTimingSurfaceServer`) reads it via
+ * `consumeNdjsonStream<BatchTimingSurfaceStreamEvent>`.
+ */
+export type BatchTimingSurfaceStreamEvent =
+    | { type: "start"; candidates: number; reruns: number }
+    | { type: "done"; ok: true; result: TimingSurfaceResult; fingerprint: string | null }
     | { type: "done"; ok: false; cancelled: true; summary: string }
     | { type: "fatal"; error: string };

@@ -10,7 +10,6 @@ const SHARED_CORE = path.join(APP_ROOT, "lib", "batch-backtest", "batch-dataset-
 const STREAM_TYPES = path.join(APP_ROOT, "lib", "finder", "server", "finder-stream-types.ts");
 const FINDER_PLUGIN = path.join(APP_ROOT, "lib", "finder", "server", "finder-vite-plugin.ts");
 const UNIVERSE_RUNNER = path.join(APP_ROOT, "lib", "finder", "finder-runner-universe.ts");
-const FINDER_MANAGER = path.join(APP_ROOT, "lib", "finder-manager.ts");
 
 function readSource(filePath: string): string {
     if (!existsSync(filePath)) {
@@ -115,9 +114,8 @@ describe("finder server loader parity", () => {
     });
 
     it("F4 regression: HTTP handler applies sliceFinderDataWindow to loaded data", () => {
-        // The browser path slices before evaluation; the server loader returns
-        // raw data. The handler must apply the same slice or browser/server
-        // results diverge for half-window / OOS / data-slice runs.
+        // The server loader returns raw data. The handler must apply the
+        // requested evaluation slice before running candidates.
         const plugin = readSource(FINDER_PLUGIN);
         expect(plugin).to.include("sliceFinderDataWindow");
         expect(plugin).to.include("loadDatasetWithSlice");
@@ -135,20 +133,4 @@ describe("finder server loader parity", () => {
         expect(plugin).to.include("useRustEnginePreference: input.useRustEnginePreference");
     });
 
-    it("F8 regression: dispatch discriminates on an explicit serverRan flag, NOT allResults.length", () => {
-        // A valid server run can produce ZERO survivors (every candidate
-        // filtered out, or all symbols failed to load but the run completed).
-        // Using allResults.length === 0 as the "run in-tab instead" discriminator
-        // would rerun the whole workload in-tab in that case — a correctness bug
-        // (different random path) and a performance regression (defeats the
-        // server path). The discriminator MUST be an explicit flag set only when
-        // the server path actually executed.
-        const manager = readSource(FINDER_MANAGER);
-        expect(manager, "must declare an explicit serverRan flag").to.include("let serverRan = false");
-        expect(manager, "must set serverRan = true on a non-null server outcome").to.include("serverRan = true");
-        // The in-tab loop guard must be the explicit flag, NOT result count.
-        expect(manager, "in-tab loop must guard on !serverRan").to.match(/if\s*\(\s*!serverRan\s*\)/);
-        // And it must NOT use the result-count discriminator that caused the bug.
-        expect(manager).to.not.contain("if (allResults.length === 0) {");
-    });
 });

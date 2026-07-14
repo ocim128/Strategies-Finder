@@ -1302,8 +1302,8 @@ function compareAnalogByDistanceThenOrder(
  * sits at the root, so it is the first eviction candidate. Indices > 0 hold
  * progressively "smaller" kept items.
  */
-function siftUp(
-    heap: Array<{ sample: BatchSyntheticCandidateSample; distance: number; order: number }>,
+function siftUp<T extends { distance: number; order: number }>(
+    heap: T[],
     index: number,
 ): void {
     let i = index;
@@ -1323,8 +1323,8 @@ function siftUp(
 /**
  * Max-heap sift-down. Restores the heap invariant after the root is replaced.
  */
-function siftDown(
-    heap: Array<{ sample: BatchSyntheticCandidateSample; distance: number; order: number }>,
+function siftDown<T extends { distance: number; order: number }>(
+    heap: T[],
     index: number,
     size: number,
 ): void {
@@ -1899,4 +1899,242 @@ function verdictRank(verdict: BatchSyntheticVerdict): number {
 
 export function resolveBatchSyntheticTargetSymbol(asset: string, suffix: "USDT" = "USDT"): string {
     return `${normalizeAsset(asset)}${suffix}`;
+}
+
+// ---------------------------------------------------------------------------
+// Server-internal analog-detail seam for the Timing Surface engine.
+//
+// This seam exposes selected historical state samples for the Timing Surface
+// engine WITHOUT changing the existing verdict bytes or auto-horizon behavior
+// of `runPreparedBatchSyntheticStateMiner`. Public Mine and Stability runners
+// continue returning their current scalar contracts unchanged.
+//
+// The seam is server-internal-only by convention: it returns heavy per-sample
+// state (snapshots, bar indexes) that the engine needs to evaluate delay/horizon
+// cells but that must NEVER be serialized into NDJSON. The engine itself is the
+// sole authorized consumer.
+// ---------------------------------------------------------------------------
+
+/**
+ * One historical analog sample with the original target bar index attached.
+ * The Timing Surface engine uses `barIndex` to enforce chronological window
+ * boundaries and to compute delayed-entry fills using the same execution helpers
+ * the engine loop uses.
+ *
+ * Heavy by design — server-internal only.
+ */
+export interface BatchSyntheticAnalogDetailSample {
+    snapshot: BatchSyntheticStateSnapshot;
+    /** Original target-bar index for this candidate. */
+    barIndex: number;
+    /** Direction at this historical bar (matches snapshot.direction). */
+    direction: BatchSyntheticDirection;
+}
+
+/**
+ * Calibrated distance scales for one (target, rerun) pair, frozen from
+ * discovery-only samples. The engine uses these to score analog distance
+ * against the current snapshot.
+ */
+export interface BatchSyntheticAnalogDetailScales {
+    scales: DistanceScales;
+}
+
+export interface BatchSyntheticAnalogDetailInput {
+    /** Prepared target artifact (with timeIndex). */
+    target: BatchSyntheticPreparedTargetArtifact;
+    /** Prepared linked pair artifacts for this rerun's subset. */
+    linkedPairs: readonly BatchSyntheticPreparedPairArtifact[];
+    /** Direction to retain (matches retained Stability row's LONG/SHORT). */
+    direction: BatchSyntheticDirection;
+    options?: Partial<BatchSyntheticMinerOptions>;
+}
+
+export interface BatchSyntheticAnalogDetailResult {
+    samples: BatchSyntheticAnalogDetailSample[];
+    scales: BatchSyntheticAnalogDetailScales | null;
+    /** Discovery-only closed linked-pair trade hold bars, for horizon calibration. */
+    discoveryHoldBars: number[];
+    /** Discovery bar index upper bound (exclusive): 60% of candidate span. */
+    discoveryEndIndex: number;
+    /** Selection bar index upper bound (exclusive): 80% of candidate span. */
+    selectionEndIndex: number;
+    /** Candidate span upper bound used for window boundary math. */
+    candidateSpan: number;
+    /** Current state reconstructed from the same indexed rerun data. */
+    currentSnapshot: BatchSyntheticStateSnapshot | null;
+    /** Reconstruct a state without rescanning linked-pair artifacts. */
+    snapshotAt(targetIndex: number): BatchSyntheticStateSnapshot | null;
+}
+
+/**
+ * Build the historical analog detail for one (target, rerun-subset) pair.
+ *
+ * This reuses the existing snapshot/candidate-state machinery but does NOT
+ * apply the current miner's full-history auto-horizon calibration, classify a
+ * verdict, or compute pair contributions. It returns the per-bar candidate
+ * samples and the discovery-calibrated distance scales so the Timing Surface
+ * engine can evaluate its own delay/horizon grid independently.
+ *
+ * Window boundaries are derived by raw target-bar position (60/20/20 split of
+ * the candidate span) — they do NOT depend on the miner's window labelling.
+ */
+export function buildBatchSyntheticAnalogDetail(
+    input: BatchSyntheticAnalogDetailInput,
+): BatchSyntheticAnalogDetailResult {
+    const options = resolveOptions(input.options);
+    const { target, linkedPairs, direction } = input;
+    if (linkedPairs.length === 0 || target.data.length === 0) {
+        return {
+            samples: [],
+            scales: null,
+            discoveryHoldBars: [],
+            discoveryEndIndex: 0,
+            selectionEndIndex: 0,
+            candidateSpan: 0,
+            currentSnapshot: null,
+            snapshotAt: () => null,
+        };
+    }
+    // The candidate span must accommodate at least the longest fallback horizon
+    // (24 bars). We do NOT calibrate horizons here — that's the engine's job,
+    // driven by `discoveryHoldBars` below.
+    const fallbackLongest = (options.horizons[options.horizons.length - 1] ?? 24);
+    const longest = Math.max(fallbackLongest, 24);
+    const candidateSpan = Math.max(1, target.data.length - longest);
+    const discoveryEndIndex = Math.max(0, Math.floor(candidateSpan * 0.6));
+    const selectionEndIndex = Math.max(discoveryEndIndex, Math.floor(candidateSpan * 0.8));
+
+    const lastTargetIndex = target.data.length - 1;
+    const candidateStateIndex = buildCandidateStateIndex(target, linkedPairs, options.lagBars, lastTargetIndex);
+    const snapshotAt = (targetIndex: number): BatchSyntheticStateSnapshot | null => {
+        if (targetIndex < 0 || targetIndex > lastTargetIndex) return null;
+        return buildSnapshotFromStates(
+            target.asset,
+            targetIndex,
+            target.data,
+            candidateStateIndex.statesByTargetIndex.get(targetIndex) ?? [],
+            candidateStateIndex.statesByTargetIndex.get(Math.max(0, targetIndex - TRANSITION_LOOKBACK_BARS)) ?? [],
+            linkedPairs,
+            options,
+        );
+    };
+    const currentSnapshot = snapshotAt(lastTargetIndex);
+
+    // Collect closed linked-pair trade hold bars whose entry AND exit fall
+    // inside discovery for horizon calibration.
+    const discoveryHoldBars: number[] = [];
+    for (const pair of linkedPairs) {
+        for (const range of pair.closedTradeRanges) {
+            // Pair and target datasets can have different gaps or starting
+            // timestamps. Raw pair indexes are therefore not valid target
+            // window coordinates; map the trade times onto the target first.
+            const targetEntryIndex = target.timeIndex.get(timeKey(range.trade.entryTime));
+            const targetExitIndex = target.timeIndex.get(timeKey(range.trade.exitTime));
+            if (targetEntryIndex === undefined || targetExitIndex === undefined) continue;
+            if (targetEntryIndex < discoveryEndIndex && targetExitIndex < discoveryEndIndex) {
+                discoveryHoldBars.push(Math.max(1, targetExitIndex - targetEntryIndex));
+            }
+        }
+    }
+
+    const samples: BatchSyntheticAnalogDetailSample[] = [];
+    for (const index of candidateStateIndex.candidateIndexes) {
+        if (index >= candidateSpan) continue;
+        const snapshot = snapshotAt(index);
+        if (!snapshot || snapshot.direction !== direction) continue;
+        samples.push({
+            snapshot,
+            barIndex: index,
+            direction: snapshot.direction,
+        });
+    }
+
+    if (samples.length < 4) {
+        return {
+            samples,
+            scales: null,
+            discoveryHoldBars,
+            discoveryEndIndex,
+            selectionEndIndex,
+            candidateSpan,
+            currentSnapshot,
+            snapshotAt,
+        };
+    }
+
+    // Calibrate distance scales from discovery-only samples.
+    // This freezes scales BEFORE any analog scoring on selection/validation.
+    const discoverySamples: BatchSyntheticCandidateSample[] = samples
+        .filter((sample) => sample.barIndex < discoveryEndIndex)
+        .map((sample) => ({
+            snapshot: sample.snapshot,
+            window: "discovery" as const,
+            forwardReturnPct: 0,
+            futureMfePct: 0,
+            futureMaePct: 0,
+            outcomesByHorizon: [],
+        }));
+    const scales = discoverySamples.length >= 4
+        ? { scales: calibrateDistanceScales(discoverySamples) }
+        : null;
+    return {
+        samples,
+        scales,
+        discoveryHoldBars,
+        discoveryEndIndex,
+        selectionEndIndex,
+        candidateSpan,
+        currentSnapshot,
+        snapshotAt,
+    };
+}
+
+/**
+ * Top-K nearest-analog selection for the Timing Surface engine. Mirrors the
+ * internal `selectAnalogs` used by Mine Timing so the engine's per-window
+ * nearest-neighbor selection is consistent with the miner's metric. Returns
+ * analogs sorted by (distance asc, original sample index asc) — deterministic
+ * regardless of input order. Returns at most `neighborCountMax` analogs and at
+ * least `neighborCountMin` when enough samples qualify; falls back to the
+ * `sqrt(N)` cap used by the miner.
+ *
+ * Uses the existing fixed neighbor limits (neighborCountMin = 4,
+ * neighborCountMax = 24); the endpoint exposes no tuning override.
+ *
+ * Server-internal only.
+ */
+export function selectNearestAnalogsForTimingSurface(
+    current: BatchSyntheticStateSnapshot,
+    samples: ReadonlyArray<BatchSyntheticAnalogDetailSample>,
+    scales: BatchSyntheticAnalogDetailScales,
+    options?: Partial<BatchSyntheticMinerOptions>,
+): Array<{ sample: BatchSyntheticAnalogDetailSample; distance: number }> {
+    const resolved = resolveOptions(options);
+    // Compute finite distances and preserve barIndex via the original sample.
+    const finite: Array<{ sample: BatchSyntheticAnalogDetailSample; distance: number; order: number }> = [];
+    for (let i = 0; i < samples.length; i += 1) {
+        const sample = samples[i]!;
+        if (sample.snapshot.direction !== current.direction) continue;
+        const distance = measureSnapshotDistance(current, sample.snapshot, scales.scales);
+        if (!Number.isFinite(distance)) continue;
+        finite.push({ sample, distance, order: i });
+    }
+    const count = Math.min(resolved.neighborCountMax, Math.max(resolved.neighborCountMin, Math.ceil(Math.sqrt(finite.length))));
+    if (finite.length <= count) {
+        finite.sort(compareAnalogByDistanceThenOrder);
+        return finite.map((item) => ({ sample: item.sample, distance: item.distance }));
+    }
+    const heap: typeof finite = [];
+    for (const item of finite) {
+        if (heap.length < count) {
+            heap.push(item);
+            siftUp(heap, heap.length - 1);
+        } else if (compareAnalogByDistanceThenOrder(item, heap[0]!) < 0) {
+            heap[0] = item;
+            siftDown(heap, 0, heap.length);
+        }
+    }
+    heap.sort(compareAnalogByDistanceThenOrder);
+    return heap.map((item) => ({ sample: item.sample, distance: item.distance }));
 }

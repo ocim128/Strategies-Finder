@@ -713,11 +713,6 @@ export class DataFetcher {
         }
 
         const fallback = await this.fetchNonBinanceData(symbol, interval, signal);
-        this.reporter.updateSymbolDataSource?.(
-            'Fallback',
-            'warning',
-            'Primary data source was unavailable, so fallback data is being used.'
-        );
         return sliceCandlesToLookback(fallback, chain.lookbackBars);
     }
 
@@ -927,9 +922,15 @@ export class DataFetcher {
         return data;
     }
 
-    private async fetchNonBinanceData(symbol: string, interval: string, _signal?: AbortSignal): Promise<OHLCVData[]> {
-        this.notifyDataFallback(symbol, interval);
-        return generateMockData(symbol, interval);
+    private async fetchNonBinanceData(symbol: string, interval: string, signal?: AbortSignal): Promise<OHLCVData[]> {
+        if (signal?.aborted) return [];
+        this.reporter.showToast?.(`Data unavailable for ${symbol} (${interval}).`, 'error');
+        this.reporter.updateSymbolDataSource?.(
+            'Data unavailable',
+            'warning',
+            'No supported local or network data source returned candles.'
+        );
+        return [];
     }
 
     private describeLocalSource(source: NonBinanceLocalSource): { label: string; title: string } {
@@ -1362,7 +1363,4 @@ export class DataFetcher {
         };
     }
 
-    private notifyDataFallback(symbol: string, interval: string): void {
-        this.reporter.showToast?.(`Data unavailable for ${symbol} (${interval}). Using mock data.`, 'warning');
-    }
 }

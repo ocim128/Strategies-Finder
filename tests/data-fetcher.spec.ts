@@ -68,6 +68,29 @@ function createFetcher(options: {
 }
 
 describe("DataFetcher chart lookback", () => {
+    it("never substitutes mock candles for an unsupported provider", async () => {
+        const messages: string[] = [];
+        const sources: string[] = [];
+        const fetcher = createFetcher({
+            getLookbackBars: () => 300,
+            provider: "unsupported",
+            persistence: {
+                loadNonBinanceLocalData: async () => null,
+            },
+            reporter: {
+                showToast: (message) => messages.push(message),
+                updateSymbolDataSource: (label) => sources.push(label),
+            },
+        });
+
+        const data = await fetcher.fetchDataWithLimit("UNKNOWN", "1h", 300);
+
+        assert.deepEqual(data, []);
+        assert.equal(messages.some((message) => message.includes("Using mock data")), false);
+        assert.equal(messages.some((message) => message.includes("Data unavailable")), true);
+        assert.deepEqual(sources, ["Data unavailable"]);
+    });
+
     it("applies the current lookback to cached chart data", async () => {
         const cache = new DataCache();
         const candles = makeCandles(26_000);

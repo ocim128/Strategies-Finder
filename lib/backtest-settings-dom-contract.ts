@@ -1,4 +1,5 @@
 import { parseInputNumber } from "./dom-input-readers";
+import { ADVANCED_SIZING_FIELD_IDS } from "./advanced-sizing-dom";
 import { readBoolean, readNumber } from "./settings-parse-utils";
 import {
     resolveKellyFraction,
@@ -69,7 +70,6 @@ export type BacktestDomSettingParser =
     | "secureFMethod"
     | "strategyKey"
     | "strategyParams"
-    | "finderUniverseExecutionMode"
     | "pathExitMode";
 
 export type SettingSupportLevel = "supported" | "unsupported" | "conditional" | "ui_only";
@@ -368,11 +368,6 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         rustSupport: "unsupported",
         workerSupport: "unsupported",
     }),
-    createField("finderUniverseExecutionMode", {
-        parser: "finderUniverseExecutionMode",
-        rustSupport: "ui_only",
-        workerSupport: "ui_only",
-    }),
 ];
 
 export const BACKTEST_SETTINGS_DOM_CONTRACTS: readonly BacktestDomSettingContract[] = Object.freeze([
@@ -381,6 +376,23 @@ export const BACKTEST_SETTINGS_DOM_CONTRACTS: readonly BacktestDomSettingContrac
 
 export const BACKTEST_SETTINGS_DOM_IDS: readonly string[] = Object.freeze(
     BACKTEST_SETTINGS_DOM_CONTRACTS.map((contract) => contract.domId)
+);
+
+const NON_BACKTEST_READER_DOM_IDS = new Set<string>([
+    "initialCapital",
+    "positionSize",
+    "commission",
+    "fixedTradeToggle",
+    "tradeSizingMode",
+    "fixedTradeAmount",
+    "useRustEngineToggle",
+    ...ADVANCED_SIZING_FIELD_IDS,
+]);
+
+export const BACKTEST_DOM_SETTING_IDS: readonly string[] = Object.freeze(
+    BACKTEST_SETTINGS_DOM_CONTRACTS
+        .map((contract) => contract.domId)
+        .filter((domId) => !NON_BACKTEST_READER_DOM_IDS.has(domId))
 );
 
 const BACKTEST_SETTINGS_DOM_CONTRACT_MAP = new Map(
@@ -521,11 +533,6 @@ export function coerceBacktestDomSettingValue(
             return resolveMartingaleBaseSize(value);
         case "secureFMethod":
             return resolveSecureFMethod(value);
-        case "finderUniverseExecutionMode":
-            // Case-sensitive ("server" | "browser"); same rationale as
-            // Server is the default so new users get the bounded-tab path;
-            // browser is the in-tab fallback.
-            return value === "browser" ? "browser" : "server";
         case "pathExitMode":
             if (typeof value === "string") {
                 const normalized = value.trim().toLowerCase();

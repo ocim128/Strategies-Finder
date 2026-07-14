@@ -159,28 +159,6 @@ export interface BacktestSettingsData {
     /** Resolved secondary symbol for cross-symbol strategies. Empty string means use strategy default. */
     crossSymbolSecondary: string;
 
-    /**
-     * Where the Batch Backtest tab runs its heavy per-symbol workload.
-     * - "server": the Vite dev server (Node) — keeps the browser tab bounded
-     *   regardless of pair count. Default since moving the workload off-browser
-     *   is the whole point of the server-side path.
-     * - "browser": the original in-tab path. Retained as a fallback for
-     *   environments without the dev server (e.g. `vite preview`).
-     *
-     * UI-only: not consumed by Rust or worker surfaces.
-     */
-    /**
-     * Where the Finder Symbol Universe runs its heavy multi-symbol evaluation.
-     * - "server": the Vite dev server (Node) — keeps the browser tab bounded
-     *   for large universes (N full OHLCV datasets held for the whole loop).
-     *   Default for the bounded server path.
-     * - "browser": the original in-tab path. Retained as a fallback for
-     *   environments without the dev server.
-     *
-     * UI-only: not consumed by Rust or worker surfaces. Applies to the
-     * Symbol Universe scope only; the current-chart Finder is always in-tab.
-     */
-    finderUniverseExecutionMode: "server" | "browser";
 }
 
 export interface StrategyConfig {
@@ -290,10 +268,6 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     // Cross-symbol
     crossSymbolSecondary: "",
 
-    // Finder Symbol Universe execution mode. Server is the default, matching
-    // the bounded server path.
-    finderUniverseExecutionMode: "server",
-
     // Signal confirmation
     confirmationStrategiesToggle: false,
     confirmationStrategies: [],
@@ -383,7 +357,6 @@ const UI_ONLY_BACKTEST_SETTING_KEYS = new Set<keyof BacktestSettingsData>([
     'useRustEngine',
     'riskSettingsToggle',
     'confirmationStrategiesToggle',
-    'finderUniverseExecutionMode',
 ]);
 
 export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsData {
@@ -479,11 +452,6 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
         ? source.exitStrategyKey.trim()
         : '';
     normalized.exitStrategyParams = normalizeStrategyParams(source.exitStrategyParams);
-
-    // Finder Symbol Universe execution mode.
-    normalized.finderUniverseExecutionMode = source.finderUniverseExecutionMode === "browser"
-        ? "browser"
-        : DEFAULT_BACKTEST_SETTINGS.finderUniverseExecutionMode;
 
     return normalized;
 }

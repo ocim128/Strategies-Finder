@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { normalizeBacktestSettings } from '../lib/strategies/backtest/backtest-utils';
-import { BACKTEST_DOM_SETTING_IDS, EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw } from '../lib/backtest-settings-resolver';
+import { EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw } from '../lib/backtest-settings-resolver';
 import {
     sanitizeBacktestSettingsForRust,
     requiresTypescriptEngine,
@@ -24,6 +24,7 @@ import {
 import { DEFAULT_BACKTEST_SETTINGS, type EnsembleSignalRecipe } from '../lib/settings-model';
 import { readBoolean, readNumber, toBooleanLike, toFiniteNumber } from '../lib/settings-parse-utils';
 import {
+    BACKTEST_DOM_SETTING_IDS,
     BACKTEST_SETTINGS_DOM_CONTRACTS,
     coerceBacktestDomSettingValue,
     getBacktestDomSettingContract,

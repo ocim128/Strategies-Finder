@@ -1,10 +1,10 @@
 import { getOptionalElement } from "./dom-utils";
 import {
-    BACKTEST_DOM_SETTING_IDS,
     CAPITAL_DEFAULTS,
     EFFECTIVE_BACKTEST_DEFAULTS,
     resolveBacktestSettingsFromRaw,
 } from "./backtest-settings-resolver";
+import { BACKTEST_DOM_SETTING_IDS } from "./backtest-settings-dom-contract";
 import { readNumberInputValue } from "./dom-input-readers";
 import { ADVANCED_SIZING_DOM_IDS, ADVANCED_SIZING_FIELD_IDS } from "./advanced-sizing-dom";
 import {
