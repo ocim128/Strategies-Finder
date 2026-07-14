@@ -2,6 +2,8 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { createBatchDatasetLoaderCore } from "../lib/batch-backtest/batch-dataset-loader-core";
+import type { OHLCVData, Time } from "../lib/types/strategies";
 
 const APP_ROOT = process.cwd();
 const BROWSER_LOADER = path.join(APP_ROOT, "lib", "batch-backtest", "batch-backtest-loader.ts");
@@ -18,6 +20,35 @@ function readSource(filePath: string): string {
 }
 
 describe("batch-backtest server loader parity", () => {
+    it("derives standalone 1h/2h IBKR miner targets from 30m candles", async () => {
+        const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
+            time: time as Time,
+            open: 100,
+            high: 102,
+            low: 99,
+            close: 101,
+            volume: 10,
+        }));
+        const historicalIntervals: string[] = [];
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => {
+                throw new Error("target-interval fetch should not run when 30m IBKR seeds exist");
+            },
+            fetchHistorical: async (_symbol, interval) => {
+                historicalIntervals.push(interval);
+                return source;
+            },
+        });
+
+        const oneHour = await loader.load("AAPL\u2022", "1h");
+        const twoHour = await loader.load("AAPL\u2022", "2h");
+
+        expect(historicalIntervals).to.deep.equal(["30m", "30m"]);
+        expect(oneHour).to.have.length(2);
+        expect(twoHour).to.have.length(1);
+    });
+
     it("keeps browser and server loaders as wrappers around the shared core", () => {
         expect(existsSync(BROWSER_LOADER)).to.equal(true);
         expect(existsSync(SERVER_LOADER)).to.equal(true);

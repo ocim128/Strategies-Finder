@@ -10,6 +10,7 @@ import {
 } from "../../scripts/lib/synthetic-pair";
 import { DATA_CHART_TOTAL_LIMIT, SYNTHETIC_TARGET_BARS } from "../data/constants";
 import { parseIntervalSeconds } from "../interval-utils";
+import { resampleOHLCV } from "../strategies/resample-utils";
 import type { OHLCVData } from "../types/strategies";
 import {
     buildLegCacheKey,
@@ -82,6 +83,22 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                 effectiveInterval,
                 signal,
             );
+        }
+
+        // Mine/Stability load each synthetic leg again as a standalone target.
+        // Keep those targets on the same canonical source as the pair build:
+        // ratio pairs use 30m legs and 1h/2h target series are aggregated from
+        // those same 30m candles. Otherwise Batch succeeds while the miner
+        // asks for absent 1h/2h CSVs and reports zero target assets.
+        if (isIbkrSymbol(symbol) && (effectiveInterval === "1h" || effectiveInterval === "2h")) {
+            const source = await options.fetchHistorical(symbol, "30m", DATA_CHART_TOTAL_LIMIT, {
+                signal,
+                offline: true,
+            });
+            if (signal?.aborted) return [];
+            if (source.length > 0) {
+                return resampleOHLCV(source, effectiveInterval);
+            }
         }
 
         const data = await options.fetchDetached(symbol, effectiveInterval, { signal, offline: true });

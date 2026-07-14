@@ -305,9 +305,16 @@ describe('pickSourceInterval', () => {
         assert.equal(result4h!.sourceInterval, '30m');
         assert.equal(result4h!.ratio, 8);
 
-        // 1h -> 5m (12x ratio, the cap). Without the filter, would also be 5m.
+        // 1h/2h use the canonical 30m IBKR seed. Optional 5m/15m snapshots
+        // are not guaranteed to exist locally, while 30m is the source of
+        // truth for ratio-before-aggregation synthetic construction.
         const result1h = pickSourceInterval('1h', 12, ibkr);
-        assert.equal(result1h!.sourceInterval, '5m');
+        assert.equal(result1h!.sourceInterval, '30m');
+        assert.equal(result1h!.ratio, 2);
+
+        const result2h = pickSourceInterval('2h', 12, ibkr);
+        assert.equal(result2h!.sourceInterval, '30m');
+        assert.equal(result2h!.ratio, 4);
     });
 
     it('returns null when the allowlist excludes every finer divisible candidate', () => {
@@ -353,6 +360,28 @@ describe('aggregateSyntheticBars', () => {
 });
 
 describe('buildSyntheticPairFromLegs', () => {
+    it('builds 1h and 2h IBKR ratios from canonical 30m legs', async () => {
+        const sourceBars = [0, 1800, 3600, 5400].map((time) => bar(time));
+
+        for (const [interval, expectedBars] of [['1h', 2], ['2h', 1]] as const) {
+            const calls: string[] = [];
+            const result = await buildSyntheticPairFromLegs({
+                baseSymbol: 'AAPL\u2022',
+                quoteSymbol: 'MSFT\u2022',
+                interval,
+                targetBars: 2,
+                fetchLeg: async (_symbol, sourceInterval) => {
+                    calls.push(sourceInterval);
+                    return sourceBars;
+                },
+            });
+
+            assert.deepEqual(calls, ['30m', '30m']);
+            assert.equal(result.sourceInterval, '30m');
+            assert.equal(result.bars.length, expectedBars);
+        }
+    });
+
     it('runs the full pipeline (fetch -> align -> aggregate) and returns legs + meta', async () => {
         // Two 1m legs that align on timestamps 0 and 60; target interval 2m
         // forces pickSourceInterval to use 1m and aggregate two sub-bars each.

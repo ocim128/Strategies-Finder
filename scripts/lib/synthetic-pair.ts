@@ -265,6 +265,23 @@ export function pickSourceInterval(
         return null;
     }
 
+    // IBKR synthetic ratios use the canonical 30m seed for 1h/2h targets.
+    // The local IBKR store is guaranteed to retain 30m seeds, while the
+    // nominal supported-interval list may include 5m/15m even when those
+    // optional snapshots were not synced. Picking 5m for 1h or 15m for 2h
+    // would therefore fetch empty legs and then retry equally absent target-
+    // interval files. Build the ratio from 30m candles first, then aggregate.
+    const thirtyMinuteSecs = parseIntervalSeconds('30m');
+    const usesCanonicalIbkrSeed = allowSet?.has('30m')
+        && (targetInterval.toLowerCase() === '1h' || targetInterval.toLowerCase() === '2h')
+        && thirtyMinuteSecs !== null
+        && targetSecs % thirtyMinuteSecs === 0;
+    if (usesCanonicalIbkrSeed) {
+        const result = { sourceInterval: '30m', ratio: targetSecs / thirtyMinuteSecs };
+        sourceIntervalCache.set(cacheKey, result);
+        return { ...result };
+    }
+
     for (const candidate of SOURCE_INTERVAL_CANDIDATES) {
         if (allowSet && !allowSet.has(candidate)) continue;
         const candidateSecs = parseIntervalSeconds(candidate);
