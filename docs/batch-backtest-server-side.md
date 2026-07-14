@@ -154,8 +154,9 @@ All endpoints live under `/api/batch-backtest/*`:
 
 - `POST /run` — NDJSON stream. Body: `{ symbols, interval, strategyKey,
   strategyParams, backtestSettings, capitalSettings, useRustEnginePreference }`.
-  Streams `start`, `progress`, `symbol`, `symbol_failed`, `done`, `fatal`
-  events.
+  Streams `start`, `progress`, `symbol`, `done`, `fatal` events. Load/run
+  failures are transported as ordinary `symbol` events with a `load_failed` /
+  `run_failed` status on the row; there is no separate failure event.
 - `POST /stop` — force-bumps the owner lock and aborts in-flight loads. Safe
   to call when no run is active.
 - `POST /mine` — NDJSON stream. Body: `{ fingerprint, interval }`. Streams
@@ -163,12 +164,15 @@ All endpoints live under `/api/batch-backtest/*`:
 - `POST /stability-mine` — NDJSON stream. Body: `{ fingerprint, interval,
   subsetSize, reruns, seed }`. Streams `progress`, `done`, `fatal` events.
 - `POST /portfolio-fit` — NDJSON stream. Body: `{ fingerprint, interval,
-  stability, capital, options? }`. Streams `start`, `progress`, `done`, `fatal`
-  events. The `done` event carries a single scalar-only `BatchPortfolioFitResult`
-  (no OHLCV/signal/trade/equity arrays). Shares the `minerOwner` lock with Mine
-  Timing and Stability Mine (mutually exclusive). Does NOT release artifacts —
-  they survive for a later Stability rerun (R16). See
-  `docs/portfolio-fit-mining-implementation-plan.md`.
+  capital, options? }`. The server resolves its retained scalar Stability result
+  from module state (the same authority Timing Surface uses); the browser does
+  NOT send `stability`. Streams `start`, `progress`, `done`, `fatal` events. The
+  `done` event carries a single scalar-only `BatchPortfolioFitResult`
+  (no OHLCV/signal/trade/equity arrays). A missing retained Stability context
+  surfaces as a `fatal` with error `STABILITY_CONTEXT_MISSING`. Shares the
+  `minerOwner` lock with Mine Timing and Stability Mine (mutually exclusive).
+  Does NOT release artifacts — they survive for a later Stability rerun (R16).
+  See `docs/portfolio-fit-mining-implementation-plan.md`.
 - `POST /timing-surface` — NDJSON stream. Body: `{ fingerprint, interval }`
   (no Stability rows, no cost overrides, no market arrays). Streams `start`,
   `done`, and `fatal` events. The server derives everything from

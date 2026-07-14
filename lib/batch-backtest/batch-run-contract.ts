@@ -7,6 +7,9 @@ export interface BatchRunFingerprintInput {
     interval: string;
 }
 
+/** Shared intake and snapshot ceiling for one Batch run. */
+export const BATCH_MAX_SYMBOLS = 2_000;
+
 export function parseBatchSymbols(raw: string): string[] {
     return normalizeBatchSymbols(raw.split(/[\s,]+/));
 }

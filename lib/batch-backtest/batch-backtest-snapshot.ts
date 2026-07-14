@@ -2,8 +2,9 @@ import { toScalarRow } from "./batch-backtest-stream-types";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import type { BatchStabilityMineResult } from "./batch-stability-mine";
 import type { BatchSyntheticMinerProfile } from "./batch-synthetic-state-miner";
+import { BATCH_MAX_SYMBOLS } from "./batch-run-contract";
 
-export const BATCH_RESULT_SNAPSHOT_LIMIT = 2_000;
+export const BATCH_RESULT_SNAPSHOT_LIMIT = BATCH_MAX_SYMBOLS;
 
 export interface BatchBacktestResultsSnapshot {
     savedAt: number;

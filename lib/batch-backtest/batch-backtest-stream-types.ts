@@ -3,7 +3,7 @@
  *
  * The browser consumes these via `consumeNdjsonStream` (lib/ndjson-stream.ts),
  * which dispatches by mapping `event.type` to a camelCase handler key
- * (e.g. `symbol_failed` -> `onSymbolFailed`).
+ * (e.g. `symbol` -> `onSymbol`).
  *
  * CRITICAL CONTRACT: the `row` sent in `symbol` events must contain ONLY
  * scalars. The `data`, `signals`, and `result.trades` arrays stay in Node so
@@ -13,6 +13,10 @@
  *
  * Copy parity is preserved by adding tiny derived scalars (`buyHoldPct` and
  * `openTradeAssetScores`) before stripping the heavy arrays.
+ *
+ * Failures (load_failed / run_failed) are transported as ordinary `symbol`
+ * events with the failing `status` set on the row; there is no separate
+ * failure event in this contract.
  */
 
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
@@ -24,7 +28,6 @@ export type BatchStreamEvent =
     | { type: "start"; total: number; interval: string; strategyKey: string }
     | { type: "progress"; percent: number; text: string; status: string }
     | { type: "symbol"; index: number; total: number; row: BatchBacktestSymbolResult }
-    | { type: "symbol_failed"; index: number; total: number; symbol: string; error: string }
     | {
         type: "done";
         ok: boolean;

@@ -12,6 +12,7 @@
  */
 import { expect } from "chai";
 import { describe, it, after, before } from "node:test";
+import { Readable } from "node:stream";
 import { strategyRegistry } from "../strategyRegistry";
 import {
     processRunBatch,
@@ -42,6 +43,8 @@ const {
     setMinerGatesForTests,
     resetMinerGatesForTests,
     processPortfolioFit,
+    registerBatchRoutesForTests,
+    setRetainedStabilityContextForTests,
 } = __testInternals;
 
 function makeCandles(closes: number[]): OHLCVData[] {
@@ -318,5 +321,73 @@ describe("batch-portfolio-fit server plugin — cancellation", () => {
         const cancelled = events.find((e) => e.type === "done" && (e as any).ok === false) as Extract<BatchPortfolioFitStreamEvent, { type: "done"; ok: false }> | undefined;
         expect(cancelled).to.not.equal(undefined);
         expect(cancelled!.cancelled).to.equal(true);
+    });
+});
+
+describe("batch-portfolio-fit server plugin — server-authoritative Stability context", () => {
+    type Handler = (req: any, res: any) => Promise<void>;
+    async function invokePortfolioFitRoute(body: Record<string, unknown>): Promise<{ body: string; events: any[] }> {
+        const routes = new Map<string, Handler>();
+        registerBatchRoutesForTests({ use: (path: string, handler: Handler) => routes.set(path, handler) });
+        const handler = routes.get("/api/batch-backtest/portfolio-fit");
+        if (!handler) throw new Error("portfolio-fit route not registered");
+        const req = Readable.from([JSON.stringify(body)]) as any;
+        req.method = "POST";
+        req.url = "/api/batch-backtest/portfolio-fit";
+        req.headers = { origin: "http://127.0.0.1:5173", "content-type": "application/json" };
+        const res = {
+            statusCode: 0,
+            chunks: [] as string[],
+            setHeader: () => {},
+            write: (b: string) => { res.chunks.push(b); return true; },
+            end: (b?: string) => { if (b !== undefined) res.chunks.push(b); },
+        };
+        await handler(req, res);
+        const responseBody = res.chunks.join("");
+        const events = responseBody.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+        return { body: responseBody, events };
+    }
+
+    it("returns STABILITY_CONTEXT_MISSING when no retained Stability context exists", async () => {
+        const { fingerprint, interval } = await runBatchToPopulateArtifacts();
+        setRetainedStabilityContextForTests({ stability: null, costModel: null });
+        completeRunForTests();
+        setMinerOwnerForTests(0);
+        try {
+            const response = await invokePortfolioFitRoute({
+                fingerprint,
+                interval,
+                capital: TEST_PORTFOLIO_FIT_CAPITAL,
+                stability: { rows: [{ asset: "FAKE", direction: "LONG", hits: 1, high: 1, medium: 0, low: 0, medianRetPct: 1, medianLiftPct: 1, medianRr: 1, medianDist: 1, medianHmaxLiftPct: 1, pairWarnings: 0 }] },
+            });
+            const fatal = response.events.find((event: any) => event.type === "fatal") as { error?: string } | undefined;
+            expect(fatal, `expected fatal event, got: ${response.body}`).to.not.equal(undefined);
+            expect(fatal!.error).to.equal("STABILITY_CONTEXT_MISSING");
+        } finally {
+            setMinerOwnerForTests(0);
+        }
+    });
+
+    it("uses the server-retained Stability context and ignores body.stability", async () => {
+        const { fingerprint, interval } = await runBatchToPopulateArtifacts();
+        const stability = await runStabilityToGetResult(fingerprint, interval);
+        if (!stability || stability.rows.length === 0) return; // skip if no candidates
+        completeRunForTests();
+        try {
+            setRetainedStabilityContextForTests({ stability, costModel: null });
+            const response = await invokePortfolioFitRoute({
+                fingerprint,
+                interval,
+                capital: TEST_PORTFOLIO_FIT_CAPITAL,
+            });
+            const fatal = response.events.find((event: any) => event.type === "fatal");
+            expect(fatal, `expected no fatal event, got: ${response.body}`).to.equal(undefined);
+            const done = response.events.find((event: any) => event.type === "done") as { ok?: boolean } | undefined;
+            expect(done).to.not.equal(undefined);
+            expect(done!.ok).to.equal(true);
+        } finally {
+            setMinerOwnerForTests(0);
+            setRetainedStabilityContextForTests({ stability: null, costModel: null });
+        }
     });
 });

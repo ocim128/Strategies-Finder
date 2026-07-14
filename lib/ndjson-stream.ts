@@ -1,15 +1,14 @@
 /**
  * Helper to consume newline-delimited JSON (NDJSON) streams.
- * Maps event types to camelCase handlers, e.g. 'symbol_failed' -> 'onSymbolFailed'.
+ * Maps event types to camelCase handlers, e.g. 'symbol_complete' ->
+ * 'onSymbolComplete'. Malformed non-empty lines always fail with their 1-based
+ * line number; silently accepting a partial protocol is never safe.
  *
  * `requireTerminal` (default false): when true, a stream that reaches EOF
- * without first processing a `done` or `fatal` event throws
- * `StreamEndedBeforeTerminalError`. Without this flag the consumer resolves
- * normally at EOF — the original behavior that Crypto/IBKR/Stability rely on
- * (they track terminal state themselves). Callers whose correctness depends on
- * a terminal event (Batch Run, Batch Miner, Finder Universe) should opt in so
- * a truncated stream surfaces as an error instead of partial data presented as
- * complete.
+ *   without first processing a `done` or `fatal` event throws
+ *   `StreamEndedBeforeTerminalError`. Without this flag the consumer resolves
+ *   normally at EOF. Callers whose correctness depends on a terminal event
+ *   should opt in.
  */
 export class StreamEndedBeforeTerminalError extends Error {
     constructor(message = "NDJSON stream ended before a terminal (done/fatal) event.") {
@@ -18,15 +17,30 @@ export class StreamEndedBeforeTerminalError extends Error {
     }
 }
 
+export class MalformedNdjsonLineError extends Error {
+    /** 1-based line number within the stream. */
+    readonly lineNumber: number;
+    constructor(lineNumber: number) {
+        super(`NDJSON stream contained a malformed line at line ${lineNumber}.`);
+        this.name = "MalformedNdjsonLineError";
+        this.lineNumber = lineNumber;
+    }
+}
+
+export interface ConsumeNdjsonStreamOptions {
+    requireTerminal?: boolean;
+}
+
 export async function consumeNdjsonStream<T extends { type: string }>(
     body: ReadableStream<Uint8Array>,
     handlers: Record<string, ((event: any) => void) | undefined>,
-    options?: { requireTerminal?: boolean }
+    options?: ConsumeNdjsonStreamOptions
 ): Promise<void> {
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let sawTerminal = false;
+    let lineNumber = 0;
 
     const toHandlerKey = (type: string): string => {
         const camel = type.replace(/_([a-z])/g, (_, g) => g.toUpperCase());
@@ -42,12 +56,13 @@ export async function consumeNdjsonStream<T extends { type: string }>(
             while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
                 const line = buffer.slice(0, newlineIndex).trim();
                 buffer = buffer.slice(newlineIndex + 1);
+                lineNumber += 1;
                 if (!line) continue;
                 let event: T;
                 try {
                     event = JSON.parse(line) as T;
                 } catch {
-                    continue;
+                    throw new MalformedNdjsonLineError(lineNumber);
                 }
                 const handlerKey = toHandlerKey(event.type);
                 const handler = handlers[handlerKey];

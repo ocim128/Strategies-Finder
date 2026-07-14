@@ -62,7 +62,7 @@ import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import { toScalarRow, type BatchStreamEvent } from "./batch-backtest-stream-types";
 import { rememberLoopbackOriginFromRequest } from "../local-api-transport";
 import { isAllowedLocalRequest } from "../local-route-authorization";
-import { buildBatchRunFingerprint, normalizeBatchSymbols } from "./batch-run-contract";
+import { buildBatchRunFingerprint, normalizeBatchSymbols, BATCH_MAX_SYMBOLS } from "./batch-run-contract";
 import {
     mergeStabilityAccumulators,
     runParallelStability,
@@ -544,26 +544,14 @@ export async function processRunBatch(
 
     const lostOwnership = () => runOwner !== owner;
     let cancelled = false;
-    // Remember the last real percent emitted by `setProgress` so `setStatus`
-    // (which the runner calls per-symbol with symbol-specific text like
-    // `Backtesting ${symbol}...`) can preserve the bar instead of resetting it
-    // to 0. Without this, every symbol visually snaps the bar back to 0 on the
-    // server path because the runner calls setProgress then setStatus in the
-    // same tick. The browser path's setStatus is label-only, so this asymmetry
-    // only existed server-side.
-    let lastPercent = 0;
-
+    // setProgress already carries the status; do not emit it twice per symbol.
     try {
         const output = await runBatchBacktest({ ...input, pruneResultArtifacts: true }, {
             setProgress: (percent, text) => {
                 if (lostOwnership()) return;
-                lastPercent = percent;
                 writer({ type: "progress", percent, text, status: text });
             },
-            setStatus: (text) => {
-                if (lostOwnership()) return;
-                writer({ type: "progress", percent: lastPercent, text, status: text });
-            },
+            setStatus: () => {},
             onSymbolStart: (_index, symbol) => {
                 if (lostOwnership()) return;
                 if (runState === snapshot) {
@@ -1050,6 +1038,13 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
     if (symbols.length === 0) {
         throw new HttpStatusError(400, "At least one symbol is required.");
     }
+    if (symbols.length > BATCH_MAX_SYMBOLS) {
+        // Keep accepted runs within the shared persistence ceiling.
+        throw new HttpStatusError(
+            400,
+            `Batch size ${symbols.length} exceeds the ${BATCH_MAX_SYMBOLS}-symbol limit. Split the run into chunks of ${BATCH_MAX_SYMBOLS} or fewer.`,
+        );
+    }
     const heapWarning = resolveServerBatchHeapWarning(symbols.length);
     if (heapWarning) {
         throw new HttpStatusError(507, heapWarning);
@@ -1249,8 +1244,8 @@ async function handleStabilityMineRequest(res: ViteHttpResponse, body: Record<st
  *    to the pure `runPortfolioFit` engine.
  *  - Emits a scalar-only `BatchPortfolioFitResult` in the `done` event (R15).
  *
- * The `stability` result is passed in from the browser (it holds the completed
- * Stability Mine output). The fingerprint must match `lastRunFingerprint`.
+ * Production passes the server-retained Stability result; tests may inject a
+ * fixture. The fingerprint must match `lastRunFingerprint`.
  */
 export async function processPortfolioFit(
     fingerprint: string | null,
@@ -1272,7 +1267,8 @@ export async function processPortfolioFit(
         return;
     }
     if (!stability || !Array.isArray(stability.rows) || stability.rows.length === 0) {
-        writer({ type: "fatal", error: "Run Stability Mine before Portfolio Fit; no actionable candidates." });
+        // Match Timing Surface's missing retained-context contract.
+        writer({ type: "fatal", error: "STABILITY_CONTEXT_MISSING" });
         return;
     }
     if (!capital || !Number.isFinite(capital.initialCapital) || capital.initialCapital <= 0) {
@@ -1358,10 +1354,11 @@ async function handlePortfolioFitRequest(res: ViteHttpResponse, body: Record<str
     let stream: ReturnType<typeof beginNdjsonStream> | null = null;
     try {
         stream = beginNdjsonStream(res);
+        // Browser-supplied Stability rows are intentionally ignored.
         await processPortfolioFit(
             typeof body.fingerprint === "string" ? body.fingerprint : null,
             typeof body.interval === "string" ? body.interval : lastRunInterval,
-            (body.stability ?? null) as BatchStabilityMineResult | null,
+            retainedStabilityResult,
             (body.capital ?? null) as BatchPortfolioFitInput["capital"] | null,
             (body.options ?? undefined) as BatchPortfolioFitInput["options"],
             (event) => stream!.write(event),
@@ -1701,7 +1698,23 @@ async function handleTimingSurfaceRequest(res: ViteHttpResponse, body: Record<st
 // ---------------------------------------------------------------------------
 
 export function batchBacktestVitePlugin(): Plugin {
-    const register = (middlewares: any) => {
+    return {
+        name: "batch-backtest",
+        configureServer(server) {
+            // Best-effort: sweep orphaned dirs from a prior crash without
+            // blocking dev-server registration (audit Finding 4).
+            void sweepOrphanedMineArtifactDirs();
+            registerBatchRoutes(server.middlewares);
+        },
+        configurePreviewServer(server) {
+            void sweepOrphanedMineArtifactDirs();
+            registerBatchRoutes(server.middlewares);
+        },
+    };
+}
+
+/** Install all Batch routes; exposed through test internals for route tests. */
+function registerBatchRoutes(middlewares: any): void {
         middlewares.use("/api/batch-backtest/run", async (req: any, res: any) => {
             if (req.method !== "POST") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
@@ -1815,27 +1828,17 @@ export function batchBacktestVitePlugin(): Plugin {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
                 return;
             }
+            // Status exposes run inputs, progress, results, and miner state.
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
+                return;
+            }
             const parsedUrl = new URL(req.url ?? "/api/batch-backtest/status", "http://localhost");
             const after = Number(parsedUrl.searchParams.get("after") ?? 0);
             const limitParam = parsedUrl.searchParams.get("limit");
             const limit = limitParam === null ? undefined : Number(limitParam);
             sendJson(res, 200, handleStatusRequest(after, limit));
         });
-    };
-
-    return {
-        name: "batch-backtest",
-        configureServer(server) {
-            // Best-effort: sweep orphaned dirs from a prior crash without
-            // blocking dev-server registration (audit Finding 4).
-            void sweepOrphanedMineArtifactDirs();
-            register(server.middlewares);
-        },
-        configurePreviewServer(server) {
-            void sweepOrphanedMineArtifactDirs();
-            register(server.middlewares);
-        },
-    };
 }
 
 // Exported for tests only. `processRunBatch`, `processMine`, and
@@ -1850,6 +1853,7 @@ export const __testInternals = {
     DEFAULT_ARTIFACT_RETENTION_MS,
     handleStatusRequest,
     handleStopRequest,
+    registerBatchRoutesForTests: registerBatchRoutes,
     processPortfolioFit,
     processTimingSurface,
     /**

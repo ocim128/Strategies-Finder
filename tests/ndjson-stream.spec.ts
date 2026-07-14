@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { consumeNdjsonStream, StreamEndedBeforeTerminalError } from "../lib/ndjson-stream";
+import { consumeNdjsonStream, StreamEndedBeforeTerminalError, MalformedNdjsonLineError } from "../lib/ndjson-stream";
 
 describe("consumeNdjsonStream", () => {
     it("stops after a done event so trailing stream errors do not fail completed work", async () => {
@@ -102,5 +102,57 @@ describe("consumeNdjsonStream", () => {
             { requireTerminal: true },
         );
         // No throw => pass.
+    });
+
+    it("throws MalformedNdjsonLineError on a malformed middle line", async () => {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(encoder.encode('{"type":"progress","text":"a"}\n'));
+                controller.enqueue(encoder.encode('{bogus payload\n'));
+                controller.enqueue(encoder.encode('{"type":"done","summary":"ok"}\n'));
+                controller.close();
+            },
+        });
+
+        let caught: unknown = null;
+        try {
+            await consumeNdjsonStream<{ type: string; text?: string; summary?: string }>(
+                stream,
+                {
+                    onProgress: () => {},
+                    onDone: () => {},
+                },
+            );
+        } catch (error) {
+            caught = error;
+        }
+        expect(caught).to.be.instanceOf(MalformedNdjsonLineError);
+        expect((caught as MalformedNdjsonLineError).lineNumber).to.equal(2);
+        expect((caught as Error).message).to.not.include("bogus payload");
+    });
+
+    it("throws MalformedNdjsonLineError on a malformed terminal line", async () => {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(encoder.encode('{"type":"progress","text":"a"}\n'));
+                controller.enqueue(encoder.encode('{broken done line\n'));
+                controller.close();
+            },
+        });
+
+        let caught: unknown = null;
+        try {
+            await consumeNdjsonStream<{ type: string; text?: string }>(
+                stream,
+                { onProgress: () => {} },
+                { requireTerminal: true },
+            );
+        } catch (error) {
+            caught = error;
+        }
+        expect(caught).to.be.instanceOf(MalformedNdjsonLineError);
+        expect((caught as MalformedNdjsonLineError).lineNumber).to.equal(2);
     });
 });

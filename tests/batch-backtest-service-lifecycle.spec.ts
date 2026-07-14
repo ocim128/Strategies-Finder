@@ -1,0 +1,325 @@
+/** Browser-visible analysis lifecycle regressions not covered by plugin specs. */
+import { expect } from "chai";
+import { describe, it, before, after } from "node:test";
+import { batchBacktestService } from "../lib/batch-backtest/batch-backtest-service";
+import type { BatchBacktestDom } from "../lib/batch-backtest/batch-backtest-dom";
+
+function fakeEl(): any {
+    const listeners = new Map<string, Array<() => void>>();
+    const classes = new Set<string>();
+    const el: any = {
+        style: { display: "", width: "" },
+        disabled: false,
+        value: "",
+        checked: false,
+        textContent: "",
+        hidden: false,
+        classList: {
+            add(...cls: string[]) { for (const c of cls) classes.add(c); },
+            remove(...cls: string[]) { for (const c of cls) classes.delete(c); },
+            toggle(cls: string, force?: boolean) {
+                if (force === undefined) { if (classes.has(cls)) classes.delete(cls); else classes.add(cls); }
+                else if (force) classes.add(cls); else classes.delete(cls);
+            },
+            contains(cls: string) { return classes.has(cls); },
+        },
+        replaceChildren: () => { el.children = []; },
+        appendChild: (child: any) => { el.children = el.children ?? []; el.children.push(child); return child; },
+        addEventListener: (type: string, handler: () => void) => {
+            const arr = listeners.get(type) ?? [];
+            arr.push(handler);
+            listeners.set(type, arr);
+        },
+        removeEventListener: () => {},
+        // Drive the REAL handler bound by bindEvents. Returns true iff a
+        // handler was actually invoked, so tests can assert wiring.
+        click(): boolean {
+            const arr = listeners.get("click");
+            if (!arr || arr.length === 0) return false;
+            for (const handler of arr) handler();
+            return true;
+        },
+        children: [] as any[],
+        setAttribute: () => {},
+    };
+    return el;
+}
+
+function fakeDom(): BatchBacktestDom {
+    const el = () => fakeEl();
+    return {
+        batchbacktestTab: el(),
+        batchBacktestSymbols: el(),
+        batchBacktestSymbolTemplate: el(),
+        batchBacktestUseCurrent: el(),
+        batchBacktestClear: el(),
+        batchBacktestRunBtn: el(),
+        batchBacktestStopBtn: el(),
+        batchBacktestCopyBtn: el(),
+        batchBacktestCopyBenchmarkBtn: el(),
+        batchBacktestMineBtn: el(),
+        batchBacktestCopyMinerBtn: el(),
+        batchBacktestAutoRunStability: el(),
+        batchBacktestStabilitySubsetSize: el(),
+        batchBacktestStabilityReruns: el(),
+        batchBacktestStabilitySeed: el(),
+        batchBacktestStabilityMineBtn: el(),
+        batchBacktestCopyStabilityBtn: el(),
+        batchBacktestPortfolioFitBtn: el(),
+        batchBacktestCopyPortfolioFitBtn: el(),
+        batchBacktestPortfolioFitSummary: el(),
+        batchBacktestPortfolioFitResults: el(),
+        batchBacktestTimingSurfaceBtn: el(),
+        batchBacktestCopyTimingSurfaceBtn: el(),
+        batchBacktestTimingSurfaceSummary: el(),
+        batchBacktestTimingSurfaceResults: el(),
+        batchBacktestProgress: el(),
+        batchBacktestProgressFill: el(),
+        batchBacktestProgressText: el(),
+        batchBacktestStatus: el(),
+        batchBacktestSummary: el(),
+        batchBacktestSummaryGrid: el(),
+        batchBacktestMinerSummary: el(),
+        batchBacktestMinerResults: el(),
+        batchBacktestResults: el(),
+        batchBacktestEmpty: el(),
+    } as unknown as BatchBacktestDom;
+}
+
+/** Fetch mock responder type. */
+type FetchResponse = {
+    ok: boolean;
+    status: number;
+    body?: ReadableStream<Uint8Array> | null;
+    text?: string;
+};
+type FetchResponder = (url: string, init?: any) => FetchResponse | Promise<FetchResponse>;
+
+function deferred<T>(): {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+} {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => { resolve = res; });
+    return { promise, resolve };
+}
+
+function ndjsonStream(lines: object[]): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder();
+    const content = lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
+    return new ReadableStream<Uint8Array>({
+        start(controller) {
+            controller.enqueue(encoder.encode(content));
+            controller.close();
+        },
+    });
+}
+
+// Saved globals to restore after the suite.
+let savedDocument: any;
+let savedLocalStorage: any;
+let savedFetch: any;
+
+before(() => {
+    savedDocument = (globalThis as any).document;
+    savedLocalStorage = (globalThis as any).localStorage;
+    savedFetch = (globalThis as any).fetch;
+    (globalThis as any).document = {
+        getElementById: () => fakeEl(),
+        createElement: () => fakeEl(),
+        createDocumentFragment: () => fakeEl(),
+        addEventListener: () => {},
+    };
+    (globalThis as any).localStorage = {
+        _store: new Map<string, string>(),
+        getItem(k: string) { return this._store.has(k) ? this._store.get(k)! : null; },
+        setItem(k: string, v: string) { this._store.set(k, v); },
+        removeItem(k: string) { this._store.delete(k); },
+    };
+});
+
+after(() => {
+    if (savedDocument === undefined) delete (globalThis as any).document;
+    else (globalThis as any).document = savedDocument;
+    if (savedLocalStorage === undefined) delete (globalThis as any).localStorage;
+    else (globalThis as any).localStorage = savedLocalStorage;
+    (globalThis as any).fetch = savedFetch;
+});
+
+function svc(): any { return batchBacktestService as any; }
+
+function setupForAnalysis(fingerprint = "fp-test"): BatchBacktestDom {
+    const dom = fakeDom();
+    const s = svc();
+    s.dom = dom;
+    s.bindEvents(dom);
+    s.serverHasArtifacts = true;
+    s.lastRunFingerprint = fingerprint;
+    s.lastRunInterval = "5m";
+    s.lastRunStrategyKey = "test";
+    s.analysisInFlight = false;
+    s.analysisCancelRequested = false;
+    s.pendingStopPromise = null;
+    s.buildCurrentRunFingerprint = () => fingerprint;
+    return dom;
+}
+
+async function withMockFetch(responder: FetchResponder, fn: () => Promise<void>): Promise<void> {
+    const prev = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init?: any) => {
+        const r = await responder(url, init);
+        return {
+            ok: r.ok,
+            status: r.status,
+            body: r.body ?? null,
+            text: async () => r.text ?? "",
+            json: async () => JSON.parse(r.text ?? "{}"),
+        };
+    };
+    try {
+        await fn();
+    } finally {
+        (globalThis as any).fetch = prev;
+    }
+}
+
+function successStabilityResponder(): FetchResponder {
+    return (url) => {
+        if (url.includes("/status")) {
+            return { ok: true, status: 200, text: JSON.stringify({ lastRun: { hasArtifacts: true, fingerprint: "fp-test", interval: "5m" }, timingSurfaceAvailable: true }) };
+        }
+        if (url.includes("/stability-mine")) {
+            return { ok: true, status: 200, body: ndjsonStream([{ type: "done", ok: true, result: { rows: [{ asset: "BTC" }] } }]) };
+        }
+        return { ok: true, status: 200, text: "{}" };
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe("BatchBacktestService analysis lifecycle", () => {
+    it("completes a Stability run successfully and restores the tab to idle", async () => {
+        const dom = setupForAnalysis();
+        svc().lastStabilityResult = { rows: [{ asset: "BTC" }] };
+
+        await withMockFetch(successStabilityResponder(), async () => {
+            await svc().runStabilityMine();
+        });
+
+        // SUCCESS state — not just cleanup-after-error. The service must have
+        // stored the result and enabled the copy button, and the summary must
+        // not show an error.
+        expect(svc().lastStabilityResult, "successful Stability result must be stored").to.not.equal(null);
+        expect(dom.batchBacktestCopyStabilityBtn.disabled, "copy button must be enabled on success").to.equal(false);
+        expect(dom.batchBacktestMinerSummary.textContent, "summary must not show an error").to.not.include("error");
+        // Lifecycle cleanup.
+        expect((dom.batchbacktestTab as any).classList.contains("is-running"), "is-running must be removed").to.equal(false);
+        expect((dom.batchBacktestStopBtn as any).style.display).to.equal("none");
+        expect(dom.batchBacktestRunBtn.disabled).to.equal(false);
+    });
+
+    it("only one analysis POST is issued after a rapid double-click", async () => {
+        setupForAnalysis();
+        svc().lastStabilityResult = { rows: [{ asset: "BTC" }] };
+        let stabilityPosts = 0;
+
+        await withMockFetch((url) => {
+            if (url.includes("/status")) {
+                return { ok: true, status: 200, text: JSON.stringify({ lastRun: { hasArtifacts: true, fingerprint: "fp-test", interval: "5m" }, timingSurfaceAvailable: true }) };
+            }
+            if (url.includes("/stability-mine")) {
+                stabilityPosts += 1;
+                return { ok: true, status: 200, body: ndjsonStream([{ type: "done", ok: true, result: { rows: [{ asset: "BTC" }] } }]) };
+            }
+            return { ok: true, status: 200, text: "{}" };
+        }, async () => {
+            const p1 = svc().runStabilityMine();
+            const p2 = svc().runStabilityMine();
+            await Promise.all([p1, p2]);
+        });
+
+        expect(stabilityPosts, "double-click must produce exactly one analysis POST").to.equal(1);
+    });
+
+    it("Stop clicked via the REAL handler during preflight prevents the analysis POST", async () => {
+        const dom = setupForAnalysis();
+        svc().lastStabilityResult = { rows: [{ asset: "BTC" }] };
+        let stabilityPosts = 0;
+
+        await withMockFetch((url) => {
+            if (url.includes("/status")) {
+                return { ok: true, status: 200, text: JSON.stringify({ lastRun: { hasArtifacts: true, fingerprint: "fp-test", interval: "5m" }, timingSurfaceAvailable: true }) };
+            }
+            if (url.includes("/stability-mine")) {
+                stabilityPosts += 1;
+                return { ok: true, status: 200, body: ndjsonStream([{ type: "done", ok: true, result: { rows: [{ asset: "BTC" }] } }]) };
+            }
+            return { ok: true, status: 200, text: "{}" };
+        }, async () => {
+            // Start the analysis (the preflight GET is in flight).
+            const promise = svc().runStabilityMine();
+            // Click the REAL Stop button — the handler bound by bindEvents
+            // fires, bumping the generation so the post-preflight check aborts.
+            const invoked = (dom.batchBacktestStopBtn as any).click();
+            expect(invoked, "the real Stop click handler must be bound").to.equal(true);
+            await promise;
+        });
+
+        expect(stabilityPosts, "Stop during preflight must prevent the analysis POST").to.equal(0);
+        expect((dom.batchbacktestTab as any).classList.contains("is-running")).to.equal(false);
+    });
+
+    it("issues a distinct second /stop after the POST establishes while the first Stop is still pending", async () => {
+        const dom = setupForAnalysis();
+        svc().lastStabilityResult = { rows: [{ asset: "BTC" }] };
+        let stopPosts = 0;
+        let stabilityPosts = 0;
+        const postStarted = deferred<void>();
+        const postResponse = deferred<FetchResponse>();
+        const firstStopResponse = deferred<FetchResponse>();
+
+        await withMockFetch(async (url) => {
+            if (url.includes("/status")) {
+                return { ok: true, status: 200, text: JSON.stringify({ lastRun: { hasArtifacts: true, fingerprint: "fp-test", interval: "5m" }, timingSurfaceAvailable: true }) };
+            }
+            if (url.includes("/stability-mine")) {
+                stabilityPosts += 1;
+                postStarted.resolve();
+                return postResponse.promise;
+            }
+            if (url.includes("/stop")) {
+                stopPosts += 1;
+                if (stopPosts === 1) return firstStopResponse.promise;
+                return { ok: true, status: 200, text: "{}" };
+            }
+            return { ok: true, status: 200, text: "{}" };
+        }, async () => {
+            const promise = svc().runStabilityMine();
+            // Wait until preflight has passed and the analysis POST is actually
+            // pending, then click the real Stop handler. Keep the first Stop
+            // unresolved to prove the post-ownership reissue is not coalesced.
+            await postStarted.promise;
+            (dom.batchBacktestStopBtn as any).click();
+            postResponse.resolve({
+                ok: true,
+                status: 200,
+                body: ndjsonStream([{ type: "done", ok: false, cancelled: true, summary: "cancelled" }]),
+            });
+            // Let the original Stop settle only after the second request has
+            // been issued. Until then the guard and operation buttons must
+            // remain locked so a delayed unscoped Stop cannot hit new work.
+            while (stopPosts < 2) await Promise.resolve();
+            expect(dom.batchBacktestRunBtn.disabled).to.equal(true);
+            expect(dom.batchBacktestStabilityMineBtn.disabled).to.equal(true);
+            firstStopResponse.resolve({ ok: true, status: 200, text: "{}" });
+            await promise;
+        });
+
+        expect(stabilityPosts, "the analysis POST must have reached the server").to.equal(1);
+        expect(stopPosts, "Stop requested mid-POST must issue an original and post-ownership Stop").to.equal(2);
+        expect((dom.batchbacktestTab as any).classList.contains("is-running")).to.equal(false);
+    });
+
+});

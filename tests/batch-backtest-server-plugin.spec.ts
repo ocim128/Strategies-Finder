@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { describe, it, after, before } from "node:test";
+import { Readable } from "node:stream";
 import { strategyRegistry } from "../strategyRegistry";
 import {
     processRunBatch,
@@ -28,7 +29,26 @@ const {
     getRunStateForTests,
     handleStatusRequest,
     handleStopRequest,
+    registerBatchRoutesForTests,
 } = __testInternals;
+
+type RouteHandler = (req: any, res: any) => Promise<void>;
+
+function captureBatchRoutes(): Map<string, RouteHandler> {
+    const routes = new Map<string, RouteHandler>();
+    registerBatchRoutesForTests({ use: (path: string, handler: RouteHandler) => routes.set(path, handler) });
+    return routes;
+}
+
+function makeRouteResponse(): { statusCode: number; body: string; setHeader: () => void; end: (body: string) => void } {
+    const response = {
+        statusCode: 0,
+        body: "",
+        setHeader: () => {},
+        end: (body: string) => { response.body = body; },
+    };
+    return response;
+}
 
 function makeCandles(closes: number[]): OHLCVData[] {
     return closes.map((close, index) => ({
@@ -428,10 +448,16 @@ describe("batch-backtest server plugin processRunBatch", () => {
         await releaseLastResults("test_end");
     });
 
-    it("setStatus preserves the last real percent instead of resetting to 0", async () => {
-        // The runner calls setProgress(real%) then setStatus(symbol text) in the
-        // same tick. Before the fix, setStatus emitted percent: 0, snapping the
-        // bar back. Now it must echo the last real percent set by setProgress.
+    it("does not emit a redundant setStatus-driven progress event per symbol", async () => {
+        // The runner calls setProgress(real%) then setStatus(symbol text) in
+        // the same tick. Previously the server emitted TWO progress writes per
+        // symbol (one per callback), and the setStatus one reset percent to 0
+        // before the lastPercent fix, then duplicated it after. Now setStatus
+        // is a no-op for emission: setProgress already carries both the percent
+        // and a status-bearing text line, so exactly one progress event should
+        // appear per symbol start (plus the terminal 100% Done) — never a
+        // second, redundant one. This is the protocol invariant: N symbols
+        // must produce ~N progress events, not ~2N.
         const datasets = new Map<string, OHLCVData[]>([
             ["UP", makeCandles([100, 105, 110, 115, 120])],
             ["DOWN", makeCandles([100, 95, 90, 85, 80])],
@@ -458,18 +484,24 @@ describe("batch-backtest server plugin processRunBatch", () => {
         );
 
         const progressEvents = events.filter((e): e is Extract<BatchStreamEvent, { type: "progress" }> => e.type === "progress");
-        // The second symbol starts at 50%; before the fix, the immediately
-        // following setStatus("Backtesting DOWN...") event reset percent to 0.
+        // Every progress event must carry a non-negative percent; no event
+        // may reset the bar to 0 after a higher percent was seen.
         let maxSeen = 0;
-        let checkedPositiveStatus = false;
         for (const ev of progressEvents) {
             if (ev.percent > 0) maxSeen = Math.max(maxSeen, ev.percent);
-            if (maxSeen > 0 && ev.text.startsWith("Backtesting")) {
-                expect(ev.percent).to.equal(maxSeen, `setStatus-driven progress must preserve last percent, got ${ev.percent} after ${maxSeen}`);
-                checkedPositiveStatus = true;
+            expect(ev.percent).to.be.at.least(0);
+            // After the first non-zero percent, no later event may drop below
+            // the running max — that would mean the bar snapped backwards.
+            if (maxSeen > 0 && ev.percent < maxSeen && ev.percent !== 100) {
+                expect.fail(`progress percent snapped backwards: ${ev.percent} after ${maxSeen}`);
             }
         }
-        expect(checkedPositiveStatus).to.equal(true);
+        // The runner emits one setProgress per symbol start (2 symbols) plus a
+        // terminal setProgress(100, "Done"). No setStatus-driven duplicates.
+        // (Some symbols may also emit a setProgress on the prefetch path, so
+        // assert a strict upper bound rather than exact equality: the key
+        // invariant is "no second write per symbol".)
+        expect(progressEvents.length).to.be.at.most(4);
 
         setRunOwnerForTests(0);
         await releaseLastResults("test_end");
@@ -912,6 +944,83 @@ describe("batch-backtest server plugin processStabilityMine", () => {
             setMinerAbortControllerForTests(null);
             setMinerOwnerForTests(0);
             await releaseLastResults("test_end");
+        }
+    });
+});
+
+describe("batch-backtest server plugin route-level authorization", () => {
+    it("rejects an unauthenticated non-loopback GET /status with 401", async () => {
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/status");
+        expect(handler).to.not.equal(undefined);
+        // No Origin/Referer, no Authorization header, no LOCAL_PROXY_TOKEN:
+        // this is what a remote poller hitting a tunneled/proxied dev server
+        // looks like. Must be rejected, not handed the status payload.
+        const prevToken = process.env.LOCAL_PROXY_TOKEN;
+        delete process.env.LOCAL_PROXY_TOKEN;
+        try {
+            const res = makeRouteResponse();
+            await handler!({ method: "GET", url: "/api/batch-backtest/status", headers: {} }, res);
+            expect(res.statusCode).to.equal(401);
+            const payload = JSON.parse(res.body) as { ok?: boolean; error?: string };
+            expect(payload.ok).to.equal(false);
+            expect(payload.error).to.include("local-only");
+        } finally {
+            if (prevToken !== undefined) process.env.LOCAL_PROXY_TOKEN = prevToken;
+        }
+    });
+
+    it("allows a loopback-origin GET /status through to handleStatusRequest", async () => {
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/status");
+        expect(handler).to.not.equal(undefined);
+        // A same-origin browser caller on a loopback host is trusted without a
+        // token. The handler must reach `handleStatusRequest` and return 200.
+        const res = makeRouteResponse();
+        await handler!(
+            { method: "GET", url: "/api/batch-backtest/status", headers: { origin: "http://127.0.0.1:5173" } },
+            res,
+        );
+        expect(res.statusCode).to.equal(200);
+        // Body is the status payload (an object, possibly empty when no run is
+        // active). JSON-parseability is the contract; an auth rejection would
+        // produce { ok:false, error: ... } instead.
+        const payload = JSON.parse(res.body);
+        expect(payload).to.be.an("object");
+        expect(payload.ok).to.not.equal(false);
+    });
+});
+
+describe("batch-backtest server plugin run intake size guard", () => {
+    it("rejects a run with more than BATCH_MAX_SYMBOLS symbols with 400 before streaming", async () => {
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/run");
+        expect(handler).to.not.equal(undefined);
+        const prevToken = process.env.LOCAL_PROXY_TOKEN;
+        delete process.env.LOCAL_PROXY_TOKEN;
+        try {
+            // 2001 unique symbols exceeds the 2000-row persistence cap. The
+            // handler must reject before allocating the run or opening the
+            // NDJSON stream — the response is a single JSON error, not a
+            // stream that starts and then aborts.
+            const tooMany = Array.from({ length: 2001 }, (_, i) => `SYM${i}`);
+            // The route handler calls readJsonBody(req), which iterates the
+            // request asynchronously. A Node Readable that emits the JSON
+            // body satisfies that contract (IncomingMessage is a Readable).
+            const req = Readable.from([JSON.stringify({ symbols: tooMany, interval: "5m", strategyKey: STRATEGY_KEY })]) as any;
+            req.method = "POST";
+            req.url = "/api/batch-backtest/run";
+            req.headers = { origin: "http://127.0.0.1:5173", "content-type": "application/json" };
+            const res = makeRouteResponse();
+            await handler!(req, res);
+            expect(res.statusCode).to.equal(400);
+            const payload = JSON.parse(res.body) as { ok?: boolean; error?: string };
+            expect(payload.ok).to.equal(false);
+            expect(payload.error).to.include("exceeds");
+            expect(payload.error).to.match(/2[,.]?000/);
+        } finally {
+            setRunOwnerForTests(0);
+            if (prevToken !== undefined) process.env.LOCAL_PROXY_TOKEN = prevToken;
         }
     });
 });

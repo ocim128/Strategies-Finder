@@ -199,4 +199,5 @@ describe("Batch backtest result snapshots", () => {
         });
         expect(withEmpty?.strategyKey).to.equal(null);
     });
+
 });

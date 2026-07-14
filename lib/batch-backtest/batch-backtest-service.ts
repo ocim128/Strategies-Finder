@@ -34,7 +34,7 @@ import {
 import { getBatchDatasetCacheStats } from "./batch-backtest-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
-import { buildBatchRunFingerprint, parseBatchSymbols } from "./batch-run-contract";
+import { buildBatchRunFingerprint, parseBatchSymbols, BATCH_MAX_SYMBOLS } from "./batch-run-contract";
 import { BATCH_SYMBOL_TEMPLATES, type BatchSymbolTemplateKey } from "./batch-symbol-templates";
 import {
     formatBatchOverallSummary,
@@ -150,6 +150,12 @@ class BatchBacktestService {
     // sees its token as stale and stops writing DOM/state, preventing two
     // concurrent runs from racing on `this.lastResults` and the results list.
     private runToken = 0;
+    // Serializes Mine Timing, Stability, Portfolio Fit, and Timing Surface.
+    private analysisInFlight = false;
+    // Set when Stop races analysis preflight or POST establishment.
+    private analysisCancelRequested = false;
+    // /stop is not operation-scoped, so new work must wait for every request.
+    private pendingStopPromise: Promise<void> | null = null;
     // True when the most recent server-side Run finished with artifacts still
     // on the server (the Mine Timing button is enabled on this flag, NOT on
     // `row.data !== undefined`, because in server-side mode the browser never
@@ -213,7 +219,11 @@ class BatchBacktestService {
         });
         dom.batchBacktestStopBtn.addEventListener("click", () => {
             this.cancelled = true;
-            void this.stopServerRun();
+            // The same button also stops normal Batch runs.
+            if (this.analysisInFlight) {
+                this.analysisCancelRequested = true;
+            }
+            this.requestServerStop();
         });
         dom.batchBacktestCopyBtn.addEventListener("click", () => {
             void this.copyResults();
@@ -286,7 +296,11 @@ class BatchBacktestService {
             dom.batchBacktestStatus.textContent = "Add at least one pair.";
             return;
         }
-
+        if (symbols.length > BATCH_MAX_SYMBOLS) {
+            dom.batchBacktestStatus.textContent =
+                `Batch size ${symbols.length} exceeds the ${BATCH_MAX_SYMBOLS}-symbol limit. Split into chunks of ${BATCH_MAX_SYMBOLS} or fewer.`;
+            return;
+        }
         const strategyKey = state.currentStrategyKey;
         await ensureBuiltInStrategyLoaded(strategyKey);
         const strategy = strategyRegistry.get(strategyKey);
@@ -312,6 +326,7 @@ class BatchBacktestService {
         this.cancelLiveRenderRaf();
         this.liveRenderQueue = [];
         this.cancelled = false;
+        this.analysisCancelRequested = false;
         this.lastResults = [];
         this.lastRunFingerprint = null;
         this.lastRunInterval = null;
@@ -420,6 +435,7 @@ class BatchBacktestService {
         // thrown `StreamEndedBeforeTerminalError`. Without this, a truncated
         // stream resolved normally with `doneSummary === null` and the run was
         // finalized as "Done" at 100% with partial data (audit finding 1).
+        // Malformed lines also fail instead of silently dropping events.
         let streamError: unknown = null;
         try {
             await consumeNdjsonStream<BatchStreamEvent>(response.body, {
@@ -441,12 +457,6 @@ class BatchBacktestService {
                     this.lastResults.push(event.row);
                     this.appendedCount += 1;
                     this.queueLiveRender(dom, event.row, token);
-                },
-                onSymbolFailed: (event: Extract<BatchStreamEvent, { type: "symbol_failed" }>) => {
-                    if (token !== this.runToken) return;
-                    debugLogger.warn("batch.server.symbol_failed", {
-                        symbol: event.symbol, index: event.index, error: event.error,
-                    });
                 },
                 onDone: (event: Extract<BatchStreamEvent, { type: "done" }>) => {
                     if (token !== this.runToken) return;
@@ -919,23 +929,32 @@ class BatchBacktestService {
     }
 
     private async runMiner(): Promise<void> {
+        if (this.analysisInFlight) return;
+        this.analysisInFlight = true;
+        this.analysisCancelRequested = false;
         const dom = this.getDom();
-        if (!this.serverHasArtifacts) {
-            dom.batchBacktestMinerSummary.textContent = "Run Batch first.";
-            return;
-        }
-        if (!this.lastRunFingerprint) {
-            dom.batchBacktestMinerSummary.textContent = "Rerun Batch before mining; settings or symbols changed.";
+        try {
+            if (!this.serverHasArtifacts) {
+                dom.batchBacktestMinerSummary.textContent = "Run Batch first.";
+                return;
+            }
+            if (!this.lastRunFingerprint) {
+                dom.batchBacktestMinerSummary.textContent = "Rerun Batch before mining; settings or symbols changed.";
+                dom.batchBacktestCopyMinerBtn.disabled = true;
+                return;
+            }
+            if (this.analysisCancelRequested) return;
+            this.beginAnalysisBusy(dom);
+            dom.batchBacktestMineBtn.disabled = true;
             dom.batchBacktestCopyMinerBtn.disabled = true;
-            return;
+            dom.batchBacktestMinerSummary.textContent = "Mining on server...";
+            dom.batchBacktestMinerResults.replaceChildren();
+            const mineStartedAt = performance.now();
+            const targetCount = await this.runMinerServer(dom);
+            this.recordMineBenchmark(mineStartedAt, targetCount);
+        } finally {
+            await this.finishAnalysisBusy(dom);
         }
-        dom.batchBacktestMineBtn.disabled = true;
-        dom.batchBacktestCopyMinerBtn.disabled = true;
-        dom.batchBacktestMinerSummary.textContent = "Mining on server...";
-        dom.batchBacktestMinerResults.replaceChildren();
-        const mineStartedAt = performance.now();
-        const targetCount = await this.runMinerServer(dom);
-        this.recordMineBenchmark(mineStartedAt, targetCount);
     }
 
     /**
@@ -966,6 +985,7 @@ class BatchBacktestService {
                 try { payload = JSON.parse(text); } catch { /* ignore */ }
                 throw new Error(payload.error ?? `Server mine failed (${response.status}).`);
             }
+            await this.reissueStopIfNeeded();
             const verdicts: BatchSyntheticAssetVerdict[] = [];
             let minerInterval = this.lastRunInterval ?? state.currentInterval;
             // `requireTerminal: true` enforces the protocol invariant: a clean
@@ -1020,7 +1040,8 @@ class BatchBacktestService {
         return targetCount;
     }
 
-    private async stopServerRun(): Promise<void> {
+    /** Cancel the Batch run and any analysis holding the server miner lock. */
+    private async stopServerWork(): Promise<void> {
         try {
             await fetch("/api/batch-backtest/stop", { method: "POST" });
         } catch (error) {
@@ -1028,6 +1049,30 @@ class BatchBacktestService {
                 error: error instanceof Error ? error.message : String(error),
             });
         }
+    }
+
+    // Do not coalesce Stops: the first may arrive before analysis ownership.
+    private requestServerStop(): Promise<void> {
+        const request = this.stopServerWork();
+        const prior = this.pendingStopPromise;
+        const pending = prior
+            ? Promise.all([prior, request]).then(() => undefined)
+            : request;
+        this.pendingStopPromise = pending;
+        void pending.finally(() => {
+            if (this.pendingStopPromise === pending) {
+                this.pendingStopPromise = null;
+            }
+        });
+        return request;
+    }
+
+    // Fetch resolves after the route owns the miner lock, so a second Stop sent
+    // here closes the pre-ownership race.
+    private async reissueStopIfNeeded(): Promise<void> {
+        if (!this.analysisCancelRequested) return;
+        this.analysisCancelRequested = false;
+        await this.requestServerStop();
     }
 
     private stopReattachPoll(): void {
@@ -1314,26 +1359,35 @@ class BatchBacktestService {
     }
 
     private async runStabilityMine(): Promise<void> {
+        if (this.analysisInFlight) return;
+        this.analysisInFlight = true;
+        this.analysisCancelRequested = false;
         const dom = this.getDom();
-        if (!this.serverHasArtifacts || !this.lastRunFingerprint) {
-            dom.batchBacktestMinerSummary.textContent = "Run Batch first.";
-            return;
+        try {
+            if (!this.serverHasArtifacts || !this.lastRunFingerprint) {
+                dom.batchBacktestMinerSummary.textContent = "Run Batch first.";
+                return;
+            }
+            const currentFingerprint = this.buildCurrentRunFingerprint();
+            if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
+                dom.batchBacktestMinerSummary.textContent = "Rerun Batch before stability mining; settings or symbols changed.";
+                dom.batchBacktestCopyStabilityBtn.disabled = true;
+                return;
+            }
+            this.beginAnalysisBusy(dom);
+            const hasServerArtifacts = await this.refreshServerArtifactState(currentFingerprint);
+            if (this.analysisCancelRequested) return;
+            if (!hasServerArtifacts) {
+                dom.batchBacktestMinerSummary.textContent = "Rerun Batch before stability mining; no artifacts on server.";
+                dom.batchBacktestStabilityMineBtn.disabled = true;
+                return;
+            }
+            const stabilityStartedAt = performance.now();
+            await this.runStabilityMineServer(dom);
+            this.recordStabilityBenchmark(stabilityStartedAt);
+        } finally {
+            await this.finishAnalysisBusy(dom);
         }
-        const currentFingerprint = this.buildCurrentRunFingerprint();
-        if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
-            dom.batchBacktestMinerSummary.textContent = "Rerun Batch before stability mining; settings or symbols changed.";
-            dom.batchBacktestCopyStabilityBtn.disabled = true;
-            return;
-        }
-        const hasServerArtifacts = await this.refreshServerArtifactState(currentFingerprint);
-        if (!hasServerArtifacts) {
-            dom.batchBacktestMinerSummary.textContent = "Rerun Batch before stability mining; no artifacts on server.";
-            dom.batchBacktestStabilityMineBtn.disabled = true;
-            return;
-        }
-        const stabilityStartedAt = performance.now();
-        await this.runStabilityMineServer(dom);
-        this.recordStabilityBenchmark(stabilityStartedAt);
     }
     private async runStabilityMineServer(dom: BatchBacktestDom): Promise<void> {
         const subsetSize = this.readClampedInt(dom.batchBacktestStabilitySubsetSize.value, 200, 10, Number.MAX_SAFE_INTEGER);
@@ -1381,6 +1435,7 @@ class BatchBacktestService {
                 }
                 throw new Error(payload.error ?? (text || `HTTP ${response.status}`));
             }
+            await this.reissueStopIfNeeded();
             const received: { result: BatchStabilityMineResult | null; cancelledSummary: string | null } = {
                 result: null,
                 cancelledSummary: null,
@@ -1399,7 +1454,7 @@ class BatchBacktestService {
                 onFatal: (event: Extract<BatchStabilityMineStreamEvent, { type: "fatal" }>) => {
                     throw new Error(event.error);
                 },
-            });
+            }, { requireTerminal: true });
             if (received.cancelledSummary) {
                 this.lastStabilityResult = null;
                 dom.batchBacktestMinerSummary.textContent = received.cancelledSummary;
@@ -1483,23 +1538,32 @@ class BatchBacktestService {
     // -----------------------------------------------------------------------
 
     private async runPortfolioFit(): Promise<void> {
+        if (this.analysisInFlight) return;
+        this.analysisInFlight = true;
+        this.analysisCancelRequested = false;
         const dom = this.getDom();
-        if (!this.lastStabilityResult || this.lastStabilityResult.rows.length === 0) {
-            dom.batchBacktestPortfolioFitSummary.textContent = "Run Stability Mine before Portfolio Fit.";
-            return;
+        try {
+            if (!this.lastStabilityResult || this.lastStabilityResult.rows.length === 0) {
+                dom.batchBacktestPortfolioFitSummary.textContent = "Run Stability Mine before Portfolio Fit.";
+                return;
+            }
+            const currentFingerprint = this.buildCurrentRunFingerprint();
+            if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
+                dom.batchBacktestPortfolioFitSummary.textContent = "Rerun Batch before Portfolio Fit; settings or symbols changed.";
+                return;
+            }
+            this.beginAnalysisBusy(dom);
+            const hasServerArtifacts = await this.refreshServerArtifactState(currentFingerprint);
+            if (this.analysisCancelRequested) return;
+            if (!hasServerArtifacts) {
+                dom.batchBacktestPortfolioFitSummary.textContent = "Rerun Batch before Portfolio Fit; no artifacts on server.";
+                dom.batchBacktestPortfolioFitBtn.disabled = true;
+                return;
+            }
+            await this.runPortfolioFitServer(dom);
+        } finally {
+            await this.finishAnalysisBusy(dom);
         }
-        const currentFingerprint = this.buildCurrentRunFingerprint();
-        if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
-            dom.batchBacktestPortfolioFitSummary.textContent = "Rerun Batch before Portfolio Fit; settings or symbols changed.";
-            return;
-        }
-        const hasServerArtifacts = await this.refreshServerArtifactState(currentFingerprint);
-        if (!hasServerArtifacts) {
-            dom.batchBacktestPortfolioFitSummary.textContent = "Rerun Batch before Portfolio Fit; no artifacts on server.";
-            dom.batchBacktestPortfolioFitBtn.disabled = true;
-            return;
-        }
-        await this.runPortfolioFitServer(dom);
     }
 
     private async runPortfolioFitServer(dom: BatchBacktestDom): Promise<void> {
@@ -1509,13 +1573,13 @@ class BatchBacktestService {
         this.lastPortfolioFitResult = null;
         try {
             const capital = this.resolvePortfolioFitCapital();
+            // Stability context is retained and resolved by the server.
             const response = await fetch("/api/batch-backtest/portfolio-fit", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     fingerprint: this.lastRunFingerprint,
                     interval: this.lastRunInterval ?? state.currentInterval,
-                    stability: this.lastStabilityResult,
                     capital,
                 }),
             });
@@ -1528,6 +1592,7 @@ class BatchBacktestService {
                 }
                 throw new Error(payload.error ?? (text || `HTTP ${response.status}`));
             }
+            await this.reissueStopIfNeeded();
             const received: { result: BatchPortfolioFitResult | null; cancelledSummary: string | null } = {
                 result: null,
                 cancelledSummary: null,
@@ -1659,27 +1724,36 @@ class BatchBacktestService {
     // -----------------------------------------------------------------------
 
     private async runTimingSurface(): Promise<void> {
+        if (this.analysisInFlight) return;
+        this.analysisInFlight = true;
+        this.analysisCancelRequested = false;
         const dom = this.getDom();
-        if (!this.lastStabilityResult || this.lastStabilityResult.rows.length === 0) {
-            dom.batchBacktestTimingSurfaceSummary.textContent = "Run Stability Mine before Timing Surface.";
-            return;
+        try {
+            if (!this.lastStabilityResult || this.lastStabilityResult.rows.length === 0) {
+                dom.batchBacktestTimingSurfaceSummary.textContent = "Run Stability Mine before Timing Surface.";
+                return;
+            }
+            const currentFingerprint = this.buildCurrentRunFingerprint();
+            if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
+                dom.batchBacktestTimingSurfaceSummary.textContent = "Rerun Batch before Timing Surface; settings or symbols changed.";
+                return;
+            }
+            this.beginAnalysisBusy(dom);
+            const hasServerArtifacts = await this.refreshServerArtifactState(currentFingerprint);
+            if (this.analysisCancelRequested) return;
+            if (!hasServerArtifacts) {
+                dom.batchBacktestTimingSurfaceSummary.textContent = "Rerun Batch before Timing Surface; no artifacts on server.";
+                dom.batchBacktestTimingSurfaceBtn.disabled = true;
+                return;
+            }
+            // The server is authoritative for retained Stability context. If the
+            // server has released it (e.g. tab reload after artifact TTL expiry),
+            // the endpoint returns STABILITY_CONTEXT_MISSING as a fatal — surfacing
+            // it explicitly here would duplicate the server's authority.
+            await this.runTimingSurfaceServer(dom);
+        } finally {
+            await this.finishAnalysisBusy(dom);
         }
-        const currentFingerprint = this.buildCurrentRunFingerprint();
-        if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
-            dom.batchBacktestTimingSurfaceSummary.textContent = "Rerun Batch before Timing Surface; settings or symbols changed.";
-            return;
-        }
-        const hasServerArtifacts = await this.refreshServerArtifactState(currentFingerprint);
-        if (!hasServerArtifacts) {
-            dom.batchBacktestTimingSurfaceSummary.textContent = "Rerun Batch before Timing Surface; no artifacts on server.";
-            dom.batchBacktestTimingSurfaceBtn.disabled = true;
-            return;
-        }
-        // The server is authoritative for retained Stability context. If the
-        // server has released it (e.g. tab reload after artifact TTL expiry),
-        // the endpoint returns STABILITY_CONTEXT_MISSING as a fatal — surfacing
-        // it explicitly here would duplicate the server's authority.
-        await this.runTimingSurfaceServer(dom);
     }
 
     private async runTimingSurfaceServer(dom: BatchBacktestDom): Promise<void> {
@@ -1706,6 +1780,7 @@ class BatchBacktestService {
                 }
                 throw new Error(payload.error ?? (text || `HTTP ${response.status}`));
             }
+            await this.reissueStopIfNeeded();
             const received: { result: TimingSurfaceResult | null; cancelledSummary: string | null } = {
                 result: null,
                 cancelledSummary: null,
@@ -2262,7 +2337,8 @@ class BatchBacktestService {
      * paths that render hundreds of rows synchronously do a single reflow
      * instead of one per row. Output is identical to calling appendResultRow
      * per element; this is purely a layout-cost optimization for bulk paths.
-     * The live server stream stays on appendResultRow (one row per event).
+     * The live server stream is frame-batched separately via queueLiveRender
+     * (one reflow per animation frame, not one per row).
      */
     private appendResultRows(dom: BatchBacktestDom, results: readonly BatchBacktestSymbolResult[]): void {
         if (results.length === 0) return;
@@ -2384,6 +2460,38 @@ class BatchBacktestService {
      */
     private setRunBusy(dom: BatchBacktestDom, busy: boolean): void {
         dom.batchbacktestTab.classList.toggle("is-running", busy);
+    }
+
+    private beginAnalysisBusy(dom: BatchBacktestDom): void {
+        this.setRunBusy(dom, true);
+        setVisible(dom.batchBacktestStopBtn, true);
+        dom.batchBacktestRunBtn.disabled = true;
+        dom.batchBacktestMineBtn.disabled = true;
+        dom.batchBacktestStabilityMineBtn.disabled = true;
+        dom.batchBacktestPortfolioFitBtn.disabled = true;
+        dom.batchBacktestTimingSurfaceBtn.disabled = true;
+    }
+
+    // Keep operations disabled until unscoped /stop requests have settled.
+    private async finishAnalysisBusy(dom: BatchBacktestDom): Promise<void> {
+        this.analysisCancelRequested = false;
+        this.setRunBusy(dom, false);
+        setVisible(dom.batchBacktestStopBtn, false);
+        dom.batchBacktestRunBtn.disabled = true;
+        dom.batchBacktestMineBtn.disabled = true;
+        dom.batchBacktestStabilityMineBtn.disabled = true;
+        dom.batchBacktestPortfolioFitBtn.disabled = true;
+        dom.batchBacktestTimingSurfaceBtn.disabled = true;
+        const pending = this.pendingStopPromise;
+        if (pending) {
+            try { await pending; } catch { /* stopServerWork swallows errors */ }
+        }
+        this.analysisInFlight = false;
+        dom.batchBacktestRunBtn.disabled = false;
+        dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
+        dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
+        this.updatePortfolioFitButtonState(dom);
+        this.updateTimingSurfaceButtonState(dom);
     }
 
     private resetProgress(dom: BatchBacktestDom): void {
