@@ -6,6 +6,7 @@ import {
     evaluateEligibility,
     runPortfolioFit,
 } from "../lib/batch-backtest/batch-portfolio-fit-engine";
+import { formatPortfolioFitSummary } from "../lib/batch-backtest/batch-portfolio-fit-summary";
 import { PORTFOLIO_FIT_DEFAULT_OPTIONS } from "../lib/batch-backtest/batch-portfolio-fit-types";
 import type {
     BatchPortfolioFitInput,
@@ -129,8 +130,25 @@ describe("Portfolio Fit allocation", () => {
             { options: { correlationCap: 0.8, tailRiskIncreaseThreshold: 1 } },
         ));
         const second = result.rows.find((item) => item.asset === "BBB")!;
+        expect(second.decision).to.equal("DEFER");
         expect(second.allocationFraction).to.equal(0);
         expect(second.reasonCodes).to.include("HIGH_CORRELATION");
+    });
+
+    it("defers a candidate when full and half allocations both increase tail risk", () => {
+        const sharedReturns = returns("AAA").returns;
+        const result = runPortfolioFit(input(
+            [row("AAA", { medianLiftPct: 10 }), row("BBB")],
+            [{ asset: "AAA", returns: sharedReturns }, { asset: "BBB", returns: new Map(sharedReturns) }],
+            { options: { correlationCap: 1, tailRiskIncreaseThreshold: 0 } },
+        ));
+        const second = result.rows.find((item) => item.asset === "BBB")!;
+        expect(second.decision).to.equal("DEFER");
+        expect(second.allocationFraction).to.equal(0);
+        expect(second.reasonCodes).to.deep.equal(["TAIL_RISK_INCREASE"]);
+        expect(formatPortfolioFitSummary(result)).to.include(
+            "PORTFOLIO_FIT | Candidates 2 | Accepted 1 | Deferred 1 | Rejected 0",
+        );
     });
 
     it("uses direction-adjusted returns exactly once for shorts", () => {

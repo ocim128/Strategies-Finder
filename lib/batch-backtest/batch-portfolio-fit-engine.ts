@@ -387,7 +387,7 @@ function buildResultRow(
         asset: candidate.row.asset,
         direction: candidate.row.direction === "LONG" ? "long" : "short",
         decision: allocationFraction <= 0
-            ? candidate.eligibility.decision
+            ? (candidate.eligibility.eligible ? "DEFER" : candidate.eligibility.decision)
             : outcome?.fullFailure ? "ADD_SMALL" : "ADD",
         allocationFraction: finiteOrZero(allocationFraction),
         allocationAmount: finiteOrZero(allocationFraction * initialCapital),
