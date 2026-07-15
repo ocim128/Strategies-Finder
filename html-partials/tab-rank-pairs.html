@@ -2,15 +2,20 @@
 <div id="rankpairsTab">
     <div class="section-title">Rank Pairs</div>
     <div class="param-hint">
-        Score each synthetic pair (<code>BASE+QUOTE</code>) by how much the base
-        out- or under-performed the side over the fetched window. The ratio
-        series <em>is</em> the relative-strength measurement: a rising ratio means
-        the base leg is strong vs the side leg. Use it to spot structurally weak
-        bases before backtesting.
+        Classify each synthetic pair (<code>BASE+QUOTE</code>) by the regime of
+        its ratio path (base.close / quote.close). Each pair is sampled at fixed
+        30-calendar-day anchors over roughly three years, then labelled with an
+        independent direction (<code>BASE</code> / <code>NEUTRAL</code> /
+        <code>QUOTE</code>) and structure (<code>TREND</code> /
+        <code>OSCILLATING</code> / <code>TRANSITION</code> /
+        <code>REVERSAL</code> / <code>MIXED</code>). Calendar anchoring makes
+        <code>30m</code>, <code>4h</code>, and <code>1d</code> paths comparable
+        across continuous and stock sessions.
     </div>
     <div class="param-hint" style="margin-top: 4px; color: var(--color-warning, #b8860b);">
-        ⚠ Research only &mdash; full-window return has lookahead bias. Do not treat
-        rankings as a deployable filter without re-testing on a rolling window.
+        ⚠ Research only &mdash; a regime label is measured over a multiyear
+        historical window and is not a persistence claim. Ranking pairs by a
+        label and then backtesting over the same period is lookahead-biased.
     </div>
 
     <div class="section-body">
@@ -65,7 +70,7 @@
                         d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z" />
                 </svg>
             </div>
-            <h3 class="empty-state-title">Rank Pairs by Relative Strength</h3>
+            <h3 class="empty-state-title">Rank Pairs by Regime</h3>
             <p class="empty-state-description">
                 Paste a list of synthetic pairs above, then click <strong>Rank Pairs</strong>.
             </p>

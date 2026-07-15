@@ -16,6 +16,7 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 - [counterfactual-timing-surface.md](counterfactual-timing-surface.md) - Timing Surface design: cost-aware entry-delay and hold-policy mining after Batch Stability.
 - [cross-symbol.md](cross-symbol.md) - secondary-symbol strategy runtime contract and support matrix.
 - [synthetic-pairs.md](synthetic-pairs.md) - synthetic pair generation, supported surfaces, and state miner notes.
+- [rank-pairs.md](rank-pairs.md) - Rank Pairs regime classification: anchored sampling, metrics, labels, thresholds, and copy contract.
 - [path-dependent-exits.md](path-dependent-exits.md) - Risk Management path-exit modes and TypeScript/Rust compatibility.
 - [polymarket.md](polymarket.md) - Polymarket charting, scoring, diagnostics, bridge export, and Execution Lab boundaries.
 - [execution-lab-live-trading.md](execution-lab-live-trading.md) - live-trade executor boundary, env vars, order lifecycle, and safety rules.
