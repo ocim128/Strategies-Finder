@@ -314,26 +314,12 @@
         max-width: none;
     }
 
-    /* Portrait navigation overflow: let the tab strip scroll horizontally
-       instead of clipping or shrinking labels to 11px. The More trigger
-       stays pinned at the right via its flex-shrink: 0. */
+    /* Drop the nav padding on narrow viewports so the scrollable tab strip has
+       the full strip width. The scroll behavior itself is defined at the
+       component level (no viewport gate) so it also covers narrow desktop
+       panels. */
     .panel-navigation {
         padding-right: 0;
-    }
-
-    .panel-tabs {
-        overflow-x: auto;
-        flex-wrap: nowrap;
-        scrollbar-width: none;
-        -ms-overflow-style: none;
-    }
-
-    .panel-tabs::-webkit-scrollbar {
-        display: none;
-    }
-
-    .panel-tab {
-        flex: 0 0 auto;
     }
 }
 
@@ -366,12 +352,6 @@
     }
 
     .run-btn-text {
-        display: none;
-    }
-
-    /* Collapse "Backtest tools" to its gear icon at narrow widths so the
-       header still centers on Run. */
-    .backtest-tools-label {
         display: none;
     }
 
@@ -438,9 +418,9 @@
     }
 
     .panel-tabs {
+        /* Cap height in landscape; horizontal scroll is defined at the
+           component level now. */
         max-height: 48px;
-        overflow-x: auto;
-        flex-wrap: nowrap;
     }
 
     .panel-content {

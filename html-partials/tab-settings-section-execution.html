@@ -103,7 +103,7 @@
                             <span class="section-toggle-track"></span>
                         </label>
                     </div>
-                    <div class="param-hint">Score trades against Polymarket crypto outcome events. Default session stays 5m. Use the chart symbol by default, or pick BTCUSDT/ETHUSDT/SOLUSDT/XRPUSDT for cross-symbol evaluation.</div>
+                    <div class="param-hint">Score trades against Polymarket crypto outcome events. Default session is 5m; pick another symbol for cross-symbol evaluation.</div>
                 </div>
                 <div class="param-group">
                     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
@@ -148,7 +148,7 @@
                         <option value="fixed_offset" selected>Fixed minute offset</option>
                         <option value="actual_entry_minute">Auto (use each trade's actual minute)</option>
                     </select>
-                    <div class="param-hint">Auto scores the first eligible trade per 5m Polymarket event and uses that trade's real minute for entry pricing. Fixed offset keeps the existing minute 0..4 filter.</div>
+                    <div class="param-hint">Auto scores the first eligible trade per 5m event and uses its real minute for pricing. Fixed offset keeps the minute 0..4 filter.</div>
                 </div>
             </div>
             <div class="param-row" id="polymarketEntryOffsetRow" style="display: none;">
@@ -161,7 +161,7 @@
                         <option value="3">Minute 3 (fourth minute)</option>
                         <option value="4">Minute 4 (fifth minute / last before resolution)</option>
                     </select>
-                    <div class="param-hint">For 1m chart runs: only trades entering at the selected minute offset within each 5m Polymarket event will be scored. One trade per event is scored; duplicates are ignored.</div>
+                    <div class="param-hint">1m charts: score only trades entering at this minute offset within each 5m event. One trade per event; duplicates ignored.</div>
                 </div>
             </div>
             <div class="param-row" id="polymarketEntryPriceFilterCentsRow" style="display: none;">
@@ -219,7 +219,7 @@
                         <option value="signal_exit_same_event">Signal Exit Same Event (exit on chart sell signal)</option>
                         <option value="chart_exit_same_event">Chart Exit Same Event (exit on chart trade close)</option>
                     </select>
-                    <div class="param-hint">Same-event modes use chart timing and cached Polymarket quotes inside the mapped event. Signal Exit only uses chart signal exits; Chart Exit uses the chart trade close.</div>
+                    <div class="param-hint">Same-event modes score within the mapped event using cached Polymarket quotes. Signal Exit uses chart sell signals; Chart Exit uses the chart trade close.</div>
                 </div>
             </div>
             <div class="param-row" id="polymarketSignalExitAllowMultipleTradesPerEventRow" style="display: none;">

@@ -193,7 +193,7 @@
                 </div>
             </div>
             <div class="param-hint">After TP Only scores only entries whose previous closed trade exited via take profit.</div>
-            <div class="param-hint">Classification-only. Balanced mode uses a confidence-weighted score so tiny-sample win rates do not dominate. Lock Offset limits random 1m Polymarket Finder to the currently selected backtest offset instead of testing all 5 offsets.</div>
+            <div class="param-hint">Balanced mode uses a confidence-weighted score so tiny-sample win rates don't dominate. Lock Offset restricts 1m Polymarket Finder to the selected backtest offset instead of all 5.</div>
         </div>
     </div>
 
@@ -212,7 +212,7 @@
                 <input type="checkbox" id="finderRandomizePathExitToggle">
             </div>
         </div>
-        <div class="param-hint">When Path-Dependent Exits are enabled in settings, Finder varies the numeric controls for the selected path-exit mode and applies the sampled values with the result.</div>
+        <div class="param-hint">When Path-Dependent Exits are enabled, Finder varies the numeric controls for the selected path-exit mode and applies them with the result.</div>
     </div>
 
     <div class="section-header">
@@ -223,7 +223,7 @@
         </label>
     </div>
     <div class="section-body">
-        <div class="param-hint">Requires Disable Exit Signal and Exit Strategy Override in settings. When on, Finder samples exit strategies from the checked strategy list and varies their params alongside entry params. Apply writes the chosen exit strategy and both param sets back to settings.</div>
+        <div class="param-hint">Requires Disable Exit Signal + Exit Strategy Override. Finder samples exit strategies from the checked list and varies their params with entry params; Apply writes both back to settings.</div>
     </div>
 
     <div class="section-header">

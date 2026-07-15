@@ -161,20 +161,6 @@ function applyPreset(preset: SettingsPresetMode, settingsTab: HTMLElement, prese
     });
 }
 
-/**
- * Tooltip initialization.
- *
- * The earlier "i" trigger + floating tooltip system was removed: hints are
- * short, essential copy and are now shown inline via `.param-hint` (always
- * visible). The transformation was more complex than the visual result
- * deserved, the 14px trigger was too small for touch, and floating tooltips
- * were clipped by accordion bodies that use overflow: hidden. Kept as a
- * no-op so existing call sites stay stable.
- */
-function initTooltips(): void {
-    // Intentionally empty: hints render inline via .param-hint in CSS.
-}
-
 function syncRegistryMarkup(): void {
     const settingsTab = document.getElementById('settingsTab');
     if (!settingsTab) return;
@@ -213,6 +199,5 @@ export function initSettingsUX(): void {
     initWorkspaceAccordion();
     initAccordion();
     initPresets();
-    initTooltips();
     bindFormAccessibility(document);
 }

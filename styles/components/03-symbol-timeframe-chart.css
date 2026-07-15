@@ -256,10 +256,22 @@
     flex: 1 1 auto;
     min-width: 0;
     gap: var(--space-1);
+    /* The panel is narrow at desktop widths too, so overflow can't be gated on
+       viewport width. Let the tab strip scroll horizontally and keep .panel-more
+       pinned at the right via its flex-shrink: 0. Hide the scrollbar — the
+       active-tab affordance is enough. */
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.panel-tabs::-webkit-scrollbar {
+    display: none;
 }
 
 .panel-tab {
-    flex: 1 0 auto;
+    flex: 0 0 auto;
     padding: var(--space-2) var(--space-2-5);
     display: flex;
     align-items: center;

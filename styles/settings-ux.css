@@ -137,6 +137,16 @@
     gap: var(--space-1-5);
 }
 
+/* Compact card label so Saved Configurations reads as its own workflow
+   without the old heavy section header. Mirrors the preset label style. */
+.strategy-workspace-card-label {
+    font-size: var(--font-size-xs);
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    font-weight: var(--font-weight-semibold);
+}
+
 .strategy-workspace-card--config .settings-preset-label {
     margin-top: var(--space-1);
 }

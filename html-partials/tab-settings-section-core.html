@@ -19,9 +19,7 @@
                         <option value="both_flip_loss_2">Both (Flip After 2 Losses)</option>
                         <option value="combined">Combined (L+S)</option>
                     </select>
-                    <div class="param-hint">Both flips on opposite signals. Flip-after-2 keeps an active side and
-                        switches only after 2 consecutive losses on that side. Combined runs long+short books in
-                        parallel and ignores same-bar opposite entries.</div>
+                    <div class="param-hint">Both flips on opposite signals. Flip-after-2 switches side only after 2 consecutive losses. Combined runs long+short in parallel, ignoring same-bar opposite entries.</div>
                 </div>
             </div>
             <div class="param-row">
@@ -311,7 +309,7 @@
                                 <option value="serial_dependency">Serial Dependency</option>
                                 <option value="minimum_surprisal">Minimum Surprisal</option>
                             </select>
-                            <div class="param-hint">`fixed` is static. `mfe_bootstrap` is non-causal. The adaptive modes below use entry context or rolling closed-trade history to reveal where the strategy's TP edge actually concentrates.</div>
+                            <div class="param-hint">`fixed` is static. `mfe_bootstrap` is non-causal. The adaptive modes use entry context or rolling closed-trade history to find where the TP edge concentrates.</div>
                         </div>
                     </div>
                     <div class="param-row">

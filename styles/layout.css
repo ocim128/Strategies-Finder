@@ -234,19 +234,40 @@
 }
 
 /* Backtest tools overflow menu — endpoint actions live here so the header has
-   one unmistakable primary action (Run). Mirrors the strategy-library-menu
-   disclosure pattern. */
+   one unmistakable primary action (Run). The trigger is a vertical-ellipsis
+   icon button at every width; the label lives inside the popover so the
+   header title keeps its line. */
 .backtest-tools-menu {
     position: relative;
+    flex-shrink: 0;
 }
 
 .backtest-tools-summary {
     list-style: none;
     display: inline-flex;
     align-items: center;
-    gap: var(--space-1-5);
+    justify-content: center;
+    width: 34px;
+    height: 34px;
     min-height: 34px;
+    padding: 0;
+    border-radius: var(--radius-m);
+    border: 1px solid var(--card-border);
+    background: var(--card-bg-muted);
+    color: var(--text-secondary);
     cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.backtest-tools-summary:hover {
+    background: var(--field-bg-hover);
+    border-color: hsl(var(--hsl-accent) / 0.25);
+    color: var(--text-primary);
+}
+
+.backtest-tools-summary:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring), var(--focus-ring-soft);
 }
 
 .backtest-tools-summary::-webkit-details-marker {
@@ -254,8 +275,8 @@
 }
 
 .backtest-tools-summary svg {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
 }
 
 .backtest-tools-panel {
@@ -274,6 +295,15 @@
     box-shadow: var(--shadow-md);
 }
 
+.backtest-tools-heading {
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--text-tertiary);
+    font-weight: var(--font-weight-semibold);
+    padding: 0 var(--space-1);
+}
+
 .backtest-tools-item {
     width: 100%;
     justify-content: flex-start;
@@ -290,8 +320,17 @@
     align-items: center;
     gap: var(--space-2);
     letter-spacing: 0.01em;
+    /* Keep the title on one line; .panel-title-text can ellipsize if a very
+       narrow panel forces it, but the title no longer wraps to two rows. */
     min-width: 0;
     line-height: var(--line-height-tight);
+    flex: 0 1 auto;
+}
+
+.panel-title-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .panel-title svg {
