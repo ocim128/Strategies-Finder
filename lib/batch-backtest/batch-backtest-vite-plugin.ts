@@ -51,7 +51,6 @@ import {
     runBatchSyntheticStateMiner,
     resolveBatchSyntheticTargetSymbol,
     type BatchSyntheticPairArtifact,
-    type BatchSyntheticPreparedPairArtifact,
     type BatchSyntheticTargetArtifact,
 } from "./batch-synthetic-state-miner";
 import { parsePortfolioSyntheticPairSymbol } from "../portfolioLab/portfolio-lab-synthetic";
@@ -74,13 +73,6 @@ import type {
     BatchPortfolioFitInput,
     PortfolioFitTargetReturnSeries,
 } from "./batch-portfolio-fit-types";
-import { runTimingSurfaceEngine } from "./batch-timing-surface-engine";
-import type {
-    TimingSurfaceCostModel,
-    TimingSurfaceResult,
-} from "./batch-timing-surface-types";
-import { TimingSurfaceCancelled } from "./batch-timing-surface-types";
-import { computeStabilityAction } from "./miner-verdict-format-helpers";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -213,15 +205,9 @@ let abortController: AbortController | null = null;
 let minerAbortController: AbortController | null = null;
 let artifactReleaseTimer: ReturnType<typeof setTimeout> | null = null;
 let minerState: { running: boolean; startedAt: number; assets: number; pairs: number; verdicts: number; cancelled: boolean } | null = null;
-// Retained Timing Surface server context: the successful scalar
-// Stability result + normalized cost/execution model captured when the matching
-// Stability run completes. The timing-surface endpoint does NOT trust the
-// browser's copy of either; it re-derives everything from these retained
-// server values + the active fingerprint. Cleared in the same places
-// `lastRunFingerprint` is cleared (new Run, fingerprint change, artifact
-// release, test reset).
+// Retain the successful Stability result so Portfolio Fit uses server-owned
+// context instead of trusting browser-supplied rows.
 let retainedStabilityResult: BatchStabilityMineResult | null = null;
-let retainedTimingCostModel: TimingSurfaceCostModel | null = null;
 
 export type BatchRunSnapshot = {
     startedAt: number;
@@ -402,10 +388,8 @@ async function releaseLastResults(reason: string): Promise<void> {
     lastRunInterval = null;
     lastRunStrategyKey = null;
     lastRunCacheStats = null;
-    // clear retained Stability/cost state on artifact release and
-    // new Run so the timing-surface endpoint can never read stale context.
+    // Clear retained Stability state whenever its matching artifacts expire.
     retainedStabilityResult = null;
-    retainedTimingCostModel = null;
     clearServerBatchDatasetCaches();
     if (dirToRemove) {
         // `force: true` suppresses ENOENT but NOT EBUSY/EPERM (e.g. an AV
@@ -595,7 +579,6 @@ export async function processRunBatch(
         lastRunFingerprint = fingerprint;
         lastRunInterval = input.interval;
         lastRunStrategyKey = input.strategyKey;
-        retainedTimingCostModel = buildTimingCostModelFromRun(input);
 
         // Flush in-flight artifact writes before the `done` event so
         // `serverHasArtifacts` is truthful — the browser gates the Mine button
@@ -780,7 +763,6 @@ export async function processStabilityMine(
     const writeCancelled = () => {
         snapshot.cancelled = true;
         snapshot.running = false;
-        // A cancelled Stability run cannot support Timing Surface.
         retainedStabilityResult = null;
         writer({ type: "done", ok: false, cancelled: true, summary: "Stability mining cancelled." });
     };
@@ -926,7 +908,6 @@ export async function processStabilityMine(
         const message = error instanceof Error ? error.message : String(error);
         debugLogger.warn("batch.server.stability_mine.fatal", { error: message });
         snapshot.running = false;
-        // A failed Stability run cannot support Timing Surface.
         retainedStabilityResult = null;
         writer({ type: "fatal", error: message });
     } finally {
@@ -1261,7 +1242,6 @@ export async function processPortfolioFit(
         return;
     }
     if (!stability || !Array.isArray(stability.rows) || stability.rows.length === 0) {
-        // Match Timing Surface's missing retained-context contract.
         writer({ type: "fatal", error: "STABILITY_CONTEXT_MISSING" });
         return;
     }
@@ -1392,10 +1372,6 @@ function handleStatusRequest(afterRow = 0, limitRaw?: number): unknown {
     const nextOffset = sliceEnd < rowCount ? sliceEnd : null;
     return {
         ok: true,
-        timingSurfaceAvailable: hasStoredMineArtifacts()
-            && lastRunFingerprint !== null
-            && retainedStabilityResult !== null
-            && retainedTimingCostModel !== null,
         running: runState !== null && runOwner !== RUN_OWNER_NONE,
         run: runState && runOwner !== RUN_OWNER_NONE
             ? {
@@ -1463,228 +1439,6 @@ async function resolveStrategy(strategyKey: string): Promise<Strategy> {
         throw new HttpStatusError(400, `Strategy not loaded: ${strategyKey}`);
     }
     return strategy;
-}
-
-// ---------------------------------------------------------------------------
-// Timing Surface. Artifacts remain available and the TTL is re-armed.
-// ---------------------------------------------------------------------------
-
-function buildTimingCostModelFromRun(input: BatchBacktestRunInput): TimingSurfaceCostModel | null {
-    const commissionPercent = Number(input.capitalSettings.commission);
-    const slippageBps = Number(input.backtestSettings.slippageBps);
-    const executionModelRaw = input.backtestSettings.executionModel;
-    if (!Number.isFinite(commissionPercent) || commissionPercent < 0) return null;
-    if (!Number.isFinite(slippageBps) || slippageBps < 0) return null;
-    if (executionModelRaw !== "signal_close" && executionModelRaw !== "next_open" && executionModelRaw !== "next_close") return null;
-    return { commissionPercent, slippageBps, executionModel: executionModelRaw };
-}
-
-/**
- * Factored Timing Surface core, testable without an HTTP response. Mirrors
- * `processPortfolioFit`'s ownership/fingerprint/cancellation pattern and:
- *  - Does not release artifacts; re-arms TTL in `finally`.
- *  - Loads target datasets server-side via `loadMinerTargets`.
- *  - Reconstructs exact Stability subsets from the retained seed and rerun index.
- *  - Recomputes Stability actions server-side and evaluates only fresh ENTER rows.
- *  - Emits a scalar-only {@link TimingSurfaceResult} in the `done` event.
- */
-export async function processTimingSurface(
-    fingerprint: string | null,
-    interval: string | null,
-    writer: MinerStreamWriter,
-    owner: number,
-    loadTargets: (pairArtifacts: readonly StoredMineArtifactMeta[], interval: string, signal?: AbortSignal) => Promise<BatchSyntheticTargetArtifact[]> = loadMinerTargets,
-): Promise<void> {
-    clearArtifactReleaseTimer();
-    try {
-        await processTimingSurfaceCore(fingerprint, interval, writer, owner, loadTargets);
-    } finally {
-        // Timing Surface preserves artifacts for later Stability reruns, but
-        // they must still expire when the user walks away.
-        if (hasStoredMineArtifacts()) scheduleArtifactTtl();
-    }
-}
-
-async function processTimingSurfaceCore(
-    fingerprint: string | null,
-    interval: string | null,
-    writer: MinerStreamWriter,
-    owner: number,
-    loadTargets: (pairArtifacts: readonly StoredMineArtifactMeta[], interval: string, signal?: AbortSignal) => Promise<BatchSyntheticTargetArtifact[]>,
-): Promise<void> {
-    const artifactMetas = collectStoredMineArtifactMetas();
-    if (artifactMetas.length === 0) {
-        writer({ type: "fatal", error: "Run Batch before Timing Surface; no artifacts on server." });
-        return;
-    }
-    if (!fingerprint || fingerprint !== lastRunFingerprint || !interval) {
-        writer({ type: "fatal", error: "Rerun Batch before Timing Surface; settings or symbols changed." });
-        return;
-    }
-    // validate retained Stability context + cost model.
-    const stability = retainedStabilityResult;
-    const costModel = retainedTimingCostModel;
-    if (!stability || !Array.isArray(stability.rows)) {
-        writer({ type: "fatal", error: "STABILITY_CONTEXT_MISSING" });
-        return;
-    }
-    if (!costModel) {
-        writer({ type: "fatal", error: "STABILITY_CONTEXT_MISSING" });
-        return;
-    }
-    // validate subset metadata consistency.
-    if (!Number.isFinite(stability.subsetSize) || !Number.isFinite(stability.reruns) || !Number.isFinite(stability.seed)) {
-        writer({ type: "fatal", error: "STABILITY_CONTEXT_MISMATCH" });
-        return;
-    }
-
-    const lostOwnership = () => minerOwner !== owner;
-    const reruns = Math.max(1, Math.floor(stability.reruns));
-    const subsetSize = Math.max(1, Math.floor(stability.subsetSize));
-    const seed = Math.floor(stability.seed);
-
-    writer({ type: "start", candidates: stability.rows.length, reruns });
-    if (lostOwnership()) {
-        writer({ type: "done", ok: false, cancelled: true, summary: "Timing Surface cancelled." });
-        return;
-    }
-
-    const targetLoadStartedAt = performance.now();
-    const targets: BatchSyntheticTargetArtifact[] = await loadTargets(artifactMetas, interval, minerAbortController?.signal);
-    const targetLoadMs = performance.now() - targetLoadStartedAt;
-    if (lostOwnership()) {
-        writer({ type: "done", ok: false, cancelled: true, summary: "Timing Surface cancelled." });
-        return;
-    }
-
-    // Build the engine's target map keyed by normalized asset. Missing targets
-    // emit INVALID rows in the engine.
-    const engineTargets = new Map<string, { asset: string; data: typeof targets[number]["data"] }>();
-    for (const target of targets) {
-        engineTargets.set(target.asset.trim().toUpperCase(), { asset: target.asset, data: target.data });
-    }
-
-    // Load and prepare the full pair universe once per request.
-    const subsetReconstructionStartedAt = performance.now();
-    const loadedPairs = await Promise.all(artifactMetas.map(loadStoredMineArtifact));
-    const preparedPairsAll = prepareBatchSyntheticPairArtifacts(loadedPairs);
-    const subsetReconstructionMs = performance.now() - subsetReconstructionStartedAt;
-
-    // Reconstruct the per-rerun subset pair lists once.
-    const subsetsByRunIndex: BatchSyntheticPreparedPairArtifact[][] = [];
-    for (let runIndex = 0; runIndex < reruns; runIndex += 1) {
-        if (lostOwnership()) {
-            writer({ type: "done", ok: false, cancelled: true, summary: "Timing Surface cancelled." });
-            return;
-        }
-        subsetsByRunIndex.push(sampleItems(preparedPairsAll, subsetSize, seed + runIndex));
-    }
-
-    // Recompute current Stability actions for every row.
-    const nowMs = Date.now();
-    const stabilityActions = new Map<string, "ENTER" | "WATCH" | "WAIT" | "REJECT" | "INVALID">();
-    for (const row of stability.rows) {
-        const action = computeStabilityAction(row, reruns, interval, nowMs);
-        stabilityActions.set(`${row.asset}|${row.direction}`, action.action);
-    }
-
-    // The async engine yields between bounded work units so Stop remains
-    // responsive. There is no meaningful per-rerun progress to stream — the
-    // engine is a single grid evaluation — so we emit only start/done/fatal.
-    if (lostOwnership()) {
-        writer({ type: "done", ok: false, cancelled: true, summary: "Timing Surface cancelled." });
-        return;
-    }
-
-    // Run the pure engine. The engine's `resolveRerunLinkedArtifacts` callback
-    // returns the pre-reconstructed subset for each (rerun, asset) pair. Heavy
-    // pair artifacts NEVER cross the engine boundary into the result. The
-    // engine's `lostOwnership` callback lets Stop abort it between bounded
-    // work units (per-target and per-cell) instead of waiting for the whole
-    // grid to finish.
-    let result: TimingSurfaceResult;
-    try {
-        result = await runTimingSurfaceEngine({
-            fingerprint,
-            interval,
-            stability,
-            stabilityActions,
-            costModel,
-            targets: engineTargets,
-            resolveRerunLinkedArtifacts: (runIndex, asset) => {
-                if (runIndex < 0 || runIndex >= subsetsByRunIndex.length) return null;
-                const subset = subsetsByRunIndex[runIndex]!;
-                // Filter the subset to the pairs linked to this target. Mirrors
-                // the miner's `metasByAsset` lookup at the asset-pair index.
-                const linked = subset.filter((pair) => pair.baseAsset === asset || pair.quoteAsset === asset);
-                if (linked.length === 0) return null;
-                return { linkedArtifacts: linked };
-            },
-            lostOwnership: () => lostOwnership(),
-            nowMs,
-            completionNow: () => Date.now(),
-        });
-    } catch (error) {
-        if (error instanceof TimingSurfaceCancelled) {
-            writer({ type: "done", ok: false, cancelled: true, summary: "Timing Surface cancelled." });
-            return;
-        }
-        throw error;
-    }
-
-    // Stamp the server-side profile timings (target load + subset
-    // reconstruction are server-only costs; the engine filled the rest).
-    result.profile.targetLoadMs = Math.round(targetLoadMs * 1000) / 1000;
-    result.profile.subsetReconstructionMs = Math.round(subsetReconstructionMs * 1000) / 1000;
-
-    if (lostOwnership()) {
-        writer({ type: "done", ok: false, cancelled: true, summary: "Timing Surface cancelled." });
-        return;
-    }
-    writer({ type: "done", ok: true, result, fingerprint: lastRunFingerprint });
-}
-
-async function handleTimingSurfaceRequest(res: ViteHttpResponse, body: Record<string, unknown>): Promise<void> {
-    if (minerOwner !== RUN_OWNER_NONE) {
-        throw new HttpStatusError(409, "Mine Timing is already running.");
-    }
-    if (runOwner !== RUN_OWNER_NONE) {
-        throw new HttpStatusError(409, "A batch backtest is running. Use Stop first.");
-    }
-    if (!hasStoredMineArtifacts()) {
-        throw new HttpStatusError(400, "Run Batch before Timing Surface; no artifacts on server.");
-    }
-    const owner = ++minerOwnerGen;
-    minerOwner = owner;
-    minerAbortController = new AbortController();
-
-    let stream: ReturnType<typeof beginNdjsonStream> | null = null;
-    try {
-        stream = beginNdjsonStream(res);
-        await processTimingSurface(
-            typeof body.fingerprint === "string" ? body.fingerprint : null,
-            typeof body.interval === "string" ? body.interval : lastRunInterval,
-            (event) => stream!.write(event),
-            owner,
-        );
-        stream.end();
-    } catch (error) {
-        if (!stream) throw error;
-        const message = error instanceof Error ? error.message : String(error);
-        try {
-            stream.end({ type: "fatal", error: message });
-        } catch {
-            /* best-effort */
-        }
-    } finally {
-        if (minerOwner === owner) {
-            minerOwner = RUN_OWNER_NONE;
-        }
-        if (minerState && minerOwner === RUN_OWNER_NONE) {
-            minerState.running = false;
-        }
-        minerAbortController = null;
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1800,23 +1554,6 @@ function registerBatchRoutes(middlewares: any): void {
             }
         });
 
-        middlewares.use("/api/batch-backtest/timing-surface", async (req: any, res: any) => {
-            if (req.method !== "POST") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            if (!isAllowedLocalRequest(req)) {
-                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
-                return;
-            }
-            try {
-                rememberLocalApiOriginFromRequest(req);
-                await handleTimingSurfaceRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
-        });
-
         middlewares.use("/api/batch-backtest/status", async (req: any, res: any) => {
             if (req.method !== "GET") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
@@ -1852,24 +1589,11 @@ export const __testInternals = {
     handleStopRequest,
     registerBatchRoutesForTests: registerBatchRoutes,
     processPortfolioFit,
-    processTimingSurface,
-    /**
-     * Directly install retained Stability context for Timing Surface tests.
-     * Mirrors what `processStabilityMine` retains on success, so timing-surface
-     * tests don't need to spin up a real Stability run. Pass nulls to clear.
-     */
-    setRetainedStabilityContextForTests(args: {
-        stability: BatchStabilityMineResult | null;
-        costModel: TimingSurfaceCostModel | null;
-    }): void {
-        retainedStabilityResult = args.stability;
-        retainedTimingCostModel = args.costModel;
+    setRetainedStabilityResultForTests(stability: BatchStabilityMineResult | null): void {
+        retainedStabilityResult = stability;
     },
     getRetainedStabilityResultForTests(): BatchStabilityMineResult | null {
         return retainedStabilityResult;
-    },
-    getRetainedTimingCostModelForTests(): TimingSurfaceCostModel | null {
-        return retainedTimingCostModel;
     },
     hasArtifactReleaseTimerForTests(): boolean {
         return artifactReleaseTimer !== null;

@@ -69,10 +69,6 @@ function fakeDom(): BatchBacktestDom {
         batchBacktestCopyPortfolioFitBtn: el(),
         batchBacktestPortfolioFitSummary: el(),
         batchBacktestPortfolioFitResults: el(),
-        batchBacktestTimingSurfaceBtn: el(),
-        batchBacktestCopyTimingSurfaceBtn: el(),
-        batchBacktestTimingSurfaceSummary: el(),
-        batchBacktestTimingSurfaceResults: el(),
         batchBacktestProgress: el(),
         batchBacktestProgressFill: el(),
         batchBacktestProgressText: el(),
@@ -186,7 +182,7 @@ async function withMockFetch(responder: FetchResponder, fn: () => Promise<void>)
 function successStabilityResponder(): FetchResponder {
     return (url) => {
         if (url.includes("/status")) {
-            return { ok: true, status: 200, text: JSON.stringify({ lastRun: { hasArtifacts: true, fingerprint: "fp-test", interval: "5m" }, timingSurfaceAvailable: true }) };
+            return { ok: true, status: 200, text: JSON.stringify({ lastRun: { hasArtifacts: true, fingerprint: "fp-test", interval: "5m" } }) };
         }
         if (url.includes("/stability-mine")) {
             return { ok: true, status: 200, body: ndjsonStream([{ type: "done", ok: true, result: { rows: [{ asset: "BTC" }] } }]) };
@@ -248,7 +244,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
 
         await withMockFetch((url) => {
             if (url.includes("/status")) {
-                return { ok: true, status: 200, text: JSON.stringify({ lastRun: { hasArtifacts: true, fingerprint: "fp-test", interval: "5m" }, timingSurfaceAvailable: true }) };
+                return { ok: true, status: 200, text: JSON.stringify({ lastRun: { hasArtifacts: true, fingerprint: "fp-test", interval: "5m" } }) };
             }
             if (url.includes("/stability-mine")) {
                 stabilityPosts += 1;
@@ -271,7 +267,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
 
         await withMockFetch((url) => {
             if (url.includes("/status")) {
-                return { ok: true, status: 200, text: JSON.stringify({ lastRun: { hasArtifacts: true, fingerprint: "fp-test", interval: "5m" }, timingSurfaceAvailable: true }) };
+                return { ok: true, status: 200, text: JSON.stringify({ lastRun: { hasArtifacts: true, fingerprint: "fp-test", interval: "5m" } }) };
             }
             if (url.includes("/stability-mine")) {
                 stabilityPosts += 1;
@@ -300,7 +296,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
 
         await withMockFetch(async (url) => {
             if (url.includes("/status")) {
-                return { ok: true, status: 200, text: JSON.stringify({ lastRun: { hasArtifacts: true, fingerprint: "fp-test", interval: "5m" }, timingSurfaceAvailable: true }) };
+                return { ok: true, status: 200, text: JSON.stringify({ lastRun: { hasArtifacts: true, fingerprint: "fp-test", interval: "5m" } }) };
             }
             if (url.includes("/stability-mine")) {
                 stabilityPosts += 1;

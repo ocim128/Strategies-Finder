@@ -44,7 +44,7 @@ const {
     resetMinerGatesForTests,
     processPortfolioFit,
     registerBatchRoutesForTests,
-    setRetainedStabilityContextForTests,
+    setRetainedStabilityResultForTests,
 } = __testInternals;
 
 function makeCandles(closes: number[]): OHLCVData[] {
@@ -351,7 +351,7 @@ describe("batch-portfolio-fit server plugin — server-authoritative Stability c
 
     it("returns STABILITY_CONTEXT_MISSING when no retained Stability context exists", async () => {
         const { fingerprint, interval } = await runBatchToPopulateArtifacts();
-        setRetainedStabilityContextForTests({ stability: null, costModel: null });
+        setRetainedStabilityResultForTests(null);
         completeRunForTests();
         setMinerOwnerForTests(0);
         try {
@@ -375,7 +375,7 @@ describe("batch-portfolio-fit server plugin — server-authoritative Stability c
         if (!stability || stability.rows.length === 0) return; // skip if no candidates
         completeRunForTests();
         try {
-            setRetainedStabilityContextForTests({ stability, costModel: null });
+            setRetainedStabilityResultForTests(stability);
             const response = await invokePortfolioFitRoute({
                 fingerprint,
                 interval,
@@ -388,7 +388,7 @@ describe("batch-portfolio-fit server plugin — server-authoritative Stability c
             expect(done!.ok).to.equal(true);
         } finally {
             setMinerOwnerForTests(0);
-            setRetainedStabilityContextForTests({ stability: null, costModel: null });
+            setRetainedStabilityResultForTests(null);
         }
     });
 });

@@ -13,7 +13,6 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 - [backtest-endpoint.md](backtest-endpoint.md) - local HTTP endpoint request/response contract.
 - [batch-backtest-server-side.md](batch-backtest-server-side.md) - Batch server runtime, Mine/Stability artifacts, miner acceleration, Portfolio Fit endpoint, and memory budget.
 - [portfolio-fit-mining-implementation-plan.md](portfolio-fit-mining-implementation-plan.md) - Portfolio Fit Phase 0 resolutions (R1–R19) governing the shipped allocation engine, validation, and contracts.
-- [counterfactual-timing-surface.md](counterfactual-timing-surface.md) - Timing Surface design: cost-aware entry-delay and hold-policy mining after Batch Stability.
 - [cross-symbol.md](cross-symbol.md) - secondary-symbol strategy runtime contract and support matrix.
 - [synthetic-pairs.md](synthetic-pairs.md) - synthetic pair generation, supported surfaces, and state miner notes.
 - [rank-pairs.md](rank-pairs.md) - Rank Pairs regime classification: anchored sampling, metrics, labels, thresholds, and copy contract.

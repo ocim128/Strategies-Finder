@@ -71,16 +71,11 @@ import {
     type BatchStabilityRow,
 } from "./batch-stability-mine";
 import { formatPortfolioFitSummary, shortFingerprint } from "./batch-portfolio-fit-summary";
-import { formatTimingSurfaceSummary } from "./batch-timing-surface-copy";
 import type {
     BatchPortfolioFitInput,
     BatchPortfolioFitResult,
 } from "./batch-portfolio-fit-types";
-import type {
-    BatchPortfolioFitStreamEvent,
-    BatchTimingSurfaceStreamEvent,
-} from "./batch-backtest-stream-types";
-import type { TimingSurfaceResult } from "./batch-timing-surface-types";
+import type { BatchPortfolioFitStreamEvent } from "./batch-backtest-stream-types";
 import {
     projectMineVerdictToSnapshot,
     projectStabilityRowToSnapshot,
@@ -132,7 +127,6 @@ class BatchBacktestService {
     private lastMinerResult: BatchSyntheticMinerResult | null = null;
     private lastStabilityResult: BatchStabilityMineResult | null = null;
     private lastPortfolioFitResult: BatchPortfolioFitResult | null = null;
-    private lastTimingSurfaceResult: TimingSurfaceResult | null = null;
     private lastRunFingerprint: string | null = null;
     private lastRunInterval: string | null = null;
     // The strategy key that governed the last Run, captured at run start so
@@ -150,7 +144,7 @@ class BatchBacktestService {
     // sees its token as stale and stops writing DOM/state, preventing two
     // concurrent runs from racing on `this.lastResults` and the results list.
     private runToken = 0;
-    // Serializes Mine Timing, Stability, Portfolio Fit, and Timing Surface.
+    // Serializes Mine Timing, Stability, and Portfolio Fit.
     private analysisInFlight = false;
     // Set when Stop races analysis preflight or POST establishment.
     private analysisCancelRequested = false;
@@ -161,8 +155,6 @@ class BatchBacktestService {
     // `row.data !== undefined`, because in server-side mode the browser never
     // holds `row.data`).
     private serverHasArtifacts = false;
-    /** True only when the server retains matching Stability and cost context. */
-    private serverTimingSurfaceAvailable = false;
     // Live-stream DOM render queue (Finding 6). The server stream emits one
     // `symbol` event per row; appending each to the DOM synchronously caused
     // one reflow per row (up to ~1000 on a large cached run). Rows are pushed
@@ -252,12 +244,6 @@ class BatchBacktestService {
         dom.batchBacktestCopyPortfolioFitBtn.addEventListener("click", () => {
             void this.copyPortfolioFitResults();
         });
-        dom.batchBacktestTimingSurfaceBtn.addEventListener("click", () => {
-            void this.runTimingSurface();
-        });
-        dom.batchBacktestCopyTimingSurfaceBtn.addEventListener("click", () => {
-            void this.copyTimingSurfaceResults();
-        });
         dom.batchBacktestSymbolTemplate.addEventListener("change", () => {
             const key = dom.batchBacktestSymbolTemplate.value as BatchSymbolTemplateKey;
             const template = BATCH_SYMBOL_TEMPLATES[key];
@@ -333,7 +319,6 @@ class BatchBacktestService {
         this.lastRunStrategyKey = null;
         this.appendedCount = 0;
         this.serverHasArtifacts = false;
-        this.serverTimingSurfaceAvailable = false;
         this.clearPersistedLatestResults();
         this.stopReattachPoll();
         dom.batchBacktestRunBtn.disabled = true;
@@ -541,7 +526,6 @@ class BatchBacktestService {
             if (!firstResponse.ok) return null;
             const firstPayload = await firstResponse.json() as {
                 running?: boolean;
-                timingSurfaceAvailable?: boolean;
                 lastRun?: {
                     rowCount?: number;
                     hasArtifacts?: boolean;
@@ -569,7 +553,6 @@ class BatchBacktestService {
                 this.lastRunStrategyKey = lastRun.strategyKey;
             }
             this.serverHasArtifacts = lastRun.hasArtifacts === true;
-            this.serverTimingSurfaceAvailable = firstPayload.timingSurfaceAvailable === true;
             this.pendingServerRunCacheStats = lastRun.cacheStats
                 ? buildCacheStatsFromLoader(lastRun.cacheStats)
                 : null;
@@ -1035,7 +1018,6 @@ class BatchBacktestService {
             dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
             dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
             this.updatePortfolioFitButtonState(dom);
-            this.updateTimingSurfaceButtonState(dom);
         }
         return targetCount;
     }
@@ -1139,7 +1121,6 @@ class BatchBacktestService {
                 }
                 let payload: {
                     running?: boolean;
-                    timingSurfaceAvailable?: boolean;
                     run?: {
                         total: number;
                         completed: number;
@@ -1225,7 +1206,6 @@ class BatchBacktestService {
                         && (this.lastRunFingerprint === null || this.lastRunFingerprint === payload.lastRun.fingerprint)
                     ) {
                         this.serverHasArtifacts = true;
-                        this.serverTimingSurfaceAvailable = payload.timingSurfaceAvailable === true;
                         this.lastRunFingerprint = payload.lastRun.fingerprint;
                         this.lastRunInterval = payload.lastRun.interval ?? null;
                         // Adopt the governing strategy so Mine provenance survives
@@ -1248,7 +1228,6 @@ class BatchBacktestService {
                         this.getDom().batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
                         this.getDom().batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
                         this.updatePortfolioFitButtonState(this.getDom());
-                        this.updateTimingSurfaceButtonState(this.getDom());
                     }
                     if (this.lastResults.length > 0) {
                         this.saveLatestResultsSnapshot();
@@ -1271,7 +1250,6 @@ class BatchBacktestService {
                 }
                 const run = payload.run;
                 this.serverHasArtifacts = false; // still running; Mine not yet available.
-                this.serverTimingSurfaceAvailable = false;
                 // Adopt the in-progress run's governing strategy so Mine
                 // provenance is correct even on the very first reattach tick
                 // (audit finding 5). `run.strategyKey` is always present while
@@ -1405,14 +1383,9 @@ class BatchBacktestService {
         dom.batchBacktestMinerResults.replaceChildren();
         this.lastStabilityResult = null;
         this.lastPortfolioFitResult = null;
-        this.lastTimingSurfaceResult = null;
-        this.serverTimingSurfaceAvailable = false;
         dom.batchBacktestCopyPortfolioFitBtn.disabled = true;
         dom.batchBacktestPortfolioFitSummary.textContent = "";
         dom.batchBacktestPortfolioFitResults.replaceChildren();
-        dom.batchBacktestCopyTimingSurfaceBtn.disabled = true;
-        dom.batchBacktestTimingSurfaceSummary.textContent = "";
-        dom.batchBacktestTimingSurfaceResults.replaceChildren();
 
         try {
             const response = await fetch("/api/batch-backtest/stability-mine", {
@@ -1468,8 +1441,6 @@ class BatchBacktestService {
             dom.batchBacktestCopyStabilityBtn.disabled = received.result.rows.length === 0;
             this.updatePortfolioFitButtonState(dom);
             this.serverHasArtifacts = true;
-            this.serverTimingSurfaceAvailable = true;
-            this.updateTimingSurfaceButtonState(dom);
             this.saveLatestResultsSnapshot();
             this.persistMineTimingResult("stability");
         } catch (error) {
@@ -1481,7 +1452,6 @@ class BatchBacktestService {
             dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
             dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
             this.updatePortfolioFitButtonState(dom);
-            this.updateTimingSurfaceButtonState(dom);
         }
     }
 
@@ -1494,7 +1464,6 @@ class BatchBacktestService {
                 return previouslyAvailable;
             }
             const payload = await response.json() as {
-                timingSurfaceAvailable?: boolean;
                 lastRun?: {
                     hasArtifacts?: boolean;
                     fingerprint?: string | null;
@@ -1504,7 +1473,6 @@ class BatchBacktestService {
             const lastRun = payload.lastRun;
             const hasArtifacts = lastRun?.hasArtifacts === true && lastRun.fingerprint === expectedFingerprint;
             this.serverHasArtifacts = hasArtifacts;
-            this.serverTimingSurfaceAvailable = hasArtifacts && payload.timingSurfaceAvailable === true;
             if (hasArtifacts) {
                 this.lastRunFingerprint = expectedFingerprint;
                 this.lastRunInterval = lastRun?.interval ?? this.lastRunInterval;
@@ -1717,164 +1685,6 @@ class BatchBacktestService {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Timing Surface runs after Stability and retains server artifacts.
-    // -----------------------------------------------------------------------
-
-    private async runTimingSurface(): Promise<void> {
-        if (this.analysisInFlight) return;
-        this.analysisInFlight = true;
-        this.analysisCancelRequested = false;
-        const dom = this.getDom();
-        try {
-            if (!this.lastStabilityResult || this.lastStabilityResult.rows.length === 0) {
-                dom.batchBacktestTimingSurfaceSummary.textContent = "Run Stability Mine before Timing Surface.";
-                return;
-            }
-            const currentFingerprint = this.buildCurrentRunFingerprint();
-            if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
-                dom.batchBacktestTimingSurfaceSummary.textContent = "Rerun Batch before Timing Surface; settings or symbols changed.";
-                return;
-            }
-            this.beginAnalysisBusy(dom);
-            const hasServerArtifacts = await this.refreshServerArtifactState(currentFingerprint);
-            if (this.analysisCancelRequested) return;
-            if (!hasServerArtifacts) {
-                dom.batchBacktestTimingSurfaceSummary.textContent = "Rerun Batch before Timing Surface; no artifacts on server.";
-                dom.batchBacktestTimingSurfaceBtn.disabled = true;
-                return;
-            }
-            // The server is authoritative for retained Stability context. If the
-            // server has released it (e.g. tab reload after artifact TTL expiry),
-            // the endpoint returns STABILITY_CONTEXT_MISSING as a fatal — surfacing
-            // it explicitly here would duplicate the server's authority.
-            await this.runTimingSurfaceServer(dom);
-        } finally {
-            await this.finishAnalysisBusy(dom);
-        }
-    }
-
-    private async runTimingSurfaceServer(dom: BatchBacktestDom): Promise<void> {
-        dom.batchBacktestTimingSurfaceBtn.disabled = true;
-        dom.batchBacktestCopyTimingSurfaceBtn.disabled = true;
-        dom.batchBacktestTimingSurfaceSummary.textContent = "Running Timing Surface on server...";
-        this.lastTimingSurfaceResult = null;
-        dom.batchBacktestTimingSurfaceResults.replaceChildren();
-        try {
-            const response = await fetch("/api/batch-backtest/timing-surface", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    fingerprint: this.lastRunFingerprint,
-                    interval: this.lastRunInterval ?? state.currentInterval,
-                }),
-            });
-            if (!response.ok || !response.body) {
-                const text = await response.text().catch(() => "");
-                let payload: { error?: string } = {};
-                try { payload = JSON.parse(text); } catch { /* ignore */ }
-                if (response.status === 400 && payload.error?.includes("no artifacts")) {
-                    this.serverHasArtifacts = false;
-                }
-                throw new Error(payload.error ?? (text || `HTTP ${response.status}`));
-            }
-            await this.reissueStopIfNeeded();
-            const received: { result: TimingSurfaceResult | null; cancelledSummary: string | null } = {
-                result: null,
-                cancelledSummary: null,
-            };
-            await consumeNdjsonStream<BatchTimingSurfaceStreamEvent>(response.body, {
-                onStart: (event: Extract<BatchTimingSurfaceStreamEvent, { type: "start" }>) => {
-                    dom.batchBacktestTimingSurfaceSummary.textContent =
-                        `Timing Surface running on server... (candidates ${event.candidates}, reruns ${event.reruns})`;
-                },
-                onDone: (event: Extract<BatchTimingSurfaceStreamEvent, { type: "done" }>) => {
-                    if (event.ok) {
-                        received.result = event.result;
-                    } else {
-                        received.cancelledSummary = event.summary;
-                    }
-                },
-                onFatal: (event: Extract<BatchTimingSurfaceStreamEvent, { type: "fatal" }>) => {
-                    throw new Error(event.error);
-                },
-            }, { requireTerminal: true });
-            if (received.cancelledSummary) {
-                this.lastTimingSurfaceResult = null;
-                dom.batchBacktestTimingSurfaceSummary.textContent = received.cancelledSummary;
-                return;
-            }
-            if (!received.result) {
-                throw new Error("Server Timing Surface did not return a result.");
-            }
-            this.lastTimingSurfaceResult = received.result;
-            this.renderTimingSurfaceResult(dom, received.result);
-            dom.batchBacktestCopyTimingSurfaceBtn.disabled = false;
-            this.serverHasArtifacts = true;
-            this.serverTimingSurfaceAvailable = true;
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.lastTimingSurfaceResult = null;
-            this.serverTimingSurfaceAvailable = false;
-            dom.batchBacktestTimingSurfaceSummary.textContent = `Timing Surface error: ${message}`;
-            debugLogger.error("batch_timing_surface.server_failed", { error: message });
-            if (this.lastRunFingerprint) {
-                await this.refreshServerArtifactState(this.lastRunFingerprint);
-            }
-        } finally {
-            this.updateTimingSurfaceButtonState(dom);
-        }
-    }
-
-    private renderTimingSurfaceResult(dom: BatchBacktestDom, result: TimingSurfaceResult): void {
-        // Keep the historical-conditional evidence scope visible.
-        const actionable = result.rows.filter((r) => r.decision === "ENTER_NOW" || r.decision === "WAIT_1" || r.decision === "WAIT_2" || r.decision === "WAIT_3");
-        const cm = result.costModel;
-        dom.batchBacktestTimingSurfaceSummary.textContent =
-            `Timing Surface (HISTORICAL_CONDITIONAL; exploitEligible: false; not independently validated)`
-            + ` | ${actionable.length}/${result.rows.length} actionable`
-            + ` | cost commission ${cm.commissionPercent}% slippage ${cm.slippageBps}bps execution ${cm.executionModel}`
-            + ` | asOf ${result.asOfTimeKey ?? "unknown"}`;
-        const container = dom.batchBacktestTimingSurfaceResults;
-        container.replaceChildren();
-        // Render the evidence scope as a dedicated row.
-        const scopeEl = document.createElement("div");
-        scopeEl.className = "batch-miner-row batch-miner-row-scope";
-        scopeEl.textContent = "Evidence scope: HISTORICAL_CONDITIONAL — exploitEligible: false — not independently validated";
-        container.appendChild(scopeEl);
-        if (result.rows.length === 0) {
-            const empty = document.createElement("div");
-            empty.className = "batch-miner-row";
-            empty.textContent = "No actionable candidates.";
-            container.appendChild(empty);
-            return;
-        }
-        for (const row of result.rows) {
-            const el = document.createElement("div");
-            el.className = "batch-miner-row";
-            const delayHorizon = row.chosenDelay !== null && row.chosenHorizon !== null
-                ? `delay ${row.chosenDelay} horizon ${row.chosenHorizon}b`
-                : "delay -- horizon --";
-            const reval = row.revalidationBarIndex !== null ? ` | revalidate@bar ${row.revalidationBarIndex}` : "";
-            const evidenceCell = row.evidenceDelay != null && row.evidenceHorizon != null
-                ? `d${row.evidenceDelay}h${row.evidenceHorizon}`
-                : "--";
-            const selNet = row.selectionMedianNetReturnPct !== null ? `${row.selectionMedianNetReturnPct.toFixed(2)}%` : "--";
-            const valNet = row.validationMedianNetReturnPct !== null ? `${row.validationMedianNetReturnPct.toFixed(2)}%` : "--";
-            el.textContent = `${row.asset} ${row.direction} -> ${row.decision} | ${delayHorizon}${reval} | evidenceCell ${evidenceCell} | selNet ${selNet} | valNet ${valNet} | valPositive ${row.validationPositiveReruns}/${row.validationQualifyingReruns} | reasons [${row.reasonCodes.join(", ")}]`;
-            container.appendChild(el);
-        }
-    }
-
-    private async copyTimingSurfaceResults(): Promise<void> {
-        if (!this.lastTimingSurfaceResult) return;
-        const text = formatTimingSurfaceSummary(this.lastTimingSurfaceResult).join("\n");
-        const copied = await copyToClipboard(text);
-        if (!copied) {
-            this.getDom().batchBacktestTimingSurfaceSummary.textContent = "Copy Timing Surface failed.";
-        }
-    }
-
     private buildCurrentRunFingerprint(): string | null {
         const strategyKey = state.currentStrategyKey;
         const strategy = strategyRegistry.get(strategyKey);
@@ -1946,8 +1756,6 @@ class BatchBacktestService {
         dom.batchBacktestStabilityMineBtn.disabled = true;
         dom.batchBacktestPortfolioFitBtn.disabled = true;
         dom.batchBacktestCopyPortfolioFitBtn.disabled = true;
-        dom.batchBacktestTimingSurfaceBtn.disabled = true;
-        dom.batchBacktestCopyTimingSurfaceBtn.disabled = true;
         if (this.lastStabilityResult) {
             this.renderStabilityResult(dom, this.lastStabilityResult);
             dom.batchBacktestCopyStabilityBtn.disabled = this.lastStabilityResult.rows.length === 0;
@@ -2017,29 +1825,10 @@ class BatchBacktestService {
         dom.batchBacktestPortfolioFitBtn.disabled = !this.canRunPortfolioFit();
     }
 
-    /**
-     * Enable Timing Surface when local Stability output exists and the server
-     * still has matching artifacts. The server is authoritative for retained
-     * Stability context — if it has released it (TTL expiry, new run, etc.),
-     * the endpoint returns STABILITY_CONTEXT_MISSING as a fatal rather than
-     * the browser trying to mirror that state.
-     */
-    private canRunTimingSurface(): boolean {
-        return Boolean(this.lastStabilityResult && this.lastStabilityResult.rows.length > 0)
-            && this.serverHasArtifacts
-            && this.serverTimingSurfaceAvailable;
-    }
-
-    private updateTimingSurfaceButtonState(dom: BatchBacktestDom): void {
-        dom.batchBacktestTimingSurfaceBtn.disabled = !this.canRunTimingSurface();
-    }
-
     private clearMinerResults(dom: BatchBacktestDom): void {
         this.lastMinerResult = null;
         this.lastStabilityResult = null;
         this.lastPortfolioFitResult = null;
-        this.lastTimingSurfaceResult = null;
-        this.serverTimingSurfaceAvailable = false;
         // Clear rather than show "Miner idle": an empty .batch-miner-status
         // collapses via CSS (:empty) so the run-state region does not show a
         // noise strip before any mining has happened (point 7 of the refactor).
@@ -2051,10 +1840,6 @@ class BatchBacktestService {
         dom.batchBacktestCopyPortfolioFitBtn.disabled = true;
         dom.batchBacktestPortfolioFitSummary.textContent = "";
         dom.batchBacktestPortfolioFitResults.replaceChildren();
-        dom.batchBacktestTimingSurfaceBtn.disabled = true;
-        dom.batchBacktestCopyTimingSurfaceBtn.disabled = true;
-        dom.batchBacktestTimingSurfaceSummary.textContent = "";
-        dom.batchBacktestTimingSurfaceResults.replaceChildren();
     }
 
     private createMinerRow(verdict: BatchSyntheticAssetVerdict): HTMLDivElement {
@@ -2467,7 +2252,6 @@ class BatchBacktestService {
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
         dom.batchBacktestPortfolioFitBtn.disabled = true;
-        dom.batchBacktestTimingSurfaceBtn.disabled = true;
     }
 
     // Keep operations disabled until unscoped /stop requests have settled.
@@ -2479,7 +2263,6 @@ class BatchBacktestService {
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
         dom.batchBacktestPortfolioFitBtn.disabled = true;
-        dom.batchBacktestTimingSurfaceBtn.disabled = true;
         const pending = this.pendingStopPromise;
         if (pending) {
             try { await pending; } catch { /* stopServerWork swallows errors */ }
@@ -2489,7 +2272,6 @@ class BatchBacktestService {
         dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
         dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
         this.updatePortfolioFitButtonState(dom);
-        this.updateTimingSurfaceButtonState(dom);
     }
 
     private resetProgress(dom: BatchBacktestDom): void {
