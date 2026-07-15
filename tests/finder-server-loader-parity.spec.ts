@@ -110,7 +110,12 @@ describe("finder server loader parity", () => {
         const streamTypes = readSource(STREAM_TYPES);
         expect(streamTypes, "done event must declare a candidates field").to.include("candidates: FinderUniverseCandidate[]");
         const plugin = readSource(FINDER_PLUGIN);
-        expect(plugin, "plugin must ship terminalResults on done").to.include("candidates: terminalResults");
+        // The plugin ships the scalar terminal slice on `done` so the browser
+        // finalizes from done.candidates (not throttled incremental events).
+        // The variable name is `terminalScalar` (the scalar-stripped terminal
+        // survivors); the contract is that the done event carries the
+        // authoritative candidate slice.
+        expect(plugin, "plugin must ship the terminal scalar survivors on done").to.include("candidates: terminalScalar");
     });
 
     it("F4 regression: HTTP handler applies sliceFinderDataWindow to loaded data", () => {

@@ -1,16 +1,23 @@
 /**
- * Stream event contract for the server-side Finder Symbol Universe plugin
- * (the Finder analogue of `lib/batch-backtest/batch-backtest-stream-types.ts`).
+ * Stream + status contract for the server-owned Finder Symbol Universe job.
  *
- * The browser consumes these via `consumeNdjsonStream` (lib/ndjson-stream.ts),
- * which dispatches by mapping `event.type` to a camelCase handler key
- * (e.g. `symbol_failed` -> `onSymbolFailed`).
+ * One server job owns all selected strategies: it sequences each entry
+ * strategy through `runFinderUniverseExecution(...)`, merges the scalar
+ * survivors, runs the optional OOS pass, and publishes one authoritative
+ * terminal candidate slice. The browser remains the control + rendering
+ * layer and reattaches after a tab reload by polling
+ * `GET /api/finder/status?runId=...`.
  *
- * CRITICAL CONTRACT: the `candidate` payload sent in `candidate` events must
- * contain ONLY scalars (plus the already-scalar `symbols` metrics array). The
- * Finder universe runner holds N full OHLCV datasets in memory during the
- * evaluation loop; in server-side mode those stay in Node so the browser tab
- * stays bounded regardless of symbol count. The browser reconstructs a
+ * The browser consumes stream events via `consumeNdjsonStream`
+ * (lib/ndjson-stream.ts), which dispatches by mapping `event.type` to a
+ * camelCase handler key (e.g. `symbol_failed` -> `onSymbolFailed`).
+ *
+ * CRITICAL CONTRACT: the `candidate` payload sent in `candidate` events and
+ * returned in the terminal status snapshot must contain ONLY scalars (plus
+ * the already-scalar `symbols` metrics array). The Finder universe runner
+ * holds N full OHLCV datasets in memory during the evaluation loop; in
+ * server-owned mode those stay in Node so the browser tab stays bounded
+ * regardless of symbol count. The browser reconstructs a
  * `FinderUniverseCandidate[]` from the stream with no heavy arrays.
  *
  * `FinderUniverseCandidate` / `FinderUniverseSymbolResult` are already scalar
@@ -21,7 +28,7 @@
  * Unlike the Batch stream, the Finder stream has no Mine / artifact / TTL
  * surface — Universe has no Mine step. The `done` event carries the terminal
  * survivor count; the server holds the datasets only for the duration of the
- * run (plus an optional OOS pass), then releases them.
+ * run (plus the OOS pass), then releases them.
  */
 
 import type { BatchDatasetCacheStats } from "../../batch-backtest/batch-dataset-loader-core";
@@ -32,9 +39,47 @@ import type {
 } from "../../types/finder";
 import type { StrategyParams } from "../../types/strategies";
 
+// ---------------------------------------------------------------------------
+// Job phase + run identity
+// ---------------------------------------------------------------------------
+
+/**
+ * Coarse lifecycle phase of a server-owned universe job. Surfaced in
+ * `progress` events and the `/status` snapshot so the browser and reattach
+ * polling render the same phase. The runner-internal load/evaluate split is
+ * flattened to `loading` / `evaluating`; OOS is its own phase because it
+ * runs after the merged IS survivors are finalized.
+ */
+export type FinderJobPhase = "loading" | "evaluating" | "oos" | "done" | "cancelled" | "fatal";
+
+// ---------------------------------------------------------------------------
+// Stream events (NDJSON, one JSON object per line)
+// ---------------------------------------------------------------------------
+
 export type FinderStreamEvent =
-    | { type: "start"; totalCandidates: number; totalSymbols: number; interval: string; strategyKey: string }
-    | { type: "progress"; percent: number; text: string; status: string }
+    | {
+        type: "start";
+        /** Browser-generated job id, echoed so a reload can match the run. */
+        runId: string;
+        totalCandidates: number;
+        totalSymbols: number;
+        interval: string;
+        /** Ordered selected entry strategy keys for this job. */
+        strategyKeys: string[];
+        /** Number of selected entry strategies (=== strategyKeys.length). */
+        strategyCount: number;
+    }
+    | {
+        type: "progress";
+        percent: number;
+        text: string;
+        status: string;
+        phase: FinderJobPhase;
+        /** 0-based index of the strategy currently being evaluated. */
+        strategyIndex: number;
+        /** Total number of strategies in the job (=== start.strategyCount). */
+        strategyCount: number;
+    }
     | {
         type: "candidate";
         /** Index of this candidate in the per-strategy candidate plan stream. */
@@ -48,6 +93,7 @@ export type FinderStreamEvent =
         type: "done";
         ok: boolean;
         cancelled: boolean;
+        runId: string;
         interval: string;
         totals: {
             loadedSymbols: number;
@@ -70,7 +116,68 @@ export type FinderStreamEvent =
         /** Server-side loader cache counters captured at run completion. */
         cacheStats?: BatchDatasetCacheStats;
     }
-    | { type: "fatal"; error: string };
+    | { type: "fatal"; runId: string; error: string };
+
+// ---------------------------------------------------------------------------
+// Status snapshot (GET /api/finder/status?runId=...)
+// ---------------------------------------------------------------------------
+
+/**
+ * Shared, typed response for `GET /api/finder/status`. Replaces the prior
+ * untyped introspection object so the browser reattach path and the server
+ * agree on the shape.
+ *
+ * In-progress snapshots are SUMMARY-ONLY: they carry candidate COUNTS, never
+ * the full candidate payload, so polling stays small while a large universe
+ * is running. The terminal snapshot is the one place that may carry the
+ * authoritative final candidate slice.
+ *
+ * A status response for a run id that does not match the active/last run
+ * returns 404 at the HTTP layer; this type only describes a matching run.
+ */
+export type FinderRunStatusSnapshot = {
+    ok: true;
+    /** True while a job holds the owner lock. */
+    running: boolean;
+    /** True once the run reached a terminal snapshot (done/cancelled/fatal). */
+    terminal: boolean;
+    runId: string;
+    startedAt: number;
+    /** Completion time, set on the terminal snapshot only. */
+    finishedAt: number | null;
+    phase: FinderJobPhase;
+    interval: string;
+    /** Ordered selected entry strategy keys. */
+    strategyKeys: string[];
+    /** 0-based index of the strategy currently being evaluated. */
+    strategyIndex: number;
+    /** Total number of strategies in the job. */
+    strategyCount: number;
+    totalSymbols: number;
+    progressPercent: number;
+    statusText: string;
+    /** Candidate count only while running; the full slice ships when terminal. */
+    candidateCount: number;
+    loadedSymbols: number;
+    failedSymbols: number;
+    cancelled: boolean;
+    /** Present and authoritative only on the terminal snapshot. */
+    terminalCandidates: FinderUniverseCandidate[] | null;
+    summary: string | null;
+    /** Terminal fatal error; null for running, done, and cancelled jobs. */
+    error: string | null;
+    diagnostics: FinderDiagnostics | null;
+    totals: {
+        loadedSymbols: number;
+        failedSymbols: number;
+        survivors: number;
+        oosRemoved: number;
+    } | null;
+};
+
+// ---------------------------------------------------------------------------
+// Scalar contract enforcement
+// ---------------------------------------------------------------------------
 
 /**
  * Names of fields that must NEVER appear on a wire candidate because they would

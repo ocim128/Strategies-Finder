@@ -9,7 +9,7 @@ import { dataManager } from "./data-manager";
 import { settingsManager } from "./settings-manager";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
 import { MAJOR_SYMBOLS } from "./portfolioLab/portfolio-lab-types";
-import { getLocalDailyAssets, isMarkedLocalStockSymbol, isStockMarketSymbol, type LocalDailyAsset } from "./local-daily-datasets";
+import { getLocalDailyAssets, isMarkedLocalStockSymbol } from "./local-daily-datasets";
 import { cloneJsonCompatible } from "./json-utils";
 
 import { FINDER_SORT_OPTIONS, METRIC_FULL_LABELS, UNIVERSE_METRIC_FULL_LABELS } from "./finder/constants";
@@ -38,21 +38,16 @@ import {
 	runStrategyBacktest,
 	type ParamJob,
 } from "./finder/finder-runner-shared";
-import { withExitStrategyBaseParams, splitExitStrategyParams } from "./finder/exit-strategy-param-prefix";
+import { withExitStrategyBaseParams } from "./finder/exit-strategy-param-prefix";
 import { sanitizeBacktestSettingsForRust } from "./rust-settings-sanitizer";
 import { precomputeIndicators, runBacktest } from "./strategies/index";
 import {
-	computeUniverseOosAggregate,
-	computeUniverseSymbolOosVerdict,
 	sortFinderUniverseCandidates,
-	updateFinderUniverseCandidateScores,
 } from "./finder/finder-universe-metrics";
 import {
 	compactFinderLatestResults,
 	normalizeFinderLatestResultsSnapshot,
 } from "./finder/finder-result-snapshot";
-import { executeBacktest, resolveExecutorBacktestSettings } from "./backtest-executor";
-import { resolveCapitalSettingsFromRaw } from "./backtest-capital-settings";
 import {
 	buildFinderDiagnostics,
 	buildCompactFinderDiagnostics,
@@ -82,20 +77,9 @@ import type {
 	FinderResult,
 	FinderUniverseCandidate,
 	FinderUniverseMetric,
-	FinderUniverseSymbolMetrics,
-	FinderFailureDiagnostics,
-	FinderStrategyDiagnostics,
 } from './types/finder';
 import { isSmartTradeSizingMode, type CapitalSettings } from "./types/backtest";
-import type { BacktestResult, BacktestSettings } from "./types/strategies";
-import {
-    buildSyntheticPairFromLegs,
-    deriveSyntheticSymbol,
-    pickSourceInterval,
-    resolveEffectiveIntervalForSynthetic,
-    resolveSyntheticAvailableIntervals,
-} from "../scripts/lib/synthetic-pair";
-import { SYNTHETIC_TARGET_BARS, DATA_CHART_TOTAL_LIMIT } from "./data/constants";
+import type { BacktestSettings } from "./types/strategies";
 
 const QUOTE_SUFFIXES = ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD', 'BTC', 'ETH', 'BNB', 'EUR', 'TRY', 'BRL'];
 const FINDER_FOLLOW_STRATEGY_KEYS = [
@@ -140,16 +124,17 @@ export function parseSyntheticPairToken(symbol: string): { baseSymbol: string; q
 }
 
 /**
- * Outcome of a server-side Finder Universe run, returned by
- * `runUniverseFinderServer`. The caller feeds `results` into the shared OOS
- * + status tail (the same one the in-tab path uses) so server-mode runs still
- * get the browser-side OOS pass on the returned survivors.
+ * Outcome of a server-owned Finder Universe job, returned by
+ * `runUniverseFinderServer`. The server owns IS evaluation, survivor merge,
+ * and OOS; the browser only renders. `oosRemoved` reflects the server-side
+ * OOS aggregate-fail filter count (0 when OOS is disabled).
  */
 interface ServerUniverseRunOutcome {
 	results: FinderUniverseCandidate[];
 	diagnostics: FinderDiagnostics | null;
 	loadedSymbols: number;
 	failedSymbolCount: number;
+	oosRemoved: number;
 }
 
 import { isSameEventPolymarketExitMode } from "./polymarket-exit-mode";
@@ -165,7 +150,7 @@ import { finderSortRequiresTradeTimingQuality } from "./trade-timing-quality";
 import { isSecondMarketPolymarketSupported } from "./second-market/evaluation";
 import { consumeNdjsonStream } from "./ndjson-stream";
 import { shouldUseRustEngine } from "./engine-preferences";
-import type { FinderStreamEvent } from "./finder/server/finder-stream-types";
+import type { FinderRunStatusSnapshot, FinderStreamEvent } from "./finder/server/finder-stream-types";
 
 type FinderPersistedUiState = {
 	scope: FinderScope;
@@ -213,12 +198,33 @@ const FINDER_RESULTS_STORAGE = {
 	schema: "finder.latest_results",
 	version: 1,
 } as const;
+/**
+ * Persisted active server-run id for Symbol Universe reattachment. Written
+ * BEFORE `fetch('/api/finder/universe-run')` so a tab reload during a run
+ * can identify the same server job and poll `/api/finder/status?runId=...`
+ * to recover progress + final results. Cleared only after a matching
+ * terminal response, explicit Stop, or a confirmed missing server job.
+ *
+ * Schema version 1: just the run id + the scope that initiated it (so a
+ * current-chart reload cannot adopt a universe server snapshot).
+ */
+const FINDER_ACTIVE_SERVER_RUN_STORAGE = {
+	key: "playground_finder_active_server_run",
+	schema: "finder.active_server_run",
+	version: 1,
+} as const;
 
 type FinderPersistedResultsState = {
 	savedAt: number;
 	symbol: string;
 	interval: string;
 	results: FinderLatestResults;
+};
+
+type FinderPersistedActiveServerRun = {
+	runId: string;
+	scope: 'symbol_universe';
+	startedAt: number;
 };
 
 const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
@@ -271,15 +277,6 @@ const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
     "totalTrades",
     "activeSymbols",
 ] as const;
-// Each entry holds a finished OHLCV series (up to DATA_CHART_TOTAL_LIMIT = 100k
-// bars, ~5-10 MB). The cap is by entry count, not bytes, so a high cap can hold
-// multiple GB steady-state on large universes. 128 covers typical multi-strategy
-// reuse for universes up to ~100 pairs without pinning 1000-pair runs in memory.
-const UNIVERSE_DATASET_CACHE_MAX_ENTRIES = 128;
-// Synthetic universe runs reuse the same source symbols (e.g. BNBUSDT 1m) across
-// many pairs. A typical universe has <50 unique source symbols, so a small LRU
-// is enough to dedup 200+ source reads down to the unique set per run.
-const SYNTHETIC_SOURCE_SERIES_CACHE_MAX_ENTRIES = 64;
 const TIMING_SORT_METRICS: readonly FinderMetric[] = ["entryScore", "exitScore"];
 
 function isTimingSortMetric(value: unknown): value is FinderMetric {
@@ -457,18 +454,36 @@ export class FinderManager {
 	private readonly paramSpace = new FinderParamSpace();
 	private readonly taskYielder = createTaskYielder();
 	private dom: FinderManagerDom | null = null;
-	private localDailyAssetMapPromise: Promise<Map<string, LocalDailyAsset>> | null = null;
-	private readonly universeDatasetCache = new Map<string, Promise<OHLCVData[]>>();
-	private readonly syntheticSourceSeriesCache = new Map<string, Promise<OHLCVData[]>>();
+	/**
+	 * Active server-run id for the Symbol Universe job currently in flight
+	 * (or null). Acts as the ownership token: every stream + poll callback
+	 * checks `this.activeServerRunId === runId` before mutating UI state so a
+	 * stale tab cannot clobber a newer run.
+	 */
+	private activeServerRunId: string | null = null;
+	/**
+	 * Reattach poller state. `reattachPollingStopped` is the cancel token;
+	 * `reattachTimerResolve` lets Stop / a new Run unblock a pending poll
+	 * sleep immediately.
+	 */
+	private reattachPollingStopped = false;
+	private reattachTimer: ReturnType<typeof setTimeout> | null = null;
+	private reattachTimerResolve: (() => void) | null = null;
 
 	private getDom(): FinderManagerDom {
 		return this.dom ??= createFinderManagerDom();
 	}
 
 	public invalidateLocalDataCaches(): void {
-		this.localDailyAssetMapPromise = null;
-		this.universeDatasetCache.clear();
-		this.syntheticSourceSeriesCache.clear();
+		// Universe synthetic leg/pair caches now live in the Vite server. Keep
+		// the existing invalidation contract used by IBKR/Crypto data sync so a
+		// subsequent Finder run cannot reuse an in-memory series built before the
+		// local files changed. Disk entries remain fingerprint-validated.
+		void fetch('/api/finder/invalidate-cache', { method: 'POST' }).catch((error) => {
+			debugLogger.warn('finder.server.dataset_cache_invalidation_failed', {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		});
 	}
 
 	private getScope(): FinderScope {
@@ -563,6 +578,99 @@ export class FinderManager {
 		});
 	}
 
+	/**
+	 * Generate a unique browser-side run id for a server Universe job. Used
+	 * as the ownership token + persisted before fetch so a reload can
+	 * identify the same server job.
+	 */
+	private generateServerRunId(): string {
+		const rand = Math.random().toString(36).slice(2, 10);
+		return `finder-${Date.now().toString(36)}-${rand}`;
+	}
+
+	/** Persist the active run id BEFORE fetch so a reload can reattach. */
+	private persistActiveServerRun(runId: string, startTime: number): void {
+		writePersistedJson({
+			...FINDER_ACTIVE_SERVER_RUN_STORAGE,
+			data: { runId, scope: 'symbol_universe' as const, startedAt: startTime },
+			onError: (error) => {
+				debugLogger.warn("finder.active_server_run_save_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			},
+		});
+	}
+
+	/** Clear the persisted active-run record (terminal / stop / missing). */
+	private clearActiveServerRun(): void {
+		writePersistedJson({
+			...FINDER_ACTIVE_SERVER_RUN_STORAGE,
+			data: null,
+			onError: (error) => {
+				debugLogger.warn("finder.active_server_run_clear_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			},
+		});
+	}
+
+	/** Read the persisted active-run record (or null). */
+	private loadPersistedActiveServerRun(): FinderPersistedActiveServerRun | null {
+		return readPersistedJson<FinderPersistedActiveServerRun | null>({
+			...FINDER_ACTIVE_SERVER_RUN_STORAGE,
+			fallback: null,
+			migrate: ({ data }) => {
+				if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+				const source = data as Partial<FinderPersistedActiveServerRun>;
+				if (typeof source.runId !== "string" || !source.runId) return null;
+				if (source.scope !== "symbol_universe") return null;
+				return {
+					runId: source.runId,
+					scope: "symbol_universe",
+					startedAt: typeof source.startedAt === "number" ? source.startedAt : Date.now(),
+				};
+			},
+			onError: () => {
+				// Persisted-json read failures are non-fatal for reattach; just
+				// skip reattachment. Don't spam the console on a missing key.
+			},
+		});
+	}
+
+	/** Cancel any in-flight reattach poll loop immediately. */
+	private stopReattachPoll(): void {
+		this.reattachPollingStopped = true;
+		if (this.reattachTimer) {
+			clearTimeout(this.reattachTimer);
+			this.reattachTimer = null;
+		}
+		if (this.reattachTimerResolve) {
+			this.reattachTimerResolve();
+			this.reattachTimerResolve = null;
+		}
+	}
+
+	private async stopActiveServerRun(runId: string): Promise<void> {
+		try {
+			const response = await fetch('/api/finder/stop', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ runId }),
+			});
+			if (!response.ok) {
+				throw new Error(`status ${response.status}`);
+			}
+			// The matching run was stopped or no longer owns the server.
+			this.clearActiveServerRun();
+		} catch (error) {
+			debugLogger.warn('finder.server.stop_failed', {
+				runId,
+				error: error instanceof Error ? error.message : String(error),
+			});
+			this.setStatus('Finder Stop could not reach the server; reload to reattach.');
+		}
+	}
+
 	private parseUniverseSymbols(rawText = this.getDom().finderUniverseSymbols.value): string[] {
 		const unique = new Set<string>();
 		for (const token of rawText.split(/[\s,]+/)) {
@@ -580,282 +688,6 @@ export class FinderManager {
 		dom.finderUniverseSummary.textContent = `${symbols.length} symbol${symbols.length === 1 ? "" : "s"}`;
 	}
 
-	private getLocalDailyAssetMap(): Promise<Map<string, LocalDailyAsset>> {
-		if (!this.localDailyAssetMapPromise) {
-			this.localDailyAssetMapPromise = getLocalDailyAssets().then((assets) => {
-				const bySymbol = new Map<string, LocalDailyAsset>();
-				for (const asset of assets) {
-					const symbol = asset.symbol.trim().toUpperCase();
-					if (symbol && !bySymbol.has(symbol)) {
-						bySymbol.set(symbol, asset);
-					}
-				}
-				return bySymbol;
-			});
-		}
-		return this.localDailyAssetMapPromise;
-	}
-
-	private async prepareUniverseSymbolProvider(symbol: string): Promise<void> {
-		const normalizedSymbol = symbol.trim().toUpperCase();
-		if (!normalizedSymbol) return;
-
-		const localDailyAssets = await this.getLocalDailyAssetMap();
-		const asset = localDailyAssets.get(normalizedSymbol);
-		if (asset) {
-			dataManager.setProviderOverride(normalizedSymbol, asset.provider);
-		}
-	}
-
-	private buildUniverseDatasetCacheKey(symbol: string, interval: string): string {
-		const normalizedSymbol = symbol.trim().toUpperCase();
-		const normalizedInterval = interval.trim().toLowerCase();
-		const provider = dataManager.getProvider(normalizedSymbol);
-		const lookbackBars = dataManager.getChartLookbackBars() ?? "all";
-		return `${provider}|${normalizedSymbol}|${normalizedInterval}|${lookbackBars}`;
-	}
-
-	private setUniverseDatasetCache(key: string, promise: Promise<OHLCVData[]>): void {
-		if (this.universeDatasetCache.has(key)) {
-			this.universeDatasetCache.delete(key);
-		}
-		this.universeDatasetCache.set(key, promise);
-		while (this.universeDatasetCache.size > UNIVERSE_DATASET_CACHE_MAX_ENTRIES) {
-			const oldestKey = this.universeDatasetCache.keys().next().value;
-			if (!oldestKey) break;
-			this.universeDatasetCache.delete(oldestKey);
-		}
-	}
-
-	private async loadUniverseDataset(symbol: string, interval: string, signal?: AbortSignal) {
-		const synthParts = parseSyntheticPairToken(symbol);
-		// Diamond-marked symbols are offline stock_market_data, which only has
-		// `1d` bars. Coerce to `1d` whenever a marked symbol or leg is involved
-		// so the local-daily loader returns data instead of empty.
-		const effectiveInterval = resolveEffectiveIntervalForSynthetic(
-			symbol,
-			synthParts?.baseSymbol ?? null,
-			synthParts?.quoteSymbol ?? null,
-			interval,
-		);
-		if (synthParts) {
-			return this.loadSyntheticPairForUniverse(synthParts.baseSymbol, synthParts.quoteSymbol, effectiveInterval, signal);
-		}
-		await this.prepareUniverseSymbolProvider(symbol);
-		const cacheKey = this.buildUniverseDatasetCacheKey(symbol, effectiveInterval);
-		const cached = this.universeDatasetCache.get(cacheKey);
-		if (cached) {
-			debugLogger.event("finder.universe_dataset_cache_hit", { symbol, interval: effectiveInterval, cacheKey });
-			return cached;
-		}
-		debugLogger.event("finder.universe_dataset_cache_miss", { symbol, interval: effectiveInterval, cacheKey });
-
-		let promise: Promise<OHLCVData[]>;
-		promise = dataManager.fetchDataDetached(symbol, effectiveInterval, { signal, offline: true })
-			.then((data) => {
-				if (signal?.aborted || !Array.isArray(data) || data.length === 0) {
-					if (this.universeDatasetCache.get(cacheKey) === promise) {
-						this.universeDatasetCache.delete(cacheKey);
-					}
-				}
-				return data;
-			})
-			.catch((error) => {
-				if (this.universeDatasetCache.get(cacheKey) === promise) {
-					this.universeDatasetCache.delete(cacheKey);
-				}
-				throw error;
-			});
-		this.setUniverseDatasetCache(cacheKey, promise);
-		return promise;
-	}
-
-	private buildSyntheticUniverseCacheKey(args: {
-		syntheticSymbol: string;
-		baseSymbol: string;
-		quoteSymbol: string;
-		interval: string;
-		sourceInterval: string;
-		sourceBars: number;
-	}): string {
-		const normalizedBase = args.baseSymbol.trim().toUpperCase();
-		const normalizedQuote = args.quoteSymbol.trim().toUpperCase();
-		const normalizedSymbol = args.syntheticSymbol.trim().toUpperCase();
-		const normalizedInterval = args.interval.trim().toLowerCase();
-		const normalizedSourceInterval = args.sourceInterval.trim().toLowerCase();
-		const provider = dataManager.getProvider(normalizedSymbol);
-		return `${provider}|${normalizedSymbol}|${normalizedBase}|${normalizedQuote}|${normalizedInterval}|${normalizedSourceInterval}|${args.sourceBars}|synthetic`;
-	}
-
-	private getSourceSeriesForSynthetic(
-		sourceSymbol: string,
-		sourceInterval: string,
-		sourceBars: number,
-		signal?: AbortSignal,
-	): Promise<OHLCVData[]> {
-		// Synthetic universe pairs reuse the same source symbols (e.g. BNBUSDT 1m)
-		// across many pairs. Without this cache, BNBUSDT 1m would be re-read once
-		// per pair that references it (up to ~15x in a typical universe). The
-		// source arrays are treated as read-only by buildSyntheticPairDataset and
-		// aggregateSyntheticBars, so sharing is safe.
-		//
-		// Legs are persisted to SQLite/IDB after their first Binance fetch (see
-		// data-fetcher.ts persistLocalCandles calls), so we read them offline-only
-		// here. The hybrid fetch falls through to Binance on its own if no local
-		// data exists at all (true first-ever fetch). As a safety net against a
-		// partial / interrupted prior persist, if the offline result is degenerate
-		// (well below the requested sourceBars) we retry once with the remote
-		// gap-fill path.
-		//
-		// Exception: diamond-marked legs are offline stock_market_data tickers
-		// with no remote source — they always stay offline.
-		const cacheKey = `${sourceSymbol.trim().toUpperCase()}|${sourceInterval.trim().toLowerCase()}|${sourceBars}`;
-		const cached = this.syntheticSourceSeriesCache.get(cacheKey);
-		if (cached) {
-			debugLogger.event("finder.synthetic_source_cache_hit", { sourceSymbol, sourceInterval, sourceBars });
-			return cached;
-		}
-		const markedLeg = isMarkedLocalStockSymbol(sourceSymbol);
-		// 25% threshold: a healthy 1h leg for a 4h synthetic should be near the
-		// requested sourceBars; anything dramatically smaller signals a partial
-		// cache or interrupted prior persist, not a real short history.
-		const minHealthyLegBars = Math.max(1_000, Math.floor(sourceBars * 0.25));
-		const fetchLeg = (offline: boolean): Promise<OHLCVData[]> =>
-			dataManager
-				.fetchHistoricalData(sourceSymbol, sourceInterval, sourceBars, {
-					signal,
-					...(offline ? { offline: true } : {}),
-				});
-		const promise = (markedLeg
-				? fetchLeg(true)
-				: fetchLeg(true).then((data) =>
-						data.length >= minHealthyLegBars
-							? data
-							: (debugLogger.warn('finder.synthetic_source_offline_thin', {
-									sourceSymbol,
-									sourceInterval,
-									returned: data.length,
-									expected: sourceBars,
-								}),
-								fetchLeg(false)),
-					))
-			.catch((error) => {
-				if (this.syntheticSourceSeriesCache.get(cacheKey) === promise) {
-					this.syntheticSourceSeriesCache.delete(cacheKey);
-				}
-				throw error;
-			});
-		this.syntheticSourceSeriesCache.set(cacheKey, promise);
-		while (this.syntheticSourceSeriesCache.size > SYNTHETIC_SOURCE_SERIES_CACHE_MAX_ENTRIES) {
-			const oldestKey = this.syntheticSourceSeriesCache.keys().next().value;
-			if (!oldestKey) break;
-			this.syntheticSourceSeriesCache.delete(oldestKey);
-		}
-		return promise;
-	}
-
-	private async loadSyntheticPairForUniverse(
-		baseSymbol: string,
-		quoteSymbol: string,
-		interval: string,
-		signal?: AbortSignal,
-	): Promise<OHLCVData[]> {
-		const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
-		// Diamond-marked legs have no finer granularity than 1d, so skip
-		// source subdivision for them (matches buildSyntheticPairFromLegs).
-		// IBKR (bullet) legs take the normal path, filtered by IBKR's
-		// supportedIntervals so e.g. 1d won't pick a 2h seed that doesn't exist.
-		const diamondLeg = isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol);
-		const available = resolveSyntheticAvailableIntervals(baseSymbol, quoteSymbol);
-		const source = diamondLeg ? null : pickSourceInterval(interval, 12, available);
-		const sourceInterval = source?.sourceInterval ?? interval;
-		// Cap source bars at DATA_CHART_TOTAL_LIMIT (100k). The synthetic source
-		// interval is a derived interval the user may not have pre-warmed, so the
-		// read often has to gap-fill from Binance; capping keeps the paginated
-		// remote fetch bounded (the original universe synthetic loader used this
-		// same cap before the SYNTHETIC_SOURCE_BARS_LIMIT inflation regressed it).
-		const sourceBars = Math.min(SYNTHETIC_TARGET_BARS * (source?.ratio ?? 1), DATA_CHART_TOTAL_LIMIT);
-		const cacheKey = this.buildSyntheticUniverseCacheKey({
-			syntheticSymbol,
-			baseSymbol,
-			quoteSymbol,
-			interval,
-			sourceInterval,
-			sourceBars,
-		});
-		const cached = this.universeDatasetCache.get(cacheKey);
-		if (cached) {
-			debugLogger.event("finder.synthetic_universe_cache_hit", {
-				syntheticSymbol,
-				baseSymbol,
-				quoteSymbol,
-				interval,
-				sourceInterval,
-				sourceBars,
-			});
-			this.setUniverseDatasetCache(cacheKey, cached);
-			return cached;
-		}
-		debugLogger.event("finder.synthetic_universe_cache_miss", {
-			syntheticSymbol,
-			baseSymbol,
-			quoteSymbol,
-			interval,
-			sourceInterval,
-			sourceBars,
-		});
-
-		let promise: Promise<OHLCVData[]>;
-		promise = (async () => {
-			if (signal?.aborted) return [];
-			// The pipeline (pick source -> fetch legs -> align -> aggregate)
-			// is centralized in buildSyntheticPairFromLegs so every synthetic
-			// consumer stays in lockstep. This callsite keeps two local
-			// variations: the source-bars cap below (kept bounded because the
-			// derived source interval often forces a remote Binance gap-fill),
-			// and getSourceSeriesForSynthetic as the fetchLeg so BNBUSDT 1m is
-			// reused ~15x rather than re-read per pair.
-			const result = await buildSyntheticPairFromLegs({
-				baseSymbol,
-				quoteSymbol,
-				interval,
-				targetBars: SYNTHETIC_TARGET_BARS,
-				sourceBarsCap: DATA_CHART_TOTAL_LIMIT,
-				fetchLeg: (legSymbol, sourceInterval, sourceBars) =>
-					this.getSourceSeriesForSynthetic(legSymbol, sourceInterval, sourceBars, signal),
-			});
-			if (signal?.aborted) return [];
-			const syntheticBars = result.bars;
-			if (syntheticBars.length === 0) return [];
-
-			dataManager.registerImportedData(syntheticSymbol, interval, syntheticBars);
-			return syntheticBars;
-		})()
-			.then((data) => {
-				// Only evict on abort or genuinely broken loads. The previous
-				// `isShortSyntheticDataset` guard evicted any synthetic with fewer
-				// than SYNTHETIC_TARGET_BARS (50,000) rows — but no 4h synthetic can
-				// ever reach that bar count (~22 years of data), so the guard caused
-				// every 4h synthetic to be re-gap-filled from Binance on every Finder
-				// run. The in-memory LRU (UNIVERSE_DATASET_CACHE_MAX_ENTRIES) bounds
-				// growth; empty-array/abort still evict.
-				if (signal?.aborted || !Array.isArray(data) || data.length === 0) {
-					if (this.universeDatasetCache.get(cacheKey) === promise) {
-						this.universeDatasetCache.delete(cacheKey);
-					}
-				}
-				return data;
-			})
-			.catch((error) => {
-				if (this.universeDatasetCache.get(cacheKey) === promise) {
-					this.universeDatasetCache.delete(cacheKey);
-				}
-				throw error;
-			});
-
-		this.setUniverseDatasetCache(cacheKey, promise);
-		return promise;
-	}
 
 	private async populateUniverseWithLocalDailySeeds(): Promise<void> {
 		const dom = this.getDom();
@@ -938,17 +770,22 @@ export class FinderManager {
 
 		dom.stopFinder.addEventListener('click', () => {
 			this.isCancelled = true;
-			// Server-side Finder Universe: the runner lives in the dev server,
-			// so `this.isCancelled` alone does NOT stop it — the server checks
-			// ownership loss + abort via POST /api/finder/stop. Fire-and-forget;
-			// the browser-side OOS pass (which runs in-tab on the returned
-			// survivors) also sees `this.isCancelled` and stops promptly.
-			// Only POST when a run is actually in flight (this.isRunning) AND in
-			// server universe scope, so a stray click doesn't spam the endpoint.
-			if (this.isRunning && this.isUniverseScope()) {
-				void fetch('/api/finder/stop', { method: 'POST' }).catch(() => {
-					// The active request will surface an unavailable server endpoint.
-				});
+			// Cancel any in-flight reattach poll immediately so Stop changes UI
+			// ownership before the next poll iteration.
+			this.stopReattachPoll();
+			// Server-owned Finder Universe: the job lives in the dev server, so
+			// `this.isCancelled` alone does NOT stop it — the server checks
+			// ownership loss + abort via POST /api/finder/stop with the active
+			// run id (Stop is scoped by run id so a stale tab cannot cancel a
+			// newer run). Fire-and-forget; only POST when a run is in flight
+			// AND the active run id is known.
+			const activeRunId = this.activeServerRunId;
+			if (this.isRunning && activeRunId) {
+				// Drop local ownership immediately so late stream callbacks cannot
+				// mutate the stopped view. Keep the persisted marker until the server
+				// confirms Stop; on a network failure a reload can still reattach.
+				this.activeServerRunId = null;
+				void this.stopActiveServerRun(activeRunId);
 			}
 		});
 
@@ -997,6 +834,11 @@ export class FinderManager {
 		this.applyScopeUi();
 		this.loadPersistedLatestResults();
 		this.renderLatestResults();
+		// Reattach to an in-flight or terminal server-owned Universe job after
+		// a tab reload. Finder is lazy-loaded, so this runs on first Finder
+		// activation (not global startup). No-op when there is no persisted
+		// active run id.
+		void this.reattachToActiveServerRun();
 	}
 
 	private initOosValidationUI(): void {
@@ -1715,6 +1557,10 @@ export class FinderManager {
 
 	public async runFinder(): Promise<void> {
 		if (this.isRunning) return;
+		// Starting a new run cancels any stale reattach poll before changing
+		// UI ownership so late poll updates cannot mutate the new run's state.
+		this.stopReattachPoll();
+		this.activeServerRunId = null;
 		if (!this.isUniverseScope() && state.ohlcvData.length === 0) {
 			this.setStatus('Data not loaded. Attempting to load...');
 			await dataManager.loadData();
@@ -2030,199 +1876,232 @@ export class FinderManager {
 	}
 
 	/**
-	 * Per-symbol OOS pass for Symbol Universe mode. For each survivor candidate,
-	 * re-runs the strategy on the complementary half of every symbol's data and
-	 * attaches a per-symbol OOS result/verdict plus a strategy-level aggregate.
-	 * Candidates whose OOS breadth collapses are filtered out. Returns the number
-	 * removed; returns 0 when the gate is not applicable (toggle off, non-half
-	 * window, polymarket mode) or no survivors exist.
+	 * Reattach to an in-flight or terminal server-owned Universe job after a
+	 * tab reload. Called from `init()` (Finder is lazy-loaded, so reattach
+	 * begins when Finder initializes — not at global startup). Reads the
+	 * persisted active run id; if the server still has a matching job,
+	 * restores progress + Stop state, then polls summary-only status at a
+	 * bounded interval (Batch's reattach pattern) until terminal. On terminal,
+	 * adopts the authoritative candidate slice + diagnostics, renders,
+	 * persists through the completed-results snapshot, and clears the
+	 * active-run record.
+	 *
+	 * Reattach only survives a browser reload while the same Vite process
+	 * remains alive; a Vite restart loses the in-memory job and the reattach
+	 * clears its record.
 	 */
-	private async applyUniverseOosValidationIfNeeded(args: {
-		results: FinderUniverseCandidate[];
-		selectedStrategies: FinderSelectedStrategy[];
-		settings: BacktestSettings;
-		options: FinderOptions;
-		startTime: number;
-	}): Promise<number> {
-		const { results, selectedStrategies, settings, options } = args;
-		if (!options.oosValidationEnabled) return 0;
-		const oosSlice = resolveOosDataSlice(options.dataSlice ?? 'all');
-		if (!oosSlice) return 0;
-		if (results.length === 0) return 0;
+	private async reattachToActiveServerRun(): Promise<void> {
+		const persisted = this.loadPersistedActiveServerRun();
+		if (!persisted) return;
+		const runId = persisted.runId;
 
-		const strategyByKey = new Map(selectedStrategies.map((item) => [item.key, item.strategy]));
-		const minActiveSymbols = options.universe?.minActiveSymbols ?? 1;
-		// Per-symbol OOS trade floor: a small constant so symbols with a handful of
-		// OOS trades are inconclusive rather than auto-failing. Mirrors the IS
-		// intent without reusing the cross-strategy minTrades knob.
-		const perSymbolMinTrades = 5;
-		// Hoist per-run constants out of the candidate loop.
-		const rustSettings = sanitizeBacktestSettingsForRust(settings);
-		const capitalSettings = backtestService.getCapitalSettings();
-		// Capital settings are identical for every OOS candidate × symbol;
-		// resolve once to avoid re-running the normalizer per call (mirrors
-		// the IS universe path in finder-runner-universe.ts).
-		const preResolvedCapital = resolveCapitalSettingsFromRaw(capitalSettings as unknown as Record<string, unknown>);
-		const runNowSec = Math.floor(Date.now() / 1000);
-
-		this.setProgress(true, 0, 'Validating universe survivors out-of-sample...');
-		const symbolDataCache = new Map<string, OHLCVData[]>();
-		const loadOosData = async (symbol: string, interval: string): Promise<OHLCVData[]> => {
-			const cacheKey = `${symbol.trim().toUpperCase()}|${interval}`;
-			const cached = symbolDataCache.get(cacheKey);
-			if (cached) return cached;
-			try {
-				const full = await this.loadUniverseDataset(symbol, interval);
-				const sliced = sliceFinderDataWindow(full, oosSlice);
-				symbolDataCache.set(cacheKey, sliced);
-				return sliced;
-			} catch {
-				symbolDataCache.set(cacheKey, []);
-				return [];
+		// Probe whether the server still has this job.
+		let initial: FinderRunStatusSnapshot | null = null;
+		let confirmedMissing = false;
+		try {
+			const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, { cache: "no-store" });
+			if (response.ok) {
+				initial = (await response.json()) as FinderRunStatusSnapshot;
+			} else if (response.status === 404) {
+				confirmedMissing = true;
+			} else {
+				return;
 			}
+		} catch {
+			// Transient network error on the probe — leave the persisted record
+			// intact; the user can reload again. Do not claim completion.
+			return;
+		}
+		if (confirmedMissing || !initial || !initial.ok) {
+			// Server has no matching job (Vite restart, or a different run
+			// already completed). Clear the stale record so reattach doesn't
+			// loop forever.
+			this.clearActiveServerRun();
+			return;
+		}
+
+		// The server job exists. Adopt it as the active run.
+		this.activeServerRunId = runId;
+		this.isRunning = true;
+		this.isCancelled = false;
+		this.reattachPollingStopped = false;
+		const dom = this.getDom();
+		// The persisted ownership record proves this is a Universe job. Restore
+		// that scope before any terminal snapshot is adopted so it cannot replace
+		// a current-chart view while the UI still claims current-chart scope.
+		if (this.uiState.scope !== persisted.scope) {
+			this.uiState.scope = persisted.scope;
+			dom.finderScope.value = persisted.scope;
+			this.applyScopeUi();
+			this.saveUiState();
+		}
+		dom.runFinder.disabled = true;
+		dom.stopFinder.style.display = "";
+		debugLogger.event("finder.server.reattach_started", {
+			runId,
+			phase: initial.phase,
+			terminal: initial.terminal,
+		});
+
+		const setRunningUI = (running: boolean) => {
+			dom.runFinder.disabled = running;
+			dom.runFinder.classList.toggle("is-loading", running);
+			dom.runFinder.setAttribute("aria-busy", running ? "true" : "false");
+			dom.stopFinder.style.display = running ? "" : "none";
 		};
 
-		for (let candidateIndex = 0; candidateIndex < results.length; candidateIndex += 1) {
-			if (this.isCancelled) break;
-			const candidate = results[candidateIndex]!;
-			this.setProgress(
-				true,
-				(candidateIndex / results.length) * 100,
-				`OOS validation ${candidateIndex + 1}/${results.length}: ${candidate.strategyName}`
-			);
+		this.setProgress(true, initial.progressPercent, initial.statusText);
+		this.setStatus(`Reattached to Universe Finder: ${initial.statusText}`);
+		let clearPersistedRecord = false;
+		let terminalReached = false;
+		const applyTerminalSnapshot = (snapshot: FinderRunStatusSnapshot): void => {
+			if (!snapshot.terminal || this.activeServerRunId !== runId) return;
+			terminalReached = true;
+			clearPersistedRecord = true;
+			if (snapshot.phase === "done" && snapshot.terminalCandidates) {
+				// The server slice is already sorted and bounded with the original
+				// run options. Those options are not available after a reload.
+				this.setLatestResults({
+					scope: "symbol_universe",
+					results: [...snapshot.terminalCandidates],
+				});
+				this.renderLatestResults();
+				this.latestDiagnostics = snapshot.diagnostics;
+				dom.finderCopyDiagnostics.disabled = !snapshot.diagnostics;
+			}
+			this.setStatus(snapshot.error ?? snapshot.summary ?? snapshot.statusText);
+			debugLogger.event("finder.server.reattach_terminal", {
+				runId,
+				phase: snapshot.phase,
+				candidates: snapshot.terminalCandidates?.length ?? 0,
+			});
+		};
+		applyTerminalSnapshot(initial);
 
-			const strategy = strategyByKey.get(candidate.strategyKey);
-			if (!strategy) {
-				candidate.oosAggregate = {
-					verdict: 'inconclusive',
-					activeSymbols: 0,
-					profitableSymbols: 0,
-					profitableActiveRatio: 0,
-					worstNetProfit: 0,
-				};
+		const POLL_INTERVAL_MS = 2000;
+		const LONG_POLL_INTERVAL_MS = 5000;
+		const FAST_POLL_COUNT = 150; // 5 min at 2s before stepping down
+		const FAILURE_BACKOFF_MS = [2_000, 5_000, 10_000, 15_000] as const;
+		const MAX_REATTACH_CONSECUTIVE_FAILURES = 20;
+		let consecutiveFailures = 0;
+
+		const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => {
+			this.reattachTimerResolve = resolve;
+			this.reattachTimer = setTimeout(resolve, ms);
+		});
+
+		for (let poll = 0; !terminalReached; poll += 1) {
+			if (this.reattachPollingStopped || this.activeServerRunId !== runId) break;
+			const delay = poll >= FAST_POLL_COUNT ? LONG_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
+			await sleep(delay);
+			if (this.reattachPollingStopped || this.activeServerRunId !== runId) break;
+
+			let snapshot: FinderRunStatusSnapshot | null = null;
+			try {
+				const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, { cache: "no-store" });
+				if (!response.ok) {
+					// 404 means the server job is gone (restart). Stop polling
+					// and clear the record; don't claim completion.
+					if (response.status === 404) {
+						clearPersistedRecord = true;
+						this.setStatus("Server Finder run lost (dev server restarted).");
+						break;
+					}
+					throw new Error(`status ${response.status}`);
+				}
+				snapshot = (await response.json()) as FinderRunStatusSnapshot;
+			} catch (error) {
+				if (this.reattachPollingStopped || this.activeServerRunId !== runId) break;
+				consecutiveFailures += 1;
+				debugLogger.warn("finder.server.reattach_poll_failed", {
+					runId,
+					consecutive: consecutiveFailures,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				if (consecutiveFailures > MAX_REATTACH_CONSECUTIVE_FAILURES) {
+					this.setStatus("Server connection lost — reload to retry Universe Finder reattach.");
+					break;
+				}
+				const backoffIndex = Math.min(consecutiveFailures - 1, FAILURE_BACKOFF_MS.length - 1);
+				poll -= 1; // don't advance into long-poll step-down due to retries
+				await sleep(FAILURE_BACKOFF_MS[backoffIndex]!);
 				continue;
 			}
-			// Match the universe IS path: split exit params out and inject the exit
-			// descriptor into per-candidate backtest settings (see finder-runner-universe.ts).
-			const combinedParams = withExitStrategyBaseParams(candidate.params, candidate.exitStrategyParams ?? {});
-			const { entryParams } = candidate.exitStrategyKey
-				? splitExitStrategyParams(combinedParams)
-				: { entryParams: combinedParams };
-			const { backtestSettings: riskAdjustedSettings } = resolveFinderRiskOverrides(settings, rustSettings, combinedParams, options);
-			const oosBacktestSettings: BacktestSettings = candidate.exitStrategyKey
-				? {
-					...riskAdjustedSettings,
-					disableSignalExits: true,
-					exitStrategyOverrideEnabled: true,
-					exitStrategyKey: candidate.exitStrategyKey,
-					exitStrategyParams: { ...(candidate.exitStrategyParams ?? {}) },
-				}
-				: riskAdjustedSettings;
-			const preResolvedSettings = resolveExecutorBacktestSettings(
-				{ ...(oosBacktestSettings as Record<string, unknown>), interval: state.currentInterval } as BacktestSettings,
-				state.currentInterval,
-			);
-			const crossSymbolDataFetcher = strategy.crossSymbolConfig
-				? {
-					getProvider: (symbol: string) => dataManager.getProvider(symbol),
-					fetchDataDetached: loadOosData,
-				}
-				: undefined;
 
-			for (const symbolResult of candidate.symbols) {
-				if (this.isCancelled) break;
-				if (symbolResult.status === 'load_failed' || symbolResult.status === 'run_failed') {
-					continue;
-				}
-				const oosData = await loadOosData(symbolResult.symbol, state.currentInterval);
-				if (oosData.length === 0) continue;
-
-				try {
-					const output = await executeBacktest({
-						ohlcvData: oosData,
-						interval: state.currentInterval,
-						primarySymbol: symbolResult.symbol,
-						strategyKey: candidate.strategyKey,
-						strategy,
-						strategyParams: entryParams,
-						backtestSettings: oosBacktestSettings,
-						capitalSettings,
-						preResolvedSettings,
-						preResolvedCapital,
-						dataFetcher: crossSymbolDataFetcher,
-						context: {
-							blockRange: null,
-							annotatePolymarket: false,
-							engineMode: 'auto',
-							nowSec: runNowSec,
-						},
-						backtestRunOptions: {
-							includeAdvancedAnalytics: false,
-							omitEquityCurve: true,
-							skipDrawdown: true,
-							skipResultPostProcessing: true,
-						},
-					});
-					const oosMetrics = this.backtestResultToUniverseMetrics(output.result);
-					symbolResult.oosResult = oosMetrics;
-					symbolResult.oosVerdict = computeUniverseSymbolOosVerdict({
-						oosNetProfit: oosMetrics.netProfit,
-						oosProfitFactor: oosMetrics.profitFactor,
-						oosTotalTrades: oosMetrics.totalTrades,
-						minTrades: perSymbolMinTrades,
-					});
-				} catch {
-					symbolResult.oosResult = undefined;
-					symbolResult.oosVerdict = 'inconclusive';
-				}
-				await this.taskYielder.yieldControl();
+			consecutiveFailures = 0;
+			if (!snapshot || !snapshot.ok) {
+				// Server no longer has this run id — stop and clear.
+				clearPersistedRecord = true;
+				this.setStatus("Server Finder run no longer active.");
+				break;
 			}
 
-			candidate.oosAggregate = computeUniverseOosAggregate({
-				symbols: candidate.symbols,
-				isProfitableActiveRatio: candidate.profitableActiveRatio,
-				minActiveSymbols,
-			});
-			updateFinderUniverseCandidateScores(candidate);
+			// Update progress from the summary-only snapshot (no candidate
+			// payload while running).
+			this.setProgress(true, snapshot.progressPercent, snapshot.statusText);
+			this.setStatus(`Universe Finder: ${snapshot.statusText}`);
+
+			applyTerminalSnapshot(snapshot);
 		}
 
-		const initialCount = results.length;
-		const survivors = results.filter((candidate) => candidate.oosAggregate?.verdict !== 'fail');
-		const removedCount = initialCount - survivors.length;
-		// Always re-publish + re-render after the OOS pass: even when nothing is
-		// filtered out, per-symbol oosResult/oosAggregate were attached and must
-		// be painted. Without this the OOS chips/badges never appear.
-		if (removedCount > 0) {
-			results.length = 0;
-			results.push(...survivors);
+		// Teardown: only the reattach path that still owns the run id clears it.
+		if (this.activeServerRunId === runId) {
+			this.activeServerRunId = null;
+			if (clearPersistedRecord) {
+				this.clearActiveServerRun();
+			}
 		}
-		const sortedResults = sortFinderUniverseCandidates(
-			results,
-			options.universe?.sortPriority ?? []
-		).slice(0, options.topN);
-		results.length = 0;
-		results.push(...sortedResults);
-		this.setLatestResults({ scope: 'symbol_universe', results: [...results] });
-		this.renderLatestResults();
-		return removedCount;
+		this.reattachTimer = null;
+		this.reattachTimerResolve = null;
+		this.isRunning = false;
+		this.isCancelled = false;
+		setRunningUI(false);
+		this.setProgress(false, 0, "");
 	}
 
-	private backtestResultToUniverseMetrics(result: BacktestResult): FinderUniverseSymbolMetrics {
-		return {
-			netProfit: result.netProfit,
-			netProfitPercent: result.netProfitPercent,
-			expectancy: result.expectancy,
-			avgTrade: result.avgTrade,
-			winRate: result.winRate,
-			profitFactor: result.profitFactor,
-			totalTrades: result.totalTrades,
-			maxDrawdownPercent: result.maxDrawdownPercent,
-			winningTrades: result.winningTrades,
-			losingTrades: result.losingTrades,
-			avgWin: result.avgWin,
-			avgLoss: result.avgLoss,
-			sharpeRatio: result.sharpeRatio,
-		};
+	/**
+	 * Recover the initiating tab when its NDJSON connection ends before the
+	 * terminal event. The server job keeps running, so poll the scoped status
+	 * endpoint instead of treating provisional streamed candidates as final or
+	 * allowing a replacement run to orphan the active server job.
+	 */
+	private async recoverActiveUniverseServerRun(runId: string): Promise<FinderRunStatusSnapshot | null> {
+		const FAILURE_BACKOFF_MS = [2_000, 5_000, 10_000, 15_000] as const;
+		const MAX_CONSECUTIVE_FAILURES = 20;
+		let consecutiveFailures = 0;
+
+		while (this.activeServerRunId === runId) {
+			try {
+				const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, { cache: "no-store" });
+				if (response.status === 404) return null;
+				if (!response.ok) throw new Error(`status ${response.status}`);
+				const snapshot = await response.json() as FinderRunStatusSnapshot;
+				if (!snapshot.ok) return null;
+				consecutiveFailures = 0;
+				if (snapshot.terminal) {
+					debugLogger.warn("finder.server.stream_recovered_via_status", {
+						runId,
+						phase: snapshot.phase,
+						candidates: snapshot.terminalCandidates?.length ?? 0,
+					});
+					return snapshot;
+				}
+				this.setProgress(true, snapshot.progressPercent, snapshot.statusText);
+				this.setStatus(`Universe Finder: ${snapshot.statusText}`);
+				await new Promise<void>((resolve) => setTimeout(resolve, 2_000));
+			} catch (error) {
+				consecutiveFailures += 1;
+				debugLogger.warn("finder.server.stream_recovery_poll_failed", {
+					runId,
+					consecutive: consecutiveFailures,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				if (consecutiveFailures > MAX_CONSECUTIVE_FAILURES) return null;
+				const backoffIndex = Math.min(consecutiveFailures - 1, FAILURE_BACKOFF_MS.length - 1);
+				await new Promise<void>((resolve) => setTimeout(resolve, FAILURE_BACKOFF_MS[backoffIndex]!));
+			}
+		}
+		return null;
 	}
 
 	private async runUniverseFinder(options: FinderOptions, startTime: number): Promise<boolean> {
@@ -2237,80 +2116,48 @@ export class FinderManager {
 		}
 		const exitStrategyCandidates = await this.resolveExitStrategyCandidates(options, selectedStrategies);
 
-		// The endpoint accepts one entry strategy per request. Sequence selected
-		// strategies and merge their scalar survivors before OOS validation.
-		const allResults: FinderUniverseCandidate[] = [];
-		const diagnosticsParts: FinderDiagnostics[] = [];
-		let maxLoadedSymbols = 0;
-		let failedSymbolCount = 0;
-		const settings = backtestService.getBacktestSettings();
-		for (let strategyIndex = 0; strategyIndex < selectedStrategies.length; strategyIndex += 1) {
-			const serverOutcome = await this.runUniverseFinderServer(
-				options,
-				selectedStrategies[strategyIndex]!,
-				exitStrategyCandidates,
-				startTime,
-				allResults,
-				strategyIndex,
-				selectedStrategies.length,
-			);
-			allResults.push(...serverOutcome.results);
-			maxLoadedSymbols = Math.max(maxLoadedSymbols, serverOutcome.loadedSymbols);
-			failedSymbolCount += serverOutcome.failedSymbolCount;
-			if (serverOutcome.diagnostics) diagnosticsParts.push(serverOutcome.diagnostics);
-			const mergedResults = sortFinderUniverseCandidates(
-				allResults,
-				options.universe.sortPriority,
-			).slice(0, options.topN);
-			this.setLatestResults({ scope: 'symbol_universe', results: mergedResults });
-			this.renderLatestResults();
-			if (this.isCancelled) break;
-		}
+		// ONE server job owns all selected strategies: IS evaluation, survivor
+		// merge, and the optional OOS pass all run server-side. The browser is
+		// the control + rendering layer. Persist the active run id before fetch
+		// so a tab reload can reattach to the same server job.
+		const runId = this.generateServerRunId();
+		this.activeServerRunId = runId;
+		this.persistActiveServerRun(runId, startTime);
 
-		if (this.isCancelled) {
-			return true;
-		}
-
-		// Per-symbol OOS pass on the finalized survivors. Loads the complementary
-		// half of each symbol's data (cache hit on universeDatasetCache) and
-		// re-runs each survivor strategy via executeBacktest. Candidates whose
-		// OOS breadth collapses are filtered out.
-		const universeResults = sortFinderUniverseCandidates(allResults, options.universe.sortPriority).slice(0, options.topN);
-		const oosRemovedCount = await this.applyUniverseOosValidationIfNeeded({
-			results: universeResults,
-			selectedStrategies,
-			settings,
+		const outcome = await this.runUniverseFinderServer(
 			options,
+			selectedStrategies,
+			exitStrategyCandidates,
+			runId,
 			startTime,
-		});
+		);
 
-		this.latestDiagnostics = diagnosticsParts.length === 0
-			? null
-			: diagnosticsParts.length === 1
-				? diagnosticsParts[0]!
-				: this.buildCombinedUniverseDiagnostics({
-					options,
-					parts: diagnosticsParts,
-					shownResults: this.getUniverseResults().length,
-					elapsedMs: performance.now() - startTime,
-				});
+		// A stale run that lost ownership (Stop, newer run) must not persist
+		// its active-run record or overwrite rendered state. The stream
+		// consumer already guards against stale run ids; this clears the
+		// record only when THIS run is still the active one.
+		if (this.activeServerRunId === runId) {
+			this.activeServerRunId = null;
+			this.clearActiveServerRun();
+		}
+
+		this.latestDiagnostics = outcome.diagnostics;
 		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics;
 		this.ui.renderRandomBenchmark(options.mode);
 
-		if (!this.isCancelled) {
+		if (!this.isCancelled && this.activeServerRunId === null) {
 			const totalSymbols = options.universe.symbols.length;
-			const failureCount = failedSymbolCount;
 			const survivors = this.getUniverseResults().length;
 			const segments = [
 				`Universe Finder complete. ${survivors} survivor${survivors === 1 ? '' : 's'}`,
 				`${selectedStrategies.length} strateg${selectedStrategies.length === 1 ? 'y' : 'ies'}`,
-				`${maxLoadedSymbols}/${totalSymbols} symbols loaded`,
+				`${outcome.loadedSymbols}/${totalSymbols} symbols loaded`,
 			];
-			if (oosRemovedCount > 0) {
-				segments.push(`${oosRemovedCount} filtered by OOS gate`);
+			if (outcome.oosRemoved > 0) {
+				segments.push(`${outcome.oosRemoved} filtered by OOS gate`);
 			}
-			if (failureCount > 0) {
-				segments.push(`${failureCount} load failure${failureCount === 1 ? '' : 's'}`);
+			if (outcome.failedSymbolCount > 0) {
+				segments.push(`${outcome.failedSymbolCount} load failure${outcome.failedSymbolCount === 1 ? '' : 's'}`);
 			}
 			segments.push(`${Math.round(performance.now() - startTime)}ms`);
 			this.setStatus(segments.join(' | '));
@@ -2319,49 +2166,53 @@ export class FinderManager {
 	}
 
 	/**
-	 * Server-side Finder Universe path: POST to `/api/finder/universe-run`,
-	 * consume the NDJSON stream of scalar survivor candidates, and reconstruct
-	 * the terminal survivor slice + diagnostics in-browser. The server holds
-	 * the N full OHLCV datasets; the browser tab keeps only rendered scalars.
+	 * Server-owned Finder Universe path: POST ONE request containing all
+	 * selected entry strategy keys + a browser-generated runId, consume the
+	 * NDJSON stream of scalar survivor candidates, and adopt the server's
+	 * authoritative terminal slice + diagnostics. The server sequences
+	 * strategies, merges survivors, runs OOS, and publishes one terminal
+	 * snapshot; the browser only renders.
 	 *
-	 * The caller sequences requests and applies browser-side OOS validation to
-	 * the merged scalar survivors.
+	 * `runId` guards every stream + poll callback so a stale tab cannot
+	 * mutate newer Finder state (the active-server-run token). Disconnecting
+	 * the initiating stream does not cancel the server job — reattach polling
+	 * on Finder init recovers an in-flight or terminal job after reload.
 	 */
 	private async runUniverseFinderServer(
 		options: FinderOptions,
-		selectedStrategy: FinderSelectedStrategy,
+		selectedStrategies: FinderSelectedStrategy[],
 		exitStrategyCandidates: FinderSelectedStrategy[] | undefined,
+		runId: string,
 		startTime: number,
-		priorResults: readonly FinderUniverseCandidate[],
-		strategyIndex: number,
-		strategyCount: number,
 	): Promise<ServerUniverseRunOutcome> {
 		const settings = backtestService.getBacktestSettings();
 		const capitalSettings = backtestService.getCapitalSettings();
 		// Send a symbol -> provider map so the server's cross-symbol mismatch
 		// guard matches the browser's `dataManager.getProvider` classification.
-		// Without this the server returned a constant provider for every symbol
-		// and silently allowed cross-provider pairs the browser rejects
-		// (Finding 4: cross-provider parity).
 		const universeSymbols = options.universe?.symbols ?? [];
 		const providerBySymbol: Record<string, string> = {};
 		for (const symbol of universeSymbols) {
 			providerBySymbol[symbol] = dataManager.getProvider(symbol);
 		}
-		const secondarySymbol = resolveCrossSymbolSecondaryForStrategy(selectedStrategy.strategy, settings);
-		if (secondarySymbol) {
-			providerBySymbol[secondarySymbol] = dataManager.getProvider(secondarySymbol);
+		// Include cross-symbol secondaries for every entry and sampled exit
+		// strategy so provider-mismatch checks stay identical server-side.
+		for (const selected of [...selectedStrategies, ...(exitStrategyCandidates ?? [])]) {
+			const secondarySymbol = resolveCrossSymbolSecondaryForStrategy(selected.strategy, settings);
+			if (secondarySymbol) {
+				providerBySymbol[secondarySymbol] = dataManager.getProvider(secondarySymbol);
+			}
 		}
 		const response = await fetch('/api/finder/universe-run', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
+				runId,
 				symbols: universeSymbols,
 				interval: state.currentInterval,
 				options,
 				settings,
 				capitalSettings,
-				strategyKey: selectedStrategy.key,
+				strategyKeys: selectedStrategies.map((s) => s.key),
 				exitStrategyKeys: exitStrategyCandidates?.map((c) => c.key),
 				useRustEnginePreference: shouldUseRustEngine(),
 				providerBySymbol,
@@ -2378,10 +2229,10 @@ export class FinderManager {
 			throw new Error(payload.error ?? `Server Finder run failed (${response.status}).`);
 		}
 
-		// Incremental merge of streamed candidates for live display. The
-		// terminal slice in `done.candidates` is authoritative (the 750ms
-		// throttle can skip the final passers), so on `done` we ADOPT that
-		// slice instead of the merged map.
+		// runId guard: every callback checks `this.activeServerRunId === runId`
+		// before mutating UI state, so a stale tab (or a stale stream consumed
+		// after a newer run started) cannot clobber the current view.
+		const isStillActive = (): boolean => this.activeServerRunId === runId;
 		const survivorByKey = new Map<string, FinderUniverseCandidate>();
 		const identityKey = (c: FinderUniverseCandidate) =>
 			`${c.strategyKey}|${JSON.stringify(c.params)}|${c.exitStrategyKey ?? ''}|${JSON.stringify(c.exitStrategyParams ?? {})}`;
@@ -2390,26 +2241,27 @@ export class FinderManager {
 		let terminalCandidates: FinderUniverseCandidate[] | null = null;
 		let loadedSymbols = 0;
 		let failedSymbolCount = 0;
+		let oosRemoved = 0;
 
 		const renderMerged = (): void => {
-			const merged = sortFinderUniverseCandidates([...priorResults, ...survivorByKey.values()], sortPriority)
+			if (!isStillActive()) return;
+			const merged = sortFinderUniverseCandidates([...survivorByKey.values()], sortPriority)
 				.slice(0, options.topN);
+			// Candidate events are incremental, but a candidate displaced from the
+			// topN can never return under the fixed comparator. Release its large
+			// per-symbol metrics array instead of retaining every provisional row.
+			survivorByKey.clear();
+			for (const candidate of merged) {
+				survivorByKey.set(identityKey(candidate), candidate);
+			}
 			this.setLatestResults({ scope: 'symbol_universe', results: merged });
 			this.renderLatestResults();
 		};
-		// Coalesce candidate arrivals into a single render per animation frame.
-		// The server dedups identities, but a throttled snapshot can still ship
-		// several candidate events back-to-back in one chunk; rendering once per
-		// event re-sorts the whole survivor set and rebuilds the DOM each time.
-		// Flushing on the next animation frame batches them into one render.
-		//
-		// `finalized` guards a race: a single NDJSON chunk can contain candidate
-		// event(s) immediately followed by the terminal `done` event. `onDone`
-		// renders the authoritative terminal slice synchronously, but the deferred
-		// render scheduled by the preceding `onCandidate` would fire AFTER `done`
-		// and clobber that slice with the lower-quality incremental merge (which
-		// may include intermediates the runner's final sort+slice evicted). Once
-		// the run finalizes, any pending deferred render is suppressed.
+		// Coalesce candidate arrivals into one render per animation frame. The
+		// server dedups identities, but a throttled snapshot can ship several
+		// candidate events back-to-back in one chunk. `finalized` guards the
+		// race where a candidate event in the SAME chunk as `done` would defer
+		// a render that fires AFTER the authoritative terminal slice render.
 		let renderScheduled = false;
 		let finalized = false;
 		const scheduleRender = (): void => {
@@ -2423,33 +2275,28 @@ export class FinderManager {
 			if (typeof requestAnimationFrame === 'function') {
 				requestAnimationFrame(flush);
 			} else {
-				// Node/test environment without rAF — flush on the microtask
-				// queue so the render still coalesces within the chunk.
 				Promise.resolve().then(flush);
 			}
 		};
 
 		let streamError: unknown = null;
 		try {
-			// `requireTerminal: true` converts a clean EOF before `done` into a
-			// thrown `StreamEndedBeforeTerminalError`. Without it, a truncated
-			// stream resolved normally with `terminalCandidates === null` and
-			// the run finalized against the provisional incremental map —
-			// adopting intermediates the runner's final sort+slice had evicted
-			// and missing late passers the throttle never flushed (audit
-			// finding 2).
 			await consumeNdjsonStream<FinderStreamEvent>(response.body, {
 				onStart: (event) => {
-					this.setStatus(`[${strategyIndex + 1}/${strategyCount}] ${selectedStrategy.name}: 0/${event.totalSymbols} symbols (evaluating ~${event.totalCandidates} candidates)...`);
+					if (!isStillActive()) return;
+					const strategyCount = event.strategyCount ?? selectedStrategies.length;
+					this.setStatus(`Universe Finder: ${strategyCount} strateg${strategyCount === 1 ? 'y' : 'ies'}, 0/${event.totalSymbols} symbols (evaluating ~${event.totalCandidates} candidates)...`);
 				},
 				onProgress: (event) => {
-					const scaledPercent = ((strategyIndex + (event.percent / 100)) / strategyCount) * 100;
-					this.setProgress(true, scaledPercent, event.text);
-					this.setStatus(`[${strategyIndex + 1}/${strategyCount}] ${selectedStrategy.name}: ${event.status}`);
+					if (!isStillActive()) return;
+					this.setProgress(true, event.percent, event.text);
+					const si = event.strategyIndex ?? 0;
+					const sc = event.strategyCount ?? selectedStrategies.length;
+					const phaseLabel = event.phase === 'oos' ? 'OOS' : `${Math.min(si + 1, sc)}/${sc}`;
+					this.setStatus(`Universe Finder [${phaseLabel}]: ${event.status}`);
 				},
 				onCandidate: (event) => {
-					// Merge incrementally; the server emits each survivor identity
-					// at most once. Coalesce the render to one per animation frame.
+					if (!isStillActive()) return;
 					survivorByKey.set(identityKey(event.candidate), event.candidate);
 					scheduleRender();
 				},
@@ -2460,20 +2307,17 @@ export class FinderManager {
 					terminalDiagnostics = event.diagnostics;
 					loadedSymbols = event.totals?.loadedSymbols ?? 0;
 					failedSymbolCount = event.totals?.failedSymbols ?? 0;
-					// Adopt the authoritative terminal slice; the merged map may
-					// include intermediates later evicted by the runner's final
-					// sort+slice, and may MISS late passers the throttle never
-					// flushed. The server's done.candidates is the source of truth.
+					oosRemoved = event.totals?.oosRemoved ?? 0;
+					// Adopt the authoritative terminal slice (server-owned IS
+					// + OOS). The merged map is provisional; done.candidates is
+					// the source of truth including OOS fields.
 					terminalCandidates = event.candidates ?? null;
-					if (terminalCandidates) {
-						const displayed = sortFinderUniverseCandidates([...priorResults, ...terminalCandidates], sortPriority)
+					if (terminalCandidates && isStillActive()) {
+						const displayed = sortFinderUniverseCandidates(terminalCandidates, sortPriority)
 							.slice(0, options.topN);
 						this.setLatestResults({ scope: 'symbol_universe', results: displayed });
 						this.renderLatestResults();
 					}
-					// Mark finalized so a deferred incremental render scheduled by
-					// a candidate event in the SAME chunk can't fire after `done`
-					// and clobber the authoritative terminal slice.
 					finalized = true;
 				},
 				onFatal: (event) => {
@@ -2481,62 +2325,43 @@ export class FinderManager {
 				},
 			}, { requireTerminal: true });
 		} catch (error) {
-			// Defer decision until after the cancellation check; a stale run
-			// that lost ownership must not mutate UI state.
 			streamError = error;
 		}
 
-		// If no terminal `done` arrived, the stream either threw mid-flight OR
-		// resolved cleanly before `done` (truncated response). Previously this
-		// silently fell back to the incremental map. Now: attempt recovery via
-		// `/api/finder/status`, which exposes the authoritative terminal slice
-		// from the server's retained `runState` after completion. Only if
-		// recovery also fails do we surface the error.
-		if (terminalCandidates === null) {
-			const recovered = await this.recoverUniverseServerRun();
-			if (recovered) {
-				terminalCandidates = recovered.candidates;
-				if (terminalDiagnostics === null) {
-					terminalDiagnostics = recovered.diagnostics;
-				}
-				if (loadedSymbols === 0) loadedSymbols = recovered.loadedSymbols;
-				if (failedSymbolCount === 0) failedSymbolCount = recovered.failedSymbolCount;
-				if (terminalCandidates) {
-					const displayed = sortFinderUniverseCandidates([...priorResults, ...terminalCandidates], sortPriority)
-						.slice(0, options.topN);
-					this.setLatestResults({ scope: 'symbol_universe', results: displayed });
+		if (streamError !== null && terminalCandidates === null && isStillActive()) {
+			const recovered = await this.recoverActiveUniverseServerRun(runId);
+			if (recovered?.phase === "fatal") {
+				throw new Error(recovered.error ?? recovered.summary ?? recovered.statusText);
+			}
+			if (recovered?.terminalCandidates) {
+				terminalCandidates = recovered.terminalCandidates;
+				terminalDiagnostics = recovered.diagnostics;
+				loadedSymbols = recovered.totals?.loadedSymbols ?? 0;
+				failedSymbolCount = recovered.totals?.failedSymbols ?? 0;
+				oosRemoved = recovered.totals?.oosRemoved ?? 0;
+				finalized = true;
+				if (isStillActive()) {
+					this.setLatestResults({ scope: "symbol_universe", results: [...terminalCandidates] });
 					this.renderLatestResults();
 				}
-				finalized = true;
-				// Recovery succeeded — the run genuinely completed on the server.
-				// Discard any stream error; it's informational.
-				streamError = null;
 			}
 		}
 
-		if (streamError !== null) {
-			// Recovery did not succeed and we have no terminal slice. Surface
-			// the original stream error so the caller's catch reports it; keep
-			// any partial survivor set already rendered for diagnostics.
+		if (streamError !== null && terminalCandidates === null) {
+			if (this.isCancelled && !isStillActive()) {
+				throw new Error("Finder stopped.");
+			}
 			const message = streamError instanceof Error ? streamError.message : String(streamError);
-			this.setStatus(`Server Finder failed: ${message}`);
+			if (isStillActive()) {
+				this.setStatus(`Server Finder failed: ${message}`);
+			}
 			throw streamError;
 		}
 
-		// terminalCandidates is now guaranteed by the `requireTerminal`
-		// invariant + recovery; the provisional incremental map is no longer
-		// an acceptable final state. (If recovery sets candidates to [], that
-		// is a legitimate "zero survivors" outcome, distinct from "no terminal
-		// slice".)
 		const finalResults = terminalCandidates
 			?? sortFinderUniverseCandidates([...survivorByKey.values()], sortPriority).slice(0, options.topN);
 
-		// Store terminal diagnostics so Copy Diagnostics works; the server uses
-		// the same diagnostics builder, so the shape matches the in-tab path.
-		this.latestDiagnostics = terminalDiagnostics;
-		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics;
-
-		if (!this.isCancelled) {
+		if (!this.isCancelled && isStillActive()) {
 			this.setStatus(`Server Finder: ${finalResults.length} survivors (${Math.round(performance.now() - startTime)}ms)`);
 		}
 
@@ -2545,71 +2370,9 @@ export class FinderManager {
 			diagnostics: terminalDiagnostics,
 			loadedSymbols,
 			failedSymbolCount,
+			oosRemoved,
 		};
 	}
-
-		/**
-		 * Recovery path for a truncated Universe server stream. When the run
-		 * stream ends before its terminal `done` event (network drop, clean EOF
-		 * on a partial response), the server may still have completed: Universe
-		 * has no TTL/Mine surface, so `runState` persists after completion until
-		 * the next run overwrites it. `/api/finder/status` exposes the terminal
-		 * candidate slice + diagnostics via its `lastRun` branch. This adopts
-		 * that authoritative slice instead of presenting provisional incremental
-		 * candidates as final (audit finding 2).
-		 *
-		 * Returns `null` if the server is still running, has no `lastRun`, or the
-		 * request fails — the caller then surfaces the original stream error.
-		 */
-		private async recoverUniverseServerRun(
-		): Promise<{
-			candidates: FinderUniverseCandidate[] | null;
-			diagnostics: FinderDiagnostics | null;
-			loadedSymbols: number;
-			failedSymbolCount: number;
-		} | null> {
-			try {
-				const response = await fetch('/api/finder/status', { cache: "no-store" });
-				if (!response.ok) return null;
-				const payload = await response.json() as {
-					running?: boolean;
-					lastRun?: {
-						candidates?: FinderUniverseCandidate[];
-						diagnostics?: FinderDiagnostics | null;
-						totals?: { loadedSymbols?: number; failedSymbols?: number } | null;
-						// Non-null only when the run reached its terminal
-						// reconciliation (success or cancel). After a fatal the
-						// server leaves summary null and runState.candidates holds
-						// only the partial provisional set — adopting that would
-						// reintroduce the very bug (provisional candidates treated
-						// as authoritative) that finding 2 fixes.
-						summary?: string | null;
-					} | null;
-				};
-				if (payload.running || !payload.lastRun) return null;
-				const lastRun = payload.lastRun;
-				// summary === null => run crashed (fatal) before reconciling its
-				// terminal survivor slice; the candidates array is provisional.
-				// Refuse recovery so the caller surfaces the original stream error.
-				if (typeof lastRun.summary !== "string" || !lastRun.summary) return null;
-				const candidates = Array.isArray(lastRun.candidates) ? lastRun.candidates : null;
-				if (candidates === null) return null;
-				debugLogger.warn('finder.server.stream_recovered_via_status', {
-					survivors: candidates.length,
-				});
-				return {
-					candidates,
-					diagnostics: lastRun.diagnostics ?? null,
-					loadedSymbols: lastRun.totals?.loadedSymbols ?? 0,
-					failedSymbolCount: lastRun.totals?.failedSymbols ?? 0,
-				};
-			} catch (error) {
-				debugLogger.warn('finder.server.recover_universe_run_failed', {
-					error: error instanceof Error ? error.message : String(error),
-				});
-				return null;
-			}
-		}
 
 	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'polymarketExitMode' | 'polymarketSignalExitAllowMultipleTradesPerEvent' | 'executionModel' | 'polymarketEntryDelayBars' | 'polymarketEntryPriceFilterCents' | 'polymarketBacktestSlippageCents' | 'polymarketPostSignalLimitEntryEnabled' | 'polymarketPostSignalLimitEntryMode' | 'polymarketPostSignalLimitEntryPriceCents' | 'polymarketPostSignalLimitEntryOffsetCents' | 'polymarketPostSignalLimitExitEnabled' | 'polymarketPostSignalLimitExitMode' | 'polymarketPostSignalLimitExitPriceCents' | 'polymarketPostSignalLimitExitOffsetCents' | 'disableSignalExits' | 'exitStrategyOverrideEnabled'>): FinderOptions {
 		const dom = this.getDom();
@@ -2965,105 +2728,6 @@ export class FinderManager {
 		};
 	}
 
-	private combineFailureBreakdown(parts: FinderDiagnostics[]): FinderFailureDiagnostics[] | undefined {
-		const byReason = new Map<string, { runs: number; strategyKeys: Set<string> }>();
-		for (const part of parts) {
-			for (const failure of part.failureBreakdown ?? []) {
-				let entry = byReason.get(failure.reason);
-				if (!entry) {
-					entry = { runs: 0, strategyKeys: new Set<string>() };
-					byReason.set(failure.reason, entry);
-				}
-				entry.runs += failure.runs;
-				failure.strategyKeys.forEach((key) => entry.strategyKeys.add(key));
-			}
-		}
-		if (byReason.size === 0) return undefined;
-		return [...byReason.entries()]
-			.map(([reason, entry]) => ({
-				reason,
-				runs: entry.runs,
-				strategyKeys: [...entry.strategyKeys].sort(),
-			}))
-			.sort((a, b) => b.runs - a.runs || a.reason.localeCompare(b.reason));
-	}
-
-	private combineUniverseStrategyBreakdown(parts: FinderDiagnostics[]): FinderStrategyDiagnostics[] {
-		const strategyBreakdown = parts.flatMap((part) => part.strategyBreakdown);
-		const totalMs = strategyBreakdown.reduce((sum, strategy) => sum + strategy.totalMs, 0);
-		return strategyBreakdown
-			.map((strategy) => ({
-				...strategy,
-				runtimePct: totalMs > 0 ? Number(((strategy.totalMs / totalMs) * 100).toFixed(2)) : 0,
-			}))
-			.sort((a, b) => b.avgTotalMs - a.avgTotalMs);
-	}
-
-	private combineUniverseDiagnostics(parts: FinderDiagnostics[]): FinderDiagnostics["universe"] | undefined {
-		const universeParts = parts
-			.map((part) => part.universe)
-			.filter((universe): universe is NonNullable<FinderDiagnostics["universe"]> => Boolean(universe));
-		if (universeParts.length === 0) return undefined;
-
-		const failedSymbols = new Map<string, string>();
-		for (const universe of universeParts) {
-			for (const failure of universe.failedSymbols) {
-				if (!failedSymbols.has(failure.symbol)) {
-					failedSymbols.set(failure.symbol, failure.reason);
-				}
-			}
-		}
-
-		return {
-			totalSymbols: Math.max(...universeParts.map((universe) => universe.totalSymbols)),
-			loadedSymbols: Math.max(...universeParts.map((universe) => universe.loadedSymbols)),
-			failedSymbols: [...failedSymbols.entries()]
-				.map(([symbol, reason]) => ({ symbol, reason }))
-				.sort((a, b) => a.symbol.localeCompare(b.symbol)),
-			dataWindow: universeParts
-				.slice()
-				.reverse()
-				.find((universe) => universe.dataWindow)?.dataWindow,
-		};
-	}
-
-	private buildCombinedUniverseDiagnostics(args: {
-		options: FinderOptions;
-		parts: FinderDiagnostics[];
-		shownResults: number;
-		elapsedMs: number;
-	}): FinderDiagnostics {
-		const timings = createEmptyFinderDiagnosticsTimings();
-		for (const part of args.parts) {
-			for (const key of Object.keys(timings) as Array<keyof typeof timings>) {
-				timings[key] += part.timingsMs[key] ?? 0;
-			}
-		}
-		timings.total = args.elapsedMs;
-
-		return buildFinderDiagnostics({
-			runId: createFinderRunId("finder-universe"),
-			symbol: "SYMBOL_UNIVERSE",
-			interval: state.currentInterval,
-			mode: args.options.mode,
-			engineMode: "symbol_universe",
-			inputBars: Math.max(...args.parts.map((part) => part.data.inputBars)),
-			evaluationBars: Math.max(...args.parts.map((part) => part.data.evaluationBars)),
-			selectedStrategies: args.parts.reduce((sum, part) => sum + part.data.selectedStrategies, 0),
-			totalParamRuns: args.parts.reduce((sum, part) => sum + part.data.totalParamRuns, 0),
-			batchSize: Math.max(...args.parts.map((part) => part.data.batchSize)),
-			processedRuns: args.parts.reduce((sum, part) => sum + part.counts.processedRuns, 0),
-			filteredRuns: args.parts.reduce((sum, part) => sum + part.counts.filteredRuns, 0),
-			shownResults: args.shownResults,
-			endpointAdjusted: args.parts.reduce((sum, part) => sum + part.counts.endpointAdjusted, 0),
-			failedRuns: args.parts.reduce((sum, part) => sum + part.counts.failedRuns, 0),
-			skippedRuns: args.parts.reduce((sum, part) => sum + part.counts.skippedRuns, 0),
-			timings,
-			strategyBreakdown: this.combineUniverseStrategyBreakdown(args.parts),
-			failureBreakdown: this.combineFailureBreakdown(args.parts),
-			universeDiagnostics: this.combineUniverseDiagnostics(args.parts),
-		});
-	}
 
 	private renderLatestResults(): void {
 		if (this.getScope() === 'symbol_universe') {

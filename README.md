@@ -395,7 +395,7 @@ These are intentionally narrower than the repo itself:
 - `docs/polymarket.md`: Polymarket scoring, signal-exit, diagnostics, bridge, and Execution Lab live-trade contracts
 - `docs/execution-lab-live-trading.md`: Execution Lab live-trade executor boundary, request/response schema, and safety rules
 - `docs/batch-backtest-server-side.md`: server-side Batch Backtest, artifact retention, Mine/Stability acceleration, and memory budget
-- `docs/finder-server-side.md`: server-side Finder Symbol Universe, heap budget, scalar-only wire contract, and Stop semantics (tab-reload reattach is not yet supported)
+- `docs/finder-server-side.md`: server-owned Finder Symbol Universe (one server job owns all strategies + OOS), heap budget, scalar-only wire contract, Stop scoped by run id, and tab-reload reattach via `/api/finder/status`
 - `docs/cross-symbol.md`: cross-symbol strategy runtime and support matrix
 - `docs/synthetic-pairs.md`: synthetic pair generation and supported surfaces
 - `docs/path-dependent-exits.md`: path-dependent Risk Management exits

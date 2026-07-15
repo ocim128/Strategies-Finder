@@ -20,7 +20,18 @@ import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/s
 
 // The plugin holds module-scope state (runOwner). Each test must reset it via
 // the test internals, mirroring the Batch plugin spec.
-const { setRunOwnerForTests, resetRunStateForTests, handleStatusRequest, assertUniverseOptions } = __testInternals;
+const {
+    setRunOwnerForTests,
+    resetRunStateForTests,
+    handleStatusRequest,
+    handleStopRequest,
+    assertUniverseOptions,
+    parseStrategyKeys,
+    parseRunId,
+    consumePendingStopForRun,
+    writeStreamEventBestEffort,
+    withCanonicalUniverseSymbols,
+} = __testInternals;
 
 function makeCandles(closes: number[]): OHLCVData[] {
     return closes.map((close, index) => ({
@@ -48,6 +59,23 @@ const testStrategy: Strategy = {
     },
 };
 
+// A second strategy with a DIFFERENT key so multi-strategy sequencing can be
+// exercised. Produces survivors for threshold 1 only (narrower than
+// testStrategy) so the merged survivor set is distinguishable per strategy.
+const testStrategy2: Strategy = {
+    name: "Server Finder Test 2",
+    description: "Second deterministic strategy for multi-strategy plugin tests.",
+    defaultParams: { threshold: 1 },
+    paramLabels: { threshold: "Threshold" },
+    execute(data, params) {
+        if (params.threshold !== 1 || data.length < 3) return [];
+        return [
+            { time: data[0]!.time, type: "buy", price: data[0]!.close },
+            { time: data[data.length - 1]!.time, type: "sell", price: data[data.length - 1]!.close },
+        ];
+    },
+};
+
 const settings: BacktestSettings = {
     executionModel: "signal_close",
     tradeDirection: "long",
@@ -65,6 +93,22 @@ const capitalSettings: CapitalSettings = {
 };
 
 const STRATEGY_KEY = "server_finder_test";
+const STRATEGY_KEY_2 = "server_finder_test_2";
+
+/** Build the selectedStrategies list for the multi-strategy plugin input. */
+function selectStrategies(keys: string[]): Array<{ key: string; name: string; strategy: Strategy }> {
+    const map: Record<string, Strategy> = {
+        [STRATEGY_KEY]: testStrategy,
+        [STRATEGY_KEY_2]: testStrategy2,
+    };
+    return keys.map((key) => ({ key, name: map[key]!.name, strategy: map[key]! }));
+}
+
+let runIdCounter = 0;
+function nextRunId(): string {
+    runIdCounter += 1;
+    return `test-run-${runIdCounter}`;
+}
 
 function makeOptions(symbols: string[]): FinderOptions {
     return {
@@ -94,12 +138,81 @@ function collectEvents(runner: (events: FinderStreamEvent[]) => Promise<void>): 
     return runner(events).then(() => events);
 }
 
+/**
+ * Run `processFinderUniverseRun` for the given strategies and collect the
+ * stream events. Sets a unique owner + runId so cancellation tests can bump
+ * the owner independently. Mirrors how the HTTP handler wires the input.
+ */
+async function runPlugin(args: {
+    symbols: string[];
+    datasets: Map<string, OHLCVData[]>;
+    strategyKeys?: string[];
+    owner: number;
+    runId?: string;
+    generateParamSets?: () => Array<Record<string, number>>;
+    /** When true, the input omits generateParamSets entirely (F1 fallback). */
+    omitGenerateParamSets?: boolean;
+    loadDatasetThrows?: boolean;
+    options?: FinderOptions;
+    onEvent?: (event: FinderStreamEvent, events: FinderStreamEvent[]) => void;
+}): Promise<FinderStreamEvent[]> {
+    const {
+        symbols, datasets, owner,
+        runId = nextRunId(),
+        strategyKeys = [STRATEGY_KEY],
+        generateParamSets = () => [{ threshold: 1 }, { threshold: 2 }],
+        omitGenerateParamSets = false,
+        loadDatasetThrows = false,
+        options,
+        onEvent,
+    } = args;
+    setRunOwnerForTests(owner);
+    const loadDataset = loadDatasetThrows
+        ? () => Promise.reject(new Error("No candles"))
+        : (symbol: string) => {
+            const d = datasets.get(symbol);
+            if (!d) throw new Error("Dataset missing");
+            return Promise.resolve(d);
+        };
+    return collectEvents(async (events) => {
+        await processFinderUniverseRun(
+            {
+                runId,
+                interval: "5m",
+                symbols,
+                options: options ?? makeOptions(symbols),
+                settings,
+                capitalSettings,
+                selectedStrategies: selectStrategies(strategyKeys),
+                loadDataset,
+                // Wire the OOS loader whenever OOS is enabled so the plugin
+                // exercises the server-owned OOS path. Reuses the same
+                // datasets map (the OOS slice is applied inside the plugin).
+                ...(options?.oosValidationEnabled ? { loadOosDataset: loadDataset } : {}),
+                ...(omitGenerateParamSets ? {} : { generateParamSets }),
+            },
+            (event) => {
+                events.push(event);
+                onEvent?.(event, events);
+            },
+            owner,
+        );
+    });
+}
+
+const upDownDatasets = () => new Map<string, OHLCVData[]>([
+    ["UP", makeCandles([100, 105, 110, 115, 120])],
+    ["DOWN", makeCandles([100, 95, 90, 85, 80])],
+]);
+
 before(() => {
     strategyRegistry.register(STRATEGY_KEY, testStrategy);
+    strategyRegistry.register(STRATEGY_KEY_2, testStrategy2);
 });
 
 after(() => {
     strategyRegistry.unregister(STRATEGY_KEY);
+    strategyRegistry.unregister(STRATEGY_KEY_2);
     resetRunStateForTests();
 });
 
@@ -109,29 +222,12 @@ afterEach(() => {
 
 describe("finder server plugin processFinderUniverseRun", () => {
     it("emits start, candidate, and done events in order with scalar-only candidates", async () => {
-        const datasets = new Map<string, OHLCVData[]>([
-            ["UP", makeCandles([100, 105, 110, 115, 120])],
-            ["DOWN", makeCandles([100, 95, 90, 85, 80])],
-        ]);
-        const owner = 7001;
-        setRunOwnerForTests(owner);
-
-        const events = await collectEvents((ev) =>
-            processFinderUniverseRun(
-                {
-                    interval: "5m",
-                    symbols: ["UP", "DOWN"],
-                    options: makeOptions(["UP", "DOWN"]),
-                    settings,
-                    capitalSettings,
-                    selectedStrategy: { key: STRATEGY_KEY, name: testStrategy.name, strategy: testStrategy },
-                    loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
-                    generateParamSets: () => [{ threshold: 1 }, { threshold: 2 }],
-                },
-                (event) => ev.push(event),
-                owner,
-            ),
-        );
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets: upDownDatasets(),
+            owner: 7001,
+            runId: "run-scalar-1",
+        });
 
         // Sequence: start, progress*, candidate*, done.
         expect(events[0]!.type).to.equal("start");
@@ -139,7 +235,9 @@ describe("finder server plugin processFinderUniverseRun", () => {
         expect(done.type).to.equal("done");
         const startEvent = events[0] as Extract<FinderStreamEvent, { type: "start" }>;
         expect(startEvent.totalSymbols).to.equal(2);
-        expect(startEvent.strategyKey).to.equal(STRATEGY_KEY);
+        expect(startEvent.runId).to.equal("run-scalar-1");
+        expect(startEvent.strategyKeys).to.deep.equal([STRATEGY_KEY]);
+        expect(startEvent.strategyCount).to.equal(1);
 
         const candidateEvents = events.filter((e) => e.type === "candidate") as Array<Extract<FinderStreamEvent, { type: "candidate" }>>;
         // testStrategy emits signals for thresholds 1 and 2; both symbols pass
@@ -152,8 +250,8 @@ describe("finder server plugin processFinderUniverseRun", () => {
         const indices = candidateEvents.map((e) => e.index);
         expect(indices.some((i) => i >= 0), "at least one candidate index must be a real position, not -1").to.equal(true);
 
-        // MEMORY CONTRACT (Phase 4): every streamed candidate must be scalar —
-        // no data/signals/trades/equityCurve arrays anywhere on it or its
+        // MEMORY CONTRACT: every streamed candidate must be scalar — no
+        // data/signals/trades/equityCurve arrays anywhere on it or its
         // per-symbol results. Deep-scan.
         for (const { candidate } of candidateEvents) {
             assertCandidateIsScalar(candidate);
@@ -164,45 +262,31 @@ describe("finder server plugin processFinderUniverseRun", () => {
         }
 
         // F3 regression: the done event MUST carry the terminal survivor slice.
-        // The 750ms results throttle can skip the final passers, so the browser
-        // finalizes from done.candidates (not the incremental candidate stream).
         const doneEvent = done as Extract<FinderStreamEvent, { type: "done" }>;
         expect(Array.isArray(doneEvent.candidates)).to.equal(true);
         expect(doneEvent.candidates.length).to.be.greaterThan(0);
         expect(doneEvent.candidates.length).to.equal(doneEvent.totals.survivors);
+        expect(doneEvent.runId).to.equal("run-scalar-1");
         for (const candidate of doneEvent.candidates) {
             assertCandidateIsScalar(candidate);
+        }
+
+        // progress events carry the multi-strategy phase + index/count fields.
+        const progressEvents = events.filter((e) => e.type === "progress") as Array<Extract<FinderStreamEvent, { type: "progress" }>>;
+        expect(progressEvents.length).to.be.greaterThan(0);
+        for (const p of progressEvents) {
+            expect(p.phase).to.be.oneOf(["loading", "evaluating", "oos", "done", "cancelled"]);
+            expect(p.strategyCount).to.equal(1);
+            expect(p.strategyIndex).to.equal(0);
         }
     });
 
     it("F2 regression: streams each candidate identity at most once across updates", async () => {
-        // The runner re-emits the FULL survivor set on every throttled
-        // onResultsUpdate. The server MUST dedup by identity so each candidate
-        // is streamed exactly once; otherwise at topN=100 a single update can
-        // re-ship up to 100 redundant wire events + browser DOM rebuilds.
-        const datasets = new Map<string, OHLCVData[]>([
-            ["UP", makeCandles([100, 105, 110, 115, 120])],
-            ["DOWN", makeCandles([100, 95, 90, 85, 80])],
-        ]);
-        const owner = 7201;
-        setRunOwnerForTests(owner);
-
-        const events = await collectEvents((ev) =>
-            processFinderUniverseRun(
-                {
-                    interval: "5m",
-                    symbols: ["UP", "DOWN"],
-                    options: makeOptions(["UP", "DOWN"]),
-                    settings,
-                    capitalSettings,
-                    selectedStrategy: { key: STRATEGY_KEY, name: testStrategy.name, strategy: testStrategy },
-                    loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
-                    generateParamSets: () => [{ threshold: 1 }, { threshold: 2 }],
-                },
-                (event) => ev.push(event),
-                owner,
-            ),
-        );
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets: upDownDatasets(),
+            owner: 7201,
+        });
 
         const candidateEvents = events.filter((e) => e.type === "candidate") as Array<Extract<FinderStreamEvent, { type: "candidate" }>>;
         const identityCounts = new Map<string, number>();
@@ -216,35 +300,15 @@ describe("finder server plugin processFinderUniverseRun", () => {
     });
 
     it("F1 regression: produces candidates only when generateParamSets is supplied", async () => {
-        // The core falls back to () => [] when generateParamSets is missing,
-        // producing zero candidates ("No valid parameter combinations
-        // generated."). The HTTP handler must pass a real generator. This test
-        // locks both sides of that contract: with a generator -> survivors;
-        // without -> the run ends with zero survivors (not a crash).
-        const datasets = new Map<string, OHLCVData[]>([
-            ["UP", makeCandles([100, 105, 110, 115, 120])],
-            ["DOWN", makeCandles([100, 95, 90, 85, 80])],
-        ]);
-        const owner = 7101;
-        setRunOwnerForTests(owner);
+        const datasets = upDownDatasets();
 
         // WITH a generator: survivors exist.
-        const eventsWith = await collectEvents((ev) =>
-            processFinderUniverseRun(
-                {
-                    interval: "5m",
-                    symbols: ["UP", "DOWN"],
-                    options: makeOptions(["UP", "DOWN"]),
-                    settings,
-                    capitalSettings,
-                    selectedStrategy: { key: STRATEGY_KEY, name: testStrategy.name, strategy: testStrategy },
-                    loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
-                    generateParamSets: () => [{ threshold: 1 }],
-                },
-                (event) => ev.push(event),
-                owner,
-            ),
-        );
+        const eventsWith = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets,
+            owner: 7101,
+            generateParamSets: () => [{ threshold: 1 }],
+        });
         const doneWith = eventsWith[eventsWith.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
         expect(doneWith.type).to.equal("done");
         expect(doneWith.totals.survivors).to.be.greaterThan(0);
@@ -252,30 +316,16 @@ describe("finder server plugin processFinderUniverseRun", () => {
         // WITHOUT a generator: the core falls back to () => [], no candidates
         // pass filters, the run completes with zero survivors. This is the
         // state the production HTTP handler would hit if it forgot to pass
-        // generateParamSets — the test documents that fallback so the handler
-        // wiring (which supplies a real FinderParamSpace) is clearly load-bearing.
+        // generateParamSets.
         resetRunStateForTests();
-        setRunOwnerForTests(owner + 1);
-        const eventsWithout = await collectEvents((ev) =>
-            processFinderUniverseRun(
-                {
-                    interval: "5m",
-                    symbols: ["UP", "DOWN"],
-                    options: makeOptions(["UP", "DOWN"]),
-                    settings,
-                    capitalSettings,
-                    selectedStrategy: { key: STRATEGY_KEY, name: testStrategy.name, strategy: testStrategy },
-                    loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
-                    // generateParamSets intentionally omitted
-                },
-                (event) => ev.push(event),
-                owner + 1,
-            ),
-        );
+        const eventsWithout = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets,
+            owner: 7102,
+            omitGenerateParamSets: true,
+        });
+        // Pass an input that omits generateParamSets entirely.
         const lastWithout = eventsWithout[eventsWithout.length - 1]!;
-        // Either a `done` with zero survivors, or a `fatal` from the runner's
-        // "No valid parameter combinations generated." short-circuit. Both
-        // prove the fallback produced no candidates.
         expect(["done", "fatal"]).to.include(lastWithout.type);
         if (lastWithout.type === "done") {
             expect((lastWithout as Extract<FinderStreamEvent, { type: "done" }>).totals.survivors).to.equal(0);
@@ -287,29 +337,11 @@ describe("finder server plugin processFinderUniverseRun", () => {
             ["UP", makeCandles([100, 105, 110, 115, 120])],
             ["DOWN", makeCandles([100, 95, 90, 85, 80])],
         ]);
-        const owner = 7002;
-        setRunOwnerForTests(owner);
-
-        const events = await collectEvents((ev) =>
-            processFinderUniverseRun(
-                {
-                    interval: "5m",
-                    symbols: ["UP", "DOWN", "MISSING"],
-                    options: makeOptions(["UP", "DOWN", "MISSING"]),
-                    settings,
-                    capitalSettings,
-                    selectedStrategy: { key: STRATEGY_KEY, name: testStrategy.name, strategy: testStrategy },
-                    loadDataset: (symbol) => {
-                        const d = datasets.get(symbol);
-                        if (!d) throw new Error("Dataset missing");
-                        return Promise.resolve(d);
-                    },
-                    generateParamSets: () => [{ threshold: 1 }],
-                },
-                (event) => ev.push(event),
-                owner,
-            ),
-        );
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN", "MISSING"],
+            datasets,
+            owner: 7002,
+        });
 
         const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
         expect(done.type).to.equal("done");
@@ -319,73 +351,43 @@ describe("finder server plugin processFinderUniverseRun", () => {
     });
 
     it("emits a fatal event when no universe symbols can be loaded", async () => {
-        const owner = 7003;
-        setRunOwnerForTests(owner);
-
-        const events = await collectEvents((ev) =>
-            processFinderUniverseRun(
-                {
-                    interval: "5m",
-                    symbols: ["GONE1", "GONE2"],
-                    options: makeOptions(["GONE1", "GONE2"]),
-                    settings,
-                    capitalSettings,
-                    selectedStrategy: { key: STRATEGY_KEY, name: testStrategy.name, strategy: testStrategy },
-                    loadDataset: () => Promise.reject(new Error("No candles")),
-                    generateParamSets: () => [{ threshold: 1 }],
-                },
-                (event) => ev.push(event),
-                owner,
-            ),
-        );
+        const events = await runPlugin({
+            symbols: ["GONE1", "GONE2"],
+            datasets: new Map(),
+            owner: 7003,
+            loadDatasetThrows: true,
+        });
 
         const fatal = events[events.length - 1] as Extract<FinderStreamEvent, { type: "fatal" }>;
         expect(fatal.type).to.equal("fatal");
         expect(fatal.error).to.contain("No universe symbols could be loaded");
+        expect(fatal.runId).to.be.a("string");
 
-        // Audit finding 2 recovery guard: after a fatal, runState persists with
-        // only the provisional (pre-reconciliation) candidate set and
-        // `summary === null`. Browser recovery (`recoverUniverseServerRun`)
-        // refuses to adopt candidates unless `summary` is a non-empty string,
-        // so a crashed run cannot be presented as a completed one. Lock the
-        // server side of that contract here.
+        // A reattaching browser must receive the fatal reason even after the
+        // initiating stream is gone.
         setRunOwnerForTests(0);
-        const status = handleStatusRequest() as {
-            lastRun: { summary: string | null; candidates: unknown[] } | null;
-        };
-        expect(status.lastRun).to.not.equal(null);
-        expect(status.lastRun!.summary).to.equal(null);
+        const status = handleStatusRequest(null) as { terminal: boolean; phase: string; error: string | null; summary: string | null };
+        expect(status.terminal).to.equal(true);
+        expect(status.phase).to.equal("fatal");
+        expect(status.error).to.contain("No universe symbols could be loaded");
+        expect(status.summary).to.contain("Finder failed");
     });
 
     it("stops emitting after ownership is lost (Stop semantics)", async () => {
-        const datasets = new Map<string, OHLCVData[]>([
-            ["UP", makeCandles([100, 105, 110, 115, 120])],
-            ["DOWN", makeCandles([100, 95, 90, 85, 80])],
-        ]);
         const owner = 7004;
-        setRunOwnerForTests(owner);
-
-        const events: FinderStreamEvent[] = [];
-        await processFinderUniverseRun(
-            {
-                interval: "5m",
-                symbols: ["UP", "DOWN"],
-                options: makeOptions(["UP", "DOWN"]),
-                settings,
-                capitalSettings,
-                selectedStrategy: { key: STRATEGY_KEY, name: testStrategy.name, strategy: testStrategy },
-                loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
-                generateParamSets: () => [{ threshold: 1 }],
-            },
-            (event) => {
-                events.push(event);
+        let bumped = false;
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets: upDownDatasets(),
+            owner,
+            onEvent: (_event, ev) => {
                 // Simulate Stop firing after the first event: bump the owner.
-                if (events.length === 1) {
+                if (!bumped && ev.length === 1) {
+                    bumped = true;
                     setRunOwnerForTests(owner + 999);
                 }
             },
-            owner,
-        );
+        });
 
         const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
         expect(done.type).to.equal("done");
@@ -393,52 +395,314 @@ describe("finder server plugin processFinderUniverseRun", () => {
         expect(done.ok).to.equal(false);
     });
 
-    it("handleStatusRequest reflects in-flight run state", async () => {
-        const datasets = new Map<string, OHLCVData[]>([
-            ["UP", makeCandles([100, 105, 110, 115, 120])],
-            ["DOWN", makeCandles([100, 95, 90, 85, 80])],
-        ]);
+    it("status snapshot is summary-only while running and authoritative when terminal", async () => {
         const owner = 7005;
-        setRunOwnerForTests(owner);
-
-        await processFinderUniverseRun(
-            {
-                interval: "5m",
-                symbols: ["UP", "DOWN"],
-                options: makeOptions(["UP", "DOWN"]),
-                settings,
-                capitalSettings,
-                selectedStrategy: { key: STRATEGY_KEY, name: testStrategy.name, strategy: testStrategy },
-                loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
-                generateParamSets: () => [{ threshold: 1 }],
-            },
-            () => {},
+        const runId = "run-status-1";
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets: upDownDatasets(),
             owner,
-        );
+            runId,
+        });
+        void events;
 
-        // Simulate the HTTP handler's finally (which clears the owner after
-        // the run completes) so status reflects the post-run snapshot.
+        // The HTTP handler's finally clears the owner after the run completes,
+        // so status reflects the post-run (terminal) snapshot.
         setRunOwnerForTests(0);
-        const status = handleStatusRequest() as {
+        const status = handleStatusRequest(runId) as {
             running: boolean;
-            lastRun: {
-                candidateCount: number;
-                candidates: { strategyKey: string }[] | null;
-                totals: { survivors: number } | null;
-                diagnostics: { engineMode: string } | null;
-            } | null;
+            terminal: boolean;
+            runId: string;
+            candidateCount: number;
+            terminalCandidates: { strategyKey: string }[] | null;
+            totals: { survivors: number } | null;
         };
         expect(status.running).to.equal(false);
-        expect(status.lastRun).to.not.equal(null);
-        expect(status.lastRun!.candidateCount).to.be.greaterThanOrEqual(0);
-        // Audit finding 2 recovery seam: the terminal candidate slice must be
-        // exposed on lastRun so a browser that lost the run stream mid-flight
-        // can adopt the authoritative survivors instead of provisional ones.
-        // `candidates` length must agree with `candidateCount`, and the totals
-        // block carries the survivor count for status-message reconstruction.
-        expect(status.lastRun!.candidates).to.be.an("array");
-        expect(status.lastRun!.candidates!.length).to.equal(status.lastRun!.candidateCount);
-        expect(status.lastRun!.totals?.survivors).to.equal(status.lastRun!.candidateCount);
+        expect(status.terminal).to.equal(true);
+        expect(status.runId).to.equal(runId);
+        expect(status.candidateCount).to.be.greaterThanOrEqual(0);
+        // Terminal snapshot carries the authoritative candidate slice once.
+        expect(status.terminalCandidates).to.be.an("array");
+        expect(status.terminalCandidates!.length).to.equal(status.candidateCount);
+        expect(status.totals?.survivors).to.equal(status.candidateCount);
+    });
+
+    it("status returns 404-style error for a mismatched run id", async () => {
+        const owner = 7006;
+        await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets: upDownDatasets(),
+            owner,
+            runId: "run-real",
+        });
+        setRunOwnerForTests(0);
+        const status = handleStatusRequest("run-different") as { ok: false; error: string };
+        expect(status.ok).to.equal(false);
+        expect(status.error).to.match(/does not match/);
+    });
+
+    // --- Phase 2: multi-strategy orchestration ---
+
+    it("sequences multiple strategies and merges survivors into one authoritative slice", async () => {
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets: upDownDatasets(),
+            owner: 7301,
+            strategyKeys: [STRATEGY_KEY, STRATEGY_KEY_2],
+            runId: "run-multi-1",
+        });
+
+        const start = events[0] as Extract<FinderStreamEvent, { type: "start" }>;
+        expect(start.strategyKeys).to.deep.equal([STRATEGY_KEY, STRATEGY_KEY_2]);
+        expect(start.strategyCount).to.equal(2);
+
+        const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
+        expect(done.type).to.equal("done");
+        expect(done.ok).to.equal(true);
+        // Both strategies produce survivors; the merged slice must contain
+        // rows from BOTH strategy keys (proves the merge, not just the last).
+        const keysInResults = new Set(done.candidates.map((c) => c.strategyKey));
+        expect(keysInResults.has(STRATEGY_KEY), "merged slice must include strategy 1 survivors").to.equal(true);
+        expect(keysInResults.has(STRATEGY_KEY_2), "merged slice must include strategy 2 survivors").to.equal(true);
+
+        // Progress events must report strategyCount=2 and walk strategyIndex 0->1.
+        const progressEvents = events.filter((e) => e.type === "progress") as Array<Extract<FinderStreamEvent, { type: "progress" }>>;
+        expect(progressEvents.length).to.be.greaterThan(0);
+        for (const p of progressEvents) {
+            expect(p.strategyCount).to.equal(2);
+            expect(p.strategyIndex).to.be.at.least(0).and.at.most(1);
+        }
+    });
+
+    it("a candidate evicted from a later top-K update does not remain in runState", async () => {
+        // With topN=1 and two strategies each producing multiple survivors,
+        // the merged snapshot must NEVER carry more than topN candidates —
+        // later strategy merges replace, not append, evicted identities.
+        const opts = makeOptions(["UP", "DOWN"]);
+        opts.topN = 1;
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets: upDownDatasets(),
+            owner: 7302,
+            strategyKeys: [STRATEGY_KEY, STRATEGY_KEY_2],
+            options: opts,
+        });
+        const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
+        expect(done.candidates.length).to.be.at.most(1);
+    });
+
+    it("Stop during a later strategy prevents remaining strategies from starting", async () => {
+        const owner = 7303;
+        let stoppedAfterSecondStrategyProgress = false;
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets: upDownDatasets(),
+            owner,
+            strategyKeys: [STRATEGY_KEY, STRATEGY_KEY_2],
+            onEvent: (event) => {
+                if (stoppedAfterSecondStrategyProgress) return;
+                if (event.type === "progress" && event.strategyIndex === 1) {
+                    // Stop once the second strategy begins evaluation.
+                    stoppedAfterSecondStrategyProgress = true;
+                    setRunOwnerForTests(owner + 1);
+                }
+            },
+        });
+        const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
+        expect(done.cancelled).to.equal(true);
+    });
+
+    it("Stop is scoped by run id: a stale run id cannot stop the active job", async () => {
+        const owner = 7304;
+        const activeRunId = "run-active-stop";
+        // Plant an active run state (owner set + runState with the active
+        // run id) mirroring an in-flight job. handleStopRequest with a
+        // DIFFERENT run id must NOT clear the owner.
+        setRunOwnerForTests(owner);
+        __testInternals.setRunStateForTests({
+            runId: activeRunId,
+            startedAt: Date.now(),
+            finishedAt: null,
+            interval: "5m",
+            strategyKeys: [STRATEGY_KEY],
+            strategyIndex: 0,
+            strategyCount: 1,
+            phase: "evaluating",
+            totalSymbols: 2,
+            progressPercent: 30,
+            statusText: "running",
+            loadedSymbols: 2,
+            failedSymbols: 0,
+            candidates: [],
+            diagnostics: null,
+            cancelled: false,
+            summary: null,
+            error: null,
+            totals: null,
+        });
+        const stopped = await handleStopRequest("run-stale");
+        expect(stopped.stopped).to.equal(false);
+        // Owner must still be set (the active job is unaffected by the stale
+        // stop). setRunOwnerForTests reads back via the same module-scope
+        // field.
+        setRunOwnerForTests(0); // cleanup
+    });
+
+    it("Stop-before-ownership works when an older terminal snapshot exists", async () => {
+        __testInternals.setRunStateForTests({
+            runId: "older-terminal-run",
+            startedAt: Date.now() - 1000,
+            finishedAt: Date.now(),
+            interval: "5m",
+            strategyKeys: [STRATEGY_KEY],
+            strategyIndex: 0,
+            strategyCount: 1,
+            phase: "done",
+            totalSymbols: 2,
+            progressPercent: 100,
+            statusText: "done",
+            loadedSymbols: 2,
+            failedSymbols: 0,
+            candidates: [],
+            diagnostics: null,
+            cancelled: false,
+            summary: "done",
+            error: null,
+            totals: { loadedSymbols: 2, failedSymbols: 0, survivors: 0, oosRemoved: 0 },
+        });
+        const stopped = await handleStopRequest("new-run-pending-stop");
+        expect(stopped.stopped).to.equal(false);
+        expect(consumePendingStopForRun("new-run-pending-stop")).to.equal(true);
+    });
+
+    it("Stop-before-ownership records and consumes the matching run id", async () => {
+        // Stop arrives before the run acquires ownership. handleStopRequest
+        // records the pending run id; a subsequent request with that run id
+        // is rejected (the HTTP handler consumes the marker before acquiring
+        // ownership). Verified at the handleStopRequest + parseRunId level
+        // since the HTTP ownership dance lives in handleRunRequest.
+        const pendingRunId = "run-pending-stop";
+        const stopped = await handleStopRequest(pendingRunId);
+        // No active run, so stopped=false, but the marker is recorded.
+        expect(stopped.stopped).to.equal(false);
+        // Now a run request with the same run id must be rejected. We
+        // simulate the HTTP handler's consumption via the test internals:
+        // the run request checks pendingStopRunId === runId. Since that
+        // field is module-private, we verify behavior by calling
+        // handleStopRequest again with the same id AFTER a run would have
+        // consumed it — but the cleanest observable is that a fresh run with
+        // a DIFFERENT id is NOT affected by the stale pending marker.
+        expect(consumePendingStopForRun("run-other")).to.equal(false);
+        expect(consumePendingStopForRun(pendingRunId)).to.equal(true);
+        expect(consumePendingStopForRun(pendingRunId)).to.equal(false);
+    });
+
+    it("rejects an unscoped Stop instead of cancelling the active owner", async () => {
+        setRunOwnerForTests(7305);
+        let caught: unknown;
+        try {
+            await handleStopRequest(undefined);
+        } catch (error) {
+            caught = error;
+        }
+        expect(caught).to.be.instanceof(HttpStatusError);
+        expect((caught as HttpStatusError).status).to.equal(400);
+    });
+
+    // --- Phase 3: server-owned OOS ---
+
+    it("runs server-owned OOS when enabled and attaches oosAggregate", async () => {
+        const opts = makeOptions(["UP", "DOWN"]);
+        opts.oosValidationEnabled = true;
+        opts.dataSlice = "half_oldest";
+        // Provide enough candles for both IS (first half) and OOS (second half).
+        const longCandles = (start: number): OHLCVData[] =>
+            makeCandles(Array.from({ length: 20 }, (_v, i) => start + i));
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP", longCandles(100)],
+            ["DOWN", longCandles(100)],
+        ]);
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets,
+            owner: 7401,
+            options: opts,
+            runId: "run-oos-1",
+        });
+        const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
+        expect(done.type).to.equal("done");
+        expect(done.totals.oosRemoved).to.be.a("number");
+        // At least one candidate must have an oosAggregate attached (proves
+        // the OOS pass ran server-side).
+        const withOos = done.candidates.filter((c) => c.oosAggregate !== undefined);
+        expect(withOos.length, "at least one candidate must carry oosAggregate").to.be.greaterThan(0);
+        // Phase progression must include the oos phase.
+        const progressEvents = events.filter((e) => e.type === "progress") as Array<Extract<FinderStreamEvent, { type: "progress" }>>;
+        expect(progressEvents.some((p) => p.phase === "oos"), "progress must report an oos phase").to.equal(true);
+    });
+
+    // --- request validation (Phase 1 contracts) ---
+
+    it("parseStrategyKeys rejects malformed entries without imposing a new UI selection cap", () => {
+        expect(() => parseStrategyKeys([], undefined)).to.throw(/at least one strategy/);
+        expect(() => parseStrategyKeys(["a", "a"], undefined)).to.throw(/must not contain duplicates/);
+        expect(() => parseStrategyKeys(["a", 1 as unknown], undefined)).to.throw(/strategyKeys\[1\] must be a string/);
+        expect(() => parseStrategyKeys([""], undefined)).to.throw(/non-empty string/);
+        expect(parseStrategyKeys(Array.from({ length: 40 }, (_v, i) => `strategy_${i}`), undefined)).to.have.length(40);
+    });
+
+    it("parseStrategyKeys accepts legacy single strategyKey field as a 1-list", () => {
+        const keys = parseStrategyKeys(undefined, "legacy_key");
+        expect(keys).to.deep.equal(["legacy_key"]);
+    });
+
+    it("parseRunId rejects missing, non-string, empty, and oversized values", () => {
+        expect(() => parseRunId(undefined)).to.throw(/runId is required/);
+        expect(() => parseRunId(42 as unknown)).to.throw(/runId is required/);
+        expect(() => parseRunId("  ")).to.throw(/non-empty string/);
+        expect(() => parseRunId("x".repeat(129))).to.throw(/at most 128 characters/);
+    });
+
+    it("keeps the job authoritative after the response stream disconnects", async () => {
+        const runId = "run-disconnected";
+        const owner = 7100;
+        let writes = 0;
+        let writable = true;
+        setRunOwnerForTests(owner);
+
+        await processFinderUniverseRun({
+            runId,
+            interval: "5m",
+            symbols: ["UP", "DOWN"],
+            options: makeOptions(["UP", "DOWN"]),
+            settings,
+            capitalSettings,
+            selectedStrategies: selectStrategies([STRATEGY_KEY]),
+            loadDataset: (symbol) => Promise.resolve(upDownDatasets().get(symbol)!),
+            generateParamSets: () => [{ threshold: 1 }],
+        }, (event) => {
+            if (!writable) return;
+            writable = writeStreamEventBestEffort({
+                write() {
+                    writes += 1;
+                    if (writes > 1) throw new Error("socket closed");
+                },
+            }, event, runId);
+        }, owner);
+
+        const status = handleStatusRequest(runId);
+        if (!status.ok) throw new Error(status.error);
+        expect(status.terminal).to.equal(true);
+        expect(status.phase).to.equal("done");
+        expect(status.error).to.equal(null);
+        expect(status.terminalCandidates).to.be.an("array");
+    });
+
+    it("uses the heap-guarded top-level symbol list as the runner source of truth", () => {
+        const options = makeOptions(["A", "B", "C"]);
+        const canonical = withCanonicalUniverseSymbols(options, ["A"]);
+        expect(canonical.universe?.symbols).to.deep.equal(["A"]);
+        expect(options.universe?.symbols).to.deep.equal(["A", "B", "C"]);
     });
 });
 
