@@ -28,9 +28,11 @@ import {
     formatPercent,
     type PairDirection,
     type PairRegimeResult,
+    type PairStructure,
 } from "./pair-regime-classifier";
 
-interface RankResult {
+/** A ranked pair row. Exported for service-level copy/summary tests. */
+export interface RankResult {
     symbol: string;
     regime: PairRegimeResult;
     status: "ok" | "no_data" | "failed";
@@ -55,15 +57,23 @@ function badgeCssFor(result: RankResult): string {
     return FAILED_CSS;
 }
 
-function badgeLabelFor(result: RankResult): string {
+/** Badge label. Exported for service tests. */
+export function badgeLabelFor(result: RankResult): string {
     if (result.status === "ok") return result.regime.label;
-    if (result.status === "no_data") return "THIN / THIN";
+    if (result.status === "no_data") {
+        // Surface the actual reason (INSUFFICIENT_ANCHORS, ZERO_VARIANCE, …)
+        // rather than masking every no-data row as an identical THIN / THIN.
+        return `THIN (${result.regime.reason})`;
+    }
     return "FAIL";
 }
 
 function formatResultRowPipe(result: RankResult): string {
     if (result.status !== "ok") {
-        return result.status === "no_data" ? "no data" : (result.error ?? "failed");
+        // Distinguish a load failure from an insufficient-coverage no-data row.
+        return result.status === "failed"
+            ? `failed: ${result.error ?? "unknown"}`
+            : `no data: ${result.regime.reason}`;
     }
     const m = result.regime.metrics;
     const recentDir = m.hasRecentWindow
@@ -81,31 +91,47 @@ function formatResultRowPipe(result: RankResult): string {
     return parts.join(" | ");
 }
 
-function formatOverallSummary(results: RankResult[]): string {
+/** Summary line. Exported for service tests. */
+export function formatOverallSummary(results: RankResult[]): string {
+    // Only genuinely-classified (status "ok") pairs contribute to direction and
+    // structure counts. no_data and failed rows are tracked separately so they
+    // are never double-counted as THIN.
     const ok = results.filter((r) => r.status === "ok");
     const dirCounts: Record<PairDirection, number> = { BASE: 0, NEUTRAL: 0, QUOTE: 0, THIN: 0 };
+    const structCounts: Record<PairStructure, number> = {
+        TREND: 0, OSCILLATING: 0, TRANSITION: 0, REVERSAL: 0, MIXED: 0, THIN: 0,
+    };
     for (const r of ok) {
         dirCounts[r.regime.direction] += 1;
+        structCounts[r.regime.structure] += 1;
     }
-    const thin = results.filter((r) => r.status !== "ok").length + dirCounts.THIN;
+    const noData = results.filter((r) => r.status === "no_data").length;
     const failed = results.filter((r) => r.status === "failed").length;
     const parts = [`Pairs ${results.length}`];
     for (const d of DIRECTION_ORDER) {
-        if (d === "THIN") continue;
         parts.push(`${d} ${dirCounts[d]}`);
     }
-    parts.push(`THIN ${thin}`);
-    parts.push(`FAILED ${failed}`);
+    // Structure counts (display order mirrors the sort group order).
+    parts.push(
+        `TREND ${structCounts.TREND}`,
+        `OSC ${structCounts.OSCILLATING}`,
+        `TRANS ${structCounts.TRANSITION}`,
+        `REV ${structCounts.REVERSAL}`,
+        `MIXED ${structCounts.MIXED}`,
+    );
+    parts.push(`NODATA ${noData}`, `FAILED ${failed}`);
     return parts.join(" | ");
 }
 
-const COPY_HEADER = "RANK_PAIRS_V2";
-const COPY_COLUMNS = [
+export const COPY_HEADER = "RANK_PAIRS_V2";
+export const COPY_COLUMNS = [
     "PAIR",
+    "STATUS",
     "DIRECTION",
     "STRUCTURE",
     "LABEL",
     "REASON",
+    "ERROR",
     "RATIO_RET",
     "LOG_RET",
     "ANN_SLOPE",
@@ -128,10 +154,12 @@ function scalarRow(result: RankResult): string {
     const m = result.regime.metrics;
     const fields = [
         result.symbol,
+        result.status,
         result.regime.direction,
         result.regime.structure,
         result.regime.label,
         result.regime.reason,
+        result.error ?? "",
         formatPercent(m.ratioReturn),
         formatFixed(m.logReturn, 4),
         formatPercent(m.annualizedSlope),
@@ -152,7 +180,8 @@ function scalarRow(result: RankResult): string {
     return fields.join(" | ");
 }
 
-function formatCopyText(results: RankResult[]): string {
+/** Copy-Results text. Exported for service tests. */
+export function formatCopyText(results: RankResult[]): string {
     // Deterministic copy ordering mirrors the rendered list: regime group order
     // with within-group tie-breaks, failed/no-data rows last by symbol.
     const ranked = results

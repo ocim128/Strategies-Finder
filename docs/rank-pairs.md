@@ -118,10 +118,15 @@ deterministic display order as the rendered list. Columns:
 
 ```
 RANK_PAIRS_V2
-PAIR | DIRECTION | STRUCTURE | LABEL | REASON | RATIO_RET | LOG_RET | ANN_SLOPE |
-ANN_VOL | NORM_DRIFT | PATH_EFF | REVERSAL_RATE | HAS_RECENT | RECENT_DRIFT |
-RECENT_EFF | ENDPOINT_RATIO | IN_BAND | ANCHORS | BARS | ELAPSED_DAYS | AS_OF
+PAIR | STATUS | DIRECTION | STRUCTURE | LABEL | REASON | ERROR | RATIO_RET |
+LOG_RET | ANN_SLOPE | ANN_VOL | NORM_DRIFT | PATH_EFF | REVERSAL_RATE |
+HAS_RECENT | RECENT_DRIFT | RECENT_EFF | ENDPOINT_RATIO | IN_BAND | ANCHORS |
+BARS | ELAPSED_DAYS | AS_OF
 ```
+
+`STATUS` is one of `ok`, `no_data`, `failed`. `REASON` carries the classifier
+reason code (`OK`, `INSUFFICIENT_ANCHORS`, `INVALID_TIME`, `NO_VALID_CLOSES`,
+`ZERO_VARIANCE`); for `failed` rows `ERROR` carries the load error message.
 
 ### Diagnostics
 
@@ -139,8 +144,37 @@ per-pair events are logged.
   change between runs. `asOf` exposes the source time.
 - **Coverage:** assets failing the 33-anchor/960-day requirement remain `THIN`;
   there is no shorter-term fallback.
-- **Threshold calibration:** the initial thresholds are starting points and may
-  need calibration against user-labeled real charts.
+- **Thresholds are uncalibrated starting points.** They were chosen from the
+  metric definitions, not fitted to labeled real charts. See Validation status.
+
+## Validation status
+
+Automated (passing): metric definitions, null/reason behavior, anchor
+extraction, reciprocal-pair invariants, gap-correctness (duration-weighted
+returns keep slope stable when interior anchors are missing), classification
+precedence and boundary conditions, deterministic sorting, and the
+summary/copy/failure contracts. Covered by `tests/rank-pairs-regime-classifier.spec.ts`
+and `tests/rank-pairs-service.spec.ts`.
+
+**Open — requires user input or a live environment (not blocking for code
+correctness, blocking for production trust):**
+
+- **Real-chart threshold calibration.** The thresholds need to be checked
+  against user-labeled known Uptrend / Chop / Downtrend / Reversal charts.
+  This is a prerequisite the plan calls out (§Phase 2 dependencies) and cannot
+  be settled by synthetic fixtures, which are built around the thresholds by
+  construction.
+- **Warm-cache profiling** (100 / 400 / 1,000-pair runs, loader time separated
+  from classifier time) requires a running dev server with local data.
+- **Manual smoke matrix** — crypto ratios at `30m`/`4h`/`1d`, IBKR stock ratios
+  at `4h`/`1d`, a pair and its reciprocal, and known regime examples — requires
+  the same live environment.
+
+Until calibration lands, treat the labels as a research surface whose
+*structure* (direction vs. structure split, calendar anchoring, precedence) is
+sound but whose *thresholds* may need adjustment. Changing a threshold is a
+named-constant edit in `pair-regime-classifier.ts` plus a fixture/boundary-test
+update.
 
 ## Relationship to the old scorer
 

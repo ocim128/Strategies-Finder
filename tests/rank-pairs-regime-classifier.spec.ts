@@ -5,9 +5,13 @@
  * the 30-calendar-day anchor selection resolves cleanly. The goal of these
  * tests is to lock the metric definitions, null/reason behavior, anchor
  * extraction, reciprocal-pair invariants, classification precedence, boundary
- * thresholds, and deterministic sorting — NOT to assert that the chosen
- * thresholds match any particular real market (that requires user calibration
- * and is explicitly out of scope per the plan).
+ * thresholds, and deterministic sorting.
+ *
+ * What these tests do NOT cover: real-chart threshold calibration. The chosen
+ * thresholds are documented starting points; validating them against
+ * user-labeled real charts (Uptrend / Chop / Downtrend) is a plan prerequisite
+ * (plan §Phase 2 dependencies) that requires user input and is tracked as an
+ * open item in docs/rank-pairs.md, not something these unit tests can settle.
  */
 
 import { expect } from "chai";
@@ -24,6 +28,8 @@ import {
     OSCILLATING_EFFICIENCY_THRESHOLD,
     OSCILLATING_REVERSAL_RATE_THRESHOLD,
     ENDPOINT_BAND,
+    VOL_FLOOR_EPS,
+    MAX_NORMALIZED_DRIFT,
     classifyPairRegime,
     comparePairRegimeResults,
     directionFromDrift,
@@ -115,8 +121,12 @@ function roundTripSeries(count: number, startPrice: number, endTime: number): OH
 }
 
 /**
- * Recent reversal: long base-trend, then a sharp recent window in the opposite
- * direction. The `recentCount` most recent anchors reverse hard.
+ * Recent reversal: a long, clean, strong exponential base-trend (so the full
+ * window still shows strong directional drift), with a gentle but clean recent
+ * reversal. REVERSAL requires |full drift| >= 0.50 AND a recent opposite drift,
+ * so the older trend must be strong enough to survive the recent counter-move —
+ * this models an established trend that is starting to reverse, not a violent
+ * round trip (which would land on TRANSITION/MIXED).
  */
 function recentReversalSeries(
     count: number,
@@ -124,17 +134,15 @@ function recentReversalSeries(
     endTime: number,
     recentCount = RECENT_ANCHOR_COUNT,
 ): OHLCVData[] {
+    const peak = startPrice * Math.pow(1.08, count - recentCount);
     return anchorGridSeries(count, endTime, (i) => {
         if (i < count - recentCount) {
-            // strong base trend over the older portion
-            const frac = i / (count - recentCount);
-            return startPrice * (1 + 3 * frac); // up to ~4x
+            return startPrice * Math.pow(1.08, i); // strong clean base trend
         }
-        // recent window reverses hard (quote direction)
+        // recent window: clean gentle reversal (quote direction)
         const rIdx = i - (count - recentCount);
-        const peak = startPrice * 4;
         const frac = (rIdx + 1) / recentCount;
-        return peak * (1 - 0.6 * frac); // drop 60% over recent window
+        return peak * (1 - 0.15 * frac); // ~15% pullback over recent window
     });
 }
 
@@ -297,13 +305,31 @@ describe("pair-regime-classifier — metrics definitions", () => {
         expect(down.metrics.annualizedSlope!).to.be.lessThan(0);
     });
 
-    it("normalizedDrift is slope / vol and never null when variance > 0", () => {
+    it("normalizedDrift = slope / vol for a well-conditioned (noisy) series and is never null when variance > floor", () => {
+        // A noisy trend has variance well above VOL_FLOOR_EPS, so the drift
+        // formula holds exactly (no clamping). This is the real-metric path.
+        let s = 0x5eed >>> 0;
+        const rand = () => {
+            s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0;
+            return (s / 0xffffffff) * 2 - 1;
+        };
+        const bars = anchorGridSeries(TOTAL_ANCHORS, FIXED_END, (i) =>
+            100 * Math.pow(1.012, i) * (1 + 0.05 * rand()),
+        );
+        const r = classifyPairRegime(bars);
+        expect(r.metrics.annualizedVolatility!).to.be.greaterThan(VOL_FLOOR_EPS * 100);
+        expect(r.metrics.normalizedDrift).to.not.equal(null);
+        const expected = r.metrics.annualizedSlope! / r.metrics.annualizedVolatility!;
+        expect(r.metrics.normalizedDrift).to.be.closeTo(expected, 1e-6);
+    });
+
+    it("normalizedDrift is clamped to MAX_NORMALIZED_DRIFT for a deterministic (near-zero-variance) trend", () => {
+        // A perfectly exponential trend has floating-point-residue variance,
+        // which without clamping produces drift ~1e15. The cap keeps it bounded.
         const r = classifyPairRegime(smoothTrendSeries(TOTAL_ANCHORS, 100, 1.02, FIXED_END));
         expect(r.metrics.normalizedDrift).to.not.equal(null);
-        if (r.metrics.normalizedDrift !== null && r.metrics.annualizedVolatility !== null) {
-            const expected = r.metrics.annualizedSlope! / r.metrics.annualizedVolatility;
-            expect(r.metrics.normalizedDrift).to.be.closeTo(expected, 1e-6);
-        }
+        expect(Math.abs(r.metrics.normalizedDrift!)).to.be.at.most(MAX_NORMALIZED_DRIFT);
+        expect(r.metrics.normalizedDrift).to.equal(MAX_NORMALIZED_DRIFT);
     });
 
     it("pathEfficiency is 1 for a perfectly monotonic series", () => {
@@ -399,10 +425,21 @@ describe("pair-regime-classifier — crypto vs stock session parity", () => {
         // Ratio/log return depend only on the first & last anchor closes.
         expect(rc.metrics.ratioReturn).to.be.closeTo(rs.metrics.ratioReturn!, 1e-9);
         expect(rc.metrics.logReturn).to.be.closeTo(rs.metrics.logReturn!, 1e-9);
-        // Path efficiency, reversal rate, and structure are scale-free and
-        // anchor-determined → identical.
+        // Path efficiency and reversal rate are scale-free and depend only on
+        // the sequence of anchor closes (not their exact times) → identical.
         expect(rc.metrics.pathEfficiency).to.be.closeTo(rs.metrics.pathEfficiency!, 1e-9);
         expect(rc.metrics.reversalRate).to.equal(rs.metrics.reversalRate);
+        // Slope, volatility, and normalized drift depend on the exact anchor
+        // times. Crypto anchors land exactly on 30-day marks; stock anchors are
+        // snapped to weekdays (±1–2 days). The metrics are therefore CLOSE but
+        // not bit-identical — within a few percent, which is the whole point of
+        // calendar anchoring making 30m/4h/1d sessions comparable.
+        expect(rc.metrics.annualizedSlope!).to.be.closeTo(rs.metrics.annualizedSlope!, 0.05);
+        expect(rc.metrics.annualizedVolatility!).to.be.closeTo(
+            rs.metrics.annualizedVolatility!, 0.05,
+        );
+        // Same structure + direction: the classification is stable across the
+        // two session types.
         expect(rc.structure).to.equal(rs.structure);
         expect(rc.direction).to.equal(rs.direction);
     });
@@ -549,16 +586,36 @@ describe("pair-regime-classifier — boundary thresholds", () => {
         expect(lowEff.structure).to.not.equal("TREND");
     });
 
-    it("OSCILLATING requires endpoint inside band, efficiency <= threshold, AND reversalRate >= threshold", () => {
-        // Endpoint outside band alone must NOT yield OSCILLATING.
-        const outsideBand = anchorGridSeries(TOTAL_ANCHORS, FIXED_END, (i) =>
-            100 + (60 * i) / (TOTAL_ANCHORS - 1),
+    it("OSCILLATING is rejected when the endpoint is outside the band even with high reversal rate", () => {
+        // Construct an oscillating series (period-4, high reversal rate, low
+        // efficiency) whose net drift pushes the endpoint OUTSIDE the reciprocal
+        // 30% band. The band condition is a hard requirement: ending outside the
+        // band must NOT produce OSCILLATING regardless of the other metrics.
+        // A trending sine: each cycle slightly higher than the last so the
+        // endpoint clears the band while keeping reversal rate high.
+        const bars = anchorGridSeries(TOTAL_ANCHORS, FIXED_END, (i) =>
+            100 * Math.pow(1.018, i) * (1 + 0.05 * Math.sin((i * Math.PI) / 2)),
         );
-        const rOutside = classifyPairRegime(outsideBand);
-        if (rOutside.structure === "OSCILLATING") {
-            // If it somehow is, the band condition must actually hold.
-            expect(rOutside.metrics.endpointInsideBand).to.equal(true);
-        }
+        const r = classifyPairRegime(bars);
+        // Precondition: the endpoint really is outside the band.
+        expect(r.metrics.endpointInsideBand).to.equal(false);
+        // Therefore OSCILLATING is impossible regardless of reversal rate.
+        expect(r.structure).to.not.equal("OSCILLATING");
+    });
+
+    it("OSCILLATING is rejected when reversal rate is below threshold even inside the band", () => {
+        // Inside the band + low efficiency is NOT enough: reversal rate must
+        // also clear 0.50. A slow single arc (one long swing) returns to start
+        // (inside band, low efficiency) but has very few sign changes.
+        const bars = anchorGridSeries(TOTAL_ANCHORS, FIXED_END, (i) => {
+            const frac = i / (TOTAL_ANCHORS - 1);
+            const arc = (1 - Math.cos(frac * Math.PI * 2)) / 2; // 0..1..0
+            return 100 * (1 + 0.2 * arc);
+        });
+        const r = classifyPairRegime(bars);
+        expect(r.metrics.endpointInsideBand).to.equal(true);
+        expect(r.metrics.reversalRate!).to.be.lt(OSCILLATING_REVERSAL_RATE_THRESHOLD);
+        expect(r.structure).to.not.equal("OSCILLATING");
     });
 });
 
@@ -675,22 +732,75 @@ describe("pair-regime-classifier — performance & linearity", () => {
 });
 
 describe("pair-regime-classifier — missing-anchor handling", () => {
-    it("does not fill a gap anchor and still classifies when coverage holds", () => {
-        // Take a valid trend and delete enough interior candles to drop a few
-        // anchors below TOTAL_ANCHORS but stay above MIN_VALID_ANCHORS.
+    it("interior gaps do not corrupt metrics: slope is invariant, coverage holds", () => {
+        // The core gap-correctness invariant: removing interior anchors (so the
+        // return between the two neighbors now spans 60+ days) must NOT change
+        // the annualized slope, because slope regresses on actual calendar time.
+        // Before the duration-weighted volatility fix, this same probe showed
+        // volatility swinging from ~1e-15 to ~7% on an unchanged price path.
+        const complete = classifyPairRegime(smoothTrendSeries(TOTAL_ANCHORS, 100, 1.03, FIXED_END));
         const bars = smoothTrendSeries(TOTAL_ANCHORS, 100, 1.03, FIXED_END);
-        // Remove candles for anchors near the middle so those anchors become
-        // gaps (nearest candle older than 7 days).
+        // Remove 4 interior anchor candles so those anchors become gaps.
         const toRemove = new Set<number>();
         for (let k = 10; k < 14; k++) {
             toRemove.add(FIXED_END - k * ANCHOR_SPACING);
         }
-        const pruned = bars.filter(
-            (b) => !toRemove.has(b.time as unknown as number),
+        const pruned = bars.filter((b) => !toRemove.has(b.time as unknown as number));
+        const gapped = classifyPairRegime(pruned);
+
+        // Coverage: 4 anchors dropped but still above the minimum.
+        expect(gapped.metrics.anchorCount).to.equal(TOTAL_ANCHORS - 4);
+        expect(gapped.metrics.anchorCount).to.be.gte(MIN_VALID_ANCHORS);
+        expect(gapped.reason).to.equal("OK");
+
+        // Slope is gap-invariant: it depends only on (time, logClose) pairs,
+        // which are unchanged for the surviving anchors.
+        expect(gapped.metrics.annualizedSlope).to.be.closeTo(
+            complete.metrics.annualizedSlope!, 1e-9,
         );
-        const r = classifyPairRegime(pruned);
-        expect(r.metrics.anchorCount).to.equal(TOTAL_ANCHORS - 4);
-        expect(r.metrics.anchorCount).to.be.gte(MIN_VALID_ANCHORS);
-        expect(r.reason).to.equal("OK");
+        // ratioReturn depends only on first/last close — unchanged.
+        expect(gapped.metrics.ratioReturn).to.be.closeTo(
+            complete.metrics.ratioReturn!, 1e-9,
+        );
+        // Both classify the same way (a deterministic trend clamps to the drift
+        // cap in both cases, so the label is stable).
+        expect(gapped.structure).to.equal(complete.structure);
+        expect(gapped.direction).to.equal(complete.direction);
+    });
+
+    it("interior gaps do not corrupt a well-conditioned noisy trend's structure", () => {
+        // On a noisy series, removing interior anchors changes which points the
+        // OLS slope fits, so slope shifts slightly — but the shift is small and
+        // the classification must be stable. This guards against the pre-fix
+        // behavior where gap-collapsed returns were treated as 30-day returns,
+        // which moved drift across a threshold and flipped the label.
+        let s = 0x1234 >>> 0;
+        const rand = () => {
+            s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0;
+            return (s / 0xffffffff) * 2 - 1;
+        };
+        const bars = anchorGridSeries(TOTAL_ANCHORS, FIXED_END, (i) =>
+            100 * Math.pow(1.02, i) * (1 + 0.04 * rand()),
+        );
+        const complete = classifyPairRegime(bars);
+        // Remove 3 interior anchors.
+        const toRemove = new Set<number>();
+        for (let k = 12; k < 15; k++) toRemove.add(FIXED_END - k * ANCHOR_SPACING);
+        const pruned = bars.filter((b) => !toRemove.has(b.time as unknown as number));
+        const gapped = classifyPairRegime(pruned);
+
+        // ratioReturn depends only on first/last close — exactly invariant.
+        expect(gapped.metrics.ratioReturn).to.be.closeTo(
+            complete.metrics.ratioReturn!, 1e-9,
+        );
+        // Slope shifts slightly (removed points no longer contribute to OLS)
+        // but stays close — within a few percent, not the orders-of-magnitude
+        // swing the pre-fix duration bug produced.
+        expect(gapped.metrics.annualizedSlope!).to.be.closeTo(
+            complete.metrics.annualizedSlope!, 0.05,
+        );
+        // Structure should be stable: removing a few interior anchors does not
+        // flip the regime label.
+        expect(gapped.structure).to.equal(complete.structure);
     });
 });

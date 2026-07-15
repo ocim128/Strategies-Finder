@@ -3,9 +3,9 @@
  *
  * Replaces the first-to-last `relative-strength-score.ts`. The classifier
  * describes the synthetic ratio path (base.close / quote.close — see
- * docs/synthetic-agreement-filter-plan.md for the `BASE+QUOTE` = base/quote
- * convention) with fixed 30-calendar-day observations anchored at the latest
- * candle, then emits independent direction and structure labels.
+ * docs/synthetic-pairs.md for the `BASE+QUOTE` = base/quote convention) with
+ * fixed 30-calendar-day observations anchored at the latest candle, then emits
+ * independent direction and structure labels.
  *
  * No DOM, no fetch, no shared state, no `Date.now()`. The browser service feeds
  * it the OHLCVData[] returned by the batch dataset loader and keeps only the
@@ -124,6 +124,20 @@ export const RECENT_EFFICIENCY_THRESHOLD = 0.40;
 export const OSCILLATING_EFFICIENCY_THRESHOLD = 0.20;
 export const OSCILLATING_REVERSAL_RATE_THRESHOLD = 0.50;
 
+/**
+ * Below this annualized volatility, the series is numerically a pure trend
+ * (variance is floating-point residue, e.g. a deterministic exponential). Vol
+ * is clamped up to this floor so normalized drift stays bounded instead of
+ * exploding to ~1e15. Pair with MAX_NORMALIZED_DRIFT.
+ */
+export const VOL_FLOOR_EPS = 1e-6;
+/**
+ * Cap on |normalized drift|. A path at the vol floor is a perfect trend; its
+ * exact drift magnitude is meaningless, so it is clamped to this cap rather
+ * than allowed to dominate within-group sorting.
+ */
+export const MAX_NORMALIZED_DRIFT = 10;
+
 // ---------------------------------------------------------------------------
 // Internal time constants
 // ---------------------------------------------------------------------------
@@ -132,8 +146,6 @@ const SECONDS_PER_DAY = 86_400;
 const SECONDS_PER_YEAR = 365 * SECONDS_PER_DAY;
 const ANCHOR_INTERVAL_SECONDS = ANCHOR_INTERVAL_DAYS * SECONDS_PER_DAY;
 const MAX_ANCHOR_AGE_SECONDS = MAX_ANCHOR_AGE_DAYS * SECONDS_PER_DAY;
-/** Nominal 30-day periods per year, used only for volatility annualization. */
-const PERIODS_PER_YEAR = SECONDS_PER_YEAR / ANCHOR_INTERVAL_SECONDS;
 
 // ---------------------------------------------------------------------------
 // Anchor selection + metric computation
@@ -149,14 +161,6 @@ function mean(xs: number[]): number {
     let s = 0;
     for (const x of xs) s += x;
     return s / xs.length;
-}
-
-function stdev(xs: number[]): number {
-    if (xs.length < 2) return 0;
-    const m = mean(xs);
-    let s = 0;
-    for (const x of xs) s += (x - m) * (x - m);
-    return Math.sqrt(s / (xs.length - 1));
 }
 
 /**
@@ -203,7 +207,16 @@ function selectAnchors(points: AnchorPoint[]): (AnchorPoint | null)[] {
     return observations;
 }
 
-/** Slope, vol, normalized drift, and path efficiency over a set of anchors. */
+/**
+ * Slope, vol, normalized drift, and path efficiency over a set of anchors.
+ *
+ * Each return is annualized by its ACTUAL elapsed calendar duration, not by a
+ * fixed 30-day factor — a return spanning 60 or 90 days (because the anchor
+ * between two observations had no candle) is weighted as the longer return it
+ * really is. Without this, gap-collapsed adjacent observations would inflate
+ * volatility and distort normalized drift. See VOL_FLOOR_EPS / MAX_NORMALIZED_DRIFT
+ * for the near-zero-variance (deterministic trend) handling.
+ */
 function driftMetrics(asc: AnchorPoint[]) {
     if (asc.length < 2) {
         return {
@@ -217,14 +230,33 @@ function driftMetrics(asc: AnchorPoint[]) {
     const logCloses = asc.map((o) => Math.log(o.close));
     const tYears = asc.map((o) => (o.time - asc[0].time) / SECONDS_PER_YEAR);
 
+    // OLS slope regresses log-price on actual calendar years, so it is already
+    // gap-correct (a gap is just a wider x-spacing).
     const slope = olsSlope(tYears, logCloses); // log units / year
 
+    // Returns with their actual elapsed durations. periodReturns[i] is the log
+    // return from anchor i to anchor i+1; periodYears[i] is that span in years.
     const periodReturns: number[] = [];
-    for (let i = 1; i < logCloses.length; i++) {
+    const periodYears: number[] = [];
+    for (let i = 1; i < asc.length; i++) {
+        const dtYears = (asc[i].time - asc[i - 1].time) / SECONDS_PER_YEAR;
+        if (dtYears <= 0) continue; // defensive: duplicate-time dedup should prevent this
         periodReturns.push(logCloses[i] - logCloses[i - 1]);
+        periodYears.push(dtYears);
     }
-    const vol = stdev(periodReturns) * Math.sqrt(PERIODS_PER_YEAR);
-    const normalizedDrift = vol > 0 ? slope / vol : null;
+
+    // Duration-weighted volatility: convert each return to an annualized log
+    // return (r / dtYears) and take their sample stdev. This treats a 90-day
+    // gap return as a 90-day return, not a 30-day one.
+    const vol = durationWeightedVol(periodReturns, periodYears);
+
+    // Clamp near-zero variance so a deterministic trend does not explode drift
+    // to ~1e15. The path is then reported at the MAX_NORMALIZED_DRIFT cap.
+    const effectiveVol = Math.max(vol, VOL_FLOOR_EPS);
+    const rawDrift = slope / effectiveVol;
+    const clampedDrift = Math.max(-MAX_NORMALIZED_DRIFT, Math.min(MAX_NORMALIZED_DRIFT, rawDrift));
+    // vol strictly > 0 after the floor; normalizedDrift is always defined here.
+    const normalizedDrift = clampedDrift;
 
     const firstLog = logCloses[0];
     const lastLog = logCloses[logCloses.length - 1];
@@ -233,6 +265,27 @@ function driftMetrics(asc: AnchorPoint[]) {
     const efficiency = sumAbs > 0 ? Math.abs(lastLog - firstLog) / sumAbs : null;
 
     return { slope, vol, normalizedDrift, efficiency, periodReturns };
+}
+
+/**
+ * Sample standard deviation of per-period returns annualized by each return's
+ * own elapsed duration. For uniform 30-day spacing this reduces to the classic
+ * `stdev(returns) * sqrt(periods/year)`; for gapped series it weights each
+ * return by the calendar time it actually spans.
+ */
+function durationWeightedVol(returns: number[], years: number[]): number {
+    if (returns.length < 2) return 0;
+    const annualized = new Array<number>(returns.length);
+    let sum = 0;
+    for (let i = 0; i < returns.length; i++) {
+        const a = returns[i] / years[i]; // annualized log return for this leg
+        annualized[i] = a;
+        sum += a;
+    }
+    const m = sum / returns.length;
+    let s = 0;
+    for (const a of annualized) s += (a - m) * (a - m);
+    return Math.sqrt(s / (returns.length - 1));
 }
 
 function reversalRateOf(periodReturns: number[]): number | null {
@@ -290,11 +343,9 @@ function thinResult(reason: PairRegimeReason, metrics: PairRegimeMetrics): PairR
 export function classifyPairRegime(bars: OHLCVData[]): PairRegimeResult {
     // 1. Normalize time + close, dedup last-write-wins, sort ascending by time.
     const byTime = new Map<number, AnchorPoint>();
-    let validTimeCount = 0;
     let validCloseCount = 0;
     for (const bar of bars) {
         const t = timeToNumber(bar.time);
-        if (t !== null) validTimeCount++;
         const c = Number(bar.close);
         if (Number.isFinite(c) && c > 0) validCloseCount++;
         if (t === null || !Number.isFinite(c) || c <= 0) continue;
