@@ -4,14 +4,14 @@
  * Lazy-initialized like the other strategy panel services (see
  * `lib/batch-backtest/batch-backtest-service.ts`). Binds the tab's buttons,
  * reads the CURRENT chart interval once per run, fetches each pair's OHLCV via
- * the shared batch loader (so shared synthetic legs are deduped), and scores
- * each pair with the pure `scoreRelativeStrength` helper.
+ * the shared batch loader (so shared synthetic legs are deduped), and
+ * classifies each pair with the pure `classifyPairRegime` helper.
  *
- * Output rows mirror Batch Backtest's `finder-symbol-row` shape with a verdict
- * badge + pipe-formatted metrics, so a Rank run reads the same as a Batch run.
+ * Output rows mirror Batch Backtest's `finder-symbol-row` shape with a regime
+ * badge + pipe-formatted evidence, so a Rank run reads the same as a Batch run.
  *
- * ⚠ Research only: scores use full-window return (lookahead bias). Surfaced in
- * the tab's hint banner.
+ * ⚠ Research only: the regime label spans a multiyear historical window and has
+ * lookahead bias. Surfaced in the tab's hint banner.
  */
 
 import { state } from "../state";
@@ -21,83 +21,226 @@ import { parseBatchSymbols } from "../batch-backtest/batch-backtest-runner";
 import { loadBatchDataset } from "../batch-backtest/batch-backtest-loader";
 import { createRankPairsDom, type RankPairsDom } from "./rank-pairs-dom";
 import {
+    classifyPairRegime,
+    comparePairRegimeResults,
+    formatAsOf,
+    formatFixed,
     formatPercent,
-    scoreRelativeStrength,
-    type RankVerdict,
-    type RelativeStrengthScore,
-} from "./relative-strength-score";
+    type PairDirection,
+    type PairRegimeResult,
+    type PairStructure,
+} from "./pair-regime-classifier";
 
-interface RankResult {
+/** A ranked pair row. Exported for service-level copy/summary tests. */
+export interface RankResult {
     symbol: string;
-    score: RelativeStrengthScore;
+    regime: PairRegimeResult;
     status: "ok" | "no_data" | "failed";
     error?: string;
 }
 
-const VERDICT_LABEL: Record<RankVerdict, string> = {
-    STRONG_BASE: "STRONG",
-    SOLID_BASE: "SOLID",
-    FLAT: "FLAT",
-    WEAK_BASE: "WEAK",
-    THIN: "THIN",
-};
+export interface PreparedRankPairRelationships {
+    symbols: string[];
+    reciprocalDuplicates: number;
+    selfPairs: number;
+}
+
+/** Keep one orientation per relationship and discard meaningless A+A pairs. */
+export function prepareRankPairRelationships(
+    symbols: string[],
+): PreparedRankPairRelationships {
+    const seen = new Set<string>();
+    const unique: string[] = [];
+    let reciprocalDuplicates = 0;
+    let selfPairs = 0;
+    for (const symbol of symbols) {
+        const plus = symbol.indexOf("+");
+        const base = plus > 0 ? symbol.slice(0, plus).trim() : "";
+        const quote = plus > 0 ? symbol.slice(plus + 1).trim() : "";
+        if (base && quote && base.toUpperCase() === quote.toUpperCase()) {
+            selfPairs += 1;
+            continue;
+        }
+        const key = base && quote
+            ? [base.toUpperCase(), quote.toUpperCase()].sort().join("+")
+            : symbol.toUpperCase();
+        if (seen.has(key)) {
+            reciprocalDuplicates += 1;
+            continue;
+        }
+        seen.add(key);
+        unique.push(symbol);
+    }
+    return { symbols: unique, reciprocalDuplicates, selfPairs };
+}
+
+const DIRECTION_ORDER: PairDirection[] = ["BASE", "NEUTRAL", "QUOTE", "THIN"];
 
 // Reuse Batch Backtest / Finder verdict CSS classes (single hyphen) so the
 // badges pick up the existing palette without new styles.
-const VERDICT_CSS_CLASS: Record<RankVerdict, string> = {
-    STRONG_BASE: "finder-verdict-strong",
-    SOLID_BASE: "finder-verdict-solid",
-    FLAT: "finder-verdict-marginal",
-    WEAK_BASE: "finder-verdict-losing",
+const DIRECTION_CSS: Record<PairDirection, string> = {
+    BASE: "finder-verdict-strong",
+    NEUTRAL: "finder-verdict-marginal",
+    QUOTE: "finder-verdict-losing",
     THIN: "finder-verdict-thin",
 };
+const FAILED_CSS = "finder-verdict-losing";
 
-function verdictForError(status: RankResult["status"]): { label: string; cssClass: string } {
-    if (status === "no_data") return { label: "THIN", cssClass: VERDICT_CSS_CLASS.THIN };
-    return { label: "FAIL", cssClass: "finder-verdict-losing" };
+function badgeCssFor(result: RankResult): string {
+    if (result.status === "ok") return DIRECTION_CSS[result.regime.direction];
+    if (result.status === "no_data") return DIRECTION_CSS.THIN;
+    return FAILED_CSS;
+}
+
+/** Badge label. Exported for service tests. */
+export function badgeLabelFor(result: RankResult): string {
+    if (result.status === "ok") return result.regime.label;
+    if (result.status === "no_data") {
+        // Surface the actual reason (INSUFFICIENT_ANCHORS, ZERO_VARIANCE, …)
+        // rather than masking every no-data row as an identical THIN / THIN.
+        return `THIN (${result.regime.reason})`;
+    }
+    return "FAIL";
 }
 
 function formatResultRowPipe(result: RankResult): string {
-    const { score } = result;
+    if (result.status !== "ok") {
+        // Distinguish a load failure from an insufficient-coverage no-data row.
+        return result.status === "failed"
+            ? `failed: ${result.error ?? "unknown"}`
+            : `no data: ${result.regime.reason}`;
+    }
+    const m = result.regime.metrics;
+    const recentDir = m.hasRecentWindow
+        ? formatFixed(m.recentNormalizedDrift, 2)
+        : "n/a";
     const parts = [
-        `RS ${formatPercent(score.ratioReturn)}`,
-        `Ann ${formatPercent(score.annualizedReturn)}`,
-        `Bars ${score.bars}`,
+        `Slope ${formatPercent(m.annualizedSlope)}`,
+        `Vol ${formatPercent(m.annualizedVolatility)}`,
+        `Eff ${formatFixed(m.pathEfficiency, 2)}`,
+        `Rev ${formatFixed(m.reversalRate, 2)}`,
+        `Recent ${recentDir}`,
+        `Anchors ${m.anchorCount}`,
+        `asOf ${formatAsOf(m.asOf)}`,
     ];
     return parts.join(" | ");
 }
 
-function formatOverallSummary(results: RankResult[]): string {
-    const scored = results.filter((r) => r.status === "ok");
-    const counts: Record<RankVerdict, number> = {
-        STRONG_BASE: 0, SOLID_BASE: 0, FLAT: 0, WEAK_BASE: 0, THIN: 0,
+/** Summary line. Exported for service tests. */
+export function formatOverallSummary(results: RankResult[]): string {
+    // Only genuinely-classified (status "ok") pairs contribute to direction and
+    // structure counts. no_data and failed rows are tracked separately so they
+    // are never double-counted as THIN.
+    const ok = results.filter((r) => r.status === "ok");
+    const dirCounts: Record<PairDirection, number> = { BASE: 0, NEUTRAL: 0, QUOTE: 0, THIN: 0 };
+    const structCounts: Record<PairStructure, number> = {
+        TREND: 0, OSCILLATING: 0, TRANSITION: 0, REVERSAL: 0, MIXED: 0, THIN: 0,
     };
-    for (const r of scored) counts[r.score.verdict] += 1;
+    for (const r of ok) {
+        dirCounts[r.regime.direction] += 1;
+        structCounts[r.regime.structure] += 1;
+    }
+    const noData = results.filter((r) => r.status === "no_data").length;
     const failed = results.filter((r) => r.status === "failed").length;
-    return [
-        `Pairs ${results.length}`,
-        `STRONG ${counts.STRONG_BASE}`,
-        `SOLID ${counts.SOLID_BASE}`,
-        `FLAT ${counts.FLAT}`,
-        `WEAK ${counts.WEAK_BASE}`,
-        `THIN ${counts.THIN}`,
-        `FAILED ${failed}`,
-    ].join(" | ");
+    const parts = [`Pairs ${results.length}`];
+    for (const d of DIRECTION_ORDER) {
+        parts.push(`${d} ${dirCounts[d]}`);
+    }
+    // Structure counts (display order mirrors the sort group order).
+    parts.push(
+        `TREND ${structCounts.TREND}`,
+        `OSC ${structCounts.OSCILLATING}`,
+        `TRANS ${structCounts.TRANSITION}`,
+        `REV ${structCounts.REVERSAL}`,
+        `MIXED ${structCounts.MIXED}`,
+    );
+    parts.push(`NODATA ${noData}`, `FAILED ${failed}`);
+    return parts.join(" | ");
 }
 
-function formatCopyText(results: RankResult[]): string {
-    const lines = ["PAIR | RATIO_RET | ANN_RET | BARS | VERDICT"];
-    for (const r of [...results].sort((a, b) => {
-        const ar = Number.isFinite(a.score.ratioReturn) ? a.score.ratioReturn : -Infinity;
-        const br = Number.isFinite(b.score.ratioReturn) ? b.score.ratioReturn : -Infinity;
-        return br - ar;
-    })) {
-        const v = r.status === "ok" ? VERDICT_LABEL[r.score.verdict] : r.status.toUpperCase();
-        lines.push(
-            `${r.symbol} | ${formatPercent(r.score.ratioReturn)} | ${formatPercent(r.score.annualizedReturn)} | ${r.score.bars} | ${v}`,
-        );
-    }
+export const COPY_HEADER = "RANK_PAIRS_V2";
+export const COPY_COLUMNS = [
+    "PAIR",
+    "STATUS",
+    "DIRECTION",
+    "STRUCTURE",
+    "LABEL",
+    "REASON",
+    "ERROR",
+    "RATIO_RET",
+    "LOG_RET",
+    "ANN_SLOPE",
+    "ANN_VOL",
+    "NORM_DRIFT",
+    "PATH_EFF",
+    "REVERSAL_RATE",
+    "HAS_RECENT",
+    "RECENT_DRIFT",
+    "RECENT_EFF",
+    "ENDPOINT_RATIO",
+    "IN_BAND",
+    "ANCHORS",
+    "BARS",
+    "ELAPSED_DAYS",
+    "AS_OF",
+];
+
+function scalarRow(result: RankResult): string {
+    const m = result.regime.metrics;
+    const fields = [
+        result.symbol,
+        result.status,
+        result.regime.direction,
+        result.regime.structure,
+        result.regime.label,
+        result.regime.reason,
+        result.error ?? "",
+        formatPercent(m.ratioReturn),
+        formatFixed(m.logReturn, 4),
+        formatPercent(m.annualizedSlope),
+        formatPercent(m.annualizedVolatility),
+        formatFixed(m.normalizedDrift, 3),
+        formatFixed(m.pathEfficiency, 3),
+        formatFixed(m.reversalRate, 3),
+        m.hasRecentWindow ? "yes" : "no",
+        formatFixed(m.recentNormalizedDrift, 3),
+        formatFixed(m.recentPathEfficiency, 3),
+        formatFixed(m.endpointRatio, 4),
+        m.endpointInsideBand === null ? "n/a" : m.endpointInsideBand ? "yes" : "no",
+        String(m.anchorCount),
+        String(m.barCount),
+        formatFixed(m.elapsedDays, 0),
+        formatAsOf(m.asOf),
+    ];
+    return fields.join(" | ");
+}
+
+/** Copy-Results text. Exported for service tests. */
+export function formatCopyText(results: RankResult[]): string {
+    // Deterministic copy ordering mirrors the rendered list: regime group order
+    // with within-group tie-breaks, failed/no-data rows last by symbol.
+    const ranked = results
+        .map((r, idx) => ({ r, idx }))
+        .sort((a, b) => compareRankResultsForDisplay(a.r, b.r, a.idx, b.idx));
+    const lines = [COPY_HEADER, COPY_COLUMNS.join(" | ")];
+    for (const { r } of ranked) lines.push(scalarRow(r));
     return lines.join("\n");
+}
+
+/**
+ * Display comparator wrapping the pure regime comparator. Failed/no-data rows
+ * sort after every regime result (they fall into the THIN group), with stable
+ * input order as the fallback so streaming order is preserved among ties.
+ */
+function compareRankResultsForDisplay(
+    a: RankResult,
+    b: RankResult,
+    aIdx: number,
+    bIdx: number,
+): number {
+    const cmp = comparePairRegimeResults(a.regime, b.regime);
+    if (cmp !== 0) return cmp;
+    return aIdx - bIdx;
 }
 
 class RankPairsService {
@@ -161,13 +304,20 @@ class RankPairsService {
 
     private async runRank(): Promise<void> {
         const dom = this.getDom();
-        const symbols = parseBatchSymbols(dom.rankPairsSymbols.value);
-        if (symbols.length === 0) {
+        const inputSymbols = parseBatchSymbols(dom.rankPairsSymbols.value);
+        if (inputSymbols.length === 0) {
             dom.rankPairsStatus.textContent = "Add at least one pair.";
+            return;
+        }
+        const prepared = prepareRankPairRelationships(inputSymbols);
+        const symbols = prepared.symbols;
+        if (symbols.length === 0) {
+            dom.rankPairsStatus.textContent = "Add at least one pair between different assets.";
             return;
         }
 
         const interval = state.currentInterval;
+        const startedAt = Date.now();
 
         this.runToken += 1;
         const token = this.runToken;
@@ -192,12 +342,18 @@ class RankPairsService {
                     const bars = await loadBatchDataset(symbol, interval, signal);
                     if (token !== this.runToken) return;
                     if (!signal.aborted && bars.length > 0) {
-                        const score = scoreRelativeStrength(bars, interval);
-                        result = { symbol, score, status: score.bars < 200 ? "no_data" : "ok" };
+                        const regime = classifyPairRegime(bars);
+                        regime.symbol = symbol;
+                        // The classifier returns THIN with an INSUFFICIENT_*
+                        // reason when coverage fails; surface those as no_data
+                        // rows distinct from genuine classifications.
+                        const isThin =
+                            regime.direction === "THIN" && regime.reason !== "OK";
+                        result = { symbol, regime, status: isThin ? "no_data" : "ok" };
                     } else {
                         result = {
                             symbol,
-                            score: { ratioReturn: NaN, annualizedReturn: NaN, bars: bars.length, verdict: "THIN" },
+                            regime: emptyThinRegime(symbol),
                             status: "no_data",
                         };
                     }
@@ -207,7 +363,7 @@ class RankPairsService {
                     debugLogger.warn("rank_pairs.pair_failed", { symbol, error: message });
                     result = {
                         symbol,
-                        score: { ratioReturn: NaN, annualizedReturn: NaN, bars: 0, verdict: "THIN" },
+                        regime: emptyThinRegime(symbol),
                         status: "failed",
                         error: message,
                     };
@@ -226,15 +382,14 @@ class RankPairsService {
 
             if (token !== this.runToken) return;
 
-            // On completion, re-render the list sorted by ratio return (strongest
-            // first) in a single DocumentFragment so we pay one reflow, not N.
+            // On completion, re-render the list in the deterministic display
+            // order in a single DocumentFragment so we pay one reflow, not N.
             // Skip on cancel — the streamed input-order rows stay as-is.
             if (!this.cancelled) {
-                this.lastResults.sort((a, b) => {
-                    const ar = Number.isFinite(a.score.ratioReturn) ? a.score.ratioReturn : -Infinity;
-                    const br = Number.isFinite(b.score.ratioReturn) ? b.score.ratioReturn : -Infinity;
-                    return br - ar;
-                });
+                const indexed = this.lastResults
+                    .map((r, idx) => ({ r, idx }))
+                    .sort((a, b) => compareRankResultsForDisplay(a.r, b.r, a.idx, b.idx));
+                this.lastResults = indexed.map(({ r }) => r);
                 const fragment = document.createDocumentFragment();
                 for (const result of this.lastResults) {
                     fragment.appendChild(this.createResultRow(result));
@@ -245,7 +400,11 @@ class RankPairsService {
             setVisible(dom.rankPairsEmpty, this.lastResults.length === 0);
             dom.rankPairsStatus.textContent = this.cancelled
                 ? `Stopped (${this.lastResults.length}/${symbols.length} pairs)`
-                : `Done (${this.lastResults.length} pairs)`;
+                : prepared.reciprocalDuplicates > 0 || prepared.selfPairs > 0
+                    ? `Done (${this.lastResults.length} relationships; ${prepared.reciprocalDuplicates} reciprocal duplicates skipped; ${prepared.selfPairs} self-pairs skipped)`
+                    : `Done (${this.lastResults.length} relationships)`;
+
+            this.emitRunComplete(interval, symbols.length, startedAt);
         } catch (error) {
             if (token !== this.runToken) return;
             const message = error instanceof Error ? error.message : String(error);
@@ -261,6 +420,33 @@ class RankPairsService {
                 this.abortController = null;
             }
         }
+    }
+
+    private emitRunComplete(
+        interval: string,
+        _symbolCount: number,
+        startedAt: number,
+    ): void {
+        // One aggregate event per run — never one per pair, and never candles.
+        // Counts by label let the debug panel summarize a run without re-running
+        // the classifier.
+        const ok = this.lastResults.filter((r) => r.status === "ok");
+        const dirCounts: Record<string, number> = {};
+        const structCounts: Record<string, number> = {};
+        for (const r of ok) {
+            dirCounts[r.regime.direction] = (dirCounts[r.regime.direction] ?? 0) + 1;
+            structCounts[r.regime.structure] = (structCounts[r.regime.structure] ?? 0) + 1;
+        }
+        const failed = this.lastResults.filter((r) => r.status === "failed").length;
+        debugLogger.event("rank_pairs.run_complete", {
+            interval,
+            classified: ok.length,
+            failed,
+            cancelled: this.cancelled,
+            elapsedMs: Date.now() - startedAt,
+            byDirection: dirCounts,
+            byStructure: structCounts,
+        });
     }
 
     private async copyResults(): Promise<void> {
@@ -292,14 +478,8 @@ class RankPairsService {
         line.className = "finder-sub finder-symbol-row";
 
         const badge = document.createElement("span");
-        if (result.status === "ok") {
-            badge.className = `finder-verdict ${VERDICT_CSS_CLASS[result.score.verdict]}`;
-            badge.textContent = VERDICT_LABEL[result.score.verdict];
-        } else {
-            const v = verdictForError(result.status);
-            badge.className = `finder-verdict ${v.cssClass}`;
-            badge.textContent = v.label;
-        }
+        badge.className = `finder-verdict ${badgeCssFor(result)}`;
+        badge.textContent = badgeLabelFor(result);
         line.appendChild(badge);
 
         line.appendChild(document.createTextNode(` ${result.symbol} | ${formatResultRowPipe(result)}`));
@@ -328,6 +508,12 @@ class RankPairsService {
         const count = parseBatchSymbols(dom.rankPairsSymbols.value).length;
         dom.rankPairsSummary.textContent = `${count} pair${count === 1 ? "" : "s"}`;
     }
+}
+
+function emptyThinRegime(symbol: string): PairRegimeResult {
+    const regime = classifyPairRegime([]);
+    regime.symbol = symbol;
+    return regime;
 }
 
 export const rankPairsService = new RankPairsService();
