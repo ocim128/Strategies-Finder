@@ -189,7 +189,7 @@ function discoverTestFiles(): string[] {
                 walk(fullPath);
                 continue;
             }
-            if (!entry.isFile() || !entry.name.endsWith(".spec.ts")) {
+            if (!entry.isFile() || (!entry.name.endsWith(".spec.ts") && !entry.name.endsWith(".spec.mts"))) {
                 continue;
             }
 

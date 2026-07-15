@@ -1,8 +1,13 @@
 /** Browser-visible analysis lifecycle regressions not covered by plugin specs. */
 import { expect } from "chai";
 import { describe, it, before, after } from "node:test";
-import { batchBacktestService } from "../lib/batch-backtest/batch-backtest-service";
+import * as batchBacktestServiceNamespace from "../lib/batch-backtest/batch-backtest-service";
 import type { BatchBacktestDom } from "../lib/batch-backtest/batch-backtest-dom";
+
+const batchBacktestServiceModule = (
+    batchBacktestServiceNamespace as unknown as { default?: typeof batchBacktestServiceNamespace }
+).default ?? batchBacktestServiceNamespace;
+const { batchBacktestService } = batchBacktestServiceModule as typeof import("../lib/batch-backtest/batch-backtest-service");
 
 function fakeEl(): any {
     const listeners = new Map<string, Array<() => void>>();
