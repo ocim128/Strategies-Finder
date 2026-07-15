@@ -20,11 +20,22 @@ import { collectExecutionLabTradeQuoteTimes } from "../lib/execution-lab/trade-q
 import type { PolymarketClob1sQuoteRow } from "../lib/second-market/types";
 import type { OHLCVData, Strategy, Time, Trade } from "../lib/types/strategies";
 
-type MockHandler = (req: NodeJS.ReadableStream & { method?: string; url?: string; headers?: Record<string, string> }, res: {
+type MockHandler = (req: NodeJS.ReadableStream & {
+    method?: string;
+    url?: string;
+    headers?: Record<string, string>;
+    socket?: { remoteAddress?: string } | null;
+}, res: {
     statusCode: number;
     setHeader(name: string, value: string): void;
     end(body?: string): void;
 }) => void | Promise<void>;
+
+// Simulated in-browser caller: a loopback peer address (the unforgeable
+// signal the auth gate keys off) plus loopback Host + Origin. Set on every
+// request so tests exercise the real trust path, not a bypass.
+const LOOPBACK_SOCKET = { remoteAddress: "127.0.0.1" };
+const LOOPBACK_BROWSER_HEADERS = { host: "127.0.0.1:5173", origin: "http://127.0.0.1:5173" };
 
 function createHandler(): MockHandler {
     let handler: MockHandler | null = null;
@@ -56,10 +67,18 @@ function createDevHandler(): MockHandler {
 
 async function invoke(handler: MockHandler, path: string): Promise<{ statusCode: number; json: any }> {
     return await new Promise((resolve, reject) => {
-        const request = Readable.from([]) as NodeJS.ReadableStream & { method?: string; url?: string; headers?: Record<string, string> };
+        const request = Readable.from([]) as NodeJS.ReadableStream & {
+            method?: string;
+            url?: string;
+            headers?: Record<string, string>;
+            socket?: { remoteAddress?: string } | null;
+        };
         request.method = "GET";
         request.url = path;
-        request.headers = {};
+        // Simulate the in-browser caller: loopback peer + loopback Host +
+        // loopback Origin so the mutation-route auth gate accepts.
+        request.headers = { ...LOOPBACK_BROWSER_HEADERS };
+        request.socket = LOOPBACK_SOCKET;
         const response = {
             statusCode: 200,
             setHeader() {},
@@ -77,10 +96,18 @@ async function invoke(handler: MockHandler, path: string): Promise<{ statusCode:
 
 async function invokePost(handler: MockHandler, path: string, body: unknown): Promise<{ statusCode: number; json: any }> {
     return await new Promise((resolve, reject) => {
-        const request = Readable.from([JSON.stringify(body)]) as NodeJS.ReadableStream & { method?: string; url?: string; headers?: Record<string, string> };
+        const request = Readable.from([JSON.stringify(body)]) as NodeJS.ReadableStream & {
+            method?: string;
+            url?: string;
+            headers?: Record<string, string>;
+            socket?: { remoteAddress?: string } | null;
+        };
         request.method = "POST";
         request.url = path;
-        request.headers = {};
+        // Loopback peer + Host + Origin (browser caller) + application/json,
+        // matching the mutation-route auth gate and JSON content-type enforcement.
+        request.headers = { ...LOOPBACK_BROWSER_HEADERS, "content-type": "application/json" };
+        request.socket = LOOPBACK_SOCKET;
         const response = {
             statusCode: 200,
             setHeader() {},
@@ -105,10 +132,19 @@ async function invokePostRaw(
     headers: Record<string, string> = {}
 ): Promise<{ statusCode: number; json: any }> {
     return await new Promise((resolve, reject) => {
-        const request = Readable.from([rawBody]) as NodeJS.ReadableStream & { method?: string; url?: string; headers?: Record<string, string> };
+        const request = Readable.from([rawBody]) as NodeJS.ReadableStream & {
+            method?: string;
+            url?: string;
+            headers?: Record<string, string>;
+            socket?: { remoteAddress?: string } | null;
+        };
         request.method = "POST";
         request.url = path;
-        request.headers = headers;
+        // Default to a loopback browser caller so tests reach the body parser
+        // (the auth gate would otherwise reject and mask the parser behavior).
+        // Callers can still pass explicit headers to override.
+        request.headers = { ...LOOPBACK_BROWSER_HEADERS, "content-type": "application/json", ...headers };
+        request.socket = LOOPBACK_SOCKET;
         const response = {
             statusCode: 200,
             setHeader() {},
@@ -1253,4 +1289,355 @@ describe("Execution Lab body parser status codes", () => {
         expect(response.statusCode).to.equal(413);
         expect(response.json.ok).to.equal(false);
     });
+
+    it("returns 415 when a POST is not application/json (audit: content-type enforcement)", async () => {
+        const handler = createHandler();
+        // Override the default application/json with text/plain — must 415
+        // before any JSON parsing or miner start side effect happens.
+        const response = await invokePostRaw(
+            handler,
+            "/miner/start",
+            JSON.stringify({ marketType: "spot" }),
+            { "content-type": "text/plain" },
+        );
+        expect(response.statusCode).to.equal(415);
+        expect(response.json.ok).to.equal(false);
+        expect(String(response.json.error)).to.match(/application\/json/i);
+    });
 });
+
+// Audit Finding: Execution Lab control-plane auth. Every POST plus GET
+// /live/status must be gated by the shared loopback/bearer policy so a Vite
+// server exposed via --host / tunnel / reverse proxy cannot be driven into
+// spawning processes, writing files, or submitting/cancelling real orders.
+describe("Execution Lab control-plane authorization", () => {
+    const ORIGINAL_TOKEN = process.env.LOCAL_PROXY_TOKEN;
+
+    beforeEach(() => {
+        delete process.env.LOCAL_PROXY_TOKEN;
+    });
+
+    afterEach(() => {
+        if (ORIGINAL_TOKEN === undefined) {
+            delete process.env.LOCAL_PROXY_TOKEN;
+        } else {
+            process.env.LOCAL_PROXY_TOKEN = ORIGINAL_TOKEN;
+        }
+    });
+
+    async function invokeWithHeaders(
+        handler: MockHandler,
+        method: string,
+        path: string,
+        headers: Record<string, string>,
+        body?: unknown,
+        socket: { remoteAddress?: string } | null = { remoteAddress: "127.0.0.1" },
+    ): Promise<{ statusCode: number; json: any }> {
+        return await new Promise((resolve, reject) => {
+            const payload = body === undefined ? [] : [JSON.stringify(body)];
+            const request = Readable.from(payload) as NodeJS.ReadableStream & {
+                method?: string;
+                url?: string;
+                headers?: Record<string, string>;
+                socket?: { remoteAddress?: string } | null;
+            };
+            request.method = method;
+            request.url = path;
+            request.headers = headers;
+            request.socket = socket;
+            const response = {
+                statusCode: 200,
+                setHeader() {},
+                end(rawBody?: string) {
+                    try {
+                        resolve({ statusCode: response.statusCode, json: rawBody ? JSON.parse(rawBody) : null });
+                    } catch (error) {
+                        reject(error);
+                    }
+                },
+            };
+            Promise.resolve(handler(request, response)).catch(reject);
+        });
+    }
+
+    it("allows a tokenless loopback POST when peer + Host + Origin are all loopback", async () => {
+        const handler = createHandler();
+        const response = await invokeWithHeaders(
+            handler,
+            "POST",
+            "/session/start",
+            { host: "127.0.0.1:5173", origin: "http://127.0.0.1:5173", "content-type": "application/json" },
+            { strategyKey: "x", symbol: "BTCUSDT" },
+            { remoteAddress: "127.0.0.1" },
+        );
+        // Auth passes (200/400 from validation, NOT 401 from auth).
+        expect(response.statusCode).to.not.equal(401);
+    });
+
+    // ----- THE BYPASS THE OLD GATE HAD -----
+    it("rejects a spoofed loopback Origin from a remote socket (the P1 bypass)", async () => {
+        const handler = createHandler();
+        const response = await invokeWithHeaders(
+            handler,
+            "POST",
+            "/miner/stop",
+            // Attacker on 192.0.2.10 forges Origin: http://127.0.0.1:5173.
+            { host: "192.0.2.10:5173", origin: "http://127.0.0.1:5173", "content-type": "application/json" },
+            undefined,
+            { remoteAddress: "192.0.2.10" },
+        );
+        expect(response.statusCode).to.equal(401);
+        expect(response.json.ok).to.equal(false);
+        expect(String(response.json.error)).to.match(/local-only/i);
+    });
+
+    it("rejects a cross-origin POST from a loopback socket (CSRF defense)", async () => {
+        const handler = createHandler();
+        const response = await invokeWithHeaders(
+            handler,
+            "POST",
+            "/session/start",
+            { host: "127.0.0.1:5173", origin: "https://evil.test", "content-type": "application/json" },
+            { strategyKey: "x", symbol: "BTCUSDT" },
+            { remoteAddress: "127.0.0.1" },
+        );
+        expect(response.statusCode).to.equal(401);
+    });
+
+    it("rejects a remote POST with no Origin/Referer and no token", async () => {
+        const handler = createHandler();
+        const response = await invokeWithHeaders(
+            handler,
+            "POST",
+            "/miner/stop",
+            { host: "192.0.2.10:5173", "content-type": "application/json" },
+            undefined,
+            { remoteAddress: "192.0.2.10" },
+        );
+        expect(response.statusCode).to.equal(401);
+    });
+
+    it("accepts a remote POST presenting the configured LOCAL_PROXY_TOKEN bearer", async () => {
+        process.env.LOCAL_PROXY_TOKEN = "execution-lab-secret";
+        try {
+            const handler = createHandler();
+            const response = await invokeWithHeaders(
+                handler,
+                "POST",
+                "/miner/stop",
+                {
+                    host: "tunnel.example.test:5173",
+                    origin: "https://evil.test",
+                    "content-type": "application/json",
+                    authorization: "Bearer execution-lab-secret",
+                },
+                undefined,
+                { remoteAddress: "192.0.2.10" },
+            );
+            // Auth passes (200 from stopMiner), NOT 401.
+            expect(response.statusCode).to.not.equal(401);
+        } finally {
+            delete process.env.LOCAL_PROXY_TOKEN;
+        }
+    });
+
+    it("gates GET /live/status (executor config probe) but allows read-only /miner/status", async () => {
+        const handler = createHandler();
+        const remoteSocket = { remoteAddress: "192.0.2.10" };
+        const remoteHeaders = { host: "192.0.2.10:5173", origin: "https://evil.test" };
+
+        const liveStatus = await invokeWithHeaders(handler, "GET", "/live/status", remoteHeaders, undefined, remoteSocket);
+        expect(liveStatus.statusCode).to.equal(401);
+
+        const minerStatus = await invokeWithHeaders(handler, "GET", "/miner/status", remoteHeaders, undefined, remoteSocket);
+        // Read-only miner status is NOT under the gate.
+        expect(minerStatus.statusCode).to.equal(200);
+    });
+});
+
+// Audit Finding: abandoned Execution Lab session expiry. Sessions were
+// previously removed only when a valid session_stop record arrived, so a
+// browser crash / reload / network error / malicious session creation left
+// entries — and the session IDs accepted by live-trade validation — alive
+// indefinitely. These tests verify the lifecycle that TTL pruning builds on:
+// a stopped session is dropped immediately, and the live-trade handler then
+// rejects its sessionId.
+describe("Execution Lab session lifecycle (TTL pruning foundation)", () => {
+    beforeEach(() => {
+        const tmp = mkdtempSync(join(tmpdir(), "exec-lab-session-"));
+        __setLogRootForTests(tmp);
+    });
+
+    afterEach(() => {
+        __setLogRootForTests(null);
+    });
+
+    async function invokeWithHeaders(
+        handler: MockHandler,
+        method: string,
+        path: string,
+        headers: Record<string, string>,
+        body?: unknown,
+    ): Promise<{ statusCode: number; json: any }> {
+        return await new Promise((resolve, reject) => {
+            const payload = body === undefined ? [] : [JSON.stringify(body)];
+            const request = Readable.from(payload) as NodeJS.ReadableStream & {
+                method?: string;
+                url?: string;
+                headers?: Record<string, string>;
+                socket?: { remoteAddress?: string } | null;
+            };
+            request.method = method;
+            request.url = path;
+            request.headers = headers;
+            request.socket = LOOPBACK_SOCKET;
+            const response = {
+                statusCode: 200,
+                setHeader() {},
+                end(rawBody?: string) {
+                    try {
+                        resolve({ statusCode: response.statusCode, json: rawBody ? JSON.parse(rawBody) : null });
+                    } catch (error) {
+                        reject(error);
+                    }
+                },
+            };
+            Promise.resolve(handler(request, response)).catch(reject);
+        });
+    }
+
+    it("drops a session after a session_stop record and rejects its sessionId on live trade", async () => {
+        const handler = createDevHandler();
+        const loopback = { host: "127.0.0.1:5173", origin: "http://127.0.0.1:5173", "content-type": "application/json" };
+
+        const start = await invokeWithHeaders(
+            handler,
+            "POST",
+            "/session/start",
+            loopback,
+            { strategyKey: "demo_strategy", symbol: "BTCUSDT" },
+        );
+        expect(start.statusCode).to.equal(200);
+        const sessionId: string = start.json.sessionId;
+        expect(sessionId).to.be.a("string");
+
+        // Session is recognized while alive — live trade reaches validation,
+        // not the 404 "Unknown execution lab session" branch.
+        const liveTradeBefore = await invokeWithHeaders(
+            handler,
+            "POST",
+            "/live/trade",
+            loopback,
+            { sessionId },
+        );
+        expect(liveTradeBefore.statusCode).to.not.equal(404);
+
+        // Send session_stop, which removes the session synchronously.
+        const stop = await invokeWithHeaders(
+            handler,
+            "POST",
+            "/logs",
+            loopback,
+            {
+                records: [
+                    {
+                        recordType: "session_stop",
+                        sessionId,
+                        symbol: "BTCUSDT",
+                        interval: "1s",
+                        strategyKey: "demo_strategy",
+                        recordedAtIso: new Date().toISOString(),
+                        reason: "user_stop",
+                    },
+                ],
+            },
+        );
+        expect(stop.statusCode).to.equal(200);
+
+        // Session is now gone — live trade must 404.
+        const liveTradeAfter = await invokeWithHeaders(
+            handler,
+            "POST",
+            "/live/trade",
+            loopback,
+            { sessionId },
+        );
+        expect(liveTradeAfter.statusCode).to.equal(404);
+        expect(String(liveTradeAfter.json.error)).to.match(/unknown execution lab session/i);
+    });
+
+    it("prunes a session after the 6-hour idle TTL even with no session_stop", async () => {
+        // Real TTL test: stub Date.now so the next request appears to arrive
+        // > SESSION_IDLE_TTL_MS after the session was created, then verify the
+        // session is rejected as Unknown on /live/trade. This fails if the
+        // pruning call, comparison direction, or TTL constant changes.
+        const handler = createDevHandler();
+        const loopback = { host: "127.0.0.1:5173", origin: "http://127.0.0.1:5173", "content-type": "application/json" };
+
+        const start = await invokeWithHeaders(
+            handler,
+            "POST",
+            "/session/start",
+            loopback,
+            { strategyKey: "demo_strategy", symbol: "BTCUSDT" },
+        );
+        expect(start.statusCode).to.equal(200);
+        const sessionId: string = start.json.sessionId;
+        expect(sessionId).to.be.a("string");
+
+        // Sanity: while fresh, /live/trade recognizes the session.
+        const liveTradeFresh = await invokeWithHeaders(
+            handler,
+            "POST",
+            "/live/trade",
+            loopback,
+            { sessionId },
+        );
+        expect(liveTradeFresh.statusCode).to.not.equal(404);
+
+        // Advance Date.now beyond the 6-hour idle TTL. `pruneExpiredSessions`
+        // runs on /live/trade before the session lookup, so the now-expired
+        // session is dropped before validation reaches it.
+        const SESSION_IDLE_TTL_MS = 6 * 60 * 60 * 1000;
+        const realDateNow = Date.now;
+        const baseMs = realDateNow.call(Date);
+        try {
+            Date.now = () => baseMs + SESSION_IDLE_TTL_MS + 1;
+            const liveTradeAged = await invokeWithHeaders(
+                handler,
+                "POST",
+                "/live/trade",
+                loopback,
+                { sessionId },
+            );
+            expect(liveTradeAged.statusCode).to.equal(404);
+            expect(String(liveTradeAged.json.error)).to.match(/unknown execution lab session/i);
+
+            // Likewise /logs must reject an aged session — pruneExpiredSessions
+            // also runs on log append.
+            const logAged = await invokeWithHeaders(
+                handler,
+                "POST",
+                "/logs",
+                loopback,
+                {
+                    records: [
+                        {
+                            recordType: "session_start",
+                            sessionId,
+                            symbol: "BTCUSDT",
+                            interval: "1s",
+                            strategyKey: "demo_strategy",
+                            recordedAtIso: new Date(baseMs + SESSION_IDLE_TTL_MS + 1).toISOString(),
+                            stakeUsd: 5,
+                        },
+                    ],
+                },
+            );
+            expect(logAged.statusCode).to.equal(404);
+        } finally {
+            Date.now = realDateNow;
+        }
+    });
+});
+

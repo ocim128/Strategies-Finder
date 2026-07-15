@@ -41,10 +41,14 @@ type SecondMarketApiError = {
     error?: string;
 };
 
-function getBaseUrl(baseUrl?: string): string {
-    if (baseUrl) return baseUrl.replace(/\/+$/, "");
-    return typeof window === "undefined" ? "http://localhost:5173" : "";
-}
+// Browser `fetch` resolves relative URLs against `window.location` itself.
+// Node's `fetch` does NOT — it throws `TypeError: Invalid URL` for a bare
+// `/api/...` path. Returning "" here produces a relative URL that
+// `fetchLocalApi`/`resolveLocalApiUrl` resolves against the bound server
+// socket (recorded via `rememberLoopbackOriginFromRequest`), NOT a hardcoded
+// `localhost:5173` that silently breaks whenever Vite picks another port
+// (5174+) and ignores `VITE_DEV_SERVER_ORIGIN`.
+const BASE_URL = "";
 
 export function normalizeSecondMarketChartSymbol(symbol: string): SecondMarketSymbol | null {
     const normalized = getUnscopedBinanceStorageSymbol(symbol);
@@ -96,7 +100,7 @@ export async function loadSecondMarketCandles(args: {
     if (args.startTs !== undefined) params.set("startTs", String(Math.floor(args.startTs)));
     if (args.endTs !== undefined) params.set("endTs", String(Math.floor(args.endTs)));
 
-    const url = `${getBaseUrl()}/api/second-market/candles?${params.toString()}`;
+    const url = `${BASE_URL}/api/second-market/candles?${params.toString()}`;
     const parseJsonCandles = async (jsonResponse: Response): Promise<OHLCVData[]> => {
         const payload = await jsonResponse.json().catch(() => ({})) as SecondMarketCandlesResponse | SecondMarketApiError;
         const data = assertOk(jsonResponse, payload, "/api/second-market/candles");
@@ -131,7 +135,6 @@ export async function loadSecondMarketClobQuotesWithStats(args: {
     startTs: number;
     endTs: number;
     seriesId?: string;
-    baseUrl?: string;
 }): Promise<SecondMarketClobQuotesResult> {
     const params = new URLSearchParams({
         symbol: args.symbol,
@@ -140,7 +143,7 @@ export async function loadSecondMarketClobQuotesWithStats(args: {
     });
     if (args.seriesId) params.set("seriesId", args.seriesId);
 
-    const response = await fetchLocalApi(`${getBaseUrl(args.baseUrl)}/api/second-market/clob-quotes?${params.toString()}`, {
+    const response = await fetchLocalApi(`${BASE_URL}/api/second-market/clob-quotes?${params.toString()}`, {
         method: "GET",
     }, SECOND_MARKET_REQUEST_TIMEOUT_MS);
     const payload = await response.json().catch(() => ({})) as SecondMarketClobQuotesResponse | SecondMarketApiError;
@@ -156,7 +159,6 @@ export async function loadSecondMarketClobQuotes(args: {
     startTs: number;
     endTs: number;
     seriesId?: string;
-    baseUrl?: string;
 }): Promise<PolymarketClob1sQuoteRow[]> {
     return (await loadSecondMarketClobQuotesWithStats(args)).quotes;
 }
@@ -166,7 +168,6 @@ export async function loadSecondMarketGammaSnapshots(args: {
     startTs: number;
     endTs: number;
     seriesId?: string;
-    baseUrl?: string;
 }): Promise<Polymarket1sGammaContextRow[]> {
     const params = new URLSearchParams({
         symbol: args.symbol,
@@ -175,7 +176,7 @@ export async function loadSecondMarketGammaSnapshots(args: {
     });
     if (args.seriesId) params.set("seriesId", args.seriesId);
 
-    const response = await fetchLocalApi(`${getBaseUrl(args.baseUrl)}/api/second-market/gamma-snapshots?${params.toString()}`, {
+    const response = await fetchLocalApi(`${BASE_URL}/api/second-market/gamma-snapshots?${params.toString()}`, {
         method: "GET",
     }, SECOND_MARKET_REQUEST_TIMEOUT_MS);
     const payload = await response.json().catch(() => ({})) as SecondMarketGammaSnapshotsResponse | SecondMarketApiError;

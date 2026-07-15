@@ -44,6 +44,7 @@ import {
     type BinanceDnsMode,
 } from "../second-market/binance-dns";
 import { readJsonBody, sendCaughtErrorJson } from "../vite-http-utils";
+import { isAllowedLocalRequest } from "../local-route-authorization";
 
 const DEFAULT_LOG_ROOT = resolve(process.cwd(), "logs", "paper-execution");
 // Test-only override so the session-log spec can redirect log writes to a
@@ -780,8 +781,15 @@ function loadRecentStoredLiveQuote(
 export function executionLabVitePlugin(): Plugin {
     configureBinanceDns(getExecutionLabBinanceDnsMode());
 
-    const sessions = new Map<string, string>();
+    const sessions = new Map<string, { logPath: string; lastActivityMs: number }>();
     const sessionLogQueues = new Map<string, Promise<void>>();
+    // Audit Finding (abandoned session expiry): sessions were previously
+    // removed only when a valid session_stop record arrived. Browser crashes,
+    // reloads, network errors, or malicious session creation left entries (and
+    // the associated session IDs accepted by live-trade validation) alive
+    // indefinitely. The TTL below prunes idle sessions on the same lifecycle
+    // hooks the existing live-ledger pruning already uses.
+    const SESSION_IDLE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
     const liveEventCache = new Map<string, CacheEntry<SecondMarketPolymarketEvent[]>>();
     const liveOutcomeCache = new Map<string, CacheEntry<LiveOutcomeRow[]>>();
     const inFlightFetches = new Map<string, Promise<unknown>>();
@@ -926,6 +934,28 @@ export function executionLabVitePlugin(): Plugin {
         await write;
     }
 
+    function touchSession(sessionId: string): void {
+        const entry = sessions.get(sessionId);
+        if (entry) entry.lastActivityMs = Date.now();
+    }
+
+    /**
+     * Audit Finding (abandoned session expiry): drop sessions whose
+     * `lastActivityMs` is older than the idle TTL. Also clear the matching
+     * sessionLogQueues entry so the in-flight write promise does not leak.
+     * Called on session creation, log appends, and live-order submission so
+     * the maps stay bounded regardless of browser lifecycle.
+     */
+    function pruneExpiredSessions(): void {
+        const cutoff = Date.now() - SESSION_IDLE_TTL_MS;
+        for (const [sessionId, entry] of sessions) {
+            if (entry.lastActivityMs < cutoff) {
+                sessions.delete(sessionId);
+                sessionLogQueues.delete(sessionId);
+            }
+        }
+    }
+
     async function appendValidatedRecords(records: readonly ExecutionLabRecord[]): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
         if (records.length === 0) {
             return { ok: false, status: 400, error: "records must not be empty" };
@@ -939,15 +969,19 @@ export function executionLabVitePlugin(): Plugin {
             return { ok: false, status: 400, error: "records must belong to one session" };
         }
 
-        const logPath = sessions.get(sessionId);
-        if (!logPath) {
+        pruneExpiredSessions();
+
+        const entry = sessions.get(sessionId);
+        if (!entry) {
             return { ok: false, status: 404, error: "Unknown execution lab session" };
         }
 
-        await appendSessionLog(sessionId, logPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+        await appendSessionLog(sessionId, entry.logPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
         if (records.some((record) => record.recordType === "session_stop")) {
             sessions.delete(sessionId);
             sessionLogQueues.delete(sessionId);
+        } else {
+            touchSession(sessionId);
         }
         return { ok: true };
     }
@@ -1249,6 +1283,22 @@ export function executionLabVitePlugin(): Plugin {
                     return;
                 }
 
+                // Audit Finding (Execution Lab control-plane auth): every
+                // state-changing route — miner start/stop, session creation,
+                // logging, live trade, cancel — and the `/live/status` executor
+                // config probe (which surfaces token IDs / order mode) MUST be
+                // gated by the same loopback/bearer policy the IBKR, Batch, and
+                // strategy-admin routes enforce. Without this, a Vite server
+                // started with `--host`, exposed through a tunnel, or reached
+                // from another machine could be driven into spawning processes,
+                // writing files, and submitting or cancelling real orders.
+                if (method === "POST" || (method === "GET" && path === "/live/status")) {
+                    if (!isAllowedLocalRequest(req)) {
+                        sendJson(res, 401, { ok: false, error: "Unauthorized: execution-lab mutation routes are local-only." });
+                        return;
+                    }
+                }
+
                 if (method === "GET" && path === "/live/status") {
                     sendJson(res, 200, loadLiveExecutorStatus());
                     return;
@@ -1259,8 +1309,14 @@ export function executionLabVitePlugin(): Plugin {
                     return;
                 }
 
+                // Audit Finding (POST body content-type): every Execution Lab
+                // POST passes `{ requireJsonContentType: true }` to its
+                // `readJsonBody` call so curl/form-post traffic cannot bypass
+                // JSON validation with a 415. The browser UI already sends
+                // `Content-Type: application/json`.
+
                 if (path === "/miner/start") {
-                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES);
+                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES, { requireJsonContentType: true });
                     sendJson(res, 200, startMiner(parseMinerMarketType(payload.marketType)));
                     return;
                 }
@@ -1271,7 +1327,7 @@ export function executionLabVitePlugin(): Plugin {
                 }
 
                 if (path === "/live/config/resolve") {
-                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES);
+                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES, { requireJsonContentType: true });
                     const liveUiConfig = readLiveUiConfigFromPayload(payload)
                         ?? normalizeExecutionLabLiveUiConfig(payload);
                     sendJson(res, 200, loadLiveExecutorStatus(undefined, liveUiConfig));
@@ -1283,12 +1339,14 @@ export function executionLabVitePlugin(): Plugin {
                         sendJson(res, 404, { ok: false, error: "Live trade submission is not registered in preview mode." });
                         return;
                     }
-                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES);
+                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES, { requireJsonContentType: true });
                     const sessionId = readSessionIdFromPayload(payload);
+                    pruneExpiredSessions();
                     if (!sessionId || !sessions.has(sessionId)) {
                         sendJson(res, 404, { ok: false, error: "Unknown execution lab session" });
                         return;
                     }
+                    touchSession(sessionId);
                     const liveUiConfig = readLiveUiConfigFromPayload(payload);
                     const status = loadLiveExecutorStatus(undefined, liveUiConfig);
                     const validation = validateLiveTradeSubmitRequest(payload, {
@@ -1344,12 +1402,14 @@ export function executionLabVitePlugin(): Plugin {
                         sendJson(res, 404, { ok: false, error: "Live cancel-all submission is not registered in preview mode." });
                         return;
                     }
-                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES);
+                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES, { requireJsonContentType: true });
                     const sessionId = readSessionIdFromPayload(payload);
+                    pruneExpiredSessions();
                     if (!sessionId || !sessions.has(sessionId)) {
                         sendJson(res, 404, { ok: false, error: "Unknown execution lab session" });
                         return;
                     }
+                    touchSession(sessionId);
                     const liveUiConfig = readLiveUiConfigFromPayload(payload);
                     const status = loadLiveExecutorStatus(undefined, liveUiConfig);
                     const validation = validateLiveCancelAllSubmitRequest(payload, {
@@ -1368,7 +1428,7 @@ export function executionLabVitePlugin(): Plugin {
                 }
 
                 if (path === "/session/start") {
-                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES);
+                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES, { requireJsonContentType: true });
                     const strategyKey = typeof payload.strategyKey === "string" ? payload.strategyKey : "";
                     const symbol = parseSymbol(typeof payload.symbol === "string" ? payload.symbol : "");
                     const startedAtIso = typeof payload.startedAtIso === "string" ? payload.startedAtIso : "";
@@ -1388,13 +1448,17 @@ export function executionLabVitePlugin(): Plugin {
                     );
                     mkdirSync(dirname(logPath), { recursive: true });
                     appendFileSync(logPath, "", "utf8");
-                    sessions.set(sessionId, logPath);
+                    // Prune abandoned sessions before registering a new one so the
+                    // map does not grow unbounded under browser-crash / reload
+                    // cycles (audit Finding: abandoned session expiry).
+                    pruneExpiredSessions();
+                    sessions.set(sessionId, { logPath, lastActivityMs: Date.now() });
                     sendJson(res, 200, { ok: true, sessionId, logPath });
                     return;
                 }
 
                 if (path === "/log") {
-                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES);
+                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES, { requireJsonContentType: true });
                     const validation = validateExecutionLabRecord(payload);
                     if (!validation.ok) {
                         sendJson(res, 400, { ok: false, error: validation.error });
@@ -1410,7 +1474,7 @@ export function executionLabVitePlugin(): Plugin {
                 }
 
                 if (path === "/logs") {
-                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES);
+                    const payload = await readJsonBody(req as IncomingMessage, MAX_BODY_BYTES, { requireJsonContentType: true });
                     const rawRecords = Array.isArray(payload.records) ? payload.records : null;
                     if (!rawRecords) {
                         sendJson(res, 400, { ok: false, error: "records must be an array" });
