@@ -83,8 +83,15 @@ function computeOosPassReliability(symbols: readonly FinderUniverseSymbolResult[
     };
 }
 
-function isAscendingUniverseMetric(_metric: FinderUniverseMetric): boolean {
-    return false;
+function isAscendingUniverseMetric(metric: FinderUniverseMetric): boolean {
+    return metric === "worstMaxDrawdownPercent" || metric === "medianMaxDrawdownPercent";
+}
+
+function computeReturnDrawdownRatio(netProfitPercent: number, maxDrawdownPercent: number): number {
+    if (maxDrawdownPercent > 0.0001) return netProfitPercent / maxDrawdownPercent;
+    if (netProfitPercent > 0.0001) return Number.MAX_SAFE_INTEGER;
+    if (netProfitPercent < -0.0001) return Number.MIN_SAFE_INTEGER;
+    return 0;
 }
 
 function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
@@ -99,6 +106,8 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
     const sharpes: number[] = [];
     const profitFactors: number[] = [];
     const compositeEdgeRatios: number[] = [];
+    const maxDrawdownPercents: number[] = [];
+    const returnDrawdownRatios: number[] = [];
 
     for (const symbol of symbols) {
         const result = symbol.result;
@@ -125,6 +134,11 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
         if (typeof result.compositeEdgeRatio === "number" && Number.isFinite(result.compositeEdgeRatio)) {
             compositeEdgeRatios.push(result.compositeEdgeRatio);
         }
+        if (result.drawdownAvailable === true) {
+            const maxDrawdownPercent = Math.max(0, result.maxDrawdownPercent);
+            maxDrawdownPercents.push(maxDrawdownPercent);
+            returnDrawdownRatios.push(computeReturnDrawdownRatio(result.netProfitPercent, maxDrawdownPercent));
+        }
 
         if (result.netProfit > 0.0001) {
             profitableSymbols += 1;
@@ -148,6 +162,10 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
         medianProfitFactor: median(profitFactors),
         medianNetProfit: median(netProfits),
         medianCompositeEdgeRatio: compositeEdgeRatios.length > 0 ? median(compositeEdgeRatios) : 0,
+        drawdownMetricsAvailable: maxDrawdownPercents.length > 0,
+        worstMaxDrawdownPercent: maxDrawdownPercents.length > 0 ? Math.max(...maxDrawdownPercents) : 0,
+        medianMaxDrawdownPercent: median(maxDrawdownPercents),
+        medianReturnDrawdownRatio: median(returnDrawdownRatios),
         worstNetProfit: netProfits.length > 0 ? Math.min(...netProfits) : 0,
         bestNetProfit: netProfits.length > 0 ? Math.max(...netProfits) : 0,
     };
@@ -333,6 +351,12 @@ export function getFinderUniverseMetricValue(
             return item.medianProfitFactor;
         case "medianCompositeEdgeRatio":
             return item.medianCompositeEdgeRatio;
+        case "worstMaxDrawdownPercent":
+            return item.worstMaxDrawdownPercent;
+        case "medianMaxDrawdownPercent":
+            return item.medianMaxDrawdownPercent;
+        case "medianReturnDrawdownRatio":
+            return item.medianReturnDrawdownRatio;
         case "worstNetProfit":
             return item.worstNetProfit;
         case "totalTrades":

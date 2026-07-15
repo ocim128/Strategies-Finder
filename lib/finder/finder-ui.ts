@@ -218,6 +218,14 @@ export class FinderUI {
             if (item.medianCompositeEdgeRatio > 0) {
                 metrics.appendChild(this.createMetricChip(`Med ER ${item.medianCompositeEdgeRatio.toFixed(2)}`));
             }
+            if (item.drawdownMetricsAvailable) {
+                metrics.appendChild(this.createMetricChip(`Worst DD ${item.worstMaxDrawdownPercent.toFixed(2)}%`));
+                metrics.appendChild(this.createMetricChip(`Med DD ${item.medianMaxDrawdownPercent.toFixed(2)}%`));
+                const returnDrawdown = item.medianReturnDrawdownRatio === Number.MAX_SAFE_INTEGER
+                    ? "∞"
+                    : item.medianReturnDrawdownRatio.toFixed(2);
+                metrics.appendChild(this.createMetricChip(`Med R/DD ${returnDrawdown}`));
+            }
             metrics.appendChild(this.createMetricChip(`Worst ${this.formatCurrency(item.worstNetProfit)}`));
             metrics.appendChild(this.createMetricChip(`Trades ${item.totalTrades}`));
             if (item.oosAggregate) {

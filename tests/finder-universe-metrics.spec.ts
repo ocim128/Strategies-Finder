@@ -4,16 +4,16 @@ import { buildFinderUniverseCandidate, computePerformanceVerdict, computeStrateg
 import type { FinderUniverseSymbolMetrics, FinderUniverseSymbolResult } from "../lib/types/finder";
 import type { Time } from "../lib/types/strategies";
 
-function makeBacktestResult(netProfit: number, expectancy: number, totalTrades: number, sharpeRatio = 0, profitFactor = 0, compositeEdgeRatio?: number): FinderUniverseSymbolMetrics {
+function makeBacktestResult(netProfit: number, expectancy: number, totalTrades: number, sharpeRatio = 0, profitFactor = 0, compositeEdgeRatio?: number, netProfitPercent = 0, maxDrawdownPercent = 0, drawdownAvailable = false): FinderUniverseSymbolMetrics {
     const sharpeRatioAvailable = arguments.length >= 4;
     return {
         netProfit,
-        netProfitPercent: 0,
+        netProfitPercent,
         expectancy,
         avgTrade: 0,
         winRate: 0,
         profitFactor,
-        maxDrawdownPercent: 0,
+        maxDrawdownPercent,
         totalTrades,
         winningTrades: 0,
         losingTrades: 0,
@@ -21,7 +21,7 @@ function makeBacktestResult(netProfit: number, expectancy: number, totalTrades: 
         avgLoss: 0,
         sharpeRatio,
         sharpeRatioAvailable,
-        drawdownAvailable: false,
+        drawdownAvailable,
         ...(typeof compositeEdgeRatio === "number" ? { compositeEdgeRatio } : {}),
     };
 }
@@ -261,6 +261,66 @@ describe("Finder universe metrics", () => {
         );
 
         expect(sorted.map((item) => item.strategyKey)).to.deep.equal(["edgier", "flatter"]);
+    });
+
+    it("aggregates drawdown only from active symbols where it was computed", () => {
+        const candidate = buildFinderUniverseCandidate({
+            strategyKey: "demo",
+            strategyName: "Demo",
+            params: { threshold: 1 },
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(120, 4, 8, 0, 0, undefined, 24, 6, true)),
+                makeSymbol("ETHUSDT", "profitable", makeBacktestResult(40, 2, 6, 0, 0, undefined, 8, 2, true)),
+                makeSymbol("SOLUSDT", "losing", makeBacktestResult(-20, -1, 5, 0, 0, undefined, -5, 30, false)),
+                makeSymbol("BNBUSDT", "no_trades", makeBacktestResult(0, 0, 0, 0, 0, undefined, 0, 99, true)),
+            ],
+        });
+
+        expect(candidate.drawdownMetricsAvailable).to.equal(true);
+        expect(candidate.worstMaxDrawdownPercent).to.equal(6);
+        expect(candidate.medianMaxDrawdownPercent).to.equal(4);
+        expect(candidate.medianReturnDrawdownRatio).to.equal(4);
+    });
+
+    it("ranks drawdown ascending and return-to-drawdown descending", () => {
+        const makeCandidate = (strategyKey: string, netProfitPercent: number, maxDrawdownPercent: number) =>
+            buildFinderUniverseCandidate({
+                strategyKey,
+                strategyName: strategyKey,
+                params: {},
+                symbols: [
+                    makeSymbol("BTCUSDT", "profitable", makeBacktestResult(20, 2, 10, 0, 0, undefined, netProfitPercent, maxDrawdownPercent, true)),
+                ],
+            });
+        const lowDrawdown = makeCandidate("low-dd", 10, 2);
+        const highDrawdown = makeCandidate("high-dd", 30, 10);
+
+        expect(sortFinderUniverseCandidates(
+            [highDrawdown, lowDrawdown],
+            ["worstMaxDrawdownPercent"],
+        ).map((item) => item.strategyKey)).to.deep.equal(["low-dd", "high-dd"]);
+        expect(sortFinderUniverseCandidates(
+            [highDrawdown, lowDrawdown],
+            ["medianMaxDrawdownPercent"],
+        ).map((item) => item.strategyKey)).to.deep.equal(["low-dd", "high-dd"]);
+        expect(sortFinderUniverseCandidates(
+            [highDrawdown, lowDrawdown],
+            ["medianReturnDrawdownRatio"],
+        ).map((item) => item.strategyKey)).to.deep.equal(["low-dd", "high-dd"]);
+    });
+
+    it("keeps a profitable zero-drawdown return ratio finite and best-ranked", () => {
+        const zeroDrawdown = buildFinderUniverseCandidate({
+            strategyKey: "zero-dd",
+            strategyName: "Zero DD",
+            params: {},
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(10, 1, 5, 0, 0, undefined, 5, 0, true)),
+            ],
+        });
+
+        expect(zeroDrawdown.medianReturnDrawdownRatio).to.equal(Number.MAX_SAFE_INTEGER);
+        expect(Number.isFinite(zeroDrawdown.medianReturnDrawdownRatio)).to.equal(true);
     });
 
     it("scores robust universe candidates higher when breadth, samples, edge, and downside all hold", () => {

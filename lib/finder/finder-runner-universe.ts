@@ -684,6 +684,11 @@ export async function runFinderUniverseExecution(
     const evaluationStart = performance.now();
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
     const requiresSharpeRatio = universe.sortPriority.includes("medianSharpe");
+    const requiresDrawdown = universe.sortPriority.some((metric) =>
+        metric === "worstMaxDrawdownPercent"
+        || metric === "medianMaxDrawdownPercent"
+        || metric === "medianReturnDrawdownRatio"
+    );
     // Composite Edge Ratio needs per-trade OHLCV lookups; only compute when the
     // active sort requests it, and only for non-cross-symbol runs where we have
     // a clean closed-candle series matching what the backtest ran on.
@@ -835,7 +840,7 @@ export async function runFinderUniverseExecution(
                         includeAdvancedAnalytics: false,
                         includeSharpeRatio: requiresSharpeRatio,
                         omitEquityCurve: !requiresSharpeRatio,
-                        skipDrawdown: true,
+                        skipDrawdown: !requiresDrawdown,
                         skipResultPostProcessing: true,
                     },
                 });
@@ -857,7 +862,7 @@ export async function runFinderUniverseExecution(
                 const symbolResult = buildSymbolResult(symbol, output.result, {
                     compositeEdgeRatio: symbolEdgeRatio,
                     sharpeRatioAvailable: requiresSharpeRatio,
-                    drawdownAvailable: false,
+                    drawdownAvailable: requiresDrawdown,
                 });
                 symbolResults.set(symbol.symbol, symbolResult);
                 accumulatePartialCounts(partialCounts, symbolResult);

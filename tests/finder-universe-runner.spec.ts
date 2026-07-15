@@ -117,6 +117,7 @@ describe("Finder universe runner", () => {
         expect(output.results[0]!.profitableSymbols).to.equal(1);
         expect(output.results[0]!.losingSymbols).to.equal(1);
         expect(output.results[0]!.symbols.find((item) => item.symbol === "MISSING")?.status).to.equal("load_failed");
+        expect(output.results[0]!.drawdownMetricsAvailable).to.equal(false);
         expect((output.results[0]!.symbols.find((item) => item.symbol === "UP")?.result as any)?.trades).to.equal(undefined);
         expect((output.results[0]!.symbols.find((item) => item.symbol === "UP")?.result as any)?.equityCurve).to.equal(undefined);
         expect(output.diagnostics?.engineMode).to.equal("symbol_universe");
@@ -132,6 +133,55 @@ describe("Finder universe runner", () => {
         expect(output.diagnostics?.timingsMs.dataLoading).to.be.greaterThanOrEqual(0);
         expect(output.diagnostics?.strategyBreakdown[0]?.key).to.equal("universe_test");
         expect(partialUpdates.length).to.be.greaterThan(0);
+    });
+
+    it("computes drawdown only when a Universe drawdown sort requests it", async () => {
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 1,
+            rangePercent: 0,
+            maxRuns: 1,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols: ["UP"],
+                minActiveSymbols: 1,
+                minTotalTrades: 1,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["worstMaxDrawdownPercent"],
+            },
+        };
+
+        const output = await runFinderUniverseExecution(
+            {
+                interval: "5m",
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategy: {
+                    key: "universe_test",
+                    name: testStrategy.name,
+                    strategy: testStrategy,
+                },
+                loadDataset: async () => makeCandles([100, 110, 90, 120]),
+                generateParamSets: () => [{ threshold: 1 }],
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                yieldControl: async () => {},
+                isCancelled: () => false,
+            },
+        );
+
+        expect(output.results[0]!.drawdownMetricsAvailable).to.equal(true);
+        expect(output.results[0]!.symbols[0]!.result?.drawdownAvailable).to.equal(true);
+        expect(output.results[0]!.worstMaxDrawdownPercent).to.be.greaterThanOrEqual(0);
     });
 
     it("counts backtest execution failures separately from symbol load failures", async () => {

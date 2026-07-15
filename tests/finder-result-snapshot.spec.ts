@@ -82,6 +82,10 @@ function makeUniverseCandidate(index: number): FinderUniverseCandidate {
         worstNetProfit: 1,
         bestNetProfit: 100,
         medianCompositeEdgeRatio: 0,
+        drawdownMetricsAvailable: true,
+        worstMaxDrawdownPercent: 4,
+        medianMaxDrawdownPercent: 2,
+        medianReturnDrawdownRatio: 0.5,
         robustUniverseScore: 90,
         windowStabilityScore: 0,
     };
@@ -129,5 +133,25 @@ describe("Finder result snapshots", () => {
         expect(normalized.scope).to.equal("current_chart");
         if (normalized.scope !== "current_chart") throw new Error("unexpected scope");
         expect(normalized.results[0]!.result.trades).to.deep.equal([]);
+    });
+
+    it("defaults new drawdown aggregates when restoring an older universe snapshot", () => {
+        const legacyCandidate = makeUniverseCandidate(1) as unknown as Record<string, unknown>;
+        delete legacyCandidate.drawdownMetricsAvailable;
+        delete legacyCandidate.worstMaxDrawdownPercent;
+        delete legacyCandidate.medianMaxDrawdownPercent;
+        delete legacyCandidate.medianReturnDrawdownRatio;
+
+        const normalized = normalizeFinderLatestResultsSnapshot({
+            scope: "symbol_universe",
+            results: [legacyCandidate],
+        });
+
+        expect(normalized?.scope).to.equal("symbol_universe");
+        if (!normalized || normalized.scope !== "symbol_universe") throw new Error("unexpected scope");
+        expect(normalized.results[0]!.drawdownMetricsAvailable).to.equal(false);
+        expect(normalized.results[0]!.worstMaxDrawdownPercent).to.equal(0);
+        expect(normalized.results[0]!.medianMaxDrawdownPercent).to.equal(0);
+        expect(normalized.results[0]!.medianReturnDrawdownRatio).to.equal(0);
     });
 });

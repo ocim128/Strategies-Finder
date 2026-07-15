@@ -99,6 +99,9 @@ export const UNIVERSE_METRIC_FULL_LABELS: Record<FinderUniverseMetric, string> =
     medianSharpe: 'Median Sharpe Ratio',
     medianProfitFactor: 'Median Profit Factor',
     medianCompositeEdgeRatio: 'Median Composite Edge Ratio',
+    worstMaxDrawdownPercent: 'Worst-Symbol Max Drawdown',
+    medianMaxDrawdownPercent: 'Median Max Drawdown',
+    medianReturnDrawdownRatio: 'Median Return / Drawdown Ratio',
     worstNetProfit: 'Worst Net Profit',
     totalTrades: 'Total Trades',
 };

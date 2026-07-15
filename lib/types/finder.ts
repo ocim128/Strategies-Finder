@@ -45,6 +45,9 @@ export type FinderUniverseMetric =
     | 'medianSharpe'
     | 'medianProfitFactor'
     | 'medianCompositeEdgeRatio'
+    | 'worstMaxDrawdownPercent'
+    | 'medianMaxDrawdownPercent'
+    | 'medianReturnDrawdownRatio'
     | 'worstNetProfit'
     | 'totalTrades';
 
@@ -246,6 +249,14 @@ export interface FinderUniverseCandidate {
     bestNetProfit: number;
     /** Median per-symbol Composite Edge Ratio across active symbols (0 when never computed). */
     medianCompositeEdgeRatio: number;
+    /** True when the active Universe sort requested per-symbol drawdown computation. */
+    drawdownMetricsAvailable: boolean;
+    /** Largest max drawdown percentage across active symbols with computed drawdown. */
+    worstMaxDrawdownPercent: number;
+    /** Median max drawdown percentage across active symbols with computed drawdown. */
+    medianMaxDrawdownPercent: number;
+    /** Median per-symbol net-profit-percent / max-drawdown-percent ratio. */
+    medianReturnDrawdownRatio: number;
     /** Bounded 0..100 score favoring broad, sufficiently sampled, downside-aware universe performance. */
     robustUniverseScore: number;
     /** Bounded 0..100 score comparing IS breadth against the OOS validation window; 0 until OOS validation runs. */
