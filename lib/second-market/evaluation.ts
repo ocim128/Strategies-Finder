@@ -463,7 +463,6 @@ export async function loadSecondMarketEvaluationContext(args: {
     outcomeInterval?: PolymarketOutcomeInterval;
     startTs: number;
     endTs: number;
-    apiBaseUrl?: string;
     includeGammaSnapshots?: boolean;
 }): Promise<SecondMarketEvaluationContext | null> {
     const outcomeInterval = resolvePolymarketOutcomeInterval(args.outcomeInterval);
@@ -488,7 +487,6 @@ export async function loadSecondMarketEvaluationContext(args: {
             seriesId,
             startTs,
             endTs,
-            baseUrl: args.apiBaseUrl,
         }),
         includeGammaSnapshots
             ? loadSecondMarketGammaSnapshots({
@@ -496,7 +494,6 @@ export async function loadSecondMarketEvaluationContext(args: {
                 seriesId,
                 startTs,
                 endTs,
-                baseUrl: args.apiBaseUrl,
             }).catch(() => [])
             : Promise.resolve([]),
     ]);

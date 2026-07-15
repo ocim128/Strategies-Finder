@@ -334,7 +334,8 @@ describe("batch-portfolio-fit server plugin — server-authoritative Stability c
         const req = Readable.from([JSON.stringify(body)]) as any;
         req.method = "POST";
         req.url = "/api/batch-backtest/portfolio-fit";
-        req.headers = { origin: "http://127.0.0.1:5173", "content-type": "application/json" };
+        req.headers = { host: "127.0.0.1:5173", origin: "http://127.0.0.1:5173", "content-type": "application/json" };
+        req.socket = { remoteAddress: "127.0.0.1" };
         const res = {
             statusCode: 0,
             chunks: [] as string[],

@@ -979,6 +979,7 @@ describe("batch-backtest server plugin route-level authorization", () => {
             {
                 method: "GET",
                 url: "/api/batch-backtest/status",
+                socket: { remoteAddress: "127.0.0.1" },
                 headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" },
             },
             res,
@@ -1009,7 +1010,8 @@ describe("batch-backtest server plugin run intake size guard", () => {
             const req = Readable.from([JSON.stringify({ symbols: tooMany, interval: "5m", strategyKey: STRATEGY_KEY })]) as any;
             req.method = "POST";
             req.url = "/api/batch-backtest/run";
-            req.headers = { origin: "http://127.0.0.1:5173", "content-type": "application/json" };
+            req.headers = { host: "127.0.0.1:5173", origin: "http://127.0.0.1:5173", "content-type": "application/json" };
+            req.socket = { remoteAddress: "127.0.0.1" };
             const res = makeRouteResponse();
             await handler!(req, res);
             expect(res.statusCode).to.equal(400);

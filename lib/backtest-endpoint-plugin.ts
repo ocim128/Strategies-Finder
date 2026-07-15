@@ -35,6 +35,7 @@ import type {
 import { BACKTEST_ENDPOINT_CAPITAL_SETTINGS, toCompactMetrics, toSlimSingleResult } from "./backtest-endpoint-contract";
 import { stripEndpointIgnoredBacktestSettings } from "./backtest-endpoint-settings";
 import { buildBacktestEndpointExecutorRequest } from "./backtest-endpoint-execution";
+import { rememberLoopbackOriginFromRequest } from "./local-api-transport";
 import { sendJson } from "./http-response-utils";
 import { readJsonBody, sendCaughtErrorJson } from "./vite-http-utils";
 import type { OHLCVData, BacktestResult, StrategyParams } from "./types/strategies";
@@ -52,6 +53,15 @@ interface CachedDataset {
     firstTime: number;
     lastTime: number;
     createdAt: number;
+    /**
+     * Monotonic access sequence number (NOT a wall-clock timestamp). Drives
+     * LRU eviction: the entry with the smallest `lastTouchedSeq` is the
+     * victim. A counter — not `Date.now()` — is used so rapid operations
+     * inside the same millisecond still produce a strict total order.
+     */
+    lastTouchedSeq: number;
+    /** Estimated retained heap bytes; drives byte-budget eviction. */
+    bytes: number;
 }
 
 interface DatasetCacheError {
@@ -60,27 +70,73 @@ interface DatasetCacheError {
     code: string;
 }
 
+// Audit Finding (cache byte budget): the previous cap was a flat 200 entries.
+// At the repo's documented ~5–10 MB per 100k-bar dataset that permitted 1–2 GB
+// of retained references — far larger than the Vite dev process budget. We now
+// cap by estimated bytes (default 384 MB) with a per-entry floor, evict
+// least-recently-used until the new entry fits, and reject any single dataset
+// larger than the whole budget with 413. An entry-count ceiling is retained as
+// a secondary guard so pathological millions of tiny datasets cannot exhaust
+// the Map without exceeding the byte budget.
 const datasetCache = new Map<string, CachedDataset>();
 const DATASET_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const DATASET_CACHE_MAX_ENTRIES = 200;
+const DEFAULT_DATASET_CACHE_MAX_BYTES = 384 * 1024 * 1024;
+// OHLCV row is ~6 floats + time wrapper; 80 bytes is a conservative floor that
+// matches the binary wire format (48 B) plus object header + property slots.
+const DATASET_CACHE_BYTES_PER_CANDLE = 80;
+let datasetCacheTotalBytes = 0;
+// Monotonic access counter — increments on every cache/touch. Strictly total
+// ordering evictions avoids the same-millisecond ties `Date.now()` produces.
+let datasetAccessSeq = 0;
+// Test-only override so eviction semantics can be exercised without uploading
+// hundreds of MB of candles. `null` resolves to the production 384 MB budget.
+let datasetCacheMaxBytesForTests: number | null = null;
+
+/** Test seam: shrink the byte budget so LRU eviction is exercisable in tests. */
+export function __setDatasetCacheMaxBytesForTests(bytes: number | null): void {
+    datasetCacheMaxBytesForTests = bytes;
+}
+
+function getDatasetCacheMaxBytes(): number {
+    return datasetCacheMaxBytesForTests ?? DEFAULT_DATASET_CACHE_MAX_BYTES;
+}
+
+function nextAccessSeq(): number {
+    datasetAccessSeq += 1;
+    return datasetAccessSeq;
+}
 
 function createRandomSeed(): number {
     return Math.floor(Math.random() * 2147483647);
 }
 
-function cacheDataset(candles: OHLCVData[], keyHint?: string): CachedDataset | DatasetCacheError {
-    // Evict stale entries periodically
-    if (datasetCache.size > DATASET_CACHE_MAX_ENTRIES) {
-        evictStaleDatasets();
-    }
+function estimateCandlesBytes(candles: OHLCVData[]): number {
+    return Math.max(1, candles.length) * DATASET_CACHE_BYTES_PER_CANDLE;
+}
 
+function cacheDataset(candles: OHLCVData[], keyHint?: string): CachedDataset | DatasetCacheError {
     const hash = computeCandleHash(candles);
     const ref = keyHint ?? `cache_${hash.slice(0, 12)}`;
+    const bytes = estimateCandlesBytes(candles);
+    const maxBytes = getDatasetCacheMaxBytes();
 
-    // If already cached with same ref, return existing
+    // Reject any single dataset that would exceed the entire cache budget.
+    if (bytes > maxBytes) {
+        return {
+            error: `Dataset too large for cache (estimated ${bytes} bytes; budget ${maxBytes}).`,
+            status: 413,
+            code: "DATASET_TOO_LARGE",
+        };
+    }
+
+    // If already cached with same ref, refresh and return.
     const existing = datasetCache.get(ref);
     if (existing) {
-        if (existing.hash === hash) return existing;
+        if (existing.hash === hash) {
+            touchDataset(ref);
+            return existing;
+        }
         return {
             error: `Cached dataset ref conflict: ${ref} already exists with different candle content.`,
             status: 409,
@@ -88,8 +144,19 @@ function cacheDataset(candles: OHLCVData[], keyHint?: string): CachedDataset | D
         };
     }
 
+    // Evict expired and LRU entries until the new dataset fits both budgets.
+    evictExpiredDatasets();
+    while (
+        (datasetCacheTotalBytes + bytes > maxBytes
+            || datasetCache.size + 1 > DATASET_CACHE_MAX_ENTRIES)
+        && datasetCache.size > 0
+    ) {
+        evictLruDataset();
+    }
+
     const firstTime = toUnixSeconds(candles[0]?.time) ?? 0;
     const lastTime = toUnixSeconds(candles[candles.length - 1]?.time) ?? 0;
+    const now = Date.now();
 
     const entry: CachedDataset = {
         ref,
@@ -97,9 +164,12 @@ function cacheDataset(candles: OHLCVData[], keyHint?: string): CachedDataset | D
         hash,
         firstTime,
         lastTime,
-        createdAt: Date.now(),
+        createdAt: now,
+        lastTouchedSeq: nextAccessSeq(),
+        bytes,
     };
     datasetCache.set(ref, entry);
+    datasetCacheTotalBytes += bytes;
     return entry;
 }
 
@@ -107,26 +177,54 @@ function getDataset(ref: string): CachedDataset | null {
     const entry = datasetCache.get(ref);
     if (!entry) return null;
     if (Date.now() - entry.createdAt > DATASET_CACHE_TTL_MS) {
-        datasetCache.delete(ref);
+        removeDatasetEntry(ref);
         return null;
     }
+    // Refresh LRU recency on access using the monotonic counter.
+    entry.lastTouchedSeq = nextAccessSeq();
     return entry;
 }
 
-function evictStaleDatasets(): void {
+function touchDataset(ref: string): void {
+    const entry = datasetCache.get(ref);
+    if (entry) entry.lastTouchedSeq = nextAccessSeq();
+}
+
+function removeDatasetEntry(ref: string): void {
+    const entry = datasetCache.get(ref);
+    if (!entry) return;
+    datasetCache.delete(ref);
+    datasetCacheTotalBytes -= entry.bytes;
+    if (datasetCacheTotalBytes < 0) datasetCacheTotalBytes = 0;
+}
+
+function evictExpiredDatasets(): void {
     const now = Date.now();
     for (const [ref, entry] of datasetCache) {
         if (now - entry.createdAt > DATASET_CACHE_TTL_MS) {
-            datasetCache.delete(ref);
+            removeDatasetEntry(ref);
         }
     }
-    if (datasetCache.size > DATASET_CACHE_MAX_ENTRIES) {
-        // Still too many after TTL cleanup - evict oldest
-        const entries = Array.from(datasetCache.entries())
-            .sort((a, b) => a[1].createdAt - b[1].createdAt);
-        const toDelete = entries.slice(0, entries.length - DATASET_CACHE_MAX_ENTRIES / 2);
-        for (const [ref] of toDelete) datasetCache.delete(ref);
+}
+
+/**
+ * Evict the single least-recently-used entry. Recency is the monotonic
+ * `lastTouchedSeq` counter — strictly totally ordered across operations, so
+ * there are no same-millisecond ties (the bug a `Date.now()`-based LRU had).
+ * Insertion order would also work if entries were re-inserted on touch, but
+ * scanning by `lastTouchedSeq` keeps the Map stable. Scan cost is bounded by
+ * the entry ceiling.
+ */
+function evictLruDataset(): void {
+    let lruRef: string | null = null;
+    let lruSeq = Infinity;
+    for (const [ref, entry] of datasetCache) {
+        if (entry.lastTouchedSeq < lruSeq) {
+            lruSeq = entry.lastTouchedSeq;
+            lruRef = ref;
+        }
     }
+    if (lruRef !== null) removeDatasetEntry(lruRef);
 }
 
 function computeCandleHash(candles: OHLCVData[]): string {
@@ -160,6 +258,15 @@ function toUnixSeconds(t: OHLCVData["time"]): number | null {
 // Backtest dataset uploads can carry large inline candle arrays, so this cap is
 // intentionally much larger than the default 80 MiB used by other plugins.
 const BACKTEST_MAX_BODY_BYTES = 100 * 1024 * 1024; // 100 MB
+
+// Audit Finding (workload budgets): bound the server's worst-case CPU, response
+// size, and memory for external HTTP requests. The documented normal workload
+// is 1,000 random-search runs; these ceilings preserve that while making
+// pathological inputs reject explicitly (400) instead of silently clamping.
+const BACKTEST_RANDOM_MAX_RUNS = 5_000;
+const BACKTEST_BATCH_MAX_ITEMS = 10_000;
+const BACKTEST_RESULT_TOP_N_MAX = 1_000;
+const BACKTEST_RANDOM_MAX_RANGE_PERCENT = 1_000;
 
 function errorResponse(res: any, status: number, message: string, code?: string): void {
     sendJson(res, status, { ok: false, error: message, code } satisfies BacktestErrorResponse);
@@ -310,18 +417,6 @@ function steppedRandom(min: number, max: number, step: number, rng: () => number
     return min + Math.floor(rng() * (steps + 1)) * step;
 }
 
-function getRequestBaseUrl(req?: IncomingMessage): string | undefined {
-    const host = req?.headers?.host;
-    if (typeof host !== "string" || host.trim().length === 0) return undefined;
-    const forwardedProto = req?.headers?.["x-forwarded-proto"];
-    const proto = Array.isArray(forwardedProto)
-        ? forwardedProto[0]
-        : typeof forwardedProto === "string" && forwardedProto.trim().length > 0
-            ? forwardedProto
-            : "http";
-    return `${proto}://${host}`;
-}
-
 // ============================================================================
 // Endpoint handlers
 // ============================================================================
@@ -418,7 +513,6 @@ async function handleSingleBacktest(
             blockRange,
             annotatePolymarket,
             crossSymbolInput ?? undefined,
-            getRequestBaseUrl(httpRequest)
         ));
 
         // If the strategy is entry-only, we may need to use the parity-specific path
@@ -450,8 +544,7 @@ async function handleSingleBacktest(
 
 async function handleBatchBacktest(
     strategyKey: string,
-    body: Record<string, unknown>,
-    httpRequest?: IncomingMessage
+    body: Record<string, unknown>
 ): Promise<BacktestBatchResponse | BacktestErrorResponse> {
     const req = body as unknown as BacktestBatchRequest;
 
@@ -467,6 +560,9 @@ async function handleBatchBacktest(
 
     if (!Array.isArray(req.items) || req.items.length === 0) {
         return { ok: false, error: "items array is required and must not be empty" };
+    }
+    if (req.items.length > BACKTEST_BATCH_MAX_ITEMS) {
+        return { ok: false, error: `items length must be at most ${BACKTEST_BATCH_MAX_ITEMS}` };
     }
     if (!req.symbol || !req.interval) {
         return { ok: false, error: "symbol and interval are required" };
@@ -507,7 +603,6 @@ async function handleBatchBacktest(
                 itemCtx.blockRange ?? blockRange,
                 itemCtx.annotatePolymarket ?? annotatePolymarket,
                 crossSymbolInput ?? undefined,
-                getRequestBaseUrl(httpRequest)
             ));
 
             results.push({
@@ -549,16 +644,54 @@ async function handleBatchBacktest(
 
 async function handleRandomSearch(
     strategyKey: string,
-    body: Record<string, unknown>,
-    httpRequest?: IncomingMessage
+    body: Record<string, unknown>
 ): Promise<BacktestRandomSearchResponse | BacktestErrorResponse> {
     const req = body as unknown as BacktestRandomSearchRequest;
 
     if (!req.baseParams || typeof req.baseParams !== "object") {
         return { ok: false, error: "baseParams is required" };
     }
-    if (!req.randomization?.count || req.randomization.count < 1) {
-        return { ok: false, error: "randomization.count must be >= 1" };
+    // Audit Finding (workload budgets): one predicate per field — reject
+    // pathological external inputs (non-numbers, null, strings, fractional,
+    // or out-of-range) instead of silently clamping. A string "10", null,
+    // or undefined must not slip through and produce NaN generated params.
+    const count = req.randomization?.count;
+    if (
+        typeof count !== "number"
+        || !Number.isInteger(count)
+        || count < 1
+        || count > BACKTEST_RANDOM_MAX_RUNS
+    ) {
+        return { ok: false, error: `randomization.count must be a finite integer between 1 and ${BACKTEST_RANDOM_MAX_RUNS}` };
+    }
+    const rangePercent = req.randomization?.rangePercent;
+    if (
+        typeof rangePercent !== "number"
+        || !Number.isFinite(rangePercent)
+        || rangePercent < 0
+        || rangePercent > BACKTEST_RANDOM_MAX_RANGE_PERCENT
+    ) {
+        return { ok: false, error: `randomization.rangePercent must be a finite number between 0 and ${BACKTEST_RANDOM_MAX_RANGE_PERCENT}` };
+    }
+    if (req.randomization.seed !== undefined && !Number.isFinite(req.randomization.seed)) {
+        return { ok: false, error: "randomization.seed must be a finite number when provided" };
+    }
+    const rankingIn = req.ranking ?? { topN: 100, sortPriority: ["netProfitPercent"] };
+    // topN ends up as `slice(0, topN)`; require a finite positive integer so
+    // fractional values cannot produce surprising off-by-one slice semantics.
+    if (
+        typeof rankingIn.topN !== "number"
+        || !Number.isInteger(rankingIn.topN)
+        || rankingIn.topN < 1
+        || rankingIn.topN > BACKTEST_RESULT_TOP_N_MAX
+    ) {
+        return { ok: false, error: `ranking.topN must be a finite integer between 1 and ${BACKTEST_RESULT_TOP_N_MAX}` };
+    }
+    if (rankingIn.minTrades !== undefined && (!Number.isFinite(rankingIn.minTrades) || rankingIn.minTrades < 0)) {
+        return { ok: false, error: "ranking.minTrades must be a finite non-negative number when provided" };
+    }
+    if (rankingIn.maxTrades !== undefined && (!Number.isFinite(rankingIn.maxTrades) || rankingIn.maxTrades < 0)) {
+        return { ok: false, error: "ranking.maxTrades must be a finite non-negative number when provided" };
     }
 
     const candlesOrError = extractDatasetCandles(req);
@@ -595,15 +728,23 @@ async function handleRandomSearch(
         req.randomization.paramSpecs
     );
 
-    const ranking = req.ranking ?? { topN: 100, sortPriority: ["netProfitPercent"] };
+    const ranking = rankingIn;
     const compact = req.compact ?? false;
     const startTs = Date.now();
 
-    // Execute all runs
+    // Execute all runs.
+    //
+    // Audit Finding (compact retention): when `compact: true`, retain only the
+    // params and scalar metrics — never the full BacktestResult (which carries
+    // trades and equity). The previous path retained every full result and
+    // discarded them only at response time, so a 1,000-run search held 1,000
+    // full result objects in memory despite needing only scalars for ranking.
+    // The non-compact path is unchanged.
     const allResults: Array<{
+        index: number;
         params: StrategyParams;
         metrics: CompactBacktestMetrics;
-        result: BacktestResult;
+        result?: BacktestResult;
     }> = [];
     const failures: Array<{ index: number; error: string }> = [];
 
@@ -621,13 +762,13 @@ async function handleRandomSearch(
                 blockRange,
                 annotatePolymarket,
                 crossSymbolInput ?? undefined,
-                getRequestBaseUrl(httpRequest)
             ));
 
             allResults.push({
+                index,
                 params,
                 metrics: toCompactMetrics(executorResult.result),
-                result: executorResult.result,
+                ...(compact ? {} : { result: executorResult.result }),
             });
         } catch (error) {
             failures.push({
@@ -649,13 +790,16 @@ async function handleRandomSearch(
         ? ranking.sortPriority
         : ["netProfitPercent"] as typeof ranking.sortPriority;
 
+    // Stable tiebreak by the original generated index keeps ranking
+    // deterministic across engines/runtimes that do not guarantee a stable
+    // Array.prototype.sort for equal keys.
     filtered.sort((a, b) => {
         for (const key of priority) {
             const va = (a.metrics as any)[key] ?? 0;
             const vb = (b.metrics as any)[key] ?? 0;
             if (vb !== va) return vb - va; // descending
         }
-        return 0;
+        return a.index - b.index;
     });
 
     // Take top N
@@ -679,7 +823,7 @@ async function handleRandomSearch(
             rank: i + 1,
             params: r.params,
             metrics: r.metrics,
-            ...(compact ? {} : { result: r.result }),
+            ...(compact || !r.result ? {} : { result: r.result }),
         })),
         totalTimingMs: Date.now() - startTs,
         seed: rng,
@@ -782,6 +926,11 @@ export function backtestEndpointPlugin(): Plugin {
                 if (method === "POST" && pathParts.length === 1) {
                     const strategyKey = pathParts[0];
                     const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
+                    // Audit Finding (Host SSRF): remember the loopback origin from
+                    // the bound server socket (NOT the spoofable Host header) so any
+                    // internal second-market /api/* fetches done during execution
+                    // target this Vite server and never a caller-controlled origin.
+                    rememberLoopbackOriginFromRequest(req);
                     const result = await handleSingleBacktest(strategyKey, body, req as IncomingMessage);
                     const status = result.ok ? 200 : (result as BacktestErrorResponse).code === "EXECUTION_ERROR" ? 500 : 400;
                     sendJson(res, status, result);
@@ -792,7 +941,8 @@ export function backtestEndpointPlugin(): Plugin {
                 if (method === "POST" && pathParts.length === 2 && pathParts[1] === "batch") {
                     const strategyKey = pathParts[0];
                     const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
-                    const result = await handleBatchBacktest(strategyKey, body, req as IncomingMessage);
+                    rememberLoopbackOriginFromRequest(req);
+                    const result = await handleBatchBacktest(strategyKey, body);
                     const status = result.ok ? 200 : 400;
                     sendJson(res, status, result);
                     return;
@@ -802,7 +952,8 @@ export function backtestEndpointPlugin(): Plugin {
                 if (method === "POST" && pathParts.length === 3 && pathParts[1] === "search" && pathParts[2] === "random") {
                     const strategyKey = pathParts[0];
                     const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
-                    const result = await handleRandomSearch(strategyKey, body, req as IncomingMessage);
+                    rememberLoopbackOriginFromRequest(req);
+                    const result = await handleRandomSearch(strategyKey, body);
                     const status = result.ok ? 200 : 400;
                     sendJson(res, status, result);
                     return;

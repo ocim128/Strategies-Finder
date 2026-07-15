@@ -97,7 +97,6 @@ export interface BacktestExecutorRequest {
         skipResultPostProcessing?: boolean;
     };
     dataFetcher?: CrossSymbolDataFetcher;
-    secondMarketApiBaseUrl?: string;
     crossSymbolInput?: {
         secondarySymbol: string;
         secondaryData: OHLCVData[];
@@ -254,7 +253,6 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         data: backtestData,
         settings: resolvedSettings,
         baseContext: alignedCrossSymbolContext,
-        apiBaseUrl: req.secondMarketApiBaseUrl,
         contextMode: req.polymarket1sContextMode ?? "auto",
     });
 
@@ -710,7 +708,6 @@ async function resolvePolymarket1sExecutionContext(args: {
     data: OHLCVData[];
     settings: BacktestSettings;
     baseContext?: StrategyExecutionContext;
-    apiBaseUrl?: string;
     contextMode: "auto" | "provided";
 }): Promise<StrategyExecutionContext | undefined> {
     const config = args.strategy.polymarket1sConfig;
@@ -747,7 +744,6 @@ async function resolvePolymarket1sExecutionContext(args: {
             outcomeInterval: args.settings.polymarketOutcomeInterval,
             startTs: range.startTs - 300,
             endTs: range.endTs + 300,
-            apiBaseUrl: args.apiBaseUrl,
         });
     } catch (error) {
         if (callerPolymarketContext && callerPolymarketContext.quotes.length > 0) {

@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type StatementSync } from "node:sqlite";
 import type { Plugin } from "vite";
-import { encodeBinaryOhlcvRows } from "./ohlcv-binary";
+import { encodeBinaryOhlcvRows, type BinaryOhlcvRow } from "./ohlcv-binary";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { sendBinary, sendCaughtErrorJson, sendJson } from "./vite-http-utils";
 
@@ -13,7 +13,10 @@ const SECOND_MARKET_CLOB_QUOTE_LIMIT = 250000;
 type SecondMarketBinanceDbRow = {
     symbol: string;
     market_type: string;
-    ts: number;
+    // The SQL selects `ts AS time` (see /candles handler) so rows satisfy the
+    // binary encoder's `BinaryOhlcvRow` shape without a per-row remap. The
+    // JSON branch projects `time` back to `ts` to preserve the wire contract.
+    time: number;
     open: number;
     high: number;
     low: number;
@@ -78,8 +81,15 @@ function toUnixSeconds(value: unknown): number | null {
 
 export function secondMarketApiPlugin(): Plugin {
     let readDb: DatabaseSync | null = null;
+    // Audit Finding (avoidable work in candle reads): `node:sqlite` parses and
+    // compiles SQL on every `prepare()` call. The /candles, /clob-quotes, and
+    // /gamma-snapshots routes used to recompile their statements per request.
+    // Cache them per opened connection and clear the cache when the connection
+    // is reset (matching the established local-sqlite-vite-plugin pattern).
+    const preparedStatements = new Map<string, StatementSync>();
 
     const resetReadDb = (): void => {
+        preparedStatements.clear();
         readDb?.close();
         readDb = null;
     };
@@ -99,6 +109,20 @@ export function secondMarketApiPlugin(): Plugin {
             return null;
         }
     };
+
+    /**
+     * Return (and cache) a prepared statement tied to the current read-only
+     * connection. The cache is cleared in `resetReadDb` so we never hand out a
+     * statement whose connection has been closed.
+     */
+    function getPreparedStatement(db: DatabaseSync, sql: string): StatementSync {
+        let stmt = preparedStatements.get(sql);
+        if (!stmt) {
+            stmt = db.prepare(sql);
+            preparedStatements.set(sql, stmt);
+        }
+        return stmt;
+    }
 
     const register = (middlewares: any) => {
         middlewares.use("/api/second-market", async (req: any, res: any) => {
@@ -129,10 +153,10 @@ export function secondMarketApiPlugin(): Plugin {
                     };
                     if (requestUrl.searchParams.get("includeCount") === "1") {
                         payload.counts = {
-                            binance: Number((db.prepare("SELECT COUNT(*) AS count FROM binance_1s_candles").get() as { count?: number }).count) || 0,
-                            clob: Number((db.prepare("SELECT COUNT(*) AS count FROM polymarket_clob_1s_quotes").get() as { count?: number }).count) || 0,
-                            reference: Number((db.prepare("SELECT COUNT(*) AS count FROM polymarket_reference_1s_prices").get() as { count?: number }).count) || 0,
-                            gamma: Number((db.prepare("SELECT COUNT(*) AS count FROM polymarket_gamma_snapshots").get() as { count?: number }).count) || 0,
+                            binance: Number((getPreparedStatement(db, "SELECT COUNT(*) AS count FROM binance_1s_candles").get() as { count?: number }).count) || 0,
+                            clob: Number((getPreparedStatement(db, "SELECT COUNT(*) AS count FROM polymarket_clob_1s_quotes").get() as { count?: number }).count) || 0,
+                            reference: Number((getPreparedStatement(db, "SELECT COUNT(*) AS count FROM polymarket_reference_1s_prices").get() as { count?: number }).count) || 0,
+                            gamma: Number((getPreparedStatement(db, "SELECT COUNT(*) AS count FROM polymarket_gamma_snapshots").get() as { count?: number }).count) || 0,
                         };
                     }
                     sendJson(res, 200, payload);
@@ -158,16 +182,24 @@ export function secondMarketApiPlugin(): Plugin {
                         return;
                     }
 
+                    // Audit Finding (avoidable work in candle reads): select
+                    // `ts AS time` so the binary wire path can hand the rows
+                    // straight to `encodeBinaryOhlcvRows` without a per-row
+                    // { time, ... } remap (eliminates up to 200,000 short-lived
+                    // objects on a max-size request). The JSON wire format
+                    // still exposes `ts` (the second-market client maps
+                    // `row.ts` → `time`) — that projection happens only in the
+                    // JSON branch below.
                     const candles = explicitStartTs !== null
-                        ? db.prepare(`
-                                SELECT symbol, market_type, ts, open, high, low, close, volume, trade_count, updated_at
+                        ? getPreparedStatement(db, `
+                                SELECT symbol, market_type, ts AS time, open, high, low, close, volume, trade_count, updated_at
                                 FROM binance_1s_candles
                                 WHERE symbol = ? AND market_type = ? AND ts >= ? AND ts <= ?
                                 ORDER BY ts ASC
                                 LIMIT ?
                             `).all(symbol, marketType, explicitStartTs, endTs, limit) as SecondMarketBinanceDbRow[]
-                        : (db.prepare(`
-                                SELECT symbol, market_type, ts, open, high, low, close, volume, trade_count, updated_at
+                        : (getPreparedStatement(db, `
+                                SELECT symbol, market_type, ts AS time, open, high, low, close, volume, trade_count, updated_at
                                 FROM binance_1s_candles
                                 WHERE symbol = ? AND market_type = ? AND ts <= ?
                                 ORDER BY ts DESC
@@ -175,24 +207,17 @@ export function secondMarketApiPlugin(): Plugin {
                             `).all(symbol, marketType, endTs, limit) as SecondMarketBinanceDbRow[]).reverse();
                     const accept = String(req.headers.accept || "");
                     if (accept.includes("application/octet-stream")) {
-                        sendBinary(res, 200, Buffer.from(encodeBinaryOhlcvRows(candles.map((row) => ({
-                            time: row.ts,
-                            open: row.open,
-                            high: row.high,
-                            low: row.low,
-                            close: row.close,
-                            volume: row.volume,
-                        })))));
+                        sendBinary(res, 200, Buffer.from(encodeBinaryOhlcvRows(candles as readonly BinaryOhlcvRow[])));
                         return;
                     }
-                    const latestDataTs = maxFinite(candles.map((row) => row.ts));
+                    const latestDataTs = maxFinite(candles.map((row) => row.time));
                     sendJson(res, 200, {
                         ok: true,
                         dbPath: SECOND_MARKET_DB_PATH,
                         symbol,
                         marketType,
                         endTs,
-                        candles,
+                        candles: candles.map((row) => ({ ...row, ts: row.time })),
                         stats: {
                             latestDataTs,
                             latestLagSec: latestDataTs === null ? null : Math.max(0, Math.floor(Date.now() / 1000) - latestDataTs),
@@ -226,7 +251,9 @@ export function secondMarketApiPlugin(): Plugin {
                     if (seriesId) bindings.push(seriesId);
                     const queryLimit = SECOND_MARKET_CLOB_QUOTE_LIMIT + 1;
                     bindings.push(queryLimit);
-                    const queryRows = db.prepare(`
+                    // The seriesFilter branch produces two distinct SQL strings
+                    // (with/without series_id); each is cached on first use.
+                    const queryRows = getPreparedStatement(db, `
                             SELECT series_id, symbol, outcome_interval, event_start_ts, event_end_ts,
                                    condition_id, market_slug, yes_token_id, no_token_id,
                                    sample_ts, yes_bid, yes_ask, yes_mid, yes_last,
@@ -289,7 +316,7 @@ export function secondMarketApiPlugin(): Plugin {
                     const bindings: Array<string | number> = [symbol, startTs, endTs];
                     const seriesFilter = seriesId ? "AND series_id = ?" : "";
                     if (seriesId) bindings.push(seriesId);
-                    const gammaSnapshots = db.prepare(`
+                    const gammaSnapshots = getPreparedStatement(db, `
                             SELECT series_id, symbol, outcome_interval, event_start_ts, event_end_ts,
                                    snapshot_ts, gamma_yes_price, gamma_no_price
                             FROM polymarket_gamma_snapshots
@@ -325,9 +352,19 @@ export function secondMarketApiPlugin(): Plugin {
         name: "second-market-api",
         configureServer(server) {
             register(server.middlewares);
+            // Audit Finding (avoidable work in candle reads): close the
+            // read-only SQLite handle and release cached prepared statements
+            // when the dev server shuts down so the process does not hold an
+            // open file handle until exit.
+            server.httpServer?.on("close", () => {
+                resetReadDb();
+            });
         },
         configurePreviewServer(server) {
             register(server.middlewares);
+            server.httpServer?.on("close", () => {
+                resetReadDb();
+            });
         },
     };
 }

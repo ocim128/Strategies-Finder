@@ -81,19 +81,7 @@ If you want a UI run to match an endpoint run, set the UI capital inputs to the 
 
 The UI now has a `Preview Endpoint` button and a `Copy Endpoint` button in the strategy panel header. `Preview Endpoint` reruns the latest regular UI backtest through the exact HTTP endpoint contract locally, so the visible UI result can match the endpoint before you compare anything. `Copy Endpoint` uploads the exact candle set used by that backtest to `/api/backtest/datasets` and copies only the JSON POST body for `/api/backtest/<strategyKey>`, already filled with a real `datasetRef`, instead of embedding the full candle array. The copied payload still includes the latest UI backtest snapshot for strategy params, backtest settings, block range, and deterministic `nowSec`. For cross-symbol strategies, `Preview Endpoint` and `Copy Endpoint` also include the resolved secondary symbol dataset under `crossSymbol`, so the endpoint does not silently refetch different data. For supported Polymarket runs, `Preview Endpoint` and `Copy Endpoint` automatically set Polymarket annotation on in the endpoint contract so the single-run endpoint can return `polymarketPerformance` without requiring a separate manual toggle in the copied JSON. The UI warns you if the previous UI result differed from the endpoint contract. If you switch symbol or timeframe after the backtest ran, switch back or rerun before previewing or copying so the endpoint request still matches the visible UI result. If the local endpoint is down, the button still copies the JSON body with a placeholder `dataset.ref` and shows the exact `/api/backtest/health` URL to verify before you upload candles manually.
 
-## Dataset Cache
-
-`POST /api/backtest/datasets` stores candles in the local Vite process and returns a reusable `datasetRef`.
-
-Current behavior from the implementation:
-
-- cache is in memory only
-- refs disappear on server restart
-- entries expire after about 30 minutes
-- cache is capped to 200 entries
-- request body limit is 100 MB
-
-Use cached datasets for batch and random search. Sending huge candle arrays on every request wastes most of the speed benefit.
+The dataset cache is byte-budgeted (default 384 MB with a 200-entry secondary ceiling, LRU eviction, and a 30-minute TTL). See [Dataset Cache](#dataset-cache) for the full contract.
 
 ## Minimal Flow
 
@@ -404,6 +392,36 @@ Notes:
 4. Switch to `/batch` or `/search/random` after the request contract is stable.
 5. Keep the same `nowSec` for all runs in one search job so closed-candle trimming stays deterministic.
 6. Re-upload datasets when the Vite server restarts or the ref expires.
+
+## Workload Budgets
+
+To keep the server's worst-case CPU, response size, and memory predictable, the endpoint rejects oversized external inputs with `400` instead of silently clamping them.
+
+| Field | Cap | Notes |
+| --- | --- | --- |
+| `randomization.count` | `5_000` | Documented normal workload is 1,000 runs. |
+| `randomization.rangePercent` | `1_000` | Must be a finite non-negative number. |
+| `randomization.seed` | — | Must be finite when provided. |
+| `ranking.topN` | `1_000` | Must be a finite positive number. |
+| `ranking.minTrades` / `ranking.maxTrades` | — | Finite non-negative when provided. |
+| `items` (batch) | `10_000` | Must be non-empty. |
+
+If a request exceeds any cap the response is `{ ok: false, error: "...", code: undefined }` with HTTP `400`. The documented 1,000-run random-search workflow and typical batch sizes remain well below these ceilings.
+
+## Dataset Cache
+
+`POST /api/backtest/datasets` stores candles in the local Vite process and returns a reusable `datasetRef`.
+
+Current behavior from the implementation:
+
+- cache is in memory only
+- refs disappear on server restart
+- entries expire after about 30 minutes
+- cache is capped by a byte budget (default 384 MB) and an entry ceiling of 200; least-recently-used entries are evicted first
+- a single dataset larger than the whole byte budget is rejected with `413 DATASET_TOO_LARGE`
+- request body limit is 100 MB
+
+Use cached datasets for batch and random search. Sending huge candle arrays on every request wastes most of the speed benefit.
 
 ## Current Limitations
 
