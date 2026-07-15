@@ -346,7 +346,6 @@ class StrategyPanelController {
         if (!dom) return;
 
         const isMoreTab = !this.tabButtons.has(tabId);
-        const matchedItem = this.moreItems.get(tabId);
 
         dom.panelMoreTrigger.classList.toggle("is-more-active", isMoreTab);
 
@@ -355,12 +354,9 @@ class StrategyPanelController {
             item.setAttribute("aria-current", id === tabId ? "page" : "false");
         });
 
-        if (isMoreTab && matchedItem) {
-            const label = matchedItem.textContent?.trim() ?? "More";
-            dom.panelMoreTrigger.querySelector<HTMLSpanElement>("#panelMoreLabel")?.replaceChildren(label);
-        } else {
-            dom.panelMoreTrigger.querySelector<HTMLSpanElement>("#panelMoreLabel")?.replaceChildren("More");
-        }
+        // Keep the trigger label fixed as "More". The active tool name belongs
+        // in the content heading, not in the navigation strip — renaming the
+        // trigger causes the tab geometry to shift after each navigation.
     }
 
     private captureTabs(): void {

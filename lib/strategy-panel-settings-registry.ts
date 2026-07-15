@@ -10,6 +10,11 @@ export interface StrategyPanelSettingsSectionDefinition {
 
 export const STRATEGY_PANEL_SETTINGS_SECTIONS: readonly StrategyPanelSettingsSectionDefinition[] = [
     {
+        id: "direction",
+        preset: "simple",
+        accordionBodyId: "directionBody",
+    },
+    {
         id: "risk",
         preset: "simple",
         accordionBodyId: "riskSectionBody",
@@ -17,24 +22,9 @@ export const STRATEGY_PANEL_SETTINGS_SECTIONS: readonly StrategyPanelSettingsSec
         featureContentId: "riskSettings",
     },
     {
-        id: "realism",
-        preset: "standard",
-        accordionBodyId: "realismBody",
-    },
-    {
-        id: "polymarket",
-        preset: "standard",
-        accordionBodyId: "polymarketSettingsBody",
-    },
-    {
         id: "sizing",
         preset: "simple",
         accordionBodyId: "tradeSizingBody",
-    },
-    {
-        id: "direction",
-        preset: "simple",
-        accordionBodyId: "directionBody",
     },
     {
         id: "confirmation",
@@ -44,9 +34,19 @@ export const STRATEGY_PANEL_SETTINGS_SECTIONS: readonly StrategyPanelSettingsSec
         featureContentId: "confirmationStrategiesSettings",
     },
     {
+        id: "realism",
+        preset: "standard",
+        accordionBodyId: "realismBody",
+    },
+    {
         id: "engine",
         preset: "standard",
         accordionBodyId: "engineBody",
+    },
+    {
+        id: "polymarket",
+        preset: "standard",
+        accordionBodyId: "polymarketSettingsBody",
     },
 ] as const;
 

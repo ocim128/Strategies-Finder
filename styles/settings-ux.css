@@ -1,8 +1,9 @@
 /* ============================================================================
    Settings UX Enhancements
+   - Strategy workspace (flattened, no outer accordion)
    - Collapsible accordion sections
    - Info-icon tooltips (replacing inline .param-hint)
-   - Preset mode selector (Simple / Standard / Advanced)
+   - Preset mode selector (Simple / Standard)
    ============================================================================ */
 
 /* --------------------------------------------------------------------------
@@ -26,6 +27,12 @@
     -webkit-backdrop-filter: none;
 }
 
+/* The outer accordion was flattened. The toggle element is kept hidden in the
+   DOM for contract stability; the body is always visible. */
+.strategy-workspace-header [hidden] {
+    display: none !important;
+}
+
 .strategy-workspace-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -33,25 +40,8 @@
     align-items: start;
 }
 
-.strategy-workspace-toggle.section-header.collapsible {
-    margin: 0 0 var(--space-2);
-}
-
-.strategy-workspace-body.accordion-body {
-    overflow: hidden;
-    transition: max-height 0.2s var(--ease-out-expo), opacity 0.15s ease;
-    max-height: 800px;
-    opacity: 1;
-    will-change: max-height;
-}
-
-.strategy-workspace-body.accordion-body.collapsed {
-    max-height: 0;
-    opacity: 0;
-    pointer-events: none;
-    will-change: auto;
-}
-
+/* Flat inner section separated by a border — no card shadow. The single
+   outer panel shadow is the only elevation cue. */
 .strategy-workspace-card {
     display: flex;
     flex-direction: column;
@@ -61,30 +51,14 @@
     border-radius: var(--radius-m);
     border: 1px solid var(--card-border);
     background: var(--card-bg);
-    box-shadow: var(--shadow-xs);
 }
 
-.strategy-workspace-card-top {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-2);
-}
-
-.strategy-workspace-kicker,
 .settings-preset-label {
     font-size: var(--font-size-xs);
     letter-spacing: var(--tracking-wide);
     text-transform: uppercase;
     color: var(--text-tertiary);
     font-weight: var(--font-weight-semibold);
-}
-
-.strategy-workspace-pills {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: var(--space-1);
 }
 
 .strategy-workspace-pill {
@@ -118,6 +92,13 @@
     gap: var(--space-1);
 }
 
+.strategy-workspace-title-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-1-5);
+}
+
 .strategy-workspace-title {
     font-size: var(--font-size-lg);
     font-weight: var(--font-weight-semibold);
@@ -131,6 +112,14 @@
 
 .strategy-workspace-title[data-strategy-kind="cross-symbol"] {
     color: var(--green-light);
+}
+
+.strategy-workspace-pill--meta {
+    background: var(--card-bg-muted);
+    border-color: var(--card-border);
+    color: var(--text-tertiary);
+    text-transform: none;
+    letter-spacing: normal;
 }
 
 .strategy-workspace-description {
@@ -162,6 +151,9 @@
     min-height: 40px;
 }
 
+/* Library Tools is intentionally a low-emphasis disclosure beneath the
+   parameters so destructive admin actions don't compete with the strategy
+   selection flow. */
 .strategy-library-menu {
     border: 1px solid var(--card-border);
     border-radius: var(--radius-m);
@@ -307,53 +299,38 @@
     box-shadow: var(--shadow-xs), inset 0 0 0 1px hsl(var(--hsl-accent) / 0.08);
 }
 
-.settings-preset-btn .preset-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-}
-
-.settings-preset-btn[data-preset="simple"] .preset-dot {
-    background: var(--green);
-}
-
-.settings-preset-btn[data-preset="standard"] .preset-dot {
-    background: var(--warning);
-}
-
-.settings-preset-btn[data-preset="advanced"] .preset-dot {
-    background: var(--red);
-}
-
-.settings-preset-btn.active .preset-dot {
-    background: currentColor;
-}
-
 /* --------------------------------------------------------------------------
    3. Collapsible Accordion Sections
    -------------------------------------------------------------------------- */
 
-/* Make section-header clickable */
+/* Make section-header clickable — flat divider row, not a micro-card */
 .section-header.collapsible {
     cursor: pointer;
     user-select: none;
     -webkit-user-select: none;
-    border-radius: var(--radius-m);
-    min-height: 40px;
-    padding: var(--space-2) var(--space-2-5);
-    margin-left: calc(-1 * var(--space-2));
-    margin-right: calc(-1 * var(--space-2));
-    margin-bottom: var(--space-2);
-    margin-top: var(--space-2);
-    transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
-    border: 1px solid hsl(var(--hsl-border) / 0.16);
-    border-bottom-color: hsl(var(--hsl-border) / 0.36);
+    border-radius: 0;
+    min-height: 44px;
+    padding: var(--space-2) 0;
+    margin: 0;
+    border: none;
+    border-top: 1px solid hsl(var(--hsl-border) / 0.4);
+    transition: background 0.1s ease, color 0.1s ease;
+}
+
+/* The first collapsible header in a stack does not need a top divider —
+   the panel-content padding already separates it from the workspace above. */
+.settings-section:first-child .section-header.collapsible,
+.strategy-workspace-sections > .settings-section:first-child .section-header.collapsible {
+    border-top: none;
 }
 
 .section-header.collapsible:hover {
-    background: var(--card-bg-muted);
-    border-color: hsl(var(--hsl-accent) / 0.18);
+    background: hsl(var(--hsl-surface-4) / 0.18);
+}
+
+/* Stronger heading for the currently expanded section */
+.section-header.collapsible:not(.collapsed) .section-title {
+    color: var(--text-primary);
 }
 
 /* Chevron indicator */
@@ -394,96 +371,20 @@
 }
 
 /* --------------------------------------------------------------------------
-   4. Info-icon Tooltips (replacing inline .param-hint)
-   -------------------------------------------------------------------------- */
+   4. Inline parameter hints
+   --------------------------------------------------------------------------
 
-/* When tooltip mode is active, hide regular param hints */
-#settingsTab.tooltips-active .param-hint {
-    display: none;
-}
+   The earlier "i" trigger + floating tooltip system was removed. Hints are
+   short, essential copy and are now shown inline via .param-hint, always
+   visible. This keeps the text reachable on touch and avoids clipping inside
+   accordion bodies that use overflow: hidden. */
 
-/* Improved param-hint visibility when shown */
 .param-hint {
     margin-top: calc(var(--space-1) * 0.5);
     font-size: var(--font-size-xs);
     line-height: var(--line-height-normal);
     color: var(--text-tertiary);
     max-width: 320px;
-}
-
-/* Tooltip wrapper around param-label */
-.param-label-with-tip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.info-tip-trigger {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    border: 1px solid var(--border-color);
-    background: transparent;
-    color: var(--text-tertiary);
-    font-size: 11px;
-    font-weight: var(--font-weight-bold);
-    cursor: help;
-    flex-shrink: 0;
-    transition: border-color 0.1s ease, color 0.1s ease;
-    position: relative;
-    line-height: 1;
-}
-
-.info-tip-trigger:hover {
-    border-color: var(--accent-color);
-    color: var(--accent-color);
-}
-
-/* The floating tooltip */
-.info-tip-content {
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: 50%;
-    transform: translateX(-50%) translateY(4px);
-    background: var(--card-bg);
-    color: var(--text-primary);
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-normal);
-    line-height: var(--line-height-relaxed);
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-s);
-    border: 1px solid var(--card-border);
-    box-shadow: var(--shadow-floating);
-    white-space: normal;
-    width: max-content;
-    max-width: 220px;
-    z-index: 100;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.15s ease, transform 0.15s ease;
-    text-transform: none;
-    letter-spacing: normal;
-}
-
-/* Arrow */
-.info-tip-content::after {
-    content: '';
-    position: absolute;
-    top: 100%;
-    left: 50%;
-    transform: translateX(-50%);
-    border: 5px solid transparent;
-    border-top-color: var(--card-bg);
-}
-
-.info-tip-trigger:hover .info-tip-content,
-.info-tip-trigger:focus .info-tip-content {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
-    pointer-events: auto;
 }
 
 /* --------------------------------------------------------------------------
@@ -505,12 +406,6 @@
     opacity: 1;
 }
 
-@media (max-width: 1100px) {
-    .strategy-workspace-grid {
-        grid-template-columns: 1fr;
-    }
-}
-
 @media (max-width: 720px) {
     .strategy-workspace-header {
         position: static;
@@ -524,15 +419,6 @@
 
     .strategy-workspace-card {
         padding: var(--space-2-5);
-    }
-
-    .strategy-workspace-card-top {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-
-    .strategy-workspace-pills {
-        justify-content: flex-start;
     }
 }
 
@@ -574,19 +460,11 @@
     .strategy-workspace-card--config .settings-preset-label {
         margin-top: 0;
     }
-
-    .strategy-workspace-card--config .btn.btn-icon {
-        min-width: 40px;
-        padding-left: 0;
-        padding-right: 0;
-    }
 }
 
+/* Saved Configurations is a compact secondary surface beneath the strategy
+   card, never a sibling column that competes with the strategy selector. */
 @container (min-width: 560px) {
-    .strategy-workspace-grid {
-        grid-template-columns: minmax(0, 1.35fr) minmax(240px, 1fr);
-    }
-
     .strategy-workspace-card {
         gap: var(--space-3);
         padding: var(--space-3);

@@ -71,6 +71,19 @@
     background: var(--warning-hover);
 }
 
+/* Ghost: low-emphasis text action for destructive/secondary controls where a
+   filled danger button would over-signal risk at rest. */
+.btn-ghost {
+    background: transparent;
+    color: var(--text-secondary);
+    border-color: transparent;
+}
+
+.btn-ghost:hover {
+    background: hsl(var(--hsl-danger) / 0.1);
+    color: var(--red);
+}
+
 .btn-icon {
     width: 34px;
     height: 34px;

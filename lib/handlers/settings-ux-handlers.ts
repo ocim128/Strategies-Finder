@@ -2,8 +2,7 @@
  * Settings UX Enhancements
  *
  * 1. Collapsible accordion sections
- * 2. Preset mode selector (Simple / Standard / Advanced)
- * 3. Info-icon tooltips converting inline .param-hint text
+ * 2. Preset mode selector (Simple / Standard)
  */
 
 import { debugLogger } from '../debug-logger';
@@ -25,7 +24,10 @@ function isSettingsPresetMode(value: string | null | undefined): value is Settin
 function readSavedPreset(): SettingsPresetMode | null {
     try {
         const preset = localStorage.getItem(PRESET_STORAGE_KEY);
-        return isSettingsPresetMode(preset) ? preset : null;
+        if (!isSettingsPresetMode(preset)) return null;
+        // "advanced" was removed from the UI (no sections used it). Treat any
+        // saved "advanced" as "standard" so old payloads still apply cleanly.
+        return preset === 'advanced' ? 'standard' : preset;
     } catch {
         return null;
     }
@@ -97,7 +99,10 @@ function initAccordion(): void {
 function initWorkspaceAccordion(): void {
     const header = document.getElementById('strategyWorkspaceToggle');
     const body = document.getElementById('strategyWorkspaceBody');
-    if (!header || !body) return;
+    // The outer workspace accordion was flattened (F7): the toggle element is
+    // kept in the DOM for contract stability but is `hidden`, and the body is
+    // always visible. Skip wiring the accordion behavior in that case.
+    if (!header || !body || header.hasAttribute('hidden')) return;
 
     header.setAttribute('role', 'button');
     header.tabIndex = 0;
@@ -156,40 +161,18 @@ function applyPreset(preset: SettingsPresetMode, settingsTab: HTMLElement, prese
     });
 }
 
+/**
+ * Tooltip initialization.
+ *
+ * The earlier "i" trigger + floating tooltip system was removed: hints are
+ * short, essential copy and are now shown inline via `.param-hint` (always
+ * visible). The transformation was more complex than the visual result
+ * deserved, the 14px trigger was too small for touch, and floating tooltips
+ * were clipped by accordion bodies that use overflow: hidden. Kept as a
+ * no-op so existing call sites stay stable.
+ */
 function initTooltips(): void {
-    const settingsTab = document.getElementById('settingsTab');
-    if (!settingsTab) return;
-
-    settingsTab.classList.add('tooltips-active');
-
-    const hints = settingsTab.querySelectorAll<HTMLElement>('.param-hint');
-
-    hints.forEach((hint) => {
-        const text = hint.textContent?.trim();
-        if (!text) return;
-
-        const paramGroup = hint.closest('.param-group');
-        if (!paramGroup) return;
-
-        const label = paramGroup.querySelector<HTMLElement>('.param-label');
-        if (!label || label.querySelector('.info-tip-trigger')) return;
-
-        const tipTrigger = document.createElement('span');
-        tipTrigger.className = 'info-tip-trigger';
-        tipTrigger.setAttribute('tabindex', '0');
-        tipTrigger.setAttribute('role', 'button');
-        tipTrigger.setAttribute('aria-label', text);
-        tipTrigger.textContent = 'i';
-        const tipContent = document.createElement('span');
-        tipContent.className = 'info-tip-content';
-        tipContent.textContent = text;
-        tipTrigger.appendChild(tipContent);
-
-        if (!label.classList.contains('param-label-with-tip')) {
-            label.classList.add('param-label-with-tip');
-        }
-        label.appendChild(tipTrigger);
-    });
+    // Intentionally empty: hints render inline via .param-hint in CSS.
 }
 
 function syncRegistryMarkup(): void {

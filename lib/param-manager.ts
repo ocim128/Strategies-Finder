@@ -22,34 +22,36 @@ export class ParamManager {
     public render(strategy: Strategy) {
         const container = this.getParamContainer();
         const paramKeys = Object.keys(strategy.defaultParams);
-        const fragment = document.createDocumentFragment();
         this.inputsByParam.clear();
 
-        for (let i = 0; i < paramKeys.length; i += 2) {
-            const row = document.createElement('div');
-            row.className = 'param-row';
-            for (let j = i; j < Math.min(i + 2, paramKeys.length); j++) {
-                const key = paramKeys[j];
-                const value = strategy.defaultParams[key];
-                const label = strategy.paramLabels[key] || key;
-                const group = document.createElement('div');
-                group.className = 'param-group';
-                group.id = `${this.idPrefix}group_${key}`;
+        // Render all parameter groups into a single grid (.param-row) and let
+        // CSS choose one or two columns based on available width. The previous
+        // implementation manually paired parameters by array index, duplicating
+        // layout logic that already lived in the auto-fit grid and producing
+        // awkward semantic pairs plus lonely final rows.
+        const row = document.createElement('div');
+        row.className = 'param-row';
 
-                const labelEl = document.createElement('label');
-                labelEl.className = 'param-label';
-                labelEl.id = `${this.idPrefix}label_${key}`;
-                labelEl.htmlFor = `${this.idPrefix}${key}`;
-                labelEl.textContent = label;
+        for (const key of paramKeys) {
+            const value = strategy.defaultParams[key];
+            const label = strategy.paramLabels[key] || key;
+            const group = document.createElement('div');
+            group.className = 'param-group';
+            group.id = `${this.idPrefix}group_${key}`;
 
-                const input = this.renderParamInput(key, value);
-                this.inputsByParam.set(key, input);
-                group.append(labelEl, input);
-                row.appendChild(group);
-            }
-            fragment.appendChild(row);
+            const labelEl = document.createElement('label');
+            labelEl.className = 'param-label';
+            labelEl.id = `${this.idPrefix}label_${key}`;
+            labelEl.htmlFor = `${this.idPrefix}${key}`;
+            labelEl.textContent = label;
+
+            const input = this.renderParamInput(key, value);
+            this.inputsByParam.set(key, input);
+            group.append(labelEl, input);
+            row.appendChild(group);
         }
-        container.replaceChildren(fragment);
+
+        container.replaceChildren(row);
         bindFormAccessibility(container);
     }
 

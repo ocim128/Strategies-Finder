@@ -279,7 +279,10 @@ export function setupSettingsHandlers() {
     };
 
     if (configSelect) {
-        configSelect.addEventListener('change', () => setShareLinkOutput(''));
+        configSelect.addEventListener('change', () => {
+            setShareLinkOutput('');
+            syncConfigActionButtons(dom, configSelect.value);
+        });
     }
 
     if (generateShareLinkBtn && configSelect) {
@@ -521,13 +524,29 @@ function scheduleSharedAutoBacktest(options: SharedBacktestWaitOptions): void {
  * @param selectName Optional name of the configuration to select after updating.
  */
 export function updateConfigDropdown(selectName?: string) {
-    const configSelect = createSettingsHandlersDom().configSelect;
+    const dom = createSettingsHandlersDom();
+    const configSelect = dom.configSelect;
     if (!configSelect) return;
 
     const configs = sortStrategyConfigsNewestFirst(settingsManager.loadAllStrategyConfigs());
     const currentValue = selectName || configSelect.value;
 
     populateConfigSelect(configSelect, configs, '-- Select configuration --', currentValue);
+    syncConfigActionButtons(dom, configSelect.value);
+}
+
+/**
+ * Disable Load/Delete until a real configuration is selected so the
+ * destructive action never sits one click away from the placeholder. Mirrors
+ * the existing empty-value guards inside the click handlers.
+ */
+function syncConfigActionButtons(
+    dom: ReturnType<typeof createSettingsHandlersDom>,
+    selectedValue: string
+): void {
+    const hasSelection = !!selectedValue;
+    if (dom.loadConfigBtn) dom.loadConfigBtn.disabled = !hasSelection;
+    if (dom.deleteConfigBtn) dom.deleteConfigBtn.disabled = !hasSelection;
 }
 
 function populateConfigSelect(

@@ -36,14 +36,18 @@ describe("Strategy panel settings registry", () => {
     });
 
     it("keeps the settings sections in the requested display order", () => {
+        // Order follows the user's workflow (F11): foundational strategy
+        // choices first (direction), then risk/sizing/confirmation, then
+        // execution realism and engine, with Polymarket last because it is
+        // only relevant for specific strategies.
         expect(STRATEGY_PANEL_SETTINGS_SECTIONS.map((section) => section.id)).to.deep.equal([
-            "risk",
-            "realism",
-            "polymarket",
-            "sizing",
             "direction",
+            "risk",
+            "sizing",
             "confirmation",
+            "realism",
             "engine",
+            "polymarket",
         ]);
     });
 

@@ -2,37 +2,29 @@
 <div id="settingsTab" data-preset="standard">
     <div class="strategy-workspace">
         <div class="strategy-workspace-header" id="strategyWorkspaceHeader">
-            <div class="strategy-workspace-toggle section-header collapsible" id="strategyWorkspaceToggle"
-                data-target="strategyWorkspaceBody">
-                <div style="display:flex;align-items:center;">
-                    <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M7 10l5 5 5-5z" />
-                        </svg></span>
-                    <div class="section-title">Strategy Workspace</div>
-                </div>
-            </div>
-            <div class="strategy-workspace-body accordion-body" id="strategyWorkspaceBody">
+            <div id="strategyWorkspaceToggle" data-target="strategyWorkspaceBody" hidden></div>
+            <div id="strategyWorkspaceBody">
                 <div class="strategy-workspace-grid">
                 <section class="strategy-workspace-card strategy-workspace-card--strategy">
-                    <div class="strategy-workspace-card-top">
-                        <div class="strategy-workspace-kicker">Strategy Workspace</div>
-                        <div class="strategy-workspace-pills">
-                            <span class="strategy-workspace-pill" id="strategyMetaKey">strategy</span>
-                            <span class="strategy-workspace-pill" id="strategyParamCount">0 params</span>
-                        </div>
-                    </div>
-
                     <div class="strategy-workspace-copy">
-                        <div class="strategy-workspace-title" id="strategyMetaName">Strategy Tester</div>
+                        <div class="strategy-workspace-title-row">
+                            <div class="strategy-workspace-title" id="strategyMetaName">Strategy Tester</div>
+                            <span class="strategy-workspace-pill strategy-workspace-pill--meta" id="strategyParamCount">0 params</span>
+                            <span class="strategy-workspace-pill strategy-workspace-pill--key" id="strategyMetaKey" hidden>strategy</span>
+                        </div>
                         <div class="strategy-workspace-description" id="strategyMetaDescription">
                             Select a strategy, review its controls, and keep the active setup visible while you tune execution settings below.
                         </div>
                     </div>
 
-                    <label class="param-label" for="strategySelect">Built-In Strategy</label>
+                    <label class="param-label" for="strategySelect">Strategy</label>
                     <select class="strategy-select" id="strategySelect">
                         <option value="">Loading strategies...</option>
                     </select>
+
+                    <div id="strategyParams">
+                        <!-- Parameters will be injected here -->
+                    </div>
 
                     <details class="strategy-library-menu" id="strategyLibraryMenu">
                         <summary class="btn btn-secondary btn-compact strategy-library-menu-summary">
@@ -64,27 +56,16 @@
                         </div>
                     </details>
 
-                    <div id="strategyParams">
-                        <!-- Parameters will be injected here -->
-                    </div>
-
                 </section>
 
                 <section class="strategy-workspace-card strategy-workspace-card--config">
-                    <div class="section-header config-header">
-                        <div class="section-title">Saved Configurations</div>
-                    </div>
-
                     <div class="config-actions">
                         <div class="config-input-row">
                             <input type="text" class="param-input config-name-input" id="configNameInput"
                                 placeholder="Configuration name..." />
-                            <button class="btn btn-success btn-icon" id="saveConfigBtn"
+                            <button class="btn btn-success btn-compact config-action-btn" id="saveConfigBtn"
                                 title="Save current settings as configuration">
-                                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                                    <path
-                                        d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm2 16H5V5h11.17L19 7.83V19zm-7-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3zM6 6h9v4H6V6z" />
-                                </svg>
+                                Save
                             </button>
                         </div>
 
@@ -92,31 +73,24 @@
                             <select class="param-input config-select" id="configSelect">
                                 <option value="">-- Select configuration --</option>
                             </select>
-                            <button class="btn btn-primary btn-icon" id="loadConfigBtn"
+                            <button class="btn btn-secondary btn-compact config-action-btn" id="loadConfigBtn"
                                 title="Load selected configuration">
-                                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                                    <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
-                                </svg>
+                                Load
                             </button>
-                            <button class="btn btn-danger btn-icon" id="deleteConfigBtn"
+                            <button class="btn btn-ghost btn-compact config-action-btn config-action-btn--danger" id="deleteConfigBtn"
                                 title="Delete selected configuration">
-                                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                                </svg>
+                                Delete…
                             </button>
                         </div>
                     </div>
 
-                    <div class="settings-preset-label">Interface Density</div>
+                    <div class="settings-preset-label">Settings shown</div>
                     <div class="settings-preset-bar" id="settingsPresetBar">
                         <button class="settings-preset-btn" data-preset="simple" type="button">
-                            <span class="preset-dot"></span>Simple
+                            Simple
                         </button>
                         <button class="settings-preset-btn active" data-preset="standard" type="button">
-                            <span class="preset-dot"></span>Standard
-                        </button>
-                        <button class="settings-preset-btn" data-preset="advanced" type="button">
-                            <span class="preset-dot"></span>Advanced
+                            Standard
                         </button>
                     </div>
                 </section>

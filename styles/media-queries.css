@@ -122,7 +122,11 @@
         width: 100%;
         max-width: none;
         min-width: 0;
-        max-height: 50vh;
+        /* Give the panel real usable height on phones. Header + navigation used
+           to consume most of the previous 50vh cap before settings could scroll.
+           Fall back to vh where dvh is unsupported. */
+        max-height: 65vh;
+        max-height: 65dvh;
         margin-left: 0;
     }
 
@@ -309,6 +313,28 @@
         width: calc(100vw - var(--space-6));
         max-width: none;
     }
+
+    /* Portrait navigation overflow: let the tab strip scroll horizontally
+       instead of clipping or shrinking labels to 11px. The More trigger
+       stays pinned at the right via its flex-shrink: 0. */
+    .panel-navigation {
+        padding-right: 0;
+    }
+
+    .panel-tabs {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    }
+
+    .panel-tabs::-webkit-scrollbar {
+        display: none;
+    }
+
+    .panel-tab {
+        flex: 0 0 auto;
+    }
 }
 
 /* Small phone */
@@ -335,18 +361,26 @@
     }
 
     /* Hide panel title text, show only icon */
-    .panel-title span {
+    .panel-title-text {
         display: none;
     }
 
-    .run-btn span {
+    .run-btn-text {
         display: none;
     }
 
+    /* Collapse "Backtest tools" to its gear icon at narrow widths so the
+       header still centers on Run. */
+    .backtest-tools-label {
+        display: none;
+    }
+
+    /* Tab labels stay legible; the strip scrolls horizontally rather than
+       shrinking the text. */
     .panel-tab,
     .panel-more-trigger {
-        padding: var(--space-2);
-        font-size: 11px;
+        padding: var(--space-2) var(--space-2-5);
+        font-size: var(--font-size-sm);
     }
 
     /* Stack symbol info */

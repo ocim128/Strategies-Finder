@@ -235,11 +235,17 @@ export class UIManager {
         const kind = getStrategyKind(strategyKey, strategy);
         workspace.strategyMetaName.textContent = name;
         workspace.strategyMetaDescription.textContent = description;
-        workspace.strategyMetaKey.textContent = strategyKey.replace(/_/g, ' ');
         workspace.strategyParamCount.textContent = `${paramCount} param${paramCount === 1 ? '' : 's'}`;
         workspace.strategyMetaName.dataset.strategyKind = kind;
+        workspace.strategyMetaName.title = strategyKey;
+        // The technical key pill is hidden by default. Show it only for
+        // meaningful special-state kinds (Polymarket / cross-symbol); for
+        // standard strategies the key is exposed via the title tooltip.
+        const isSpecialKind = kind !== 'standard';
+        workspace.strategyMetaKey.textContent = strategyKey.replace(/_/g, ' ');
         workspace.strategyMetaKey.dataset.strategyKind = kind;
         workspace.strategyMetaKey.title = getStrategyKindTitle(kind);
+        workspace.strategyMetaKey.hidden = !isSpecialKind;
         this.getDom().strategySelect.dataset.strategyKind = kind;
     }
 

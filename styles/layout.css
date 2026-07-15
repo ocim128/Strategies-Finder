@@ -173,15 +173,15 @@
     height: 100%;
 }
 
-/* Strategy panel - Floating drawer */
+/* Strategy panel - Floating drawer.
+   Single solid panel surface (no nested glass/gradient); the outer shadow is
+   the only elevation cue, so inner sections can stay flat. */
 .strategy-panel {
     --strategy-panel-default-width: 410px;
     width: var(--strategy-panel-width, var(--strategy-panel-default-width));
     min-width: 280px;
     max-width: 80vw;
-    background: var(--panel-shell-bg);
-    backdrop-filter: blur(20px) saturate(130%);
-    -webkit-backdrop-filter: blur(20px) saturate(130%);
+    background: var(--bg-secondary);
     border: 1px solid hsl(var(--hsl-border) / 0.72);
     border-radius: var(--float-radius);
     display: flex;
@@ -214,24 +214,9 @@
     gap: var(--space-3);
     padding: var(--space-3) var(--space-3-5);
     border-bottom: 1px solid hsl(var(--hsl-border) / 0.2);
-    background: var(--panel-header-bg);
+    background: var(--bg-tertiary);
     position: relative;
     color: var(--panel-header-ink);
-}
-
-/* Subtle accent line under panel header */
-.panel-header::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: var(--space-4);
-    right: var(--space-4);
-    height: 1px;
-    background: linear-gradient(90deg,
-            transparent,
-            hsl(var(--hsl-accent) / 0.25) 20%,
-            hsl(var(--hsl-accent) / 0.25) 80%,
-            transparent);
 }
 
 .panel-actions {
@@ -243,24 +228,59 @@
     flex: 1 1 auto;
 }
 
-.panel-actions .btn-secondary.btn-compact {
-    width: 34px;
-    min-width: 34px;
-    height: 34px;
-    min-height: 34px;
-    padding: 0;
-    justify-content: center;
-    gap: 0;
-    font-size: 0;
-}
-
-.panel-actions .btn-secondary.btn-compact svg {
-    margin: 0;
-}
-
 .panel-actions .btn-primary.btn-compact {
     min-height: 34px;
     padding-inline: var(--space-3);
+}
+
+/* Backtest tools overflow menu — endpoint actions live here so the header has
+   one unmistakable primary action (Run). Mirrors the strategy-library-menu
+   disclosure pattern. */
+.backtest-tools-menu {
+    position: relative;
+}
+
+.backtest-tools-summary {
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1-5);
+    min-height: 34px;
+    cursor: pointer;
+}
+
+.backtest-tools-summary::-webkit-details-marker {
+    display: none;
+}
+
+.backtest-tools-summary svg {
+    width: 16px;
+    height: 16px;
+}
+
+.backtest-tools-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 50;
+    min-width: 220px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1-5);
+    padding: var(--space-2-5);
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-m);
+    box-shadow: var(--shadow-md);
+}
+
+.backtest-tools-item {
+    width: 100%;
+    justify-content: flex-start;
+}
+
+.backtest-tools-item svg {
+    flex-shrink: 0;
 }
 
 .panel-title {
@@ -286,7 +306,7 @@
     overflow-y: auto;
     padding: var(--panel-content-padding);
     position: relative;
-    background: var(--panel-content-bg);
+    background: var(--bg-primary);
 }
 
 /* Resize handle */

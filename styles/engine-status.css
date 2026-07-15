@@ -1,21 +1,28 @@
 /**
  * Engine Status Indicator Styles
+ *
+ * Rendered as neutral text + small colored dot so it does not compete with the
+ * primary Run action. Solid accent fill is reserved for Run.
  */
 
 .engine-status {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    gap: 6px;
     min-height: 28px;
-    padding: 4px 9px;
-    border-radius: var(--radius-m);
+    padding: 4px 10px;
+    border-radius: var(--radius-pill);
     font-size: var(--font-size-xs);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.04em;
     margin-left: 8px;
     cursor: pointer;
     transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
     user-select: none;
-    border: 1px solid transparent;
+    border: 1px solid var(--card-border);
+    background: var(--card-bg-muted);
+    color: var(--text-secondary);
     line-height: 1;
 }
 
@@ -23,29 +30,36 @@
     margin-left: 0;
 }
 
+.engine-status::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: currentColor;
+}
+
 .engine-status.engine-rust {
-    background: var(--warning);
-    color: var(--text-on-accent);
+    color: var(--warning);
 }
 
 .engine-status.engine-rust:hover {
-    background: var(--warning-hover);
+    border-color: hsl(var(--hsl-warning) / 0.5);
+    color: var(--warning-hover);
 }
 
 .engine-status.engine-typescript {
-    background: var(--accent-color);
-    color: var(--text-on-accent);
+    color: var(--accent-color);
 }
 
 .engine-status.engine-typescript:hover {
-    background: var(--accent-hover);
+    border-color: hsl(var(--hsl-accent) / 0.5);
+    color: var(--accent-hover);
 }
 
 /* Disconnected/checking state */
 .engine-status.engine-checking {
-    background: var(--card-bg-muted);
-    color: var(--text-secondary);
-    border-color: var(--card-border);
+    color: var(--text-tertiary);
     animation: enginePulse 1.5s ease-in-out infinite;
 }
 
