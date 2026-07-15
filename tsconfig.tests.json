@@ -7,8 +7,7 @@
 	"include": [
 		"vite-env.d.ts",
 		"tests/**/*.d.ts",
-		"tests/**/*.spec.ts",
-		"tests/**/*.spec.mts"
+		"tests/**/*.spec.ts"
 	],
 	"exclude": [
 		"tests/e2e.spec.ts"

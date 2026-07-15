@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { build as buildWithEsbuild } from "esbuild";
 
 type TestRunStatus = "PASS" | "FAIL";
 
@@ -189,7 +190,7 @@ function discoverTestFiles(): string[] {
                 walk(fullPath);
                 continue;
             }
-            if (!entry.isFile() || (!entry.name.endsWith(".spec.ts") && !entry.name.endsWith(".spec.mts"))) {
+            if (!entry.isFile() || !entry.name.endsWith(".spec.ts")) {
                 continue;
             }
 
@@ -286,7 +287,22 @@ async function runSingleTest(
     let spawnError: unknown = null;
     const verbose = outputMode === "verbose";
 
-    const child = spawn(process.execPath, [esnoCliPath, file], {
+    let childArgs = [esnoCliPath, file];
+    if (file.endsWith(".browser.spec.ts")) {
+        const bundlePath = path.join(latestLogsDir, `${sanitizeLogName(file)}.cjs`);
+        await buildWithEsbuild({
+            entryPoints: [path.join(repoRoot, file)],
+            bundle: true,
+            platform: "node",
+            format: "cjs",
+            target: "node22",
+            outfile: bundlePath,
+            logLevel: "silent",
+        });
+        childArgs = [bundlePath];
+    }
+
+    const child = spawn(process.execPath, childArgs, {
         cwd: repoRoot,
         stdio: ["ignore", "pipe", "pipe"],
     });
