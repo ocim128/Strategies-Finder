@@ -93,17 +93,36 @@ export function combineUniverseDiagnosticsBlock(
     if (universeParts.length === 0) return undefined;
 
     const failedSymbols = new Map<string, string>();
+    const typescriptReasons = new Map<string, number>();
     for (const universe of universeParts) {
         for (const failure of universe.failedSymbols) {
             if (!failedSymbols.has(failure.symbol)) {
                 failedSymbols.set(failure.symbol, failure.reason);
             }
         }
+        for (const entry of universe.engineUsage?.typescriptReasons ?? []) {
+            typescriptReasons.set(entry.reason, (typescriptReasons.get(entry.reason) ?? 0) + entry.runs);
+        }
     }
 
     return {
         totalSymbols: Math.max(...universeParts.map((universe) => universe.totalSymbols)),
         loadedSymbols: Math.max(...universeParts.map((universe) => universe.loadedSymbols)),
+        candidatePlans: universeParts.reduce((sum, universe) => sum + (universe.candidatePlans ?? 0), 0),
+        symbolEvaluations: {
+            planned: universeParts.reduce((sum, universe) => sum + (universe.symbolEvaluations?.planned ?? 0), 0),
+            completed: universeParts.reduce((sum, universe) => sum + (universe.symbolEvaluations?.completed ?? 0), 0),
+            avoided: universeParts.reduce((sum, universe) => sum + (universe.symbolEvaluations?.avoided ?? 0), 0),
+            passingCandidates: universeParts.reduce((sum, universe) => sum + (universe.symbolEvaluations?.passingCandidates ?? 0), 0),
+        },
+        engineUsage: {
+            rustRequested: universeParts.some((universe) => universe.engineUsage?.rustRequested === true),
+            rustCompletedRuns: universeParts.reduce((sum, universe) => sum + (universe.engineUsage?.rustCompletedRuns ?? 0), 0),
+            typescriptCompletedRuns: universeParts.reduce((sum, universe) => sum + (universe.engineUsage?.typescriptCompletedRuns ?? 0), 0),
+            typescriptReasons: [...typescriptReasons.entries()]
+                .map(([reason, runs]) => ({ reason, runs }))
+                .sort((a, b) => b.runs - a.runs || a.reason.localeCompare(b.reason)),
+        },
         failedSymbols: [...failedSymbols.entries()]
             .map(([symbol, reason]) => ({ symbol, reason }))
             .sort((a, b) => a.symbol.localeCompare(b.symbol)),
@@ -166,6 +185,7 @@ export function buildCombinedUniverseDiagnostics(args: {
         skippedRuns: parts.reduce((sum, part) => sum + part.counts.skippedRuns, 0),
         rustCompletedRuns: parts.reduce((sum, part) => sum + part.counts.rustCompletedRuns, 0),
         rustFallbackRuns: parts.reduce((sum, part) => sum + part.counts.rustFallbackRuns, 0),
+        typescriptCompletedRuns: parts.reduce((sum, part) => sum + (part.counts.typescriptCompletedRuns ?? 0), 0),
         timings,
         strategyBreakdown: combineUniverseStrategyBreakdown(parts),
         failureBreakdown: combineUniverseFailureBreakdown(parts),

@@ -5,6 +5,7 @@ import { EFFECTIVE_BACKTEST_DEFAULTS, resolveBacktestSettingsFromRaw } from '../
 import {
     sanitizeBacktestSettingsForRust,
     requiresTypescriptEngine,
+    getTypescriptEngineRequirementReasons,
     RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS,
 } from '../lib/rust-settings-sanitizer';
 import type { BacktestSettings } from '../lib/types/strategies';
@@ -487,6 +488,7 @@ describe('Backtest settings compatibility', () => {
         // Same-bar exits are no longer configurable, so the TS engine is required.
         expect(requiresTypescriptEngine({})).to.equal(true);
         expect(requiresTypescriptEngine({ executionModel: 'signal_close', slippageBps: 0, allowSameBarExit: true })).to.equal(true);
+        expect(getTypescriptEngineRequirementReasons({})).to.deep.equal(['same-bar exits are disabled']);
 
         // Non-signal_close execution model requires TS
         expect(requiresTypescriptEngine({ executionModel: 'next_open' })).to.equal(true);

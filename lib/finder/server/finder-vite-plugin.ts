@@ -275,6 +275,55 @@ export async function processFinderUniverseRun(
     const strategyCount = selectedStrategies.length;
     const candidatePlansEstimate = estimateCandidateCount(input);
     const sortPriority = resolveUniverseSortPriority(input.options);
+    // Every selected strategy evaluates the same universe. Cache only
+    // successful sliced datasets for this server job so the loader performs
+    // one real read/build per symbol+interval instead of one per strategy.
+    // Failures and empty results are removed so a later strategy may retry.
+    const jobDatasetCache = new Map<string, Promise<OHLCVData[]>>();
+    const jobDatasetCacheStats = {
+        requests: 0,
+        hits: 0,
+        misses: 0,
+        successfulLoads: 0,
+        failedLoads: 0,
+        uniqueBarsLoaded: 0,
+    };
+    const loadDatasetForJob = (
+        symbol: string,
+        interval: string,
+        signal?: AbortSignal,
+    ): Promise<OHLCVData[]> => {
+        jobDatasetCacheStats.requests += 1;
+        if (signal?.aborted) return Promise.resolve([]);
+        const key = `${symbol}|${interval}`;
+        const cached = jobDatasetCache.get(key);
+        if (cached) {
+            jobDatasetCacheStats.hits += 1;
+            return cached;
+        }
+
+        jobDatasetCacheStats.misses += 1;
+        let promise: Promise<OHLCVData[]>;
+        promise = Promise.resolve()
+            .then(() => input.loadDataset(symbol, interval, signal))
+            .then((data) => {
+                if (signal?.aborted || data.length === 0) {
+                    if (jobDatasetCache.get(key) === promise) jobDatasetCache.delete(key);
+                    if (!signal?.aborted) jobDatasetCacheStats.failedLoads += 1;
+                    return data;
+                }
+                jobDatasetCacheStats.successfulLoads += 1;
+                jobDatasetCacheStats.uniqueBarsLoaded += data.length;
+                return data;
+            })
+            .catch((error) => {
+                if (jobDatasetCache.get(key) === promise) jobDatasetCache.delete(key);
+                jobDatasetCacheStats.failedLoads += 1;
+                throw error;
+            });
+        jobDatasetCache.set(key, promise);
+        return promise;
+    };
 
     runState = {
         runId: input.runId,
@@ -374,7 +423,7 @@ export async function processFinderUniverseRun(
                     settings: input.settings,
                     capitalSettings: input.capitalSettings,
                     selectedStrategy,
-                    loadDataset: input.loadDataset,
+                    loadDataset: loadDatasetForJob,
                     getProvider: input.getProvider,
                     generateParamSets: input.generateParamSets ?? (() => []),
                     exitStrategyCandidates: input.exitStrategyCandidates,
@@ -575,6 +624,12 @@ export async function processFinderUniverseRun(
                         shownResults: terminalScalar.length,
                         elapsedMs: Date.now() - snapshot.startedAt,
                     });
+        if (combinedDiagnostics?.universe) {
+            combinedDiagnostics.universe.jobDatasetCache = {
+                ...jobDatasetCacheStats,
+                entries: jobDatasetCache.size,
+            };
+        }
         snapshot.diagnostics = combinedDiagnostics;
 
         const summary = cancelled
@@ -620,6 +675,10 @@ export async function processFinderUniverseRun(
             heapLimitMb: Math.floor(getHeapStatistics().heap_size_limit / HEAP_MB),
             interval: input.interval,
             strategyKeys: selectedStrategies.map((s) => s.key),
+            jobDatasetCache: {
+                ...jobDatasetCacheStats,
+                entries: jobDatasetCache.size,
+            },
         });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -636,6 +695,8 @@ export async function processFinderUniverseRun(
         };
         debugLogger.warn("finder.server.run.fatal", { runId: input.runId, error: message });
         writer({ type: "fatal", runId: input.runId, error: message });
+    } finally {
+        jobDatasetCache.clear();
     }
 }
 

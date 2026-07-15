@@ -346,6 +346,35 @@ export interface FinderUniverseDiagnostics {
         symbol: string;
         reason: string;
     }>;
+    /** Candidate plans are strategy/parameter combinations, before symbols fan out. */
+    candidatePlans?: number;
+    /** Explicit Universe evaluation counts; avoids treating symbol evaluations as parameter runs. */
+    symbolEvaluations?: {
+        planned: number;
+        completed: number;
+        avoided: number;
+        passingCandidates: number;
+    };
+    /** Server-job cache shared by every selected strategy in one Universe run. */
+    jobDatasetCache?: {
+        requests: number;
+        hits: number;
+        misses: number;
+        successfulLoads: number;
+        failedLoads: number;
+        entries: number;
+        uniqueBarsLoaded: number;
+    };
+    /** Actual executor results, independent of the requested engine preference. */
+    engineUsage?: {
+        rustRequested: boolean;
+        rustCompletedRuns: number;
+        typescriptCompletedRuns: number;
+        typescriptReasons: Array<{
+            reason: string;
+            runs: number;
+        }>;
+    };
     dataWindow?: {
         dataSlice: FinderDataSlice;
         loadedBars: {
@@ -388,6 +417,7 @@ export interface FinderDiagnostics {
         shownResults: number;
         rustCompletedRuns: number;
         rustFallbackRuns: number;
+        typescriptCompletedRuns?: number;
         endpointAdjusted: number;
         failedRuns: number;
         skippedRuns: number;

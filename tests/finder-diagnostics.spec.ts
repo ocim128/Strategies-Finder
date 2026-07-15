@@ -91,6 +91,7 @@ function makeDiagnostics(): FinderDiagnostics {
             shownResults: 10,
             rustCompletedRuns: 0,
             rustFallbackRuns: 0,
+            typescriptCompletedRuns: 2400,
             endpointAdjusted: 2,
             failedRuns: 4,
             skippedRuns: 2,
@@ -106,6 +107,28 @@ function makeDiagnostics(): FinderDiagnostics {
         universe: {
             totalSymbols: 12,
             loadedSymbols: 10,
+            candidatePlans: 24,
+            symbolEvaluations: {
+                planned: 2400,
+                completed: 2398,
+                avoided: 2,
+                passingCandidates: 44,
+            },
+            jobDatasetCache: {
+                requests: 240,
+                hits: 228,
+                misses: 12,
+                successfulLoads: 10,
+                failedLoads: 2,
+                entries: 10,
+                uniqueBarsLoaded: 17_000,
+            },
+            engineUsage: {
+                rustRequested: false,
+                rustCompletedRuns: 0,
+                typescriptCompletedRuns: 2400,
+                typescriptReasons: [{ reason: "same-bar exits are disabled", runs: 2400 }],
+            },
             dataWindow: {
                 dataSlice: "5",
                 loadedBars: { min: 1700, max: 1700, avg: 1700 },
@@ -190,8 +213,15 @@ describe("Finder compact diagnostics", () => {
             "strategy_23",
             "strategy_22",
             "strategy_21",
+            "strategy_20",
+            "strategy_19",
+            "strategy_18",
+            "strategy_17",
+            "strategy_16",
+            "strategy_15",
+            "strategy_14",
         ]);
-        expect(compact.strategies.issues).to.have.length(3);
+        expect(compact.strategies.issues).to.have.length(7);
         expect(compact.backtest?.fastPath.topBlockers).to.have.length(3);
         expect(compact.failures?.[0]?.strategyKeys).to.deep.equal(["a", "b", "c", "d"]);
         expect(compact.failures?.[0]?.omittedStrategyKeys).to.equal(4);
@@ -206,6 +236,28 @@ describe("Finder compact diagnostics", () => {
                 { symbol: "MISS_04", reason: "No candles returned." },
             ],
             omittedFailedSymbols: 5,
+            candidatePlans: 24,
+            symbolEvaluations: {
+                planned: 2400,
+                completed: 2398,
+                avoided: 2,
+                passingCandidates: 44,
+            },
+            jobDatasetCache: {
+                requests: 240,
+                hits: 228,
+                misses: 12,
+                successfulLoads: 10,
+                failedLoads: 2,
+                entries: 10,
+                uniqueBarsLoaded: 17_000,
+            },
+            engineUsage: {
+                rustRequested: false,
+                rustCompletedRuns: 0,
+                typescriptCompletedRuns: 2400,
+                typescriptReasons: [{ reason: "same-bar exits are disabled", runs: 2400 }],
+            },
             dataWindow: {
                 dataSlice: "5",
                 loadedBars: { min: 1700, max: 1700, avg: 1700 },
@@ -228,9 +280,12 @@ describe("Finder compact diagnostics", () => {
             "preparedData",
             "indicatorPrecompute",
         ]);
+        expect(compact.timings.model).to.equal("overlapping");
+        expect(compact.counts.passingCandidates).to.equal(44);
+        expect(compact.counts.filteredRuns).to.equal(undefined);
         expect(compactJson).to.not.contain('"strategyBreakdown"');
         expect(compactJson).to.not.contain('"totals"');
-        expect(compactJson.split("\n").length).to.be.lessThan(260);
+        expect(compactJson.split("\n").length).to.be.lessThan(420);
         expect(compactJson.length).to.be.lessThan(fullJson.length / 3);
     });
 
@@ -251,7 +306,23 @@ describe("Finder compact diagnostics", () => {
             "4 candidate runs failed",
             "2 candidate runs skipped (zero-signal bail or fatal strategy failure)",
             "1 Rust run fell back to TypeScript",
+            "backtest used 40.0% of measured runtime",
         ]);
+    });
+
+    it("explains why a Rust-requested run stayed on TypeScript", () => {
+        const full = makeDiagnostics();
+        const notes = buildFinderDiagnosticsBottlenecks({
+            timingsMs: full.timingsMs,
+            strategyBreakdown: full.strategyBreakdown,
+            failedRuns: 0,
+            rustRequested: true,
+            rustCompletedRuns: 0,
+            typescriptCompletedRuns: 2400,
+            typescriptReasons: [{ reason: "same-bar exits are disabled", runs: 2400 }],
+        });
+
+        expect(notes[0]).to.equal("Rust requested, but 2400 evaluations used TypeScript: same-bar exits are disabled");
     });
 
     it("surfaces universe-specific timing phases (preparedData, closed-candle selection, parameter generation) in bottlenecks when populated", () => {

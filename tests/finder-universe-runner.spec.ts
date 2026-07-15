@@ -124,10 +124,24 @@ describe("Finder universe runner", () => {
         expect(output.diagnostics?.counts.shownResults).to.equal(1);
         expect(output.diagnostics?.counts.processedRuns).to.equal(3);
         expect(output.diagnostics?.counts.failedRuns).to.equal(0);
+        expect(output.diagnostics?.counts.typescriptCompletedRuns).to.equal(3);
         expect(output.diagnostics?.data.totalParamRuns).to.equal(6);
         expect(output.diagnostics?.universe).to.deep.equal({
             totalSymbols: 3,
             loadedSymbols: 2,
+            candidatePlans: 2,
+            symbolEvaluations: {
+                planned: 6,
+                completed: 3,
+                avoided: 0,
+                passingCandidates: 1,
+            },
+            engineUsage: {
+                rustRequested: false,
+                rustCompletedRuns: 0,
+                typescriptCompletedRuns: 3,
+                typescriptReasons: [{ reason: "same-bar exits are disabled", runs: 3 }],
+            },
             failedSymbols: [{ symbol: "MISSING", reason: "Dataset missing" }],
         });
         expect(output.diagnostics?.timingsMs.dataLoading).to.be.greaterThanOrEqual(0);

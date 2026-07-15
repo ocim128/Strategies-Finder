@@ -38,7 +38,12 @@ export interface CompactFinderDiagnostics {
         engineMode: string;
     };
     data: FinderDiagnostics["data"];
-    counts: FinderDiagnostics["counts"];
+    counts: Omit<FinderDiagnostics["counts"], "filteredRuns"> & {
+        /** Retained for non-Universe diagnostics where this name is accurate. */
+        filteredRuns?: number;
+        /** Universe candidates that passed filters and reached ranking. */
+        passingCandidates?: number;
+    };
     universe?: {
         totalSymbols: number;
         loadedSymbols: number;
@@ -48,10 +53,16 @@ export interface CompactFinderDiagnostics {
             reason: string;
         }>;
         omittedFailedSymbols: number;
+        candidatePlans?: number;
+        symbolEvaluations?: NonNullable<FinderDiagnostics["universe"]>["symbolEvaluations"];
+        jobDatasetCache?: NonNullable<FinderDiagnostics["universe"]>["jobDatasetCache"];
+        engineUsage?: NonNullable<FinderDiagnostics["universe"]>["engineUsage"];
         dataWindow?: NonNullable<FinderDiagnostics["universe"]>["dataWindow"];
     };
     timings: {
         totalMs: number;
+        /** Phase timings include nested work and therefore are not additive. */
+        model: "overlapping";
         topPhases: CompactFinderTimingPhase[];
     };
     bottlenecks: string[];
@@ -89,8 +100,9 @@ export interface CompactFinderDiagnostics {
 }
 
 const COMPACT_FINDER_PHASE_LIMIT = 4;
-const COMPACT_FINDER_STRATEGY_LIMIT = 3;
+const COMPACT_FINDER_STRATEGY_LIMIT = 10;
 const COMPACT_FINDER_FAILURE_LIMIT = 3;
+const COMPACT_FINDER_BOTTLENECK_LIMIT = 4;
 const COMPACT_FINDER_FAILURE_STRATEGY_LIMIT = 4;
 const COMPACT_FINDER_UNIVERSE_FAILURE_LIMIT = 4;
 
@@ -368,7 +380,12 @@ export function buildFinderDiagnosticsBottlenecks(args: {
     failedRuns: number;
     skippedRuns?: number;
     rustFallbackRuns?: number;
+    rustCompletedRuns?: number;
+    rustRequested?: boolean;
+    typescriptCompletedRuns?: number;
+    typescriptReasons?: Array<{ reason: string; runs: number }>;
     backtest?: FinderBacktestDiagnostics;
+    skippedRunsAreAvoided?: boolean;
 }): string[] {
     // Every populated timing phase is eligible so universe runs (which populate
     // closedDataSelection / preparedData / paramGeneration) and current-chart
@@ -400,10 +417,20 @@ export function buildFinderDiagnosticsBottlenecks(args: {
         notes.push(`${args.failedRuns} candidate run${args.failedRuns === 1 ? "" : "s"} failed`);
     }
     if ((args.skippedRuns ?? 0) > 0) {
-        notes.push(`${args.skippedRuns} candidate run${args.skippedRuns === 1 ? "" : "s"} skipped (zero-signal bail or fatal strategy failure)`);
+        notes.push(args.skippedRunsAreAvoided
+            ? `${args.skippedRuns} symbol evaluation${args.skippedRuns === 1 ? "" : "s"} avoided by zero-signal bail`
+            : `${args.skippedRuns} candidate run${args.skippedRuns === 1 ? "" : "s"} skipped (zero-signal bail or fatal strategy failure)`);
     }
     if ((args.rustFallbackRuns ?? 0) > 0) {
         notes.push(`${args.rustFallbackRuns} Rust run${args.rustFallbackRuns === 1 ? "" : "s"} fell back to TypeScript`);
+    }
+    if (
+        args.rustRequested === true
+        && (args.rustCompletedRuns ?? 0) === 0
+        && (args.typescriptCompletedRuns ?? 0) > 0
+    ) {
+        const topReason = args.typescriptReasons?.[0]?.reason ?? "the run was not Rust-eligible";
+        notes.push(`Rust requested, but ${args.typescriptCompletedRuns} evaluation${args.typescriptCompletedRuns === 1 ? "" : "s"} used TypeScript: ${topReason}`);
     }
 
     const total = Math.max(1, args.timingsMs.total);
@@ -502,6 +529,7 @@ export function buildFinderDiagnostics(args: {
     universeDiagnostics?: FinderDiagnostics["universe"];
     rustCompletedRuns?: number;
     rustFallbackRuns?: number;
+    typescriptCompletedRuns?: number;
 }): FinderDiagnostics {
     const timingsMs: FinderDiagnosticsTimings = {
         total: roundFinderMs(args.timings.total),
@@ -540,6 +568,7 @@ export function buildFinderDiagnostics(args: {
             shownResults: args.shownResults,
             rustCompletedRuns: args.rustCompletedRuns ?? 0,
             rustFallbackRuns: args.rustFallbackRuns ?? 0,
+            typescriptCompletedRuns: args.typescriptCompletedRuns ?? 0,
             endpointAdjusted: args.endpointAdjusted,
             failedRuns: args.failedRuns,
             skippedRuns: args.skippedRuns ?? 0,
@@ -556,7 +585,12 @@ export function buildFinderDiagnostics(args: {
             failedRuns: args.failedRuns,
             skippedRuns: args.skippedRuns,
             rustFallbackRuns: args.rustFallbackRuns,
+            rustCompletedRuns: args.rustCompletedRuns,
+            rustRequested: args.universeDiagnostics?.engineUsage?.rustRequested,
+            typescriptCompletedRuns: args.typescriptCompletedRuns,
+            typescriptReasons: args.universeDiagnostics?.engineUsage?.typescriptReasons,
             backtest: args.backtestDiagnostics,
+            skippedRunsAreAvoided: args.engineMode === "symbol_universe",
         }),
     };
 }
@@ -608,6 +642,19 @@ function topCompactFinderStrategies(
 }
 
 export function buildCompactFinderDiagnostics(diagnostics: FinderDiagnostics): CompactFinderDiagnostics {
+    const counts: CompactFinderDiagnostics["counts"] = diagnostics.universe?.symbolEvaluations
+        ? {
+            processedRuns: diagnostics.counts.processedRuns,
+            shownResults: diagnostics.counts.shownResults,
+            rustCompletedRuns: diagnostics.counts.rustCompletedRuns,
+            rustFallbackRuns: diagnostics.counts.rustFallbackRuns,
+            typescriptCompletedRuns: diagnostics.counts.typescriptCompletedRuns,
+            endpointAdjusted: diagnostics.counts.endpointAdjusted,
+            failedRuns: diagnostics.counts.failedRuns,
+            skippedRuns: diagnostics.counts.skippedRuns,
+            passingCandidates: diagnostics.universe.symbolEvaluations.passingCandidates,
+        }
+        : diagnostics.counts;
     const compact: CompactFinderDiagnostics = {
         schema: "finder.diagnostics.compact.v1",
         run: {
@@ -618,12 +665,13 @@ export function buildCompactFinderDiagnostics(diagnostics: FinderDiagnostics): C
             engineMode: diagnostics.engineMode,
         },
         data: diagnostics.data,
-        counts: diagnostics.counts,
+        counts,
         timings: {
             totalMs: diagnostics.timingsMs.total,
+            model: "overlapping",
             topPhases: buildCompactTimingPhases(diagnostics.timingsMs, diagnostics.timingsMs.total),
         },
-        bottlenecks: diagnostics.bottlenecks.slice(0, COMPACT_FINDER_FAILURE_LIMIT),
+        bottlenecks: diagnostics.bottlenecks.slice(0, COMPACT_FINDER_BOTTLENECK_LIMIT),
         strategies: {
             totalStrategies: diagnostics.strategyBreakdown.length,
             omittedFromTopRuntime: Math.max(0, diagnostics.strategyBreakdown.length - COMPACT_FINDER_STRATEGY_LIMIT),
@@ -678,6 +726,18 @@ export function buildCompactFinderDiagnostics(diagnostics: FinderDiagnostics): C
             loadFailures: diagnostics.universe.failedSymbols.length,
             failedSymbols: diagnostics.universe.failedSymbols.slice(0, COMPACT_FINDER_UNIVERSE_FAILURE_LIMIT),
             omittedFailedSymbols: Math.max(0, diagnostics.universe.failedSymbols.length - COMPACT_FINDER_UNIVERSE_FAILURE_LIMIT),
+            ...(diagnostics.universe.candidatePlans !== undefined
+                ? { candidatePlans: diagnostics.universe.candidatePlans }
+                : {}),
+            ...(diagnostics.universe.symbolEvaluations
+                ? { symbolEvaluations: diagnostics.universe.symbolEvaluations }
+                : {}),
+            ...(diagnostics.universe.jobDatasetCache
+                ? { jobDatasetCache: diagnostics.universe.jobDatasetCache }
+                : {}),
+            ...(diagnostics.universe.engineUsage
+                ? { engineUsage: diagnostics.universe.engineUsage }
+                : {}),
             dataWindow: diagnostics.universe.dataWindow,
         };
     }

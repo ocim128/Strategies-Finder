@@ -46,6 +46,13 @@ $env:NODE_OPTIONS="--max-old-space-size=16384"; npm run dev
 `run_playground.bat` applies this default unless a heap value is already set.
 The server rejects 400-799 symbols below 8192 MB and 800+ below 12288 MB.
 
+Within one server-owned run, successful sliced datasets are cached by
+`symbol|interval` and reused by every selected strategy. The cache does not
+increase the runner's peak dataset count because one strategy already loads
+the full universe; it extends that dataset lifetime until Done, Stop, or Fatal,
+when the job cache is cleared. Failed and empty loads are not retained, so a
+later strategy can retry them.
+
 ## Wire contract
 
 `FinderUniverseCandidate` is scalar-only. `toScalarCandidate(...)` and
@@ -64,6 +71,14 @@ The server rejects 400-799 symbols below 8192 MB and 800+ below 12288 MB.
 The terminal `done.candidates` slice is authoritative. `/status` in-progress
 snapshots are summary-only (candidate counts, never the per-symbol payload);
 the terminal snapshot is the one place that carries the final candidate slice.
+
+Copied diagnostics report job-cache requests, hits, misses, unique bars,
+candidate plans versus symbol evaluations, and actual Rust/TypeScript executor
+usage. When Rust was requested but a run remains on TypeScript, diagnostics
+include the deterministic eligibility reason; current execution semantics
+disable same-bar exits, which the Rust backend does not support. Timing phases
+are marked `overlapping` because yielding and nested
+signal/backtest work must not be added together as independent wall time.
 
 ## `GET /api/finder/status?runId=...`
 

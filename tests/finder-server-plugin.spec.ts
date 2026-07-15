@@ -153,6 +153,8 @@ async function runPlugin(args: {
     /** When true, the input omits generateParamSets entirely (F1 fallback). */
     omitGenerateParamSets?: boolean;
     loadDatasetThrows?: boolean;
+    loadDatasetImpl?: (symbol: string) => Promise<OHLCVData[]>;
+    onUnderlyingLoad?: (symbol: string) => void;
     options?: FinderOptions;
     onEvent?: (event: FinderStreamEvent, events: FinderStreamEvent[]) => void;
 }): Promise<FinderStreamEvent[]> {
@@ -163,17 +165,20 @@ async function runPlugin(args: {
         generateParamSets = () => [{ threshold: 1 }, { threshold: 2 }],
         omitGenerateParamSets = false,
         loadDatasetThrows = false,
+        loadDatasetImpl,
         options,
         onEvent,
+        onUnderlyingLoad,
     } = args;
     setRunOwnerForTests(owner);
-    const loadDataset = loadDatasetThrows
+    const loadDataset = loadDatasetImpl ?? (loadDatasetThrows
         ? () => Promise.reject(new Error("No candles"))
         : (symbol: string) => {
+            onUnderlyingLoad?.(symbol);
             const d = datasets.get(symbol);
             if (!d) throw new Error("Dataset missing");
             return Promise.resolve(d);
-        };
+        });
     return collectEvents(async (events) => {
         await processFinderUniverseRun(
             {
@@ -444,12 +449,14 @@ describe("finder server plugin processFinderUniverseRun", () => {
     // --- Phase 2: multi-strategy orchestration ---
 
     it("sequences multiple strategies and merges survivors into one authoritative slice", async () => {
+        const underlyingLoads: string[] = [];
         const events = await runPlugin({
             symbols: ["UP", "DOWN"],
             datasets: upDownDatasets(),
             owner: 7301,
             strategyKeys: [STRATEGY_KEY, STRATEGY_KEY_2],
             runId: "run-multi-1",
+            onUnderlyingLoad: (symbol) => underlyingLoads.push(symbol),
         });
 
         const start = events[0] as Extract<FinderStreamEvent, { type: "start" }>;
@@ -459,6 +466,16 @@ describe("finder server plugin processFinderUniverseRun", () => {
         const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
         expect(done.type).to.equal("done");
         expect(done.ok).to.equal(true);
+        expect(underlyingLoads.sort()).to.deep.equal(["DOWN", "UP"]);
+        expect(done.diagnostics?.universe?.jobDatasetCache).to.deep.equal({
+            requests: 4,
+            hits: 2,
+            misses: 2,
+            successfulLoads: 2,
+            failedLoads: 0,
+            entries: 2,
+            uniqueBarsLoaded: 10,
+        });
         // Both strategies produce survivors; the merged slice must contain
         // rows from BOTH strategy keys (proves the merge, not just the last).
         const keysInResults = new Set(done.candidates.map((c) => c.strategyKey));
@@ -472,6 +489,30 @@ describe("finder server plugin processFinderUniverseRun", () => {
             expect(p.strategyCount).to.equal(2);
             expect(p.strategyIndex).to.be.at.least(0).and.at.most(1);
         }
+    });
+
+    it("retries a failed job-cache load for a later strategy", async () => {
+        const datasets = upDownDatasets();
+        const calls = new Map<string, number>();
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets,
+            owner: 7305,
+            strategyKeys: [STRATEGY_KEY, STRATEGY_KEY_2],
+            loadDatasetImpl: async (symbol) => {
+                const count = (calls.get(symbol) ?? 0) + 1;
+                calls.set(symbol, count);
+                if (symbol === "UP" && count === 1) throw new Error("transient read failure");
+                return datasets.get(symbol)!;
+            },
+        });
+
+        const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
+        expect(done.type).to.equal("done");
+        expect(calls.get("UP")).to.equal(2);
+        expect(calls.get("DOWN")).to.equal(1);
+        expect(done.diagnostics?.universe?.jobDatasetCache?.failedLoads).to.equal(1);
+        expect(done.diagnostics?.universe?.jobDatasetCache?.successfulLoads).to.equal(2);
     });
 
     it("a candidate evicted from a later top-K update does not remain in runState", async () => {

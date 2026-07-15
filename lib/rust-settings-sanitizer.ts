@@ -1,16 +1,11 @@
 import type { BacktestSettings } from "./types/strategies";
 import { isSameEventPolymarketExitMode } from "./polymarket-exit-mode";
 
-export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
+export function getTypescriptEngineRequirementReasons(settings: BacktestSettings): string[] {
     const executionModel = settings.executionModel ?? 'signal_close';
     const allowSameBarExit = false;
     const slippageBps = settings.slippageBps ?? 0;
     const marketMode = 'all';
-
-    const usesRealismConstraints =
-        executionModel !== 'signal_close'
-        || slippageBps > 0
-        || !allowSameBarExit;
 
     const usesCombinedDirection =
         settings.tradeDirection === 'both'
@@ -45,18 +40,26 @@ export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
         && settings.pathExitMode !== undefined
         && settings.pathExitMode !== 'off';
 
-    return usesRealismConstraints
-        || usesCombinedDirection
-        || usesNonAllMarketMode
-        || usesRiskMaxHold
-        || usesRiskMinHold
-        || usesPercentageWinStreakStopLoss
-        || usesAdaptivePercentageTakeProfit
-        || usesMultiPosition
-        || usesSignalExitMode
-        || usesDisableSignalExits
-        || usesPolymarketProtection
-        || usesPathExit;
+    const reasons: string[] = [];
+    if (executionModel !== 'signal_close') reasons.push('execution model is not signal_close');
+    if (slippageBps > 0) reasons.push('slippage is enabled');
+    if (!allowSameBarExit) reasons.push('same-bar exits are disabled');
+    if (usesCombinedDirection) reasons.push('combined trade direction is enabled');
+    if (usesNonAllMarketMode) reasons.push('market-mode filtering is enabled');
+    if (usesRiskMaxHold) reasons.push('maximum hold bars are enabled');
+    if (usesRiskMinHold) reasons.push('minimum hold bars are enabled');
+    if (usesPercentageWinStreakStopLoss) reasons.push('win-streak stop loss is enabled');
+    if (usesAdaptivePercentageTakeProfit) reasons.push('adaptive take profit is enabled');
+    if (usesMultiPosition) reasons.push('multiple open positions are enabled');
+    if (usesSignalExitMode) reasons.push('same-event Polymarket exits are enabled');
+    if (usesDisableSignalExits) reasons.push('signal exits are disabled');
+    if (usesPolymarketProtection) reasons.push('Polymarket protection is enabled');
+    if (usesPathExit) reasons.push('path exits are enabled');
+    return reasons;
+}
+
+export function requiresTypescriptEngine(settings: BacktestSettings): boolean {
+    return getTypescriptEngineRequirementReasons(settings).length > 0;
 }
 
 export const SNAPSHOT_FILTER_SETTING_KEYS = [] as const;

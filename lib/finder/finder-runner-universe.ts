@@ -3,9 +3,12 @@ import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import { mapWithConcurrencyLimit } from "../async-pool";
 import type { CrossSymbolDataFetcher } from "../cross-symbol-runtime";
 import { debugLogger } from "../debug-logger";
-import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
+import {
+    getTypescriptEngineRequirementReasons,
+    sanitizeBacktestSettingsForRust,
+} from "../rust-settings-sanitizer";
 import { createSeededRandom } from "../param-math-utils";
-import type { CapitalSettings } from "../types/backtest";
+import { isSmartTradeSizingMode, type CapitalSettings } from "../types/backtest";
 import type {
     FinderOptions,
     FinderDiagnostics,
@@ -488,6 +491,9 @@ export async function runFinderUniverseExecution(
     let processedRuns = 0;
     let failedRuns = 0;
     let skippedRuns = 0;
+    let rustCompletedRuns = 0;
+    let typescriptCompletedRuns = 0;
+    const typescriptReasonCounts = new Map<string, number>();
     const measuredYield = async (): Promise<void> => {
         const startedAt = performance.now();
         await callbacks.yieldControl();
@@ -775,6 +781,10 @@ export async function runFinderUniverseExecution(
             { ...(backtestSettings as Record<string, unknown>), interval: input.interval } as BacktestSettings,
             input.interval,
         );
+        const typescriptRequirementReasons = getTypescriptEngineRequirementReasons(preResolvedSettings);
+        if (isSmartTradeSizingMode(preResolvedCapital.sizingMode)) {
+            typescriptRequirementReasons.push(`${preResolvedCapital.sizingMode} position sizing requires TypeScript`);
+        }
 
         const symbolResults = new Map<string, FinderUniverseSymbolResult>();
         let evaluationStoppedEarly = false;
@@ -844,6 +854,21 @@ export async function runFinderUniverseExecution(
                         skipResultPostProcessing: true,
                     },
                 });
+                if (output.engineUsed === "rust") {
+                    rustCompletedRuns += 1;
+                } else {
+                    typescriptCompletedRuns += 1;
+                    const reasons = typescriptRequirementReasons.length > 0
+                        ? typescriptRequirementReasons
+                        : output.signals.length === 0
+                            ? ["no signals required trade simulation"]
+                            : input.useRustEnginePreference === true
+                                ? ["Rust backend was unavailable or rejected the result"]
+                                : ["Rust was not requested"];
+                    for (const reason of reasons) {
+                        typescriptReasonCounts.set(reason, (typescriptReasonCounts.get(reason) ?? 0) + 1);
+                    }
+                }
                 zeroSignals = output.signals.length === 0;
                 const runMs = performance.now() - runStartedAt;
                 processedRuns += 1;
@@ -998,12 +1023,29 @@ export async function runFinderUniverseExecution(
         endpointAdjusted: 0,
         failedRuns,
         skippedRuns,
+        rustCompletedRuns,
+        typescriptCompletedRuns,
         timings,
         strategyBreakdown: toFinderStrategyDiagnostics(strategyStatsByKey),
         failureBreakdown: toFinderFailureDiagnostics(strategyStatsByKey),
         universeDiagnostics: {
             totalSymbols: normalizedSymbols.length,
             loadedSymbols: loadedSymbols.length,
+            candidatePlans: candidatePlans.length,
+            symbolEvaluations: {
+                planned: candidatePlans.length * normalizedSymbols.length,
+                completed: processedRuns,
+                avoided: skippedRuns,
+                passingCandidates: keptCandidateCount,
+            },
+            engineUsage: {
+                rustRequested: input.useRustEnginePreference === true,
+                rustCompletedRuns,
+                typescriptCompletedRuns,
+                typescriptReasons: [...typescriptReasonCounts.entries()]
+                    .map(([reason, runs]) => ({ reason, runs }))
+                    .sort((a, b) => b.runs - a.runs || a.reason.localeCompare(b.reason)),
+            },
             failedSymbols: [...loadFailures.values()]
                 .map((failure) => ({
                     symbol: failure.symbol,
