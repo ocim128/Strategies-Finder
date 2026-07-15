@@ -6,7 +6,10 @@ import {
     resolveStabilityWorkerCount,
     runParallelStability,
 } from "../lib/batch-backtest/batch-stability-parallel";
-import { runStabilityRerunRange } from "../lib/batch-backtest/batch-stability-worker";
+import {
+    runStabilityRerunRange,
+    shouldReuseWorkerArtifactUnion,
+} from "../lib/batch-backtest/batch-stability-worker";
 import { finalizeStabilityAggregate } from "../lib/batch-backtest/batch-stability-mine";
 import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-state-miner";
 import type { BatchStabilityMineResult } from "../lib/batch-backtest/batch-stability-mine";
@@ -88,6 +91,14 @@ function buildFixtures(): {
 }
 
 describe("batch stability parallel partition + merge", () => {
+    it("reuses worker artifact unions only for 4h and slower intervals", () => {
+        expect(shouldReuseWorkerArtifactUnion("1h")).to.equal(false);
+        expect(shouldReuseWorkerArtifactUnion("2h")).to.equal(false);
+        expect(shouldReuseWorkerArtifactUnion("4h")).to.equal(true);
+        expect(shouldReuseWorkerArtifactUnion("1d")).to.equal(true);
+        expect(shouldReuseWorkerArtifactUnion("invalid")).to.equal(false);
+    });
+
     it("partitionRerunRange covers [0, total) exactly with no gaps or overlaps", () => {
         const ranges = partitionRerunRange(50, 4);
         expect(ranges.length).to.equal(4);
@@ -192,7 +203,7 @@ describe("batch stability parallel vs sequential parity", () => {
         }
     });
 
-    it("worker loads only the sampled artifact union when selected indexes are provided", () => {
+    it("worker loads only the sampled artifacts when selected indexes are provided", () => {
         const fixtures = buildFixtures();
         try {
             // Corrupt an artifact that is intentionally NOT sampled. If the

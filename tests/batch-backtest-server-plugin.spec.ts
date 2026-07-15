@@ -20,6 +20,7 @@ const {
     releaseLastResults,
     hasMineableArtifacts,
     hasStoredMineArtifacts,
+    getParsedArtifactCacheSizeForTests,
     setRunOwnerForTests,
     completeRunForTests,
     setMinerOwnerForTests,
@@ -239,6 +240,7 @@ describe("batch-backtest server plugin processRunBatch", () => {
         expect(done.serverHasArtifacts).to.equal(true);
         expect(done.cacheStats?.disk.writes).to.be.a("number");
         expect(hasStoredMineArtifacts()).to.equal(true);
+        expect(getParsedArtifactCacheSizeForTests()).to.equal(0);
 
         setRunOwnerForTests(0);
         await releaseLastResults("test_end");

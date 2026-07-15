@@ -26,6 +26,7 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { readFileSync } from "node:fs";
 import { deserialize } from "node:v8";
+import { parseIntervalSeconds } from "../interval-utils";
 import {
     addStabilityVerdicts,
     createStabilityAggregate,
@@ -54,10 +55,10 @@ export interface StabilityWorkerData {
      * Exact sampled pair indexes for each rerun in `[startRerun, endRerun)`,
      * in rerun order. Indexes refer to `artifactFiles`.
      *
-     * When present, the worker loads only the union of these indexes and uses
-     * these lists directly instead of re-running `sampleItems(...)` over the
-     * full artifact array. This preserves deterministic sampling while avoiding
-     * full-universe artifact load/prep in every worker.
+     * When present, the worker uses these lists directly instead of re-running
+     * `sampleItems(...)` over the full artifact array. Each rerun loads and
+     * prepares only its own indexes so 1h artifacts are released between
+     * reruns instead of accumulating as a multi-rerun union.
      */
     selectedIndexesByRerun?: number[][];
     targets: BatchSyntheticTargetArtifact[];
@@ -93,6 +94,18 @@ function nowMs(): number {
         : Date.now();
 }
 
+const UNION_REUSE_MIN_INTERVAL_SECONDS = 4 * 60 * 60;
+
+/**
+ * Reuse a worker's sampled artifact union only where candle density keeps the
+ * prepared universe bounded. This restores the fast 4h/1d lifecycle while
+ * preserving per-rerun release for the 1h/2h workloads that exhausted 16 GB.
+ */
+export function shouldReuseWorkerArtifactUnion(interval: string): boolean {
+    const seconds = parseIntervalSeconds(interval);
+    return seconds !== null && seconds >= UNION_REUSE_MIN_INTERVAL_SECONDS;
+}
+
 /**
  * Load artifact files from disk. Mirrors the server plugin's
  * `loadStoredMineArtifact` but reads directly from disk (the worker has no
@@ -120,23 +133,24 @@ function loadArtifactsFromDisk(
 export function runStabilityRerunRange(data: StabilityWorkerData): StabilityWorkerResult {
     const profile = createBatchSyntheticMinerProfile();
     const selectedIndexesByRerun = normalizeSelectedIndexes(data);
-    const requiredIndexes = Array.from(new Set(selectedIndexesByRerun.flat())).sort((a, b) => a - b);
-    // Time prepare/load honestly. On the parallel path each worker pays these
-    // costs independently; without timing them the merged profile would show
-    // prepareTargetsMs/preparePairsMs/artifactConversionMs as 0 and hide real
-    // per-worker cost inside runPreparedMs. `nowMs` mirrors the miner's helper.
-    const loadStartedAt = nowMs();
-    const loadedPairs = loadArtifactsFromDisk(data.artifactFiles, requiredIndexes);
-    profile.artifactConversionMs += nowMs() - loadStartedAt;
-    const preparePairsStartedAt = nowMs();
-    const preparedPairsByIndex = new Map<number, BatchSyntheticPreparedPairArtifact>();
-    for (const entry of loadedPairs) {
-        const prepared = prepareBatchSyntheticPairArtifacts([entry.artifact]);
-        if (prepared[0]) {
-            preparedPairsByIndex.set(entry.index, prepared[0]);
+    const loadAndPrepareIndexes = (indexes: readonly number[]): Map<number, BatchSyntheticPreparedPairArtifact> => {
+        const loadStartedAt = nowMs();
+        const loadedPairs = loadArtifactsFromDisk(data.artifactFiles, indexes);
+        profile.artifactConversionMs += nowMs() - loadStartedAt;
+        const preparePairsStartedAt = nowMs();
+        const preparedPairsByIndex = new Map<number, BatchSyntheticPreparedPairArtifact>();
+        for (const entry of loadedPairs) {
+            const prepared = prepareBatchSyntheticPairArtifacts([entry.artifact]);
+            if (prepared[0]) {
+                preparedPairsByIndex.set(entry.index, prepared[0]);
+            }
         }
-    }
-    profile.preparePairsMs += nowMs() - preparePairsStartedAt;
+        profile.preparePairsMs += nowMs() - preparePairsStartedAt;
+        return preparedPairsByIndex;
+    };
+    const reusablePreparedPairsByIndex = shouldReuseWorkerArtifactUnion(data.interval)
+        ? loadAndPrepareIndexes(Array.from(new Set(selectedIndexesByRerun.flat())).sort((a, b) => a - b))
+        : null;
     const prepareTargetsStartedAt = nowMs();
     const preparedTargets = prepareBatchSyntheticTargetArtifacts(data.targets);
     profile.prepareTargetsMs += nowMs() - prepareTargetsStartedAt;
@@ -152,6 +166,11 @@ export function runStabilityRerunRange(data: StabilityWorkerData): StabilityWork
     );
     for (let runIndex = data.startRerun; runIndex < data.endRerun; runIndex += 1) {
         const selectedIndexes = selectedIndexesByRerun[runIndex - data.startRerun] ?? [];
+        // 4h+ reuses the worker's sampled union to avoid repeated disk and
+        // preparation work. Denser 1h/2h data stays bounded to one subset;
+        // its multi-rerun union can exceed the worker's 16 GB heap.
+        const preparedPairsByIndex = reusablePreparedPairsByIndex
+            ?? loadAndPrepareIndexes(selectedIndexes);
         const subsetArtifacts = selectedIndexes
             .map((index) => preparedPairsByIndex.get(index))
             .filter((artifact): artifact is NonNullable<typeof artifact> => Boolean(artifact));

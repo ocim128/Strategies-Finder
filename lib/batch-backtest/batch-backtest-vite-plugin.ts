@@ -187,12 +187,10 @@ let minerOwnerGen = 0;
 
 let runState: BatchRunSnapshot | null = null;
 let lastMineArtifacts: StoredMineArtifactMeta[] = [];
-// In-memory cache of parsed artifacts keyed by file path. Stability Mine
-// re-reads the same artifacts once per rerun (subsetSize * reruns reads for
-// the same N artifacts); without this cache a 1000-pair / 50-rerun run does
-// ~10,000 disk reads + JSON parses of multi-MB files. The cache is bounded
-// by the artifact count and cleared in `releaseLastResults`, so steady-state
-// heap footprint is unchanged.
+// In-memory cache of artifacts loaded by sequential miner consumers. Batch
+// writes must not populate this cache: retaining every full 1h pair defeats
+// the disk-backed artifact contract and can exhaust a 16 GB V8 heap before a
+// 1000-pair run completes. Parallel Stability reads the files independently.
 const parsedArtifactCache = new Map<string, BatchSyntheticPairArtifact>();
 // Pending async artifact writes from `storeMineArtifact`. The `done` event and
 // `releaseLastResults` both await this so artifacts are durable before the
@@ -262,11 +260,10 @@ function ensureMineArtifactDir(): string {
  * responsive to NDJSON progress, status polling, and Stop requests during heavy
  * disk activity (audit Finding 4).
  *
- * The in-memory `parsedArtifactCache` is populated synchronously so same-run
- * Mine reads hit the cache without waiting on the disk write; the disk write is
- * enqueued through a bounded pool (ARTIFACT_WRITE_CONCURRENCY) and tracked in
- * `pendingArtifactWrites` so `flushPendingArtifactWrites` can make the `done`
- * event and `releaseLastResults` wait for durability before proceeding.
+ * The disk write is enqueued through a bounded pool
+ * (ARTIFACT_WRITE_CONCURRENCY) and tracked in `pendingArtifactWrites` so
+ * `flushPendingArtifactWrites` can make the `done` event and
+ * `releaseLastResults` wait for durability before proceeding.
  */
 function storeMineArtifact(index: number, row: BatchBacktestSymbolResult): void {
     if (!row.result || !row.data || !row.signals) return;
@@ -288,14 +285,11 @@ function storeMineArtifact(index: number, row: BatchBacktestSymbolResult): void 
         result: row.result,
     };
     // v8 serialize is ~2-4x faster than JSON.stringify on numeric-heavy
-    // OHLCV/trade payloads and produces smaller files. Paired with the parse
-    // cache in loadStoredMineArtifact, Stability Mine no longer blocks on
-    // (de)serialization for rerun subsets. The buffer is serialized INSIDE the
-    // IIFE (after acquire) rather than synchronously here — computing it here
+    // OHLCV/trade payloads and produces smaller files. The buffer is serialized
+    // INSIDE the IIFE (after acquire) rather than synchronously here — computing it here
     // would retain 1000 multi-MB buffers in `pendingArtifactWrites` until the
     // post-run flush, ~5 GB of extra peak heap on a 1000-pair run. Deferring
     // to the IIFE caps live buffers at ARTIFACT_WRITE_CONCURRENCY (4).
-    parsedArtifactCache.set(filePath, artifact);
     lastMineArtifacts[index] = {
         symbol: row.symbol,
         baseAsset: parsed.baseAsset,
@@ -1850,6 +1844,9 @@ export const __testInternals = {
     releaseLastResults,
     hasMineableArtifacts,
     hasStoredMineArtifacts,
+    getParsedArtifactCacheSizeForTests(): number {
+        return parsedArtifactCache.size;
+    },
     DEFAULT_ARTIFACT_RETENTION_MS,
     handleStatusRequest,
     handleStopRequest,
