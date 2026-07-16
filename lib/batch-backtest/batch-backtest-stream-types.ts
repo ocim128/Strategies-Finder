@@ -24,7 +24,7 @@ import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import { computeBuyAndHoldPct, computeOpenTradeAssetScores } from "./batch-row-scalars";
 
 export type BatchStreamEvent =
-    | { type: "start"; total: number; interval: string; strategyKey: string }
+    | { type: "start"; total: number; interval: string; strategyKey: string; runId?: string }
     | { type: "progress"; percent: number; text: string; status: string }
     | { type: "symbol"; index: number; total: number; row: BatchBacktestSymbolResult }
     | {
@@ -40,8 +40,12 @@ export type BatchStreamEvent =
         fingerprint: string | null;
         /** Server-side loader cache counters captured at run completion. */
         cacheStats?: BatchDatasetCacheStats;
+        /** Browser-generated run id (audit Finding 5). Optional for backward
+         *  compat with stale browser bundles that predate the runId contract;
+         *  the server still scopes Stop by runId once the browser sends one. */
+        runId?: string;
     }
-    | { type: "fatal"; error: string };
+    | { type: "fatal"; error: string; runId?: string };
 
 /**
  * Strip the heavy array fields from a per-symbol result so it is safe to send

@@ -118,7 +118,13 @@ export interface BatchBacktestRunInput {
 export interface BatchBacktestRunCallbacks {
     setProgress: (percent: number, text: string) => void;
     setStatus: (text: string) => void;
-    onSymbolComplete?: (index: number, result: BatchBacktestSymbolResult) => void;
+    /**
+     * Allowed to return a Promise. The runner awaits it before starting the
+     * next symbol so a slow consumer (e.g. server-side artifact persistence)
+     * can apply backpressure instead of unbounded queueing (audit Finding 2).
+     * Synchronous return values remain valid; the await is a no-op for them.
+     */
+    onSymbolComplete?: (index: number, result: BatchBacktestSymbolResult) => void | Promise<void>;
     /**
      * Fired once per attempted symbol at the top of the iteration, before
      * load/backtest. Lets a caller (the server-side plugin) surface which pair
@@ -215,7 +221,7 @@ export async function runBatchBacktest(
                 };
                 results[i] = failure;
                 failedSymbols.push(symbol);
-                callbacks.onSymbolComplete?.(i, failure);
+                await callbacks.onSymbolComplete?.(i, failure);
                 // Refill the prefetch window before continuing.
                 const nextIdx = i + PREFETCH_AHEAD;
                 if (nextIdx < symbols.length) startPrefetch(nextIdx);
@@ -237,7 +243,7 @@ export async function runBatchBacktest(
                 };
                 results[i] = failure;
                 failedSymbols.push(symbol);
-                callbacks.onSymbolComplete?.(i, failure);
+                await callbacks.onSymbolComplete?.(i, failure);
                 const nextIdx = i + PREFETCH_AHEAD;
                 if (nextIdx < symbols.length) startPrefetch(nextIdx);
                 continue;
@@ -257,7 +263,7 @@ export async function runBatchBacktest(
             };
             results[i] = failure;
             failedSymbols.push(symbol);
-            callbacks.onSymbolComplete?.(i, failure);
+            await callbacks.onSymbolComplete?.(i, failure);
             const nextIdx = i + PREFETCH_AHEAD;
             if (nextIdx < symbols.length) startPrefetch(nextIdx);
             continue;
@@ -296,7 +302,7 @@ export async function runBatchBacktest(
             });
             if (cancelCheck()) break;
             const result = buildSymbolResult(symbol, data, output.result, output.signals);
-            callbacks.onSymbolComplete?.(i, result);
+            await callbacks.onSymbolComplete?.(i, result);
             results[i] = input.pruneResultArtifacts ? pruneResultArtifacts(result) : result;
         } catch (error) {
             if (cancelCheck()) break;
@@ -311,7 +317,7 @@ export async function runBatchBacktest(
             };
             results[i] = failure;
             failedSymbols.push(symbol);
-            callbacks.onSymbolComplete?.(i, failure);
+            await callbacks.onSymbolComplete?.(i, failure);
         }
     }
 

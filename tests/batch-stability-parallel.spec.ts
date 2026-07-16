@@ -5,6 +5,7 @@ import {
     partitionRerunRange,
     resolveStabilityWorkerCount,
     runParallelStability,
+    __testInternals as stabilityParallelInternals,
 } from "../lib/batch-backtest/batch-stability-parallel";
 import {
     runStabilityRerunRange,
@@ -292,6 +293,61 @@ describe("batch stability parallel worker spawn (end-to-end)", () => {
             expect(outcome.workerCount).to.equal(3);
         } finally {
             fixtures.cleanup();
+        }
+    });
+});
+
+describe("batch stability worker bundle dependency hash (audit Finding 8)", () => {
+    // Intent being locked: the worker bundle cache key MUST cover the worker's
+    // transitive dependency closure, not just the entry file's mtime. The
+    // previous key (`${sourcePath}@${stat.mtimeMs}`) silently served stale
+    // worker code whenever a dependency (e.g. `batch-stability-mine.ts`)
+    // changed within a dev session while the sequential fallback used current
+    // code — a parity divergence in a correctness-sensitive deterministic
+    // path. These tests pin the new content hash to the full graph.
+
+    it("returns the same hash for the same dependency graph", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "stab-hash-stable-"));
+        try {
+            const entry = join(dir, "entry.ts");
+            const dep = join(dir, "dep.ts");
+            writeFileSync(entry, "export { x } from './dep';");
+            writeFileSync(dep, "export const x = 1;");
+            const fs = await import("node:fs/promises");
+            const crypto = await import("node:crypto");
+            const metafile = { inputs: { [dep]: {} } };
+            const h1 = await stabilityParallelInternals.computeDependencyHash(entry, metafile, fs, crypto);
+            const h2 = await stabilityParallelInternals.computeDependencyHash(entry, metafile, fs, crypto);
+            expect(h1).to.equal(h2);
+            expect(h1.length).to.be.greaterThan(0);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("changes the hash when a transitive dependency mtime changes", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "stab-hash-mtime-"));
+        try {
+            const entry = join(dir, "entry.ts");
+            const dep = join(dir, "dep.ts");
+            writeFileSync(entry, "export { x } from './dep';");
+            writeFileSync(dep, "export const x = 1;");
+            const fs = await import("node:fs/promises");
+            const crypto = await import("node:crypto");
+            const metafile = { inputs: { [dep]: {} } };
+            const before = await stabilityParallelInternals.computeDependencyHash(entry, metafile, fs, crypto);
+
+            // Bump the dependency's mtime by rewriting it. Use a future-dated
+            // mtime so the change is unambiguous regardless of FS mtime
+            // resolution (some Windows FS are 100ms-granular).
+            writeFileSync(dep, "export const x = 2;");
+            const future = new Date(Date.now() + 60_000);
+            await fs.utimes(dep, future, future);
+
+            const after = await stabilityParallelInternals.computeDependencyHash(entry, metafile, fs, crypto);
+            expect(after, "dependency mtime change must invalidate the bundle hash").to.not.equal(before);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
         }
     });
 });
