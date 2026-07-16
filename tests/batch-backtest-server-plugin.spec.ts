@@ -7,10 +7,12 @@ import {
     processMine,
     processStabilityMine,
     resolveServerBatchHeapWarning,
+    ArtifactStore,
     type BatchRunSnapshot,
     __testInternals,
 } from "../lib/batch-backtest/batch-backtest-vite-plugin";
 import type { BatchStreamEvent } from "../lib/batch-backtest/batch-backtest-stream-types";
+import type { BatchBacktestSymbolResult } from "../lib/batch-backtest/batch-backtest-runner";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
 
@@ -1195,6 +1197,92 @@ describe("batch-backtest server plugin artifact lifecycle races (audit Findings 
     });
 });
 
+describe("batch-backtest server plugin per-run ArtifactStore (audit follow-up R-F1)", () => {
+    // Intent being locked: a `storeMineArtifact` submission blocked inside
+    // awaitSlot() must NOT contaminate the new generation when Stop + new Run
+    // detaches its store while it is waiting. The F3 test only planted a plain
+    // pending promise; this test exercises the real submission path:
+    // fill the gate to capacity, queue one more (blocked) store(), detach the
+    // store, then drain the gate — the blocked store() must bail without
+    // creating a dir entry or metadata in the new generation.
+    function makeSyntheticRow(): BatchBacktestSymbolResult {
+        const candles = makeCandles([100, 105, 110, 115, 120]);
+        return {
+            symbol: "BTCUSDT+ETHUSDT",
+            status: "profitable",
+            barCount: candles.length,
+            data: candles,
+            signals: [{ time: candles[0]!.time, type: "buy", price: 100 }],
+            result: {
+                totalTrades: 1, netProfit: 10, netProfitPct: 10,
+                winRate: 100, profitFactor: 1, maxDrawdown: 0, maxDrawdownPct: 0,
+                finalCapital: 110, totalReturn: 10, exposurePct: 100,
+                trades: [{ entryTime: candles[0]!.time, exitTime: candles[4]!.time, entryPrice: 100, exitPrice: 120, pnl: 20, pnlPct: 20, side: "long", bars: 4 }],
+                equityCurve: [],
+            } as any,
+        };
+    }
+
+    afterEach(async () => {
+        setRunOwnerForTests(0);
+        await releaseLastResults("rf1_after_each");
+    });
+
+    it("a store() blocked at the gate bails after detach without touching state", async () => {
+        let releaseWrites!: () => void;
+        const writesBlocked = new Promise<void>((resolve) => { releaseWrites = resolve; });
+        const store = new ArtifactStore(async () => { await writesBlocked; });
+        // Fill the real submission gate through the public store path. The
+        // injected writer keeps all eight submissions unresolved without
+        // reaching into private implementation state.
+        await Promise.all(Array.from({ length: 8 }, (_value, index) =>
+            store.store(index, makeSyntheticRow())
+        ));
+
+        // Queue one more store(); it must block in awaitSlot().
+        const blockedStore = store.store(99, makeSyntheticRow());
+        // Yield so the blocked store() actually enters awaitSlot's await.
+        for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
+
+        // Detach the store (simulating releaseLastResults mid-flight).
+        store.detach();
+        expect(store.isDetached()).to.equal(true);
+
+        // Drain the gate — the blocked store() resumes its post-await check.
+        releaseWrites();
+        // Also pump to let the blocked store() settle.
+        for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
+
+        // The blocked store() must have bailed: it added no metadata, no
+        // pending write, and did not create the dir.
+        await blockedStore;
+        expect(store.collectMetas().length, "no metadata added post-detach").to.equal(0);
+        expect(store.pendingWrites.length, "no pending write added post-detach").to.equal(0);
+        expect(store.dir, "no dir created post-detach").to.equal(null);
+    });
+
+    it("store() before detach records the artifact normally", async () => {
+        const store = new ArtifactStore();
+        await store.store(0, makeSyntheticRow());
+        expect(store.collectMetas().length).to.equal(1);
+        expect(store.dir).to.not.equal(null);
+        await store.flush();
+    });
+
+    it("does not advertise an artifact when its disk write fails", async () => {
+        const store = new ArtifactStore(async () => { throw new Error("disk full"); });
+        await store.store(0, makeSyntheticRow());
+        await store.flush();
+
+        expect(store.collectMetas().length).to.equal(0);
+        const detached = store.detach();
+        if (detached.dir) {
+            const fs = await import("node:fs/promises");
+            await fs.rm(detached.dir, { recursive: true, force: true });
+        }
+    });
+});
+
 describe("batch-backtest server plugin runId-scoped Stop (audit Finding 5)", () => {
     // Intent being locked: Stop is scoped by browser-generated runId so a stale
     // tab cannot cancel a newer run. A mismatched runId MUST be rejected without
@@ -1244,12 +1332,13 @@ describe("batch-backtest server plugin runId-scoped Stop (audit Finding 5)", () 
         expect(result).to.deep.equal({ ok: true, stopped: true });
     });
 
-    it("falls back to legacy unscoped Stop when no runId is sent (backward compat)", async () => {
+    it("rejects an unscoped Stop when the active run has a runId", async () => {
         const owner = 9203;
         plantActiveRun("run-active-3", owner);
         // No runId argument — a stale browser bundle that predates the contract.
         const result = await handleStopRequest();
-        expect(result).to.deep.equal({ ok: true, stopped: true });
+        expect(result).to.deep.equal({ ok: false, stopped: false });
+        expect(getRunStateForTests()!.runId).to.equal("run-active-3");
     });
 
     it("also falls back to unscoped Stop when the active run has no runId (legacy server state)", async () => {
@@ -1314,8 +1403,8 @@ describe("batch-backtest server plugin runId-scoped Stop (audit Finding 5)", () 
     it("parseBatchRunId trims, rejects non-strings, and rejects overlong ids", () => {
         expect(parseBatchRunId("  abc  ")).to.equal("abc");
         expect(parseBatchRunId(undefined)).to.equal("");
-        expect(parseBatchRunId(123)).to.equal("");
-        expect(parseBatchRunId("x".repeat(200))).to.equal("");
+        expect(() => parseBatchRunId(123)).to.throw("runId must be a string");
+        expect(() => parseBatchRunId("x".repeat(200))).to.throw("runId must be at most 128 characters");
     });
 });
 
@@ -1331,9 +1420,9 @@ describe("batch-backtest server plugin PID-scoped orphan sweep (audit Finding 7)
     const PREFIX = MINE_ARTIFACT_DIR_PREFIX_FOR_TESTS;
     const now = Date.now();
 
-    it("sweeps a legacy bare-prefix entry (no PID stamp)", () => {
+    it("does not classify a legacy bare-prefix entry without filesystem age", () => {
         // Pre-fix mkdtemp output: prefix + random suffix only.
-        expect(shouldSweepOrphanEntryForTests(`${PREFIX}ABCDE`, now)).to.equal(true);
+        expect(shouldSweepOrphanEntryForTests(`${PREFIX}ABCDE`, now)).to.equal(false);
     });
 
     it("never sweeps a directory owned by the current process", () => {
@@ -1343,12 +1432,12 @@ describe("batch-backtest server plugin PID-scoped orphan sweep (audit Finding 7)
         expect(shouldSweepOrphanEntryForTests(entry, now)).to.equal(false);
     });
 
-    it("sweeps a directory older than the stale threshold regardless of PID liveness", () => {
+    it("retains an old directory while its owning PID is still alive", () => {
         // Even if the PID is the current process's, an entry older than
         // ORPHAN_SWEEP_STALE_MS is reclaimed (age backstop).
         const ancient = now - (ORPHAN_SWEEP_STALE_MS_FOR_TESTS + 60_000);
         const entry = `${PREFIX}${process.pid}-${ancient}-abc`;
-        expect(shouldSweepOrphanEntryForTests(entry, now)).to.equal(true);
+        expect(shouldSweepOrphanEntryForTests(entry, now)).to.equal(false);
     });
 
     it("retains a directory owned by a DIFFERENT live process", () => {
@@ -1380,9 +1469,9 @@ describe("batch-backtest server plugin PID-scoped orphan sweep (audit Finding 7)
         expect(shouldSweepOrphanEntryForTests(entry, recent), "dead pid must be swept").to.equal(true);
     });
 
-    it("sweeps an entry with an invalid PID stamp", () => {
+    it("does not classify an invalid PID stamp without filesystem age", () => {
         const entry = `${PREFIX}notanumber-${now}-abc`;
         // NaN pid → sweep (malformed stamp can't prove ownership).
-        expect(shouldSweepOrphanEntryForTests(entry, now)).to.equal(true);
+        expect(shouldSweepOrphanEntryForTests(entry, now)).to.equal(false);
     });
 });

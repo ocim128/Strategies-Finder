@@ -156,6 +156,8 @@ function setupForAnalysis(fingerprint = "fp-test"): BatchBacktestDom {
     s.analysisInFlight = false;
     s.analysisCancelRequested = false;
     s.pendingStopPromise = null;
+    s.activeServerRunId = null;
+    (globalThis as any).localStorage._store.clear();
     s.buildCurrentRunFingerprint = () => fingerprint;
     return dom;
 }
@@ -196,6 +198,65 @@ function successStabilityResponder(): FetchResponder {
 // ---------------------------------------------------------------------------
 
 describe("BatchBacktestService analysis lifecycle", () => {
+    it("persists the active run id and restores it after a tab-style reset", () => {
+        setupForAnalysis();
+        svc().persistActiveServerRun("batch-owned");
+        svc().activeServerRunId = null;
+
+        expect(svc().loadPersistedActiveServerRun()?.runId).to.equal("batch-owned");
+    });
+
+    it("keeps ownership after a rejected Stop and clears it after an accepted Stop", async () => {
+        setupForAnalysis();
+        svc().activeServerRunId = "batch-owned";
+        svc().persistActiveServerRun("batch-owned");
+        const bodies: Array<{ runId?: string }> = [];
+        let accepted = false;
+
+        await withMockFetch((_url, init) => {
+            bodies.push(JSON.parse(String(init?.body ?? "{}")));
+            return { ok: true, status: 200, text: JSON.stringify({ ok: accepted, stopped: accepted }) };
+        }, async () => {
+            await svc().stopServerWork();
+            expect(svc().activeServerRunId).to.equal("batch-owned");
+            accepted = true;
+            await svc().stopServerWork();
+        });
+
+        expect(bodies).to.deep.equal([{ runId: "batch-owned" }, { runId: "batch-owned" }]);
+        expect(svc().activeServerRunId).to.equal(null);
+    });
+
+    it("surfaces a terminal server failure when reattaching after reload", async () => {
+        const dom = setupForAnalysis();
+        svc().activeServerRunId = "batch-fatal";
+        svc().persistActiveServerRun("batch-fatal");
+        svc().lastResults = [];
+
+        await withMockFetch(() => ({
+            ok: true,
+            status: 200,
+            text: JSON.stringify({
+                running: false,
+                lastRun: {
+                    runId: "batch-fatal",
+                    rowCount: 0,
+                    hasArtifacts: false,
+                    fingerprint: null,
+                    phase: "fatal",
+                    summary: "Batch failed.",
+                    error: "worker exploded",
+                },
+            }),
+        }), async () => {
+            await svc().reattachToInProgressServerRun();
+        });
+
+        expect(dom.batchBacktestStatus.textContent).to.include("worker exploded");
+        expect(svc().activeServerRunId).to.equal("batch-fatal");
+        expect(svc().loadPersistedActiveServerRun()).to.equal(null);
+    });
+
     it("completes a Stability run successfully and restores the tab to idle", async () => {
         const dom = setupForAnalysis();
         svc().lastStabilityResult = { rows: [{ asset: "BTC" }] };

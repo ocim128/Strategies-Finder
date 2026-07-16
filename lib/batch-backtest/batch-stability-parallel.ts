@@ -257,8 +257,6 @@ export type ParallelStabilityOutcome =
  * path so the caller falls back to sequential TS with the spawn failure
  * captured as the fallback reason — never throws.
  */
-const WORKER_BUNDLE_CACHE = new Map<string, string>();
-
 /**
  * How long an unreferenced worker-bundle generation must sit in the temp dir
  * before {@link sweepStaleWorkerBundles} reclaims it. Conservative (1h): the
@@ -287,11 +285,7 @@ async function resolveWorkerPath(): Promise<string> {
         /* fall through to bundle */
     }
     try {
-        const bundled = await bundleWorkerWithEsbuild(sourcePath);
-        // In-process memo key is the final outfile path; stable across calls
-        // for the same dependency graph because the dir is content-hash-named.
-        WORKER_BUNDLE_CACHE.set(bundled, bundled);
-        return bundled;
+        return await bundleWorkerWithEsbuild(sourcePath);
     } catch {
         // esbuild unavailable or bundling failed — return the .ts path; the
         // spawn will fail and the caller falls back to sequential TS.
@@ -371,56 +365,57 @@ async function bundleWorkerWithEsbuild(sourcePath: string): Promise<string> {
             metafile: boolean;
         }) => Promise<{
             metafile?: { inputs?: Record<string, unknown> };
+            outputFiles?: Array<{ contents: Uint8Array }>;
         }>;
     };
     const tmp = os.tmpdir();
     const root = workerBundleRoot(tmp);
 
-    // First pass: build with metafile to capture the full dependency graph,
-    // then derive the cache hash from every input path + mtime. Building into
-    // a throwaway path keeps the content-addressed dir clean if hashing fails.
-    const probeDir = await fs.mkdtemp(join(tmp, "stability-worker-probe-"));
-    const probeOut = join(probeDir, "worker.cjs");
-    let result: { metafile?: { inputs?: Record<string, unknown> } };
-    try {
-        result = await esbuild.build({
-            entryPoints: [sourcePath],
-            bundle: true,
-            platform: "node",
-            format: "cjs",
-            target: "node18",
-            outfile: probeOut,
-            write: true,
-            logLevel: "silent",
-            metafile: true,
-        });
-    } finally {
-        // Probe dir is disposable; content-addressed dir is created below.
-        await fs.rm(probeDir, { recursive: true, force: true }).catch(() => { /* best-effort */ });
+    // Build once in memory. The same result supplies both the dependency graph
+    // used for the generation key and the bytes atomically published below.
+    // This avoids a probe build followed by a second build that can observe a
+    // different source tree or leave a truncated final bundle on interruption.
+    const result = await esbuild.build({
+        entryPoints: [sourcePath],
+        bundle: true,
+        platform: "node",
+        format: "cjs",
+        target: "node18",
+        outfile: "worker.cjs",
+        write: false,
+        logLevel: "silent",
+        metafile: true,
+    });
+    const contents = result.outputFiles?.[0]?.contents;
+    if (!contents?.byteLength) {
+        throw new Error("esbuild produced an empty stability worker bundle");
     }
 
     const hash = await computeDependencyHash(sourcePath, result.metafile, fs, crypto);
     const dir = join(root, hash);
     const outfile = join(dir, "worker.cjs");
 
-    // If a prior process/session already wrote this generation, reuse it.
-    // Otherwise rebuild into the content-addressed dir. Either way the output
-    // path is stable for a given dependency graph.
-    const exists = await fs.access(outfile).then(() => true).catch(() => false);
-    if (!exists) {
-        await fs.mkdir(dir, { recursive: true });
-        await esbuild.build({
-            entryPoints: [sourcePath],
-            bundle: true,
-            platform: "node",
-            format: "cjs",
-            target: "node18",
-            outfile,
-            write: true,
-            logLevel: "silent",
-            metafile: false,
-        });
+    await fs.mkdir(dir, { recursive: true });
+    const existingSize = await fs.stat(outfile).then((value) => value.size).catch(() => null);
+    if (existingSize === null || existingSize <= 0) {
+        const temporary = join(dir, `worker.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`);
+        await fs.writeFile(temporary, contents);
+        try {
+            if (existingSize !== null && existingSize <= 0) {
+                await fs.rm(outfile, { force: true });
+            }
+            await fs.rename(temporary, outfile);
+        } catch (error) {
+            const publishedSize = await fs.stat(outfile).then((value) => value.size).catch(() => 0);
+            if (publishedSize <= 0) throw error;
+        } finally {
+            await fs.rm(temporary, { force: true }).catch(() => { /* best-effort */ });
+        }
     }
+
+    // Mark the active generation as recently used before sweeping siblings.
+    const now = new Date();
+    await fs.utimes(dir, now, now).catch(() => { /* best-effort */ });
 
     // Opportunistic cleanup; never block resolution on sweep failures.
     void sweepStaleWorkerBundles(tmp, hash);

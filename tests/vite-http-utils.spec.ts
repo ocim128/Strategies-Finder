@@ -277,4 +277,19 @@ describe("createDisconnectSafeStream (audit Finding 4)", () => {
         // Subsequent writes no-op without throwing.
         stream.write({ type: "symbol", index: 2 });
     });
+
+    it("notifies the owner exactly once when the stream disconnects", () => {
+        const { res, emit } = makeStreamingResponse();
+        let disconnects = 0;
+        const stream = createDisconnectSafeStream(res, {
+            onDisconnect: () => { disconnects += 1; },
+        });
+
+        emit("close");
+        emit("error");
+        stream.write({ type: "symbol", index: 1 });
+
+        assert.equal(disconnects, 1);
+        assert.equal(stream.isWritable(), false);
+    });
 });

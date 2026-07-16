@@ -110,6 +110,17 @@ const BATCH_RESULTS_STORAGE = {
     version: 1,
 } as const;
 
+const BATCH_ACTIVE_SERVER_RUN_STORAGE = {
+    key: "playground_batch_backtest_active_server_run",
+    schema: "batch_backtest.active_server_run",
+    version: 1,
+} as const;
+
+type BatchPersistedActiveServerRun = {
+    runId: string;
+    startedAt: number;
+};
+
 /**
  * Max rows buffered before a synchronous mid-stream flush (Finding 6). The
  * live stream queues DOM renders and flushes once per animation frame, but a
@@ -201,6 +212,7 @@ class BatchBacktestService {
         this.bindEvents(dom);
         this.resetProgress(dom);
         this.loadPersistedLatestResults(dom);
+        this.activeServerRunId = this.loadPersistedActiveServerRun()?.runId ?? null;
         this.updateSummary(dom);
         this.initialized = true;
         // Reattach to a server-side run that started before page load. Mirrors
@@ -327,6 +339,7 @@ class BatchBacktestService {
         // Audit Finding 5: clear the active server run id at the start of each
         // new run; `runBatchServer` assigns a fresh one before POSTing.
         this.activeServerRunId = null;
+        this.clearActiveServerRun();
         this.clearPersistedLatestResults();
         this.stopReattachPoll();
         dom.batchBacktestRunBtn.disabled = true;
@@ -407,7 +420,10 @@ class BatchBacktestService {
         // so the server can scope Stop to THIS run. Adopted on the service so
         // Stop and reattach reconciliation send the same value.
         const runId = `batch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-        if (token === this.runToken) this.activeServerRunId = runId;
+        if (token === this.runToken) {
+            this.activeServerRunId = runId;
+            this.persistActiveServerRun(runId);
+        }
         const response = await fetch("/api/batch-backtest/run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -426,6 +442,7 @@ class BatchBacktestService {
             const text = await response.text();
             let payload: { error?: string } = {};
             try { payload = JSON.parse(text); } catch { /* ignore */ }
+            if (!response.ok) this.clearActiveServerRun(runId);
             throw new Error(payload.error ?? `Server run failed (${response.status}).`);
         }
 
@@ -471,6 +488,7 @@ class BatchBacktestService {
                         ? buildCacheStatsFromLoader(event.cacheStats)
                         : null;
                     doneSummary = event.summary;
+                    this.clearActiveServerRun(runId, false);
                     setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
                     dom.batchBacktestStatus.textContent = doneSummary;
                 },
@@ -520,6 +538,7 @@ class BatchBacktestService {
         }
         if (token !== this.runToken) return;
         if (doneSummary !== null) {
+            this.clearActiveServerRun(runId, false);
             dom.batchBacktestStatus.textContent = doneSummary;
             this.saveLatestResultsSnapshot();
         }
@@ -1057,11 +1076,13 @@ class BatchBacktestService {
             // Stop to THIS run. A stale tab's mismatched id is rejected
             // without mutating the active run's ownership.
             const runId = this.activeServerRunId;
-            await fetch("/api/batch-backtest/stop", {
+            const response = await fetch("/api/batch-backtest/stop", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(runId ? { runId } : {}),
             });
+            const payload = await response.json().catch(() => null) as { ok?: boolean } | null;
+            if (response.ok && payload?.ok && runId) this.clearActiveServerRun(runId);
         } catch (error) {
             debugLogger.warn("batch.server.stop_failed", {
                 error: error instanceof Error ? error.message : String(error),
@@ -1169,6 +1190,7 @@ class BatchBacktestService {
                         rowOffset?: number;
                         rowCount?: number;
                         nextOffset?: number | null;
+                        runId?: string;
                     } | null;
                     lastRun?: {
                         rowCount: number;
@@ -1177,6 +1199,10 @@ class BatchBacktestService {
                         interval?: string | null;
                         strategyKey?: string | null;
                         cacheStats?: BatchDatasetCacheStats | null;
+                        runId?: string;
+                        phase?: "done" | "cancelled" | "fatal";
+                        summary?: string | null;
+                        error?: string | null;
                     } | null;
                 };
                 try {
@@ -1233,6 +1259,19 @@ class BatchBacktestService {
                 // Successful poll: reset the transient-failure counter.
                 this.reattachConsecutiveFailures = 0;
                 if (!payload.running || !payload.run) {
+                    const terminalRunId = payload.lastRun?.runId;
+                    if (
+                        this.activeServerRunId
+                        && terminalRunId
+                        && terminalRunId !== this.activeServerRunId
+                    ) {
+                        // This tab owns a different run. Do not adopt or render
+                        // another tab's terminal snapshot.
+                        return;
+                    }
+                    if (terminalRunId && !this.activeServerRunId) {
+                        this.activeServerRunId = terminalRunId;
+                    }
                     // Adopt any leftover server-side artifacts (Mine Timing
                     // can still run against the prior run if it hasn't TTL'd).
                     if (
@@ -1268,6 +1307,13 @@ class BatchBacktestService {
                     if (this.lastResults.length > 0) {
                         this.saveLatestResultsSnapshot();
                     }
+                    if (payload.lastRun?.phase === "fatal") {
+                        this.getDom().batchBacktestStatus.textContent =
+                            `Server Batch failed: ${payload.lastRun.error ?? payload.lastRun.summary ?? "Unknown error"}`;
+                    } else if (payload.lastRun?.summary) {
+                        this.getDom().batchBacktestStatus.textContent = payload.lastRun.summary;
+                    }
+                    if (terminalRunId) this.clearActiveServerRun(terminalRunId, false);
                     // Only restore Run/Stop/busy if reattach is still the active
                     // task. A user clicking Run while this fetch was in-flight
                     // calls stopReattachPoll(); in that case the user's Run owns
@@ -1285,6 +1331,19 @@ class BatchBacktestService {
                     return;
                 }
                 const run = payload.run;
+                if (
+                    this.activeServerRunId
+                    && run.runId
+                    && run.runId !== this.activeServerRunId
+                ) {
+                    // A persisted id from this tab does not own the server's
+                    // current run; leave the other run untouched.
+                    return;
+                }
+                if (run.runId && !this.activeServerRunId) {
+                    this.activeServerRunId = run.runId;
+                    this.persistActiveServerRun(run.runId);
+                }
                 this.serverHasArtifacts = false; // still running; Mine not yet available.
                 // Adopt the in-progress run's governing strategy so Mine
                 // provenance is correct even on the very first reattach tick
@@ -1845,6 +1904,44 @@ class BatchBacktestService {
                 error: error instanceof Error ? error.message : String(error),
             });
         }
+    }
+
+    private persistActiveServerRun(runId: string): void {
+        writePersistedJson({
+            ...BATCH_ACTIVE_SERVER_RUN_STORAGE,
+            data: { runId, startedAt: Date.now() },
+            onError: (error) => debugLogger.warn("batch.active_server_run_save_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            }),
+        });
+    }
+
+    private loadPersistedActiveServerRun(): BatchPersistedActiveServerRun | null {
+        return readPersistedJson<BatchPersistedActiveServerRun | null>({
+            ...BATCH_ACTIVE_SERVER_RUN_STORAGE,
+            fallback: null,
+            migrate: ({ data }) => {
+                if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+                const source = data as Partial<BatchPersistedActiveServerRun>;
+                if (typeof source.runId !== "string" || !source.runId.trim()) return null;
+                return {
+                    runId: source.runId.trim(),
+                    startedAt: typeof source.startedAt === "number" ? source.startedAt : Date.now(),
+                };
+            },
+        });
+    }
+
+    private clearActiveServerRun(expectedRunId?: string, clearMemory = true): void {
+        if (expectedRunId && this.activeServerRunId && this.activeServerRunId !== expectedRunId) return;
+        if (clearMemory) this.activeServerRunId = null;
+        writePersistedJson({
+            ...BATCH_ACTIVE_SERVER_RUN_STORAGE,
+            data: null,
+            onError: (error) => debugLogger.warn("batch.active_server_run_clear_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            }),
+        });
     }
 
     /**

@@ -26,7 +26,7 @@
 import type { Plugin } from "vite";
 import { getHeapStatistics, deserialize, serialize } from "node:v8";
 import { mkdtempSync } from "node:fs";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { debugLogger } from "../debug-logger";
@@ -156,9 +156,8 @@ const ARTIFACT_SUBMISSION_CAPACITY = 8;
  * Minimal counting semaphore capping concurrent async artifact writes across
  * `storeMineArtifact` submissions. `acquire` blocks (returns a waiting promise)
  * once `ARTIFACT_WRITE_CONCURRENCY` writes are in flight; `release` drains the
- * queue in FIFO order. The pending-writes array in `storeMineArtifact` is the
- * single flush seam — `flushPendingArtifactWrites` awaits every submitted
- * promise, so even a queued-but-not-yet-acquired write is tracked.
+ * queue in FIFO order. `ArtifactStore.flush()` awaits every submitted promise,
+ * so even a queued-but-not-yet-acquired write is tracked.
  */
 class ArtifactWriteSemaphore {
     private active = 0;
@@ -188,7 +187,6 @@ class ArtifactWriteSemaphore {
         }
     }
 }
-const artifactWriteSemaphore = new ArtifactWriteSemaphore();
 
 /**
  * Bounded FIFO of in-flight artifact submissions (audit Finding 2). Each entry
@@ -198,10 +196,8 @@ const artifactWriteSemaphore = new ArtifactWriteSemaphore();
  * `inflight.length >= ARTIFACT_SUBMISSION_CAPACITY`, awaiting the oldest entry
  * — so at most CAP artifacts are captured-but-not-yet-serialized at once.
  *
- * Reset in `releaseLastResults` so a new run starts from an empty window even
- * if a prior run's writes were cancelled mid-flight (their gate links resolve
- * in their own `finally`, so leaking them here would only over-throttle the
- * next run; the explicit reset keeps the capacity accounting exact).
+ * Owned per {@link ArtifactStore} (audit follow-up R-F1): a stale run's writer
+ * awaiting a slot is waiting on ITS store's gate, not the new generation's.
  */
 class ArtifactSubmissionGate {
     private inflight: Promise<void>[] = [];
@@ -228,12 +224,159 @@ class ArtifactSubmissionGate {
             this.inflight = this.inflight.filter((p) => p !== serialized);
         }).catch(() => { /* already handled by the awaiter */ });
     }
+}
 
-    reset(): void {
-        this.inflight = [];
+/**
+ * Per-run artifact store (audit follow-up R-F1). Encapsulates the directory,
+ * submission gate, write semaphore, metadata, parsed cache, and pending writes
+ * for ONE run generation. `storeMineArtifact` captures the store instance, so
+ * after {@link detach} an old run's in-flight writer resumes against its own
+ * (now-detached) store and bails instead of mutating the new generation's
+ * globals. Pre-fix the write path shared module globals and an old writer
+ * could clobber a new run's `lastMineArtifacts` / `pendingArtifactWrites` /
+ * `mineArtifactDir` after Stop + new Run reset them.
+ *
+ * `detached` is the ownership flag: set synchronously by `detach()` before the
+ * async cleanup, and rechecked after every `await` in the write path.
+ */
+export class ArtifactStore {
+    dir: string | null = null;
+    metas: StoredMineArtifactMeta[] = [];
+    readonly parsedCache = new Map<string, BatchSyntheticPairArtifact>();
+    pendingWrites: Promise<void>[] = [];
+    private detached = false;
+    private readonly gate = new ArtifactSubmissionGate();
+    private readonly semaphore = new ArtifactWriteSemaphore();
+
+    constructor(
+        private readonly writeArtifactFile: (path: string, data: Uint8Array) => Promise<void> = writeFile,
+    ) {}
+
+    ensureDir(): string {
+        if (!this.dir) {
+            const stamp = `${process.pid}-${Date.now()}-`;
+            this.dir = mkdtempSync(join(tmpdir(), MINE_ARTIFACT_DIR_PREFIX + stamp));
+        }
+        return this.dir;
+    }
+
+    isDetached(): boolean {
+        return this.detached;
+    }
+
+    /**
+     * Store one row's Mine artifact under backpressure. The submission gate
+     * bounds captured-but-not-yet-serialized closures; after every await the
+     * store is rechecked for detachment so a stale writer cannot contaminate a
+     * newer generation.
+     */
+    async store(index: number, row: BatchBacktestSymbolResult): Promise<void> {
+        if (this.detached) return;
+        if (!row.result || !row.data || !row.signals) return;
+        const parsed = parsePortfolioSyntheticPairSymbol(row.symbol);
+        if (!parsed) return;
+
+        // Backpressure: don't capture the (multi-MB) artifact closure until a
+        // submission slot is free. See ArtifactSubmissionGate.
+        await this.gate.awaitSlot();
+        // R-F1: recheck after the await. If Stop + new Run detached this store
+        // while we were waiting for a slot, bail BEFORE capturing the artifact
+        // or touching this store's state.
+        if (this.detached) return;
+
+        const dir = this.ensureDir();
+        const filePath = join(dir, `${String(index).padStart(6, "0")}.bin`);
+        const artifact: BatchSyntheticPairArtifact = {
+            symbol: row.symbol,
+            baseAsset: parsed.baseAsset,
+            quoteAsset: parsed.quoteAsset,
+            baseSymbol: parsed.baseSymbol,
+            quoteSymbol: parsed.quoteSymbol,
+            data: row.data,
+            signals: row.signals,
+            result: row.result,
+        };
+        this.metas[index] = {
+            symbol: row.symbol,
+            baseAsset: parsed.baseAsset,
+            quoteAsset: parsed.quoteAsset,
+            baseSymbol: parsed.baseSymbol,
+            quoteSymbol: parsed.quoteSymbol,
+            filePath,
+        };
+        let markSerialized: () => void;
+        const serialized = new Promise<void>((resolve) => { markSerialized = resolve; });
+        this.gate.enter(serialized);
+        this.pendingWrites.push(
+            (async () => {
+                try {
+                    await this.semaphore.acquire();
+                    try {
+                        await mkdir(dir, { recursive: true });
+                        await this.writeArtifactFile(filePath, serialize(artifact));
+                    } catch (error) {
+                        // Never advertise a file that failed to reach disk.
+                        if (this.metas[index]?.filePath === filePath) {
+                            delete this.metas[index];
+                        }
+                        debugLogger.warn("batch.server.artifact_store_failed", {
+                            filePath,
+                            error: error instanceof Error ? error.message : String(error),
+                        });
+                    } finally {
+                        this.semaphore.release();
+                    }
+                } finally {
+                    markSerialized!();
+                }
+            })(),
+        );
+    }
+
+    async loadStored(meta: StoredMineArtifactMeta): Promise<BatchSyntheticPairArtifact> {
+        const cached = this.parsedCache.get(meta.filePath);
+        if (cached) return cached;
+        const deserialized = deserialize(await readFile(meta.filePath)) as BatchSyntheticPairArtifact;
+        this.parsedCache.set(meta.filePath, deserialized);
+        return deserialized;
+    }
+
+    collectMetas(): StoredMineArtifactMeta[] {
+        return this.metas.filter((meta): meta is StoredMineArtifactMeta => Boolean(meta));
+    }
+
+    hasStored(): boolean {
+        return this.collectMetas().length > 0;
+    }
+
+    async flush(): Promise<void> {
+        const writes = this.pendingWrites;
+        this.pendingWrites = [];
+        if (writes.length > 0) {
+            await Promise.all(writes);
+        }
+    }
+
+    /**
+     * Mark this generation detached and snapshot what cleanup needs. Sets
+     * `detached = true` SYNCHRONOUSLY so any in-flight writer that resumes
+     * after this point bails. Returns the dir + pending writes for the async
+     * cleanup; the caller owns the rm.
+     */
+    detach(): { dir: string | null; writes: Promise<void>[]; metasCount: number } {
+        this.detached = true;
+        const snapshot = {
+            dir: this.dir,
+            writes: this.pendingWrites,
+            metasCount: this.metas.length,
+        };
+        this.pendingWrites = [];
+        this.metas = [];
+        this.parsedCache.clear();
+        this.dir = null;
+        return snapshot;
     }
 }
-const serializeGate = new ArtifactSubmissionGate();
 
 // ---------------------------------------------------------------------------
 // Module-scope state — single in-flight run per dev server (single-owner model)
@@ -246,18 +389,19 @@ let minerOwner = RUN_OWNER_NONE;
 let minerOwnerGen = 0;
 
 let runState: BatchRunSnapshot | null = null;
-let lastMineArtifacts: StoredMineArtifactMeta[] = [];
-// In-memory cache of artifacts loaded by sequential miner consumers. Batch
-// writes must not populate this cache: retaining every full 1h pair defeats
-// the disk-backed artifact contract and can exhaust a 16 GB V8 heap before a
-// 1000-pair run completes. Parallel Stability reads the files independently.
-const parsedArtifactCache = new Map<string, BatchSyntheticPairArtifact>();
-// Pending async artifact writes from `storeMineArtifact`. The `done` event and
-// `releaseLastResults` both await this so artifacts are durable before the
-// browser is told `serverHasArtifacts: true` and before the temp dir is
-// deleted (audit Finding 4). Cleared in `releaseLastResults`.
-let pendingArtifactWrites: Promise<void>[] = [];
-let mineArtifactDir: string | null = null;
+/**
+ * The current run's artifact store (audit follow-up R-F1). Owns the per-run
+ * directory, submission gate, write semaphore, metadata, parsed cache, and
+ * pending writes. Closures in `storeMineArtifact` capture THIS instance, so
+ * when `releaseLastResults` detaches it (sets `currentArtifactStore = null`
+ * and `store.detached = true`), an old run's in-flight writer resumes against
+ * its OWN (now-detached) store and bails instead of contaminating the new
+ * generation's globals. Pre-fix the write path awaited the shared module
+ * gate/semaphore and then mutated shared `lastMineArtifacts` /
+ * `pendingArtifactWrites` / `mineArtifactDir` without rechecking generation,
+ * letting a stale writer clobber a new run's state.
+ */
+let currentArtifactStore: ArtifactStore | null = null;
 let lastRunFingerprint: string | null = null;
 let lastRunInterval: string | null = null;
 let lastRunStrategyKey: string | null = null;
@@ -290,15 +434,20 @@ let pendingStopRunId: string | null = null;
 const BATCH_MAX_RUN_ID_LENGTH = 128;
 
 /**
- * Parse and validate a browser-supplied run id. Returns the trimmed id, or
- * empty string when missing/invalid. An empty id signals the legacy unscoped
- * contract (a stale browser bundle) — the server falls back to "stop whatever
- * is active" for backward compat in that case (audit Finding 5).
+ * Parse and validate an optional browser-supplied run id. Missing means a
+ * legacy caller; malformed PRESENT values are rejected instead of silently
+ * degrading to an unscoped Stop.
  */
 function parseBatchRunId(raw: unknown): string {
-    if (typeof raw !== "string") return "";
+    if (raw === undefined || raw === null) return "";
+    if (typeof raw !== "string") {
+        throw new HttpStatusError(400, "runId must be a string.");
+    }
     const trimmed = raw.trim();
-    if (!trimmed || trimmed.length > BATCH_MAX_RUN_ID_LENGTH) return "";
+    if (!trimmed) throw new HttpStatusError(400, "runId must be a non-empty string.");
+    if (trimmed.length > BATCH_MAX_RUN_ID_LENGTH) {
+        throw new HttpStatusError(400, `runId must be at most ${BATCH_MAX_RUN_ID_LENGTH} characters.`);
+    }
     return trimmed;
 }
 
@@ -369,132 +518,46 @@ interface StoredMineArtifactMeta {
  */
 const MINE_ARTIFACT_DIR_PREFIX = "strategies-finder-batch-mine-";
 
-function ensureMineArtifactDir(): string {
-    if (!mineArtifactDir) {
-        // Embed PID + creation time so the sweep can check ownership without a
-        // sidecar marker file. `mkdtempSync` still appends a random suffix,
-        // keeping the temp-dir collision guard.
-        const stamp = `${process.pid}-${Date.now()}-`;
-        mineArtifactDir = mkdtempSync(join(tmpdir(), MINE_ARTIFACT_DIR_PREFIX + stamp));
-    }
-    return mineArtifactDir;
-}
-
 /**
- * Persist a per-row Mine artifact asynchronously so the Vite event loop stays
- * responsive to NDJSON progress, status polling, and Stop requests during heavy
- * disk activity (audit Finding 4).
- *
- * The disk write is enqueued through a bounded pool
- * (ARTIFACT_WRITE_CONCURRENCY) and tracked in `pendingArtifactWrites` so
- * `flushPendingArtifactWrites` can make the `done` event and
- * `releaseLastResults` wait for durability before proceeding.
- *
- * Backpressure (audit Finding 2): the function is async and awaits a free
- * submission slot before capturing the `artifact` closure. The runner now
- * awaits `onSymbolComplete`, so a slow disk path holds up the next row's
- * build instead of stacking hundreds of full-artifact closures in
- * `pendingArtifactWrites`. Peak live artifacts are bounded by
- * {@link ARTIFACT_SUBMISSION_CAPACITY}, not the run size.
+ * Persist a per-row Mine artifact via the captured {@link ArtifactStore}
+ * (audit follow-up R-F1). The store is captured at run start in
+ * {@link processRunBatch} and passed through `onSymbolComplete`, so a stale
+ * writer that resumes after `releaseLastResults` operates on its OWN
+ * (detached) store and bails instead of contaminating the new generation.
  */
-async function storeMineArtifact(index: number, row: BatchBacktestSymbolResult): Promise<void> {
-    if (!row.result || !row.data || !row.signals) return;
-    const parsed = parsePortfolioSyntheticPairSymbol(row.symbol);
-    if (!parsed) return;
-
-    // Backpressure gate: don't capture the (multi-MB) artifact closure until a
-    // submission slot is free. `serializeGate` is a chain where each link
-    // resolves once an earlier submission has finished serializing its artifact
-    // (the point at which its captured closure is released). Awaiting the
-    // CAP-threshold-ago link bounds in-flight captured artifacts to CAP.
-    await serializeGate.awaitSlot();
-
-    const dir = ensureMineArtifactDir();
-    // .bin extension reflects the v8-serialized format (see loadStoredMineArtifact).
-    // The on-disk artifact is internal-only; no external reader consumes it.
-    const filePath = join(dir, `${String(index).padStart(6, "0")}.bin`);
-    const artifact: BatchSyntheticPairArtifact = {
-        symbol: row.symbol,
-        baseAsset: parsed.baseAsset,
-        quoteAsset: parsed.quoteAsset,
-        baseSymbol: parsed.baseSymbol,
-        quoteSymbol: parsed.quoteSymbol,
-        data: row.data,
-        signals: row.signals,
-        result: row.result,
-    };
-    // v8 serialize is ~2-4x faster than JSON.stringify on numeric-heavy
-    // OHLCV/trade payloads and produces smaller files. The buffer is serialized
-    // INSIDE the IIFE (after acquire) rather than synchronously here — computing it here
-    // would retain 1000 multi-MB buffers in `pendingArtifactWrites` until the
-    // post-run flush, ~5 GB of extra peak heap on a 1000-pair run. Deferring
-    // to the IIFE caps live buffers at ARTIFACT_WRITE_CONCURRENCY (4).
-    lastMineArtifacts[index] = {
-        symbol: row.symbol,
-        baseAsset: parsed.baseAsset,
-        quoteAsset: parsed.quoteAsset,
-        baseSymbol: parsed.baseSymbol,
-        quoteSymbol: parsed.quoteSymbol,
-        filePath,
-    };
-    // Resolve this submission's gate link ONLY once v8.serialize has run and
-    // released the `artifact` reference, so the next waiter knows its slot is
-    // truly free of a retained multi-MB closure.
-    let markSerialized: () => void;
-    const serialized = new Promise<void>((resolve) => { markSerialized = resolve; });
-    serializeGate.enter(serialized);
-    pendingArtifactWrites.push(
-        (async () => {
-            try {
-                await artifactWriteSemaphore.acquire();
-                try {
-                    await mkdir(dir, { recursive: true });
-                    await writeFile(filePath, serialize(artifact));
-                } catch (error) {
-                    debugLogger.warn("batch.server.artifact_store_failed", {
-                        filePath,
-                        error: error instanceof Error ? error.message : String(error),
-                    });
-                } finally {
-                    artifactWriteSemaphore.release();
-                }
-            } finally {
-                markSerialized!();
-            }
-        })(),
-    );
+async function storeMineArtifact(index: number, row: BatchBacktestSymbolResult, store: ArtifactStore): Promise<void> {
+    await store.store(index, row);
 }
 
 async function loadStoredMineArtifact(meta: StoredMineArtifactMeta): Promise<BatchSyntheticPairArtifact> {
-    const cached = parsedArtifactCache.get(meta.filePath);
-    if (cached) {
-        return cached;
+    if (!currentArtifactStore) {
+        throw new Error("loadStoredMineArtifact called with no active artifact store");
     }
-    const deserialized = deserialize(await readFile(meta.filePath)) as BatchSyntheticPairArtifact;
-    parsedArtifactCache.set(meta.filePath, deserialized);
-    return deserialized;
+    return currentArtifactStore.loadStored(meta);
 }
 
 function collectStoredMineArtifactMetas(): StoredMineArtifactMeta[] {
-    return lastMineArtifacts.filter((meta): meta is StoredMineArtifactMeta => Boolean(meta));
+    return currentArtifactStore ? currentArtifactStore.collectMetas() : [];
 }
 
 function hasStoredMineArtifacts(): boolean {
-    return collectStoredMineArtifactMetas().length > 0;
+    return Boolean(currentArtifactStore?.hasStored());
 }
 
 /**
- * Wait for all in-flight `storeMineArtifact` writes to flush. Called before the
- * `done` event (so `serverHasArtifacts` is truthful) and before
- * `releaseLastResults` deletes the temp dir (so a write isn't left pointing at
- * a deleted path).
+ * Get the active store's dir for the orphan-sweep active-generation skip and
+ * test seams. Returns null when no store is active.
  */
-async function flushPendingArtifactWrites(): Promise<void> {
-    const writes = pendingArtifactWrites;
-    pendingArtifactWrites = [];
-    if (writes.length > 0) {
-        await Promise.all(writes);
+function currentMineArtifactDir(): string | null {
+    return currentArtifactStore?.dir ?? null;
+}
+
+/** Ensure the active store has a dir, creating one if needed. Test seam. */
+function ensureCurrentArtifactStoreDir(): string {
+    if (!currentArtifactStore) {
+        currentArtifactStore = new ArtifactStore();
     }
+    return currentArtifactStore.ensureDir();
 }
 
 function clearArtifactReleaseTimer(): void {
@@ -524,35 +587,28 @@ function clearArtifactReleaseTimer(): void {
  */
 async function releaseLastResults(reason: string): Promise<void> {
     clearArtifactReleaseTimer();
-    // Audit Finding 3: detach THIS generation's store SYNCHRONOUSLY, before any
-    // await. The previous implementation awaited `flushPendingArtifactWrites`
-    // FIRST, then snapshotted `mineArtifactDir` — so a concurrent new Run that
-    // acquired ownership mid-flush would install its own dir/artifacts, only
-    // for THIS cleanup to resume after the flush and `rm` / null the new run's
-    // state. Detaching up front means every async step below operates on the
-    // detached snapshot; the module variables are free for a new generation.
-    const dirToRemove = mineArtifactDir;
-    const writesToFlush = pendingArtifactWrites;
-    pendingArtifactWrites = [];
-    const rows = lastMineArtifacts.length;
-    lastMineArtifacts = [];
-    parsedArtifactCache.clear();
-    mineArtifactDir = null;
+    // Audit Finding 3 + follow-up R-F1: detach THIS generation's store
+    // SYNCHRONOUSLY, before any await. `detach()` flips `store.detached = true`
+    // so any in-flight `storeMineArtifact` writer that resumes after this point
+    // against its OWN (captured) store bails instead of contaminating the new
+    // generation's globals. Pre-fix the writer captured module globals and
+    // could clobber a new run's `lastMineArtifacts` / `pendingArtifactWrites` /
+    // `mineArtifactDir` after Stop + new Run reset them.
+    const store = currentArtifactStore;
+    const detached = store ? store.detach() : { dir: null, writes: [], metasCount: 0 };
+    currentArtifactStore = null;
     lastRunFingerprint = null;
     lastRunInterval = null;
     lastRunStrategyKey = null;
     lastRunCacheStats = null;
-    // Drop the submission backpressure window too — a cancelled run's
-    // pending serialize links must not throttle the next generation.
-    serializeGate.reset();
     // Clear retained Stability state whenever its matching artifacts expire.
     retainedStabilityResult = null;
 
     // Now safe to await: this only touches the DETACHED snapshot.
-    if (writesToFlush.length > 0) {
-        await Promise.all(writesToFlush);
+    if (detached.writes.length > 0) {
+        await Promise.all(detached.writes);
     }
-    if (rows === 0 && !dirToRemove) {
+    if (detached.metasCount === 0 && !detached.dir) {
         // `new_run` also comes through here. Cache invalidation must not depend
         // on Mine artifacts existing: IBKR CSVs may have changed since a prior
         // non-mineable/expired run while the server-side parsed CSV cache lived.
@@ -561,24 +617,21 @@ async function releaseLastResults(reason: string): Promise<void> {
     }
     debugLogger.info("batch.server.artifacts_released", {
         reason,
-        rows,
+        rows: detached.metasCount,
         heapUsedMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
     });
-    // `dirToRemove` is the DETACHED dir from THIS generation; the module
-    // variable was nulled synchronously above so a new Run can install its own.
-    retainedStabilityResult = null;
     clearServerBatchDatasetCaches();
-    if (dirToRemove) {
+    if (detached.dir) {
         // `force: true` suppresses ENOENT but NOT EBUSY/EPERM (e.g. an AV
         // scanner holding a file on Windows). Swallowing is correct: the
         // sweepOrphanedMineArtifactDirs startup sweep reclaims what's left,
         // and a rejection here must NOT crash the dev server via the TTL
         // timer's `void` caller or fail an in-flight Run/Mine.
         try {
-            await rm(dirToRemove, { recursive: true, force: true });
+            await rm(detached.dir, { recursive: true, force: true });
         } catch (error) {
             debugLogger.warn("batch.server.artifact_release_rm_failed", {
-                dir: dirToRemove,
+                dir: detached.dir,
                 error: error instanceof Error ? error.message : String(error),
             });
         }
@@ -601,12 +654,10 @@ function scheduleArtifactTtl(): void {
  *
  * Audit Finding 7: the sweep is PID- and age-aware so a SECOND concurrently
  * running Vite process (worktree, automatic port 5174/5175) does NOT have its
- * active artifacts deleted. A directory is reclaimed only when:
- *   - its owning PID is provably no longer alive (`process.kill(pid, 0)`
- *     throws), OR
- *   - it is older than {@link ORPHAN_SWEEP_STALE_MS} (defense-in-depth against
- *     PID reuse and Windows `process.kill` liveness gaps).
- * The current process's active generation (`mineArtifactDir`) is always
+ * active artifacts deleted. A stamped directory is reclaimed when its owning
+ * PID is provably dead. A live PID always wins over age; age is only the
+ * fallback for legacy directories or indeterminate liveness errors.
+ * The current process's active generation is always
  * skipped. Pre-fix the sweep deleted every matching dir unconditionally.
  *
  * Idempotent and safe to call at plugin registration.
@@ -624,18 +675,28 @@ async function sweepOrphanedMineArtifactDirs(): Promise<void> {
     } catch {
         return;
     }
-    const activeDir = mineArtifactDir;
+    const activeDir = currentMineArtifactDir();
     const now = Date.now();
     for (const entry of entries) {
-        // Pre-fix legacy dirs use the bare prefix with no PID stamp. Treat
-        // those as orphans: nothing created them since the stamp landed, so
-        // they predate this process and are safe to reclaim. (A live sibling
-        // running pre-fix code would be on an older commit and would not be
-        // running concurrently in practice.)
+        // Pre-fix legacy dirs use the bare prefix with no PID stamp. Their
+        // filesystem age is checked below because a live sibling may still be
+        // running an older bundle.
         if (!entry.startsWith(MINE_ARTIFACT_DIR_PREFIX)) continue;
         const fullPath = join(tmp, entry);
         if (activeDir === fullPath) continue;
-        if (!shouldSweepOrphanEntry(entry, now)) continue;
+        let shouldSweep = shouldSweepOrphanEntry(entry, now);
+        if (!shouldSweep && !entry.slice(MINE_ARTIFACT_DIR_PREFIX.length).match(/^(\d+)-(\d+)-/)) {
+            // Legacy directories have no embedded owner. Use directory mtime
+            // as the conservative age signal instead of deleting them merely
+            // because a sibling happens to run older code.
+            try {
+                const info = await stat(fullPath);
+                shouldSweep = now - info.mtimeMs > ORPHAN_SWEEP_STALE_MS;
+            } catch {
+                shouldSweep = false;
+            }
+        }
+        if (!shouldSweep) continue;
         try {
             await rm(fullPath, { recursive: true, force: true });
         } catch (error) {
@@ -650,34 +711,32 @@ async function sweepOrphanedMineArtifactDirs(): Promise<void> {
 /**
  * Decide whether a temp-dir entry matches the artifact-dir shape AND is safe to
  * reclaim. The shape is `<prefix><pid>-<createdAtMs>-<random>`. A dir is safe
- * to delete when either (a) the owning PID is no longer alive, or (b) the dir
- * is older than {@link ORPHAN_SWEEP_STALE_MS} (a conservative age backstop).
- * Bare-prefix legacy entries (no PID stamp) are always swept.
+ * to delete when the owning PID is no longer alive. A live PID is retained
+ * regardless of age. Legacy entries are handled by filesystem mtime in the
+ * caller because this pure classifier has no age evidence for them.
  */
 function shouldSweepOrphanEntry(entry: string, now: number): boolean {
     const tail = entry.slice(MINE_ARTIFACT_DIR_PREFIX.length);
-    // Legacy bare-prefix entry: no PID/timestamp stamp. Sweep unconditionally.
+    // Legacy entries cannot prove ownership. Only age-stamped generations can
+    // be reclaimed here; an unparseable recent/live sibling must be preserved.
     const stampMatch = tail.match(/^(\d+)-(\d+)-/);
-    if (!stampMatch) return true;
+    if (!stampMatch) return false;
     const pid = Number(stampMatch[1]!);
     const createdAtMs = Number(stampMatch[2]!);
-    // Age backstop first — avoids any PID-liveness platform quirks for
-    // long-dead dirs.
-    if (Number.isFinite(createdAtMs) && now - createdAtMs > ORPHAN_SWEEP_STALE_MS) {
-        return true;
-    }
     if (!Number.isFinite(pid) || pid <= 0) return true;
-    // The current process never sweeps its own generation — caller already
-    // skipped `activeDir`, but defensively skip our own PID too.
+    // A provably live PID always wins over age. Long server jobs can exceed
+    // the stale threshold, especially in a sibling worktree.
     if (pid === process.pid) return false;
-    // `process.kill(pid, 0)` throws ONLY when the process does not exist
-    // (or the caller lacks permission; on Windows that maps to "no such
-    // process" for an unrelated pid). A throw means the owner is gone.
     try {
         process.kill(pid, 0);
         return false;
-    } catch {
-        return true;
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code;
+        if (code === "ESRCH") return true;
+        // EPERM/unknown means liveness is indeterminate. Reclaim only after
+        // the conservative age threshold; never interpret permission failure
+        // as proof that the process is dead.
+        return Number.isFinite(createdAtMs) && now - createdAtMs > ORPHAN_SWEEP_STALE_MS;
     }
 }
 
@@ -745,6 +804,12 @@ export async function processRunBatch(
         runId,
     };
     const snapshot = runState;
+    // R-F1: create THIS run's ArtifactStore and capture it in the closure so
+    // `onSymbolComplete` writes against this generation only. If Stop + new Run
+    // detaches this store mid-flight, the captured writer bails instead of
+    // contaminating the new generation's globals.
+    const store = new ArtifactStore();
+    currentArtifactStore = store;
     const fingerprint = buildBatchRunFingerprint({
         symbols: input.symbols,
         strategyKey: input.strategyKey,
@@ -781,8 +846,11 @@ export async function processRunBatch(
                 }
                 // Audit Finding 2: await the artifact write so the runner
                 // applies backpressure instead of stacking unbounded closures
-                // that each retain a full multi-MB row.
-                await storeMineArtifact(index, result);
+                // that each retain a full multi-MB row. R-F1: pass THIS run's
+                // captured store so a stale writer can't contaminate a newer
+                // generation after Stop + new Run detached it.
+                await storeMineArtifact(index, result, store);
+                if (store.isDetached()) return;
                 writer({ type: "symbol", index, total, row: scalarRow });
             },
             isCancelled: () => {
@@ -814,16 +882,25 @@ export async function processRunBatch(
             snapshot.currentSymbol = null;
             snapshot.cancelled = cancelled;
         }
-
-        lastRunFingerprint = fingerprint;
-        lastRunInterval = input.interval;
-        lastRunStrategyKey = input.strategyKey;
-
+        // R-F1: only stamp the global run-provenance fields if THIS run still
+        // owns the snapshot. An unwinding old run whose ownership was taken by
+        // a newer run must not overwrite the newer run's fingerprint/interval/
+        // strategy — those gate Mine/Stability/Portfolio Fit acceptance.
         // Flush in-flight artifact writes before the `done` event so
         // `serverHasArtifacts` is truthful — the browser gates the Mine button
         // on that flag, and Mine reads the artifacts from disk (audit Finding 4).
-        await flushPendingArtifactWrites();
-        const artifactsAvailable = hasStoredMineArtifacts();
+        // Bind completion to this captured generation. A stopped old run can
+        // resume after a newer run installs another global store; it must not
+        // flush, release, or report that newer generation's artifacts.
+        if (store.isDetached() || currentArtifactStore !== store) return;
+        await store.flush();
+        if (store.isDetached() || currentArtifactStore !== store) return;
+        const artifactsAvailable = store.hasStored();
+        if (runState === snapshot) {
+            lastRunFingerprint = fingerprint;
+            lastRunInterval = input.interval;
+            lastRunStrategyKey = input.strategyKey;
+        }
         const cacheStats = getServerBatchDatasetCacheStats();
         lastRunCacheStats = cacheStats;
         const terminalSummary = `Done — ${output.results.length} pairs${output.failedSymbols.length > 0 ? `, ${output.failedSymbols.length} failed` : ""}${cancelled ? ", cancelled" : ""}`;
@@ -857,14 +934,16 @@ export async function processRunBatch(
         if (artifactsAvailable) {
             scheduleArtifactTtl();
         } else {
-            await releaseLastResults("run_no_artifacts");
+            if (currentArtifactStore === store) {
+                await releaseLastResults("run_no_artifacts");
+            }
         }
         debugLogger.event("batch.server.run.complete", {
             symbols: input.symbols.length,
             loadedSymbols: output.loadedSymbols,
             failedSymbols: output.failedSymbols.length,
             cancelled,
-            artifacts: collectStoredMineArtifactMetas().length,
+            artifacts: store.collectMetas().length,
             durationMs: Date.now() - snapshot.startedAt,
             heapUsedMb: Math.round(process.memoryUsage().heapUsed / HEAP_MB),
             heapLimitMb: getV8HeapLimitMb(),
@@ -884,7 +963,9 @@ export async function processRunBatch(
             snapshot.error = message;
         }
         writer({ type: "fatal", error: message, runId });
-        await releaseLastResults("run_fatal");
+        if (currentArtifactStore === store) {
+            await releaseLastResults("run_fatal");
+        }
     } finally {
         abortController = null;
     }
@@ -968,6 +1049,12 @@ export async function processMine(
                 writer({ type: "verdict", verdict });
             }
         }
+        if (lostOwnership()) {
+            snapshot.cancelled = true;
+            snapshot.running = false;
+            writer({ type: "done", ok: false, cancelled: true, summary: "Mining cancelled.", totals: { verdicts: verdictCount } });
+            return;
+        }
         snapshot.running = false;
         writer({
             type: "done",
@@ -990,6 +1077,16 @@ export async function processMine(
         if (hasStoredMineArtifacts()) {
             scheduleArtifactTtl();
         }
+    }
+}
+
+function cancelMinerOnDisconnect(owner: number): void {
+    if (minerOwner !== owner) return;
+    minerAbortController?.abort();
+    minerOwner = RUN_OWNER_NONE;
+    if (minerState) {
+        minerState.cancelled = true;
+        minerState.running = false;
     }
 }
 
@@ -1058,7 +1155,7 @@ export async function processStabilityMine(
             // the parent copies adds another full prepared-universe footprint
             // during the peak and is unnecessary; sequential fallback reloads
             // them through loadStoredMineArtifact if worker startup fails.
-            parsedArtifactCache.clear();
+            currentArtifactStore?.parsedCache.clear();
             const parallelOutcome: ParallelStabilityOutcome = await runParallelStability({
                 artifactFiles: manifest?.pairArtifactFiles ?? [],
                 targets,
@@ -1099,6 +1196,10 @@ export async function processStabilityMine(
                 parallelResult.engine = "typescript_parallel";
                 snapshot.verdicts = parallelResult.hitEvents;
                 writer({ type: "progress", run: reruns, reruns, hits: parallelResult.hitEvents });
+                if (lostOwnership()) {
+                    writeCancelled();
+                    return;
+                }
                 snapshot.running = false;
                 retainedStabilityResult = parallelResult;
                 writer({ type: "done", ok: true, result: parallelResult });
@@ -1158,6 +1259,10 @@ export async function processStabilityMine(
         const finalResult = finalizeStabilityAggregate(aggregate);
         finalResult.minerProfile = minerProfile;
         finalResult.engine = "typescript";
+        if (lostOwnership()) {
+            writeCancelled();
+            return;
+        }
         snapshot.running = false;
         retainedStabilityResult = finalResult;
         writer({ type: "done", ok: true, result: finalResult });
@@ -1251,7 +1356,7 @@ async function loadMinerTargets(
  * count. Returns null when no artifacts are retained (e.g. after TTL release).
  */
 function buildStabilityManifest(): { pairArtifactFiles: string[] } | null {
-    if (!mineArtifactDir) return null;
+    if (!currentMineArtifactDir()) return null;
     const metas = collectStoredMineArtifactMetas();
     if (metas.length === 0) return null;
     return { pairArtifactFiles: metas.map((meta) => meta.filePath) };
@@ -1377,13 +1482,14 @@ async function handleStopRequest(rawRunId?: unknown): Promise<{ ok: boolean; sto
     const runWasActive = runOwner !== RUN_OWNER_NONE;
     const minerWasActive = minerOwner !== RUN_OWNER_NONE;
 
-    // Scoped Stop: if the browser sent a runId AND the active run has one,
-    // they must match. A mismatch is a stale tab — reject without mutating
-    // ownership so the active run is unaffected.
-    if (runWasActive && requestedRunId && runState && runState.runId && runState.runId !== requestedRunId) {
+    const ownedRunId = runState?.runId ?? "";
+    if ((runWasActive || minerWasActive) && ownedRunId && requestedRunId !== ownedRunId) {
         return { ok: false, stopped: false };
     }
 
+    // Scoped Stop: if the browser sent a runId AND the active run has one,
+    // they must match. A mismatch is a stale tab — reject without mutating
+    // ownership so the active run is unaffected.
     // Run cancellation (scoped or legacy unscoped).
     if (runWasActive) {
         if (abortController) {
@@ -1433,7 +1539,7 @@ async function handleMineRequest(res: ViteHttpResponse, body: Record<string, unk
     let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
     try {
         // Audit Finding 4: disconnect-safe writer (see handleRunRequest).
-        stream = createDisconnectSafeStream(res);
+        stream = createDisconnectSafeStream(res, { onDisconnect: () => cancelMinerOnDisconnect(owner) });
         await processMine(
             typeof body.fingerprint === "string" ? body.fingerprint : null,
             typeof body.interval === "string" ? body.interval : lastRunInterval,
@@ -1477,7 +1583,7 @@ async function handleStabilityMineRequest(res: ViteHttpResponse, body: Record<st
     let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
     try {
         // Audit Finding 4: disconnect-safe writer (see handleRunRequest).
-        stream = createDisconnectSafeStream(res);
+        stream = createDisconnectSafeStream(res, { onDisconnect: () => cancelMinerOnDisconnect(owner) });
         await processStabilityMine(
             typeof body.fingerprint === "string" ? body.fingerprint : null,
             typeof body.interval === "string" ? body.interval : lastRunInterval,
@@ -1630,7 +1736,7 @@ async function handlePortfolioFitRequest(res: ViteHttpResponse, body: Record<str
     let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
     try {
         // Audit Finding 4: disconnect-safe writer (see handleRunRequest).
-        stream = createDisconnectSafeStream(res);
+        stream = createDisconnectSafeStream(res, { onDisconnect: () => cancelMinerOnDisconnect(owner) });
         // Browser-supplied Stability rows are intentionally ignored.
         await processPortfolioFit(
             typeof body.fingerprint === "string" ? body.fingerprint : null,
@@ -1713,8 +1819,8 @@ function handleStatusRequest(afterRow = 0, limitRaw?: number): unknown {
         // available via `hasArtifacts` + Mine APIs.
         lastRun: runState && runOwner === RUN_OWNER_NONE
             ? {
-                interval: lastRunInterval,
-                strategyKey: lastRunStrategyKey,
+                interval: lastRunInterval ?? runState.interval,
+                strategyKey: lastRunStrategyKey ?? runState.strategyKey,
                 fingerprint: lastRunFingerprint,
                 rowCount,
                 hasArtifacts: hasStoredMineArtifacts(),
@@ -1824,10 +1930,10 @@ function registerBatchRoutes(middlewares: any): void {
                 return;
             }
             try {
-                // Audit Finding 5: read the body for the optional runId so
-                // Stop can be scoped. A missing/empty body falls back to the
-                // legacy unscoped contract (stale browser bundle).
-                const body = await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES).catch(() => ({}));
+                // Audit Finding 5: read the optional runId so Stop can be
+                // scoped. Empty bodies remain valid for legacy server state;
+                // malformed JSON and invalid ids fail closed as client errors.
+                const body = await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES);
                 const result = await handleStopRequest((body as { runId?: unknown })?.runId);
                 sendJson(res, 200, result);
             } catch (error) {
@@ -1914,7 +2020,7 @@ export const __testInternals = {
     hasMineableArtifacts,
     hasStoredMineArtifacts,
     getParsedArtifactCacheSizeForTests(): number {
-        return parsedArtifactCache.size;
+        return currentArtifactStore?.parsedCache.size ?? 0;
     },
     DEFAULT_ARTIFACT_RETENTION_MS,
     handleStatusRequest,
@@ -2001,24 +2107,30 @@ export const __testInternals = {
     resetMinerGatesForTests(): void {
         BATCH_MINER_PARALLEL_STABILITY_ENABLED = BATCH_MINER_PARALLEL_STABILITY_ENABLED_DEFAULT;
     },
-    // --- Audit Finding 3 generation-safety test seams ---
-    /** Push a controllable pending write so a test can pause `releaseLastResults`
-     *  mid-flush and simulate a concurrent new generation installing its own dir. */
+    // --- Audit Finding 3 / follow-up R-F1 generation-safety test seams ---
+    /**
+     * Get the current generation's ArtifactStore so a test can drive the write
+     * path (including its backpressure gate) directly. Returns null when no run
+     * is active.
+     */
+    getArtifactStoreForTests(): ArtifactStore | null {
+        return currentArtifactStore;
+    },
+    /**
+     * Push a controllable pending write into the current store so a test can
+     * pause `releaseLastResults` mid-flush. Creates a store if none exists,
+     * mirroring the production run-start path.
+     */
     pushPendingArtifactWriteForTests(write: Promise<void>): void {
-        pendingArtifactWrites.push(write);
+        if (!currentArtifactStore) currentArtifactStore = new ArtifactStore();
+        currentArtifactStore.pendingWrites.push(write);
     },
-    /** Read the current `mineArtifactDir` so a test can assert detach timing. */
+    /** Read the current generation's dir so a test can assert detach timing. */
     getMineArtifactDirForTests(): string | null {
-        return mineArtifactDir;
+        return currentMineArtifactDir();
     },
-    /** Install / reset `mineArtifactDir` so a test can simulate a new generation
-     *  taking ownership mid-release without going through the full Run path. */
-    setMineArtifactDirForTests(dir: string | null): void {
-        mineArtifactDir = dir;
-    },
-    /** Expose `ensureMineArtifactDir` so a test can install a real dir for the
-     *  new-generation race scenario. */
+    /** Install a fresh store+dir for the new-generation race scenario. */
     ensureMineArtifactDirForTests(): string {
-        return ensureMineArtifactDir();
+        return ensureCurrentArtifactStoreDir();
     },
 };

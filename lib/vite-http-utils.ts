@@ -109,25 +109,39 @@ export function beginNdjsonStream(res: ViteHttpResponse): {
  * Why this matters: without it, a browser reload mid-run makes `stream.write`
  * throw on a dead socket, which the Batch run loop treated as fatal — calling
  * `releaseLastResults` and undermining the documented status-reattach path.
- * With this wrapper, the job keeps running and updating server snapshot state;
- * a reloaded tab reattaches via `GET /status`. `/status` remains authoritative.
+ * The caller decides whether disconnect means "keep running for /status
+ * reattach" or "cancel because the streamed result cannot be recovered" via
+ * `onDisconnect`; either policy is isolated from socket write failures.
  *
  * `end` is a no-op once disconnected (the socket is already gone). Returns the
  * raw `write`/`end` plus an `isWritable` predicate for callers that gate
  * terminal writes (e.g. the Finder `safeWrite` pattern).
  */
-export function createDisconnectSafeStream(res: ViteHttpResponse): {
+export function createDisconnectSafeStream(
+    res: ViteHttpResponse,
+    options: { onDisconnect?: () => void } = {},
+): {
     write: (event: unknown) => void;
     end: (event?: unknown) => void;
     isWritable: () => boolean;
 } {
     const stream = beginNdjsonStream(res);
     let writable = true;
+    let disconnectNotified = false;
+    const markDisconnected = (): void => {
+        writable = false;
+        if (disconnectNotified) return;
+        disconnectNotified = true;
+        try {
+            options.onDisconnect?.();
+        } catch {
+            // Transport cleanup must never throw into the response emitter.
+        }
+    };
     const responseWithEvents = res as ViteHttpResponse & {
         on?: (event: string, listener: () => void) => void;
     };
     if (typeof responseWithEvents.on === "function") {
-        const markDisconnected = (): void => { writable = false; };
         responseWithEvents.on("close", markDisconnected);
         // `beginNdjsonStream` already attaches its own `error` no-op; attaching
         // a second `error` listener for the disconnect flag is safe (Node
@@ -143,7 +157,7 @@ export function createDisconnectSafeStream(res: ViteHttpResponse): {
             } catch {
                 // A socket that died between the close/error event and this
                 // write would throw; flip the flag so subsequent writes no-op.
-                writable = false;
+                markDisconnected();
             }
         },
         end: (event?: unknown) => {
@@ -151,7 +165,7 @@ export function createDisconnectSafeStream(res: ViteHttpResponse): {
             try {
                 stream.end(event);
             } catch {
-                writable = false;
+                markDisconnected();
             }
         },
         isWritable: () => writable,
