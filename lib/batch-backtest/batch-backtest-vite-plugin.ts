@@ -59,7 +59,6 @@ import type { BacktestSettings, Strategy, StrategyParams } from "../types/strate
 import type { CapitalSettings } from "../types/backtest";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import { toScalarRow, type BatchStreamEvent } from "./batch-backtest-stream-types";
-import type { BatchDirectionForecastStreamEvent } from "./batch-backtest-stream-types";
 import { rememberLoopbackOriginFromRequest } from "../local-api-transport";
 import { isAllowedLocalRequest } from "../local-route-authorization";
 import { buildBatchRunFingerprint, normalizeBatchSymbols, BATCH_MAX_SYMBOLS } from "./batch-run-contract";
@@ -74,16 +73,6 @@ import type {
     BatchPortfolioFitInput,
     PortfolioFitTargetReturnSeries,
 } from "./batch-portfolio-fit-types";
-import {
-    buildBatchSignalLifecycleAnalysis,
-    createTargetUnavailableForecastRow,
-    forecastBatchSignalLifecycleAt,
-} from "./batch-signal-lifecycle-forecast";
-import { runBatchSignalSelectionPath } from "./batch-signal-selection-path";
-import type {
-    BatchDirectionExecutionAssumptions,
-    BatchSignalLifecycleAnalysis,
-} from "./batch-signal-lifecycle-types";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -417,7 +406,6 @@ let lastRunFingerprint: string | null = null;
 let lastRunInterval: string | null = null;
 let lastRunStrategyKey: string | null = null;
 let lastRunCacheStats: BatchDatasetCacheStats | null = null;
-let lastRunDirectionExecution: BatchDirectionExecutionAssumptions | null = null;
 let abortController: AbortController | null = null;
 // Abort controller for in-flight Mine / Stability Mine target dataset loads.
 // Mirrors `abortController` (Run path): created when a Mine starts, aborted in
@@ -548,10 +536,6 @@ async function loadStoredMineArtifact(meta: StoredMineArtifactMeta): Promise<Bat
     return currentArtifactStore.loadStored(meta);
 }
 
-async function loadStoredMineArtifactUncached(meta: StoredMineArtifactMeta): Promise<BatchSyntheticPairArtifact> {
-    return deserialize(await readFile(meta.filePath)) as BatchSyntheticPairArtifact;
-}
-
 function collectStoredMineArtifactMetas(): StoredMineArtifactMeta[] {
     return currentArtifactStore ? currentArtifactStore.collectMetas() : [];
 }
@@ -617,7 +601,6 @@ async function releaseLastResults(reason: string): Promise<void> {
     lastRunInterval = null;
     lastRunStrategyKey = null;
     lastRunCacheStats = null;
-    lastRunDirectionExecution = null;
     // Clear retained Stability state whenever its matching artifacts expire.
     retainedStabilityResult = null;
 
@@ -917,7 +900,6 @@ export async function processRunBatch(
             lastRunFingerprint = fingerprint;
             lastRunInterval = input.interval;
             lastRunStrategyKey = input.strategyKey;
-            lastRunDirectionExecution = resolveDirectionExecution(input.capitalSettings, input.backtestSettings);
         }
         const cacheStats = getServerBatchDatasetCacheStats();
         lastRunCacheStats = cacheStats;
@@ -991,18 +973,6 @@ export async function processRunBatch(
 
 function hasMineableArtifacts(rows: readonly BatchBacktestSymbolResult[]): boolean {
     return rows.some((row) => Boolean(row.result && row.data && row.signals && parsePortfolioSyntheticPairSymbol(row.symbol)));
-}
-
-function resolveDirectionExecution(
-    capital: CapitalSettings,
-    backtest: BacktestSettings,
-): BatchDirectionExecutionAssumptions {
-    const slippageBps = Number(backtest.slippageBps ?? 0);
-    return {
-        initialCapital: Number.isFinite(capital.initialCapital) && capital.initialCapital > 0 ? capital.initialCapital : 10_000,
-        commissionPercent: Number.isFinite(capital.commission) && capital.commission >= 0 ? capital.commission : 0,
-        slippageBps: Number.isFinite(slippageBps) && slippageBps >= 0 ? slippageBps : 0,
-    };
 }
 
 // ---------------------------------------------------------------------------
@@ -1644,202 +1614,6 @@ async function handleStabilityMineRequest(res: ViteHttpResponse, body: Record<st
 }
 
 // ---------------------------------------------------------------------------
-// Direction Forecast (preserves artifacts; re-arms TTL)
-// ---------------------------------------------------------------------------
-
-interface DirectionTargetRequest {
-    asset: string;
-    symbol: string | null;
-    unavailableReason: string | null;
-    metas: StoredMineArtifactMeta[];
-}
-
-export async function processDirectionForecast(
-    fingerprint: string | null,
-    interval: string | null,
-    writer: (event: BatchDirectionForecastStreamEvent) => void,
-    owner: number,
-    loadTarget: (symbol: string, interval: string, signal?: AbortSignal) => Promise<BatchSyntheticTargetArtifact["data"]> = loadServerBatchDataset,
-    loadArtifact: (meta: StoredMineArtifactMeta) => Promise<BatchSyntheticPairArtifact> = loadStoredMineArtifactUncached,
-): Promise<void> {
-    const artifactMetas = collectStoredMineArtifactMetas();
-    if (artifactMetas.length === 0) {
-        writer({ type: "fatal", error: "Run Batch before Direction Forecast; no artifacts on server." });
-        return;
-    }
-    if (!fingerprint || fingerprint !== lastRunFingerprint || !interval) {
-        writer({ type: "fatal", error: "Rerun Batch before Direction Forecast; settings or symbols changed." });
-        return;
-    }
-    if (!lastRunDirectionExecution) {
-        writer({ type: "fatal", error: "Direction Forecast execution assumptions are unavailable; rerun Batch." });
-        return;
-    }
-
-    clearArtifactReleaseTimer();
-    const requests = resolveDirectionTargetRequests(artifactMetas);
-    const analyses: BatchSignalLifecycleAnalysis[] = [];
-    const rows = [];
-    const lostOwnership = () => minerOwner !== owner;
-    const generatedAt = Date.now();
-    minerState = { running: true, startedAt: generatedAt, assets: requests.length, pairs: artifactMetas.length, verdicts: 0, cancelled: false };
-    writer({ type: "start", assets: requests.length, pairs: artifactMetas.length });
-
-    try {
-        for (let index = 0; index < requests.length; index += 1) {
-            if (lostOwnership()) {
-                writer({
-                    type: "done", ok: false, cancelled: true, summary: "Direction Forecast cancelled.",
-                    totals: { forecasts: rows.length, unavailable: rows.filter((row) => row.status === "TARGET_UNAVAILABLE").length },
-                    fingerprint: lastRunFingerprint, strategyKey: lastRunStrategyKey, interval, generatedAt,
-                });
-                return;
-            }
-            const request = requests[index]!;
-            let row;
-            if (!request.symbol) {
-                row = createTargetUnavailableForecastRow(request.asset, request.asset, request.unavailableReason ?? "TARGET_IDENTITY");
-            } else {
-                try {
-                    const data = await loadTarget(request.symbol, interval, minerAbortController?.signal);
-                    if (!Array.isArray(data) || data.length === 0) {
-                        row = createTargetUnavailableForecastRow(request.asset, request.symbol, "TARGET_DATA_MISSING");
-                    } else {
-                        const artifacts: BatchSyntheticPairArtifact[] = [];
-                        for (const meta of request.metas) {
-                            if (lostOwnership()) break;
-                            artifacts.push(await loadArtifact(meta));
-                        }
-                        if (lostOwnership()) continue;
-                        const analysis = buildBatchSignalLifecycleAnalysis(
-                            { asset: request.asset, symbol: request.symbol, data },
-                            artifacts,
-                        );
-                        analyses.push(analysis);
-                        row = forecastBatchSignalLifecycleAt(analysis, data.length - 1, interval, undefined, generatedAt, true);
-                    }
-                } catch (error) {
-                    if (lostOwnership() || minerAbortController?.signal.aborted) continue;
-                    debugLogger.warn("batch.server.direction_forecast.target_failed", {
-                        asset: request.asset,
-                        symbol: request.symbol,
-                        error: error instanceof Error ? error.message : String(error),
-                    });
-                    row = createTargetUnavailableForecastRow(request.asset, request.symbol, "TARGET_LOAD_FAILED");
-                }
-            }
-            rows.push(row);
-            if (minerState?.running) minerState.verdicts = rows.length;
-            writer({ type: "forecast", row });
-            writer({ type: "progress", phase: "targets", completed: index + 1, total: requests.length, asset: request.asset });
-        }
-
-        if (lostOwnership()) {
-            writer({
-                type: "done", ok: false, cancelled: true, summary: "Direction Forecast cancelled.",
-                totals: { forecasts: rows.length, unavailable: rows.filter((row) => row.status === "TARGET_UNAVAILABLE").length },
-                fingerprint: lastRunFingerprint, strategyKey: lastRunStrategyKey, interval, generatedAt,
-            });
-            return;
-        }
-        writer({ type: "progress", phase: "path", completed: 0, total: 1 });
-        const path = runBatchSignalSelectionPath({
-            analyses,
-            interval,
-            execution: lastRunDirectionExecution,
-            isCancelled: lostOwnership,
-        });
-        if (lostOwnership()) {
-            writer({
-                type: "done", ok: false, cancelled: true, summary: "Direction Forecast cancelled.",
-                totals: { forecasts: rows.length, unavailable: rows.filter((row) => row.status === "TARGET_UNAVAILABLE").length },
-                fingerprint: lastRunFingerprint, strategyKey: lastRunStrategyKey, interval, generatedAt,
-            });
-            return;
-        }
-        writer({ type: "path", result: path });
-        writer({ type: "progress", phase: "path", completed: 1, total: 1 });
-        const unavailable = rows.filter((row) => row.status === "TARGET_UNAVAILABLE").length;
-        writer({
-            type: "done", ok: true, cancelled: false,
-            summary: `Direction Forecast complete - ${rows.length - unavailable}/${rows.length} assets evaluated.`,
-            totals: { forecasts: rows.length, unavailable },
-            fingerprint: lastRunFingerprint, strategyKey: lastRunStrategyKey, interval, generatedAt,
-        });
-        debugLogger.event("batch.server.direction_forecast.complete", {
-            assets: rows.length,
-            unavailable,
-            pairs: artifactMetas.length,
-            pathStatus: path.status,
-            pathTrades: path.path.trades,
-        });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        debugLogger.warn("batch.server.direction_forecast.fatal", { error: message });
-        writer({ type: "fatal", error: message });
-    } finally {
-        if (minerState) minerState.running = false;
-        if (hasStoredMineArtifacts()) scheduleArtifactTtl();
-    }
-}
-
-function resolveDirectionTargetRequests(metas: readonly StoredMineArtifactMeta[]): DirectionTargetRequest[] {
-    const byAsset = new Map<string, { symbols: Set<string>; metas: StoredMineArtifactMeta[] }>();
-    for (const meta of metas) {
-        const parsed = parsePortfolioSyntheticPairSymbol(meta.symbol);
-        for (const [assetRaw, symbolRaw] of [
-            [meta.baseAsset, meta.baseSymbol ?? parsed?.baseSymbol],
-            [meta.quoteAsset, meta.quoteSymbol ?? parsed?.quoteSymbol],
-        ] as const) {
-            const asset = assetRaw.trim().toUpperCase();
-            if (!asset) continue;
-            const entry = byAsset.get(asset) ?? { symbols: new Set<string>(), metas: [] };
-            if (symbolRaw?.trim()) entry.symbols.add(symbolRaw.trim().toUpperCase());
-            entry.metas.push(meta);
-            byAsset.set(asset, entry);
-        }
-    }
-    return [...byAsset.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([asset, entry]) => {
-        const symbols = [...entry.symbols];
-        if (symbols.length > 1) return { asset, symbol: null, unavailableReason: "TARGET_IDENTITY_AMBIGUOUS", metas: entry.metas };
-        return {
-            asset,
-            symbol: symbols[0] ?? resolveBatchSyntheticTargetSymbol(asset),
-            unavailableReason: null,
-            metas: entry.metas,
-        };
-    });
-}
-
-async function handleDirectionForecastRequest(res: ViteHttpResponse, body: Record<string, unknown>): Promise<void> {
-    if (minerOwner !== RUN_OWNER_NONE) throw new HttpStatusError(409, "Batch analysis is already running.");
-    if (runOwner !== RUN_OWNER_NONE) throw new HttpStatusError(409, "A batch backtest is running. Use Stop first.");
-    if (!hasStoredMineArtifacts()) throw new HttpStatusError(400, "Run Batch before Direction Forecast; no artifacts on server.");
-    const owner = ++minerOwnerGen;
-    minerOwner = owner;
-    minerAbortController = new AbortController();
-    let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
-    try {
-        stream = createDisconnectSafeStream(res, { onDisconnect: () => cancelMinerOnDisconnect(owner) });
-        await processDirectionForecast(
-            typeof body.fingerprint === "string" ? body.fingerprint : null,
-            typeof body.interval === "string" ? body.interval : lastRunInterval,
-            (event) => stream!.write(event),
-            owner,
-        );
-        stream.end();
-    } catch (error) {
-        if (!stream) throw error;
-        const message = error instanceof Error ? error.message : String(error);
-        try { stream.end({ type: "fatal", error: message }); } catch { /* best-effort */ }
-    } finally {
-        if (minerOwner === owner) minerOwner = RUN_OWNER_NONE;
-        if (minerState) minerState.running = false;
-        minerAbortController = null;
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Portfolio Fit (R16: does NOT release artifacts; re-arms TTL)
 // ---------------------------------------------------------------------------
 
@@ -2201,23 +1975,6 @@ function registerBatchRoutes(middlewares: any): void {
             }
         });
 
-        middlewares.use("/api/batch-backtest/direction-forecast", async (req: any, res: any) => {
-            if (req.method !== "POST") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            if (!isAllowedLocalRequest(req)) {
-                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
-                return;
-            }
-            try {
-                rememberLocalApiOriginFromRequest(req);
-                await handleDirectionForecastRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
-        });
-
         middlewares.use("/api/batch-backtest/portfolio-fit", async (req: any, res: any) => {
             if (req.method !== "POST") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
@@ -2270,17 +2027,6 @@ export const __testInternals = {
     handleStopRequest,
     registerBatchRoutesForTests: registerBatchRoutes,
     processPortfolioFit,
-    processDirectionForecast,
-    resolveDirectionTargetRequestsForTests: resolveDirectionTargetRequests,
-    setDirectionContextForTests(args: {
-        fingerprint: string | null;
-        interval: string | null;
-        execution: BatchDirectionExecutionAssumptions | null;
-    }): void {
-        lastRunFingerprint = args.fingerprint;
-        lastRunInterval = args.interval;
-        lastRunDirectionExecution = args.execution;
-    },
     // Audit Finding 5 test seams.
     parseBatchRunId,
     consumePendingBatchStopForRun,

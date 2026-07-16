@@ -59,7 +59,7 @@ import {
     type BatchBenchmarkStabilityPhase,
 } from "./batch-benchmark-snapshot";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
-import type { BatchStreamEvent, BatchMinerStreamEvent, BatchStabilityMineStreamEvent, BatchDirectionForecastStreamEvent } from "./batch-backtest-stream-types";
+import type { BatchStreamEvent, BatchMinerStreamEvent, BatchStabilityMineStreamEvent } from "./batch-backtest-stream-types";
 import {
     BATCH_SYNTHETIC_MINER_DEFAULT_OPTIONS,
     type BatchSyntheticAssetVerdict,
@@ -76,12 +76,6 @@ import type {
     BatchPortfolioFitResult,
 } from "./batch-portfolio-fit-types";
 import type { BatchPortfolioFitStreamEvent } from "./batch-backtest-stream-types";
-import type {
-    BatchDirectionForecastResult,
-    BatchDirectionForecastRow,
-    BatchDirectionSelectionPathResult,
-} from "./batch-signal-lifecycle-types";
-import { formatDirectionForecastCopy } from "./batch-direction-forecast-summary";
 import {
     projectMineVerdictToSnapshot,
     projectStabilityRowToSnapshot,
@@ -144,7 +138,6 @@ class BatchBacktestService {
     private lastMinerResult: BatchSyntheticMinerResult | null = null;
     private lastStabilityResult: BatchStabilityMineResult | null = null;
     private lastPortfolioFitResult: BatchPortfolioFitResult | null = null;
-    private lastDirectionForecastResult: BatchDirectionForecastResult | null = null;
     private lastRunFingerprint: string | null = null;
     private lastRunInterval: string | null = null;
     // The strategy key that governed the last Run, captured at run start so
@@ -256,17 +249,11 @@ class BatchBacktestService {
         dom.batchBacktestStabilityMineBtn.addEventListener("click", () => {
             void this.runStabilityMine();
         });
-        dom.batchBacktestDirectionForecastBtn.addEventListener("click", () => {
-            void this.runDirectionForecast();
-        });
         dom.batchBacktestAutoRunStability.addEventListener("change", () => {
             writeBatchAutoRunStability(dom.batchBacktestAutoRunStability.checked);
         });
         dom.batchBacktestCopyStabilityBtn.addEventListener("click", () => {
             void this.copyStabilityResults();
-        });
-        dom.batchBacktestCopyDirectionForecastBtn.addEventListener("click", () => {
-            void this.copyDirectionForecastResults();
         });
         dom.batchBacktestPortfolioFitBtn.addEventListener("click", () => {
             void this.runPortfolioFit();
@@ -361,7 +348,6 @@ class BatchBacktestService {
         dom.batchBacktestCopyBenchmarkBtn.disabled = true;
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
-        dom.batchBacktestDirectionForecastBtn.disabled = true;
         this.setRunBusy(dom, true);
         this.clearMinerResults(dom);
         setVisible(dom.batchBacktestEmpty, false);
@@ -394,7 +380,6 @@ class BatchBacktestService {
                 // (the browser never holds `row.data` in this mode).
                 dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
                 dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
-                dom.batchBacktestDirectionForecastBtn.disabled = !this.serverHasArtifacts;
                 this.updateSummary(dom);
                 this.setProgress(dom, 100, this.cancelled ? "Stopped" : "Done");
                 this.setRunBusy(dom, false);
@@ -694,7 +679,6 @@ class BatchBacktestService {
             setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
             dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
             dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
-            dom.batchBacktestDirectionForecastBtn.disabled = !this.serverHasArtifacts;
             this.saveLatestResultsSnapshot();
             if (serverRowCount > 0 && this.lastResults.length < serverRowCount) {
                 // Reconstruction could not reach the server's row count — surface
@@ -1080,7 +1064,6 @@ class BatchBacktestService {
         } finally {
             dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
             dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
-            dom.batchBacktestDirectionForecastBtn.disabled = !this.serverHasArtifacts;
             this.updatePortfolioFitButtonState(dom);
         }
         return targetCount;
@@ -1319,7 +1302,6 @@ class BatchBacktestService {
                         // artifacts before their TTL expires.
                         this.getDom().batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
                         this.getDom().batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
-                        this.getDom().batchBacktestDirectionForecastBtn.disabled = !this.serverHasArtifacts;
                         this.updatePortfolioFitButtonState(this.getDom());
                     }
                     if (this.lastResults.length > 0) {
@@ -1490,7 +1472,6 @@ class BatchBacktestService {
 
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
-        dom.batchBacktestDirectionForecastBtn.disabled = true;
         dom.batchBacktestCopyMinerBtn.disabled = true;
         dom.batchBacktestCopyStabilityBtn.disabled = true;
         dom.batchBacktestMinerSummary.textContent = "Stability mining on server...";
@@ -1565,7 +1546,6 @@ class BatchBacktestService {
         } finally {
             dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
             dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
-            dom.batchBacktestDirectionForecastBtn.disabled = !this.serverHasArtifacts;
             this.updatePortfolioFitButtonState(dom);
         }
     }
@@ -1611,155 +1591,6 @@ class BatchBacktestService {
         const copied = await copyToClipboard(text);
         if (!copied) {
             this.getDom().batchBacktestMinerSummary.textContent = "Copy stability failed.";
-        }
-    }
-
-    private async runDirectionForecast(): Promise<void> {
-        if (this.analysisInFlight) return;
-        this.analysisInFlight = true;
-        this.analysisCancelRequested = false;
-        const dom = this.getDom();
-        try {
-            if (!this.serverHasArtifacts || !this.lastRunFingerprint) {
-                dom.batchBacktestDirectionForecastSummary.textContent = "Run Batch first.";
-                return;
-            }
-            const currentFingerprint = this.buildCurrentRunFingerprint();
-            if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
-                dom.batchBacktestDirectionForecastSummary.textContent = "Rerun Batch before Direction Forecast; settings or symbols changed.";
-                return;
-            }
-            this.beginAnalysisBusy(dom);
-            if (!await this.refreshServerArtifactState(currentFingerprint)) {
-                dom.batchBacktestDirectionForecastSummary.textContent = "Rerun Batch before Direction Forecast; no artifacts on server.";
-                return;
-            }
-            await this.runDirectionForecastServer(dom);
-        } finally {
-            await this.finishAnalysisBusy(dom);
-        }
-    }
-
-    private async runDirectionForecastServer(dom: BatchBacktestDom): Promise<void> {
-        this.lastDirectionForecastResult = null;
-        dom.batchBacktestCopyDirectionForecastBtn.disabled = true;
-        dom.batchBacktestDirectionForecastBtn.disabled = true;
-        dom.batchBacktestDirectionForecastSummary.textContent = "Direction Forecast running on server...";
-        dom.batchBacktestDirectionForecastResults.replaceChildren();
-        try {
-            const response = await fetch("/api/batch-backtest/direction-forecast", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ fingerprint: this.lastRunFingerprint, interval: this.lastRunInterval ?? state.currentInterval }),
-            });
-            if (!response.ok || !response.body) {
-                const text = await response.text().catch(() => "");
-                let payload: { error?: string } = {};
-                try { payload = JSON.parse(text); } catch { /* ignore */ }
-                if (response.status === 400 && payload.error?.includes("no artifacts")) this.serverHasArtifacts = false;
-                throw new Error(payload.error ?? (text || `HTTP ${response.status}`));
-            }
-            await this.reissueStopIfNeeded();
-            const rows: BatchDirectionForecastRow[] = [];
-            let selectionPath: BatchDirectionSelectionPathResult | null = null;
-            let terminal: Extract<BatchDirectionForecastStreamEvent, { type: "done" }> | null = null;
-            await consumeNdjsonStream<BatchDirectionForecastStreamEvent>(response.body, {
-                onStart: (event: Extract<BatchDirectionForecastStreamEvent, { type: "start" }>) => {
-                    dom.batchBacktestDirectionForecastSummary.textContent = `Direction Forecast - ${event.assets} assets / ${event.pairs} pairs`;
-                },
-                onProgress: (event: Extract<BatchDirectionForecastStreamEvent, { type: "progress" }>) => {
-                    dom.batchBacktestDirectionForecastSummary.textContent = event.phase === "targets"
-                        ? `Direction Forecast ${event.completed}/${event.total}${event.asset ? ` - ${event.asset}` : ""}`
-                        : "Direction Forecast - replaying selection path";
-                },
-                onForecast: (event: Extract<BatchDirectionForecastStreamEvent, { type: "forecast" }>) => rows.push(event.row),
-                onPath: (event: Extract<BatchDirectionForecastStreamEvent, { type: "path" }>) => { selectionPath = event.result; },
-                onDone: (event: Extract<BatchDirectionForecastStreamEvent, { type: "done" }>) => { terminal = event; },
-                onFatal: (event: Extract<BatchDirectionForecastStreamEvent, { type: "fatal" }>) => { throw new Error(event.error); },
-            }, { requireTerminal: true });
-            const done = terminal as Extract<BatchDirectionForecastStreamEvent, { type: "done" }> | null;
-            if (!done) throw new Error("Server Direction Forecast did not return a terminal result.");
-            if (done.cancelled) {
-                dom.batchBacktestDirectionForecastSummary.textContent = done.summary;
-                return;
-            }
-            if (!selectionPath) throw new Error("Server Direction Forecast did not return a selection path.");
-            const result: BatchDirectionForecastResult = {
-                schemaVersion: 1,
-                interval: done.interval,
-                fingerprint: done.fingerprint ?? this.lastRunFingerprint ?? "",
-                strategyKey: done.strategyKey ?? this.lastRunStrategyKey,
-                generatedAt: done.generatedAt,
-                rows,
-                selectionPath,
-                diagnostics: [],
-            };
-            this.lastDirectionForecastResult = result;
-            this.renderDirectionForecastResult(dom, result);
-            dom.batchBacktestCopyDirectionForecastBtn.disabled = false;
-            this.serverHasArtifacts = true;
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.lastDirectionForecastResult = null;
-            dom.batchBacktestDirectionForecastSummary.textContent = `Direction Forecast error: ${message}`;
-            debugLogger.error("batch_direction_forecast.server_failed", { error: message });
-        }
-    }
-
-    private renderDirectionForecastResult(dom: BatchBacktestDom, result: BatchDirectionForecastResult): void {
-        const path = result.selectionPath;
-        const worstTrade = path.path.worstTradeSymbol
-            ? ` | Worst ${path.path.worstTradeSymbol} ${path.path.worstTradeBias ?? "--"} ${formatSignedPercent(path.path.worstTradeReturnPct)}`
-            : "";
-        dom.batchBacktestDirectionForecastSummary.textContent = path.status === "PATH_UNAVAILABLE"
-            ? `Direction Forecast | ${result.rows.filter((row) => row.status === "EDGE").length}/${result.rows.length} edges | Path unavailable: ${path.reasonCode}`
-            : `Direction Forecast | ${result.rows.filter((row) => row.status === "EDGE").length}/${result.rows.length} edges | Path ${path.status} ${formatSignedPercent(path.path.returnPct)} | Trades ${path.path.trades} | Quality ${path.quality.status}${worstTrade}`;
-        const fragment = document.createDocumentFragment();
-        for (const row of result.rows) fragment.appendChild(this.createDirectionForecastRow(row));
-        dom.batchBacktestDirectionForecastResults.replaceChildren(fragment);
-    }
-
-    private createDirectionForecastRow(row: BatchDirectionForecastRow): HTMLDivElement {
-        const line = document.createElement("div");
-        line.className = "batch-miner-row";
-        const primary = document.createElement("div");
-        primary.className = "batch-miner-primary";
-        const badge = document.createElement("span");
-        badge.className = `finder-verdict ${row.status === "EDGE" ? "finder-verdict-strong" : row.status === "TARGET_UNAVAILABLE" ? "finder-verdict-losing" : "finder-verdict-thin"}`;
-        badge.textContent = row.bias;
-        const asset = document.createElement("span");
-        asset.className = "batch-miner-asset";
-        asset.textContent = row.asset;
-        const direction = document.createElement("span");
-        direction.className = "batch-miner-direction";
-        direction.textContent = row.aggregateDirection?.toUpperCase() ?? "--";
-        primary.appendChild(badge);
-        primary.appendChild(asset);
-        primary.appendChild(direction);
-        primary.appendChild(this.createMinerMetric("Prob", row.conservativeDirectionProbability === null ? "--" : `${(row.conservativeDirectionProbability * 100).toFixed(1)}%`));
-        primary.appendChild(this.createMinerMetric("Ret", formatSignedPercent(row.medianReturnPct), row.medianReturnPct));
-        primary.appendChild(this.createMinerMetric("RR", formatRatio(row.returnToAdverseRatio)));
-        primary.appendChild(this.createMinerMetric("Samples", `${row.analogCount}/${row.candidateCount}`));
-        line.appendChild(primary);
-        const metrics = document.createElement("div");
-        metrics.className = "batch-miner-metrics";
-        metrics.appendChild(this.createMinerMetric("Status", row.status));
-        metrics.appendChild(this.createMinerMetric("Fresh", row.freshness));
-        metrics.appendChild(this.createMinerMetric("Age", row.lifecycleAge === null ? "--" : String(row.lifecycleAge)));
-        metrics.appendChild(this.createMinerMetric("Agree", `${row.agreementCount}/${row.oppositionCount}`));
-        metrics.appendChild(this.createMinerMetric("Dist", formatNumber(row.averageDistance, 2)));
-        line.appendChild(metrics);
-        const reason = document.createElement("div");
-        reason.className = "batch-miner-reason";
-        reason.textContent = row.reasonCode;
-        line.appendChild(reason);
-        return line;
-    }
-
-    private async copyDirectionForecastResults(): Promise<void> {
-        if (!this.lastDirectionForecastResult) return;
-        if (!await copyToClipboard(formatDirectionForecastCopy(this.lastDirectionForecastResult))) {
-            this.getDom().batchBacktestDirectionForecastSummary.textContent = "Copy Direction Forecast failed.";
         }
     }
 
@@ -2018,7 +1849,6 @@ class BatchBacktestService {
         dom.batchBacktestCopyBtn.disabled = this.lastResults.length === 0;
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
-        dom.batchBacktestDirectionForecastBtn.disabled = true;
         dom.batchBacktestPortfolioFitBtn.disabled = true;
         dom.batchBacktestCopyPortfolioFitBtn.disabled = true;
         if (this.lastStabilityResult) {
@@ -2132,7 +1962,6 @@ class BatchBacktestService {
         this.lastMinerResult = null;
         this.lastStabilityResult = null;
         this.lastPortfolioFitResult = null;
-        this.lastDirectionForecastResult = null;
         // Clear rather than show "Miner idle": an empty .batch-miner-status
         // collapses via CSS (:empty) so the run-state region does not show a
         // noise strip before any mining has happened (point 7 of the refactor).
@@ -2140,9 +1969,6 @@ class BatchBacktestService {
         dom.batchBacktestMinerResults.replaceChildren();
         dom.batchBacktestCopyMinerBtn.disabled = true;
         dom.batchBacktestCopyStabilityBtn.disabled = true;
-        dom.batchBacktestCopyDirectionForecastBtn.disabled = true;
-        dom.batchBacktestDirectionForecastSummary.textContent = "";
-        dom.batchBacktestDirectionForecastResults.replaceChildren();
         dom.batchBacktestPortfolioFitBtn.disabled = true;
         dom.batchBacktestCopyPortfolioFitBtn.disabled = true;
         dom.batchBacktestPortfolioFitSummary.textContent = "";
@@ -2451,7 +2277,6 @@ class BatchBacktestService {
         this.clearPersistedLatestResults();
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
-        dom.batchBacktestDirectionForecastBtn.disabled = true;
         if (this.lastResults.length === 0) return;
         this.lastResults = [];
         this.appendedCount = 0;
@@ -2562,7 +2387,6 @@ class BatchBacktestService {
         dom.batchBacktestRunBtn.disabled = true;
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
-        dom.batchBacktestDirectionForecastBtn.disabled = true;
         dom.batchBacktestPortfolioFitBtn.disabled = true;
     }
 
@@ -2574,7 +2398,6 @@ class BatchBacktestService {
         dom.batchBacktestRunBtn.disabled = true;
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
-        dom.batchBacktestDirectionForecastBtn.disabled = true;
         dom.batchBacktestPortfolioFitBtn.disabled = true;
         const pending = this.pendingStopPromise;
         if (pending) {
@@ -2584,7 +2407,6 @@ class BatchBacktestService {
         dom.batchBacktestRunBtn.disabled = false;
         dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
         dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
-        dom.batchBacktestDirectionForecastBtn.disabled = !this.serverHasArtifacts;
         this.updatePortfolioFitButtonState(dom);
     }
 

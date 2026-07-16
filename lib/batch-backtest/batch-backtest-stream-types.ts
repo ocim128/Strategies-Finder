@@ -114,7 +114,6 @@ export type BatchStabilityMineStreamEvent =
 // ---------------------------------------------------------------------------
 
 import type { BatchPortfolioFitResult } from "./batch-portfolio-fit-types";
-import type { BatchDirectionForecastRow, BatchDirectionSelectionPathResult } from "./batch-signal-lifecycle-types";
 
 /**
  * Stream event contract for the Portfolio Fit server-side plugin
@@ -131,26 +130,4 @@ export type BatchPortfolioFitStreamEvent =
     | { type: "progress"; percent: number; text: string }
     | { type: "done"; ok: true; result: BatchPortfolioFitResult; fingerprint: string | null }
     | { type: "done"; ok: false; cancelled: true; summary: string }
-    | { type: "fatal"; error: string };
-
-// ---------------------------------------------------------------------------
-// Direction Forecast stream events
-// ---------------------------------------------------------------------------
-
-export type BatchDirectionForecastStreamEvent =
-    | { type: "start"; assets: number; pairs: number }
-    | { type: "progress"; phase: "targets" | "path"; completed: number; total: number; asset?: string }
-    | { type: "forecast"; row: BatchDirectionForecastRow }
-    | { type: "path"; result: BatchDirectionSelectionPathResult }
-    | {
-        type: "done";
-        ok: boolean;
-        cancelled: boolean;
-        summary: string;
-        totals: { forecasts: number; unavailable: number };
-        fingerprint: string | null;
-        strategyKey: string | null;
-        interval: string;
-        generatedAt: number;
-      }
     | { type: "fatal"; error: string };

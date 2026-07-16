@@ -111,49 +111,6 @@ The miner:
 
 It does not place trades, persist event-level samples, or treat raw agreement or raw positive drift as enough for entry. `LONG` and `SHORT` require pre-OOS and newest-window OOS analogs to agree, show lift over the OOS baseline, clear a minimum edge gate, keep favorable MFE/MAE, and stay within the analog-distance gate. Window splits are computed over the aligned mined candidate span, not the full target-asset history, so shorter synthetic-pair overlap can still have discovery/selection/OOS evidence. If target candles are missing, analog distance is too high, or OOS evidence is weak, the verdict is `INCONCLUSIVE`, `WATCH`, or `SKIP`.
 
-## Direction Forecast
-
-After a Batch run, **Direction Forecast** answers what the exact direct asset
-returned in comparable historical aggregate pair states from next-open entry
-until that state invalidated. It does not use a fixed-bar outcome horizon.
-
-Each completed lifecycle contributes at most one sample: its observed snapshot
-nearest to the current state's maturity. Maturity uses `medianBarsHeld` with
-lifecycle age as fallback; return and invalidation outcomes do not select the
-snapshot. The current open lifecycle, the initial left-censored lifecycle,
-coverage gaps, and exits not yet observable at a historical cutoff are excluded
-from evidence. Exact leg symbols identify direct targets, including marked
-stock symbols; ambiguous or unavailable targets are reported instead of being
-silently mapped to crypto.
-
-The normalized path allocates full equity to one position. A short can lose
-more than 100% before lifecycle invalidation and therefore reach zero equity;
-no borrow, margin-call, or implicit stop model is added. Path output identifies
-the worst closed trade with symbol, side, timestamps, gross return, and PnL so
-ruin can be audited against direct-asset prices.
-Any forecast path that reaches zero equity reports `FAILED | PATH_RUIN`; the
-quality section remains separately `VALID` or `INSUFFICIENT`.
-
-Lifecycle state uses signed agreement strength with hysteresis: activate at
-`+/-0.25` and invalidate after strength decays through `+/-0.10`. A weak raw
-majority therefore cannot keep one state alive indefinitely. A decrease in
-`medianBarsHeld` also invalidates the lifecycle because it identifies an
-observable reset of the supporting pair-position cohort, even if direction is
-unchanged. Coverage loss still censors the state instead of creating a false
-invalidation.
-
-The output separates current per-asset probability and return distributions
-from a final-window selection path. The path compares forecast ranking with raw
-agreement, deterministic random selection, and cash under identical next-open
-cost assumptions. A larger final PnL is not treated as better forecast quality;
-selection percentile, regret, rank correlation, abstention, and PnL
-concentration are reported independently.
-
-Paths with insufficient closed trades or comparable decisions are labeled
-`EXPLORATORY`. Current stale rows cannot be actionable edges. Copy output names
-the exact failed gate, retains excursions for neutral rows, prints UTC replay
-dates, and includes the full Batch run fingerprint and strategy key.
-
 ## Unsupported Surfaces
 
 | Surface | Current behavior | Reason |

@@ -269,15 +269,6 @@ export interface BatchSyntheticPreparedPairArtifact extends BatchSyntheticPairAr
     signalsByIndex: IndexedSignal[][];
 }
 
-export interface BatchSyntheticStateObservation {
-    index: number;
-    timeKey: string;
-    observable: boolean;
-    alignedPairCount: number;
-    totalPairCount: number;
-    snapshot: BatchSyntheticStateSnapshot | null;
-}
-
 interface PairState {
     symbol: string;
     direction: BatchSyntheticDirection;
@@ -410,7 +401,7 @@ export function runBatchSyntheticStateMiner(input: BatchSyntheticMinerInput): Ba
 
 export function runPreparedBatchSyntheticStateMiner(input: BatchSyntheticPreparedMinerInput): BatchSyntheticMinerResult {
     const runStartedAt = nowMs();
-    const options = resolveBatchSyntheticMinerOptions(input.options);
+    const options = resolveOptions(input.options);
     const diagnostics = [...(input.diagnostics ?? [])];
     const profile = input.profile;
     if (profile) {
@@ -462,7 +453,7 @@ export function prepareBatchSyntheticTargetArtifacts(
         });
 }
 
-export function resolveBatchSyntheticMinerOptions(raw?: Partial<BatchSyntheticMinerOptions>): BatchSyntheticMinerOptions {
+function resolveOptions(raw?: Partial<BatchSyntheticMinerOptions>): BatchSyntheticMinerOptions {
     const options = { ...DEFAULT_OPTIONS, ...raw };
     // Explicit horizons opt out of auto-horizons: a caller who pins horizons
     // wants exactly those values, not median-hold-derived ones.
@@ -486,35 +477,6 @@ export function resolveBatchSyntheticMinerOptions(raw?: Partial<BatchSyntheticMi
         minMfeMaeRatio: Math.max(1, Number.isFinite(options.minMfeMaeRatio) ? options.minMfeMaeRatio : DEFAULT_OPTIONS.minMfeMaeRatio),
         targetQuoteSuffix: "USDT",
     };
-}
-
-/**
- * Build the state clock used by lifecycle forecasting without duplicating the
- * miner's signal/trade interpretation. Missing pair bars are represented as
- * unobservable observations, never as an inactive synthetic state.
- */
-export function buildPreparedBatchSyntheticStateTimeline(
-    target: BatchSyntheticPreparedTargetArtifact,
-    linkedPairs: readonly BatchSyntheticPreparedPairArtifact[],
-    rawOptions?: Partial<BatchSyntheticMinerOptions>,
-): BatchSyntheticStateObservation[] {
-    const options = resolveBatchSyntheticMinerOptions(rawOptions);
-    return target.data.map((bar, index) => {
-        const key = timeKey(bar.time);
-        let alignedPairCount = 0;
-        for (const pair of linkedPairs) {
-            if (pair.timeIndex.has(key)) alignedPairCount += 1;
-        }
-        const observable = linkedPairs.length > 0 && alignedPairCount === linkedPairs.length;
-        return {
-            index,
-            timeKey: key,
-            observable,
-            alignedPairCount,
-            totalPairCount: linkedPairs.length,
-            snapshot: observable ? buildSnapshotAt(target.asset, index, target.data, linkedPairs, options) : null,
-        };
-    });
 }
 
 export function prepareBatchSyntheticPairArtifacts(
@@ -1263,7 +1225,7 @@ function selectAnalogs(
     current: BatchSyntheticStateSnapshot,
     samples: readonly BatchSyntheticCandidateSample[],
     options: BatchSyntheticMinerOptions,
-    scales: BatchSyntheticDistanceScales,
+    scales: DistanceScales,
     profile?: BatchSyntheticMinerProfile
 ): LabeledAnalog[] {
     // Phase 1 acceleration: top-K selection instead of full sort.
@@ -1288,7 +1250,7 @@ function selectAnalogs(
     for (let i = 0; i < samples.length; i += 1) {
         const sample = samples[i]!;
         if (sample.snapshot.direction !== current.direction) continue;
-        const distance = measureBatchSyntheticSnapshotDistance(current, sample.snapshot, scales);
+        const distance = measureSnapshotDistance(current, sample.snapshot, scales);
         if (!Number.isFinite(distance)) continue;
         finite.push({ sample, distance, order: i });
     }
@@ -1381,7 +1343,7 @@ function siftDown(
     }
 }
 
-export interface BatchSyntheticDistanceScales {
+interface DistanceScales {
     activePeerCount: number;
     netAgreement: number;
     agreementTransition: number;
@@ -1392,7 +1354,7 @@ export interface BatchSyntheticDistanceScales {
     breadthPersistence: number;
 }
 
-const FALLBACK_SCALES: BatchSyntheticDistanceScales = {
+const FALLBACK_SCALES: DistanceScales = {
     activePeerCount: 12,
     netAgreement: 8,
     agreementTransition: 6,
@@ -1412,13 +1374,8 @@ const FALLBACK_SCALES: BatchSyntheticDistanceScales = {
  * fixed scale of 8 would let one feature dominate the distance and push every
  * analog past `maxEntryDistance`. Calibrating to the actual spread fixes that.
  */
-function calibrateDistanceScales(preOosSamples: readonly BatchSyntheticCandidateSample[]): BatchSyntheticDistanceScales {
-    return calibrateBatchSyntheticDistanceScales(preOosSamples.map((sample) => sample.snapshot));
-}
-
-export function calibrateBatchSyntheticDistanceScales(
-    snapshots: readonly BatchSyntheticStateSnapshot[],
-): BatchSyntheticDistanceScales {
+function calibrateDistanceScales(preOosSamples: readonly BatchSyntheticCandidateSample[]): DistanceScales {
+    const snapshots = preOosSamples.map((sample) => sample.snapshot);
     if (snapshots.length < 4) {
         return { ...FALLBACK_SCALES };
     }
@@ -1452,10 +1409,10 @@ export function calibrateBatchSyntheticDistanceScales(
     };
 }
 
-export function measureBatchSyntheticSnapshotDistance(
+function measureSnapshotDistance(
     a: BatchSyntheticStateSnapshot,
     b: BatchSyntheticStateSnapshot,
-    scales: BatchSyntheticDistanceScales
+    scales: DistanceScales
 ): number {
     if (!a.direction || a.direction !== b.direction) {
         return Number.POSITIVE_INFINITY;

@@ -56,10 +56,6 @@
                 title="Repeatedly mine random pair subsets from the latest Batch run">
                 Stability Mine
             </button>
-            <button class="btn btn-secondary btn-compact" id="batchBacktestDirectionForecastBtn" type="button" disabled
-                title="Forecast direct-asset return until the current aggregate synthetic state invalidates">
-                Direction Forecast
-            </button>
             <button class="btn btn-secondary btn-compact" id="batchBacktestPortfolioFitBtn" type="button" disabled
                 title="Post-analysis: which Stability candidates improve the candidate portfolio, with bounded allocation">
                 Portfolio Fit
@@ -78,10 +74,6 @@
             <button class="btn btn-secondary btn-compact" id="batchBacktestCopyStabilityBtn" type="button" disabled
                 title="Copy the latest stability miner summary">
                 Copy Stability
-            </button>
-            <button class="btn btn-secondary btn-compact" id="batchBacktestCopyDirectionForecastBtn" type="button" disabled
-                title="Copy current lifecycle forecasts, path quality, and benchmarks">
-                Copy Forecast
             </button>
             <button class="btn btn-secondary btn-compact" id="batchBacktestCopyPortfolioFitBtn" type="button" disabled
                 title="Copy the latest Portfolio Fit recommendation">
@@ -133,14 +125,11 @@
         </div>
         <div class="batch-summary-grid" id="batchBacktestSummaryGrid" hidden></div>
         <div class="batch-miner-status" id="batchBacktestMinerSummary"></div>
-        <div class="batch-miner-status" id="batchBacktestDirectionForecastSummary"></div>
         <div class="batch-miner-status" id="batchBacktestPortfolioFitSummary"></div>
     </div>
 
     <div class="finder-results">
         <div class="finder-list" id="batchBacktestMinerResults">
-        </div>
-        <div class="finder-list" id="batchBacktestDirectionForecastResults">
         </div>
         <div class="finder-list" id="batchBacktestResults">
         </div>
