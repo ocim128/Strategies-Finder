@@ -21,7 +21,7 @@ It combines:
 - Use Quick View to inspect backtest stats, trades, Polymarket scoring, and Polymarket payout diagnostics, including native `15m` / `1h` session summaries, same-event signal-exit metrics on supported `1m` runs, and exact-second CLOB metrics on supported `1s` runs
 - Paper trade selected `1s` candidates in Execution Lab with live Binance candles, live Polymarket CLOB quotes, chart overlays, and JSONL logs; optionally live-trade through a local secret-bearing Polymarket executor after dry-run preflight
 - Run Portfolio Lab across multiple pairs for context, ranking, and sizing decisions
-- Run Batch Backtest post-analysis with Mine Timing, Stability Mine, and Portfolio Fit (which candidates improve the candidate portfolio, with bounded allocation)
+- Run Batch Backtest post-analysis with Mine Timing, Stability Mine, Direction Forecast, and Portfolio Fit (which candidates improve the candidate portfolio, with bounded allocation)
 - Build live or scheduled alert subscriptions through the Worker API
 
 Trade timing quality scores are descriptive diagnostics. Exit Score is measured on each strategy's own trades; it is not an isolated exit-rule benchmark.
@@ -167,7 +167,7 @@ This ordering matters because Finder, Scanner, and repeated backtests depend on 
 
 ### Server-Side Batch Backtest
 
-The Batch Backtest tab runs its workload in the Vite dev-server (Node) process, so 1000+ IBKR 4H synthetic-pair runs stop OOM-ing the browser. The browser tab holds only rendered scalars and DOM rows; Node writes Mine Timing artifacts to temporary disk storage and loads linked pairs back per target during Mine.
+The Batch Backtest tab runs its workload in the Vite dev-server (Node) process, so 1000+ IBKR 4H synthetic-pair runs stop OOM-ing the browser. The browser tab holds only rendered scalars and DOM rows; Node writes analysis artifacts to temporary disk storage and loads linked pairs back per target during Mine Timing and Direction Forecast.
 
 For large runs, start the dev server with extra heap:
 

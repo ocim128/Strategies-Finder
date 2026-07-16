@@ -111,6 +111,26 @@ The miner:
 
 It does not place trades, persist event-level samples, or treat raw agreement or raw positive drift as enough for entry. `LONG` and `SHORT` require pre-OOS and newest-window OOS analogs to agree, show lift over the OOS baseline, clear a minimum edge gate, keep favorable MFE/MAE, and stay within the analog-distance gate. Window splits are computed over the aligned mined candidate span, not the full target-asset history, so shorter synthetic-pair overlap can still have discovery/selection/OOS evidence. If target candles are missing, analog distance is too high, or OOS evidence is weak, the verdict is `INCONCLUSIVE`, `WATCH`, or `SKIP`.
 
+## Direction Forecast
+
+After a Batch run, **Direction Forecast** answers what the exact direct asset
+returned in comparable historical aggregate pair states from next-open entry
+until that state invalidated. It does not use a fixed-bar outcome horizon.
+
+Each completed lifecycle contributes at most one sample at the current
+lifecycle age. The current open lifecycle, the initial left-censored lifecycle,
+coverage gaps, and exits not yet observable at a historical cutoff are excluded
+from evidence. Exact leg symbols identify direct targets, including marked
+stock symbols; ambiguous or unavailable targets are reported instead of being
+silently mapped to crypto.
+
+The output separates current per-asset probability and return distributions
+from a final-window selection path. The path compares forecast ranking with raw
+agreement, deterministic random selection, and cash under identical next-open
+cost assumptions. A larger final PnL is not treated as better forecast quality;
+selection percentile, regret, rank correlation, abstention, and PnL
+concentration are reported independently.
+
 ## Unsupported Surfaces
 
 | Surface | Current behavior | Reason |
