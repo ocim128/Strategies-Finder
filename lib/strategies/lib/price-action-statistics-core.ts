@@ -495,35 +495,65 @@ export function buildRollingAutoCorrelation(
 	const key = `${lookback}|${safeLag}`;
 	return getCachedSeries(rollingAutoCorrelationCache, values, key, () => {
 		const result: (number | null)[] = new Array(values.length).fill(null);
+		const firstEnd = lookback - 1 + safeLag;
+		if (firstEnd >= values.length) return result;
 
-		for (let i = lookback - 1 + safeLag; i < values.length; i++) {
-			let sumX = 0;
-			let sumY = 0;
-			const n = lookback;
-
-			for (let j = 0; j < n; j++) {
-				const idx = i - n + 1 + j;
-				sumX += values[idx - safeLag];
-				sumY += values[idx];
+		let sumX = 0;
+		let sumY = 0;
+		let sumXX = 0;
+		let sumYY = 0;
+		let sumXY = 0;
+		let nonFinitePairs = 0;
+		for (let yIndex = safeLag; yIndex <= firstEnd; yIndex++) {
+			const x = values[yIndex - safeLag];
+			const y = values[yIndex];
+			if (!Number.isFinite(x) || !Number.isFinite(y)) {
+				nonFinitePairs += 1;
+				continue;
 			}
-			const meanX = sumX / n;
-			const meanY = sumY / n;
+			sumX += x;
+			sumY += y;
+			sumXX += x * x;
+			sumYY += y * y;
+			sumXY += x * y;
+		}
 
-			let cov = 0;
-			let varX = 0;
-			let varY = 0;
-			for (let j = 0; j < n; j++) {
-				const idx = i - n + 1 + j;
-				const dx = values[idx - safeLag] - meanX;
-				const dy = values[idx] - meanY;
-				cov += dx * dy;
-				varX += dx * dx;
-				varY += dy * dy;
+		for (let i = firstEnd; i < values.length; i++) {
+			if (nonFinitePairs > 0) {
+				result[i] = Number.NaN;
+			} else {
+				const covariance = sumXY - ((sumX * sumY) / lookback);
+				const varianceX = Math.max(0, sumXX - ((sumX * sumX) / lookback));
+				const varianceY = Math.max(0, sumYY - ((sumY * sumY) / lookback));
+				const denom = Math.sqrt(varianceX * varianceY);
+				if (denom > 0) result[i] = covariance / denom;
 			}
 
-			const denom = Math.sqrt(varX * varY);
-			if (denom <= 0) continue;
-			result[i] = cov / denom;
+			const nextYIndex = i + 1;
+			if (nextYIndex >= values.length) continue;
+			const removedYIndex = nextYIndex - lookback;
+			const removedX = values[removedYIndex - safeLag];
+			const removedY = values[removedYIndex];
+			const addedX = values[nextYIndex - safeLag];
+			const addedY = values[nextYIndex];
+			if (Number.isFinite(removedX) && Number.isFinite(removedY)) {
+				sumX -= removedX;
+				sumY -= removedY;
+				sumXX -= removedX * removedX;
+				sumYY -= removedY * removedY;
+				sumXY -= removedX * removedY;
+			} else {
+				nonFinitePairs -= 1;
+			}
+			if (Number.isFinite(addedX) && Number.isFinite(addedY)) {
+				sumX += addedX;
+				sumY += addedY;
+				sumXX += addedX * addedX;
+				sumYY += addedY * addedY;
+				sumXY += addedX * addedY;
+			} else {
+				nonFinitePairs += 1;
+			}
 		}
 
 		return result;

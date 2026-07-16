@@ -7,7 +7,7 @@ import {
 	getCloses,
 } from "../strategy-helpers";
 import { extractBarMetricSeries } from "./price-action-frequency-core";
-import { buildRollingAutoCorrelation, buildRollingStdDev, buildRollingZScore } from "./price-action-statistics-core";
+import { buildRollingAutoCorrelation, buildRollingZScore } from "./price-action-statistics-core";
 
 type PreparedData = {
 	data: OHLCVData[];
@@ -15,7 +15,6 @@ type PreparedData = {
 	returns: number[];
 	zscoreByLookback: Map<number, (number | null)[]>;
 	autocorrByLookback: Map<number, (number | null)[]>;
-	stddevByLookback: Map<number, (number | null)[]>;
 };
 
 function normalizeParams(params: StrategyParams): StrategyParams {
@@ -44,7 +43,6 @@ export const medallion_hidden_markov_state_reversion: Strategy = {
 		returns: extractBarMetricSeries(data, "closeReturn"),
 		zscoreByLookback: new Map<number, (number | null)[]>(),
 		autocorrByLookback: new Map<number, (number | null)[]>(),
-		stddevByLookback: new Map<number, (number | null)[]>(),
 	}),
 	executePrepared: (preparedData: unknown, params: StrategyParams, data: OHLCVData[]) => {
 		const p = normalizeParams(params);
@@ -72,14 +70,7 @@ export const medallion_hidden_markov_state_reversion: Strategy = {
 			autocorrByLookback.set(lookback, autocorr);
 		}
 
-		const stddevByLookback = prepared?.stddevByLookback ?? new Map<number, (number | null)[]>();
-		let stddev = stddevByLookback.get(lookback);
-		if (!stddev) {
-			stddev = buildRollingStdDev(returns, lookback);
-			stddevByLookback.set(lookback, stddev);
-		}
-
-		return createSignalLoop(cleanData, [zscore, autocorr, stddev], (i) => {
+		return createSignalLoop(cleanData, [zscore, autocorr], (i) => {
 			if (i < lookback + 1) return null;
 
 			const z = zscore[i];

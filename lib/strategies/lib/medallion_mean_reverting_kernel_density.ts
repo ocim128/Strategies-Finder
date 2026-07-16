@@ -26,19 +26,18 @@ function normalizeParams(params: StrategyParams): StrategyParams {
 function computeDensityRankSeries(closes: number[], lookback: number): (number | null)[] {
 	const result: (number | null)[] = new Array(closes.length).fill(null);
 	if (closes.length < lookback) return result;
+	const scores = new Float64Array(lookback);
 
 	for (let i = lookback - 1; i < closes.length; i++) {
-		const W = new Array<number>(lookback);
+		const start = i - lookback + 1;
 		let sum = 0;
 		for (let j = 0; j < lookback; j++) {
-			const val = closes[i - lookback + 1 + j];
-			W[j] = val;
-			sum += val;
+			sum += closes[start + j];
 		}
 		const mean = sum / lookback;
 		let sumSquares = 0;
 		for (let j = 0; j < lookback; j++) {
-			const diff = W[j] - mean;
+			const diff = closes[start + j] - mean;
 			sumSquares += diff * diff;
 		}
 		const variance = sumSquares / lookback;
@@ -50,16 +49,18 @@ function computeDensityRankSeries(closes: number[], lookback: number): (number |
 		const std = Math.sqrt(variance);
 		const h = 1.06 * std * Math.pow(lookback, -0.2);
 
-		// Compute relative density score for each element in W
-		const scores = new Array<number>(lookback);
-		for (let j = 0; j < lookback; j++) {
-			let density = 0;
-			const x = W[j];
-			for (let k = 0; k < lookback; k++) {
-				const u = (x - W[k]) / h;
-				density += Math.exp(-0.5 * u * u);
+		// Gaussian similarity is symmetric. Seed each point with its self-kernel
+		// (1), then evaluate each distinct pair once and add it to both density
+		// totals. This halves the expensive Math.exp calls for every window.
+		scores.fill(1);
+		for (let j = 0; j < lookback - 1; j++) {
+			const x = closes[start + j];
+			for (let k = j + 1; k < lookback; k++) {
+				const u = (x - closes[start + k]) / h;
+				const similarity = Math.exp(-0.5 * u * u);
+				scores[j] += similarity;
+				scores[k] += similarity;
 			}
-			scores[j] = density;
 		}
 
 		const currentScore = scores[lookback - 1];

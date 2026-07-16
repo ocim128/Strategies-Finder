@@ -521,6 +521,8 @@ describe("finder server plugin processFinderUniverseRun", () => {
             entries: 2,
             uniqueBarsLoaded: 10,
         });
+        expect(done.diagnostics?.backtest?.runs).to.be.greaterThan(0);
+        expect(done.diagnostics?.backtest?.fastPathRuns).to.be.greaterThanOrEqual(0);
         // Both strategies produce survivors; the merged slice must contain
         // rows from BOTH strategy keys (proves the merge, not just the last).
         const keysInResults = new Set(done.candidates.map((c) => c.strategyKey));

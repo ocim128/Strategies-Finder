@@ -17,8 +17,10 @@
 
 import {
     buildFinderDiagnostics,
+    createEmptyFinderBacktestDiagnosticsStats,
     createEmptyFinderDiagnosticsTimings,
     createFinderRunId,
+    toFinderBacktestDiagnostics,
     type FinderDiagnosticsTimings,
 } from "./finder-diagnostics";
 import type {
@@ -75,6 +77,32 @@ export function combineUniverseStrategyBreakdown(
             runtimePct: totalMs > 0 ? Number(((strategy.totalMs / totalMs) * 100).toFixed(2)) : 0,
         }))
         .sort((a, b) => b.avgTotalMs - a.avgTotalMs);
+}
+
+/** Combine per-strategy backtest counters without averaging averages. */
+export function combineUniverseBacktestDiagnostics(parts: readonly FinderDiagnostics[]): FinderDiagnostics["backtest"] {
+    const stats = createEmptyFinderBacktestDiagnosticsStats();
+    for (const backtest of parts.map((part) => part.backtest).filter(Boolean)) {
+        if (!backtest) continue;
+        stats.runs += backtest.runs;
+        for (const key of Object.keys(stats.totals) as Array<keyof typeof stats.totals>) {
+            if (key === "maxOpenPositions") {
+                stats.totals.maxOpenPositions = Math.max(stats.totals.maxOpenPositions, backtest.totals.maxOpenPositions);
+            } else {
+                stats.totals[key] += backtest.totals[key];
+            }
+        }
+        for (const key of Object.keys(stats.timingsMs) as Array<keyof typeof stats.timingsMs>) {
+            stats.timingsMs[key] += backtest.timingsMs[key];
+        }
+        for (const blocker of backtest.fastPathBlockers ?? []) {
+            stats.fastPathBlockers.set(
+                blocker.reason,
+                (stats.fastPathBlockers.get(blocker.reason) ?? 0) + blocker.runs,
+            );
+        }
+    }
+    return toFinderBacktestDiagnostics(stats);
 }
 
 /**
@@ -187,6 +215,7 @@ export function buildCombinedUniverseDiagnostics(args: {
         rustFallbackRuns: parts.reduce((sum, part) => sum + part.counts.rustFallbackRuns, 0),
         typescriptCompletedRuns: parts.reduce((sum, part) => sum + (part.counts.typescriptCompletedRuns ?? 0), 0),
         timings,
+        backtestDiagnostics: combineUniverseBacktestDiagnostics(parts),
         strategyBreakdown: combineUniverseStrategyBreakdown(parts),
         failureBreakdown: combineUniverseFailureBreakdown(parts),
         universeDiagnostics: combineUniverseDiagnosticsBlock(parts),

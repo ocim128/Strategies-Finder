@@ -125,6 +125,10 @@ describe("Finder universe runner", () => {
         expect(output.diagnostics?.counts.processedRuns).to.equal(3);
         expect(output.diagnostics?.counts.failedRuns).to.equal(0);
         expect(output.diagnostics?.counts.typescriptCompletedRuns).to.equal(3);
+        // Zero-signal executor short-circuits do not enter the backtest engine;
+        // the two simulated runs must still reach both diagnostic aggregates.
+        expect(output.diagnostics?.backtest?.runs).to.equal(2);
+        expect(output.diagnostics?.strategyBreakdown[0]?.backtest?.runs).to.equal(2);
         expect(output.diagnostics?.data.totalParamRuns).to.equal(6);
         expect(output.diagnostics?.universe).to.deep.equal({
             totalSymbols: 3,
@@ -787,6 +791,51 @@ describe("Finder universe runner", () => {
         // from per-candidate.
         expect(updateCount).to.be.lessThan(20);
         expect(updateCount).to.be.greaterThanOrEqual(1);
+    });
+
+    it("batches cached dataset completions without starving event-loop control", async () => {
+        const symbols = Array.from({ length: 130 }, (_value, index) => `SYM_${index}`);
+        const data = makeCandles([100, 104, 108, 112, 116]);
+        let yields = 0;
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 1,
+            steps: 1,
+            rangePercent: 0,
+            maxRuns: 1,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols,
+                minActiveSymbols: 1,
+                minTotalTrades: 1,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["profitableActiveRatio"],
+            },
+        };
+
+        await runFinderUniverseExecution({
+            interval: "5m",
+            options,
+            settings,
+            capitalSettings,
+            selectedStrategy: { key: "universe_test", name: testStrategy.name, strategy: testStrategy },
+            loadDataset: async () => data,
+            generateParamSets: () => [{ threshold: 1 }],
+        }, {
+            setProgress: () => {},
+            setStatus: () => {},
+            yieldControl: async () => { yields += 1; },
+            isCancelled: () => false,
+        });
+
+        // The old every-8 policy yielded at least 16 times during loading.
+        // Batches of 64 preserve periodic control without taxing cache hits.
+        expect(yields).to.be.within(2, 6);
     });
 });
 

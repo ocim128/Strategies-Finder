@@ -38,13 +38,16 @@ import {
     addElapsed,
     buildFinderDiagnostics,
     buildCompactFinderDiagnostics,
+    createEmptyFinderBacktestDiagnosticsStats,
     createEmptyFinderDiagnosticsTimings,
     createFinderRunId,
     getFinderStrategyDiagnosticsStats,
+    recordFinderBacktestDiagnostics,
     recordFinderStrategyFailure,
     recordFinderStrategyNoSignals,
     recordFinderStrategySkipped,
     toFinderFailureDiagnostics,
+    toFinderBacktestDiagnostics,
     toFinderStrategyDiagnostics,
     type FinderStrategyDiagnosticsStats,
 } from "./finder-diagnostics";
@@ -52,7 +55,8 @@ import { buildFinderUniverseCandidate, passesFinderUniverseFilters, FinderUniver
 import type { FinderSelectedStrategy } from "./finder-runner";
 
 const UNIVERSE_DATA_LOAD_CONCURRENCY = 12;
-const UNIVERSE_DATA_LOAD_YIELD_EVERY = 8;
+const UNIVERSE_DATA_LOAD_YIELD_EVERY = 64;
+const UNIVERSE_DATA_LOAD_YIELD_MIN_MS = 250;
 const UNIVERSE_EVALUATION_YIELD_EVERY_RUNS = 256;
 const UNIVERSE_EVALUATION_YIELD_MIN_MS = 1000;
 const UNIVERSE_UI_UPDATE_MIN_MS = 250;
@@ -482,6 +486,7 @@ export async function runFinderUniverseExecution(
     const timings = createEmptyFinderDiagnosticsTimings();
     const strategyStatsByKey = new Map<string, FinderStrategyDiagnosticsStats>();
     const strategyStats = getFinderStrategyDiagnosticsStats(strategyStatsByKey, input.selectedStrategy);
+    const backtestStats = createEmptyFinderBacktestDiagnosticsStats();
     const signalTimingByRun = {
         preparedDataMs: 0,
         signalMs: 0,
@@ -500,11 +505,20 @@ export async function runFinderUniverseExecution(
         addElapsed(timings, "yielding", startedAt);
     };
     let loadYieldCount = 0;
+    let lastLoadYieldAt = performance.now();
     const maybeYieldDuringLoad = async (): Promise<void> => {
         loadYieldCount += 1;
-        if (loadYieldCount % UNIVERSE_DATA_LOAD_YIELD_EVERY === 0) {
-            await measuredYield();
+        const now = performance.now();
+        if (
+            loadYieldCount < UNIVERSE_DATA_LOAD_YIELD_EVERY
+            && now - lastLoadYieldAt < UNIVERSE_DATA_LOAD_YIELD_MIN_MS
+        ) {
+            return;
         }
+
+        loadYieldCount = 0;
+        lastLoadYieldAt = now;
+        await measuredYield();
     };
     let evaluationsSinceYield = 0;
     let lastEvaluationYieldAt = performance.now();
@@ -852,8 +866,11 @@ export async function runFinderUniverseExecution(
                         omitEquityCurve: !requiresSharpeRatio,
                         skipDrawdown: !requiresDrawdown,
                         skipResultPostProcessing: true,
+                        collectDiagnostics: true,
                     },
                 });
+                recordFinderBacktestDiagnostics(strategyStats.backtest, output.result.diagnostics);
+                recordFinderBacktestDiagnostics(backtestStats, output.result.diagnostics);
                 if (output.engineUsed === "rust") {
                     rustCompletedRuns += 1;
                 } else {
@@ -1026,6 +1043,7 @@ export async function runFinderUniverseExecution(
         rustCompletedRuns,
         typescriptCompletedRuns,
         timings,
+        backtestDiagnostics: toFinderBacktestDiagnostics(backtestStats),
         strategyBreakdown: toFinderStrategyDiagnostics(strategyStatsByKey),
         failureBreakdown: toFinderFailureDiagnostics(strategyStatsByKey),
         universeDiagnostics: {

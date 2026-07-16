@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { buildCompactFinderDiagnostics, buildFinderDiagnosticsBottlenecks } from "../lib/finder/finder-diagnostics";
+import { combineUniverseBacktestDiagnostics } from "../lib/finder/finder-universe-diagnostics-combine";
 import type { FinderBacktestDiagnostics, FinderDiagnostics, FinderStrategyDiagnostics } from "../lib/types/finder";
 
 function makeBacktestDiagnostics(runs: number): FinderBacktestDiagnostics {
@@ -389,5 +390,21 @@ describe("Finder compact diagnostics", () => {
         const text = bottlenecks.join("\n");
         expect(text).to.contain("result enrichment used 50.0% of measured runtime");
         expect(text).to.contain("reconciliation used 20.0% of measured runtime");
+    });
+
+    it("combines server-owned Universe backtest totals before deriving averages", () => {
+        const first = makeDiagnostics();
+        const second = makeDiagnostics();
+        first.backtest = makeBacktestDiagnostics(2);
+        second.backtest = makeBacktestDiagnostics(3);
+
+        const combined = combineUniverseBacktestDiagnostics([first, second]);
+
+        expect(combined?.runs).to.equal(5);
+        expect(combined?.totals.inputSignals).to.equal(240);
+        expect(combined?.avgInputSignals).to.equal(48);
+        expect(combined?.fastPathRuns).to.equal(6);
+        expect(combined?.fastPathBlockers?.find((item) => item.reason === "equity_curve_required")?.runs).to.equal(18);
+        expect(combined?.timingsMs.total).to.equal(400);
     });
 });
