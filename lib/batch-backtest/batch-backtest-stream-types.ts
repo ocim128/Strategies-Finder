@@ -149,6 +149,7 @@ export type BatchDirectionForecastStreamEvent =
         summary: string;
         totals: { forecasts: number; unavailable: number };
         fingerprint: string | null;
+        strategyKey: string | null;
         interval: string;
         generatedAt: number;
       }

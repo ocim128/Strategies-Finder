@@ -6,6 +6,7 @@ import {
     prepareBatchSyntheticPairArtifacts,
     prepareBatchSyntheticTargetArtifacts,
     resolveBatchSyntheticMinerOptions,
+    type BatchSyntheticDirection,
     type BatchSyntheticMinerOptions,
     type BatchSyntheticPairArtifact,
     type BatchSyntheticStateSnapshot,
@@ -39,6 +40,9 @@ interface ForecastAnalog {
     order: number;
 }
 
+export const LIFECYCLE_ACTIVATION_STRENGTH = 0.25;
+export const LIFECYCLE_PERSISTENCE_STRENGTH = 0.10;
+
 export function buildBatchSignalLifecycleAnalyses(
     input: Omit<BatchSignalLifecycleForecastInput, "nowMs">,
 ): BatchSignalLifecycleAnalysis[] {
@@ -55,6 +59,7 @@ export function buildBatchSignalLifecycleAnalysis(
     const linkedPairs = prepareBatchSyntheticPairArtifacts(artifacts)
         .filter((pair) => pair.baseAsset === target.asset || pair.quoteAsset === target.asset);
     const timeline = buildPreparedBatchSyntheticStateTimeline(target, linkedPairs, resolveBatchSyntheticMinerOptions(rawOptions));
+    const segmented = segmentLifecycles(target.data, timeline);
     return {
         asset: target.asset,
         symbol: target.symbol,
@@ -62,7 +67,8 @@ export function buildBatchSignalLifecycleAnalysis(
         target,
         linkedPairCount: linkedPairs.length,
         timeline,
-        lifecycles: segmentLifecycles(target.data, timeline),
+        lifecycleDirectionByIndex: segmented.directionByIndex,
+        lifecycles: segmented.lifecycles,
     };
 }
 
@@ -99,23 +105,24 @@ export function forecastBatchSignalLifecycleAt(
         return { ...base, status: "INSUFFICIENT", reasonCode: "PAIR_COVERAGE" };
     }
     const snapshot = observation.snapshot;
+    const aggregateDirection = analysis.lifecycleDirectionByIndex[cutoffIndex] ?? null;
     const freshness = includeLiveFreshness
         ? resolveFreshness(analysis.symbol, observation.timeKey, interval, nowMs)
         : { freshness: "FRESH" as const, freshnessReason: "CUTOFF_OBSERVABLE" };
     const rowBase: BatchDirectionForecastRow = {
         ...base,
         ...freshness,
-        aggregateDirection: snapshot.direction,
+        aggregateDirection,
         asOfPrice: snapshot.close,
         agreementCount: snapshot.agreementCount,
         oppositionCount: snapshot.oppositionCount,
     };
-    if (!snapshot.direction) {
+    if (!aggregateDirection) {
         return { ...rowBase, status: "NO_ACTIVE_STATE", reasonCode: "NO_ACTIVE_STATE" };
     }
 
     const current = findLifecycleAt(analysis.lifecycles, cutoffIndex);
-    if (!current || current.direction !== snapshot.direction) {
+    if (!current || current.direction !== aggregateDirection) {
         return { ...rowBase, status: "INSUFFICIENT", reasonCode: "LIFECYCLE_LEFT_CENSORED" };
     }
     const age = cutoffIndex - current.activationIndex;
@@ -124,11 +131,13 @@ export function forecastBatchSignalLifecycleAt(
         const lifecycle = analysis.lifecycles[order]!;
         if (lifecycle.direction !== current.direction || lifecycle.invalidationIndex === null) continue;
         const exitIndex = lifecycle.invalidationIndex + 1;
-        if (exitIndex > cutoffIndex || lifecycle.snapshots.length <= age) continue;
-        const decisionIndex = lifecycle.activationIndex + age;
+        if (exitIndex > cutoffIndex) continue;
+        const comparison = selectLifecycleComparisonSnapshot(lifecycle, snapshot, age);
+        if (!comparison) continue;
+        const decisionIndex = lifecycle.activationIndex + comparison.offset;
         const outcome = computeLifecycleOutcome(analysis, decisionIndex, lifecycle.invalidationIndex);
         if (!outcome) continue;
-        candidates.push({ lifecycle, snapshot: lifecycle.snapshots[age]!, outcome, distance: 0, order });
+        candidates.push({ lifecycle, snapshot: comparison.snapshot, outcome, distance: 0, order });
     }
 
     if (candidates.length < options.minSamples) {
@@ -160,18 +169,20 @@ export function forecastBatchSignalLifecycleAt(
     const upMedian = quantile(upExcursions, 0.5);
     const downMedian = quantile(downExcursions, 0.5);
     const averageDistance = mean(analogs.map((analog) => analog.distance));
-    const bias = classifyBias(bounds.lower, bounds.upper, medianReturnPct, upMedian, downMedian, averageDistance, analogs.length, options);
-    const favorable = bias === "UP" ? upMedian : bias === "DOWN" ? downMedian : null;
-    const adverse = bias === "UP" ? downMedian : bias === "DOWN" ? upMedian : null;
+    const classification = classifyBias(bounds.lower, bounds.upper, medianReturnPct, upMedian, downMedian, averageDistance, analogs.length, options);
+    const bias = classification.bias;
+    const excursionDirection = bias !== "NEUTRAL" ? bias : aggregateDirection === "long" ? "UP" : "DOWN";
+    const favorable = excursionDirection === "UP" ? upMedian : downMedian;
+    const adverse = excursionDirection === "UP" ? downMedian : upMedian;
     const directionReturn = bias === "DOWN" && medianReturnPct !== null ? -medianReturnPct : medianReturnPct;
     const conservativeProbability = bias === "UP" ? bounds.lower : bias === "DOWN" ? 1 - bounds.upper : null;
     const concentrationWarning = outcomeConcentration(analogs.map((analog) => analog.outcome.rawReturnPct)) > 0.5;
 
-    return {
+    const result: BatchDirectionForecastRow = {
         ...rowBase,
         bias,
         status: bias === "NEUTRAL" ? "NO_EDGE" : "EDGE",
-        reasonCode: bias === "NEUTRAL" ? "EDGE_GATES" : "EDGE_CONFIRMED",
+        reasonCode: classification.reasonCode,
         lifecycleAge: age,
         candidateCount: candidates.length,
         analogCount: analogs.length,
@@ -191,6 +202,39 @@ export function forecastBatchSignalLifecycleAt(
             ? directionReturn / adverse
             : null,
     };
+    if (includeLiveFreshness && result.status === "EDGE" && freshness.freshness !== "FRESH") {
+        return {
+            ...result,
+            bias: "NEUTRAL",
+            status: "NO_EDGE",
+            reasonCode: freshness.freshness === "STALE" ? "DATA_STALE" : "DATA_TIME_UNKNOWN",
+            conservativeDirectionProbability: null,
+            forecastDirectionReturnPct: null,
+            returnToAdverseRatio: null,
+        };
+    }
+    return result;
+}
+
+function selectLifecycleComparisonSnapshot(
+    lifecycle: BatchSignalLifecycle,
+    current: BatchSyntheticStateSnapshot,
+    currentAge: number,
+): { snapshot: BatchSyntheticStateSnapshot; offset: number } | null {
+    const currentMaturity = snapshotMaturity(current, currentAge);
+    let best: { snapshot: BatchSyntheticStateSnapshot; offset: number; distance: number } | null = null;
+    for (let offset = 0; offset < lifecycle.snapshots.length; offset += 1) {
+        const candidate = lifecycle.snapshots[offset]!;
+        const distance = Math.abs(Math.log1p(snapshotMaturity(candidate, offset)) - Math.log1p(currentMaturity));
+        if (!best || distance < best.distance) best = { snapshot: candidate, offset, distance };
+    }
+    return best ? { snapshot: best.snapshot, offset: best.offset } : null;
+}
+
+function snapshotMaturity(snapshot: BatchSyntheticStateSnapshot, fallbackAge: number): number {
+    return snapshot.medianBarsHeld !== null && Number.isFinite(snapshot.medianBarsHeld)
+        ? Math.max(0, snapshot.medianBarsHeld)
+        : Math.max(0, fallbackAge);
 }
 
 export function createTargetUnavailableForecastRow(asset: string, symbol: string, reasonCode: string): BatchDirectionForecastRow {
@@ -204,42 +248,97 @@ export function createTargetUnavailableForecastRow(asset: string, symbol: string
 function segmentLifecycles(
     data: BatchSignalLifecycleAnalysis["target"]["data"],
     timeline: BatchSignalLifecycleAnalysis["timeline"],
-): BatchSignalLifecycle[] {
+): { lifecycles: BatchSignalLifecycle[]; directionByIndex: Array<BatchSyntheticDirection | null> } {
     const lifecycles: BatchSignalLifecycle[] = [];
+    const directionByIndex = Array<BatchSyntheticDirection | null>(timeline.length).fill(null);
     let active: BatchSignalLifecycle | null = null;
+    let censoredDirection: BatchSyntheticDirection | null = null;
+    let censoredSnapshot: BatchSyntheticStateSnapshot | null = null;
     let ready = false;
 
     for (const observation of timeline) {
         if (!observation.observable || !observation.snapshot) {
             active = null;
+            censoredDirection = null;
+            censoredSnapshot = null;
             ready = false;
             continue;
         }
-        const direction = observation.snapshot.direction;
+        const signedStrength = snapshotSignedStrength(observation.snapshot);
         if (!ready) {
-            if (direction === null) ready = true;
-            continue;
+            if (censoredDirection === null) {
+                censoredDirection = activationDirection(signedStrength);
+                censoredSnapshot = censoredDirection ? observation.snapshot : null;
+            }
+            if (censoredDirection && persists(censoredDirection, signedStrength)) {
+                if (!hasSupportingCohortReset(censoredSnapshot, observation.snapshot)) {
+                    directionByIndex[observation.index] = censoredDirection;
+                    censoredSnapshot = observation.snapshot;
+                    continue;
+                }
+            }
+            censoredDirection = null;
+            censoredSnapshot = null;
+            ready = true;
         }
         if (!active) {
+            const direction = activationDirection(signedStrength);
+            directionByIndex[observation.index] = direction;
             if (direction) {
                 active = createLifecycle(direction, observation.index, observation.snapshot);
                 lifecycles.push(active);
             }
             continue;
         }
-        if (direction === active.direction) {
+        if (persists(active.direction, signedStrength)
+            && !hasSupportingCohortReset(active.snapshots.at(-1) ?? null, observation.snapshot)) {
+            directionByIndex[observation.index] = active.direction;
             active.snapshots.push(observation.snapshot);
             continue;
         }
         active.invalidationIndex = observation.index;
         active.outcome = computeOutcomeFromData(data, active.activationIndex, observation.index);
         active = null;
+        const direction = activationDirection(signedStrength);
+        directionByIndex[observation.index] = direction;
         if (direction) {
             active = createLifecycle(direction, observation.index, observation.snapshot);
             lifecycles.push(active);
         }
     }
-    return lifecycles;
+    return { lifecycles, directionByIndex };
+}
+
+function hasSupportingCohortReset(
+    previous: BatchSyntheticStateSnapshot | null,
+    current: BatchSyntheticStateSnapshot,
+): boolean {
+    const previousAge = previous?.medianBarsHeld;
+    const currentAge = current.medianBarsHeld;
+    return previousAge !== null
+        && previousAge !== undefined
+        && currentAge !== null
+        && Number.isFinite(previousAge)
+        && Number.isFinite(currentAge)
+        && currentAge < previousAge;
+}
+
+function snapshotSignedStrength(snapshot: BatchSyntheticStateSnapshot): number {
+    if (!snapshot.direction || snapshot.activePeerCount <= 0) return 0;
+    const magnitude = (snapshot.agreementCount - snapshot.oppositionCount) / snapshot.activePeerCount;
+    return snapshot.direction === "long" ? magnitude : -magnitude;
+}
+
+function activationDirection(strength: number): BatchSyntheticDirection | null {
+    if (strength >= LIFECYCLE_ACTIVATION_STRENGTH) return "long";
+    if (strength <= -LIFECYCLE_ACTIVATION_STRENGTH) return "short";
+    return null;
+}
+
+function persists(direction: BatchSyntheticDirection, strength: number): boolean {
+    return direction === "long"
+        ? strength >= LIFECYCLE_PERSISTENCE_STRENGTH
+        : strength <= -LIFECYCLE_PERSISTENCE_STRENGTH;
 }
 
 function createLifecycle(
@@ -309,11 +408,24 @@ function classifyBias(
     averageDistance: number | null,
     analogCount: number,
     options: BatchSyntheticMinerOptions,
-): BatchDirectionForecastBias {
-    if (analogCount < options.neighborCountMin || averageDistance === null || averageDistance > options.maxEntryDistance) return "NEUTRAL";
-    if (lower > 0.5 && (medianReturn ?? 0) > 0 && (upExcursion ?? 0) > (downExcursion ?? 0) * options.minMfeMaeRatio) return "UP";
-    if (upper < 0.5 && (medianReturn ?? 0) < 0 && (downExcursion ?? 0) > (upExcursion ?? 0) * options.minMfeMaeRatio) return "DOWN";
-    return "NEUTRAL";
+): { bias: BatchDirectionForecastBias; reasonCode: string } {
+    if (analogCount < options.neighborCountMin) return { bias: "NEUTRAL", reasonCode: "ANALOG_COUNT_GATE" };
+    if (averageDistance === null || averageDistance > options.maxEntryDistance) return { bias: "NEUTRAL", reasonCode: "DISTANCE_GATE" };
+    if (lower > 0.5) {
+        if ((medianReturn ?? 0) <= 0) return { bias: "NEUTRAL", reasonCode: "RETURN_SIGN_GATE" };
+        if ((upExcursion ?? 0) <= (downExcursion ?? 0) * options.minMfeMaeRatio) {
+            return { bias: "NEUTRAL", reasonCode: "EXCURSION_GATE" };
+        }
+        return { bias: "UP", reasonCode: "EDGE_CONFIRMED" };
+    }
+    if (upper < 0.5) {
+        if ((medianReturn ?? 0) >= 0) return { bias: "NEUTRAL", reasonCode: "RETURN_SIGN_GATE" };
+        if ((downExcursion ?? 0) <= (upExcursion ?? 0) * options.minMfeMaeRatio) {
+            return { bias: "NEUTRAL", reasonCode: "EXCURSION_GATE" };
+        }
+        return { bias: "DOWN", reasonCode: "EDGE_CONFIRMED" };
+    }
+    return { bias: "NEUTRAL", reasonCode: "WILSON_GATE" };
 }
 
 function selectNearestAnalogs(candidates: readonly ForecastAnalog[], count: number): ForecastAnalog[] {

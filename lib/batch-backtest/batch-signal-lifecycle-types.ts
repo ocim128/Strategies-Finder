@@ -29,6 +29,7 @@ export interface BatchSignalLifecycleAnalysis {
     target: BatchSyntheticPreparedTargetArtifact;
     linkedPairCount: number;
     timeline: BatchSyntheticStateObservation[];
+    lifecycleDirectionByIndex: Array<BatchSyntheticDirection | null>;
     lifecycles: BatchSignalLifecycle[];
 }
 
@@ -87,6 +88,12 @@ export interface BatchDirectionPathMetrics {
     ruin: boolean;
     top1PnlConcentration: number | null;
     top3PnlConcentration: number | null;
+    worstTradeSymbol: string | null;
+    worstTradeBias: BatchDirectionForecastBias | null;
+    worstTradeEntryTimeKey: string | null;
+    worstTradeExitTimeKey: string | null;
+    worstTradeReturnPct: number | null;
+    worstTradePnl: number | null;
 }
 
 export interface BatchDirectionForecastQuality {
@@ -110,7 +117,7 @@ export interface BatchDirectionForecastBenchmarks {
 }
 
 export interface BatchDirectionSelectionPathResult {
-    status: "OK" | "PATH_UNAVAILABLE";
+    status: "OK" | "EXPLORATORY" | "FAILED" | "PATH_UNAVAILABLE";
     reasonCode: string;
     path: BatchDirectionPathMetrics;
     quality: BatchDirectionForecastQuality;
@@ -121,6 +128,7 @@ export interface BatchDirectionForecastResult {
     schemaVersion: 1;
     interval: string;
     fingerprint: string;
+    strategyKey: string | null;
     generatedAt: number;
     rows: BatchDirectionForecastRow[];
     selectionPath: BatchDirectionSelectionPathResult;

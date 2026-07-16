@@ -1688,6 +1688,7 @@ class BatchBacktestService {
                 schemaVersion: 1,
                 interval: done.interval,
                 fingerprint: done.fingerprint ?? this.lastRunFingerprint ?? "",
+                strategyKey: done.strategyKey ?? this.lastRunStrategyKey,
                 generatedAt: done.generatedAt,
                 rows,
                 selectionPath,
@@ -1707,9 +1708,12 @@ class BatchBacktestService {
 
     private renderDirectionForecastResult(dom: BatchBacktestDom, result: BatchDirectionForecastResult): void {
         const path = result.selectionPath;
-        dom.batchBacktestDirectionForecastSummary.textContent = path.status === "OK"
-            ? `Direction Forecast | ${result.rows.filter((row) => row.status === "EDGE").length}/${result.rows.length} edges | Path ${formatSignedPercent(path.path.returnPct)} | Trades ${path.path.trades} | Quality ${path.quality.status}`
-            : `Direction Forecast | ${result.rows.filter((row) => row.status === "EDGE").length}/${result.rows.length} edges | Path unavailable: ${path.reasonCode}`;
+        const worstTrade = path.path.worstTradeSymbol
+            ? ` | Worst ${path.path.worstTradeSymbol} ${path.path.worstTradeBias ?? "--"} ${formatSignedPercent(path.path.worstTradeReturnPct)}`
+            : "";
+        dom.batchBacktestDirectionForecastSummary.textContent = path.status === "PATH_UNAVAILABLE"
+            ? `Direction Forecast | ${result.rows.filter((row) => row.status === "EDGE").length}/${result.rows.length} edges | Path unavailable: ${path.reasonCode}`
+            : `Direction Forecast | ${result.rows.filter((row) => row.status === "EDGE").length}/${result.rows.length} edges | Path ${path.status} ${formatSignedPercent(path.path.returnPct)} | Trades ${path.path.trades} | Quality ${path.quality.status}${worstTrade}`;
         const fragment = document.createDocumentFragment();
         for (const row of result.rows) fragment.appendChild(this.createDirectionForecastRow(row));
         dom.batchBacktestDirectionForecastResults.replaceChildren(fragment);

@@ -49,6 +49,46 @@ function pair(symbol: string, target: BatchSyntheticTargetArtifact, indexes: rea
     };
 }
 
+function directedPair(
+    symbol: string,
+    target: BatchSyntheticTargetArtifact,
+    directions: ReadonlyMap<number, "buy" | "sell">,
+): BatchSyntheticPairArtifact {
+    return {
+        ...pair(symbol, target, []),
+        signals: [...directions].map(([index, type]) => ({
+            time: target.data[index]!.time,
+            type,
+            price: target.data[index]!.close,
+            barIndex: index,
+        })),
+    };
+}
+
+function rollingTradePair(
+    symbol: string,
+    target: BatchSyntheticTargetArtifact,
+    boundaries: readonly number[],
+): BatchSyntheticPairArtifact {
+    const artifact = pair(symbol, target, []);
+    artifact.result.trades = boundaries.slice(0, -1).map((entryIndex, index) => {
+        const exitIndex = boundaries[index + 1]!;
+        return {
+            id: index + 1,
+            type: "long",
+            entryTime: target.data[entryIndex]!.time,
+            entryPrice: target.data[entryIndex]!.close,
+            exitTime: target.data[exitIndex]!.time,
+            exitPrice: target.data[exitIndex]!.close,
+            pnl: 0,
+            pnlPercent: 0,
+            size: 1,
+            exitReason: "signal",
+        };
+    });
+    return artifact;
+}
+
 describe("Batch signal lifecycle forecast", () => {
     it("labels one sample per completed lifecycle and keeps the current lifecycle open", () => {
         const events = [2, 7, 12, 17, 22, 27, 32, 37, 42, 47, 52, 59];
@@ -84,6 +124,41 @@ describe("Batch signal lifecycle forecast", () => {
         expect(afterLatestExit.candidateCount).to.equal(6);
     });
 
+    it("names the failed edge gate and keeps excursions visible for a neutral row", () => {
+        const events = [2, 7, 12, 17, 22, 27, 31];
+        const target: BatchSyntheticTargetArtifact = { asset: "AAA", symbol: "AAAUSDT", data: candles(32, events, 0) };
+        const output = runBatchSignalLifecycleForecast({
+            interval: "5m",
+            targets: [target],
+            artifacts: [pair("AAA+BBB", target, events), pair("AAA+CCC", target, events)],
+            options: { lagBars: 0, minSamples: 4, neighborCountMin: 4, neighborCountMax: 8 },
+            nowMs: 1_700_000_000_000,
+        });
+
+        expect(output.rows[0]!.status).to.equal("NO_EDGE");
+        expect(output.rows[0]!.reasonCode).to.equal("RETURN_SIGN_GATE");
+        expect(output.rows[0]!.medianFavorableExcursionPct).to.not.equal(null);
+        expect(output.rows[0]!.medianAdverseExcursionPct).to.not.equal(null);
+    });
+
+    it("does not expose a stale current distribution as an actionable edge", () => {
+        const events = [2, 7, 12, 17, 22, 27, 32, 37, 42, 47, 52, 59];
+        const target: BatchSyntheticTargetArtifact = { asset: "AAA", symbol: "AAAUSDT", data: candles(60, events) };
+        const output = runBatchSignalLifecycleForecast({
+            interval: "5m",
+            targets: [target],
+            artifacts: [pair("AAA+BBB", target, events), pair("AAA+CCC", target, events)],
+            options: { lagBars: 0, minSamples: 4, neighborCountMin: 4, neighborCountMax: 8 },
+            nowMs: 1_800_000_000_000,
+        });
+
+        expect(output.rows[0]!.freshness).to.equal("STALE");
+        expect(output.rows[0]!.status).to.equal("NO_EDGE");
+        expect(output.rows[0]!.bias).to.equal("NEUTRAL");
+        expect(output.rows[0]!.reasonCode).to.equal("DATA_STALE");
+        expect(output.rows[0]!.medianReturnPct).to.not.equal(null);
+    });
+
     it("treats a missing linked-pair bar as unknown coverage, not invalidation", () => {
         const events = [2, 7, 12];
         const target: BatchSyntheticTargetArtifact = { asset: "AAA", symbol: "AAAUSDT", data: candles(20, events) };
@@ -110,5 +185,78 @@ describe("Batch signal lifecycle forecast", () => {
 
         expect(analysis.lifecycles.some((entry) => entry.activationIndex === 0)).to.equal(false);
         expect(analysis.lifecycles[0]!.activationIndex).to.equal(5);
+    });
+
+    it("invalidates when agreement strength decays even while a raw majority remains", () => {
+        const target: BatchSyntheticTargetArtifact = { asset: "AAA", symbol: "AAAUSDT", data: candles(8, []) };
+        const artifacts = Array.from({ length: 11 }, (_, index) => directedPair(
+            `AAA+P${index}`,
+            target,
+            new Map([
+                [2, index < 9 ? "buy" : "sell"],
+                [3, index < 6 ? "buy" : "sell"],
+                [4, index < 9 ? "buy" : "sell"],
+            ]),
+        ));
+        const analysis = buildBatchSignalLifecycleAnalyses({
+            interval: "5m",
+            targets: [target],
+            artifacts,
+            options: { lagBars: 0 },
+        })[0]!;
+
+        expect(analysis.timeline[3]!.snapshot!.direction).to.equal("long");
+        expect(analysis.lifecycleDirectionByIndex.slice(2, 5)).to.deep.equal(["long", null, "long"]);
+        expect(analysis.lifecycles[0]!.invalidationIndex).to.equal(3);
+        expect(analysis.lifecycles[1]!.activationIndex).to.equal(4);
+    });
+
+    it("starts a new lifecycle when supporting pair positions reset in the same direction", () => {
+        const boundaries = [2, 6, 10, 14, 18, 22];
+        const target: BatchSyntheticTargetArtifact = { asset: "AAA", symbol: "AAAUSDT", data: candles(24, []) };
+        const analysis = buildBatchSignalLifecycleAnalyses({
+            interval: "5m",
+            targets: [target],
+            artifacts: [
+                rollingTradePair("AAA+BBB", target, boundaries),
+                rollingTradePair("AAA+CCC", target, boundaries),
+            ],
+            options: { lagBars: 0 },
+        })[0]!;
+
+        expect(analysis.lifecycles.map((entry) => entry.activationIndex)).to.deep.equal([2, 6, 10, 14, 18]);
+        expect(analysis.lifecycles.slice(0, -1).map((entry) => entry.invalidationIndex)).to.deep.equal([6, 10, 14, 18]);
+        expect(analysis.lifecycleDirectionByIndex.slice(5, 11)).to.deep.equal(["long", "long", "long", "long", "long", "long"]);
+    });
+
+    it("uses the nearest observed maturity from shorter completed lifecycles", () => {
+        const events = [2, 7, 12, 17, 20];
+        const target: BatchSyntheticTargetArtifact = { asset: "AAA", symbol: "AAAUSDT", data: candles(40, events) };
+        const artifacts = [pair("AAA+BBB", target, events), pair("AAA+CCC", target, events)];
+        for (const artifact of artifacts) {
+            artifact.result.trades = [{
+                id: 1,
+                type: "long",
+                entryTime: target.data[20]!.time,
+                entryPrice: target.data[20]!.close,
+                exitTime: target.data[39]!.time,
+                exitPrice: target.data[39]!.close,
+                pnl: 0,
+                pnlPercent: 0,
+                size: 1,
+                exitReason: "end_of_data",
+            }];
+        }
+        const output = runBatchSignalLifecycleForecast({
+            interval: "5m",
+            targets: [target],
+            artifacts,
+            options: { lagBars: 0, minSamples: 4, neighborCountMin: 4, neighborCountMax: 8 },
+            nowMs: 1_700_000_000_000,
+        });
+
+        expect(output.rows[0]!.lifecycleAge).to.equal(19);
+        expect(output.rows[0]!.candidateCount).to.equal(4);
+        expect(output.rows[0]!.analogCount).to.equal(4);
     });
 });

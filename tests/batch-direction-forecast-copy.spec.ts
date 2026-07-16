@@ -22,6 +22,12 @@ function path(overrides: Partial<BatchDirectionPathMetrics> = {}): BatchDirectio
         ruin: false,
         top1PnlConcentration: 0.4,
         top3PnlConcentration: 0.8,
+        worstTradeSymbol: "ETHUSDT",
+        worstTradeBias: "DOWN",
+        worstTradeEntryTimeKey: "1700000000",
+        worstTradeExitTimeKey: "1700003600",
+        worstTradeReturnPct: -12.5,
+        worstTradePnl: -1250,
         ...overrides,
     };
 }
@@ -31,6 +37,7 @@ function result(): BatchDirectionForecastResult {
         schemaVersion: 1,
         interval: "5m",
         fingerprint: "1234567890abcdef",
+        strategyKey: "test_strategy",
         generatedAt: 1_700_000_000_000,
         rows: [{
             asset: "BTC",
@@ -63,8 +70,8 @@ function result(): BatchDirectionForecastResult {
             returnToAdverseRatio: 2.4,
         }],
         selectionPath: {
-            status: "OK",
-            reasonCode: "OK",
+            status: "EXPLORATORY",
+            reasonCode: "QUALITY_INSUFFICIENT",
             path: path(),
             quality: {
                 status: "VALID",
@@ -94,11 +101,15 @@ describe("Direction Forecast copy", () => {
         const first = formatDirectionForecastCopy(result());
         expect(formatDirectionForecastCopy(result())).to.equal(first);
         expect(first).to.include("BTC | BTCUSDT | LONG | UP | EDGE");
-        expect(first).to.include("PATH | OK | OK");
+        expect(first).to.include("Strategy test_strategy");
+        expect(first).to.include("RUN FINGERPRINT | 1234567890abcdef");
+        expect(first).to.include("PATH | EXPLORATORY | QUALITY_INSUFFICIENT");
+        expect(first).to.include("2023-11-14T22:13:20Z..2023-11-14T23:13:20Z");
         expect(first).to.include("Raw Agreement");
         expect(first).to.include("Random | Median");
         expect(first).to.include("QUALITY | VALID");
         expect(first).to.include("Exposure 25.00%");
+        expect(first).to.include("Worst ETHUSDT DOWN -12.50% $-1250.00");
         expect(first).to.include("normalized research equity");
     });
 });

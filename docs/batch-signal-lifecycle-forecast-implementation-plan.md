@@ -56,8 +56,19 @@ signal remains observable when no trade is open; it is not a return horizon.
 - State is observable only when every linked pair artifact is in range and has
   an aligned bar. This keeps the pair cohort constant across current and
   historical states. Partial coverage is unknown state, not a weaker vote.
-- Activation: aggregate direction changes from null/opposite to long or short.
-- Invalidation: an observable aggregate direction becomes null or opposite.
+- Convert aggregate breadth to signed strength:
+  `(supporting pairs - opposing pairs) / active pairs`, positive for long and
+  negative for short.
+- Activation: signed strength reaches `0.25` long or `-0.25` short.
+- Persistence: an active long remains valid at `0.10` or above; an active short
+  remains valid at `-0.10` or below.
+- Invalidation: strength crosses the persistence threshold, even if a weak raw
+  majority remains. This hysteresis separates meaningful state episodes
+  without introducing a fixed return horizon.
+- Supporting-cohort reset: invalidate when `medianBarsHeld` moves backward.
+  Supporting pair positions have renewed even when aggregate direction is
+  unchanged, so the previous state is complete and a same-direction lifecycle
+  may activate on that observation.
 - Same-bar flip: invalidate the old lifecycle and activate the new lifecycle.
 - Left-censored lifecycle: exclude until its first observed invalidation.
 - Right-censored lifecycle: never assign an `end_of_data` return.
@@ -68,12 +79,13 @@ Current lifecycle age is used only to compare states at similar maturity.
 
 ### Realized sample
 
-For current lifecycle age `A`, one completed historical lifecycle contributes
-at most one sample:
+For the current lifecycle maturity, one completed historical lifecycle
+contributes at most one sample:
 
 1. It has the same aggregate direction.
-2. It survived at least `A` observations.
-3. Forecast information is taken at activation plus `A`.
+2. Select its snapshot with the nearest observed maturity, comparing
+   `log1p(medianBarsHeld)` and falling back to lifecycle age when unavailable.
+3. Snapshot selection uses no return, excursion, or invalidation outcome.
 4. Entry is the next target bar open after that close.
 5. Exit is the next target bar open after invalidation becomes observable.
 
@@ -86,8 +98,9 @@ unresolved.
 ### Analog forecast
 
 Reuse the miner's normalized snapshot distance and stable top-K ordering. Each
-lifecycle supplies one age-matched sample, preventing overlapping bars from
-inflating evidence.
+lifecycle supplies one nearest-maturity sample, preventing overlapping bars
+from inflating evidence while allowing mature current states to use shorter
+completed episodes.
 
 Each scalar forecast row contains:
 
@@ -105,7 +118,11 @@ Each scalar forecast row contains:
 `UP` requires a Wilson lower bound above `0.5`, positive median return,
 sufficient analogs, acceptable distance, and favorable excursion greater than
 adverse excursion. `DOWN` uses the symmetric conditions. Reuse existing miner
-sample, distance, and MFE/MAE defaults. Failed gates produce `NEUTRAL`.
+sample, distance, and MFE/MAE defaults. Failed gates produce `NEUTRAL` with a
+specific reason: `ANALOG_COUNT_GATE`, `DISTANCE_GATE`, `WILSON_GATE`,
+`RETURN_SIGN_GATE`, or `EXCURSION_GATE`. Current stale or time-unknown rows
+cannot be actionable `EDGE` rows; their distributions remain visible with
+`DATA_STALE` or `DATA_TIME_UNKNOWN`.
 
 Keep raw asset return for display. For ranking and risk ratios, convert it to
 forecast-direction return: raw return for `UP`, negated raw return for `DOWN`.
@@ -167,6 +184,9 @@ next-open `DATA_GAP` risk exit; that lifecycle is not added to forecast evidence
 - Ignore Kelly and other sizing modes so sizing cannot determine quality.
 - Long return: `(exit / entry) - 1`.
 - Short return: `(entry - exit) / entry` before costs.
+- A full-notional short can lose more than 100% before invalidation. Clamp
+  equity at zero, report ruin, and attribute the worst closed trade; do not add
+  an implicit stop or margin rule.
 - If equity reaches zero or below, set equity to zero, mark ruin, and terminate
   that policy path.
 - If a position remains active at the final test timestamp, keep it open. Report
@@ -202,6 +222,7 @@ Test Start/End | Start/Realized/Marked Equity | Realized/Unrealized PnL
 Return | Max DD
 Trades | Win Rate
 Profit Factor | Exposure | Turnover | Ruin | Top1/Top3 PnL Concentration
+Worst closed trade symbol/side | Entry/exit | Gross return | PnL
 
 FORECAST QUALITY
 Selected Return Percentile | Excess vs Eligible Median | Selection Hit Rate
@@ -216,7 +237,10 @@ high concentration even when final equity is large. Cross-sectional quality
 metrics include only decisions with at least two ultimately resolved eligible
 alternatives. Report excluded unresolved decisions separately. Mark path quality
 `INSUFFICIENT` when fewer than 12 closed forecast trades or comparable decisions
-exist.
+exist. Such a path is `EXPLORATORY`, not `OK`.
+A forecast policy that reaches zero equity is `FAILED` with `PATH_RUIN`,
+regardless of quality sample count. Forecast quality remains a separate
+`VALID` or `INSUFFICIENT` result.
 
 ## Data Flow
 
@@ -323,7 +347,7 @@ Build deterministic lifecycle forecasts and a no-lookahead selection path.
 
 - Shared-helper extraction can regress the miner hot path.
 - Complete pair coverage may reduce evidence when one linked dataset has gaps.
-- Long-lived states may have insufficient age-matched lifecycles.
+- Long-lived states may still have too few completed same-direction lifecycles.
 - Replay may become quadratic in lifecycle count.
 - A mixed-market Batch can produce valid current rows but no comparable path.
 - One final holdout path can remain regime-specific; its timestamps and
@@ -341,6 +365,8 @@ Build deterministic lifecycle forecasts and a no-lookahead selection path.
 **Validation and testing criteria**
 
 - Long, short, null, flip, left-censored, and right-censored fixtures pass.
+- Same-direction supporting-position resets create separate, non-overlapping
+  lifecycles.
 - Missing aligned pair bars never become signal invalidation.
 - Entry and exit use the first executable open after each observed decision.
 - One lifecycle contributes at most one sample.

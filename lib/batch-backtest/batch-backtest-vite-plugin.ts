@@ -1691,7 +1691,7 @@ export async function processDirectionForecast(
                 writer({
                     type: "done", ok: false, cancelled: true, summary: "Direction Forecast cancelled.",
                     totals: { forecasts: rows.length, unavailable: rows.filter((row) => row.status === "TARGET_UNAVAILABLE").length },
-                    fingerprint: lastRunFingerprint, interval, generatedAt,
+                    fingerprint: lastRunFingerprint, strategyKey: lastRunStrategyKey, interval, generatedAt,
                 });
                 return;
             }
@@ -1738,7 +1738,7 @@ export async function processDirectionForecast(
             writer({
                 type: "done", ok: false, cancelled: true, summary: "Direction Forecast cancelled.",
                 totals: { forecasts: rows.length, unavailable: rows.filter((row) => row.status === "TARGET_UNAVAILABLE").length },
-                fingerprint: lastRunFingerprint, interval, generatedAt,
+                fingerprint: lastRunFingerprint, strategyKey: lastRunStrategyKey, interval, generatedAt,
             });
             return;
         }
@@ -1753,7 +1753,7 @@ export async function processDirectionForecast(
             writer({
                 type: "done", ok: false, cancelled: true, summary: "Direction Forecast cancelled.",
                 totals: { forecasts: rows.length, unavailable: rows.filter((row) => row.status === "TARGET_UNAVAILABLE").length },
-                fingerprint: lastRunFingerprint, interval, generatedAt,
+                fingerprint: lastRunFingerprint, strategyKey: lastRunStrategyKey, interval, generatedAt,
             });
             return;
         }
@@ -1764,7 +1764,7 @@ export async function processDirectionForecast(
             type: "done", ok: true, cancelled: false,
             summary: `Direction Forecast complete - ${rows.length - unavailable}/${rows.length} assets evaluated.`,
             totals: { forecasts: rows.length, unavailable },
-            fingerprint: lastRunFingerprint, interval, generatedAt,
+            fingerprint: lastRunFingerprint, strategyKey: lastRunStrategyKey, interval, generatedAt,
         });
         debugLogger.event("batch.server.direction_forecast.complete", {
             assets: rows.length,

@@ -44,6 +44,7 @@ interface PendingFill {
 
 interface OpenPosition {
     candidate: SelectionCandidate;
+    candidateMode: "forecast" | "raw";
     lifecycleActivationIndex: number;
     entrySeconds: number;
     entryPrice: number;
@@ -113,7 +114,24 @@ export function runBatchSignalSelectionPath(input: BatchSignalSelectionPathInput
         randomP95Equity: quantile(randomEquities, 0.95) ?? input.execution.initialCapital,
         cashEquity: input.execution.initialCapital,
     };
-    return { status: "OK", reasonCode: "OK", path: forecast.metrics, quality: forecast.quality, benchmarks };
+    const qualityValid = forecast.quality.status === "VALID";
+    const pathFailed = forecast.metrics.ruin;
+    return {
+        status: pathFailed ? "FAILED" : qualityValid ? "OK" : "EXPLORATORY",
+        reasonCode: pathFailed ? "PATH_RUIN" : qualityValid ? "OK" : "QUALITY_INSUFFICIENT",
+        path: forecast.metrics,
+        quality: forecast.quality,
+        benchmarks,
+    };
+}
+
+interface ClosedPathTrade {
+    symbol: string;
+    bias: BatchDirectionForecastRow["bias"];
+    entrySeconds: number;
+    exitSeconds: number;
+    grossReturnPct: number;
+    pnl: number;
 }
 
 function simulatePolicy(
@@ -142,6 +160,7 @@ function simulatePolicy(
     let turnover = 0;
     let ruin = false;
     const tradePnls: number[] = [];
+    const closedTrades: ClosedPathTrade[] = [];
 
     for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
         if (input.isCancelled?.()) break;
@@ -152,7 +171,16 @@ function simulatePolicy(
             const exitFill = adverseExitPrice(pendingExit.price, position.candidate.row.bias, slippage);
             const grossReturn = directionalReturn(position.entryPrice, exitFill, position.candidate.row.bias);
             equity = Math.max(0, position.equityAfterEntry * (1 + grossReturn) * (1 - commission));
-            tradePnls.push(equity - position.equityBeforeEntry);
+            const pnl = equity - position.equityBeforeEntry;
+            tradePnls.push(pnl);
+            closedTrades.push({
+                symbol: position.candidate.analysis.symbol,
+                bias: position.candidate.row.bias,
+                entrySeconds: position.entrySeconds,
+                exitSeconds: event.seconds,
+                grossReturnPct: grossReturn * 100,
+                pnl,
+            });
             turnover += 1;
             position = null;
             pendingExit = null;
@@ -164,6 +192,7 @@ function simulatePolicy(
             const afterCommission = Math.max(0, equity * (1 - commission));
             position = {
                 candidate,
+                candidateMode,
                 lifecycleActivationIndex: findLifecycleAt(candidate.analysis.lifecycles, candidate.targetIndex)?.activationIndex ?? candidate.targetIndex,
                 entrySeconds: event.seconds,
                 entryPrice,
@@ -182,9 +211,10 @@ function simulatePolicy(
             if (targetIndex !== undefined) {
                 const observation = position.candidate.analysis.timeline[targetIndex];
                 const lifecycle = findLifecycleAt(position.candidate.analysis.lifecycles, targetIndex);
-                const invalidated = !observation?.observable
-                    || !lifecycle
-                    || lifecycle.activationIndex !== position.lifecycleActivationIndex;
+                const rawDirection = position.candidate.row.bias === "UP" ? "long" : "short";
+                const invalidated = position.candidateMode === "raw"
+                    ? !observation?.observable || observation.snapshot?.direction !== rawDirection
+                    : !observation?.observable || !lifecycle || lifecycle.activationIndex !== position.lifecycleActivationIndex;
                 if (invalidated && !pendingExit) {
                     const next = nextOpen(position.candidate.analysis, targetIndex);
                     if (next) {
@@ -238,6 +268,10 @@ function simulatePolicy(
     const negativePnl = tradePnls.filter((value) => value < 0);
     const sortedPositive = tradePnls.filter((value) => value > 0).sort((a, b) => b - a);
     const totalPositive = positivePnl.reduce((sum, value) => sum + value, 0);
+    const worstTrade = closedTrades.reduce<ClosedPathTrade | null>(
+        (worst, trade) => !worst || trade.pnl < worst.pnl ? trade : worst,
+        null,
+    );
     const metrics: BatchDirectionPathMetrics = {
         testStartTimeKey: events[testStartIndex]?.timeKey ?? null,
         testEndTimeKey: events[events.length - 1]?.timeKey ?? null,
@@ -260,6 +294,12 @@ function simulatePolicy(
         ruin,
         top1PnlConcentration: totalPositive > 0 ? (sortedPositive[0] ?? 0) / totalPositive : null,
         top3PnlConcentration: totalPositive > 0 ? sortedPositive.slice(0, 3).reduce((sum, value) => sum + value, 0) / totalPositive : null,
+        worstTradeSymbol: worstTrade?.symbol ?? null,
+        worstTradeBias: worstTrade?.bias ?? null,
+        worstTradeEntryTimeKey: worstTrade ? String(worstTrade.entrySeconds) : null,
+        worstTradeExitTimeKey: worstTrade ? String(worstTrade.exitSeconds) : null,
+        worstTradeReturnPct: worstTrade?.grossReturnPct ?? null,
+        worstTradePnl: worstTrade?.pnl ?? null,
     };
     return { metrics, quality: finalizeQuality(quality, metrics.trades) };
 }
@@ -278,8 +318,11 @@ function collectCandidates(
         if (mode === "forecast") {
             if (row.status !== "EDGE") continue;
         } else {
-            if (!row.aggregateDirection || row.reasonCode === "PAIR_COVERAGE") continue;
-            row.bias = row.aggregateDirection === "long" ? "UP" : "DOWN";
+            const observation = analysis.timeline[targetIndex];
+            const rawDirection = observation?.observable ? observation.snapshot?.direction ?? null : null;
+            if (!rawDirection) continue;
+            row.aggregateDirection = rawDirection;
+            row.bias = rawDirection === "long" ? "UP" : "DOWN";
         }
         candidates.push({ analysis, targetIndex, row, score: forecastScore(row) });
     }
@@ -454,6 +497,12 @@ function emptyMetrics(execution: BatchDirectionExecutionAssumptions): BatchDirec
         ruin: false,
         top1PnlConcentration: null,
         top3PnlConcentration: null,
+        worstTradeSymbol: null,
+        worstTradeBias: null,
+        worstTradeEntryTimeKey: null,
+        worstTradeExitTimeKey: null,
+        worstTradeReturnPct: null,
+        worstTradePnl: null,
     };
 }
 

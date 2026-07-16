@@ -87,8 +87,8 @@ server releases its artifact copy. Re-mining the same run requires a fresh Run
 Direction Forecast reuses the retained Batch artifacts and the matching Batch
 capital, commission, and slippage assumptions. It loads one exact target and
 its linked pair artifacts at a time, constructs completed signal lifecycles,
-and estimates return from an age-matched historical state until observable
-state invalidation. Initial and final censored lifecycles, incomplete pair
+and estimates return from one nearest-maturity snapshot per historical
+lifecycle until observable state invalidation. Initial and final censored lifecycles, incomplete pair
 coverage, and outcomes not yet observable at the replay cutoff do not become
 forecast samples.
 
@@ -97,6 +97,15 @@ same next-open execution rules for the forecast policy, raw-agreement
 benchmark, deterministic random benchmark, and cash. Path PnL and forecast
 quality are reported separately. Mixed stock and continuous-market targets can
 still produce current rows, but their combined path is unavailable.
+
+Signal lifecycles use signed-agreement hysteresis (`0.25` activation, `0.10`
+persistence) so weakening breadth can invalidate a state before the raw
+majority flips. A backward reset in supporting positions' median bars held also
+ends the old lifecycle, because the signal cohort renewed even when direction
+did not change. The raw-agreement benchmark intentionally does not use this
+lifecycle identity; it holds its selected raw direction until that direction
+changes. Insufficient path-quality evidence is labeled `EXPLORATORY`, and stale
+current rows cannot be actionable edges.
 
 Only scalar forecast rows, path metrics, quality metrics, and benchmarks cross
 the NDJSON boundary. Direction Forecast does not release artifacts; successful

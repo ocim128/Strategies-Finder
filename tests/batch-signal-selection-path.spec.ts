@@ -24,11 +24,11 @@ function target(asset: string, symbol: string, gain: number, events: readonly nu
     return { asset, symbol, data };
 }
 
-function pairs(targetArtifact: BatchSyntheticTargetArtifact, events: readonly number[]): BatchSyntheticPairArtifact[] {
+function pairs(targetArtifact: BatchSyntheticTargetArtifact, events: readonly number[], type: Signal["type"] = "buy"): BatchSyntheticPairArtifact[] {
     return ["X", "Y"].map((quote) => {
         const signals: Signal[] = events.map((index) => ({
             time: targetArtifact.data[index]!.time,
-            type: "buy",
+            type,
             price: targetArtifact.data[index]!.close,
             barIndex: index,
         }));
@@ -43,6 +43,50 @@ function pairs(targetArtifact: BatchSyntheticTargetArtifact, events: readonly nu
     });
 }
 
+function shortPathTarget(asset: string, ruinInTest: boolean, events: readonly number[]): BatchSyntheticTargetArtifact {
+    const data: OHLCVData[] = Array.from({ length: 120 }, (_, index) => {
+        const exitEvent = events.find((event) => index === event + 2);
+        const price = exitEvent === undefined ? 100 : ruinInTest && exitEvent >= 96 ? 300 : 90;
+        const hasPreExitDownside = events.some((event) => index === event + 1);
+        return {
+            time: (1_700_000_000 + index * 300) as Time,
+            open: price,
+            high: price + 1,
+            low: hasPreExitDownside ? 80 : price - 0.25,
+            close: price,
+            volume: 1_000,
+        };
+    });
+    return { asset, symbol: `${asset}USDT`, data };
+}
+
+function persistentPair(targetArtifact: BatchSyntheticTargetArtifact, quote: string): BatchSyntheticPairArtifact {
+    const first = targetArtifact.data[0]!;
+    const last = targetArtifact.data[targetArtifact.data.length - 1]!;
+    return {
+        symbol: `${targetArtifact.asset}+${quote}`,
+        baseAsset: targetArtifact.asset,
+        quoteAsset: quote,
+        data: targetArtifact.data.map((bar) => ({ ...bar })),
+        signals: [{ time: first.time, type: "buy", price: first.close, barIndex: 0 }],
+        result: {
+            ...result(),
+            trades: [{
+                id: 1,
+                type: "long",
+                entryTime: first.time,
+                entryPrice: first.close,
+                exitTime: last.time,
+                exitPrice: last.close,
+                pnl: 0,
+                pnlPercent: 0,
+                size: 1,
+                exitReason: "end_of_data",
+            }],
+        },
+    };
+}
+
 describe("Batch signal selection path", () => {
     const events = Array.from({ length: 29 }, (_, index) => 2 + index * 4);
     const execution = { initialCapital: 10_000, commissionPercent: 0.1, slippageBps: 5 };
@@ -55,7 +99,8 @@ describe("Batch signal selection path", () => {
         const first = runBatchSignalSelectionPath({ analyses, interval: "5m", execution, options, randomSeeds: 10 });
         const second = runBatchSignalSelectionPath({ analyses, interval: "5m", execution, options, randomSeeds: 10 });
 
-        expect(first.status).to.equal("OK");
+        expect(first.status).to.equal("EXPLORATORY");
+        expect(first.reasonCode).to.equal("QUALITY_INSUFFICIENT");
         expect(first.path.trades).to.be.greaterThan(0);
         expect(first.path.returnPct).to.be.greaterThan(0);
         expect(first.quality.status).to.equal("INSUFFICIENT");
@@ -71,5 +116,42 @@ describe("Batch signal selection path", () => {
         expect(path.status).to.equal("PATH_UNAVAILABLE");
         expect(path.reasonCode).to.equal("MIXED_MARKET_CLOCKS");
         expect(path.path.trades).to.equal(0);
+    });
+
+    it("holds a persistent left-censored raw state instead of churning every bar", () => {
+        const first = target("AAA", "AAAUSDT", 0, []);
+        const second = target("BBB", "BBBUSDT", 0, []);
+        const analyses = buildBatchSignalLifecycleAnalyses({
+            interval: "5m",
+            targets: [first, second],
+            artifacts: [persistentPair(first, "X"), persistentPair(second, "Y")],
+            options: { lagBars: 0 },
+        });
+        const path = runBatchSignalSelectionPath({ analyses, interval: "5m", execution, options });
+
+        expect(path.benchmarks.rawAgreement.turnover).to.equal(1);
+        expect(path.benchmarks.rawAgreement.trades).to.equal(0);
+        expect(path.benchmarks.rawAgreement.exposurePct).to.be.greaterThan(0);
+    });
+
+    it("attributes ruin when a full-notional short more than doubles before invalidation", () => {
+        const ruinTarget = shortPathTarget("AAA", true, events);
+        const controlTarget = shortPathTarget("BBB", false, events);
+        const analyses = buildBatchSignalLifecycleAnalyses({
+            interval: "5m",
+            targets: [ruinTarget, controlTarget],
+            artifacts: [...pairs(ruinTarget, events, "sell"), ...pairs(controlTarget, events, "sell")],
+            options,
+        });
+        const path = runBatchSignalSelectionPath({ analyses, interval: "5m", execution, options, randomSeeds: 10 });
+
+        expect(path.status).to.equal("FAILED");
+        expect(path.reasonCode).to.equal("PATH_RUIN");
+        expect(path.path.ruin).to.equal(true);
+        expect(path.path.markedEquity).to.equal(0);
+        expect(path.path.worstTradeSymbol).to.equal("AAAUSDT");
+        expect(path.path.worstTradeBias).to.equal("DOWN");
+        expect(path.path.worstTradeReturnPct).to.be.lessThan(-100);
+        expect(path.path.worstTradePnl).to.equal(-10_000);
     });
 });
