@@ -25,6 +25,7 @@ const {
     resetRunStateForTests,
     handleStatusRequest,
     handleStopRequest,
+    registerFinderRoutesForTests,
     assertUniverseOptions,
     parseStrategyKeys,
     parseRunId,
@@ -32,6 +33,27 @@ const {
     writeStreamEventBestEffort,
     withCanonicalUniverseSymbols,
 } = __testInternals;
+
+type FinderRouteHandler = (req: any, res: any) => Promise<void>;
+
+/** Mirror of `captureBatchRoutes` in the Batch spec: install every Finder
+ * route into a map keyed by path so route-level authorization can be tested
+ * without booting a Vite server (audit Finding 1). */
+function captureFinderRoutes(): Map<string, FinderRouteHandler> {
+    const routes = new Map<string, FinderRouteHandler>();
+    registerFinderRoutesForTests({ use: (path: string, handler: FinderRouteHandler) => routes.set(path, handler) });
+    return routes;
+}
+
+function makeRouteResponse(): { statusCode: number; body: string; setHeader: () => void; end: (body: string) => void } {
+    const response = {
+        statusCode: 0,
+        body: "",
+        setHeader: () => {},
+        end: (body: string) => { response.body = body; },
+    };
+    return response;
+}
 
 function makeCandles(closes: number[]): OHLCVData[] {
     return closes.map((close, index) => ({
@@ -353,6 +375,29 @@ describe("finder server plugin processFinderUniverseRun", () => {
         expect(done.ok).to.equal(true);
         expect(done.totals.failedSymbols).to.equal(1);
         expect(done.totals.loadedSymbols).to.equal(2);
+    });
+
+    it("counts unique failing symbols across strategies, not the per-strategy sum (audit Finding 9)", async () => {
+        // A symbol that fails to load fails for EVERY selected strategy, so
+        // summing `failedSymbols.length` per strategy double-counts. With two
+        // strategies and one shared failing symbol, the user-facing total must
+        // be 1, not 2.
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP", makeCandles([100, 105, 110, 115, 120])],
+            ["DOWN", makeCandles([100, 95, 90, 85, 80])],
+        ]);
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN", "MISSING"],
+            datasets,
+            owner: 7004,
+            strategyKeys: [STRATEGY_KEY, STRATEGY_KEY_2],
+        });
+
+        const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
+        expect(done.type).to.equal("done");
+        expect(done.ok).to.equal(true);
+        // Unique failing symbols, not 2 * 1.
+        expect(done.totals.failedSymbols).to.equal(1);
     });
 
     it("emits a fatal event when no universe symbols can be loaded", async () => {
@@ -881,5 +926,106 @@ describe("assertUniverseOptions nested validation", () => {
             scope: "symbol_universe",
             universe: { symbols: ["BTCUSDT", "ETHUSDT"] },
         } as FinderOptions)).to.not.throw();
+    });
+});
+
+describe("finder server plugin route-level authorization (audit Finding 1)", () => {
+    // Every Finder route must reject an unauthenticated non-loopback caller —
+    // what a remote poller hitting a tunneled / `--host`ed dev server looks
+    // like. The CPU-heavy `universe-run` route is the headline, but stop,
+    // status (discloses inputs/diagnostics), and invalidate-cache (thrashes
+    // caches) must all gate on the same loopback/bearer policy the Batch
+    // routes enforce.
+    const ROUTES = [
+        { path: "/api/finder/universe-run", method: "POST" },
+        { path: "/api/finder/stop", method: "POST" },
+        { path: "/api/finder/status", method: "GET" },
+        { path: "/api/finder/invalidate-cache", method: "POST" },
+    ];
+
+    for (const route of ROUTES) {
+        it(`rejects an unauthenticated non-loopback ${route.method} ${route.path} with 401`, async () => {
+            const routes = captureFinderRoutes();
+            const handler = routes.get(route.path);
+            expect(handler).to.not.equal(undefined);
+            // No Origin/Referer, no Authorization header, no LOCAL_PROXY_TOKEN:
+            // a remote caller cannot satisfy the tokenless path (its socket is
+            // not loopback and its Host header is not loopback either).
+            const prevToken = process.env.LOCAL_PROXY_TOKEN;
+            delete process.env.LOCAL_PROXY_TOKEN;
+            try {
+                const res = makeRouteResponse();
+                await handler!({ method: route.method, url: route.path, headers: { host: "example.com:5173" }, socket: { remoteAddress: "203.0.113.10" } }, res);
+                expect(res.statusCode).to.equal(401);
+                const payload = JSON.parse(res.body) as { ok?: boolean; error?: string };
+                expect(payload.ok).to.equal(false);
+                expect(payload.error).to.include("local-only");
+            } finally {
+                if (prevToken !== undefined) process.env.LOCAL_PROXY_TOKEN = prevToken;
+            }
+        });
+    }
+
+    it("allows a loopback same-origin GET /status without Origin/Referer", async () => {
+        const routes = captureFinderRoutes();
+        const handler = routes.get("/api/finder/status");
+        expect(handler).to.not.equal(undefined);
+        const res = makeRouteResponse();
+        await handler!(
+            {
+                method: "GET",
+                url: "/api/finder/status",
+                socket: { remoteAddress: "127.0.0.1" },
+                headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" },
+            },
+            res,
+        );
+        // No active run → handleStatusRequest returns `{ ok:false }` snapshot
+        // → handler sends 404. The point of this assertion is that the loopback
+        // caller is NOT rejected at the auth gate (401); it passes through and
+        // reaches the snapshot logic.
+        expect(res.statusCode).to.not.equal(401);
+    });
+
+    it("allows a loopback same-origin POST /invalidate-cache", async () => {
+        const routes = captureFinderRoutes();
+        const handler = routes.get("/api/finder/invalidate-cache");
+        expect(handler).to.not.equal(undefined);
+        const res = makeRouteResponse();
+        await handler!(
+            {
+                method: "POST",
+                socket: { remoteAddress: "127.0.0.1" },
+                headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" },
+            },
+            res,
+        );
+        expect(res.statusCode).to.equal(200);
+        const payload = JSON.parse(res.body) as { ok?: boolean };
+        expect(payload.ok).to.equal(true);
+    });
+
+    it("rejects a loopback socket with a spoofable cross-origin Host header", async () => {
+        // Defense against the documented `--host`/tunnel spoof: even from a
+        // loopback socket, a non-loopback Host header must be rejected.
+        const routes = captureFinderRoutes();
+        const handler = routes.get("/api/finder/status");
+        const prevToken = process.env.LOCAL_PROXY_TOKEN;
+        delete process.env.LOCAL_PROXY_TOKEN;
+        try {
+            const res = makeRouteResponse();
+            await handler!(
+                {
+                    method: "GET",
+                    url: "/api/finder/status",
+                    socket: { remoteAddress: "127.0.0.1" },
+                    headers: { host: "tunneled.example.com" },
+                },
+                res,
+            );
+            expect(res.statusCode).to.equal(401);
+        } finally {
+            if (prevToken !== undefined) process.env.LOCAL_PROXY_TOKEN = prevToken;
+        }
     });
 });

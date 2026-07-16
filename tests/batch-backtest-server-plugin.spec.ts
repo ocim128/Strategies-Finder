@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { describe, it, after, before } from "node:test";
+import { describe, it, after, afterEach, before } from "node:test";
 import { Readable } from "node:stream";
 import { strategyRegistry } from "../strategyRegistry";
 import {
@@ -7,6 +7,7 @@ import {
     processMine,
     processStabilityMine,
     resolveServerBatchHeapWarning,
+    type BatchRunSnapshot,
     __testInternals,
 } from "../lib/batch-backtest/batch-backtest-vite-plugin";
 import type { BatchStreamEvent } from "../lib/batch-backtest/batch-backtest-stream-types";
@@ -28,9 +29,20 @@ const {
     setMinerGatesForTests,
     resetMinerGatesForTests,
     getRunStateForTests,
+    setRunStateForTests,
     handleStatusRequest,
     handleStopRequest,
     registerBatchRoutesForTests,
+    pushPendingArtifactWriteForTests,
+    getMineArtifactDirForTests,
+    ensureMineArtifactDirForTests,
+    parseBatchRunId,
+    consumePendingBatchStopForRun,
+    setPendingStopRunIdForTests,
+    getPendingStopRunIdForTests,
+    shouldSweepOrphanEntryForTests,
+    MINE_ARTIFACT_DIR_PREFIX_FOR_TESTS,
+    ORPHAN_SWEEP_STALE_MS_FOR_TESTS,
 } = __testInternals;
 
 type RouteHandler = (req: any, res: any) => Promise<void>;
@@ -1025,5 +1037,352 @@ describe("batch-backtest server plugin run intake size guard", () => {
             setRunOwnerForTests(0);
             if (prevToken !== undefined) process.env.LOCAL_PROXY_TOKEN = prevToken;
         }
+    });
+});
+
+describe("batch-backtest server plugin terminal snapshot in /status (audit Finding 6)", () => {
+    // Intent being locked: a terminal run snapshot MUST be recoverable from
+    // /status even when the run produced no Mine artifacts. Pre-fix the
+    // `lastRun` branch was gated on `hasStoredMineArtifacts()`, so a fatal
+    // run (or a no-artifact completed run) "vanished" from /status after a
+    // reload — making long-running failures undiagnosable. The terminal
+    // phase / finishedAt / summary / error must travel on `lastRun`
+    // independently of `hasArtifacts`.
+
+    afterEach(async () => {
+        setRunOwnerForTests(0);
+        await releaseLastResults("finding6_after_each");
+    });
+
+    it("exposes lastRun with phase=fatal and the error after a fatal run with no artifacts", async () => {
+        // The runner converts most execution errors into per-symbol
+        // `load_failed` rows rather than a thrown fatal, so plant the fatal
+        // terminal snapshot directly via the test seam to exercise the
+        // /status presentation logic (the actual change in audit Finding 6):
+        // a terminal snapshot MUST surface on `lastRun` even when
+        // `hasArtifacts` is false.
+        const fatalSnapshot: BatchRunSnapshot = {
+            startedAt: Date.now() - 1000,
+            interval: "5m",
+            strategyKey: STRATEGY_KEY,
+            total: 10,
+            completed: 3,
+            failed: 0,
+            currentSymbol: null,
+            cancelled: false,
+            rows: [],
+            phase: "fatal",
+            finishedAt: Date.now(),
+            summary: "Fatal — disk on fire",
+            error: "disk on fire",
+            runId: "finding6-fatal",
+        };
+        setRunStateForTests(fatalSnapshot);
+        // Simulate the production handler's `finally`: release ownership so
+        // status treats the run as terminal while `runState` is retained.
+        completeRunForTests();
+
+        const status = handleStatusRequest(0, 100) as {
+            running: boolean;
+            lastRun: {
+                phase?: string;
+                finishedAt?: number | null;
+                summary?: string | null;
+                error?: string | null;
+                hasArtifacts?: boolean;
+            } | null;
+        };
+        expect(status.running, "fatal run is not in progress").to.equal(false);
+        expect(status.lastRun, "lastRun must be present after a fatal run").to.not.equal(null);
+        expect(status.lastRun!.phase).to.equal("fatal");
+        expect(status.lastRun!.error).to.equal("disk on fire");
+        expect(status.lastRun!.summary).to.match(/Fatal/i);
+        expect(status.lastRun!.finishedAt, "finishedAt must be set on fatal").to.not.equal(null);
+        expect(status.lastRun!.hasArtifacts, "fatal run produced no artifacts").to.equal(false);
+    });
+
+    it("exposes lastRun with phase=done even when no synthetic pairs produced artifacts", async () => {
+        // A run that completes cleanly but has no synthetic-pair rows (so
+        // storeMineArtifact is a no-op) must still surface `lastRun` so a
+        // reloaded tab can read the terminal summary.
+        const owner = 9102;
+        setRunOwnerForTests(owner);
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP", makeCandles([100, 105, 110, 115, 120])],
+        ]);
+        await processRunBatch(
+            {
+                interval: "5m",
+                strategyKey: STRATEGY_KEY,
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols: ["UP"],
+                loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                minUsableBars: 1,
+            },
+            () => { /* discard */ },
+            owner,
+        );
+        completeRunForTests();
+
+        const status = handleStatusRequest(0, 100) as {
+            lastRun: { phase?: string; summary?: string | null; hasArtifacts?: boolean } | null;
+        };
+        expect(status.lastRun, "lastRun must be present for a no-artifact completed run").to.not.equal(null);
+        expect(status.lastRun!.phase).to.equal("done");
+        expect(status.lastRun!.summary).to.match(/Done/i);
+        expect(status.lastRun!.hasArtifacts).to.equal(false);
+    });
+});
+
+describe("batch-backtest server plugin artifact lifecycle races (audit Findings 2 & 3)", () => {
+    it("releaseLastResults detaches the store synchronously: a new generation installed mid-flush survives (audit Finding 3)", async () => {
+        // Intent being locked: cleanup must snapshot THIS generation's state
+        // before its first await, so a concurrent new Run that installs its own
+        // dir/artifacts during the flush window is NOT clobbered when the old
+        // cleanup resumes. Pre-fix the dir was snapshotted AFTER the flush,
+        // so a new Run's dir could be rm'd out from under it.
+        //
+        // Scenario:
+        //   1. Plant a blocking pending write so releaseLastResults pauses
+        //      inside its flush.
+        //   2. While paused, install a NEW generation dir (simulating a new
+        //      Run acquiring ownership).
+        //   3. Release the blocking write; await cleanup.
+        //   4. The new generation's dir must still exist and be reachable via
+        //      the module variable.
+        let releaseOldWrite: () => void = () => {};
+        const oldWrite = new Promise<void>((resolve) => { releaseOldWrite = resolve; });
+        pushPendingArtifactWriteForTests(oldWrite);
+
+        // Install the OLD generation dir so releaseLastResults has something
+        // to detach + rm. ensureMineArtifactDir creates a real temp dir.
+        const oldDir = ensureMineArtifactDirForTests();
+        try {
+            expect(getMineArtifactDirForTests(), "old gen dir installed").to.equal(oldDir);
+
+            const releasePromise = releaseLastResults("finding3_race");
+
+            // Pump the microtask queue so releaseLastResults runs up to its first
+            // await (the flush). At that point the module state MUST already be
+            // detached: mineArtifactDir === null.
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(getMineArtifactDirForTests(), "old gen detached synchronously before flush await").to.equal(null);
+
+            // Now a new generation installs its own dir while the old flush waits.
+            const newDir = ensureMineArtifactDirForTests();
+            expect(getMineArtifactDirForTests()).to.equal(newDir);
+            expect(newDir, "new gen dir is distinct from old").to.not.equal(oldDir);
+
+            // Release the old write so the old cleanup finishes.
+            releaseOldWrite();
+            await releasePromise;
+
+            // The new generation's dir survives — the old cleanup rm'd `oldDir`,
+            // not the current `mineArtifactDir`.
+            expect(getMineArtifactDirForTests(), "new gen dir not clobbered by old cleanup").to.equal(newDir);
+
+            // Cleanup the new dir from disk so the test doesn't leak.
+            const fs = await import("node:fs/promises");
+            await fs.rm(newDir, { recursive: true, force: true }).catch(() => { /* best-effort */ });
+        } finally {
+            setRunOwnerForTests(0);
+            await releaseLastResults("finding3_finally");
+        }
+    });
+});
+
+describe("batch-backtest server plugin runId-scoped Stop (audit Finding 5)", () => {
+    // Intent being locked: Stop is scoped by browser-generated runId so a stale
+    // tab cannot cancel a newer run. A mismatched runId MUST be rejected without
+    // mutating ownership; a matching runId (or legacy unscoped Stop) cancels.
+    // Also covers the Stop-before-ownership race closer.
+
+    function plantActiveRun(runId: string, owner: number): void {
+        setRunOwnerForTests(owner);
+        setRunStateForTests({
+            startedAt: Date.now(),
+            interval: "5m",
+            strategyKey: STRATEGY_KEY,
+            total: 4,
+            completed: 1,
+            failed: 0,
+            currentSymbol: "UP",
+            cancelled: false,
+            rows: [],
+            phase: "running",
+            finishedAt: null,
+            summary: null,
+            error: null,
+            runId,
+        });
+    }
+
+    afterEach(async () => {
+        setRunOwnerForTests(0);
+        setPendingStopRunIdForTests(null);
+        await releaseLastResults("finding5_after_each");
+    });
+
+    it("rejects a mismatched runId without mutating ownership", async () => {
+        const owner = 9201;
+        plantActiveRun("run-active", owner);
+        const result = await handleStopRequest("run-from-stale-tab");
+        expect(result).to.deep.equal({ ok: false, stopped: false });
+        // Ownership is preserved — the active run continues.
+        expect(getRunStateForTests(), "active run state preserved").to.not.equal(null);
+        expect(getRunStateForTests()!.runId).to.equal("run-active");
+    });
+
+    it("cancels the active run when the runId matches", async () => {
+        const owner = 9202;
+        plantActiveRun("run-active-2", owner);
+        const result = await handleStopRequest("run-active-2");
+        expect(result).to.deep.equal({ ok: true, stopped: true });
+    });
+
+    it("falls back to legacy unscoped Stop when no runId is sent (backward compat)", async () => {
+        const owner = 9203;
+        plantActiveRun("run-active-3", owner);
+        // No runId argument — a stale browser bundle that predates the contract.
+        const result = await handleStopRequest();
+        expect(result).to.deep.equal({ ok: true, stopped: true });
+    });
+
+    it("also falls back to unscoped Stop when the active run has no runId (legacy server state)", async () => {
+        const owner = 9204;
+        // Plant a run with an empty runId (the legacy default).
+        setRunOwnerForTests(owner);
+        setRunStateForTests({
+            startedAt: Date.now(),
+            interval: "5m",
+            strategyKey: STRATEGY_KEY,
+            total: 1,
+            completed: 0,
+            failed: 0,
+            currentSymbol: "UP",
+            cancelled: false,
+            rows: [],
+            phase: "running",
+            finishedAt: null,
+            summary: null,
+            error: null,
+            runId: "",
+        });
+        // Even though the browser sends a runId, the server's run has none, so
+        // it must fall back to the legacy contract.
+        const result = await handleStopRequest("anything");
+        expect(result).to.deep.equal({ ok: true, stopped: true });
+    });
+
+    it("records a pending stop slot when Stop arrives before ownership", async () => {
+        // Stop arrives with a runId but no run is active (request still
+        // parsing). The run id must be recorded so the matching /run request
+        // finishes cancelled instead of starting heavy work.
+        const result = await handleStopRequest("run-not-yet-started");
+        expect(result).to.deep.equal({ ok: true, stopped: false });
+        expect(getPendingStopRunIdForTests(), "pending stop slot planted").to.equal("run-not-yet-started");
+
+        // The matching run consumes the marker.
+        expect(consumePendingBatchStopForRun("run-not-yet-started"), "matching run consumes marker").to.equal(true);
+        expect(getPendingStopRunIdForTests(), "slot cleared after consume").to.equal(null);
+        // A different runId does NOT consume the marker.
+        setPendingStopRunIdForTests("run-not-yet-started");
+        expect(consumePendingBatchStopForRun("other-run"), "mismatched run does not consume").to.equal(false);
+    });
+
+    it("status snapshot exposes runId on both run and lastRun branches", async () => {
+        // In-progress branch.
+        plantActiveRun("run-status", 9205);
+        const inProgress = handleStatusRequest(0, 100) as {
+            run: { runId?: string } | null;
+        };
+        expect(inProgress.run!.runId).to.equal("run-status");
+
+        // Terminal branch.
+        completeRunForTests();
+        const terminal = handleStatusRequest(0, 100) as {
+            lastRun: { runId?: string; phase?: string } | null;
+        };
+        expect(terminal.lastRun, "terminal lastRun present").to.not.equal(null);
+        expect(terminal.lastRun!.runId).to.equal("run-status");
+    });
+
+    it("parseBatchRunId trims, rejects non-strings, and rejects overlong ids", () => {
+        expect(parseBatchRunId("  abc  ")).to.equal("abc");
+        expect(parseBatchRunId(undefined)).to.equal("");
+        expect(parseBatchRunId(123)).to.equal("");
+        expect(parseBatchRunId("x".repeat(200))).to.equal("");
+    });
+});
+
+describe("batch-backtest server plugin PID-scoped orphan sweep (audit Finding 7)", () => {
+    // Intent being locked: the orphan-dir sweep must NOT delete a directory
+    // belonging to a concurrently-running Vite process. Pre-fix the sweep
+    // matched the bare prefix `strategies-finder-batch-mine-` and rm'd every
+    // dir unconditionally — clobbering a live sibling process's active
+    // multi-GB artifacts. The new dir name embeds `<pid>-<createdAtMs>-` and
+    // the sweep reclaims only when the owning PID is provably dead OR the dir
+    // is older than the conservative stale threshold.
+
+    const PREFIX = MINE_ARTIFACT_DIR_PREFIX_FOR_TESTS;
+    const now = Date.now();
+
+    it("sweeps a legacy bare-prefix entry (no PID stamp)", () => {
+        // Pre-fix mkdtemp output: prefix + random suffix only.
+        expect(shouldSweepOrphanEntryForTests(`${PREFIX}ABCDE`, now)).to.equal(true);
+    });
+
+    it("never sweeps a directory owned by the current process", () => {
+        // A dir created by THIS process (recent) must be retained so the
+        // sweep never deletes the active generation.
+        const entry = `${PREFIX}${process.pid}-${now}-abc`;
+        expect(shouldSweepOrphanEntryForTests(entry, now)).to.equal(false);
+    });
+
+    it("sweeps a directory older than the stale threshold regardless of PID liveness", () => {
+        // Even if the PID is the current process's, an entry older than
+        // ORPHAN_SWEEP_STALE_MS is reclaimed (age backstop).
+        const ancient = now - (ORPHAN_SWEEP_STALE_MS_FOR_TESTS + 60_000);
+        const entry = `${PREFIX}${process.pid}-${ancient}-abc`;
+        expect(shouldSweepOrphanEntryForTests(entry, now)).to.equal(true);
+    });
+
+    it("retains a directory owned by a DIFFERENT live process", () => {
+        // Use the test runner's own PID as a stand-in for "a different but
+        // alive PID" — wait, that IS this process. Spawn a real child so we
+        // have a genuinely different alive pid.
+        const { spawn } = require("node:child_process") as typeof import("node:child_process");
+        const child = spawn(process.execPath, ["-e", "setInterval(()=>{}, 60000)"], { stdio: "ignore" });
+        try {
+            const childPid = child.pid!;
+            const entry = `${PREFIX}${childPid}-${now}-abc`;
+            expect(shouldSweepOrphanEntryForTests(entry, now), "live sibling pid must be retained").to.equal(false);
+        } finally {
+            child.kill("SIGKILL");
+        }
+    });
+
+    it("sweeps a directory whose owning PID is no longer alive", async () => {
+        // Spawn a child, wait for it to exit, then verify the sweep reclaims
+        // a dir stamped with the dead pid + a recent timestamp.
+        const { spawn } = require("node:child_process") as typeof import("node:child_process");
+        const child = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+        const childPid = child.pid!;
+        await new Promise<void>((resolve) => child.on("exit", () => resolve()));
+        // Give the OS a moment to reap the process record.
+        await new Promise((r) => setTimeout(r, 100));
+        const recent = Date.now();
+        const entry = `${PREFIX}${childPid}-${recent}-abc`;
+        expect(shouldSweepOrphanEntryForTests(entry, recent), "dead pid must be swept").to.equal(true);
+    });
+
+    it("sweeps an entry with an invalid PID stamp", () => {
+        const entry = `${PREFIX}notanumber-${now}-abc`;
+        // NaN pid → sweep (malformed stamp can't prove ownership).
+        expect(shouldSweepOrphanEntryForTests(entry, now)).to.equal(true);
     });
 });

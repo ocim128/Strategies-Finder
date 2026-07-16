@@ -109,7 +109,7 @@ describe("runBatchBacktest", () => {
             {
                 setProgress: () => {},
                 setStatus: () => {},
-                onSymbolComplete: (_i, r) => statuses.set(r.symbol, r.status),
+                onSymbolComplete: (_i, r) => { statuses.set(r.symbol, r.status); },
                 isCancelled: () => false,
             },
         );
@@ -360,6 +360,84 @@ describe("runBatchBacktest", () => {
         );
 
         expect(starts).to.deep.equal(["UP"]);
+    });
+
+    it("awaits an async onSymbolComplete before starting the next symbol (audit Finding 2)", async () => {
+        // Intent being locked: the runner MUST await onSymbolComplete so a
+        // slow consumer (server-side artifact persistence) applies backpressure
+        // rather than firing N symbols and stacking N unbounded full-row
+        // closures. The observed signal is strict serialization: symbol N's
+        // callback end is observed before symbol N+1's onSymbolStart fires.
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP", makeCandles([100, 105, 110, 115, 120])],
+            ["DOWN", makeCandles([100, 95, 90, 85, 80])],
+            ["FLAT", makeCandles([100, 100, 100, 100, 100])],
+        ]);
+        const order: string[] = [];
+        // Each callback awaits its own deferred; the test resolves them in
+        // lockstep so a non-awaiting runner would observe overlap.
+        const resolvers: Array<() => void> = [];
+        const waitForGate = () => new Promise<void>((resolve) => { resolvers.push(resolve); });
+
+        const runPromise = runBatchBacktest(
+            {
+                interval: "5m",
+                strategyKey: "batch_test",
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols: ["UP", "DOWN", "FLAT"],
+                loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                minUsableBars: 1,
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                onSymbolStart: (_i, symbol) => order.push(`start:${symbol}`),
+                onSymbolComplete: async (_i, r) => {
+                    order.push(`cb-start:${r.symbol}`);
+                    await waitForGate();
+                    order.push(`cb-end:${r.symbol}`);
+                },
+                isCancelled: () => false,
+            },
+        );
+
+        // UP runs first: its callback is pending. The runner must NOT start
+        // DOWN until UP's callback resolves. Pump the event loop a few times
+        // so any eager progress surfaces.
+        for (let i = 0; i < 10; i += 1) await new Promise((r) => setImmediate(r));
+
+        // Only UP's start and cb-start should be observable so far.
+        expect(order).to.deep.equal(["start:UP", "cb-start:UP"]);
+
+        // Release UP's callback; the runner should then progress to DOWN only.
+        resolvers.shift()!();
+        for (let i = 0; i < 10; i += 1) await new Promise((r) => setImmediate(r));
+        expect(order).to.deep.equal([
+            "start:UP", "cb-start:UP", "cb-end:UP",
+            "start:DOWN", "cb-start:DOWN",
+        ]);
+
+        // Release DOWN.
+        resolvers.shift()!();
+        for (let i = 0; i < 10; i += 1) await new Promise((r) => setImmediate(r));
+        expect(order).to.deep.equal([
+            "start:UP", "cb-start:UP", "cb-end:UP",
+            "start:DOWN", "cb-start:DOWN", "cb-end:DOWN",
+            "start:FLAT", "cb-start:FLAT",
+        ]);
+
+        // Release FLAT and let the run finish.
+        resolvers.shift()!();
+        const output = await runPromise;
+        expect(output.results.length).to.equal(3);
+        expect(order).to.deep.equal([
+            "start:UP", "cb-start:UP", "cb-end:UP",
+            "start:DOWN", "cb-start:DOWN", "cb-end:DOWN",
+            "start:FLAT", "cb-start:FLAT", "cb-end:FLAT",
+        ]);
     });
 });
 

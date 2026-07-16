@@ -144,6 +144,11 @@ class BatchBacktestService {
     // sees its token as stale and stops writing DOM/state, preventing two
     // concurrent runs from racing on `this.lastResults` and the results list.
     private runToken = 0;
+    // Browser-generated server run id (audit Finding 5). Sent on the /run body
+    // and the /stop body so the server can scope Stop to THIS run: a stale tab
+    // cannot cancel a newer run. Reattach also matches this against the
+    // terminal snapshot's runId to decide whether to adopt the recovered run.
+    private activeServerRunId: string | null = null;
     // Serializes Mine Timing, Stability, and Portfolio Fit.
     private analysisInFlight = false;
     // Set when Stop races analysis preflight or POST establishment.
@@ -319,6 +324,9 @@ class BatchBacktestService {
         this.lastRunStrategyKey = null;
         this.appendedCount = 0;
         this.serverHasArtifacts = false;
+        // Audit Finding 5: clear the active server run id at the start of each
+        // new run; `runBatchServer` assigns a fresh one before POSTing.
+        this.activeServerRunId = null;
         this.clearPersistedLatestResults();
         this.stopReattachPoll();
         dom.batchBacktestRunBtn.disabled = true;
@@ -395,6 +403,11 @@ class BatchBacktestService {
         interval: string,
         runFingerprint: string,
     ): Promise<void> {
+        // Audit Finding 5: generate a per-run id and send it on the /run body
+        // so the server can scope Stop to THIS run. Adopted on the service so
+        // Stop and reattach reconciliation send the same value.
+        const runId = `batch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+        if (token === this.runToken) this.activeServerRunId = runId;
         const response = await fetch("/api/batch-backtest/run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -406,6 +419,7 @@ class BatchBacktestService {
                 backtestSettings,
                 capitalSettings,
                 useRustEnginePreference: shouldUseRustEngine(),
+                runId,
             }),
         });
         if (!response.ok || !response.body) {
@@ -536,10 +550,22 @@ class BatchBacktestService {
                     rows?: BatchBacktestSymbolResult[];
                     rowOffset?: number;
                     nextOffset?: number | null;
+                    runId?: string;
                 } | null;
             };
             const lastRun = firstPayload.lastRun;
             if (firstPayload.running || !lastRun || lastRun.fingerprint !== runFingerprint) {
+                return null;
+            }
+            // Audit Finding 5: when both the browser and the server carry a
+            // runId, they must match — a reloaded tab must not adopt a
+            // different run that happens to share the fingerprint.
+            if (
+                this.activeServerRunId
+                && typeof lastRun.runId === "string"
+                && lastRun.runId
+                && lastRun.runId !== this.activeServerRunId
+            ) {
                 return null;
             }
             this.lastRunFingerprint = runFingerprint;
@@ -1027,7 +1053,15 @@ class BatchBacktestService {
     /** Cancel the Batch run and any analysis holding the server miner lock. */
     private async stopServerWork(): Promise<void> {
         try {
-            await fetch("/api/batch-backtest/stop", { method: "POST" });
+            // Audit Finding 5: send the active run id so the server scopes
+            // Stop to THIS run. A stale tab's mismatched id is rejected
+            // without mutating the active run's ownership.
+            const runId = this.activeServerRunId;
+            await fetch("/api/batch-backtest/stop", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(runId ? { runId } : {}),
+            });
         } catch (error) {
             debugLogger.warn("batch.server.stop_failed", {
                 error: error instanceof Error ? error.message : String(error),
@@ -2141,6 +2175,8 @@ class BatchBacktestService {
         this.lastRunInterval = null;
         this.lastRunStrategyKey = null;
         this.serverHasArtifacts = false;
+        // Audit Finding 5: a stale run id must not survive a results clear.
+        this.activeServerRunId = null;
         this.clearPersistedLatestResults();
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;

@@ -96,6 +96,68 @@ export function beginNdjsonStream(res: ViteHttpResponse): {
     };
 }
 
+/**
+ * Disconnect-safe NDJSON stream wrapper (audit Finding 4).
+ *
+ * Wraps {@link beginNdjsonStream} and tracks the response lifecycle: once the
+ * client disconnects (`close` / `error`), every subsequent `write` is silently
+ * dropped instead of throwing into a long-running async loop. The production
+ * Finder plugin already used this pattern inline; this extracts it so the
+ * Batch run/mine/stability/portfolio-fit handlers can share the exact same
+ * transport-safety contract.
+ *
+ * Why this matters: without it, a browser reload mid-run makes `stream.write`
+ * throw on a dead socket, which the Batch run loop treated as fatal — calling
+ * `releaseLastResults` and undermining the documented status-reattach path.
+ * With this wrapper, the job keeps running and updating server snapshot state;
+ * a reloaded tab reattaches via `GET /status`. `/status` remains authoritative.
+ *
+ * `end` is a no-op once disconnected (the socket is already gone). Returns the
+ * raw `write`/`end` plus an `isWritable` predicate for callers that gate
+ * terminal writes (e.g. the Finder `safeWrite` pattern).
+ */
+export function createDisconnectSafeStream(res: ViteHttpResponse): {
+    write: (event: unknown) => void;
+    end: (event?: unknown) => void;
+    isWritable: () => boolean;
+} {
+    const stream = beginNdjsonStream(res);
+    let writable = true;
+    const responseWithEvents = res as ViteHttpResponse & {
+        on?: (event: string, listener: () => void) => void;
+    };
+    if (typeof responseWithEvents.on === "function") {
+        const markDisconnected = (): void => { writable = false; };
+        responseWithEvents.on("close", markDisconnected);
+        // `beginNdjsonStream` already attaches its own `error` no-op; attaching
+        // a second `error` listener for the disconnect flag is safe (Node
+        // EventEmitter permits multiple listeners) and necessary so an emitted
+        // 'error' flips `writable` before the next write attempt.
+        responseWithEvents.on("error", markDisconnected);
+    }
+    return {
+        write: (event: unknown) => {
+            if (!writable) return;
+            try {
+                stream.write(event);
+            } catch {
+                // A socket that died between the close/error event and this
+                // write would throw; flip the flag so subsequent writes no-op.
+                writable = false;
+            }
+        },
+        end: (event?: unknown) => {
+            if (!writable) return;
+            try {
+                stream.end(event);
+            } catch {
+                writable = false;
+            }
+        },
+        isWritable: () => writable,
+    };
+}
+
 export async function readBodyBuffer(
     req: IncomingMessage,
     maxBytes = DEFAULT_MAX_BODY_BYTES

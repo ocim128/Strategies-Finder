@@ -235,10 +235,22 @@ export type ParallelStabilityOutcome =
  *
  * Approach: esbuild (already a transitive dep via Vite) bundles
  * `batch-stability-worker.ts` + its dependency closure into a single
- * self-contained `.cjs` file under the OS temp directory. The output path is
- * derived from the source mtime so a source change during a dev session
- * re-bundles; stable sources re-use the cached bundle across sessions. The
- * bundle is platform-portable CJS with no external runtime deps (esbuild
+ * self-contained `.cjs` file under a deterministic cache directory
+ * `strategies-finder-workers/<content-hash>/worker.cjs` in the OS temp dir.
+ *
+ * Cache invalidation (audit Finding 8): the hash is computed from esbuild's
+ * `metafile` dependency graph — every input file path plus its mtime — so an
+ * edit to ANY file in the worker's transitive closure (not just the entry)
+ * invalidates the bundle. The previous key used only the entry mtime, which
+ * left the worker running stale code when a dependency (e.g.
+ * `batch-stability-mine.ts`) changed within a dev session while the sequential
+ * fallback used current code — a silent parity divergence in a
+ * correctness-sensitive deterministic path. The hash-derived directory name
+ * also stops the unbounded temp-dir accumulation the prior `mkdtemp` caused
+ * (one new dir per source edit); old hash dirs are swept opportunistically by
+ * mtime on each resolve.
+ *
+ * The bundle is platform-portable CJS with no external runtime deps (esbuild
  * inlines `node:*` builtins as empty externals).
  *
  * On any esbuild error (e.g. esbuild not resolvable), returns the raw `.ts`
@@ -246,6 +258,22 @@ export type ParallelStabilityOutcome =
  * captured as the fallback reason — never throws.
  */
 const WORKER_BUNDLE_CACHE = new Map<string, string>();
+
+/**
+ * How long an unreferenced worker-bundle generation must sit in the temp dir
+ * before {@link sweepStaleWorkerBundles} reclaims it. Conservative (1h): the
+ * generation is content-addressed so a re-resolve with the same dependency
+ * graph reuses it; the sweep only clears generations left behind by source
+ * edits across sessions.
+ */
+const WORKER_BUNDLE_STALE_MS = 60 * 60 * 1000;
+
+/**
+ * Hash namespace so a future change to the hashing scheme (e.g. including
+ * bytes, not just mtimes) invalidates every prior generation deliberately
+ * rather than silently reusing a now-misnamed dir.
+ */
+const MODULE_BUNDLE_HASH_VERSION = "v1";
 
 async function resolveWorkerPath(): Promise<string> {
     const sourcePath = locateWorkerSource();
@@ -258,13 +286,11 @@ async function resolveWorkerPath(): Promise<string> {
     } catch {
         /* fall through to bundle */
     }
-    // Cached bundle for this source mtime.
-    const cacheKey = await bundleCacheKey(sourcePath);
-    const cached = WORKER_BUNDLE_CACHE.get(cacheKey);
-    if (cached) return cached;
     try {
         const bundled = await bundleWorkerWithEsbuild(sourcePath);
-        WORKER_BUNDLE_CACHE.set(cacheKey, bundled);
+        // In-process memo key is the final outfile path; stable across calls
+        // for the same dependency graph because the dir is content-hash-named.
+        WORKER_BUNDLE_CACHE.set(bundled, bundled);
         return bundled;
     } catch {
         // esbuild unavailable or bundling failed — return the .ts path; the
@@ -286,19 +312,49 @@ function moduleThisFileDir(): string {
     }
 }
 
-async function bundleCacheKey(sourcePath: string): Promise<string> {
+/**
+ * Parent directory for all stability-worker bundle generations. Named (not
+ * `mkdtemp`) so generations are content-addressed and old ones can be swept
+ * by mtime without parsing random suffixes.
+ */
+function workerBundleRoot(tmpdir: string): string {
+    return join(tmpdir, "strategies-finder-workers");
+}
+
+/**
+ * Best-effort sweep of stale bundle generations older than
+ * {@link WORKER_BUNDLE_STALE_MS}. Never throws — sweep failures only mean
+ * stale dirs linger (the OS temp cleanup or a future sweep will reclaim them).
+ * Skips the directory matching {@link keepHash} (the just-written generation).
+ */
+async function sweepStaleWorkerBundles(tmpdir: string, keepHash: string): Promise<void> {
+    const fs = await import("node:fs/promises");
+    const root = workerBundleRoot(tmpdir);
+    let entries: string[];
     try {
-        const fs = await import("node:fs/promises");
-        const stat = await fs.stat(sourcePath);
-        return `${sourcePath}@${stat.mtimeMs}`;
+        entries = await fs.readdir(root);
     } catch {
-        return sourcePath;
+        return; // root doesn't exist yet — nothing to sweep.
     }
+    const now = Date.now();
+    await Promise.all(entries.map(async (entry) => {
+        if (entry === keepHash) return;
+        const dir = join(root, entry);
+        try {
+            const stat = await fs.stat(dir);
+            if (now - stat.mtimeMs > WORKER_BUNDLE_STALE_MS) {
+                await fs.rm(dir, { recursive: true, force: true });
+            }
+        } catch {
+            /* best-effort */
+        }
+    }));
 }
 
 async function bundleWorkerWithEsbuild(sourcePath: string): Promise<string> {
     const fs = await import("node:fs/promises");
     const os = await import("node:os");
+    const crypto = await import("node:crypto");
     // Resolve esbuild from the repo's node_modules (Vite ships it transitively).
     // `import("esbuild")` resolves the ESM entry; the default export exposes
     // `build`. This works under both vite dev (Node) and esno (tests).
@@ -312,22 +368,105 @@ async function bundleWorkerWithEsbuild(sourcePath: string): Promise<string> {
             outfile: string;
             write: boolean;
             logLevel: string;
-        }) => Promise<unknown>;
+            metafile: boolean;
+        }) => Promise<{
+            metafile?: { inputs?: Record<string, unknown> };
+        }>;
     };
     const tmp = os.tmpdir();
-    const dir = await fs.mkdtemp(join(tmp, "stability-worker-"));
+    const root = workerBundleRoot(tmp);
+
+    // First pass: build with metafile to capture the full dependency graph,
+    // then derive the cache hash from every input path + mtime. Building into
+    // a throwaway path keeps the content-addressed dir clean if hashing fails.
+    const probeDir = await fs.mkdtemp(join(tmp, "stability-worker-probe-"));
+    const probeOut = join(probeDir, "worker.cjs");
+    let result: { metafile?: { inputs?: Record<string, unknown> } };
+    try {
+        result = await esbuild.build({
+            entryPoints: [sourcePath],
+            bundle: true,
+            platform: "node",
+            format: "cjs",
+            target: "node18",
+            outfile: probeOut,
+            write: true,
+            logLevel: "silent",
+            metafile: true,
+        });
+    } finally {
+        // Probe dir is disposable; content-addressed dir is created below.
+        await fs.rm(probeDir, { recursive: true, force: true }).catch(() => { /* best-effort */ });
+    }
+
+    const hash = await computeDependencyHash(sourcePath, result.metafile, fs, crypto);
+    const dir = join(root, hash);
     const outfile = join(dir, "worker.cjs");
-    await esbuild.build({
-        entryPoints: [sourcePath],
-        bundle: true,
-        platform: "node",
-        format: "cjs",
-        target: "node18",
-        outfile,
-        write: true,
-        logLevel: "silent",
-    });
+
+    // If a prior process/session already wrote this generation, reuse it.
+    // Otherwise rebuild into the content-addressed dir. Either way the output
+    // path is stable for a given dependency graph.
+    const exists = await fs.access(outfile).then(() => true).catch(() => false);
+    if (!exists) {
+        await fs.mkdir(dir, { recursive: true });
+        await esbuild.build({
+            entryPoints: [sourcePath],
+            bundle: true,
+            platform: "node",
+            format: "cjs",
+            target: "node18",
+            outfile,
+            write: true,
+            logLevel: "silent",
+            metafile: false,
+        });
+    }
+
+    // Opportunistic cleanup; never block resolution on sweep failures.
+    void sweepStaleWorkerBundles(tmp, hash);
     return outfile;
+}
+
+/**
+ * Content hash of the worker's full dependency graph. Captures every input
+ * file path plus its mtime as reported by esbuild's metafile, plus the entry
+ * path/mtime as a baseline (the metafile already includes the entry, but
+ * including it explicitly defends against a future esbuild version that
+ * trims self-references). A change to ANY transitive dependency invalidates
+ * the hash, forcing a rebundle — the bug fixed in audit Finding 8.
+ */
+async function computeDependencyHash(
+    entryPath: string,
+    metafile: { inputs?: Record<string, unknown> } | undefined,
+    fs: typeof import("node:fs/promises"),
+    crypto: typeof import("node:crypto"),
+): Promise<string> {
+    const inputs = metafile?.inputs ?? {};
+    // Always include the entry explicitly so an empty metafile still keys on
+    // the entry, and so the entry's own mtime participates even if a future
+    // esbuild version omits self-references.
+    const pathList = Array.from(new Set([entryPath, ...Object.keys(inputs)])).sort();
+    let mtimes: string[];
+    try {
+        const stamped = await Promise.all(pathList.map(async (p) => {
+            try {
+                const stat = await fs.stat(p);
+                return `${p}@${stat.mtimeMs}`;
+            } catch {
+                return `${p}@missing`;
+            }
+        }));
+        mtimes = stamped.sort();
+    } catch {
+        mtimes = pathList;
+    }
+    const h = crypto.createHash("sha256");
+    h.update(MODULE_BUNDLE_HASH_VERSION);
+    for (const stamp of mtimes) {
+        h.update("\u0000");
+        h.update(stamp);
+    }
+    return h.digest("hex").slice(0, 24);
 }
 
 /**
@@ -537,3 +676,15 @@ export function partitionRerunRange(total: number, count: number): Array<{ start
     }
     return ranges;
 }
+
+/**
+ * Test-only seam for the dependency-graph hash (audit Finding 8). Exposes the
+ * pure hashing helper so a unit test can assert that an mtime change on a
+ * transitive dependency input invalidates the hash — the regression that
+ * silently served stale worker code when only the entry mtime keyed the cache.
+ */
+export const __testInternals = {
+    computeDependencyHash,
+    workerBundleRoot,
+    WORKER_BUNDLE_STALE_MS,
+};

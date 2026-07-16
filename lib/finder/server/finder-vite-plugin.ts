@@ -84,6 +84,7 @@ import {
 } from "./finder-stream-types";
 import { resolveFinderUniverseHeapWarning } from "./finder-server-heap-guard";
 import { rememberLoopbackOriginFromRequest } from "../../local-api-transport";
+import { isAllowedLocalRequest } from "../../local-route-authorization";
 import {
     clampFinderOptions,
     FINDER_BATCH_MAX_BODY_BYTES,
@@ -373,7 +374,12 @@ export async function processFinderUniverseRun(
     // object at the terminal event.
     const diagnosticsParts: FinderDiagnostics[] = [];
     let loadedSymbolsMax = 0;
-    let failedSymbolsTotal = 0;
+    // Unique failing symbols across the whole job. A symbol that fails to load
+    // typically fails for every selected strategy; summing `failedSymbols.length`
+    // per strategy double-counts the same N symbols once per strategy. Track a
+    // set for the user-facing total and a raw attempt counter for diagnostics.
+    const failedSymbolSet = new Set<string>();
+    let failedLoadAttempts = 0;
     let cancelled = false;
     let oosRemoved = 0;
 
@@ -505,7 +511,8 @@ export async function processFinderUniverseRun(
             }
             activeSurvivorByKey.clear();
             loadedSymbolsMax = Math.max(loadedSymbolsMax, output.loadedSymbols);
-            failedSymbolsTotal += output.failedSymbols.length;
+            for (const failed of output.failedSymbols) failedSymbolSet.add(failed);
+            failedLoadAttempts += output.failedSymbols.length;
             if (output.diagnostics) diagnosticsParts.push(output.diagnostics);
 
             // Re-sort + bound the merged snapshot to topN so `runState` never
@@ -513,7 +520,7 @@ export async function processFinderUniverseRun(
             snapshot.candidates = [...boundedCompleted];
 
             snapshot.loadedSymbols = loadedSymbolsMax;
-            snapshot.failedSymbols = failedSymbolsTotal;
+            snapshot.failedSymbols = failedSymbolSet.size;
 
             debugLogger.event("finder.server.strategy.complete", {
                 runId: input.runId,
@@ -522,6 +529,7 @@ export async function processFinderUniverseRun(
                 strategyCount,
                 loadedSymbols: output.loadedSymbols,
                 failedSymbols: output.failedSymbols.length,
+                uniqueFailedSymbols: failedSymbolSet.size,
                 survivors: output.results.length,
                 mergedSurvivors: snapshot.candidates.length,
                 durationMs: Date.now() - snapshot.startedAt,
@@ -634,11 +642,11 @@ export async function processFinderUniverseRun(
 
         const summary = cancelled
             ? `Cancelled — ${terminalScalar.length} survivors`
-            : `Done — ${terminalScalar.length} survivors, ${failedSymbolsTotal} failed symbols`;
+            : `Done — ${terminalScalar.length} survivors, ${failedSymbolSet.size} failed symbols`;
         snapshot.summary = summary;
         snapshot.totals = {
             loadedSymbols: loadedSymbolsMax,
-            failedSymbols: failedSymbolsTotal,
+            failedSymbols: failedSymbolSet.size,
             survivors: terminalScalar.length,
             oosRemoved,
         };
@@ -651,7 +659,7 @@ export async function processFinderUniverseRun(
             interval: input.interval,
             totals: {
                 loadedSymbols: loadedSymbolsMax,
-                failedSymbols: failedSymbolsTotal,
+                failedSymbols: failedSymbolSet.size,
                 survivors: terminalScalar.length,
                 oosRemoved,
             },
@@ -666,7 +674,8 @@ export async function processFinderUniverseRun(
             symbols: totalSymbols,
             strategyCount,
             loadedSymbols: loadedSymbolsMax,
-            failedSymbols: failedSymbolsTotal,
+            failedSymbols: failedSymbolSet.size,
+            failedLoadAttempts,
             survivors: terminalScalar.length,
             oosRemoved,
             cancelled,
@@ -689,7 +698,7 @@ export async function processFinderUniverseRun(
         snapshot.error = message;
         snapshot.totals = {
             loadedSymbols: loadedSymbolsMax,
-            failedSymbols: failedSymbolsTotal,
+            failedSymbols: failedSymbolSet.size,
             survivors: snapshot.candidates.length,
             oosRemoved,
         };
@@ -1173,75 +1182,110 @@ function resolveServerProvider(symbol: string, providerBySymbol: Map<string, str
 // ---------------------------------------------------------------------------
 
 export function finderVitePlugin(): Plugin {
-    const register = (middlewares: any) => {
-        middlewares.use("/api/finder/universe-run", async (req: any, res: any) => {
-            if (req.method !== "POST") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            try {
-                rememberLocalApiOriginFromRequest(req);
-                await handleRunRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES) as unknown as FinderUniverseRequestBody);
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
-        });
-
-        middlewares.use("/api/finder/stop", async (req: any, res: any) => {
-            if (req.method !== "POST") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            try {
-                const body = await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES).catch(() => ({}));
-                const result = await handleStopRequest((body as { runId?: unknown })?.runId);
-                sendJson(res, 200, result);
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
-        });
-
-        middlewares.use("/api/finder/status", async (req: any, res: any) => {
-            if (req.method !== "GET") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            try {
-                const url = new URL(req.url, "http://localhost");
-                const runIdFilter = url.searchParams.has("runId")
-                    ? url.searchParams.get("runId")
-                    : null;
-                const snapshot = handleStatusRequest(runIdFilter);
-                if (snapshot && typeof snapshot === "object" && snapshot.ok === false) {
-                    sendJson(res, 404, snapshot);
-                    return;
-                }
-                sendJson(res, 200, snapshot);
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
-        });
-
-        middlewares.use("/api/finder/invalidate-cache", async (req: any, res: any) => {
-            if (req.method !== "POST") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            clearServerFinderDatasetCaches();
-            debugLogger.event("finder.server.dataset_cache_invalidated");
-            sendJson(res, 200, { ok: true });
-        });
-    };
-
     return {
         name: "finder-universe-server",
         configureServer(server) {
-            register(server.middlewares);
+            registerFinderRoutes(server.middlewares);
         },
         configurePreviewServer(server) {
-            register(server.middlewares);
+            registerFinderRoutes(server.middlewares);
         },
     };
+}
+
+/**
+ * Install all Finder server routes; exposed through {@link __testInternals}
+ * (`registerFinderRoutesForTests`) for route-level authorization tests,
+ * mirroring the Batch plugin's `registerBatchRoutes` seam.
+ *
+ * Audit Finding 1: every Finder route gates on {@link isAllowedLocalRequest},
+ * the same loopback/bearer policy the Batch, IBKR, and strategy-admin routes
+ * enforce — so a Vite dev server exposed via `--host`, tunnel, or reverse
+ * proxy cannot be driven into CPU-heavy Finder runs or have results/diagnostics
+ * disclosed to a remote caller.
+ */
+function registerFinderRoutes(middlewares: any): void {
+    middlewares.use("/api/finder/universe-run", async (req: any, res: any) => {
+        if (req.method !== "POST") {
+            sendJson(res, 405, { ok: false, error: "Method not allowed" });
+            return;
+        }
+        // Audit Finding 1: gate the CPU-heavy run on the same loopback/bearer
+        // policy the Batch routes enforce.
+        if (!isAllowedLocalRequest(req)) {
+            sendJson(res, 401, { ok: false, error: "Unauthorized: Finder routes are local-only." });
+            return;
+        }
+        try {
+            rememberLocalApiOriginFromRequest(req);
+            await handleRunRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES) as unknown as FinderUniverseRequestBody);
+        } catch (error) {
+            sendCaughtErrorJson(res, error);
+        }
+    });
+
+    middlewares.use("/api/finder/stop", async (req: any, res: any) => {
+        if (req.method !== "POST") {
+            sendJson(res, 405, { ok: false, error: "Method not allowed" });
+            return;
+        }
+        // Audit Finding 1: gate Stop too — an unauthenticated remote caller
+        // must not be able to cancel a long-running Finder job.
+        if (!isAllowedLocalRequest(req)) {
+            sendJson(res, 401, { ok: false, error: "Unauthorized: Finder routes are local-only." });
+            return;
+        }
+        try {
+            const body = await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES).catch(() => ({}));
+            const result = await handleStopRequest((body as { runId?: unknown })?.runId);
+            sendJson(res, 200, result);
+        } catch (error) {
+            sendCaughtErrorJson(res, error);
+        }
+    });
+
+    middlewares.use("/api/finder/status", async (req: any, res: any) => {
+        if (req.method !== "GET") {
+            sendJson(res, 405, { ok: false, error: "Method not allowed" });
+            return;
+        }
+        // Audit Finding 1: status exposes run inputs, progress, candidates,
+        // and diagnostics — gate it on the loopback/bearer policy.
+        if (!isAllowedLocalRequest(req)) {
+            sendJson(res, 401, { ok: false, error: "Unauthorized: Finder routes are local-only." });
+            return;
+        }
+        try {
+            const url = new URL(req.url, "http://localhost");
+            const runIdFilter = url.searchParams.has("runId")
+                ? url.searchParams.get("runId")
+                : null;
+            const snapshot = handleStatusRequest(runIdFilter);
+            if (snapshot && typeof snapshot === "object" && snapshot.ok === false) {
+                sendJson(res, 404, snapshot);
+                return;
+            }
+            sendJson(res, 200, snapshot);
+        } catch (error) {
+            sendCaughtErrorJson(res, error);
+        }
+    });
+
+    middlewares.use("/api/finder/invalidate-cache", async (req: any, res: any) => {
+        if (req.method !== "POST") {
+            sendJson(res, 405, { ok: false, error: "Method not allowed" });
+            return;
+        }
+        // Audit Finding 1: cache invalidation thrashes the server dataset
+        // cache — gate it on the loopback/bearer policy.
+        if (!isAllowedLocalRequest(req)) {
+            sendJson(res, 401, { ok: false, error: "Unauthorized: Finder routes are local-only." });
+            return;
+        }
+        clearServerFinderDatasetCaches();
+        debugLogger.event("finder.server.dataset_cache_invalidated");
+        sendJson(res, 200, { ok: true });
+    });
 }
 
 // Exported for tests only. `processFinderUniverseRun` consults module-scope
@@ -1250,6 +1294,7 @@ export const __testInternals = {
     handleStopRequest,
     handleStatusRequest,
     clearServerFinderDatasetCaches,
+    registerFinderRoutesForTests: registerFinderRoutes,
     assertUniverseOptions,
     parseStrategyKeys,
     parseRunId,

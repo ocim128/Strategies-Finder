@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import { afterEach, describe, it } from "node:test";
 import {
+    createDisconnectSafeStream,
     DEFAULT_MAX_BODY_BYTES,
     HttpStatusError,
     proxyUpstreamJson,
@@ -179,5 +180,101 @@ describe("proxyUpstreamJson", () => {
         assert.equal(errored, true);
         assert.equal(capture.status, 0);
         assert.equal(capture.body, "");
+    });
+});
+
+describe("createDisconnectSafeStream (audit Finding 4)", () => {
+    // Intent being locked: after the client disconnects (close/error on the
+    // response), further write/end calls MUST silently no-op instead of
+    // throwing into a long-running batch/finder loop. A reload mid-run must
+    // not be treated as fatal — the server-owned job keeps running and a
+    // reloaded tab reattaches via /status. The wrapper also flips `writable`
+    // when an in-flight write throws, defending against a socket that died
+    // between the close event and the next write attempt.
+
+    type EventEmitter = { on?: (event: string, listener: () => void) => void };
+
+    function makeStreamingResponse(): { res: ViteHttpResponse & EventEmitter; writes: string[]; ended: boolean; emit: (event: "close" | "error") => void } {
+        const listeners: Record<string, Array<() => void>> = {};
+        const writes: string[] = [];
+        const state: { ended: boolean } = { ended: false };
+        const res = {
+            statusCode: 0,
+            setHeader: () => {},
+            write(chunk: string) { writes.push(chunk); },
+            end() { state.ended = true; },
+            on(event: string, listener: () => void) {
+                (listeners[event] ??= []).push(listener);
+            },
+        } as unknown as ViteHttpResponse & EventEmitter;
+        return {
+            res,
+            writes,
+            get ended() { return state.ended; },
+            emit(event: "close" | "error") {
+                for (const l of listeners[event] ?? []) l();
+            },
+        };
+    }
+
+    it("passes writes through while the socket is alive", () => {
+        const { res, writes, ended } = makeStreamingResponse();
+        const stream = createDisconnectSafeStream(res);
+        stream.write({ type: "progress", percent: 50 });
+        stream.write({ type: "symbol", index: 0 });
+        assert.equal(writes.length, 2);
+        assert.equal(ended, false);
+        assert.equal(stream.isWritable(), true);
+    });
+
+    it("drops writes after 'close' and does not end twice", () => {
+        const { res, writes, ended, emit } = makeStreamingResponse();
+        const stream = createDisconnectSafeStream(res);
+        stream.write({ type: "progress", percent: 10 });
+        emit("close");
+        assert.equal(stream.isWritable(), false);
+        // After disconnect, writes are silently dropped...
+        stream.write({ type: "symbol", index: 1 });
+        stream.write({ type: "symbol", index: 2 });
+        assert.equal(writes.length, 1);
+        // ...and end is a no-op (socket already gone).
+        stream.end({ type: "done", ok: true });
+        assert.equal(ended, false);
+    });
+
+    it("drops writes after 'error'", () => {
+        const { res, writes, emit } = makeStreamingResponse();
+        const stream = createDisconnectSafeStream(res);
+        stream.write({ type: "progress", percent: 10 });
+        emit("error");
+        stream.write({ type: "symbol", index: 1 });
+        assert.equal(writes.length, 1);
+        assert.equal(stream.isWritable(), false);
+    });
+
+    it("flips writable false when an underlying write throws mid-stream", () => {
+        const listeners: Record<string, Array<() => void>> = {};
+        const state: { ended: boolean; failNext: boolean } = { ended: false, failNext: false };
+        const res = {
+            statusCode: 0,
+            setHeader: () => {},
+            write() {
+                if (state.failNext) throw new Error("socket gone");
+            },
+            end() { state.ended = true; },
+            on(event: string, listener: () => void) {
+                (listeners[event] ??= []).push(listener);
+            },
+        } as unknown as ViteHttpResponse;
+        const stream = createDisconnectSafeStream(res);
+        stream.write({ type: "progress", percent: 10 });
+        assert.equal(stream.isWritable(), true);
+        // Simulate a socket that died between the close event and the next
+        // write: the underlying write throws, the wrapper must catch + flip.
+        state.failNext = true;
+        stream.write({ type: "symbol", index: 1 });
+        assert.equal(stream.isWritable(), false);
+        // Subsequent writes no-op without throwing.
+        stream.write({ type: "symbol", index: 2 });
     });
 });
