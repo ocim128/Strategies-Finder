@@ -3221,4 +3221,1412 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "acceptance_asymmetry_streak_exhaustion",
+        name: "Acceptance Asymmetry Streak Exhaustion",
+        description: "Fades consecutive close acceptance streaks that show poor efficiency ratio displacement.",
+        defaultParams: {
+		acceptanceThreshold: 0.75,
+		streakThreshold: 3,
+	} as Record<string, number>,
+        paramLabels: {
+		acceptanceThreshold: "Acceptance Threshold",
+		streakThreshold: "Streak Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["acceptanceThreshold", "streakThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "body_dominance_streak_fade",
+        name: "Body Dominance Streak Fade",
+        description: "Fades consecutive large candle bodies in one direction when the current close location reverts.",
+        defaultParams: {
+		bodyRatioThreshold: 0.75,
+		streakThreshold: 3,
+	} as Record<string, number>,
+        paramLabels: {
+		bodyRatioThreshold: "Body Ratio Threshold",
+		streakThreshold: "Streak Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["bodyRatioThreshold", "streakThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_location_deviation_streak_reversion",
+        name: "Close Location Deviation Streak Reversion",
+        description: "Fades extreme close location values when the close location reverts back to center.",
+        defaultParams: {
+		locationBoundary: 0.88,
+		streakThreshold: 3,
+	} as Record<string, number>,
+        paramLabels: {
+		locationBoundary: "Location Boundary",
+		streakThreshold: "Streak Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["locationBoundary", "streakThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "entropy_regime_streak_exhaustion",
+        name: "Entropy Regime Streak Exhaustion",
+        description: "Fades low-entropy trend regimes when entropy rises at close z-score extremes.",
+        defaultParams: {
+		lookback: 20,
+		entropyPercentileLimit: 0.3,
+		streakThreshold: 4,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		entropyPercentileLimit: "Entropy Percentile Limit",
+		streakThreshold: "Streak Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "entropyPercentileLimit", "streakThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "initiative_pressure_streak_fade",
+        name: "Initiative Pressure Streak Fade",
+        description: "Fades consecutive bars showing extreme initiative pressure above a relative threshold.",
+        defaultParams: {
+		pressureThreshold: 0.6,
+		streakThreshold: 4,
+	} as Record<string, number>,
+        paramLabels: {
+		pressureThreshold: "Pressure Threshold",
+		streakThreshold: "Streak Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["pressureThreshold", "streakThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "relative_volume_thrust_streak_reversion",
+        name: "Relative Volume Thrust Streak Reversion",
+        description: "Fades extreme close z-score deviations when volume thrust streak breaks.",
+        defaultParams: {
+		lookback: 20,
+		volPercentileThreshold: 0.7,
+		streakThreshold: 3,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		volPercentileThreshold: "Vol Percentile Threshold",
+		streakThreshold: "Streak Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "volPercentileThreshold", "streakThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "rolling_median_deviation_streak_reversion",
+        name: "Rolling Median Deviation Streak Reversion",
+        description: "Fades extended closes entirely on one side of the rolling median when close location reverts.",
+        defaultParams: {
+		lookback: 40,
+		streakThreshold: 6,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		streakThreshold: "Streak Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "streakThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "true_range_expansion_streak_exhaustion",
+        name: "True Range Expansion Streak Exhaustion",
+        description: "Fades true range expansion exhaustion at z-score price extremes when expansion halts.",
+        defaultParams: {
+		lookback: 20,
+		streakThreshold: 3,
+		reversionZScore: 1.5,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		streakThreshold: "Streak Threshold",
+		reversionZScore: "Reversion Z-Score",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "streakThreshold", "reversionZScore"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "wick_imbalance_streak_fade",
+        name: "Wick Imbalance Streak Fade",
+        description: "Fades consecutive bars with high wick asymmetry pointing in one direction.",
+        defaultParams: {
+		imbalanceThreshold: 0.7,
+		streakThreshold: 3,
+	} as Record<string, number>,
+        paramLabels: {
+		imbalanceThreshold: "Imbalance Threshold",
+		streakThreshold: "Streak Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["imbalanceThreshold", "streakThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "zscore_deviation_streak_reversion",
+        name: "Z-Score Deviation Streak Reversion",
+        description: "Fades consecutive extreme rolling z-score close deviations on the first positive/negative return bar.",
+        defaultParams: {
+		lookback: 20,
+		zScoreBoundary: 1.8,
+		streakThreshold: 4,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		zScoreBoundary: "Z-Score Boundary",
+		streakThreshold: "Streak Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "zScoreBoundary", "streakThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "medallion_fractal_dimension_reversion",
+        name: "Medallion Fractal Dimension Reversion",
+        description: "Fades price extremes when efficiency ratio drops, indicating high fractal path complexity.",
+        defaultParams: {
+		lookback: 30,
+		efficiencyLimit: 0.35,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		efficiencyLimit: "Efficiency Limit",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "efficiencyLimit"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "medallion_hidden_markov_state_reversion",
+        name: "Medallion Hidden Markov State Reversion",
+        description: "Restricts mean reversion entries to regimes showing negative autocorrelation (mean-reverting states).",
+        defaultParams: {
+		lookback: 30,
+		regimeThreshold: -0.15,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		regimeThreshold: "Regime Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "regimeThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "medallion_information_entropy_arbitrage",
+        name: "Medallion Information Entropy Arbitrage",
+        description: "Fades collapsing rolling entropy trends at price z-score extremes.",
+        defaultParams: {
+		lookback: 40,
+		entropyPercentileLimit: 0.25,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		entropyPercentileLimit: "Entropy Percentile Limit",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "entropyPercentileLimit"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "medallion_mean_reverting_kernel_density",
+        name: "Medallion Mean Reverting Kernel Density",
+        description: "Approximates rolling price density via Gaussian kernel to fade price deviations at low-probability density tails.",
+        defaultParams: {
+		lookback: 45,
+		densityPercentile: 0.1,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		densityPercentile: "Density Percentile",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "densityPercentile"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "medallion_multivariate_anomaly_reversion",
+        name: "Medallion Multivariate Anomaly Reversion",
+        description: "Combines price, volume, and volatility z-scores into a joint index to fade coordinated anomalies.",
+        defaultParams: {
+		lookback: 35,
+		anomalyThreshold: 2.3,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		anomalyThreshold: "Anomaly Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "anomalyThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "simons_autocorrelation_regime_arbitrage",
+        name: "Simons Autocorrelation Regime Arbitrage",
+        description: "Restricts reversion entries to periods where autocorrelation of returns is negative and declining.",
+        defaultParams: {
+		lookback: 24,
+		maxCorrelation: -0.2,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		maxCorrelation: "Max Correlation",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "maxCorrelation"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "simons_lead_lag_cross_reversion",
+        name: "Simons Lead Lag Cross Reversion",
+        description: "Fades price deviations when base and quote close returns decoupling correlation falls below correlationLimit.",
+        defaultParams: {
+		lookback: 30,
+		correlationLimit: 0.15,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		correlationLimit: "Correlation Limit",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "correlationLimit"],
+	},
+        crossSymbolConfig: true,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "simons_non_parametric_distribution_fade",
+        name: "Simons Non Parametric Distribution Fade",
+        description: "Fades extreme tails of the empirical cumulative distribution function (eCDF) of returns.",
+        defaultParams: {
+		lookback: 50,
+		tailThreshold: 0.98,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		tailThreshold: "Tail Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "tailThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "simons_true_range_distribution_arbitrage",
+        name: "Simons True Range Distribution Arbitrage",
+        description: "Fades true range expansions that fail to displace close price, showing rejection friction.",
+        defaultParams: {
+		lookback: 35,
+		minRangePercentile: 0.85,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minRangePercentile: "Min Range Percentile",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minRangePercentile"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "simons_volume_weighted_statistical_arbitrage",
+        name: "Simons Volume Weighted Statistical Arbitrage",
+        description: "Fades ratio price deviations from rolling VWAP on declining proxy volume.",
+        defaultParams: {
+		lookback: 30,
+		volCutoff: 0.35,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		volCutoff: "Volume Cutoff",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "volCutoff"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "markov_autocorrelation_regime_reversion",
+        name: "Markov Autocorrelation Regime Reversion",
+        description: "Enters mean reversion trades when transition probability of remaining in the Oscillating return autocorrelation state is high.",
+        defaultParams: {
+		lookback: 35,
+		oscillatingStateStability: 0.7,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		oscillatingStateStability: "Oscillating Stability",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "oscillatingStateStability"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "markov_close_location_state_reversion",
+        name: "Markov Close Location State Reversion",
+        description: "Fades close location state extremes when empirical Markov transition probability to Mid state is high.",
+        defaultParams: {
+		lookback: 40,
+		minReversionProbability: 0.65,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minReversionProbability: "Min Reversion Probability",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minReversionProbability"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "markov_dislocation_friction_reversion",
+        name: "Markov Dislocation Friction Reversion",
+        description: "Fades price extremes when transition probability indicates moving from Efficient to Frictional displacement state.",
+        defaultParams: {
+		lookback: 35,
+		transitionThreshold: 0.6,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		transitionThreshold: "Transition Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "transitionThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "markov_efficiency_decay_reversion",
+        name: "Markov Efficiency Decay Reversion",
+        description: "Enters mean reversion trades when the transition probability of moving from Efficient to Inefficient state is high.",
+        defaultParams: {
+		lookback: 30,
+		transitionThreshold: 0.65,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		transitionThreshold: "Transition Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "transitionThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "markov_entropy_state_reversion",
+        name: "Markov Entropy State Reversion",
+        description: "Enters mean reversion trades on Markov Low-Entropy -> High-Entropy transition at price extremes.",
+        defaultParams: {
+		lookback: 40,
+		transitionThreshold: 0.55,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		transitionThreshold: "Transition Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "transitionThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "markov_proxy_volume_regime_reversion",
+        name: "Markov Proxy Volume Regime Reversion",
+        description: "Systematically fades low-liquidity moves when the low-liquidity volume regime is statistically stable.",
+        defaultParams: {
+		lookback: 30,
+		inactiveStateStability: 0.65,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		inactiveStateStability: "Inactive Stability",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "inactiveStateStability"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "markov_rebound_probability_reversion",
+        name: "Markov Rebound Probability Reversion",
+        description: "Fades price extremes when the transition probability of a change in return direction (Down->Up or Up->Down) exceeds minReboundProbability.",
+        defaultParams: {
+		lookback: 45,
+		minReboundProbability: 0.7,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minReboundProbability: "Min Rebound Prob",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minReboundProbability"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "markov_streak_length_exhaustion",
+        name: "Markov Streak Length Exhaustion",
+        description: "Fades directional close streaks when the empirical Markov transition probability of extending the streak falls below a critical threshold.",
+        defaultParams: {
+		lookback: 60,
+		maxExtensionProbability: 0.2,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		maxExtensionProbability: "Max Extension Prob",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "maxExtensionProbability"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "markov_value_area_rejection_reversion",
+        name: "Markov Value Area Rejection Reversion",
+        description: "Fades breakouts outside the value consensus zone when Markov transition probability to return Inside is extremely high.",
+        defaultParams: {
+		lookback: 50,
+		minRejectionProbability: 0.7,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minRejectionProbability: "Min Rejection Prob",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minRejectionProbability"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "markov_volatility_regime_reversion",
+        name: "Markov Volatility Regime Reversion",
+        description: "Executes mean reversion trades when Markov volatility transition indicates high probability of moving from Expanded back to Compressed.",
+        defaultParams: {
+		lookback: 50,
+		transitionThreshold: 0.6,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		transitionThreshold: "Transition Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "transitionThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "quarter_kelly_autocorrelation_reversion",
+        name: "Quarter Kelly Autocorrelation Reversion",
+        description: "Fades price extremes when negative rolling autocorrelation WinRate (0.5 - autocorr/2) yields positive Quarter-Kelly allocation.",
+        defaultParams: {
+		lookback: 24,
+		minQuarterKelly: 0.05,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minQuarterKelly: "Min Quarter Kelly",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minQuarterKelly"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "quarter_kelly_close_location_percentile_reversion",
+        name: "Quarter Kelly Close Location Percentile Reversion",
+        description: "Fades extreme settlement locations when empirical close location percentile rank WinRate maps to a positive Quarter-Kelly allocation.",
+        defaultParams: {
+		lookback: 35,
+		minQuarterKelly: 0.07,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minQuarterKelly: "Min Quarter Kelly",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minQuarterKelly"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "quarter_kelly_dislocation_friction_reversion",
+        name: "Quarter Kelly Dislocation Friction Reversion",
+        description: "Fades price extremes when dislocation friction WinRate (1 - absReturn / trueRange) maps to positive Quarter-Kelly allocation during range expansion.",
+        defaultParams: {
+		lookback: 35,
+		minQuarterKelly: 0.06,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minQuarterKelly: "Min Quarter Kelly",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minQuarterKelly"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "quarter_kelly_efficiency_gated_fade",
+        name: "Quarter Kelly Efficiency Gated Fade",
+        description: "Fades price z-score deviations when Quarter-Kelly WinRate (1 - Efficiency) exceeds minQuarterKelly.",
+        defaultParams: {
+		lookback: 30,
+		minQuarterKelly: 0.08,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minQuarterKelly: "Min Quarter Kelly",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minQuarterKelly"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "quarter_kelly_entropy_regime_fade",
+        name: "Quarter Kelly Entropy Regime Fade",
+        description: "Fades price deviations when high informational rolling entropy percentile WinRate yields positive Quarter-Kelly allocation.",
+        defaultParams: {
+		lookback: 40,
+		minQuarterKelly: 0.06,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minQuarterKelly: "Min Quarter Kelly",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minQuarterKelly"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "quarter_kelly_streak_exhaustion_fade",
+        name: "Quarter Kelly Streak Exhaustion Fade",
+        description: "Fades price deviations when win rates scaled to return streak lengths yield a positive Quarter-Kelly allocation.",
+        defaultParams: {
+		lookback: 50,
+		minQuarterKelly: 0.05,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minQuarterKelly: "Min Quarter Kelly",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minQuarterKelly"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "quarter_kelly_value_area_rejection",
+        name: "Quarter Kelly Value Area Rejection",
+        description: "Fades value area deviations when low relative volume WinRate (1 - volumePercentile) yields positive Quarter-Kelly allocation as price closes back inside VAL/VAH.",
+        defaultParams: {
+		lookback: 50,
+		minQuarterKelly: 0.07,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minQuarterKelly: "Min Quarter Kelly",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minQuarterKelly"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "quarter_kelly_volatility_adjusted_reversion",
+        name: "Quarter Kelly Volatility Adjusted Reversion",
+        description: "Executes mean-reversion trades when low-volatility compression WinRate (1 - volatilityPercentile) maps to a positive Quarter-Kelly allocation.",
+        defaultParams: {
+		lookback: 30,
+		minQuarterKelly: 0.08,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minQuarterKelly: "Min Quarter Kelly",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minQuarterKelly"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "quarter_kelly_volume_divergence_reversion",
+        name: "Quarter Kelly Volume Divergence Reversion",
+        description: "Systematically fades low-liquidity deviations when the inverse volume percentile rank WinRate yields positive Quarter-Kelly allocation.",
+        defaultParams: {
+		lookback: 30,
+		minQuarterKelly: 0.08,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minQuarterKelly: "Min Quarter Kelly",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minQuarterKelly"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "quarter_kelly_zscore_stretch_reversion",
+        name: "Quarter Kelly Z-Score Stretch Reversion",
+        description: "CDF maps rolling close Z-scores to win rates and triggers reversion entries when a conservative Quarter-Kelly allocation is positive and significant.",
+        defaultParams: {
+		lookback: 40,
+		minQuarterKelly: 0.06,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minQuarterKelly: "Min Quarter Kelly",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minQuarterKelly"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "kelly_autocorrelation_probability_reversion",
+        name: "Kelly Autocorrelation Probability Reversion",
+        description: "Fades price extremes when negative returns autocorrelation win rate (0.5 - autocorrelation / 2) maps to a Kelly fraction exceeding minKellyFraction.",
+        defaultParams: {
+		lookback: 24,
+		minKellyFraction: 0.15,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minKellyFraction: "Min Kelly Fraction",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minKellyFraction"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "kelly_close_location_distribution_reversion",
+        name: "Kelly Close Location Distribution Reversion",
+        description: "Fades close location distribution extremes when win probability from percentile rank close location yields a positive Kelly allocation above minKellyThreshold.",
+        defaultParams: {
+		lookback: 35,
+		minKellyThreshold: 0.25,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minKellyThreshold: "Min Kelly Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minKellyThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "kelly_efficiency_ratio_gated_reversion",
+        name: "Kelly Efficiency Ratio Gated Reversion",
+        description: "Fades price deviations when win rate proxy from low path efficiency (1 - Efficiency) maps to positive Kelly allocation above kellyMinLeverage.",
+        defaultParams: {
+		lookback: 30,
+		kellyMinLeverage: 0.3,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		kellyMinLeverage: "Min Kelly Leverage",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "kellyMinLeverage"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "kelly_entropy_gated_reversion",
+        name: "Kelly Entropy Gated Reversion",
+        description: "Fades price deviations when high informational rolling entropy percentile WinRate maps to positive Kelly allocation above minKellyFraction.",
+        defaultParams: {
+		lookback: 40,
+		minKellyFraction: 0.2,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minKellyFraction: "Min Kelly Fraction",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minKellyFraction"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "kelly_proxy_volume_gated_reversion",
+        name: "Kelly Proxy Volume Gated Reversion",
+        description: "Fades price deviations when low relative volume WinRate (1 - volumePercentile) maps to positive Kelly allocation above minKellyFraction.",
+        defaultParams: {
+		lookback: 30,
+		minKellyFraction: 0.25,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minKellyFraction: "Min Kelly Fraction",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minKellyFraction"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "kelly_streak_exhaustion_reversion",
+        name: "Kelly Streak Exhaustion Reversion",
+        description: "Fades directional close return streaks when win probability scaled to streak length yields a positive Kelly allocation above minKellyFraction.",
+        defaultParams: {
+		lookback: 50,
+		minKellyFraction: 0.2,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minKellyFraction: "Min Kelly Fraction",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minKellyFraction"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "kelly_true_range_dislocation_reversion",
+        name: "Kelly True Range Dislocation Reversion",
+        description: "Fades price extremes when true range expands (percentile > 0.8) without close displacement, mapping win probability (1 - absReturn / trueRange) to positive Kelly allocation above minKellyFraction.",
+        defaultParams: {
+		lookback: 35,
+		minKellyFraction: 0.25,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minKellyFraction: "Min Kelly Fraction",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minKellyFraction"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "kelly_volatility_adjusted_probability_reversion",
+        name: "Kelly Volatility Adjusted Probability Reversion",
+        description: "Fades price deviations when win rate from low-volatility compression WinRate (1 - volatilityPercentile) maps to positive Kelly allocation above minKellyFraction.",
+        defaultParams: {
+		lookback: 30,
+		minKellyFraction: 0.3,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minKellyFraction: "Min Kelly Fraction",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minKellyFraction"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "kelly_win_rate_percentile_reversion",
+        name: "Kelly Win Rate Percentile Reversion",
+        description: "Directly links entry permission to rolling empirical Kelly calculations of past return percentile crossings returning to the median.",
+        defaultParams: {
+		lookback: 50,
+		minKellyFraction: 0.2,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minKellyFraction: "Min Kelly Fraction",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minKellyFraction"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "kelly_zscore_fractional_reversion",
+        name: "Kelly Z-Score Fractional Reversion",
+        description: "CDF maps rolling close Z-scores to win rates and triggers reversion entries when the calculated Kelly fraction exceeds kellyMinFraction.",
+        defaultParams: {
+		lookback: 40,
+		kellyMinFraction: 0.25,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		kellyMinFraction: "Min Kelly Fraction",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "kellyMinFraction"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "close_location_autocorrelation_reversion",
+        name: "Close Location Autocorrelation Reversion",
+        description: "Fades close location bounds when negative rolling autocorrelation of the close-location series is below maxAutocorrelation at price extremes.",
+        defaultParams: {
+		lookback: 20,
+		maxAutocorrelation: -0.2,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		maxAutocorrelation: "Max Autocorrelation",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "maxAutocorrelation"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "efficiency_decay_reversion_trigger",
+        name: "Efficiency Decay Reversion Trigger",
+        description: "Fades price extremes when efficiency ratio decays significantly (efficiencyDrop over 5 bars) from its rolling peak.",
+        defaultParams: {
+		lookback: 24,
+		efficiencyDrop: 0.25,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		efficiencyDrop: "Efficiency Drop",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "efficiencyDrop"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "failed_breakout_rejection_reversion",
+        name: "Failed Breakout Rejection Reversion",
+        description: "Fades failed breakouts outside the rolling min/max channel when the close location returns inside the channel.",
+        defaultParams: {
+		lookback: 30,
+		rejectionLimit: 0.8,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		rejectionLimit: "Rejection Limit",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "rejectionLimit"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "proxy_volume_divergence_reversion",
+        name: "Proxy Volume Divergence Reversion",
+        description: "Fades rolling extremes when volume percentile rank is extremely low, indicating a low-liquidity anomaly.",
+        defaultParams: {
+		lookback: 40,
+		maxVolumePercentile: 0.25,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		maxVolumePercentile: "Max Volume Percentile",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "maxVolumePercentile"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "rolling_entropy_reversal_gate",
+        name: "Rolling Entropy Reversal Gate",
+        description: "Gates mean reversion entries at price Z-score extremes when rolling entropy percentile crosses below its historical median (entropyPercentileCutoff).",
+        defaultParams: {
+		lookback: 40,
+		entropyPercentileCutoff: 0.6,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		entropyPercentileCutoff: "Entropy Percentile Cutoff",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "entropyPercentileCutoff"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "rolling_entropy_squeeze_exhaustion_reversion",
+        name: "Rolling Entropy Squeeze Exhaustion Reversion",
+        description: "Fades price extremes when rolling entropy percentile increases after being squeezed below maxEntropyPercentile for the last 3 bars.",
+        defaultParams: {
+		lookback: 35,
+		maxEntropyPercentile: 0.35,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		maxEntropyPercentile: "Max Entropy Percentile",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "maxEntropyPercentile"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "rolling_median_crossover_reversion",
+        name: "Rolling Median Crossover Reversion",
+        description: "Fades price deviations when Z-score exceeds zScoreLimit and close location crosses 0.5 midpoint.",
+        defaultParams: {
+		lookback: 30,
+		zScoreLimit: 2.0,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		zScoreLimit: "Z-Score Limit",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "zScoreLimit"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "rolling_skewness_exhaustion_fade_v2",
+        name: "Rolling Skewness Exhaustion Fade",
+        description: "Fades price extremes when rolling return skewness crosses back from skewness limits (-skewLimit / skewLimit) towards zero.",
+        defaultParams: {
+		lookback: 45,
+		skewLimit: 1.5,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		skewLimit: "Skew Limit",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "skewLimit"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "rolling_zscore_volatility_adjusted_reversion",
+        name: "Rolling Z-Score Volatility Adjusted Reversion",
+        description: "Fades price deviations at Z-score extremes when rolling returns volatility percentile rank is below 0.30 (declining volatility).",
+        defaultParams: {
+		lookback: 35,
+		zScoreThreshold: 2.2,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		zScoreThreshold: "Z-Score Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "zScoreThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "true_range_expansion_exhaustion_fade",
+        name: "True Range Expansion Exhaustion Fade",
+        description: "Fades true range expansions (above minRangePercentile) that fail to displace close price (absolute close return percentile < 0.3) at close location boundaries.",
+        defaultParams: {
+		lookback: 30,
+		minRangePercentile: 0.85,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minRangePercentile: "Min Range Percentile",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minRangePercentile"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "autocorrelation_reversal_snap",
+        name: "Autocorrelation Reversal Snap",
+        description: "Fades price extremes (Z-score 1.8) when rolling autocorrelation of close returns is highly negative (less than maxAutocorrelation).",
+        defaultParams: {
+		lookback: 24,
+		maxAutocorrelation: -0.15,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		maxAutocorrelation: "Max Autocorrelation",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "maxAutocorrelation"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "decoupling_wick_rejection_fade",
+        name: "Decoupling Wick Rejection Fade",
+        description: "Fades high-percentile true-range expansions (above rangePercentile) that exhibit sharp intrabar wick rejection at bar highs or lows.",
+        defaultParams: {
+		lookback: 30,
+		rangePercentile: 0.88,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		rangePercentile: "Range Percentile",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "rangePercentile"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "efficiency_exhaustion_center_snap",
+        name: "Efficiency Exhaustion Center Snap",
+        description: "Fades price extremes (Z-score 2.0) when efficiency ratio crosses below the efficiencyTrigger threshold.",
+        defaultParams: {
+		lookback: 25,
+		efficiencyTrigger: 0.4,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		efficiencyTrigger: "Efficiency Trigger",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "efficiencyTrigger"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "proxy_volume_exhaustion_cap",
+        name: "Proxy Volume Exhaustion Cap",
+        description: "Fades price extremes (Z-score 2.0) when proxy volume percentile falls below 0.50 immediately after a top-tail volume surge (above volSurgeThreshold).",
+        defaultParams: {
+		lookback: 35,
+		volSurgeThreshold: 0.92,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		volSurgeThreshold: "Volume Surge Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "volSurgeThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "return_distribution_stretch_fade",
+        name: "Return Distribution Stretch Fade",
+        description: "Fades single-bar close returns that exceed extreme historical percentile bands (stretchPercentile) of positive or negative returns.",
+        defaultParams: {
+		lookback: 50,
+		stretchPercentile: 0.96,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		stretchPercentile: "Stretch Percentile",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "stretchPercentile"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "rolling_correlation_break_reversion",
+        name: "Rolling Correlation Break Reversion",
+        description: "Fades ratio price extremes (Z-score 2.0) when rolling correlation between the underlying base and quote close prices drops below minCorrelation.",
+        defaultParams: {
+		lookback: 30,
+		minCorrelation: 0.2,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		minCorrelation: "Min Correlation",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "minCorrelation"],
+	},
+        crossSymbolConfig: true,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "statistical_stretch_entropy_exhaustion",
+        name: "Statistical Stretch Entropy Exhaustion",
+        description: "Fades price deviations at Z-score extremes when rolling returns entropy percentile rank is below 0.25 (orderly exhaustion).",
+        defaultParams: {
+		lookback: 40,
+		zScoreThreshold: 2.1,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		zScoreThreshold: "Z-Score Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "zScoreThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "streak_exhaustion_reversion",
+        name: "Streak Exhaustion Reversion",
+        description: "Fades prolonged directional close streaks (equal to or greater than streakThreshold) when the current bar closes in the opposite direction.",
+        defaultParams: {
+		lookback: 100,
+		streakThreshold: 6,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		streakThreshold: "Streak Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "streakThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "value_area_deviation_reversion",
+        name: "Value Area Deviation Reversion",
+        description: "Fades price deviations outside the rolling volume profile value area (VAH/VAL) when volume is low and close crosses back inside the value area.",
+        defaultParams: {
+		lookback: 50,
+		volumeThreshold: 0.45,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		volumeThreshold: "Volume Threshold",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "volumeThreshold"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "volatility_compression_reversion_launch",
+        name: "Volatility Compression Reversion Launch",
+        description: "Fades compressed low-volatility drift to extreme rolling percentiles when a sudden range expansion is rejected.",
+        defaultParams: {
+		lookback: 30,
+		volPercentileLimit: 0.3,
+	} as Record<string, number>,
+        paramLabels: {
+		lookback: "Lookback Window",
+		volPercentileLimit: "Vol Percentile Limit",
+	} as Record<string, string>,
+        metadata: {
+		role: "entry",
+		direction: "both",
+		walkForwardParams: ["lookback", "volPercentileLimit"],
+	},
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];

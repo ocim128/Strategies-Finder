@@ -162,6 +162,76 @@ import { vwap_gradient_autocorrelation_reversion } from "./lib/vwap_gradient_aut
 import { vwap_gradient_efficiency_trend } from "./lib/vwap_gradient_efficiency_trend";
 import { vwap_regime_gradient_streak } from "./lib/vwap_regime_gradient_streak";
 import { vwap_skew_gradient_exhaustion } from "./lib/vwap_skew_gradient_exhaustion";
+import { acceptance_asymmetry_streak_exhaustion } from "./lib/acceptance_asymmetry_streak_exhaustion";
+import { body_dominance_streak_fade } from "./lib/body_dominance_streak_fade";
+import { close_location_deviation_streak_reversion } from "./lib/close_location_deviation_streak_reversion";
+import { entropy_regime_streak_exhaustion } from "./lib/entropy_regime_streak_exhaustion";
+import { initiative_pressure_streak_fade } from "./lib/initiative_pressure_streak_fade";
+import { relative_volume_thrust_streak_reversion } from "./lib/relative_volume_thrust_streak_reversion";
+import { rolling_median_deviation_streak_reversion } from "./lib/rolling_median_deviation_streak_reversion";
+import { true_range_expansion_streak_exhaustion } from "./lib/true_range_expansion_streak_exhaustion";
+import { wick_imbalance_streak_fade } from "./lib/wick_imbalance_streak_fade";
+import { zscore_deviation_streak_reversion } from "./lib/zscore_deviation_streak_reversion";
+import { medallion_fractal_dimension_reversion } from "./lib/medallion_fractal_dimension_reversion";
+import { medallion_hidden_markov_state_reversion } from "./lib/medallion_hidden_markov_state_reversion";
+import { medallion_information_entropy_arbitrage } from "./lib/medallion_information_entropy_arbitrage";
+import { medallion_mean_reverting_kernel_density } from "./lib/medallion_mean_reverting_kernel_density";
+import { medallion_multivariate_anomaly_reversion } from "./lib/medallion_multivariate_anomaly_reversion";
+import { simons_autocorrelation_regime_arbitrage } from "./lib/simons_autocorrelation_regime_arbitrage";
+import { simons_lead_lag_cross_reversion } from "./lib/simons_lead_lag_cross_reversion";
+import { simons_non_parametric_distribution_fade } from "./lib/simons_non_parametric_distribution_fade";
+import { simons_true_range_distribution_arbitrage } from "./lib/simons_true_range_distribution_arbitrage";
+import { simons_volume_weighted_statistical_arbitrage } from "./lib/simons_volume_weighted_statistical_arbitrage";
+import { markov_autocorrelation_regime_reversion } from "./lib/markov_autocorrelation_regime_reversion";
+import { markov_close_location_state_reversion } from "./lib/markov_close_location_state_reversion";
+import { markov_dislocation_friction_reversion } from "./lib/markov_dislocation_friction_reversion";
+import { markov_efficiency_decay_reversion } from "./lib/markov_efficiency_decay_reversion";
+import { markov_entropy_state_reversion } from "./lib/markov_entropy_state_reversion";
+import { markov_proxy_volume_regime_reversion } from "./lib/markov_proxy_volume_regime_reversion";
+import { markov_rebound_probability_reversion } from "./lib/markov_rebound_probability_reversion";
+import { markov_streak_length_exhaustion } from "./lib/markov_streak_length_exhaustion";
+import { markov_value_area_rejection_reversion } from "./lib/markov_value_area_rejection_reversion";
+import { markov_volatility_regime_reversion } from "./lib/markov_volatility_regime_reversion";
+import { quarter_kelly_autocorrelation_reversion } from "./lib/quarter_kelly_autocorrelation_reversion";
+import { quarter_kelly_close_location_percentile_reversion } from "./lib/quarter_kelly_close_location_percentile_reversion";
+import { quarter_kelly_dislocation_friction_reversion } from "./lib/quarter_kelly_dislocation_friction_reversion";
+import { quarter_kelly_efficiency_gated_fade } from "./lib/quarter_kelly_efficiency_gated_fade";
+import { quarter_kelly_entropy_regime_fade } from "./lib/quarter_kelly_entropy_regime_fade";
+import { quarter_kelly_streak_exhaustion_fade } from "./lib/quarter_kelly_streak_exhaustion_fade";
+import { quarter_kelly_value_area_rejection } from "./lib/quarter_kelly_value_area_rejection";
+import { quarter_kelly_volatility_adjusted_reversion } from "./lib/quarter_kelly_volatility_adjusted_reversion";
+import { quarter_kelly_volume_divergence_reversion } from "./lib/quarter_kelly_volume_divergence_reversion";
+import { quarter_kelly_zscore_stretch_reversion } from "./lib/quarter_kelly_zscore_stretch_reversion";
+import { kelly_autocorrelation_probability_reversion } from "./lib/kelly_autocorrelation_probability_reversion";
+import { kelly_close_location_distribution_reversion } from "./lib/kelly_close_location_distribution_reversion";
+import { kelly_efficiency_ratio_gated_reversion } from "./lib/kelly_efficiency_ratio_gated_reversion";
+import { kelly_entropy_gated_reversion } from "./lib/kelly_entropy_gated_reversion";
+import { kelly_proxy_volume_gated_reversion } from "./lib/kelly_proxy_volume_gated_reversion";
+import { kelly_streak_exhaustion_reversion } from "./lib/kelly_streak_exhaustion_reversion";
+import { kelly_true_range_dislocation_reversion } from "./lib/kelly_true_range_dislocation_reversion";
+import { kelly_volatility_adjusted_probability_reversion } from "./lib/kelly_volatility_adjusted_probability_reversion";
+import { kelly_win_rate_percentile_reversion } from "./lib/kelly_win_rate_percentile_reversion";
+import { kelly_zscore_fractional_reversion } from "./lib/kelly_zscore_fractional_reversion";
+import { close_location_autocorrelation_reversion } from "./lib/close_location_autocorrelation_reversion";
+import { efficiency_decay_reversion_trigger } from "./lib/efficiency_decay_reversion_trigger";
+import { failed_breakout_rejection_reversion } from "./lib/failed_breakout_rejection_reversion";
+import { proxy_volume_divergence_reversion } from "./lib/proxy_volume_divergence_reversion";
+import { rolling_entropy_reversal_gate } from "./lib/rolling_entropy_reversal_gate";
+import { rolling_entropy_squeeze_exhaustion_reversion } from "./lib/rolling_entropy_squeeze_exhaustion_reversion";
+import { rolling_median_crossover_reversion } from "./lib/rolling_median_crossover_reversion";
+import { rolling_skewness_exhaustion_fade_v2 } from "./lib/rolling_skewness_exhaustion_fade_v2";
+import { rolling_zscore_volatility_adjusted_reversion } from "./lib/rolling_zscore_volatility_adjusted_reversion";
+import { true_range_expansion_exhaustion_fade } from "./lib/true_range_expansion_exhaustion_fade";
+import { autocorrelation_reversal_snap } from "./lib/autocorrelation_reversal_snap";
+import { decoupling_wick_rejection_fade } from "./lib/decoupling_wick_rejection_fade";
+import { efficiency_exhaustion_center_snap } from "./lib/efficiency_exhaustion_center_snap";
+import { proxy_volume_exhaustion_cap } from "./lib/proxy_volume_exhaustion_cap";
+import { return_distribution_stretch_fade } from "./lib/return_distribution_stretch_fade";
+import { rolling_correlation_break_reversion } from "./lib/rolling_correlation_break_reversion";
+import { statistical_stretch_entropy_exhaustion } from "./lib/statistical_stretch_entropy_exhaustion";
+import { streak_exhaustion_reversion } from "./lib/streak_exhaustion_reversion";
+import { value_area_deviation_reversion } from "./lib/value_area_deviation_reversion";
+import { volatility_compression_reversion_launch } from "./lib/volatility_compression_reversion_launch";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -329,6 +399,76 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "vwap_gradient_efficiency_trend", strategy: vwap_gradient_efficiency_trend },
     { key: "vwap_regime_gradient_streak", strategy: vwap_regime_gradient_streak },
     { key: "vwap_skew_gradient_exhaustion", strategy: vwap_skew_gradient_exhaustion },
+    { key: "acceptance_asymmetry_streak_exhaustion", strategy: acceptance_asymmetry_streak_exhaustion },
+    { key: "body_dominance_streak_fade", strategy: body_dominance_streak_fade },
+    { key: "close_location_deviation_streak_reversion", strategy: close_location_deviation_streak_reversion },
+    { key: "entropy_regime_streak_exhaustion", strategy: entropy_regime_streak_exhaustion },
+    { key: "initiative_pressure_streak_fade", strategy: initiative_pressure_streak_fade },
+    { key: "relative_volume_thrust_streak_reversion", strategy: relative_volume_thrust_streak_reversion },
+    { key: "rolling_median_deviation_streak_reversion", strategy: rolling_median_deviation_streak_reversion },
+    { key: "true_range_expansion_streak_exhaustion", strategy: true_range_expansion_streak_exhaustion },
+    { key: "wick_imbalance_streak_fade", strategy: wick_imbalance_streak_fade },
+    { key: "zscore_deviation_streak_reversion", strategy: zscore_deviation_streak_reversion },
+    { key: "medallion_fractal_dimension_reversion", strategy: medallion_fractal_dimension_reversion },
+    { key: "medallion_hidden_markov_state_reversion", strategy: medallion_hidden_markov_state_reversion },
+    { key: "medallion_information_entropy_arbitrage", strategy: medallion_information_entropy_arbitrage },
+    { key: "medallion_mean_reverting_kernel_density", strategy: medallion_mean_reverting_kernel_density },
+    { key: "medallion_multivariate_anomaly_reversion", strategy: medallion_multivariate_anomaly_reversion },
+    { key: "simons_autocorrelation_regime_arbitrage", strategy: simons_autocorrelation_regime_arbitrage },
+    { key: "simons_lead_lag_cross_reversion", strategy: simons_lead_lag_cross_reversion },
+    { key: "simons_non_parametric_distribution_fade", strategy: simons_non_parametric_distribution_fade },
+    { key: "simons_true_range_distribution_arbitrage", strategy: simons_true_range_distribution_arbitrage },
+    { key: "simons_volume_weighted_statistical_arbitrage", strategy: simons_volume_weighted_statistical_arbitrage },
+    { key: "markov_autocorrelation_regime_reversion", strategy: markov_autocorrelation_regime_reversion },
+    { key: "markov_close_location_state_reversion", strategy: markov_close_location_state_reversion },
+    { key: "markov_dislocation_friction_reversion", strategy: markov_dislocation_friction_reversion },
+    { key: "markov_efficiency_decay_reversion", strategy: markov_efficiency_decay_reversion },
+    { key: "markov_entropy_state_reversion", strategy: markov_entropy_state_reversion },
+    { key: "markov_proxy_volume_regime_reversion", strategy: markov_proxy_volume_regime_reversion },
+    { key: "markov_rebound_probability_reversion", strategy: markov_rebound_probability_reversion },
+    { key: "markov_streak_length_exhaustion", strategy: markov_streak_length_exhaustion },
+    { key: "markov_value_area_rejection_reversion", strategy: markov_value_area_rejection_reversion },
+    { key: "markov_volatility_regime_reversion", strategy: markov_volatility_regime_reversion },
+    { key: "quarter_kelly_autocorrelation_reversion", strategy: quarter_kelly_autocorrelation_reversion },
+    { key: "quarter_kelly_close_location_percentile_reversion", strategy: quarter_kelly_close_location_percentile_reversion },
+    { key: "quarter_kelly_dislocation_friction_reversion", strategy: quarter_kelly_dislocation_friction_reversion },
+    { key: "quarter_kelly_efficiency_gated_fade", strategy: quarter_kelly_efficiency_gated_fade },
+    { key: "quarter_kelly_entropy_regime_fade", strategy: quarter_kelly_entropy_regime_fade },
+    { key: "quarter_kelly_streak_exhaustion_fade", strategy: quarter_kelly_streak_exhaustion_fade },
+    { key: "quarter_kelly_value_area_rejection", strategy: quarter_kelly_value_area_rejection },
+    { key: "quarter_kelly_volatility_adjusted_reversion", strategy: quarter_kelly_volatility_adjusted_reversion },
+    { key: "quarter_kelly_volume_divergence_reversion", strategy: quarter_kelly_volume_divergence_reversion },
+    { key: "quarter_kelly_zscore_stretch_reversion", strategy: quarter_kelly_zscore_stretch_reversion },
+    { key: "kelly_autocorrelation_probability_reversion", strategy: kelly_autocorrelation_probability_reversion },
+    { key: "kelly_close_location_distribution_reversion", strategy: kelly_close_location_distribution_reversion },
+    { key: "kelly_efficiency_ratio_gated_reversion", strategy: kelly_efficiency_ratio_gated_reversion },
+    { key: "kelly_entropy_gated_reversion", strategy: kelly_entropy_gated_reversion },
+    { key: "kelly_proxy_volume_gated_reversion", strategy: kelly_proxy_volume_gated_reversion },
+    { key: "kelly_streak_exhaustion_reversion", strategy: kelly_streak_exhaustion_reversion },
+    { key: "kelly_true_range_dislocation_reversion", strategy: kelly_true_range_dislocation_reversion },
+    { key: "kelly_volatility_adjusted_probability_reversion", strategy: kelly_volatility_adjusted_probability_reversion },
+    { key: "kelly_win_rate_percentile_reversion", strategy: kelly_win_rate_percentile_reversion },
+    { key: "kelly_zscore_fractional_reversion", strategy: kelly_zscore_fractional_reversion },
+    { key: "close_location_autocorrelation_reversion", strategy: close_location_autocorrelation_reversion },
+    { key: "efficiency_decay_reversion_trigger", strategy: efficiency_decay_reversion_trigger },
+    { key: "failed_breakout_rejection_reversion", strategy: failed_breakout_rejection_reversion },
+    { key: "proxy_volume_divergence_reversion", strategy: proxy_volume_divergence_reversion },
+    { key: "rolling_entropy_reversal_gate", strategy: rolling_entropy_reversal_gate },
+    { key: "rolling_entropy_squeeze_exhaustion_reversion", strategy: rolling_entropy_squeeze_exhaustion_reversion },
+    { key: "rolling_median_crossover_reversion", strategy: rolling_median_crossover_reversion },
+    { key: "rolling_skewness_exhaustion_fade_v2", strategy: rolling_skewness_exhaustion_fade_v2 },
+    { key: "rolling_zscore_volatility_adjusted_reversion", strategy: rolling_zscore_volatility_adjusted_reversion },
+    { key: "true_range_expansion_exhaustion_fade", strategy: true_range_expansion_exhaustion_fade },
+    { key: "autocorrelation_reversal_snap", strategy: autocorrelation_reversal_snap },
+    { key: "decoupling_wick_rejection_fade", strategy: decoupling_wick_rejection_fade },
+    { key: "efficiency_exhaustion_center_snap", strategy: efficiency_exhaustion_center_snap },
+    { key: "proxy_volume_exhaustion_cap", strategy: proxy_volume_exhaustion_cap },
+    { key: "return_distribution_stretch_fade", strategy: return_distribution_stretch_fade },
+    { key: "rolling_correlation_break_reversion", strategy: rolling_correlation_break_reversion },
+    { key: "statistical_stretch_entropy_exhaustion", strategy: statistical_stretch_entropy_exhaustion },
+    { key: "streak_exhaustion_reversion", strategy: streak_exhaustion_reversion },
+    { key: "value_area_deviation_reversion", strategy: value_area_deviation_reversion },
+    { key: "volatility_compression_reversion_launch", strategy: volatility_compression_reversion_launch },
 ];
 
 export function createStrategiesRecordFromManifest(
