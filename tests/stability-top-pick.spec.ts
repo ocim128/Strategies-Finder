@@ -116,17 +116,23 @@ describe("pickStabilityTopTrade", () => {
         expect(pick!.row.asset).to.equal("FRESH");
     });
 
-    it("treats unknown dataLagBars (null) as worst-case when tie-breaking", () => {
+    it("does not promote a stale as-of ENTER as the current Top Pick", () => {
+        const rows = [makeRow({ asset: "STALE-ENTER" })];
+        const decisions = [decision("ENTER", { dataLagBars: 3 })];
+        expect(pickStabilityTopTrade(rows, decisions)).to.equal(null);
+    });
+
+    it("does not promote unknown-age data over a known fresh row", () => {
         const rows = [
             makeRow({ asset: "UNKNOWN-LAG", timingEdgeScore: 80 }),
             makeRow({ asset: "KNOWN-LAG", timingEdgeScore: 80 }),
         ];
         const decisions = [
             decision("ENTER", { dataLagBars: null }),
-            decision("ENTER", { dataLagBars: 100 }),
+            decision("ENTER", { dataLagBars: 2 }),
         ];
-        // Even a large-but-known lag beats unknown lag, mirroring the action
-        // layer's stance that unknown freshness is not trustworthy.
+        // Unknown freshness remains untrusted even though the as-of action is
+        // otherwise actionable.
         const pick = pickStabilityTopTrade(rows, decisions);
         expect(pick!.row.asset).to.equal("KNOWN-LAG");
     });

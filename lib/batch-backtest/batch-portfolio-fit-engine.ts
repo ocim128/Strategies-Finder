@@ -58,7 +58,10 @@ export function evaluateEligibility(
     const reasonCodes: BatchPortfolioFitReasonCode[] = [];
     let decision: PortfolioFitDecision = "DEFER";
     let eligible = false;
-    if (action.action === "ENTER") {
+    if (freshness === "STALE") {
+        decision = "REJECT";
+        reasonCodes.push("DATA_STALE");
+    } else if (action.action === "ENTER") {
         eligible = true;
         decision = "ADD";
     } else if (action.action === "REJECT") {

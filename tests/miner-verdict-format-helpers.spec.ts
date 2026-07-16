@@ -173,12 +173,12 @@ describe("Stability copy diagnostics", () => {
         expect(decision.reason).to.equal("FRESH_STABLE");
     });
 
-    it("invalidates stale data even when the historical evidence score passes", () => {
+    it("keeps the as-of ENTER visible when data is intentionally stale", () => {
         const decision = computeStabilityAction(makeStabilityRow({
             asOfTimeKey: "1700000000",
         }), 50, "1h", 1_700_036_000_000);
-        expect(decision.action).to.equal("INVALID");
-        expect(decision.reason).to.equal("DATA_STALE");
+        expect(decision.action).to.equal("ENTER");
+        expect(decision.reason).to.equal("FRESH_STABLE");
         expect(decision.dataLagBars).to.equal(10);
     });
 
@@ -191,13 +191,14 @@ describe("Stability copy diagnostics", () => {
         expect(decision.reason).to.not.equal("DATA_STALE");
     });
 
-    it("still invalidates IBKR data after more than two completed market buckets", () => {
+    it("keeps the IBKR as-of action after more than two completed market buckets", () => {
         const decision = computeStabilityAction(makeStabilityRow({
             asOfTimeKey: "1783699200", // Friday 2026-07-10 final aggregate bucket
             dominantPair: "XOM•+QCOM•",
         }), 50, "4h", Date.parse("2026-07-14T20:30:00Z"));
         expect(decision.dataLagBars).to.equal(4);
-        expect(decision.reason).to.equal("DATA_STALE");
+        expect(decision.action).to.equal("ENTER");
+        expect(decision.reason).to.equal("FRESH_STABLE");
     });
 
     it("watches sparse recurrence and waits on an old state", () => {
@@ -264,12 +265,9 @@ describe("Stability copy diagnostics", () => {
 });
 
 describe("summarizeStabilityDataFreshness", () => {
-    // Intent (AGENTS.md rule 8): a stale OHLCV feed vetoes every per-row Action
-    // (`computeStabilityAction` returns INVALID | DATA_STALE), which on a stale
-    // feed makes the whole run look like an algorithm failure. This summary
-    // surfaces the data-feed cause once at the run level. The run is STALE when
-    // ANY row exceeds the per-row veto threshold — one stale asset means the
-    // feed stopped, so the run-level verdict must be pessimistic.
+    // Intent (AGENTS.md rule 8): stale OHLCV stays visible as a run-level warning
+    // without hiding each row's as-of Action. The run is STALE when ANY row
+    // exceeds the threshold so frozen or stopped feeds remain unmistakable.
 
     it("flags STALE when any row's lag exceeds the threshold (1h interval)", () => {
         // nowMs = 1_700_036_000_000 ms = 1_700_036_000 s; asOf 1_700_000_000 s
@@ -311,9 +309,7 @@ describe("summarizeStabilityDataFreshness", () => {
         expect(summary.maxLagBars).to.equal(0);
     });
 
-    it("treats a row exactly at the threshold as FRESH (veto is strictly greater-than)", () => {
-        // `computeStabilityAction` vetoes when lag > 2, so lag == 2 must be FRESH
-        // here too — otherwise the run banner would contradict the per-row action.
+    it("treats a row exactly at the threshold as FRESH (comparison is strictly greater-than)", () => {
         // nowMs chosen so asOf 1_700_000_000 is exactly 2 bars on 1h.
         const summary = summarizeStabilityDataFreshness(
             [{ asOfTimeKey: "1700000000" }],
@@ -360,10 +356,7 @@ describe("summarizeStabilityDataFreshness", () => {
         expect(summary.unknownCount).to.equal(1);
     });
 
-    it("exposes the threshold the run-level verdict shares with the per-row veto", () => {
-        // Lock the contract: run-level STALE and per-row INVALID | DATA_STALE
-        // must use the same threshold, otherwise the banner and the row Actions
-        // would disagree on the boundary.
+    it("exposes the run-level freshness threshold", () => {
         expect(STABILITY_DATA_STALE_THRESHOLD_BARS).to.equal(2);
     });
 

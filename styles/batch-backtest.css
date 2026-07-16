@@ -506,7 +506,7 @@
     font-family: var(--font-family-mono);
 }
 
-/* Stale / unknown data invalidates the action — flag at row level. */
+/* Stale / unknown data remains visible, but is flagged at row level. */
 .batch-miner-row.is-stale {
     background: hsl(var(--hsl-warning) / 0.06);
 }

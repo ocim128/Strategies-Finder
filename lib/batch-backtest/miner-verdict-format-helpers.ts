@@ -88,8 +88,9 @@ export function computeStabilityGate(row: BatchStabilityRow): string {
 
 /**
  * Trade-decision layer kept separate from the research score. The score says
- * whether conditional analog evidence is good; this classifier says whether
- * that evidence is current, recurrent, and fresh enough to act on.
+ * whether conditional analog evidence is good; this classifier says what the
+ * latest available snapshot implies. Data freshness is reported separately so
+ * intentionally frozen datasets can still expose their as-of action.
  */
 export function computeStabilityAction(
     row: BatchStabilityRow,
@@ -109,9 +110,6 @@ export function computeStabilityAction(
 
     if (dataLagBars === null) {
         return { action: "INVALID", reason: "DATA_TIME_UNKNOWN", dataLagBars, recurrenceRate, freshHitRate };
-    }
-    if (dataLagBars > 2) {
-        return { action: "INVALID", reason: "DATA_STALE", dataLagBars, recurrenceRate, freshHitRate };
     }
     if (gate !== "PASS") {
         return { action: "REJECT", reason: gate, dataLagBars, recurrenceRate, freshHitRate };
@@ -214,9 +212,9 @@ function nthSundayOfMonth(year: number, month: number, occurrence: number): numb
 }
 
 /**
- * Per-run staleness threshold in bars. Mirrors the `dataLagBars > 2` veto in
- * `computeStabilityAction` — kept as a named constant so the run-level summary
- * and the per-row action stay on the same definition of "stale".
+ * Per-run staleness threshold in bars. Freshness is diagnostic rather than an
+ * action veto so manually frozen walk-forward snapshots retain their as-of
+ * ENTER/WATCH/WAIT classification.
  */
 export const STABILITY_DATA_STALE_THRESHOLD_BARS = 2;
 
@@ -235,12 +233,9 @@ export interface StabilityDataFreshnessSummary {
 /**
  * Aggregate per-row data lag into a single run-level freshness verdict.
  *
- * Why this exists: Stability Mine's per-row `Action` is `INVALID | DATA_STALE`
- * whenever `dataLagBars > 2`, but on stale OHLCV every row hits that veto and
- * the run looks like an algorithm failure rather than a data-feed failure.
- * This summary surfaces "the data is stale" once at the top of the run/Copy so
- * the cause is impossible to miss, while `computeStabilityAction` keeps its
- * hard per-row veto unchanged.
+ * Why this exists: stale OHLCV must remain obvious without replacing the
+ * snapshot's underlying Action. This summary surfaces "the data is stale" once
+ * at the top of the run/Copy while each row retains its as-of classification.
  *
  * Reuses `computeStabilityDataLagBars` (the single source of lag math). A row
  * is STALE when its lag exceeds `STABILITY_DATA_STALE_THRESHOLD_BARS`. The run

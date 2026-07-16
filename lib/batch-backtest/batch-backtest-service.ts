@@ -867,8 +867,10 @@ class BatchBacktestService {
         } else {
             if (!this.lastStabilityResult || this.lastStabilityResult.rows.length === 0) return;
             const validRows = this.lastStabilityResult.rows.filter((row) => {
-                const action = computeStabilityAction(row, this.lastStabilityResult!.reruns, interval).action;
-                return action === "ENTER" || action === "WATCH";
+                const decision = computeStabilityAction(row, this.lastStabilityResult!.reruns, interval);
+                return (decision.action === "ENTER" || decision.action === "WATCH")
+                    && decision.dataLagBars !== null
+                    && decision.dataLagBars <= STABILITY_DATA_STALE_THRESHOLD_BARS;
             });
             run = {
                 runId,
@@ -1987,7 +1989,7 @@ class BatchBacktestService {
      * Two-level Stability row (point 6 of the Batch UI refactor). Primary line
      * carries the decision surface (asset, direction, action, score, hit rate,
      * freshness); secondary line carries edge diagnostics; the row is flagged
-     * stale when the underlying data lag invalidates the action. The pipe
+     * stale when the underlying data exceeds the freshness threshold. The pipe
      * formatter stays for clipboard / Copy Stability output.
      */
     private createStabilityRow(
@@ -1997,8 +1999,9 @@ class BatchBacktestService {
     ): HTMLDivElement {
         const line = document.createElement("div");
         line.className = "batch-miner-row";
-        const isStale = decision.action === "INVALID";
-        if (isStale) line.classList.add("is-stale");
+        const hasUntrustedDataAge = decision.dataLagBars === null
+            || decision.dataLagBars > STABILITY_DATA_STALE_THRESHOLD_BARS;
+        if (hasUntrustedDataAge) line.classList.add("is-stale");
 
         // Primary: action + asset + direction + score + hit rate + freshness.
         const primary = document.createElement("div");

@@ -18,7 +18,11 @@
  */
 
 import type { BatchStabilityRow } from "./batch-stability-mine";
-import { computeStabilityAgeTag, type StabilityActionDecision } from "./miner-verdict-format-helpers";
+import {
+    computeStabilityAgeTag,
+    STABILITY_DATA_STALE_THRESHOLD_BARS,
+    type StabilityActionDecision,
+} from "./miner-verdict-format-helpers";
 
 export type StabilityTopPickTier = "ENTER" | "WATCH";
 
@@ -87,6 +91,8 @@ export function pickStabilityTopTrade(
     let bestTier: StabilityTopPickTier | null = null;
     for (let i = 0; i < capped; i += 1) {
         const decision = decisions[i]!;
+        if (decision.dataLagBars === null
+            || decision.dataLagBars > STABILITY_DATA_STALE_THRESHOLD_BARS) continue;
         const tier = tierOf(decision.action);
         if (tier === null) continue;
         const candidate = { row: rows[i]!, decision };

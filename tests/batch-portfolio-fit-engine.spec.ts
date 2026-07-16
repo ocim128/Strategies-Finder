@@ -90,6 +90,17 @@ describe("Portfolio Fit eligibility and edge", () => {
         expect(result.stabilityAction).to.equal("ENTER");
     });
 
+    it("keeps a stale as-of ENTER out of allocation", () => {
+        const result = evaluateEligibility(row("AAA", {
+            asOfTimeKey: String(NOW_MS / 1000 - 3_600),
+        }), 50, "5m", NOW_MS);
+        expect(result.stabilityAction).to.equal("ENTER");
+        expect(result.freshness).to.equal("STALE");
+        expect(result.eligible).to.equal(false);
+        expect(result.decision).to.equal("REJECT");
+        expect(result.reasonCodes).to.deep.equal(["DATA_STALE"]);
+    });
+
     it("normalizes Stability percent edge and applies a bounded haircut", () => {
         const result = estimateAdjustedEdge(row("AAA", { hits: 25, medianLiftPct: 2 }), 50, PORTFOLIO_FIT_DEFAULT_OPTIONS);
         expect(result.rawEdgeFraction).to.equal(0.02);
