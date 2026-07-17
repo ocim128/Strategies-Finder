@@ -75,6 +75,8 @@ function fakeDom(): BatchBacktestDom {
         batchBacktestMinePredictionFrom: { value: "" },
         batchBacktestMinePredictionTo: { value: "" },
         batchBacktestMinePredictionDirection: { value: "both" },
+        batchBacktestMinePredictionSampleBars: { value: "25" },
+        batchBacktestMinePredictionSampleStep: { value: "80" },
         batchBacktestProgress: el(),
         batchBacktestProgressFill: el(),
         batchBacktestProgressText: el(),

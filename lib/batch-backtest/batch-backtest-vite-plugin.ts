@@ -1987,6 +1987,8 @@ export async function processMinePrediction(
     sampleFromSec: number | null = null,
     sampleToSec: number | null = null,
     directionFilter: "both" | "long" | "short" = "both",
+    sampleBars: number | null = null,
+    sampleStep: number | null = null,
 ): Promise<void> {
     const artifactMetas = collectStoredMineArtifactMetas();
     if (artifactMetas.length === 0) {
@@ -2036,6 +2038,10 @@ export async function processMinePrediction(
             // Direction filter: score only the chosen direction's verdicts.
             // Critical for long-only strategies — see engine docstring.
             directionFilter,
+            // Sample density (null = engine defaults of 25/80). Lower step =
+            // denser sampling for regime tests; higher sampleBars = tighter IC.
+            ...(sampleBars !== null ? { sampleBars } : {}),
+            ...(sampleStep !== null ? { sampleStep } : {}),
             onAssetProgress: (asset, samples, totalAssets, doneAssets) => {
                 if (lostOwnership()) return;
                 writer({ type: "progress", asset, samples, doneAssets, totalAssets });
@@ -2108,6 +2114,8 @@ async function handleMinePredictionRequest(res: ViteHttpResponse, body: Record<s
             parseBodyDateSec("sampleFrom"),
             parseBodyDateSec("sampleTo"),
             body.directionFilter === "long" || body.directionFilter === "short" ? body.directionFilter : "both",
+            typeof body.sampleBars === "number" && body.sampleBars >= 5 ? Math.floor(body.sampleBars) : null,
+            typeof body.sampleStep === "number" && body.sampleStep >= 1 ? Math.floor(body.sampleStep) : null,
         );
         stream.end();
     } catch (error) {

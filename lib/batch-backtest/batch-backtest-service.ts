@@ -2044,6 +2044,13 @@ class BatchBacktestService {
             const sampleTo = dom.batchBacktestMinePredictionTo.value.trim();
             const directionRaw = dom.batchBacktestMinePredictionDirection.value.trim();
             const directionFilter = directionRaw === "long" || directionRaw === "short" ? directionRaw : "both";
+            // Sample density controls. Parse to int with sane floors; invalid/
+            // empty falls back to the engine defaults (25 / 80) by omitting
+            // the field from the body.
+            const sampleBarsRaw = Number(dom.batchBacktestMinePredictionSampleBars.value);
+            const sampleStepRaw = Number(dom.batchBacktestMinePredictionSampleStep.value);
+            const sampleBars = Number.isFinite(sampleBarsRaw) && sampleBarsRaw >= 5 ? Math.floor(sampleBarsRaw) : null;
+            const sampleStep = Number.isFinite(sampleStepRaw) && sampleStepRaw >= 1 ? Math.floor(sampleStepRaw) : null;
             // Audit NDJSON-POST-helper finding: shared transport. The
             // `onResponse` hook preserves the reissue-Stop ordering.
             await postBatchNdjson<BatchMinePredictionStreamEvent>({
@@ -2054,6 +2061,8 @@ class BatchBacktestService {
                     ...(sampleFrom ? { sampleFrom } : {}),
                     ...(sampleTo ? { sampleTo } : {}),
                     directionFilter,
+                    ...(sampleBars !== null ? { sampleBars } : {}),
+                    ...(sampleStep !== null ? { sampleStep } : {}),
                 },
                 onResponse: () => this.reissueStopIfNeeded(),
                 handlers: {
