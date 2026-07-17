@@ -106,6 +106,18 @@ export interface RunMinePredictionOptions {
      */
     sampleFromSec?: number;
     sampleToSec?: number;
+    /**
+     * Restrict ALL scoring (IC, hit-rate, calibration, edge, per-asset) to
+     * verdicts of this direction. Critical for direction-biased strategies:
+     * a long-only pair strategy should be scored on LONG verdicts alone,
+     * because the SHORT verdicts are counter-predictive noise the trader
+     * would never act on — including them drags the aggregate IC toward
+     * zero and corrupts any pair-universe narrowing done off the result.
+     * "both" (default) = include every direction as before. INCONCLUSIVE
+     * (direction=null) bars are always retained as the baseline regardless
+     * of the filter — they're the "Mine declined to call" reference.
+     */
+    directionFilter?: "both" | "long" | "short";
     /** Called after each asset's verdicts are collected, for streaming progress. */
     onAssetProgress?: (asset: string, samples: number, totalAssets: number, doneAssets: number) => void;
     /** Called after each bar within an asset, for live progress on slow assets. */
@@ -233,7 +245,7 @@ function computeRealized(
  * Documented tradeoff for the 10-100x speedup.
  */
 function collectAssetSamples(
-    opts: Required<Omit<RunMinePredictionOptions, "artifacts" | "targets" | "interval" | "strategyKey" | "onAssetProgress" | "onBarProgress" | "shouldStop">>,
+    opts: Required<Omit<RunMinePredictionOptions, "artifacts" | "targets" | "interval" | "strategyKey" | "onAssetProgress" | "onBarProgress" | "shouldStop" | "directionFilter">>,
     interval: string,
     asset: string,
     fullData: OHLCVData[],
@@ -384,10 +396,23 @@ export function runMinePredictionDiagnostic(options: RunMinePredictionOptions): 
 
     if (allSamples.length === 0) return empty("No verdict samples collected (check data depth, sample-bars, horizons).");
 
+    const directionFilter = options.directionFilter ?? "both";
+    // Filter samples by direction before scoring, but ALWAYS keep INCONCLUSIVE
+    // (direction=null) bars — they're the "Mine declined to call" baseline that
+    // the EDGE line measures LONG/SHORT performance against. Without them the
+    // baseline drift would be undefined and the edge-vs-refusing read breaks.
+    const scoredSamples = directionFilter === "both"
+        ? allSamples
+        : allSamples.filter((s) => s.direction === directionFilter || s.direction === null);
+
+    if (scoredSamples.filter((s) => s.direction !== null).length === 0) {
+        return empty(`NO_EDGE: no ${directionFilter === "both" ? "" : directionFilter + " "}verdicts in the collected samples to score.`);
+    }
+
     return buildReport({
         strategyKey, interval, pairCount: options.artifacts.length,
-        assetCount: options.targets.length, samples: allSamples, horizons, opts,
-        sampleFromSec: opts.sampleFromSec, sampleToSec: opts.sampleToSec,
+        assetCount: options.targets.length, samples: scoredSamples, horizons, opts,
+        sampleFromSec: opts.sampleFromSec, sampleToSec: opts.sampleToSec, directionFilter,
     });
 }
 
@@ -405,6 +430,7 @@ function buildReport(args: {
     opts: { horizons: number[]; sampleBars: number; sampleStep: number };
     sampleFromSec?: number;
     sampleToSec?: number;
+    directionFilter?: "both" | "long" | "short";
 }): BatchMinePredictionResult {
     const { strategyKey, interval, pairCount, assetCount, samples, horizons } = args;
     const primaryH = horizons[0]!;
@@ -541,8 +567,9 @@ function buildReport(args: {
 
     // 8. Build pipe-delimited report.
     const reportLines: string[] = [];
-    reportLines.push(`MINE_PRED | strategy=${strategyKey ?? "?"} interval=${interval} assets=${assetCount} pairs=${pairCount} samples=${samples.length} horizons=${horizons.join(",")}${formatWindowTag(args.sampleFromSec, args.sampleToSec)}`);
-    reportLines.push(`MINE_PRED | NOTE: rank_IC (predicted-vs-realized) is the primary score; realized is signed by verdict direction`);
+    reportLines.push(`MINE_PRED | strategy=${strategyKey ?? "?"} interval=${interval} assets=${assetCount} pairs=${pairCount} samples=${samples.length} horizons=${horizons.join(",")}${formatWindowTag(args.sampleFromSec, args.sampleToSec)}${args.directionFilter && args.directionFilter !== "both" ? ` direction=${args.directionFilter}` : ""}`);
+    reportLines.push(`MINE_PRED | NOTE: rank_IC (predicted-vs-realized) is the primary score; realized is signed by verdict direction${args.directionFilter && args.directionFilter !== "both" ? `. Direction filter=${args.directionFilter}: scoring excludes the other direction's verdicts (INCONCLUSIVE bars retained as baseline).` : ""}`);
+
 
     const icParts = horizons.map((h) => {
         const a = rankIcByHorizon.get(h)!;

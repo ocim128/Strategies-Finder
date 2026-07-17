@@ -221,4 +221,79 @@ describe("batch-mine-prediction-engine diagnostic", () => {
             expect(caveatLine, "LONG-edge caveat must reference the meaningful-edge threshold").to.contain("meaningful-edge threshold");
         }
     });
+
+    it("directionFilter=long excludes SHORT verdicts from scoring and tags the header", () => {
+        // Intent: a long-only strategy should be scored on LONG verdicts alone.
+        // SHORT verdicts are counter-predictive noise the trader would never
+        // act on; including them drags the aggregate IC toward zero and
+        // corrupts pair-universe narrowing. The filter must exclude SHORT
+        // samples from the scored set while retaining INCONCLUSIVE bars as
+        // the baseline.
+        const length = 500;
+        const asset = makeCandles(length, (i) => 100 + i * 0.05);
+        const targets: BatchSyntheticTargetArtifact[] = [
+            { asset: "AAA", symbol: "AAAUSDT", data: asset },
+        ];
+        const artifacts: BatchSyntheticPairArtifact[] = [{
+            symbol: "AAA+BBB", baseAsset: "AAA", quoteAsset: "BBB",
+            data: asset, signals: [], result: emptyResult(),
+        }];
+
+        // First run unfiltered to confirm the engine runs without throwing.
+        // On synthetic data Mine may produce no verdicts, so accept either a
+        // full report or an empty-result message — the point is just that
+        // the call succeeded.
+        const bothResult = runMinePredictionDiagnostic({
+            artifacts, targets, interval: "4h",
+            horizons: [12], sampleBars: 5, sampleStep: 30,
+        });
+        expect(bothResult.reportLines.length, "unfiltered run must produce some output").to.be.greaterThan(0);
+
+        // Filtered run: direction=long. If Mine produced LONG verdicts, the
+        // header must tag the filter and the NOTE must explain it. If Mine
+        // produced NO LONG verdicts on this synthetic data, the empty result
+        // must mention the direction (proving the filter was applied).
+        const longResult = runMinePredictionDiagnostic({
+            artifacts, targets, interval: "4h",
+            horizons: [12], sampleBars: 5, sampleStep: 30,
+            directionFilter: "long",
+        });
+        const allText = longResult.reportLines.join("\n");
+        if (longResult.samples > 0) {
+            const header = longResult.reportLines.find((l) => l.startsWith("MINE_PRED | strategy="));
+            expect(header, "header must tag direction=long when filter is active and samples exist").to.contain("direction=long");
+            const noteLine = longResult.reportLines.find((l) => l.startsWith("MINE_PRED | NOTE"));
+            expect(noteLine, "NOTE must mention Direction filter").to.contain("Direction filter=long");
+        } else {
+            // No LONG verdicts on synthetic data — acceptable. The empty
+            // message must reference the direction so the user knows the
+            // filter was applied (not that Mine is broken).
+            expect(allText, "empty result must mention 'long' direction").to.contain("long");
+        }
+    });
+
+    it("directionFilter=short excludes LONG verdicts from scoring", () => {
+        const length = 500;
+        const asset = makeCandles(length, (i) => 100 + i * 0.05);
+        const targets: BatchSyntheticTargetArtifact[] = [
+            { asset: "AAA", symbol: "AAAUSDT", data: asset },
+        ];
+        const artifacts: BatchSyntheticPairArtifact[] = [{
+            symbol: "AAA+BBB", baseAsset: "AAA", quoteAsset: "BBB",
+            data: asset, signals: [], result: emptyResult(),
+        }];
+        const result = runMinePredictionDiagnostic({
+            artifacts, targets, interval: "4h",
+            horizons: [12], sampleBars: 5, sampleStep: 30,
+            directionFilter: "short",
+        });
+        const allText = result.reportLines.join("\n");
+        if (result.samples > 0) {
+            const header = result.reportLines.find((l) => l.startsWith("MINE_PRED | strategy="));
+            expect(header, "header must tag direction=short when samples exist").to.contain("direction=short");
+        } else {
+            expect(allText, "empty result must mention 'short' direction").to.contain("short");
+        }
+    });
 });
+

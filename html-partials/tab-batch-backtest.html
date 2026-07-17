@@ -72,6 +72,14 @@
                 <label class="batch-field-label" for="batchBacktestMinePredictionTo">To</label>
                 <input class="batch-field-input batch-field-input--date" id="batchBacktestMinePredictionTo" type="date">
             </div>
+            <div class="batch-field batch-field--inline" title="Score only the chosen direction's verdicts. Use Long for long-only strategies — SHORT verdicts are counter-predictive noise that drags the aggregate IC.">
+                <label class="batch-field-label" for="batchBacktestMinePredictionDirection">Dir</label>
+                <select class="batch-field-input" id="batchBacktestMinePredictionDirection">
+                    <option value="both">Both</option>
+                    <option value="long">Long only</option>
+                    <option value="short">Short only</option>
+                </select>
+            </div>
         </div>
         <div class="batch-action-group batch-action-group--divider" aria-hidden="true"></div>
         <div class="batch-action-group batch-action-group--exports" role="group" aria-label="Batch export">

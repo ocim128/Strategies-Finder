@@ -1986,6 +1986,7 @@ export async function processMinePrediction(
     loadTargets: (pairArtifacts: readonly StoredMineArtifactMeta[], interval: string, signal?: AbortSignal) => Promise<BatchSyntheticTargetArtifact[]> = loadMinerTargets,
     sampleFromSec: number | null = null,
     sampleToSec: number | null = null,
+    directionFilter: "both" | "long" | "short" = "both",
 ): Promise<void> {
     const artifactMetas = collectStoredMineArtifactMetas();
     if (artifactMetas.length === 0) {
@@ -2032,6 +2033,9 @@ export async function processMinePrediction(
             // (e.g. 2022 bear market) without a separate CLI invocation.
             ...(sampleFromSec !== null ? { sampleFromSec } : {}),
             ...(sampleToSec !== null ? { sampleToSec } : {}),
+            // Direction filter: score only the chosen direction's verdicts.
+            // Critical for long-only strategies — see engine docstring.
+            directionFilter,
             onAssetProgress: (asset, samples, totalAssets, doneAssets) => {
                 if (lostOwnership()) return;
                 writer({ type: "progress", asset, samples, doneAssets, totalAssets });
@@ -2103,6 +2107,7 @@ async function handleMinePredictionRequest(res: ViteHttpResponse, body: Record<s
             loadMinerTargets,
             parseBodyDateSec("sampleFrom"),
             parseBodyDateSec("sampleTo"),
+            body.directionFilter === "long" || body.directionFilter === "short" ? body.directionFilter : "both",
         );
         stream.end();
     } catch (error) {

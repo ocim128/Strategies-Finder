@@ -2042,6 +2042,8 @@ class BatchBacktestService {
             // treats blank as null.
             const sampleFrom = dom.batchBacktestMinePredictionFrom.value.trim();
             const sampleTo = dom.batchBacktestMinePredictionTo.value.trim();
+            const directionRaw = dom.batchBacktestMinePredictionDirection.value.trim();
+            const directionFilter = directionRaw === "long" || directionRaw === "short" ? directionRaw : "both";
             // Audit NDJSON-POST-helper finding: shared transport. The
             // `onResponse` hook preserves the reissue-Stop ordering.
             await postBatchNdjson<BatchMinePredictionStreamEvent>({
@@ -2051,6 +2053,7 @@ class BatchBacktestService {
                     interval: this.lastRunInterval,
                     ...(sampleFrom ? { sampleFrom } : {}),
                     ...(sampleTo ? { sampleTo } : {}),
+                    directionFilter,
                 },
                 onResponse: () => this.reissueStopIfNeeded(),
                 handlers: {
