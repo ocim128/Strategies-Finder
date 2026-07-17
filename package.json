@@ -30,6 +30,7 @@
     "mine:1s:live": "esno scripts/second-market-miner.ts --mode live --binance-dns adguard-doh",
     "mine:1s:verify": "esno scripts/second-market-miner.ts --mode verify",
     "alpha:surgical": "esno scripts/surgical-optimization.ts",
+    "diagnose:mine-prediction": "esno scripts/diagnose-mine-prediction.ts",
     "synthetic:pair": "esno scripts/build-synthetic-pair.ts",
     "ibkr:aggregate": "esno scripts/ibkr-aggregate-csv.ts",
     "strategies:sync-manifest": "esno scripts/sync-strategy-manifest.ts",

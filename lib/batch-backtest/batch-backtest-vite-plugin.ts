@@ -73,6 +73,7 @@ import type {
     BatchPortfolioFitInput,
     PortfolioFitTargetReturnSeries,
 } from "./batch-portfolio-fit-types";
+import { runMinePredictionDiagnostic } from "./batch-mine-prediction-engine";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1767,6 +1768,158 @@ async function handlePortfolioFitRequest(res: ViteHttpResponse, body: Record<str
     }
 }
 
+/**
+ * Mine Prediction diagnostic. Mirrors {@link processPortfolioFit}'s ownership
+ * / abort / read-only-on-artifacts pattern, but the compute is heavier:
+ * re-runs the Mine engine at ~hundreds of historical bars per asset, so the
+ * endpoint streams per-asset `progress` events. Does NOT call
+ * `releaseLastResults` (read-only — Mine/Stability/PortfolioFit can still run
+ * after it within the TTL window).
+ *
+ * Exported for direct invocation in tests (mirrors `processPortfolioFit`).
+ */
+export async function processMinePrediction(
+    fingerprint: string | null,
+    interval: string | null,
+    writer: MinerStreamWriter,
+    owner: number,
+    loadTargets: (pairArtifacts: readonly StoredMineArtifactMeta[], interval: string, signal?: AbortSignal) => Promise<BatchSyntheticTargetArtifact[]> = loadMinerTargets,
+    sampleFromSec: number | null = null,
+    sampleToSec: number | null = null,
+): Promise<void> {
+    const artifactMetas = collectStoredMineArtifactMetas();
+    if (artifactMetas.length === 0) {
+        writer({ type: "fatal", error: "Run Batch before Mine Prediction; no artifacts on server." });
+        return;
+    }
+    if (!fingerprint || fingerprint !== lastRunFingerprint || !interval) {
+        writer({ type: "fatal", error: "Rerun Batch before Mine Prediction; settings or symbols changed." });
+        return;
+    }
+
+    clearArtifactReleaseTimer();
+    const lostOwnership = () => minerOwner !== owner;
+
+    try {
+        const targets = await loadTargets(artifactMetas, interval, minerAbortController?.signal);
+        if (lostOwnership()) {
+            writer({ type: "done", ok: false, cancelled: true, summary: "Mine Prediction cancelled." });
+            return;
+        }
+        if (targets.length === 0) {
+            writer({ type: "done", ok: false, cancelled: true, summary: "No target asset candles loaded." });
+            return;
+        }
+
+        const artifacts = await Promise.all(artifactMetas.map(loadStoredMineArtifact));
+        if (lostOwnership()) {
+            writer({ type: "done", ok: false, cancelled: true, summary: "Mine Prediction cancelled." });
+            return;
+        }
+
+        writer({ type: "start", assets: targets.length, pairs: artifactMetas.length });
+
+        // Per-asset throttle state for onBarProgress (see comment below).
+        const lastBarBucketSentByAsset = new Map<string, number>();
+
+        const result = runMinePredictionDiagnostic({
+            artifacts,
+            targets,
+            interval,
+            strategyKey: lastRunStrategyKey,
+            // Optional verdict-bar date window (unix seconds). Null/undefined
+            // = sample full history. Lets the UI run regime-specific tests
+            // (e.g. 2022 bear market) without a separate CLI invocation.
+            ...(sampleFromSec !== null ? { sampleFromSec } : {}),
+            ...(sampleToSec !== null ? { sampleToSec } : {}),
+            onAssetProgress: (asset, samples, totalAssets, doneAssets) => {
+                if (lostOwnership()) return;
+                writer({ type: "progress", asset, samples, doneAssets, totalAssets });
+            },
+            // Throttle per-bar updates: emitting on every bar (25 x 24 = 600
+            // writes) floods the stream. Emit at 0%, 25%, 50%, 75%, 100% of
+            // each asset so the user sees live progress without the overhead.
+            onBarProgress: (asset, barsDone, barsTotal) => {
+                if (lostOwnership() || barsTotal <= 0) return;
+                const frac = barsDone / barsTotal;
+                // Emit when frac crosses each 0.25 boundary (or at the end).
+                const bucket = Math.floor(frac * 4) / 4;
+                const lastKey = lastBarBucketSentByAsset.get(asset) ?? -1;
+                if (bucket > lastKey || barsDone >= barsTotal) {
+                    lastBarBucketSentByAsset.set(asset, bucket);
+                    writer({ type: "bar", asset, barsDone, barsTotal });
+                }
+            },
+            shouldStop: () => lostOwnership(),
+        });
+        if (lostOwnership()) {
+            writer({ type: "done", ok: false, cancelled: true, summary: "Mine Prediction cancelled." });
+            return;
+        }
+        writer({ type: "done", ok: true, result });
+        // Intentionally NO releaseLastResults — read-only on the artifact store.
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        debugLogger.warn("batch.server.mine_prediction.fatal", { error: message });
+        writer({ type: "fatal", error: message });
+    } finally {
+        if (hasStoredMineArtifacts()) {
+            scheduleArtifactTtl();
+        }
+    }
+}
+
+async function handleMinePredictionRequest(res: ViteHttpResponse, body: Record<string, unknown>): Promise<void> {
+    if (minerOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "An analysis is already running. Use Stop first.");
+    }
+    if (runOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "A batch backtest is running. Use Stop first.");
+    }
+    if (!hasStoredMineArtifacts()) {
+        throw new HttpStatusError(400, "Run Batch before Mine Prediction; no artifacts on server.");
+    }
+    const owner = ++minerOwnerGen;
+    minerOwner = owner;
+    minerAbortController = new AbortController();
+
+    let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
+    try {
+        stream = createDisconnectSafeStream(res, { onDisconnect: () => cancelMinerOnDisconnect(owner) });
+        // Parse optional verdict-bar date window (YYYY-MM-DD or ISO). Null when
+        // absent or unparseable = sample full history.
+        const parseBodyDateSec = (key: string): number | null => {
+            const raw = body[key];
+            if (typeof raw !== "string" || raw.trim() === "") return null;
+            const ms = Date.parse(raw);
+            return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+        };
+        await processMinePrediction(
+            typeof body.fingerprint === "string" ? body.fingerprint : null,
+            typeof body.interval === "string" ? body.interval : lastRunInterval,
+            (event) => stream!.write(event),
+            owner,
+            loadMinerTargets,
+            parseBodyDateSec("sampleFrom"),
+            parseBodyDateSec("sampleTo"),
+        );
+        stream.end();
+    } catch (error) {
+        if (!stream) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        try {
+            stream.end({ type: "fatal", error: message });
+        } catch {
+            /* best-effort */
+        }
+    } finally {
+        if (minerOwner === owner) {
+            minerOwner = RUN_OWNER_NONE;
+        }
+        minerAbortController = null;
+    }
+}
+
 function handleStatusRequest(afterRow = 0, limitRaw?: number): unknown {
     const rowOffset = Math.max(0, Math.floor(Number.isFinite(afterRow) ? afterRow : 0));
     // Bound the page so a late-reattach tab never receives every accumulated
@@ -1992,6 +2145,23 @@ function registerBatchRoutes(middlewares: any): void {
             }
         });
 
+        middlewares.use("/api/batch-backtest/mine-prediction", async (req: any, res: any) => {
+            if (req.method !== "POST") {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
+                return;
+            }
+            try {
+                rememberLocalApiOriginFromRequest(req);
+                await handleMinePredictionRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
+            } catch (error) {
+                sendCaughtErrorJson(res, error);
+            }
+        });
+
         middlewares.use("/api/batch-backtest/status", async (req: any, res: any) => {
             if (req.method !== "GET") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
@@ -2027,6 +2197,7 @@ export const __testInternals = {
     handleStopRequest,
     registerBatchRoutesForTests: registerBatchRoutes,
     processPortfolioFit,
+    processMinePrediction,
     // Audit Finding 5 test seams.
     parseBatchRunId,
     consumePendingBatchStopForRun,

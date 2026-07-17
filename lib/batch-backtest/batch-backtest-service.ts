@@ -76,6 +76,8 @@ import type {
     BatchPortfolioFitResult,
 } from "./batch-portfolio-fit-types";
 import type { BatchPortfolioFitStreamEvent } from "./batch-backtest-stream-types";
+import type { BatchMinePredictionResult } from "./batch-mine-prediction-engine";
+import type { BatchMinePredictionStreamEvent } from "./batch-mine-prediction-stream-types";
 import {
     projectMineVerdictToSnapshot,
     projectStabilityRowToSnapshot,
@@ -138,6 +140,7 @@ class BatchBacktestService {
     private lastMinerResult: BatchSyntheticMinerResult | null = null;
     private lastStabilityResult: BatchStabilityMineResult | null = null;
     private lastPortfolioFitResult: BatchPortfolioFitResult | null = null;
+    private lastMinePredictionResult: BatchMinePredictionResult | null = null;
     private lastRunFingerprint: string | null = null;
     private lastRunInterval: string | null = null;
     // The strategy key that governed the last Run, captured at run start so
@@ -261,6 +264,12 @@ class BatchBacktestService {
         dom.batchBacktestCopyPortfolioFitBtn.addEventListener("click", () => {
             void this.copyPortfolioFitResults();
         });
+        dom.batchBacktestMinePredictionBtn.addEventListener("click", () => {
+            void this.runMinePrediction();
+        });
+        dom.batchBacktestCopyMinePredictionBtn.addEventListener("click", () => {
+            void this.copyMinePredictionResults();
+        });
         dom.batchBacktestSymbolTemplate.addEventListener("change", () => {
             const key = dom.batchBacktestSymbolTemplate.value as BatchSymbolTemplateKey;
             const template = BATCH_SYMBOL_TEMPLATES[key];
@@ -380,6 +389,7 @@ class BatchBacktestService {
                 // (the browser never holds `row.data` in this mode).
                 dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
                 dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
+                dom.batchBacktestMinePredictionBtn.disabled = !this.serverHasArtifacts;
                 this.updateSummary(dom);
                 this.setProgress(dom, 100, this.cancelled ? "Stopped" : "Done");
                 this.setRunBusy(dom, false);
@@ -679,6 +689,7 @@ class BatchBacktestService {
             setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
             dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
             dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
+            dom.batchBacktestMinePredictionBtn.disabled = !this.serverHasArtifacts;
             this.saveLatestResultsSnapshot();
             if (serverRowCount > 0 && this.lastResults.length < serverRowCount) {
                 // Reconstruction could not reach the server's row count — surface
@@ -1064,6 +1075,7 @@ class BatchBacktestService {
         } finally {
             dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
             dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
+            dom.batchBacktestMinePredictionBtn.disabled = !this.serverHasArtifacts;
             this.updatePortfolioFitButtonState(dom);
         }
         return targetCount;
@@ -1302,6 +1314,7 @@ class BatchBacktestService {
                         // artifacts before their TTL expires.
                         this.getDom().batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
                         this.getDom().batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
+                        this.getDom().batchBacktestMinePredictionBtn.disabled = !this.serverHasArtifacts;
                         this.updatePortfolioFitButtonState(this.getDom());
                     }
                     if (this.lastResults.length > 0) {
@@ -1546,6 +1559,7 @@ class BatchBacktestService {
         } finally {
             dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
             dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
+            dom.batchBacktestMinePredictionBtn.disabled = !this.serverHasArtifacts;
             this.updatePortfolioFitButtonState(dom);
         }
     }
@@ -1780,6 +1794,113 @@ class BatchBacktestService {
         }
     }
 
+    /**
+     * Mine Prediction diagnostic. READ-ONLY on server artifacts: the engine
+     * re-runs Mine at ~hundreds of historical bars per asset to test whether
+     * Mine's analog-Lift% predicts realized forward return. Does NOT release
+     * artifacts (Mine/Stability/PortfolioFit can still run after).
+     */
+    private async runMinePrediction(): Promise<void> {
+        if (this.analysisInFlight) return;
+        this.analysisInFlight = true;
+        this.analysisCancelRequested = false;
+        const dom = this.getDom();
+        try {
+            if (!this.serverHasArtifacts) {
+                dom.batchBacktestMinePredictionSummary.textContent = "Run Batch first.";
+                return;
+            }
+            if (!this.lastRunFingerprint) {
+                dom.batchBacktestMinePredictionSummary.textContent = "Rerun Batch before Mine Prediction; settings or symbols changed.";
+                dom.batchBacktestCopyMinePredictionBtn.disabled = true;
+                return;
+            }
+            if (this.analysisCancelRequested) return;
+            this.beginAnalysisBusy(dom);
+            dom.batchBacktestMinePredictionBtn.disabled = true;
+            dom.batchBacktestCopyMinePredictionBtn.disabled = true;
+            dom.batchBacktestMinePredictionSummary.textContent = "Backtesting Mine predictions on server...";
+            await this.runMinePredictionServer(dom);
+        } finally {
+            await this.finishAnalysisBusy(dom);
+        }
+    }
+
+    private async runMinePredictionServer(dom: BatchBacktestDom): Promise<void> {
+        try {
+            // Optional verdict-bar date window (YYYY-MM-DD). Empty string on
+            // either side = full history on that side. The server parses and
+            // treats blank as null.
+            const sampleFrom = dom.batchBacktestMinePredictionFrom.value.trim();
+            const sampleTo = dom.batchBacktestMinePredictionTo.value.trim();
+            const response = await fetch("/api/batch-backtest/mine-prediction", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    fingerprint: this.lastRunFingerprint,
+                    interval: this.lastRunInterval,
+                    ...(sampleFrom ? { sampleFrom } : {}),
+                    ...(sampleTo ? { sampleTo } : {}),
+                }),
+            });
+            if (!response.ok || !response.body) {
+                const text = await response.text();
+                let payload: { error?: string } = {};
+                try { payload = JSON.parse(text); } catch { /* ignore */ }
+                throw new Error(payload.error ?? `Mine Prediction failed (${response.status}).`);
+            }
+            await this.reissueStopIfNeeded();
+            await consumeNdjsonStream<BatchMinePredictionStreamEvent>(response.body, {
+                onStart: (event) => {
+                    dom.batchBacktestMinePredictionSummary.textContent = `Backtesting Mine predictions — ${event.assets} assets / ${event.pairs} pairs`;
+                },
+                onProgress: (event) => {
+                    dom.batchBacktestMinePredictionSummary.textContent = `Backtesting Mine predictions — ${event.asset} (${event.doneAssets}/${event.totalAssets}, ${event.samples} samples)`;
+                },
+                onBar: (event) => {
+                    const pct = event.barsTotal > 0 ? Math.round((event.barsDone / event.barsTotal) * 100) : 0;
+                    dom.batchBacktestMinePredictionSummary.textContent = `Backtesting Mine predictions — ${event.asset} ${pct}% (${event.barsDone}/${event.barsTotal} bars)`;
+                },
+                onDone: (event) => {
+                    if (event.ok) {
+                        this.lastMinePredictionResult = event.result;
+                        this.renderMinePredictionResult(dom, event.result);
+                    } else {
+                        dom.batchBacktestMinePredictionSummary.textContent = event.summary;
+                    }
+                },
+                onFatal: (event) => {
+                    throw new Error(event.error);
+                },
+            }, { requireTerminal: true });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.lastMinePredictionResult = null;
+            dom.batchBacktestMinePredictionSummary.textContent = `Mine Prediction error: ${message}`;
+            dom.batchBacktestCopyMinePredictionBtn.disabled = true;
+            debugLogger.error("batch_mine_prediction.server_failed", { error: message });
+        }
+    }
+
+    private renderMinePredictionResult(dom: BatchBacktestDom, result: BatchMinePredictionResult): void {
+        dom.batchBacktestMinePredictionSummary.textContent = result.reportLines.join("\n");
+        dom.batchBacktestCopyMinePredictionBtn.disabled = result.reportLines.length === 0;
+    }
+
+    private async copyMinePredictionResults(): Promise<void> {
+        if (!this.lastMinePredictionResult) {
+            uiManager.showToast("No Mine Prediction report to copy", "info");
+            return;
+        }
+        const text = this.lastMinePredictionResult.reportLines.join("\n");
+        const copied = await copyToClipboard(text);
+        if (copied) {
+            uiManager.showToast("Mine Prediction report copied", "success");
+        } else {
+            this.getDom().batchBacktestStatus.textContent = "Copy failed.";
+        }
+    }
+
     private buildCurrentRunFingerprint(): string | null {
         const strategyKey = state.currentStrategyKey;
         const strategy = strategyRegistry.get(strategyKey);
@@ -1962,6 +2083,7 @@ class BatchBacktestService {
         this.lastMinerResult = null;
         this.lastStabilityResult = null;
         this.lastPortfolioFitResult = null;
+        this.lastMinePredictionResult = null;
         // Clear rather than show "Miner idle": an empty .batch-miner-status
         // collapses via CSS (:empty) so the run-state region does not show a
         // noise strip before any mining has happened (point 7 of the refactor).
@@ -1973,6 +2095,8 @@ class BatchBacktestService {
         dom.batchBacktestCopyPortfolioFitBtn.disabled = true;
         dom.batchBacktestPortfolioFitSummary.textContent = "";
         dom.batchBacktestPortfolioFitResults.replaceChildren();
+        dom.batchBacktestCopyMinePredictionBtn.disabled = true;
+        dom.batchBacktestMinePredictionSummary.textContent = "";
     }
 
     private createMinerRow(verdict: BatchSyntheticAssetVerdict): HTMLDivElement {
@@ -2388,6 +2512,7 @@ class BatchBacktestService {
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
         dom.batchBacktestPortfolioFitBtn.disabled = true;
+        dom.batchBacktestMinePredictionBtn.disabled = true;
     }
 
     // Keep operations disabled until unscoped /stop requests have settled.
@@ -2399,6 +2524,7 @@ class BatchBacktestService {
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
         dom.batchBacktestPortfolioFitBtn.disabled = true;
+        dom.batchBacktestMinePredictionBtn.disabled = true;
         const pending = this.pendingStopPromise;
         if (pending) {
             try { await pending; } catch { /* stopServerWork swallows errors */ }
@@ -2408,6 +2534,7 @@ class BatchBacktestService {
         dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
         dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
         this.updatePortfolioFitButtonState(dom);
+        dom.batchBacktestMinePredictionBtn.disabled = !this.serverHasArtifacts;
     }
 
     private resetProgress(dom: BatchBacktestDom): void {

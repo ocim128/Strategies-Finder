@@ -6,6 +6,7 @@ import {
     processRunBatch,
     processMine,
     processStabilityMine,
+    processMinePrediction,
     resolveServerBatchHeapWarning,
     ArtifactStore,
     type BatchRunSnapshot,
@@ -1473,5 +1474,123 @@ describe("batch-backtest server plugin PID-scoped orphan sweep (audit Finding 7)
         const entry = `${PREFIX}notanumber-${now}-abc`;
         // NaN pid → sweep (malformed stamp can't prove ownership).
         expect(shouldSweepOrphanEntryForTests(entry, now)).to.equal(false);
+    });
+});
+
+describe("batch-backtest server plugin processMinePrediction", () => {
+    it("rejects Mine Prediction when no prior run artifacts exist on the server", async () => {
+        await releaseLastResults("pre_mine_pred_test");
+        const events: unknown[] = [];
+        await processMinePrediction("any-fingerprint", "4h", (event) => events.push(event), 99);
+        const first = events[0] as { type: string };
+        // No artifacts -> fatal (mirrors processPortfolioFit's no-artifacts gate,
+        // unlike processMine which emits a cancelled done).
+        expect(first.type).to.equal("fatal");
+    });
+
+    it("streams a done event with a populated report when artifacts exist, and does NOT release artifacts (read-only)", async () => {
+        // Intent being locked: Mine Prediction is READ-ONLY on the artifact
+        // store. It MUST leave artifacts intact so Mine/Stability/PortfolioFit
+        // can still run after it. A regression that adds releaseLastResults
+        // here would break the "run Mine Prediction then Mine" sequence.
+        const pairData = makeCandles(Array.from({ length: 60 }, (_, i) => 100 + i));
+        const datasets = new Map<string, OHLCVData[]>([["UP+DOWN", pairData]]);
+        const owner = 9070;
+        setRunOwnerForTests(owner);
+        const runEvents = await collectEvents((ev) =>
+            processRunBatch(
+                {
+                    interval: "4h",
+                    strategyKey: STRATEGY_KEY,
+                    strategy: testStrategy,
+                    strategyParams: { threshold: 1 },
+                    backtestSettings: settings,
+                    capitalSettings,
+                    symbols: ["UP+DOWN"],
+                    loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                    minUsableBars: 1,
+                },
+                (event) => ev.push(event),
+                owner,
+            ),
+        );
+        setRunOwnerForTests(0);
+        const done = runEvents[runEvents.length - 1] as Extract<BatchStreamEvent, { type: "done" }>;
+        expect(done.serverHasArtifacts, "run must produce artifacts for the test").to.equal(true);
+        expect(hasStoredMineArtifacts()).to.equal(true);
+
+        const minerOwner = 9071;
+        setMinerOwnerForTests(minerOwner);
+        const predEvents: unknown[] = [];
+        await processMinePrediction(
+            done.fingerprint,
+            "4h",
+            (event) => predEvents.push(event),
+            minerOwner,
+            // Inject target candles so the test does not hit the network.
+            async () => [
+                { asset: "UP", symbol: "UPUSDT", data: pairData },
+                { asset: "DOWN", symbol: "DOWNUSDT", data: pairData },
+            ],
+        );
+        setMinerOwnerForTests(0);
+
+        const terminal = predEvents[predEvents.length - 1] as { type: string; ok?: boolean; result?: { reportLines?: string[] } };
+        expect(terminal.type).to.equal("done");
+        expect(terminal.ok).to.equal(true);
+        expect(terminal.result?.reportLines?.length ?? 0, "report must have lines").to.be.greaterThan(0);
+
+        // CRITICAL contract: artifacts still available after Mine Prediction.
+        expect(hasStoredMineArtifacts(), "Mine Prediction must NOT release artifacts").to.equal(true);
+
+        await releaseLastResults("mine_pred_test_end");
+    });
+});
+
+describe("batch-backtest server plugin mine-prediction route-level authorization", () => {
+    it("rejects a non-POST /api/batch-backtest/mine-prediction with 405", async () => {
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/mine-prediction");
+        expect(handler, "mine-prediction route must be registered").to.not.equal(undefined);
+        const res = makeRouteResponse();
+        await handler!(
+            {
+                method: "GET",
+                url: "/api/batch-backtest/mine-prediction",
+                socket: { remoteAddress: "127.0.0.1" },
+                headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" },
+            },
+            res,
+        );
+        expect(res.statusCode).to.equal(405);
+        const payload = JSON.parse(res.body) as { ok?: boolean; error?: string };
+        expect(payload.ok).to.equal(false);
+        expect(payload.error).to.include("Method");
+    });
+
+    it("rejects an unauthenticated non-loopback POST /mine-prediction with 401 (audit F1 parity)", async () => {
+        // Intent: the mine-prediction route must enforce the SAME loopback
+        // gate as Mine/Stability/PortfolioFit/status. A tunneled dev server
+        // must not expose a CPU-heavy diagnostic to a remote caller.
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/mine-prediction");
+        expect(handler).to.not.equal(undefined);
+        const prevToken = process.env.LOCAL_PROXY_TOKEN;
+        delete process.env.LOCAL_PROXY_TOKEN;
+        try {
+            const req = Readable.from([JSON.stringify({ fingerprint: "x", interval: "4h" })]) as any;
+            req.method = "POST";
+            req.url = "/api/batch-backtest/mine-prediction";
+            req.headers = {}; // no Origin/Referer/Authorization -> looks remote
+            req.socket = { remoteAddress: "203.0.113.9" };
+            const res = makeRouteResponse();
+            await handler!(req, res);
+            expect(res.statusCode).to.equal(401);
+            const payload = JSON.parse(res.body) as { ok?: boolean; error?: string };
+            expect(payload.ok).to.equal(false);
+            expect(payload.error).to.include("local-only");
+        } finally {
+            if (prevToken !== undefined) process.env.LOCAL_PROXY_TOKEN = prevToken;
+        }
     });
 });

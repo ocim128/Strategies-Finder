@@ -233,6 +233,19 @@
     box-shadow: var(--focus-ring-soft);
 }
 
+/* Inline variant: label and input on one row (used by the Mine Prediction
+ * date-range inputs inside the analysis button group). */
+.batch-field--inline {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-1-5);
+}
+
+.batch-field-input--date {
+    width: auto;
+    min-width: 8rem;
+}
+
 /* ------------------------------------------------------------------
  * Run-state region (point 7)
  * One panel: state + pair progress on top, progress bar only while
@@ -329,6 +342,16 @@
 
 .batch-miner-status:empty {
     display: none;
+}
+
+/* Multi-line variant for diagnostic reports (e.g. Mine Prediction). The base
+ * rule keeps single-line summaries on one visual line; this modifier opts
+ * into pre-line wrapping so a pipe-delimited multi-line report renders
+ * legibly instead of collapsing onto one line. */
+.batch-miner-status--multiline {
+    white-space: pre-line;
+    max-height: 24rem;
+    overflow-y: auto;
 }
 
 /* ------------------------------------------------------------------

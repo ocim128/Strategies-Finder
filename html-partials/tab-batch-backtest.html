@@ -60,6 +60,18 @@
                 title="Post-analysis: which Stability candidates improve the candidate portfolio, with bounded allocation">
                 Portfolio Fit
             </button>
+            <button class="btn btn-secondary btn-compact" id="batchBacktestMinePredictionBtn" type="button" disabled
+                title="Backtest Mine's predictions at historical bars — does the analog Lift% correlate with realized forward return?">
+                Mine Prediction
+            </button>
+            <div class="batch-field batch-field--inline" title="Restrict Mine Prediction sampling to verdict bars in this date range (YYYY-MM-DD). Leave blank for full history.">
+                <label class="batch-field-label" for="batchBacktestMinePredictionFrom">From</label>
+                <input class="batch-field-input batch-field-input--date" id="batchBacktestMinePredictionFrom" type="date">
+            </div>
+            <div class="batch-field batch-field--inline" title="Restrict Mine Prediction sampling to verdict bars up to this date (YYYY-MM-DD). Leave blank for full history.">
+                <label class="batch-field-label" for="batchBacktestMinePredictionTo">To</label>
+                <input class="batch-field-input batch-field-input--date" id="batchBacktestMinePredictionTo" type="date">
+            </div>
         </div>
         <div class="batch-action-group batch-action-group--divider" aria-hidden="true"></div>
         <div class="batch-action-group batch-action-group--exports" role="group" aria-label="Batch export">
@@ -78,6 +90,10 @@
             <button class="btn btn-secondary btn-compact" id="batchBacktestCopyPortfolioFitBtn" type="button" disabled
                 title="Copy the latest Portfolio Fit recommendation">
                 Copy Portfolio Fit
+            </button>
+            <button class="btn btn-secondary btn-compact" id="batchBacktestCopyMinePredictionBtn" type="button" disabled
+                title="Copy the latest Mine Prediction diagnostic report">
+                Copy Mine Prediction
             </button>
             <button class="btn btn-secondary btn-compact" id="batchBacktestCopyBenchmarkBtn" type="button" disabled
                 title="Copy benchmark diagnostics (timings, cache hit rates) for the latest run / mine / stability as JSON">
@@ -126,6 +142,7 @@
         <div class="batch-summary-grid" id="batchBacktestSummaryGrid" hidden></div>
         <div class="batch-miner-status" id="batchBacktestMinerSummary"></div>
         <div class="batch-miner-status" id="batchBacktestPortfolioFitSummary"></div>
+        <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestMinePredictionSummary"></div>
     </div>
 
     <div class="finder-results">
