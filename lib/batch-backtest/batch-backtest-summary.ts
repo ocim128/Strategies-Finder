@@ -378,7 +378,13 @@ export function summarizeOpenScoreConcentration(scores: readonly { asset: string
 }
 
 function summarizeBatchResults(results: readonly BatchBacktestSymbolResult[]): BatchOverallStats {
-    const completedRows = results.filter((row) => row.status !== "no_trades" || row.error !== "Skipped (cancelled).");
+    // Exclude cancelled-tail rows from the aggregate. They used to be marked
+    // `no_trades` + a sentinel error and were filtered by that pair; now they
+    // carry a dedicated `skipped` status (audit benchmark-rows finding), so
+    // filter on the status directly. The legacy `error` check is kept as a
+    // back-compat guard for snapshots produced before the status existed.
+    const completedRows = results.filter((row) => row.status !== "skipped"
+        && (row.status !== "no_trades" || row.error !== "Skipped (cancelled)."));
     const resultRows = completedRows.filter((row) => Boolean(row.result));
     const profitableRows = resultRows.filter((row) => row.result!.netProfit > 0);
     const losingRows = resultRows.filter((row) => row.result!.netProfit < 0);
@@ -438,6 +444,7 @@ function formatStatus(status: BatchBacktestSymbolResult["status"]): string {
         case "no_trades": return "No Trades";
         case "load_failed": return "Load Failed";
         case "run_failed": return "Run Failed";
+        case "skipped": return "Skipped";
         default: return status;
     }
 }

@@ -44,6 +44,17 @@ export type BatchStreamEvent =
          *  compat with stale browser bundles that predate the runId contract;
          *  the server still scopes Stop by runId once the browser sends one. */
         runId?: string;
+        /**
+         * Audit artifact-stats finding: partial-write outcomes. Present so the
+         * browser can surface "artifacts X/Y; Mine will omit Z failed writes"
+         * without polling `/status`. Null when the run produced no artifacts.
+         */
+        artifactStats?: { eligible: number; stored: number; failed: number; bytesWritten: number } | null;
+        /**
+         * Audit parse-cache finding: parsed-artifact LRU counters. Diagnostics-
+         * only; lets the benchmark surface cache hit rate and eviction counts.
+         */
+        parsedCacheStats?: { size: number; max: number; hits: number; misses: number; evictions: number; peak: number } | null;
     }
     | { type: "fatal"; error: string; runId?: string };
 

@@ -54,7 +54,13 @@ export type BatchBacktestSymbolStatus =
     | "flat"
     | "no_trades"
     | "load_failed"
-    | "run_failed";
+    | "run_failed"
+    // Audit finding (benchmark rows): a slot that was never attempted because
+    // the loop broke early on cancel. Distinct from `no_trades` (which means the
+    // strategy actually ran and produced zero trades) so the benchmark can
+    // classify cancelled tail rows accurately instead of counting them as
+    // successfully loaded.
+    | "skipped";
 
 export interface BatchBacktestSymbolResult {
     symbol: string;
@@ -329,7 +335,9 @@ export async function runBatchBacktest(
         if (!results[i]) {
             results[i] = {
                 symbol: symbols[i],
-                status: "no_trades",
+                // Distinct from `no_trades`: this slot was never attempted, so
+                // the benchmark must not count it as successfully loaded.
+                status: "skipped",
                 barCount: 0,
                 error: "Skipped (cancelled).",
             };

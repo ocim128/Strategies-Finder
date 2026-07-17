@@ -439,5 +439,57 @@ describe("runBatchBacktest", () => {
             "start:FLAT", "cb-start:FLAT", "cb-end:FLAT",
         ]);
     });
+
+    it("marks cancelled-tail rows as `skipped` (audit benchmark-rows finding)", async () => {
+        // Intent being locked (AGENTS.md rule 8): a cancelled tail must NOT
+        // be counted as `no_trades`. The benchmark uses status to classify
+        // rows into completed / failed / cancelled buckets; a `no_trades`
+        // status would inflate the "completed" denominator and present a fast
+        // Stop as a fully-loaded run. The dedicated `skipped` status lets
+        // `recordRunBenchmark` separate "ran but produced zero trades"
+        // (completed) from "never attempted because of Stop" (cancelled).
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP", makeCandles([100, 105, 110, 115, 120])],
+            ["DOWN", makeCandles([100, 95, 90, 85, 80])],
+            ["FLAT", makeCandles([100, 100, 100, 100, 100])],
+        ]);
+        // Flip the cancel flag inside onSymbolComplete for iteration 0 so the
+        // FIRST result is committed normally and the 2nd iteration's loop
+        // head observes cancellation. Using onSymbolComplete is robust against
+        // the prefetch window (which calls loadDataset ahead of the consumer).
+        let cancelled = false;
+        const output = await runBatchBacktest(
+            {
+                interval: "5m",
+                strategyKey: "batch_test",
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols: ["UP", "DOWN", "FLAT"],
+                loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                minUsableBars: 1,
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                onSymbolComplete: (index) => {
+                    // After UP (index 0) commits, flip the flag so DOWN's
+                    // loop head sees cancellation.
+                    if (index === 0) cancelled = true;
+                },
+                isCancelled: () => cancelled,
+            },
+        );
+        // Ran normally.
+        expect(output.results[0]!.symbol).to.equal("UP");
+        expect(output.results[0]!.status).to.not.equal("skipped");
+        // The cancelled tail carries the new dedicated status, distinct from
+        // `no_trades`. The error string is preserved for back-compat with any
+        // consumer that used the old sentinel.
+        expect(output.results[1]!.status).to.equal("skipped");
+        expect(output.results[1]!.error).to.equal("Skipped (cancelled).");
+        expect(output.results[2]!.status).to.equal("skipped");
+    });
 });
 

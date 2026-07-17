@@ -16,7 +16,7 @@
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import type { BatchMinerEngine, BatchSyntheticMinerProfile } from "./batch-synthetic-state-miner";
 
-export const BATCH_BENCHMARK_SCHEMA = "batch.benchmark.v1" as const;
+export const BATCH_BENCHMARK_SCHEMA = "batch.benchmark.v2" as const;
 
 export interface BatchBenchmarkCacheBucket {
     hits: number;
@@ -41,7 +41,28 @@ export interface BatchBenchmarkRunPhase {
     synthetic: number;
     real: number;
     avgMsPerLoaded: number | null;
+    /**
+     * Benchmark rows classification (audit benchmark-rows finding). The legacy
+     * `loaded`/`failed` pair could not distinguish a cancelled tail from a
+     * completed run: cancelled slots were materialized as `no_trades` and
+     * counted as loaded, inflating throughput numbers on a fast Stop.
+     *
+     * `attempted` is the total row count; `completed` are rows where the
+     * strategy actually ran (profitable/losing/flat/no_trades); `failed` are
+     * load_failed+run_failed; `cancelled` (= `skipped`) are slots never
+     * attempted because the loop broke on Stop. `outcome` records the terminal
+     * state: a benchmark is recorded only after a known terminal outcome so
+     * `incomplete` (HTTP/stream failure before any terminal) is surfaced as
+     * such rather than presented as a successful run.
+     */
+    attempted: number;
+    completed: number;
+    cancelled: number;
+    skipped: number;
+    outcome: BatchBenchmarkRunOutcome;
 }
+
+export type BatchBenchmarkRunOutcome = "done" | "cancelled" | "fatal" | "incomplete";
 
 export interface BatchBenchmarkMinePhase {
     totalMs: number;

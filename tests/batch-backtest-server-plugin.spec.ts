@@ -43,6 +43,8 @@ const {
     consumePendingBatchStopForRun,
     setPendingStopRunIdForTests,
     getPendingStopRunIdForTests,
+    setRunReservationForTests,
+    getRunOwnerForTests,
     shouldSweepOrphanEntryForTests,
     MINE_ARTIFACT_DIR_PREFIX_FOR_TESTS,
     ORPHAN_SWEEP_STALE_MS_FOR_TESTS,
@@ -256,6 +258,56 @@ describe("batch-backtest server plugin processRunBatch", () => {
         expect(done.cacheStats?.disk.writes).to.be.a("number");
         expect(hasStoredMineArtifacts()).to.equal(true);
         expect(getParsedArtifactCacheSizeForTests()).to.equal(0);
+
+        setRunOwnerForTests(0);
+        await releaseLastResults("test_end");
+    });
+
+    it("done event carries artifactStats and parsedCacheStats (audit artifact-stats + parse-cache findings)", async () => {
+        // Intent being locked (AGENTS.md rule 8): the `done` event MUST carry
+        // the partial-write + LRU snapshots so a reloaded tab or a benchmark
+        // consumer can observe disk-pressure failures and heap-bound behavior
+        // without polling. A missing `artifactStats` field would hide partial
+        // failures; a missing `parsedCacheStats` would hide an LRU regression
+        // that re-introduced unbounded heap retention.
+        const datasets = new Map<string, OHLCVData[]>([
+            ["AAA+BBB", makeCandles([100, 105, 110, 115, 120])],
+            ["CCC+DDD", makeCandles([100, 105, 110, 115, 120])],
+        ]);
+        const owner = 9906;
+        setRunOwnerForTests(owner);
+
+        const events = await collectEvents((ev) =>
+            processRunBatch(
+                {
+                    interval: "5m",
+                    strategyKey: STRATEGY_KEY,
+                    strategy: testStrategy,
+                    strategyParams: { threshold: 1 },
+                    backtestSettings: settings,
+                    capitalSettings,
+                    symbols: ["AAA+BBB", "CCC+DDD"],
+                    loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                    minUsableBars: 1,
+                },
+                (event) => ev.push(event),
+                owner,
+            ),
+        );
+        const done = events[events.length - 1] as Extract<BatchStreamEvent, { type: "done" }>;
+        // Both synthetic pairs passed the gate and wrote successfully.
+        expect(done.artifactStats, "artifactStats present on done").to.not.equal(undefined);
+        expect(done.artifactStats!.eligible).to.equal(2);
+        expect(done.artifactStats!.stored).to.equal(2);
+        expect(done.artifactStats!.failed).to.equal(0);
+        expect(done.artifactStats!.bytesWritten, "byte counter positive").to.be.greaterThan(0);
+        // parsedCacheStats present (size is 0 here because Mine never ran;
+        // the cap and counters are still observable for diagnostics).
+        expect(done.parsedCacheStats, "parsedCacheStats present on done").to.not.equal(undefined);
+        expect(done.parsedCacheStats!.max, "cap is 32").to.equal(32);
+        // The summary MUST NOT include the partial-write warning when there
+        // were zero failures — only surface it when failed > 0.
+        expect(done.summary).to.not.include("Mine will omit");
 
         setRunOwnerForTests(0);
         await releaseLastResults("test_end");
@@ -709,7 +761,7 @@ describe("batch-backtest server plugin processStabilityMine", () => {
                 owner,
             ),
         );
-        setRunOwnerForTests(0);
+        completeRunForTests();
         const done = runEvents[runEvents.length - 1] as Extract<BatchStreamEvent, { type: "done" }>;
         expect(done.serverHasArtifacts).to.equal(true);
         expect(hasStoredMineArtifacts()).to.equal(true);
@@ -737,6 +789,11 @@ describe("batch-backtest server plugin processStabilityMine", () => {
         expect(last.ok).to.equal(true);
         expect(last.result?.rows).to.be.an("array");
         expect(hasStoredMineArtifacts()).to.equal(true);
+        const firstStatus = handleStatusRequest() as {
+            lastRun?: { parsedCacheStats?: { size: number; misses: number; hits: number; peak: number } | null } | null;
+        };
+        expect(firstStatus.lastRun?.parsedCacheStats?.misses, "status captures post-analysis cache misses").to.be.greaterThan(0);
+        expect(firstStatus.lastRun?.parsedCacheStats?.peak, "status captures the analysis working-set peak").to.be.greaterThan(0);
 
         setMinerOwnerForTests(0);
         const secondMinerOwner = 9012;
@@ -763,6 +820,10 @@ describe("batch-backtest server plugin processStabilityMine", () => {
         expect(secondLast.type).to.equal("done");
         expect(secondLast.ok).to.equal(true);
         expect(hasStoredMineArtifacts()).to.equal(true);
+        const secondStatus = handleStatusRequest() as {
+            lastRun?: { parsedCacheStats?: { hits: number } | null } | null;
+        };
+        expect(secondStatus.lastRun?.parsedCacheStats?.hits, "repeated analysis updates cache-hit telemetry").to.be.greaterThan(0);
 
         await releaseLastResults("test_end");
     });
@@ -1284,6 +1345,102 @@ describe("batch-backtest server plugin per-run ArtifactStore (audit follow-up R-
     });
 });
 
+describe("batch-backtest server plugin ArtifactStore LRU + artifact stats (audit parse-cache + artifact-stats findings)", () => {
+    // Intent being locked (AGENTS.md rule 8): the parsed-artifact cache MUST
+    // be bounded so a 1000-pair Mine cannot pull ~5 GB of artifacts back into
+    // heap after the disk-backed design went to the trouble of writing them
+    // out. A 32-entry LRU keeps the working set hot. The artifact-stats
+    // counters MUST surface partial-write outcomes so a run that lost N
+    // artifacts to disk pressure is observable from the `done` event instead
+    // of silently presenting "artifacts available" while Mine analyzes fewer
+    // pairs than expected.
+    function makeSyntheticRow(symbol = "BTCUSDT+ETHUSDT"): BatchBacktestSymbolResult {
+        const candles = makeCandles([100, 105, 110, 115, 120]);
+        return {
+            symbol,
+            status: "profitable",
+            barCount: candles.length,
+            data: candles,
+            signals: [{ time: candles[0]!.time, type: "buy", price: 100 }],
+            result: {
+                totalTrades: 1, netProfit: 10, netProfitPct: 10,
+                winRate: 100, profitFactor: 1, maxDrawdown: 0, maxDrawdownPct: 0,
+                finalCapital: 110, totalReturn: 10, exposurePct: 100,
+                trades: [{ entryTime: candles[0]!.time, exitTime: candles[4]!.time, entryPrice: 100, exitPrice: 120, pnl: 20, pnlPct: 20, side: "long", bars: 4 }],
+                equityCurve: [],
+            } as any,
+        };
+    }
+
+    afterEach(async () => {
+        setRunOwnerForTests(0);
+        await releaseLastResults("lru_after_each");
+    });
+
+    it("parsedCache stays at or below the cap and counts evictions", async () => {
+        // Build 40 artifacts, then load each one. The cache must not exceed
+        // the cap; the misses-after-eviction re-reads prove the LRU eviction
+        // actually freed entries (a leak would show `size > max`).
+        const store = new ArtifactStore();
+        for (let i = 0; i < 40; i += 1) {
+            await store.store(i, makeSyntheticRow(`A${i}+B${i}`));
+        }
+        await store.flush();
+        const metas = store.collectMetas();
+        expect(metas.length).to.equal(40);
+
+        // Load all 40 — every load past the cap evicts the oldest.
+        for (const meta of metas) {
+            await store.loadStored(meta);
+        }
+        const stats = store.parsedCacheStats();
+        expect(stats.max, "cap is 32").to.equal(32);
+        expect(stats.size, "size bounded by cap").to.be.at.most(32);
+        expect(stats.evictions, "at least 8 evictions for 40 loads against cap 32").to.be.gte(8);
+        expect(stats.misses, "40 first-time loads = 40 misses").to.equal(40);
+        expect(stats.hits, "no re-reads yet").to.equal(0);
+        // `peak` records the size HIGH-WATER MARK, including the brief
+        // overshoot before eviction fires (insert → size=33 → evict → 32).
+        // So peak is bounded by cap+1, not cap.
+        expect(stats.peak, "peak bounded by cap+1 (overshoot before eviction)").to.be.at.most(33);
+
+        // Re-read the LAST-loaded meta: it must be a hit (LRU recency).
+        const lastMeta = metas[metas.length - 1]!;
+        await store.loadStored(lastMeta);
+        const statsAfterHit = store.parsedCacheStats();
+        expect(statsAfterHit.hits, "re-reading the most-recent entry is a hit").to.equal(1);
+
+        store.detach();
+    });
+
+    it("artifactStats surfaces eligible/stored/failed/bytesWritten (audit artifact-stats finding)", async () => {
+        // Half the writes succeed, half fail. `artifactStats` must report
+        // both outcomes so the run-complete `done` event can warn the user
+        // "Mine will omit N failed writes" instead of presenting a partial
+        // artifact set as complete.
+        let call = 0;
+        const store = new ArtifactStore(async (_path: string, _data: Uint8Array) => {
+            call += 1;
+            if (call % 2 === 0) throw new Error("disk pressure");
+        });
+        for (let i = 0; i < 4; i += 1) {
+            await store.store(i, makeSyntheticRow(`A${i}+B${i}`));
+        }
+        await store.flush();
+
+        const stats = store.artifactStats();
+        expect(stats.eligible, "4 synthetic-pair rows passed the gate").to.equal(4);
+        // Calls 2 and 4 fail, so 2 stored and 2 failed.
+        expect(stats.stored, "alternating writes: 2 succeed").to.equal(2);
+        expect(stats.failed, "alternating writes: 2 fail").to.equal(2);
+        expect(stats.bytesWritten, "byte counter is positive").to.be.greaterThan(0);
+        // The failed writes must NOT be advertised as artifacts.
+        expect(store.collectMetas().length, "only successful writes survive as metas").to.equal(2);
+
+        store.detach();
+    });
+});
+
 describe("batch-backtest server plugin runId-scoped Stop (audit Finding 5)", () => {
     // Intent being locked: Stop is scoped by browser-generated runId so a stale
     // tab cannot cancel a newer run. A mismatched runId MUST be rejected without
@@ -1382,6 +1539,35 @@ describe("batch-backtest server plugin runId-scoped Stop (audit Finding 5)", () 
         // A different runId does NOT consume the marker.
         setPendingStopRunIdForTests("run-not-yet-started");
         expect(consumePendingBatchStopForRun("other-run"), "mismatched run does not consume").to.equal(false);
+    });
+
+    it("stops the reserved run before runState switches to the new generation", async () => {
+        // A new /run reserves ownership before async strategy resolution, but
+        // runState can still describe the previous terminal generation. Stop
+        // must match the reservation id, not the stale snapshot id.
+        setRunStateForTests({
+            startedAt: Date.now() - 1_000,
+            interval: "5m",
+            strategyKey: STRATEGY_KEY,
+            total: 1,
+            completed: 1,
+            failed: 0,
+            currentSymbol: null,
+            cancelled: false,
+            rows: [],
+            phase: "done",
+            finishedAt: Date.now(),
+            summary: "Done",
+            error: null,
+            runId: "previous-run",
+        });
+        setRunReservationForTests(9205, "new-run");
+
+        const result = await handleStopRequest("new-run");
+
+        expect(result).to.deep.equal({ ok: true, stopped: true });
+        expect(getRunOwnerForTests(), "pre-start reservation is released").to.equal(0);
+        expect(getRunStateForTests()?.runId, "prior terminal snapshot is not mistaken for the owner").to.equal("previous-run");
     });
 
     it("status snapshot exposes runId on both run and lastRun branches", async () => {
@@ -1592,5 +1778,129 @@ describe("batch-backtest server plugin mine-prediction route-level authorization
         } finally {
             if (prevToken !== undefined) process.env.LOCAL_PROXY_TOKEN = prevToken;
         }
+    });
+});
+
+describe("batch-backtest server plugin single-flight /run (audit single-flight finding)", () => {
+    // Intent being locked (AGENTS.md rule 8): ownership is claimed BEFORE the
+    // first await. Two concurrent /run requests MUST NOT both pass the
+    // `runOwner !== NONE` gate and then race to claim — the second must get a
+    // 409. Pre-fix the claim was AFTER `resolveStrategy` (async), so two
+    // requests could both pass the gate, both await resolveStrategy, then both
+    // try to claim; the second stole ownership and the first stream cancelled.
+    const validBody = {
+        symbols: ["UP+DOWN"],
+        interval: "5m",
+        strategyKey: STRATEGY_KEY,
+        strategyParams: { threshold: 1 },
+        backtestSettings: settings,
+        capitalSettings,
+    };
+
+    afterEach(async () => {
+        setRunOwnerForTests(0);
+        await releaseLastResults("single_flight_after_each");
+    });
+
+    it("rejects a /run with 409 when another run already owns the lock", async () => {
+        // Pre-fix the gate was already there but ineffective under concurrency
+        // because the claim came after the async resolveStrategy. Post-fix the
+        // claim is synchronous-before-await, so once runOwner is non-NONE any
+        // subsequent /run (regardless of how far the first has progressed
+        // through resolveStrategy) sees the gate immediately and 409s.
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/run")!;
+        const owner = 9301;
+        setRunOwnerForTests(owner);
+
+        const req = Readable.from([JSON.stringify(validBody)]) as any;
+        req.method = "POST";
+        req.url = "/api/batch-backtest/run";
+        req.headers = { host: "localhost:5173" };
+        req.socket = { remoteAddress: "127.0.0.1", localAddress: "127.0.0.1", localPort: 5173 };
+        const res = makeRouteResponse();
+        await handler(req, res);
+        expect(res.statusCode, "second /run while another holds ownership must 409").to.equal(409);
+        const payload = JSON.parse(res.body) as { ok?: boolean; error?: string };
+        expect(payload.error).to.include("already running");
+    });
+
+    it("releases ownership when a post-claim step throws so a retry succeeds", async () => {
+        // Audit single-flight finding: the new try/finally around the post-
+        // claim block releases ownership on ANY throw (resolveStrategy fails,
+        // a 400 sneaks through, etc.). Pre-fix a thrown resolveStrategy would
+        // leave runOwner set because the synchronous claim was followed by an
+        // unguarded throw, wedging the server until restart.
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/run")!;
+        // Unknown strategy → resolveStrategy throws → the finally must release.
+        const badBody = { ...validBody, strategyKey: "definitely_not_a_real_strategy" };
+        const req = Readable.from([JSON.stringify(badBody)]) as any;
+        req.method = "POST";
+        req.url = "/api/batch-backtest/run";
+        req.headers = { host: "localhost:5173" };
+        req.socket = { remoteAddress: "127.0.0.1", localAddress: "127.0.0.1", localPort: 5173 };
+        const res = makeRouteResponse();
+        await handler(req, res);
+        // The handler emits a 400 (strategy not loaded) via sendCaughtErrorJson.
+        expect(res.statusCode).to.equal(400);
+        // CRITICAL: runOwner MUST be NONE after the throw so the next /run is
+        // not wedged. Pre-fix the synchronous claim was not released on throw.
+        const status = handleStatusRequest() as { running?: boolean };
+        expect(status.running, "ownership released after a post-claim throw").to.equal(false);
+    });
+});
+
+describe("batch-backtest server plugin runId-scoped /status (audit runId-scoping finding)", () => {
+    // Intent being locked (AGENTS.md rule 8): a paginated /status drain
+    // scoped to runId A MUST NOT return rows from a newer run B. When the
+    // requested runId no longer matches the retained snapshot, the server
+    // returns `{ ok: true, runMismatch: true, run: null, lastRun: null }`
+    // (HTTP 200, explicit mismatch) so the browser stops paginating instead
+    // of stitching rows from two generations. An empty/absent runId
+    // preserves the legacy behavior.
+
+    afterEach(async () => {
+        setRunOwnerForTests(0);
+        await releaseLastResults("runid_scope_after_each");
+    });
+
+    it("returns runMismatch when the requested runId does not match the retained snapshot", async () => {
+        const owner = 9401;
+        setRunOwnerForTests(owner);
+        const datasets = new Map<string, OHLCVData[]>([["UP+DOWN", makeCandles([100, 105, 110, 115, 120])]]);
+        await processRunBatch(
+            {
+                interval: "5m",
+                strategyKey: STRATEGY_KEY,
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols: ["UP+DOWN"],
+                loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                minUsableBars: 1,
+            },
+            () => {},
+            owner,
+            "batch-runid-A",
+        );
+        completeRunForTests();
+        // Sanity: an unscoped request returns the retained snapshot.
+        const unscoped = handleStatusRequest() as { runMismatch?: boolean; lastRun?: { runId?: string } | null };
+        expect(unscoped.runMismatch, "unscoped request never mismatches").to.not.equal(true);
+        expect(unscoped.lastRun?.runId).to.equal("batch-runid-A");
+        // Matching runId also returns normally.
+        const matching = handleStatusRequest(0, undefined, "batch-runid-A") as { runMismatch?: boolean; lastRun?: { runId?: string } | null };
+        expect(matching.runMismatch, "matching runId never mismatches").to.not.equal(true);
+        expect(matching.lastRun?.runId).to.equal("batch-runid-A");
+        // Mismatched runId returns the explicit mismatch shape with no snapshot.
+        const mismatched = handleStatusRequest(0, undefined, "batch-runid-OTHER") as { runMismatch?: boolean; lastRun?: unknown; run?: unknown };
+        expect(mismatched.runMismatch, "mismatched runId signals mismatch").to.equal(true);
+        expect(mismatched.lastRun, "mismatch suppresses lastRun").to.equal(null);
+        expect(mismatched.run, "mismatch suppresses run").to.equal(null);
+
+        setRunOwnerForTests(0);
+        await releaseLastResults("runid_scope_end");
     });
 });

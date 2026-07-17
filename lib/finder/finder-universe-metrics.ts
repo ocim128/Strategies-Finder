@@ -547,7 +547,8 @@ export function computePerformanceVerdict(
     status: string
 ): SymbolVerdict {
     if (!result || result.totalTrades <= 0 ||
-        status === "no_trades" || status === "load_failed" || status === "run_failed") {
+        status === "no_trades" || status === "load_failed" || status === "run_failed"
+        || status === "skipped") {
         return { label: "NO SIGNAL", cssClass: "finder-verdict-no-signal", tier: 6 };
     }
     if (result.totalTrades < 15) {

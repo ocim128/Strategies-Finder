@@ -396,4 +396,125 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect((dom.batchbacktestTab as any).classList.contains("is-running")).to.equal(false);
     });
 
+    it("disables Mine, Stability, AND Mine Prediction after clearStaleResults (audit Mine-Prediction-gating finding)", () => {
+        // Intent being locked (AGENTS.md rule 8): all three artifact-action
+        // buttons share the SAME gate. Mine Prediction used to stay enabled
+        // after `clearStaleResults` (only Mine and Stability were disabled),
+        // letting the user click a stale button and only then see "Run Batch
+        // first." The shared `updateArtifactActionButtons` helper is now the
+        // single source of truth.
+        const dom = setupForAnalysis();
+        // Pre-state: artifacts available + fingerprint set, so all buttons
+        // would be enabled by the helper.
+        svc().serverHasArtifacts = true;
+        svc().lastRunFingerprint = "fp-test";
+        svc().updateArtifactActionButtons(dom);
+        expect(dom.batchBacktestMineBtn.disabled, "Mine enabled before clear").to.equal(false);
+        expect(dom.batchBacktestStabilityMineBtn.disabled, "Stability enabled before clear").to.equal(false);
+        expect(dom.batchBacktestMinePredictionBtn.disabled, "Mine Prediction enabled before clear").to.equal(false);
+        // clearStaleResults flips all three off via the helper.
+        svc().clearStaleResults(dom);
+        expect(dom.batchBacktestMineBtn.disabled, "Mine disabled after clear").to.equal(true);
+        expect(dom.batchBacktestStabilityMineBtn.disabled, "Stability disabled after clear").to.equal(true);
+        expect(dom.batchBacktestMinePredictionBtn.disabled, "Mine Prediction disabled after clear (regression)").to.equal(true);
+    });
+
+    it("rejects a second runBatch synchronously while one is in flight (audit single-flight finding)", async () => {
+        // Intent being locked (AGENTS.md rule 8): the browser-side runInFlight
+        // guard fires BEFORE any await and before the Run button is disabled,
+        // so a rapid double-click on Run cannot stack two runBatch()
+        // invocations. The button-disable further down is the visual signal;
+        // this guard is the correctness gate.
+        //
+        // Directly flip runInFlight on (as if a run were in progress), call
+        // runBatch, and assert it short-circuited without touching fetch.
+        const dom = setupForAnalysis();
+        svc().runInFlight = true;
+        let fetchCalled = false;
+        await withMockFetch(() => {
+            fetchCalled = true;
+            return { ok: true, status: 200, text: "{}" };
+        }, async () => {
+            await svc().runBatch();
+        });
+        expect(fetchCalled, "second runBatch must short-circuit before fetch").to.equal(false);
+        expect(dom.batchBacktestStatus.textContent).to.include("already running");
+        // Reset for the rest of the suite.
+        svc().runInFlight = false;
+    });
+
+    it("reconcileStatusRows dedupes a streamed prefix + a recovery page (audit status-row-recovery finding)", () => {
+        // Intent being locked (AGENTS.md rule 8): the shared helper is the
+        // single source of truth for accepting status rows. The previous
+        // bespoke code in recoverCompletedServerRun appended the WHOLE first
+        // recovery page to the DOM while only pushing the missing prefix into
+        // lastResults, producing duplicate DOM rows after a stream
+        // interruption. The helper MUST dedupe by absolute index against
+        // lastResults on both the data array and the DOM append.
+        const dom = setupForAnalysis();
+        svc().lastResults = [];
+        // Simulate the streamed prefix: 3 rows already in lastResults.
+        const prefix = [
+            { symbol: "AAA", status: "profitable", barCount: 100 },
+            { symbol: "BBB", status: "profitable", barCount: 100 },
+            { symbol: "CCC", status: "profitable", barCount: 100 },
+        ] as any;
+        for (const r of prefix) svc().lastResults.push(r);
+        // Recovery page: same 3 rows + 2 new ones. The helper MUST skip the
+        // first 3 (already seen) and only accept the last 2.
+        const recovery = [
+            ...prefix,
+            { symbol: "DDD", status: "profitable", barCount: 100 },
+            { symbol: "EEE", status: "profitable", barCount: 100 },
+        ] as any;
+        const accepted = svc().reconcileStatusRows(dom, recovery, 0);
+        expect(accepted.length, "only the 2 unseen rows are accepted").to.equal(2);
+        expect(accepted.map((r: any) => r.symbol)).to.deep.equal(["DDD", "EEE"]);
+        expect(svc().lastResults.length, "lastResults has 5 rows total").to.equal(5);
+    });
+
+    it("a terminal reattach drains lastRun.rows so a reloaded tab recovers the result table (audit status-row-recovery finding)", async () => {
+        // Intent being locked (AGENTS.md rule 8): a tab that reloads AFTER a
+        // server-side run completed must recover the result rows from
+        // `/status.lastRun`. Previously the terminal branch adopted
+        // hasArtifacts but ignored lastRun.rows entirely, leaving the tab
+        // showing Mine availability with no results and no Copy output. The
+        // fix routes terminal rows through the shared reconcile helper.
+        const dom = setupForAnalysis();
+        svc().lastResults = [];
+        svc().activeServerRunId = "batch-recovered";
+        svc().persistActiveServerRun("batch-recovered");
+
+        const rows = [
+            { symbol: "AAA+BBB", status: "profitable", barCount: 100 },
+            { symbol: "CCC+DDD", status: "profitable", barCount: 100 },
+        ];
+        await withMockFetch(() => ({
+            ok: true,
+            status: 200,
+            text: JSON.stringify({
+                running: false,
+                runMismatch: false,
+                lastRun: {
+                    rowCount: 2,
+                    hasArtifacts: true,
+                    fingerprint: "fp-test",
+                    interval: "5m",
+                    strategyKey: "test",
+                    runId: "batch-recovered",
+                    phase: "done",
+                    summary: "Done — 2 pairs",
+                    rows,
+                    rowOffset: 0,
+                    nextOffset: null,
+                },
+            }),
+        }), async () => {
+            await svc().reattachToInProgressServerRun();
+        });
+
+        expect(svc().lastResults.length, "terminal reattach drains lastRun.rows").to.equal(2);
+        expect(svc().lastResults.map((r: any) => r.symbol)).to.deep.equal(["AAA+BBB", "CCC+DDD"]);
+        expect(dom.batchBacktestStatus.textContent).to.include("Done");
+    });
 });

@@ -33,6 +33,7 @@ import {
 } from "./batch-auto-stability-preference";
 import { getBatchDatasetCacheStats } from "./batch-backtest-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
+import { extractBatchServerError, postBatchNdjson } from "./batch-ndjson-post";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import { buildBatchRunFingerprint, parseBatchSymbols, BATCH_MAX_SYMBOLS } from "./batch-run-contract";
 import { BATCH_SYMBOL_TEMPLATES, type BatchSymbolTemplateKey } from "./batch-symbol-templates";
@@ -54,6 +55,7 @@ import {
     type BatchBenchmarkCacheSource,
     type BatchBenchmarkCacheStats,
     type BatchBenchmarkMinePhase,
+    type BatchBenchmarkRunOutcome,
     type BatchBenchmarkRunPhase,
     type BatchBenchmarkSnapshot,
     type BatchBenchmarkStabilityPhase,
@@ -158,6 +160,13 @@ class BatchBacktestService {
     // sees its token as stale and stops writing DOM/state, preventing two
     // concurrent runs from racing on `this.lastResults` and the results list.
     private runToken = 0;
+    // Audit single-flight finding: closes the double-click window between the
+    // user's click and the Run button being disabled (which happens ~50 lines
+    // into runBatch, after the first awaits). Without this guard, a rapid
+    // double-click stacks two runBatch() invocations on the event loop before
+    // either can disable the button — both pass the local preflight and the
+    // second one steals ownership from the first.
+    private runInFlight = false;
     // Browser-generated server run id (audit Finding 5). Sent on the /run body
     // and the /stop body so the server can scope Stop to THIS run: a stale tab
     // cannot cancel a newer run. Reattach also matches this against the
@@ -302,6 +311,25 @@ class BatchBacktestService {
     }
 
     private async runBatch(): Promise<void> {
+        // Audit single-flight finding: this guard fires BEFORE any await and
+        // before the Run button is disabled, so a rapid double-click on Run
+        // cannot stack two invocations that both pass local preflight. The
+        // button-disable further down stays as the visual signal; this is the
+        // correctness gate.
+        if (this.runInFlight) {
+            const dom = this.getDom();
+            dom.batchBacktestStatus.textContent = "Batch is already running — wait for it to finish.";
+            return;
+        }
+        this.runInFlight = true;
+        try {
+            await this.runBatchInner();
+        } finally {
+            this.runInFlight = false;
+        }
+    }
+
+    private async runBatchInner(): Promise<void> {
         const dom = this.getDom();
         const symbols = parseBatchSymbols(dom.batchBacktestSymbols.value);
         if (symbols.length === 0) {
@@ -370,13 +398,34 @@ class BatchBacktestService {
         // or the recovery/reattach path.
         this.pendingServerRunCacheStats = null;
         const runStartedAt = performance.now();
+        // Audit benchmark-rows finding: the benchmark records ONLY after a
+        // known terminal outcome. A run that threw before any terminal event
+        // (HTTP failure, stream error before `done`) is recorded as
+        // `incomplete` so the Copy Benchmark button is not enabled for a run
+        // that never produced authoritative results.
+        let runOutcome: BatchBenchmarkRunOutcome = "done";
+        let reachedTerminal = false;
         try {
-            await this.runBatchServer(dom, token, symbols, strategyKey, strategyParams, backtestSettings, capitalSettings, interval, runFingerprint);
+            await this.runBatchServer(dom, token, symbols, strategyKey, strategyParams, backtestSettings, capitalSettings, interval, runFingerprint, (finalOutcome) => {
+                // The server path resolves its terminal outcome AFTER all
+                // recovery attempts. Capture it here so the benchmark reflects
+                // what actually happened (done / cancelled) instead of guessing
+                // from `this.cancelled` after the fact.
+                reachedTerminal = true;
+                runOutcome = finalOutcome;
+            });
+            reachedTerminal = true;
         } catch (error) {
             if (token !== this.runToken) return;
             const message = error instanceof Error ? error.message : String(error);
             dom.batchBacktestStatus.textContent = `Error: ${message}`;
             debugLogger.error("batch_backtest.run_failed", { error: message });
+            // The run threw before any terminal event was processed. Preserve
+            // `this.cancelled` as the dominant signal: a user-initiated Stop
+            // surfaces a `cancelled` outcome so the benchmark distinguishes it
+            // from an HTTP/stream `fatal`.
+            runOutcome = this.cancelled ? "cancelled" : "fatal";
+            reachedTerminal = this.cancelled;
         } finally {
             // Only restore buttons if this run is still the active one.
             if (token === this.runToken) {
@@ -387,13 +436,19 @@ class BatchBacktestService {
                 // Mine button must be gated on the `serverHasArtifacts` flag
                 // (set by the `done` event), not on `row.data !== undefined`
                 // (the browser never holds `row.data` in this mode).
-                dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
-                dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
-                dom.batchBacktestMinePredictionBtn.disabled = !this.serverHasArtifacts;
+                this.updateArtifactActionButtons(dom);
                 this.updateSummary(dom);
                 this.setProgress(dom, 100, this.cancelled ? "Stopped" : "Done");
                 this.setRunBusy(dom, false);
-                this.recordRunBenchmark("server", strategyKey, interval, runStartedAt);
+                // Audit benchmark-rows finding: record the benchmark only after
+                // a known terminal outcome. A run that exited via HTTP/stream
+                // failure without recovery is recorded as `incomplete` (still
+                // observable, but clearly labeled). `this.cancelled` from the
+                // user clicking Stop is a terminal outcome (`cancelled`).
+                const benchmarkOutcome: BatchBenchmarkRunOutcome = reachedTerminal
+                    ? runOutcome
+                    : "incomplete";
+                this.recordRunBenchmark("server", strategyKey, interval, runStartedAt, benchmarkOutcome);
                 const hasMineableArtifacts = this.serverHasArtifacts;
                 if (shouldAutoRunBatchStability(
                     dom.batchBacktestAutoRunStability.checked,
@@ -425,6 +480,7 @@ class BatchBacktestService {
         capitalSettings: CapitalSettings,
         interval: string,
         runFingerprint: string,
+        onTerminal: (outcome: BatchBenchmarkRunOutcome) => void,
     ): Promise<void> {
         // Audit Finding 5: generate a per-run id and send it on the /run body
         // so the server can scope Stop to THIS run. Adopted on the service so
@@ -449,11 +505,14 @@ class BatchBacktestService {
             }),
         });
         if (!response.ok || !response.body) {
-            const text = await response.text();
-            let payload: { error?: string } = {};
-            try { payload = JSON.parse(text); } catch { /* ignore */ }
+            // Audit NDJSON-POST-helper finding: use the shared error extractor
+            // so this non-2xx path matches the centralized transport shape.
+            // The run path keeps its own fetch because the stream is wrapped
+            // in a try/catch + recovery flow that does not fit the helper's
+            // single-shot POST+consume contract.
+            const { message } = await extractBatchServerError(response, `Server run failed (${response.status}).`);
             if (!response.ok) this.clearActiveServerRun(runId);
-            throw new Error(payload.error ?? `Server run failed (${response.status}).`);
+            throw new Error(message);
         }
 
         let doneSummary: string | null = null;
@@ -498,9 +557,23 @@ class BatchBacktestService {
                         ? buildCacheStatsFromLoader(event.cacheStats)
                         : null;
                     doneSummary = event.summary;
+                    // Audit benchmark-rows finding: surface a partial-artifact
+                    // warning in the status line when the server retained some
+                    // but not all Mine artifacts (disk pressure on a 1000-pair
+                    // run). Keep the Mine button enabled as long as any artifact
+                    // survived — Mine still works on the survivors.
+                    if (event.artifactStats && event.artifactStats.failed > 0) {
+                        const { stored, eligible, failed } = event.artifactStats;
+                        const base = doneSummary ?? `Done — ${this.lastResults.length} pairs`;
+                        doneSummary = `${base} — artifacts ${stored}/${eligible}; Mine will omit ${failed} failed write${failed === 1 ? "" : "s"}.`;
+                    }
                     this.clearActiveServerRun(runId, false);
                     setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
                     dom.batchBacktestStatus.textContent = doneSummary;
+                    // Audit benchmark-rows finding: report a terminal outcome.
+                    // `done.cancelled` is set by the server when its run loop
+                    // observed ownership loss (Stop). A clean done is "done".
+                    onTerminal(event.cancelled ? "cancelled" : "done");
                 },
                 onFatal: (event: Extract<BatchStreamEvent, { type: "fatal" }>) => {
                     if (token !== this.runToken) return;
@@ -539,6 +612,10 @@ class BatchBacktestService {
                 throw new Error(message);
             }
             doneSummary = recovered;
+            // Recovery adopted the server's terminal snapshot — the run reached
+            // a known terminal outcome even though the stream broke mid-flight.
+            // `this.cancelled` reflects whether Stop was clicked locally.
+            onTerminal(this.cancelled ? "cancelled" : "done");
         } else if (streamError !== null) {
             // Terminal `done` was processed before the stream later errored —
             // the run is complete; the trailing error is informational only.
@@ -565,10 +642,21 @@ class BatchBacktestService {
             // misbehaving server cannot make the browser loop forever.
             const PAGE_LIMIT = 250;
             const MAX_ROWS_TO_RECONSTRUCT = 10_000;
-            const firstResponse = await fetch("/api/batch-backtest/status", { cache: "no-store" });
+            // Audit runId-scoping finding: scope the initial status probe to
+            // the active run id so a different generation's terminal snapshot
+            // is not adopted by mistake. The helper returns `runMismatch` when
+            // the server's retained run is no longer the one this tab started.
+            const scopeRunId = this.activeServerRunId ?? undefined;
+            const firstResponse = await fetch(
+                scopeRunId
+                    ? `/api/batch-backtest/status?runId=${encodeURIComponent(scopeRunId)}`
+                    : "/api/batch-backtest/status",
+                { cache: "no-store" },
+            );
             if (!firstResponse.ok) return null;
             const firstPayload = await firstResponse.json() as {
                 running?: boolean;
+                runMismatch?: boolean;
                 lastRun?: {
                     rowCount?: number;
                     hasArtifacts?: boolean;
@@ -582,6 +670,10 @@ class BatchBacktestService {
                     runId?: string;
                 } | null;
             };
+            // Audit runId-scoping finding: the server confirmed the retained
+            // run is no longer ours. Treat as not-adoptable so the caller
+            // surfaces the original stream error instead of partial recovery.
+            if (firstPayload.runMismatch) return null;
             const lastRun = firstPayload.lastRun;
             if (firstPayload.running || !lastRun || lastRun.fingerprint !== runFingerprint) {
                 return null;
@@ -612,30 +704,16 @@ class BatchBacktestService {
                 ? buildCacheStatsFromLoader(lastRun.cacheStats)
                 : null;
 
-            // Reconcile missing rows. The browser holds the streamed prefix
-            // (whatever arrived before the disconnect); the server retains the
-            // FULL scalar row list in `runState.rows` for the artifact lifetime
-            // and now exposes it via `lastRun` pagination. Page from the current
-            // browser offset up to the server rowCount so Copy / benchmark /
-            // snapshot describe the complete run, not just the prefix that
-            // reached the browser (audit finding 3).
+            // Audit status-row-recovery finding: route through the shared
+            // `reconcileStatusRows` helper so the streamed prefix and the
+            // recovered rows cannot double-append. The helper dedupes by
+            // absolute index (offset+i) and is the single place that pushes
+            // to `lastResults` and `appendResultRows`.
             const serverRowCount = Math.max(0, Math.floor(Number(lastRun.rowCount ?? 0)));
-            let firstDelivered: BatchBacktestSymbolResult[] = [];
-            let nextOffset: number | null = null;
-            if (Array.isArray(lastRun.rows)) {
-                const rowOffset = Math.max(0, Math.floor(Number(lastRun.rowOffset ?? 0)));
-                firstDelivered = lastRun.rows;
-                nextOffset = lastRun.nextOffset === undefined ? null : lastRun.nextOffset;
-                for (let i = 0; i < firstDelivered.length; i += 1) {
-                    const absoluteIndex = rowOffset + i;
-                    if (absoluteIndex < this.lastResults.length) continue;
-                    this.lastResults.push(firstDelivered[i]!);
-                    this.appendedCount += 1;
-                }
-            }
-            if (firstDelivered.length > 0) {
-                this.appendResultRows(dom, firstDelivered);
-            }
+            const nextOffset = Array.isArray(lastRun.rows)
+                ? (lastRun.nextOffset === undefined ? null : lastRun.nextOffset)
+                : null;
+            this.reconcileStatusRows(dom, lastRun.rows, lastRun.rowOffset, scopeRunId);
 
             // Drain remaining pages from the server offset until the server
             // signals no more rows (`nextOffset === null`). The status endpoint
@@ -644,52 +722,50 @@ class BatchBacktestService {
             // row-count / iteration caps prevent a misbehaving server from
             // looping the browser forever.
             let guard = 0;
+            let cursor = nextOffset;
+            let lastCursor = cursor;
             while (
-                typeof nextOffset === "number"
+                typeof cursor === "number"
                 && this.lastResults.length < serverRowCount
                 && this.lastResults.length < MAX_ROWS_TO_RECONSTRUCT
                 && guard < MAX_ROWS_TO_RECONSTRUCT
             ) {
                 guard += 1;
                 const pageResponse = await fetch(
-                    `/api/batch-backtest/status?after=${nextOffset}&limit=${PAGE_LIMIT}`,
+                    `/api/batch-backtest/status?after=${cursor}&limit=${PAGE_LIMIT}`
+                    + (scopeRunId ? `&runId=${encodeURIComponent(scopeRunId)}` : ""),
                     { cache: "no-store" },
                 );
                 if (!pageResponse.ok) break;
                 const pagePayload = await pageResponse.json() as {
+                    runMismatch?: boolean;
                     lastRun?: {
                         rows?: BatchBacktestSymbolResult[];
                         rowOffset?: number;
                         nextOffset?: number | null;
                     } | null;
                 };
+                // Audit runId-scoping finding: stop paginating the moment the
+                // server signals the run id is no longer ours (a newer run
+                // started during the drain).
+                if (pagePayload.runMismatch) break;
                 const page = pagePayload.lastRun;
                 if (!page || !Array.isArray(page.rows) || page.rows.length === 0) break;
-                const pageOffset = Math.max(0, Math.floor(Number(page.rowOffset ?? nextOffset)));
-                const pageRows: BatchBacktestSymbolResult[] = [];
-                for (let i = 0; i < page.rows.length; i += 1) {
-                    const absoluteIndex = pageOffset + i;
-                    if (absoluteIndex < this.lastResults.length + pageRows.length) continue;
-                    pageRows.push(page.rows[i]!);
-                }
-                for (const row of pageRows) {
-                    this.lastResults.push(row);
-                    this.appendedCount += 1;
-                }
-                if (pageRows.length > 0) {
-                    this.appendResultRows(dom, pageRows);
-                }
-                nextOffset = page.nextOffset === undefined ? null : page.nextOffset;
-                if (page.nextOffset !== null && page.nextOffset !== undefined
-                    && page.nextOffset <= pageOffset + page.rows.length) {
+                const pageOffset = Math.max(0, Math.floor(Number(page.rowOffset ?? cursor)));
+                this.reconcileStatusRows(dom, page.rows, pageOffset, scopeRunId);
+                lastCursor = cursor;
+                cursor = page.nextOffset === undefined ? null : page.nextOffset;
+                if (
+                    cursor !== null
+                    && cursor <= pageOffset + page.rows.length
+                ) {
                     break; // non-progressing cursor guard
                 }
+                if (cursor === lastCursor) break;
             }
 
             setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
-            dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
-            dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
-            dom.batchBacktestMinePredictionBtn.disabled = !this.serverHasArtifacts;
+            this.updateArtifactActionButtons(dom);
             this.saveLatestResultsSnapshot();
             if (serverRowCount > 0 && this.lastResults.length < serverRowCount) {
                 // Reconstruction could not reach the server's row count — surface
@@ -709,6 +785,45 @@ class BatchBacktestService {
         }
     }
 
+    /**
+     * Single source of truth for accepting status-page rows (audit status-row
+     * -recovery finding). Dedupes by absolute index against `lastResults` so a
+     * streamed prefix + a recovery page cannot double-append (the previous
+     * bespoke code appended the whole first page to the DOM while only pushing
+     * the missing prefix to `lastResults`, producing duplicate DOM rows).
+     * Returns the rows actually accepted; never throws on dupes or runId
+     * mismatch.
+     *
+     * `expectedRunId` is informational — the server has already rejected the
+     * page on a mismatch (runMismatch), but the helper still skips work if the
+     * caller can detect a stale row array locally.
+     */
+    private reconcileStatusRows(
+        dom: BatchBacktestDom,
+        rows: readonly BatchBacktestSymbolResult[] | undefined,
+        rowOffsetRaw: number | undefined,
+        _expectedRunId?: string,
+    ): BatchBacktestSymbolResult[] {
+        if (!rows || rows.length === 0) return [];
+        const rowOffset = Math.max(0, Math.floor(Number(rowOffsetRaw ?? 0)));
+        const accepted: BatchBacktestSymbolResult[] = [];
+        for (let i = 0; i < rows.length; i += 1) {
+            const absoluteIndex = rowOffset + i;
+            // Skip rows the browser already holds (absolute index is already
+            // present). This is the dedupe invariant: streamed prefix + later
+            // recovery pages converge to exactly the server's row list.
+            if (absoluteIndex < this.lastResults.length + accepted.length) continue;
+            accepted.push(rows[i]!);
+        }
+        if (accepted.length === 0) return [];
+        for (const row of accepted) {
+            this.lastResults.push(row);
+            this.appendedCount += 1;
+        }
+        this.appendResultRows(dom, accepted);
+        return accepted;
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // Benchmark capture. Each phase records wall clock + cache stats; the
     // Copy Benchmark button pretty-prints the accumulated snapshot to the
@@ -720,18 +835,44 @@ class BatchBacktestService {
         strategyKey: string,
         interval: string,
         startedAt: number,
+        outcome: BatchBenchmarkRunOutcome,
     ): void {
         const totalMs = performance.now() - startedAt;
         // Classify pairs by synthetic vs real. parsePortfolioSyntheticPairSymbol
         // returns non-null only for `BASE+QUOTE` tokens.
         let synthetic = 0;
         let real = 0;
+        // Audit benchmark-rows finding: classify each row into completed /
+        // failed / cancelled buckets so a fast Stop no longer counts its
+        // unattempted tail as "loaded". `skipped` rows are cancelled slots the
+        // runner synthesized when its loop broke early; `no_trades` means the
+        // strategy actually ran and produced zero trades, so it counts as
+        // completed.
+        let completed = 0;
+        let failed = 0;
+        let cancelled = 0;
         for (const row of this.lastResults) {
             if (parsePortfolioSyntheticPairSymbol(row.symbol)) synthetic += 1;
             else real += 1;
+            switch (row.status) {
+                case "load_failed":
+                case "run_failed":
+                    failed += 1;
+                    break;
+                case "skipped":
+                    cancelled += 1;
+                    break;
+                default:
+                    completed += 1;
+            }
         }
+        // Legacy `loaded` keeps its pre-fix meaning ("not load_failed/run_failed")
+        // so downstream consumers (existing snapshots, copied JSON) stay
+        // backward-compatible. It now includes `skipped` rows for the same
+        // reason it did before: those rows have a non-failure status. The new
+        // `completed`/`cancelled` split is the accurate breakdown.
         const loaded = this.lastResults.filter((r) => r.status !== "load_failed" && r.status !== "run_failed").length;
-        const failed = this.lastResults.length - loaded;
+        const attempted = this.lastResults.length;
         const phase: BatchBenchmarkRunPhase = {
             totalMs,
             loaded,
@@ -739,6 +880,11 @@ class BatchBacktestService {
             synthetic,
             real,
             avgMsPerLoaded: benchmarkRatio(totalMs, loaded),
+            attempted,
+            completed,
+            cancelled,
+            skipped: cancelled,
+            outcome,
         };
         const cacheSource = this.resolveCacheSource(mode);
         const cache = cacheSource === "server_stream" && this.pendingServerRunCacheStats
@@ -1012,49 +1158,40 @@ class BatchBacktestService {
         // Declared outside `try` so the `finally`-adjacent return can read it.
         let targetCount = 0;
         try {
-            const response = await fetch("/api/batch-backtest/mine", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
+            const verdicts: BatchSyntheticAssetVerdict[] = [];
+            const minerInterval = this.lastRunInterval ?? state.currentInterval;
+            // Audit NDJSON-POST-helper finding: route through the shared
+            // `postBatchNdjson` helper for the transport mechanics (fetch,
+            // response validation, JSON error extraction, requireTerminal).
+            // The handler object stays at the call site so the typed Mine
+            // events (`start`/`verdict`/`done`/`fatal`) stay compile-checked.
+            // `onResponse` preserves the prior ordering: re-issue Stop AFTER
+            // the POST establishes server-side ownership so a Stop that raced
+            // the POST is re-sent once the lock is held.
+            await postBatchNdjson<BatchMinerStreamEvent>({
+                endpoint: "/api/batch-backtest/mine",
+                body: {
                     fingerprint: this.lastRunFingerprint,
                     interval: this.lastRunInterval,
-                }),
+                },
+                onResponse: () => this.reissueStopIfNeeded(),
+                handlers: {
+                    onStart: (event: Extract<BatchMinerStreamEvent, { type: "start" }>) => {
+                        targetCount = Math.max(0, Math.floor(event.assets ?? 0));
+                        dom.batchBacktestMinerSummary.textContent = `Mining on server — ${event.assets} assets / ${event.pairs} pairs`;
+                    },
+                    onVerdict: (event: Extract<BatchMinerStreamEvent, { type: "verdict" }>) => {
+                        verdicts.push(event.verdict);
+                        dom.batchBacktestMinerResults.appendChild(this.createMinerRow(event.verdict));
+                    },
+                    onDone: (event: Extract<BatchMinerStreamEvent, { type: "done" }>) => {
+                        dom.batchBacktestMinerSummary.textContent = event.summary;
+                    },
+                    onFatal: (event: Extract<BatchMinerStreamEvent, { type: "fatal" }>) => {
+                        throw new Error(event.error);
+                    },
+                },
             });
-            if (!response.ok || !response.body) {
-                const text = await response.text();
-                let payload: { error?: string } = {};
-                try { payload = JSON.parse(text); } catch { /* ignore */ }
-                throw new Error(payload.error ?? `Server mine failed (${response.status}).`);
-            }
-            await this.reissueStopIfNeeded();
-            const verdicts: BatchSyntheticAssetVerdict[] = [];
-            let minerInterval = this.lastRunInterval ?? state.currentInterval;
-            // `requireTerminal: true` enforces the protocol invariant: a clean
-            // EOF before `done`/`fatal` throws `StreamEndedBeforeTerminalError`,
-            // so reaching the line after `consumeNdjsonStream` resolves proves
-            // `done` was processed (the only terminal that doesn't throw via
-            // `onFatal`). Without this, a truncated stream resolved normally and
-            // partial verdicts were committed as a complete Mine run (same root
-            // cause as the Batch Run path). Mirrors the Stability Mine path's
-            // `received.result` guard.
-            // targetCount declared on the function scope; updated in the
-            // `start` event handler below.
-            await consumeNdjsonStream<BatchMinerStreamEvent>(response.body, {
-                onStart: (event: Extract<BatchMinerStreamEvent, { type: "start" }>) => {
-                    targetCount = Math.max(0, Math.floor(event.assets ?? 0));
-                    dom.batchBacktestMinerSummary.textContent = `Mining on server — ${event.assets} assets / ${event.pairs} pairs`;
-                },
-                onVerdict: (event: Extract<BatchMinerStreamEvent, { type: "verdict" }>) => {
-                    verdicts.push(event.verdict);
-                    dom.batchBacktestMinerResults.appendChild(this.createMinerRow(event.verdict));
-                },
-                onDone: (event: Extract<BatchMinerStreamEvent, { type: "done" }>) => {
-                    dom.batchBacktestMinerSummary.textContent = event.summary;
-                },
-                onFatal: (event: Extract<BatchMinerStreamEvent, { type: "fatal" }>) => {
-                    throw new Error(event.error);
-                },
-            }, { requireTerminal: true });
             this.lastMinerResult = {
                 interval: minerInterval,
                 options: BATCH_SYNTHETIC_MINER_DEFAULT_OPTIONS,
@@ -1073,10 +1210,7 @@ class BatchBacktestService {
             dom.batchBacktestMinerSummary.textContent = `Miner error: ${message}`;
             debugLogger.error("batch_synthetic_miner.server_failed", { error: message });
         } finally {
-            dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
-            dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
-            dom.batchBacktestMinePredictionBtn.disabled = !this.serverHasArtifacts;
-            this.updatePortfolioFitButtonState(dom);
+            this.updateArtifactActionButtons(dom);
         }
         return targetCount;
     }
@@ -1190,6 +1324,10 @@ class BatchBacktestService {
                 }
                 let payload: {
                     running?: boolean;
+                    // Audit runId-scoping finding: server signals the retained
+                    // run is no longer the one this tab asked about. Treated as
+                    // "no longer our run" — the loop drops ownership below.
+                    runMismatch?: boolean;
                     run?: {
                         total: number;
                         completed: number;
@@ -1215,10 +1353,26 @@ class BatchBacktestService {
                         phase?: "done" | "cancelled" | "fatal";
                         summary?: string | null;
                         error?: string | null;
+                        // Audit status-row-recovery finding: terminal reattach
+                        // now also drains `lastRun.rows` (previously ignored),
+                        // so a tab that reloads after the run finished still
+                        // recovers the result table.
+                        rows?: BatchBacktestSymbolResult[];
+                        rowOffset?: number;
+                        nextOffset?: number | null;
                     } | null;
                 };
                 try {
-                    const response = await fetch(`/api/batch-backtest/status?after=${this.lastResults.length}`, { cache: "no-store" });
+                    // Audit runId-scoping finding: scope each poll to the
+                    // active run id so a tab polling a stale generation stops
+                    // seeing rows from a newer run. If `activeServerRunId` is
+                    // unset (very first poll of a fresh tab), the request is
+                    // unscoped and the server returns whatever it currently
+                    // owns; the loop adopts the runId from the response below.
+                    const initialRunId = this.activeServerRunId
+                        ? `&runId=${encodeURIComponent(this.activeServerRunId)}`
+                        : "";
+                    const response = await fetch(`/api/batch-backtest/status?after=${this.lastResults.length}${initialRunId}`, { cache: "no-store" });
                     // Audit Finding 4: a non-2xx status is a transient failure,
                     // not a parseable payload — treat it the same as a thrown
                     // fetch so the backoff path engages instead of crashing on
@@ -1270,6 +1424,20 @@ class BatchBacktestService {
                 }
                 // Successful poll: reset the transient-failure counter.
                 this.reattachConsecutiveFailures = 0;
+                // Audit runId-scoping finding: server confirmed the retained
+                // run is no longer ours. Stop polling without adopting another
+                // tab's snapshot. Keep the already-rendered rows in place.
+                if (payload.runMismatch) {
+                    if (!this.reattachPollingStopped) {
+                        const dom = this.getDom();
+                        dom.batchBacktestRunBtn.disabled = false;
+                        setVisible(dom.batchBacktestStopBtn, false);
+                        this.setRunBusy(dom, false);
+                        this.updateSummary(dom);
+                        dom.batchBacktestStatus.textContent = "Batch run was replaced by a newer run — click Run to start over.";
+                    }
+                    return;
+                }
                 if (!payload.running || !payload.run) {
                     const terminalRunId = payload.lastRun?.runId;
                     if (
@@ -1308,17 +1476,66 @@ class BatchBacktestService {
                         this.pendingServerRunCacheStats = payload.lastRun.cacheStats
                             ? buildCacheStatsFromLoader(payload.lastRun.cacheStats)
                             : null;
+                        // Audit status-row-recovery finding: drain the terminal
+                        // snapshot's rows via the shared helper. Previously a
+                        // tab that reloaded AFTER the run completed would see
+                        // `hasArtifacts` but no rows and no Copy output. The
+                        // helper dedupes by absolute index so a partial earlier
+                        // render is preserved and only the gap is filled.
+                        const dom = this.getDom();
+                        this.reconcileStatusRows(dom, payload.lastRun.rows, payload.lastRun.rowOffset, terminalRunId);
+                        // Audit status-row-recovery finding: drain remaining
+                        // pages while the server reports more rows for this
+                        // terminal snapshot. The pagination contract matches
+                        // the recovery path (after + limit + runId scope).
+                        let termCursor = payload.lastRun.nextOffset ?? null;
+                        let termLastCursor = termCursor;
+                        let termGuard = 0;
+                        const TERM_PAGE_LIMIT = 250;
+                        const TERM_MAX_PAGES = 40; // ~10k rows, matches recovery cap
+                        while (
+                            typeof termCursor === "number"
+                            && termGuard < TERM_MAX_PAGES
+                            && !this.reattachPollingStopped
+                        ) {
+                            termGuard += 1;
+                            const termRunId = terminalRunId
+                                ? `&runId=${encodeURIComponent(terminalRunId)}`
+                                : "";
+                            const pageResponse = await fetch(
+                                `/api/batch-backtest/status?after=${termCursor}&limit=${TERM_PAGE_LIMIT}${termRunId}`,
+                                { cache: "no-store" },
+                            );
+                            if (!pageResponse.ok) break;
+                            const pagePayload = await pageResponse.json() as {
+                                runMismatch?: boolean;
+                                lastRun?: {
+                                    rows?: BatchBacktestSymbolResult[];
+                                    rowOffset?: number;
+                                    nextOffset?: number | null;
+                                } | null;
+                            };
+                            if (pagePayload.runMismatch) break;
+                            const page = pagePayload.lastRun;
+                            if (!page || !Array.isArray(page.rows) || page.rows.length === 0) break;
+                            const pageOffset = Math.max(0, Math.floor(Number(page.rowOffset ?? termCursor)));
+                            this.reconcileStatusRows(dom, page.rows, pageOffset, terminalRunId);
+                            termLastCursor = termCursor;
+                            termCursor = page.nextOffset ?? null;
+                            if (termCursor === null || termCursor <= termLastCursor) break;
+                        }
+                        if (this.lastResults.length > 0) {
+                            this.saveLatestResultsSnapshot();
+                        }
                         // The browser does not have the per-row scalars for the
                         // prior run (the tab reloaded), but server-side Mine
                         // and Stability Mine can still consume retained
                         // artifacts before their TTL expires.
-                        this.getDom().batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
-                        this.getDom().batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
-                        this.getDom().batchBacktestMinePredictionBtn.disabled = !this.serverHasArtifacts;
-                        this.updatePortfolioFitButtonState(this.getDom());
-                    }
-                    if (this.lastResults.length > 0) {
-                        this.saveLatestResultsSnapshot();
+                        this.updateArtifactActionButtons(dom);
+                    } else {
+                        if (this.lastResults.length > 0) {
+                            this.saveLatestResultsSnapshot();
+                        }
                     }
                     if (payload.lastRun?.phase === "fatal") {
                         this.getDom().batchBacktestStatus.textContent =
@@ -1373,41 +1590,40 @@ class BatchBacktestService {
                 if (rowOffset === 0 && this.lastResults.length === 0 && run.rows.length > 0) {
                     dom.batchBacktestResults.replaceChildren();
                 }
-                // Drain pages until the server signals no more rows for this
-                // tick. The status endpoint bounds rows-per-response (default
-                // 250) and returns `nextOffset` when more remain; without this
-                // drain a late reload would catch up at one page per 2s poll.
-                // Reconciliation is unchanged (absolute index, skip seen), so
-                // any page boundary is safe. New rows accumulate in a buffer
-                // and append as one DocumentFragment (see appendResultRows).
-                // Paged responses only need the reconcile fields, so the
-                // structural type here is intentionally narrower than the
-                // initial `run` shape (which carries status scalars too).
-                const pendingRows: BatchBacktestSymbolResult[] = [];
-                let page: { rows: BatchBacktestSymbolResult[]; rowOffset?: number; nextOffset?: number | null } = run;
+                // Audit status-row-recovery finding: drain pages via the shared
+                // `reconcileStatusRows` helper (the same one recovery and
+                // terminal reattach use). The helper dedupes by absolute index
+                // and is the single place that pushes to `lastResults` + DOM,
+                // so any page boundary is safe. Without this drain a late
+                // reload would catch up at one page per 2s poll. Paged
+                // responses are scoped to the active run id so a newer run
+                // started mid-drain cannot contaminate this tab's row list.
+                this.reconcileStatusRows(dom, run.rows, run.rowOffset, this.activeServerRunId ?? undefined);
+                let nextOffset = run.nextOffset;
+                let lastOffset = nextOffset;
                 for (;;) {
-                    const pageOffset = Math.max(0, Math.floor(Number(page.rowOffset ?? 0)));
-                    for (let i = 0; i < page.rows.length; i += 1) {
-                        const absoluteIndex = pageOffset + i;
-                        if (absoluteIndex < this.lastResults.length + pendingRows.length) continue;
-                        pendingRows.push(page.rows[i]!);
-                    }
-                    const nextOffset = page.nextOffset;
                     if (nextOffset === null || nextOffset === undefined) break;
-                    if (nextOffset <= pageOffset + page.rows.length) break; // guard against non-progressing cursors
+                    const pageOffsetCheck = Math.max(0, Math.floor(Number(run.rowOffset ?? 0)));
+                    if (nextOffset <= pageOffsetCheck + run.rows.length) break; // guard against non-progressing cursors
                     if (!payload.running || !payload.run) break;
-                    const nextResponse = await fetch(`/api/batch-backtest/status?after=${nextOffset}&limit=250`, { cache: "no-store" });
+                    const scopeQs = this.activeServerRunId
+                        ? `&runId=${encodeURIComponent(this.activeServerRunId)}`
+                        : "";
+                    const nextResponse = await fetch(`/api/batch-backtest/status?after=${nextOffset}&limit=250${scopeQs}`, { cache: "no-store" });
                     if (!nextResponse.ok) break;
-                    const nextPayload = await nextResponse.json() as { run?: { rows: BatchBacktestSymbolResult[]; rowOffset?: number; nextOffset?: number | null } | null };
+                    const nextPayload = await nextResponse.json() as {
+                        runMismatch?: boolean;
+                        run?: { rows: BatchBacktestSymbolResult[]; rowOffset?: number; nextOffset?: number | null } | null;
+                    };
+                    // Audit runId-scoping finding: stop the moment the server
+                    // signals the run id is no longer ours.
+                    if (nextPayload.runMismatch) break;
                     if (!nextPayload.run) break;
-                    page = nextPayload.run;
-                }
-                if (pendingRows.length > 0) {
-                    for (const row of pendingRows) {
-                        this.lastResults.push(row);
-                        this.appendedCount += 1;
-                    }
-                    this.appendResultRows(dom, pendingRows);
+                    const np = nextPayload.run;
+                    this.reconcileStatusRows(dom, np.rows, np.rowOffset, this.activeServerRunId ?? undefined);
+                    lastOffset = nextOffset;
+                    nextOffset = np.nextOffset === undefined ? null : np.nextOffset;
+                    if (nextOffset === null || nextOffset === lastOffset) break;
                 }
                 const seen = run.completed + run.failed;
                 const current = run.currentSymbol ? ` — ${run.currentSymbol}` : "";
@@ -1465,7 +1681,7 @@ class BatchBacktestService {
             if (this.analysisCancelRequested) return;
             if (!hasServerArtifacts) {
                 dom.batchBacktestMinerSummary.textContent = "Rerun Batch before stability mining; no artifacts on server.";
-                dom.batchBacktestStabilityMineBtn.disabled = true;
+                this.updateArtifactActionButtons(dom);
                 return;
             }
             const stabilityStartedAt = performance.now();
@@ -1496,46 +1712,45 @@ class BatchBacktestService {
         dom.batchBacktestPortfolioFitResults.replaceChildren();
 
         try {
-            const response = await fetch("/api/batch-backtest/stability-mine", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
+            const received: { result: BatchStabilityMineResult | null; cancelledSummary: string | null } = {
+                result: null,
+                cancelledSummary: null,
+            };
+            // Audit NDJSON-POST-helper finding: shared transport. The
+            // `onNonOkResponse` hook preserves the prior 400 "no artifacts"
+            // special case so the next click short-circuits without a second
+            // round trip. `onResponse` preserves the reissue-Stop ordering.
+            await postBatchNdjson<BatchStabilityMineStreamEvent>({
+                endpoint: "/api/batch-backtest/stability-mine",
+                body: {
                     fingerprint: this.lastRunFingerprint,
                     interval: this.lastRunInterval ?? state.currentInterval,
                     subsetSize,
                     reruns,
                     seed,
-                }),
-            });
-            if (!response.ok || !response.body) {
-                const text = await response.text().catch(() => "");
-                let payload: { error?: string } = {};
-                try { payload = JSON.parse(text); } catch { /* ignore */ }
-                if (response.status === 400 && payload.error?.includes("no artifacts on server")) {
-                    this.serverHasArtifacts = false;
-                }
-                throw new Error(payload.error ?? (text || `HTTP ${response.status}`));
-            }
-            await this.reissueStopIfNeeded();
-            const received: { result: BatchStabilityMineResult | null; cancelledSummary: string | null } = {
-                result: null,
-                cancelledSummary: null,
-            };
-            await consumeNdjsonStream<BatchStabilityMineStreamEvent>(response.body, {
-                onProgress: (event: Extract<BatchStabilityMineStreamEvent, { type: "progress" }>) => {
-                    dom.batchBacktestMinerSummary.textContent = `Stability mining on server ${event.run}/${event.reruns} | hits ${event.hits}`;
                 },
-                onDone: (event: Extract<BatchStabilityMineStreamEvent, { type: "done" }>) => {
-                    if (event.ok) {
-                        received.result = event.result;
-                    } else {
-                        received.cancelledSummary = event.summary;
+                onResponse: () => this.reissueStopIfNeeded(),
+                onNonOkResponse: (status, payload) => {
+                    if (status === 400 && typeof payload?.error === "string" && payload.error.includes("no artifacts on server")) {
+                        this.serverHasArtifacts = false;
                     }
                 },
-                onFatal: (event: Extract<BatchStabilityMineStreamEvent, { type: "fatal" }>) => {
-                    throw new Error(event.error);
+                handlers: {
+                    onProgress: (event: Extract<BatchStabilityMineStreamEvent, { type: "progress" }>) => {
+                        dom.batchBacktestMinerSummary.textContent = `Stability mining on server ${event.run}/${event.reruns} | hits ${event.hits}`;
+                    },
+                    onDone: (event: Extract<BatchStabilityMineStreamEvent, { type: "done" }>) => {
+                        if (event.ok) {
+                            received.result = event.result;
+                        } else {
+                            received.cancelledSummary = event.summary;
+                        }
+                    },
+                    onFatal: (event: Extract<BatchStabilityMineStreamEvent, { type: "fatal" }>) => {
+                        throw new Error(event.error);
+                    },
                 },
-            }, { requireTerminal: true });
+            });
             if (received.cancelledSummary) {
                 this.lastStabilityResult = null;
                 dom.batchBacktestMinerSummary.textContent = received.cancelledSummary;
@@ -1557,10 +1772,7 @@ class BatchBacktestService {
             dom.batchBacktestMinerSummary.textContent = `Stability miner error: ${message}`;
             debugLogger.error("batch_stability_miner.server_failed", { error: message });
         } finally {
-            dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
-            dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
-            dom.batchBacktestMinePredictionBtn.disabled = !this.serverHasArtifacts;
-            this.updatePortfolioFitButtonState(dom);
+            this.updateArtifactActionButtons(dom);
         }
     }
 
@@ -1648,48 +1860,45 @@ class BatchBacktestService {
         this.lastPortfolioFitResult = null;
         try {
             const capital = this.resolvePortfolioFitCapital();
-            // Stability context is retained and resolved by the server.
-            const response = await fetch("/api/batch-backtest/portfolio-fit", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    fingerprint: this.lastRunFingerprint,
-                    interval: this.lastRunInterval ?? state.currentInterval,
-                    capital,
-                }),
-            });
-            if (!response.ok || !response.body) {
-                const text = await response.text().catch(() => "");
-                let payload: { error?: string } = {};
-                try { payload = JSON.parse(text); } catch { /* ignore */ }
-                if (response.status === 400 && payload.error?.includes("no artifacts")) {
-                    this.serverHasArtifacts = false;
-                }
-                throw new Error(payload.error ?? (text || `HTTP ${response.status}`));
-            }
-            await this.reissueStopIfNeeded();
             const received: { result: BatchPortfolioFitResult | null; cancelledSummary: string | null } = {
                 result: null,
                 cancelledSummary: null,
             };
-            await consumeNdjsonStream<BatchPortfolioFitStreamEvent>(response.body, {
-                onStart: () => {
-                    dom.batchBacktestPortfolioFitSummary.textContent = "Portfolio Fit running on server...";
+            // Audit NDJSON-POST-helper finding: shared transport. The
+            // `onNonOkResponse` hook preserves the prior 400 "no artifacts"
+            // special case; `onResponse` preserves the reissue-Stop ordering.
+            await postBatchNdjson<BatchPortfolioFitStreamEvent>({
+                endpoint: "/api/batch-backtest/portfolio-fit",
+                body: {
+                    fingerprint: this.lastRunFingerprint,
+                    interval: this.lastRunInterval ?? state.currentInterval,
+                    capital,
                 },
-                onProgress: (event: Extract<BatchPortfolioFitStreamEvent, { type: "progress" }>) => {
-                    dom.batchBacktestPortfolioFitSummary.textContent = `Portfolio Fit ${event.percent}% - ${event.text}`;
-                },
-                onDone: (event: Extract<BatchPortfolioFitStreamEvent, { type: "done" }>) => {
-                    if (event.ok) {
-                        received.result = event.result;
-                    } else {
-                        received.cancelledSummary = event.summary;
+                onResponse: () => this.reissueStopIfNeeded(),
+                onNonOkResponse: (status, payload) => {
+                    if (status === 400 && typeof payload?.error === "string" && payload.error.includes("no artifacts")) {
+                        this.serverHasArtifacts = false;
                     }
                 },
-                onFatal: (event: Extract<BatchPortfolioFitStreamEvent, { type: "fatal" }>) => {
-                    throw new Error(event.error);
+                handlers: {
+                    onStart: () => {
+                        dom.batchBacktestPortfolioFitSummary.textContent = "Portfolio Fit running on server...";
+                    },
+                    onProgress: (event: Extract<BatchPortfolioFitStreamEvent, { type: "progress" }>) => {
+                        dom.batchBacktestPortfolioFitSummary.textContent = `Portfolio Fit ${event.percent}% - ${event.text}`;
+                    },
+                    onDone: (event: Extract<BatchPortfolioFitStreamEvent, { type: "done" }>) => {
+                        if (event.ok) {
+                            received.result = event.result;
+                        } else {
+                            received.cancelledSummary = event.summary;
+                        }
+                    },
+                    onFatal: (event: Extract<BatchPortfolioFitStreamEvent, { type: "fatal" }>) => {
+                        throw new Error(event.error);
+                    },
                 },
-            }, { requireTerminal: true });
+            });
             if (received.cancelledSummary) {
                 this.lastPortfolioFitResult = null;
                 dom.batchBacktestPortfolioFitSummary.textContent = received.cancelledSummary;
@@ -1833,46 +2042,41 @@ class BatchBacktestService {
             // treats blank as null.
             const sampleFrom = dom.batchBacktestMinePredictionFrom.value.trim();
             const sampleTo = dom.batchBacktestMinePredictionTo.value.trim();
-            const response = await fetch("/api/batch-backtest/mine-prediction", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
+            // Audit NDJSON-POST-helper finding: shared transport. The
+            // `onResponse` hook preserves the reissue-Stop ordering.
+            await postBatchNdjson<BatchMinePredictionStreamEvent>({
+                endpoint: "/api/batch-backtest/mine-prediction",
+                body: {
                     fingerprint: this.lastRunFingerprint,
                     interval: this.lastRunInterval,
                     ...(sampleFrom ? { sampleFrom } : {}),
                     ...(sampleTo ? { sampleTo } : {}),
-                }),
+                },
+                onResponse: () => this.reissueStopIfNeeded(),
+                handlers: {
+                    onStart: (event) => {
+                        dom.batchBacktestMinePredictionSummary.textContent = `Backtesting Mine predictions — ${event.assets} assets / ${event.pairs} pairs`;
+                    },
+                    onProgress: (event) => {
+                        dom.batchBacktestMinePredictionSummary.textContent = `Backtesting Mine predictions — ${event.asset} (${event.doneAssets}/${event.totalAssets}, ${event.samples} samples)`;
+                    },
+                    onBar: (event) => {
+                        const pct = event.barsTotal > 0 ? Math.round((event.barsDone / event.barsTotal) * 100) : 0;
+                        dom.batchBacktestMinePredictionSummary.textContent = `Backtesting Mine predictions — ${event.asset} ${pct}% (${event.barsDone}/${event.barsTotal} bars)`;
+                    },
+                    onDone: (event) => {
+                        if (event.ok) {
+                            this.lastMinePredictionResult = event.result;
+                            this.renderMinePredictionResult(dom, event.result);
+                        } else {
+                            dom.batchBacktestMinePredictionSummary.textContent = event.summary;
+                        }
+                    },
+                    onFatal: (event) => {
+                        throw new Error(event.error);
+                    },
+                },
             });
-            if (!response.ok || !response.body) {
-                const text = await response.text();
-                let payload: { error?: string } = {};
-                try { payload = JSON.parse(text); } catch { /* ignore */ }
-                throw new Error(payload.error ?? `Mine Prediction failed (${response.status}).`);
-            }
-            await this.reissueStopIfNeeded();
-            await consumeNdjsonStream<BatchMinePredictionStreamEvent>(response.body, {
-                onStart: (event) => {
-                    dom.batchBacktestMinePredictionSummary.textContent = `Backtesting Mine predictions — ${event.assets} assets / ${event.pairs} pairs`;
-                },
-                onProgress: (event) => {
-                    dom.batchBacktestMinePredictionSummary.textContent = `Backtesting Mine predictions — ${event.asset} (${event.doneAssets}/${event.totalAssets}, ${event.samples} samples)`;
-                },
-                onBar: (event) => {
-                    const pct = event.barsTotal > 0 ? Math.round((event.barsDone / event.barsTotal) * 100) : 0;
-                    dom.batchBacktestMinePredictionSummary.textContent = `Backtesting Mine predictions — ${event.asset} ${pct}% (${event.barsDone}/${event.barsTotal} bars)`;
-                },
-                onDone: (event) => {
-                    if (event.ok) {
-                        this.lastMinePredictionResult = event.result;
-                        this.renderMinePredictionResult(dom, event.result);
-                    } else {
-                        dom.batchBacktestMinePredictionSummary.textContent = event.summary;
-                    }
-                },
-                onFatal: (event) => {
-                    throw new Error(event.error);
-                },
-            }, { requireTerminal: true });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.lastMinePredictionResult = null;
@@ -1968,9 +2172,11 @@ class BatchBacktestService {
         this.appendResultRows(dom, this.lastResults);
         setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
         dom.batchBacktestCopyBtn.disabled = this.lastResults.length === 0;
-        dom.batchBacktestMineBtn.disabled = true;
-        dom.batchBacktestStabilityMineBtn.disabled = true;
-        dom.batchBacktestPortfolioFitBtn.disabled = true;
+        // Audit Mine-Prediction-gating finding: route every artifact-action
+        // button (Mine, Stability, Mine Prediction) through the same helper so
+        // a tab that reloads into restored-but-not-current state keeps all
+        // three disabled consistently until a server-side run re-enables them.
+        this.updateArtifactActionButtons(dom);
         dom.batchBacktestCopyPortfolioFitBtn.disabled = true;
         if (this.lastStabilityResult) {
             this.renderStabilityResult(dom, this.lastStabilityResult);
@@ -2077,6 +2283,24 @@ class BatchBacktestService {
 
     private updatePortfolioFitButtonState(dom: BatchBacktestDom): void {
         dom.batchBacktestPortfolioFitBtn.disabled = !this.canRunPortfolioFit();
+    }
+
+    /**
+     * Single source of truth for the three artifact-action buttons (Mine,
+     * Stability Mine, Mine Prediction) plus the Portfolio Fit gate. Audit
+     * finding (Mine Prediction gating): Mine Prediction used to stay enabled
+     * after `clearStaleResults` invalidated the fingerprint (only Mine and
+     * Stability were disabled), so the user could click a stale button and
+     * only then see "Run Batch first." Locking all three artifact-dependent
+     * buttons to the same `serverHasArtifacts && lastRunFingerprint` gate
+     * keeps them consistent across every lifecycle branch.
+     */
+    private updateArtifactActionButtons(dom: BatchBacktestDom): void {
+        const available = this.serverHasArtifacts && Boolean(this.lastRunFingerprint);
+        dom.batchBacktestMineBtn.disabled = !available;
+        dom.batchBacktestStabilityMineBtn.disabled = !available;
+        dom.batchBacktestMinePredictionBtn.disabled = !available;
+        this.updatePortfolioFitButtonState(dom);
     }
 
     private clearMinerResults(dom: BatchBacktestDom): void {
@@ -2399,8 +2623,10 @@ class BatchBacktestService {
         // Audit Finding 5: a stale run id must not survive a results clear.
         this.activeServerRunId = null;
         this.clearPersistedLatestResults();
-        dom.batchBacktestMineBtn.disabled = true;
-        dom.batchBacktestStabilityMineBtn.disabled = true;
+        // Audit Mine-Prediction-gating finding: all three artifact-action
+        // buttons share the same gate; clearing stale results disables Mine,
+        // Stability, AND Mine Prediction consistently through one helper.
+        this.updateArtifactActionButtons(dom);
         if (this.lastResults.length === 0) return;
         this.lastResults = [];
         this.appendedCount = 0;
@@ -2531,10 +2757,10 @@ class BatchBacktestService {
         }
         this.analysisInFlight = false;
         dom.batchBacktestRunBtn.disabled = false;
-        dom.batchBacktestMineBtn.disabled = !this.serverHasArtifacts;
-        dom.batchBacktestStabilityMineBtn.disabled = !this.serverHasArtifacts;
-        this.updatePortfolioFitButtonState(dom);
-        dom.batchBacktestMinePredictionBtn.disabled = !this.serverHasArtifacts;
+        // Audit Mine-Prediction-gating finding: route the post-analysis restore
+        // through the shared helper so Mine, Stability, Mine Prediction, and
+        // Portfolio Fit all flip back together based on the same gate.
+        this.updateArtifactActionButtons(dom);
     }
 
     private resetProgress(dom: BatchBacktestDom): void {

@@ -154,6 +154,20 @@ const ARTIFACT_WRITE_CONCURRENCY = 4;
 const ARTIFACT_SUBMISSION_CAPACITY = 8;
 
 /**
+ * Cap on the in-memory parsed-artifact cache (audit parse-cache finding). The
+ * disk-backed Mine design intentionally moves multi-MB artifacts out of heap,
+ * but `loadStored` previously cached EVERY deserialized artifact for the
+ * lifetime of the run. On a 1000-pair Mine that pulled nearly every artifact
+ * back into heap, defeating the disk-backed design and risking OOM. A 32-entry
+ * LRU keeps the working set (the linked pairs of the currently-mined target +
+ * near-term reuse) hot while bounding peak heap to ~32 × artifact size.
+ *
+ * A pair links two assets, so an evicted pair may be re-read from disk at most
+ * once more per Mine — acceptable disk overhead in exchange for the heap bound.
+ */
+const PARSED_ARTIFACT_CACHE_MAX = 32;
+
+/**
  * Minimal counting semaphore capping concurrent async artifact writes across
  * `storeMineArtifact` submissions. `acquire` blocks (returns a waiting promise)
  * once `ARTIFACT_WRITE_CONCURRENCY` writes are in flight; `release` drains the
@@ -248,6 +262,23 @@ export class ArtifactStore {
     private detached = false;
     private readonly gate = new ArtifactSubmissionGate();
     private readonly semaphore = new ArtifactWriteSemaphore();
+    // Audit parse-cache finding: LRU bookkeeping. `parsedCacheHits`/`Misses`
+    // count `loadStored` outcomes; `parsedCacheEvictions` counts LRU victims;
+    // `parsedCachePeak` is the high-water mark of `parsedCache.size`. Used by
+    // the benchmark surface and the run-complete debug event to make the
+    // heap-bound behavior observable.
+    private parsedCacheHits = 0;
+    private parsedCacheMisses = 0;
+    private parsedCacheEvictions = 0;
+    private parsedCachePeak = 0;
+    // Audit artifact-stats finding: track partial-write outcomes so a run that
+    // lost N artifacts to disk pressure can surface it in the `done` event
+    // instead of presenting "artifacts available" while Mine silently analyzes
+    // only the survivors.
+    private artifactEligible = 0;
+    private artifactStored = 0;
+    private artifactFailed = 0;
+    private artifactBytesWritten = 0;
 
     constructor(
         private readonly writeArtifactFile: (path: string, data: Uint8Array) => Promise<void> = writeFile,
@@ -305,6 +336,10 @@ export class ArtifactStore {
             quoteSymbol: parsed.quoteSymbol,
             filePath,
         };
+        // Audit artifact-stats finding: this row passed the synthetic-pair
+        // gate, so it is eligible for Mine. Increment BEFORE the write so a
+        // failed write records `failed++` against the right denominator.
+        this.artifactEligible += 1;
         let markSerialized: () => void;
         const serialized = new Promise<void>((resolve) => { markSerialized = resolve; });
         this.gate.enter(serialized);
@@ -313,13 +348,20 @@ export class ArtifactStore {
                 try {
                     await this.semaphore.acquire();
                     try {
+                        const bytes = serialize(artifact);
                         await mkdir(dir, { recursive: true });
-                        await this.writeArtifactFile(filePath, serialize(artifact));
+                        await this.writeArtifactFile(filePath, bytes);
+                        // Audit artifact-stats finding: success — record the
+                        // outcome and the byte count (the wire-size of the
+                        // artifact, useful for heap-budget math).
+                        this.artifactStored += 1;
+                        this.artifactBytesWritten += bytes.byteLength;
                     } catch (error) {
                         // Never advertise a file that failed to reach disk.
                         if (this.metas[index]?.filePath === filePath) {
                             delete this.metas[index];
                         }
+                        this.artifactFailed += 1;
                         debugLogger.warn("batch.server.artifact_store_failed", {
                             filePath,
                             error: error instanceof Error ? error.message : String(error),
@@ -336,10 +378,72 @@ export class ArtifactStore {
 
     async loadStored(meta: StoredMineArtifactMeta): Promise<BatchSyntheticPairArtifact> {
         const cached = this.parsedCache.get(meta.filePath);
-        if (cached) return cached;
+        if (cached) {
+            // Audit parse-cache finding: refresh recency so the LRU eviction
+            // order reflects actual reuse, not insertion order. `delete` +
+            // `set` moves the entry to the end of Map iteration order.
+            this.parsedCache.delete(meta.filePath);
+            this.parsedCache.set(meta.filePath, cached);
+            this.parsedCacheHits += 1;
+            return cached;
+        }
         const deserialized = deserialize(await readFile(meta.filePath)) as BatchSyntheticPairArtifact;
         this.parsedCache.set(meta.filePath, deserialized);
+        this.evictParsedCacheIfOverLimit();
+        this.parsedCacheMisses += 1;
         return deserialized;
+    }
+
+    /**
+     * Enforce the LRU cap. Map iteration order is insertion order, so the
+     * oldest entry is the LRU victim. Updates `parsedCachePeak` even when no
+     * eviction is needed so the high-water mark stays accurate.
+     */
+    private evictParsedCacheIfOverLimit(): void {
+        if (this.parsedCache.size > this.parsedCachePeak) {
+            this.parsedCachePeak = this.parsedCache.size;
+        }
+        while (this.parsedCache.size > PARSED_ARTIFACT_CACHE_MAX) {
+            const oldest = this.parsedCache.keys().next().value;
+            if (oldest === undefined) break;
+            this.parsedCache.delete(oldest);
+            this.parsedCacheEvictions += 1;
+        }
+    }
+
+    /** Snapshot the LRU counters for diagnostics (audit parse-cache finding). */
+    parsedCacheStats(): {
+        size: number;
+        max: number;
+        hits: number;
+        misses: number;
+        evictions: number;
+        peak: number;
+    } {
+        return {
+            size: this.parsedCache.size,
+            max: PARSED_ARTIFACT_CACHE_MAX,
+            hits: this.parsedCacheHits,
+            misses: this.parsedCacheMisses,
+            evictions: this.parsedCacheEvictions,
+            peak: this.parsedCachePeak,
+        };
+    }
+
+    /**
+     * Snapshot of the artifact-write counters (audit artifact-stats finding).
+     * `eligible` is the synthetic-pair count seen by `store`; `stored`/`failed`
+     * are the write outcomes; `bytesWritten` is the wire size of stored
+     * artifacts. Used by the `done` event and `/status.lastRun` so a partial
+     * failure is observable instead of silent.
+     */
+    artifactStats(): { eligible: number; stored: number; failed: number; bytesWritten: number } {
+        return {
+            eligible: this.artifactEligible,
+            stored: this.artifactStored,
+            failed: this.artifactFailed,
+            bytesWritten: this.artifactBytesWritten,
+        };
     }
 
     collectMetas(): StoredMineArtifactMeta[] {
@@ -374,6 +478,16 @@ export class ArtifactStore {
         this.pendingWrites = [];
         this.metas = [];
         this.parsedCache.clear();
+        // Reset all diagnostics counters so a reused ArtifactStore (test seam)
+        // starts from zero. Production always allocates a fresh store per run.
+        this.parsedCacheHits = 0;
+        this.parsedCacheMisses = 0;
+        this.parsedCacheEvictions = 0;
+        this.parsedCachePeak = 0;
+        this.artifactEligible = 0;
+        this.artifactStored = 0;
+        this.artifactFailed = 0;
+        this.artifactBytesWritten = 0;
         this.dir = null;
         return snapshot;
     }
@@ -386,6 +500,12 @@ export class ArtifactStore {
 const RUN_OWNER_NONE = 0;
 let runOwner = RUN_OWNER_NONE;
 let runOwnerGen = 0;
+// Run id reserved by the request that currently owns `runOwner`. This is set
+// before the first awaited preflight step, while `runState` may still describe
+// the previous run (or be null). Stop must consult this reservation instead of
+// relying only on `runState.runId`, otherwise a Stop in that window can be
+// rejected as stale or clear the lock without preventing the run from starting.
+let runOwnerRunId: string | null = null;
 let minerOwner = RUN_OWNER_NONE;
 let minerOwnerGen = 0;
 
@@ -494,6 +614,18 @@ export type BatchRunSnapshot = {
      * the server still accepts legacy unscoped Stop in that case.
      */
     runId: string;
+    /**
+     * Audit artifact-stats finding: snapshot of partial-write outcomes
+     * (`eligible`/`stored`/`failed`/`bytesWritten`). Present on terminal
+     * snapshots; null while running or when no run has completed.
+     */
+    artifactStats?: { eligible: number; stored: number; failed: number; bytesWritten: number } | null;
+    /**
+     * Audit parse-cache finding: snapshot of the parsed-artifact LRU counters
+     * at run completion. Surfaces hits/misses/evictions/peak so the heap-bound
+     * behavior is observable from `/status.lastRun`.
+     */
+    parsedCacheStats?: { size: number; max: number; hits: number; misses: number; evictions: number; peak: number } | null;
 };
 
 interface StoredMineArtifactMeta {
@@ -535,6 +667,17 @@ async function loadStoredMineArtifact(meta: StoredMineArtifactMeta): Promise<Bat
         throw new Error("loadStoredMineArtifact called with no active artifact store");
     }
     return currentArtifactStore.loadStored(meta);
+}
+
+/**
+ * Persist the active store's post-analysis LRU counters on the retained run
+ * snapshot. Run completion captures the pre-Mine zero state; analysis paths
+ * call this after loading artifacts so `/status.lastRun.parsedCacheStats`
+ * reflects real cache usage even after Mine releases the store.
+ */
+function captureCurrentParsedCacheStats(): void {
+    if (!currentArtifactStore || !runState) return;
+    runState.parsedCacheStats = currentArtifactStore.parsedCacheStats();
 }
 
 function collectStoredMineArtifactMetas(): StoredMineArtifactMeta[] {
@@ -803,6 +946,8 @@ export async function processRunBatch(
         summary: null,
         error: null,
         runId,
+        artifactStats: null,
+        parsedCacheStats: null,
     };
     const snapshot = runState;
     // R-F1: create THIS run's ArtifactStore and capture it in the closure so
@@ -897,6 +1042,8 @@ export async function processRunBatch(
         await store.flush();
         if (store.isDetached() || currentArtifactStore !== store) return;
         const artifactsAvailable = store.hasStored();
+        const artifactStats = store.artifactStats();
+        const parsedCacheStats = store.parsedCacheStats();
         if (runState === snapshot) {
             lastRunFingerprint = fingerprint;
             lastRunInterval = input.interval;
@@ -904,7 +1051,15 @@ export async function processRunBatch(
         }
         const cacheStats = getServerBatchDatasetCacheStats();
         lastRunCacheStats = cacheStats;
-        const terminalSummary = `Done — ${output.results.length} pairs${output.failedSymbols.length > 0 ? `, ${output.failedSymbols.length} failed` : ""}${cancelled ? ", cancelled" : ""}`;
+        let terminalSummary = `Done — ${output.results.length} pairs${output.failedSymbols.length > 0 ? `, ${output.failedSymbols.length} failed` : ""}${cancelled ? ", cancelled" : ""}`;
+        // Audit artifact-stats finding: when a run retains some but not all
+        // Mine artifacts (disk pressure on a 1000-pair run), surface the
+        // partial-failure count in the summary so Mine-analyzing fewer pairs
+        // is visible rather than silent. Keep `serverHasArtifacts` truthful
+        // (true iff `stored > 0`) so the Mine button stays enabled.
+        if (artifactStats.failed > 0) {
+            terminalSummary += ` — artifacts ${artifactStats.stored}/${artifactStats.eligible}; Mine will omit ${artifactStats.failed} failed write${artifactStats.failed === 1 ? "" : "s"}.`;
+        }
         // Audit Finding 6: stamp the terminal snapshot fields BEFORE releasing
         // ownership so /status can recover a terminal failure even if the run
         // produced no Mine artifacts. The previous `lastRun` gate
@@ -915,6 +1070,11 @@ export async function processRunBatch(
             snapshot.finishedAt = Date.now();
             snapshot.summary = terminalSummary;
             snapshot.error = null;
+            // Audit artifact-stats finding: stash the partial-write snapshot
+            // on the run state so `/status.lastRun` can render the same
+            // diagnostic to a reloaded tab without needing the stream.
+            snapshot.artifactStats = artifactStats;
+            snapshot.parsedCacheStats = parsedCacheStats;
         }
         writer({
             type: "done",
@@ -927,6 +1087,8 @@ export async function processRunBatch(
             fingerprint,
             cacheStats,
             runId,
+            artifactStats,
+            parsedCacheStats,
         });
 
         // Schedule the TTL release only if the run produced mineable
@@ -950,6 +1112,10 @@ export async function processRunBatch(
             heapLimitMb: getV8HeapLimitMb(),
             interval: input.interval,
             strategyKey: input.strategyKey,
+            // Audit artifact-stats / parse-cache findings: surface counters so
+            // the heap-bound + partial-write behavior is observable in logs.
+            artifactStats,
+            parsedCacheStats,
         });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -967,8 +1133,6 @@ export async function processRunBatch(
         if (currentArtifactStore === store) {
             await releaseLastResults("run_fatal");
         }
-    } finally {
-        abortController = null;
     }
 }
 
@@ -1064,6 +1228,7 @@ export async function processMine(
             summary: `Miner | Assets ${verdictCount}`,
             totals: { verdicts: verdictCount },
         });
+        captureCurrentParsedCacheStats();
         // Mine was the last consumer of the per-row artifacts. Release them.
         await releaseLastResults("mine_completed");
     } catch (error) {
@@ -1072,6 +1237,7 @@ export async function processMine(
         snapshot.running = false;
         writer({ type: "fatal", error: message });
     } finally {
+        captureCurrentParsedCacheStats();
         if (minerState === snapshot) {
             snapshot.running = false;
         }
@@ -1278,6 +1444,7 @@ export async function processStabilityMine(
         retainedStabilityResult = null;
         writer({ type: "fatal", error: message });
     } finally {
+        captureCurrentParsedCacheStats();
         if (minerState === snapshot) {
             snapshot.running = false;
         }
@@ -1399,71 +1566,98 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
     if (!strategyKey) {
         throw new HttpStatusError(400, "strategyKey is required.");
     }
-
-    const strategy = await resolveStrategy(strategyKey);
-    const strategyParams = (body.strategyParams ?? {}) as StrategyParams;
-    const backtestSettings = (body.backtestSettings ?? {}) as BacktestSettings;
-    const capitalSettings = (body.capitalSettings ?? {}) as CapitalSettings;
-    const useRustEnginePreference = body.useRustEnginePreference === true;
     // Audit Finding 5: browser-generated run id scopes Stop and reattach to
     // THIS run. Empty string signals a stale browser bundle that predates the
     // contract; the server falls back to legacy unscoped behavior in that case.
     const runId = parseBatchRunId(body.runId);
 
+    // Audit single-flight finding: claim ownership BEFORE the first await
+    // (`resolveStrategy` does an async `loadBuiltInStrategyByKey`). Pre-fix
+    // two concurrent /run requests could both pass the `runOwner !== NONE`
+    // gate above, both await resolveStrategy, then both try to claim — the
+    // second stole ownership and the first stream cancelled. Claiming here
+    // (synchronously, after the cheap input validation) makes the gate
+    // authoritative; the `try/finally` releases ownership if a later step
+    // throws before `processRunBatch` takes over.
     const owner = ++runOwnerGen;
     runOwner = owner;
-    // Audit Finding 5: if a scoped Stop arrived while this request was still
-    // parsing/loading (before ownership was acquired), finish cancelled instead
-    // of starting heavy work. Closes the Stop-before-ownership race without an
-    // unbounded cancellation set.
-    if (runId && consumePendingBatchStopForRun(runId)) {
-        runOwner = RUN_OWNER_NONE;
-        throw new HttpStatusError(409, "Batch run was stopped before it started.");
-    }
-    await releaseLastResults("new_run");
-    lastRunFingerprint = null;
-    lastRunInterval = null;
-    lastRunStrategyKey = null;
-    lastRunCacheStats = null;
-    abortController = new AbortController();
-
-    let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
+    runOwnerRunId = runId;
+    const runAbort = new AbortController();
+    abortController = runAbort;
     try {
-        // Audit Finding 4: disconnect-safe writer. A reload / closed tab flips
-        // the internal flag and silently drops further writes; the job keeps
-        // running and updating runState so a reloaded tab reattaches via
-        // /status instead of the dead stream throwing into the run loop.
-        stream = createDisconnectSafeStream(res);
-        await processRunBatch(
-            {
-                interval,
-                strategyKey,
-                strategy,
-                strategyParams,
-                backtestSettings,
-                capitalSettings,
-                symbols,
-                useRustEnginePreference,
-                loadDataset: (sym, intv, signal) => loadServerBatchDataset(sym, intv, signal),
-            },
-            (event) => stream!.write(event),
-            owner,
-            runId,
-        );
-        stream.end();
-    } catch (error) {
-        if (!stream) throw error;
-        const message = error instanceof Error ? error.message : String(error);
+        // Audit Finding 5: if a scoped Stop arrived while this request was
+        // still parsing/loading (before ownership was acquired), finish
+        // cancelled instead of starting heavy work. Closes the
+        // Stop-before-ownership race without an unbounded cancellation set.
+        if (runId && consumePendingBatchStopForRun(runId)) {
+            throw new HttpStatusError(409, "Batch run was stopped before it started.");
+        }
+
+        const strategy = await resolveStrategy(strategyKey);
+        if (runOwner !== owner) {
+            throw new HttpStatusError(409, "Batch run was stopped before it started.");
+        }
+        const strategyParams = (body.strategyParams ?? {}) as StrategyParams;
+        const backtestSettings = (body.backtestSettings ?? {}) as BacktestSettings;
+        const capitalSettings = (body.capitalSettings ?? {}) as CapitalSettings;
+        const useRustEnginePreference = body.useRustEnginePreference === true;
+        await releaseLastResults("new_run");
+        if (runOwner !== owner) {
+            throw new HttpStatusError(409, "Batch run was stopped before it started.");
+        }
+        lastRunFingerprint = null;
+        lastRunInterval = null;
+        lastRunStrategyKey = null;
+        lastRunCacheStats = null;
+
+        let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
         try {
-            stream.end({ type: "fatal", error: message, runId });
-        } catch {
-            /* best-effort */
+            // Audit Finding 4: disconnect-safe writer. A reload / closed tab flips
+            // the internal flag and silently drops further writes; the job keeps
+            // running and updating runState so a reloaded tab reattaches via
+            // /status instead of the dead stream throwing into the run loop.
+            stream = createDisconnectSafeStream(res);
+            await processRunBatch(
+                {
+                    interval,
+                    strategyKey,
+                    strategy,
+                    strategyParams,
+                    backtestSettings,
+                    capitalSettings,
+                    symbols,
+                    useRustEnginePreference,
+                    loadDataset: (sym, intv, signal) => loadServerBatchDataset(sym, intv, signal),
+                },
+                (event) => stream!.write(event),
+                owner,
+                runId,
+            );
+            stream.end();
+        } catch (error) {
+            if (!stream) throw error;
+            const message = error instanceof Error ? error.message : String(error);
+            try {
+                stream.end({ type: "fatal", error: message, runId });
+            } catch {
+                /* best-effort */
+            }
+        } finally {
+            if (abortController === runAbort) {
+                abortController = null;
+            }
         }
     } finally {
+        // Release ownership only if THIS request still owns it. A normal run
+        // completion leaves `runOwner === owner` until this fires; a Stop that
+        // already force-bumped the lock leaves it on a newer owner — leave
+        // that alone. The `processRunBatch` `finally` does NOT touch
+        // `runOwner`, so this is the single release point.
         if (runOwner === owner) {
             runOwner = RUN_OWNER_NONE;
+            runOwnerRunId = null;
         }
-        abortController = null;
+        if (abortController === runAbort) abortController = null;
     }
 }
 
@@ -1483,7 +1677,12 @@ async function handleStopRequest(rawRunId?: unknown): Promise<{ ok: boolean; sto
     const runWasActive = runOwner !== RUN_OWNER_NONE;
     const minerWasActive = minerOwner !== RUN_OWNER_NONE;
 
-    const ownedRunId = runState?.runId ?? "";
+    // During preflight the new request has already claimed `runOwner`, but
+    // `runState` may still belong to the prior generation. Prefer the explicit
+    // reservation so a matching Stop can cancel the new request reliably.
+    const ownedRunId = runWasActive
+        ? (runOwnerRunId ?? runState?.runId ?? "")
+        : (runState?.runId ?? "");
     if ((runWasActive || minerWasActive) && ownedRunId && requestedRunId !== ownedRunId) {
         return { ok: false, stopped: false };
     }
@@ -1501,6 +1700,7 @@ async function handleStopRequest(rawRunId?: unknown): Promise<{ ok: boolean; sto
             }
         }
         runOwner = RUN_OWNER_NONE;
+        runOwnerRunId = null;
     } else if (requestedRunId) {
         // Stop arrived before the matching run acquired ownership. Record the
         // run id so the run request finishes cancelled instead of starting
@@ -1863,6 +2063,7 @@ export async function processMinePrediction(
         debugLogger.warn("batch.server.mine_prediction.fatal", { error: message });
         writer({ type: "fatal", error: message });
     } finally {
+        captureCurrentParsedCacheStats();
         if (hasStoredMineArtifacts()) {
             scheduleArtifactTtl();
         }
@@ -1920,7 +2121,31 @@ async function handleMinePredictionRequest(res: ViteHttpResponse, body: Record<s
     }
 }
 
-function handleStatusRequest(afterRow = 0, limitRaw?: number): unknown {
+function handleStatusRequest(afterRow = 0, limitRaw?: number, requestedRunId?: string): unknown {
+    // Audit runId-scoping finding: a paginated drain that started against run
+    // generation A must NOT receive rows from generation B (started by another
+    // tab while A was being drained). When the caller supplies a runId and it
+    // no longer matches the retained snapshot, return an explicit mismatch
+    // signal (HTTP 200) so the browser stops paginating and drops the run
+    // instead of stitching together rows from two generations. An empty/absent
+    // runId preserves the legacy behavior (legacy browser bundle, or the
+    // internal `refreshServerArtifactState` probe that intentionally queries
+    // the latest server state without scoping).
+    if (
+        requestedRunId
+        && runState
+        && runState.runId
+        && runState.runId !== requestedRunId
+    ) {
+        return {
+            ok: true,
+            runMismatch: true,
+            running: false,
+            run: null,
+            lastRun: null,
+            miner: null,
+        };
+    }
     const rowOffset = Math.max(0, Math.floor(Number.isFinite(afterRow) ? afterRow : 0));
     // Bound the page so a late-reattach tab never receives every accumulated
     // row in one response. Default to DEFAULT_STATUS_ROW_LIMIT; clamp a
@@ -1996,6 +2221,11 @@ function handleStatusRequest(afterRow = 0, limitRaw?: number): unknown {
                 // terminal snapshot to the run it started (and decide whether
                 // to adopt it on reattach).
                 runId: runState.runId,
+                // Audit artifact-stats / parse-cache findings: surface the
+                // partial-write + LRU snapshots so a reloaded tab sees the same
+                // diagnostics the stream would have carried.
+                artifactStats: runState.artifactStats ?? null,
+                parsedCacheStats: runState.parsedCacheStats ?? null,
             }
             : null,
         miner: minerState && minerOwner !== RUN_OWNER_NONE
@@ -2176,7 +2406,13 @@ function registerBatchRoutes(middlewares: any): void {
             const after = Number(parsedUrl.searchParams.get("after") ?? 0);
             const limitParam = parsedUrl.searchParams.get("limit");
             const limit = limitParam === null ? undefined : Number(limitParam);
-            sendJson(res, 200, handleStatusRequest(after, limit));
+            // Audit runId-scoping finding: optional `?runId=` so a paginated
+            // drain is scoped to one generation. Empty/absent preserves legacy
+            // behavior (the server cannot distinguish an old browser bundle
+            // from a probe, and an unmatched id returns runMismatch).
+            const runIdParam = parsedUrl.searchParams.get("runId");
+            const runId = runIdParam && runIdParam.trim() ? runIdParam.trim() : undefined;
+            sendJson(res, 200, handleStatusRequest(after, limit, runId));
         });
 }
 
@@ -2192,6 +2428,22 @@ export const __testInternals = {
     getParsedArtifactCacheSizeForTests(): number {
         return currentArtifactStore?.parsedCache.size ?? 0;
     },
+    /**
+     * Audit parse-cache finding: snapshot of the active store's LRU counters
+     * (or null when no store is active). Used by tests to assert eviction and
+     * hit-rate behavior without poking internal state directly.
+     */
+    getParsedArtifactCacheStatsForTests(): { size: number; max: number; hits: number; misses: number; evictions: number; peak: number } | null {
+        return currentArtifactStore ? currentArtifactStore.parsedCacheStats() : null;
+    },
+    /**
+     * Audit artifact-stats finding: snapshot of the active store's write
+     * counters (or null when no store is active). Used by tests to assert
+     * partial-write handling without poking internal state directly.
+     */
+    getArtifactStatsForTests(): { eligible: number; stored: number; failed: number; bytesWritten: number } | null {
+        return currentArtifactStore ? currentArtifactStore.artifactStats() : null;
+    },
     DEFAULT_ARTIFACT_RETENTION_MS,
     handleStatusRequest,
     handleStopRequest,
@@ -2206,6 +2458,13 @@ export const __testInternals = {
     },
     getPendingStopRunIdForTests(): string | null {
         return pendingStopRunId;
+    },
+    setRunReservationForTests(owner: number, runId: string | null): void {
+        runOwner = owner;
+        runOwnerRunId = runId;
+    },
+    getRunOwnerForTests(): number {
+        return runOwner;
     },
     // Audit Finding 7 test seams.
     shouldSweepOrphanEntryForTests: shouldSweepOrphanEntry,
@@ -2223,6 +2482,7 @@ export const __testInternals = {
     setRunOwnerForTests(owner: number): void {
         runOwner = owner;
         if (owner === RUN_OWNER_NONE) {
+            runOwnerRunId = null;
             runState = null;
             // Clear the pending-stop slot too so a prior test's Stop marker
             // can't make the next test's run finish cancelled (audit F5).
@@ -2239,6 +2499,7 @@ export const __testInternals = {
      */
     completeRunForTests(): void {
         runOwner = RUN_OWNER_NONE;
+        runOwnerRunId = null;
     },
     setMinerOwnerForTests(owner: number): void {
         minerOwner = owner;
