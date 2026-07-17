@@ -1989,6 +1989,7 @@ export async function processMinePrediction(
     directionFilter: "both" | "long" | "short" = "both",
     sampleBars: number | null = null,
     sampleStep: number | null = null,
+    horizons: number[] | null = null,
 ): Promise<void> {
     const artifactMetas = collectStoredMineArtifactMetas();
     if (artifactMetas.length === 0) {
@@ -2042,6 +2043,7 @@ export async function processMinePrediction(
             // denser sampling for regime tests; higher sampleBars = tighter IC.
             ...(sampleBars !== null ? { sampleBars } : {}),
             ...(sampleStep !== null ? { sampleStep } : {}),
+            ...(horizons !== null ? { horizons } : {}),
             onAssetProgress: (asset, samples, totalAssets, doneAssets) => {
                 if (lostOwnership()) return;
                 writer({ type: "progress", asset, samples, doneAssets, totalAssets });
@@ -2116,6 +2118,9 @@ async function handleMinePredictionRequest(res: ViteHttpResponse, body: Record<s
             body.directionFilter === "long" || body.directionFilter === "short" ? body.directionFilter : "both",
             typeof body.sampleBars === "number" && body.sampleBars >= 5 ? Math.floor(body.sampleBars) : null,
             typeof body.sampleStep === "number" && body.sampleStep >= 1 ? Math.floor(body.sampleStep) : null,
+            Array.isArray(body.horizons) && body.horizons.length > 0
+                ? body.horizons.filter((h: unknown) => typeof h === "number" && h >= 1).map((h: number) => Math.floor(h))
+                : null,
         );
         stream.end();
     } catch (error) {

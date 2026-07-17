@@ -91,6 +91,10 @@
                 <label class="batch-field-label" for="batchBacktestMinePredictionSampleStep">Step</label>
                 <input class="batch-field-input batch-field-input--date" id="batchBacktestMinePredictionSampleStep" type="number" min="1" max="500" step="1" value="80">
             </div>
+            <div class="batch-field batch-field--inline" title="Forward-return horizons in bars (comma-separated). MUST match your hold period: if riskMaxHoldBars=3, use 1,2,3. Default 12,24,48.">
+                <label class="batch-field-label" for="batchBacktestMinePredictionHorizons">Horizons</label>
+                <input class="batch-field-input batch-field-input--date" id="batchBacktestMinePredictionHorizons" type="text" value="12,24,48" placeholder="12,24,48">
+            </div>
         </div>
         <div class="batch-action-group batch-action-group--divider" aria-hidden="true"></div>
         <div class="batch-action-group batch-action-group--exports" role="group" aria-label="Batch export">

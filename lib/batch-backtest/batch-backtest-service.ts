@@ -2051,6 +2051,12 @@ class BatchBacktestService {
             const sampleStepRaw = Number(dom.batchBacktestMinePredictionSampleStep.value);
             const sampleBars = Number.isFinite(sampleBarsRaw) && sampleBarsRaw >= 5 ? Math.floor(sampleBarsRaw) : null;
             const sampleStep = Number.isFinite(sampleStepRaw) && sampleStepRaw >= 1 ? Math.floor(sampleStepRaw) : null;
+            // Horizons: comma-separated bar counts. MUST match your hold period
+            // (if riskMaxHoldBars=3, use "1,2,3"). Default 12,24,48.
+            const horizonsRaw = dom.batchBacktestMinePredictionHorizons.value.trim();
+            const horizons = horizonsRaw
+                ? horizonsRaw.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n >= 1)
+                : null;
             // Audit NDJSON-POST-helper finding: shared transport. The
             // `onResponse` hook preserves the reissue-Stop ordering.
             await postBatchNdjson<BatchMinePredictionStreamEvent>({
@@ -2063,6 +2069,7 @@ class BatchBacktestService {
                     directionFilter,
                     ...(sampleBars !== null ? { sampleBars } : {}),
                     ...(sampleStep !== null ? { sampleStep } : {}),
+                    ...(horizons && horizons.length > 0 ? { horizons } : {}),
                 },
                 onResponse: () => this.reissueStopIfNeeded(),
                 handlers: {
