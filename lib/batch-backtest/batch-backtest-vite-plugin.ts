@@ -68,6 +68,7 @@ import {
     type ParallelStabilityOutcome,
 } from "./batch-stability-parallel";
 import { runMinePredictionDiagnostic } from "./batch-mine-prediction-engine";
+import { runMineAbTest } from "./batch-mine-prediction-ab-engine";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -520,6 +521,9 @@ let currentArtifactStore: ArtifactStore | null = null;
 let lastRunFingerprint: string | null = null;
 let lastRunInterval: string | null = null;
 let lastRunStrategyKey: string | null = null;
+let lastRunBacktestSettings: BacktestSettings | null = null;
+let lastRunCapitalSettings: CapitalSettings | null = null;
+let lastRunUseRustEnginePreference = false;
 let lastRunCacheStats: BatchDatasetCacheStats | null = null;
 let abortController: AbortController | null = null;
 // Abort controller for in-flight Mine / Stability Mine target dataset loads.
@@ -663,6 +667,22 @@ async function loadStoredMineArtifact(meta: StoredMineArtifactMeta): Promise<Bat
     return currentArtifactStore.loadStored(meta);
 }
 
+const MINE_AB_ARTIFACT_LOAD_TIMEOUT_MS = 15_000;
+
+async function loadStoredMineArtifactBounded(meta: StoredMineArtifactMeta): Promise<BatchSyntheticPairArtifact | null> {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+        return await Promise.race([
+            loadStoredMineArtifact(meta),
+            new Promise<null>((resolve) => {
+                timer = setTimeout(() => resolve(null), MINE_AB_ARTIFACT_LOAD_TIMEOUT_MS);
+            }),
+        ]);
+    } finally {
+        if (timer !== null) clearTimeout(timer);
+    }
+}
+
 /**
  * Persist the active store's post-analysis LRU counters on the retained run
  * snapshot. Run completion captures the pre-Mine zero state; analysis paths
@@ -738,6 +758,9 @@ async function releaseLastResults(reason: string): Promise<void> {
     lastRunFingerprint = null;
     lastRunInterval = null;
     lastRunStrategyKey = null;
+    lastRunBacktestSettings = null;
+    lastRunCapitalSettings = null;
+    lastRunUseRustEnginePreference = false;
     lastRunCacheStats = null;
     // Clear retained Stability state whenever its matching artifacts expire.
     retainedStabilityResult = null;
@@ -1042,6 +1065,9 @@ export async function processRunBatch(
             lastRunFingerprint = fingerprint;
             lastRunInterval = input.interval;
             lastRunStrategyKey = input.strategyKey;
+            lastRunBacktestSettings = { ...input.backtestSettings };
+            lastRunCapitalSettings = { ...input.capitalSettings };
+            lastRunUseRustEnginePreference = input.useRustEnginePreference === true;
         }
         const cacheStats = getServerBatchDatasetCacheStats();
         lastRunCacheStats = cacheStats;
@@ -1452,9 +1478,11 @@ async function loadMinerTargets(
     pairArtifacts: readonly StoredMineArtifactMeta[],
     interval: string,
     signal?: AbortSignal,
+    baseOnly = false,
+    onAssetProgress?: (asset: string, doneAssets: number, totalAssets: number) => void,
 ): Promise<BatchSyntheticTargetArtifact[]> {
     const assets = Array.from(new Set(
-        pairArtifacts.flatMap((artifact) => [artifact.baseAsset, artifact.quoteAsset])
+        pairArtifacts.flatMap((artifact) => baseOnly ? [artifact.baseAsset] : [artifact.baseAsset, artifact.quoteAsset])
             .map((asset) => asset.trim().toUpperCase())
             .filter(Boolean)
     )).sort();
@@ -1480,6 +1508,7 @@ async function loadMinerTargets(
     // deduped). Per-target errors are isolated so one failed asset does not
     // reject the batch. Results preserve input (asset-sorted) order.
     const TARGET_LOAD_CONCURRENCY = 8;
+    let completedAssets = 0;
     const loaded = await mapWithConcurrencyLimit(
         assets,
         TARGET_LOAD_CONCURRENCY,
@@ -1501,6 +1530,9 @@ async function loadMinerTargets(
                     error: error instanceof Error ? error.message : String(error),
                 });
                 return null;
+            } finally {
+                completedAssets += 1;
+                onAssetProgress?.(asset, completedAssets, assets.length);
             }
         },
     );
@@ -1602,6 +1634,9 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
         lastRunFingerprint = null;
         lastRunInterval = null;
         lastRunStrategyKey = null;
+        lastRunBacktestSettings = null;
+        lastRunCapitalSettings = null;
+        lastRunUseRustEnginePreference = false;
         lastRunCacheStats = null;
 
         let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
@@ -1979,6 +2014,170 @@ async function handleMinePredictionRequest(res: ViteHttpResponse, body: Record<s
     }
 }
 
+/**
+ * Mine A/B Test: re-runs each pair's backtest with signals filtered to only
+ * Mine-LONG-gated entries, compares P&L vs control (all entries). Read-only
+ * on artifacts — does NOT release them.
+ */
+export async function processMineAb(
+    fingerprint: string | null,
+    interval: string | null,
+    writer: MinerStreamWriter,
+    owner: number,
+    loadTargets: (pairArtifacts: readonly StoredMineArtifactMeta[], interval: string, signal?: AbortSignal, baseOnly?: boolean, onAssetProgress?: (asset: string, doneAssets: number, totalAssets: number) => void) => Promise<BatchSyntheticTargetArtifact[]> = loadMinerTargets,
+): Promise<void> {
+    const artifactMetas = collectStoredMineArtifactMetas();
+    if (artifactMetas.length === 0) {
+        writer({ type: "fatal", error: "Run Batch before Mine A/B Test; no artifacts on server." });
+        return;
+    }
+    if (!fingerprint || fingerprint !== lastRunFingerprint || !interval) {
+        writer({ type: "fatal", error: "Rerun Batch before Mine A/B Test; settings or symbols changed." });
+        return;
+    }
+    if (!lastRunBacktestSettings || !lastRunCapitalSettings) {
+        writer({ type: "fatal", error: "Rerun Batch before Mine A/B Test; original run settings are unavailable." });
+        return;
+    }
+
+    clearArtifactReleaseTimer();
+    const lostOwnership = () => minerOwner !== owner;
+
+    try {
+        // Emit this before any dataset I/O. Previously the client stayed on
+        // its initial text until every base+quote asset had loaded.
+        writer({ type: "start", pairs: artifactMetas.length });
+        const targets = await loadTargets(
+            artifactMetas,
+            interval,
+            minerAbortController?.signal,
+            true,
+            (asset, doneAssets, totalAssets) => {
+                if (!lostOwnership()) writer({ type: "target-progress", asset, doneAssets, totalAssets });
+            },
+        );
+        if (lostOwnership()) {
+            writer({ type: "done", ok: false, cancelled: true, summary: "Mine A/B Test cancelled." });
+            return;
+        }
+        if (targets.length === 0) {
+            writer({ type: "done", ok: false, cancelled: true, summary: "No target asset candles loaded." });
+            return;
+        }
+
+        writer({ type: "progress", symbol: "Loading pair artifacts...", donePairs: 0, totalPairs: artifactMetas.length });
+        // Do not start hundreds of reads/deserializations at once. V8's
+        // deserialize step is synchronous after each read and an unbounded
+        // Promise.all made the event loop appear hung while retaining every
+        // decoded row simultaneously. Eight in-flight artifacts keeps disk
+        // throughput high and lets the browser receive progress events.
+        let loadedArtifactCount = 0;
+        const loadedArtifacts = await mapWithConcurrencyLimit(
+            artifactMetas,
+            8,
+            async (meta) => {
+                let artifact: BatchSyntheticPairArtifact | null = null;
+                let failure: string | null = null;
+                try {
+                    artifact = await loadStoredMineArtifactBounded(meta);
+                    if (artifact === null) failure = "timeout";
+                } catch (error) {
+                    failure = error instanceof Error ? error.message : String(error);
+                }
+                loadedArtifactCount += 1;
+                if (!lostOwnership()) {
+                    writer({
+                        type: "progress",
+                        symbol: failure ? `Artifact ${meta.symbol} skipped (${failure})` : "Loading pair artifacts...",
+                        donePairs: loadedArtifactCount,
+                        totalPairs: artifactMetas.length,
+                    });
+                }
+                return artifact;
+            },
+        );
+        const artifacts = loadedArtifacts.filter((artifact): artifact is BatchSyntheticPairArtifact => artifact !== null);
+        if (lostOwnership()) {
+            writer({ type: "done", ok: false, cancelled: true, summary: "Mine A/B Test cancelled." });
+            return;
+        }
+
+        writer({ type: "progress", symbol: "Preparing Mine pair state...", donePairs: artifacts.length, totalPairs: artifactMetas.length });
+        // Let the NDJSON writer flush the final load progress before the
+        // synchronous ATR/trade-index preparation begins in the leaf.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        const result = await runMineAbTest({
+            artifacts,
+            targets,
+            interval,
+            strategyKey: lastRunStrategyKey,
+            backtestSettings: lastRunBacktestSettings,
+            capitalSettings: lastRunCapitalSettings,
+            useRustEnginePreference: lastRunUseRustEnginePreference,
+            expectedPairs: artifactMetas.length,
+            onPairProgress: (symbol, donePairs, totalPairs) => {
+                if (lostOwnership()) return;
+                writer({ type: "progress", symbol, donePairs, totalPairs });
+            },
+            shouldStop: () => lostOwnership(),
+        });
+        if (lostOwnership()) {
+            writer({ type: "done", ok: false, cancelled: true, summary: "Mine A/B Test cancelled." });
+            return;
+        }
+        writer({ type: "done", ok: true, result });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        debugLogger.warn("batch.server.mine_ab.fatal", { error: message });
+        writer({ type: "fatal", error: message });
+    } finally {
+        if (hasStoredMineArtifacts()) {
+            scheduleArtifactTtl();
+        }
+    }
+}
+
+async function handleMineAbRequest(res: ViteHttpResponse, body: Record<string, unknown>): Promise<void> {
+    if (minerOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "An analysis is already running. Use Stop first.");
+    }
+    if (runOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "A batch backtest is running. Use Stop first.");
+    }
+    if (!hasStoredMineArtifacts()) {
+        throw new HttpStatusError(400, "Run Batch before Mine A/B Test; no artifacts on server.");
+    }
+    const owner = ++minerOwnerGen;
+    minerOwner = owner;
+    minerAbortController = new AbortController();
+
+    let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
+    try {
+        stream = createDisconnectSafeStream(res, { onDisconnect: () => cancelMinerOnDisconnect(owner) });
+        await processMineAb(
+            typeof body.fingerprint === "string" ? body.fingerprint : null,
+            typeof body.interval === "string" ? body.interval : lastRunInterval,
+            (event) => stream!.write(event),
+            owner,
+            loadMinerTargets,
+        );
+        stream.end();
+    } catch (error) {
+        if (!stream) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        try {
+            stream.end({ type: "fatal", error: message });
+        } catch {
+            /* best-effort */
+        }
+    } finally {
+        if (minerOwner === owner) {
+            minerOwner = RUN_OWNER_NONE;
+        }
+        minerAbortController = null;
+    }
+}
+
 function handleStatusRequest(afterRow = 0, limitRaw?: number, requestedRunId?: string): unknown {
     // Audit runId-scoping finding: a paginated drain that started against run
     // generation A must NOT receive rows from generation B (started by another
@@ -2232,6 +2431,23 @@ function registerBatchRoutes(middlewares: any): void {
             }
         });
 
+        middlewares.use("/api/batch-backtest/mine-prediction-ab", async (req: any, res: any) => {
+            if (req.method !== "POST") {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
+                return;
+            }
+            try {
+                rememberLocalApiOriginFromRequest(req);
+                await handleMineAbRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
+            } catch (error) {
+                sendCaughtErrorJson(res, error);
+            }
+        });
+
         middlewares.use("/api/batch-backtest/status", async (req: any, res: any) => {
             if (req.method !== "GET") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
@@ -2289,6 +2505,7 @@ export const __testInternals = {
     handleStopRequest,
     registerBatchRoutesForTests: registerBatchRoutes,
     processMinePrediction,
+    processMineAb,
     // Audit Finding 5 test seams.
     parseBatchRunId,
     consumePendingBatchStopForRun,

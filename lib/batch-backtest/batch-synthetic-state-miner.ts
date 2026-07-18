@@ -76,6 +76,8 @@ export interface BatchSyntheticPreparedMinerInput {
     options?: Partial<BatchSyntheticMinerOptions>;
     diagnostics?: string[];
     profile?: BatchSyntheticMinerProfile;
+    /** Reuse the immutable asset-to-pair index across repeated historical calls. */
+    pairsByAsset?: PairsByAssetIndex;
 }
 
 export interface BatchSyntheticStateSnapshot {
@@ -415,7 +417,7 @@ export function runPreparedBatchSyntheticStateMiner(input: BatchSyntheticPrepare
     // into ~2k during index build, and each target's linked lookup is now O(1).
     // `buildPairsByAssetIndex` itself is O(pairs); the index is shared read-only
     // across every `buildAssetVerdict` call below.
-    const pairsByAsset = buildPairsByAssetIndex(input.artifacts);
+    const pairsByAsset = input.pairsByAsset ?? buildPairsByAssetIndex(input.artifacts);
 
     const buildStartedAt = nowMs();
     const verdicts = input.targets

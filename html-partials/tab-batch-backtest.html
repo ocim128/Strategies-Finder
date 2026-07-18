@@ -112,6 +112,14 @@
                 title="Copy the latest Mine Prediction diagnostic report">
                 Copy Mine Prediction
             </button>
+            <button class="btn btn-secondary btn-compact" id="batchBacktestMineAbBtn" type="button" disabled
+                title="A/B test: does filtering trades through Mine's LONG verdict improve actual P&L?">
+                Mine A/B Test
+            </button>
+            <button class="btn btn-secondary btn-compact" id="batchBacktestCopyMineAbBtn" type="button" disabled
+                title="Copy the Mine A/B test report">
+                Copy A/B
+            </button>
             <button class="btn btn-secondary btn-compact" id="batchBacktestCopyBenchmarkBtn" type="button" disabled
                 title="Copy benchmark diagnostics (timings, cache hit rates) for the latest run / mine / stability as JSON">
                 Copy Benchmark
@@ -160,6 +168,7 @@
         <div class="batch-miner-status" id="batchBacktestMinerSummary"></div>
 
         <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestMinePredictionSummary"></div>
+        <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestMineAbSummary"></div>
     </div>
 
     <div class="finder-results">

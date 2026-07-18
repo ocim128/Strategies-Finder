@@ -114,6 +114,11 @@ describe("batch-mine-prediction-engine diagnostic", () => {
             // The new CALL_IC and VERDICTS lines must be present.
             expect(result.reportLines.some((l) => l.startsWith("CALL_IC"))).to.equal(true);
             expect(result.reportLines.some((l) => l.startsWith("VERDICTS"))).to.equal(true);
+            expect(result.reportLines.some((l) => l.startsWith("FORECAST_VERDICT"))).to.equal(true);
+            expect(result.reportLines.some((l) => l.startsWith("CALL_VERDICT"))).to.equal(true);
+            expect(result.callVerdict).to.equal(result.verdict);
+            expect(result.callVerdict).to.contain("INSUFFICIENT_SAMPLE");
+            expect(result.reportLines.join("\n")).to.contain("matched long non-calls");
         } else {
             expect(result.reportLines.length, "empty result must produce at least one line").to.be.greaterThan(0);
         }
@@ -218,11 +223,12 @@ describe("batch-mine-prediction-engine diagnostic", () => {
         // the caveat fired. This guards against a revert.
         expect(allText, "must not contain the old misleading CAVEAT wording").to.not.contain("does not exceed INCONCLUSIVE mean");
         expect(allText, "must not contain the old misleading 'refusing' wording").to.not.contain("no edge over refusing");
-        // EDGE line must label the baseline as passive-long drift, not 'baseline drift'.
+        // EDGE must use direction-matched non-call cohorts, not a mixed
+        // directionless/passive-long baseline.
         const edgeLine = result.reportLines.find((l) => l.startsWith("EDGE"));
         if (edgeLine) {
-            expect(edgeLine, "EDGE baseline must be labeled passive-long drift, not 'baseline drift'").to.contain("passive-long drift");
-            expect(edgeLine, "EDGE baseline must clarify it is NOT cash").to.contain("NOT cash");
+            expect(edgeLine, "EDGE must label the matched long cohort").to.contain("matched long non-calls");
+            expect(edgeLine, "EDGE must label the matched short cohort").to.contain("matched short non-calls");
         }
         // If a LONG-edge caveat fired, it must reference the threshold.
         const caveatLine = result.reportLines.find((l) => l.startsWith("CAVEAT") && l.includes("LONG edge"));
@@ -305,4 +311,3 @@ describe("batch-mine-prediction-engine diagnostic", () => {
         }
     });
 });
-

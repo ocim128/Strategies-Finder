@@ -7,6 +7,7 @@ import {
     processMine,
     processStabilityMine,
     processMinePrediction,
+    processMineAb,
     resolveServerBatchHeapWarning,
     ArtifactStore,
     type BatchRunSnapshot,
@@ -1733,6 +1734,52 @@ describe("batch-backtest server plugin processMinePrediction", () => {
     });
 });
 
+describe("batch-backtest server plugin processMineAb", () => {
+    it("streams a report and retains the artifacts for later analyses", async () => {
+        const pairData = makeCandles(Array.from({ length: 60 }, (_, index) => 100 + index));
+        const owner = 9072;
+        setRunOwnerForTests(owner);
+        const runEvents = await collectEvents((events) => processRunBatch(
+            {
+                interval: "4h",
+                strategyKey: STRATEGY_KEY,
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols: ["UP+DOWN"],
+                loadDataset: () => Promise.resolve(pairData),
+                minUsableBars: 1,
+            },
+            (event) => events.push(event),
+            owner,
+        ));
+        setRunOwnerForTests(0);
+        const done = runEvents.at(-1) as Extract<BatchStreamEvent, { type: "done" }>;
+        expect(done.serverHasArtifacts).to.equal(true);
+
+        const analysisOwner = 9073;
+        setMinerOwnerForTests(analysisOwner);
+        const events: unknown[] = [];
+        await processMineAb(
+            done.fingerprint,
+            "4h",
+            (event) => events.push(event),
+            analysisOwner,
+            async () => [{ asset: "UP", symbol: "UPUSDT", data: pairData }],
+        );
+        setMinerOwnerForTests(0);
+
+        const terminal = events.at(-1) as { type: string; ok?: boolean; result?: { reportLines: string[] } };
+        expect(terminal.type).to.equal("done");
+        expect(terminal.ok).to.equal(true);
+        expect(terminal.result?.reportLines.some((line) => line.startsWith("SUMMARY"))).to.equal(true);
+        expect(hasStoredMineArtifacts(), "Mine A/B must be read-only on the artifact store").to.equal(true);
+
+        await releaseLastResults("mine_ab_test_end");
+    });
+});
+
 describe("batch-backtest server plugin mine-prediction route-level authorization", () => {
     it("rejects a non-POST /api/batch-backtest/mine-prediction with 405", async () => {
         const routes = captureBatchRoutes();
@@ -1902,5 +1949,39 @@ describe("batch-backtest server plugin runId-scoped /status (audit runId-scoping
 
         setRunOwnerForTests(0);
         await releaseLastResults("runid_scope_end");
+    });
+});
+
+describe("batch-backtest server plugin mine-prediction-ab route-level authorization", () => {
+    it("rejects a non-POST /api/batch-backtest/mine-prediction-ab with 405", async () => {
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/mine-prediction-ab");
+        expect(handler, "mine-prediction-ab route must be registered").to.not.equal(undefined);
+        const res = makeRouteResponse();
+        await handler!(
+            { method: "GET", url: "/api/batch-backtest/mine-prediction-ab", socket: { remoteAddress: "127.0.0.1" }, headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" } },
+            res,
+        );
+        expect(res.statusCode).to.equal(405);
+    });
+
+    it("rejects an unauthenticated non-loopback POST /mine-prediction-ab with 401", async () => {
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/mine-prediction-ab");
+        expect(handler).to.not.equal(undefined);
+        const prevToken = process.env.LOCAL_PROXY_TOKEN;
+        delete process.env.LOCAL_PROXY_TOKEN;
+        try {
+            const req = Readable.from([JSON.stringify({ fingerprint: "x", interval: "1d" })]) as any;
+            req.method = "POST";
+            req.url = "/api/batch-backtest/mine-prediction-ab";
+            req.headers = {};
+            req.socket = { remoteAddress: "203.0.113.9" };
+            const res = makeRouteResponse();
+            await handler!(req, res);
+            expect(res.statusCode).to.equal(401);
+        } finally {
+            if (prevToken !== undefined) process.env.LOCAL_PROXY_TOKEN = prevToken;
+        }
     });
 });
