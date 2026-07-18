@@ -117,6 +117,30 @@ describe("Finder universe metrics", () => {
         expect(sorted.map((item) => item.strategyKey)).to.deep.equal(["balanced", "weaker"]);
     });
 
+    it("sorts median expectancy and profit factor weighted by total trades", () => {
+        const higherMedian = buildFinderUniverseCandidate({
+            strategyKey: "higher-median",
+            strategyName: "Higher Median",
+            params: {},
+            symbols: [makeSymbol("BTCUSDT", "profitable", makeBacktestResult(10, 3, 10, 0, 2))],
+        });
+        const higherWeighted = buildFinderUniverseCandidate({
+            strategyKey: "higher-weighted",
+            strategyName: "Higher Weighted",
+            params: {},
+            symbols: [makeSymbol("BTCUSDT", "profitable", makeBacktestResult(10, 2, 20, 0, 1.75))],
+        });
+
+        expect(sortFinderUniverseCandidates(
+            [higherMedian, higherWeighted],
+            ["medianExpectancyWeightedTrades"]
+        ).map((item) => item.strategyKey)).to.deep.equal(["higher-weighted", "higher-median"]);
+        expect(sortFinderUniverseCandidates(
+            [higherMedian, higherWeighted],
+            ["medianProfitFactorWeightedTrades"]
+        ).map((item) => item.strategyKey)).to.deep.equal(["higher-weighted", "higher-median"]);
+    });
+
     it("aggregates median sharpe ratio across active symbols", () => {
         const candidate = buildFinderUniverseCandidate({
             strategyKey: "demo",

@@ -22,6 +22,22 @@ const CONFIRMATION_STRATEGY_CHECKBOXES = [
         ],
     },
     {
+        checkboxKey: "confirmationProbabilityBoundaryEigenShift",
+        strategyKey: "probability_boundary_eigen_shift",
+        params: [
+            { inputKey: "confirmationProbabilityBoundaryStateLookback", paramKey: "stateLookback", defaultValue: 250, minValue: 2 },
+        ],
+        fixedParams: { eigenLimit: -13 },
+    },
+    {
+        checkboxKey: "confirmationDecayMomentumAlignment",
+        strategyKey: "decay_momentum_alignment",
+        params: [
+            { inputKey: "confirmationDecayMomentumDecay", paramKey: "decay", defaultValue: 0.92, minValue: 0.01 },
+            { inputKey: "confirmationDecayMomentumRocPeriod", paramKey: "roc_period", defaultValue: 1, minValue: 1 },
+        ],
+    },
+    {
         checkboxKey: "confirmationEventDirectionFollow",
         strategyKey: "event_direction_1s",
         params: [
@@ -228,6 +244,7 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     const confirmationCheckboxes = CONFIRMATION_STRATEGY_CHECKBOXES.map((definition) => ({
         strategyKey: definition.strategyKey,
         checkbox: dom[definition.checkboxKey],
+        fixedParams: "fixedParams" in definition ? definition.fixedParams : {},
         params: definition.params.map((p) => ({
             paramKey: p.paramKey,
             defaultValue: p.defaultValue,
@@ -292,8 +309,8 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     };
     const syncConfirmationParamsInputFromFields = () => {
         const paramsByStrategy: Record<string, Record<string, number>> = {};
-        confirmationCheckboxes.forEach(({ strategyKey, params }) => {
-            const merged: Record<string, number> = {};
+        confirmationCheckboxes.forEach(({ strategyKey, params, fixedParams }) => {
+            const merged: Record<string, number> = { ...fixedParams };
             params.forEach(({ paramKey, defaultValue, minValue, input }) => {
                 const parsedValue = parseInputNumber(input.value);
                 merged[paramKey] = typeof parsedValue === 'number' && Number.isFinite(parsedValue)

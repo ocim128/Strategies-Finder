@@ -345,10 +345,14 @@ export function getFinderUniverseMetricValue(
             return item.activeSymbols;
         case "medianExpectancy":
             return item.medianExpectancy;
+        case "medianExpectancyWeightedTrades":
+            return item.medianExpectancy * item.totalTrades;
         case "medianSharpe":
             return item.medianSharpe;
         case "medianProfitFactor":
             return item.medianProfitFactor;
+        case "medianProfitFactorWeightedTrades":
+            return item.medianProfitFactor * item.totalTrades;
         case "medianCompositeEdgeRatio":
             return item.medianCompositeEdgeRatio;
         case "worstMaxDrawdownPercent":

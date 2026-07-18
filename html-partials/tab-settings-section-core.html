@@ -125,6 +125,42 @@
                 <div class="param-row">
                     <div class="param-group">
                         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Probability Boundary Eigen-Shift</label>
+                            <label class="section-toggle section-toggle--sm" aria-label="Toggle probability boundary eigen-shift confirmation">
+                                <input type="checkbox" id="confirmationProbabilityBoundaryEigenShift">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">Requires the confirmation strategy to agree using a fixed Eigen Limit of -13.</div>
+                        <div class="param-group">
+                            <label class="param-label">State Lookback</label>
+                            <input type="number" class="param-input" id="confirmationProbabilityBoundaryStateLookback" value="250" min="2" step="1">
+                        </div>
+                    </div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Decay Momentum Alignment</label>
+                            <label class="section-toggle section-toggle--sm" aria-label="Toggle decay momentum alignment confirmation">
+                                <input type="checkbox" id="confirmationDecayMomentumAlignment">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">Allows entries while exponentially weighted momentum agrees with the entry direction.</div>
+                        <div class="param-group">
+                            <label class="param-label">Decay Factor</label>
+                            <input type="number" class="param-input" id="confirmationDecayMomentumDecay" value="0.92" min="0.01" max="0.999" step="0.001">
+                        </div>
+                        <div class="param-group">
+                            <label class="param-label">ROC Period</label>
+                            <input type="number" class="param-input" id="confirmationDecayMomentumRocPeriod" value="1" min="1" step="1">
+                        </div>
+                    </div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
                             <label class="param-label" style="margin-bottom: 0;">Event Direction Follow</label>
                             <label class="section-toggle section-toggle--sm" aria-label="Toggle event direction follow confirmation">
                                 <input type="checkbox" id="confirmationEventDirectionFollow">
