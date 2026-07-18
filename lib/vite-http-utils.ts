@@ -103,7 +103,7 @@ export function beginNdjsonStream(res: ViteHttpResponse): {
  * client disconnects (`close` / `error`), every subsequent `write` is silently
  * dropped instead of throwing into a long-running async loop. The production
  * Finder plugin already used this pattern inline; this extracts it so the
- * Batch run/mine/stability/portfolio-fit handlers can share the exact same
+ * Batch run/mine/stability handlers can share the exact same
  * transport-safety contract.
  *
  * Why this matters: without it, a browser reload mid-run makes `stream.write`

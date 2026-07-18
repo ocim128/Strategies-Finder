@@ -6,7 +6,7 @@
  * (expectedForwardReturnPct, oosLiftPct, confidence). Portfolio Fit uses
  * oosLiftPct as its "edge%" — but nothing measures whether those statistics
  * track reality. The codebase flags this gap itself:
- * batch-portfolio-fit-summary.ts:37 emits "Independent validation unavailable
+ * (previously batch-portfolio-fit-summary.ts:37 emitted "Independent validation unavailable
  * (historical Stability reconstruction not implemented)".
  *
  * This leaf closes that gap by BACKTESTING Mine's real engine at many
@@ -72,6 +72,7 @@ export interface BatchMinePredictionResult {
     samples: number;
     horizons: number[];
     rankIcByHorizon: Map<number, IcPoint>;
+    callIcByHorizon: Map<number, IcPoint>;
     hitRate: { long: HitRateBucket; short: HitRateBucket; none: HitRateBucket };
     longestHorizon: number;
     longestIc: number;
@@ -82,9 +83,13 @@ export interface BatchMinePredictionResult {
     perAssetIc: Map<number, Map<string, { ic: number; n: number }>>;
     confidenceCalibration: Map<string, HitRateBucket>;
     caveats: string[];
+    forecastVerdict: string;
+    callVerdict: string;
     verdict: string;
     reportLines: string[];
 }
+
+const MIN_ACTIONABLE_CALL_SAMPLES = 50;
 
 export interface RunMinePredictionOptions {
     artifacts: BatchSyntheticPairArtifact[];
@@ -375,8 +380,8 @@ export function runMinePredictionDiagnostic(options: RunMinePredictionOptions): 
         },
         longestHorizon: horizons[horizons.length - 1] ?? 1,
         longestIc: Number.NaN, primaryHorizon: horizons[0] ?? 1, primaryIc: Number.NaN, primaryN: 0,
-        liftCorrByHorizon: new Map(), perAssetIc: new Map(), confidenceCalibration: new Map(),
-        caveats: [], verdict, reportLines: [`MINE_PRED | ${verdict}`],
+        liftCorrByHorizon: new Map(), callIcByHorizon: new Map(), perAssetIc: new Map(), confidenceCalibration: new Map(),
+        caveats: [], forecastVerdict: verdict, callVerdict: verdict, verdict, reportLines: [`MINE_PRED | ${verdict}`],
     });
 
     if (options.artifacts.length === 0) return empty("No synthetic-pair artifacts to analyze.");
@@ -404,17 +409,17 @@ export function runMinePredictionDiagnostic(options: RunMinePredictionOptions): 
 
     const directionFilter = options.directionFilter ?? "both";
     // Filter samples by ACTUAL VERDICT before scoring, not by underlying
-    // market-state direction. When directionFilter="long", keep only verdict
-    // "LONG" + all non-call verdicts (WATCH/SKIP/INCONCLUSIVE as baseline).
-    // This prevents WATCH-LONG or INCONCLUSIVE-LONG from leaking into the
-    // LONG call bucket — they're not actionable entries.
+    // market-state direction. Keep only direction-matched non-calls as the
+    // comparison cohort; opposite-direction non-calls would contaminate a
+    // direction-specific forecast and edge estimate.
     const filterVerdict: BatchSyntheticVerdict | null = directionFilter === "long" ? "LONG"
         : directionFilter === "short" ? "SHORT"
         : null;
     const scoredSamples = filterVerdict === null
         ? allSamples
         : allSamples.filter((s) => s.verdict === filterVerdict
-            || s.verdict === "WATCH" || s.verdict === "SKIP" || s.verdict === "INCONCLUSIVE");
+            || (s.verdict !== "LONG" && s.verdict !== "SHORT"
+                && (s.direction === (filterVerdict === "LONG" ? "long" : "short") || s.direction === null)));
 
     const actionableInFiltered = scoredSamples.filter((s) =>
         (filterVerdict === null && (s.verdict === "LONG" || s.verdict === "SHORT"))
@@ -433,6 +438,67 @@ export function runMinePredictionDiagnostic(options: RunMinePredictionOptions): 
 
 function emptyBucket(): HitRateBucket {
     return { p: Number.NaN, lower: Number.NaN, upper: Number.NaN, n: 0, meanReturn: Number.NaN };
+}
+
+function classifyIcVerdict(
+    label: string,
+    primaryIc: number,
+    primaryN: number,
+    longestIc: number,
+    longestN: number,
+): string {
+    if (!Number.isFinite(primaryIc)) {
+        return `${label}_NO_EDGE: primary IC undefined (n too small).`;
+    }
+    if (primaryIc <= -0.03) {
+        return `${label}_ANTI: primary IC=${fmt(primaryIc)} (n=${primaryN})`;
+    }
+    if (primaryIc < 0.05) {
+        return `${label}_NO_EDGE: primary IC=${fmt(primaryIc)} (n=${primaryN}) — |IC| < 0.05 (longest IC=${fmt(longestIc)}, n=${longestN})`;
+    }
+    return `${label}_WEAK_PREDICTIVE: primary IC=${fmt(primaryIc)} (n=${primaryN}) — IC > 0.05 (longest IC=${fmt(longestIc)}, n=${longestN})`;
+}
+
+function classifyCallIcVerdict(
+    primaryIc: number,
+    primaryN: number,
+    longestIc: number,
+    longestN: number,
+): string {
+    if (primaryN < MIN_ACTIONABLE_CALL_SAMPLES) {
+        return `INSUFFICIENT_SAMPLE: actionable CALL_IC n=${primaryN}; need ${MIN_ACTIONABLE_CALL_SAMPLES} (primary IC=${fmt(primaryIc)}, longest IC=${fmt(longestIc)}, n=${longestN})`;
+    }
+    if (!Number.isFinite(primaryIc)) {
+        return "CALL_NO_EDGE: primary CALL_IC undefined.";
+    }
+    if (primaryIc <= -0.03) {
+        return `CALL_ANTI: primary CALL_IC=${fmt(primaryIc)} (n=${primaryN})`;
+    }
+    if (primaryIc < 0.05) {
+        return `CALL_NO_EDGE: primary CALL_IC=${fmt(primaryIc)} (n=${primaryN})`;
+    }
+    return `CALL_WEAK_PREDICTIVE: primary CALL_IC=${fmt(primaryIc)} (n=${primaryN}) (longest CALL_IC=${fmt(longestIc)}, n=${longestN})`;
+}
+
+function buildCallIcByHorizon(
+    samples: readonly BatchMinePredictionSample[],
+    horizons: readonly number[],
+): Map<number, IcPoint> {
+    const result = new Map<number, IcPoint>();
+    for (const h of horizons) {
+        const predicted: number[] = [];
+        const realized: number[] = [];
+        for (const sample of samples) {
+            if (sample.verdict !== "LONG" && sample.verdict !== "SHORT") continue;
+            if (sample.predicted === null) continue;
+            const value = sample.realized.get(h);
+            if (value === undefined || !Number.isFinite(value)) continue;
+            predicted.push(sample.predicted / 100);
+            realized.push(value);
+        }
+        result.set(h, { mean: spearman(predicted, realized), tStat: Number.NaN, n: predicted.length });
+    }
+    return result;
 }
 
 function buildReport(args: {
@@ -501,9 +567,18 @@ function buildReport(args: {
     const nonCallBucket = bucket(nonCallReturns);
     const total = longBucket.n + shortBucket.n + nonCallBucket.n;
     const refusalRate = total > 0 ? nonCallBucket.n / total : 0;
-    const baselineDrift = nonCallBucket.meanReturn;
-    const longEdge = Number.isFinite(longBucket.meanReturn) && Number.isFinite(baselineDrift) ? longBucket.meanReturn - baselineDrift : Number.NaN;
-    const shortEdge = Number.isFinite(shortBucket.meanReturn) && Number.isFinite(baselineDrift) ? shortBucket.meanReturn - baselineDrift : Number.NaN;
+    const nonCallLong = bucket(samples
+        .filter((s) => s.verdict !== "LONG" && s.verdict !== "SHORT" && s.direction === "long")
+        .map((s) => s.realized.get(primaryH)!)
+        .filter((r): r is number => Number.isFinite(r)));
+    const nonCallShort = bucket(samples
+        .filter((s) => s.verdict !== "LONG" && s.verdict !== "SHORT" && s.direction === "short")
+        .map((s) => s.realized.get(primaryH)!)
+        .filter((r): r is number => Number.isFinite(r)));
+    const longEdge = Number.isFinite(longBucket.meanReturn) && Number.isFinite(nonCallLong.meanReturn)
+        ? longBucket.meanReturn - nonCallLong.meanReturn : Number.NaN;
+    const shortEdge = Number.isFinite(shortBucket.meanReturn) && Number.isFinite(nonCallShort.meanReturn)
+        ? shortBucket.meanReturn - nonCallShort.meanReturn : Number.NaN;
 
     // 3. Confidence calibration at primary horizon.
     const confidenceCalibration = new Map<string, HitRateBucket>();
@@ -551,32 +626,32 @@ function buildReport(args: {
     }
     perAssetIc.set(primaryH, primaryAssetMap);
 
+    const callIcByHorizon = buildCallIcByHorizon(samples, horizons);
+
     // Primary + longest IC for verdict anchoring.
     const primaryIcData = rankIcByHorizon.get(primaryH)!;
     const longestIcData = rankIcByHorizon.get(longestH)!;
     const primaryIc = primaryIcData.mean;
     const longestIc = longestIcData.mean;
 
-    // 6. Verdict (sign-aware, primary-horizon-anchored — the bug-fixed logic).
-    let verdict: string;
-    if (!Number.isFinite(primaryIc)) {
-        verdict = `NO_EDGE: primary IC undefined (n too small).`;
-    } else if (primaryIc <= -0.03) {
-        verdict = `ANTI: primary h=${primaryH} IC=${fmt(primaryIc)} (n=${primaryIcData.n}) — Mine is counter-predictive at the trading horizon. Following it loses.`;
-    } else if (primaryIc < 0.05) {
-        verdict = `NO_EDGE: primary h=${primaryH} IC=${fmt(primaryIc)} (n=${primaryIcData.n}) — |IC| < 0.05; Mine predictions do not meaningfully correlate with realized. (longest h=${longestH} IC=${fmt(longestIc)})`;
-    } else {
-        verdict = `WEAK_PREDICTIVE: primary h=${primaryH} IC=${fmt(primaryIc)} (n=${primaryIcData.n}) — IC > 0.05. Check CALIB and EDGE for tradeability. (longest h=${longestH} IC=${fmt(longestIc)})`;
-    }
+    const forecastVerdict = classifyIcVerdict("FORECAST", primaryIc, primaryIcData.n, longestIc, longestIcData.n);
+    const primaryCallIcData = callIcByHorizon.get(primaryH)!;
+    const longestCallIcData = callIcByHorizon.get(longestH)!;
+    const callVerdict = classifyCallIcVerdict(
+        primaryCallIcData.mean,
+        primaryCallIcData.n,
+        longestCallIcData.mean,
+        longestCallIcData.n,
+    );
+    const verdict = callVerdict;
 
     // 7. Caveats.
     const caveats: string[] = [];
-    if (Number.isFinite(longBucket.meanReturn) && Number.isFinite(nonCallBucket.meanReturn) && longBucket.meanReturn - nonCallBucket.meanReturn < 0.005) {
-        // Threshold is < 0.5% (0.005 fraction), NOT <= 0. LONG may still exceed
-        // inconclusive-bar drift, just not by enough to clear the meaningful-edge
-        // bar. Wording must match the condition (do NOT claim LONG < inconclusive).
-        const diff = (longBucket.meanReturn - nonCallBucket.meanReturn) * 100;
-        caveats.push(`LONG edge over inconclusive-bars is only ${fmt(diff, 2)}% (< 0.5% meaningful-edge threshold) — Mine's LONG selection adds little beyond passive-long drift`);
+    if (Number.isFinite(longEdge) && longEdge < 0.005) {
+        caveats.push(`LONG edge over matched long non-calls is only ${fmt(longEdge * 100, 2)}% (< 0.5% meaningful-edge threshold)`);
+    }
+    if (Number.isFinite(shortEdge) && shortEdge < 0.005) {
+        caveats.push(`SHORT edge over matched short non-calls is only ${fmt(shortEdge * 100, 2)}% (< 0.5% meaningful-edge threshold)`);
     }
     const highHit = confidenceCalibration.get("high")!;
     const lowHit = confidenceCalibration.get("low")!;
@@ -594,7 +669,7 @@ function buildReport(args: {
     // 8. Build pipe-delimited report.
     const reportLines: string[] = [];
     reportLines.push(`MINE_PRED | strategy=${strategyKey ?? "?"} interval=${interval} assets=${assetCount} pairs=${pairCount} samples=${samples.length} horizons=${horizons.join(",")}${formatWindowTag(args.sampleFromSec, args.sampleToSec)}${args.directionFilter && args.directionFilter !== "both" ? ` direction=${args.directionFilter}` : ""}`);
-    reportLines.push(`MINE_PRED | NOTE: rank_IC (predicted-vs-realized) is the primary score; realized is signed by verdict direction${args.directionFilter && args.directionFilter !== "both" ? `. Direction filter=${args.directionFilter}: scoring excludes the other direction's verdicts (INCONCLUSIVE bars retained as baseline).` : ""}`);
+    reportLines.push(`MINE_PRED | NOTE: RANK_IC measures all finite forecasts; CALL_IC measures actionable LONG/SHORT calls. Realized is signed by underlying state direction${args.directionFilter && args.directionFilter !== "both" ? `. Direction filter=${args.directionFilter}: opposite-direction samples and non-calls are excluded except matched/neutral baselines.` : ""}`);
 
 
     const icParts = horizons.map((h) => {
@@ -641,7 +716,7 @@ function buildReport(args: {
         `HIT_RATE | h=${primaryH} LONG(hit) ${fmtPct(longBucket.p)} CI[${fmtPct(longBucket.lower)},${fmtPct(longBucket.upper)}] n=${longBucket.n} | SHORT(hit) ${fmtPct(shortBucket.p)} CI[${fmtPct(shortBucket.lower)},${fmtPct(shortBucket.upper)}] n=${shortBucket.n} | WATCH n=${watchBucket.n} SKIP n=${skipBucket.n} INCONCLUSIVE n=${inconclusiveBucket.n} (refusal ${fmtPct(refusalRate)})`,
     );
     reportLines.push(
-        `EDGE     | h=${primaryH} LONG edge vs inconclusive=${fmt(longEdge * 100, 2)}% | SHORT edge=${fmt(shortEdge * 100, 2)}% | inconclusive-bar passive-long drift=${fmt(baselineDrift * 100, 2)}% (NOT cash; direction=null defaults to long-sign)`,
+        `EDGE     | h=${primaryH} LONG edge vs matched long non-calls=${fmt(longEdge * 100, 2)}% (n=${nonCallLong.n}) | SHORT edge vs matched short non-calls=${fmt(shortEdge * 100, 2)}% (n=${nonCallShort.n}) | all non-call signed mean=${fmt(nonCallBucket.meanReturn * 100, 2)}% (directionless observations are not cash)`,
     );
     const confParts = (["high", "medium", "low", "none"] as const).map((c) => {
         const b = confidenceCalibration.get(c)!;
@@ -657,12 +732,15 @@ function buildReport(args: {
     assetParts.sort();
     reportLines.push(`PER_ASSET| h=${primaryH} ${assetParts.join(" | ")}`);
     if (caveats.length > 0) reportLines.push(`CAVEAT   | ${caveats.join(" | ")}`);
-    reportLines.push(`VERDICT  | ${verdict}`);
+    reportLines.push(`FORECAST_VERDICT | ${forecastVerdict}`);
+    reportLines.push(`CALL_VERDICT     | ${callVerdict}`);
+    reportLines.push(`VERDICT          | ${callVerdict}`);
 
     return {
         strategyKey, interval, pairs: pairCount, assets: assetCount, samples: samples.length, horizons,
-        rankIcByHorizon, hitRate: { long: longBucket, short: shortBucket, none: nonCallBucket },
+        rankIcByHorizon, callIcByHorizon, hitRate: { long: longBucket, short: shortBucket, none: nonCallBucket },
         longestHorizon: longestH, longestIc, primaryHorizon: primaryH, primaryIc, primaryN: primaryIcData.n,
-        liftCorrByHorizon, perAssetIc, confidenceCalibration, caveats, verdict, reportLines,
+        liftCorrByHorizon, perAssetIc, confidenceCalibration, caveats,
+        forecastVerdict, callVerdict, verdict, reportLines,
     };
 }

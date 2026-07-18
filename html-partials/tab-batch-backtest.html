@@ -56,10 +56,7 @@
                 title="Repeatedly mine random pair subsets from the latest Batch run">
                 Stability Mine
             </button>
-            <button class="btn btn-secondary btn-compact" id="batchBacktestPortfolioFitBtn" type="button" disabled
-                title="Post-analysis: which Stability candidates improve the candidate portfolio, with bounded allocation">
-                Portfolio Fit
-            </button>
+
             <button class="btn btn-secondary btn-compact" id="batchBacktestMinePredictionBtn" type="button" disabled
                 title="Backtest Mine's predictions at historical bars — does the analog Lift% correlate with realized forward return?">
                 Mine Prediction
@@ -110,10 +107,7 @@
                 title="Copy the latest stability miner summary">
                 Copy Stability
             </button>
-            <button class="btn btn-secondary btn-compact" id="batchBacktestCopyPortfolioFitBtn" type="button" disabled
-                title="Copy the latest Portfolio Fit recommendation">
-                Copy Portfolio Fit
-            </button>
+
             <button class="btn btn-secondary btn-compact" id="batchBacktestCopyMinePredictionBtn" type="button" disabled
                 title="Copy the latest Mine Prediction diagnostic report">
                 Copy Mine Prediction
@@ -164,7 +158,7 @@
         </div>
         <div class="batch-summary-grid" id="batchBacktestSummaryGrid" hidden></div>
         <div class="batch-miner-status" id="batchBacktestMinerSummary"></div>
-        <div class="batch-miner-status" id="batchBacktestPortfolioFitSummary"></div>
+
         <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestMinePredictionSummary"></div>
     </div>
 
@@ -173,8 +167,7 @@
         </div>
         <div class="finder-list" id="batchBacktestResults">
         </div>
-        <div class="finder-list" id="batchBacktestPortfolioFitResults">
-        </div>
+
         <div class="empty-state empty-state-illustrated" id="batchBacktestEmpty">
             <div class="empty-state-icon">
                 <svg viewBox="0 0 24 24" fill="currentColor">

@@ -5,7 +5,7 @@
  * statistics (expectedForwardReturnPct, oosLiftPct, confidence). Portfolio Fit
  * uses those statistics as its "edge%" — but nothing in the codebase measures
  * whether they correlate with REALIZED forward return. The codebase itself
- * flags this gap: batch-portfolio-fit-summary.ts:37 emits
+ * flags this gap: (previously batch-portfolio-fit-summary.ts:37 emitted
  * "Independent validation unavailable (historical Stability reconstruction
  * not implemented)".
  *

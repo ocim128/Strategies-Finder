@@ -20,7 +20,6 @@ import { setVisible } from "../dom-utils";
 import { ensureLazyStylesheet } from "../lazy-styles";
 import { debugLogger } from "../debug-logger";
 import { uiManager } from "../ui-manager";
-import { isDirectFractionTradeSizingMode, usesFixedDollarSizing } from "../types/backtest";
 import { computePerformanceVerdict } from "../finder/finder-universe-metrics";
 import { parsePortfolioSyntheticPairSymbol } from "../portfolioLab/portfolio-lab-synthetic";
 import { copyToClipboard } from "../browser-transfer";
@@ -72,12 +71,6 @@ import {
     type BatchStabilityMineResult,
     type BatchStabilityRow,
 } from "./batch-stability-mine";
-import { formatPortfolioFitSummary, shortFingerprint } from "./batch-portfolio-fit-summary";
-import type {
-    BatchPortfolioFitInput,
-    BatchPortfolioFitResult,
-} from "./batch-portfolio-fit-types";
-import type { BatchPortfolioFitStreamEvent } from "./batch-backtest-stream-types";
 import type { BatchMinePredictionResult } from "./batch-mine-prediction-engine";
 import type { BatchMinePredictionStreamEvent } from "./batch-mine-prediction-stream-types";
 import {
@@ -141,7 +134,6 @@ class BatchBacktestService {
     private lastResults: BatchBacktestSymbolResult[] = [];
     private lastMinerResult: BatchSyntheticMinerResult | null = null;
     private lastStabilityResult: BatchStabilityMineResult | null = null;
-    private lastPortfolioFitResult: BatchPortfolioFitResult | null = null;
     private lastMinePredictionResult: BatchMinePredictionResult | null = null;
     private lastRunFingerprint: string | null = null;
     private lastRunInterval: string | null = null;
@@ -267,12 +259,7 @@ class BatchBacktestService {
         dom.batchBacktestCopyStabilityBtn.addEventListener("click", () => {
             void this.copyStabilityResults();
         });
-        dom.batchBacktestPortfolioFitBtn.addEventListener("click", () => {
-            void this.runPortfolioFit();
-        });
-        dom.batchBacktestCopyPortfolioFitBtn.addEventListener("click", () => {
-            void this.copyPortfolioFitResults();
-        });
+
         dom.batchBacktestMinePredictionBtn.addEventListener("click", () => {
             void this.runMinePrediction();
         });
@@ -1706,10 +1693,7 @@ class BatchBacktestService {
         dom.batchBacktestMinerSummary.textContent = "Stability mining on server...";
         dom.batchBacktestMinerResults.replaceChildren();
         this.lastStabilityResult = null;
-        this.lastPortfolioFitResult = null;
-        dom.batchBacktestCopyPortfolioFitBtn.disabled = true;
-        dom.batchBacktestPortfolioFitSummary.textContent = "";
-        dom.batchBacktestPortfolioFitResults.replaceChildren();
+
 
         try {
             const received: { result: BatchStabilityMineResult | null; cancelledSummary: string | null } = {
@@ -1762,7 +1746,6 @@ class BatchBacktestService {
             this.lastStabilityResult = received.result;
             this.renderStabilityResult(dom, received.result);
             dom.batchBacktestCopyStabilityBtn.disabled = received.result.rows.length === 0;
-            this.updatePortfolioFitButtonState(dom);
             this.serverHasArtifacts = true;
             this.saveLatestResultsSnapshot();
             this.persistMineTimingResult("stability");
@@ -1820,194 +1803,12 @@ class BatchBacktestService {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Portfolio Fit (R16: does not release artifacts; runs after Stability)
-    // -----------------------------------------------------------------------
-
-    private async runPortfolioFit(): Promise<void> {
-        if (this.analysisInFlight) return;
-        this.analysisInFlight = true;
-        this.analysisCancelRequested = false;
-        const dom = this.getDom();
-        try {
-            if (!this.lastStabilityResult || this.lastStabilityResult.rows.length === 0) {
-                dom.batchBacktestPortfolioFitSummary.textContent = "Run Stability Mine before Portfolio Fit.";
-                return;
-            }
-            const currentFingerprint = this.buildCurrentRunFingerprint();
-            if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
-                dom.batchBacktestPortfolioFitSummary.textContent = "Rerun Batch before Portfolio Fit; settings or symbols changed.";
-                return;
-            }
-            this.beginAnalysisBusy(dom);
-            const hasServerArtifacts = await this.refreshServerArtifactState(currentFingerprint);
-            if (this.analysisCancelRequested) return;
-            if (!hasServerArtifacts) {
-                dom.batchBacktestPortfolioFitSummary.textContent = "Rerun Batch before Portfolio Fit; no artifacts on server.";
-                dom.batchBacktestPortfolioFitBtn.disabled = true;
-                return;
-            }
-            await this.runPortfolioFitServer(dom);
-        } finally {
-            await this.finishAnalysisBusy(dom);
-        }
-    }
-
-    private async runPortfolioFitServer(dom: BatchBacktestDom): Promise<void> {
-        dom.batchBacktestPortfolioFitBtn.disabled = true;
-        dom.batchBacktestCopyPortfolioFitBtn.disabled = true;
-        dom.batchBacktestPortfolioFitSummary.textContent = "Running Portfolio Fit on server...";
-        this.lastPortfolioFitResult = null;
-        try {
-            const capital = this.resolvePortfolioFitCapital();
-            const received: { result: BatchPortfolioFitResult | null; cancelledSummary: string | null } = {
-                result: null,
-                cancelledSummary: null,
-            };
-            // Audit NDJSON-POST-helper finding: shared transport. The
-            // `onNonOkResponse` hook preserves the prior 400 "no artifacts"
-            // special case; `onResponse` preserves the reissue-Stop ordering.
-            await postBatchNdjson<BatchPortfolioFitStreamEvent>({
-                endpoint: "/api/batch-backtest/portfolio-fit",
-                body: {
-                    fingerprint: this.lastRunFingerprint,
-                    interval: this.lastRunInterval ?? state.currentInterval,
-                    capital,
-                },
-                onResponse: () => this.reissueStopIfNeeded(),
-                onNonOkResponse: (status, payload) => {
-                    if (status === 400 && typeof payload?.error === "string" && payload.error.includes("no artifacts")) {
-                        this.serverHasArtifacts = false;
-                    }
-                },
-                handlers: {
-                    onStart: () => {
-                        dom.batchBacktestPortfolioFitSummary.textContent = "Portfolio Fit running on server...";
-                    },
-                    onProgress: (event: Extract<BatchPortfolioFitStreamEvent, { type: "progress" }>) => {
-                        dom.batchBacktestPortfolioFitSummary.textContent = `Portfolio Fit ${event.percent}% - ${event.text}`;
-                    },
-                    onDone: (event: Extract<BatchPortfolioFitStreamEvent, { type: "done" }>) => {
-                        if (event.ok) {
-                            received.result = event.result;
-                        } else {
-                            received.cancelledSummary = event.summary;
-                        }
-                    },
-                    onFatal: (event: Extract<BatchPortfolioFitStreamEvent, { type: "fatal" }>) => {
-                        throw new Error(event.error);
-                    },
-                },
-            });
-            if (received.cancelledSummary) {
-                this.lastPortfolioFitResult = null;
-                dom.batchBacktestPortfolioFitSummary.textContent = received.cancelledSummary;
-                return;
-            }
-            if (!received.result) {
-                throw new Error("Server Portfolio Fit did not return a result.");
-            }
-            this.lastPortfolioFitResult = received.result;
-            this.renderPortfolioFitResult(dom, received.result);
-            dom.batchBacktestCopyPortfolioFitBtn.disabled = false;
-            this.serverHasArtifacts = true;
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.lastPortfolioFitResult = null;
-            dom.batchBacktestPortfolioFitSummary.textContent = `Portfolio Fit error: ${message}`;
-            debugLogger.error("batch_portfolio_fit.server_failed", { error: message });
-        } finally {
-            this.updatePortfolioFitButtonState(dom);
-        }
-    }
-
-    private resolvePortfolioFitCapital(): BatchPortfolioFitInput["capital"] {
-        const cs = backtestService.getCapitalSettings();
-        const initialCapital = cs.initialCapital > 0 ? cs.initialCapital : 10000;
-        // R6/R11: resolve the base allocation mirroring position-builder.ts:246.
-        // The engine's resolved Kelly/optimal-f fraction is NOT available at
-        // post-analysis time (rolling SmartSizingState is not persisted), so
-        // `kellyFraction` stays null and we record the fallback provenance.
-        const isDirectFraction = isDirectFractionTradeSizingMode(cs.sizingMode);
-        const usePercentBase = (cs.sizingMode === "martingale" || cs.sizingMode === "anti_martingale")
-            && cs.advancedSizing?.martingaleBaseSize === "percent";
-        const preferFixedFallback = isDirectFraction && cs.fixedTradeAmount > 0;
-        const usesFixedDollar = !usePercentBase
-            && (usesFixedDollarSizing(cs.sizingMode) || preferFixedFallback)
-            && cs.fixedTradeAmount > 0;
-
-        let baseAllocation: number;
-        let baseAllocationSource: BatchPortfolioFitInput["capital"]["baseAllocationSource"];
-        if (usesFixedDollar && cs.fixedTradeAmount > 0) {
-            baseAllocation = cs.fixedTradeAmount;
-            baseAllocationSource = isDirectFraction
-                ? "direct_fraction_fallback_fixed"
-                : "fixed";
-        } else {
-            baseAllocation = initialCapital * (cs.positionSize / 100);
-            baseAllocationSource = isDirectFraction
-                ? "direct_fraction_fallback_percent"
-                : "percent";
-        }
-
-        // configuredKellyFraction: surface the user's configured fraction for
-        // transparency when Kelly sizing is active. kellyFraction stays null
-        // because the fraction was NOT applied to resolve baseAllocation
-        // (baseAllocationSource would need to be "resolved_kelly" for that).
-        const configuredKellyFraction: BatchPortfolioFitInput["capital"]["configuredKellyFraction"]
-            = cs.sizingMode === "kelly_criterion"
-                ? (cs.advancedSizing?.kellyFraction ?? "half")
-                : null;
-
-        return {
-            initialCapital,
-            baseAllocation,
-            kellyFraction: null, // never resolved at post-analysis in v1
-            baseAllocationSource,
-            configuredKellyFraction,
-        };
-    }
-
-    private renderPortfolioFitResult(dom: BatchBacktestDom, result: BatchPortfolioFitResult): void {
-        const label = "Portfolio Fit (EXPERIMENTAL - independent validation unavailable)";
-        const accepted = result.rows.filter((r) => r.decision === "ADD" || r.decision === "ADD_SMALL").length;
-        dom.batchBacktestPortfolioFitSummary.textContent =
-            `${label} | ${accepted}/${result.rows.length} accepted | allocated ${(result.portfolio.allocatedFraction * 100).toFixed(1)}%`
-            + ` | sizing: ${result.baseAllocationSource}`
-            + (result.configuredKellyFraction !== null ? ` | Kelly configured: ${result.configuredKellyFraction}` : "")
-            + (result.kellyFraction === null && result.configuredKellyFraction !== null ? " | Kelly resolved: unavailable" : "");
-        const container = dom.batchBacktestPortfolioFitResults;
-        container.replaceChildren();
-        if (result.rows.length === 0) {
-            container.textContent = "No candidates.";
-            return;
-        }
-        for (const row of result.rows) {
-            const el = document.createElement("div");
-            el.className = "batch-miner-row";
-            const reasons = row.reasonCodes.join(", ");
-            const allocationLimit = row.allocationLimitReasonCodes.length > 0
-                ? ` | limited by ${row.allocationLimitReasonCodes.join(", ")}`
-                : "";
-            el.textContent = `${row.asset} ${row.direction} -> ${row.decision} | ${(row.allocationFraction * 100).toFixed(1)}% | ${reasons}${allocationLimit}`;
-            container.appendChild(el);
-        }
-    }
-
-    private async copyPortfolioFitResults(): Promise<void> {
-        if (!this.lastPortfolioFitResult) return;
-        const text = formatPortfolioFitSummary(this.lastPortfolioFitResult).join("\n");
-        const copied = await copyToClipboard(text);
-        if (!copied) {
-            this.getDom().batchBacktestPortfolioFitSummary.textContent = "Copy Portfolio Fit failed.";
-        }
-    }
-
     /**
+
      * Mine Prediction diagnostic. READ-ONLY on server artifacts: the engine
      * re-runs Mine at ~hundreds of historical bars per asset to test whether
      * Mine's analog-Lift% predicts realized forward return. Does NOT release
-     * artifacts (Mine/Stability/PortfolioFit can still run after).
+     * artifacts (Mine/Stability can still run after).
      */
     private async runMinePrediction(): Promise<void> {
         if (this.analysisInFlight) return;
@@ -2173,7 +1974,6 @@ class BatchBacktestService {
 
         this.lastResults = snapshot.results;
         this.lastStabilityResult = snapshot.stabilityResult ?? null;
-        this.lastPortfolioFitResult = null;
         this.lastRunFingerprint = snapshot.fingerprint;
         this.lastRunInterval = snapshot.interval || null;
         // Restore the strategy that governed the Run so Mine provenance survives
@@ -2196,16 +1996,9 @@ class BatchBacktestService {
         // a tab that reloads into restored-but-not-current state keeps all
         // three disabled consistently until a server-side run re-enables them.
         this.updateArtifactActionButtons(dom);
-        dom.batchBacktestCopyPortfolioFitBtn.disabled = true;
         if (this.lastStabilityResult) {
             this.renderStabilityResult(dom, this.lastStabilityResult);
             dom.batchBacktestCopyStabilityBtn.disabled = this.lastStabilityResult.rows.length === 0;
-        }
-        if (this.lastPortfolioFitResult) {
-            // Mark as non-current: artifacts/fingerprint may have expired.
-            this.renderPortfolioFitResult(dom, this.lastPortfolioFitResult);
-            dom.batchBacktestCopyPortfolioFitBtn.disabled = false;
-            dom.batchBacktestPortfolioFitSummary.textContent += " (restored — rerun Batch to confirm current)";
         }
         dom.batchBacktestStatus.textContent = `Restored last Batch run (${this.lastResults.length} pairs)`;
         this.setProgress(dom, 100, "Restored");
@@ -2291,41 +2084,24 @@ class BatchBacktestService {
     }
 
     /**
-     * Portfolio Fit is actionable only after Stability Mine produces actionable
-     * rows AND artifacts are still available (server or browser-held). Mirrors
-     * the Stability Mine button gate so the two stay in sync.
-     */
-    private canRunPortfolioFit(): boolean {
-        return Boolean(this.lastStabilityResult && this.lastStabilityResult.rows.length > 0)
-            && this.serverHasArtifacts;
-    }
-
-    private updatePortfolioFitButtonState(dom: BatchBacktestDom): void {
-        dom.batchBacktestPortfolioFitBtn.disabled = !this.canRunPortfolioFit();
-    }
-
-    /**
      * Single source of truth for the three artifact-action buttons (Mine,
-     * Stability Mine, Mine Prediction) plus the Portfolio Fit gate. Audit
-     * finding (Mine Prediction gating): Mine Prediction used to stay enabled
-     * after `clearStaleResults` invalidated the fingerprint (only Mine and
-     * Stability were disabled), so the user could click a stale button and
-     * only then see "Run Batch first." Locking all three artifact-dependent
-     * buttons to the same `serverHasArtifacts && lastRunFingerprint` gate
-     * keeps them consistent across every lifecycle branch.
+     * Stability Mine, Mine Prediction). Audit finding (Mine Prediction gating):
+     * Mine Prediction used to stay enabled after `clearStaleResults` invalidated
+     * the fingerprint (only Mine and Stability were disabled), so the user could
+     * click a stale button and only then see "Run Batch first." Locking all three
+     * artifact-dependent buttons to the same `serverHasArtifacts && lastRunFingerprint`
+     * gate keeps them consistent across every lifecycle branch.
      */
     private updateArtifactActionButtons(dom: BatchBacktestDom): void {
         const available = this.serverHasArtifacts && Boolean(this.lastRunFingerprint);
         dom.batchBacktestMineBtn.disabled = !available;
         dom.batchBacktestStabilityMineBtn.disabled = !available;
         dom.batchBacktestMinePredictionBtn.disabled = !available;
-        this.updatePortfolioFitButtonState(dom);
     }
 
     private clearMinerResults(dom: BatchBacktestDom): void {
         this.lastMinerResult = null;
         this.lastStabilityResult = null;
-        this.lastPortfolioFitResult = null;
         this.lastMinePredictionResult = null;
         // Clear rather than show "Miner idle": an empty .batch-miner-status
         // collapses via CSS (:empty) so the run-state region does not show a
@@ -2334,10 +2110,6 @@ class BatchBacktestService {
         dom.batchBacktestMinerResults.replaceChildren();
         dom.batchBacktestCopyMinerBtn.disabled = true;
         dom.batchBacktestCopyStabilityBtn.disabled = true;
-        dom.batchBacktestPortfolioFitBtn.disabled = true;
-        dom.batchBacktestCopyPortfolioFitBtn.disabled = true;
-        dom.batchBacktestPortfolioFitSummary.textContent = "";
-        dom.batchBacktestPortfolioFitResults.replaceChildren();
         dom.batchBacktestCopyMinePredictionBtn.disabled = true;
         dom.batchBacktestMinePredictionSummary.textContent = "";
     }
@@ -2756,7 +2528,6 @@ class BatchBacktestService {
         dom.batchBacktestRunBtn.disabled = true;
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
-        dom.batchBacktestPortfolioFitBtn.disabled = true;
         dom.batchBacktestMinePredictionBtn.disabled = true;
     }
 
@@ -2768,7 +2539,6 @@ class BatchBacktestService {
         dom.batchBacktestRunBtn.disabled = true;
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
-        dom.batchBacktestPortfolioFitBtn.disabled = true;
         dom.batchBacktestMinePredictionBtn.disabled = true;
         const pending = this.pendingStopPromise;
         if (pending) {
@@ -2778,7 +2548,7 @@ class BatchBacktestService {
         dom.batchBacktestRunBtn.disabled = false;
         // Audit Mine-Prediction-gating finding: route the post-analysis restore
         // through the shared helper so Mine, Stability, Mine Prediction, and
-        // Portfolio Fit all flip back together based on the same gate.
+        // all flip back together based on the same gate.
         this.updateArtifactActionButtons(dom);
     }
 
@@ -2836,6 +2606,17 @@ class BatchBacktestService {
         const value = Number.isFinite(parsed) ? parsed : fallback;
         return Math.max(min, Math.min(max, Math.floor(value)));
     }
+}
+
+/** Stable, display-only FNV-1a digest; the full fingerprint remains in state. */
+function shortFingerprint(value: string | null): string {
+    if (!value) return "--";
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < value.length; i++) {
+        hash ^= value.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
 interface StabilityFormatContext {

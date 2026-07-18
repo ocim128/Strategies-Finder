@@ -1,6 +1,6 @@
 /**
  * Shared transport for the five Batch server-side NDJSON POST calls (run,
- * mine, stability-mine, portfolio-fit, mine-prediction). Audit NDJSON-POST-
+ * mine, stability-mine, mine-prediction). Audit NDJSON-POST-
  * helper finding: each call site duplicated the same four mechanics — JSON
  * POST, `response.ok`/`response.body` validation, best-effort JSON error
  * extraction, and `consumeNdjsonStream(..., { requireTerminal: true })` — and

@@ -27,10 +27,7 @@ export const BATCH_BACKTEST_REQUIRED_IDS = [
     "batchBacktestStabilitySeed",
     "batchBacktestStabilityMineBtn",
     "batchBacktestCopyStabilityBtn",
-    "batchBacktestPortfolioFitBtn",
-    "batchBacktestCopyPortfolioFitBtn",
-    "batchBacktestPortfolioFitSummary",
-    "batchBacktestPortfolioFitResults",
+
     "batchBacktestMinePredictionBtn",
     "batchBacktestCopyMinePredictionBtn",
     "batchBacktestMinePredictionSummary",
@@ -71,10 +68,7 @@ export function createBatchBacktestDom() {
         batchBacktestStabilitySeed: getRequiredElement<HTMLInputElement>("batchBacktestStabilitySeed"),
         batchBacktestStabilityMineBtn: getRequiredElement<HTMLButtonElement>("batchBacktestStabilityMineBtn"),
         batchBacktestCopyStabilityBtn: getRequiredElement<HTMLButtonElement>("batchBacktestCopyStabilityBtn"),
-        batchBacktestPortfolioFitBtn: getRequiredElement<HTMLButtonElement>("batchBacktestPortfolioFitBtn"),
-        batchBacktestCopyPortfolioFitBtn: getRequiredElement<HTMLButtonElement>("batchBacktestCopyPortfolioFitBtn"),
-        batchBacktestPortfolioFitSummary: getRequiredElement<HTMLDivElement>("batchBacktestPortfolioFitSummary"),
-        batchBacktestPortfolioFitResults: getRequiredElement<HTMLDivElement>("batchBacktestPortfolioFitResults"),
+
         batchBacktestMinePredictionBtn: getRequiredElement<HTMLButtonElement>("batchBacktestMinePredictionBtn"),
         batchBacktestCopyMinePredictionBtn: getRequiredElement<HTMLButtonElement>("batchBacktestCopyMinePredictionBtn"),
         batchBacktestMinePredictionSummary: getRequiredElement<HTMLDivElement>("batchBacktestMinePredictionSummary"),
