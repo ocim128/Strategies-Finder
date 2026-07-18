@@ -235,7 +235,25 @@ function buildReport(
 }
 
 export async function runMineAbTest(options: RunMineAbOptions): Promise<MineAbResult> {
-    const preparedPairs = prepareBatchSyntheticPairArtifacts(options.artifacts);
+    // Yield before the synchronous prepare step so the "Preparing..." progress
+    // event flushes through the NDJSON stream. Without this the UI shows
+    // "Preparing..." forever because the event loop is blocked by the
+    // synchronous prepareBatchSyntheticPairArtifacts call.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    // Prepare artifacts in chunks with yields to keep the event loop alive.
+    // 603 artifacts with large candle/trade data can block for seconds without
+    // this, making the UI appear stuck.
+    const PREPARE_CHUNK_SIZE = 50;
+    const preparedPairs: BatchSyntheticPreparedPairArtifact[] = [];
+    for (let i = 0; i < options.artifacts.length; i += PREPARE_CHUNK_SIZE) {
+        if (options.shouldStop?.()) break;
+        const chunk = options.artifacts.slice(i, i + PREPARE_CHUNK_SIZE);
+        const preparedChunk = prepareBatchSyntheticPairArtifacts(chunk);
+        preparedPairs.push(...preparedChunk);
+        // Yield after each chunk so progress events and stop signals can be processed.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+    }
     const pairsByAsset = buildPairsByAssetIndex(preparedPairs);
     const targetByAsset = new Map(options.targets.map((target) => [target.asset.toUpperCase(), target.data]));
     const verdict = options.verdictAtTime ?? mineVerdictAtTime;
