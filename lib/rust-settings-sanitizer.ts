@@ -9,6 +9,7 @@ export function getTypescriptEngineRequirementReasons(settings: BacktestSettings
 
     const usesCombinedDirection =
         settings.tradeDirection === 'both'
+        || settings.tradeDirection === 'both_no_flip'
         || settings.tradeDirection === 'both_flip_loss_2'
         || settings.tradeDirection === 'combined';
 

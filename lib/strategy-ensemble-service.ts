@@ -879,6 +879,8 @@ class StrategyEnsembleService {
                 return "Combine";
             case "both_flip_loss_2":
                 return "Both Flip Loss 2";
+            case "both_no_flip":
+                return "Both No Flip";
             case "both":
             case undefined:
             case null:

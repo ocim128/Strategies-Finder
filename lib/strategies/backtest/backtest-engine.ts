@@ -291,8 +291,9 @@ function getConflictingEntryTimes(signals: Signal[]): Set<string> {
 
     for (const signal of signals) {
         const key = timeKey(signal.time);
+        if (signal.exitOnly === true) continue;
         if (signal.type === 'buy') buyTimes.add(key);
-        else sellTimes.add(key);
+        else if (signal.type === 'sell') sellTimes.add(key);
     }
 
     const conflicts = new Set<string>();
@@ -1251,7 +1252,11 @@ function runCombinedBacktest(
         fixedTradeAmount: sizing?.fixedTradeAmount ?? 0,
         advancedSizing: sizing?.advancedSizing,
     };
-    const sideOptions = canUseNoEquityCombinedSideFastPath(options) ? options : undefined;
+    const sideOptions = options === undefined
+        ? undefined
+        : canUseNoEquityCombinedSideFastPath(options)
+            ? options
+            : { ...options, omitEquityCurve: false, skipDrawdown: false };
 
     const longResult = runBacktest(
         data,
@@ -1313,7 +1318,8 @@ function runCombinedBacktest(
         initialCapital,
         finalCapital,
         maxDrawdown,
-        maxDrawdownPercent
+        maxDrawdownPercent,
+        options
     );
 }
 

@@ -749,6 +749,14 @@ describe('Backtesting Engine', () => {
         expect(resolved.tradeDirection).to.equal('combined');
     });
 
+    it('scanner settings resolver should accept both_no_flip trade direction', () => {
+        const resolved = resolveScannerBacktestSettings({
+            tradeDirection: 'both_no_flip',
+            riskSettingsToggle: false,
+        } as any);
+        expect(resolved.tradeDirection).to.equal('both_no_flip');
+    });
+
     it('scanner settings resolver should accept flip-after-2-losses trade direction', () => {
         const resolved = resolveScannerBacktestSettings({
             tradeDirection: 'both_flip_loss_2',
@@ -1506,6 +1514,31 @@ describe('Backtesting Engine', () => {
         expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-8);
     });
 
+    it('should close without reversing on the same signal in both_no_flip mode', () => {
+        const data: OHLCVData[] = [
+            { time: 1 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 2 as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
+            { time: 3 as Time, open: 100, high: 101, low: 94, close: 95, volume: 1000 },
+            { time: 4 as Time, open: 95, high: 96, low: 94, close: 95, volume: 1000 },
+            { time: 5 as Time, open: 95, high: 106, low: 94, close: 105, volume: 1000 },
+            { time: 6 as Time, open: 105, high: 106, low: 104, close: 105, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 2 as Time, type: 'sell', price: 100 },
+            { time: 3 as Time, type: 'buy', price: 95 },
+            { time: 4 as Time, type: 'buy', price: 95 },
+        ];
+        const result = runBacktest(data, signals, 1000, 100, 0, {
+            tradeDirection: 'both_no_flip',
+            executionModel: 'signal_close',
+        });
+
+        expect(result.trades.map((trade) => `${trade.type}:${trade.entryTime}`)).to.deep.equal([
+            'short:2',
+            'long:4',
+        ]);
+    });
+
     it('should flip only after two consecutive losses in both_flip_loss_2 mode', () => {
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 101, low: 99, close: 100, volume: 1000 },
@@ -1652,6 +1685,58 @@ describe('Backtesting Engine', () => {
         expect(full.netProfit).to.be.closeTo(128.787878, 1e-6);
         expect(compact.totalTrades).to.equal(full.totalTrades);
         expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-8);
+    });
+
+    it('should not let exitOnly conflicts suppress a combined entry', () => {
+        const data: OHLCVData[] = Array.from({ length: 6 }, (_, index) => ({
+            time: (index + 1) as Time,
+            open: 100 + index,
+            high: 101 + index,
+            low: 99 + index,
+            close: 100 + index,
+            volume: 1000,
+        }));
+        const signals: Signal[] = [
+            { time: 2 as Time, type: 'sell', price: 101 },
+            { time: 2 as Time, type: 'buy', price: 101, exitOnly: true },
+        ];
+        const result = runBacktest(data, signals, 1000, 100, 0, {
+            tradeDirection: 'combined',
+            executionModel: 'signal_close',
+        });
+
+        expect(result.totalTrades).to.equal(1);
+        expect(result.trades[0].type).to.equal('short');
+    });
+
+    it('should preserve combined diagnostics and disabled Sharpe in full runs', () => {
+        const data: OHLCVData[] = Array.from({ length: 8 }, (_, index) => {
+            const close = 100 + (index % 2 === 0 ? index * 2 : -index);
+            return {
+                time: `2024-01-${String(index + 1).padStart(2, '0')}` as Time,
+                open: close,
+                high: close + 1,
+                low: close - 1,
+                close,
+                volume: 1000,
+            };
+        });
+        const signals: Signal[] = data.slice(0, -1).map((candle, index) => ({
+            time: candle.time,
+            type: index % 2 === 0 ? 'buy' : 'sell',
+            price: candle.close,
+        }));
+        const result = runBacktest(data, signals, 10000, 100, 0, {
+            tradeDirection: 'combined',
+            executionModel: 'signal_close',
+        }, undefined, undefined, {
+            includeSharpeRatio: false,
+            collectDiagnostics: true,
+        });
+
+        expect(result.sharpeRatio).to.equal(0);
+        expect(result.diagnostics?.counts.tradesOpened).to.be.greaterThan(0);
+        expect(result.diagnostics?.counts.tradesClosed).to.be.greaterThan(0);
     });
 
     it('should use side fast paths for full combined no-equity Finder runs while preserving trades', () => {

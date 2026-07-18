@@ -266,7 +266,7 @@ export interface StrategyParams {
     [key: string]: number;
 }
 
-export type TradeDirection = 'long' | 'short' | 'both' | 'both_flip_loss_2' | 'combined';
+export type TradeDirection = 'long' | 'short' | 'both' | 'both_no_flip' | 'both_flip_loss_2' | 'combined';
 export type ExecutionModel = 'signal_close' | 'next_open' | 'next_close';
 export type ConfirmationMode = 'agree' | 'veto_opposite' | 'confirm_within_window' | 'veto_within_window';
 export type MarketMode = 'all' | 'uptrend' | 'downtrend' | 'sideway';

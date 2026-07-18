@@ -395,7 +395,7 @@ function resolveBooleanSettingRules(
     return resolved;
 }
 
-const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_flip_loss_2", "combined"]);
+const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_no_flip", "both_flip_loss_2", "combined"]);
 const VALID_CONFIRMATION_MODES = new Set<ConfirmationMode>([
     "agree",
     "veto_opposite",

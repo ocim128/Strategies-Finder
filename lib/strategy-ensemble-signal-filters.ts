@@ -33,6 +33,7 @@ export function resolveContextVote(
 export function isEntrySignalForTradeDirection(signal: Signal, tradeDirection: TradeDirection): boolean {
     if (
         tradeDirection === "both"
+        || tradeDirection === "both_no_flip"
         || tradeDirection === "both_flip_loss_2"
         || tradeDirection === "combined"
     ) {

@@ -14,6 +14,7 @@ function isValidTradeDirection(value: unknown): value is TradeDirection {
     return value === "long"
         || value === "short"
         || value === "both"
+        || value === "both_no_flip"
         || value === "both_flip_loss_2"
         || value === "combined";
 }

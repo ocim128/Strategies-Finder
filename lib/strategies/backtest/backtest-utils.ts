@@ -177,6 +177,7 @@ export function applySlippage(price: number, side: 'buy' | 'sell', slippageRate:
 export function normalizeTradeDirection(settings?: BacktestSettings): TradeDirection {
     return settings?.tradeDirection === 'short'
         || settings?.tradeDirection === 'both'
+        || settings?.tradeDirection === 'both_no_flip'
         || settings?.tradeDirection === 'both_flip_loss_2'
         || settings?.tradeDirection === 'combined'
         ? settings.tradeDirection
@@ -205,8 +206,9 @@ export function applySignalPolarity(signals: Signal[], settings?: BacktestSettin
 
 export function isBothLikeTradeDirection(
     tradeDirection: TradeDirection
-): tradeDirection is 'both' | 'both_flip_loss_2' | 'combined' {
+): tradeDirection is 'both' | 'both_no_flip' | 'both_flip_loss_2' | 'combined' {
     return tradeDirection === 'both'
+        || tradeDirection === 'both_no_flip'
         || tradeDirection === 'both_flip_loss_2'
         || tradeDirection === 'combined';
 }

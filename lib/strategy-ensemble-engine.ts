@@ -153,6 +153,7 @@ export async function runConfig(
 export function normalizeTradeDirection(settings: BacktestSettings): TradeDirection {
     return settings.tradeDirection === "short"
         || settings.tradeDirection === "both"
+        || settings.tradeDirection === "both_no_flip"
         || settings.tradeDirection === "both_flip_loss_2"
         || settings.tradeDirection === "combined"
         ? settings.tradeDirection
@@ -161,6 +162,7 @@ export function normalizeTradeDirection(settings: BacktestSettings): TradeDirect
 
 export function isBothLikeTradeDirection(tradeDirection: TradeDirection): boolean {
     return tradeDirection === "both"
+        || tradeDirection === "both_no_flip"
         || tradeDirection === "both_flip_loss_2"
         || tradeDirection === "combined";
 }
