@@ -36,6 +36,7 @@ import {
     type BatchSyntheticPairArtifact,
     type BatchSyntheticPreparedPairArtifact,
     type BatchSyntheticTargetArtifact,
+    type BatchSyntheticVerdict,
 } from "./batch-synthetic-state-miner";
 
 // ============================================================================
@@ -45,6 +46,10 @@ import {
 export interface BatchMinePredictionSample {
     asset: string;
     barN: number;
+    /** Mine's actual verdict classification (LONG/SHORT/WATCH/SKIP/INCONCLUSIVE). */
+    verdict: BatchSyntheticVerdict;
+    /** The underlying market-state direction. Can be non-null even when verdict
+     *  is WATCH/SKIP/INCONCLUSIVE — do NOT use this to classify calls. */
     direction: "long" | "short" | null;
     confidence: string;
     predicted: number | null;
@@ -309,7 +314,7 @@ function collectAssetSamples(
         const verdict = result.verdicts.find((v) => v.asset === asset || v.asset === asset.toUpperCase());
         if (!verdict) {
             samples.push({
-                asset, barN: N, direction: null, confidence: "none",
+                asset, barN: N, verdict: "INCONCLUSIVE", direction: null, confidence: "none",
                 predicted: null, oosLift: null, longestPredicted: null,
                 analogCount: 0, oosCount: 0,
                 realized: computeRealized(fullData, N, opts.horizons),
@@ -320,6 +325,7 @@ function collectAssetSamples(
 
         samples.push({
             asset, barN: N,
+            verdict: verdict.verdict,
             direction: verdict.direction,
             confidence: verdict.confidence,
             predicted: verdict.evidence.expectedForwardReturnPct,
@@ -397,16 +403,25 @@ export function runMinePredictionDiagnostic(options: RunMinePredictionOptions): 
     if (allSamples.length === 0) return empty("No verdict samples collected (check data depth, sample-bars, horizons).");
 
     const directionFilter = options.directionFilter ?? "both";
-    // Filter samples by direction before scoring, but ALWAYS keep INCONCLUSIVE
-    // (direction=null) bars — they're the "Mine declined to call" baseline that
-    // the EDGE line measures LONG/SHORT performance against. Without them the
-    // baseline drift would be undefined and the edge-vs-refusing read breaks.
-    const scoredSamples = directionFilter === "both"
+    // Filter samples by ACTUAL VERDICT before scoring, not by underlying
+    // market-state direction. When directionFilter="long", keep only verdict
+    // "LONG" + all non-call verdicts (WATCH/SKIP/INCONCLUSIVE as baseline).
+    // This prevents WATCH-LONG or INCONCLUSIVE-LONG from leaking into the
+    // LONG call bucket — they're not actionable entries.
+    const filterVerdict: BatchSyntheticVerdict | null = directionFilter === "long" ? "LONG"
+        : directionFilter === "short" ? "SHORT"
+        : null;
+    const scoredSamples = filterVerdict === null
         ? allSamples
-        : allSamples.filter((s) => s.direction === directionFilter || s.direction === null);
+        : allSamples.filter((s) => s.verdict === filterVerdict
+            || s.verdict === "WATCH" || s.verdict === "SKIP" || s.verdict === "INCONCLUSIVE");
 
-    if (scoredSamples.filter((s) => s.direction !== null).length === 0) {
-        return empty(`NO_EDGE: no ${directionFilter === "both" ? "" : directionFilter + " "}verdicts in the collected samples to score.`);
+    const actionableInFiltered = scoredSamples.filter((s) =>
+        (filterVerdict === null && (s.verdict === "LONG" || s.verdict === "SHORT"))
+        || (filterVerdict !== null && s.verdict === filterVerdict)
+    );
+    if (actionableInFiltered.length === 0) {
+        return empty(`NO_EDGE: no ${directionFilter === "both" ? "" : directionFilter + " "}actionable verdicts in the collected samples to score.`);
     }
 
     return buildReport({
@@ -454,15 +469,20 @@ function buildReport(args: {
         rankIcByHorizon.set(h, { mean: spearman(predicted, realized), tStat: agg.tStat, n: predicted.length });
     }
 
-    // 2. Hit rate by direction at primary horizon.
-    const byDir = { long: [] as number[], short: [] as number[], none: [] as number[] };
+    // 2. Hit rate by ACTUAL VERDICT (not direction) at primary horizon.
+    // A WATCH-LONG or INCONCLUSIVE-LONG must NOT be counted as a LONG call.
+    // Only verdict === "LONG" is an actionable long entry; verdict === "SHORT"
+    // is an actionable short. WATCH/SKIP/INCONCLUSIVE are non-calls regardless
+    // of their underlying direction.
+    const byVerdict = { long: [] as number[], short: [] as number[], watch: [] as number[], skip: [] as number[], inconclusive: [] as number[] };
     for (const s of samples) {
         const r = s.realized.get(primaryH);
         if (r === undefined || !Number.isFinite(r)) continue;
-        const key = s.direction ?? "none";
-        if (key === "long") byDir.long.push(r);
-        else if (key === "short") byDir.short.push(r);
-        else byDir.none.push(r);
+        if (s.verdict === "LONG") byVerdict.long.push(r);
+        else if (s.verdict === "SHORT") byVerdict.short.push(r);
+        else if (s.verdict === "WATCH") byVerdict.watch.push(r);
+        else if (s.verdict === "SKIP") byVerdict.skip.push(r);
+        else byVerdict.inconclusive.push(r);
     }
     const bucket = (arr: number[]): HitRateBucket => {
         if (arr.length === 0) return emptyBucket();
@@ -470,12 +490,18 @@ function buildReport(args: {
         const ci = wilson(hits, arr.length);
         return { ...ci, n: arr.length, meanReturn: arr.reduce((a, b) => a + b, 0) / arr.length };
     };
-    const longBucket = bucket(byDir.long);
-    const shortBucket = bucket(byDir.short);
-    const noneBucket = bucket(byDir.none);
-    const total = longBucket.n + shortBucket.n + noneBucket.n;
-    const refusalRate = total > 0 ? noneBucket.n / total : 0;
-    const baselineDrift = noneBucket.meanReturn;
+    const longBucket = bucket(byVerdict.long);
+    const shortBucket = bucket(byVerdict.short);
+    const watchBucket = bucket(byVerdict.watch);
+    const skipBucket = bucket(byVerdict.skip);
+    const inconclusiveBucket = bucket(byVerdict.inconclusive);
+    // Non-call baseline = WATCH + SKIP + INCONCLUSIVE (everything Mine didn't
+    // commit to as an actionable LONG/SHORT entry).
+    const nonCallReturns = [...byVerdict.watch, ...byVerdict.skip, ...byVerdict.inconclusive];
+    const nonCallBucket = bucket(nonCallReturns);
+    const total = longBucket.n + shortBucket.n + nonCallBucket.n;
+    const refusalRate = total > 0 ? nonCallBucket.n / total : 0;
+    const baselineDrift = nonCallBucket.meanReturn;
     const longEdge = Number.isFinite(longBucket.meanReturn) && Number.isFinite(baselineDrift) ? longBucket.meanReturn - baselineDrift : Number.NaN;
     const shortEdge = Number.isFinite(shortBucket.meanReturn) && Number.isFinite(baselineDrift) ? shortBucket.meanReturn - baselineDrift : Number.NaN;
 
@@ -545,11 +571,11 @@ function buildReport(args: {
 
     // 7. Caveats.
     const caveats: string[] = [];
-    if (Number.isFinite(longBucket.meanReturn) && Number.isFinite(noneBucket.meanReturn) && longBucket.meanReturn - noneBucket.meanReturn < 0.005) {
+    if (Number.isFinite(longBucket.meanReturn) && Number.isFinite(nonCallBucket.meanReturn) && longBucket.meanReturn - nonCallBucket.meanReturn < 0.005) {
         // Threshold is < 0.5% (0.005 fraction), NOT <= 0. LONG may still exceed
         // inconclusive-bar drift, just not by enough to clear the meaningful-edge
         // bar. Wording must match the condition (do NOT claim LONG < inconclusive).
-        const diff = (longBucket.meanReturn - noneBucket.meanReturn) * 100;
+        const diff = (longBucket.meanReturn - nonCallBucket.meanReturn) * 100;
         caveats.push(`LONG edge over inconclusive-bars is only ${fmt(diff, 2)}% (< 0.5% meaningful-edge threshold) — Mine's LONG selection adds little beyond passive-long drift`);
     }
     const highHit = confidenceCalibration.get("high")!;
@@ -580,8 +606,39 @@ function buildReport(args: {
         `RANK_IC | NOTE every horizon correlates Mine's PRIMARY-horizon prediction (expectedForwardReturnPct) against realized at that horizon — these are not separate per-horizon forecasts.`,
     );
 
+    // VERDICTS count: how many of each verdict type were collected.
+    const verdictCounts = { LONG: 0, SHORT: 0, WATCH: 0, SKIP: 0, INCONCLUSIVE: 0 };
+    for (const s of samples) {
+        verdictCounts[s.verdict] = (verdictCounts[s.verdict] ?? 0) + 1;
+    }
     reportLines.push(
-        `HIT_RATE | h=${primaryH} LONG hit=${fmtPct(longBucket.p)} CI[${fmtPct(longBucket.lower)},${fmtPct(longBucket.upper)}] n=${longBucket.n} meanRet=${fmt(longBucket.meanReturn * 100, 2)}% | SHORT hit=${fmtPct(shortBucket.p)} CI[${fmtPct(shortBucket.lower)},${fmtPct(shortBucket.upper)}] n=${shortBucket.n} meanRet=${fmt(shortBucket.meanReturn * 100, 2)}% | INCONCLUSIVE n=${noneBucket.n} (refusal ${fmtPct(refusalRate)})`,
+        `VERDICTS | LONG ${verdictCounts.LONG} | SHORT ${verdictCounts.SHORT} | WATCH ${verdictCounts.WATCH} | SKIP ${verdictCounts.SKIP} | INCONCLUSIVE ${verdictCounts.INCONCLUSIVE}`,
+    );
+
+    // CALL_IC: rank IC on ACTIONABLE verdicts only (LONG + SHORT), not
+    // WATCH/SKIP/INCONCLUSIVE. This is the score that answers "are Mine's
+    // actual entry calls predictive?" — distinct from FORECAST_IC (RANK_IC
+    // above) which includes every finite analog prediction regardless of
+    // whether Mine committed to a call.
+    const callIcParts: string[] = [];
+    for (const h of horizons) {
+        const predicted: number[] = [];
+        const realized: number[] = [];
+        for (const s of samples) {
+            if (s.verdict !== "LONG" && s.verdict !== "SHORT") continue;
+            if (s.predicted === null) continue;
+            const r = s.realized.get(h);
+            if (r === undefined || !Number.isFinite(r)) continue;
+            predicted.push(s.predicted / 100);
+            realized.push(r);
+        }
+        const ic = spearman(predicted, realized);
+        callIcParts.push(`h=${h} IC=${fmt(ic)} n=${predicted.length}`);
+    }
+    reportLines.push(`CALL_IC  | ${callIcParts.join(" | ")} (actionable LONG+SHORT verdicts only; compare to RANK_IC which includes all finite predictions)`);
+
+    reportLines.push(
+        `HIT_RATE | h=${primaryH} LONG(hit) ${fmtPct(longBucket.p)} CI[${fmtPct(longBucket.lower)},${fmtPct(longBucket.upper)}] n=${longBucket.n} | SHORT(hit) ${fmtPct(shortBucket.p)} CI[${fmtPct(shortBucket.lower)},${fmtPct(shortBucket.upper)}] n=${shortBucket.n} | WATCH n=${watchBucket.n} SKIP n=${skipBucket.n} INCONCLUSIVE n=${inconclusiveBucket.n} (refusal ${fmtPct(refusalRate)})`,
     );
     reportLines.push(
         `EDGE     | h=${primaryH} LONG edge vs inconclusive=${fmt(longEdge * 100, 2)}% | SHORT edge=${fmt(shortEdge * 100, 2)}% | inconclusive-bar passive-long drift=${fmt(baselineDrift * 100, 2)}% (NOT cash; direction=null defaults to long-sign)`,
@@ -604,7 +661,7 @@ function buildReport(args: {
 
     return {
         strategyKey, interval, pairs: pairCount, assets: assetCount, samples: samples.length, horizons,
-        rankIcByHorizon, hitRate: { long: longBucket, short: shortBucket, none: noneBucket },
+        rankIcByHorizon, hitRate: { long: longBucket, short: shortBucket, none: nonCallBucket },
         longestHorizon: longestH, longestIc, primaryHorizon: primaryH, primaryIc, primaryN: primaryIcData.n,
         liftCorrByHorizon, perAssetIc, confidenceCalibration, caveats, verdict, reportLines,
     };
