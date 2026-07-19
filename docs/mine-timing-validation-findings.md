@@ -155,3 +155,123 @@ Portfolio Fit uses `oosLiftPct` (the analog study's average forward return over 
 | Portfolio Fit edge formula | `lib/batch-backtest/batch-portfolio-fit-engine.ts:89-112` |
 | Engine spec tests | `tests/batch-mine-prediction-engine.spec.ts`, `tests/batch-mine-prediction-ab-engine.spec.ts` |
 | Server-plugin route tests | `tests/batch-backtest-server-plugin.spec.ts` |
+
+---
+
+## Update: Spread Quality Validation (Phase 0) — Also Negative (2026-07-19)
+
+### What was tested
+
+After the Mine Timing investigation concluded negative, we explored whether **spread-quality statistics** (ADF stationarity, half-life of mean reversion, Hurst exponent) could rank pairs by tradeability — identifying which synthetic pairs have genuinely mean-reverting spreads vs trending ones.
+
+A walk-forward validation script (`scripts/validate-spread-quality.ts`) was built to test this. It splits each pair's ratio history into 6-month train / 3-month test folds, computes ADF + half-life on train, measures OOS P&L from existing trades on test, and correlates.
+
+### Result: ADF and half-life do NOT predict OOS P&L
+
+| Config | Pairs | ADF verdict | Half-life verdict |
+|---|---|---|---|
+| Config 1 | 512 | FAIL (46% consistent) | "PASS" but only 13 folds, many with 5-12 pairs — noise |
+| Config 2 | 512 | FAIL (55%) | FAIL (48%) |
+| Config 3 | 512 | FAIL (60%, IC≈0) | "PASS" (63%, IC=+0.053) — borderline |
+| Config 4 | 512 | "PASS" but ADF bug + inverted direction | FAIL (47%) |
+
+**Honest verdict: FAIL.** No metric consistently predicts OOS P&L across configurations. Config 2 (the cleanest with most populated folds) is clearly negative for both metrics. The winning metric changes across configs (half-life in 1/3, ADF in 4, neither in 2) — that is not consistent evidence.
+
+### Phase 4 (Fixed-Ratio Diagnostics UI) not built
+
+The plan gated Phase 4 on Phase 0 passing. It did not pass. The Exposure & Redundancy Report (descriptive, no quality labels) was built and is useful regardless — it shows concentration and overlap without claiming any pair is "better."
+
+### Bugs found by AI audit of the Phase 0 script
+
+1. ADF residual calculation used level y instead of Δy — every t-stat invalid
+2. Consistency direction chosen post-hoc (after seeing mean IC) — inflates pass rate
+3. Quantile calculation inverted (most-negative ADF in "bottom")
+4. P&L not per-unit-capital; includes exits after the test window
+5. OR logic too lenient (passes if either metric passes)
+6. Unadjusted corporate-action splits distort both ADF and half-life on raw ratio data
+
+Even after fixing these bugs, the cleanest config (Config 2) is negative. The conclusion stands.
+
+---
+
+## Complete Investigation Summary: Lessons Learned
+
+### What was investigated (4 independent approaches)
+
+| # | Approach | Question | Tool | Result |
+|---|---|---|---|---|
+| 1 | Batch positioning analysis | Does OPEN_SCORE predict direction? | OPEN_SCORE IC diagnostic | **ANTI-SIGNAL** |
+| 2 | Mine Timing prediction | Does Mine's analog engine predict forward return? | Mine Prediction IC diagnostic | **NO_EDGE** at proper density |
+| 3 | Mine as trade filter | Does filtering trades through Mine improve P&L? | Mine A/B Test | **CONTROL_BETTER** (Mine destroys $195k) |
+| 4 | Spread quality metrics | Do ADF/half-life predict which pairs are profitable OOS? | Phase 0 walk-forward validation | **FAIL** — no OOS predictive value |
+
+### The pattern
+
+Every theoretically-plausible metric failed under rigorous validation:
+- Small-sample inflation made early results look positive (+0.10 to +0.37 IC)
+- Dense sampling (n>100) collapsed them to near-zero or negative
+- Regime splits showed the "edge" was trend beta, not skill
+- P&L A/B test proved the signal destroys value when used as a filter
+- Walk-forward validation showed spread metrics don't predict OOS
+
+### Root causes
+
+1. **k-NN on financial data predicts the median, not the tail.** Mine's analog engine finds many matches for "quiet continuation" and few for "explosive moves." By averaging, it systematically underestimates large moves. Direction accuracy (60-90% hit rate) does not translate to return prediction.
+
+2. **99.6% pair profitability saturates the selection target.** With 275/276 pairs profitable, there's almost no variance to predict. Any pair-selection metric will look useless because almost everything works. The edge is in the strategy + exit overlay, not in which pair you pick.
+
+3. **In-sample metrics have no OOS value in this system.** ADF, half-life, rank IC, and Mine's analog Lift% all correlate with in-sample performance but fail to predict OOS performance. This is consistent with the backtest-overfitting literature: after enough configuration search, in-sample metrics become uncorrelated with OOS outcomes.
+
+4. **The exit overlay is the product.** Your batch P&L (+$922k) comes from `zscore_deviation_streak_reversion` / `naive_compression_breakout_follow` / `vwap_skew_gradient_exhaustion` applied to pair entry signals. No overlay on top of that (Mine Timing, spread-quality metrics, Portfolio Fit) improves it.
+
+### What works (proven)
+
+- **The batch pair-strategy + exit overlay.** That's the edge. 99.6% of pairs are profitable.
+- **The Exposure & Redundancy Report.** Shows concentration (SNDK in 68 pairs, EffAssets=37.7 out of 70) and overlap. Useful for managing capital allocation without claiming any pair is "better."
+
+### What doesn't work (proven)
+
+- Mine Timing / Stability Mine / Portfolio Fit for any trade decision (direction, timing, sizing, filtering)
+- ADF / half-life / Hurst exponent for pair selection or OOS prediction
+- Any in-sample metric for predicting OOS performance after configuration search
+
+### Methodology lessons for future research
+
+1. **Always start with a walk-forward validation before building UI.** Phase 0 saved weeks of building a diagnostic UI for metrics that don't work. The Mine Timing investigation took longer because Phase 0 wasn't built first.
+
+2. **Use dense sampling (n>100) before trusting any IC.** Small-sample IC is wildly unstable (+0.30 at n=20 can collapse to +0.04 at n=172). Always report n alongside IC.
+
+3. **Match horizons to the actual hold period.** Measuring at h=12 when maxHoldBars=3 dilutes the signal with post-exit drift. The measurement must match the trade.
+
+4. **Test the A/B P&L, not just IC.** A signal with weak IC can still improve P&L (if it cuts losers). A signal with good IC can hurt P&L (if it removes winners). The A/B test is the definitive measurement.
+
+5. **Filter by direction for direction-biased strategies.** Including SHORT verdicts in a long-only strategy's IC drags the aggregate toward zero. Score only the calls you'd actually make.
+
+6. **Don't trust verdict labels without validated thresholds.** "best", "tradeable", "avoid" are unsupported unless backed by OOS evidence. Use descriptive metrics instead.
+
+7. **Don't combine overlapping metrics into a composite score.** ADF + half-life + Hurst measure the same underlying property (mean-reversion speed). Combining them triple-counts one signal and creates false confidence.
+
+### Tools retained for future research
+
+All diagnostic tools are retained in the codebase for validating future signals:
+
+| Tool | Button | What it measures |
+|---|---|---|
+| Mine Prediction | "Mine Prediction" | Rank IC of Mine's analog predictions vs realized forward return |
+| Mine A/B Test | "Mine A/B" | P&L difference between all trades and Mine-filtered trades |
+| Exposure & Redundancy | "Exposure" | Asset concentration, shared-leg clusters, cross-pair correlations |
+| Phase 0 Validation | `npm run validate:spread-quality` | Walk-forward: do spread metrics predict OOS P&L? |
+
+If a future strategy or signal claims directional edge, run Mine Prediction first (IC test), then Mine A/B (P&L test). If both pass, the edge is real. If either fails, it's not.
+
+---
+
+## Where to focus next
+
+The investigation proved the edge is in the execution layer (strategy + exit overlay), not in direction prediction or pair selection. The highest-value next steps:
+
+1. **Exit-overlay parameter optimization.** Walk-forward optimization on `lookback`, `zScoreBoundary`, `streakThreshold` (for `zscore_deviation_streak_reversion`) or `lookback`, `volPercentileMax`, `zThreshold` (for `naive_compression_breakout_follow`). These are the knobs that determine how much of the +$922k you capture.
+
+2. **Capital efficiency via redundancy reduction.** Use the Exposure Report to cut from 512 to ~150 non-redundant pairs. Same per-trade edge, less capital required, lower concentration risk.
+
+3. **Single-asset direction (if needed).** A standalone momentum/trend strategy on single-asset OHLCV — not an overlay on the pair strategy. The pair strategy is a spread/arbitrage tool; direction is a different tool's job.
