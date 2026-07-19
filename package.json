@@ -33,6 +33,7 @@
     "diagnose:mine-prediction": "esno scripts/diagnose-mine-prediction.ts",
     "validate:spread-quality": "esno scripts/validate-spread-quality.ts",
     "replay:signal-events": "esno scripts/replay-signal-events.ts",
+    "replay:signal-events:latest": "powershell -ExecutionPolicy Bypass -File scripts/run-signal-replay-latest.ps1",
     "synthetic:pair": "esno scripts/build-synthetic-pair.ts",
     "ibkr:aggregate": "esno scripts/ibkr-aggregate-csv.ts",
     "strategies:sync-manifest": "esno scripts/sync-strategy-manifest.ts",
