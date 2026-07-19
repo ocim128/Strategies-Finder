@@ -9,6 +9,12 @@ param(
     [ValidateRange(1, 1000000)]
     [int]$MinTestEvents = 100,
 
+    [ValidateRange(1, 120)]
+    [int]$TrainMonths = 6,
+
+    [ValidateRange(1, 120)]
+    [int]$TestMonths = 3,
+
     [ValidateRange(0, 2147483647)]
     [int]$Seed = 42,
 
@@ -52,7 +58,7 @@ if ($artifactAgeMinutes -gt $MaxAgeMinutes) {
 
 Write-Host "Using artifact: $($selectedArtifact.Path)"
 Write-Host "Artifacts: $($selectedArtifact.BinCount), age: $([math]::Round($artifactAgeMinutes, 1)) minutes"
-Write-Host "Execution model: $ExecutionModel, direction: $Direction, minimum events/fold: $MinTestEvents"
+Write-Host "Execution model: $ExecutionModel, direction: $Direction, train/test months: $TrainMonths/$TestMonths, minimum events/fold: $MinTestEvents"
 
 Push-Location $repoRoot
 try {
@@ -60,6 +66,8 @@ try {
         "--artifact-dir" $selectedArtifact.Path `
         "--execution-model" $ExecutionModel `
         "--direction" $Direction `
+        "--train-months" $TrainMonths `
+        "--test-months" $TestMonths `
         "--min-test-events" $MinTestEvents `
         "--seed" $Seed
     if ($LASTEXITCODE -ne 0) {
