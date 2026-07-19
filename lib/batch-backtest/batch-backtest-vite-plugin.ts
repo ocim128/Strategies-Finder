@@ -69,7 +69,9 @@ import {
 } from "./batch-stability-parallel";
 import { runMinePredictionDiagnostic } from "./batch-mine-prediction-engine";
 import { runMineAbTest } from "./batch-mine-prediction-ab-engine";
+import { runOpenScoreUsdReplay, type OpenScoreUsdTarget } from "./batch-open-score-usd-replay-engine";
 import { runExposureRedundancyReport } from "../spread-quality/spread-quality-engine";
+import { createEmptyBacktestResult } from "../strategies/backtest/position-stats";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -2130,6 +2132,233 @@ async function handleExposureRedundancyRequest(res: ViteHttpResponse, body: Reco
 }
 
 /**
+ * OPEN_SCORE USD Replay: reconstructs historical OPEN_SCORE decision events
+ * from the retained Batch artifacts and asks whether picking the top positive
+ * score asset (traded vs USD at the next bar's open) beat a uniform random
+ * pick among the other positive candidates at the same event.
+ *
+ * Read-only on the artifact store (no releaseLastResults). Artifacts are loaded
+ * ONE AT A TIME inside the async generator (never `Promise.all` over metas) so
+ * peak memory stays at 1 artifact + accumulated scalar deltas; target datasets
+ * are loaded one at a time and released after their event requests are consumed.
+ *
+ * Exported for direct invocation in tests.
+ */
+export async function processOpenScoreUsdReplay(
+    fingerprint: string | null,
+    interval: string | null,
+    writer: MinerStreamWriter,
+    owner: number,
+    horizons: number[] | null,
+    sampleFromSec: number | null = null,
+    sampleToSec: number | null = null,
+    loadTargetDataset: (symbol: string, interval: string, signal?: AbortSignal) => Promise<unknown> = loadServerBatchDataset,
+): Promise<void> {
+    const artifactMetas = collectStoredMineArtifactMetas();
+    if (artifactMetas.length === 0) {
+        writer({ type: "fatal", error: "Run Batch before OPEN_SCORE USD; no artifacts on server." });
+        return;
+    }
+    if (!fingerprint || fingerprint !== lastRunFingerprint || !interval || interval !== lastRunInterval) {
+        writer({ type: "fatal", error: "Rerun Batch before OPEN_SCORE USD; settings or symbols changed." });
+        return;
+    }
+    const runInterval: string = interval;
+    const validHorizons = (horizons ?? []).filter((h) => Number.isFinite(h) && h >= 1).map((h) => Math.floor(h));
+    if (validHorizons.length === 0) {
+        writer({ type: "fatal", error: "OPEN_SCORE USD requires at least one positive bar horizon." });
+        return;
+    }
+    if (sampleFromSec !== null && sampleToSec !== null && sampleFromSec > sampleToSec) {
+        writer({ type: "fatal", error: "OPEN_SCORE USD date window is reversed; From must not be after To." });
+        return;
+    }
+    if (!lastRunBacktestSettings || !lastRunCapitalSettings) {
+        writer({ type: "fatal", error: "Rerun Batch before OPEN_SCORE USD; retained Batch cost settings are unavailable." });
+        return;
+    }
+    // Slippage/commission come from the RETAINED Batch settings (the same ones
+    // the artifacts were produced under), not bespoke request fields. This
+    // mirrors backtest-engine.ts: slippageRate = slippageBps/10000,
+    // commissionRate = commissionPercent/100. Bespoke UI rate inputs would
+    // drift from the run's actual execution-cost assumptions.
+    const slippageRate = (lastRunBacktestSettings.slippageBps ?? 0) / 10000;
+    const commissionRate = (lastRunCapitalSettings.commission ?? 0) / 100;
+
+    clearArtifactReleaseTimer();
+    const lostOwnership = () => minerOwner !== owner;
+    const startedAt = Date.now();
+    debugLogger.info("batch.server.open_score_usd.start", { pairs: artifactMetas.length, horizons: validHorizons });
+
+    // Async generator: yields one artifact at a time (peak memory = 1 artifact).
+    // A disk-read failure for ONE pair must NOT abort the entire analysis —
+    // yield a tombstone with no trades so the engine counts it as omitted and
+    // continues. The aggregate report surfaces omittedPairs.
+    async function* artifactLoader(): AsyncIterable<BatchSyntheticPairArtifact> {
+        for (const meta of artifactMetas) {
+            if (lostOwnership()) return;
+            try {
+                yield await loadStoredMineArtifact(meta);
+            } catch (error) {
+                if (minerAbortController?.signal?.aborted || lostOwnership()) return;
+                debugLogger.warn("batch.server.open_score_usd.artifact_load_failed", {
+                    symbol: meta.symbol, error: error instanceof Error ? error.message : String(error),
+                });
+                yield {
+                    symbol: meta.symbol,
+                    baseAsset: meta.baseAsset,
+                    quoteAsset: meta.quoteAsset,
+                    baseSymbol: meta.baseSymbol,
+                    quoteSymbol: meta.quoteSymbol,
+                    data: [],
+                    signals: [],
+                    result: createEmptyBacktestResult(),
+                } as BatchSyntheticPairArtifact;
+            }
+        }
+    }
+
+    // Resolve the marked target symbol for each asset from artifact metadata,
+    // then yield one target dataset at a time so it is released after use.
+    const markedSymbolByAsset = new Map<string, string>();
+    const assetSet = new Set<string>();
+    for (const meta of artifactMetas) {
+        for (const [asset, symbol] of [
+            [meta.baseAsset, meta.baseSymbol],
+            [meta.quoteAsset, meta.quoteSymbol],
+        ] as const) {
+            const key = asset?.trim().toUpperCase();
+            if (!key) continue;
+            assetSet.add(key);
+            if (symbol && !markedSymbolByAsset.has(key)) markedSymbolByAsset.set(key, symbol);
+        }
+    }
+    const assets = Array.from(assetSet).sort();
+
+    async function* targetLoader(): AsyncIterable<OpenScoreUsdTarget> {
+        for (const asset of assets) {
+            if (lostOwnership()) return;
+            const symbol = markedSymbolByAsset.get(asset) ?? resolveBatchSyntheticTargetSymbol(asset);
+            try {
+                const data = (await loadTargetDataset(symbol, runInterval, minerAbortController?.signal)) as BatchSyntheticTargetArtifact["data"] | null;
+                if (Array.isArray(data) && data.length > 0) {
+                    yield { asset, symbol, data };
+                }
+            } catch (error) {
+                if (minerAbortController?.signal?.aborted || lostOwnership()) return;
+                debugLogger.warn("batch.server.open_score_usd.target_load_failed", {
+                    asset, symbol, error: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
+    }
+
+    let lastPhase = "";
+    try {
+        writer({ type: "start", pairs: artifactMetas.length, assets: assets.length, horizons: validHorizons });
+        const result = await runOpenScoreUsdReplay(
+            artifactLoader,
+            targetLoader,
+            {
+                horizons: validHorizons,
+                interval: runInterval,
+                ...(sampleFromSec !== null ? { sampleFromSec } : {}),
+                ...(sampleToSec !== null ? { sampleToSec } : {}),
+                slippageRate,
+                commissionRate,
+                shouldStop: () => lostOwnership(),
+                onPhase: (phase, detail, completed, total) => {
+                    if (lostOwnership()) return;
+                    const elapsedMs = Date.now() - startedAt;
+                    if (phase !== lastPhase) {
+                        lastPhase = phase;
+                        debugLogger.info("batch.server.open_score_usd.phase", { phase, detail, completed, total });
+                        writer({ type: "phase", phase, detail, completed, total, elapsedMs });
+                    } else {
+                        writer({ type: "progress", phase, detail, completed, total, elapsedMs });
+                    }
+                },
+            },
+        );
+        if (lostOwnership()) {
+            writer({ type: "done", ok: false, cancelled: true, summary: "OPEN_SCORE USD cancelled." });
+            return;
+        }
+        debugLogger.info("batch.server.open_score_usd.complete", {
+            pairs: result.pairs, assets: result.assets, events: result.totalEvents,
+            eligible: result.eligibleEvents, complete: result.complete,
+        });
+        writer({ type: "done", ok: true, result });
+        // Intentionally NO releaseLastResults — read-only on the artifact store.
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        debugLogger.warn("batch.server.open_score_usd.fatal", { error: message });
+        writer({ type: "fatal", error: message });
+    } finally {
+        captureCurrentParsedCacheStats();
+        if (hasStoredMineArtifacts()) {
+            scheduleArtifactTtl();
+        }
+    }
+}
+
+async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<string, unknown>): Promise<void> {
+    if (minerOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "An analysis is already running. Use Stop first.");
+    }
+    if (runOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "A batch backtest is running. Use Stop first.");
+    }
+    if (!hasStoredMineArtifacts()) {
+        throw new HttpStatusError(400, "Run Batch before OPEN_SCORE USD; no artifacts on server.");
+    }
+    const owner = ++minerOwnerGen;
+    minerOwner = owner;
+    minerAbortController = new AbortController();
+
+    const parseBodyDateSec = (key: string, endOfDay = false): number | null => {
+        const raw = body[key];
+        if (typeof raw !== "string" || raw.trim() === "") return null;
+        // YYYY-MM-DD parses as UTC midnight. For "sampleFrom" that's fine; for
+        // "sampleTo" we add 24h-1s so the entire selected day is included
+        // (otherwise most of the chosen day's events were excluded).
+        const ms = Date.parse(raw);
+        if (!Number.isFinite(ms)) return null;
+        return Math.floor(ms / 1000) + (endOfDay ? 24 * 3600 - 1 : 0);
+    };
+
+    let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
+    try {
+        stream = createDisconnectSafeStream(res, { onDisconnect: () => cancelMinerOnDisconnect(owner) });
+        await processOpenScoreUsdReplay(
+            typeof body.fingerprint === "string" ? body.fingerprint : null,
+            lastRunInterval,
+            (event) => stream!.write(event),
+            owner,
+            Array.isArray(body.horizons) && body.horizons.length > 0
+                ? body.horizons.filter((h: unknown) => typeof h === "number" && h >= 1).map((h: number) => Math.floor(h))
+                : null,
+            parseBodyDateSec("sampleFrom", false),
+            parseBodyDateSec("sampleTo", true),
+        );
+        stream.end();
+    } catch (error) {
+        if (!stream) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        try {
+            stream.end({ type: "fatal", error: message });
+        } catch {
+            /* best-effort */
+        }
+    } finally {
+        if (minerOwner === owner) {
+            minerOwner = RUN_OWNER_NONE;
+        }
+        minerAbortController = null;
+    }
+}
+
+/**
  * Mine A/B Test: re-runs each pair's backtest with signals filtered to only
  * Mine-LONG-gated entries, compares P&L vs control (all entries). Read-only
  * on artifacts — does NOT release them.
@@ -2580,6 +2809,23 @@ function registerBatchRoutes(middlewares: any): void {
             }
         });
 
+        middlewares.use("/api/batch-backtest/open-score-usd", async (req: any, res: any) => {
+            if (req.method !== "POST") {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
+                return;
+            }
+            try {
+                rememberLocalApiOriginFromRequest(req);
+                await handleOpenScoreUsdRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
+            } catch (error) {
+                sendCaughtErrorJson(res, error);
+            }
+        });
+
         middlewares.use("/api/batch-backtest/status", async (req: any, res: any) => {
             if (req.method !== "GET") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
@@ -2639,6 +2885,7 @@ export const __testInternals = {
     processMinePrediction,
     processMineAb,
     processExposureRedundancy,
+    processOpenScoreUsdReplay,
     // Audit Finding 5 test seams.
     parseBatchRunId,
     consumePendingBatchStopForRun,

@@ -65,6 +65,25 @@
                 title="Analyze pair concentration, shared-leg clusters, and cross-pair correlations">
                 Exposure
             </button>
+            <button class="btn btn-secondary btn-compact" id="batchBacktestOpenScoreUsdBtn" type="button" disabled
+                title="Event-level selector study: at each historical OPEN_SCORE decision event, did the top positive-score asset (traded vs USD at the next bar open) beat a random positive candidate?">
+                OPEN_SCORE USD
+            </button>
+        </div>
+        <div class="batch-mine-prediction-config" aria-label="OPEN_SCORE USD configuration">
+            <span class="batch-mine-prediction-config-label">OPEN_SCORE USD:</span>
+            <div class="batch-field batch-field--inline" title="Restrict decision events to this date onward (YYYY-MM-DD). Leave blank for full history.">
+                <label class="batch-field-label" for="batchBacktestOpenScoreUsdFrom">From</label>
+                <input class="batch-field-input batch-field-input--date" id="batchBacktestOpenScoreUsdFrom" type="date">
+            </div>
+            <div class="batch-field batch-field--inline" title="Restrict decision events up to this date (YYYY-MM-DD). Leave blank for full history.">
+                <label class="batch-field-label" for="batchBacktestOpenScoreUsdTo">To</label>
+                <input class="batch-field-input batch-field-input--date" id="batchBacktestOpenScoreUsdTo" type="date">
+            </div>
+            <div class="batch-field batch-field--inline" title="Forward USD-return horizons in bars (comma-separated). Required. Use values that match your intended hold period.">
+                <label class="batch-field-label" for="batchBacktestOpenScoreUsdHorizons">Horizons</label>
+                <input class="batch-field-input batch-field-input--date" id="batchBacktestOpenScoreUsdHorizons" type="text" value="12,24,48" placeholder="12,24,48">
+            </div>
         </div>
         <div class="batch-mine-prediction-config" aria-label="Mine Prediction configuration">
             <span class="batch-mine-prediction-config-label">Mine Prediction:</span>
@@ -128,6 +147,10 @@
                 title="Copy the Exposure & Redundancy report">
                 Copy Exposure
             </button>
+            <button class="btn btn-secondary btn-compact" id="batchBacktestCopyOpenScoreUsdBtn" type="button" disabled
+                title="Copy the OPEN_SCORE USD replay report">
+                Copy OPEN_SCORE USD
+            </button>
             <button class="btn btn-secondary btn-compact" id="batchBacktestCopyBenchmarkBtn" type="button" disabled
                 title="Copy benchmark diagnostics (timings, cache hit rates) for the latest run / mine / stability as JSON">
                 Copy Benchmark
@@ -178,6 +201,7 @@
         <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestMinePredictionSummary"></div>
         <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestMineAbSummary"></div>
         <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestExposureSummary"></div>
+        <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestOpenScoreUsdSummary"></div>
     </div>
 
     <div class="finder-results">

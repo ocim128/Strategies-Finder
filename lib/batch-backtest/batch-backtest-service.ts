@@ -77,6 +77,8 @@ import type { MineAbResult } from "./batch-mine-prediction-ab-engine";
 import type { MineAbStreamEvent } from "./batch-mine-prediction-ab-stream-types";
 import type { ExposureRedundancyResult } from "../spread-quality/spread-quality-engine";
 import type { ExposureRedundancyStreamEvent } from "../spread-quality/spread-quality-stream-types";
+import type { OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-engine";
+import type { OpenScoreUsdReplayStreamEvent } from "./batch-open-score-usd-replay-stream-types";
 import {
     projectMineVerdictToSnapshot,
     projectStabilityRowToSnapshot,
@@ -141,6 +143,7 @@ class BatchBacktestService {
     private lastMinePredictionResult: BatchMinePredictionResult | null = null;
     private lastMineAbResult: MineAbResult | null = null;
     private lastExposureResult: ExposureRedundancyResult | null = null;
+    private lastOpenScoreUsdResult: OpenScoreUsdReplayResult | null = null;
     private lastRunFingerprint: string | null = null;
     private lastRunInterval: string | null = null;
     // The strategy key that governed the last Run, captured at run start so
@@ -283,6 +286,12 @@ class BatchBacktestService {
         });
         dom.batchBacktestCopyExposureBtn.addEventListener("click", () => {
             void this.copyExposureResults();
+        });
+        dom.batchBacktestOpenScoreUsdBtn.addEventListener("click", () => {
+            void this.runOpenScoreUsdReplay();
+        });
+        dom.batchBacktestCopyOpenScoreUsdBtn.addEventListener("click", () => {
+            void this.copyOpenScoreUsdResults();
         });
         dom.batchBacktestSymbolTemplate.addEventListener("change", () => {
             const key = dom.batchBacktestSymbolTemplate.value as BatchSymbolTemplateKey;
@@ -2103,6 +2112,123 @@ class BatchBacktestService {
         }
     }
 
+    /**
+     * OPEN_SCORE USD Replay: at each historical synthetic-pair decision event,
+     * did selecting the highest positive OPEN_SCORE asset (traded vs USD at the
+     * next bar's open, fixed-horizon) beat a uniform random pick among the
+     * other positive candidates? Read-only on artifacts — no Batch result
+     * change, no orders. v1 is an event-level selector study, not a portfolio
+     * replay; the report labels TOP_RAW and TOP_ADJUSTED separately and never
+     * picks the better-looking formula after seeing results.
+     */
+    private async runOpenScoreUsdReplay(): Promise<void> {
+        if (this.analysisInFlight) return;
+        this.analysisInFlight = true;
+        this.analysisCancelRequested = false;
+        const dom = this.getDom();
+        try {
+            if (!this.serverHasArtifacts) {
+                dom.batchBacktestOpenScoreUsdSummary.textContent = "Run Batch first.";
+                return;
+            }
+            if (!this.lastRunFingerprint) {
+                dom.batchBacktestOpenScoreUsdSummary.textContent = "Rerun Batch; settings or symbols changed.";
+                dom.batchBacktestCopyOpenScoreUsdBtn.disabled = true;
+                return;
+            }
+            if (this.analysisCancelRequested) return;
+            // Horizons: comma-separated positive bar counts. Required in v1.
+            const horizonsRaw = dom.batchBacktestOpenScoreUsdHorizons.value.trim();
+            const horizons = horizonsRaw
+                ? horizonsRaw.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n >= 1).map((n) => Math.floor(n))
+                : [];
+            if (horizons.length === 0) {
+                dom.batchBacktestOpenScoreUsdSummary.textContent = "Enter at least one positive horizon (e.g. 12,24,48).";
+                dom.batchBacktestCopyOpenScoreUsdBtn.disabled = true;
+                return;
+            }
+            // Optional decision-event date window (YYYY-MM-DD); blank = full side.
+            const sampleFrom = dom.batchBacktestOpenScoreUsdFrom.value.trim();
+            const sampleTo = dom.batchBacktestOpenScoreUsdTo.value.trim();
+            // Slippage/commission are NOT request fields: the server derives
+            // them from the retained Batch run's slippageBps / commission so
+            // the OPEN_SCORE USD replay uses the same execution-cost
+            // assumptions as the artifacts it reads.
+
+            this.beginAnalysisBusy(dom);
+            dom.batchBacktestOpenScoreUsdBtn.disabled = true;
+            dom.batchBacktestCopyOpenScoreUsdBtn.disabled = true;
+            dom.batchBacktestOpenScoreUsdSummary.textContent = "Replaying OPEN_SCORE events on server...";
+            await postBatchNdjson<OpenScoreUsdReplayStreamEvent>({
+                endpoint: "/api/batch-backtest/open-score-usd",
+                body: {
+                    fingerprint: this.lastRunFingerprint,
+                    interval: this.lastRunInterval,
+                    horizons,
+                    ...(sampleFrom ? { sampleFrom } : {}),
+                    ...(sampleTo ? { sampleTo } : {}),
+                },
+                onResponse: () => this.reissueStopIfNeeded(),
+                handlers: {
+                    onStart: (event: Extract<OpenScoreUsdReplayStreamEvent, { type: "start" }>) => {
+                        dom.batchBacktestOpenScoreUsdSummary.textContent =
+                            `OPEN_SCORE USD — ${event.pairs} pairs / ${event.assets} assets / horizons [${event.horizons.join(",")}]`;
+                    },
+                    onPhase: (event: Extract<OpenScoreUsdReplayStreamEvent, { type: "phase" }>) => {
+                        const pct = event.total > 0 ? Math.round((event.completed / event.total) * 100) : 0;
+                        dom.batchBacktestOpenScoreUsdSummary.textContent =
+                            `OPEN_SCORE USD — ${event.phase}: ${event.detail} (${pct}%, ${(event.elapsedMs / 1000).toFixed(1)}s)`;
+                    },
+                    onProgress: (event: Extract<OpenScoreUsdReplayStreamEvent, { type: "progress" }>) => {
+                        const pct = event.total > 0 ? Math.round((event.completed / event.total) * 100) : 0;
+                        const extra = [];
+                        if (event.events !== undefined) extra.push(`${event.events} events`);
+                        if (event.omitted !== undefined) extra.push(`${event.omitted} omitted`);
+                        const tail = extra.length > 0 ? ` (${extra.join(", ")})` : "";
+                        dom.batchBacktestOpenScoreUsdSummary.textContent =
+                            `OPEN_SCORE USD — ${event.phase}: ${event.detail} (${pct}%, ${(event.elapsedMs / 1000).toFixed(1)}s)${tail}`;
+                    },
+                    onDone: (event: Extract<OpenScoreUsdReplayStreamEvent, { type: "done" }>) => {
+                        if (event.ok === true && "result" in event && event.result) {
+                            this.lastOpenScoreUsdResult = event.result;
+                            dom.batchBacktestOpenScoreUsdSummary.textContent = event.result.reportLines.join("\n");
+                            dom.batchBacktestCopyOpenScoreUsdBtn.disabled = event.result.reportLines.length === 0;
+                        } else if (event.ok === false && "summary" in event) {
+                            dom.batchBacktestOpenScoreUsdSummary.textContent = event.summary ?? "OPEN_SCORE USD cancelled.";
+                        } else {
+                            dom.batchBacktestOpenScoreUsdSummary.textContent = "OPEN_SCORE USD finished.";
+                        }
+                    },
+                    onFatal: (event: Extract<OpenScoreUsdReplayStreamEvent, { type: "fatal" }>) => {
+                        throw new Error(event.error);
+                    },
+                },
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.lastOpenScoreUsdResult = null;
+            dom.batchBacktestOpenScoreUsdSummary.textContent = `OPEN_SCORE USD error: ${message}`;
+            dom.batchBacktestCopyOpenScoreUsdBtn.disabled = true;
+            debugLogger.error("batch_open_score_usd.server_failed", { error: message });
+        } finally {
+            await this.finishAnalysisBusy(dom);
+        }
+    }
+
+    private async copyOpenScoreUsdResults(): Promise<void> {
+        if (!this.lastOpenScoreUsdResult) {
+            uiManager.showToast("No OPEN_SCORE USD report to copy", "info");
+            return;
+        }
+        const text = this.lastOpenScoreUsdResult.reportLines.join("\n");
+        const copied = await copyToClipboard(text);
+        if (copied) {
+            uiManager.showToast("OPEN_SCORE USD report copied", "success");
+        } else {
+            this.getDom().batchBacktestStatus.textContent = "Copy failed.";
+        }
+    }
+
     private buildCurrentRunFingerprint(): string | null {
         const strategyKey = state.currentStrategyKey;
         const strategy = strategyRegistry.get(strategyKey);
@@ -2277,6 +2403,7 @@ class BatchBacktestService {
         dom.batchBacktestMinePredictionBtn.disabled = !available;
         dom.batchBacktestMineAbBtn.disabled = !available;
         dom.batchBacktestExposureBtn.disabled = !available;
+        dom.batchBacktestOpenScoreUsdBtn.disabled = !available;
     }
 
     private clearMinerResults(dom: BatchBacktestDom): void {
@@ -2285,6 +2412,7 @@ class BatchBacktestService {
         this.lastMinePredictionResult = null;
         this.lastMineAbResult = null;
         this.lastExposureResult = null;
+        this.lastOpenScoreUsdResult = null;
         // Clear rather than show "Miner idle": an empty .batch-miner-status
         // collapses via CSS (:empty) so the run-state region does not show a
         // noise strip before any mining has happened (point 7 of the refactor).
@@ -2298,6 +2426,8 @@ class BatchBacktestService {
         dom.batchBacktestMineAbSummary.textContent = "";
         dom.batchBacktestCopyExposureBtn.disabled = true;
         dom.batchBacktestExposureSummary.textContent = "";
+        dom.batchBacktestCopyOpenScoreUsdBtn.disabled = true;
+        dom.batchBacktestOpenScoreUsdSummary.textContent = "";
     }
 
     private createMinerRow(verdict: BatchSyntheticAssetVerdict): HTMLDivElement {
@@ -2717,6 +2847,7 @@ class BatchBacktestService {
         dom.batchBacktestMinePredictionBtn.disabled = true;
         dom.batchBacktestMineAbBtn.disabled = true;
         dom.batchBacktestExposureBtn.disabled = true;
+        dom.batchBacktestOpenScoreUsdBtn.disabled = true;
     }
 
     // Keep operations disabled until unscoped /stop requests have settled.
@@ -2730,6 +2861,7 @@ class BatchBacktestService {
         dom.batchBacktestMinePredictionBtn.disabled = true;
         dom.batchBacktestMineAbBtn.disabled = true;
         dom.batchBacktestExposureBtn.disabled = true;
+        dom.batchBacktestOpenScoreUsdBtn.disabled = true;
         const pending = this.pendingStopPromise;
         if (pending) {
             try { await pending; } catch { /* stopServerWork swallows errors */ }

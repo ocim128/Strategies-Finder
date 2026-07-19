@@ -8,6 +8,7 @@ import {
     processStabilityMine,
     processMinePrediction,
     processMineAb,
+    processOpenScoreUsdReplay,
     resolveServerBatchHeapWarning,
     ArtifactStore,
     type BatchRunSnapshot,
@@ -2017,6 +2018,228 @@ describe("batch-backtest server plugin exposure-redundancy route-level authoriza
             expect(res.statusCode).to.equal(401);
         } finally {
             if (prevToken !== undefined) process.env.LOCAL_PROXY_TOKEN = prevToken;
+        }
+    });
+});
+
+describe("batch-backtest server plugin open-score-usd route-level authorization", () => {
+    it("rejects a non-POST /api/batch-backtest/open-score-usd with 405", async () => {
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/open-score-usd");
+        expect(handler, "open-score-usd route must be registered").to.not.equal(undefined);
+        const res = makeRouteResponse();
+        await handler!(
+            { method: "GET", url: "/api/batch-backtest/open-score-usd", socket: { remoteAddress: "127.0.0.1" }, headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" } },
+            res,
+        );
+        expect(res.statusCode).to.equal(405);
+    });
+
+    it("rejects an unauthenticated non-loopback POST /open-score-usd with 401", async () => {
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/open-score-usd");
+        expect(handler).to.not.equal(undefined);
+        const prevToken = process.env.LOCAL_PROXY_TOKEN;
+        delete process.env.LOCAL_PROXY_TOKEN;
+        try {
+            const req = Readable.from([JSON.stringify({ fingerprint: "x", interval: "1d", horizons: [12] })]) as any;
+            req.method = "POST";
+            req.url = "/api/batch-backtest/open-score-usd";
+            req.headers = {};
+            req.socket = { remoteAddress: "203.0.113.9" };
+            const res = makeRouteResponse();
+            await handler!(req, res);
+            expect(res.statusCode).to.equal(401);
+        } finally {
+            if (prevToken !== undefined) process.env.LOCAL_PROXY_TOKEN = prevToken;
+        }
+    });
+});
+
+describe("batch-backtest server plugin processOpenScoreUsdReplay", () => {
+    // Intent being locked (AGENTS.md rule 8): OPEN_SCORE USD Replay must be a
+    // read-only analysis on the retained Batch artifact store. It must:
+    //   - fatal-out cleanly when there are no artifacts (Run Batch first)
+    //   - fatal-out when the fingerprint is stale
+    //   - fatal-out when horizons are missing/invalid
+    //   - leave artifacts intact on success AND on cancellation
+    //   - emit start -> phase/progress -> done in order on a fixture run
+    //   - use the injected target loader (never Promise.all over disk reads)
+    //
+    // The synthetic-pair fixture is the smallest one that produces real
+    // artifacts: UP+DOWN with a long-then-sell strategy yields one synthetic
+    // pair artifact whose base/quote assets feed the score reconstruction.
+
+    async function setupOnePairArtifacts(): Promise<{ fingerprint: string; interval: string }> {
+        const pairData = makeCandles([100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]);
+        const datasets = new Map<string, OHLCVData[]>([["UP+DOWN", pairData]]);
+        const owner = 9050;
+        setRunOwnerForTests(owner);
+        const events = await collectEvents((ev) =>
+            processRunBatch(
+                {
+                    interval: "5m",
+                    strategyKey: STRATEGY_KEY,
+                    strategy: testStrategy,
+                    strategyParams: { threshold: 1 },
+                    backtestSettings: settings,
+                    capitalSettings,
+                    symbols: ["UP+DOWN"],
+                    loadDataset: (symbol) => Promise.resolve(datasets.get(symbol) ?? []),
+                    minUsableBars: 1,
+                },
+                (event) => ev.push(event),
+                owner,
+            ),
+        );
+        completeRunForTests();
+        setRunOwnerForTests(0);
+        const done = events[events.length - 1] as Extract<BatchStreamEvent, { type: "done" }>;
+        if (!done.serverHasArtifacts) {
+            throw new Error("fixture run did not produce synthetic-pair artifacts");
+        }
+        if (!done.fingerprint) {
+            throw new Error("fixture run did not produce a fingerprint");
+        }
+        return { fingerprint: done.fingerprint, interval: "5m" };
+    }
+
+    it("fatals when no prior run artifacts exist on the server", async () => {
+        await releaseLastResults("pre_test");
+        const events: unknown[] = [];
+        await processOpenScoreUsdReplay("any-fingerprint", "5m", (e) => events.push(e), 9051, [12]);
+        const first = events[0] as { type: string; error?: string };
+        expect(first.type).to.equal("fatal");
+        expect(first.error).to.match(/no artifacts/i);
+    });
+
+    it("fatals when the fingerprint is stale (settings/symbols changed)", async () => {
+        const { interval } = await setupOnePairArtifacts();
+        try {
+            const minerOwner = 9052;
+            setMinerOwnerForTests(minerOwner);
+            const events: unknown[] = [];
+            await processOpenScoreUsdReplay("stale-fingerprint", interval, (e) => events.push(e), minerOwner, [12]);
+            setMinerOwnerForTests(0);
+            const first = events[0] as { type: string; error?: string };
+            expect(first.type).to.equal("fatal");
+            expect(first.error).to.match(/rerun batch|fingerprint/i);
+            // Read-only: artifacts still available for a follow-up Mine.
+            expect(hasStoredMineArtifacts()).to.equal(true);
+        } finally {
+            await releaseLastResults("test_end");
+        }
+    });
+
+    it("fatals when horizons are missing or invalid", async () => {
+        const { fingerprint, interval } = await setupOnePairArtifacts();
+        try {
+            const minerOwner = 9053;
+            setMinerOwnerForTests(minerOwner);
+            for (const bad of [null, [], [0], [-1, 0.5]] as Array<number[] | null>) {
+                const events: unknown[] = [];
+                await processOpenScoreUsdReplay(fingerprint, interval, (e) => events.push(e), minerOwner, bad);
+                const first = events[0] as { type: string; error?: string };
+                expect(first.type).to.equal("fatal");
+                expect(first.error).to.match(/horizon/i);
+            }
+            setMinerOwnerForTests(0);
+            expect(hasStoredMineArtifacts()).to.equal(true);
+        } finally {
+            await releaseLastResults("test_end");
+        }
+    });
+
+    it("completes a fixture run, preserves artifacts, and emits start -> phases -> done in order", async () => {
+        const { fingerprint, interval } = await setupOnePairArtifacts();
+        try {
+            const minerOwner = 9054;
+            setMinerOwnerForTests(minerOwner);
+            const events: unknown[] = [];
+            // Target loader stub: UP/DOWN datasets are flat so the engine
+            // produces finite returns; this is the smallest fixture that
+            // exercises the full start -> phase -> progress -> done flow.
+            const targetData = makeCandles([100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]);
+            const stubLoader = () => Promise.resolve(targetData);
+            await processOpenScoreUsdReplay(
+                fingerprint,
+                interval,
+                (e) => events.push(e),
+                minerOwner,
+                [3, 5],
+                null,
+                null,
+                stubLoader,
+            );
+            setMinerOwnerForTests(0);
+
+            const types = events.map((e) => (e as { type: string }).type);
+            expect(types[0], "first event is start").to.equal("start");
+            expect(types[types.length - 1], "last event is done").to.equal("done");
+            const done = events[events.length - 1] as { type: string; ok: boolean; result?: { complete: boolean; pairs: number; reportLines: string[] } };
+            expect(done.ok).to.equal(true);
+            expect(done.result?.pairs).to.equal(1);
+            // Artifacts preserved (read-only — no releaseLastResults).
+            expect(hasStoredMineArtifacts()).to.equal(true);
+        } finally {
+            await releaseLastResults("test_end");
+        }
+    });
+
+    it("is read-only: artifacts remain available after success and after a second OPEN_SCORE run", async () => {
+        // Audit read-only finding: OPEN_SCORE USD MUST NOT call
+        // releaseLastResults. The retained Batch artifacts must stay on disk
+        // so a follow-up OPEN_SCORE USD (or Mine / Stability / Exposure) can
+        // still see them. We assert this with a second OPEN_SCORE run instead
+        // of a real Mine because Mine hits the live target loader (network).
+        const { fingerprint, interval } = await setupOnePairArtifacts();
+        try {
+            const targetData = makeCandles([100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]);
+            const stubLoader = () => Promise.resolve(targetData);
+
+            const ownerA = 9055;
+            setMinerOwnerForTests(ownerA);
+            const eventsA: unknown[] = [];
+            await processOpenScoreUsdReplay(fingerprint, interval, (e) => eventsA.push(e), ownerA, [3], null, null, stubLoader);
+            setMinerOwnerForTests(0);
+            expect(hasStoredMineArtifacts(), "artifacts retained after first OPEN_SCORE USD").to.equal(true);
+
+            const ownerB = 9057;
+            setMinerOwnerForTests(ownerB);
+            const eventsB: unknown[] = [];
+            await processOpenScoreUsdReplay(fingerprint, interval, (e) => eventsB.push(e), ownerB, [3], null, null, stubLoader);
+            setMinerOwnerForTests(0);
+            const lastB = eventsB[eventsB.length - 1] as { type: string; ok?: boolean };
+            expect(lastB.type).to.equal("done");
+            expect(lastB.ok).to.equal(true);
+            expect(hasStoredMineArtifacts(), "artifacts retained after second OPEN_SCORE USD").to.equal(true);
+        } finally {
+            await releaseLastResults("test_end");
+        }
+    });
+
+    it("Stop (lost ownership) cancels mid-run and still leaves artifacts intact", async () => {
+        // Stop path: a different owner claims the lock mid-run; the engine
+        // observes lost ownership via shouldStop and bails. Artifacts survive.
+        const { fingerprint, interval } = await setupOnePairArtifacts();
+        try {
+            const events: unknown[] = [];
+            const targetData = makeCandles([100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]);
+            const stubLoader = () => Promise.resolve(targetData);
+            // Run with owner=9070 but clobber the lock to a different owner
+            // immediately so shouldStop() returns true on the first check.
+            const runPromise = processOpenScoreUsdReplay(fingerprint, interval, (e) => events.push(e), 9070, [3], null, null, stubLoader);
+            setMinerOwnerForTests(99999); // different owner -> lostOwnership()=true
+            await runPromise;
+            setMinerOwnerForTests(0);
+            const last = events[events.length - 1] as { type: string; cancelled?: boolean; summary?: string };
+            // Either a cancelled done (graceful observation) or a fatal — both
+            // are acceptable Stop outcomes. The contract is "no hang + no
+            // artifact mutation".
+            expect(["done", "fatal"]).to.include(last.type);
+            expect(hasStoredMineArtifacts(), "artifacts retained after Stop").to.equal(true);
+        } finally {
+            await releaseLastResults("test_end");
         }
     });
 });
