@@ -2,19 +2,156 @@
 
 ## Overview
 
-A CLI research tool that tests whether any **current-time selection rule** can pick the best trade when multiple pairs signal simultaneously. This is the direct test that the Mine Timing / OPEN_SCORE / spread-quality investigations did NOT run — those tested direction prediction, pair-quality ranking, and aggregate filtering. This tests **relative selection among simultaneous signals**.
+A CLI research tool that tests whether any **current-time selection rule** can pick the best trade when multiple pairs signal simultaneously. This is a **ranking diagnostic**, not a portfolio backtest. It measures whether a rule's ranking of simultaneously-signaling pairs correlates with realized trade outcomes — using strict causal walk-forward validation.
 
-**Core question:** "At timestamp T, 5 pairs fire entry signals. Rule X picks pair #3. Does pair #3's trade outperform the average of the other 4?"
+**Core question:** "At signal time T, 5 pairs fire entry signals. Rule X ranks pair #3 highest. Does pair #3's completed trade outperform the event average?"
 
-If no rule beats random selection, the conclusion "no tested method reliably selects the best trade" becomes "it is proven that no current-time selector can work" for this strategy universe.
+If no rule beats random after walk-forward validation, the conclusion is: no tested selection rule shows reliable OOS ranking value in this universe and configuration.
 
 ---
 
-## Problem Definition
+## Design Principles (learned from prior investigations)
 
-The batch runner executes each pair independently with unlimited capital. In reality, when N pairs signal on the same bar and capital limits you to K < N, you must choose. The batch P&L (+$922k) assumes all trades are taken; the achievable P&L depends on the selection rule.
+1. **Walk-forward is mandatory, not conditional.** Prior investigations (Mine Timing, spread quality) failed because they searched full history first, then validated conditionally. This tool runs chronological folds from the start — rule/lookback selection on train, evaluation on the next test fold.
+2. **Causal history only.** A trade's P&L is unknown until it exits. Rules may only use trades with `exitTime < signalTime`. Including still-open trades would leak future information.
+3. **Normalized returns, not raw dollars.** Different pairs have different entry prices and position sizes. Use `pnlPercent` (fee-aware) as the primary outcome.
+4. **Seeded everything.** Random baseline and tie-breaking use a fixed seed. Results are reproducible.
+5. **Ranking mode only for v1.** This tool measures ranking ability (does the rule put better trades higher?). It does NOT simulate portfolio capacity, open positions, or capital constraints. That is a separate tool.
 
-This tool replays existing batch trade data — **no re-running backtests**. It reads the entry/exit times and P&L from artifact trades, groups entries by timestamp, applies selection rules, and measures whether the rule beats random.
+---
+
+## Data Flow
+
+```
+Batch artifacts (temp dir, v8 .bin files)
+  ↓ (--artifact-dir required)
+Load artifacts one at a time:
+  extract signalTime, fillTime, exitTime, pnlPercent, direction, pair metadata
+  extract causal feature snapshots (volatility, momentum) at signal bar
+  release artifact immediately
+  ↓
+Collect all SignalCandidate records
+  ↓
+Group by signalTime → signal events
+  ↓
+Chronological walk-forward folds:
+  For each fold:
+    Train segment: select best rule/lookback by in-fold ranking IC
+    Test segment: apply frozen rule, measure paired return delta vs event mean
+  ↓
+Aggregate OOS results across test folds
+  ↓
+Report: paired delta, percentile rank, block-bootstrap CI, verdict
+```
+
+---
+
+## SignalCandidate Shape
+
+```ts
+interface SignalCandidate {
+  symbol: string;
+  baseAsset: string;
+  quoteAsset: string;
+  signalTimeSec: number;   // bar before fill (decision time)
+  fillTimeSec: number;     // entryTime of the trade (next_open fill)
+  exitTimeSec: number;     // exitTime of the completed trade
+  direction: "long" | "short";
+  netReturnPct: number;    // pnlPercent (fee-aware, comparable across pairs)
+  entryFeatures: {
+    volatilityPct: number | null;      // ATR% at signal bar (14-bar)
+    momentum5: number | null;          // 5-bar ratio return at signal bar
+    momentum10: number | null;         // 10-bar ratio return at signal bar
+    momentum20: number | null;         // 20-bar ratio return at signal bar
+    timeSinceLastExitBars: number | null; // bars since this pair's last trade exited
+    signalRarity: number | null;       // 1 / count of this pair's signals in last 100 bars
+  };
+}
+```
+
+Feature snapshots are computed **while the artifact is loaded** (one at a time), attached as scalars to each candidate, then the OHLCV array is released. No `Map<string, OHLCVData[]>` is retained.
+
+---
+
+## Selection Rules
+
+Each rule computes a score for each candidate at a signal event. Higher score = ranked higher.
+
+| Rule | Score formula | Type |
+|---|---|---|
+| `random` | Seeded pseudo-random | Baseline |
+| `recent_return_mean_std_N` | Mean / StdDev of last N exited trades' netReturnPct | Negative control (recent performance persistence) |
+| `recent_winrate_N` | Fraction of wins in last N exited trades | Negative control |
+| `recent_avg_return_N` | Mean netReturnPct of last N exited trades | Negative control |
+| `recent_profit_factor_N` | Sum(wins) / abs(Sum(losses)) in last N exited trades | Negative control |
+| `time_since_last_exit` | Bars since this pair's last trade exited | Execution-quality candidate |
+| `signal_rarity` | 1 / signal count in last 100 bars | Execution-quality candidate |
+| `entry_volatility` | ATR% at signal bar (lower = higher score) | Risk-based candidate |
+| `momentum_N` | N-bar ratio return at signal bar | Directional negative control |
+
+**Rules labeled "negative control"** are families already shown unreliable at the pair level. Testing them at the signal-event level is useful to confirm they also fail here. They are NOT expected to pass.
+
+**Rules labeled "execution-quality candidate"** have not been tested at any level. They are the rules most likely to show something new.
+
+**`momentum_N`** is explicitly a directional predictor. It is included as a negative control to confirm that direction doesn't help even at the signal-event grain.
+
+### Causal history constraint
+
+`recent_*` rules use only trades where `exitTimeSec < currentSignalTimeSec`. A trade entered before the event but still open is excluded — its P&L is unknown at decision time.
+
+### Tie-breaking
+
+When two candidates have the same score (including score=0 for empty history), break ties using a **seeded deterministic random** (not alphabetical/file order). The seed is a CLI argument (default: 42).
+
+---
+
+## Walk-Forward Validation (mandatory in Phase 1)
+
+### Fold structure
+
+- **Fold unit:** 3 calendar months (configurable via `--fold-months`)
+- **Train:** all signal events in the fold
+- **Test:** all signal events in the next fold
+- **Non-overlapping walk-forward:** train → test → advance by one fold → repeat
+
+### Per-fold evaluation
+
+For each fold:
+1. On the **train** segment: compute each rule's ranking IC (Spearman of rule-score vs realized netReturnPct across all multi-signal events)
+2. Select the best rule/lookback by train IC
+3. On the **test** segment: apply the frozen rule, record per-event paired delta (selected return − event mean return)
+
+### Aggregation across test folds
+
+- Mean paired delta (selected − event_mean)
+- Median paired delta
+- Fraction of test folds with positive mean delta
+- Block-bootstrap 95% CI on mean delta (block = calendar month)
+- Oracle regret: mean delta of (best-possible selection − event_mean) as ceiling
+
+---
+
+## Report Format
+
+```
+SIGNAL_REPLAY | artifact-dir=<path> pairs=<P> trades=<T> events=<E> multi_signal_events=<M>
+SIGNAL_REPLAY | mode=ranking | outcome=netReturnPct | seed=42 | folds=<F>
+SIGNAL_REPLAY | NOTE: ranking diagnostic only. Does not simulate portfolio capacity or capital constraints.
+
+FOLD <i>/<F> | train=<date>..=<date> test=<date>..=<date> | events=<N> | best_train_rule=<RULE> train_IC=<X>
+
+OOS_RULE  | <BEST_RULE>: mean_delta=+0.XX% median=+0.XX% pos_folds=<N>/<F> bootstrap_CI=[+0.XX, +0.XX]
+OOS_RULE  | random:       mean_delta=+0.XX% median=+0.XX% pos_folds=<N>/<F> bootstrap_CI=[+0.XX, +0.XX]
+OOS_CEIL  | oracle:       mean_delta=+0.XX% (upper bound — best possible top-1 selection)
+
+VERDICT   | <VERDICT_TEXT>
+```
+
+**Verdict logic (from OOS test folds only):**
+- Mean paired delta > 0 AND block-bootstrap 95% CI excludes 0 AND ≥60% of test folds positive → **OOS_EDGE**: rule shows reliable signal-event ranking value
+- Otherwise → **NO_OOS_EDGE**: no tested rule reliably ranks simultaneous signals better than random
+
+The statement "no tested rule reliably ranks simultaneous signals" does NOT mean "no possible selector can work." It means the tested rules in this universe/configuration do not.
 
 ---
 
@@ -24,230 +161,120 @@ This tool replays existing batch trade data — **no re-running backtests**. It 
 
 | File | Purpose |
 |---|---|
-| `scripts/replay-signal-events.ts` | CLI script. Reads artifacts, groups trades by timestamp, applies rules, reports. |
+| `scripts/replay-signal-events.ts` | CLI script with walk-forward replay engine |
+| `tests/replay-signal-events.spec.ts` | Pure-function unit tests for the replay core |
 
-### No modified files
+### Modified files
 
-This is a standalone CLI research script. No UI, no endpoint, no service wiring, no production code changes. Same pattern as `scripts/validate-spread-quality.ts`.
+| File | Change |
+|---|---|
+| `package.json` | Add `"replay:signal-events": "esno scripts/replay-signal-events.ts"` |
 
 ### Referenced (not modified)
 
 | File | Why |
 |---|---|
-| `lib/batch-backtest/batch-synthetic-state-miner.ts:25-41` | `BatchSyntheticPairArtifact` shape (`symbol`, `baseAsset`, `quoteAsset`, `result.trades`) |
-| `lib/types/strategies.ts:23-42` | `Trade` shape (`entryTime`, `exitTime`, `pnl`, `type`, `entryPrice`) |
-| `scripts/validate-spread-quality.ts:68-97` | Artifact loading pattern to reuse (`findLatestArtifactDir`, `loadArtifactsFromDir`, v8 `deserialize`) |
-
----
-
-## Architecture
-
-### Data flow
-
-```
-Batch artifacts (temp dir, v8 .bin files)
-  ↓
-loadArtifactsFromDir (one file at a time, extract trades + metadata)
-  ↓
-Collect all trade entries: { symbol, baseAsset, quoteAsset, entryTime, exitTime, pnl, type }
-  ↓
-Group by entryTime (timestamp) → signal events
-  ↓
-For each multi-signal event (N > 1 pairs signaling simultaneously):
-  ↓
-Apply each selection rule → pick K trades (or rank all)
-  ↓
-Record: selected trade P&L vs average of all alternatives
-  ↓
-Aggregate: per-rule win rate vs random, IC of rule score vs realized P&L
-  ↓
-Report: does any rule beat random?
-```
-
-### Artifact loading
-
-Reuse the pattern from `scripts/validate-spread-quality.ts:68-97`:
-1. `findLatestArtifactDir()` — scan `tmpdir()` for `strategies-finder-batch-mine-*` directories, pick the most recent by mtime
-2. `loadArtifactsFromDir(dir)` — read `.bin` files sequentially, `deserialize` each, extract `symbol`, `baseAsset`, `quoteAsset`, and `result.trades`
-3. Must run within the 10-minute artifact TTL after a Batch Run
-
-### Memory profile
-
-Each artifact is ~5-10 MB (ratio OHLCV + signals + trades). But the replay only needs trade metadata — not the OHLCV. Extract trades per artifact and release the full artifact immediately. Peak memory = 1 artifact + accumulated trade entries (each ~100 bytes × ~1000 trades/pair × 512 pairs ≈ 50 MB of trade records). Manageable.
-
----
-
-## Selection Rules to Test
-
-Each rule computes a score for each candidate pair at a signal event. The rule selects the top-K (or top-1) by score. Rules use **only information available at entry time** — no lookahead.
-
-### Rule implementations
-
-All rules receive the list of candidate trades at a given timestamp and return a score per candidate. The score is computed from the candidate pair's **trade history up to (but not including) this entry**.
-
-| Rule | Score | Data needed | Lookback |
-|---|---|---|---|
-| `random` | Math.random() | None | None (baseline) |
-| `recent_sharpe` | Sharpe of last N trades' pnl | result.trades sorted by entryTime | N=10, 20 |
-| `recent_winrate` | Win rate of last N trades | result.trades | N=5, 10 |
-| `recent_avg_pnl` | Mean pnl of last N trades | result.trades | N=5, 10 |
-| `recent_profit_factor` | Gross profit / gross loss of last N trades | result.trades | N=10 |
-| `signal_rarity` | 1 / (number of trades in last 100 bars) | result.trades + bar timestamps | 100 bars |
-| `time_since_last` | Bars since the pair's last trade exit | result.trades | None |
-| `entry_volatility` | ATR% of the pair's ratio at entry bar | artifact.data (ratio OHLCV) | 14 bars |
-| `momentum` | Return of the ratio over last N bars at entry | artifact.data (ratio closes) | N=5, 10, 20 |
-
-### Constraints
-
-- **Non-redundancy constraint:** optional flag to prevent selecting two pairs that share a common asset in the same event. When enabled, the rule picks the highest-scoring pair, removes all pairs sharing its assets, then picks the next highest, etc.
-
----
-
-## Report Format
-
-```
-SIGNAL_REPLAY | pairs=<P> trades=<T> events=<E> multi_signal_events=<M>
-SIGNAL_REPLAY | NOTE: tests whether selection rules beat random when multiple pairs signal simultaneously.
-SIGNAL_REPLAY | Method: for each event where N>1 pairs signal, apply rule to pick top-1, record selected P&L vs event average.
-
-RULE          | random:            avg_selected_pnl=$<X> avg_alternative_pnl=$<Y> delta=$<D> win_rate=<WR%> n=<M>
-RULE          | recent_sharpe_10:  avg_selected_pnl=$<X> avg_alternative_pnl=$<Y> delta=$<D> win_rate=<WR%> n=<M>
-RULE          | recent_winrate_5:  avg_selected_pnl=$<X> avg_alternative_pnl=$<Y> delta=$<D> win_rate=<WR%> n=<M>
-RULE          | recent_avg_pnl_5:  avg_selected_pnl=$<X> avg_alternative_pnl=$<Y> delta=$<D> win_rate=<WR%> n=<M>
-RULE          | signal_rarity:     avg_selected_pnl=$<X> avg_alternative_pnl=$<Y> delta=$<D> win_rate=<WR%> n=<M>
-RULE          | time_since_last:   avg_selected_pnl=$<X> avg_alternative_pnl=$<Y> delta=$<D> win_rate=<WR%> n=<M>
-RULE          | entry_volatility:  avg_selected_pnl=$<X> avg_alternative_pnl=$<Y> delta=$<D> win_rate=<WR%> n=<M>
-RULE          | momentum_5:        avg_selected_pnl=$<X> avg_alternative_pnl=$<Y> delta=$<D> win_rate=<WR%> n=<M>
-
-VERDICT       | <BEST_RULE>: delta=$<D> win_rate=<WR%> | <VERDICT_TEXT>
-```
-
-**Definitions:**
-- `avg_selected_pnl`: mean P&L of the trade selected by the rule across all multi-signal events
-- `avg_alternative_pnl`: mean P&L of all non-selected trades across the same events
-- `delta`: avg_selected_pnl − avg_alternative_pnl (positive = rule beats average)
-- `win_rate`: fraction of events where the selected trade's P&L > the event's average P&L
-
-**Verdict logic:**
-- `win_rate > 55%` AND `delta > 0` → **POTENTIAL_EDGE** — rule may have signal-selection value
-- `win_rate` between 45-55% OR `delta` ≈ 0 → **NO_EDGE** — rule does not beat random
-- `win_rate < 45%` AND `delta < 0` → **ANTI** — rule is counter-predictive
+| `lib/batch-backtest/batch-synthetic-state-miner.ts:25-41` | `BatchSyntheticPairArtifact` shape |
+| `lib/types/strategies.ts:23-42` | `Trade` shape (`entryTime`, `exitTime`, `pnlPercent`, `type`) |
+| `lib/types/strategies.ts:455` | `Signal` shape (has `time` and `barIndex` for signal-time extraction) |
+| `lib/strategies/index.ts` | `timeKey` for timestamp normalization |
+| `scripts/validate-spread-quality.ts:68-97` | Artifact loading pattern (`findLatestArtifactDir`, `loadArtifactsFromDir`, v8 `deserialize`) |
 
 ---
 
 ## Implementation Phases
 
-### Phase 1: CLI script + core replay engine
+### Phase 1: Walk-forward replay engine + CLI
 
-**Objective:** Build the standalone script that loads artifacts, groups trades by entry timestamp, and runs the replay.
+**Objective:** Build the script that tests all selection rules with mandatory chronological walk-forward validation.
 
-**Scope:** `scripts/replay-signal-events.ts` only.
+**Scope:** `scripts/replay-signal-events.ts` + `tests/replay-signal-events.spec.ts` + `package.json` entry.
 
 **Technical tasks:**
 
-1. **Artifact loading.** Reuse pattern from `scripts/validate-spread-quality.ts`:
-   - `findLatestArtifactDir()` — scan tmpdir for `strategies-finder-batch-mine-*`
-   - `loadTradesFromDir(dir)` — read each `.bin`, `deserialize`, extract trades with pair metadata, release artifact
+1. **Artifact loading** (reuse pattern from `validate-spread-quality.ts`):
+   - `--artifact-dir` CLI flag (required — do NOT auto-discover latest; explicit for reproducibility)
+   - Load one `.bin` at a time, deserialize, extract signals + trades + feature snapshots, release
+   - Extract `signalTime` from the artifact's `signals[]` array (the `Signal.time` field at the bar before the trade's `entryTime`), or fall back to `entryTime - 1 bar` if signals are not available
 
-2. **Trade extraction.** For each artifact, extract:
-   ```ts
-   interface SignalTrade {
-     symbol: string;
-     baseAsset: string;
-     quoteAsset: string;
-     entryTimeSec: number;
-     exitTimeSec: number;
-     pnl: number;
-     type: "long" | "short";
-   }
-   ```
-   Filter to `type === "long"` (the strategy is long-only).
+2. **SignalCandidate extraction.** For each trade in each artifact:
+   - `signalTimeSec`: normalized from `Signal.time` or computed as the bar before `entryTime`
+   - `fillTimeSec`: `Number(trade.entryTime)` via `timeKey`/`timeToNumber`
+   - `exitTimeSec`: `Number(trade.exitTime)`
+   - `netReturnPct`: `trade.pnlPercent`
+   - `direction`: `trade.type`
+   - `entryFeatures`: computed from ratio OHLCV at the signal bar index, then OHLCV released
 
-3. **Signal-event grouping.** Group all SignalTrades by `entryTimeSec`. A "signal event" is a set of trades with the same entry timestamp. Multi-signal events have N > 1.
+3. **Feature computation** (while artifact is loaded):
+   - `volatilityPct`: ATR(14) / close × 100 at the signal bar
+   - `momentumN`: (close[signalBar] / close[signalBar - N] - 1) × 100
+   - `timeSinceLastExitBars`: signal bar index − last exited trade's exit bar index
+   - `signalRarity`: 1 / count of signals in last 100 bars from this pair
 
-4. **Rule implementations.** Each rule is a function:
-   ```ts
-   type SelectionRule = (
-     candidates: SignalTrade[],
-     pairHistory: Map<string, SignalTrade[]>, // sorted by entryTime, up to but not including current
-     pairBars: Map<string, OHLCVData[]>, // ratio OHLCV for volatility/momentum rules
-   ) => SignalTrade // the selected trade (top-1)
-   ```
-   For `top-K` selection (future extension), return a ranked array instead.
+4. **Causal history ledger.** Maintain a per-pair sorted list of completed trades. At each signal event, a pair's history includes only trades with `exitTimeSec < signalTimeSec`. Append to the ledger only after a trade exits, not when it enters.
 
-5. **Replay engine.**
-   - Sort all SignalTrades chronologically by `entryTimeSec`
-   - For each multi-signal event:
-     - Build `pairHistory` from all trades with `entryTimeSec < currentEventTime` for each candidate's symbol
-     - Apply each rule
-     - Record selected P&L and alternative P&Ls
-   - Aggregate per rule
+5. **Signal-event grouping.** Group candidates by `signalTimeSec`. Multi-signal events have N > 1.
 
-6. **Report builder.** Format per the report spec above.
+6. **Rule implementations.** Each rule receives candidates + causal history and returns a score per candidate. Use `--direction long|short|both` CLI flag (not hardcoded to long).
 
-7. **CLI args:**
-   - `--top-k` (default 1): how many trades to select per event
-   - `--no-redundancy`: skip pairs sharing assets with already-selected pairs
-   - `--rules`: comma-separated rule names to test (default: all)
-   - `--lookback`: override default lookback windows (e.g., `--lookback 5,10,20`)
+7. **Walk-forward replay engine:**
+   - Chronological folds (3-month default)
+   - Train: compute per-rule ranking IC, select best rule/lookback
+   - Test: apply frozen rule, record per-event paired delta
+   - Aggregate OOS results
 
-**Dependencies:** None (pure CLI, reads existing artifacts).
+8. **Block bootstrap.** For the 95% CI on mean delta: resample test-fold months with replacement (1000 iterations), compute mean delta per resample, take 2.5th and 97.5th percentiles.
+
+9. **Report builder.** Format per spec above.
+
+10. **CLI args:**
+    - `--artifact-dir <path>` (required)
+    - `--fold-months <N>` (default 3)
+    - `--seed <N>` (default 42)
+    - `--direction long|short|both` (default both)
+    - `--top-k <N>` (default 1)
+    - `--no-redundancy` (for top-K: skip pairs sharing assets with already-selected)
+
+**Dependencies:** None (pure CLI).
 
 **Risks:**
-- **Entry timestamp alignment:** synthetic pair bars share timestamps by construction (base.time = quote.time = ratio.time). But the `executionModel: next_open` setting means the actual fill is at the next bar's open, not at the signal bar's close. The trade's `entryTime` field should reflect the actual fill time. Must verify this.
-- **Pair history availability:** at the first event, there's no history for any pair. Rules must handle empty history gracefully (fall back to random or skip).
-- **Ratio OHLCV for volatility/momentum rules:** these need `artifact.data`, which means loading the full artifact (5-10 MB per pair). For 512 pairs this is manageable if done sequentially and the data is released after extraction.
+- **signalTime inference:** if `signals[]` is not available on the artifact (stripped during serialization), must fall back to `fillTime - 1 bar`. The artifact shape at `BatchSyntheticPairArtifact.signals` should be present for synthetic pairs (the runner stores it). Must verify.
+- **Low multi-signal event count:** if most pairs trade at different times, there may be too few multi-signal events for meaningful statistics. The report must state the count; if < 100 OOS events, the verdict is "insufficient data."
+- **Feature computation cost:** loading 512 artifacts sequentially to compute ATR/momentum snapshots. Each artifact ~7 MB, loaded one at a time, features extracted, released. Total ~3.5 GB loaded but peak memory ~10 MB.
 
-**Deliverables:**
-- `scripts/replay-signal-events.ts`
-- `npm run replay:signal-events` in `package.json`
+**Deliverables:** `scripts/replay-signal-events.ts` + spec + package.json entry.
 
 **Validation:**
-- Script runs on a real batch and produces output.
-- Random rule produces `win_rate ≈ 50%` and `delta ≈ $0` (sanity check).
-- All rules handle empty history (first events) without crashing.
+- `tests/replay-signal-events.spec.ts` with:
+  - Causal history test: a trade entered before an event but exited after is NOT in the history ledger
+  - Grouping test: two trades with next_open fills are grouped by their signal bar, not fill bar
+  - Random baseline test: mean paired delta ≈ 0 (not win_rate ≈ 50%)
+  - Tie-breaking test: deterministic under a fixed seed
+  - pnlPercent ranking test: raw $ differences do not affect ranking when normalized returns are equal
+- `npm run typecheck` clean
+- Manual smoke: run after a batch → report renders
 
-**Exit criteria:** Script produces a complete report for all rules on a real batch.
-
----
-
-### Phase 2 (conditional): Walk-forward validation
-
-**Objective:** If Phase 1 finds a rule with `win_rate > 55%`, validate it OOS via temporal split.
-
-**Scope:** Extend the script with walk-forward folds.
-
-**Technical tasks:**
-
-1. Split the signal events into chronological halves (or rolling folds).
-2. On the first half, compute the rule's aggregate win rate and delta.
-3. On the second half, apply the same rule and measure OOS win rate.
-4. Report whether the edge persists.
-
-**Dependencies:** Phase 1 complete AND at least one rule shows `win_rate > 55%`.
-
-**Exit criteria:** OOS verdict documented. If the edge doesn't persist, the rule is noise.
+**Exit criteria:** Script produces a complete walk-forward report with OOS verdict.
 
 ---
 
-### Phase 3 (conditional): UI integration
+### Phase 2 (conditional): UI integration
 
-**Objective:** If Phase 2 validates a rule, build a UI button that shows the live selection recommendation.
+**Objective:** If Phase 1 finds a rule with OOS_EDGE, build a UI button that shows live selection recommendation.
 
-**Scope:** New endpoint + button + panel (same pattern as Mine Prediction).
+**Dependencies:** Phase 1 verdict is OOS_EDGE.
 
-**Dependencies:** Phase 2 passes (rule has OOS edge).
-
-**Exit criteria:** Button works, shows recommended pairs when multiple signals fire.
+**Not planned in detail until Phase 1 passes.**
 
 ---
 
 ## Performance
 
-- **Trade extraction:** 512 artifacts × ~1000 trades each = ~500K SignalTrade records. Each ~100 bytes. Total ~50 MB in memory after extraction.
-- **Signal-event grouping:** single sort by entryTimeSec + groupBy. O(N log N).
-- **Per-rule computation:** for each multi-signal event, compute scores for each candidate. With ~10K events × ~5 candidates × 9 rules = ~450K score computations. Each is O(lookback) for history-based rules. Total: seconds.
-- **Ratio OHLCV rules (volatility, momentum):** need to load artifact data (5-10 MB per pair). Load one pair at a time, extract the entry-bar values, release. 512 × ~7 MB = ~3.5 GB total loaded sequentially, but peak memory = 1 artifact at a time.
+- **Artifact loading + feature extraction:** 512 artifacts × ~7 MB, loaded sequentially. Features extracted while loaded, then released. Wall time: ~30-60 seconds.
+- **Signal-event grouping:** sort ~500K SignalCandidate records by signalTimeSec. O(N log N). Seconds.
+- **Rule computation per event:** O(candidates × lookback) per event. With ~10K events × ~5 candidates × 9 rules ≈ 450K computations. Seconds.
+- **Block bootstrap:** 1000 iterations × O(events). Seconds.
+- **Memory peak:** ~10 MB (1 artifact) + ~50 MB (SignalCandidate array for 500K trades at ~100 bytes each).
 
 ---
 
@@ -255,43 +282,29 @@ VERDICT       | <BEST_RULE>: delta=$<D> win_rate=<WR%> | <VERDICT_TEXT>
 
 | Case | Handling |
 |---|---|
-| No artifacts in temp dir | Print error: "Run a Batch then immediately run this script" |
-| Artifacts expired (TTL) | Same error |
-| No multi-signal events (every pair trades at different times) | Print "0 multi-signal events — selection rules not testable" |
-| Pair has no trade history at first event | Rules fall back to score=0 (equivalent to random for that pair) |
-| All trades have same entryTimeSec | Single event with N=512 candidates — replay works but is one data point |
-| Negative P&L trades | Include them — the question is relative selection, not absolute profitability |
+| `--artifact-dir` not provided or invalid | Error: require explicit path for reproducibility |
+| No artifacts in dir | Error: "Run a Batch then use --artifact-dir <path>" |
+| No multi-signal events | Report: "0 multi-signal events — selection rules not testable on this universe" |
+| < 100 OOS multi-signal events | Verdict: "INSUFFICIENT_DATA — too few events for reliable conclusion" |
+| Pair has no exited trade history at first events | Score = 0 for recent_* rules; seeded random tie-break resolves ties |
+| Direction filter removes all candidates | Report: "0 candidates after direction filter" |
 
 ---
 
 ## Assumptions and Unknowns
 
-1. **entryTime = fill time:** The `Trade.entryTime` field should reflect the actual execution time (next bar open for `executionModel: next_open`). Must verify that two pairs signaling on the same bar produce trades with identical `entryTime` values. If they differ by 1 bar due to data alignment, the grouping will be off.
+1. **signalTime availability:** The artifact carries `signals[]` (confirmed for synthetic pairs at `BatchSyntheticPairArtifact.signals`). Each Signal has `time` and `barIndex`. If present, `signalTime = Signal.time`. If not present, fall back to `fillTime - 1 bar` on the ratio OHLCV timeline.
 
-2. **Pair-level vs trade-level "best":** The replay measures whether the selected *trade* outperforms alternatives. It doesn't measure whether the selected *pair* is better long-term. These are different questions.
+2. **pnlPercent comparability:** `Trade.pnlPercent` is fee-aware and computed as `pnl / (entryPrice × size) × 100`. It should be comparable across pairs with different entry prices. Must verify that all pairs in the batch used the same `positionSizePercent` (100%) and `commissionPercent`.
 
-3. **Top-1 vs top-K:** Phase 1 tests top-1 selection (pick the single best trade). If capital allows K positions, top-K selection is a natural extension. The rule's ranking quality matters more than its top-1 accuracy.
+3. **Completed-trade bias:** This replay only includes trades that actually completed. Signals that were blocked because a position was already open are NOT in the artifact's trades. This means the replay overstates the number of available slots — some "competing" signals would not have been executable. This is a known limitation of ranking mode vs a full capacity replay.
 
-4. **ExecutionModel impact:** With `next_open`, the entry price is the next bar's open, not the signal bar's close. The entry-bar volatility and momentum rules must use the signal bar (bar before entry), not the entry bar itself.
+4. **Entry OHLCV availability:** `volatilityPct` and `momentumN` need ratio OHLCV at the signal bar. The artifact's `data` field has this. The feature is computed during artifact loading, before the data is released.
 
-5. **Lookback bias in rules:** `recent_sharpe` etc. use the pair's own trade history. If a pair has few prior trades, the estimate is noisy. Minimum history thresholds (e.g., skip rule if < 5 prior trades) should be configurable.
-
-6. **What "simultaneously" means:** Two pairs signaling on the same daily bar may not be truly simultaneous in execution (different markets, different open times). For daily bars this is a reasonable approximation. For 4h bars it's less precise.
-
----
-
-## Validation Summary
-
-| Check | Command |
-|---|---|
-| Typecheck | `npm run typecheck` |
-| Manual smoke | Run batch → immediately run `npm run replay:signal-events` → report renders |
-| Random sanity | Random rule win_rate ≈ 50%, delta ≈ $0 |
-| Edge detection | Any rule with win_rate > 55% → proceed to Phase 2 |
+5. **Time normalization:** `Time` can be unix seconds, milliseconds, ISO strings, or `BusinessDay`. Use `timeKey` from `lib/strategies/index.ts` for normalization. Do NOT use raw `Number(trade.entryTime)`.
 
 ---
 
 ## Rollback Strategy
 
-- Single new file (`scripts/replay-signal-events.ts`) + 1 `package.json` entry. Removing them reverts cleanly.
-- No production code changes. No UI, no endpoint, no service wiring.
+- `scripts/replay-signal-events.ts` + `tests/replay-signal-events.spec.ts` + 1 `package.json` entry. Removing them reverts cleanly. No production code changes.
