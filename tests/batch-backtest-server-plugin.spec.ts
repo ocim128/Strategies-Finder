@@ -1985,3 +1985,38 @@ describe("batch-backtest server plugin mine-prediction-ab route-level authorizat
         }
     });
 });
+
+
+describe("batch-backtest server plugin exposure-redundancy route-level authorization", () => {
+    it("rejects a non-POST /api/batch-backtest/exposure-redundancy with 405", async () => {
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/exposure-redundancy");
+        expect(handler, "exposure-redundancy route must be registered").to.not.equal(undefined);
+        const res = makeRouteResponse();
+        await handler!(
+            { method: "GET", url: "/api/batch-backtest/exposure-redundancy", socket: { remoteAddress: "127.0.0.1" }, headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" } },
+            res,
+        );
+        expect(res.statusCode).to.equal(405);
+    });
+
+    it("rejects an unauthenticated non-loopback POST /exposure-redundancy with 401", async () => {
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/exposure-redundancy");
+        expect(handler).to.not.equal(undefined);
+        const prevToken = process.env.LOCAL_PROXY_TOKEN;
+        delete process.env.LOCAL_PROXY_TOKEN;
+        try {
+            const req = Readable.from([JSON.stringify({ fingerprint: "x", interval: "1d" })]) as any;
+            req.method = "POST";
+            req.url = "/api/batch-backtest/exposure-redundancy";
+            req.headers = {};
+            req.socket = { remoteAddress: "203.0.113.9" };
+            const res = makeRouteResponse();
+            await handler!(req, res);
+            expect(res.statusCode).to.equal(401);
+        } finally {
+            if (prevToken !== undefined) process.env.LOCAL_PROXY_TOKEN = prevToken;
+        }
+    });
+});

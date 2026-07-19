@@ -69,6 +69,7 @@ import {
 } from "./batch-stability-parallel";
 import { runMinePredictionDiagnostic } from "./batch-mine-prediction-engine";
 import { runMineAbTest } from "./batch-mine-prediction-ab-engine";
+import { runExposureRedundancyReport } from "../spread-quality/spread-quality-engine";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -2015,6 +2016,120 @@ async function handleMinePredictionRequest(res: ViteHttpResponse, body: Record<s
 }
 
 /**
+ * Exposure & Redundancy report. Mirrors {@link processMinePrediction}'s
+ * ownership / abort / read-only-on-artifacts pattern, but the compute is a
+ * single pass: iterate stored artifacts ONE AT A TIME, snapshot the scalars
+ * the engine needs (metadata, trade pnl, ratio closes), release the artifact,
+ * then compute incidence + clusters + correlations. Does NOT call
+ * `releaseLastResults` (read-only — Mine/Stability can still run after it
+ * within the TTL window).
+ *
+ * CRITICAL: artifacts are loaded SEQUENTIALLY inside the async generator, NOT
+ * via `Promise.all(metas.map(loadStoredMineArtifact))`. `Promise.all` would
+ * load every artifact simultaneously and defeat the disk-backed parsed-artifact
+ * LRU (`parsedCache`, capped at 32). Peak memory = 1 artifact + accumulated
+ * scalar arrays.
+ *
+ * Exported for direct invocation in tests.
+ */
+export async function processExposureRedundancy(
+    fingerprint: string | null,
+    interval: string | null,
+    writer: MinerStreamWriter,
+    owner: number,
+): Promise<void> {
+    const artifactMetas = collectStoredMineArtifactMetas();
+    if (artifactMetas.length === 0) {
+        writer({ type: "fatal", error: "Run Batch before Exposure & Redundancy; no artifacts on server." });
+        return;
+    }
+    if (!fingerprint || fingerprint !== lastRunFingerprint || !interval) {
+        writer({ type: "fatal", error: "Rerun Batch before Exposure & Redundancy; settings or symbols changed." });
+        return;
+    }
+
+    clearArtifactReleaseTimer();
+    const lostOwnership = () => minerOwner !== owner;
+
+    // Async generator: yields one artifact at a time so the engine never holds
+    // the whole set. `lostOwnership` is checked before each load so a Stop
+    // mid-iteration aborts the next disk read.
+    async function* artifactLoader(): AsyncIterable<BatchSyntheticPairArtifact> {
+        for (const meta of artifactMetas) {
+            if (lostOwnership()) return;
+            yield await loadStoredMineArtifact(meta);
+        }
+    }
+
+    try {
+        writer({ type: "start", pairs: artifactMetas.length });
+        const result = await runExposureRedundancyReport(
+            artifactLoader,
+            (symbol, done) => {
+                if (lostOwnership()) return;
+                writer({ type: "progress", symbol, donePairs: done, totalPairs: artifactMetas.length });
+            },
+            () => lostOwnership(),
+        );
+        if (lostOwnership()) {
+            writer({ type: "done", ok: false, cancelled: true, summary: "Exposure & Redundancy cancelled." });
+            return;
+        }
+        writer({ type: "done", ok: true, result });
+        // Intentionally NO releaseLastResults — read-only on the artifact store.
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        debugLogger.warn("batch.server.exposure_redundancy.fatal", { error: message });
+        writer({ type: "fatal", error: message });
+    } finally {
+        captureCurrentParsedCacheStats();
+        if (hasStoredMineArtifacts()) {
+            scheduleArtifactTtl();
+        }
+    }
+}
+
+async function handleExposureRedundancyRequest(res: ViteHttpResponse, body: Record<string, unknown>): Promise<void> {
+    if (minerOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "An analysis is already running. Use Stop first.");
+    }
+    if (runOwner !== RUN_OWNER_NONE) {
+        throw new HttpStatusError(409, "A batch backtest is running. Use Stop first.");
+    }
+    if (!hasStoredMineArtifacts()) {
+        throw new HttpStatusError(400, "Run Batch before Exposure & Redundancy; no artifacts on server.");
+    }
+    const owner = ++minerOwnerGen;
+    minerOwner = owner;
+    minerAbortController = new AbortController();
+
+    let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
+    try {
+        stream = createDisconnectSafeStream(res, { onDisconnect: () => cancelMinerOnDisconnect(owner) });
+        await processExposureRedundancy(
+            typeof body.fingerprint === "string" ? body.fingerprint : null,
+            typeof body.interval === "string" ? body.interval : lastRunInterval,
+            (event) => stream!.write(event),
+            owner,
+        );
+        stream.end();
+    } catch (error) {
+        if (!stream) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        try {
+            stream.end({ type: "fatal", error: message });
+        } catch {
+            /* best-effort */
+        }
+    } finally {
+        if (minerOwner === owner) {
+            minerOwner = RUN_OWNER_NONE;
+        }
+        minerAbortController = null;
+    }
+}
+
+/**
  * Mine A/B Test: re-runs each pair's backtest with signals filtered to only
  * Mine-LONG-gated entries, compares P&L vs control (all entries). Read-only
  * on artifacts — does NOT release them.
@@ -2448,6 +2563,23 @@ function registerBatchRoutes(middlewares: any): void {
             }
         });
 
+        middlewares.use("/api/batch-backtest/exposure-redundancy", async (req: any, res: any) => {
+            if (req.method !== "POST") {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
+                return;
+            }
+            try {
+                rememberLocalApiOriginFromRequest(req);
+                await handleExposureRedundancyRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
+            } catch (error) {
+                sendCaughtErrorJson(res, error);
+            }
+        });
+
         middlewares.use("/api/batch-backtest/status", async (req: any, res: any) => {
             if (req.method !== "GET") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
@@ -2506,6 +2638,7 @@ export const __testInternals = {
     registerBatchRoutesForTests: registerBatchRoutes,
     processMinePrediction,
     processMineAb,
+    processExposureRedundancy,
     // Audit Finding 5 test seams.
     parseBatchRunId,
     consumePendingBatchStopForRun,

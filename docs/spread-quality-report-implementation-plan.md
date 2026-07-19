@@ -4,7 +4,7 @@
 
 A server-side diagnostic that helps the user understand the concentration and overlap structure of a batch run. Two deliverables:
 
-1. **Exposure & Redundancy Report** (Phase 1-3, defensible now): asset incidence counts, shared-leg clusters, and realized strategy-equity-return correlations between pairs. Descriptive only — no quality labels.
+1. **Exposure & Redundancy Report** (Phase 1-3, defensible now): asset incidence counts, shared-leg network concentration, simultaneous exit-P&L correlations, and ratio-return correlations. Descriptive only — no quality labels.
 2. **Fixed-Ratio Diagnostics** (Phase 0 mandatory, then Phase 4 if validated): ADF stationarity and half-life on the ratio series. Built as a CLI walk-forward validation FIRST. Only promoted to UI if the metrics demonstrate consistent OOS predictive value.
 
 ### What this plan is NOT
@@ -77,11 +77,11 @@ This uses only artifact metadata (`baseAsset`, `quoteAsset` from `BatchSynthetic
 
 Output: `AssetIncidenceResult` — per-asset counts + cluster groupings.
 
-### 1.2 Realized strategy-equity-return correlation
+### 1.2 Simultaneous exit-P&L correlation
 
-For each pair of pairs, compute Pearson correlation of their **strategy equity returns** (not ratio returns). Equity returns come from the per-pair `BacktestResult.equityCurve` — but the batch runner sets `omitEquityCurve: true`, so equity curves are NOT on the artifact.
+True strategy-equity-return correlation would require the per-pair `BacktestResult.equityCurve`, but the batch runner sets `omitEquityCurve: true`, so equity curves are NOT on the artifact.
 
-**Alternative:** compute correlation from per-pair `result.trades` pnl time series. Each trade's `pnl` at its `exitTime` is a cash-flow event. Align two pairs' cash-flow series by `timeKey(exitTime)` and compute correlation on the overlapping timestamps.
+The implemented descriptive proxy correlates per-pair `result.trades` pnl cash-flow events at simultaneous `exitTime` timestamps. It is labeled `EXIT_PNL_CORR`, not equity correlation. Require at least 30 overlapping exits and report the overlap with every result.
 
 This requires `result.trades` from the artifact — which IS available server-side on `BatchSyntheticPairArtifact.result.trades`.
 
@@ -103,9 +103,9 @@ Output: top-K highest ratio-return-correlation pair pairs.
 
 ```ts
 export interface ExposureRedundancyResult {
-  assetIncidence: Map<string, { totalPairs: number; pairs: string[] }>;
+  assetIncidence: Array<{ asset: string; totalPairs: number; grossSlotShare: number; pairs: string[] }>;
   clusters: Array<{ assets: string[]; pairs: string[] }>;
-  topEquityCorrelations: Array<{ pairA: string; pairB: string; correlation: number }>;
+  topExitPnlCorrelations: Array<{ pairA: string; pairB: string; correlation: number | null; overlap: number }>;
   topRatioCorrelations: Array<{ pairA: string; pairB: string; correlation: number }>;
   reportLines: string[];
 }
@@ -117,7 +117,7 @@ export async function runExposureRedundancyReport(
 ): Promise<ExposureRedundancyResult>
 ```
 
-**Critical: artifact loading.** The engine accepts an async iterator/loader callback, NOT a `BatchSyntheticPairArtifact[]` array. This prevents loading all artifacts simultaneously. The plugin's caller iterates metadata, loads one artifact at a time via `loadStoredMineArtifact`, passes it to the engine, and the engine extracts what it needs (metadata for incidence, trades for equity correlation, ratio closes for ratio correlation) before the caller loads the next.
+**Critical: artifact loading.** The engine accepts an async iterator/loader callback, NOT a `BatchSyntheticPairArtifact[]` array. This prevents loading all artifacts simultaneously. The plugin's caller iterates metadata, loads one artifact at a time via `loadStoredMineArtifact`, passes it to the engine, and the engine extracts what it needs (metadata for incidence, trades for exit-P&L correlation, compact typed ratio arrays for ratio correlation) before the caller loads the next.
 
 **Dependencies:** None (pure compute).
 
@@ -202,10 +202,13 @@ export async function runExposureRedundancyReport(
 EXPOSURE   | strategy=<key> interval=<int> pairs=<P> assets=<A>
 EXPOSURE   | NOTE: descriptive analysis of pair concentration and overlap. No quality labels.
 ASSETS     | NFLX in 12 pairs | ORCL in 8 pairs | ANET in 6 pairs | AMD in 5 pairs | ...
-CLUSTERS   | Largest: {NFLX,ORCL,ANET,AMD} connected via 23 pairs | Next: {AVGO,JPM,WFC} via 8 pairs
-EQUITY_CORR| Top correlations: ORCL+NFLX ↔ ANET+NFLX = 0.82 (overlap=45 trades) | AVGO+JPM ↔ AVGO+WFC = 0.71 (overlap=38)
-RATIO_CORR | Top correlations: ORCL+NFLX ↔ ANET+NFLX = 0.76 (overlap=3800 bars) | BTC+ETH ↔ BTC+SOL = 0.89 (overlap=4100 bars)
-REDUNDANCY | <N> pairs have equity correlation > 0.7 with at least one other pair — consider dropping one of each
+CONCENTRATION | legSlots=<2P> | EffAssets=<N> | Top5=<X>% | Top10=<Y>%
+NETWORK    | components=<N> | largest=<P1>/<P> pairs across <A1>/<A> assets
+EXIT_PNL_CORR | Top simultaneous-exit correlations: ORCL+NFLX ↔ ANET+NFLX = 0.82 (overlap=45 trades)
+RATIO_CORR | Top correlations: ORCL+NFLX ↔ ANET+NFLX = 0.7612 (overlap=3800 bars, shared=NFLX)
+RATIO_CORR_NOTE | Full-history ratio returns may be dominated by shared corporate-action jumps; validate split-adjusted or event-filtered data before using as redundancy evidence.
+REDUNDANCY | <E> high-positive exit-P&L relationships involve <N> pairs; review shared exposure
+DIVERSIFICATION | <E> high-negative exit-P&L relationships
 ```
 
 **Validation:**
@@ -297,7 +300,7 @@ Batch Run → ArtifactStore (disk) → iterate metadata
                             loadStoredMineArtifact (1 at a time)
                                     ↓
                             extract: baseAsset, quoteAsset (metadata)
-                                      result.trades[].pnl + exitTime (equity correlation)
+                                      result.trades[].pnl + exitTime (exit-P&L correlation)
                                       data[].close (ratio correlation, Phase 4: ADF/half-life)
                                     ↓ release artifact
                             accumulate scalars
@@ -326,7 +329,7 @@ Batch Run → ArtifactStore (disk) → iterate metadata
 |---|---|
 | Pair has < 50 bars | Exclude from ratio correlation, include in incidence |
 | No trade-time overlap between two pairs | correlation = null, overlap = 0 |
-| Pair has no trades | Include in incidence, exclude from equity correlation |
+| Pair has no trades | Include in incidence, exclude from exit-P&L correlation |
 | ADF regression singular (zero variance) | adfStatistic = null, status = "invalid" |
 | Half-life with ρ outside (0,1) | halfLife = null, status = "unit_root"/"explosive"/"oscillatory" |
 | NaN or Infinity in any metric | Report as null + status field. Never serialize NaN/Infinity. |
@@ -345,7 +348,7 @@ Batch Run → ArtifactStore (disk) → iterate metadata
 
 ## Assumptions and Unknowns
 
-1. **Trade-pnl as equity proxy:** Using trade exit-time pnl as a sparse equity-return proxy assumes trades are the primary P&L events. If a pair has very few trades, the correlation estimate is noisy. Minimum trade-overlap threshold (e.g., 10 trades) should be required before reporting a correlation.
+1. **Exit-P&L is not equity return:** Correlating pnl only at simultaneous trade exits is a sparse descriptive proxy and can be noisy. It is labeled `EXIT_PNL_CORR`, requires at least 30 overlapping exits, and must not be presented as mark-to-market strategy-equity correlation.
 
 2. **Phase 0 outcome:** Most likely negative (given Mine Timing precedent). The plan is structured so a Phase 0 failure still delivers the Exposure & Redundancy Report (Phases 1-3), which is useful regardless.
 

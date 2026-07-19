@@ -61,6 +61,10 @@
                 title="Backtest Mine's predictions at historical bars — does the analog Lift% correlate with realized forward return?">
                 Mine Prediction
             </button>
+            <button class="btn btn-secondary btn-compact" id="batchBacktestExposureBtn" type="button" disabled
+                title="Analyze pair concentration, shared-leg clusters, and cross-pair correlations">
+                Exposure
+            </button>
         </div>
         <div class="batch-mine-prediction-config" aria-label="Mine Prediction configuration">
             <span class="batch-mine-prediction-config-label">Mine Prediction:</span>
@@ -120,6 +124,10 @@
                 title="Copy the Mine A/B test report">
                 Copy A/B
             </button>
+            <button class="btn btn-secondary btn-compact" id="batchBacktestCopyExposureBtn" type="button" disabled
+                title="Copy the Exposure & Redundancy report">
+                Copy Exposure
+            </button>
             <button class="btn btn-secondary btn-compact" id="batchBacktestCopyBenchmarkBtn" type="button" disabled
                 title="Copy benchmark diagnostics (timings, cache hit rates) for the latest run / mine / stability as JSON">
                 Copy Benchmark
@@ -169,6 +177,7 @@
 
         <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestMinePredictionSummary"></div>
         <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestMineAbSummary"></div>
+        <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestExposureSummary"></div>
     </div>
 
     <div class="finder-results">

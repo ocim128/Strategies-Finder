@@ -75,6 +75,8 @@ import type { BatchMinePredictionResult } from "./batch-mine-prediction-engine";
 import type { BatchMinePredictionStreamEvent } from "./batch-mine-prediction-stream-types";
 import type { MineAbResult } from "./batch-mine-prediction-ab-engine";
 import type { MineAbStreamEvent } from "./batch-mine-prediction-ab-stream-types";
+import type { ExposureRedundancyResult } from "../spread-quality/spread-quality-engine";
+import type { ExposureRedundancyStreamEvent } from "../spread-quality/spread-quality-stream-types";
 import {
     projectMineVerdictToSnapshot,
     projectStabilityRowToSnapshot,
@@ -138,6 +140,7 @@ class BatchBacktestService {
     private lastStabilityResult: BatchStabilityMineResult | null = null;
     private lastMinePredictionResult: BatchMinePredictionResult | null = null;
     private lastMineAbResult: MineAbResult | null = null;
+    private lastExposureResult: ExposureRedundancyResult | null = null;
     private lastRunFingerprint: string | null = null;
     private lastRunInterval: string | null = null;
     // The strategy key that governed the last Run, captured at run start so
@@ -274,6 +277,12 @@ class BatchBacktestService {
         });
         dom.batchBacktestCopyMineAbBtn.addEventListener("click", () => {
             void this.copyMineAbResults();
+        });
+        dom.batchBacktestExposureBtn.addEventListener("click", () => {
+            void this.runExposureRedundancy();
+        });
+        dom.batchBacktestCopyExposureBtn.addEventListener("click", () => {
+            void this.copyExposureResults();
         });
         dom.batchBacktestSymbolTemplate.addEventListener("change", () => {
             const key = dom.batchBacktestSymbolTemplate.value as BatchSymbolTemplateKey;
@@ -1957,6 +1966,7 @@ class BatchBacktestService {
             if (this.analysisCancelRequested) return;
             this.beginAnalysisBusy(dom);
             dom.batchBacktestMineAbBtn.disabled = true;
+        dom.batchBacktestExposureBtn.disabled = true;
             dom.batchBacktestCopyMineAbBtn.disabled = true;
             dom.batchBacktestMineAbSummary.textContent = "Running Mine A/B test on server...";
             await postBatchNdjson<MineAbStreamEvent>({
@@ -2010,6 +2020,84 @@ class BatchBacktestService {
         const copied = await copyToClipboard(text);
         if (copied) {
             uiManager.showToast("Mine A/B report copied", "success");
+        } else {
+            this.getDom().batchBacktestStatus.textContent = "Copy failed.";
+        }
+    }
+
+    /**
+     * Exposure & Redundancy Report: analyzes pair concentration, shared-leg
+     * clusters, and cross-pair correlations. Descriptive only — no quality
+     * labels. Read-only on artifacts.
+     */
+    private async runExposureRedundancy(): Promise<void> {
+        if (this.analysisInFlight) return;
+        this.analysisInFlight = true;
+        this.analysisCancelRequested = false;
+        const dom = this.getDom();
+        try {
+            if (!this.serverHasArtifacts) {
+                dom.batchBacktestExposureSummary.textContent = "Run Batch first.";
+                return;
+            }
+            if (!this.lastRunFingerprint) {
+                dom.batchBacktestExposureSummary.textContent = "Rerun Batch; settings or symbols changed.";
+                dom.batchBacktestCopyExposureBtn.disabled = true;
+                return;
+            }
+            if (this.analysisCancelRequested) return;
+            this.beginAnalysisBusy(dom);
+            dom.batchBacktestExposureBtn.disabled = true;
+            dom.batchBacktestCopyExposureBtn.disabled = true;
+            dom.batchBacktestExposureSummary.textContent = "Analyzing exposure and redundancy on server...";
+            await postBatchNdjson<ExposureRedundancyStreamEvent>({
+                endpoint: "/api/batch-backtest/exposure-redundancy",
+                body: {
+                    fingerprint: this.lastRunFingerprint,
+                    interval: this.lastRunInterval,
+                },
+                onResponse: () => this.reissueStopIfNeeded(),
+                handlers: {
+                    onStart: (event: { pairs: number }) => {
+                        dom.batchBacktestExposureSummary.textContent = `Analyzing exposure — ${event.pairs} pairs`;
+                    },
+                    onProgress: (event: { symbol: string; donePairs: number; totalPairs: number }) => {
+                        dom.batchBacktestExposureSummary.textContent = `Analyzing exposure — ${event.symbol} (${event.donePairs}/${event.totalPairs})`;
+                    },
+                    onDone: (event: { ok: boolean; result?: ExposureRedundancyResult; summary?: string }) => {
+                        if (event.ok && event.result) {
+                            this.lastExposureResult = event.result;
+                            dom.batchBacktestExposureSummary.textContent = event.result.reportLines.join("\n");
+                            dom.batchBacktestCopyExposureBtn.disabled = event.result.reportLines.length === 0;
+                        } else {
+                            dom.batchBacktestExposureSummary.textContent = event.summary ?? "Exposure analysis failed.";
+                        }
+                    },
+                    onFatal: (event: { error: string }) => {
+                        throw new Error(event.error);
+                    },
+                },
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.lastExposureResult = null;
+            dom.batchBacktestExposureSummary.textContent = `Exposure error: ${message}`;
+            dom.batchBacktestCopyExposureBtn.disabled = true;
+            debugLogger.error("batch_exposure.server_failed", { error: message });
+        } finally {
+            await this.finishAnalysisBusy(dom);
+        }
+    }
+
+    private async copyExposureResults(): Promise<void> {
+        if (!this.lastExposureResult) {
+            uiManager.showToast("No Exposure report to copy", "info");
+            return;
+        }
+        const text = this.lastExposureResult.reportLines.join("\n");
+        const copied = await copyToClipboard(text);
+        if (copied) {
+            uiManager.showToast("Exposure report copied", "success");
         } else {
             this.getDom().batchBacktestStatus.textContent = "Copy failed.";
         }
@@ -2188,6 +2276,7 @@ class BatchBacktestService {
         dom.batchBacktestStabilityMineBtn.disabled = !available;
         dom.batchBacktestMinePredictionBtn.disabled = !available;
         dom.batchBacktestMineAbBtn.disabled = !available;
+        dom.batchBacktestExposureBtn.disabled = !available;
     }
 
     private clearMinerResults(dom: BatchBacktestDom): void {
@@ -2195,6 +2284,7 @@ class BatchBacktestService {
         this.lastStabilityResult = null;
         this.lastMinePredictionResult = null;
         this.lastMineAbResult = null;
+        this.lastExposureResult = null;
         // Clear rather than show "Miner idle": an empty .batch-miner-status
         // collapses via CSS (:empty) so the run-state region does not show a
         // noise strip before any mining has happened (point 7 of the refactor).
@@ -2206,6 +2296,8 @@ class BatchBacktestService {
         dom.batchBacktestMinePredictionSummary.textContent = "";
         dom.batchBacktestCopyMineAbBtn.disabled = true;
         dom.batchBacktestMineAbSummary.textContent = "";
+        dom.batchBacktestCopyExposureBtn.disabled = true;
+        dom.batchBacktestExposureSummary.textContent = "";
     }
 
     private createMinerRow(verdict: BatchSyntheticAssetVerdict): HTMLDivElement {
@@ -2624,6 +2716,7 @@ class BatchBacktestService {
         dom.batchBacktestStabilityMineBtn.disabled = true;
         dom.batchBacktestMinePredictionBtn.disabled = true;
         dom.batchBacktestMineAbBtn.disabled = true;
+        dom.batchBacktestExposureBtn.disabled = true;
     }
 
     // Keep operations disabled until unscoped /stop requests have settled.
@@ -2636,6 +2729,7 @@ class BatchBacktestService {
         dom.batchBacktestStabilityMineBtn.disabled = true;
         dom.batchBacktestMinePredictionBtn.disabled = true;
         dom.batchBacktestMineAbBtn.disabled = true;
+        dom.batchBacktestExposureBtn.disabled = true;
         const pending = this.pendingStopPromise;
         if (pending) {
             try { await pending; } catch { /* stopServerWork swallows errors */ }
