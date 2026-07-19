@@ -1,6 +1,6 @@
 # Mine Timing / Stability Mine / Portfolio Fit — Validation Findings
 
-## Status: Validated Negative (2026-07-18)
+## Status: Validated Negative (updated 2026-07-19)
 
 Three diagnostic tools were built to answer: **does Mine Timing produce a tradeable directional edge?** After exhaustive testing across multiple strategies, intervals, horizons, directions, regimes, and sample densities — including a real-P&L A/B test — the answer is **no**.
 
@@ -104,13 +104,14 @@ Portfolio Fit uses `oosLiftPct` (the analog study's average forward return over 
 
 ### What to use
 - **The batch pair-strategy P&L itself.** That's the real edge (+$125k on 2 pairs, +$922k on 276 pairs). It comes from the strategy + exit overlay, not from Mine Timing.
-- **Sort batch pairs by net P&L.** The top pairs ARE the best performers. Mine's overlay doesn't improve the ranking.
+- **Treat historical pair P&L as descriptive evidence about the batch configuration.** It identifies past performance, but it is not a validated rule for choosing the best trade among signals firing now.
 
 ### What NOT to use
 - **Do not use Mine Timing / Stability Mine verdicts for trade timing or entry filtering.** The A/B test proved it destroys P&L.
 - **Do not use Portfolio Fit's `edge%` / dollar allocation recommendations.** The input is ungrounded (`LIFT_COR ≈ 0`). Portfolio Fit's own output already labels itself "EXPERIMENTAL — do not treat as independently validated."
 - **Do not size by Mine's confidence labels.** They are not calibrated and invert in bear markets.
 - **Do not follow SHORT verdicts.** Universally counter-predictive across all tests.
+- **Do not rank current signals by recent return, win rate, profit factor, signal rarity, time since exit, entry volatility, or ratio momentum.** The signal-event replay found no reliable OOS selection edge from these rules.
 
 ### What to keep as research display (not trade signals)
 - Mine Timing, Stability Mine, and Portfolio Fit can be retained as **research-only displays**. They visualize the batch's positioning state, which is informative for understanding what happened — just not for predicting what will happen.
@@ -194,9 +195,74 @@ Even after fixing these bugs, the cleanest config (Config 2) is negative. The co
 
 ---
 
+## Update: Current-Time Signal Selection Replay — Negative (2026-07-19)
+
+### Question tested
+
+When many synthetic pairs signal simultaneously and capital cannot take every trade, can information available at that moment identify the best trade to take?
+
+The replay grouped trades by their original signal time and compared top-1 selection against the mean return of all candidates in the same event. Every history-based feature used only trades that had already exited. Labels crossing train/test boundaries and `end_of_data` trades were excluded. Rule selection used chronological walk-forward training, and the final annual window was held out.
+
+Rules tested:
+
+- recent risk-adjusted return over 5/10/20 completed trades
+- recent win rate, average return, and profit factor over 5/10 completed trades
+- bars since the pair's last exit
+- recent signal rarity
+- entry ATR percentage, preferring lower volatility
+- 5/10/20-bar ratio momentum
+- seeded-random selection as the neutral baseline
+
+### Configuration check mattered
+
+The first annual-window run used a long-hold configuration. It produced only 1 usable fold because many outcomes crossed fold boundaries, so its positive-looking OOS numbers were correctly classified as `INSUFFICIENT_DATA` and were not evidence of edge.
+
+The intended three-bar configuration was then verified from the realized holding distribution: median signal-to-exit duration was 6 calendar days, p90/p99 were 7 days, and the maximum was 10 days (weekends and holidays explain the calendar-time difference from three trading bars).
+
+Three-month test windows could not reach the predeclared minimum of 100 complete events per fold. Using 12-month train and 12-month test windows preserved the 100-event minimum without weakening the standard.
+
+### Valid three-bar result
+
+| Measurement | Result |
+|---|---|
+| Artifacts / eligible pairs | 428 / 420 |
+| Completed trade candidates | 114,655 |
+| Multi-signal events | 5,477 |
+| Usable rolling OOS folds | 20 / 20 |
+| Eligible events per OOS fold | 228–248 |
+| Adaptive walk-forward selector | mean delta **+0.07%**, median **+0.07%** |
+| Positive folds | 13 / 20 |
+| Fold-bootstrap 95% CI | **[-0.14%, +0.24%]** |
+| Seeded-random baseline | mean delta **+0.20%**, CI **[-0.10%, +0.73%]** |
+| Frozen-rule final holdout | 246 events, mean delta **-0.01%**, median **-0.06%** |
+| Oracle ceiling | mean delta **+7.46%** |
+| Verdict | **NO_OOS_EDGE** |
+
+The oracle ceiling proves that choosing the right trade would matter after the outcomes are known. The tested causal features could not identify that trade beforehand. The adaptive selector's confidence interval includes zero, it did not beat the random baseline, and the frozen rule was flat on the untouched holdout.
+
+Preferring lower entry volatility was reliably harmful in rolling OOS (`-0.25%`, CI `[-0.45%, -0.08%]`). This is an anti-signal for that predeclared polarity, not proof that selecting the highest-volatility candidate works. Reversing it after seeing the result would be a new post-hoc hypothesis requiring fresh untouched validation.
+
+### Decision and cleanup
+
+- Phase 1 failed its OOS gate; the conditional stateful capacity replay and UI integration must not be built.
+- No tested rule may be labeled "best trade now."
+- When capacity is constrained, use a neutral admission policy plus exposure limits rather than an unsupported predictive rank: equal allocation or seeded-random admission, with caps on shared underlying assets.
+- The signal-event replay CLI, launcher, tests, package commands, and implementation plan were removed after recording the result here. Keeping a failed one-off research surface would invite repeated post-hoc tuning against the same history.
+
+### Experience retained for future research
+
+1. Verify the artifact's actual holding distribution before interpreting fold exclusions.
+2. Set fold duration from event density while preserving the predeclared minimum sample size; do not lower the threshold merely to manufacture usable folds.
+3. Treat `INSUFFICIENT_DATA` as neither pass nor fail, regardless of attractive point estimates.
+4. Reserve a final holdout and do not promote a rule whose rolling OOS confidence interval crosses zero.
+5. A large oracle ceiling shows economic opportunity, not a usable forecast. A causal selector still has to demonstrate OOS and holdout value.
+6. Do not invert a failed rule after observing its sign and call the inverse validated.
+
+---
+
 ## Complete Investigation Summary: Lessons Learned
 
-### What was investigated (4 independent approaches)
+### What was investigated (5 independent approaches)
 
 | # | Approach | Question | Tool | Result |
 |---|---|---|---|---|
@@ -204,6 +270,7 @@ Even after fixing these bugs, the cleanest config (Config 2) is negative. The co
 | 2 | Mine Timing prediction | Does Mine's analog engine predict forward return? | Mine Prediction IC diagnostic | **NO_EDGE** at proper density |
 | 3 | Mine as trade filter | Does filtering trades through Mine improve P&L? | Mine A/B Test | **CONTROL_BETTER** (Mine destroys $195k) |
 | 4 | Spread quality metrics | Do ADF/half-life predict which pairs are profitable OOS? | Phase 0 walk-forward validation | **FAIL** — no OOS predictive value |
+| 5 | Current-time signal ranking | Can causal history and entry features pick the best simultaneous trade? | Signal-event walk-forward replay | **NO_OOS_EDGE** — adaptive CI crosses zero; holdout flat |
 
 ### The pattern
 
@@ -213,6 +280,7 @@ Every theoretically-plausible metric failed under rigorous validation:
 - Regime splits showed the "edge" was trend beta, not skill
 - P&L A/B test proved the signal destroys value when used as a filter
 - Walk-forward validation showed spread metrics don't predict OOS
+- Dense signal-event replay showed current-time ranking rules do not beat neutral selection
 
 ### Root causes
 
@@ -224,6 +292,8 @@ Every theoretically-plausible metric failed under rigorous validation:
 
 4. **The exit overlay is the product.** Your batch P&L (+$922k) comes from `zscore_deviation_streak_reversion` / `naive_compression_breakout_follow` / `vwap_skew_gradient_exhaustion` applied to pair entry signals. No overlay on top of that (Mine Timing, spread-quality metrics, Portfolio Fit) improves it.
 
+5. **Outcome dispersion is not predictability.** The signal-event oracle had a large +7.46% ceiling, so simultaneous trades do differ materially after the fact. Recent pair performance and entry-state features still failed to identify the winner causally OOS.
+
 ### What works (proven)
 
 - **The batch pair-strategy + exit overlay.** That's the edge. 99.6% of pairs are profitable.
@@ -234,6 +304,7 @@ Every theoretically-plausible metric failed under rigorous validation:
 - Mine Timing / Stability Mine / Portfolio Fit for any trade decision (direction, timing, sizing, filtering)
 - ADF / half-life / Hurst exponent for pair selection or OOS prediction
 - Any in-sample metric for predicting OOS performance after configuration search
+- Recent-return, win-rate, profit-factor, rarity, time-since-exit, low-volatility, and momentum rules for choosing the best current signal
 
 ### Methodology lessons for future research
 
@@ -251,9 +322,15 @@ Every theoretically-plausible metric failed under rigorous validation:
 
 7. **Don't combine overlapping metrics into a composite score.** ADF + half-life + Hurst measure the same underlying property (mean-reversion speed). Combining them triple-counts one signal and creates false confidence.
 
+8. **Validate the actual run configuration before interpreting a diagnostic.** The long-hold replay had only one usable annual fold; only the verified three-bar artifacts produced a valid ranking test.
+
+9. **Choose windows from event density, not convenience.** Twelve-month folds were required to retain at least 100 complete events per fold. Lowering the minimum would have weakened the claim instead of fixing the design.
+
+10. **Stop after a negative gate.** Do not build capacity simulation or UI for a selector that failed counterfactual OOS ranking.
+
 ### Tools retained for future research
 
-All diagnostic tools are retained in the codebase for validating future signals:
+The following reusable diagnostic tools are retained in the codebase for validating future signals:
 
 | Tool | Button | What it measures |
 |---|---|---|
@@ -264,6 +341,8 @@ All diagnostic tools are retained in the codebase for validating future signals:
 
 If a future strategy or signal claims directional edge, run Mine Prediction first (IC test), then Mine A/B (P&L test). If both pass, the edge is real. If either fails, it's not.
 
+The one-off signal-event replay was removed after its negative conclusion was documented. Any future current-time selector should start from a new preregistered hypothesis and untouched validation data rather than reusing that surface to mine the same history.
+
 ---
 
 ## Where to focus next
@@ -272,6 +351,6 @@ The investigation proved the edge is in the execution layer (strategy + exit ove
 
 1. **Exit-overlay parameter optimization.** Walk-forward optimization on `lookback`, `zScoreBoundary`, `streakThreshold` (for `zscore_deviation_streak_reversion`) or `lookback`, `volPercentileMax`, `zThreshold` (for `naive_compression_breakout_follow`). These are the knobs that determine how much of the +$922k you capture.
 
-2. **Capital efficiency via redundancy reduction.** Use the Exposure Report to cut from 512 to ~150 non-redundant pairs. Same per-trade edge, less capital required, lower concentration risk.
+2. **Capital efficiency via exposure constraints.** When signals exceed available slots, use a neutral admission rule with shared-asset and concentration caps. Exposure management controls risk without pretending to know which current trade will be best.
 
 3. **Single-asset direction (if needed).** A standalone momentum/trend strategy on single-asset OHLCV — not an overlay on the pair strategy. The pair strategy is a spread/arbitrage tool; direction is a different tool's job.
