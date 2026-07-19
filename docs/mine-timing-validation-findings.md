@@ -1,6 +1,6 @@
 # Mine Timing / Stability Mine / Portfolio Fit — Validation Findings
 
-## Status: Validated Negative (updated 2026-07-19)
+## Status: Validated Negative (updated 2026-07-20)
 
 Three diagnostic tools were built to answer: **does Mine Timing produce a tradeable directional edge?** After exhaustive testing across multiple strategies, intervals, horizons, directions, regimes, and sample densities — including a real-P&L A/B test — the answer is **no**.
 
@@ -260,9 +260,164 @@ Preferring lower entry volatility was reliably harmful in rolling OOS (`-0.25%`,
 
 ---
 
+## Update: OPEN_SCORE USD Asset Selection Replay (2026-07-20)
+
+### Question tested
+
+When several synthetic-pair positions imply positive exposure to different
+assets, does selecting the asset with the highest positive OPEN_SCORE and
+trading that asset against USD beat selecting another positive asset at random?
+
+The server-side `OPEN_SCORE USD` replay reconstructs the signed asset votes at
+each historical pair-entry event, enters the selected single asset against USD
+at the next bar open, and measures fixed-horizon returns with the retained Batch
+slippage and commission settings.
+
+This remains an event-level selector study. It does not model overlapping USD
+positions, slot limits, adaptive exits, or compounding.
+
+### What `MAX_ACTIVE` means
+
+Every currently open synthetic pair containing an asset counts as one active
+pair for that asset. The pair direction determines whether its signed vote is
+positive or negative, but both directions count toward active-pair coverage.
+
+For example:
+
+- AAPL has 7 positive pair votes and 4 negative pair votes: raw score `+3`,
+  active pairs `11`.
+- NVDA has 4 positive pair votes and no negative pair votes: raw score `+4`,
+  active pairs `4`.
+
+`TOP_RAW` selects NVDA because `+4` is the larger net score. `MAX_ACTIVE`
+selects AAPL because 11 currently open pairs contain AAPL. The final trade is
+still AAPL against USD; no synthetic pair is traded.
+
+`MAX_ACTIVE` therefore asks a simpler question:
+
+> Among assets whose net signed vote is positive, did the asset supported by
+> the largest number of currently open pair relationships perform best?
+
+It is a coverage/breadth rule, not a prediction model. It uses no future return,
+pair P&L, asset identity preference, or learned threshold.
+
+### Control selectors
+
+The replay compares five causal selectors against the same-event random-positive
+baseline:
+
+| Selector | Rule |
+|---|---|
+| `TOP_RAW` | Highest net signed pair vote |
+| `TOP_ADJUSTED` | Highest `raw / sqrt(activePairs)` |
+| `TOP_MEAN` | Highest `raw / activePairs` |
+| `MAX_ACTIVE` | Most currently open pairs among positive-score assets |
+| `MAX_STATIC` | Most submitted pair-list relationships among positive-score assets |
+
+The report also removes the most frequently selected `TOP_RAW` asset and
+recalculates the result (`RAW_EX_<asset>`). This exposes results caused by one
+dominant stock rather than a reusable selector.
+
+### Results
+
+| Pair universe / interval | Main result |
+|---|---|
+| Rank-Pairs-derived 567-pair 4h lists | `TOP_RAW` looked strongly positive, but `MAX_ACTIVE` matched or slightly beat it; RAW/ADJUSTED agreed 95-99% |
+| 276-pair MIXED list, 4h | `TOP_RAW` selected MU about 83% of the time; removing MU made every horizon significantly negative |
+| Random 2,000-symbol input, 1,534 retained artifacts, 4h | `TOP_RAW`, `TOP_ADJUSTED`, and `TOP_MEAN` were negative; `MAX_ACTIVE` was positive at 36/72/96 bars with deltas `+1.15%`, `+2.38%`, and `+3.29%` and positive 95% intervals |
+| Rank-Pairs-derived 995-pair uptrend list, 30m | `TOP_RAW` was positive but nearly identical to `MAX_ACTIVE`, with 99.7% RAW/ADJUSTED agreement and about 60% of selections in AMD |
+| Rank-Pairs-derived downtrend list, 4h | `TOP_RAW` failed; `TOP_MEAN` was positive, but the pair universe also changed, so this was not a clean regime comparison |
+
+### Conclusion
+
+`TOP_RAW` is **not validated as a general asset selector**. Its attractive 4h
+and 30m results depended strongly on pair-list construction and a few
+high-coverage assets. On the broad random universe it underperformed random
+selection.
+
+`MAX_ACTIVE` is the strongest new hypothesis because it survived the broad
+random-universe run. It is not yet validated: it was identified after examining
+the same historical experiments and still needs a preregistered test on an
+untouched chronological holdout with a fixed, degree-balanced pair universe.
+
+`TOP_MEAN` may behave differently in downtrends, but the observed downtrend run
+changed both the market regime and pair universe. It cannot isolate a regime
+effect.
+
+Rank Pairs labels must not be used to filter a pair universe and then replay the
+same historical window. Rank Pairs classifies approximately three years ending
+at its latest candle, so that workflow uses future regime information. A valid
+Rank-Pairs-driven test requires classification using candles at or before a
+cutoff, freezing the list, then replaying only after the cutoff.
+
+### Pair-list size and chunking
+
+The Batch server accepts at most 2,000 submitted symbols. Splitting a larger
+universe into independent chunks is not valid for OPEN_SCORE selection because
+each chunk changes the candidates and scores available at the same event.
+Chunk reports cannot be combined into the result of one full-universe decision.
+
+A Cartesian pair matrix also contains self-pairs and reciprocal duplicates.
+For `N` assets, the number of unique unordered, non-self relationships is:
+
+```text
+N * (N - 1) / 2
+```
+
+For 70 assets this is 2,415 relationships, not 4,900 directional cells.
+
+### Proposed feature: balanced pair-list generator
+
+Add a pair-list generator whose input is one marked asset per line:
+
+```text
+AAPL•
+NVDA•
+MSFT•
+AMD•
+```
+
+The generator should:
+
+1. normalize and deduplicate asset tokens;
+2. reject invalid assets;
+3. generate each non-self relationship once;
+4. omit reciprocal duplicates such as keeping `AAPL•+NVDA•` but not also
+   `NVDA•+AAPL•`;
+5. output the full unique list when it contains at most 2,000 pairs;
+6. when it exceeds 2,000, deterministically select a degree-balanced subset;
+7. balance base/quote orientation so input or alphabetical order does not make
+   one asset almost always the base leg;
+8. report asset count, possible unique pairs, emitted pairs, seed, and pair
+   degree min/median/max;
+9. support Copy and applying the generated list to Batch.
+
+For 70 assets and a 2,000-pair limit, total pair degree is 4,000. A balanced
+generator should therefore make each asset appear in approximately 57-58
+pairs. This provides broad coverage without letting a few assets dominate only
+because the input list was uneven.
+
+The generator must not rank pairs by past return, Rank Pairs regime, asset
+identity, or future outcomes. Its purpose is experimental balance and
+reproducibility, not selecting historically attractive pairs.
+
+### Required next validation
+
+1. Generate one deterministic, degree-balanced pair list.
+2. Freeze the pair list, Batch configuration, interval, horizons, and selector
+   rules before examining the holdout.
+3. Compare `MAX_ACTIVE`, `TOP_RAW`, `TOP_MEAN`, `MAX_STATIC`, and random on a
+   new chronological holdout.
+4. Require positive chronological blocks and a positive confidence interval;
+   also report per-asset selection concentration.
+5. Only build a stateful USD portfolio replay if `MAX_ACTIVE` survives that
+   gate.
+
+---
+
 ## Complete Investigation Summary: Lessons Learned
 
-### What was investigated (5 independent approaches)
+### What was investigated (6 independent approaches)
 
 | # | Approach | Question | Tool | Result |
 |---|---|---|---|---|
@@ -271,6 +426,7 @@ Preferring lower entry volatility was reliably harmful in rolling OOS (`-0.25%`,
 | 3 | Mine as trade filter | Does filtering trades through Mine improve P&L? | Mine A/B Test | **CONTROL_BETTER** (Mine destroys $195k) |
 | 4 | Spread quality metrics | Do ADF/half-life predict which pairs are profitable OOS? | Phase 0 walk-forward validation | **FAIL** — no OOS predictive value |
 | 5 | Current-time signal ranking | Can causal history and entry features pick the best simultaneous trade? | Signal-event walk-forward replay | **NO_OOS_EDGE** — adaptive CI crosses zero; holdout flat |
+| 6 | OPEN_SCORE USD asset selection | Does the largest positive signed asset vote beat another positive asset? | OPEN_SCORE USD replay | **TOP_RAW NOT GENERAL**; `MAX_ACTIVE` is an unvalidated holdout hypothesis |
 
 ### The pattern
 
@@ -281,6 +437,7 @@ Every theoretically-plausible metric failed under rigorous validation:
 - P&L A/B test proved the signal destroys value when used as a filter
 - Walk-forward validation showed spread metrics don't predict OOS
 - Dense signal-event replay showed current-time ranking rules do not beat neutral selection
+- OPEN_SCORE USD showed that attractive score results can be pair-degree and dominant-asset effects; a broad random universe rejected `TOP_RAW`
 
 ### Root causes
 
@@ -305,6 +462,7 @@ Every theoretically-plausible metric failed under rigorous validation:
 - ADF / half-life / Hurst exponent for pair selection or OOS prediction
 - Any in-sample metric for predicting OOS performance after configuration search
 - Recent-return, win-rate, profit-factor, rarity, time-since-exit, low-volatility, and momentum rules for choosing the best current signal
+- `TOP_RAW` OPEN_SCORE as a general USD asset selector
 
 ### Methodology lessons for future research
 
@@ -337,11 +495,12 @@ The following reusable diagnostic tools are retained in the codebase for validat
 | Mine Prediction | "Mine Prediction" | Rank IC of Mine's analog predictions vs realized forward return |
 | Mine A/B Test | "Mine A/B" | P&L difference between all trades and Mine-filtered trades |
 | Exposure & Redundancy | "Exposure" | Asset concentration, shared-leg clusters, cross-pair correlations |
+| OPEN_SCORE USD | "OPEN_SCORE USD" | Event-level comparison of signed-score and coverage selectors against random-positive selection |
 | Phase 0 Validation | `npm run validate:spread-quality` | Walk-forward: do spread metrics predict OOS P&L? |
 
 If a future strategy or signal claims directional edge, run Mine Prediction first (IC test), then Mine A/B (P&L test). If both pass, the edge is real. If either fails, it's not.
 
-The one-off signal-event replay was removed after its negative conclusion was documented. Any future current-time selector should start from a new preregistered hypothesis and untouched validation data rather than reusing that surface to mine the same history.
+The one-off signal-event replay was removed after its negative conclusion was documented. `MAX_ACTIVE` is a new, explicitly unvalidated hypothesis and must be tested on untouched data rather than promoted from the exploratory OPEN_SCORE runs.
 
 ---
 
@@ -351,6 +510,8 @@ The investigation proved the edge is in the execution layer (strategy + exit ove
 
 1. **Exit-overlay parameter optimization.** Walk-forward optimization on `lookback`, `zScoreBoundary`, `streakThreshold` (for `zscore_deviation_streak_reversion`) or `lookback`, `volPercentileMax`, `zThreshold` (for `naive_compression_breakout_follow`). These are the knobs that determine how much of the +$922k you capture.
 
-2. **Capital efficiency via exposure constraints.** When signals exceed available slots, use a neutral admission rule with shared-asset and concentration caps. Exposure management controls risk without pretending to know which current trade will be best.
+2. **Balanced pair-universe construction.** Generate a deterministic pair list from single-asset inputs, remove self/reciprocal duplicates, and keep asset degree and base/quote orientation balanced under the 2,000-symbol limit.
 
-3. **Single-asset direction (if needed).** A standalone momentum/trend strategy on single-asset OHLCV — not an overlay on the pair strategy. The pair strategy is a spread/arbitrage tool; direction is a different tool's job.
+3. **Capital efficiency via exposure constraints.** When signals exceed available slots, use a neutral admission rule with shared-asset and concentration caps. Exposure management controls risk without pretending to know which current trade will be best.
+
+4. **Single-asset direction (if needed).** A standalone momentum/trend strategy on single-asset OHLCV — not an overlay on the pair strategy. The pair strategy is a spread/arbitrage tool; direction is a different tool's job.

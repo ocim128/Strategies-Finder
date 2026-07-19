@@ -75,6 +75,21 @@ export interface DegreeSummary {
     topAssetShare: number | null;
 }
 
+export interface SelectorAgreement {
+    events: number;
+    sameSelection: number;
+    rate: number | null;
+}
+
+export interface AssetSelectionSummary {
+    asset: string;
+    events: number;
+    share: number;
+    topMean: number | null;
+    randomMean: number | null;
+    delta: number | null;
+}
+
 export interface OpenScoreUsdReplayResult {
     pairs: number;
     assets: number;
@@ -82,11 +97,24 @@ export interface OpenScoreUsdReplayResult {
     omittedPairs: number;
     omittedAssets: number;
     totalEvents: number;
+    /** Decision events with at least two positive candidates before outcome availability. */
+    candidateEvents: number;
     eligibleEvents: number;
     horizons: Array<{
         bars: number;
         topRaw: ReplayComparison;
         topAdjusted: ReplayComparison;
+        /** Highest rawScore / activePairCount (mean signed vote). */
+        topMean: ReplayComparison;
+        /** Control: positive candidate covered by the most currently-open pairs. */
+        maxActive: ReplayComparison;
+        /** Control: positive candidate with the highest submitted pair-list degree. */
+        maxStatic: ReplayComparison;
+        /** TOP_RAW after events selecting its most-frequent asset are removed. */
+        topRawExDominant: ReplayComparison;
+        dominantAsset: string | null;
+        rawAdjustedAgreement: SelectorAgreement;
+        topRawByAsset: AssetSelectionSummary[];
         /** Active pair count at decision events (coverage at the event). */
         candidateDegree: DegreeSummary;
         /** Static pair degree of the selected TOP_RAW asset across events. */
@@ -234,7 +262,7 @@ export async function runOpenScoreUsdReplay(
     const horizons = [...new Set(options.horizons.filter((h) => Number.isFinite(h) && h >= 1).map((h) => Math.floor(h)))].sort((a, b) => a - b);
     const emptyResult = (partial: Partial<OpenScoreUsdReplayResult>): OpenScoreUsdReplayResult => ({
         pairs: 0, assets: 0, complete: false, omittedPairs: 0, omittedAssets: 0,
-        totalEvents: 0, eligibleEvents: 0, horizons: [], degree: degreeSummary([], null),
+        totalEvents: 0, candidateEvents: 0, eligibleEvents: 0, horizons: [], degree: degreeSummary([], null),
         warnings, reportLines: [], ...partial,
     });
     if (horizons.length === 0) {
@@ -377,12 +405,22 @@ export async function runOpenScoreUsdReplay(
 
     // --- Phase 3: build candidate sets; collect per-asset event requests ---
     onPhase("targets", "forming candidates", 0, totalEvents);
-    interface Candidate { assetIndex: number; raw: number; adjusted: number; activePairs: number }
+    interface Candidate {
+        assetIndex: number;
+        raw: number;
+        adjusted: number;
+        mean: number;
+        activePairs: number;
+        staticPairs: number;
+    }
     interface EventView {
         timeSec: number;
         positives: Candidate[];
         topRaw: number;      // assetIndex
         topAdjusted: number; // assetIndex
+        topMean: number;     // assetIndex
+        maxActive: number;   // assetIndex
+        maxStatic: number;   // assetIndex
         /** Max active-pair count across positive candidates at this event. */
         maxActivePairs: number;
     }
@@ -397,7 +435,14 @@ export async function runOpenScoreUsdReplay(
             if (raw > 0) {
                 if (cnt > maxActivePairs) maxActivePairs = cnt;
                 const adjusted = cnt > 0 ? raw / Math.sqrt(cnt) : raw;
-                positives.push({ assetIndex: a, raw, adjusted, activePairs: cnt });
+                positives.push({
+                    assetIndex: a,
+                    raw,
+                    adjusted,
+                    mean: cnt > 0 ? raw / cnt : raw,
+                    activePairs: cnt,
+                    staticPairs: staticDegree.get(assetNames[a]!) ?? 0,
+                });
             }
         }
         // Need >= 2 positive candidates for a top-vs-random comparison.
@@ -406,13 +451,22 @@ export async function runOpenScoreUsdReplay(
             const byName = (x: Candidate, y: Candidate): number => assetNames[x.assetIndex]!.localeCompare(assetNames[y.assetIndex]!);
             let topRaw = positives[0]!;
             let topAdjusted = positives[0]!;
+            let topMean = positives[0]!;
+            let maxActive = positives[0]!;
+            let maxStatic = positives[0]!;
             for (const c of positives) {
                 if (c.raw > topRaw.raw || (c.raw === topRaw.raw && byName(c, topRaw) < 0)) topRaw = c;
                 if (c.adjusted > topAdjusted.adjusted || (c.adjusted === topAdjusted.adjusted && byName(c, topAdjusted) < 0)) topAdjusted = c;
+                if (c.mean > topMean.mean || (c.mean === topMean.mean && byName(c, topMean) < 0)) topMean = c;
+                if (c.activePairs > maxActive.activePairs || (c.activePairs === maxActive.activePairs && byName(c, maxActive) < 0)) maxActive = c;
+                if (c.staticPairs > maxStatic.staticPairs || (c.staticPairs === maxStatic.staticPairs && byName(c, maxStatic) < 0)) maxStatic = c;
             }
             views.push({
                 timeSec: ev.timeSec, positives,
                 topRaw: topRaw.assetIndex, topAdjusted: topAdjusted.assetIndex,
+                topMean: topMean.assetIndex,
+                maxActive: maxActive.assetIndex,
+                maxStatic: maxStatic.assetIndex,
                 maxActivePairs,
             });
         }
@@ -498,14 +552,23 @@ export async function runOpenScoreUsdReplay(
     const horizonResults: OpenScoreUsdReplayResult["horizons"] = [];
     let eligibleEventsMax = 0;
     for (let hIdx = 0; hIdx < horizons.length; hIdx += 1) {
-        const topRawDelta: number[] = [];
-        const topAdjDelta: number[] = [];
-        const topRawReturns: number[] = [];
-        const topAdjReturns: number[] = [];
-        const eventTimes: number[] = [];
+        interface SelectorSeries {
+            deltas: number[];
+            returns: number[];
+            times: number[];
+            assets: string[];
+        }
+        const createSeries = (): SelectorSeries => ({ deltas: [], returns: [], times: [], assets: [] });
+        const topRaw = createSeries();
+        const topAdjusted = createSeries();
+        const topMean = createSeries();
+        const maxActive = createSeries();
+        const maxStatic = createSeries();
         const selectedDegree: number[] = [];
         const activeCountsAtEvents: number[] = [];
         const selectedByAsset = new Map<string, number>();
+        const topRawSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        let rawAdjustedSame = 0;
 
         for (let v = 0; v < views.length; v += 1) {
             const view = views[v]!;
@@ -522,26 +585,29 @@ export async function runOpenScoreUsdReplay(
             }
             if (!allValid) continue; // censored or missing -> omit from both arms
 
-            const randomMeanOf = (excludeIdx: number): number => {
-                let s = 0, n = 0;
-                for (const [aIdx, r] of retByAsset) {
-                    if (aIdx === excludeIdx) continue;
-                    s += r; n += 1;
-                }
-                return n > 0 ? s / n : Number.NaN;
+            let totalReturn = 0;
+            for (const r of retByAsset.values()) totalReturn += r;
+            const randomMeanOf = (selectedIdx: number): number => {
+                const selectedReturn = retByAsset.get(selectedIdx);
+                return selectedReturn === undefined || retByAsset.size < 2
+                    ? Number.NaN
+                    : (totalReturn - selectedReturn) / (retByAsset.size - 1);
+            };
+            const appendSelection = (series: SelectorSeries, selectedIdx: number): void => {
+                const selectedReturn = retByAsset.get(selectedIdx)!;
+                const randomMean = randomMeanOf(selectedIdx);
+                series.returns.push(selectedReturn);
+                series.deltas.push(selectedReturn - randomMean);
+                series.times.push(view.timeSec);
+                series.assets.push(assetNames[selectedIdx]!);
             };
 
-            const topRawRet = retByAsset.get(view.topRaw)!;
-            const topAdjRet = retByAsset.get(view.topAdjusted)!;
-            const randVsRaw = randomMeanOf(view.topRaw);
-            const randVsAdj = randomMeanOf(view.topAdjusted);
-            if (!Number.isFinite(randVsRaw) || !Number.isFinite(randVsAdj)) continue;
-
-            topRawReturns.push(topRawRet);
-            topAdjReturns.push(topAdjRet);
-            topRawDelta.push(topRawRet - randVsRaw);
-            topAdjDelta.push(topAdjRet - randVsAdj);
-            eventTimes.push(view.timeSec);
+            appendSelection(topRaw, view.topRaw);
+            appendSelection(topAdjusted, view.topAdjusted);
+            appendSelection(topMean, view.topMean);
+            appendSelection(maxActive, view.maxActive);
+            appendSelection(maxStatic, view.maxStatic);
+            if (view.topRaw === view.topAdjusted) rawAdjustedSame += 1;
             // candidateDegree reports ACTIVE PAIR COUNT at decision events
             // (per the plan), NOT the count of positive candidates. The
             // previous `view.positives.length` understated coverage and hid
@@ -549,16 +615,24 @@ export async function runOpenScoreUsdReplay(
             activeCountsAtEvents.push(view.maxActivePairs);
             const selName = assetNames[view.topRaw]!;
             selectedByAsset.set(selName, (selectedByAsset.get(selName) ?? 0) + 1);
+            let assetSamples = topRawSamplesByAsset.get(selName);
+            if (!assetSamples) {
+                assetSamples = { returns: [], deltas: [] };
+                topRawSamplesByAsset.set(selName, assetSamples);
+            }
+            assetSamples.returns.push(topRaw.returns[topRaw.returns.length - 1]!);
+            assetSamples.deltas.push(topRaw.deltas[topRaw.deltas.length - 1]!);
             // selectedDegree = static pair degree of the TOP_RAW winner. This
             // was collected but never surfaced; the report now exposes it so
             // coverage bias on the actually-selected asset is visible.
             selectedDegree.push(staticDegree.get(selName) ?? 0);
         }
 
-        const n = topRawDelta.length;
+        const n = topRaw.deltas.length;
         eligibleEventsMax = Math.max(eligibleEventsMax, n);
-        const buildComparison = (deltasArr: number[], topReturns: number[]): ReplayComparison => {
-            if (n === 0) {
+        const buildComparison = (deltasArr: number[], topReturns: number[], times: number[]): ReplayComparison => {
+            const sampleCount = deltasArr.length;
+            if (sampleCount === 0) {
                 return {
                     events: 0, topMean: null, randomMean: null, delta: null, topMedian: null,
                     blockMeans: [], ciLower: null, ciUpper: null, positiveBlocks: 0, totalBlocks: 0,
@@ -569,11 +643,11 @@ export async function runOpenScoreUsdReplay(
             const randomMean = topMean !== null && deltaMean !== null ? finiteOrNull(topMean - deltaMean) : null;
             const sortedTop = [...topReturns].sort((a, b) => a - b);
             // Chronological blocks by event time.
-            const blocks = splitIntoBlocks(deltasArr, eventTimes, blockCount);
+            const blocks = splitIntoBlocks(deltasArr, times, blockCount);
             const blockMeans = blocks.map((blk) => blk.reduce((s, x) => s + x, 0) / blk.length);
             const { lower, upper } = blockBootstrapCi(blockMeans, bootstrapSamples);
             return {
-                events: n,
+                events: sampleCount,
                 topMean,
                 randomMean,
                 delta: deltaMean,
@@ -588,10 +662,46 @@ export async function runOpenScoreUsdReplay(
 
         const totalSelected = [...selectedByAsset.values()].reduce((s, x) => s + x, 0);
         const maxSelected = Math.max(0, ...selectedByAsset.values());
+        const topRawByAsset: AssetSelectionSummary[] = [...selectedByAsset.entries()]
+            .map(([asset, events]) => {
+                const samples = topRawSamplesByAsset.get(asset)!;
+                const selectedMean = meanOrNull(samples.returns);
+                const delta = meanOrNull(samples.deltas);
+                return {
+                    asset,
+                    events,
+                    share: totalSelected > 0 ? events / totalSelected : 0,
+                    topMean: selectedMean,
+                    randomMean: selectedMean !== null && delta !== null ? finiteOrNull(selectedMean - delta) : null,
+                    delta,
+                };
+            })
+            .sort((a, b) => b.events - a.events || a.asset.localeCompare(b.asset));
+        const dominantAsset = topRawByAsset[0]?.asset ?? null;
+        const nonDominantIndexes: number[] = [];
+        for (let i = 0; i < topRaw.assets.length; i += 1) {
+            if (topRaw.assets[i] !== dominantAsset) nonDominantIndexes.push(i);
+        }
+        const topRawExDominant = buildComparison(
+            nonDominantIndexes.map((i) => topRaw.deltas[i]!),
+            nonDominantIndexes.map((i) => topRaw.returns[i]!),
+            nonDominantIndexes.map((i) => topRaw.times[i]!),
+        );
         horizonResults.push({
             bars: horizons[hIdx]!,
-            topRaw: buildComparison(topRawDelta, topRawReturns),
-            topAdjusted: buildComparison(topAdjDelta, topAdjReturns),
+            topRaw: buildComparison(topRaw.deltas, topRaw.returns, topRaw.times),
+            topAdjusted: buildComparison(topAdjusted.deltas, topAdjusted.returns, topAdjusted.times),
+            topMean: buildComparison(topMean.deltas, topMean.returns, topMean.times),
+            maxActive: buildComparison(maxActive.deltas, maxActive.returns, maxActive.times),
+            maxStatic: buildComparison(maxStatic.deltas, maxStatic.returns, maxStatic.times),
+            topRawExDominant,
+            dominantAsset,
+            rawAdjustedAgreement: {
+                events: n,
+                sameSelection: rawAdjustedSame,
+                rate: n > 0 ? rawAdjustedSame / n : null,
+            },
+            topRawByAsset,
             candidateDegree: degreeSummary(activeCountsAtEvents, totalSelected > 0 ? maxSelected / totalSelected : null),
             selectedDegree: degreeSummary(selectedDegree, totalSelected > 0 ? maxSelected / totalSelected : null),
         });
@@ -629,7 +739,7 @@ export async function runOpenScoreUsdReplay(
 
     const reportLines = buildReportLines({
         pairs: pairCount, assets: assetCount, complete, omittedPairs, omittedAssets,
-        totalEvents, eligibleEvents: eligibleEventsMax, horizons: horizonResults,
+        totalEvents, candidateEvents: views.length, eligibleEvents: eligibleEventsMax, horizons: horizonResults,
         degree, warnings, startedAt, horizonsList: horizons,
         interval: options.interval ?? null,
         sampleFromSec: options.sampleFromSec ?? null,
@@ -644,6 +754,7 @@ export async function runOpenScoreUsdReplay(
         omittedPairs,
         omittedAssets,
         totalEvents,
+        candidateEvents: views.length,
         eligibleEvents: eligibleEventsMax,
         horizons: horizonResults,
         degree,
@@ -774,28 +885,40 @@ const fmtNum = (x: number | null): string => (x === null || !Number.isFinite(x) 
 
 function buildReportLines(args: {
     pairs: number; assets: number; complete: boolean; omittedPairs: number; omittedAssets: number;
-    totalEvents: number; eligibleEvents: number; horizons: OpenScoreUsdReplayResult["horizons"];
+    totalEvents: number; candidateEvents: number; eligibleEvents: number; horizons: OpenScoreUsdReplayResult["horizons"];
     degree: DegreeSummary; warnings: string[]; startedAt: number; horizonsList: number[];
     interval: string | null; sampleFromSec: number | null; sampleToSec: number | null;
     slippageRate: number; commissionRate: number;
 }): string[] {
     const lines: string[] = [];
-    const status = args.complete ? "COMPLETE" : "INCOMPLETE";
-    lines.push(`OPEN_SCORE USD | ${status} | pairs=${args.pairs} assets=${args.assets} events=${args.totalEvents} eligible=${args.eligibleEvents}`);
+    const status = args.complete ? "DATA_COMPLETE" : "DATA_INCOMPLETE";
+    const comparisonLine = (label: string, comparison: ReplayComparison): string =>
+        `${label.padEnd(14)} n=${comparison.events} top=${fmtPct(comparison.topMean)} rand=${fmtPct(comparison.randomMean)} ` +
+        `delta=${fmtPct(comparison.delta)} CI95=[${fmtPct(comparison.ciLower)},${fmtPct(comparison.ciUpper)}] ` +
+        `+blocks=${comparison.positiveBlocks}/${comparison.totalBlocks}`;
+    lines.push(`OPEN_SCORE USD | ${status} | pairs=${args.pairs} assets=${args.assets} events=${args.totalEvents} comparable=${args.candidateEvents} eligible=${args.eligibleEvents}`);
     lines.push(`config | interval=${args.interval ?? "n/a"} window=${args.sampleFromSec === null ? "start" : new Date(args.sampleFromSec * 1000).toISOString().slice(0, 10)}..${args.sampleToSec === null ? "end" : new Date(args.sampleToSec * 1000).toISOString().slice(0, 10)} horizons=[${args.horizonsList.join(",")}] slippageRate=${args.slippageRate} commissionRate=${args.commissionRate}`);
     lines.push(`static pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
+    lines.push("controls | TOP_MEAN=raw/activePairs MAX_ACTIVE=most open pairs MAX_STATIC=most submitted pairs");
     for (const h of args.horizons) {
-        lines.push(`--- horizon ${h.bars} bar(s) ---`);
-        lines.push(
-            `TOP_RAW      n=${h.topRaw.events} top=${fmtPct(h.topRaw.topMean)} rand=${fmtPct(h.topRaw.randomMean)} ` +
-            `delta=${fmtPct(h.topRaw.delta)} CI95=[${fmtPct(h.topRaw.ciLower)},${fmtPct(h.topRaw.ciUpper)}] ` +
-            `+blocks=${h.topRaw.positiveBlocks}/${h.topRaw.totalBlocks}`,
-        );
-        lines.push(
-            `TOP_ADJUSTED n=${h.topAdjusted.events} top=${fmtPct(h.topAdjusted.topMean)} rand=${fmtPct(h.topAdjusted.randomMean)} ` +
-            `delta=${fmtPct(h.topAdjusted.delta)} CI95=[${fmtPct(h.topAdjusted.ciLower)},${fmtPct(h.topAdjusted.ciUpper)}] ` +
-            `+blocks=${h.topAdjusted.positiveBlocks}/${h.topAdjusted.totalBlocks}`,
-        );
+        const coverageRate = args.candidateEvents > 0 ? h.topRaw.events / args.candidateEvents : 0;
+        const coverageStatus = h.topRaw.events === 0
+            ? "NO_USABLE_EVENTS"
+            : h.topRaw.events < args.candidateEvents
+                ? "PARTIAL"
+                : "FULL";
+        lines.push(`--- horizon ${h.bars} bar(s) | coverage=${h.topRaw.events}/${args.candidateEvents} (${(coverageRate * 100).toFixed(1)}%) ${coverageStatus} ---`);
+        lines.push(comparisonLine("TOP_RAW", h.topRaw));
+        lines.push(comparisonLine("TOP_ADJUSTED", h.topAdjusted));
+        lines.push(comparisonLine("TOP_MEAN", h.topMean));
+        lines.push(comparisonLine("MAX_ACTIVE", h.maxActive));
+        lines.push(comparisonLine("MAX_STATIC", h.maxStatic));
+        lines.push(comparisonLine(`RAW_EX_${h.dominantAsset ?? "NONE"}`, h.topRawExDominant));
+        lines.push(`RAW/ADJUSTED agreement = ${h.rawAdjustedAgreement.sameSelection}/${h.rawAdjustedAgreement.events} (${h.rawAdjustedAgreement.rate === null ? "n/a" : (h.rawAdjustedAgreement.rate * 100).toFixed(1) + "%"})`);
+        const assetBreakdown = h.topRawByAsset.slice(0, 5).map((x) =>
+            `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
+        ).join(" | ");
+        lines.push(`TOP_RAW selected assets = ${assetBreakdown || "n/a"}${h.topRawByAsset.length > 5 ? ` | other=${h.topRawByAsset.length - 5} assets` : ""}`);
         lines.push(`active pair count at events min/median/max = ${h.candidateDegree.min}/${fmtNum(h.candidateDegree.median)}/${h.candidateDegree.max} topAssetShare=${h.candidateDegree.topAssetShare === null ? "n/a" : (h.candidateDegree.topAssetShare * 100).toFixed(1) + "%"}`);
         lines.push(`selected TOP_RAW static degree min/median/max = ${h.selectedDegree.min}/${fmtNum(h.selectedDegree.median)}/${h.selectedDegree.max}`);
     }

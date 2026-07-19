@@ -40,12 +40,6 @@ import { body_proportion_entropy_ignition } from "./lib/body_proportion_entropy_
 import { return_skewness_exhaustion_fade } from "./lib/return_skewness_exhaustion_fade";
 import { volume_weighted_entropy_ignition } from "./lib/volume_weighted_entropy_ignition";
 import { initiative_crossing_frequency_chop } from "./lib/initiative_crossing_frequency_chop";
-import { relative_strength_mean_reversion } from "./lib/relative_strength_mean_reversion";
-import { cross_pressure_initiative_inversion } from "./lib/cross_pressure_initiative_inversion";
-import { dominance_handoff_exhaustion } from "./lib/dominance_handoff_exhaustion";
-import { close_location_correlation_break } from "./lib/close_location_correlation_break";
-import { correlation_range_fragmentation } from "./lib/correlation_range_fragmentation";
-import { correlation_flash_gamma_trigger } from "./lib/correlation_flash_gamma_trigger";
 import { rolling_vwap_center } from "./lib/rolling_vwap_center";
 import { initiative_pressure_side } from "./lib/initiative_pressure_side";
 import { decay_momentum_alignment } from "./lib/decay_momentum_alignment";
@@ -60,12 +54,6 @@ import { trailing_boundary_composite } from "./lib/trailing_boundary_composite";
 import { true_range_skew_acceptance } from "./lib/true_range_skew_acceptance";
 import { volume_roc_regime_router } from "./lib/volume_roc_regime_router";
 import { atr_range_conviction_follow } from "./lib/atr_range_conviction_follow";
-import { cmf_pressure_alignment } from "./lib/cmf_pressure_alignment";
-import { keltner_boundary_pressure_gap } from "./lib/keltner_boundary_pressure_gap";
-import { weighted_price_roc_veto } from "./lib/weighted_price_roc_veto";
-import { micro_level_ping_adverse_veto } from "./lib/micro_level_ping_adverse_veto";
-import { chop_breakout_adverse_veto } from "./lib/chop_breakout_adverse_veto";
-import { efficiency_median_adverse_veto } from "./lib/efficiency_median_adverse_veto";
 import { acceptance_flash_crash } from "./lib/acceptance_flash_crash";
 import { golden_conjugate_initiative_trend } from "./lib/golden_conjugate_initiative_trend";
 import { golden_initiative_quorum } from "./lib/golden_initiative_quorum";
@@ -75,19 +63,8 @@ import { acceptance_sourced_momentum_quorum } from "./lib/acceptance_sourced_mom
 import { structural_rotation_shock } from "./lib/structural_rotation_shock";
 import { width_expansion_zscore_router } from "./lib/width_expansion_zscore_router";
 import { efficiency_keltner_router } from "./lib/efficiency_keltner_router";
-import { polymarket_event_direction_follow } from "./lib/polymarket_event_direction_follow";
-import { polymarket_fair_value_mispricing } from "./lib/polymarket_fair_value_mispricing";
-import { polymarket_fair_value_catchup_scalper } from "./lib/polymarket_fair_value_catchup_scalper";
-import { polymarket_event_direction_gamma_skew_filter } from "./lib/polymarket_event_direction_gamma_skew_filter";
 import { close_acceptance_streak_ignition } from "./lib/close_acceptance_streak_ignition";
 import { rolling_distribution_asymmetry_alignment } from "./lib/rolling_distribution_asymmetry_alignment";
-import { entropy_volume_gated_no_adverse } from "./lib/entropy_volume_gated_no_adverse";
-import { micro_wick_exhaustion_executable_agreement } from "./lib/micro_wick_exhaustion_executable_agreement";
-import { midpoint_deviation_no_adverse } from "./lib/midpoint_deviation_no_adverse";
-import { price_volume_correlation_break_gamma } from "./lib/price_volume_correlation_break_gamma";
-import { volume_skewness_acceleration_no_adverse } from "./lib/volume_skewness_acceleration_no_adverse";
-import { vw_typical_dispersion_no_adverse } from "./lib/vw_typical_dispersion_no_adverse";
-import { event_direction_1s } from "./lib/event_direction_1s";
 import { cumulative_return_zscore_reversion } from "./lib/cumulative_return_zscore_reversion";
 import { range_expansion_exhaustion_reversion } from "./lib/range_expansion_exhaustion_reversion";
 import { acceptance_deviation_median_reversion } from "./lib/acceptance_deviation_median_reversion";
@@ -277,12 +254,6 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "return_skewness_exhaustion_fade", strategy: return_skewness_exhaustion_fade },
     { key: "volume_weighted_entropy_ignition", strategy: volume_weighted_entropy_ignition },
     { key: "initiative_crossing_frequency_chop", strategy: initiative_crossing_frequency_chop },
-    { key: "relative_strength_mean_reversion", strategy: relative_strength_mean_reversion },
-    { key: "cross_pressure_initiative_inversion", strategy: cross_pressure_initiative_inversion },
-    { key: "dominance_handoff_exhaustion", strategy: dominance_handoff_exhaustion },
-    { key: "close_location_correlation_break", strategy: close_location_correlation_break },
-    { key: "correlation_range_fragmentation", strategy: correlation_range_fragmentation },
-    { key: "correlation_flash_gamma_trigger", strategy: correlation_flash_gamma_trigger },
     { key: "rolling_vwap_center", strategy: rolling_vwap_center },
     { key: "initiative_pressure_side", strategy: initiative_pressure_side },
     { key: "decay_momentum_alignment", strategy: decay_momentum_alignment },
@@ -297,12 +268,6 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "true_range_skew_acceptance", strategy: true_range_skew_acceptance },
     { key: "volume_roc_regime_router", strategy: volume_roc_regime_router },
     { key: "atr_range_conviction_follow", strategy: atr_range_conviction_follow },
-    { key: "cmf_pressure_alignment", strategy: cmf_pressure_alignment },
-    { key: "keltner_boundary_pressure_gap", strategy: keltner_boundary_pressure_gap },
-    { key: "weighted_price_roc_veto", strategy: weighted_price_roc_veto },
-    { key: "micro_level_ping_adverse_veto", strategy: micro_level_ping_adverse_veto },
-    { key: "chop_breakout_adverse_veto", strategy: chop_breakout_adverse_veto },
-    { key: "efficiency_median_adverse_veto", strategy: efficiency_median_adverse_veto },
     { key: "acceptance_flash_crash", strategy: acceptance_flash_crash },
     { key: "golden_conjugate_initiative_trend", strategy: golden_conjugate_initiative_trend },
     { key: "golden_initiative_quorum", strategy: golden_initiative_quorum },
@@ -312,19 +277,8 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "structural_rotation_shock", strategy: structural_rotation_shock },
     { key: "width_expansion_zscore_router", strategy: width_expansion_zscore_router },
     { key: "efficiency_keltner_router", strategy: efficiency_keltner_router },
-    { key: "polymarket_event_direction_follow", strategy: polymarket_event_direction_follow },
-    { key: "polymarket_fair_value_mispricing", strategy: polymarket_fair_value_mispricing },
-    { key: "polymarket_fair_value_catchup_scalper", strategy: polymarket_fair_value_catchup_scalper },
-    { key: "polymarket_event_direction_gamma_skew_filter", strategy: polymarket_event_direction_gamma_skew_filter },
     { key: "close_acceptance_streak_ignition", strategy: close_acceptance_streak_ignition },
     { key: "rolling_distribution_asymmetry_alignment", strategy: rolling_distribution_asymmetry_alignment },
-    { key: "entropy_volume_gated_no_adverse", strategy: entropy_volume_gated_no_adverse },
-    { key: "micro_wick_exhaustion_executable_agreement", strategy: micro_wick_exhaustion_executable_agreement },
-    { key: "midpoint_deviation_no_adverse", strategy: midpoint_deviation_no_adverse },
-    { key: "price_volume_correlation_break_gamma", strategy: price_volume_correlation_break_gamma },
-    { key: "volume_skewness_acceleration_no_adverse", strategy: volume_skewness_acceleration_no_adverse },
-    { key: "vw_typical_dispersion_no_adverse", strategy: vw_typical_dispersion_no_adverse },
-    { key: "event_direction_1s", strategy: event_direction_1s },
     { key: "cumulative_return_zscore_reversion", strategy: cumulative_return_zscore_reversion },
     { key: "range_expansion_exhaustion_reversion", strategy: range_expansion_exhaustion_reversion },
     { key: "acceptance_deviation_median_reversion", strategy: acceptance_deviation_median_reversion },

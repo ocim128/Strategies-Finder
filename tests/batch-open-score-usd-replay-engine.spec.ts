@@ -300,6 +300,109 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(result.horizons[0]!.topRaw.topMean).to.not.equal(null);
     });
 
+    it("reports coverage controls that separate score edge from pair-degree concentration", async () => {
+        // At T1 the positive candidates intentionally produce different
+        // winners for every diagnostic rule:
+        //   TOP_RAW / MAX_ACTIVE -> AAA (raw=3, active=5)
+        //   TOP_ADJUSTED         -> BBB (2/sqrt(2) > 3/sqrt(5))
+        //   TOP_MEAN             -> AAB (raw/active=1 tie, name ascending)
+        //   MAX_STATIC           -> DDD (six submitted pairs, one active)
+        // This proves the report is evaluating genuinely different selectors,
+        // rather than printing aliases of TOP_RAW.
+        const pairs = [
+            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)]),
+            makePair("AAA", "X2", [makeTrade("long", T0 + 1000, null)]),
+            makePair("AAA", "X3", [makeTrade("long", T0 + 1000, null)]),
+            makePair("AAA", "X4", [makeTrade("long", T0 + 1000, null)]),
+            makePair("AAA", "ZZZ", [makeTrade("short", T0 + 1000, null)]),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "Y2", [makeTrade("long", T0 + 1000, null)]),
+            makePair("AAB", "Y3", [makeTrade("long", T0 + 1000, null)]),
+            makePair("DDD", "Y4", [makeTrade("long", T0 + 1000, null)]),
+            ...Array.from({ length: 5 }, (_, i) => makePair("DDD", `EMPTY${i}`, [])),
+        ];
+        const targetWithReturn = (asset: string, forwardReturn: number): OpenScoreUsdTarget =>
+            makeTarget(asset, 10, (i) => i === 3 ? 100 * (1 + forwardReturn) : 100);
+        const targets = [
+            targetWithReturn("AAA", 0.10),
+            targetWithReturn("BBB", 0.20),
+            targetWithReturn("AAB", 0.30),
+            targetWithReturn("DDD", 0.40),
+            targetWithReturn("ZZZ", 0.05),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        const horizon = result.horizons[0]!;
+        expect(horizon.topRaw.topMean).to.be.closeTo(0.10, 1e-9);
+        expect(horizon.topAdjusted.topMean).to.be.closeTo(0.20, 1e-9);
+        expect(horizon.topMean.topMean).to.be.closeTo(0.30, 1e-9);
+        expect(horizon.maxActive.topMean).to.be.closeTo(0.10, 1e-9);
+        expect(horizon.maxStatic.topMean).to.be.closeTo(0.40, 1e-9);
+        expect(horizon.rawAdjustedAgreement).to.deep.equal({ events: 1, sameSelection: 0, rate: 0 });
+        expect(horizon.dominantAsset).to.equal("AAA");
+        expect(horizon.topRawExDominant.events).to.equal(0);
+        const aaaSummary = horizon.topRawByAsset.find((x) => x.asset === "AAA")!;
+        expect(aaaSummary.events).to.equal(1);
+        expect(aaaSummary.share).to.equal(1);
+        expect(aaaSummary.topMean).to.be.closeTo(0.10, 1e-9);
+        expect(aaaSummary.randomMean).to.be.closeTo(0.2375, 1e-9);
+        expect(aaaSummary.delta).to.be.closeTo(-0.1375, 1e-9);
+        expect(result.reportLines.join("\n")).to.include("controls | TOP_MEAN=raw/activePairs");
+    });
+
+    it("labels zero-event horizons as unusable even when all datasets loaded", async () => {
+        const pairs = [
+            makePair("AAA", "CCC", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "DDD", [makeTrade("long", T0 + 1000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 3, () => 100),
+            makeTarget("BBB", 3, () => 50),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [5], blockCount: 1 },
+        );
+        expect(result.complete).to.equal(true);
+        expect(result.candidateEvents).to.equal(1);
+        expect(result.reportLines.join("\n")).to.include("coverage=0/1 (0.0%) NO_USABLE_EVENTS");
+        expect(result.reportLines[0]).to.include("DATA_COMPLETE");
+    });
+
+    it("reports TOP_RAW performance after removing the dominant selected asset", async () => {
+        const pairs = [
+            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, T0 + 2000)]),
+            makePair("AAA", "X2", [makeTrade("long", T0 + 1000, T0 + 2000)]),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, T0 + 2000)]),
+            makePair("CCC", "Z1", [makeTrade("long", T0 + 3000, null)]),
+            makePair("CCC", "Z2", [makeTrade("long", T0 + 3000, null)]),
+            makePair("DDD", "W1", [makeTrade("long", T0 + 3000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, (i) => i === 3 ? 110 : 100),
+            makeTarget("BBB", 10, () => 100),
+            makeTarget("CCC", 10, (i) => i === 5 ? 120 : 100),
+            makeTarget("DDD", 10, () => 100),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        const horizon = result.horizons[0]!;
+        // AAA and CCC each win once; the deterministic count/name ordering
+        // names AAA dominant. Removing AAA's event must leave CCC's +20%
+        // return against DDD's flat random control.
+        expect(horizon.dominantAsset).to.equal("AAA");
+        expect(horizon.topRawExDominant.events).to.equal(1);
+        expect(horizon.topRawExDominant.topMean).to.be.closeTo(0.20, 1e-9);
+        expect(horizon.topRawExDominant.delta).to.be.closeTo(0.20, 1e-9);
+    });
+
     it("cancels during the artifact scan when shouldStop returns true", async () => {
         const pairs = [makePair("AAA", "BBB", [makeTrade("long", T0 + 1000, null)])];
         const result = await runOpenScoreUsdReplay(
