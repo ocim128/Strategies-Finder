@@ -1058,7 +1058,14 @@ class BatchBacktestService {
 
     private async copyResults(): Promise<void> {
         if (this.lastResults.length === 0) return;
-        const text = formatBatchOverallSummary(this.lastResults).join("\n");
+        const lines = formatBatchOverallSummary(this.lastResults);
+        // Include the completed OPEN_SCORE USD selector study in the main
+        // Batch copy so MAX_ACTIVE and its controls are not lost when the user
+        // uses Copy Results instead of the analysis-specific copy button.
+        if (this.lastOpenScoreUsdResult?.reportLines.length) {
+            lines.push("", ...this.lastOpenScoreUsdResult.reportLines);
+        }
+        const text = lines.join("\n");
         const copied = await copyToClipboard(text);
         if (!copied) {
             this.getDom().batchBacktestStatus.textContent = "Copy failed.";
