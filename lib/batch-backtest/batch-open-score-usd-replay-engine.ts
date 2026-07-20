@@ -1159,6 +1159,7 @@ function buildReportLines(args: {
         lines.push(comparisonLine("MAX_SUBMITTED", h.maxSubmitted));
         lines.push(comparisonLine("MAX_RETAINED", h.maxRetained));
         lines.push(comparisonLine(`RAW_EX_${h.dominantAsset ?? "NONE"}`, h.topRawExDominant));
+        lines.push(comparisonLine(`ACTIVE_EX_${h.maxActiveDominantAsset ?? "NONE"}`, h.maxActiveExDominant));
         // Phase 3 MAX_ACTIVE: pairwise same-event deltas (only differing-selection events).
         lines.push(comparisonLine("ACTIVE_VS_SUB", h.activeVsSubmitted));
         lines.push(comparisonLine("ACTIVE_VS_RET", h.activeVsRetained));
@@ -1173,6 +1174,10 @@ function buildReportLines(args: {
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");
         lines.push(`TOP_RAW selected assets = ${assetBreakdown || "n/a"}${h.topRawByAsset.length > 5 ? ` | other=${h.topRawByAsset.length - 5} assets` : ""}`);
+        const maxActiveBreakdown = h.maxActiveByAsset.slice(0, 5).map((x) =>
+            `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
+        ).join(" | ");
+        lines.push(`MAX_ACTIVE selected assets = ${maxActiveBreakdown || "n/a"}${h.maxActiveByAsset.length > 5 ? ` | other=${h.maxActiveByAsset.length - 5} assets` : ""}`);
         lines.push(`active pair count at events min/median/max = ${h.candidateDegree.min}/${fmtNum(h.candidateDegree.median)}/${h.candidateDegree.max} topAssetShare=${h.candidateDegree.topAssetShare === null ? "n/a" : (h.candidateDegree.topAssetShare * 100).toFixed(1) + "%"}`);
         lines.push(`selected TOP_RAW retained degree min/median/max = ${h.selectedDegree.min}/${fmtNum(h.selectedDegree.median)}/${h.selectedDegree.max}`);
     }

@@ -229,6 +229,8 @@ describe("batch-open-score-usd-replay-engine Phase 3 MAX_ACTIVE extensions", () 
         expect(report).to.include("MAX_SUBMITTED");
         expect(report).to.include("MAX_RETAINED");
         expect(report).to.include("ACTIVE_VS_SUB");
+        expect(report).to.include("ACTIVE_EX_");
+        expect(report).to.include("MAX_ACTIVE selected assets =");
         expect(report).to.include("tie rates");
     });
 
