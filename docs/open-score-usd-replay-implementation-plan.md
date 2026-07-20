@@ -323,6 +323,138 @@ dependence. A later sensitivity run may create deterministic degree-capped
 pair subsets, but it is not part of v1 and must not replace the actual-universe
 result.
 
+## Short-side reversion selector (MAX_ACTIVE_REVERSION)
+
+The long-side arms answer: "among assets with positive signed `OPEN_SCORE`,
+which selection rule beats a random positive candidate?" The short-side
+reversion arm mirrors that question for negative-score assets: "among assets
+with negative signed `OPEN_SCORE`, does the asset with the most currently-open
+pair coverage outperform a random negative candidate when **shorted** vs USD?"
+
+**Candidate pool.** At each decision event the engine builds `positives[]`
+from `rawScore[a] > 0` and a parallel `negatives[]` from `rawScore[a] < 0`.
+Both pools carry the same per-candidate fields (raw, adjusted, mean,
+activePairs, staticPairs, submittedPairs). `rawScore === 0` assets are
+excluded from both pools.
+
+**Selection.** `MAX_ACTIVE_REVERSION = pickMax(negatives, "activePairs")` —
+the most-open-pair negative-score asset. Ties broken by the same versioned
+FNV-1a digest as every other selector (asset name and input order are never
+tie-breaks).
+
+**Trade direction.** The engine precomputes BOTH a long and short net return
+per (asset, horizon) at the outcome phase. The long formula
+`(exitPrice − entryPrice − fees) / entryPrice` uses `applySlippage("buy")`
+at entry and `applySlippage("sell")` at exit; the short formula
+`(entryPrice − exitPrice − fees) / entryPrice` flips both slippage sides
+(sell to enter, buy to exit back). Commission is symmetric. The reversion
+arm reads the **short** array.
+
+**Eligibility.** Reversion has its own gate independent of the long-side
+gate: an event contributes to `MAX_ACTIVE_REVERSION` only if
+`negatives.length >= 2` AND every negative candidate has a finite short
+return for that horizon. The long-side gate (`positives.length >= 2` and
+all long returns finite) is independent; an event can contribute to one arm
+and not the other.
+
+**Random control.** Same uniform-mean pattern as the long arms: the control
+is the mean short return of all OTHER negative candidates at that event.
+The `topMean − randomMean` delta and the block-bootstrap CI are computed
+identically.
+
+**Report lines.** Per horizon:
+
+- `MAX_ACTIVE_REVERSION` — the reversion selector vs random-negative
+  baseline. Labeled "(short USD)" in the asset-breakdown line.
+- `REVERSION_EX_<dominant>` — dominant-asset exclusion, mirrors
+  `ACTIVE_EX_<dominant>` for the long side. Drops events where
+  `MAX_ACTIVE_REVERSION` picked its most-frequently-selected asset (ties
+  by FNV-1a digest). Use this to tell whether a positive reversion delta
+  is concentrated in one asset (concentration artifact) or spread across
+  the negative pool (potentially generalizable).
+- `tie rates | ... REV=...` — reversion tie rate. The denominator is the
+  reversion-eligible event count (events with ≥ 2 negatives), NOT the
+  positive-side event count, so the rate stays meaningful when the two
+  pools differ in size.
+
+**Warning.** If the pair universe never produces ≥ 2 negative-score
+candidates at any decision event (e.g., a long-only universe where every
+pair entry adds +1 to the base), every horizon's `MAX_ACTIVE_REVERSION`
+line shows `events=0`. The engine emits a single warning explaining this
+rather than letting the empty line look like a bug:
+
+```
+WARN: Reversion selector contributed 0 events across all horizons; the pair
+universe did not produce enough negative-score assets at any decision event.
+```
+
+**Copy paths.** The OPEN_SCORE USD report is rendered opaquely: the display
+div, the dedicated Copy button, and the main Copy Results button all render
+`reportLines.join("\n")` verbatim. New lines (including `MAX_ACTIVE_REVERSION`
+and `REVERSION_EX_<dominant>`) ride both copy paths automatically; no UI or
+service change is needed when adding selector arms.
+
+**What this is NOT.** Like the long-side study, this is an event-level
+selector study. It does not model overlapping short positions, borrow costs,
+short-squeeze dynamics, capital compounding, or adaptive exits. A positive
+reversion delta means "the average per-event short-return edge is non-zero,"
+not "this is a tradeable short strategy."
+
+## Per-asset breakdowns and dominant-asset exclusions
+
+Each selector arm that picks an asset per event (TOP_RAW, TOP_MEAN,
+MAX_ACTIVE, MAX_ACTIVE_REVERSION) gets two companion diagnostics so a
+positive delta can be checked for concentration artifacts:
+
+- **`<ARM> selected assets = ...`** — per-asset breakdown of which assets the
+  selector actually picked, with per-asset event count, share of total
+  selections, and per-asset delta (selected-return minus random-mean).
+  Surfaced for `TOP_RAW`, `TOP_MEAN`, `MAX_ACTIVE`, and (short USD)
+  `MAX_ACTIVE_REVERSION`.
+- **`<PREFIX>_EX_<dominant>`** — dominant-asset exclusion line. Drops events
+  where the arm picked its most-frequently-selected asset (ties by FNV-1a
+  digest); the remaining events form a fresh `ReplayComparison`. Prefixes:
+  `RAW_EX_` (TOP_RAW), `MEAN_EX_` (TOP_MEAN), `ACTIVE_EX_` (MAX_ACTIVE),
+  `REVERSION_EX_` (MAX_ACTIVE_REVERSION).
+
+**How to read `MEAN_EX_<asset>` vs `MEAN`**. If `TOP_MEAN` shows
+`delta=+2.45%` and `MEAN_EX_<asset>` shows `delta=+2.20%`, the edge survives
+dropping the most-picked asset — broad-based signal. If `MEAN_EX_<asset>`
+collapses toward zero or flips sign, the headline delta was concentration in
+one asset (often a single large-cap riding a regime), not a generalizable
+selector property. The same read applies to `RAW_EX_` and `ACTIVE_EX_`.
+
+**Why all three long-side exclusions exist.** `RAW_EX_`, `MEAN_EX_`, and
+`ACTIVE_EX_` use *different* dominant assets because TOP_RAW, TOP_MEAN, and
+MAX_ACTIVE pick different winners. A single asset can be the dominant for
+one arm and not the others; comparing the three EX lines side-by-side shows
+which selector's edge is most dependent on a single name.
+
+## Live-snapshot parallels in the Batch summary
+
+The historical replay arms (`TOP_RAW`, `TOP_MEAN`, `MAX_ACTIVE`,
+`MAX_ACTIVE_REVERSION`) describe behavior across all historical decision
+events. The Batch summary (`formatBatchOverallSummary`) exposes parallel
+live snapshots for the **current** state of open trades at the end of a
+Batch run — what you would actually trade right now if you treated the
+OPEN_SCORE surface as a trigger:
+
+- `MAX_ACTIVE NOW | <asset> score=+<n> activePairs=<n> | ...` — every
+  positive-score asset tied at the highest active-pair count.
+- `TOP_RAW NOW | <asset> score=+<n> activePairs=<n> | ...` — every
+  positive-score asset tied at the highest raw score.
+- `TOP_MEAN NOW | <asset> mean=+<n.n> score=+<n> activePairs=<n> | ...` —
+  every positive-score asset tied at the highest mean signed vote
+  (`score / activePairs`).
+
+All three render whenever the positives pool is non-empty, and all three
+surface every tied winner (no arbitrary asset-name tie-break). They are
+produced by `computeOpenScorePositivesWithCoverage` + `pickTopPositive` in
+`lib/batch-backtest/batch-backtest-summary.ts`. There is no live parallel of
+`MAX_ACTIVE_REVERSION` because short-side snapshots would point at assets to
+avoid, not assets to trade — the historical-replay negative result is the
+relevant diagnostic.
+
 ## Implementation phases
 
 ### Phase 0: lock semantics and build fixtures

@@ -107,6 +107,15 @@ In server-side mode, the `symbol` event still strips `data`, `signals`, and
 - `buyHoldPct` preserves the B&H / alpha sections.
 - `openTradeAssetScores` preserves the OPEN_SCORE sections.
 
+The OPEN_SCORE USD replay (POST `/api/batch-backtest/open-score-usd`) produces
+a `reportLines` text array that the engine builds. Both the dedicated
+`Copy OPEN_SCORE USD` button and the main `Copy Results` button render that
+array verbatim, so new selector arms — including the short-side
+`MAX_ACTIVE_REVERSION` line — ride both copy paths automatically without UI
+or service changes. See
+[open-score-usd-replay-implementation-plan.md](open-score-usd-replay-implementation-plan.md)
+for the selector-arm semantics, candidate pools, and trade-direction math.
+
 The browser tab still avoids heavy per-row arrays, while copied summaries match
 the browser-side Batch path for these sections.
 

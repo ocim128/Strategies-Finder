@@ -362,6 +362,30 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(result.reportLines.join("\n")).to.include("controls | TOP_MEAN=raw/activePairs");
     });
 
+    it("controls legend documents the MAX_ACTIVE_REVERSION short-side arm", async () => {
+        // Any runnable scenario produces the legend line; the body of the
+        // run is irrelevant. We just need to lock the legend wording so a
+        // future refactor cannot silently drop the reversion entry.
+        const pairs = [
+            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 3, () => 100),
+            makeTarget("BBB", 3, () => 100),
+            makeTarget("X1", 3, () => 100),
+            makeTarget("Y1", 3, () => 100),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        expect(result.reportLines.join("\n")).to.include(
+            "MAX_ACTIVE_REVERSION=most open pairs among negative-score assets, shorted vs USD",
+        );
+    });
+
     it("labels zero-event horizons as unusable even when all datasets loaded", async () => {
         const pairs = [
             makePair("AAA", "CCC", [makeTrade("long", T0 + 1000, null)]),

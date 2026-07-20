@@ -2,9 +2,11 @@ import { computePerformanceVerdict } from "../finder/finder-universe-metrics";
 import type { Time } from "../types/strategies";
 import { formatProfitFactor } from "../ui-formatters";
 import { computeBuyAndHoldPct, computeCurrentMaxActiveCandidates, computeOpenTradeAssetScores } from "./batch-row-scalars";
+import type { CurrentMaxActiveCandidate } from "./batch-row-scalars";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 
 export { computeBuyAndHoldPct, computeCurrentMaxActiveCandidates, computeOpenTradeAssetScores } from "./batch-row-scalars";
+export type { CurrentMaxActiveCandidate } from "./batch-row-scalars";
 
 interface BatchOverallStats {
     completedRows: BatchBacktestSymbolResult[];
@@ -187,10 +189,90 @@ export function formatBatchOverallSummary(results: readonly BatchBacktestSymbolR
                     `${candidate.asset} score=${formatSignedScore(candidate.score)} activePairs=${candidate.activePairs}`,
                 ).join(" | ")}`,
             );
+            // TOP_RAW NOW / TOP_MEAN NOW are live-snapshot parallels of the
+            // historical-replay arms. Both reuse the positives pool already
+            // assembled by computeCurrentMaxActiveCandidates (which returns
+            // every positive asset with its activePairs count, NOT just the
+            // MAX_ACTIVE winners) — re-derive the full positive list with
+            // the same scoring, then pick by the arm's key. All tied winners
+            // are surfaced (mirrors MAX_ACTIVE NOW's no-arbitrary-tiebreak
+            // rule). See docs/open-score-usd-replay-implementation-plan.md
+            // for the arm semantics.
+            const positivesWithCoverage = computeOpenScorePositivesWithCoverage(stats.resultRows);
+            const topRawNow = pickTopPositive(positivesWithCoverage, (c) => c.score);
+            if (topRawNow.length > 0) {
+                lines.push(
+                    `TOP_RAW NOW | ${topRawNow.map((candidate) =>
+                        `${candidate.asset} score=${formatSignedScore(candidate.score)} activePairs=${candidate.activePairs}`,
+                    ).join(" | ")}`,
+                );
+            }
+            const topMeanNow = pickTopPositive(positivesWithCoverage, (c) =>
+                candidateMean(c),
+            );
+            if (topMeanNow.length > 0) {
+                lines.push(
+                    `TOP_MEAN NOW | ${topMeanNow.map((candidate) =>
+                        `${candidate.asset} mean=${formatMeanScore(candidateMean(candidate))} score=${formatSignedScore(candidate.score)} activePairs=${candidate.activePairs}`,
+                    ).join(" | ")}`,
+                );
+            }
         }
     }
 
     return lines;
+}
+
+/**
+ * Live-snapshot helper for TOP_RAW NOW / TOP_MEAN NOW. Returns the full
+ * positive-score candidate list (every asset with raw score > 0) along with
+ * its currently-open pair count. Mirrors {@link computeCurrentMaxActiveCandidates}
+ * minus the max-activePairs filter.
+ */
+function computeOpenScorePositivesWithCoverage(
+    rows: readonly BatchBacktestSymbolResult[],
+): CurrentMaxActiveCandidate[] {
+    const activePairsByAsset = new Map<string, number>();
+    for (const row of rows) {
+        const rowScores = row.openTradeAssetScores ?? computeOpenTradeAssetScores([row]);
+        const assetsInOpenPair = new Set(rowScores.filter((entry) => entry.score !== 0).map((entry) => entry.asset));
+        for (const asset of assetsInOpenPair) {
+            activePairsByAsset.set(asset, (activePairsByAsset.get(asset) ?? 0) + 1);
+        }
+    }
+    return computeOpenTradeAssetScores(rows)
+        .filter((entry) => entry.score > 0)
+        .map((entry) => ({
+            ...entry,
+            activePairs: activePairsByAsset.get(entry.asset) ?? 0,
+        }));
+}
+
+/** mean signed vote = score / activePairs (the TOP_MEAN arm's selection key). */
+function candidateMean(candidate: CurrentMaxActiveCandidate): number {
+    return candidate.activePairs > 0 ? candidate.score / candidate.activePairs : candidate.score;
+}
+
+/** Pick every candidate tied at the maximum of `key`, sorted by score then name. */
+function pickTopPositive<T extends { score: number; asset: string }>(
+    candidates: readonly T[],
+    key: (c: T) => number,
+): T[] {
+    if (candidates.length === 0) return [];
+    let maxValue = -Infinity;
+    for (const c of candidates) {
+        const k = key(c);
+        if (k > maxValue) maxValue = k;
+    }
+    return candidates
+        .filter((c) => key(c) === maxValue)
+        .sort((a, b) => b.score - a.score || a.asset.localeCompare(b.asset));
+}
+
+function formatMeanScore(value: number): string {
+    if (!Number.isFinite(value)) return "--";
+    const rounded = Math.round(value * 100) / 100;
+    return rounded >= 0 ? `+${rounded}` : `${rounded}`;
 }
 
 /**

@@ -293,6 +293,47 @@ describe("server scalar batch rows", () => {
         expect(lines.some((line) => line.startsWith("SUMMARY | B&H Compare"))).to.equal(true);
         expect(lines.some((line) => line.startsWith("OPEN_SCORE |"))).to.equal(true);
         expect(lines.some((line) => line.startsWith("MAX_ACTIVE NOW |"))).to.equal(true);
+        // Live-snapshot parallels of the historical-replay arms. Both render
+        // whenever MAX_ACTIVE NOW renders (positives pool is non-empty).
+        expect(lines.some((line) => line.startsWith("TOP_RAW NOW |"))).to.equal(true);
+        expect(lines.some((line) => line.startsWith("TOP_MEAN NOW |"))).to.equal(true);
+    });
+
+    it("TOP_RAW NOW and TOP_MEAN NOW pick by score and score/activePairs respectively", () => {
+        // Construct a positives pool where the three arms pick different assets:
+        //   AAA: 3 long pairs as base -> score=+3, activePairs=3, mean=1.0
+        //   BBB: 1 long pair as base  -> score=+1, activePairs=1, mean=1.0
+        //   CCC: 5 long pairs as base -> score=+5, activePairs=5, mean=1.0
+        // TOP_RAW NOW and MAX_ACTIVE NOW both pick CCC (highest score, most pairs).
+        // TOP_MEAN NOW ties AAA=BBB=CCC at mean=1.0 — all three are surfaced
+        // (no arbitrary asset-name tie-break, mirrors MAX_ACTIVE NOW's rule).
+        const rows = [
+            openTradeRow("AAA+X1", "long"),
+            openTradeRow("AAA+X2", "long"),
+            openTradeRow("AAA+X3", "long"),
+            openTradeRow("BBB+Y1", "long"),
+            openTradeRow("CCC+Z1", "long"),
+            openTradeRow("CCC+Z2", "long"),
+            openTradeRow("CCC+Z3", "long"),
+            openTradeRow("CCC+Z4", "long"),
+            openTradeRow("CCC+Z5", "long"),
+        ];
+        const lines = formatBatchOverallSummary(rows);
+        const topRawLine = lines.find((line) => line.startsWith("TOP_RAW NOW |"));
+        const topMeanLine = lines.find((line) => line.startsWith("TOP_MEAN NOW |"));
+        const maxActiveLine = lines.find((line) => line.startsWith("MAX_ACTIVE NOW |"));
+        expect(topRawLine, "TOP_RAW NOW line should exist").to.not.equal(undefined);
+        expect(topMeanLine, "TOP_MEAN NOW line should exist").to.not.equal(undefined);
+        expect(maxActiveLine, "MAX_ACTIVE NOW line should exist").to.not.equal(undefined);
+        // CCC has the highest raw score (5); TOP_RAW NOW and MAX_ACTIVE NOW
+        // both pick it. Top-of-list after sort by score desc.
+        expect(topRawLine).to.contain("CCC score=+5");
+        expect(maxActiveLine).to.contain("CCC score=+5 activePairs=5");
+        // TOP_MEAN NOW ties at mean=1.0 across AAA, BBB, CCC -> all three
+        // appear (sorted by score desc within the tie).
+        expect(topMeanLine).to.contain("CCC mean=+1");
+        expect(topMeanLine).to.contain("AAA mean=+1");
+        expect(topMeanLine).to.contain("BBB mean=+1");
     });
 });
 
