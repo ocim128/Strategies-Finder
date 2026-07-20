@@ -61,7 +61,10 @@ import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import { toScalarRow, type BatchStreamEvent } from "./batch-backtest-stream-types";
 import { rememberLoopbackOriginFromRequest } from "../local-api-transport";
 import { isAllowedLocalRequest } from "../local-route-authorization";
-import { buildBatchRunFingerprint, normalizeBatchSymbols, BATCH_MAX_SYMBOLS } from "./batch-run-contract";
+import { buildBatchRunFingerprint, normalizeBatchSymbols, BATCH_MAX_SYMBOLS, verifyPairListProvenance, type BatchRunPairListProvenanceMeta, type BatchUniverseCounts } from "./batch-run-contract";
+import { fnv1a64Hex, type MaxActiveResearchRegistrationV1 } from "./max-active-research-contract";
+import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
+import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import {
     mergeStabilityAccumulators,
     runParallelStability,
@@ -72,6 +75,54 @@ import { runMineAbTest } from "./batch-mine-prediction-ab-engine";
 import { runOpenScoreUsdReplay, type OpenScoreUsdTarget } from "./batch-open-score-usd-replay-engine";
 import { runExposureRedundancyReport } from "../spread-quality/spread-quality-engine";
 import { createEmptyBacktestResult } from "../strategies/backtest/position-stats";
+
+/**
+ * Phase 3 MAX_ACTIVE: compute canonical universe counts from the submitted
+ * symbol list. Uses the shared leg-identity leaf so `BTC+ETH` and `ETH+BTC`
+ * (and `BTC+BTCUSDT` aliases within the market provider) collapse to one
+ * canonical relationship. The count is invariant to orientation in the
+ * submitted list — what matters is the SET of canonical relationships.
+ *
+ * The `submittedDegreeByAsset` map counts BOTH legs of every canonical
+ * relationship (so a `BTC+ETH` pair contributes 1 to BTC and 1 to ETH).
+ * This is the "submitted degree" the OPEN_SCORE USD engine distinguishes
+ * from the "retained degree" (computed from successfully loaded artifacts).
+ */
+function computeUniverseCountsFromSymbols(symbols: readonly string[]): BatchUniverseCounts {
+    const normalized = normalizeBatchSymbols(symbols.join("\n"));
+    const canonicalKeys = new Set<string>();
+    const submittedDegreeByAsset: Record<string, number> = {};
+    for (const token of normalized) {
+        const plusIdx = token.indexOf("+");
+        if (plusIdx < 1 || plusIdx === token.length - 1) continue;
+        const baseRaw = token.slice(0, plusIdx);
+        const quoteRaw = token.slice(plusIdx + 1);
+        const baseId = canonicalizeLegIdentity(baseRaw);
+        const quoteId = canonicalizeLegIdentity(quoteRaw);
+        if (!baseId || !quoteId) continue;
+        if (baseId.scoringAsset === quoteId.scoringAsset && baseId.provider === quoteId.provider) continue;
+        // Canonical relationship key: provider-scoped, sorted.
+        const [a, b] = [
+            `${baseId.provider}:${baseId.scoringAsset}`,
+            `${quoteId.provider}:${quoteId.scoringAsset}`,
+        ].sort();
+        const relKey = `${a}+${b}`;
+        if (canonicalKeys.has(relKey)) continue;
+        canonicalKeys.add(relKey);
+        submittedDegreeByAsset[baseId.scoringAsset] = (submittedDegreeByAsset[baseId.scoringAsset] ?? 0) + 1;
+        submittedDegreeByAsset[quoteId.scoringAsset] = (submittedDegreeByAsset[quoteId.scoringAsset] ?? 0) + 1;
+    }
+    return {
+        submittedSymbols: normalized.length,
+        canonicalRelationships: canonicalKeys.size,
+        // artifactEligible / artifactsStored / artifactWriteFailures are filled
+        // in as the run progresses; the request-time snapshot starts them at 0.
+        artifactEligible: 0,
+        artifactsStored: 0,
+        artifactWriteFailures: 0,
+        submittedDegreeByAsset,
+    };
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -627,6 +678,27 @@ export type BatchRunSnapshot = {
      * behavior is observable from `/status.lastRun`.
      */
     parsedCacheStats?: { size: number; max: number; hits: number; misses: number; evictions: number; peak: number } | null;
+    /**
+     * Optional pair-list provenance metadata retained from the request. The
+     * `status` field is "verified" only when the recomputed pair-list hash
+     * matches; otherwise "manual/unverified". Bounded scalars only — no
+     * OHLCV arrays cross this wire.
+     */
+    pairListProvenanceMeta?: BatchRunPairListProvenanceMeta | null;
+    /**
+     * Universe counts for the MAX_ACTIVE research. Surfaces submitted /
+     * canonical / artifact-eligible / stored / failed counts at run
+     * completion so the OPEN_SCORE USD report can name every failed gate.
+     * Null while running or when no run has completed.
+     */
+    universeCounts?: BatchUniverseCounts | null;
+    /**
+     * Optional MAX_ACTIVE research registration metadata retained from the
+     * request. `status` is "verified" only when the registration exactly
+     * matches the committed server-side constant; otherwise
+     * "manual/unverified".
+     */
+    researchRegistrationMeta?: { registration: MaxActiveResearchRegistrationV1 | null; status: "verified" | "manual/unverified"; reason?: string } | null;
 };
 
 interface StoredMineArtifactMeta {
@@ -968,6 +1040,9 @@ export async function processRunBatch(
         runId,
         artifactStats: null,
         parsedCacheStats: null,
+        pairListProvenanceMeta: null,
+        universeCounts: null,
+        researchRegistrationMeta: null,
     };
     const snapshot = runState;
     // R-F1: create THIS run's ArtifactStore and capture it in the closure so
@@ -976,6 +1051,31 @@ export async function processRunBatch(
     // contaminating the new generation's globals.
     const store = new ArtifactStore();
     currentArtifactStore = store;
+    // Phase 3 MAX_ACTIVE: verify pair-list provenance against the canonical
+    // submitted symbols. The fingerprint includes the verified provenance so
+    // a manual textarea edit (which clears the provenance client-side) also
+    // changes the fingerprint and invalidates retained artifacts.
+    const pairListProvenanceMeta = (() => {
+        const v = verifyPairListProvenance(input.pairListProvenance ?? null, input.symbols, fnv1a64Hex);
+        if (v.ok) return { provenance: input.pairListProvenance ?? null, status: "verified" as const };
+        return {
+            provenance: input.pairListProvenance ?? null,
+            status: "manual/unverified" as const,
+            reason: v.reason,
+        };
+    })();
+    snapshot.pairListProvenanceMeta = pairListProvenanceMeta;
+    // Phase 3 MAX_ACTIVE: compute canonical universe counts from the request.
+    // Canonical relationships dedupe BASE+QUOTE / QUOTE+BASE so the count is
+    // invariant to orientation in the submitted list.
+    snapshot.universeCounts = computeUniverseCountsFromSymbols(input.symbols);
+    // Phase 3 MAX_ACTIVE: verify the optional research registration against
+    // the committed server-side constant (currently null → unverified).
+    snapshot.researchRegistrationMeta = {
+        registration: input.maxActiveResearchRegistration ?? null,
+        status: "manual/unverified",
+        reason: "no committed holdout registration",
+    };
     const fingerprint = buildBatchRunFingerprint({
         symbols: input.symbols,
         strategyKey: input.strategyKey,
@@ -983,6 +1083,9 @@ export async function processRunBatch(
         backtestSettings: input.backtestSettings,
         capitalSettings: input.capitalSettings,
         interval: input.interval,
+        ...(pairListProvenanceMeta.status === "verified" && pairListProvenanceMeta.provenance
+            ? { pairListProvenance: pairListProvenanceMeta.provenance }
+            : {}),
     });
 
     writer({ type: "start", total, interval: input.interval, strategyKey: input.strategyKey, runId });
@@ -1098,6 +1201,14 @@ export async function processRunBatch(
             // diagnostic to a reloaded tab without needing the stream.
             snapshot.artifactStats = artifactStats;
             snapshot.parsedCacheStats = parsedCacheStats;
+            // Phase 3 MAX_ACTIVE: fold the artifact-store counts into the
+            // universe counts so the OPEN_SCORE USD report can name every
+            // failed sufficiency gate (eligible/stored/failed ratios).
+            if (snapshot.universeCounts) {
+                snapshot.universeCounts.artifactEligible = artifactStats.eligible;
+                snapshot.universeCounts.artifactsStored = artifactStats.stored;
+                snapshot.universeCounts.artifactWriteFailures = artifactStats.failed;
+            }
         }
         writer({
             type: "done",
@@ -1112,6 +1223,11 @@ export async function processRunBatch(
             runId,
             artifactStats,
             parsedCacheStats,
+            pairListProvenanceMeta: snapshot.pairListProvenanceMeta ?? null,
+            universeCounts: snapshot.universeCounts ?? null,
+            verifiedPairListProvenance: snapshot.pairListProvenanceMeta?.status === "verified"
+                ? snapshot.pairListProvenanceMeta.provenance
+                : null,
         });
 
         // Schedule the TTL release only if the run produced mineable
@@ -1600,6 +1716,25 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
     // contract; the server falls back to legacy unscoped behavior in that case.
     const runId = parseBatchRunId(body.runId);
 
+    // Phase 3 MAX_ACTIVE: extract the optional pair-list provenance and the
+    // optional research registration. Both are untrusted client input; the
+    // server verifies the pair-list hash against the submitted symbols and
+    // only trusts a registration that exactly matches the committed constant.
+    // Malformed/oversized values become unverified metadata and cannot
+    // produce a HOLDOUT/PASS verdict.
+    const pairListProvenanceRaw = body.pairListProvenance;
+    const pairListProvenance = (pairListProvenanceRaw && typeof pairListProvenanceRaw === "object"
+        && (pairListProvenanceRaw as { schema?: unknown }).schema === "batch.pair_list.v1"
+        && (pairListProvenanceRaw as { algorithm?: unknown }).algorithm === "seeded_round_robin_v1")
+        ? pairListProvenanceRaw as PairListProvenanceV1
+        : null;
+    const maxActiveResearchRegistrationRaw = body.maxActiveResearchRegistration;
+    const maxActiveResearchRegistration = (maxActiveResearchRegistrationRaw
+        && typeof maxActiveResearchRegistrationRaw === "object"
+        && (maxActiveResearchRegistrationRaw as { schema?: unknown }).schema === "batch.max_active_research.v1")
+        ? maxActiveResearchRegistrationRaw as MaxActiveResearchRegistrationV1
+        : null;
+
     // Audit single-flight finding: claim ownership BEFORE the first await
     // (`resolveStrategy` does an async `loadBuiltInStrategyByKey`). Pre-fix
     // two concurrent /run requests could both pass the `runOwner !== NONE`
@@ -1659,6 +1794,12 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
                     capitalSettings,
                     symbols,
                     useRustEnginePreference,
+                    // Phase 3 MAX_ACTIVE: carry the verified pair-list provenance
+                    // and the research registration into the run so the snapshot
+                    // and the OPEN_SCORE USD report can name the provenance status
+                    // and label the report HOLDOUT vs EXPLORATORY.
+                    pairListProvenance,
+                    maxActiveResearchRegistration,
                     loadDataset: (sym, intv, signal) => loadServerBatchDataset(sym, intv, signal),
                 },
                 (event) => stream!.write(event),
@@ -2266,6 +2407,13 @@ export async function processOpenScoreUsdReplay(
                 ...(sampleToSec !== null ? { sampleToSec } : {}),
                 slippageRate,
                 commissionRate,
+                // Phase 3 MAX_ACTIVE: thread the canonical submitted degree
+                // map from the retained Batch run state. The engine uses this
+                // to drive the MAX_SUBMITTED selector distinct from
+                // MAX_RETAINED (which counts loaded-artifact legs).
+                ...(runState?.universeCounts?.submittedDegreeByAsset
+                    ? { submittedDegreeByAsset: runState.universeCounts.submittedDegreeByAsset }
+                    : {}),
                 shouldStop: () => lostOwnership(),
                 onPhase: (phase, detail, completed, total) => {
                     if (lostOwnership()) return;
@@ -2627,6 +2775,11 @@ function handleStatusRequest(afterRow = 0, limitRaw?: number, requestedRunId?: s
                 // diagnostics the stream would have carried.
                 artifactStats: runState.artifactStats ?? null,
                 parsedCacheStats: runState.parsedCacheStats ?? null,
+                // Phase 3 MAX_ACTIVE: pair-list provenance + universe counts +
+                // research registration metadata. Bounded scalars only.
+                pairListProvenanceMeta: runState.pairListProvenanceMeta ?? null,
+                universeCounts: runState.universeCounts ?? null,
+                researchRegistrationMeta: runState.researchRegistrationMeta ?? null,
             }
             : null,
         miner: minerState && minerOwner !== RUN_OWNER_NONE

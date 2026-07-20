@@ -29,6 +29,35 @@
             <textarea class="param-input" id="batchBacktestSymbols" rows="8"
                 placeholder="BTCUSDT&#10;ZEC+APT&#10;PAXGUSDT&#10;TSLAUSDT"></textarea>
         </div>
+        <div class="batch-balanced-generator" aria-label="Balanced pair-list generator">
+            <div class="batch-balanced-generator-heading">
+                <span class="batch-balanced-generator-label">Balanced Generator</span>
+                <span class="batch-balanced-generator-note">One asset per line; emits each non-self pair once, degree-balanced.</span>
+            </div>
+            <div class="batch-balanced-generator-controls">
+                <textarea class="param-input batch-balanced-generator-assets" id="batchBacktestBalancedAssets" rows="4"
+                    placeholder="BTC&#10;ETH&#10;XRP&#10;AAPL&#10;NVDA&#x2666;"></textarea>
+                <div class="batch-balanced-generator-options">
+                    <div class="batch-field batch-field--inline" title="Maximum pairs to emit (clamped to 1..2000). Default 2000.">
+                        <label class="batch-field-label" for="batchBacktestBalancedMaxPairs">Max Pairs</label>
+                        <input class="batch-field-input batch-field-input--date" id="batchBacktestBalancedMaxPairs" type="number" min="1" max="2000" step="1" value="2000">
+                    </div>
+                    <div class="batch-field batch-field--inline" title="Deterministic seed for asset permutation and orientation. Same seed + assets = same pair list. Default 1.">
+                        <label class="batch-field-label" for="batchBacktestBalancedSeed">Seed</label>
+                        <input class="batch-field-input batch-field-input--date" id="batchBacktestBalancedSeed" type="number" min="1" step="1" value="1">
+                    </div>
+                    <button class="btn btn-secondary btn-compact" id="batchBacktestBalancedGenerateBtn" type="button"
+                        title="Generate a balanced pair list and apply it to the Pairs textarea above">
+                        Generate &amp; Apply
+                    </button>
+                    <button class="btn btn-secondary btn-compact" id="batchBacktestBalancedCopyBtn" type="button" disabled
+                        title="Copy the last displayed balanced pair list (does not change the Pairs textarea)">
+                        Copy Generated
+                    </button>
+                </div>
+            </div>
+            <div class="batch-miner-status batch-miner-status--multiline batch-balanced-generator-status" id="batchBacktestBalancedSummary"></div>
+        </div>
     </section>
 
     <div class="batch-actions">

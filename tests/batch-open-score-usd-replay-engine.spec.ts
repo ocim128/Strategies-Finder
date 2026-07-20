@@ -181,13 +181,16 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(h.topRaw.delta).to.be.closeTo(expectedTop - expectedRand, 1e-9);
     });
 
-    it("same-score ties break deterministically by asset name every run", async () => {
-        // Two assets with identical raw score (both +1). Tie-break = asset name ASC.
+    it("same-score ties break deterministically by the frozen FNV-1a digest every run", async () => {
+        // Two assets with identical raw score (both +1). Per the Phase 0 freeze,
+        // tie-break = the smallest FNV-1a 64 digest of
+        // `max_active_tie_v1|1|truncatedEventTimeSec|scoringAsset` — NOT asset
+        // name, NOT input order. Both runs must produce byte-identical reports.
         const pairs = [
             makePair("ZZZ", "QQQ", [makeTrade("long", T0 + 1000, null)]), // ZZZ+1
             makePair("AAA", "QQQ", [makeTrade("long", T0 + 1000, null)]), // AAA+1 (QQQ now -2)
         ];
-        // raw: ZZZ=1, AAA=1, QQQ=-2. Positives: ZZZ, AAA. Tie -> topRaw = "AAA".
+        // raw: ZZZ=1, AAA=1, QQQ=-2. Positives: ZZZ, AAA. Tie.
         const targets = [
             makeTarget("AAA", 10, () => 100),
             makeTarget("ZZZ", 10, () => 50),
@@ -200,10 +203,12 @@ describe("batch-open-score-usd-replay-engine", () => {
         const r1 = await run();
         const r2 = await run();
         expect(r1.eligibleEvents).to.equal(1);
-        // Deterministic: both runs pick AAA (alphabetical tie-break). AAA flat (0%),
-        // ZZZ flat (0%) so delta is 0 either way — the assertion is on stability.
+        // Determinism: both runs produce the same selection and report.
         expect(r1.horizons[0]!.topRaw.delta).to.equal(r2.horizons[0]!.topRaw.delta);
         expect(r1.reportLines.join("\n")).to.equal(r2.reportLines.join("\n"));
+        // The tie counter must fire for the RAW selector.
+        expect(r1.horizons[0]!.tieRates.RAW.sameSelection).to.equal(1);
+        expect(r1.horizons[0]!.tieRates.RAW.events).to.equal(1);
     });
 
     it("applies slippage and commission identically to both arms", async () => {
@@ -305,7 +310,10 @@ describe("batch-open-score-usd-replay-engine", () => {
         // winners for every diagnostic rule:
         //   TOP_RAW / MAX_ACTIVE -> AAA (raw=3, active=5)
         //   TOP_ADJUSTED         -> BBB (2/sqrt(2) > 3/sqrt(5))
-        //   TOP_MEAN             -> AAB (raw/active=1 tie, name ascending)
+        //   TOP_MEAN             -> tie (BBB, AAB, ZZZ, DDD all raw/active=1)
+        //                          broken by the FNV-1a digest of
+        //                          `max_active_tie_v1|1|t|asset`. At t=1700001000
+        //                          ZZZ has the smallest digest, so TOP_MEAN -> ZZZ.
         //   MAX_STATIC           -> DDD (six submitted pairs, one active)
         // This proves the report is evaluating genuinely different selectors,
         // rather than printing aliases of TOP_RAW.
@@ -338,7 +346,8 @@ describe("batch-open-score-usd-replay-engine", () => {
         const horizon = result.horizons[0]!;
         expect(horizon.topRaw.topMean).to.be.closeTo(0.10, 1e-9);
         expect(horizon.topAdjusted.topMean).to.be.closeTo(0.20, 1e-9);
-        expect(horizon.topMean.topMean).to.be.closeTo(0.30, 1e-9);
+        // TOP_MEAN tie (BBB=AAB=ZZZ=DDD=1.0) -> FNV-1a digest picks ZZZ.
+        expect(horizon.topMean.topMean).to.be.closeTo(0.05, 1e-9);
         expect(horizon.maxActive.topMean).to.be.closeTo(0.10, 1e-9);
         expect(horizon.maxStatic.topMean).to.be.closeTo(0.40, 1e-9);
         expect(horizon.rawAdjustedAgreement).to.deep.equal({ events: 1, sameSelection: 0, rate: 0 });

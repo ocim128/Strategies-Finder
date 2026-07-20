@@ -21,6 +21,8 @@
 
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
+import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
+import type { BatchRunPairListProvenanceMeta, BatchUniverseCounts } from "./batch-run-contract";
 import { computeBuyAndHoldPct, computeOpenTradeAssetScores } from "./batch-row-scalars";
 
 export type BatchStreamEvent =
@@ -55,6 +57,25 @@ export type BatchStreamEvent =
          * only; lets the benchmark surface cache hit rate and eviction counts.
          */
         parsedCacheStats?: { size: number; max: number; hits: number; misses: number; evictions: number; peak: number } | null;
+        /**
+         * Phase 3 MAX_ACTIVE: optional verified pair-list provenance metadata.
+         * Present on the `done` event when the run carried provenance. The
+         * browser surfaces this in the OPEN_SCORE USD report so a forward
+         * holdout can be linked back to the generator output.
+         */
+        pairListProvenanceMeta?: BatchRunPairListProvenanceMeta | null;
+        /**
+         * Phase 3 MAX_ACTIVE: optional universe counts (submitted /
+         * canonical / artifact-eligible / stored / failed / degree map).
+         * Bounded scalars only — no OHLCV arrays.
+         */
+        universeCounts?: BatchUniverseCounts | null;
+        /**
+         * Phase 3 MAX_ACTIVE: optional verified pair-list provenance, carried
+         * when status === "verified". Older clients ignore this; the OPEN_SCORE
+         * USD engine reads it to label the report HOLDOUT vs EXPLORATORY.
+         */
+        verifiedPairListProvenance?: PairListProvenanceV1 | null;
     }
     | { type: "fatal"; error: string; runId?: string };
 

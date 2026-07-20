@@ -94,6 +94,19 @@ export interface BatchBacktestRunInput {
     capitalSettings: CapitalSettings;
     symbols: string[];
     /**
+     * Optional verified pair-list provenance (Phase 3 MAX_ACTIVE research).
+     * The request carries it from the browser when the textarea matches the
+     * generator's emitted hash; the server verifies and retains it on the
+     * run snapshot. Optional — older clients / manual pair lists omit it.
+     */
+    pairListProvenance?: import("./balanced-pair-list-generator").PairListProvenanceV1 | null;
+    /**
+     * Optional MAX_ACTIVE research registration. Verified against the
+     * committed server-side constant; mismatches are retained as
+     * manual/unverified metadata and never produce a HOLDOUT verdict.
+     */
+    maxActiveResearchRegistration?: import("./max-active-research-contract").MaxActiveResearchRegistrationV1 | null;
+    /**
      * Server-side Rust engine opt-in. Mirrors the browser DOM toggle so the
      * server-side path can use the Rust engine when the user has it enabled.
      * Browser callers leave this undefined; `engineMode: "auto"` falls back to

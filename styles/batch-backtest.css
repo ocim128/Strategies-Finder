@@ -111,6 +111,70 @@
     flex-wrap: wrap;
 }
 
+/* ------------------------------------------------------------------
+ * Balanced pair-list generator (research-only helper above the actions).
+ * Compact, low-emphasis chrome so it does not visually compete with the
+ * Markets textarea while still surfacing degree/hash diagnostics.
+ * ------------------------------------------------------------------ */
+
+.batch-balanced-generator {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+    padding: var(--space-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--surface-raised);
+}
+
+.batch-balanced-generator-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.batch-balanced-generator-label {
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.batch-balanced-generator-note {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+}
+
+.batch-balanced-generator-controls {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    align-items: flex-start;
+}
+
+.batch-balanced-generator-assets {
+    flex: 1 1 240px;
+    min-width: 240px;
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+}
+
+.batch-balanced-generator-options {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    align-items: flex-end;
+}
+
+.batch-balanced-generator-status {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+    white-space: pre-wrap;
+    color: var(--text-secondary);
+}
+
 /* Pair count readout beside the textarea heading */
 .batch-symbol-count {
     font-size: var(--font-size-xs);

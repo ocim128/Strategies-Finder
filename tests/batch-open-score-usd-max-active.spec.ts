@@ -1,0 +1,387 @@
+import { expect } from "chai";
+import { describe, it } from "node:test";
+import {
+    runOpenScoreUsdReplay,
+    type OpenScoreUsdTarget,
+} from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
+import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-state-miner";
+import type { BacktestResult, OHLCVData, Time, Trade } from "../lib/types/strategies";
+
+const T0 = 1_700_000_000;
+
+function emptyResult(): BacktestResult {
+    return {
+        trades: [], netProfit: 0, netProfitPercent: 0, winRate: 0, expectancy: 0,
+        avgTrade: 0, profitFactor: 0, maxDrawdown: 0, maxDrawdownPercent: 0,
+        totalTrades: 0, winningTrades: 0, losingTrades: 0, avgWin: 0, avgLoss: 0,
+        sharpeRatio: 0, equityCurve: [],
+    };
+}
+
+let tradeId = 0;
+function makeTrade(type: "long" | "short", entrySec: number, exitSec: number | null): Trade {
+    return {
+        id: tradeId += 1,
+        type,
+        entryTime: entrySec as Time,
+        entryPrice: 1,
+        exitTime: (exitSec ?? entrySec) as Time,
+        exitPrice: 1,
+        pnl: 0,
+        pnlPercent: 0,
+        size: 1,
+        exitReason: exitSec === null ? "end_of_data" : "signal",
+    };
+}
+
+function makePair(base: string, quote: string, trades: Trade[]): BatchSyntheticPairArtifact {
+    return {
+        symbol: `${base}+${quote}`,
+        baseAsset: base,
+        quoteAsset: quote,
+        data: [],
+        signals: [],
+        result: { ...emptyResult(), totalTrades: trades.length, trades },
+    };
+}
+
+function makeTarget(asset: string, bars: number, priceAt: (i: number) => number): OpenScoreUsdTarget {
+    const data: OHLCVData[] = Array.from({ length: bars }, (_, i) => {
+        const p = priceAt(i);
+        return { time: (T0 + i * 1000) as Time, open: p, high: p, low: p, close: p, volume: 1 };
+    });
+    return { asset, symbol: `${asset}USDT`, data };
+}
+
+async function* fromArray<T>(items: T[]): AsyncIterable<T> {
+    for (const item of items) yield item;
+}
+
+describe("batch-open-score-usd-replay-engine Phase 3 MAX_ACTIVE extensions", () => {
+    it("exposes maxSubmitted and maxRetained alongside legacy maxStatic", async () => {
+        const pairs = [
+            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)]),
+            makePair("AAA", "X2", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "Y2", [makeTrade("long", T0 + 1000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, () => 100),
+            makeTarget("BBB", 10, () => 50),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            {
+                horizons: [2],
+                slippageRate: 0,
+                commissionRate: 0,
+                blockCount: 1,
+                // Override submitted degree: make AAA submitted-degree=10,
+                // BBB submitted-degree=1, so MAX_SUBMITTED picks AAA even if
+                // artifact-retained degree would tie them.
+                submittedDegreeByAsset: { AAA: 10, BBB: 1 },
+            },
+        );
+        const h = result.horizons[0]!;
+        expect(h.maxSubmitted).to.not.equal(undefined);
+        expect(h.maxRetained).to.not.equal(undefined);
+        // maxStatic is the legacy alias for maxRetained.
+        expect(h.maxStatic.events).to.equal(h.maxRetained.events);
+    });
+
+    it("MAX_SUBMITTED uses the server-supplied degree map, distinct from MAX_RETAINED", async () => {
+        // Two assets with equal RETAINED artifact degree (both 2) but the
+        // submitted map says AAA=5, BBB=1. MAX_SUBMITTED picks AAA.
+        const pairs = [
+            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)]),
+            makePair("AAA", "X2", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "Y2", [makeTrade("long", T0 + 1000, null)]),
+        ];
+        // Linear ramps: AAA +10%/bar, BBB +1%/bar. So picking AAA (the
+        // MAX_SUBMITTED winner) yields the higher topMean.
+        const targets = [
+            makeTarget("AAA", 10, (i) => 100 * (1 + 0.10 * i)),
+            makeTarget("BBB", 10, (i) => 50 * (1 + 0.01 * i)),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            {
+                horizons: [2],
+                slippageRate: 0,
+                commissionRate: 0,
+                blockCount: 1,
+                submittedDegreeByAsset: { AAA: 5, BBB: 1 },
+            },
+        );
+        const h = result.horizons[0]!;
+        // AAA return = open(2)=120 -> close(3)=130 -> 130/120-1 = 1/12.
+        // MAX_SUBMITTED picks AAA (submitted-degree 5 > 1).
+        expect(h.maxSubmitted.topMean).to.be.closeTo(130 / 120 - 1, 1e-9);
+    });
+
+    it("ACTIVE_VS_SUBMITTED captures same-event deltas only when the selections differ", async () => {
+        // Construct an event where MAX_ACTIVE and MAX_SUBMITTED pick different
+        // assets. AAA has the most active pairs (5 long pairs open) but lower
+        // submitted degree; BBB has 1 active pair but submitted-degree=99.
+        // At T1: AAA raw=5, BBB raw=1. Positives: AAA(5), BBB(1).
+        //   MAX_ACTIVE -> AAA (5 active votes).
+        //   MAX_SUBMITTED -> BBB (submitted-degree=99 > AAA's 5).
+        const pairs = [
+            ...Array.from({ length: 5 }, (_, i) => makePair("AAA", `X${i}`, [makeTrade("long", T0 + 1000, null)])),
+            makePair("BBB", "Y0", [makeTrade("long", T0 + 1000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, () => 100),
+            makeTarget("BBB", 10, () => 50),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            {
+                horizons: [2],
+                slippageRate: 0,
+                commissionRate: 0,
+                blockCount: 1,
+                submittedDegreeByAsset: { AAA: 5, BBB: 99 },
+            },
+        );
+        const h = result.horizons[0]!;
+        // Both selectors eligible at the same event, picking different assets.
+        expect(h.activeVsSubmitted.events).to.equal(1);
+        // MAX_ACTIVE picked AAA (flat, return=0); MAX_SUBMITTED picked BBB (flat, return=0).
+        // delta = active_return - submitted_return = 0 - 0 = 0.
+        expect(h.activeVsSubmitted.delta).to.equal(0);
+    });
+
+    it("ACTIVE_VS_SUBMITTED events=0 when the two selectors always agree", async () => {
+        // Symmetric setup: both assets have identical active pairs AND
+        // submitted degree. Tie broken by name -> both pick AAA. No differing
+        // events, so activeVsSubmitted.events === 0.
+        const pairs = [
+            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, () => 100),
+            makeTarget("BBB", 10, () => 50),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            {
+                horizons: [2],
+                slippageRate: 0,
+                commissionRate: 0,
+                blockCount: 1,
+                submittedDegreeByAsset: { AAA: 1, BBB: 1 },
+            },
+        );
+        const h = result.horizons[0]!;
+        expect(h.activeVsSubmitted.events).to.equal(0);
+    });
+
+    it("tie rates are surfaced per selector", async () => {
+        // Two positives with equal raw score -> RAW selector has a tie.
+        const pairs = [
+            makePair("AAA", "QQQ", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "QQQ", [makeTrade("long", T0 + 1000, null)]),
+        ];
+        // raw: AAA=1, BBB=1, QQQ=-2. Positives: AAA, BBB (tie at raw=1).
+        const targets = [
+            makeTarget("AAA", 10, () => 100),
+            makeTarget("BBB", 10, () => 50),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            {
+                horizons: [2],
+                slippageRate: 0,
+                commissionRate: 0,
+                blockCount: 1,
+            },
+        );
+        const h = result.horizons[0]!;
+        // RAW selector had a tie (AAA and BBB both raw=1).
+        expect(h.tieRates.RAW.events).to.equal(1);
+        expect(h.tieRates.RAW.sameSelection).to.equal(1);
+        expect(h.tieRates.RAW.rate).to.equal(1);
+    });
+
+    it("report includes the renamed control labels (MAX_SUBMITTED, MAX_RETAINED)", async () => {
+        const pairs = [
+            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, () => 100),
+            makeTarget("BBB", 10, () => 50),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], blockCount: 1 },
+        );
+        const report = result.reportLines.join("\n");
+        expect(report).to.include("MAX_SUBMITTED");
+        expect(report).to.include("MAX_RETAINED");
+        expect(report).to.include("ACTIVE_VS_SUB");
+        expect(report).to.include("tie rates");
+    });
+
+    it("falls back to retained degree for MAX_SUBMITTED when no map is supplied", async () => {
+        // No submittedDegreeByAsset -> MAX_SUBMITTED == MAX_RETAINED.
+        const pairs = [
+            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)]),
+            makePair("AAA", "X2", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, () => 100),
+            makeTarget("BBB", 10, () => 50),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], blockCount: 1 },
+        );
+        const h = result.horizons[0]!;
+        // Both selectors pick the same asset (AAA has retained degree 2).
+        expect(h.maxSubmitted.topMean).to.deep.equal(h.maxRetained.topMean);
+    });
+
+    it("returns null CI when fewer than ten blocks exist (no one-block point CI)", async () => {
+        // Phase 0 freeze: a formal CI requires EXACTLY ten nonempty blocks.
+        // blockCount: 1 -> only one block -> CI MUST be null.
+        const pairs = [
+            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, null)]),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, () => 100),
+            makeTarget("BBB", 10, () => 50),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], blockCount: 1 },
+        );
+        const h = result.horizons[0]!;
+        expect(h.topRaw.ciLower).to.equal(null);
+        expect(h.topRaw.ciUpper).to.equal(null);
+        // Block means are still computed (1 block).
+        expect(h.topRaw.blockMeans.length).to.equal(1);
+    });
+
+    it("computes a CI when >= 10 blocks exist", async () => {
+        // Generate 10 events (different timestamps) so the default 10-block
+        // split produces 10 nonempty blocks -> CI is finite.
+        const pairs: BatchSyntheticPairArtifact[] = [];
+        for (let i = 0; i < 10; i += 1) {
+            pairs.push(makePair("AAA", `X${i}`, [makeTrade("long", T0 + (i + 1) * 1000, null)]));
+            pairs.push(makePair("BBB", `Y${i}`, [makeTrade("long", T0 + (i + 1) * 1000, null)]));
+        }
+        const targets = [
+            makeTarget("AAA", 30, (i) => 100 + i),
+            makeTarget("BBB", 30, (i) => 50 + i * 0.5),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0 }, // default blockCount=10
+        );
+        const h = result.horizons[0]!;
+        expect(h.topRaw.events).to.equal(10);
+        expect(h.topRaw.ciLower).to.not.equal(null);
+        expect(h.topRaw.ciUpper).to.not.equal(null);
+        expect(h.topRaw.totalBlocks).to.equal(10);
+    });
+
+    it("dominant-asset exclusion measures MAX_ACTIVE, not TOP_RAW", async () => {
+        // Event 1 (T1): AAA has 3 active pairs (raw=3); BBB has 1 (raw=1).
+        //   TOP_RAW -> AAA, MAX_ACTIVE -> AAA. AAA positions close at T2.
+        // Event 2 (T2): AAA's positions close (exits applied at T2 before
+        //   forming candidates). CCC has 1 active pair (raw=1); DDD has 1.
+        //   Positives are CCC and DDD only. MAX_ACTIVE picks by digest.
+        //
+        // Result: AAA is selected once by MAX_ACTIVE (at T1). The MAX_ACTIVE
+        // dominant-asset exclusion drops AAA's event, leaving T2.
+        const pairs = [
+            // AAA long positions opened at T1, closed at T2.
+            makePair("AAA", "X1", [makeTrade("long", T0 + 1000, T0 + 2000)]),
+            makePair("AAA", "X2", [makeTrade("long", T0 + 1000, T0 + 2000)]),
+            makePair("AAA", "X3", [makeTrade("long", T0 + 1000, T0 + 2000)]),
+            makePair("BBB", "Y1", [makeTrade("long", T0 + 1000, T0 + 2000)]),
+            // CCC and DDD open at T2 (after AAA closed).
+            makePair("CCC", "Z1", [makeTrade("long", T0 + 2000, null)]),
+            makePair("DDD", "W1", [makeTrade("long", T0 + 2000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, () => 100),
+            makeTarget("BBB", 10, () => 50),
+            makeTarget("CCC", 10, () => 25),
+            makeTarget("DDD", 10, () => 10),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1 },
+        );
+        const h = result.horizons[0]!;
+        // AAA was selected by MAX_ACTIVE only at T1 (1 event).
+        expect(h.maxActiveByAsset.find((x) => x.asset === "AAA")?.events).to.equal(1);
+        // MAX_ACTIVE dominant is AAA (1 selection). CCC and DDD each get 1.
+        // Tied at 1 — tie-break by digest decides. The dominant is whichever
+        // has the smallest digest at its event time.
+        expect(h.maxActiveDominantAsset).to.not.equal(null);
+        // MAX_ACTIVE events before exclusion = 2; after dropping the dominant
+        // asset's events, 1 event remains.
+        expect(h.maxActiveExDominant.events).to.equal(1);
+    });
+});
+
+describe("batch-open-score-usd-replay-engine Phase 3 batch-run-contract provenance", () => {
+    it("verifyPairListProvenance returns ok for a matching hash", async () => {
+        const { verifyPairListProvenance } = await import("../lib/batch-backtest/batch-run-contract");
+        const { fnv1a64Hex } = await import("../lib/batch-backtest/max-active-research-contract");
+        const pairs = ["BTCUSDT+ETHUSDT", "BTCUSDT+XRPUSDT"];
+        const hash = fnv1a64Hex(pairs.join("\n"));
+        const prov = {
+            schema: "batch.pair_list.v1" as const,
+            algorithm: "seeded_round_robin_v1" as const,
+            effectiveSeed: 1,
+            effectiveMaxPairs: 2,
+            canonicalAssetListHash: "x".repeat(16),
+            emittedPairListHash: hash,
+            assetCount: 3,
+            pairCount: 2,
+            degree: { min: 1, median: 2, max: 2 },
+            orientationImbalanceMax: 0,
+        };
+        const v = verifyPairListProvenance(prov, pairs, fnv1a64Hex);
+        expect(v.ok).to.equal(true);
+    });
+
+    it("verifyPairListProvenance returns reason on a hash mismatch", async () => {
+        const { verifyPairListProvenance } = await import("../lib/batch-backtest/batch-run-contract");
+        const { fnv1a64Hex } = await import("../lib/batch-backtest/max-active-research-contract");
+        const prov = {
+            schema: "batch.pair_list.v1" as const,
+            algorithm: "seeded_round_robin_v1" as const,
+            effectiveSeed: 1,
+            effectiveMaxPairs: 2,
+            canonicalAssetListHash: "x".repeat(16),
+            emittedPairListHash: "deadbeefdeadbeef",
+            assetCount: 3,
+            pairCount: 2,
+            degree: { min: 1, median: 2, max: 2 },
+            orientationImbalanceMax: 0,
+        };
+        const v = verifyPairListProvenance(prov, ["BTCUSDT+ETHUSDT"], fnv1a64Hex);
+        expect(v.ok).to.equal(false);
+        if (!v.ok) expect(v.reason).to.match(/hash mismatch/i);
+    });
+});

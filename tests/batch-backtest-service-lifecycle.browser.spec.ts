@@ -31,6 +31,14 @@ function fakeEl(): any {
             listeners.set(type, arr);
         },
         removeEventListener: () => {},
+        // Dispatch an event type to all bound handlers (the apply path uses
+        // this to trigger the same input invalidation as a manual paste).
+        dispatchEvent: (ev: { type: string }): boolean => {
+            const arr = listeners.get(ev.type);
+            if (!arr || arr.length === 0) return false;
+            for (const handler of arr) handler();
+            return true;
+        },
         // Drive the REAL handler bound by bindEvents. Returns true iff a
         // handler was actually invoked, so tests can assert wiring.
         click(): boolean {
@@ -53,6 +61,12 @@ function fakeDom(): BatchBacktestDom {
         batchBacktestSymbolTemplate: el(),
         batchBacktestUseCurrent: el(),
         batchBacktestClear: el(),
+        batchBacktestBalancedAssets: { value: "" },
+        batchBacktestBalancedMaxPairs: { value: "2000" },
+        batchBacktestBalancedSeed: { value: "1" },
+        batchBacktestBalancedGenerateBtn: el(),
+        batchBacktestBalancedCopyBtn: el(),
+        batchBacktestBalancedSummary: el(),
         batchBacktestRunBtn: el(),
         batchBacktestStopBtn: el(),
         batchBacktestCopyBtn: el(),
@@ -178,6 +192,11 @@ function setupForAnalysis(fingerprint = "fp-test"): BatchBacktestDom {
     s.analysisCancelRequested = false;
     s.pendingStopPromise = null;
     s.activeServerRunId = null;
+    // Reset Balanced Generator state so a previous test's remembered
+    // provenance does not leak into the next test.
+    s.activePairListProvenance = null;
+    s.lastBalancedPairListResult = null;
+    s.runInFlight = false;
     (globalThis as any).localStorage._store.clear();
     s.buildCurrentRunFingerprint = () => fingerprint;
     return dom;
@@ -532,5 +551,110 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(svc().lastResults.length, "terminal reattach drains lastRun.rows").to.equal(2);
         expect(svc().lastResults.map((r: any) => r.symbol)).to.deep.equal(["AAA+BBB", "CCC+DDD"]);
         expect(dom.batchBacktestStatus.textContent).to.include("Done");
+    });
+});
+
+describe("BatchBacktestService Balanced Generator lifecycle", () => {
+    it("Generate-and-Apply writes the pair list to the textarea and remembers provenance", async () => {
+        const dom = setupForAnalysis();
+        dom.batchBacktestBalancedAssets.value = "BTC\nETH\nXRP";
+        dom.batchBacktestBalancedMaxPairs.value = "5";
+        dom.batchBacktestBalancedSeed.value = "1";
+
+        // Click through the bound handler.
+        const clicked = dom.batchBacktestBalancedGenerateBtn.click();
+        expect(clicked, "Generate button must be wired").to.equal(true);
+        // The generator is synchronous internally; await a microtask so the
+        // async click handler finishes.
+        await new Promise((r) => setTimeout(r, 0));
+
+        // Textarea now contains the generated pair list.
+        const textareaValue = (dom.batchBacktestSymbols as any).value as string;
+        expect(textareaValue.length, "textarea was written").to.be.greaterThan(0);
+        // Provenance is remembered.
+        const provenance = svc().getActivePairListProvenance();
+        expect(provenance, "provenance is remembered after apply").to.not.equal(null);
+        if (provenance) {
+            expect(provenance.schema).to.equal("batch.pair_list.v1");
+            expect(provenance.assetCount).to.equal(3);
+        }
+    });
+
+    it("Copy Generated is enabled after a successful generation", async () => {
+        const dom = setupForAnalysis();
+        dom.batchBacktestBalancedAssets.value = "BTC\nETH\nXRP\nADA";
+        dom.batchBacktestBalancedMaxPairs.value = "10";
+        dom.batchBacktestBalancedSeed.value = "1";
+
+        dom.batchBacktestBalancedGenerateBtn.click();
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(dom.batchBacktestBalancedCopyBtn.disabled, "Copy enabled after success").to.equal(false);
+    });
+
+    it("failed generation leaves the textarea and provenance untouched", async () => {
+        const dom = setupForAnalysis();
+        // Pre-populate the textarea so we can detect it is NOT overwritten.
+        (dom.batchBacktestSymbols as any).value = "PREEXISTING+PAIR";
+        dom.batchBacktestBalancedAssets.value = "ONLY_ONE_ASSET";
+        dom.batchBacktestBalancedMaxPairs.value = "10";
+        dom.batchBacktestBalancedSeed.value = "1";
+
+        dom.batchBacktestBalancedGenerateBtn.click();
+        await new Promise((r) => setTimeout(r, 0));
+
+        // Textarea untouched.
+        expect((dom.batchBacktestSymbols as any).value).to.equal("PREEXISTING+PAIR");
+        // Provenance untouched.
+        expect(svc().getActivePairListProvenance(), "no provenance on failure").to.equal(null);
+        // Summary shows the error.
+        expect(dom.batchBacktestBalancedSummary.textContent).to.match(/at least two/i);
+    });
+
+    it("rejects Generate while an analysis is in flight and does not mutate the textarea", async () => {
+        const dom = setupForAnalysis();
+        (dom.batchBacktestSymbols as any).value = "PREEXISTING+PAIR";
+        dom.batchBacktestBalancedAssets.value = "BTC\nETH";
+        // Simulate an in-flight analysis.
+        svc().analysisInFlight = true;
+
+        dom.batchBacktestBalancedGenerateBtn.click();
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect((dom.batchBacktestSymbols as any).value, "textarea untouched while busy").to.equal("PREEXISTING+PAIR");
+        expect(dom.batchBacktestBalancedSummary.textContent).to.match(/unavailable|run|analysis/i);
+        expect(svc().getActivePairListProvenance()).to.equal(null);
+    });
+
+    it("rejects Generate while a Batch run is in flight", async () => {
+        const dom = setupForAnalysis();
+        (dom.batchBacktestSymbols as any).value = "PREEXISTING+PAIR";
+        dom.batchBacktestBalancedAssets.value = "BTC\nETH";
+        svc().runInFlight = true;
+
+        dom.batchBacktestBalancedGenerateBtn.click();
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect((dom.batchBacktestSymbols as any).value).to.equal("PREEXISTING+PAIR");
+        expect(svc().getActivePairListProvenance()).to.equal(null);
+    });
+
+    it("clears remembered provenance when the textarea is manually edited", async () => {
+        const dom = setupForAnalysis();
+        dom.batchBacktestBalancedAssets.value = "BTC\nETH\nXRP";
+        dom.batchBacktestBalancedMaxPairs.value = "5";
+        dom.batchBacktestBalancedSeed.value = "1";
+
+        dom.batchBacktestBalancedGenerateBtn.click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(svc().getActivePairListProvenance(), "provenance set after apply").to.not.equal(null);
+
+        // Simulate a manual edit: change the textarea value AND dispatch the
+        // input event so the bound handler runs clearActivePairListProvenanceIfStale.
+        const original = (dom.batchBacktestSymbols as any).value as string;
+        (dom.batchBacktestSymbols as any).value = original + "\nMANUAL+EDIT";
+        dom.batchBacktestSymbols.dispatchEvent({ type: "input" });
+
+        expect(svc().getActivePairListProvenance(), "provenance cleared after manual edit").to.equal(null);
     });
 });

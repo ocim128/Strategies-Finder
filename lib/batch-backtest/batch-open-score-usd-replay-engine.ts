@@ -41,6 +41,12 @@
 import type { OHLCVData } from "../types/strategies";
 import { applySlippage, timeToNumber } from "../strategies/backtest/backtest-utils";
 import type { BatchSyntheticPairArtifact } from "./batch-synthetic-state-miner";
+import {
+    tieBreakDigest,
+    MAX_ACTIVE_BLOCK_COUNT,
+    MAX_ACTIVE_BOOTSTRAP_SAMPLES,
+    MAX_ACTIVE_BOOTSTRAP_SEED,
+} from "./max-active-research-contract";
 
 // ============================================================================
 // Public types
@@ -110,20 +116,68 @@ export interface OpenScoreUsdReplayResult {
         maxActive: ReplayComparison;
         /** Control: positive candidate with the highest submitted pair-list degree. */
         maxStatic: ReplayComparison;
+        /**
+         * Phase 3 MAX_ACTIVE: positive candidate with the highest SUBMITTED
+         * pair-list degree (the canonical Batch request). Same selector as
+         * {@link maxStatic} (renamed per the plan); kept alongside for
+         * backward compat with existing tests.
+         */
+        maxSubmitted: ReplayComparison;
+        /**
+         * Phase 3 MAX_ACTIVE: positive candidate with the highest RETAINED
+         * artifact degree (computed from successfully loaded artifacts,
+         * counting both legs of every canonical artifact regardless of trades).
+         */
+        maxRetained: ReplayComparison;
         /** TOP_RAW after events selecting its most-frequent asset are removed. */
         topRawExDominant: ReplayComparison;
+        /**
+         * Phase 3 MAX_ACTIVE: dominant-asset exclusion for MAX_ACTIVE (the
+         * research hypothesis). Drops events where MAX_ACTIVE picked its
+         * most-frequent asset; the remaining events form the comparison.
+         */
+        maxActiveExDominant: ReplayComparison;
+        /**
+         * Phase 3 MAX_ACTIVE: most-frequently-selected MAX_ACTIVE asset
+         * (ties by FNV-1a digest). The asset excluded from `maxActiveExDominant`.
+         */
+        maxActiveDominantAsset: string | null;
+        /** Phase 3 MAX_ACTIVE: per-asset MAX_ACTIVE selection breakdown. */
+        maxActiveByAsset: AssetSelectionSummary[];
         dominantAsset: string | null;
         rawAdjustedAgreement: SelectorAgreement;
+        /**
+         * Phase 3 MAX_ACTIVE: same-event return difference between MAX_ACTIVE
+         * and MAX_SUBMITTED, only on events where the two selectors pick
+         * different assets. `events === 0` means the selectors never disagreed
+         * on this horizon.
+         */
+        activeVsSubmitted: ReplayComparison;
+        /** Same-event return difference: MAX_ACTIVE vs MAX_RETAINED. */
+        activeVsRetained: ReplayComparison;
+        /** Same-event return difference: MAX_ACTIVE vs TOP_RAW. */
+        activeVsRaw: ReplayComparison;
+        /** Same-event return difference: MAX_ACTIVE vs TOP_MEAN. */
+        activeVsMean: ReplayComparison;
         topRawByAsset: AssetSelectionSummary[];
         /** Active pair count at decision events (coverage at the event). */
         candidateDegree: DegreeSummary;
         /** Static pair degree of the selected TOP_RAW asset across events. */
         selectedDegree: DegreeSummary;
+        /**
+         * Phase 3 MAX_ACTIVE: tie count + rate for each selector (ties broken
+         * by the shared FNV-1a 64 rule). Surfaces how often the deterministic
+         * tie-break decided the selection — material for research transparency.
+         */
+        tieRates: Record<SelectorName, SelectorAgreement>;
     }>;
     degree: DegreeSummary;
     warnings: string[];
     reportLines: string[];
 }
+
+/** Phase 3 MAX_ACTIVE selector labels for tie/agreement diagnostics. */
+export type SelectorName = "RAW" | "ADJUSTED" | "MEAN" | "ACTIVE" | "SUBMITTED" | "RETAINED";
 
 export interface OpenScoreUsdTarget {
     asset: string;
@@ -146,6 +200,18 @@ export interface RunOpenScoreUsdReplayOptions {
     blockCount?: number;
     /** Deterministic bootstrap resamples. Default 2000. */
     bootstrapSamples?: number;
+    /**
+     * Phase 3 MAX_ACTIVE: submitted scoring-asset degree map from the
+     * canonical Batch request. Drives the MAX_SUBMITTED selector. When
+     * absent, MAX_SUBMITTED mirrors MAX_STATIC (which counts every leg of
+     * every artifact as submitted) so old callers keep working.
+     */
+    submittedDegreeByAsset?: Record<string, number>;
+    /**
+     * Phase 3 MAX_ACTIVE: truncated event time used by the shared tie-break
+     * digest. Defaults to the engine's existing event-time semantics.
+     */
+    tieVersion?: string;
     /** Phase transition + bounded-chunk progress. */
     onPhase?: (phase: "scan" | "events" | "targets" | "outcomes" | "aggregate", detail: string, completed: number, total: number) => void;
     /** Polled between bounded chunks; return true to stop early (cancellation). */
@@ -177,14 +243,17 @@ function meanOrNull(values: readonly number[]): number | null {
 
 /**
  * Deterministic block bootstrap over chronological block means. Resamples
- * blocks with replacement using a fixed-seed LCG so the CI is reproducible
- * run-to-run (no Math.random — research must be reproducible).
+ * blocks with replacement using a fixed-seed LCG (init from the versioned
+ * `MAX_ACTIVE_BOOTSTRAP_SEED`) so the CI is reproducible run-to-run.
+ *
+ * Phase 0 freeze: a formal CI requires EXACTLY {@link MAX_ACTIVE_BLOCK_COUNT}
+ * nonempty chronological blocks. Fewer blocks (incl. one) return null CI —
+ * `INSUFFICIENT_DATA`, never a misleading point CI from a single block.
  */
 function blockBootstrapCi(blockMeans: readonly number[], resamples: number): { lower: number | null; upper: number | null } {
     const b = blockMeans.length;
-    if (b === 0) return { lower: null, upper: null };
-    if (b === 1) return { lower: blockMeans[0]!, upper: blockMeans[0]! };
-    let seed = 0x9e3779b9;
+    if (b < MAX_ACTIVE_BLOCK_COUNT) return { lower: null, upper: null };
+    let seed = (Math.floor(MAX_ACTIVE_BOOTSTRAP_SEED) >>> 0) || 0x9e3779b9;
     const next = (): number => {
         // LCG (Numerical Recipes constants), returns [0,1).
         seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
@@ -255,8 +324,11 @@ export async function runOpenScoreUsdReplay(
     const onPhase = options.onPhase ?? (() => undefined);
     const slippageRate = options.slippageRate ?? 0;
     const commissionRate = options.commissionRate ?? 0;
-    const blockCount = Math.max(1, Math.floor(options.blockCount ?? 10));
-    const bootstrapSamples = Math.max(200, Math.floor(options.bootstrapSamples ?? 2000));
+    // Phase 0 freeze: block count and bootstrap samples default to the frozen
+    // research constants. Callers may override blockCount for diagnostics, but
+    // a formal CI still requires EXACTLY MAX_ACTIVE_BLOCK_COUNT nonempty blocks.
+    const blockCount = Math.max(1, Math.floor(options.blockCount ?? MAX_ACTIVE_BLOCK_COUNT));
+    const bootstrapSamples = Math.max(200, Math.floor(options.bootstrapSamples ?? MAX_ACTIVE_BOOTSTRAP_SAMPLES));
     const warnings: string[] = [];
 
     const horizons = [...new Set(options.horizons.filter((h) => Number.isFinite(h) && h >= 1).map((h) => Math.floor(h)))].sort((a, b) => a - b);
@@ -277,7 +349,23 @@ export async function runOpenScoreUsdReplay(
     onPhase("scan", "scanning pair artifacts", 0, 0);
     const assetIndexByName = new Map<string, number>();
     const assetNames: string[] = [];
-    const staticDegree = new Map<string, number>();
+    // `retainedDegree` counts BOTH legs of every successfully loaded artifact
+    // (the engine reads them from disk; this is what the plan calls RETAINED
+    // degree, NOT submitted). The old name `staticDegree` is kept as an alias
+    // so existing tests compile; the report labels this selector MAX_RETAINED.
+    const retainedDegree = new Map<string, number>();
+    /** @deprecated alias for {@link retainedDegree}; use that name in new code. */
+    const staticDegree = retainedDegree;
+    // Phase 3 MAX_ACTIVE: SUBMITTED degree comes from the canonical Batch
+    // request (the user's textarea). When absent, fall back to the retained
+    // degree map so MAX_SUBMITTED mirrors MAX_RETAINED for old callers.
+    const submittedDegreeInput = options.submittedDegreeByAsset ?? null;
+    const submittedDegree = new Map<string, number>();
+    if (submittedDegreeInput) {
+        for (const [k, v] of Object.entries(submittedDegreeInput)) {
+            if (Number.isFinite(v) && v >= 0) submittedDegree.set(k, v);
+        }
+    }
     const streams: ScoreDelta[][] = [];
     let pairCount = 0;
     let omittedPairs = 0;
@@ -411,7 +499,8 @@ export async function runOpenScoreUsdReplay(
         adjusted: number;
         mean: number;
         activePairs: number;
-        staticPairs: number;
+        staticPairs: number;     // RETAINED artifact degree (legacy name; counts every loaded artifact leg).
+        submittedPairs: number;  // SUBMITTED degree from the canonical Batch request.
     }
     interface EventView {
         timeSec: number;
@@ -420,9 +509,12 @@ export async function runOpenScoreUsdReplay(
         topAdjusted: number; // assetIndex
         topMean: number;     // assetIndex
         maxActive: number;   // assetIndex
-        maxStatic: number;   // assetIndex
+        maxStatic: number;   // assetIndex (alias for maxRetained — legacy)
+        maxSubmitted: number; // assetIndex (Phase 3: from server's submittedDegreeByAsset)
         /** Max active-pair count across positive candidates at this event. */
         maxActivePairs: number;
+        /** Per-selector tie counts at this event (Phase 3 MAX_ACTIVE). */
+        ties: Record<SelectorName, number>;
     }
     const views: EventView[] = [];
     for (let e = 0; e < events.length; e += 1) {
@@ -441,33 +533,79 @@ export async function runOpenScoreUsdReplay(
                     adjusted,
                     mean: cnt > 0 ? raw / cnt : raw,
                     activePairs: cnt,
-                    staticPairs: staticDegree.get(assetNames[a]!) ?? 0,
+                    staticPairs: retainedDegree.get(assetNames[a]!) ?? 0,
+                    submittedPairs: submittedDegree.size > 0
+                        ? (submittedDegree.get(assetNames[a]!) ?? 0)
+                        : (retainedDegree.get(assetNames[a]!) ?? 0),
                 });
             }
         }
         // Need >= 2 positive candidates for a top-vs-random comparison.
         if (positives.length >= 2) {
-            // Deterministic tie-break: highest score, then asset name.
-            const byName = (x: Candidate, y: Candidate): number => assetNames[x.assetIndex]!.localeCompare(assetNames[y.assetIndex]!);
-            let topRaw = positives[0]!;
-            let topAdjusted = positives[0]!;
-            let topMean = positives[0]!;
-            let maxActive = positives[0]!;
-            let maxStatic = positives[0]!;
-            for (const c of positives) {
-                if (c.raw > topRaw.raw || (c.raw === topRaw.raw && byName(c, topRaw) < 0)) topRaw = c;
-                if (c.adjusted > topAdjusted.adjusted || (c.adjusted === topAdjusted.adjusted && byName(c, topAdjusted) < 0)) topAdjusted = c;
-                if (c.mean > topMean.mean || (c.mean === topMean.mean && byName(c, topMean) < 0)) topMean = c;
-                if (c.activePairs > maxActive.activePairs || (c.activePairs === maxActive.activePairs && byName(c, maxActive) < 0)) maxActive = c;
-                if (c.staticPairs > maxStatic.staticPairs || (c.staticPairs === maxStatic.staticPairs && byName(c, maxStatic) < 0)) maxStatic = c;
-            }
+            // Phase 0 freeze: tie-break by the versioned FNV-1a 64 digest of
+            // `tieVersion|tieSeed|truncatedEventTimeSec|scoringAsset`. Smallest
+            // digest wins. Asset name and input order are NEVER tie-breaks.
+            // On a digest collision (astronomically unlikely), asset-name order
+            // keeps execution deterministic; the report surfaces tie-digest
+            // collisions and the formal verdict becomes INSUFFICIENT_DATA.
+            const eventTimeSec = ev.timeSec;
+            const digestFor = (c: Candidate): string => tieBreakDigest(eventTimeSec, assetNames[c.assetIndex]!);
+            const pickMax = (key: "raw" | "adjusted" | "mean" | "activePairs" | "staticPairs" | "submittedPairs"): { winner: Candidate; tiedCount: number; digestCollision: boolean } => {
+                // First pass: find the max value.
+                let maxValue = positives[0]![key]!;
+                for (let i = 1; i < positives.length; i += 1) {
+                    const v = positives[i]![key]!;
+                    if (v > maxValue) maxValue = v;
+                }
+                // Second pass: collect every candidate at the max, then pick by
+                // tie-break digest. Counting at the end gives the correct tied
+                // total regardless of input order.
+                const tiedAtTop: Candidate[] = [];
+                for (const c of positives) {
+                    if (c[key] === maxValue) tiedAtTop.push(c);
+                }
+                let winner = tiedAtTop[0]!;
+                let collision = false;
+                if (tiedAtTop.length > 1) {
+                    const digests = tiedAtTop.map(digestFor);
+                    for (let i = 1; i < tiedAtTop.length; i += 1) {
+                        const c = tiedAtTop[i]!;
+                        const dC = digests[i]!;
+                        const dW = digestFor(winner);
+                        if (dC < dW) { winner = c; collision = false; }
+                        else if (dC === dW) {
+                            // Tie-digest collision. Use asset name as a final
+                            // deterministic fallback; flag for INSUFFICIENT_DATA.
+                            collision = true;
+                            if (assetNames[c.assetIndex]! < assetNames[winner.assetIndex]!) winner = c;
+                        }
+                    }
+                }
+                return { winner, tiedCount: tiedAtTop.length, digestCollision: collision };
+            };
+            const topRaw = pickMax("raw");
+            const topAdjusted = pickMax("adjusted");
+            const topMean = pickMax("mean");
+            const maxActive = pickMax("activePairs");
+            const maxStatic = pickMax("staticPairs");
+            const maxSubmitted = pickMax("submittedPairs");
             views.push({
                 timeSec: ev.timeSec, positives,
-                topRaw: topRaw.assetIndex, topAdjusted: topAdjusted.assetIndex,
-                topMean: topMean.assetIndex,
-                maxActive: maxActive.assetIndex,
-                maxStatic: maxStatic.assetIndex,
+                topRaw: topRaw.winner.assetIndex,
+                topAdjusted: topAdjusted.winner.assetIndex,
+                topMean: topMean.winner.assetIndex,
+                maxActive: maxActive.winner.assetIndex,
+                maxStatic: maxStatic.winner.assetIndex,
+                maxSubmitted: maxSubmitted.winner.assetIndex,
                 maxActivePairs,
+                ties: {
+                    RAW: topRaw.tiedCount >= 2 ? 1 : 0,
+                    ADJUSTED: topAdjusted.tiedCount >= 2 ? 1 : 0,
+                    MEAN: topMean.tiedCount >= 2 ? 1 : 0,
+                    ACTIVE: maxActive.tiedCount >= 2 ? 1 : 0,
+                    SUBMITTED: maxSubmitted.tiedCount >= 2 ? 1 : 0,
+                    RETAINED: maxStatic.tiedCount >= 2 ? 1 : 0,
+                },
             });
         }
         if (e % 1000 === 0) {
@@ -564,10 +702,24 @@ export async function runOpenScoreUsdReplay(
         const topMean = createSeries();
         const maxActive = createSeries();
         const maxStatic = createSeries();
+        const maxSubmitted = createSeries();
+        // Phase 3 MAX_ACTIVE pairwise deltas: same-event return differences
+        // between MAX_ACTIVE and the other selector, ONLY on events where
+        // they pick different assets. Build them as parallel arrays so the
+        // buildComparison() helper can derive block means and a CI.
+        const activeVsSubmitted = createSeries();
+        const activeVsRetained = createSeries();
+        const activeVsRaw = createSeries();
+        const activeVsMean = createSeries();
+        // Phase 3 MAX_ACTIVE tie counters per selector.
+        const tieCounts: Record<SelectorName, number> = { RAW: 0, ADJUSTED: 0, MEAN: 0, ACTIVE: 0, SUBMITTED: 0, RETAINED: 0 };
         const selectedDegree: number[] = [];
         const activeCountsAtEvents: number[] = [];
         const selectedByAsset = new Map<string, number>();
         const topRawSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
+        // Phase 3 MAX_ACTIVE: parallel per-asset selection map for MAX_ACTIVE.
+        const activeSelectedByAsset = new Map<string, number>();
+        const maxActiveSamplesByAsset = new Map<string, { returns: number[]; deltas: number[] }>();
         let rawAdjustedSame = 0;
 
         for (let v = 0; v < views.length; v += 1) {
@@ -601,12 +753,36 @@ export async function runOpenScoreUsdReplay(
                 series.times.push(view.timeSec);
                 series.assets.push(assetNames[selectedIdx]!);
             };
+            const appendPairwise = (series: SelectorSeries, aIdx: number, bIdx: number): void => {
+                // Only on events where the two selectors pick DIFFERENT assets.
+                if (aIdx === bIdx) return;
+                const aReturn = retByAsset.get(aIdx);
+                const bReturn = retByAsset.get(bIdx);
+                if (aReturn === undefined || bReturn === undefined) return;
+                // The "delta" is the difference in selected-asset return. The
+                // "return" stored is MAX_ACTIVE's return so topMean = active's
+                // mean in the comparison report.
+                series.returns.push(aReturn);
+                series.deltas.push(aReturn - bReturn);
+                series.times.push(view.timeSec);
+                series.assets.push(assetNames[aIdx]!);
+            };
 
             appendSelection(topRaw, view.topRaw);
             appendSelection(topAdjusted, view.topAdjusted);
             appendSelection(topMean, view.topMean);
             appendSelection(maxActive, view.maxActive);
             appendSelection(maxStatic, view.maxStatic);
+            appendSelection(maxSubmitted, view.maxSubmitted);
+            // Pairwise: MAX_ACTIVE vs each control, only on differing-selection events.
+            appendPairwise(activeVsSubmitted, view.maxActive, view.maxSubmitted);
+            appendPairwise(activeVsRetained, view.maxActive, view.maxStatic);
+            appendPairwise(activeVsRaw, view.maxActive, view.topRaw);
+            appendPairwise(activeVsMean, view.maxActive, view.topMean);
+            // Accumulate tie counts.
+            (Object.keys(view.ties) as Array<SelectorName>).forEach((k) => {
+                tieCounts[k] += view.ties[k];
+            });
             if (view.topRaw === view.topAdjusted) rawAdjustedSame += 1;
             // candidateDegree reports ACTIVE PAIR COUNT at decision events
             // (per the plan), NOT the count of positive candidates. The
@@ -622,6 +798,18 @@ export async function runOpenScoreUsdReplay(
             }
             assetSamples.returns.push(topRaw.returns[topRaw.returns.length - 1]!);
             assetSamples.deltas.push(topRaw.deltas[topRaw.deltas.length - 1]!);
+            // Phase 3 MAX_ACTIVE: separately track the MAX_ACTIVE winner's per-
+            // asset selection counts so the dominant-asset exclusion measures
+            // MAX_ACTIVE (the research hypothesis), NOT TOP_RAW.
+            const activeSelName = assetNames[view.maxActive]!;
+            activeSelectedByAsset.set(activeSelName, (activeSelectedByAsset.get(activeSelName) ?? 0) + 1);
+            let activeSamples = maxActiveSamplesByAsset.get(activeSelName);
+            if (!activeSamples) {
+                activeSamples = { returns: [], deltas: [] };
+                maxActiveSamplesByAsset.set(activeSelName, activeSamples);
+            }
+            activeSamples.returns.push(maxActive.returns[maxActive.returns.length - 1]!);
+            activeSamples.deltas.push(maxActive.deltas[maxActive.deltas.length - 1]!);
             // selectedDegree = static pair degree of the TOP_RAW winner. This
             // was collected but never surfaced; the report now exposes it so
             // coverage bias on the actually-selected asset is visible.
@@ -687,6 +875,36 @@ export async function runOpenScoreUsdReplay(
             nonDominantIndexes.map((i) => topRaw.returns[i]!),
             nonDominantIndexes.map((i) => topRaw.times[i]!),
         );
+        // Phase 3 MAX_ACTIVE: dominant-asset exclusion measures MAX_ACTIVE
+        // (the research hypothesis), NOT TOP_RAW. The most-frequently-selected
+        // MAX_ACTIVE asset (ties by FNV-1a digest) is dropped; the remaining
+        // events form the `maxActiveExDominant` comparison.
+        const totalActiveSelected = [...activeSelectedByAsset.values()].reduce((s, x) => s + x, 0);
+        const maxActiveByAsset: AssetSelectionSummary[] = [...activeSelectedByAsset.entries()]
+            .map(([asset, events]) => {
+                const samples = maxActiveSamplesByAsset.get(asset)!;
+                const selectedMean = meanOrNull(samples.returns);
+                const delta = meanOrNull(samples.deltas);
+                return {
+                    asset,
+                    events,
+                    share: totalActiveSelected > 0 ? events / totalActiveSelected : 0,
+                    topMean: selectedMean,
+                    randomMean: selectedMean !== null && delta !== null ? finiteOrNull(selectedMean - delta) : null,
+                    delta,
+                };
+            })
+            .sort((a, b) => b.events - a.events || a.asset.localeCompare(b.asset));
+        const maxActiveDominantAsset = maxActiveByAsset[0]?.asset ?? null;
+        const nonActiveDominantIndexes: number[] = [];
+        for (let i = 0; i < maxActive.assets.length; i += 1) {
+            if (maxActive.assets[i] !== maxActiveDominantAsset) nonActiveDominantIndexes.push(i);
+        }
+        const maxActiveExDominant = buildComparison(
+            nonActiveDominantIndexes.map((i) => maxActive.deltas[i]!),
+            nonActiveDominantIndexes.map((i) => maxActive.returns[i]!),
+            nonActiveDominantIndexes.map((i) => maxActive.times[i]!),
+        );
         horizonResults.push({
             bars: horizons[hIdx]!,
             topRaw: buildComparison(topRaw.deltas, topRaw.returns, topRaw.times),
@@ -694,16 +912,33 @@ export async function runOpenScoreUsdReplay(
             topMean: buildComparison(topMean.deltas, topMean.returns, topMean.times),
             maxActive: buildComparison(maxActive.deltas, maxActive.returns, maxActive.times),
             maxStatic: buildComparison(maxStatic.deltas, maxStatic.returns, maxStatic.times),
+            maxSubmitted: buildComparison(maxSubmitted.deltas, maxSubmitted.returns, maxSubmitted.times),
+            maxRetained: buildComparison(maxStatic.deltas, maxStatic.returns, maxStatic.times),
             topRawExDominant,
+            maxActiveExDominant,
+            maxActiveDominantAsset,
+            maxActiveByAsset,
             dominantAsset,
             rawAdjustedAgreement: {
                 events: n,
                 sameSelection: rawAdjustedSame,
                 rate: n > 0 ? rawAdjustedSame / n : null,
             },
+            activeVsSubmitted: buildComparison(activeVsSubmitted.deltas, activeVsSubmitted.returns, activeVsSubmitted.times),
+            activeVsRetained: buildComparison(activeVsRetained.deltas, activeVsRetained.returns, activeVsRetained.times),
+            activeVsRaw: buildComparison(activeVsRaw.deltas, activeVsRaw.returns, activeVsRaw.times),
+            activeVsMean: buildComparison(activeVsMean.deltas, activeVsMean.returns, activeVsMean.times),
             topRawByAsset,
             candidateDegree: degreeSummary(activeCountsAtEvents, totalSelected > 0 ? maxSelected / totalSelected : null),
             selectedDegree: degreeSummary(selectedDegree, totalSelected > 0 ? maxSelected / totalSelected : null),
+            tieRates: {
+                RAW: { events: n, sameSelection: tieCounts.RAW, rate: n > 0 ? tieCounts.RAW / n : null },
+                ADJUSTED: { events: n, sameSelection: tieCounts.ADJUSTED, rate: n > 0 ? tieCounts.ADJUSTED / n : null },
+                MEAN: { events: n, sameSelection: tieCounts.MEAN, rate: n > 0 ? tieCounts.MEAN / n : null },
+                ACTIVE: { events: n, sameSelection: tieCounts.ACTIVE, rate: n > 0 ? tieCounts.ACTIVE / n : null },
+                SUBMITTED: { events: n, sameSelection: tieCounts.SUBMITTED, rate: n > 0 ? tieCounts.SUBMITTED / n : null },
+                RETAINED: { events: n, sameSelection: tieCounts.RETAINED, rate: n > 0 ? tieCounts.RETAINED / n : null },
+            },
         });
         onPhase("aggregate", `aggregated horizon ${horizons[hIdx]}`, hIdx + 1, horizons.length);
         await yieldLoop();
@@ -865,16 +1100,25 @@ function firstBarAfter(times: readonly (number | null)[], t: number): number {
     return ans;
 }
 
-/** Split values into chronological blocks by their event times. */
+/**
+ * Split values into chronological blocks by their event times. Phase 0 freeze:
+ * boundaries are `floor(block*n/k)..floor((block+1)*n/k)` for `k=blockCount`
+ * (NOT `ceil(n/k)`), so each block is count-balanced and the partition covers
+ * every index exactly once. Empty blocks are omitted; if any are omitted, the
+ * block-bootstrap CI returns null (formal `INSUFFICIENT_DATA`).
+ */
 function splitIntoBlocks(values: readonly number[], times: readonly number[], blockCount: number): number[][] {
     const n = values.length;
     if (n === 0) return [];
     const order = times.map((_, i) => i).sort((a, b) => times[a]! - times[b]!);
+    const k = Math.max(1, Math.min(blockCount, n));
     const blocks: number[][] = [];
-    const k = Math.min(blockCount, n);
-    const per = Math.ceil(n / k);
-    for (let b = 0; b < n; b += per) {
-        const slice = order.slice(b, b + per).map((i) => values[i]!);
+    for (let b = 0; b < k; b += 1) {
+        const start = Math.floor((b * n) / k);
+        const end = Math.floor(((b + 1) * n) / k);
+        if (end <= start) continue;
+        const slice: number[] = [];
+        for (let i = start; i < end; i += 1) slice.push(values[order[i]!]!);
         if (slice.length > 0) blocks.push(slice);
     }
     return blocks;
@@ -898,8 +1142,8 @@ function buildReportLines(args: {
         `+blocks=${comparison.positiveBlocks}/${comparison.totalBlocks}`;
     lines.push(`OPEN_SCORE USD | ${status} | pairs=${args.pairs} assets=${args.assets} events=${args.totalEvents} comparable=${args.candidateEvents} eligible=${args.eligibleEvents}`);
     lines.push(`config | interval=${args.interval ?? "n/a"} window=${args.sampleFromSec === null ? "start" : new Date(args.sampleFromSec * 1000).toISOString().slice(0, 10)}..${args.sampleToSec === null ? "end" : new Date(args.sampleToSec * 1000).toISOString().slice(0, 10)} horizons=[${args.horizonsList.join(",")}] slippageRate=${args.slippageRate} commissionRate=${args.commissionRate}`);
-    lines.push(`static pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
-    lines.push("controls | TOP_MEAN=raw/activePairs MAX_ACTIVE=most open pairs MAX_STATIC=most submitted pairs");
+    lines.push(`retained pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
+    lines.push("controls | TOP_MEAN=raw/activePairs MAX_ACTIVE=most open pairs MAX_SUBMITTED=most submitted pairs MAX_RETAINED=most loaded artifacts");
     for (const h of args.horizons) {
         const coverageRate = args.candidateEvents > 0 ? h.topRaw.events / args.candidateEvents : 0;
         const coverageStatus = h.topRaw.events === 0
@@ -912,15 +1156,25 @@ function buildReportLines(args: {
         lines.push(comparisonLine("TOP_ADJUSTED", h.topAdjusted));
         lines.push(comparisonLine("TOP_MEAN", h.topMean));
         lines.push(comparisonLine("MAX_ACTIVE", h.maxActive));
-        lines.push(comparisonLine("MAX_STATIC", h.maxStatic));
+        lines.push(comparisonLine("MAX_SUBMITTED", h.maxSubmitted));
+        lines.push(comparisonLine("MAX_RETAINED", h.maxRetained));
         lines.push(comparisonLine(`RAW_EX_${h.dominantAsset ?? "NONE"}`, h.topRawExDominant));
+        // Phase 3 MAX_ACTIVE: pairwise same-event deltas (only differing-selection events).
+        lines.push(comparisonLine("ACTIVE_VS_SUB", h.activeVsSubmitted));
+        lines.push(comparisonLine("ACTIVE_VS_RET", h.activeVsRetained));
+        lines.push(comparisonLine("ACTIVE_VS_RAW", h.activeVsRaw));
+        lines.push(comparisonLine("ACTIVE_VS_MEAN", h.activeVsMean));
         lines.push(`RAW/ADJUSTED agreement = ${h.rawAdjustedAgreement.sameSelection}/${h.rawAdjustedAgreement.events} (${h.rawAdjustedAgreement.rate === null ? "n/a" : (h.rawAdjustedAgreement.rate * 100).toFixed(1) + "%"})`);
+        // Phase 3 MAX_ACTIVE: per-selector tie rate.
+        const tieLine = (name: string, k: keyof typeof h.tieRates): string =>
+            `${name}=${h.tieRates[k].sameSelection}/${h.tieRates[k].events} (${h.tieRates[k].rate === null ? "n/a" : (h.tieRates[k].rate! * 100).toFixed(1) + "%"})`;
+        lines.push(`tie rates | ${tieLine("RAW", "RAW")} ${tieLine("ADJ", "ADJUSTED")} ${tieLine("MEAN", "MEAN")} ${tieLine("ACTIVE", "ACTIVE")} ${tieLine("SUB", "SUBMITTED")} ${tieLine("RET", "RETAINED")}`);
         const assetBreakdown = h.topRawByAsset.slice(0, 5).map((x) =>
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");
         lines.push(`TOP_RAW selected assets = ${assetBreakdown || "n/a"}${h.topRawByAsset.length > 5 ? ` | other=${h.topRawByAsset.length - 5} assets` : ""}`);
         lines.push(`active pair count at events min/median/max = ${h.candidateDegree.min}/${fmtNum(h.candidateDegree.median)}/${h.candidateDegree.max} topAssetShare=${h.candidateDegree.topAssetShare === null ? "n/a" : (h.candidateDegree.topAssetShare * 100).toFixed(1) + "%"}`);
-        lines.push(`selected TOP_RAW static degree min/median/max = ${h.selectedDegree.min}/${fmtNum(h.selectedDegree.median)}/${h.selectedDegree.max}`);
+        lines.push(`selected TOP_RAW retained degree min/median/max = ${h.selectedDegree.min}/${fmtNum(h.selectedDegree.median)}/${h.selectedDegree.max}`);
     }
     for (const w of args.warnings) lines.push(`WARN: ${w}`);
     lines.push(`elapsed=${((Date.now() - args.startedAt) / 1000).toFixed(1)}s`);
