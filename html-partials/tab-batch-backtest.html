@@ -86,14 +86,6 @@
                 Stability Mine
             </button>
 
-            <button class="btn btn-secondary btn-compact" id="batchBacktestMinePredictionBtn" type="button" disabled
-                title="Backtest Mine's predictions at historical bars — does the analog Lift% correlate with realized forward return?">
-                Mine Prediction
-            </button>
-            <button class="btn btn-secondary btn-compact" id="batchBacktestExposureBtn" type="button" disabled
-                title="Analyze pair concentration, shared-leg clusters, and cross-pair correlations">
-                Exposure
-            </button>
             <button class="btn btn-secondary btn-compact" id="batchBacktestOpenScoreUsdBtn" type="button" disabled
                 title="Event-level selector study: at each historical OPEN_SCORE decision event, did the top positive-score asset (traded vs USD at the next bar open) beat a random positive candidate?">
                 OPEN_SCORE USD
@@ -114,37 +106,6 @@
                 <input class="batch-field-input batch-field-input--date" id="batchBacktestOpenScoreUsdHorizons" type="text" value="12,24,48" placeholder="12,24,48">
             </div>
         </div>
-        <div class="batch-mine-prediction-config" aria-label="Mine Prediction configuration">
-            <span class="batch-mine-prediction-config-label">Mine Prediction:</span>
-            <div class="batch-field batch-field--inline" title="Restrict sampling to verdict bars from this date (YYYY-MM-DD). Leave blank for full history.">
-                <label class="batch-field-label" for="batchBacktestMinePredictionFrom">From</label>
-                <input class="batch-field-input batch-field-input--date" id="batchBacktestMinePredictionFrom" type="date">
-            </div>
-            <div class="batch-field batch-field--inline" title="Restrict sampling to verdict bars up to this date (YYYY-MM-DD). Leave blank for full history.">
-                <label class="batch-field-label" for="batchBacktestMinePredictionTo">To</label>
-                <input class="batch-field-input batch-field-input--date" id="batchBacktestMinePredictionTo" type="date">
-            </div>
-            <div class="batch-field batch-field--inline" title="Score only the chosen direction's verdicts. Use Long for long-only strategies — SHORT verdicts are counter-predictive noise that drags the aggregate IC.">
-                <label class="batch-field-label" for="batchBacktestMinePredictionDirection">Dir</label>
-                <select class="batch-field-input" id="batchBacktestMinePredictionDirection">
-                    <option value="both">Both</option>
-                    <option value="long">Long only</option>
-                    <option value="short">Short only</option>
-                </select>
-            </div>
-            <div class="batch-field batch-field--inline" title="Max bars to sample per asset. Higher = tighter IC confidence but slower. Default 25.">
-                <label class="batch-field-label" for="batchBacktestMinePredictionSampleBars">Samples</label>
-                <input class="batch-field-input batch-field-input--date" id="batchBacktestMinePredictionSampleBars" type="number" min="5" max="500" step="5" value="25">
-            </div>
-            <div class="batch-field batch-field--inline" title="Bar stride between samples. Lower = denser sampling (more samples per window). Default 80. Use ~10 for dense regime tests.">
-                <label class="batch-field-label" for="batchBacktestMinePredictionSampleStep">Step</label>
-                <input class="batch-field-input batch-field-input--date" id="batchBacktestMinePredictionSampleStep" type="number" min="1" max="500" step="1" value="80">
-            </div>
-            <div class="batch-field batch-field--inline" title="Forward-return horizons in bars (comma-separated). MUST match your hold period: if riskMaxHoldBars=3, use 1,2,3. Default 12,24,48.">
-                <label class="batch-field-label" for="batchBacktestMinePredictionHorizons">Horizons</label>
-                <input class="batch-field-input batch-field-input--date" id="batchBacktestMinePredictionHorizons" type="text" value="12,24,48" placeholder="12,24,48">
-            </div>
-        </div>
         <div class="batch-action-group batch-action-group--divider" aria-hidden="true"></div>
         <div class="batch-action-group batch-action-group--exports" role="group" aria-label="Batch export">
             <button class="btn btn-secondary btn-compact" id="batchBacktestCopyBtn" type="button"
@@ -160,22 +121,6 @@
                 Copy Stability
             </button>
 
-            <button class="btn btn-secondary btn-compact" id="batchBacktestCopyMinePredictionBtn" type="button" disabled
-                title="Copy the latest Mine Prediction diagnostic report">
-                Copy Mine Prediction
-            </button>
-            <button class="btn btn-secondary btn-compact" id="batchBacktestMineAbBtn" type="button" disabled
-                title="A/B test: does filtering trades through Mine's LONG verdict improve actual P&L?">
-                Mine A/B Test
-            </button>
-            <button class="btn btn-secondary btn-compact" id="batchBacktestCopyMineAbBtn" type="button" disabled
-                title="Copy the Mine A/B test report">
-                Copy A/B
-            </button>
-            <button class="btn btn-secondary btn-compact" id="batchBacktestCopyExposureBtn" type="button" disabled
-                title="Copy the Exposure & Redundancy report">
-                Copy Exposure
-            </button>
             <button class="btn btn-secondary btn-compact" id="batchBacktestCopyOpenScoreUsdBtn" type="button" disabled
                 title="Copy the OPEN_SCORE USD replay report">
                 Copy OPEN_SCORE USD
@@ -227,9 +172,6 @@
         <div class="batch-summary-grid" id="batchBacktestSummaryGrid" hidden></div>
         <div class="batch-miner-status" id="batchBacktestMinerSummary"></div>
 
-        <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestMinePredictionSummary"></div>
-        <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestMineAbSummary"></div>
-        <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestExposureSummary"></div>
         <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestOpenScoreUsdSummary"></div>
     </div>
 

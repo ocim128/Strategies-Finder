@@ -73,12 +73,6 @@ import {
     type BatchStabilityMineResult,
     type BatchStabilityRow,
 } from "./batch-stability-mine";
-import type { BatchMinePredictionResult } from "./batch-mine-prediction-engine";
-import type { BatchMinePredictionStreamEvent } from "./batch-mine-prediction-stream-types";
-import type { MineAbResult } from "./batch-mine-prediction-ab-engine";
-import type { MineAbStreamEvent } from "./batch-mine-prediction-ab-stream-types";
-import type { ExposureRedundancyResult } from "../spread-quality/spread-quality-engine";
-import type { ExposureRedundancyStreamEvent } from "../spread-quality/spread-quality-stream-types";
 import type { OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-engine";
 import type { OpenScoreUsdReplayStreamEvent } from "./batch-open-score-usd-replay-stream-types";
 import {
@@ -142,9 +136,6 @@ class BatchBacktestService {
     private lastResults: BatchBacktestSymbolResult[] = [];
     private lastMinerResult: BatchSyntheticMinerResult | null = null;
     private lastStabilityResult: BatchStabilityMineResult | null = null;
-    private lastMinePredictionResult: BatchMinePredictionResult | null = null;
-    private lastMineAbResult: MineAbResult | null = null;
-    private lastExposureResult: ExposureRedundancyResult | null = null;
     private lastOpenScoreUsdResult: OpenScoreUsdReplayResult | null = null;
     /**
      * Last successful Balanced Generator result. Used by Copy Generated so a
@@ -285,25 +276,6 @@ class BatchBacktestService {
         });
         dom.batchBacktestCopyStabilityBtn.addEventListener("click", () => {
             void this.copyStabilityResults();
-        });
-
-        dom.batchBacktestMinePredictionBtn.addEventListener("click", () => {
-            void this.runMinePrediction();
-        });
-        dom.batchBacktestCopyMinePredictionBtn.addEventListener("click", () => {
-            void this.copyMinePredictionResults();
-        });
-        dom.batchBacktestMineAbBtn.addEventListener("click", () => {
-            void this.runMineAb();
-        });
-        dom.batchBacktestCopyMineAbBtn.addEventListener("click", () => {
-            void this.copyMineAbResults();
-        });
-        dom.batchBacktestExposureBtn.addEventListener("click", () => {
-            void this.runExposureRedundancy();
-        });
-        dom.batchBacktestCopyExposureBtn.addEventListener("click", () => {
-            void this.copyExposureResults();
         });
         dom.batchBacktestOpenScoreUsdBtn.addEventListener("click", () => {
             void this.runOpenScoreUsdReplay();
@@ -1877,289 +1849,8 @@ class BatchBacktestService {
     }
 
     /**
-
-     * Mine Prediction diagnostic. READ-ONLY on server artifacts: the engine
-     * re-runs Mine at ~hundreds of historical bars per asset to test whether
-     * Mine's analog-Lift% predicts realized forward return. Does NOT release
-     * artifacts (Mine/Stability can still run after).
-     */
-    private async runMinePrediction(): Promise<void> {
-        if (this.analysisInFlight) return;
-        this.analysisInFlight = true;
-        this.analysisCancelRequested = false;
-        const dom = this.getDom();
-        try {
-            if (!this.serverHasArtifacts) {
-                dom.batchBacktestMinePredictionSummary.textContent = "Run Batch first.";
-                return;
-            }
-            if (!this.lastRunFingerprint) {
-                dom.batchBacktestMinePredictionSummary.textContent = "Rerun Batch before Mine Prediction; settings or symbols changed.";
-                dom.batchBacktestCopyMinePredictionBtn.disabled = true;
-                return;
-            }
-            if (this.analysisCancelRequested) return;
-            this.beginAnalysisBusy(dom);
-            dom.batchBacktestMinePredictionBtn.disabled = true;
-            dom.batchBacktestCopyMinePredictionBtn.disabled = true;
-            dom.batchBacktestMinePredictionSummary.textContent = "Backtesting Mine predictions on server...";
-            await this.runMinePredictionServer(dom);
-        } finally {
-            await this.finishAnalysisBusy(dom);
-        }
-    }
-
-    private async runMinePredictionServer(dom: BatchBacktestDom): Promise<void> {
-        try {
-            // Optional verdict-bar date window (YYYY-MM-DD). Empty string on
-            // either side = full history on that side. The server parses and
-            // treats blank as null.
-            const sampleFrom = dom.batchBacktestMinePredictionFrom.value.trim();
-            const sampleTo = dom.batchBacktestMinePredictionTo.value.trim();
-            const directionRaw = dom.batchBacktestMinePredictionDirection.value.trim();
-            const directionFilter = directionRaw === "long" || directionRaw === "short" ? directionRaw : "both";
-            // Sample density controls. Parse to int with sane floors; invalid/
-            // empty falls back to the engine defaults (25 / 80) by omitting
-            // the field from the body.
-            const sampleBarsRaw = Number(dom.batchBacktestMinePredictionSampleBars.value);
-            const sampleStepRaw = Number(dom.batchBacktestMinePredictionSampleStep.value);
-            const sampleBars = Number.isFinite(sampleBarsRaw) && sampleBarsRaw >= 5 ? Math.floor(sampleBarsRaw) : null;
-            const sampleStep = Number.isFinite(sampleStepRaw) && sampleStepRaw >= 1 ? Math.floor(sampleStepRaw) : null;
-            // Horizons: comma-separated bar counts. MUST match your hold period
-            // (if riskMaxHoldBars=3, use "1,2,3"). Default 12,24,48.
-            const horizonsRaw = dom.batchBacktestMinePredictionHorizons.value.trim();
-            const horizons = horizonsRaw
-                ? horizonsRaw.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n >= 1)
-                : null;
-            // Audit NDJSON-POST-helper finding: shared transport. The
-            // `onResponse` hook preserves the reissue-Stop ordering.
-            await postBatchNdjson<BatchMinePredictionStreamEvent>({
-                endpoint: "/api/batch-backtest/mine-prediction",
-                body: {
-                    fingerprint: this.lastRunFingerprint,
-                    interval: this.lastRunInterval,
-                    ...(sampleFrom ? { sampleFrom } : {}),
-                    ...(sampleTo ? { sampleTo } : {}),
-                    directionFilter,
-                    ...(sampleBars !== null ? { sampleBars } : {}),
-                    ...(sampleStep !== null ? { sampleStep } : {}),
-                    ...(horizons && horizons.length > 0 ? { horizons } : {}),
-                },
-                onResponse: () => this.reissueStopIfNeeded(),
-                handlers: {
-                    onStart: (event) => {
-                        dom.batchBacktestMinePredictionSummary.textContent = `Backtesting Mine predictions — ${event.assets} assets / ${event.pairs} pairs`;
-                    },
-                    onProgress: (event) => {
-                        dom.batchBacktestMinePredictionSummary.textContent = `Backtesting Mine predictions — ${event.asset} (${event.doneAssets}/${event.totalAssets}, ${event.samples} samples)`;
-                    },
-                    onBar: (event) => {
-                        const pct = event.barsTotal > 0 ? Math.round((event.barsDone / event.barsTotal) * 100) : 0;
-                        dom.batchBacktestMinePredictionSummary.textContent = `Backtesting Mine predictions — ${event.asset} ${pct}% (${event.barsDone}/${event.barsTotal} bars)`;
-                    },
-                    onDone: (event) => {
-                        if (event.ok) {
-                            this.lastMinePredictionResult = event.result;
-                            this.renderMinePredictionResult(dom, event.result);
-                        } else {
-                            dom.batchBacktestMinePredictionSummary.textContent = event.summary;
-                        }
-                    },
-                    onFatal: (event) => {
-                        throw new Error(event.error);
-                    },
-                },
-            });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.lastMinePredictionResult = null;
-            dom.batchBacktestMinePredictionSummary.textContent = `Mine Prediction error: ${message}`;
-            dom.batchBacktestCopyMinePredictionBtn.disabled = true;
-            debugLogger.error("batch_mine_prediction.server_failed", { error: message });
-        }
-    }
-
-    private renderMinePredictionResult(dom: BatchBacktestDom, result: BatchMinePredictionResult): void {
-        dom.batchBacktestMinePredictionSummary.textContent = result.reportLines.join("\n");
-        dom.batchBacktestCopyMinePredictionBtn.disabled = result.reportLines.length === 0;
-    }
-
-    private async copyMinePredictionResults(): Promise<void> {
-        if (!this.lastMinePredictionResult) {
-            uiManager.showToast("No Mine Prediction report to copy", "info");
-            return;
-        }
-        const text = this.lastMinePredictionResult.reportLines.join("\n");
-        const copied = await copyToClipboard(text);
-        if (copied) {
-            uiManager.showToast("Mine Prediction report copied", "success");
-        } else {
-            this.getDom().batchBacktestStatus.textContent = "Copy failed.";
-        }
-    }
-
-    /**
-     * Mine A/B Test: runs the actual backtest with signals filtered to only
-     * Mine-LONG-gated entries, compares P&L vs control. The real
-     * tradeability test — measures P&L through the exit overlay, not IC.
-     */
-    private async runMineAb(): Promise<void> {
-        if (this.analysisInFlight) return;
-        this.analysisInFlight = true;
-        this.analysisCancelRequested = false;
-        const dom = this.getDom();
-        try {
-            if (!this.serverHasArtifacts) {
-                dom.batchBacktestMineAbSummary.textContent = "Run Batch first.";
-                return;
-            }
-            if (!this.lastRunFingerprint) {
-                dom.batchBacktestMineAbSummary.textContent = "Rerun Batch before Mine A/B Test; settings or symbols changed.";
-                dom.batchBacktestCopyMineAbBtn.disabled = true;
-                return;
-            }
-            if (this.analysisCancelRequested) return;
-            this.beginAnalysisBusy(dom);
-            dom.batchBacktestMineAbBtn.disabled = true;
-        dom.batchBacktestExposureBtn.disabled = true;
-            dom.batchBacktestCopyMineAbBtn.disabled = true;
-            dom.batchBacktestMineAbSummary.textContent = "Running Mine A/B test on server...";
-            await postBatchNdjson<MineAbStreamEvent>({
-                endpoint: "/api/batch-backtest/mine-prediction-ab",
-                body: {
-                    fingerprint: this.lastRunFingerprint,
-                    interval: this.lastRunInterval,
-                },
-                onResponse: () => this.reissueStopIfNeeded(),
-                handlers: {
-                    onStart: (event) => {
-                        dom.batchBacktestMineAbSummary.textContent = `Running Mine A/B test — ${event.pairs} pairs`;
-                    },
-                    onTargetProgress: (event) => {
-                        dom.batchBacktestMineAbSummary.textContent = `Loading Mine base data — ${event.asset} (${event.doneAssets}/${event.totalAssets} assets)`;
-                    },
-                    onProgress: (event) => {
-                        dom.batchBacktestMineAbSummary.textContent = `Running Mine A/B test — ${event.symbol} (${event.donePairs}/${event.totalPairs})`;
-                    },
-                    onDone: (event) => {
-                        if (event.ok) {
-                            this.lastMineAbResult = event.result;
-                            dom.batchBacktestMineAbSummary.textContent = event.result.reportLines.join("\n");
-                            dom.batchBacktestCopyMineAbBtn.disabled = event.result.reportLines.length === 0;
-                        } else {
-                            dom.batchBacktestMineAbSummary.textContent = event.summary;
-                        }
-                    },
-                    onFatal: (event: { error: string }) => {
-                        throw new Error(event.error);
-                    },
-                },
-            });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.lastMineAbResult = null;
-            dom.batchBacktestMineAbSummary.textContent = `Mine A/B error: ${message}`;
-            dom.batchBacktestCopyMineAbBtn.disabled = true;
-            debugLogger.error("batch_mine_ab.server_failed", { error: message });
-        } finally {
-            await this.finishAnalysisBusy(dom);
-        }
-    }
-
-    private async copyMineAbResults(): Promise<void> {
-        if (!this.lastMineAbResult) {
-            uiManager.showToast("No Mine A/B report to copy", "info");
-            return;
-        }
-        const text = this.lastMineAbResult.reportLines.join("\n");
-        const copied = await copyToClipboard(text);
-        if (copied) {
-            uiManager.showToast("Mine A/B report copied", "success");
-        } else {
-            this.getDom().batchBacktestStatus.textContent = "Copy failed.";
-        }
-    }
-
-    /**
-     * Exposure & Redundancy Report: analyzes pair concentration, shared-leg
-     * clusters, and cross-pair correlations. Descriptive only — no quality
-     * labels. Read-only on artifacts.
-     */
-    private async runExposureRedundancy(): Promise<void> {
-        if (this.analysisInFlight) return;
-        this.analysisInFlight = true;
-        this.analysisCancelRequested = false;
-        const dom = this.getDom();
-        try {
-            if (!this.serverHasArtifacts) {
-                dom.batchBacktestExposureSummary.textContent = "Run Batch first.";
-                return;
-            }
-            if (!this.lastRunFingerprint) {
-                dom.batchBacktestExposureSummary.textContent = "Rerun Batch; settings or symbols changed.";
-                dom.batchBacktestCopyExposureBtn.disabled = true;
-                return;
-            }
-            if (this.analysisCancelRequested) return;
-            this.beginAnalysisBusy(dom);
-            dom.batchBacktestExposureBtn.disabled = true;
-            dom.batchBacktestCopyExposureBtn.disabled = true;
-            dom.batchBacktestExposureSummary.textContent = "Analyzing exposure and redundancy on server...";
-            await postBatchNdjson<ExposureRedundancyStreamEvent>({
-                endpoint: "/api/batch-backtest/exposure-redundancy",
-                body: {
-                    fingerprint: this.lastRunFingerprint,
-                    interval: this.lastRunInterval,
-                },
-                onResponse: () => this.reissueStopIfNeeded(),
-                handlers: {
-                    onStart: (event: { pairs: number }) => {
-                        dom.batchBacktestExposureSummary.textContent = `Analyzing exposure — ${event.pairs} pairs`;
-                    },
-                    onProgress: (event: { symbol: string; donePairs: number; totalPairs: number }) => {
-                        dom.batchBacktestExposureSummary.textContent = `Analyzing exposure — ${event.symbol} (${event.donePairs}/${event.totalPairs})`;
-                    },
-                    onDone: (event: { ok: boolean; result?: ExposureRedundancyResult; summary?: string }) => {
-                        if (event.ok && event.result) {
-                            this.lastExposureResult = event.result;
-                            dom.batchBacktestExposureSummary.textContent = event.result.reportLines.join("\n");
-                            dom.batchBacktestCopyExposureBtn.disabled = event.result.reportLines.length === 0;
-                        } else {
-                            dom.batchBacktestExposureSummary.textContent = event.summary ?? "Exposure analysis failed.";
-                        }
-                    },
-                    onFatal: (event: { error: string }) => {
-                        throw new Error(event.error);
-                    },
-                },
-            });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.lastExposureResult = null;
-            dom.batchBacktestExposureSummary.textContent = `Exposure error: ${message}`;
-            dom.batchBacktestCopyExposureBtn.disabled = true;
-            debugLogger.error("batch_exposure.server_failed", { error: message });
-        } finally {
-            await this.finishAnalysisBusy(dom);
-        }
-    }
-
-    private async copyExposureResults(): Promise<void> {
-        if (!this.lastExposureResult) {
-            uiManager.showToast("No Exposure report to copy", "info");
-            return;
-        }
-        const text = this.lastExposureResult.reportLines.join("\n");
-        const copied = await copyToClipboard(text);
-        if (copied) {
-            uiManager.showToast("Exposure report copied", "success");
-        } else {
-            this.getDom().batchBacktestStatus.textContent = "Copy failed.";
-        }
-    }
-
-    /**
-     * OPEN_SCORE USD Replay: at each historical synthetic-pair decision event,
+     /**
+      * OPEN_SCORE USD Replay: at each historical synthetic-pair decision event,
      * did selecting the highest positive OPEN_SCORE asset (traded vs USD at the
      * next bar's open, fixed-horizon) beat a uniform random pick among the
      * other positive candidates? Read-only on artifacts — no Batch result
@@ -2574,9 +2265,6 @@ class BatchBacktestService {
         const available = this.serverHasArtifacts && Boolean(this.lastRunFingerprint);
         dom.batchBacktestMineBtn.disabled = !available;
         dom.batchBacktestStabilityMineBtn.disabled = !available;
-        dom.batchBacktestMinePredictionBtn.disabled = !available;
-        dom.batchBacktestMineAbBtn.disabled = !available;
-        dom.batchBacktestExposureBtn.disabled = !available;
         dom.batchBacktestOpenScoreUsdBtn.disabled = !available;
     }
 
@@ -2590,9 +2278,6 @@ class BatchBacktestService {
     private clearMinerResults(dom: BatchBacktestDom): void {
         this.lastMinerResult = null;
         this.lastStabilityResult = null;
-        this.lastMinePredictionResult = null;
-        this.lastMineAbResult = null;
-        this.lastExposureResult = null;
         this.lastOpenScoreUsdResult = null;
         // Clear rather than show "Miner idle": an empty .batch-miner-status
         // collapses via CSS (:empty) so the run-state region does not show a
@@ -2601,12 +2286,6 @@ class BatchBacktestService {
         dom.batchBacktestMinerResults.replaceChildren();
         dom.batchBacktestCopyMinerBtn.disabled = true;
         dom.batchBacktestCopyStabilityBtn.disabled = true;
-        dom.batchBacktestCopyMinePredictionBtn.disabled = true;
-        dom.batchBacktestMinePredictionSummary.textContent = "";
-        dom.batchBacktestCopyMineAbBtn.disabled = true;
-        dom.batchBacktestMineAbSummary.textContent = "";
-        dom.batchBacktestCopyExposureBtn.disabled = true;
-        dom.batchBacktestExposureSummary.textContent = "";
         dom.batchBacktestCopyOpenScoreUsdBtn.disabled = true;
         dom.batchBacktestOpenScoreUsdSummary.textContent = "";
     }
@@ -3027,9 +2706,6 @@ class BatchBacktestService {
         dom.batchBacktestRunBtn.disabled = true;
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
-        dom.batchBacktestMinePredictionBtn.disabled = true;
-        dom.batchBacktestMineAbBtn.disabled = true;
-        dom.batchBacktestExposureBtn.disabled = true;
         dom.batchBacktestOpenScoreUsdBtn.disabled = true;
         dom.batchBacktestBalancedGenerateBtn.disabled = true;
         dom.batchBacktestBalancedCopyBtn.disabled = true;
@@ -3043,9 +2719,6 @@ class BatchBacktestService {
         dom.batchBacktestRunBtn.disabled = true;
         dom.batchBacktestMineBtn.disabled = true;
         dom.batchBacktestStabilityMineBtn.disabled = true;
-        dom.batchBacktestMinePredictionBtn.disabled = true;
-        dom.batchBacktestMineAbBtn.disabled = true;
-        dom.batchBacktestExposureBtn.disabled = true;
         dom.batchBacktestOpenScoreUsdBtn.disabled = true;
         dom.batchBacktestBalancedGenerateBtn.disabled = true;
         dom.batchBacktestBalancedCopyBtn.disabled = true;
