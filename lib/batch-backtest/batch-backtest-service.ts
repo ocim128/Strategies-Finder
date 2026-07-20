@@ -189,6 +189,7 @@ class BatchBacktestService {
     // cannot cancel a newer run. Reattach also matches this against the
     // terminal snapshot's runId to decide whether to adopt the recovered run.
     private activeServerRunId: string | null = null;
+    private serverRunActive = false;
     // Serializes Mine Timing, Stability, and Portfolio Fit.
     private analysisInFlight = false;
     // Set when Stop races analysis preflight or POST establishment.
@@ -242,6 +243,7 @@ class BatchBacktestService {
         this.resetProgress(dom);
         this.loadPersistedLatestResults(dom);
         this.activeServerRunId = this.loadPersistedActiveServerRun()?.runId ?? null;
+        this.serverRunActive = this.activeServerRunId !== null;
         this.updateSummary(dom);
         this.initialized = true;
         // Reattach to a server-side run that started before page load. Mirrors
@@ -525,6 +527,7 @@ class BatchBacktestService {
         const runId = `batch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
         if (token === this.runToken) {
             this.activeServerRunId = runId;
+            this.serverRunActive = true;
             this.persistActiveServerRun(runId);
         }
         const response = await fetch("/api/batch-backtest/run", {
@@ -613,6 +616,7 @@ class BatchBacktestService {
                         const base = doneSummary ?? `Done — ${this.lastResults.length} pairs`;
                         doneSummary = `${base} — artifacts ${stored}/${eligible}; Mine will omit ${failed} failed write${failed === 1 ? "" : "s"}.`;
                     }
+                    this.serverRunActive = false;
                     this.clearActiveServerRun(runId, false);
                     setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
                     dom.batchBacktestStatus.textContent = doneSummary;
@@ -671,6 +675,7 @@ class BatchBacktestService {
         }
         if (token !== this.runToken) return;
         if (doneSummary !== null) {
+            this.serverRunActive = false;
             this.clearActiveServerRun(runId, false);
             dom.batchBacktestStatus.textContent = doneSummary;
             this.saveLatestResultsSnapshot();
@@ -1589,6 +1594,7 @@ class BatchBacktestService {
                     } else if (payload.lastRun?.summary) {
                         this.getDom().batchBacktestStatus.textContent = payload.lastRun.summary;
                     }
+                    this.serverRunActive = false;
                     if (terminalRunId) this.clearActiveServerRun(terminalRunId, false);
                     // Only restore Run/Stop/busy if reattach is still the active
                     // task. A user clicking Run while this fetch was in-flight
@@ -1620,6 +1626,7 @@ class BatchBacktestService {
                     this.activeServerRunId = run.runId;
                     this.persistActiveServerRun(run.runId);
                 }
+                this.serverRunActive = true;
                 this.serverHasArtifacts = false; // still running; Mine not yet available.
                 // Adopt the in-progress run's governing strategy so Mine
                 // provenance is correct even on the very first reattach tick
@@ -2277,7 +2284,7 @@ class BatchBacktestService {
             // A reloaded tab can have no local in-flight promise while the
             // server still owns the run. Do not let generator edits mutate
             // the submitted universe during that ownership window.
-            this.activeServerRunId !== null
+            this.serverRunActive
         );
     }
 
@@ -2534,7 +2541,10 @@ class BatchBacktestService {
 
     private clearActiveServerRun(expectedRunId?: string, clearMemory = true): void {
         if (expectedRunId && this.activeServerRunId && this.activeServerRunId !== expectedRunId) return;
-        if (clearMemory) this.activeServerRunId = null;
+        if (clearMemory) {
+            this.activeServerRunId = null;
+            this.serverRunActive = false;
+        }
         writePersistedJson({
             ...BATCH_ACTIVE_SERVER_RUN_STORAGE,
             data: null,
@@ -2565,7 +2575,7 @@ class BatchBacktestService {
 
     private updateBalancedGeneratorButtons(dom: BatchBacktestDom): void {
         const blocked = this.runInFlight || this.analysisInFlight
-            || this.pendingStopPromise !== null || this.activeServerRunId !== null;
+            || this.pendingStopPromise !== null || this.serverRunActive;
         dom.batchBacktestBalancedGenerateBtn.disabled = blocked;
         dom.batchBacktestBalancedCopyBtn.disabled = blocked || !this.lastBalancedPairListResult;
     }
