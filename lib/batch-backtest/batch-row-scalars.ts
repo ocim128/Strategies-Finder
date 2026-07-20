@@ -55,3 +55,39 @@ export function computeOpenTradeAssetScores(
         .map(([asset, score]) => ({ asset, score }))
         .sort((a, b) => Math.abs(b.score) - Math.abs(a.score) || a.asset.localeCompare(b.asset));
 }
+
+export interface CurrentMaxActiveCandidate {
+    asset: string;
+    score: number;
+    activePairs: number;
+}
+
+/**
+ * Current-state MAX_ACTIVE candidates for the Batch summary. Unlike the
+ * historical replay, this describes only positions open at the end of the
+ * Batch run. Return every tied winner instead of hiding a tie behind an
+ * arbitrary asset-name choice.
+ */
+export function computeCurrentMaxActiveCandidates(
+    rows: readonly BatchBacktestSymbolResult[],
+): CurrentMaxActiveCandidate[] {
+    const activePairsByAsset = new Map<string, number>();
+    for (const row of rows) {
+        const rowScores = row.openTradeAssetScores ?? computeOpenTradeAssetScores([row]);
+        const assetsInOpenPair = new Set(rowScores.filter((entry) => entry.score !== 0).map((entry) => entry.asset));
+        for (const asset of assetsInOpenPair) {
+            activePairsByAsset.set(asset, (activePairsByAsset.get(asset) ?? 0) + 1);
+        }
+    }
+
+    const positives = computeOpenTradeAssetScores(rows)
+        .filter((entry) => entry.score > 0)
+        .map((entry) => ({
+            ...entry,
+            activePairs: activePairsByAsset.get(entry.asset) ?? 0,
+        }));
+    const maxActivePairs = Math.max(0, ...positives.map((entry) => entry.activePairs));
+    return positives
+        .filter((entry) => entry.activePairs === maxActivePairs)
+        .sort((a, b) => b.score - a.score || a.asset.localeCompare(b.asset));
+}

@@ -1,10 +1,10 @@
 import { computePerformanceVerdict } from "../finder/finder-universe-metrics";
 import type { Time } from "../types/strategies";
 import { formatProfitFactor } from "../ui-formatters";
-import { computeBuyAndHoldPct, computeOpenTradeAssetScores } from "./batch-row-scalars";
+import { computeBuyAndHoldPct, computeCurrentMaxActiveCandidates, computeOpenTradeAssetScores } from "./batch-row-scalars";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 
-export { computeBuyAndHoldPct, computeOpenTradeAssetScores } from "./batch-row-scalars";
+export { computeBuyAndHoldPct, computeCurrentMaxActiveCandidates, computeOpenTradeAssetScores } from "./batch-row-scalars";
 
 interface BatchOverallStats {
     completedRows: BatchBacktestSymbolResult[];
@@ -180,6 +180,14 @@ export function formatBatchOverallSummary(results: readonly BatchBacktestSymbolR
                 `Top3 ${openConcentration.top3Assets.join(", ")} = ${formatPercent(openConcentration.top3Share * 100)} gross`,
             ].join(" | "),
         );
+        const maxActiveCandidates = computeCurrentMaxActiveCandidates(stats.resultRows);
+        if (maxActiveCandidates.length > 0) {
+            lines.push(
+                `MAX_ACTIVE NOW | ${maxActiveCandidates.map((candidate) =>
+                    `${candidate.asset} score=${formatSignedScore(candidate.score)} activePairs=${candidate.activePairs}`,
+                ).join(" | ")}`,
+            );
+        }
     }
 
     return lines;

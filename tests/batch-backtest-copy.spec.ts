@@ -5,6 +5,7 @@ import {
     buildBuyHoldRows,
     buildResultRowGrid,
     computeBuyAndHoldPct,
+    computeCurrentMaxActiveCandidates,
     computeOpenTradeAssetScores,
     formatBatchOverallSummary,
     summarizeOpenScoreConcentration,
@@ -230,6 +231,28 @@ describe("computeOpenTradeAssetScores", () => {
     });
 });
 
+describe("computeCurrentMaxActiveCandidates", () => {
+    it("reports the positive asset present in the most currently open pairs", () => {
+        const candidates = computeCurrentMaxActiveCandidates([
+            openTradeRow("AAA+XXX", "long"),
+            openTradeRow("AAA+YYY", "long"),
+            openTradeRow("BBB+ZZZ", "long"),
+        ]);
+        expect(candidates).to.deep.equal([{ asset: "AAA", score: 2, activePairs: 2 }]);
+    });
+
+    it("returns every tied MAX_ACTIVE asset", () => {
+        const candidates = computeCurrentMaxActiveCandidates([
+            openTradeRow("AAA+XXX", "long"),
+            openTradeRow("BBB+YYY", "long"),
+        ]);
+        expect(candidates).to.deep.equal([
+            { asset: "AAA", score: 1, activePairs: 1 },
+            { asset: "BBB", score: 1, activePairs: 1 },
+        ]);
+    });
+});
+
 describe("buildBuyHoldRows", () => {
     it("computes alpha = netProfitPercent - buyHoldPct per row", () => {
         // 100 -> 110 = +10% B&H; strategy netProfitPercent 25 -> alpha +15.
@@ -269,6 +292,7 @@ describe("server scalar batch rows", () => {
         expect(lines.some((line) => line.startsWith("B&H Compare"))).to.equal(false);
         expect(lines.some((line) => line.startsWith("SUMMARY | B&H Compare"))).to.equal(true);
         expect(lines.some((line) => line.startsWith("OPEN_SCORE |"))).to.equal(true);
+        expect(lines.some((line) => line.startsWith("MAX_ACTIVE NOW |"))).to.equal(true);
     });
 });
 
