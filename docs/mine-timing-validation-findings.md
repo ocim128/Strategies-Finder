@@ -303,7 +303,7 @@ pair P&L, asset identity preference, or learned threshold.
 
 ### Control selectors
 
-The replay compares five causal selectors against the same-event random-positive
+The replay compares six causal selectors against the same-event random-positive
 baseline:
 
 | Selector | Rule |
@@ -312,7 +312,8 @@ baseline:
 | `TOP_ADJUSTED` | Highest `raw / sqrt(activePairs)` |
 | `TOP_MEAN` | Highest `raw / activePairs` |
 | `MAX_ACTIVE` | Most currently open pairs among positive-score assets |
-| `MAX_STATIC` | Most submitted pair-list relationships among positive-score assets |
+| `MAX_SUBMITTED` | Most submitted pair-list relationships among positive-score assets |
+| `MAX_RETAINED` | Most successfully retained pair artifacts among positive-score assets |
 
 The report also removes the most frequently selected `TOP_RAW` asset and
 recalculates the result (`RAW_EX_<asset>`). This exposes results caused by one
@@ -327,6 +328,56 @@ dominant stock rather than a reusable selector.
 | Random 2,000-symbol input, 1,534 retained artifacts, 4h | `TOP_RAW`, `TOP_ADJUSTED`, and `TOP_MEAN` were negative; `MAX_ACTIVE` was positive at 36/72/96 bars with deltas `+1.15%`, `+2.38%`, and `+3.29%` and positive 95% intervals |
 | Rank-Pairs-derived 995-pair uptrend list, 30m | `TOP_RAW` was positive but nearly identical to `MAX_ACTIVE`, with 99.7% RAW/ADJUSTED agreement and about 60% of selections in AMD |
 | Rank-Pairs-derived downtrend list, 4h | `TOP_RAW` failed; `TOP_MEAN` was positive, but the pair universe also changed, so this was not a clean regime comparison |
+| Custom 918-pair uptrend list, 4h | `MAX_ACTIVE` and `TOP_RAW` differed on only 11 of about 5,770 eligible events, so the positive result did not independently validate `MAX_ACTIVE` |
+| Degree-balanced 2,000-pair lists, seeds 1-10, 4h | At 72 bars, `MAX_ACTIVE` was positive for 8/10 seeds with median `+0.255%`, but the cross-seed 95% interval included zero; result **INCONCLUSIVE** |
+
+### Degree-balanced multi-seed robustness test
+
+The implemented generator received the same 69 assets and emitted 2,000 of
+the 2,346 possible unique relationships for each seed. Every retained universe
+had pair degree min/median/max approximately `57/58/58`. The Batch
+configuration, 4h interval, costs, and primary 72-bar horizon were held fixed.
+
+Before examining the remaining seeds, the success rule was frozen:
+
+1. at least 8 of 10 seeds must have a positive 72-bar `MAX_ACTIVE` delta
+   against random-positive selection;
+2. the median seed delta must be positive;
+3. the 95% interval across the ten seed-level deltas must be above zero;
+4. at least 7 of 10 `ACTIVE_VS_SUB` deltas must be positive; and
+5. median results at the secondary 36- and 96-bar horizons must be positive.
+
+The observed primary-horizon results were:
+
+| Seed | `MAX_ACTIVE` vs random | `ACTIVE_VS_SUB` |
+|---:|---:|---:|
+| 1 | `+1.27%` | `+1.35%` |
+| 2 | `-0.61%` | `-0.65%` |
+| 3 | `+0.59%` | `+0.57%` |
+| 4 | `-0.17%` | `-0.12%` |
+| 5 | `+0.14%` | `+0.06%` |
+| 6 | `+0.02%` | `+0.26%` |
+| 7 | `+0.03%` | `+0.14%` |
+| 8 | `+0.50%` | `+0.53%` |
+| 9 | `+0.75%` | `+0.76%` |
+| 10 | `+0.37%` | `+0.33%` |
+
+`MAX_ACTIVE` passed the sign-count gate at 8/10 and had a positive median of
+`+0.255%`. Its mean was `+0.289%`, but an approximate Student-t 95% interval
+across the ten seed estimates was `[-0.09%, +0.67%]`. `ACTIVE_VS_SUB` was also
+positive for 8/10 seeds, with mean `+0.323%` and approximate cross-seed 95%
+interval `[-0.06%, +0.71%]`. Both intervals crossed zero.
+
+The 36-bar `MAX_ACTIVE` point estimate was positive for 8/10 seeds and its
+median was positive. The required 96-bar runs were not collected for seeds
+3-10, so the 96-bar secondary gate cannot be evaluated. Separate 2020 and 2022
+seed-2 slices were exploratory after-the-fact checks, not registered holdouts:
+2020 was negative and 2022 was inconclusive.
+
+The frozen overall verdict is **INCONCLUSIVE**. The positive seed count and
+median prevent a failure verdict, while the cross-seed intervals and missing
+96-bar evidence prevent a success verdict. Seed 1 must not be promoted alone,
+and adding more seeds after seeing these results would change the frozen test.
 
 ### Conclusion
 
@@ -335,10 +386,11 @@ and 30m results depended strongly on pair-list construction and a few
 high-coverage assets. On the broad random universe it underperformed random
 selection.
 
-`MAX_ACTIVE` is the strongest new hypothesis because it survived the broad
-random-universe run. It is not yet validated: it was identified after examining
-the same historical experiments and still needs a preregistered test on an
-untouched chronological holdout with a fixed, degree-balanced pair universe.
+`MAX_ACTIVE` remains an unvalidated hypothesis. It passed the frozen 8/10
+positive-seed count at the primary 72-bar horizon, but failed the requirement
+that the cross-seed confidence interval remain above zero. The secondary
+96-bar seed matrix is incomplete. The result is therefore **INCONCLUSIVE**, not
+a success and not a failure.
 
 `TOP_MEAN` may behave differently in downtrends, but the observed downtrend run
 changed both the market regime and pair universe. It cannot isolate a regime
@@ -366,9 +418,10 @@ N * (N - 1) / 2
 
 For 70 assets this is 2,415 relationships, not 4,900 directional cells.
 
-### Proposed feature: balanced pair-list generator
+### Implemented feature: balanced pair-list generator
 
-Add a pair-list generator whose input is one marked asset per line:
+The Batch UI now includes a pair-list generator whose input is one marked asset
+per line:
 
 ```text
 AAPL•
@@ -403,15 +456,18 @@ reproducibility, not selecting historically attractive pairs.
 
 ### Required next validation
 
-1. Generate one deterministic, degree-balanced pair list.
-2. Freeze the pair list, Batch configuration, interval, horizons, and selector
-   rules before examining the holdout.
-3. Compare `MAX_ACTIVE`, `TOP_RAW`, `TOP_MEAN`, `MAX_STATIC`, and random on a
-   new chronological holdout.
-4. Require positive chronological blocks and a positive confidence interval;
-   also report per-asset selection concentration.
-5. Only build a stateful USD portfolio replay if `MAX_ACTIVE` survives that
-   gate.
+1. Record the missing 96-bar result for seeds 3-10 without changing their pair
+   lists or Batch configuration; this can complete the secondary diagnostic but
+   cannot repair the already-inconclusive primary cross-seed interval.
+2. Do not add seeds or alter the pass rule after observing seeds 1-10.
+3. If research continues, preregister a future chronological holdout, fixed
+   pair-list provenance, Batch configuration, interval, horizons, selector
+   rules, and decision thresholds before its data becomes available.
+4. Compare `MAX_ACTIVE`, `TOP_RAW`, `TOP_MEAN`, `MAX_SUBMITTED`,
+   `MAX_RETAINED`, and random on that holdout, including per-asset selection
+   concentration and tie rates.
+5. Only build a stateful USD portfolio replay if the preregistered holdout
+   passes.
 
 ---
 
@@ -426,7 +482,7 @@ reproducibility, not selecting historically attractive pairs.
 | 3 | Mine as trade filter | Does filtering trades through Mine improve P&L? | Mine A/B Test | **CONTROL_BETTER** (Mine destroys $195k) |
 | 4 | Spread quality metrics | Do ADF/half-life predict which pairs are profitable OOS? | Phase 0 walk-forward validation | **FAIL** — no OOS predictive value |
 | 5 | Current-time signal ranking | Can causal history and entry features pick the best simultaneous trade? | Signal-event walk-forward replay | **NO_OOS_EDGE** — adaptive CI crosses zero; holdout flat |
-| 6 | OPEN_SCORE USD asset selection | Does the largest positive signed asset vote beat another positive asset? | OPEN_SCORE USD replay | **TOP_RAW NOT GENERAL**; `MAX_ACTIVE` is an unvalidated holdout hypothesis |
+| 6 | OPEN_SCORE USD asset selection | Does the largest positive signed asset vote beat another positive asset? | OPEN_SCORE USD replay | **TOP_RAW NOT GENERAL**; `MAX_ACTIVE` multi-seed result **INCONCLUSIVE** |
 
 ### The pattern
 
@@ -500,7 +556,11 @@ The following reusable diagnostic tools are retained in the codebase for validat
 
 If a future strategy or signal claims directional edge, run Mine Prediction first (IC test), then Mine A/B (P&L test). If both pass, the edge is real. If either fails, it's not.
 
-The one-off signal-event replay was removed after its negative conclusion was documented. `MAX_ACTIVE` is a new, explicitly unvalidated hypothesis and must be tested on untouched data rather than promoted from the exploratory OPEN_SCORE runs.
+The one-off signal-event replay was removed after its negative conclusion was
+documented. `MAX_ACTIVE` remains unvalidated after the frozen ten-seed test:
+8/10 primary point estimates were positive, but the cross-seed confidence
+interval crossed zero and the 96-bar secondary matrix was incomplete. It must
+not be promoted from the exploratory OPEN_SCORE runs.
 
 ---
 
