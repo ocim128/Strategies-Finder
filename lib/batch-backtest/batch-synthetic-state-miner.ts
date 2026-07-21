@@ -1583,10 +1583,21 @@ function buildPairContributions(
         ...current.opposingSymbols.map((symbol) => ({ symbol, side: "opposing" as const })),
     ];
     const baseReturn = evidence.expectedForwardReturnPct;
+    // Hoist each analog's agreeing/opposing symbol lists to a Set once so the
+    // per-symbol membership check inside the map is O(1) instead of O(K). With
+    // neighborCountMax=24 and dense-agreement targets the prior
+    // `Array.prototype.includes` scans ran ~K string compares per (symbol,
+    // analog) pair. Output is byte-identical (Set membership and Array.includes
+    // agree for the unique-symbol snapshots this loop sees).
+    const analogSets = oosAnalogs.map((analog) => ({
+        sample: analog.sample,
+        agreeing: new Set(analog.sample.snapshot.agreeingSymbols),
+        opposing: new Set(analog.sample.snapshot.opposingSymbols),
+    }));
     return symbols.map(({ symbol, side }) => {
-        const without = oosAnalogs
-            .filter((analog) => !analog.sample.snapshot.agreeingSymbols.includes(symbol) && !analog.sample.snapshot.opposingSymbols.includes(symbol))
-            .map((analog) => analog.sample);
+        const without = analogSets
+            .filter((entry) => !entry.agreeing.has(symbol) && !entry.opposing.has(symbol))
+            .map((entry) => entry.sample);
         const summary = summarizeSamples(without, evidence.horizonBars);
         const delta = summary.avgReturnPct !== null && baseReturn !== null ? summary.avgReturnPct - baseReturn : null;
         let label: BatchSyntheticPairContributionLabel = "neutral";

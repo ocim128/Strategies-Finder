@@ -182,7 +182,7 @@ export function formatBatchOverallSummary(results: readonly BatchBacktestSymbolR
                 `Top3 ${openConcentration.top3Assets.join(", ")} = ${formatPercent(openConcentration.top3Share * 100)} gross`,
             ].join(" | "),
         );
-        const maxActiveCandidates = computeCurrentMaxActiveCandidates(stats.resultRows);
+        const maxActiveCandidates = computeCurrentMaxActiveCandidates(stats.resultRows, scores);
         if (maxActiveCandidates.length > 0) {
             lines.push(
                 `MAX_ACTIVE NOW | ${maxActiveCandidates.map((candidate) =>
@@ -198,7 +198,7 @@ export function formatBatchOverallSummary(results: readonly BatchBacktestSymbolR
             // are surfaced (mirrors MAX_ACTIVE NOW's no-arbitrary-tiebreak
             // rule). See docs/open-score-usd-replay-implementation-plan.md
             // for the arm semantics.
-            const positivesWithCoverage = computeOpenScorePositivesWithCoverage(stats.resultRows);
+            const positivesWithCoverage = computeOpenScorePositivesWithCoverage(stats.resultRows, scores);
             const topRawNow = pickTopPositive(positivesWithCoverage, (c) => c.score);
             if (topRawNow.length > 0) {
                 lines.push(
@@ -231,6 +231,13 @@ export function formatBatchOverallSummary(results: readonly BatchBacktestSymbolR
  */
 function computeOpenScorePositivesWithCoverage(
     rows: readonly BatchBacktestSymbolResult[],
+    /**
+     * Optional pre-computed asset scores for the same `rows` (e.g. the
+     * OPEN_SCORE summary line). When supplied, the O(N)
+     * `computeOpenTradeAssetScores(rows)` call is skipped — important because
+     * the Copy Results path used to recompute the same map three times.
+     */
+    scores?: { asset: string; score: number }[],
 ): CurrentMaxActiveCandidate[] {
     const activePairsByAsset = new Map<string, number>();
     for (const row of rows) {
@@ -240,7 +247,7 @@ function computeOpenScorePositivesWithCoverage(
             activePairsByAsset.set(asset, (activePairsByAsset.get(asset) ?? 0) + 1);
         }
     }
-    return computeOpenTradeAssetScores(rows)
+    return (scores ?? computeOpenTradeAssetScores(rows))
         .filter((entry) => entry.score > 0)
         .map((entry) => ({
             ...entry,

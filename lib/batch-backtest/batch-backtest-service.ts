@@ -181,7 +181,7 @@ class BatchBacktestService {
     // terminal snapshot's runId to decide whether to adopt the recovered run.
     private activeServerRunId: string | null = null;
     private serverRunActive = false;
-    // Serializes Mine Timing, Stability, and Portfolio Fit.
+    // Serializes Mine Timing, Stability, and OPEN_SCORE USD Replay.
     private analysisInFlight = false;
     // Set when Stop races analysis preflight or POST establishment.
     private analysisCancelRequested = false;
@@ -202,6 +202,15 @@ class BatchBacktestService {
     // final row count is always visible immediately on done/cancel/error.
     private liveRenderQueue: BatchBacktestSymbolResult[] = [];
     private liveRenderRafId: number | null = null;
+    // Mine verdict live-render queue (separate from the run-row queue above).
+    // The server-streamed Mine path emits one `verdict` event per asset; the
+    // NDJSON consumer drains every line in a tight `while` with no `await`
+    // between handlers, so a single `reader.read()` returning many verdicts
+    // fires many synchronous `appendChild`s. Queue verdicts and flush once per
+    // animation frame (same pattern as the run-row queue) so a 200-asset Mine
+    // produces one reflow per frame instead of 200.
+    private minerVerdictQueue: BatchSyntheticAssetVerdict[] = [];
+    private minerVerdictRafId: number | null = null;
     // Reattach polling timer id (set when this tab is observing a server-side
     // run that started before page load).
     private reattachTimer: ReturnType<typeof setTimeout> | null = null;
@@ -309,9 +318,25 @@ class BatchBacktestService {
             this.updateSummary(dom);
         });
         dom.batchBacktestSymbols.addEventListener("input", () => {
-            this.clearStaleResults(dom);
+            // Fast path: when there is nothing derived from a prior run/cache
+            // to invalidate (no fingerprint, no live results, no miner/stability
+            // results, no active server run, no provenance to recheck), the
+            // input event only needs the pair-count summary text. Skipping the
+            // heavy path here avoids two `parseBatchSymbols` passes + a
+            // `localStorage.removeItem` per keystroke while editing/pasting
+            // large pair lists.
+            const hasDerivedState = this.lastRunFingerprint !== null
+                || this.lastResults.length > 0
+                || this.lastMinerResult !== null
+                || this.lastStabilityResult !== null
+                || this.lastOpenScoreUsdResult !== null
+                || this.activeServerRunId !== null
+                || this.activePairListProvenance !== null;
+            if (hasDerivedState) {
+                this.clearStaleResults(dom);
+                this.clearActivePairListProvenanceIfStale(dom);
+            }
             this.updateSummary(dom);
-            this.clearActivePairListProvenanceIfStale(dom);
         });
         dom.batchBacktestBalancedGenerateBtn.addEventListener("click", () => {
             void this.generateAndApplyBalancedPairList();
@@ -1189,6 +1214,11 @@ class BatchBacktestService {
         let targetCount = 0;
         try {
             const verdicts: BatchSyntheticAssetVerdict[] = [];
+            // Defensive: reset the verdict render queue + cancel any stale RAF
+            // so a previous Mine's pending render cannot leak into this run.
+            // The onStart handler replaces `replaceChildren()` on the DOM side.
+            this.cancelMinerVerdictRaf();
+            this.minerVerdictQueue = [];
             const minerInterval = this.lastRunInterval ?? state.currentInterval;
             // Audit NDJSON-POST-helper finding: route through the shared
             // `postBatchNdjson` helper for the transport mechanics (fetch,
@@ -1211,8 +1241,14 @@ class BatchBacktestService {
                         dom.batchBacktestMinerSummary.textContent = `Mining on server — ${event.assets} assets / ${event.pairs} pairs`;
                     },
                     onVerdict: (event: Extract<BatchMinerStreamEvent, { type: "verdict" }>) => {
+                        // Push to `verdicts` synchronously so the post-Mine
+                        // Copy/persist path sees the complete, ordered list. The
+                        // DOM row is queued and rendered once per animation
+                        // frame (mirrors the run-row `queueLiveRender` path) to
+                        // avoid one layout-invalidating append per verdict on a
+                        // fast stream (Finding 7 in the perf-audit list).
                         verdicts.push(event.verdict);
-                        dom.batchBacktestMinerResults.appendChild(this.createMinerRow(event.verdict));
+                        this.queueMinerVerdictRender(dom, event.verdict);
                     },
                     onDone: (event: Extract<BatchMinerStreamEvent, { type: "done" }>) => {
                         dom.batchBacktestMinerSummary.textContent = event.summary;
@@ -1228,6 +1264,10 @@ class BatchBacktestService {
                 verdicts,
                 diagnostics: [],
             };
+            // Drain any queued verdict rows synchronously so the final count is
+            // visible before the summary text and Copy button state update.
+            this.cancelMinerVerdictRaf();
+            this.flushMinerVerdictRenderNow(dom);
             dom.batchBacktestMinerSummary.textContent = formatMinerSummary(this.lastMinerResult);
             dom.batchBacktestCopyMinerBtn.disabled = verdicts.length === 0;
             this.persistMineTimingResult("mine");
@@ -1236,6 +1276,10 @@ class BatchBacktestService {
             this.serverHasArtifacts = false;
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
+            // Drop any queued verdict rows: the partial Mine result is being
+            // discarded. Without this the RAF callback would render stale
+            // verdicts after `lastMinerResult` was cleared.
+            this.cancelMinerVerdictRaf();
             this.lastMinerResult = null;
             dom.batchBacktestMinerSummary.textContent = `Miner error: ${message}`;
             debugLogger.error("batch_synthetic_miner.server_failed", { error: message });
@@ -2158,7 +2202,7 @@ class BatchBacktestService {
         setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
         dom.batchBacktestCopyBtn.disabled = this.lastResults.length === 0;
         // Audit Mine-Prediction-gating finding: route every artifact-action
-        // button (Mine, Stability, Mine Prediction) through the same helper so
+        // button (Mine, Stability, OPEN_SCORE USD) through the same helper so
         // a tab that reloads into restored-but-not-current state keeps all
         // three disabled consistently until a server-side run re-enables them.
         this.updateArtifactActionButtons(dom);
@@ -2254,12 +2298,13 @@ class BatchBacktestService {
 
     /**
      * Single source of truth for the three artifact-action buttons (Mine,
-     * Stability Mine, Mine Prediction). Audit finding (Mine Prediction gating):
-     * Mine Prediction used to stay enabled after `clearStaleResults` invalidated
-     * the fingerprint (only Mine and Stability were disabled), so the user could
-     * click a stale button and only then see "Run Batch first." Locking all three
-     * artifact-dependent buttons to the same `serverHasArtifacts && lastRunFingerprint`
-     * gate keeps them consistent across every lifecycle branch.
+     * Stability Mine, OPEN_SCORE USD). Audit finding (artifact-action gating):
+     * an artifact-only button used to stay enabled after `clearStaleResults`
+     * invalidated the fingerprint (only Mine and Stability were disabled), so
+     * the user could click a stale button and only then see "Run Batch first."
+     * Locking all three artifact-dependent buttons to the same
+     * `serverHasArtifacts && lastRunFingerprint` gate keeps them consistent
+     * across every lifecycle branch.
      */
     private updateArtifactActionButtons(dom: BatchBacktestDom): void {
         const available = this.serverHasArtifacts && Boolean(this.lastRunFingerprint);
@@ -2565,6 +2610,55 @@ class BatchBacktestService {
     }
 
     /**
+     * Mine-verdict live-render counterpart to {@link queueLiveRender}. Verdicts
+     * arrive faster than a frame each on a warm stream; queue them and append
+     * in one DocumentFragment per frame so a 200-asset Mine produces one
+     * reflow per frame instead of 200. A synchronous flush fires at
+     * `LIVE_RENDER_MAX_BATCH` so very fast cached streams don't defer visible
+     * progress too long.
+     */
+    private queueMinerVerdictRender(dom: BatchBacktestDom, verdict: BatchSyntheticAssetVerdict): void {
+        this.minerVerdictQueue.push(verdict);
+        if (this.minerVerdictQueue.length >= LIVE_RENDER_MAX_BATCH) {
+            this.flushMinerVerdictRenderNow(dom);
+            return;
+        }
+        if (this.minerVerdictRafId !== null) return;
+        this.minerVerdictRafId = requestAnimationFrame(() => {
+            this.minerVerdictRafId = null;
+            this.flushMinerVerdictRenderNow(dom);
+        });
+    }
+
+    /**
+     * Drain the Mine verdict queue as a single DocumentFragment append
+     * (preserves verdict order). Called on the RAF schedule and on terminal
+     * paths.
+     */
+    private flushMinerVerdictRenderNow(dom: BatchBacktestDom): void {
+        if (this.minerVerdictQueue.length === 0) return;
+        const batch = this.minerVerdictQueue;
+        this.minerVerdictQueue = [];
+        const fragment = document.createDocumentFragment();
+        for (const verdict of batch) {
+            fragment.appendChild(this.createMinerRow(verdict));
+        }
+        dom.batchBacktestMinerResults.appendChild(fragment);
+    }
+
+    /**
+     * Cancel any pending Mine-verdict RAF and drop the queue. Called on the
+     * Mine error path so a stale RAF does not render partial verdicts after
+     * `lastMinerResult` was cleared.
+     */
+    private cancelMinerVerdictRaf(): void {
+        if (this.minerVerdictRafId !== null) {
+            cancelAnimationFrame(this.minerVerdictRafId);
+            this.minerVerdictRafId = null;
+        }
+    }
+
+    /**
      * Append many result rows in one DocumentFragment so restore / reattach
      * paths that render hundreds of rows synchronously do a single reflow
      * instead of one per row. Output is identical to calling appendResultRow
@@ -2590,9 +2684,9 @@ class BatchBacktestService {
         // Audit Finding 5: a stale run id must not survive a results clear.
         this.activeServerRunId = null;
         this.clearPersistedLatestResults();
-        // Audit Mine-Prediction-gating finding: all three artifact-action
+        // Audit artifact-action-gating finding: all three artifact-action
         // buttons share the same gate; clearing stale results disables Mine,
-        // Stability, AND Mine Prediction consistently through one helper.
+        // Stability, AND OPEN_SCORE USD consistently through one helper.
         this.updateArtifactActionButtons(dom);
         if (this.lastResults.length === 0) return;
         this.lastResults = [];
@@ -2728,8 +2822,8 @@ class BatchBacktestService {
         }
         this.analysisInFlight = false;
         dom.batchBacktestRunBtn.disabled = false;
-        // Audit Mine-Prediction-gating finding: route the post-analysis restore
-        // through the shared helper so Mine, Stability, Mine Prediction, and
+        // Audit artifact-action-gating finding: route the post-analysis restore
+        // through the shared helper so Mine, Stability, and OPEN_SCORE USD
         // all flip back together based on the same gate.
         this.updateArtifactActionButtons(dom);
     }

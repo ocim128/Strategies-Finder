@@ -41,7 +41,6 @@ import {
     createStabilityAggregate,
     finalizeStabilityAggregate,
     sampleItems,
-    type BatchStabilityMineResult,
 } from "./batch-stability-mine";
 import {
     createBatchSyntheticMinerProfile,
@@ -212,6 +211,18 @@ const ARTIFACT_SUBMISSION_CAPACITY = 8;
  * once more per Mine — acceptable disk overhead in exchange for the heap bound.
  */
 const PARSED_ARTIFACT_CACHE_MAX = 32;
+
+/**
+ * Caps for the OPEN_SCORE USD Replay `horizons` input. The route is reachable
+ * via the documented Cloudflare-tunnel / LOCAL_PROXY_TOKEN path and accepts no
+ * symbols (so `BATCH_MAX_SYMBOLS` does not gate it). Without these caps a
+ * single request with a million-entry `horizons` array (or one huge horizon)
+ * triggers a million-horizon replay across every retained artifact. The
+ * browser UI only ever sends a handful of small horizons, so these caps are
+ * invisible to legitimate callers.
+ */
+const OPEN_SCORE_HORIZONS_MAX_LENGTH = 8;
+const OPEN_SCORE_HORIZONS_MAX_VALUE = 1000;
 
 /**
  * Minimal counting semaphore capping concurrent async artifact writes across
@@ -586,9 +597,6 @@ let abortController: AbortController | null = null;
 let minerAbortController: AbortController | null = null;
 let artifactReleaseTimer: ReturnType<typeof setTimeout> | null = null;
 let minerState: { running: boolean; startedAt: number; assets: number; pairs: number; verdicts: number; cancelled: boolean } | null = null;
-// Retain the successful Stability result so Portfolio Fit uses server-owned
-// context instead of trusting browser-supplied rows.
-let retainedStabilityResult: BatchStabilityMineResult | null = null;
 
 /**
  * Stop-before-ownership race closer (audit Finding 5). When Stop arrives BEFORE
@@ -816,8 +824,6 @@ async function releaseLastResults(reason: string): Promise<void> {
     lastRunBacktestSettings = null;
     lastRunCapitalSettings = null;
     lastRunCacheStats = null;
-    // Clear retained Stability state whenever its matching artifacts expire.
-    retainedStabilityResult = null;
 
     // Now safe to await: this only touches the DETACHED snapshot.
     if (detached.writes.length > 0) {
@@ -1133,7 +1139,7 @@ export async function processRunBatch(
         // R-F1: only stamp the global run-provenance fields if THIS run still
         // owns the snapshot. An unwinding old run whose ownership was taken by
         // a newer run must not overwrite the newer run's fingerprint/interval/
-        // strategy — those gate Mine/Stability/Portfolio Fit acceptance.
+        // strategy — those gate Mine/Stability/OPEN_SCORE USD acceptance.
         // Flush in-flight artifact writes before the `done` event so
         // `serverHasArtifacts` is truthful — the browser gates the Mine button
         // on that flag, and Mine reads the artifacts from disk (audit Finding 4).
@@ -1405,7 +1411,6 @@ export async function processStabilityMine(
     const writeCancelled = () => {
         snapshot.cancelled = true;
         snapshot.running = false;
-        retainedStabilityResult = null;
         writer({ type: "done", ok: false, cancelled: true, summary: "Stability mining cancelled." });
     };
 
@@ -1485,7 +1490,6 @@ export async function processStabilityMine(
                     return;
                 }
                 snapshot.running = false;
-                retainedStabilityResult = parallelResult;
                 writer({ type: "done", ok: true, result: parallelResult });
                 // Do NOT releaseLastResults("mine_completed") here. The sequential
                 // Stability path intentionally retains artifacts so a second
@@ -1548,7 +1552,6 @@ export async function processStabilityMine(
             return;
         }
         snapshot.running = false;
-        retainedStabilityResult = finalResult;
         writer({ type: "done", ok: true, result: finalResult });
     } catch (error) {
         if (lostOwnership()) {
@@ -1558,7 +1561,6 @@ export async function processStabilityMine(
         const message = error instanceof Error ? error.message : String(error);
         debugLogger.warn("batch.server.stability_mine.fatal", { error: message });
         snapshot.running = false;
-        retainedStabilityResult = null;
         writer({ type: "fatal", error: message });
     } finally {
         captureCurrentParsedCacheStats();
@@ -1820,7 +1822,7 @@ function rememberLocalApiOriginFromRequest(req: { headers?: Record<string, unkno
 async function handleStopRequest(rawRunId?: unknown): Promise<{ ok: boolean; stopped: boolean }> {
     // Audit Finding 5: Stop is scoped by run id when the browser sends one.
     // A mismatched run id must NOT cancel the active run — a stale tab cannot
-    // stop a newer run. The miner (Mine / Stability / Portfolio Fit) has no
+    // stop a newer run. The miner (Mine / Stability / OPEN_SCORE USD) has no
     // runId in this contract; its locks are still force-reset so Stop remains
     // the recovery path for a stuck analysis job.
     const requestedRunId = parseBatchRunId(rawRunId);
@@ -2168,6 +2170,37 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
         return Math.floor(ms / 1000) + (endOfDay ? 24 * 3600 - 1 : 0);
     };
 
+    // OPEN_SCORE horizons input validation. The route is reachable on the
+    // documented Cloudflare-tunnel / LOCAL_PROXY_TOKEN path and accepts no
+    // symbols (so BATCH_MAX_SYMBOLS does not gate it). Reject oversized or
+    // out-of-range payloads with 400 instead of silently truncating, so a
+    // legitimate UI typo is visible while a malicious million-entry array
+    // can't exhaust CPU across all retained artifacts.
+    let validatedHorizons: number[] | null = null;
+    if (Array.isArray(body.horizons) && body.horizons.length > 0) {
+        if (body.horizons.length > OPEN_SCORE_HORIZONS_MAX_LENGTH) {
+            throw new HttpStatusError(
+                400,
+                `Too many horizons (${body.horizons.length}); limit is ${OPEN_SCORE_HORIZONS_MAX_LENGTH}.`,
+            );
+        }
+        const cleaned: number[] = [];
+        for (const h of body.horizons) {
+            if (typeof h !== "number" || !Number.isFinite(h) || h < 1) {
+                throw new HttpStatusError(400, `Each horizon must be a finite number >= 1; got ${String(h)}.`);
+            }
+            const floored = Math.floor(h);
+            if (floored > OPEN_SCORE_HORIZONS_MAX_VALUE) {
+                throw new HttpStatusError(
+                    400,
+                    `Horizon ${floored} exceeds the per-element cap of ${OPEN_SCORE_HORIZONS_MAX_VALUE}.`,
+                );
+            }
+            cleaned.push(floored);
+        }
+        validatedHorizons = cleaned;
+    }
+
     let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
     try {
         stream = createDisconnectSafeStream(res, { onDisconnect: () => cancelMinerOnDisconnect(owner) });
@@ -2176,9 +2209,7 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
             lastRunInterval,
             (event) => stream!.write(event),
             owner,
-            Array.isArray(body.horizons) && body.horizons.length > 0
-                ? body.horizons.filter((h: unknown) => typeof h === "number" && h >= 1).map((h: number) => Math.floor(h))
-                : null,
+            validatedHorizons,
             parseBodyDateSec("sampleFrom", false),
             parseBodyDateSec("sampleTo", true),
         );
@@ -2536,12 +2567,6 @@ export const __testInternals = {
     shouldSweepOrphanEntryForTests: shouldSweepOrphanEntry,
     MINE_ARTIFACT_DIR_PREFIX_FOR_TESTS: MINE_ARTIFACT_DIR_PREFIX,
     ORPHAN_SWEEP_STALE_MS_FOR_TESTS: ORPHAN_SWEEP_STALE_MS,
-    setRetainedStabilityResultForTests(stability: BatchStabilityMineResult | null): void {
-        retainedStabilityResult = stability;
-    },
-    getRetainedStabilityResultForTests(): BatchStabilityMineResult | null {
-        return retainedStabilityResult;
-    },
     hasArtifactReleaseTimerForTests(): boolean {
         return artifactReleaseTimer !== null;
     },

@@ -32,7 +32,8 @@
  * only causes a rebuild (see AGENTS.md §"synthetic-pair disk cache").
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { mkdir, readFile, rename, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { serialize as v8Serialize, deserialize as v8Deserialize } from "node:v8";
 import type { OHLCVData } from "../types/strategies";
@@ -77,7 +78,7 @@ const PRUNE_THROTTLE_MS = 60_000;
  * prune sort (oldest-mtime-first) reflects actual access, not just write
  * time. Without this, a hot pair that hasn't been rewritten would be evicted
  * before a cold newer one — FIFO dressed as LRU (audit Finding 3). The
- * throttle bounds disk writes: at most one `utimesSync` per file per window.
+ * throttle bounds disk writes: at most one `utimes` per file per window.
  */
 export const LRU_TOUCH_THROTTLE_MS = 5 * 60_000;
 
@@ -85,7 +86,7 @@ let cacheDirForTests: string | null = null;
 /**
  * Test-only override for the file-backed (IBKR / stock-market) seed CSV root.
  * Production resolves seeds against `process.cwd()/price-data/ibkr/csv/`. Tests
- * that exercise `computeSeedFingerprint`'s `statSync` sensitivity redirect
+ * that exercise `computeSeedFingerprint`'s seed-mtime stat sensitivity redirect
  * this to a per-spec tempdir so they never touch warmed production seeds.
  */
 let seedDirForTests: string | null = null;
@@ -154,9 +155,9 @@ async function legFingerprintSegment(symbol: string, sourceInterval: string): Pr
     return binanceBackedSegment(symbol, sourceInterval);
 }
 
-function fileBackedSegment(symbol: string, sourceInterval: string): string | null {
+async function fileBackedSegment(symbol: string, sourceInterval: string): Promise<string | null> {
     const bare = stripMarkedLocalStockSymbol(symbol);
-    const mtime = seedCsvMtimeMs(bare, sourceInterval);
+    const mtime = await seedCsvMtimeMs(bare, sourceInterval);
     if (mtime === null) return null;
     return `file:${bare}:${sourceInterval}:${mtime}`;
 }
@@ -234,10 +235,10 @@ function seedCsvPath(bareSymbol: string, interval: string): string {
     return resolve(process.cwd(), "price-data", "ibkr", "csv", interval, `${bareSymbol}.csv`);
 }
 
-function seedCsvMtimeMs(bareSymbol: string, interval: string): number | null {
+async function seedCsvMtimeMs(bareSymbol: string, interval: string): Promise<number | null> {
     const filePath = seedCsvPath(bareSymbol, interval);
     try {
-        return statSync(filePath).mtimeMs;
+        return (await stat(filePath)).mtimeMs;
     } catch {
         return null;
     }
@@ -287,7 +288,7 @@ export async function loadCachedSyntheticPair(
     const fingerprint = await computeSeedFingerprint(args.baseSymbol, args.quoteSymbol, args.sourceInterval);
     if (fingerprint === null) return null;
 
-    const entry = readCacheFile(args);
+    const entry = await readCacheFile(args);
     if (entry === null) return null;
     const parsed = entry.data;
 
@@ -298,7 +299,11 @@ export async function loadCachedSyntheticPair(
     // Refresh the file's mtime (throttled) so the oldest-mtime-first prune
     // reflects actual access and a hot pair survives eviction. Without this,
     // eviction was oldest-WRITE-first regardless of reads (audit Finding 3).
-    touchCacheFileForLru(entry.path);
+    // Awaited so the mtime bump is observable to a caller that immediately
+    // stats the file (the prune path and the cache tests both rely on this).
+    // The touch itself is throttled and swallow-all, so this does not block on
+    // disk contention under normal loads.
+    await touchCacheFileForLru(entry.path);
 
     // Cast `time` to the lightweight-charts `Time` branded number. The
     // disk format stores a plain number (mirrors `buildSyntheticPairPayload`
@@ -310,17 +315,22 @@ export async function loadCachedSyntheticPair(
 /**
  * Best-effort, throttled mtime bump so a cache HIT survives LRU-by-mtime
  * pruning. Touches the file at most once per {@link LRU_TOUCH_THROTTLE_MS};
- * a `statSync` decides whether the (more expensive) `utimesSync` is needed,
+ * a `stat` decides whether the (more expensive) `utimes` is needed,
  * so the common case is a single stat per lookup. Swallows all errors — the
  * cache is advisory and a failed touch must not turn a hit into an exception.
+ *
+ * Async because this sits on the synthetic-pair load hot path; the prior
+ * `statSync` + `utimesSync` blocked the event loop on every cache hit, which
+ * stalled Stop and `/status` servicing during large cold-cache runs. The
+ * caller (`loadCachedSyntheticPair`) treats this as fire-and-forget.
  */
-function touchCacheFileForLru(filePath: string): void {
+async function touchCacheFileForLru(filePath: string): Promise<void> {
     try {
         const now = Date.now();
-        const mtimeMs = statSync(filePath).mtimeMs;
+        const mtimeMs = (await stat(filePath)).mtimeMs;
         if (now - mtimeMs < LRU_TOUCH_THROTTLE_MS) return;
         const nowSec = now / 1000;
-        utimesSync(filePath, nowSec, nowSec);
+        await utimes(filePath, nowSec, nowSec);
     } catch {
         // Locked file, vanished between read and touch, permission error —
         // leave the mtime alone. Pruning will still work; it just won't see
@@ -333,11 +343,15 @@ function touchCacheFileForLru(filePath: string): void {
  * (`.json`). Returns null on any miss or decode failure — never throws. Also
  * returns the path that was read so the caller can refresh its mtime for
  * LRU-by-mtime pruning (audit Finding 3).
+ *
+ * Async because this sits on the synthetic-pair load hot path; the prior
+ * `readFileSync` calls blocked the event loop on every cache read, which
+ * stalled Stop and `/status` servicing during large cold-cache runs.
  */
-function readCacheFile(args: SyntheticPairDiskCacheArgs): { path: string; data: CachedSyntheticPairFile } | null {
+async function readCacheFile(args: SyntheticPairDiskCacheArgs): Promise<{ path: string; data: CachedSyntheticPairFile } | null> {
     const binPath = cacheFilePath(args);
     try {
-        const buffer = readFileSync(binPath);
+        const buffer = await readFile(binPath);
         const decoded = decodeV2(buffer);
         if (decoded) return { path: binPath, data: decoded };
     } catch {
@@ -345,7 +359,7 @@ function readCacheFile(args: SyntheticPairDiskCacheArgs): { path: string; data: 
     }
     const jsonPath = legacyJsonPath(args);
     try {
-        const raw = readFileSync(jsonPath, "utf8");
+        const raw = await readFile(jsonPath, "utf8");
         return { path: jsonPath, data: JSON.parse(raw) as CachedSyntheticPairFile };
     } catch {
         return null;
@@ -402,12 +416,12 @@ export async function storeSyntheticPair(args: SyntheticPairDiskCacheArgs, bars:
         })),
     };
     try {
-        mkdirSync(dirname(filePath), { recursive: true });
+        await mkdir(dirname(filePath), { recursive: true });
         const buffer = v8Serialize(payload);
-        writeAtomic(filePath, buffer);
+        await writeAtomic(filePath, buffer);
         // Remove a stale v1 `.json` for the same key so a subsequent read
         // can't resurrect a pre-v2 payload after the v2 file is written.
-        try { unlinkSync(legacyJsonPath(args)); } catch { /* may not exist */ }
+        try { await unlink(legacyJsonPath(args)); } catch { /* may not exist */ }
         maybePruneAfterWrite();
         return true;
     } catch {
@@ -421,11 +435,15 @@ export async function storeSyntheticPair(args: SyntheticPairDiskCacheArgs, bars:
  * Write `buffer` to `filePath` atomically via a sibling temp file + rename.
  * `rename` is atomic on the same filesystem (NTFS/ext4), so a crash mid-write
  * leaves either the old file or the new file — never a truncated hybrid.
+ *
+ * Async so the write does not block the event loop on the synthetic-pair
+ * hot path. The caller (`storeSyntheticPair`) awaits it inside an already-async
+ * producer promise.
  */
-function writeAtomic(filePath: string, buffer: Buffer): void {
+async function writeAtomic(filePath: string, buffer: Buffer): Promise<void> {
     const tmp = `${filePath}.${process.pid}.tmp`;
-    writeFileSync(tmp, buffer);
-    renameSync(tmp, filePath);
+    await writeFile(tmp, buffer);
+    await rename(tmp, filePath);
 }
 
 /** Exposed for tests so they can inspect path resolution without re-deriving. */

@@ -423,24 +423,40 @@ function buildTradeSummary(
         timeIndex.set(timeKey(bar.time), index);
     });
 
-    const holdBars: number[] = [];
-    const holdDays: number[] = [];
+    // Single pass over trades accumulating count / sum / max for both hold-bars
+    // and hold-days. Avoids the prior per-trade `number[]` allocations and the
+    // `Math.max(...holdBars)` spread, which throws RangeError above ~120k trades
+    // (dense-trade strategies can exceed that). The hold-days pool may be
+    // smaller than the hold-bars pool when a trade's timestamps don't parse,
+    // so it carries its own count.
+    let holdBarsCount = 0;
+    let totalHoldBars = 0;
+    let maxHoldBars = Number.NEGATIVE_INFINITY;
+    let holdDaysCount = 0;
+    let totalHoldDays = 0;
+    let maxHoldDays = Number.NEGATIVE_INFINITY;
     for (const trade of result.trades) {
         const entryIndex = timeIndex.get(timeKey(trade.entryTime));
         const exitIndex = timeIndex.get(timeKey(trade.exitTime));
         if (entryIndex === undefined || exitIndex === undefined || exitIndex < entryIndex) {
             continue;
         }
-        holdBars.push(exitIndex - entryIndex);
+        const bars = exitIndex - entryIndex;
+        holdBarsCount += 1;
+        totalHoldBars += bars;
+        if (bars > maxHoldBars) maxHoldBars = bars;
 
         const entrySec = parseTimeToUnixSeconds(trade.entryTime);
         const exitSec = parseTimeToUnixSeconds(trade.exitTime);
         if (entrySec !== null && exitSec !== null && exitSec >= entrySec) {
-            holdDays.push((exitSec - entrySec) / 86_400);
+            const days = (exitSec - entrySec) / 86_400;
+            holdDaysCount += 1;
+            totalHoldDays += days;
+            if (days > maxHoldDays) maxHoldDays = days;
         }
     }
 
-    if (holdBars.length === 0) {
+    if (holdBarsCount === 0) {
         return {
             avgHoldBars: null,
             maxHoldBars: null,
@@ -450,13 +466,11 @@ function buildTradeSummary(
         };
     }
 
-    const totalHoldBars = holdBars.reduce((sum, value) => sum + value, 0);
-    const totalHoldDays = holdDays.reduce((sum, value) => sum + value, 0);
     return {
-        avgHoldBars: totalHoldBars / holdBars.length,
-        maxHoldBars: Math.max(...holdBars),
-        avgHoldDays: holdDays.length > 0 ? totalHoldDays / holdDays.length : null,
-        maxHoldDays: holdDays.length > 0 ? Math.max(...holdDays) : null,
+        avgHoldBars: totalHoldBars / holdBarsCount,
+        maxHoldBars,
+        avgHoldDays: holdDaysCount > 0 ? totalHoldDays / holdDaysCount : null,
+        maxHoldDays: holdDaysCount > 0 ? maxHoldDays : null,
         exposurePercent: Math.min(100, (totalHoldBars / Math.max(1, data.length - 1)) * 100),
     };
 }

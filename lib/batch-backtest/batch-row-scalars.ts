@@ -70,6 +70,13 @@ export interface CurrentMaxActiveCandidate {
  */
 export function computeCurrentMaxActiveCandidates(
     rows: readonly BatchBacktestSymbolResult[],
+    /**
+     * Optional pre-computed asset scores for the same `rows`. When supplied,
+     * skips the internal O(N) `computeOpenTradeAssetScores(rows)` call. Callers
+     * that already compute the asset-score map for the OPEN_SCORE summary line
+     * should thread it through to avoid recomputing the same map per call.
+     */
+    scores?: { asset: string; score: number }[],
 ): CurrentMaxActiveCandidate[] {
     const activePairsByAsset = new Map<string, number>();
     for (const row of rows) {
@@ -80,7 +87,7 @@ export function computeCurrentMaxActiveCandidates(
         }
     }
 
-    const positives = computeOpenTradeAssetScores(rows)
+    const positives = (scores ?? computeOpenTradeAssetScores(rows))
         .filter((entry) => entry.score > 0)
         .map((entry) => ({
             ...entry,

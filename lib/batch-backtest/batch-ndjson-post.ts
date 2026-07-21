@@ -1,6 +1,6 @@
 /**
- * Shared transport for the five Batch server-side NDJSON POST calls (run,
- * mine, stability-mine, mine-prediction). Audit NDJSON-POST-
+ * Shared transport for the four Batch server-side NDJSON POST calls (run,
+ * mine, stability-mine, open-score-usd). Audit NDJSON-POST-
  * helper finding: each call site duplicated the same four mechanics — JSON
  * POST, `response.ok`/`response.body` validation, best-effort JSON error
  * extraction, and `consumeNdjsonStream(..., { requireTerminal: true })` — and
@@ -26,8 +26,8 @@ import { consumeNdjsonStream } from "../ndjson-stream";
  * fall back to the HTTP status if the body is empty.
  *
  * Returns both the message and the parsed payload (when the body was JSON) so
- * callers that need to inspect the error structurally (e.g. the Stability /
- * Portfolio Fit "no artifacts on server" 400 special case) can do so without
+ * callers that need to inspect the error structurally (e.g. the Stability
+ * "no artifacts on server" 400 special case) can do so without
  * re-reading the body.
  */
 export async function extractBatchServerError(
@@ -64,18 +64,18 @@ export async function extractBatchServerError(
  *   - `StreamEndedBeforeTerminalError` from the underlying consumer
  *
  * `onResponse` runs after the response is validated but BEFORE the stream is
- * consumed. The four analysis paths (Mine / Stability / Portfolio Fit / Mine
- * Prediction) use it to call `reissueStopIfNeeded` so a Stop that raced the
- * POST is re-sent after the server has claimed ownership — see
- * `requestServerStop`'s "Fetch resolves after the route owns the miner lock"
- * comment. The Run path leaves it absent.
+ * consumed. The three analysis paths (Mine / Stability / OPEN_SCORE USD) use
+ * it to call `reissueStopIfNeeded` so a Stop that raced the POST is re-sent
+ * after the server has claimed ownership — see `requestServerStop`'s "Fetch
+ * resolves after the route owns the miner lock" comment. The Run path leaves
+ * it absent.
  *
  * `onNonOkResponse` runs when the response is not 2xx (or has no body),
- * BEFORE the error is thrown. Two analysis paths (Stability / Portfolio Fit)
- * use it to flip `serverHasArtifacts = false` when the server reports
- * "no artifacts" so the next click short-circuits without a round trip. The
- * hook receives the parsed error payload so it can match structurally without
- * re-reading the body.
+ * BEFORE the error is thrown. Stability uses it to flip
+ * `serverHasArtifacts = false` when the server reports "no artifacts" so the
+ * next click short-circuits without a round trip. The hook receives the
+ * parsed error payload so it can match structurally without re-reading the
+ * body.
  */
 export async function postBatchNdjson<TEvent extends { type: string }>(
     opts: {
@@ -92,7 +92,7 @@ export async function postBatchNdjson<TEvent extends { type: string }>(
         onResponse?: (response: Response) => Promise<void> | void;
         /**
          * Runs when the response is not 2xx (or has no body), before the
-         * helper throws. Used by Stability and Portfolio Fit to flip
+         * helper throws. Used by Stability to flip
          * `serverHasArtifacts = false` on a "no artifacts on server" 400 so
          * the next click short-circuits. The hook receives the HTTP status
          * and the parsed error payload (when JSON) so it can match

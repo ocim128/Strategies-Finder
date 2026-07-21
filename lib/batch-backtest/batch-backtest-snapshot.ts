@@ -30,9 +30,16 @@ export function compactBatchBacktestResultsSnapshot(
         fingerprint: typeof snapshot.fingerprint === "string" ? snapshot.fingerprint : null,
         strategyKey: typeof snapshot.strategyKey === "string" && snapshot.strategyKey ? snapshot.strategyKey : null,
         serverHasArtifacts: snapshot.serverHasArtifacts === true,
+        // Skip the per-row clone for rows that already satisfy the scalar
+        // invariant (no `data` and no `trades`/`equityCurve`). Every
+        // server-streamed row already meets this — re-cloning with
+        // `{ ...row.result, trades: [], equityCurve: [] }` per row allocated a
+        // fresh object graph per row for no behavioral change. Rows that still
+        // carry array artifacts (browser-side rows that have not been pruned)
+        // keep going through `toScalarRow` exactly as before.
         results: snapshot.results
             .slice(0, BATCH_RESULT_SNAPSHOT_LIMIT)
-            .map(toScalarRow),
+            .map((row) => (row.data === undefined && (row.result?.trades?.length ?? 0) === 0 ? row : toScalarRow(row))),
         ...(snapshot.stabilityResult ? { stabilityResult: compactStabilityResult(snapshot.stabilityResult) } : {}),
     };
 }
