@@ -90,6 +90,9 @@ export interface BacktestSettingsData {
     riskMinHoldEnabled: boolean;
     riskMaxHoldBars: number;
     riskMaxHoldEnabled: boolean;
+    /** When true, block new entries for riskCooldownBars after any trade closes. */
+    riskCooldownEnabled: boolean;
+    riskCooldownBars: number;
     riskWinStreakStopLossEnabled: boolean;
     riskWinStreakStopLossAfterWins: number;
     riskWinStreakStopLossPercent: number;

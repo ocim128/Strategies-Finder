@@ -82,6 +82,8 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     riskMinHoldEnabled: false,
     riskMaxHoldBars: 10,
     riskMaxHoldEnabled: false,
+    riskCooldownEnabled: true,
+    riskCooldownBars: 1,
     riskWinStreakStopLossEnabled: false,
     riskWinStreakStopLossAfterWins: 3,
     riskWinStreakStopLossPercent: 0,
@@ -142,7 +144,8 @@ type ResolverGuardName =
     | "useAdvancedRisk"
     | "useRiskManagement"
     | "useRiskMinHold"
-    | "useRiskMaxHold";
+    | "useRiskMaxHold"
+    | "useRiskCooldown";
 
 type ResolverGuardState = Record<ResolverGuardName, boolean>;
 
@@ -168,6 +171,7 @@ type NumericResolverKey =
     | "takeProfitAdaptiveIcScale"
     | "riskMinHoldBars"
     | "riskMaxHoldBars"
+    | "riskCooldownBars"
     | "riskWinStreakStopLossAfterWins"
     | "riskWinStreakStopLossPercent"
     | "flipAfterConsecutiveLosses"
@@ -195,6 +199,7 @@ type BooleanResolverKey =
     | "takeProfitEnabled"
     | "riskMinHoldEnabled"
     | "riskMaxHoldEnabled"
+    | "riskCooldownEnabled"
     | "riskWinStreakStopLossEnabled"
     | "invertSignals"
     | "allowSameBarExit"
@@ -283,6 +288,12 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
     },
     { key: "riskMaxHoldBars", guard: "useRiskMaxHold", disabledValue: 0 },
     {
+        key: "riskCooldownBars",
+        guard: "useRiskCooldown",
+        disabledValue: 0,
+        resolve: (raw) => Math.max(0, Math.round(readDefaultedNumber(raw, "riskCooldownBars"))),
+    },
+    {
         key: "riskWinStreakStopLossAfterWins",
         guard: "useAdvancedRisk",
         disabledValue: EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossAfterWins,
@@ -343,6 +354,7 @@ const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
     { key: "takeProfitEnabled", keys: ["takeProfitEnabled", "takeProfitToggle"], guard: "usePercentRisk", disabledValue: false },
     { key: "riskMinHoldEnabled", keys: ["riskMinHoldEnabled", "riskMinHoldToggle"], guard: "useRiskMinHold", disabledValue: false },
     { key: "riskMaxHoldEnabled", keys: ["riskMaxHoldEnabled", "riskMaxHoldToggle"], guard: "useRiskMaxHold", disabledValue: false },
+    { key: "riskCooldownEnabled", keys: ["riskCooldownEnabled", "riskCooldownToggle"], guard: "useRiskCooldown", disabledValue: false },
     {
         key: "riskWinStreakStopLossEnabled",
         keys: ["riskWinStreakStopLossEnabled", "riskWinStreakStopLossToggle"],
@@ -717,6 +729,7 @@ export function resolveBacktestSettingsFromRaw(
     const useAdvancedRisk = false;
     const useRiskMinHold = riskEnabled;
     const useRiskMaxHold = riskEnabled;
+    const useRiskCooldown = riskEnabled;
 
     const rawConfirmationStrategies = readStringArray(raw["confirmationStrategies"]);
     const confirmationStrategiesEnabled = readBoolean(
@@ -750,6 +763,7 @@ export function resolveBacktestSettingsFromRaw(
         useRiskManagement: riskEnabled,
         useRiskMinHold,
         useRiskMaxHold,
+        useRiskCooldown,
     };
     const numericSettings = resolveNumericSettingRules(raw, guards);
     const booleanSettings = resolveBooleanSettingRules(raw, guards);

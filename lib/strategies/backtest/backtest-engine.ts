@@ -500,6 +500,9 @@ function runSinglePositionFinderFastPath(args: {
         pos.size -= d.size;
         const fullyClosed = pos.size <= 0;
         if (fullyClosed) {
+            if (isEntryCooldownEnabled(config)) {
+                signalExitReentryCooldownUntilBarIndex = armSignalExitReentryCooldown(currentBarIndex, config.riskCooldownBars);
+            }
             if (config.pathExitEnabled && (config.pathExitMode === 'conditional_hazard' || config.pathExitMode === 'triple_barrier_meta')) {
                 learnFromClosedTrade(
                     pos,
@@ -580,7 +583,10 @@ function runSinglePositionFinderFastPath(args: {
         if (!exitTarget && !position) {
             if (forcedExitReason !== null || isExitOnly) return null;
             if (
-                config.executionModel === "next_open"
+                (
+                    config.executionModel === "next_open"
+                    || isEntryCooldownEnabled(config)
+                )
                 && isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, barIndex)
             ) {
                 return null;
@@ -597,14 +603,6 @@ function runSinglePositionFinderFastPath(args: {
         diagnostics && diagnostics.counts.signalExitOrders++;
         const { fullyClosed } = recordExit(exitTarget, candle, signal.price, exitOrder.exitSize, forcedExitReason ?? "signal");
         if (
-            config.executionModel === "next_open"
-            && forcedExitReason === null
-            && fullyClosed
-            && !exitOrder.wasPartial
-        ) {
-            signalExitReentryCooldownUntilBarIndex = armSignalExitReentryCooldown(barIndex);
-        }
-        if (
             forcedExitReason === null
             && !isExitOnly
             && tradeDirection === "both"
@@ -612,6 +610,8 @@ function runSinglePositionFinderFastPath(args: {
             && !exitOrder.wasPartial
             && config.executionModel !== "next_open"
         ) {
+            // Same-bar direction flip: the cooldown applies to LATER bars, not the
+            // immediate opposite-direction re-entry the "both" mode allows here.
             return openSignalPosition(signal, barIndex);
         }
         return null;
@@ -803,7 +803,6 @@ type SmartSizingPositionState = {
 
 const SMART_SIZING_FAST_PROGRESS_BARS = 2;
 const SMART_SIZING_PROGRESS_PERCENT = 50;
-const SIGNAL_EXIT_REENTRY_COOLDOWN_BARS = 1;
 
 function createFlipLossDirectionState(): FlipLossDirectionState {
     return {
@@ -816,12 +815,17 @@ function createFlipLossDirectionState(): FlipLossDirectionState {
     };
 }
 
-function armSignalExitReentryCooldown(barIndex: number): number {
-    return barIndex + SIGNAL_EXIT_REENTRY_COOLDOWN_BARS - 1;
+function armSignalExitReentryCooldown(barIndex: number, cooldownBars: number): number {
+    return barIndex + Math.max(0, cooldownBars) - 1;
 }
 
 function isSignalExitReentryCooldownActive(cooldownUntilBarIndex: number, barIndex: number): boolean {
     return cooldownUntilBarIndex >= barIndex;
+}
+
+/** Whether the configurable post-exit entry cooldown is active under the current settings. */
+function isEntryCooldownEnabled(config: NormalizedSettings): boolean {
+    return config.riskCooldownEnabled && config.riskCooldownBars > 0;
 }
 
 function getOppositeDirection(direction: 'long' | 'short'): 'long' | 'short' {
@@ -1540,6 +1544,9 @@ export function runBacktestCompact(
             const idx = positions.indexOf(pos);
             if (idx >= 0) positions.splice(idx, 1);
             pendingAdaptiveTakeProfitExits.delete(pos);
+            if (isEntryCooldownEnabled(config)) {
+                signalExitReentryCooldownUntilBarIndex = armSignalExitReentryCooldown(currentBarIndex, config.riskCooldownBars);
+            }
             fullyClosed = true;
         }
         return { details, fullyClosed };
@@ -1699,9 +1706,6 @@ export function runBacktestCompact(
                     const { fullyClosed } = recordExit(exitTarget, signal.price, exitOrder.exitSize);
                     if (fullyClosed) {
                         finalizeClosedPosition(exitTarget, candle, signal.price, forcedExitReason ?? 'signal');
-                        if (!exitOrder.wasPartial) {
-                            signalExitReentryCooldownUntilBarIndex = armSignalExitReentryCooldown(i);
-                        }
                     }
                     if (forcedExitReason === null && !isExitOnly && canImmediatelyReenterAfterSignalExit({
                         fullyClosed,
@@ -1778,6 +1782,10 @@ export function runBacktestCompact(
                             continue;
                         }
                         if (config.disableSignalExits && hasOppositePositionForSignal(positions, signal)) {
+                            continue;
+                        }
+                        if (isEntryCooldownEnabled(config)
+                            && isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i)) {
                             continue;
                         }
                         if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {
@@ -2113,6 +2121,9 @@ export function runBacktest(
             const idx = positions.indexOf(pos);
             if (idx >= 0) positions.splice(idx, 1);
             pendingAdaptiveTakeProfitExits.delete(pos);
+            if (isEntryCooldownEnabled(config)) {
+                signalExitReentryCooldownUntilBarIndex = armSignalExitReentryCooldown(currentBarIndex, config.riskCooldownBars);
+            }
             fullyClosed = true;
         }
         return { details: d, fullyClosed };
@@ -2268,9 +2279,6 @@ export function runBacktest(
                     const { fullyClosed } = recordExitFull(exitTarget, candle, signal.price, exitOrder.exitSize, forcedExitReason ?? 'signal');
                     if (fullyClosed) {
                         finalizeClosedPositionFull(exitTarget, candle, signal.price, forcedExitReason ?? 'signal');
-                        if (!exitOrder.wasPartial) {
-                            signalExitReentryCooldownUntilBarIndex = armSignalExitReentryCooldown(i);
-                        }
                     }
                     if (forcedExitReason === null && !isExitOnly && canImmediatelyReenterAfterSignalExit({
                         fullyClosed,
@@ -2346,6 +2354,10 @@ export function runBacktest(
                             continue;
                         }
                         if (config.disableSignalExits && hasOppositePositionForSignal(positions, signal)) {
+                            continue;
+                        }
+                        if (isEntryCooldownEnabled(config)
+                            && isSignalExitReentryCooldownActive(signalExitReentryCooldownUntilBarIndex, i)) {
                             continue;
                         }
                         if (!canEnterLossFlipDirection(tradeDirection, flipLossDirection, signal)) {

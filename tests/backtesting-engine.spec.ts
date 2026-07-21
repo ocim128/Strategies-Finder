@@ -1319,7 +1319,11 @@ describe('Backtesting Engine', () => {
         expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-9);
     });
 
-    it('should allow a next_open entry when the previous trade already gapped through take profit at the bar open', () => {
+    it('should gap through take profit at next_open and respect the entry cooldown afterwards', () => {
+        // WHY: a gap-through-TP at the open must still close the trade at the TP
+        // target. After the cooldown feature shipped, any close (including TP)
+        // arms the post-exit entry cooldown, so a new entry cannot open on the
+        // same bar — it must wait one bar (default N=1) before re-entering.
         const data: OHLCVData[] = [
             { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
             { time: '2023-01-02' as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 },
@@ -1345,14 +1349,52 @@ describe('Backtesting Engine', () => {
         const full = runBacktest(data, signals, 10000, 100, 0, settings);
         const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings);
 
-        expect(full.totalTrades).to.equal(2);
+        // First trade enters at 2023-01-02 (next_open of the 01-01 signal) and
+        // gaps through the 5% TP at the 2023-01-03 open (106 vs 100 entry).
+        expect(full.totalTrades).to.equal(1);
         expect(full.trades[0].entryTime).to.equal('2023-01-02' as Time);
         expect(full.trades[0].exitTime).to.equal('2023-01-03' as Time);
         expect(full.trades[0].exitReason).to.equal('take_profit');
-        expect(full.trades[1].entryTime).to.equal('2023-01-03' as Time);
-        expect(full.trades[1].exitReason).to.equal('end_of_data');
+        // The 01-02 buy signal's next_open execution lands on the same bar as
+        // the TP close (01-03); the entry cooldown now blocks same-bar re-entry,
+        // so no second trade is opened.
         expect(compact.totalTrades).to.equal(full.totalTrades);
         expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-9);
+    });
+
+    it('should re-enter on the bar after a TP-gap exit once the cooldown clears', () => {
+        // WHY: the cooldown gates spacing, it does not block the strategy
+        // outright — once N bars pass the next signal must enter normally.
+        const data: OHLCVData[] = [
+            { time: '2023-01-01' as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: '2023-01-02' as Time, open: 100, high: 102, low: 99, close: 101, volume: 1000 },
+            { time: '2023-01-03' as Time, open: 106, high: 107, low: 105, close: 106, volume: 1000 },
+            { time: '2023-01-04' as Time, open: 107, high: 108, low: 106, close: 107, volume: 1000 },
+        ];
+
+        const signals: Signal[] = [
+            { time: '2023-01-01' as Time, type: 'buy', price: 100, barIndex: 0 },
+            { time: '2023-01-03' as Time, type: 'buy', price: 106, barIndex: 2 },
+        ];
+
+        const settings = {
+            tradeDirection: 'long' as const,
+            executionModel: 'next_open' as const,
+            allowSameBarExit: false,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: false,
+            takeProfitEnabled: true,
+            takeProfitPercent: 5,
+        };
+
+        const full = runBacktest(data, signals, 10000, 100, 0, settings);
+
+        // First trade gaps through TP at 01-03 open. The 01-03 buy signal's
+        // next_open execution lands on 01-04 — one bar after the exit, so the
+        // default N=1 cooldown has cleared and the second trade opens.
+        expect(full.totalTrades).to.equal(2);
+        expect(full.trades[0].exitReason).to.equal('take_profit');
+        expect(full.trades[1].entryTime).to.equal('2023-01-04' as Time);
     });
 
     it('should block same-bar next_open re-entry after a signal exit but allow re-entry on the following bar', () => {

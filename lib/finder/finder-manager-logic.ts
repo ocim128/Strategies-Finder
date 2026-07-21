@@ -206,7 +206,6 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
         maxTrades,
         freezeRiskManagement: input.freezeRiskManagement || input.polymarketScoringEnabled,
         randomizePathExitParams: !input.polymarketScoringEnabled
-            && !input.freezeRiskManagement
             && input.randomizePathExitParams === true,
         polymarketScoringEnabled: input.polymarketScoringEnabled,
         polymarketRankMode: input.polymarketRankMode,

@@ -77,13 +77,15 @@ function inferRiskToggle(settings: Record<string, unknown>): boolean {
             || toFiniteNumber(settings.stopLossPercent) > 0
             || toFiniteNumber(settings.takeProfitPercent) > 0
             || (toBoolean(settings.riskMinHoldEnabled) === true)
-            || (toBoolean(settings.riskMaxHoldEnabled) === true);
+            || (toBoolean(settings.riskMaxHoldEnabled) === true)
+            || (toBoolean(settings.riskCooldownEnabled) === true && toFiniteNumber(settings.riskCooldownBars) > 0);
     }
     return toFiniteNumber(settings.stopLossAtr) > 0
         || toFiniteNumber(settings.takeProfitAtr) > 0
         || toFiniteNumber(settings.trailingAtr) > 0
         || (toBoolean(settings.riskMinHoldEnabled) === true && toFiniteNumber(settings.riskMinHoldBars) > 0)
-        || (toBoolean(settings.riskMaxHoldEnabled) === true && toFiniteNumber(settings.riskMaxHoldBars) > 0);
+        || (toBoolean(settings.riskMaxHoldEnabled) === true && toFiniteNumber(settings.riskMaxHoldBars) > 0)
+        || (toBoolean(settings.riskCooldownEnabled) === true && toFiniteNumber(settings.riskCooldownBars) > 0);
 }
 
 function buildUiCompatibleBacktestSettings(source: unknown): Record<string, unknown> {

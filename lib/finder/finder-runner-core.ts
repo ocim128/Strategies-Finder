@@ -346,6 +346,12 @@ export function buildFinderSearchBaseParams(
 ): StrategyParams {
     const baseParams: StrategyParams = { ...strategy.defaultParams };
     if (isRiskManagementFrozen(options)) {
+        // Path-exit params are still searchable when Randomize Path Exits is on,
+        // even under freeze. All other risk settings (ATR / SL / TP / max-hold)
+        // remain frozen — only pathExit* params are added here.
+        if (shouldRandomizePathExitParams(settings, options)) {
+            addPathExitSearchParams(baseParams, settings);
+        }
         return withExitStrategyBaseParams(baseParams, options?.exitStrategyBaseParams);
     }
 
@@ -446,6 +452,18 @@ export function resolveFinderRiskOverrides(
     options?: Pick<FinderOptions, "freezeRiskManagement" | "randomizePathExitParams">
 ): { backtestSettings: BacktestSettings; rustBacktestSettings: BacktestSettings } {
     if (isRiskManagementFrozen(options)) {
+        // Path-exit overrides still apply under freeze when Randomize Path Exits
+        // is on (path exits force the TS engine, so only the backtest settings
+        // need updating — not the rust mirror). All other risk settings stay frozen.
+        if (shouldRandomizePathExitParams(settings, options)) {
+            const backtestOverrides: Partial<BacktestSettings> = {};
+            if (applyPathExitOverrides(settings, params, backtestOverrides, options)) {
+                return {
+                    backtestSettings: { ...settings, ...backtestOverrides },
+                    rustBacktestSettings: rustSettings,
+                };
+            }
+        }
         return {
             backtestSettings: settings,
             rustBacktestSettings: rustSettings,
@@ -512,6 +530,21 @@ export function mergeFinderRiskParamsIntoBacktestSettings<
 ): T {
     const merged = { ...settings };
     if (isRiskManagementFrozen(options)) {
+        // Apply path-exit params on Apply even under freeze when Randomize Path
+        // Exits is on. Other risk settings stay frozen.
+        if (shouldRandomizePathExitParams(settings, options)) {
+            const mergedRecord = merged as unknown as Record<string, number | undefined>;
+            for (const spec of PATH_EXIT_PARAM_SPECS) {
+                if (!isActivePathExit(settings) || !spec.modes.includes(settings.pathExitMode)) {
+                    continue;
+                }
+                const rawValue = params[spec.key];
+                if (!Number.isFinite(rawValue)) {
+                    continue;
+                }
+                mergedRecord[spec.key] = spec.clamp(Number(rawValue));
+            }
+        }
         return merged;
     }
 

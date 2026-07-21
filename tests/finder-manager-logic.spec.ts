@@ -150,7 +150,7 @@ describe("Finder manager logic", () => {
         expect(options.polymarketAfterTakeProfitOnly).to.equal(true);
     });
 
-    it("keeps path-exit randomization only when Finder risk management is not frozen", () => {
+    it("keeps path-exit randomization unless Polymarket scoring is on (freeze no longer disables it)", () => {
         const base = {
             useAdvancedSort: false,
             advancedSortValues: [],
@@ -173,15 +173,28 @@ describe("Finder manager logic", () => {
             polymarketExitMode: "resolve_hold" as const,
         };
 
+        // No freeze, no Polymarket → randomize honored.
         expect(buildFinderOptions({
             ...base,
             freezeRiskManagement: false,
             randomizePathExitParams: true,
         }).randomizePathExitParams).to.equal(true);
 
+        // Freeze alone no longer forces randomize off: users can freeze the
+        // ATR/SL/TP/maxHold risk controls and still let Finder vary path-exit
+        // controls. The runner-core functions gate the path-exit pathway
+        // themselves; the options flag must pass through.
         expect(buildFinderOptions({
             ...base,
             freezeRiskManagement: true,
+            randomizePathExitParams: true,
+        }).randomizePathExitParams).to.equal(true);
+
+        // Polymarket scoring remains incompatible with randomize.
+        expect(buildFinderOptions({
+            ...base,
+            polymarketScoringEnabled: true,
+            freezeRiskManagement: false,
             randomizePathExitParams: true,
         }).randomizePathExitParams).to.equal(false);
     });

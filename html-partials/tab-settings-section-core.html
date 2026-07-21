@@ -331,6 +331,20 @@
                         <div class="param-hint">Force-close open trades after N bars regardless of PnL.</div>
                     </div>
                 </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <label class="param-label" style="margin-bottom: 0;">Entry Cooldown (bars)</label>
+                            <label class="section-toggle section-toggle--sm"
+                                aria-label="Toggle entry cooldown">
+                                <input type="checkbox" id="riskCooldownToggle" checked>
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <input type="number" class="param-input" id="riskCooldownBars" value="1" min="0" step="1">
+                        <div class="param-hint">Block new entries for N bars after any trade closes. Default 1 preserves prior behavior (one-bar re-entry guard after signal exits).</div>
+                    </div>
+                </div>
                 <div class="risk-percentage is-hidden" id="riskPercentage">
                     <div class="param-row">
                         <div class="param-group">

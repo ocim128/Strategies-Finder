@@ -21,6 +21,9 @@ export function getTypescriptEngineRequirementReasons(settings: BacktestSettings
     const usesRiskMinHold =
         settings.riskMinHoldEnabled === true
         && (settings.riskMinHoldBars ?? 0) > 0;
+    const usesRiskCooldown =
+        settings.riskCooldownEnabled === true
+        && (settings.riskCooldownBars ?? 0) > 0;
     const usesPercentageWinStreakStopLoss = false;
     const usesAdaptivePercentageTakeProfit =
         settings.riskMode === 'percentage'
@@ -49,6 +52,7 @@ export function getTypescriptEngineRequirementReasons(settings: BacktestSettings
     if (usesNonAllMarketMode) reasons.push('market-mode filtering is enabled');
     if (usesRiskMaxHold) reasons.push('maximum hold bars are enabled');
     if (usesRiskMinHold) reasons.push('minimum hold bars are enabled');
+    if (usesRiskCooldown) reasons.push('entry cooldown is enabled');
     if (usesPercentageWinStreakStopLoss) reasons.push('win-streak stop loss is enabled');
     if (usesAdaptivePercentageTakeProfit) reasons.push('adaptive take profit is enabled');
     if (usesMultiPosition) reasons.push('multiple open positions are enabled');
@@ -84,6 +88,8 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "riskMinHoldEnabled",
     "riskMaxHoldBars",
     "riskMaxHoldEnabled",
+    "riskCooldownBars",
+    "riskCooldownEnabled",
     "riskWinStreakStopLossEnabled",
     "riskWinStreakStopLossAfterWins",
     "riskWinStreakStopLossPercent",

@@ -87,6 +87,8 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         riskMinHoldEnabled: settings?.riskMinHoldEnabled ?? false,
         riskMaxHoldBars: Math.max(0, toNumberOr(settings?.riskMaxHoldBars, 0)),
         riskMaxHoldEnabled: settings?.riskMaxHoldEnabled ?? false,
+        riskCooldownEnabled: settings?.riskCooldownEnabled ?? true,
+        riskCooldownBars: Math.max(0, Math.round(toNumberOr(settings?.riskCooldownBars, 1))),
         riskWinStreakStopLossEnabled: false,
         riskWinStreakStopLossAfterWins: 3,
         riskWinStreakStopLossPercent: 0,

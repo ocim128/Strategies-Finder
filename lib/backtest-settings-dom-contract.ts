@@ -269,6 +269,13 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
         legacyAliases: ["riskMaxHoldEnabled"],
         rustSupport: "unsupported",
     }),
+    createField("riskCooldownBars", { rustSupport: "unsupported" }),
+    createField("riskCooldownToggle", {
+        settingKey: "riskCooldownEnabled",
+        parser: "boolean",
+        legacyAliases: ["riskCooldownEnabled"],
+        rustSupport: "unsupported",
+    }),
     createField("disableSignalExits", { rustSupport: "unsupported" }),
     createField("exitStrategyOverrideEnabled", { rustSupport: "unsupported" }),
     createField("exitStrategyKey", { rustSupport: "unsupported" }),

@@ -30,6 +30,8 @@ export interface NormalizedSettings {
     riskMinHoldEnabled: boolean;
     riskMaxHoldBars: number;
     riskMaxHoldEnabled: boolean;
+    riskCooldownEnabled: boolean;
+    riskCooldownBars: number;
     riskWinStreakStopLossEnabled: boolean;
     riskWinStreakStopLossAfterWins: number;
     riskWinStreakStopLossPercent: number;

@@ -431,6 +431,11 @@ describe('Finder Polymarket runner', () => {
             takeProfitPercent: 1,
             allowSameBarExit: true,
             slippageBps: 0,
+            // This test exercises Polymarket scoring of a post-TP re-entry on
+            // the same bar. The general entry cooldown (default on, N=1) would
+            // block that re-entry; turn it off so the test isolates the
+            // Polymarket scoring path it was designed for.
+            riskCooldownEnabled: false,
         };
 
         const { callbacks: baselineCallbacks } = makeCallbacks();

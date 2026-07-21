@@ -335,6 +335,10 @@ export interface BacktestSettings {
     riskMaxHoldBars?: number;
     /** Enable max hold bars cap */
     riskMaxHoldEnabled?: boolean;
+    /** Block new entries for N bars after any trade closes. */
+    riskCooldownBars?: number;
+    /** Enable the post-exit entry cooldown. */
+    riskCooldownEnabled?: boolean;
     /** Enable the win-streak stop loss override in percentage mode */
     riskWinStreakStopLossEnabled?: boolean;
     /** After N consecutive winning trades, new entries switch to the override stop loss % */
