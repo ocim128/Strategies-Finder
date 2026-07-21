@@ -9,7 +9,7 @@ the browser tab keeps only rendered scalars and DOM rows.
 
 ## Runtime requirement
 
-Batch Run, Mine Timing, Stability, and Portfolio Fit require
+Batch Run, Mine Timing, Stability Mine, and OPEN_SCORE USD Replay require
 the Vite server runtime. Both `vite dev` and `vite preview` register these
 endpoints; a static-only deployment does not.
 
@@ -112,9 +112,7 @@ a `reportLines` text array that the engine builds. Both the dedicated
 `Copy OPEN_SCORE USD` button and the main `Copy Results` button render that
 array verbatim, so new selector arms — including the short-side
 `MAX_ACTIVE_REVERSION` line — ride both copy paths automatically without UI
-or service changes. See
-[open-score-usd-replay-implementation-plan.md](open-score-usd-replay-implementation-plan.md)
-for the selector-arm semantics, candidate pools, and trade-direction math.
+or service changes.
 
 The browser tab still avoids heavy per-row arrays, while copied summaries match
 the browser-side Batch path for these sections.
@@ -172,16 +170,10 @@ All endpoints live under `/api/batch-backtest/*`:
   `start`, `verdict`, `done`, `fatal` events.
 - `POST /stability-mine` — NDJSON stream. Body: `{ fingerprint, interval,
   subsetSize, reruns, seed }`. Streams `progress`, `done`, `fatal` events.
-- `POST /portfolio-fit` — NDJSON stream. Body: `{ fingerprint, interval,
-  capital, options? }`. The server resolves its retained scalar Stability result
-  from module state; the browser does
-  NOT send `stability`. Streams `start`, `progress`, `done`, `fatal` events. The
-  `done` event carries a single scalar-only `BatchPortfolioFitResult`
-  (no OHLCV/signal/trade/equity arrays). A missing retained Stability context
-  surfaces as a `fatal` with error `STABILITY_CONTEXT_MISSING`. Shares the
-  `minerOwner` lock with Mine Timing and Stability Mine (mutually exclusive).
-  Does NOT release artifacts — they survive for a later Stability rerun (R16).
-  See `docs/portfolio-fit-mining-implementation-plan.md`.
+- `POST /open-score-usd` — NDJSON stream. Reconstructs historical OPEN_SCORE
+  decision events from retained artifacts and compares selector arms against
+  the uniform-random control. Streams `start`, `phase`, `progress`, `done`,
+  `fatal` events. Read-only on artifacts.
 - `GET /status` — JSON snapshot for reattach. Returns `{ running, run, lastRun,
   miner }`.
 

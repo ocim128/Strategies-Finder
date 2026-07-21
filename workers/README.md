@@ -14,11 +14,17 @@ It deduplicates signals in D1, so the same entry is only produced once.
   - Stores/updates an auto-run subscription (pair + timeframe + strategy config)
 - `GET /api/subscriptions`
   - Lists configured subscriptions
+- `GET /api/subscriptions/state?streamId=...`
+  - Returns the live state for one subscription (open position, last trade, last signal, last evaluation)
+- `POST /api/subscriptions/states`
+  - Batched version of `GET /api/subscriptions/state` — accepts `{ streamIds: [...] }` and returns one state record per id
 - `POST /api/subscriptions/delete`
   - Soft-disables a subscription by default (`enabled=0`, keeps history)
   - Optional hard-delete: `{ "streamId": "...", "hardDelete": true }`
 - `POST /api/subscriptions/run-now`
   - Runs one subscription immediately for testing
+- `POST /api/subscriptions/run-with-candles`
+  - Runs one subscription with caller-supplied candles (used by the local candle proxy path)
 - `GET /health`
   - Returns worker metadata plus `supportedStrategyKeys`, `supportedStrategyCount`, and `strategyManifestFingerprint`
 

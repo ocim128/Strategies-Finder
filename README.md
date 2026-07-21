@@ -21,7 +21,7 @@ It combines:
 - Use Quick View to inspect backtest stats, trades, Polymarket scoring, and Polymarket payout diagnostics, including native `15m` / `1h` session summaries, same-event signal-exit metrics on supported `1m` runs, and exact-second CLOB metrics on supported `1s` runs
 - Paper trade selected `1s` candidates in Execution Lab with live Binance candles, live Polymarket CLOB quotes, chart overlays, and JSONL logs; optionally live-trade through a local secret-bearing Polymarket executor after dry-run preflight
 - Run Portfolio Lab across multiple pairs for context, ranking, and sizing decisions
-- Run Batch Backtest post-analysis with Mine Timing, Stability Mine, and Portfolio Fit (which candidates improve the candidate portfolio, with bounded allocation)
+- Run Batch Backtest post-analysis with Mine Timing, Stability Mine, and OPEN_SCORE USD Replay (all three are research-only diagnostics; see [`docs/mine-timing-validation-findings.md`](docs/mine-timing-validation-findings.md) for the validation status of each)
 - Build live or scheduled alert subscriptions through the Worker API
 
 Trade timing quality scores are descriptive diagnostics. Exit Score is measured on each strategy's own trades; it is not an isolated exit-rule benchmark.
@@ -394,11 +394,13 @@ These are intentionally narrower than the repo itself:
 - `docs/backtest-endpoint.md`: local backtest endpoint usage and request contract
 - `docs/polymarket.md`: Polymarket scoring, signal-exit, diagnostics, bridge, and Execution Lab live-trade contracts
 - `docs/execution-lab-live-trading.md`: Execution Lab live-trade executor boundary, request/response schema, and safety rules
-- `docs/batch-backtest-server-side.md`: server-side Batch Backtest, artifact retention, Mine/Stability acceleration, and memory budget
+- `docs/batch-backtest-server-side.md`: server-side Batch Backtest, artifact retention, Mine/Stability acceleration, OPEN_SCORE USD Replay, and memory budget
 - `docs/finder-server-side.md`: server-owned Finder Symbol Universe (one server job owns all strategies + OOS), heap budget, scalar-only wire contract, Stop scoped by run id, and tab-reload reattach via `/api/finder/status`
 - `docs/cross-symbol.md`: cross-symbol strategy runtime and support matrix
 - `docs/synthetic-pairs.md`: synthetic pair generation and supported surfaces
+- `docs/rank-pairs.md`: Rank Pairs regime classification contract
 - `docs/path-dependent-exits.md`: path-dependent Risk Management exits
 - `docs/strategy-authoring.md`: built-in strategy authoring guide
+- `docs/mine-timing-validation-findings.md`: validation status of removed Mine Timing / Portfolio Fit / Mine Prediction surfaces
 - `workers/README.md`: Worker endpoints, cron behavior, D1 setup, Telegram
 - `DEPLOY_TO_VERCEL.md`: deployment notes
