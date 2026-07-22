@@ -35,7 +35,7 @@
  * parsed-artifact LRU in the vite plugin.
  */
 import { timeKey, timeToNumber } from "../strategies";
-import type { BatchSyntheticPairArtifact } from "../batch-backtest/batch-synthetic-state-miner";
+import type { BatchSyntheticPairArtifact } from "../batch-backtest/batch-synthetic-artifact";
 
 // ============================================================================
 // Public types

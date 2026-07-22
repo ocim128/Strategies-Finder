@@ -8,18 +8,18 @@
  * in-progress state for browser reattach after a tab reload.
  *
  * Why server-side at all: 1000+ IBKR 4H synthetic pairs hold ~5–10 GB of
- * per-row artifacts (`data` + `signals` + `result.trades`) for the Mine
- * Timing step. That workload OOMs a browser tab; Node can use main RAM
- * directly. The browser tab keeps only rendered scalars and DOM rows.
+ * per-row artifacts (`data` + `signals` + `result.trades`) for the
+ * OPEN_SCORE USD Replay step. That workload OOMs a browser tab; Node can use
+ * main RAM directly. The browser tab keeps only rendered scalars and DOM rows.
  *
- * Memory contract: the plugin writes per-row Mine artifacts to a temp
+ * Memory contract: the plugin writes per-row analysis artifacts to a temp
  * directory until one of three release triggers fires:
- *   1. Successful Mine completion (after streaming `done`).
- *   2. A new Run starting (`POST /run` removes the prior artifact directory).
- *   3. A bounded TTL (default 10 minutes after the Run's `done` event with no
- *      Mine click) so a user who walks away doesn't leave ~5 GB pinned.
+ *   1. A new Run starting (`POST /run` removes the prior artifact directory).
+ *   2. A bounded TTL (default 10 minutes after the Run's `done` event with no
+ *      analysis click) so a user who walks away doesn't leave ~5 GB pinned.
+ *   3. Explicit Stop / fatal handling.
  *
- * The browser path got release (3) for free via tab reload; the server path
+ * The browser path got release (2) for free via tab reload; the server path
  * needs it explicitly.
  */
 
@@ -32,26 +32,12 @@ import { join } from "node:path";
 import { debugLogger } from "../debug-logger";
 import { createDisconnectSafeStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, sendJson, type ViteHttpResponse } from "../vite-http-utils";
 import { FINDER_BATCH_MAX_BODY_BYTES } from "../server-request-limits";
-import { mapWithConcurrencyLimit } from "../async-pool";
 import { runBatchBacktest, type BatchBacktestRunInput, type BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import { clearServerBatchDatasetCaches, getServerBatchDatasetCacheStats, loadServerBatchDataset } from "./server-batch-data-loader";
-import {
-    addStabilityVerdicts,
-    clampInt,
-    createStabilityAggregate,
-    finalizeStabilityAggregate,
-    sampleItems,
-} from "./batch-stability-mine";
-import {
-    createBatchSyntheticMinerProfile,
-    prepareBatchSyntheticPairArtifacts,
-    prepareBatchSyntheticTargetArtifacts,
-    runPreparedBatchSyntheticStateMiner,
-    runBatchSyntheticStateMiner,
-    resolveBatchSyntheticTargetSymbol,
-    type BatchSyntheticPairArtifact,
-    type BatchSyntheticTargetArtifact,
-} from "./batch-synthetic-state-miner";
+import type {
+    BatchSyntheticPairArtifact,
+    BatchSyntheticTargetArtifact,
+} from "./batch-synthetic-artifact";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { loadBuiltInStrategyByKey } from "../../strategyRegistry";
 import type { BacktestSettings, Strategy, StrategyParams } from "../types/strategies";
@@ -64,11 +50,6 @@ import { buildBatchRunFingerprint, normalizeBatchSymbols, BATCH_MAX_SYMBOLS, ver
 import { fnv1a64Hex, type MaxActiveResearchRegistrationV1 } from "./max-active-research-contract";
 import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
-import {
-    mergeStabilityAccumulators,
-    runParallelStability,
-    type ParallelStabilityOutcome,
-} from "./batch-stability-parallel";
 import { runOpenScoreUsdReplay, type OpenScoreUsdTarget } from "./batch-open-score-usd-replay-engine";
 import { createEmptyBacktestResult } from "../strategies/backtest/position-stats";
 import {
@@ -162,30 +143,7 @@ const DEFAULT_STATUS_ROW_LIMIT = 250;
 const MAX_STATUS_ROW_LIMIT = 1000;
 
 /**
- * Phase 3 parallel-Stability gate. When true, the server plugin partitions the
- * Stability rerun range across Node worker_threads before falling through to
- * the sequential TypeScript loop. The worker path reads artifact files from
- * disk independently, so the structured-clone cost at worker startup stays
- * bounded regardless of pair count.
- *
- * DEFAULT IS TRUE. The worker is bundled to `.js` on first use via esbuild
- * (see `resolveWorkerPath()` in `batch-stability-parallel.ts`), so Node
- * `worker_threads` can load it under `vite dev` without a TS-aware loader.
- * On any worker error (spawn failure, crash, timeout), the orchestrator
- * returns `ok: false` and the plugin falls back to the sequential TypeScript
- * loop, so a parallel-path bug never breaks Stability.
- *
- * Only engages when `reruns >= PARALLEL_STABILITY_MIN_RERUNS` (below that,
- * worker startup + merge overhead exceeds the parallelism win) and only on the
- * server-side path. The deterministic merge is parity-locked by
- * `tests/batch-stability-parallel.spec.ts`.
- */
-const BATCH_MINER_PARALLEL_STABILITY_ENABLED_DEFAULT = true;
-let BATCH_MINER_PARALLEL_STABILITY_ENABLED = BATCH_MINER_PARALLEL_STABILITY_ENABLED_DEFAULT;
-const PARALLEL_STABILITY_MIN_RERUNS = 4;
-
-/**
- * Max concurrent `writeFile` calls for Mine artifact persistence. Each artifact
+ * Max concurrent `writeFile` calls for analysis artifact persistence. Each artifact
  * is a v8-serialized multi-MB payload; unbounded concurrency would let a
  * 1000-pair run dispatch 1000 writes at once and exhaust file descriptors / RAM
  * before the event loop could drain them. 4 is enough to keep disk throughput
@@ -596,16 +554,15 @@ let lastRunBacktestSettings: BacktestSettings | null = null;
 let lastRunCapitalSettings: CapitalSettings | null = null;
 let lastRunCacheStats: BatchDatasetCacheStats | null = null;
 let abortController: AbortController | null = null;
-// Abort controller for in-flight Mine / Stability Mine target dataset loads.
-// Mirrors `abortController` (Run path): created when a Mine starts, aborted in
-// `handleStopRequest`, nulled in the handlers' `finally`. The server-side
-// `loadMinerTargets` forwards this signal to `loadServerBatchDataset`, which
-// already accepts an optional AbortSignal — so Stop now cancels up to
+// Abort controller for in-flight OPEN_SCORE USD target dataset loads.
+// Mirrors `abortController` (Run path): created when an analysis starts,
+// aborted in `handleStopRequest`, nulled in the handler's `finally`. The
+// server-side target loader forwards this signal to `loadServerBatchDataset`,
+// which already accepts an optional AbortSignal — so Stop now cancels up to
 // `TARGET_LOAD_CONCURRENCY` (=8) target loads that would otherwise keep
 // running after the user clicks Stop.
 let minerAbortController: AbortController | null = null;
 let artifactReleaseTimer: ReturnType<typeof setTimeout> | null = null;
-let minerState: { running: boolean; startedAt: number; assets: number; pairs: number; verdicts: number; cancelled: boolean } | null = null;
 
 /**
  * Stop-before-ownership race closer (audit Finding 5). When Stop arrives BEFORE
@@ -1268,400 +1225,16 @@ export async function processRunBatch(
     }
 }
 
-function hasMineableArtifacts(rows: readonly BatchBacktestSymbolResult[]): boolean {
-    return rows.some((row) => Boolean(row.result && row.data && row.signals && parsePortfolioSyntheticPairSymbol(row.symbol)));
-}
-
 // ---------------------------------------------------------------------------
-// Miner core
+// Analysis core
 // ---------------------------------------------------------------------------
 
 export type MinerStreamWriter = (event: unknown) => void;
-
-export async function processMine(
-    fingerprint: string | null,
-    interval: string | null,
-    writer: MinerStreamWriter,
-    owner: number,
-): Promise<void> {
-    const artifactMetas = collectStoredMineArtifactMetas();
-    if (artifactMetas.length === 0) {
-        writer({ type: "done", ok: true, cancelled: false, summary: "No completed synthetic pair artifacts to mine.", totals: { verdicts: 0 } });
-        return;
-    }
-    if (!fingerprint || fingerprint !== lastRunFingerprint || !interval) {
-        writer({ type: "fatal", error: "Rerun Batch before mining; settings or symbols changed." });
-        return;
-    }
-
-    minerState = { running: true, startedAt: Date.now(), assets: 0, pairs: artifactMetas.length, verdicts: 0, cancelled: false };
-    const snapshot = minerState;
-    const lostOwnership = () => minerOwner !== owner;
-    clearArtifactReleaseTimer();
-
-    try {
-        const targets = await loadMinerTargets(artifactMetas, interval, minerAbortController?.signal);
-        snapshot.assets = targets.length;
-        writer({ type: "start", assets: targets.length, pairs: artifactMetas.length });
-        if (lostOwnership()) {
-            snapshot.cancelled = true;
-            snapshot.running = false;
-            writer({ type: "done", ok: false, cancelled: true, summary: "Mining cancelled.", totals: { verdicts: 0 } });
-            return;
-        }
-        if (targets.length === 0) {
-            snapshot.running = false;
-            writer({ type: "done", ok: true, cancelled: false, summary: "No target asset candles loaded.", totals: { verdicts: 0 } });
-            return;
-        }
-        let verdictCount = 0;
-        // Build a per-asset index once so the per-target link lookup is O(1)
-        // instead of O(artifactMetas.length). On a 1000-pair / 80-asset run
-        // this collapses ~80k string comparisons into ~2k during index build.
-        const metasByAsset = new Map<string, StoredMineArtifactMeta[]>();
-        for (const meta of artifactMetas) {
-            for (const asset of [meta.baseAsset, meta.quoteAsset]) {
-                const list = metasByAsset.get(asset);
-                if (list) list.push(meta);
-                else metasByAsset.set(asset, [meta]);
-            }
-        }
-        for (const target of targets) {
-            if (lostOwnership()) {
-                snapshot.cancelled = true;
-                writer({ type: "done", ok: false, cancelled: true, summary: "Mining cancelled.", totals: { verdicts: verdictCount } });
-                return;
-            }
-            const linkedMetas = metasByAsset.get(target.asset) ?? [];
-            const linkedArtifacts = await Promise.all(linkedMetas.map(loadStoredMineArtifact));
-            const result = runBatchSyntheticStateMiner({ interval, targets: [target], artifacts: linkedArtifacts });
-            for (const verdict of result.verdicts) {
-                if (lostOwnership()) {
-                    snapshot.cancelled = true;
-                    writer({ type: "done", ok: false, cancelled: true, summary: "Mining cancelled.", totals: { verdicts: verdictCount } });
-                    return;
-                }
-                verdictCount += 1;
-                snapshot.verdicts = verdictCount;
-                writer({ type: "verdict", verdict });
-            }
-        }
-        if (lostOwnership()) {
-            snapshot.cancelled = true;
-            snapshot.running = false;
-            writer({ type: "done", ok: false, cancelled: true, summary: "Mining cancelled.", totals: { verdicts: verdictCount } });
-            return;
-        }
-        snapshot.running = false;
-        writer({
-            type: "done",
-            ok: true,
-            cancelled: false,
-            summary: `Miner | Assets ${verdictCount}`,
-            totals: { verdicts: verdictCount },
-        });
-        captureCurrentParsedCacheStats();
-        // Mine was the last consumer of the per-row artifacts. Release them.
-        await releaseLastResults("mine_completed");
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        debugLogger.warn("batch.server.mine.fatal", { error: message });
-        snapshot.running = false;
-        writer({ type: "fatal", error: message });
-    } finally {
-        captureCurrentParsedCacheStats();
-        if (minerState === snapshot) {
-            snapshot.running = false;
-        }
-        if (hasStoredMineArtifacts()) {
-            scheduleArtifactTtl();
-        }
-    }
-}
 
 function cancelMinerOnDisconnect(owner: number): void {
     if (minerOwner !== owner) return;
     minerAbortController?.abort();
     minerOwner = RUN_OWNER_NONE;
-    if (minerState) {
-        minerState.cancelled = true;
-        minerState.running = false;
-    }
-}
-
-export async function processStabilityMine(
-    fingerprint: string | null,
-    interval: string | null,
-    subsetSizeRaw: number,
-    rerunsRaw: number,
-    seedRaw: number,
-    writer: MinerStreamWriter,
-    owner: number,
-    loadTargets: (pairArtifacts: readonly StoredMineArtifactMeta[], interval: string, signal?: AbortSignal) => Promise<BatchSyntheticTargetArtifact[]> = loadMinerTargets,
-): Promise<void> {
-    const artifactMetas = collectStoredMineArtifactMetas();
-    if (artifactMetas.length === 0) {
-        writer({ type: "fatal", error: "Run Batch before stability mining; no artifacts on server." });
-        return;
-    }
-    if (!fingerprint || fingerprint !== lastRunFingerprint || !interval) {
-        writer({ type: "fatal", error: "Rerun Batch before stability mining; settings or symbols changed." });
-        return;
-    }
-
-    const subsetSize = clampInt(subsetSizeRaw, 200, 10, artifactMetas.length);
-    const reruns = clampInt(rerunsRaw, 50, 1, 200);
-    const seed = clampInt(seedRaw, 1, 1, Number.MAX_SAFE_INTEGER);
-    minerState = { running: true, startedAt: Date.now(), assets: 0, pairs: artifactMetas.length, verdicts: 0, cancelled: false };
-    const snapshot = minerState;
-    const lostOwnership = () => minerOwner !== owner;
-    clearArtifactReleaseTimer();
-
-    const writeCancelled = () => {
-        snapshot.cancelled = true;
-        snapshot.running = false;
-        writer({ type: "done", ok: false, cancelled: true, summary: "Stability mining cancelled." });
-    };
-
-    try {
-        const targets = await loadTargets(artifactMetas, interval, minerAbortController?.signal);
-        snapshot.assets = targets.length;
-        if (lostOwnership()) {
-            writeCancelled();
-            return;
-        }
-        if (targets.length === 0) {
-            writer({ type: "fatal", error: "No target asset candles loaded." });
-            return;
-        }
-
-        // Phase 3: when the rerun count justifies it, partition the rerun range
-        // across Node worker_threads. Each worker reads artifact files from disk
-        // independently, so worker startup cost stays bounded regardless of pair
-        // count. On any worker failure, fall through once to the sequential
-        // TypeScript loop. Gated by `BATCH_MINER_PARALLEL_STABILITY_ENABLED`,
-        // which defaults true after the worker bundling/parity tests locked the
-        // loading story.
-        if (
-            BATCH_MINER_PARALLEL_STABILITY_ENABLED
-            && reruns >= PARALLEL_STABILITY_MIN_RERUNS
-            && !lostOwnership()
-        ) {
-            const parallelStartedAt = performance.now();
-            const manifest = buildStabilityManifest();
-            // Workers deserialize artifacts from disk independently. Keeping
-            // the parent copies adds another full prepared-universe footprint
-            // during the peak and is unnecessary; sequential fallback reloads
-            // them through loadStoredMineArtifact if worker startup fails.
-            currentArtifactStore?.parsedCache.clear();
-            const parallelOutcome: ParallelStabilityOutcome = await runParallelStability({
-                artifactFiles: manifest?.pairArtifactFiles ?? [],
-                targets,
-                interval,
-                subsetSize,
-                reruns,
-                seed,
-                isCancelled: () => lostOwnership(),
-                onProgress: (completedReruns, totalReruns) => {
-                    if (lostOwnership()) return;
-                    // Hits are not aggregated until merge completes (each worker
-                    // holds its own partial accumulator); emit 0 for in-flight
-                    // progress and the real total on the final `done`.
-                    writer({ type: "progress", run: completedReruns, reruns: totalReruns, hits: 0 });
-                },
-            });
-            if (lostOwnership()) {
-                writeCancelled();
-                return;
-            }
-            if (parallelOutcome.ok) {
-                const merged = mergeStabilityAccumulators(
-                    parallelOutcome.result,
-                    reruns,
-                    subsetSize,
-                    seed,
-                    artifactMetas.length,
-                    targets.length,
-                );
-                const parallelProfile = merged.profile;
-                parallelProfile.parallelWorkerCount = parallelOutcome.workerCount;
-                // Stamp the parallel-orchestration wall-clock onto the merged
-                // profile so the benchmark can see worker startup + merge cost
-                // separately from per-worker compute.
-                parallelProfile.runPreparedMs += performance.now() - parallelStartedAt;
-                const parallelResult = finalizeStabilityAggregate(merged.accumulator);
-                parallelResult.minerProfile = parallelProfile;
-                parallelResult.engine = "typescript_parallel";
-                snapshot.verdicts = parallelResult.hitEvents;
-                writer({ type: "progress", run: reruns, reruns, hits: parallelResult.hitEvents });
-                if (lostOwnership()) {
-                    writeCancelled();
-                    return;
-                }
-                snapshot.running = false;
-                writer({ type: "done", ok: true, result: parallelResult });
-                // Do NOT releaseLastResults("mine_completed") here. The sequential
-                // Stability path intentionally retains artifacts so a second
-                // Stability run (different seed / reruns) can reuse them without
-                // recomputing the entire Batch run; its `finally` block schedules
-                // the TTL cleanup. Releasing here deleted artifacts immediately
-                // after the first parallel Stability success, while `done` set
-                // `serverHasArtifacts = true`, so the next Stability click hit
-                // "no artifacts on server". Falling through to `return` lets the
-                // shared `finally` schedule the TTL exactly like the sequential
-                // path — one contract for both accelerated and sequential paths.
-                return;
-            }
-            debugLogger.info("batch.parallel_stability.fallback_to_sequential", {
-                reason: parallelOutcome.reason,
-                message: parallelOutcome.message,
-            });
-        }
-
-        const aggregate = createStabilityAggregate(reruns, subsetSize, seed, artifactMetas.length, targets.length);
-        const minerProfile = createBatchSyntheticMinerProfile();
-        let profileStartedAt = performance.now();
-        const preparedTargets = prepareBatchSyntheticTargetArtifacts(targets);
-        minerProfile.prepareTargetsMs += performance.now() - profileStartedAt;
-        // Split the artifact load (disk deserialize/cache) from the prepare step
-        // (ATR/trade/signal index building) so `artifactConversionMs` reports
-        // disk artifact load separately from preparation.
-        profileStartedAt = performance.now();
-        const loadedPairs = await Promise.all(artifactMetas.map(loadStoredMineArtifact));
-        minerProfile.artifactConversionMs += performance.now() - profileStartedAt;
-        profileStartedAt = performance.now();
-        const preparedPairs = prepareBatchSyntheticPairArtifacts(loadedPairs);
-        minerProfile.preparePairsMs += performance.now() - profileStartedAt;
-        for (let runIndex = 0; runIndex < reruns; runIndex += 1) {
-            if (lostOwnership()) {
-                writeCancelled();
-                return;
-            }
-            const subsetArtifacts = sampleItems(preparedPairs, subsetSize, seed + runIndex);
-            const subsetAssets = new Set(subsetArtifacts.flatMap((artifact) => [artifact.baseAsset, artifact.quoteAsset]));
-            profileStartedAt = performance.now();
-            const subsetTargets = preparedTargets.filter((target) => subsetAssets.has(target.asset));
-            minerProfile.subsetTargetFilterMs += performance.now() - profileStartedAt;
-            const result = runPreparedBatchSyntheticStateMiner({
-                interval,
-                targets: subsetTargets,
-                artifacts: subsetArtifacts,
-                profile: minerProfile,
-            });
-            addStabilityVerdicts(aggregate, result.verdicts);
-            snapshot.verdicts = aggregate.hitEvents;
-            writer({ type: "progress", run: runIndex + 1, reruns, hits: aggregate.hitEvents });
-        }
-
-        const finalResult = finalizeStabilityAggregate(aggregate);
-        finalResult.minerProfile = minerProfile;
-        finalResult.engine = "typescript";
-        if (lostOwnership()) {
-            writeCancelled();
-            return;
-        }
-        snapshot.running = false;
-        writer({ type: "done", ok: true, result: finalResult });
-    } catch (error) {
-        if (lostOwnership()) {
-            writeCancelled();
-            return;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        debugLogger.warn("batch.server.stability_mine.fatal", { error: message });
-        snapshot.running = false;
-        writer({ type: "fatal", error: message });
-    } finally {
-        captureCurrentParsedCacheStats();
-        if (minerState === snapshot) {
-            snapshot.running = false;
-        }
-        if (hasStoredMineArtifacts()) {
-            scheduleArtifactTtl();
-        }
-    }
-}
-
-async function loadMinerTargets(
-    pairArtifacts: readonly StoredMineArtifactMeta[],
-    interval: string,
-    signal?: AbortSignal,
-    baseOnly = false,
-    onAssetProgress?: (asset: string, doneAssets: number, totalAssets: number) => void,
-): Promise<BatchSyntheticTargetArtifact[]> {
-    const assets = Array.from(new Set(
-        pairArtifacts.flatMap((artifact) => baseOnly ? [artifact.baseAsset] : [artifact.baseAsset, artifact.quoteAsset])
-            .map((asset) => asset.trim().toUpperCase())
-            .filter(Boolean)
-    )).sort();
-    const markedSymbolByAsset = new Map<string, string>();
-    for (const artifact of pairArtifacts) {
-        for (const [asset, symbol] of [
-            [artifact.baseAsset, artifact.baseSymbol],
-            [artifact.quoteAsset, artifact.quoteSymbol],
-        ] as const) {
-            const key = asset?.trim().toUpperCase();
-            if (key && symbol && !markedSymbolByAsset.has(key)) {
-                markedSymbolByAsset.set(key, symbol);
-            }
-        }
-    }
-    // Load target datasets with bounded concurrency, mirroring the browser
-    // path (batch-backtest-service.ts loadMinerTargets). The previous serial
-    // for...await serialized ~N asset loads; on 4H IBKR runs with ~80 unique
-    // assets that was the dominant wall-clock cost of Mine. Capped at 8 in
-    // flight so an 80-asset batch doesn't pin ~80 full datasets in memory at
-    // the same instant. loadServerBatchDataset goes through the shared
-    // legCache / pairCache LRU, which is concurrency-safe (promises are
-    // deduped). Per-target errors are isolated so one failed asset does not
-    // reject the batch. Results preserve input (asset-sorted) order.
-    const TARGET_LOAD_CONCURRENCY = 8;
-    let completedAssets = 0;
-    const loaded = await mapWithConcurrencyLimit(
-        assets,
-        TARGET_LOAD_CONCURRENCY,
-        async (asset): Promise<BatchSyntheticTargetArtifact | null> => {
-            if (minerOwner === RUN_OWNER_NONE) return null;
-            const symbol = markedSymbolByAsset.get(asset) ?? resolveBatchSyntheticTargetSymbol(asset);
-            try {
-                const data = await loadServerBatchDataset(symbol, interval, signal);
-                if (Array.isArray(data) && data.length > 0) {
-                    return { asset, symbol, data };
-                }
-                return null;
-            } catch (error) {
-                if (signal?.aborted || minerOwner === RUN_OWNER_NONE) {
-                    return null;
-                }
-                debugLogger.warn("batch.server.mine.target_load_failed", {
-                    asset, symbol,
-                    error: error instanceof Error ? error.message : String(error),
-                });
-                return null;
-            } finally {
-                completedAssets += 1;
-                onAssetProgress?.(asset, completedAssets, assets.length);
-            }
-        },
-    );
-    return loaded.filter((entry): entry is BatchSyntheticTargetArtifact => entry !== null);
-}
-
-// ---------------------------------------------------------------------------
-// Parallel-Stability file manifest
-// ---------------------------------------------------------------------------
-
-/**
- * Collect the on-disk pair artifact file paths for the parallel-Stability
- * workers. Each worker reads these files independently from disk so the
- * structured-clone cost at worker startup stays bounded regardless of pair
- * count. Returns null when no artifacts are retained (e.g. after TTL release).
- */
-function buildStabilityManifest(): { pairArtifactFiles: string[] } | null {
-    if (!currentMineArtifactDir()) return null;
-    const metas = collectStoredMineArtifactMetas();
-    if (metas.length === 0) return null;
-    return { pairArtifactFiles: metas.map((meta) => meta.filePath) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1831,9 +1404,9 @@ function rememberLocalApiOriginFromRequest(req: { headers?: Record<string, unkno
 async function handleStopRequest(rawRunId?: unknown): Promise<{ ok: boolean; stopped: boolean }> {
     // Audit Finding 5: Stop is scoped by run id when the browser sends one.
     // A mismatched run id must NOT cancel the active run — a stale tab cannot
-    // stop a newer run. The miner (Mine / Stability / OPEN_SCORE USD) has no
-    // runId in this contract; its locks are still force-reset so Stop remains
-    // the recovery path for a stuck analysis job.
+    // stop a newer run. The analysis owner (OPEN_SCORE USD) has no runId in
+    // this contract; its locks are still force-reset so Stop remains the
+    // recovery path for a stuck analysis job.
     const requestedRunId = parseBatchRunId(rawRunId);
     const runWasActive = runOwner !== RUN_OWNER_NONE;
     const minerWasActive = minerOwner !== RUN_OWNER_NONE;
@@ -1870,9 +1443,9 @@ async function handleStopRequest(rawRunId?: unknown): Promise<{ ok: boolean; sto
         pendingStopRunId = requestedRunId;
     }
 
-    // Miner force-reset: always cancels in-flight Mine / Stability / Portfolio
-    // Fit so Stop stays the recovery path for a stuck analysis job. Target
-    // loads swallow AbortError via the per-target try/catch.
+    // Analysis force-reset: always cancels in-flight OPEN_SCORE USD so Stop
+    // stays the recovery path for a stuck analysis job. Target loads swallow
+    // AbortError via the per-target try/catch.
     if (minerAbortController) {
         try {
             minerAbortController.abort();
@@ -1882,97 +1455,6 @@ async function handleStopRequest(rawRunId?: unknown): Promise<{ ok: boolean; sto
     }
     minerOwner = RUN_OWNER_NONE;
     return { ok: true, stopped: runWasActive || minerWasActive };
-}
-
-async function handleMineRequest(res: ViteHttpResponse, body: Record<string, unknown>): Promise<void> {
-    if (minerOwner !== RUN_OWNER_NONE) {
-        throw new HttpStatusError(409, "Mine Timing is already running.");
-    }
-    if (runOwner !== RUN_OWNER_NONE) {
-        throw new HttpStatusError(409, "A batch backtest is running. Use Stop first.");
-    }
-    if (!hasStoredMineArtifacts()) {
-        throw new HttpStatusError(400, "Run Batch before mining; no artifacts on server.");
-    }
-    const owner = ++minerOwnerGen;
-    minerOwner = owner;
-    minerAbortController = new AbortController();
-
-    let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
-    try {
-        // Audit Finding 4: disconnect-safe writer (see handleRunRequest).
-        stream = createDisconnectSafeStream(res, { onDisconnect: () => cancelMinerOnDisconnect(owner) });
-        await processMine(
-            typeof body.fingerprint === "string" ? body.fingerprint : null,
-            typeof body.interval === "string" ? body.interval : lastRunInterval,
-            (event) => stream!.write(event),
-            owner,
-        );
-        stream.end();
-    } catch (error) {
-        if (!stream) throw error;
-        const message = error instanceof Error ? error.message : String(error);
-        try {
-            stream.end({ type: "fatal", error: message });
-        } catch {
-            /* best-effort */
-        }
-    } finally {
-        if (minerOwner === owner) {
-            minerOwner = RUN_OWNER_NONE;
-        }
-        if (minerState && minerOwner === RUN_OWNER_NONE) {
-            minerState.running = false;
-        }
-        minerAbortController = null;
-    }
-}
-
-async function handleStabilityMineRequest(res: ViteHttpResponse, body: Record<string, unknown>): Promise<void> {
-    if (minerOwner !== RUN_OWNER_NONE) {
-        throw new HttpStatusError(409, "Mine Timing is already running.");
-    }
-    if (runOwner !== RUN_OWNER_NONE) {
-        throw new HttpStatusError(409, "A batch backtest is running. Use Stop first.");
-    }
-    if (!hasStoredMineArtifacts()) {
-        throw new HttpStatusError(400, "Run Batch before stability mining; no artifacts on server.");
-    }
-    const owner = ++minerOwnerGen;
-    minerOwner = owner;
-    minerAbortController = new AbortController();
-
-    let stream: ReturnType<typeof createDisconnectSafeStream> | null = null;
-    try {
-        // Audit Finding 4: disconnect-safe writer (see handleRunRequest).
-        stream = createDisconnectSafeStream(res, { onDisconnect: () => cancelMinerOnDisconnect(owner) });
-        await processStabilityMine(
-            typeof body.fingerprint === "string" ? body.fingerprint : null,
-            typeof body.interval === "string" ? body.interval : lastRunInterval,
-            Number(body.subsetSize),
-            Number(body.reruns),
-            Number(body.seed),
-            (event) => stream!.write(event),
-            owner,
-        );
-        stream.end();
-    } catch (error) {
-        if (!stream) throw error;
-        const message = error instanceof Error ? error.message : String(error);
-        try {
-            stream.end({ type: "fatal", error: message });
-        } catch {
-            /* best-effort */
-        }
-    } finally {
-        if (minerOwner === owner) {
-            minerOwner = RUN_OWNER_NONE;
-        }
-        if (minerState && minerOwner === RUN_OWNER_NONE) {
-            minerState.running = false;
-        }
-        minerAbortController = null;
-    }
 }
 
 
@@ -2083,7 +1565,7 @@ export async function processOpenScoreUsdReplay(
     async function* targetLoader(): AsyncIterable<OpenScoreUsdTarget> {
         for (const asset of assets) {
             if (lostOwnership()) return;
-            const symbol = markedSymbolByAsset.get(asset) ?? resolveBatchSyntheticTargetSymbol(asset);
+            const symbol = markedSymbolByAsset.get(asset) ?? `${asset.trim().toUpperCase()}USDT`;
             try {
                 const data = (await loadTargetDataset(symbol, runInterval, minerAbortController?.signal)) as BatchSyntheticTargetArtifact["data"] | null;
                 if (Array.isArray(data) && data.length > 0) {
@@ -2352,15 +1834,6 @@ function handleStatusRequest(afterRow = 0, limitRaw?: number, requestedRunId?: s
                 researchRegistrationMeta: runState.researchRegistrationMeta ?? null,
             }
             : null,
-        miner: minerState && minerOwner !== RUN_OWNER_NONE
-            ? {
-                running: true,
-                startedAt: minerState.startedAt,
-                assets: minerState.assets,
-                pairs: minerState.pairs,
-                verdicts: minerState.verdicts,
-            }
-            : null,
     };
 }
 
@@ -2443,40 +1916,6 @@ function registerBatchRoutes(middlewares: any): void {
                 const body = await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES);
                 const result = await handleStopRequest((body as { runId?: unknown })?.runId);
                 sendJson(res, 200, result);
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
-        });
-
-        middlewares.use("/api/batch-backtest/mine", async (req: any, res: any) => {
-            if (req.method !== "POST") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            if (!isAllowedLocalRequest(req)) {
-                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
-                return;
-            }
-            try {
-                rememberLocalApiOriginFromRequest(req);
-                await handleMineRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
-        });
-
-        middlewares.use("/api/batch-backtest/stability-mine", async (req: any, res: any) => {
-            if (req.method !== "POST") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            if (!isAllowedLocalRequest(req)) {
-                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
-                return;
-            }
-            try {
-                rememberLocalApiOriginFromRequest(req);
-                await handleStabilityMineRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
             } catch (error) {
                 sendCaughtErrorJson(res, error);
             }
@@ -2628,7 +2067,7 @@ async function handleSp500TopMeanRunRequest(res: ViteHttpResponse, body: unknown
     }
 
     if (runOwner !== RUN_OWNER_NONE || minerOwner !== RUN_OWNER_NONE || getActiveTopMeanCoordinatorEngine() !== null) {
-        throw new HttpStatusError(409, "A batch, mine, or TOP_MEAN operation is already running.");
+        throw new HttpStatusError(409, "A batch, analysis, or TOP_MEAN operation is already running.");
     }
 
     const ownerGen = ++runOwnerGen;
@@ -2721,14 +2160,12 @@ function handleSp500TopMeanResultRequest(runId: string): unknown {
     }
 }
 
-// Exported for tests only. `processRunBatch`, `processMine`, and
-// `processStabilityMine` consult
-// module-scope `runOwner` / `minerOwner` for cancellation, mirroring the IBKR
-// sync pattern. The HTTP handlers set those before invoking the factored
-// functions; tests need a way to do the same without spinning up Vite.
+// Exported for tests only. `processRunBatch` and `processOpenScoreUsdReplay`
+// consult module-scope `runOwner` / `minerOwner` for cancellation, mirroring
+// the IBKR sync pattern. The HTTP handlers set those before invoking the
+// factored functions; tests need a way to do the same without spinning up Vite.
 export const __testInternals = {
     releaseLastResults,
-    hasMineableArtifacts,
     hasStoredMineArtifacts,
     getParsedArtifactCacheSizeForTests(): number {
         return currentArtifactStore?.parsedCache.size ?? 0;
@@ -2803,11 +2240,11 @@ export const __testInternals = {
         minerOwner = owner;
     },
     /**
-     * Set the Mine abort controller during tests. The HTTP handlers create it
-     * (`minerAbortController = new AbortController()`), but tests that call
-     * `processMine` / `processStabilityMine` directly bypass the handlers, so
-     * they must install one to exercise the Stop-aborts-target-loads path.
-     * Pass null to clear.
+     * Set the analysis abort controller during tests. The HTTP handlers create
+     * it (`minerAbortController = new AbortController()`), but tests that call
+     * `processOpenScoreUsdReplay` directly bypass the handler, so they must
+     * install one to exercise the Stop-aborts-target-loads path. Pass null to
+     * clear.
      */
     setMinerAbortControllerForTests(controller: AbortController | null): void {
         minerAbortController = controller;
@@ -2824,18 +2261,6 @@ export const __testInternals = {
      */
     setRunStateForTests(snapshot: BatchRunSnapshot | null): void {
         runState = snapshot;
-    },
-    /**
-     * Toggle the parallel-Stability gate during tests. It defaults true in
-     * production, but tests that need the sequential TypeScript path (e.g. to
-     * lock the non-parallel merge) opt OUT. Always restore via
-     * resetMinerGatesForTests() in finally so a toggled gate cannot leak.
-     */
-    setMinerGatesForTests(args: { parallelStability?: boolean }): void {
-        if (args.parallelStability !== undefined) BATCH_MINER_PARALLEL_STABILITY_ENABLED = args.parallelStability;
-    },
-    resetMinerGatesForTests(): void {
-        BATCH_MINER_PARALLEL_STABILITY_ENABLED = BATCH_MINER_PARALLEL_STABILITY_ENABLED_DEFAULT;
     },
     // --- Audit Finding 3 / follow-up R-F1 generation-safety test seams ---
     /**

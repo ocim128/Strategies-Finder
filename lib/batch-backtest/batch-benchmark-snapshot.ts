@@ -14,7 +14,6 @@
  */
 
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
-import type { BatchMinerEngine, BatchSyntheticMinerProfile } from "./batch-synthetic-state-miner";
 
 export const BATCH_BENCHMARK_SCHEMA = "batch.benchmark.v2" as const;
 
@@ -64,37 +63,6 @@ export interface BatchBenchmarkRunPhase {
 
 export type BatchBenchmarkRunOutcome = "done" | "cancelled" | "fatal" | "incomplete";
 
-export interface BatchBenchmarkMinePhase {
-    totalMs: number;
-    targets: number;
-    verdicts: number;
-    avgMsPerTarget: number | null;
-    avgMsPerVerdict: number | null;
-}
-
-export interface BatchBenchmarkStabilityPhase {
-    totalMs: number;
-    reruns: number;
-    subsetSize: number;
-    totalPairs: number;
-    sampledPairEvaluations: number;
-    targetAssets: number;
-    targets: number;
-    verdicts: number;
-    hitEvents: number;
-    avgMsPerRerun: number | null;
-    avgMsPerSampledPair: number | null;
-    hitEventsPerRerun: number | null;
-    hitEventsPerSampledPair: number | null;
-    minerProfile: BatchSyntheticMinerProfile | null;
-    /**
-     * Which miner engine actually ran (Phase 6 reporting). `typescript` is the
-     * sequential reference; `typescript_parallel` is the Node worker path. Null
-     * when no Stability ran (so the field is informational, not load-bearing).
-     */
-    engine: BatchMinerEngine | null;
-}
-
 export interface BatchBenchmarkSnapshot {
     schema: typeof BATCH_BENCHMARK_SCHEMA;
     run: {
@@ -107,8 +75,6 @@ export interface BatchBenchmarkSnapshot {
     cacheSource: BatchBenchmarkCacheSource;
     phases: {
         run: BatchBenchmarkRunPhase | null;
-        mine: BatchBenchmarkMinePhase | null;
-        stability: BatchBenchmarkStabilityPhase | null;
     };
     cache: BatchBenchmarkCacheStats;
     bottlenecks: string[];
@@ -124,36 +90,6 @@ export function benchmarkRatio(numerator: number, denominator: number, decimals 
         return null;
     }
     return Number((numerator / denominator).toFixed(decimals));
-}
-
-function largestMinerSubphase(profile: BatchSyntheticMinerProfile | null): { name: string; ms: number } | null {
-    if (!profile) return null;
-    const candidates: Array<[string, number]> = [
-        ["prepare pairs", profile.preparePairsMs],
-        ["linked pair filter", profile.linkedPairFilterMs],
-        ["horizon selection", profile.horizonMs],
-        ["current snapshot", profile.currentSnapshotMs],
-        ["candidate samples", profile.candidateSamplesMs],
-        ["windowing", profile.windowingMs],
-        ["distance scale", profile.distanceScaleMs],
-        ["analog selection", profile.analogSelectionMs],
-        ["summaries", profile.summarizeMs],
-        ["pair contributions", profile.pairContributionsMs],
-        ["classification", profile.classifyMs],
-        // Server-side artifact load/deserialize cost.
-        ["artifact conversion", profile.artifactConversionMs],
-    ];
-    const valid = candidates
-        .filter(([, ms]) => Number.isFinite(ms) && ms > 0)
-        .sort((a, b) => b[1] - a[1]);
-    const top = valid[0];
-    return top ? { name: top[0], ms: top[1] } : null;
-}
-
-function parallelWallEquivalent(ms: number, profile: BatchSyntheticMinerProfile | null, engine: string | null): number {
-    if (engine !== "typescript_parallel" || !profile) return ms;
-    const workers = Math.max(1, Math.floor(profile.parallelWorkerCount || 0));
-    return workers > 1 ? ms / workers : ms;
 }
 
 export function buildCacheStatsFromLoader(stats: BatchDatasetCacheStats): BatchBenchmarkCacheStats {
@@ -215,84 +151,10 @@ export function buildBatchBenchmarkBottlenecks(
         );
     }
 
-    // Dominant phase. Whichever phase has the largest totalMs and exceeds 60%
-    // of the sum of all observed phase totals.
-    const observed: Array<[string, number]> = [];
-    if (phases.run) observed.push(["run", phases.run.totalMs]);
-    if (phases.mine) observed.push(["mine", phases.mine.totalMs]);
-    if (phases.stability) observed.push(["stability", phases.stability.totalMs]);
-    const totalObserved = observed.reduce((sum, [, ms]) => sum + ms, 0);
-    if (totalObserved > 0) {
-        observed.sort((a, b) => b[1] - a[1]);
-        const [domName, domMs] = observed[0];
-        const pct = domMs / totalObserved;
-        if (pct >= 0.6) {
-            notes.push(
-                `${domName} phase dominated (${(pct * 100).toFixed(1)}% of observed wall clock, ${domMs.toFixed(0)} ms)`,
-            );
-        }
-    }
-
-    // Stability amplification: each rerun reevaluates a sampled prepared pair
-    // subset. A high reruns x subsetSize product relative to run total signals
-    // the Stability hot path is the bottleneck.
-    if (phases.stability && phases.run && phases.run.totalMs > 0) {
-        const stabilityRatio = phases.stability.totalMs / phases.run.totalMs;
-        if (stabilityRatio >= 2) {
-            const workload = phases.stability.sampledPairEvaluations > 0
-                ? `; workload ${phases.stability.sampledPairEvaluations} sampled pair-reruns`
-                : "";
-            const avgRerun = phases.stability.avgMsPerRerun !== null
-                ? `; avg ${phases.stability.avgMsPerRerun.toFixed(0)} ms/rerun`
-                : "";
-            const avgPair = phases.stability.avgMsPerSampledPair !== null
-                ? `, ${phases.stability.avgMsPerSampledPair.toFixed(2)} ms/sampled pair`
-                : "";
-            const topSubphase = largestMinerSubphase(phases.stability.minerProfile);
-            const profileNote = topSubphase
-                ? `; top miner subphase ${topSubphase.name} ${topSubphase.ms.toFixed(0)} ms`
-                : "";
-            notes.push(
-                `stability mine took ${stabilityRatio.toFixed(1)}x the run phase (${phases.stability.totalMs.toFixed(0)} ms / ${phases.run.totalMs.toFixed(0)} ms)${workload}${avgRerun}${avgPair}${profileNote} - inspect phases.stability.minerProfile for the exact split`,
-            );
-        }
-    }
-
-    // Engine / fallback reporting (Phase 6). Surface which miner engine ran
-    // and — when Rust was attempted but fell back — why. This is diagnostic-
-    // only: it never blocks the run, it just makes "why didn't Rust kick in"
-    // answerable from the benchmark without server logs.
-    // Artifact load/deserialize cost. On the sequential path this is the
-    // one-time artifact load; on the parallel path it is summed across workers
-    // and includes each worker's disk read/deserialization of the sampled
-    // artifact subset, so normalize by worker count before comparing to
-    // wall-clock Stability time.
-    if (phases.stability && phases.stability.minerProfile && phases.stability.totalMs > 0) {
-        const convMs = phases.stability.minerProfile.artifactConversionMs;
-        if (Number.isFinite(convMs) && convMs > 0) {
-            const comparableMs = parallelWallEquivalent(convMs, phases.stability.minerProfile, phases.stability.engine);
-            const convPct = comparableMs / phases.stability.totalMs;
-            if (convPct >= 0.2) {
-                const rawNote = comparableMs !== convMs
-                    ? `, summed worker CPU ${convMs.toFixed(0)} ms`
-                    : "";
-                notes.push(
-                    `artifact load/conversion was ${(convPct * 100).toFixed(1)}% of stability (${comparableMs.toFixed(0)} ms wall-equivalent${rawNote}) - reduce worker duplicate loads`,
-                );
-            }
-        }
-    }
-
-    if (phases.stability?.engine === "typescript_parallel" && phases.stability.minerProfile && phases.stability.totalMs > 0) {
-        const topSubphase = largestMinerSubphase(phases.stability.minerProfile);
-        if (topSubphase) {
-            const comparableMs = parallelWallEquivalent(topSubphase.ms, phases.stability.minerProfile, phases.stability.engine);
-            if (comparableMs / phases.stability.totalMs >= 0.35) {
-                notes.push(
-                    `parallel worker CPU is dominated by ${topSubphase.name} (${topSubphase.ms.toFixed(0)} ms summed, ~${comparableMs.toFixed(0)} ms wall-equivalent)`,
-                );
-            }
-        }
+    // Dominant phase. With only the run phase present, surface it when it
+    // exceeded a meaningful duration.
+    if (phases.run && phases.run.totalMs > 0) {
+        notes.push(`run phase ${phases.run.totalMs.toFixed(0)} ms`);
     }
 
     if (notes.length === 0) {

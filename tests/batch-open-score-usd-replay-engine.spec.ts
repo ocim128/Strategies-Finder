@@ -4,7 +4,7 @@ import {
     runOpenScoreUsdReplay,
     type OpenScoreUsdTarget,
 } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
-import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-state-miner";
+import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-artifact";
 import type { BacktestResult, OHLCVData, Time, Trade } from "../lib/types/strategies";
 
 const T0 = 1_700_000_000;

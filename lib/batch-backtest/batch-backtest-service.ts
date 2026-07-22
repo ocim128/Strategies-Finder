@@ -25,11 +25,6 @@ import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { copyToClipboard } from "../browser-transfer";
 import { readPersistedJson, writePersistedJson } from "../persisted-json";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
-import {
-    readBatchAutoRunStability,
-    shouldAutoRunBatchStability,
-    writeBatchAutoRunStability,
-} from "./batch-auto-stability-preference";
 import { getBatchDatasetCacheStats } from "./batch-backtest-loader";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { extractBatchServerError, postBatchNdjson } from "./batch-ndjson-post";
@@ -55,51 +50,14 @@ import {
     buildCacheStatsFromLoader,
     type BatchBenchmarkCacheSource,
     type BatchBenchmarkCacheStats,
-    type BatchBenchmarkMinePhase,
     type BatchBenchmarkRunOutcome,
     type BatchBenchmarkRunPhase,
     type BatchBenchmarkSnapshot,
-    type BatchBenchmarkStabilityPhase,
 } from "./batch-benchmark-snapshot";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
-import type { BatchStreamEvent, BatchMinerStreamEvent, BatchStabilityMineStreamEvent } from "./batch-backtest-stream-types";
-import {
-    BATCH_SYNTHETIC_MINER_DEFAULT_OPTIONS,
-    type BatchSyntheticAssetVerdict,
-    type BatchSyntheticMinerResult,
-    type BatchSyntheticPairContribution,
-} from "./batch-synthetic-state-miner";
-import {
-    type BatchStabilityMineResult,
-    type BatchStabilityRow,
-} from "./batch-stability-mine";
+import type { BatchStreamEvent } from "./batch-backtest-stream-types";
 import type { OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-engine";
 import type { OpenScoreUsdReplayStreamEvent } from "./batch-open-score-usd-replay-stream-types";
-import {
-    projectMineVerdictToSnapshot,
-    projectStabilityRowToSnapshot,
-    type TimingEdgePersistedRun,
-} from "./mine-timing-persistence";
-import { storeMineTimingRun } from "../local-sqlite-mine-timing-api";
-import {
-    computeMinerAgeTag,
-    computeMinerTargetPrice,
-    computeStabilityAction,
-    computeStabilityAgeTag,
-    computeStabilityDataLagBars,
-    computeStabilityGate,
-    formatTargetPrice,
-    STABILITY_DATA_STALE_THRESHOLD_BARS,
-    summarizeStabilityDataFreshness,
-    type StabilityActionDecision,
-} from "./miner-verdict-format-helpers";
-import {
-    isStabilityTargetSuppressed,
-    pickStabilityTopTrade,
-    projectStabilityTarget,
-    stabilityHorizonBars,
-    type StabilityTopPick,
-} from "./stability-top-pick";
 import type { StrategyParams, BacktestSettings } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 
@@ -134,8 +92,6 @@ class BatchBacktestService {
     private initialized = false;
     private cancelled = false;
     private lastResults: BatchBacktestSymbolResult[] = [];
-    private lastMinerResult: BatchSyntheticMinerResult | null = null;
-    private lastStabilityResult: BatchStabilityMineResult | null = null;
     private lastOpenScoreUsdResult: OpenScoreUsdReplayResult | null = null;
     /**
      * Last successful Balanced Generator result. Used by Copy Generated so a
@@ -154,9 +110,8 @@ class BatchBacktestService {
     private lastRunFingerprint: string | null = null;
     private lastRunInterval: string | null = null;
     // The strategy key that governed the last Run, captured at run start so
-    // server-side Mine persists the strategy that actually ran — not whatever
-    // is selected in `state` at Mine-click time. Without this, switching
-    // strategy between Run and Mine would write the wrong strategyKey.
+    // the persisted snapshot reflects the strategy that actually ran — not
+    // whatever is selected in `state` later.
     private lastRunStrategyKey: string | null = null;
     // Number of result rows already appended to the DOM via onSymbolComplete.
     // Tracked so the post-run path only appends the cancelled back-fill tail
@@ -181,14 +136,14 @@ class BatchBacktestService {
     // terminal snapshot's runId to decide whether to adopt the recovered run.
     private activeServerRunId: string | null = null;
     private serverRunActive = false;
-    // Serializes Mine Timing, Stability, and OPEN_SCORE USD Replay.
+    // Serializes OPEN_SCORE USD Replay (and any future server-side analysis).
     private analysisInFlight = false;
     // Set when Stop races analysis preflight or POST establishment.
     private analysisCancelRequested = false;
     // /stop is not operation-scoped, so new work must wait for every request.
     private pendingStopPromise: Promise<void> | null = null;
     // True when the most recent server-side Run finished with artifacts still
-    // on the server (the Mine Timing button is enabled on this flag, NOT on
+    // on the server (the OPEN_SCORE USD button is enabled on this flag, NOT on
     // `row.data !== undefined`, because in server-side mode the browser never
     // holds `row.data`).
     private serverHasArtifacts = false;
@@ -202,15 +157,6 @@ class BatchBacktestService {
     // final row count is always visible immediately on done/cancel/error.
     private liveRenderQueue: BatchBacktestSymbolResult[] = [];
     private liveRenderRafId: number | null = null;
-    // Mine verdict live-render queue (separate from the run-row queue above).
-    // The server-streamed Mine path emits one `verdict` event per asset; the
-    // NDJSON consumer drains every line in a tight `while` with no `await`
-    // between handlers, so a single `reader.read()` returning many verdicts
-    // fires many synchronous `appendChild`s. Queue verdicts and flush once per
-    // animation frame (same pattern as the run-row queue) so a 200-asset Mine
-    // produces one reflow per frame instead of 200.
-    private minerVerdictQueue: BatchSyntheticAssetVerdict[] = [];
-    private minerVerdictRafId: number | null = null;
     // Reattach polling timer id (set when this tab is observing a server-side
     // run that started before page load).
     private reattachTimer: ReturnType<typeof setTimeout> | null = null;
@@ -222,9 +168,9 @@ class BatchBacktestService {
     // retries with capped backoff until either a response lands or the
     // generous MAX_REATTACH_CONSECUTIVE_FAILURES threshold is reached.
     private reattachConsecutiveFailures = 0;
-    // Benchmark snapshot for the Copy Benchmark button. Each phase (run/mine/
-    // stability) records wall clock + cache stats on completion; missing phases
-    // stay null. `null` until at least one phase has completed in this session.
+    // Benchmark snapshot for the Copy Benchmark button. The run phase records
+    // wall clock + cache stats on completion. `null` until the run phase has
+    // completed in this session.
     private lastBenchmark: BatchBenchmarkSnapshot | null = null;
     private pendingServerRunCacheStats: BatchBenchmarkCacheStats | null = null;
 
@@ -244,7 +190,6 @@ class BatchBacktestService {
             return;
         }
         const dom = this.getDom();
-        dom.batchBacktestAutoRunStability.checked = readBatchAutoRunStability();
         this.bindEvents(dom);
         this.resetProgress(dom);
         this.loadPersistedLatestResults(dom);
@@ -274,21 +219,6 @@ class BatchBacktestService {
         });
         dom.batchBacktestCopyBenchmarkBtn.addEventListener("click", () => {
             void this.copyBenchmarkPerformance();
-        });
-        dom.batchBacktestMineBtn.addEventListener("click", () => {
-            void this.runMiner();
-        });
-        dom.batchBacktestCopyMinerBtn.addEventListener("click", () => {
-            void this.copyMinerResults();
-        });
-        dom.batchBacktestStabilityMineBtn.addEventListener("click", () => {
-            void this.runStabilityMine();
-        });
-        dom.batchBacktestAutoRunStability.addEventListener("change", () => {
-            writeBatchAutoRunStability(dom.batchBacktestAutoRunStability.checked);
-        });
-        dom.batchBacktestCopyStabilityBtn.addEventListener("click", () => {
-            void this.copyStabilityResults();
         });
         dom.batchBacktestOpenScoreUsdBtn.addEventListener("click", () => {
             void this.runOpenScoreUsdReplay();
@@ -338,16 +268,14 @@ class BatchBacktestService {
         });
         dom.batchBacktestSymbols.addEventListener("input", () => {
             // Fast path: when there is nothing derived from a prior run/cache
-            // to invalidate (no fingerprint, no live results, no miner/stability
-            // results, no active server run, no provenance to recheck), the
+            // to invalidate (no fingerprint, no live results, no OPEN_SCORE USD
+            // result, no active server run, no provenance to recheck), the
             // input event only needs the pair-count summary text. Skipping the
             // heavy path here avoids two `parseBatchSymbols` passes + a
             // `localStorage.removeItem` per keystroke while editing/pasting
             // large pair lists.
             const hasDerivedState = this.lastRunFingerprint !== null
                 || this.lastResults.length > 0
-                || this.lastMinerResult !== null
-                || this.lastStabilityResult !== null
                 || this.lastOpenScoreUsdResult !== null
                 || this.activeServerRunId !== null
                 || this.activePairListProvenance !== null;
@@ -438,15 +366,13 @@ class BatchBacktestService {
         setVisible(dom.batchBacktestStopBtn, true);
         dom.batchBacktestCopyBtn.disabled = true;
         dom.batchBacktestCopyBenchmarkBtn.disabled = true;
-        dom.batchBacktestMineBtn.disabled = true;
-        dom.batchBacktestStabilityMineBtn.disabled = true;
         this.setRunBusy(dom, true);
-        this.clearMinerResults(dom);
+        this.clearStaleResults(dom);
         setVisible(dom.batchBacktestEmpty, false);
         dom.batchBacktestResults.replaceChildren();
 
         // Batch has one execution path: the Vite dev server streams scalar
-        // rows while retaining heavy Mine artifacts outside the browser tab.
+        // rows while retaining heavy analysis artifacts outside the browser tab.
         // Reset the prior run's server cache stats so they can't leak into the
         // next run's benchmark if the `done` event never arrives (cancel /
         // crash). `recordRunBenchmark` re-populates this from the `done` event
@@ -488,8 +414,8 @@ class BatchBacktestService {
                 setVisible(dom.batchBacktestStopBtn, false);
                 dom.batchBacktestCopyBtn.disabled = this.lastResults.length === 0;
                 // In server-side mode the artifacts stay on the server; the
-                // Mine button must be gated on the `serverHasArtifacts` flag
-                // (set by the `done` event), not on `row.data !== undefined`
+                // OPEN_SCORE USD button must be gated on the `serverHasArtifacts`
+                // flag (set by the `done` event), not on `row.data !== undefined`
                 // (the browser never holds `row.data` in this mode).
                 this.updateArtifactActionButtons(dom);
                 this.updateSummary(dom);
@@ -504,14 +430,6 @@ class BatchBacktestService {
                     ? runOutcome
                     : "incomplete";
                 this.recordRunBenchmark("server", strategyKey, interval, runStartedAt, benchmarkOutcome);
-                const hasMineableArtifacts = this.serverHasArtifacts;
-                if (shouldAutoRunBatchStability(
-                    dom.batchBacktestAutoRunStability.checked,
-                    this.cancelled,
-                    hasMineableArtifacts,
-                )) {
-                    await this.runStabilityMine();
-                }
             }
         }
     }
@@ -520,7 +438,8 @@ class BatchBacktestService {
      * Server-side run path: POST to `/api/batch-backtest/run`, consume the
      * NDJSON stream, and populate `lastResults` with SCALARS ONLY (no `data`,
      * `signals`, or `result.trades`). The server retains the heavy arrays for
-     * Mine Timing; the browser tab stays bounded regardless of pair count.
+     * OPEN_SCORE USD Replay; the browser tab stays bounded regardless of pair
+     * count.
      *
      * Copy Results stays at browser parity because the server sends small
      * derived scalars for B&H and open-trade asset scores.
@@ -624,13 +543,13 @@ class BatchBacktestService {
                     doneSummary = event.summary;
                     // Audit benchmark-rows finding: surface a partial-artifact
                     // warning in the status line when the server retained some
-                    // but not all Mine artifacts (disk pressure on a 1000-pair
-                    // run). Keep the Mine button enabled as long as any artifact
-                    // survived — Mine still works on the survivors.
+                    // but not all analysis artifacts (disk pressure on a 1000-pair
+                    // run). Keep the OPEN_SCORE USD button enabled as long as any
+                    // artifact survived — analysis still works on the survivors.
                     if (event.artifactStats && event.artifactStats.failed > 0) {
                         const { stored, eligible, failed } = event.artifactStats;
                         const base = doneSummary ?? `Done — ${this.lastResults.length} pairs`;
-                        doneSummary = `${base} — artifacts ${stored}/${eligible}; Mine will omit ${failed} failed write${failed === 1 ? "" : "s"}.`;
+                        doneSummary = `${base} — artifacts ${stored}/${eligible}; OPEN_SCORE USD will omit ${failed} failed write${failed === 1 ? "" : "s"}.`;
                     }
                     this.serverRunActive = false;
                     this.clearActiveServerRun(runId, false);
@@ -959,7 +878,6 @@ class BatchBacktestService {
             : cacheSource === "browser_loader"
                 ? this.currentCacheStats()
                 : this.emptyCacheStats();
-        const existing = this.lastBenchmark;
         const snapshot: BatchBenchmarkSnapshot = {
             schema: BATCH_BENCHMARK_SCHEMA,
             run: {
@@ -970,7 +888,7 @@ class BatchBacktestService {
                 executedAt: new Date().toISOString(),
             },
             cacheSource,
-            phases: { run: phase, mine: existing?.phases.mine ?? null, stability: existing?.phases.stability ?? null },
+            phases: { run: phase },
             cache,
             bottlenecks: [],
         };
@@ -978,65 +896,6 @@ class BatchBacktestService {
         this.lastBenchmark = snapshot;
         const dom = this.dom;
         if (dom) dom.batchBacktestCopyBenchmarkBtn.disabled = false;
-    }
-
-    private recordMineBenchmark(startedAt: number, targetCount: number): void {
-        const totalMs = performance.now() - startedAt;
-        const verdicts = this.lastMinerResult?.verdicts.length ?? 0;
-        const phase: BatchBenchmarkMinePhase = {
-            totalMs,
-            targets: Math.max(0, Math.floor(targetCount)),
-            verdicts,
-            avgMsPerTarget: benchmarkRatio(totalMs, targetCount),
-            avgMsPerVerdict: benchmarkRatio(totalMs, verdicts),
-        };
-        this.mergePhase({ mine: phase });
-    }
-
-    private recordStabilityBenchmark(startedAt: number): void {
-        const totalMs = performance.now() - startedAt;
-        const result = this.lastStabilityResult;
-        if (!result) return;
-        const sampledPairEvaluations = Math.max(0, Math.floor(result.reruns * result.subsetSize));
-        const hitEvents = Math.max(0, Math.floor(result.hitEvents));
-        const phase: BatchBenchmarkStabilityPhase = {
-            totalMs,
-            reruns: result.reruns,
-            subsetSize: result.subsetSize,
-            totalPairs: result.totalPairs,
-            sampledPairEvaluations,
-            targetAssets: result.targetAssets,
-            targets: result.rows.length,
-            verdicts: result.rows.length,
-            hitEvents,
-            avgMsPerRerun: benchmarkRatio(totalMs, result.reruns),
-            avgMsPerSampledPair: benchmarkRatio(totalMs, sampledPairEvaluations),
-            hitEventsPerRerun: benchmarkRatio(hitEvents, result.reruns, 3),
-            hitEventsPerSampledPair: benchmarkRatio(hitEvents, sampledPairEvaluations, 5),
-            minerProfile: result.minerProfile ?? null,
-            // Phase 6 engine reporting. Default the omitted/legacy field to the
-            // sequential TypeScript engine so the benchmark always reports a
-            // concrete engine, even for results produced before this field existed.
-            engine: result.engine ?? "typescript",
-        };
-        this.mergePhase({ stability: phase });
-    }
-
-    private mergePhase(patch: { mine?: BatchBenchmarkMinePhase } | { stability?: BatchBenchmarkStabilityPhase }): void {
-        const existing = this.lastBenchmark;
-        if (!existing) {
-            // No run phase yet (shouldn't happen because Mine/Stability require
-            // a prior Run, but be defensive). Drop the patch.
-            return;
-        }
-        const phases = { ...existing.phases, ...patch };
-        // Browser Mine can add local loader traffic. Server Mine runs in Node
-        // and the browser cannot observe its loader counters, so preserve the
-        // server stats captured at run completion.
-        const cache = existing.run.mode === "server" ? existing.cache : this.currentCacheStats();
-        const snapshot: BatchBenchmarkSnapshot = { ...existing, phases, cache, bottlenecks: [] };
-        snapshot.bottlenecks = buildBatchBenchmarkBottlenecks(snapshot.phases, snapshot.cache, snapshot.cacheSource);
-        this.lastBenchmark = snapshot;
     }
 
     private resolveCacheSource(mode: "browser" | "server"): BatchBenchmarkCacheSource {
@@ -1088,227 +947,7 @@ class BatchBacktestService {
         }
     }
 
-    /**
-     * Persist the latest Mine Timing verdicts to the local SQLite store so the
-     * Assets tab can rank assets by timing edge. Fire-and-forget on purpose —
-     * persistence failure must not block the Mine UI path; the user already
-     * has the verdicts rendered. Strategy key comes from `lastRunStrategyKey`
-     * (captured at run start) so it reflects the strategy that actually
-     * governed the run, not whatever is selected at Mine-click time.
-     */
-    private persistMineTimingResult(source: "mine" | "stability"): void {
-        const interval = this.lastRunInterval ?? state.currentInterval;
-        // Mine verdicts must be labeled with the strategy that actually
-        // governed the Run. Previously this fell back to `state.currentStrategyKey`
-        // when `lastRunStrategyKey` was null — which after a tab reload (before
-        // this fix, the snapshot never stored the key) silently attributed
-        // verdicts to whatever strategy the user happened to select next,
-        // corrupting the Assets/timing-edge history (audit finding 5).
-        //
-        // Refuse + warn: skip persistence entirely when provenance cannot be
-        // established. Mine verdicts still render in the UI (persistence is
-        // fire-and-forget); the Assets DB simply does not gain mislabeled rows.
-        if (!this.lastRunStrategyKey) {
-            debugLogger.warn("batch.mine_timing.persist_skipped_no_strategy_key", {
-                source,
-                reason: "lastRunStrategyKey is null — Run provenance not captured (reload before snapshot stored the key, or Run never completed). Skipping persistence instead of attributing verdicts to the current UI strategy.",
-            });
-            return;
-        }
-        const strategyKey = this.lastRunStrategyKey;
-        const runId = `mt-${source}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-        // Build the run descriptor for the given source, then hand it to the
-        // shared persistence path. Splitting by source here keeps the snapshot
-        // projection (mine vs stability) explicit; the store/load path is
-        // identical for both.
-        let run: TimingEdgePersistedRun;
-        if (source === "mine") {
-            if (!this.lastMinerResult || this.lastMinerResult.verdicts.length === 0) return;
-            const validVerdicts = this.lastMinerResult.verdicts.filter((verdict) => {
-                const lag = computeStabilityDataLagBars(verdict.currentSnapshot?.timeKey ?? null, interval);
-                return lag !== null && lag <= STABILITY_DATA_STALE_THRESHOLD_BARS;
-            });
-            run = {
-                runId,
-                createdAt: Date.now(),
-                interval,
-                strategyKey,
-                source: "mine",
-                pairCount: this.lastResults.length,
-                reruns: 0,
-                subsetSize: 0,
-                seed: 0,
-                verdicts: validVerdicts.map(projectMineVerdictToSnapshot),
-            };
-        } else {
-            if (!this.lastStabilityResult || this.lastStabilityResult.rows.length === 0) return;
-            const validRows = this.lastStabilityResult.rows.filter((row) => {
-                const decision = computeStabilityAction(row, this.lastStabilityResult!.reruns, interval);
-                return (decision.action === "ENTER" || decision.action === "WATCH")
-                    && decision.dataLagBars !== null
-                    && decision.dataLagBars <= STABILITY_DATA_STALE_THRESHOLD_BARS;
-            });
-            run = {
-                runId,
-                createdAt: Date.now(),
-                interval,
-                strategyKey,
-                source: "stability",
-                pairCount: this.lastResults.length,
-                reruns: this.lastStabilityResult.reruns,
-                subsetSize: this.lastStabilityResult.subsetSize,
-                seed: this.lastStabilityResult.seed,
-                verdicts: validRows.map(projectStabilityRowToSnapshot),
-            };
-        }
-        // storeMineTimingRun RESOLVES FALSE on HTTP failure (it doesn't throw),
-        // so a `.catch` alone swallows the most common failure mode silently.
-        // Await the boolean and log loudly when persistence fails — silent
-        // failure here looks exactly like "empty Assets tab" in the UI.
-        void storeMineTimingRun(run).then((ok) => {
-            if (!ok) {
-                debugLogger.warn("batch.mine_timing.persist_failed", {
-                    source,
-                    runId,
-                    verdicts: run.verdicts.length,
-                    reason: "store returned false (HTTP error, server route missing, or SQLite unavailable)",
-                });
-            } else {
-                debugLogger.event("batch.mine_timing.persisted", {
-                    source,
-                    runId,
-                    verdicts: run.verdicts.length,
-                });
-            }
-        }).catch((error) => {
-            debugLogger.warn("batch.mine_timing.persist_threw", {
-                source,
-                runId,
-                error: error instanceof Error ? error.message : String(error),
-            });
-        });
-    }
-
-    private async runMiner(): Promise<void> {
-        if (this.analysisInFlight) return;
-        this.analysisInFlight = true;
-        this.analysisCancelRequested = false;
-        const dom = this.getDom();
-        try {
-            if (!this.serverHasArtifacts) {
-                dom.batchBacktestMinerSummary.textContent = "Run Batch first.";
-                return;
-            }
-            if (!this.lastRunFingerprint) {
-                dom.batchBacktestMinerSummary.textContent = "Rerun Batch before mining; settings or symbols changed.";
-                dom.batchBacktestCopyMinerBtn.disabled = true;
-                return;
-            }
-            if (this.analysisCancelRequested) return;
-            this.beginAnalysisBusy(dom);
-            dom.batchBacktestMineBtn.disabled = true;
-            dom.batchBacktestCopyMinerBtn.disabled = true;
-            dom.batchBacktestMinerSummary.textContent = "Mining on server...";
-            dom.batchBacktestMinerResults.replaceChildren();
-            const mineStartedAt = performance.now();
-            const targetCount = await this.runMinerServer(dom);
-            this.recordMineBenchmark(mineStartedAt, targetCount);
-        } finally {
-            await this.finishAnalysisBusy(dom);
-        }
-    }
-
-    /**
-     * Server-side Mine path: stream verdicts from `/api/batch-backtest/mine`.
-     * The server retains artifacts from the run; the browser only reconstructs
-     * per-verdict rows for display. After completion the server releases its
-     * artifact copy and the browser-side `serverHasArtifacts` flag is cleared
-     * so the user must Run again before re-mining (mirrors the fingerprint
-     * guard on the browser path).
-     */
-    private async runMinerServer(dom: BatchBacktestDom): Promise<number> {
-        // Returns the target asset count (from the `start` event) so the
-        // caller can pass it to `recordMineBenchmark`. Defaults to 0 on error.
-        // Declared outside `try` so the `finally`-adjacent return can read it.
-        let targetCount = 0;
-        try {
-            const verdicts: BatchSyntheticAssetVerdict[] = [];
-            // Defensive: reset the verdict render queue + cancel any stale RAF
-            // so a previous Mine's pending render cannot leak into this run.
-            // The onStart handler replaces `replaceChildren()` on the DOM side.
-            this.cancelMinerVerdictRaf();
-            this.minerVerdictQueue = [];
-            const minerInterval = this.lastRunInterval ?? state.currentInterval;
-            // Audit NDJSON-POST-helper finding: route through the shared
-            // `postBatchNdjson` helper for the transport mechanics (fetch,
-            // response validation, JSON error extraction, requireTerminal).
-            // The handler object stays at the call site so the typed Mine
-            // events (`start`/`verdict`/`done`/`fatal`) stay compile-checked.
-            // `onResponse` preserves the prior ordering: re-issue Stop AFTER
-            // the POST establishes server-side ownership so a Stop that raced
-            // the POST is re-sent once the lock is held.
-            await postBatchNdjson<BatchMinerStreamEvent>({
-                endpoint: "/api/batch-backtest/mine",
-                body: {
-                    fingerprint: this.lastRunFingerprint,
-                    interval: this.lastRunInterval,
-                },
-                onResponse: () => this.reissueStopIfNeeded(),
-                handlers: {
-                    onStart: (event: Extract<BatchMinerStreamEvent, { type: "start" }>) => {
-                        targetCount = Math.max(0, Math.floor(event.assets ?? 0));
-                        dom.batchBacktestMinerSummary.textContent = `Mining on server — ${event.assets} assets / ${event.pairs} pairs`;
-                    },
-                    onVerdict: (event: Extract<BatchMinerStreamEvent, { type: "verdict" }>) => {
-                        // Push to `verdicts` synchronously so the post-Mine
-                        // Copy/persist path sees the complete, ordered list. The
-                        // DOM row is queued and rendered once per animation
-                        // frame (mirrors the run-row `queueLiveRender` path) to
-                        // avoid one layout-invalidating append per verdict on a
-                        // fast stream (Finding 7 in the perf-audit list).
-                        verdicts.push(event.verdict);
-                        this.queueMinerVerdictRender(dom, event.verdict);
-                    },
-                    onDone: (event: Extract<BatchMinerStreamEvent, { type: "done" }>) => {
-                        dom.batchBacktestMinerSummary.textContent = event.summary;
-                    },
-                    onFatal: (event: Extract<BatchMinerStreamEvent, { type: "fatal" }>) => {
-                        throw new Error(event.error);
-                    },
-                },
-            });
-            this.lastMinerResult = {
-                interval: minerInterval,
-                options: BATCH_SYNTHETIC_MINER_DEFAULT_OPTIONS,
-                verdicts,
-                diagnostics: [],
-            };
-            // Drain any queued verdict rows synchronously so the final count is
-            // visible before the summary text and Copy button state update.
-            this.cancelMinerVerdictRaf();
-            this.flushMinerVerdictRenderNow(dom);
-            dom.batchBacktestMinerSummary.textContent = formatMinerSummary(this.lastMinerResult);
-            dom.batchBacktestCopyMinerBtn.disabled = verdicts.length === 0;
-            this.persistMineTimingResult("mine");
-            // Server has released its artifacts; Mine cannot run again until a
-            // new server-side Run produces them.
-            this.serverHasArtifacts = false;
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            // Drop any queued verdict rows: the partial Mine result is being
-            // discarded. Without this the RAF callback would render stale
-            // verdicts after `lastMinerResult` was cleared.
-            this.cancelMinerVerdictRaf();
-            this.lastMinerResult = null;
-            dom.batchBacktestMinerSummary.textContent = `Miner error: ${message}`;
-            debugLogger.error("batch_synthetic_miner.server_failed", { error: message });
-        } finally {
-            this.updateArtifactActionButtons(dom);
-        }
-        return targetCount;
-    }
-
-    /** Cancel the Batch run and any analysis holding the server miner lock. */
+    /** Cancel the Batch run and any analysis holding the server analysis lock. */
     private async stopServerWork(): Promise<void> {
         try {
             // Audit Finding 5: send the active run id so the server scopes
@@ -1545,7 +1184,7 @@ class BatchBacktestService {
                     if (terminalRunId && !this.activeServerRunId) {
                         this.activeServerRunId = terminalRunId;
                     }
-                    // Adopt any leftover server-side artifacts (Mine Timing
+                    // Adopt any leftover server-side artifacts (OPEN_SCORE USD
                     // can still run against the prior run if it hasn't TTL'd).
                     if (
                         payload.lastRun
@@ -1621,9 +1260,9 @@ class BatchBacktestService {
                             this.saveLatestResultsSnapshot();
                         }
                         // The browser does not have the per-row scalars for the
-                        // prior run (the tab reloaded), but server-side Mine
-                        // and Stability Mine can still consume retained
-                        // artifacts before their TTL expires.
+                        // prior run (the tab reloaded), but OPEN_SCORE USD can
+                        // still consume retained artifacts before their TTL
+                        // expires.
                         this.updateArtifactActionButtons(dom);
                     } else {
                         if (this.lastResults.length > 0) {
@@ -1746,174 +1385,8 @@ class BatchBacktestService {
         }
     }
 
-    private async copyMinerResults(): Promise<void> {
-        if (!this.lastMinerResult) return;
-        const text = formatMinerCopy(this.lastMinerResult);
-        const copied = await copyToClipboard(text);
-        if (!copied) {
-            this.getDom().batchBacktestMinerSummary.textContent = "Copy miner failed.";
-        }
-    }
-
-    private async runStabilityMine(): Promise<void> {
-        if (this.analysisInFlight) return;
-        this.analysisInFlight = true;
-        this.analysisCancelRequested = false;
-        const dom = this.getDom();
-        try {
-            if (!this.serverHasArtifacts || !this.lastRunFingerprint) {
-                dom.batchBacktestMinerSummary.textContent = "Run Batch first.";
-                return;
-            }
-            const currentFingerprint = this.buildCurrentRunFingerprint();
-            if (!currentFingerprint || currentFingerprint !== this.lastRunFingerprint) {
-                dom.batchBacktestMinerSummary.textContent = "Rerun Batch before stability mining; settings or symbols changed.";
-                dom.batchBacktestCopyStabilityBtn.disabled = true;
-                return;
-            }
-            this.beginAnalysisBusy(dom);
-            const hasServerArtifacts = await this.refreshServerArtifactState(currentFingerprint);
-            if (this.analysisCancelRequested) return;
-            if (!hasServerArtifacts) {
-                dom.batchBacktestMinerSummary.textContent = "Rerun Batch before stability mining; no artifacts on server.";
-                this.updateArtifactActionButtons(dom);
-                return;
-            }
-            const stabilityStartedAt = performance.now();
-            await this.runStabilityMineServer(dom);
-            this.recordStabilityBenchmark(stabilityStartedAt);
-        } finally {
-            await this.finishAnalysisBusy(dom);
-        }
-    }
-    private async runStabilityMineServer(dom: BatchBacktestDom): Promise<void> {
-        const subsetSize = this.readClampedInt(dom.batchBacktestStabilitySubsetSize.value, 200, 10, Number.MAX_SAFE_INTEGER);
-        const reruns = this.readClampedInt(dom.batchBacktestStabilityReruns.value, 50, 1, 200);
-        const seed = this.readClampedInt(dom.batchBacktestStabilitySeed.value, 1, 1, Number.MAX_SAFE_INTEGER);
-        dom.batchBacktestStabilitySubsetSize.value = String(subsetSize);
-        dom.batchBacktestStabilityReruns.value = String(reruns);
-        dom.batchBacktestStabilitySeed.value = String(seed);
-
-        dom.batchBacktestMineBtn.disabled = true;
-        dom.batchBacktestStabilityMineBtn.disabled = true;
-        dom.batchBacktestCopyMinerBtn.disabled = true;
-        dom.batchBacktestCopyStabilityBtn.disabled = true;
-        dom.batchBacktestMinerSummary.textContent = "Stability mining on server...";
-        dom.batchBacktestMinerResults.replaceChildren();
-        this.lastStabilityResult = null;
-
-
-        try {
-            const received: { result: BatchStabilityMineResult | null; cancelledSummary: string | null } = {
-                result: null,
-                cancelledSummary: null,
-            };
-            // Audit NDJSON-POST-helper finding: shared transport. The
-            // `onNonOkResponse` hook preserves the prior 400 "no artifacts"
-            // special case so the next click short-circuits without a second
-            // round trip. `onResponse` preserves the reissue-Stop ordering.
-            await postBatchNdjson<BatchStabilityMineStreamEvent>({
-                endpoint: "/api/batch-backtest/stability-mine",
-                body: {
-                    fingerprint: this.lastRunFingerprint,
-                    interval: this.lastRunInterval ?? state.currentInterval,
-                    subsetSize,
-                    reruns,
-                    seed,
-                },
-                onResponse: () => this.reissueStopIfNeeded(),
-                onNonOkResponse: (status, payload) => {
-                    if (status === 400 && typeof payload?.error === "string" && payload.error.includes("no artifacts on server")) {
-                        this.serverHasArtifacts = false;
-                    }
-                },
-                handlers: {
-                    onProgress: (event: Extract<BatchStabilityMineStreamEvent, { type: "progress" }>) => {
-                        dom.batchBacktestMinerSummary.textContent = `Stability mining on server ${event.run}/${event.reruns} | hits ${event.hits}`;
-                    },
-                    onDone: (event: Extract<BatchStabilityMineStreamEvent, { type: "done" }>) => {
-                        if (event.ok) {
-                            received.result = event.result;
-                        } else {
-                            received.cancelledSummary = event.summary;
-                        }
-                    },
-                    onFatal: (event: Extract<BatchStabilityMineStreamEvent, { type: "fatal" }>) => {
-                        throw new Error(event.error);
-                    },
-                },
-            });
-            if (received.cancelledSummary) {
-                this.lastStabilityResult = null;
-                dom.batchBacktestMinerSummary.textContent = received.cancelledSummary;
-                return;
-            }
-            if (!received.result) {
-                throw new Error("Server stability mine did not return a result.");
-            }
-            this.lastStabilityResult = received.result;
-            this.renderStabilityResult(dom, received.result);
-            dom.batchBacktestCopyStabilityBtn.disabled = received.result.rows.length === 0;
-            this.serverHasArtifacts = true;
-            this.saveLatestResultsSnapshot();
-            this.persistMineTimingResult("stability");
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.lastStabilityResult = null;
-            dom.batchBacktestMinerSummary.textContent = `Stability miner error: ${message}`;
-            debugLogger.error("batch_stability_miner.server_failed", { error: message });
-        } finally {
-            this.updateArtifactActionButtons(dom);
-        }
-    }
-
-    private async refreshServerArtifactState(expectedFingerprint: string): Promise<boolean> {
-        const previouslyAvailable = this.serverHasArtifacts;
-        try {
-            const response = await fetch("/api/batch-backtest/status", { cache: "no-store" });
-            if (!response.ok) {
-                debugLogger.warn("batch.server.artifact_status_failed", { status: response.status });
-                return previouslyAvailable;
-            }
-            const payload = await response.json() as {
-                lastRun?: {
-                    hasArtifacts?: boolean;
-                    fingerprint?: string | null;
-                    interval?: string | null;
-                } | null;
-            };
-            const lastRun = payload.lastRun;
-            const hasArtifacts = lastRun?.hasArtifacts === true && lastRun.fingerprint === expectedFingerprint;
-            this.serverHasArtifacts = hasArtifacts;
-            if (hasArtifacts) {
-                this.lastRunFingerprint = expectedFingerprint;
-                this.lastRunInterval = lastRun?.interval ?? this.lastRunInterval;
-            }
-            return hasArtifacts;
-        } catch (error) {
-            debugLogger.warn("batch.server.artifact_status_failed", {
-                error: error instanceof Error ? error.message : String(error),
-            });
-            return previouslyAvailable;
-        }
-    }
-
-    private async copyStabilityResults(): Promise<void> {
-        if (!this.lastStabilityResult) return;
-        const text = formatStabilityCopy(this.lastStabilityResult, {
-            interval: this.lastRunInterval ?? state.currentInterval,
-            strategyKey: this.lastRunStrategyKey,
-            fingerprint: this.lastRunFingerprint,
-        });
-        const copied = await copyToClipboard(text);
-        if (!copied) {
-            this.getDom().batchBacktestMinerSummary.textContent = "Copy stability failed.";
-        }
-    }
-
     /**
-     /**
-      * OPEN_SCORE USD Replay: at each historical synthetic-pair decision event,
+     * OPEN_SCORE USD Replay: at each historical synthetic-pair decision event,
      * did selecting the highest positive OPEN_SCORE asset (traded vs USD at the
      * next bar's open, fixed-horizon) beat a uniform random pick among the
      * other positive candidates? Read-only on artifacts — no Batch result
@@ -2146,28 +1619,6 @@ class BatchBacktestService {
         return this.activePairListProvenance;
     }
 
-    private buildCurrentRunFingerprint(): string | null {
-        const strategyKey = state.currentStrategyKey;
-        const strategy = strategyRegistry.get(strategyKey);
-        if (!strategy) {
-            return null;
-        }
-        return this.buildRunFingerprint(
-            parseBatchSymbols(this.getDom().batchBacktestSymbols.value),
-            strategyKey,
-            paramManager.getValues(strategy),
-            backtestService.getBacktestSettings(),
-            backtestService.getCapitalSettings(),
-            // Phase 3 MAX_ACTIVE: thread the active pair-list provenance into
-            // the fingerprint so a manual textarea edit (which clears the
-            // provenance) also changes the fingerprint and invalidates
-            // retained artifacts. This mirrors the server-side fingerprint
-            // construction in processRunBatch.
-            this.activePairListProvenance,
-            state.currentInterval
-        );
-    }
-
     private buildRunFingerprint(
         symbols: readonly string[],
         strategyKey: string,
@@ -2202,18 +1653,16 @@ class BatchBacktestService {
         if (!snapshot) return;
 
         this.lastResults = snapshot.results;
-        this.lastStabilityResult = snapshot.stabilityResult ?? null;
         this.lastRunFingerprint = snapshot.fingerprint;
         this.lastRunInterval = snapshot.interval || null;
-        // Restore the strategy that governed the Run so Mine provenance survives
-        // a tab reload (audit finding 5). Older snapshots (pre-`strategyKey`)
-        // normalize to `null`; `persistMineTimingResult` skips persistence in
-        // that case rather than attributing verdicts to the wrong strategy.
+        // Restore the strategy that governed the Run so the persisted snapshot
+        // is correctly labeled. Older snapshots (pre-`strategyKey`) normalize
+        // to `null`.
         this.lastRunStrategyKey = snapshot.strategyKey ?? null;
         this.appendedCount = snapshot.results.length;
         // LocalStorage cannot prove server artifact TTL is still valid, and
         // browser-mode heavy arrays are intentionally not restored. Reattach
-        // status may re-enable Mine if server artifacts still exist.
+        // status may re-enable OPEN_SCORE USD if server artifacts still exist.
         this.serverHasArtifacts = false;
 
         dom.batchBacktestResults.replaceChildren();
@@ -2225,10 +1674,6 @@ class BatchBacktestService {
         // a tab that reloads into restored-but-not-current state keeps all
         // three disabled consistently until a server-side run re-enables them.
         this.updateArtifactActionButtons(dom);
-        if (this.lastStabilityResult) {
-            this.renderStabilityResult(dom, this.lastStabilityResult);
-            dom.batchBacktestCopyStabilityBtn.disabled = this.lastStabilityResult.rows.length === 0;
-        }
         dom.batchBacktestStatus.textContent = `Restored last Batch run (${this.lastResults.length} pairs)`;
         this.setProgress(dom, 100, "Restored");
         this.renderSummaryGrid(dom);
@@ -2250,7 +1695,6 @@ class BatchBacktestService {
             strategyKey: this.lastRunStrategyKey,
             serverHasArtifacts: this.serverHasArtifacts,
             results: this.lastResults,
-            stabilityResult: this.lastStabilityResult,
         });
         writePersistedJson({
             ...BATCH_RESULTS_STORAGE,
@@ -2316,19 +1760,16 @@ class BatchBacktestService {
     }
 
     /**
-     * Single source of truth for the three artifact-action buttons (Mine,
-     * Stability Mine, OPEN_SCORE USD). Audit finding (artifact-action gating):
-     * an artifact-only button used to stay enabled after `clearStaleResults`
-     * invalidated the fingerprint (only Mine and Stability were disabled), so
+     * Single source of truth for the artifact-action button (OPEN_SCORE USD).
+     * Audit finding (artifact-action gating): an artifact-only button used to
+     * stay enabled after `clearStaleResults` invalidated the fingerprint, so
      * the user could click a stale button and only then see "Run Batch first."
-     * Locking all three artifact-dependent buttons to the same
-     * `serverHasArtifacts && lastRunFingerprint` gate keeps them consistent
+     * Locking the artifact-dependent button to the same
+     * `serverHasArtifacts && lastRunFingerprint` gate keeps it consistent
      * across every lifecycle branch.
      */
     private updateArtifactActionButtons(dom: BatchBacktestDom): void {
         const available = this.serverHasArtifacts && Boolean(this.lastRunFingerprint);
-        dom.batchBacktestMineBtn.disabled = !available;
-        dom.batchBacktestStabilityMineBtn.disabled = !available;
         dom.batchBacktestOpenScoreUsdBtn.disabled = !available;
     }
 
@@ -2338,246 +1779,6 @@ class BatchBacktestService {
         dom.batchBacktestBalancedGenerateBtn.disabled = blocked;
         dom.batchBacktestBalancedCopyBtn.disabled = blocked || !this.lastBalancedPairListResult;
     }
-
-    private clearMinerResults(dom: BatchBacktestDom): void {
-        this.lastMinerResult = null;
-        this.lastStabilityResult = null;
-        this.lastOpenScoreUsdResult = null;
-        // Clear rather than show "Miner idle": an empty .batch-miner-status
-        // collapses via CSS (:empty) so the run-state region does not show a
-        // noise strip before any mining has happened (point 7 of the refactor).
-        dom.batchBacktestMinerSummary.textContent = "";
-        dom.batchBacktestMinerResults.replaceChildren();
-        dom.batchBacktestCopyMinerBtn.disabled = true;
-        dom.batchBacktestCopyStabilityBtn.disabled = true;
-        dom.batchBacktestCopyOpenScoreUsdBtn.disabled = true;
-        dom.batchBacktestOpenScoreUsdSummary.textContent = "";
-    }
-
-    private createMinerRow(verdict: BatchSyntheticAssetVerdict): HTMLDivElement {
-        const line = document.createElement("div");
-        line.className = "batch-miner-row";
-        const evidence = verdict.evidence;
-        const direction = verdict.direction ? verdict.direction.toUpperCase() : "--";
-        const mfeMaeRatio = computeMinerMfeMaeRatio(evidence.expectedMfePct, evidence.expectedMaePct);
-        const targetPrice = computeMinerTargetPrice(verdict);
-        const invalidationPrice = computeMinerInvalidationPrice(verdict);
-
-        // Primary: verdict + asset + direction + age/confidence.
-        const primary = document.createElement("div");
-        primary.className = "batch-miner-primary";
-        const badge = document.createElement("span");
-        badge.className = `finder-verdict ${getMinerVerdictClass(verdict.verdict)}`;
-        badge.textContent = verdict.verdict;
-        const asset = document.createElement("span");
-        asset.className = "batch-miner-asset";
-        asset.textContent = verdict.asset;
-        const dir = document.createElement("span");
-        dir.className = "batch-miner-direction";
-        dir.textContent = direction;
-        primary.appendChild(badge);
-        primary.appendChild(asset);
-        primary.appendChild(dir);
-        primary.appendChild(this.createMinerMetric("Age", computeMinerAgeTag(verdict)));
-        primary.appendChild(this.createMinerMetric("Conf", verdict.confidence));
-        primary.appendChild(this.createMinerMetric(
-            "Lift",
-            formatSignedPercent(evidence.oosLiftPct),
-            evidence.oosLiftPct,
-        ));
-        primary.appendChild(this.createMinerMetric(
-            "RR",
-            formatRatio(mfeMaeRatio),
-        ));
-        primary.appendChild(this.createMinerMetric(
-            "Ret",
-            formatSignedPercent(evidence.expectedForwardReturnPct),
-            evidence.expectedForwardReturnPct,
-        ));
-        primary.appendChild(this.createMinerMetric(
-            "Analogs",
-            `${evidence.analogCount}/${evidence.candidateCount}`,
-        ));
-        line.appendChild(primary);
-
-        // Secondary: edge diagnostics (distance, target/invalidation, horizons).
-        const metrics = document.createElement("div");
-        metrics.className = "batch-miner-metrics";
-        const horizonLabel = evidence.horizonBarsAll.length > 1
-            ? `[${evidence.horizonBarsAll.join(",")}]`
-            : `${evidence.horizonBars}`;
-        metrics.appendChild(this.createMinerMetric("Hrz", horizonLabel));
-        metrics.appendChild(this.createMinerMetric("Dist", formatNumber(evidence.avgDistance, 2)));
-        metrics.appendChild(this.createMinerMetric(
-            "Entry",
-            formatPrice(verdict.currentSnapshot?.close ?? null),
-        ));
-        metrics.appendChild(this.createMinerMetric(
-            "Target",
-            formatTargetPrice(verdict.direction, targetPrice, evidence.longestHorizonBars, formatPrice),
-        ));
-        metrics.appendChild(this.createMinerMetric(
-            "Inv",
-            formatInvalidationPrice(verdict.direction, invalidationPrice),
-        ));
-        if (evidence.oosCount > 0) {
-            metrics.appendChild(this.createMinerMetric("OOS", `${evidence.oosCount}`));
-        }
-        line.appendChild(metrics);
-
-        // Disclosure: the first reason (the "why" behind the verdict).
-        const reason = verdict.reasons[0];
-        if (reason) {
-            const reasonEl = document.createElement("div");
-            reasonEl.className = "batch-miner-reason";
-            reasonEl.textContent = reason;
-            line.appendChild(reasonEl);
-        }
-        return line;
-    }
-
-    private createMinerMetric(
-        label: string,
-        value: string,
-        signedValue?: number | null,
-    ): HTMLSpanElement {
-        const wrap = document.createElement("span");
-        wrap.className = "batch-miner-metric";
-        const labelEl = document.createElement("span");
-        labelEl.className = "batch-miner-metric-label";
-        labelEl.textContent = label;
-        const valueEl = document.createElement("span");
-        let cls = "batch-miner-metric-value";
-        if (signedValue !== null && signedValue !== undefined && Number.isFinite(signedValue)) {
-            if (signedValue > 0) cls += " is-profit";
-            else if (signedValue < 0) cls += " is-loss";
-        }
-        valueEl.className = cls;
-        valueEl.textContent = value;
-        wrap.appendChild(labelEl);
-        wrap.appendChild(valueEl);
-        return wrap;
-    }
-
-    private renderStabilityResult(dom: BatchBacktestDom, result: BatchStabilityMineResult): void {
-        dom.batchBacktestMinerResults.replaceChildren();
-        const interval = this.lastRunInterval ?? state.currentInterval;
-        dom.batchBacktestMinerSummary.textContent = formatStabilitySummary(result, {
-            interval,
-            strategyKey: this.lastRunStrategyKey,
-            fingerprint: this.lastRunFingerprint,
-        });
-        if (result.rows.length === 0) return;
-        const decisions = result.rows.map((row) => computeStabilityAction(row, result.reruns, interval));
-        const fragment = document.createDocumentFragment();
-        const topPick = pickStabilityTopTrade(result.rows, decisions);
-        let skipKey: string | null = null;
-        if (topPick !== null) {
-            // Reuse the same row renderer so the callout's metrics match the
-            // list below — the only difference is the modifier classes. The
-            // picked row is then skipped in the list loop so it isn't shown
-            // twice (callout + sorted position).
-            const topRow = this.createStabilityRow(topPick.row, topPick.decision, result.reruns);
-            topRow.classList.add("batch-miner-top-pick");
-            // WATCH and WEAK are mutually exclusive classes: a WATCH pick is
-            // always conviction=WEAK, but "WATCH (not yet actionable)" is the
-            // more specific signal — don't let the WEAK label override it.
-            if (topPick.tier === "WATCH") topRow.classList.add("is-watch");
-            else if (topPick.conviction === "WEAK") topRow.classList.add("is-weak");
-            skipKey = `${topPick.row.asset}|${topPick.row.direction}`;
-            fragment.appendChild(topRow);
-        }
-        for (let i = 0; i < result.rows.length; i += 1) {
-            const row = result.rows[i]!;
-            if (skipKey !== null && `${row.asset}|${row.direction}` === skipKey) continue;
-            fragment.appendChild(this.createStabilityRow(row, decisions[i]!, result.reruns));
-        }
-        dom.batchBacktestMinerResults.appendChild(fragment);
-    }
-
-    /**
-     * Two-level Stability row (point 6 of the Batch UI refactor). Primary line
-     * carries the decision surface (asset, direction, action, score, hit rate,
-     * freshness); secondary line carries edge diagnostics; the row is flagged
-     * stale when the underlying data exceeds the freshness threshold. The pipe
-     * formatter stays for clipboard / Copy Stability output.
-     */
-    private createStabilityRow(
-        row: BatchStabilityRow,
-        decision: StabilityActionDecision,
-        reruns: number,
-    ): HTMLDivElement {
-        const line = document.createElement("div");
-        line.className = "batch-miner-row";
-        const hasUntrustedDataAge = decision.dataLagBars === null
-            || decision.dataLagBars > STABILITY_DATA_STALE_THRESHOLD_BARS;
-        if (hasUntrustedDataAge) line.classList.add("is-stale");
-
-        // Primary: action + asset + direction + score + hit rate + freshness.
-        const primary = document.createElement("div");
-        primary.className = "batch-miner-primary";
-        const badge = document.createElement("span");
-        badge.className = `finder-verdict ${getStabilityActionClass(decision.action)}`;
-        badge.textContent = decision.action;
-        const asset = document.createElement("span");
-        asset.className = "batch-miner-asset";
-        asset.textContent = row.asset;
-        const dir = document.createElement("span");
-        dir.className = "batch-miner-direction";
-        dir.textContent = row.direction;
-        primary.appendChild(badge);
-        primary.appendChild(asset);
-        primary.appendChild(dir);
-        primary.appendChild(this.createMinerMetric("Score", formatNumber(row.timingEdgeScore, 1)));
-        primary.appendChild(this.createMinerMetric(
-            "Hits",
-            `${row.hits}/${reruns} (${formatPercent((row.hits / Math.max(1, reruns)) * 100)})`,
-        ));
-        primary.appendChild(this.createMinerMetric(
-            "Fresh",
-            `${Math.max(0, Math.floor(Number(row.freshHits) || 0))}/${row.hits}`,
-        ));
-        primary.appendChild(this.createMinerMetric("Gate", computeStabilityGate(row)));
-        line.appendChild(primary);
-
-        // Secondary: edge metrics + anchor concentration + age.
-        const metrics = document.createElement("div");
-        metrics.className = "batch-miner-metrics";
-        metrics.appendChild(this.createMinerMetric("Ret", formatSignedPercent(row.medianRetPct), row.medianRetPct));
-        metrics.appendChild(this.createMinerMetric("Lift", formatSignedPercent(row.medianLiftPct), row.medianLiftPct));
-        metrics.appendChild(this.createMinerMetric("RR", formatRatio(row.medianRr)));
-        metrics.appendChild(this.createMinerMetric(
-            "Anchor",
-            row.dominantPair ? `${row.dominantPair}:${(row.dominantPairShare * 100).toFixed(0)}%` : "--",
-        ));
-        metrics.appendChild(this.createMinerMetric(
-            "Div",
-            `${(row.medianDiversity * 100).toFixed(0)}%`,
-        ));
-        const barsHeld = row.medianBarsHeld === null || !Number.isFinite(row.medianBarsHeld)
-            ? "--"
-            : `${formatNumber(row.medianBarsHeld, 1)}b`;
-        metrics.appendChild(this.createMinerMetric("Age", `${computeStabilityAgeTag(row)}:${barsHeld}`));
-        const dataLag = decision.dataLagBars === null ? "--" : `${formatNumber(decision.dataLagBars, 1)}b`;
-        metrics.appendChild(this.createMinerMetric("Lag", dataLag));
-        metrics.appendChild(this.createMinerMetric("Px", formatPrice(row.close)));
-        line.appendChild(metrics);
-
-        // Disclosure: reason + H/M/L confidence counts + pair warnings.
-        const diag = document.createElement("div");
-        diag.className = "batch-miner-metrics";
-        diag.appendChild(this.createMinerMetric("Why", decision.reason));
-        diag.appendChild(this.createMinerMetric("H/M/L", `${row.high}/${row.medium}/${row.low}`));
-        if (row.pairWarnings > 0) {
-            diag.appendChild(this.createMinerMetric("PairWarn", `${row.pairWarnings}`));
-        }
-        line.appendChild(diag);
-        return line;
-    }
-
-    // --------------------------------------------------------------------
-    // Rendering
-    // --------------------------------------------------------------------
 
     /**
      * Queue a live-stream row for DOM rendering and schedule a flush once per
@@ -2629,58 +1830,9 @@ class BatchBacktestService {
     }
 
     /**
-     * Mine-verdict live-render counterpart to {@link queueLiveRender}. Verdicts
-     * arrive faster than a frame each on a warm stream; queue them and append
-     * in one DocumentFragment per frame so a 200-asset Mine produces one
-     * reflow per frame instead of 200. A synchronous flush fires at
-     * `LIVE_RENDER_MAX_BATCH` so very fast cached streams don't defer visible
-     * progress too long.
-     */
-    private queueMinerVerdictRender(dom: BatchBacktestDom, verdict: BatchSyntheticAssetVerdict): void {
-        this.minerVerdictQueue.push(verdict);
-        if (this.minerVerdictQueue.length >= LIVE_RENDER_MAX_BATCH) {
-            this.flushMinerVerdictRenderNow(dom);
-            return;
-        }
-        if (this.minerVerdictRafId !== null) return;
-        this.minerVerdictRafId = requestAnimationFrame(() => {
-            this.minerVerdictRafId = null;
-            this.flushMinerVerdictRenderNow(dom);
-        });
-    }
-
-    /**
-     * Drain the Mine verdict queue as a single DocumentFragment append
-     * (preserves verdict order). Called on the RAF schedule and on terminal
-     * paths.
-     */
-    private flushMinerVerdictRenderNow(dom: BatchBacktestDom): void {
-        if (this.minerVerdictQueue.length === 0) return;
-        const batch = this.minerVerdictQueue;
-        this.minerVerdictQueue = [];
-        const fragment = document.createDocumentFragment();
-        for (const verdict of batch) {
-            fragment.appendChild(this.createMinerRow(verdict));
-        }
-        dom.batchBacktestMinerResults.appendChild(fragment);
-    }
-
-    /**
-     * Cancel any pending Mine-verdict RAF and drop the queue. Called on the
-     * Mine error path so a stale RAF does not render partial verdicts after
-     * `lastMinerResult` was cleared.
-     */
-    private cancelMinerVerdictRaf(): void {
-        if (this.minerVerdictRafId !== null) {
-            cancelAnimationFrame(this.minerVerdictRafId);
-            this.minerVerdictRafId = null;
-        }
-    }
-
-    /**
      * Append many result rows in one DocumentFragment so restore / reattach
      * paths that render hundreds of rows synchronously do a single reflow
-     * instead of one per row. Output is identical to calling appendResultRow
+     * instead of one per row. Output is identical to calling createResultRow
      * per element; this is purely a layout-cost optimization for bulk paths.
      * The live server stream is frame-batched separately via queueLiveRender
      * (one reflow per animation frame, not one per row).
@@ -2695,7 +1847,9 @@ class BatchBacktestService {
     }
 
     private clearStaleResults(dom: BatchBacktestDom): void {
-        this.clearMinerResults(dom);
+        this.lastOpenScoreUsdResult = null;
+        dom.batchBacktestCopyOpenScoreUsdBtn.disabled = true;
+        dom.batchBacktestOpenScoreUsdSummary.textContent = "";
         this.lastRunFingerprint = null;
         this.lastRunInterval = null;
         this.lastRunStrategyKey = null;
@@ -2703,9 +1857,9 @@ class BatchBacktestService {
         // Audit Finding 5: a stale run id must not survive a results clear.
         this.activeServerRunId = null;
         this.clearPersistedLatestResults();
-        // Audit artifact-action-gating finding: all three artifact-action
-        // buttons share the same gate; clearing stale results disables Mine,
-        // Stability, AND OPEN_SCORE USD consistently through one helper.
+        // Audit artifact-action-gating finding: the artifact-action button
+        // shares this gate; clearing stale results disables OPEN_SCORE USD
+        // consistently through one helper.
         this.updateArtifactActionButtons(dom);
         if (this.lastResults.length === 0) return;
         this.lastResults = [];
@@ -2817,8 +1971,6 @@ class BatchBacktestService {
         this.setRunBusy(dom, true);
         setVisible(dom.batchBacktestStopBtn, true);
         dom.batchBacktestRunBtn.disabled = true;
-        dom.batchBacktestMineBtn.disabled = true;
-        dom.batchBacktestStabilityMineBtn.disabled = true;
         dom.batchBacktestOpenScoreUsdBtn.disabled = true;
         dom.batchBacktestBalancedGenerateBtn.disabled = true;
         dom.batchBacktestBalancedCopyBtn.disabled = true;
@@ -2830,8 +1982,6 @@ class BatchBacktestService {
         this.setRunBusy(dom, false);
         setVisible(dom.batchBacktestStopBtn, false);
         dom.batchBacktestRunBtn.disabled = true;
-        dom.batchBacktestMineBtn.disabled = true;
-        dom.batchBacktestStabilityMineBtn.disabled = true;
         dom.batchBacktestOpenScoreUsdBtn.disabled = true;
         dom.batchBacktestBalancedGenerateBtn.disabled = true;
         dom.batchBacktestBalancedCopyBtn.disabled = true;
@@ -3321,304 +2471,6 @@ class BatchBacktestService {
             }
         }, 2000);
     }
-}
-
-/** Stable, display-only FNV-1a digest; the full fingerprint remains in state. */
-function shortFingerprint(value: string | null): string {
-    if (!value) return "--";
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < value.length; i++) {
-        hash ^= value.charCodeAt(i);
-        hash = Math.imul(hash, 0x01000193);
-    }
-    return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
-interface StabilityFormatContext {
-    interval: string;
-    strategyKey: string | null;
-    fingerprint: string | null;
-}
-
-function formatStabilitySummary(result: BatchStabilityMineResult, context: StabilityFormatContext): string {
-    const workers = Math.max(0, Math.floor(result.minerProfile?.parallelWorkerCount ?? 0));
-    const freshness = summarizeStabilityDataFreshness(result.rows, context.interval);
-    return [
-        "Stability",
-        `Interval ${context.interval}`,
-        `Strategy ${context.strategyKey ?? "--"}`,
-        `Context ${shortFingerprint(context.fingerprint)}`,
-        `Engine ${result.engine ?? "typescript"}/${workers}`,
-        `Runs ${result.reruns}`,
-        `Subset ${result.subsetSize}/${result.totalPairs}`,
-        `Seed ${result.seed}`,
-        `Signals ${result.rows.length}`,
-        `Hits ${result.hitEvents}`,
-        `Data ${freshness.status}`,
-    ].join(" | ");
-}
-
-function formatStabilityRow(row: BatchStabilityRow, reruns: number, interval: string): string {
-    const decision = computeStabilityAction(row, reruns, interval);
-    const freshHits = Math.max(0, Math.floor(Number(row.freshHits) || 0));
-    const barsHeld = row.medianBarsHeld === null || !Number.isFinite(row.medianBarsHeld)
-        ? "--"
-        : `${formatNumber(row.medianBarsHeld, 1)}b`;
-    const dataLag = decision.dataLagBars === null ? "--" : `${formatNumber(decision.dataLagBars, 1)}b`;
-    return [
-        row.asset,
-        `Dir ${row.direction}`,
-        `Action ${decision.action}`,
-        `Why ${decision.reason}`,
-        `Score ${formatNumber(row.timingEdgeScore, 1)}`,
-        `Gate ${computeStabilityGate(row)}`,
-        `AsOf ${row.asOfTimeKey ?? "--"}`,
-        `Lag ${dataLag}`,
-        `Age ${computeStabilityAgeTag(row)}:${barsHeld}`,
-        `Fresh ${freshHits}/${row.hits}`,
-        `Px ${formatPrice(row.close)}`,
-        `Div ${(row.medianDiversity * 100).toFixed(0)}%`,
-        `Anchor ${row.dominantPair ?? "--"}:${(row.dominantPairShare * 100).toFixed(0)}%`,
-        `Hit ${row.hits}/${reruns} (${formatPercent((row.hits / Math.max(1, reruns)) * 100)})`,
-        `High ${row.high}`,
-        `Med ${row.medium}`,
-        `Low ${row.low}`,
-        `Ret ${formatSignedPercent(row.medianRetPct)}`,
-        `Lift ${formatSignedPercent(row.medianLiftPct)}`,
-        `RR ${formatRatio(row.medianRr)}`,
-        `Dist ${formatNumber(row.medianDist, 2)}`,
-        `HMaxLift ${formatSignedPercent(row.medianHmaxLiftPct)}`,
-        `PairWarn ${row.pairWarnings}`,
-    ].join(" | ");
-}
-
-function formatStabilityCopy(result: BatchStabilityMineResult, context: StabilityFormatContext): string {
-    const lines = [formatStabilitySummary(result, context)];
-    const freshness = summarizeStabilityDataFreshness(result.rows, context.interval);
-    if (freshness.status !== "FRESH") {
-        lines.push(freshness.text);
-    }
-    const decisions = result.rows.map((row) => computeStabilityAction(row, result.reruns, context.interval));
-    const topPick = pickStabilityTopTrade(result.rows, decisions);
-    if (topPick !== null) {
-        lines.push(formatStabilityTopPickLine(topPick));
-    }
-    for (const row of result.rows) {
-        lines.push(`STABILITY | ${formatStabilityRow(row, result.reruns, context.interval)}`);
-    }
-    return lines.join("\n");
-}
-
-/**
- * Single-line "best trade decision now" summary for the Copy Stability output.
- * Mirrors what the highlighted Top Pick callout shows in the DOM: asset,
- * direction, tier (ENTER vs a promoted WATCH), conviction, the decision
- * reason, the research score, current price, and a projected target with
- * horizon. The target is suppressed for stale analog states (the projection
- * extends a historical median from a state that fired ≥ 50 bars ago and would
- * overstate conviction — `>881.87@271b` on a 271-bar-stale row is not a level
- * to aim at).
- */
-function formatStabilityTopPickLine(pick: StabilityTopPick): string {
-    const { row, decision, tier, conviction } = pick;
-    const targetSuppressed = isStabilityTargetSuppressed(row);
-    const target = targetSuppressed ? null : projectStabilityTarget(row);
-    const horizon = targetSuppressed ? null : stabilityHorizonBars(row);
-    const targetText = targetSuppressed
-        ? "-- (stale analog)"
-        : formatTargetPrice(
-            row.direction === "LONG" ? "long" : "short",
-            target,
-            horizon,
-            formatPrice,
-        );
-    const tierLabel = tier === "ENTER"
-        ? (conviction === "STRONG" ? "ENTER" : "ENTER · WEAK (stand-aside candidate)")
-        : "WATCH (promoted, not yet actionable)";
-    return [
-        "STABILITY TOP PICK",
-        row.asset,
-        `Dir ${row.direction}`,
-        `Tier ${tierLabel}`,
-        `Action ${decision.action}`,
-        `Why ${decision.reason}`,
-        `Score ${formatNumber(row.timingEdgeScore, 1)}`,
-        `Px ${formatPrice(row.close)}`,
-        `Target ${targetText}`,
-    ].join(" | ");
-}
-
-function formatMinerSummary(result: BatchSyntheticMinerResult): string {
-    const counts = new Map<string, number>();
-    for (const verdict of result.verdicts) {
-        counts.set(verdict.verdict, (counts.get(verdict.verdict) ?? 0) + 1);
-    }
-    const parts = ["LONG", "SHORT", "WATCH", "SKIP", "INCONCLUSIVE"]
-        .map((label) => {
-            const count = counts.get(label) ?? 0;
-            return count > 0 ? `${label} ${count}` : "";
-        })
-        .filter(Boolean);
-    return `Miner | Assets ${result.verdicts.length}${parts.length > 0 ? ` | ${parts.join(", ")}` : ""}`;
-}
-
-function formatMinerRowPipe(verdict: BatchSyntheticAssetVerdict): string {
-    const evidence = verdict.evidence;
-    const direction = verdict.direction ? verdict.direction.toUpperCase() : "--";
-    const reason = verdict.reasons[0] ?? "";
-    const mfeMaeRatio = computeMinerMfeMaeRatio(evidence.expectedMfePct, evidence.expectedMaePct);
-    const invalidationPrice = computeMinerInvalidationPrice(verdict);
-    const targetPrice = computeMinerTargetPrice(verdict);
-    const horizonLabel = evidence.horizonBarsAll.length > 1
-        ? `Hrz [${evidence.horizonBarsAll.join(",")}]`
-        : `Hrz ${evidence.horizonBars}`;
-    const parts = [
-        verdict.asset,
-        `Dir ${direction}`,
-        `Conf ${verdict.confidence}`,
-        `Age ${computeMinerAgeTag(verdict)}`,
-        `AsOf ${verdict.currentSnapshot?.timeKey ?? "--"}`,
-        horizonLabel,
-        `Analogs ${evidence.analogCount}/${evidence.candidateCount}`,
-        `Pre ${evidence.selectionCount}`,
-        `PreRet ${formatSignedPercent(evidence.selectionForwardReturnPct)}`,
-        `OOS ${evidence.oosCount}`,
-        `Ret ${formatSignedPercent(evidence.expectedForwardReturnPct)}`,
-        `Lift ${formatSignedPercent(evidence.oosLiftPct)}`,
-        `MFE ${formatSignedPercent(evidence.expectedMfePct)}`,
-        `MAE ${formatSignedPercent(evidence.expectedMaePct)}`,
-        `RR ${formatRatio(mfeMaeRatio)}`,
-        `Entry @${formatPrice(verdict.currentSnapshot?.close ?? null)}`,
-        `Target ${formatTargetPrice(verdict.direction, targetPrice, evidence.longestHorizonBars, formatPrice)}`,
-        `Inv ${formatInvalidationPrice(verdict.direction, invalidationPrice)}`,
-        `HMax ${evidence.longestHorizonBars ?? "--"}b Ret ${formatSignedPercent(evidence.longestOosForwardReturnPct)} Lift ${formatSignedPercent(evidence.longestOosLiftPct)}`,
-        `Dist ${formatNumber(evidence.avgDistance, 2)}`,
-        reason,
-    ].filter(Boolean);
-    return parts.join(" | ");
-}
-
-function formatMinerCopy(result: BatchSyntheticMinerResult): string {
-    const lines = [formatMinerSummary(result)];
-    for (const verdict of result.verdicts) {
-        lines.push(`${verdict.verdict} | ${formatMinerRowPipe(verdict)}`);
-        if (verdict.verdict !== "LONG" && verdict.verdict !== "SHORT" && verdict.verdict !== "WATCH") {
-            continue;
-        }
-        const warnings = verdict.pairContributions
-            .filter((entry) => entry.label === "dominating" || entry.label === "harmful" || entry.label === "opposing")
-            .slice(0, 3)
-            .map(formatPairContributionWarning);
-        if (warnings.length > 0) {
-            lines.push(`PAIR_CHECK | ${verdict.asset} | ${warnings.join(", ")}`);
-        }
-    }
-    return lines.join("\n");
-}
-
-function computeMinerMfeMaeRatio(mfePct: number | null, maePct: number | null): number | null {
-    if (mfePct === null || maePct === null || !Number.isFinite(mfePct) || !Number.isFinite(maePct)) {
-        return null;
-    }
-    const adverse = Math.abs(maePct);
-    if (adverse <= 1e-9) {
-        return mfePct > 0 ? Number.POSITIVE_INFINITY : null;
-    }
-    return mfePct / adverse;
-}
-
-function computeMinerInvalidationPrice(verdict: BatchSyntheticAssetVerdict): number | null {
-    const close = verdict.currentSnapshot?.close;
-    const maePct = verdict.evidence.expectedMaePct;
-    if (!verdict.direction || close === null || close === undefined || maePct === null || !Number.isFinite(close) || !Number.isFinite(maePct) || close <= 0) {
-        return null;
-    }
-    const adversePct = Math.abs(maePct) / 100;
-    if (verdict.direction === "long") {
-        return close * (1 - adversePct);
-    }
-    return close * (1 + adversePct);
-}
-
-function formatInvalidationPrice(direction: BatchSyntheticAssetVerdict["direction"], value: number | null): string {
-    if (!direction || value === null || !Number.isFinite(value)) {
-        return "--";
-    }
-    const comparator = direction === "long" ? "<" : ">";
-    return `${comparator}${formatPrice(value)}`;
-}
-
-function formatPrice(value: number | null | undefined): string {
-    if (value === null || value === undefined || !Number.isFinite(value)) {
-        return "--";
-    }
-    if (Math.abs(value) >= 100) {
-        return value.toFixed(2);
-    }
-    if (Math.abs(value) >= 1) {
-        return value.toFixed(4);
-    }
-    return value.toPrecision(4);
-}
-
-function formatRatio(value: number | null): string {
-    if (value === null || Number.isNaN(value)) {
-        return "--";
-    }
-    if (!Number.isFinite(value)) {
-        return "Inf";
-    }
-    return value.toFixed(value >= 10 ? 1 : 2);
-}
-
-function formatPairContributionWarning(entry: BatchSyntheticPairContribution): string {
-    return `${entry.symbol}:${entry.label}`
-        + `(n=${entry.oosCountWithout}, ret=${formatSignedPercent(entry.oosReturnWithoutPct)}, delta=${formatSignedPercent(entry.returnDeltaPct)})`;
-}
-
-function getMinerVerdictClass(verdict: BatchSyntheticAssetVerdict["verdict"]): string {
-    switch (verdict) {
-        case "LONG":
-        case "SHORT":
-            return "finder-verdict-strong";
-        case "WATCH":
-            return "finder-verdict-marginal";
-        case "SKIP":
-            return "finder-verdict-losing";
-        case "INCONCLUSIVE":
-        default:
-            return "finder-verdict-thin";
-    }
-}
-
-function getStabilityActionClass(action: ReturnType<typeof computeStabilityAction>["action"]): string {
-    switch (action) {
-        case "ENTER":
-            return "finder-verdict-strong";
-        case "WATCH":
-            return "finder-verdict-marginal";
-        case "WAIT":
-            return "finder-verdict-thin";
-        case "INVALID":
-            return "finder-verdict-thin";
-        case "REJECT":
-        default:
-            return "finder-verdict-losing";
-    }
-}
-
-function formatPercent(value: number | null | undefined): string {
-    if (value === null || value === undefined || !Number.isFinite(value)) {
-        return "--";
-    }
-    return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
-}
-
-function formatNumber(value: number | null | undefined, digits: number): string {
-    if (value === null || value === undefined || !Number.isFinite(value)) {
-        return "--";
-    }
-    return value.toFixed(digits);
 }
 
 function formatSignedPercent(value: number | null | undefined): string {

@@ -68,40 +68,6 @@ describe("Batch backtest result snapshots", () => {
             strategyKey: "rolling_vwap_center",
             serverHasArtifacts: true,
             results: Array.from({ length: BATCH_RESULT_SNAPSHOT_LIMIT + 5 }, (_, index) => makeResult(index)),
-            stabilityResult: {
-                reruns: 20,
-                subsetSize: 5,
-                seed: 1,
-                totalPairs: 10,
-                targetAssets: 1,
-                hitEvents: 1,
-                engine: "typescript_parallel",
-                rows: [
-                    {
-                        asset: "wld",
-                        direction: "LONG",
-                        hits: 1,
-                        high: 1,
-                        medium: 0,
-                        low: 0,
-                        medianRetPct: 2,
-                        medianLiftPct: 3,
-                        medianRr: 4,
-                        medianDist: 5,
-                        medianHmaxLiftPct: 6,
-                        timingEdgeScore: 7,
-                        medianDiversity: 1,
-                        asOfTimeKey: "1700000000",
-                        close: 100,
-                        medianBarsHeld: 2,
-                        agreementTransition: 1,
-                        freshHits: 1,
-                        dominantPair: "BTC",
-                        dominantPairShare: 1,
-                        pairWarnings: 0,
-                    },
-                ],
-            },
         });
 
         expect(snapshot.results).to.have.length(BATCH_RESULT_SNAPSHOT_LIMIT);
@@ -111,8 +77,6 @@ describe("Batch backtest result snapshots", () => {
         expect(snapshot.results[0]!.result?.equityCurve).to.deep.equal([]);
         expect(snapshot.results[0]!.buyHoldPct).to.be.closeTo(10, 1e-9);
         expect(snapshot.results[0]!.openTradeAssetScores?.map((s) => `${s.asset}:${s.score}`)).to.deep.equal(["BTC:-1", "WLD:1"]);
-        expect(snapshot.stabilityResult?.rows[0]?.asset).to.equal("WLD");
-        expect(snapshot.stabilityResult?.engine).to.equal("typescript_parallel");
     });
 
     it("rejects malformed snapshots", () => {
@@ -129,26 +93,16 @@ describe("Batch backtest result snapshots", () => {
             strategyKey: "rolling_vwap_center",
             serverHasArtifacts: false,
             results: [makeResult(1)],
-            stabilityResult: {
-                reruns: 1,
-                subsetSize: 1,
-                seed: 1,
-                totalPairs: 1,
-                hitEvents: 1,
-                rows: [{ asset: "BTC", direction: "SHORT", hits: 1, high: 0, medium: 1, low: 0, medianRetPct: null, medianLiftPct: null, medianRr: null, medianDist: null, medianHmaxLiftPct: null, pairWarnings: 0 }],
-            },
         });
 
         expect(normalized?.interval).to.equal("1h");
         expect(normalized?.results[0]?.data).to.equal(undefined);
         expect(normalized?.results[0]?.result?.trades).to.deep.equal([]);
-        expect(normalized?.stabilityResult?.rows[0]?.direction).to.equal("SHORT");
     });
 
     it("preserves strategyKey through compact -> normalize round-trip (audit finding 5)", () => {
-        // Mine provenance must survive a persist/reload so verdicts are labeled
-        // with the strategy that actually governed the Run, not whatever is
-        // selected in the UI at Mine-click time.
+        // The persisted snapshot must keep the strategy that governed the Run
+        // so the reload path labels results correctly.
         const compacted = compactBatchBacktestResultsSnapshot({
             savedAt: 123,
             interval: "4h",
@@ -165,8 +119,8 @@ describe("Batch backtest result snapshots", () => {
 
     it("normalizes a legacy payload missing strategyKey to null instead of dropping it (audit finding 5)", () => {
         // Older persisted snapshots predate the `strategyKey` field. The
-        // service treats `null` as "provenance unknown — skip Mine persistence"
-        // rather than silently attributing verdicts to the current UI strategy.
+        // normalizer treats `null` as "provenance unknown" rather than dropping
+        // the snapshot entirely.
         const legacy = normalizeBatchBacktestResultsSnapshot({
             savedAt: 123,
             interval: "4h",

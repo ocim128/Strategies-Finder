@@ -26,7 +26,7 @@ import { tmpdir } from "node:os";
 import { deserialize } from "node:v8";
 import { pathToFileURL } from "node:url";
 import type { OHLCVData, Trade } from "../lib/types/strategies";
-import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-state-miner";
+import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-artifact";
 import { toPositiveInt } from "./lib/cli-args";
 
 // ============================================================================

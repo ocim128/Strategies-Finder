@@ -5,7 +5,7 @@ import {
     MIN_RATIO_BAR_OVERLAP,
     MIN_TRADE_OVERLAP,
 } from "../lib/spread-quality/spread-quality-engine";
-import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-state-miner";
+import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-artifact";
 import type { BacktestResult, OHLCVData, Time, Trade } from "../lib/types/strategies";
 
 const DAY = 86400;

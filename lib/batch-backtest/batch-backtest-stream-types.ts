@@ -36,9 +36,9 @@ export type BatchStreamEvent =
         interval: string;
         totals: { loadedSymbols: number; failedSymbols: number };
         summary: string;
-        /** True when the server retains per-row artifacts (data/signals/trades) for Mine/Stability Mine. */
+        /** True when the server retains per-row artifacts (data/signals/trades) for OPEN_SCORE USD Replay. */
         serverHasArtifacts: boolean;
-        /** Fingerprint of the run settings; Mine must match it before starting. */
+        /** Fingerprint of the run settings; OPEN_SCORE USD must match it before starting. */
         fingerprint: string | null;
         /** Server-side loader cache counters captured at run completion. */
         cacheStats?: BatchDatasetCacheStats;
@@ -48,7 +48,7 @@ export type BatchStreamEvent =
         runId?: string;
         /**
          * Audit artifact-stats finding: partial-write outcomes. Present so the
-         * browser can surface "artifacts X/Y; Mine will omit Z failed writes"
+         * browser can surface "artifacts X/Y; OPEN_SCORE USD will omit Z failed writes"
          * without polling `/status`. Null when the run produced no artifacts.
          */
         artifactStats?: { eligible: number; stored: number; failed: number; bytesWritten: number } | null;
@@ -82,7 +82,7 @@ export type BatchStreamEvent =
 /**
  * Strip the heavy array fields from a per-symbol result so it is safe to send
  * over the wire. The browser tab keeps only the rendered scalars; the heavy
- * arrays stay server-side for Mine Timing.
+ * arrays stay server-side for OPEN_SCORE USD Replay.
  */
 export function toScalarRow(row: BatchBacktestSymbolResult): BatchBacktestSymbolResult {
     return {
@@ -103,42 +103,4 @@ export function toScalarRow(row: BatchBacktestSymbolResult): BatchBacktestSymbol
         error: row.error,
     };
 }
-
-// ---------------------------------------------------------------------------
-// Miner stream events
-// ---------------------------------------------------------------------------
-
-import type { BatchSyntheticAssetVerdict } from "./batch-synthetic-state-miner";
-import type { BatchStabilityMineResult } from "./batch-stability-mine";
-
-export type BatchMinerStreamEvent =
-    | { type: "start"; assets: number; pairs: number }
-    | { type: "verdict"; verdict: BatchSyntheticAssetVerdict }
-    | {
-        type: "done";
-        ok: boolean;
-        cancelled: boolean;
-        summary: string;
-        totals: { verdicts: number };
-      }
-    | { type: "fatal"; error: string };
-
-/**
- * Stream event contract for the Stability Mine server-side plugin
- * (`POST /api/batch-backtest/stability-mine`). Distinct from
- * {@link BatchMinerStreamEvent} because Stability Mine streams `progress`
- * (per-rerun hits) and a `done` carrying the full
- * {@link BatchStabilityMineResult} — no `start` / `verdict` events. The
- * consumer (`BatchBacktestService.runStabilityMineServer`) reads it via
- * `consumeNdjsonStream<BatchStabilityMineStreamEvent>`. Dispatch in
- * `consumeNdjsonStream` is by `event.type` → camelCase handler key and is
- * non-exhaustive, so this union exists for compiler coverage at the consumer,
- * not for runtime enforcement.
- */
-export type BatchStabilityMineStreamEvent =
-    | { type: "progress"; run: number; reruns: number; hits: number }
-    | { type: "done"; ok: true; result: BatchStabilityMineResult }
-    | { type: "done"; ok: false; cancelled: true; summary: string }
-    | { type: "fatal"; error: string };
-
 

@@ -40,7 +40,7 @@
  */
 import type { OHLCVData } from "../types/strategies";
 import { applySlippage, timeToNumber } from "../strategies/backtest/backtest-utils";
-import type { BatchSyntheticPairArtifact } from "./batch-synthetic-state-miner";
+import type { BatchSyntheticPairArtifact } from "./batch-synthetic-artifact";
 import {
     tieBreakDigest,
     MAX_ACTIVE_BLOCK_COUNT,

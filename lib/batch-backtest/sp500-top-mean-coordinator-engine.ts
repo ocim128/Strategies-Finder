@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
-import type { BatchSyntheticPairArtifact } from "./batch-synthetic-state-miner";
+import type { BatchSyntheticPairArtifact } from "./batch-synthetic-artifact";
 import {
     atomicWriteJsonSync,
     cleanOldArtifacts,

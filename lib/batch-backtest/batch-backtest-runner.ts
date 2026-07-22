@@ -394,11 +394,11 @@ function buildSymbolResult(
         status = "flat";
     }
 
-    // `signals` is only consumed by Mine Timing, and Mine only runs on
-    // synthetic pair rows (parsePortfolioSyntheticPairSymbol gates it in
-    // buildMinerPairArtifacts / hasMineableArtifacts). For non-synthetic
-    // rows the array has no remaining reader, so drop it to free the
-    // per-row Signal[] allocation across large batches.
+    // `signals` is retained only on synthetic pair rows because server-side
+    // analysis features (OPEN_SCORE USD Replay) consume the retained
+    // per-row artifacts (parsePortfolioSyntheticPairSymbol gates which rows
+    // are eligible). For non-synthetic rows the array has no remaining reader,
+    // so drop it to free the per-row Signal[] allocation across large batches.
     const isSyntheticPair = parsePortfolioSyntheticPairSymbol(symbol) !== null;
 
     return {
