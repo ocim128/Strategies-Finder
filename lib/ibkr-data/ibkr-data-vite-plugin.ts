@@ -20,7 +20,12 @@ const APP_ROOT = process.cwd();
 const IBKR_DATA_DIR = resolve(APP_ROOT, "price-data", "ibkr");
 const IBKR_CSV_DIR = resolve(IBKR_DATA_DIR, "csv");
 const IBKR_CATALOG_PATH = resolve(IBKR_DATA_DIR, "catalog.json");
-const DEFAULT_GATEWAY_URL = "https://localhost:5000/v1/api";
+// Pin to 127.0.0.1, not "localhost": Node resolves localhost to ::1 first and
+// the gateway listens on IPv6 too, but its conf.yaml IP allowlist only permits
+// 127.0.0.1 — an IPv6 connection gets a 404 "Access Denied" from the gateway
+// even though TCP connects fine. The TLS dispatcher below already treats
+// 127.0.0.1 as localhost (rejectUnauthorized: false), so no cert issue.
+const DEFAULT_GATEWAY_URL = "https://127.0.0.1:5000/v1/api";
 const DEFAULT_PERIOD_BY_INTERVAL: Record<string, string> = {
     "1m": "1w",
     "5m": "1m",
