@@ -71,6 +71,15 @@ import {
 } from "./batch-stability-parallel";
 import { runOpenScoreUsdReplay, type OpenScoreUsdTarget } from "./batch-open-score-usd-replay-engine";
 import { createEmptyBacktestResult } from "../strategies/backtest/position-stats";
+import {
+    TopMeanCoordinatorEngine,
+    getActiveTopMeanCoordinatorEngine,
+    type TopMeanCoordinatorRunRequest,
+    type TopMeanStatusResponse,
+} from "./sp500-top-mean-coordinator-engine";
+import { getRunDir, loadManifest } from "./sp500-top-mean-artifact-store";
+import { strategies } from "../strategies/library";
+import { existsSync, readFileSync } from "node:fs";
 
 /**
  * Phase 3 MAX_ACTIVE: compute canonical universe counts from the submitted
@@ -2512,6 +2521,196 @@ function registerBatchRoutes(middlewares: any): void {
             const runId = runIdParam && runIdParam.trim() ? runIdParam.trim() : undefined;
             sendJson(res, 200, handleStatusRequest(after, limit, runId));
         });
+
+        middlewares.use("/api/batch-backtest/sp500-top-mean/run", async (req: any, res: any) => {
+            if (req.method !== "POST") {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
+                return;
+            }
+            try {
+                rememberLocalApiOriginFromRequest(req);
+                await handleSp500TopMeanRunRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
+            } catch (error) {
+                sendCaughtErrorJson(res, error);
+            }
+        });
+
+        middlewares.use("/api/batch-backtest/sp500-top-mean/stop", async (req: any, res: any) => {
+            if (req.method !== "POST") {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
+                return;
+            }
+            try {
+                const body = await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES);
+                const result = await handleSp500TopMeanStopRequest((body as { runId?: unknown })?.runId);
+                sendJson(res, 200, result);
+            } catch (error) {
+                sendCaughtErrorJson(res, error);
+            }
+        });
+
+        middlewares.use("/api/batch-backtest/sp500-top-mean/status", async (req: any, res: any) => {
+            if (req.method !== "GET") {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
+                return;
+            }
+            const parsedUrl = new URL(req.url ?? "/api/batch-backtest/sp500-top-mean/status", "http://localhost");
+            const runIdParam = parsedUrl.searchParams.get("runId");
+            const runId = runIdParam && runIdParam.trim() ? runIdParam.trim() : undefined;
+            const status = handleSp500TopMeanStatusRequest(runId);
+            const statusCode = "ok" in status && !status.ok ? 404 : 200;
+            sendJson(res, statusCode, status);
+        });
+
+        middlewares.use("/api/batch-backtest/sp500-top-mean/result", async (req: any, res: any) => {
+            if (req.method !== "GET") {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
+                return;
+            }
+            const parsedUrl = new URL(req.url ?? "/api/batch-backtest/sp500-top-mean/result", "http://localhost");
+            const runIdParam = parsedUrl.searchParams.get("runId");
+            if (!runIdParam || !runIdParam.trim()) {
+                sendJson(res, 400, { ok: false, error: "Missing required runId parameter" });
+                return;
+            }
+            try {
+                const result = handleSp500TopMeanResultRequest(runIdParam.trim());
+                sendJson(res, 200, result);
+            } catch (error) {
+                sendCaughtErrorJson(res, error);
+            }
+        });
+}
+
+async function handleSp500TopMeanRunRequest(res: ViteHttpResponse, body: unknown): Promise<void> {
+    if (!body || typeof body !== "object") {
+        throw new HttpStatusError(400, "Request body must be a JSON object.");
+    }
+    const req = body as Partial<TopMeanCoordinatorRunRequest>;
+    if (!req.runId || typeof req.runId !== "string") {
+        throw new HttpStatusError(400, "Missing required string property: runId.");
+    }
+    if (!req.strategyKey || typeof req.strategyKey !== "string") {
+        throw new HttpStatusError(400, "Missing required string property: strategyKey.");
+    }
+    if (!req.interval || typeof req.interval !== "string") {
+        throw new HttpStatusError(400, "Missing required string property: interval.");
+    }
+    if (!Array.isArray(req.horizons) || req.horizons.length === 0) {
+        throw new HttpStatusError(400, "Missing required non-empty array: horizons.");
+    }
+
+    const strategy = strategies[req.strategyKey];
+    if (!strategy) {
+        throw new HttpStatusError(
+            400,
+            `Strategy "${req.strategyKey}" is not a built-in strategy. Worker pool execution requires built-in strategies registered in the manifest.`,
+        );
+    }
+
+    if (runOwner !== RUN_OWNER_NONE || minerOwner !== RUN_OWNER_NONE || getActiveTopMeanCoordinatorEngine() !== null) {
+        throw new HttpStatusError(409, "A batch, mine, or TOP_MEAN operation is already running.");
+    }
+
+    const ownerGen = ++runOwnerGen;
+    const minerGen = ++minerOwnerGen;
+    runOwner = ownerGen;
+    runOwnerRunId = req.runId;
+    minerOwner = minerGen;
+
+    const stream = createDisconnectSafeStream(res);
+
+    try {
+        const engine = new TopMeanCoordinatorEngine(req as TopMeanCoordinatorRunRequest);
+        await engine.run((event) => stream.write(event));
+    } finally {
+        if (runOwner === ownerGen) {
+            runOwner = RUN_OWNER_NONE;
+            runOwnerRunId = null;
+        }
+        if (minerOwner === minerGen) {
+            minerOwner = RUN_OWNER_NONE;
+        }
+    }
+}
+
+async function handleSp500TopMeanStopRequest(runId?: unknown): Promise<{ ok: boolean; stopped: boolean; runId?: string }> {
+    const activeEngine = getActiveTopMeanCoordinatorEngine();
+    if (!activeEngine) {
+        return { ok: true, stopped: false };
+    }
+    if (typeof runId === "string" && runId.trim() && activeEngine.request.runId !== runId.trim()) {
+        return { ok: true, stopped: false };
+    }
+    activeEngine.stop();
+    return { ok: true, stopped: true, runId: activeEngine.request.runId };
+}
+
+function handleSp500TopMeanStatusRequest(runId?: string): TopMeanStatusResponse | { ok: false; error: string } {
+    const activeEngine = getActiveTopMeanCoordinatorEngine();
+    if (activeEngine && (!runId || activeEngine.request.runId === runId)) {
+        return activeEngine.getStatus();
+    }
+    if (runId) {
+        const manifest = loadManifest(runId);
+        if (manifest) {
+            let result: any = undefined;
+            const resultPath = join(getRunDir(runId), "result.json");
+            if (existsSync(resultPath)) {
+                try {
+                    result = JSON.parse(readFileSync(resultPath, "utf8"));
+                } catch {
+                    // Ignore JSON parse error
+                }
+            }
+            return {
+                runId: manifest.runId,
+                status: manifest.status,
+                phase: manifest.status === "completed" ? "completed" : "failed",
+                fingerprint: manifest.fingerprint,
+                pairTotals: manifest.pairCount,
+                completedPairs: manifest.completedPairsCount,
+                failedPairs: manifest.failedPairsCount,
+                progressText: manifest.status === "completed" ? "Completed" : manifest.error || "Interrupted",
+                workerCount: 8,
+                actualEngineMode: "auto",
+                error: manifest.error,
+                result,
+            };
+        }
+    }
+    return { ok: false, error: "Run not found" };
+}
+
+function handleSp500TopMeanResultRequest(runId: string): unknown {
+    if (!runId || typeof runId !== "string") {
+        throw new HttpStatusError(400, "Missing runId parameter.");
+    }
+    const resultPath = join(getRunDir(runId), "result.json");
+    if (!existsSync(resultPath)) {
+        throw new HttpStatusError(404, `Result for runId "${runId}" not found.`);
+    }
+    try {
+        return JSON.parse(readFileSync(resultPath, "utf8"));
+    } catch {
+        throw new HttpStatusError(500, "Failed to read result file.");
+    }
 }
 
 // Exported for tests only. `processRunBatch`, `processMine`, and
