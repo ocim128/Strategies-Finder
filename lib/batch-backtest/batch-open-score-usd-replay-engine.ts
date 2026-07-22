@@ -1371,20 +1371,35 @@ function buildReportLines(args: {
         lines.push(comparisonLine("MAX_ACTIVE_REVERSION", h.maxActiveReversion));
         lines.push(comparisonLine(`REVERSION_EX_${h.maxActiveReversionDominantAsset ?? "NONE"}`, h.maxActiveReversionExDominant));
         lines.push(comparisonLine("MAX_SUBMITTED", h.maxSubmitted));
-        lines.push(comparisonLine("MAX_RETAINED", h.maxRetained));
+        if (h.maxRetained.events !== h.maxSubmitted.events || h.maxRetained.delta !== h.maxSubmitted.delta) {
+            lines.push(comparisonLine("MAX_RETAINED", h.maxRetained));
+        }
         lines.push(comparisonLine(`RAW_EX_${h.dominantAsset ?? "NONE"}`, h.topRawExDominant));
         lines.push(comparisonLine(`MEAN_EX_${h.topMeanDominantAsset ?? "NONE"}`, h.topMeanExDominant));
         lines.push(comparisonLine(`ACTIVE_EX_${h.maxActiveDominantAsset ?? "NONE"}`, h.maxActiveExDominant));
         // Phase 3 MAX_ACTIVE: pairwise same-event deltas (only differing-selection events).
         lines.push(comparisonLine("ACTIVE_VS_SUB", h.activeVsSubmitted));
-        lines.push(comparisonLine("ACTIVE_VS_RET", h.activeVsRetained));
+        if (h.activeVsRetained.events !== h.activeVsSubmitted.events || h.activeVsRetained.delta !== h.activeVsSubmitted.delta) {
+            lines.push(comparisonLine("ACTIVE_VS_RET", h.activeVsRetained));
+        }
         lines.push(comparisonLine("ACTIVE_VS_RAW", h.activeVsRaw));
         lines.push(comparisonLine("ACTIVE_VS_MEAN", h.activeVsMean));
         lines.push(`RAW/ADJUSTED agreement = ${h.rawAdjustedAgreement.sameSelection}/${h.rawAdjustedAgreement.events} (${h.rawAdjustedAgreement.rate === null ? "n/a" : (h.rawAdjustedAgreement.rate * 100).toFixed(1) + "%"})`);
         // Phase 3 MAX_ACTIVE: per-selector tie rate.
         const tieLine = (name: string, k: keyof typeof h.tieRates): string =>
             `${name}=${h.tieRates[k].sameSelection}/${h.tieRates[k].events} (${h.tieRates[k].rate === null ? "n/a" : (h.tieRates[k].rate! * 100).toFixed(1) + "%"})`;
-        lines.push(`tie rates | ${tieLine("RAW", "RAW")} ${tieLine("ADJ", "ADJUSTED")} ${tieLine("MEAN", "MEAN")} ${tieLine("ACTIVE", "ACTIVE")} ${tieLine("SUB", "SUBMITTED")} ${tieLine("RET", "RETAINED")} ${tieLine("REV", "REVERSION")}`);
+        const tieTokens = [
+            tieLine("RAW", "RAW"),
+            tieLine("ADJ", "ADJUSTED"),
+            tieLine("MEAN", "MEAN"),
+            tieLine("ACTIVE", "ACTIVE"),
+            tieLine("SUB", "SUBMITTED"),
+        ];
+        if (h.tieRates.RETAINED.sameSelection !== h.tieRates.SUBMITTED.sameSelection || h.tieRates.RETAINED.events !== h.tieRates.SUBMITTED.events) {
+            tieTokens.push(tieLine("RET", "RETAINED"));
+        }
+        tieTokens.push(tieLine("REV", "REVERSION"));
+        lines.push(`tie rates | ${tieTokens.join(" ")}`);
         const assetBreakdown = h.topRawByAsset.slice(0, 5).map((x) =>
             `${x.asset}:n=${x.events},share=${(x.share * 100).toFixed(1)}%,delta=${fmtPct(x.delta)}`,
         ).join(" | ");

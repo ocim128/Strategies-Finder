@@ -2971,9 +2971,13 @@ class BatchBacktestService {
             pairListText,
             useRustEnginePreference: shouldUseRustEngine(),
         };
+        const diagnosticPayload = {
+            ...payload,
+            pairListText: pairListText ? `${pairListText.split("\n").length} custom pair lines` : undefined,
+        };
         this.recordTopMeanDiagnostic("run.start", {
             endpoint: "/api/batch-backtest/sp500-top-mean/run",
-            request: payload,
+            request: diagnosticPayload,
             page: typeof location === "undefined" ? null : { href: location.href },
             userAgent: typeof navigator === "undefined" ? null : navigator.userAgent,
         });
@@ -3159,28 +3163,29 @@ class BatchBacktestService {
 
         const lines: string[] = [
             "======================================================================",
-            "S&P 500 TOP_MEAN ASSET LEADERBOARD SUMMARY",
+            "🏆 TOP_MEAN ASSET LEADERBOARD SUMMARY",
             "======================================================================",
             `Run ID: ${res.runId || "--"}`,
-            `Total Assets Evaluated: ${res.counts?.usableTargetIntervalCount ?? "--"} | Pairs: ${res.counts?.pairCount ?? "--"}`,
+            `Coverage: ${res.counts?.usableTargetIntervalCount ?? "--"} target assets | ${res.counts?.pairCount ?? "--"} pairs`,
             "",
         ];
 
         if (Array.isArray(res.horizons)) {
             for (const h of res.horizons) {
-                lines.push(`• Horizon ${h.horizon}b (${h.events?.toLocaleString()} events):`);
+                lines.push(`--- Horizon ${h.horizon} Bars (${h.events?.toLocaleString()} decision events) ---`);
+                lines.push(`TOP_MEAN Overall: top=${formatSignedPercent(h.topMean?.topMean)} rand=${formatSignedPercent(h.topMean?.randomMean)} delta=${formatSignedPercent(h.topMean?.delta)}`);
+                lines.push("");
+                lines.push("Top Asset Rankings:");
                 const topAssets = Array.isArray(h.topAssets) ? h.topAssets : [];
-                for (let i = 0; i < Math.min(5, topAssets.length); i++) {
+                for (let i = 0; i < Math.min(10, topAssets.length); i++) {
                     const a = topAssets[i];
                     const sharePct = ((a.share ?? 0) * 100).toFixed(1) + "%";
-                    lines.push(`  #${i + 1} ${a.asset.padEnd(6)} | ${a.events?.toLocaleString()} events (${sharePct} share) | delta: ${formatSignedPercent(a.delta)}`);
+                    lines.push(`  #${(i + 1).toString().padStart(2)} ${a.asset.padEnd(6)} | ${a.events?.toLocaleString().padStart(5)} events (${sharePct.padStart(5)} share) | top: ${formatSignedPercent(a.topMean)} | rand: ${formatSignedPercent(a.randomMean)} | delta: ${formatSignedPercent(a.delta)}`);
                 }
                 lines.push("");
             }
         }
         lines.push("======================================================================");
-        lines.push("");
-        lines.push(JSON.stringify(res, null, 2));
 
         const text = lines.join("\n");
         await copyToClipboard(text);
