@@ -263,3 +263,32 @@ npm run typecheck
 ..\..\..\node_modules\.bin\esno tests\batch-backtest-copy.spec.ts
 ..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts
 ```
+
+## S&P 500 TOP_MEAN UI Coordinator
+
+The S&P 500 TOP_MEAN UI Coordinator runs a long-running batch evaluation over the canonical pair universe formed from S&P 500 IBKR assets.
+
+### Architecture
+
+1. **Preflight & Enumeration**: Intersection of `sp500_company_info.csv`, `price-data/ibkr/catalog.json`, and 30m seed CSV files.
+2. **Worker Pool Execution**: Node worker threads (`sp500-top-mean-worker.ts`) execute built-in strategy across pair shards and write atomic `CompactPairArtifact` files under `artifacts/sp500-top-mean/<runId>/shards/`.
+3. **Replay & Asset Ranking**: Invokes `runOpenScoreUsdReplay` using target asset price series and compact pair artifacts, yielding TOP_MEAN asset ranking summaries.
+
+### API Endpoints
+
+- `POST /api/batch-backtest/sp500-top-mean/run`
+- `POST /api/batch-backtest/sp500-top-mean/stop`
+- `GET /api/batch-backtest/sp500-top-mean/status`
+- `GET /api/batch-backtest/sp500-top-mean/result`
+
+### Validation Commands
+
+```bash
+npm run typecheck
+..\..\..\node_modules\.bin\esno tests\sp500-pair-enumerator.spec.ts
+..\..\..\node_modules\.bin\esno tests\compact-pair-artifact.spec.ts
+..\..\..\node_modules\.bin\esno tests\sp500-top-mean-worker.spec.ts
+..\..\..\node_modules\.bin\esno tests\sp500-top-mean-worker-pool.spec.ts
+..\..\..\node_modules\.bin\esno tests\sp500-top-mean-server-plugin.spec.ts
+..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts
+```

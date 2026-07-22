@@ -183,7 +183,13 @@ The shared fetch → align → aggregate pipeline lives in `buildSyntheticPairFr
 
 The Signal Committee sync path (`lib/signal-committee-service.ts`) intentionally bypasses the helper: it builds once and aggregates per-member inside a loop to avoid refetching shared legs.
 
+### S&P 500 IBKR Synthetic Pairs & 4H Aggregation
+
+For S&P 500 IBKR synthetic 4H pairs, 30m seed CSV files (`price-data/ibkr/csv/30m/`) are required. The ratio is built from 30m bars first and then aggregated to 4H to avoid conflating extremes from pre-aggregated 4H legs. The S&P 500 TOP_MEAN Coordinator (`lib/batch-backtest/sp500-pair-enumerator.ts`) enforces this invariant across the S&P 500 universe.
+
 ### Tests
 
 - `tests/synthetic-pair-transform.spec.ts` — ratio formula, alignment, error handling, payload shape, pipeline helper
 - `tests/build-synthetic-pair-script.spec.ts` — CLI argument parsing
+- `tests/sp500-pair-enumerator.spec.ts` — S&P 500 IBKR 30m seed availability & canonical pair enumeration
+

@@ -175,6 +175,36 @@
         <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestOpenScoreUsdSummary"></div>
     </div>
 
+    <section class="batch-section" aria-label="S&P 500 TOP_MEAN coordinator">
+        <div class="batch-section-heading">
+            <h3 class="batch-section-title">S&amp;P 500 TOP_MEAN Coordinator</h3>
+            <p class="batch-section-note">Evaluate built-in strategy over canonical S&amp;P 500 IBKR synthetic pairs in Node worker threads.</p>
+        </div>
+        <div class="batch-stability-controls">
+            <div class="batch-field">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanHorizons">Horizons</label>
+                <input class="batch-field-input" id="batchBacktestSp500TopMeanHorizons" type="text" value="12,24,48" placeholder="12,24,48">
+            </div>
+            <div class="batch-field">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanWorkers">Workers</label>
+                <input class="batch-field-input" id="batchBacktestSp500TopMeanWorkers" type="number" min="1" max="24" step="1" placeholder="Auto">
+            </div>
+            <div class="batch-field">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanMaxPairs">Max Pairs (Smoke)</label>
+                <input class="batch-field-input" id="batchBacktestSp500TopMeanMaxPairs" type="number" min="1" step="10" placeholder="Full">
+            </div>
+            <div class="batch-action-group">
+                <button class="btn btn-primary btn-compact" id="batchBacktestSp500TopMeanRunBtn" type="button">Run TOP_MEAN</button>
+                <button class="btn btn-danger btn-compact" id="batchBacktestSp500TopMeanStopBtn" type="button" style="display:none">Stop</button>
+                <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanCopyBtn" type="button" disabled>Copy Result</button>
+                <button class="btn btn-secondary btn-compact" id="batchBacktestSp500TopMeanDownloadBtn" type="button" disabled>Download Result</button>
+            </div>
+        </div>
+        <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestSp500TopMeanCoverageSummary"></div>
+        <div class="batch-miner-status" id="batchBacktestSp500TopMeanProgressText"></div>
+        <div class="finder-list" id="batchBacktestSp500TopMeanResults"></div>
+    </section>
+
     <div class="finder-results">
         <div class="finder-list" id="batchBacktestMinerResults">
         </div>

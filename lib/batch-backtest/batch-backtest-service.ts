@@ -228,6 +228,9 @@ class BatchBacktestService {
     private lastBenchmark: BatchBenchmarkSnapshot | null = null;
     private pendingServerRunCacheStats: BatchBenchmarkCacheStats | null = null;
 
+    private latestTopMeanResult: any = null;
+    private activeTopMeanRunId: string | null = null;
+
     private getDom(): BatchBacktestDom {
         return this.dom ??= createBatchBacktestDom();
     }
@@ -246,11 +249,9 @@ class BatchBacktestService {
         this.serverRunActive = this.activeServerRunId !== null;
         this.updateSummary(dom);
         this.initialized = true;
-        // Reattach to a server-side run that started before page load. Mirrors
-        // IBKR sync's `reattachToInProgressSync` poll on init. Polls every 2s
-        // and renders the snapshot rows accumulated server-side so a tab reload
-        // mid-run still shows the live progress (2s granularity, not per-symbol).
+        // Reattach to a server-side run that started before page load.
         void this.reattachToInProgressServerRun();
+        void this.reattachToInProgressTopMeanRun();
     }
 
     private bindEvents(dom: BatchBacktestDom): void {
@@ -291,6 +292,18 @@ class BatchBacktestService {
         });
         dom.batchBacktestCopyOpenScoreUsdBtn.addEventListener("click", () => {
             void this.copyOpenScoreUsdResults();
+        });
+        dom.batchBacktestSp500TopMeanRunBtn.addEventListener("click", () => {
+            void this.runSp500TopMeanCoordinator();
+        });
+        dom.batchBacktestSp500TopMeanStopBtn.addEventListener("click", () => {
+            void this.stopSp500TopMeanCoordinator();
+        });
+        dom.batchBacktestSp500TopMeanCopyBtn.addEventListener("click", () => {
+            void this.copySp500TopMeanResults();
+        });
+        dom.batchBacktestSp500TopMeanDownloadBtn.addEventListener("click", () => {
+            void this.downloadSp500TopMeanResults();
         });
         dom.batchBacktestSymbolTemplate.addEventListener("change", () => {
             const key = dom.batchBacktestSymbolTemplate.value as BatchSymbolTemplateKey;
@@ -2881,6 +2894,230 @@ class BatchBacktestService {
         const parsed = Number.parseInt(raw, 10);
         const value = Number.isFinite(parsed) ? parsed : fallback;
         return Math.max(min, Math.min(max, Math.floor(value)));
+    }
+
+    public async runSp500TopMeanCoordinator(): Promise<void> {
+        const dom = this.getDom();
+        const strategyKey = state.currentStrategyKey;
+        await ensureBuiltInStrategyLoaded(strategyKey);
+        const strategy = strategyRegistry.get(strategyKey);
+        if (!strategyKey || !strategy) {
+            dom.batchBacktestSp500TopMeanProgressText.textContent =
+                "Error: Custom/browser strategies cannot be run in Node worker coordinator. Please select a built-in strategy.";
+            return;
+        }
+
+        const horizonsText = dom.batchBacktestSp500TopMeanHorizons.value.trim() || "12,24,48";
+        const horizons = horizonsText
+            .split(",")
+            .map((s) => Number.parseInt(s.trim(), 10))
+            .filter((n) => Number.isFinite(n) && n > 0);
+
+        if (horizons.length === 0) {
+            dom.batchBacktestSp500TopMeanProgressText.textContent = "Error: Invalid horizons format.";
+            return;
+        }
+
+        const workersRaw = Number.parseInt(dom.batchBacktestSp500TopMeanWorkers.value, 10);
+        const workerCount = Number.isFinite(workersRaw) && workersRaw > 0 ? workersRaw : undefined;
+
+        const maxPairsRaw = Number.parseInt(dom.batchBacktestSp500TopMeanMaxPairs.value, 10);
+        const maxPairs = Number.isFinite(maxPairsRaw) && maxPairsRaw > 0 ? maxPairsRaw : undefined;
+
+        const runId = `sp500_top_mean_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        this.activeTopMeanRunId = runId;
+        writePersistedJson({
+            key: "sp500_top_mean_active_run_id",
+            schema: "sp500_top_mean_active_run_id.v1",
+            version: 1,
+            data: { runId },
+        });
+
+        setVisible(dom.batchBacktestSp500TopMeanRunBtn, false);
+        setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
+        dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
+        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
+
+        dom.batchBacktestSp500TopMeanCoverageSummary.innerHTML = "";
+        dom.batchBacktestSp500TopMeanProgressText.textContent = "Starting S&P 500 TOP_MEAN coordinator...";
+        dom.batchBacktestSp500TopMeanResults.innerHTML = "";
+
+        const payload = {
+            runId,
+            strategyKey,
+            strategyParams: paramManager.getValues(strategy),
+            backtestSettings: backtestService.getBacktestSettings(),
+            capitalSettings: backtestService.getCapitalSettings(),
+            interval: state.currentInterval || "4h",
+            horizons,
+            workerCount,
+            maxPairs,
+            useRustEnginePreference: shouldUseRustEngine(),
+        };
+
+        try {
+            await postBatchNdjson({
+                endpoint: "/api/batch-backtest/sp500-top-mean/run",
+                body: payload,
+                handlers: {
+                    preflight: (event: any) => {
+                        const c = event.counts;
+                        dom.batchBacktestSp500TopMeanCoverageSummary.innerHTML =
+                            `<strong>S&P 500 Coverage:</strong> ${c.sp500AssetsCount} assets total | ` +
+                            `${c.catalogAssetsCount} in IBKR catalog | ${c.usable30mSeedCount} with 30m seeds | ` +
+                            `${c.usableTargetIntervalCount} target-usable | <strong>${c.pairCount} pairs</strong> | ` +
+                            `${c.excludedAssetsCount} excluded assets`;
+                    },
+                    progress: (event: any) => {
+                        dom.batchBacktestSp500TopMeanProgressText.textContent = `[${event.phase}] ${event.text}`;
+                    },
+                    done: (event: any) => {
+                        this.latestTopMeanResult = event.result;
+                        this.renderTopMeanResults(dom, event.result);
+                        dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
+                        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
+                        dom.batchBacktestSp500TopMeanProgressText.textContent = "TOP_MEAN run completed successfully.";
+                        this.activeTopMeanRunId = null;
+                        writePersistedJson({
+                            key: "sp500_top_mean_active_run_id",
+                            schema: "sp500_top_mean_active_run_id.v1",
+                            version: 1,
+                            data: null,
+                        });
+                    },
+                    fatal: (event: any) => {
+                        dom.batchBacktestSp500TopMeanProgressText.textContent = `Error: ${event.error}`;
+                        this.activeTopMeanRunId = null;
+                        writePersistedJson({
+                            key: "sp500_top_mean_active_run_id",
+                            schema: "sp500_top_mean_active_run_id.v1",
+                            version: 1,
+                            data: null,
+                        });
+                    },
+                },
+            });
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            dom.batchBacktestSp500TopMeanProgressText.textContent = `Status: ${message}`;
+        } finally {
+            setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
+            setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
+        }
+    }
+
+    public async stopSp500TopMeanCoordinator(): Promise<void> {
+        if (!this.activeTopMeanRunId) return;
+        try {
+            await fetch("/api/batch-backtest/sp500-top-mean/stop", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ runId: this.activeTopMeanRunId }),
+            });
+        } catch {
+            // Ignore network errors on stop
+        }
+    }
+
+    private renderTopMeanResults(dom: BatchBacktestDom, summary: any): void {
+        if (!summary || !Array.isArray(summary.horizons)) return;
+
+        let html = "";
+        for (const h of summary.horizons) {
+            html += `<div style="margin-top: 12px; font-weight: bold;">`;
+            html += `Horizon ${h.horizon} bars | ${h.events} decision events | `;
+            html += `TOP_MEAN: top=${formatSignedPercent(h.topMean?.topMean)} random=${formatSignedPercent(h.topMean?.randomMean)} delta=${formatSignedPercent(h.topMean?.delta)}`;
+            html += `</div>`;
+
+            html += `<table class="finder-table" style="width:100%; margin-top:6px; font-size:12px;">`;
+            html += `<thead><tr><th>Asset</th><th>Events</th><th>Share</th><th>Selected Mean</th><th>Control Mean</th><th>Delta</th></tr></thead><tbody>`;
+
+            for (const row of h.topAssets || []) {
+                const sharePct = (row.share * 100).toFixed(1) + "%";
+                html += `<tr>`;
+                html += `<td><strong>${row.asset}</strong></td>`;
+                html += `<td>${row.events}</td>`;
+                html += `<td>${sharePct}</td>`;
+                html += `<td>${formatSignedPercent(row.topMean)}</td>`;
+                html += `<td>${formatSignedPercent(row.randomMean)}</td>`;
+                html += `<td>${formatSignedPercent(row.delta)}</td>`;
+                html += `</tr>`;
+            }
+            html += `</tbody></table>`;
+        }
+
+        dom.batchBacktestSp500TopMeanResults.innerHTML = html;
+    }
+
+    public async copySp500TopMeanResults(): Promise<void> {
+        if (!this.latestTopMeanResult) return;
+        const text = JSON.stringify(this.latestTopMeanResult, null, 2);
+        await copyToClipboard(text);
+        const dom = this.getDom();
+        dom.batchBacktestSp500TopMeanProgressText.textContent = "Copied TOP_MEAN result to clipboard.";
+    }
+
+    public downloadSp500TopMeanResults(): void {
+        if (!this.latestTopMeanResult) return;
+        const text = JSON.stringify(this.latestTopMeanResult, null, 2);
+        const blob = new Blob([text], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `sp500_top_mean_${this.latestTopMeanResult.runId || "result"}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    private async reattachToInProgressTopMeanRun(): Promise<void> {
+        const persisted = readPersistedJson<{ runId: string }>({
+            key: "sp500_top_mean_active_run_id",
+            schema: "sp500_top_mean_active_run_id.v1",
+            version: 1,
+            fallback: { runId: "" },
+            migrate: (ctx) => (ctx.data && typeof ctx.data === "object" ? (ctx.data as { runId: string }) : null),
+        });
+        if (!persisted?.runId) return;
+
+        const dom = this.getDom();
+        this.activeTopMeanRunId = persisted.runId;
+        setVisible(dom.batchBacktestSp500TopMeanRunBtn, false);
+        setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
+
+        const runId = persisted.runId;
+        const pollInterval = setInterval(async () => {
+            try {
+                const res = await fetch(`/api/batch-backtest/sp500-top-mean/status?runId=${runId}`);
+                if (!res.ok) {
+                    clearInterval(pollInterval);
+                    setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
+                    setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
+                    return;
+                }
+                const status = await res.json();
+                dom.batchBacktestSp500TopMeanProgressText.textContent = `[${status.phase}] ${status.progressText}`;
+
+                if (status.status === "completed" || status.status === "failed" || status.status === "interrupted") {
+                    clearInterval(pollInterval);
+                    setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
+                    setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
+                    if (status.result) {
+                        this.latestTopMeanResult = status.result;
+                        this.renderTopMeanResults(dom, status.result);
+                        dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
+                        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
+                    }
+                    writePersistedJson({
+                        key: "sp500_top_mean_active_run_id",
+                        schema: "sp500_top_mean_active_run_id.v1",
+                        version: 1,
+                        data: null,
+                    });
+                }
+            } catch {
+                // Ignore transient network errors during status poll
+            }
+        }, 2000);
     }
 }
 

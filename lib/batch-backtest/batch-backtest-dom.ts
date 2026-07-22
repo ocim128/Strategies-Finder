@@ -49,6 +49,16 @@ export const BATCH_BACKTEST_REQUIRED_IDS = [
     "batchBacktestMinerResults",
     "batchBacktestResults",
     "batchBacktestEmpty",
+    "batchBacktestSp500TopMeanRunBtn",
+    "batchBacktestSp500TopMeanStopBtn",
+    "batchBacktestSp500TopMeanHorizons",
+    "batchBacktestSp500TopMeanWorkers",
+    "batchBacktestSp500TopMeanMaxPairs",
+    "batchBacktestSp500TopMeanCopyBtn",
+    "batchBacktestSp500TopMeanDownloadBtn",
+    "batchBacktestSp500TopMeanCoverageSummary",
+    "batchBacktestSp500TopMeanProgressText",
+    "batchBacktestSp500TopMeanResults",
 ] as const;
 
 export function createBatchBacktestDom() {
@@ -92,6 +102,16 @@ export function createBatchBacktestDom() {
         batchBacktestMinerResults: getRequiredElement<HTMLDivElement>("batchBacktestMinerResults"),
         batchBacktestResults: getRequiredElement<HTMLDivElement>("batchBacktestResults"),
         batchBacktestEmpty: getRequiredElement<HTMLDivElement>("batchBacktestEmpty"),
+        batchBacktestSp500TopMeanRunBtn: getRequiredElement<HTMLButtonElement>("batchBacktestSp500TopMeanRunBtn"),
+        batchBacktestSp500TopMeanStopBtn: getRequiredElement<HTMLButtonElement>("batchBacktestSp500TopMeanStopBtn"),
+        batchBacktestSp500TopMeanHorizons: getRequiredElement<HTMLInputElement>("batchBacktestSp500TopMeanHorizons"),
+        batchBacktestSp500TopMeanWorkers: getRequiredElement<HTMLInputElement>("batchBacktestSp500TopMeanWorkers"),
+        batchBacktestSp500TopMeanMaxPairs: getRequiredElement<HTMLInputElement>("batchBacktestSp500TopMeanMaxPairs"),
+        batchBacktestSp500TopMeanCopyBtn: getRequiredElement<HTMLButtonElement>("batchBacktestSp500TopMeanCopyBtn"),
+        batchBacktestSp500TopMeanDownloadBtn: getRequiredElement<HTMLButtonElement>("batchBacktestSp500TopMeanDownloadBtn"),
+        batchBacktestSp500TopMeanCoverageSummary: getRequiredElement<HTMLDivElement>("batchBacktestSp500TopMeanCoverageSummary"),
+        batchBacktestSp500TopMeanProgressText: getRequiredElement<HTMLDivElement>("batchBacktestSp500TopMeanProgressText"),
+        batchBacktestSp500TopMeanResults: getRequiredElement<HTMLDivElement>("batchBacktestSp500TopMeanResults"),
     };
 }
 
