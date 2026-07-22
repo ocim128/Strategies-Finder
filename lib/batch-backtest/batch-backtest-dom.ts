@@ -56,9 +56,11 @@ export const BATCH_BACKTEST_REQUIRED_IDS = [
     "batchBacktestSp500TopMeanMaxPairs",
     "batchBacktestSp500TopMeanCopyBtn",
     "batchBacktestSp500TopMeanDownloadBtn",
+    "batchBacktestSp500TopMeanCopyDiagnosticBtn",
     "batchBacktestSp500TopMeanCoverageSummary",
     "batchBacktestSp500TopMeanProgressText",
     "batchBacktestSp500TopMeanResults",
+    "batchBacktestSp500TopMeanDiagnostic",
 ] as const;
 
 export function createBatchBacktestDom() {
@@ -109,9 +111,11 @@ export function createBatchBacktestDom() {
         batchBacktestSp500TopMeanMaxPairs: getRequiredElement<HTMLInputElement>("batchBacktestSp500TopMeanMaxPairs"),
         batchBacktestSp500TopMeanCopyBtn: getRequiredElement<HTMLButtonElement>("batchBacktestSp500TopMeanCopyBtn"),
         batchBacktestSp500TopMeanDownloadBtn: getRequiredElement<HTMLButtonElement>("batchBacktestSp500TopMeanDownloadBtn"),
+        batchBacktestSp500TopMeanCopyDiagnosticBtn: getRequiredElement<HTMLButtonElement>("batchBacktestSp500TopMeanCopyDiagnosticBtn"),
         batchBacktestSp500TopMeanCoverageSummary: getRequiredElement<HTMLDivElement>("batchBacktestSp500TopMeanCoverageSummary"),
         batchBacktestSp500TopMeanProgressText: getRequiredElement<HTMLDivElement>("batchBacktestSp500TopMeanProgressText"),
         batchBacktestSp500TopMeanResults: getRequiredElement<HTMLDivElement>("batchBacktestSp500TopMeanResults"),
+        batchBacktestSp500TopMeanDiagnostic: getRequiredElement<HTMLPreElement>("batchBacktestSp500TopMeanDiagnostic"),
     };
 }
 

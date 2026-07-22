@@ -2955,6 +2955,9 @@ class BatchBacktestService {
             stopButtonDisplay: dom.batchBacktestSp500TopMeanStopBtn.style.display,
         });
 
+        const pairListTextRaw = dom.batchBacktestSymbols ? dom.batchBacktestSymbols.value.trim() : "";
+        const pairListText = pairListTextRaw.length > 0 ? pairListTextRaw : undefined;
+
         const payload = {
             runId,
             strategyKey,
@@ -2965,6 +2968,7 @@ class BatchBacktestService {
             horizons,
             workerCount,
             maxPairs,
+            pairListText,
             useRustEnginePreference: shouldUseRustEngine(),
         };
         this.recordTopMeanDiagnostic("run.start", {
@@ -2999,9 +3003,9 @@ class BatchBacktestService {
                     onPreflight: (event: any) => {
                         const c = event.counts;
                         dom.batchBacktestSp500TopMeanCoverageSummary.innerHTML =
-                            `<strong>S&P 500 Coverage:</strong> ${c.sp500AssetsCount} assets total | ` +
-                            `${c.catalogAssetsCount} in IBKR catalog | ${c.usable30mSeedCount} with 30m seeds | ` +
-                            `${c.usableTargetIntervalCount} target-usable | <strong>${c.pairCount} pairs</strong> | ` +
+                            `<strong>Universe Coverage:</strong> <strong>${c.pairCount} pairs</strong> | ` +
+                            `${c.usableTargetIntervalCount} target-usable assets | ` +
+                            `${c.sp500AssetsCount} total assets cataloged | ` +
                             `${c.excludedAssetsCount} excluded assets`;
                     },
                     onProgress: (event: any) => {

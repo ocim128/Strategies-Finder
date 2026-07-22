@@ -53,6 +53,7 @@ function mockFetch(responder: (url: string, init?: any) => FetchResponse | Promi
 describe("postBatchNdjson (audit NDJSON-POST-helper finding)", () => {
     it("dispatches stream events to typed handlers and resolves after `done`", async () => {
         const events: string[] = [];
+        const observed: string[] = [];
         mockFetch(() => ({
             ok: true,
             status: 200,
@@ -65,6 +66,7 @@ describe("postBatchNdjson (audit NDJSON-POST-helper finding)", () => {
         await postBatchNdjson<{ type: string }>({
             endpoint: "/x",
             body: { foo: 1 },
+            onEvent: (event) => observed.push(event.type),
             handlers: {
                 onStart: () => events.push("start"),
                 onProgress: () => events.push("progress"),
@@ -72,6 +74,7 @@ describe("postBatchNdjson (audit NDJSON-POST-helper finding)", () => {
             },
         });
         expect(events).to.deep.equal(["start", "progress", "done"]);
+        expect(observed).to.deep.equal(["start", "progress", "done"]);
     });
 
     it("throws a server-supplied message on a non-2xx response (extracted from JSON)", async () => {

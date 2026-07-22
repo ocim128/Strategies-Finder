@@ -35,9 +35,17 @@ function testEnumerationOrderingAndExclusion(): void {
     }
 }
 
+function testCustomPairListText(): void {
+    const customText = `CVX•+AMGN•\nPANW•+CVX•\nKO•+PANW•`;
+    const res = enumerateSp500Pairs({ interval: "4h", pairListText: customText });
+    assert.ok(res.counts.pairCount <= 3, "Should parse custom pair list lines");
+    assert.ok(res.canonicalPairs.length > 0, "Should extract canonical pairs from custom list");
+}
+
 function main(): void {
     testParseCsv();
     testEnumerationOrderingAndExclusion();
+    testCustomPairListText();
     console.log("PASS: sp500-pair-enumerator.spec.ts");
 }
 

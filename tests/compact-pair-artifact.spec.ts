@@ -10,7 +10,6 @@ import {
     readShardArtifacts,
     iterateRunCompactArtifacts,
     reconcileInterruptedManifestsOnStartup,
-    getArtifactsRootDir,
 } from "../lib/batch-backtest/sp500-top-mean-artifact-store";
 
 const testBaseDir = resolve(process.cwd(), "temp_test_artifacts");

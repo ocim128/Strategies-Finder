@@ -29,6 +29,7 @@ export class MalformedNdjsonLineError extends Error {
 
 export interface ConsumeNdjsonStreamOptions {
     requireTerminal?: boolean;
+    onEvent?: (event: { type: string }) => void;
 }
 
 export async function consumeNdjsonStream<T extends { type: string }>(
@@ -64,6 +65,7 @@ export async function consumeNdjsonStream<T extends { type: string }>(
                 } catch {
                     throw new MalformedNdjsonLineError(lineNumber);
                 }
+                options?.onEvent?.(event);
                 const handlerKey = toHandlerKey(event.type);
                 const handler = handlers[handlerKey];
                 if (handler) {

@@ -2612,6 +2612,9 @@ async function handleSp500TopMeanRunRequest(res: ViteHttpResponse, body: unknown
     if (!req.interval || typeof req.interval !== "string") {
         throw new HttpStatusError(400, "Missing required string property: interval.");
     }
+    if (req.interval !== "4h") {
+        throw new HttpStatusError(400, "S&P 500 TOP_MEAN coordinator currently supports IBKR 4h synthetic pairs only.");
+    }
     if (!Array.isArray(req.horizons) || req.horizons.length === 0) {
         throw new HttpStatusError(400, "Missing required non-empty array: horizons.");
     }
@@ -2647,6 +2650,7 @@ async function handleSp500TopMeanRunRequest(res: ViteHttpResponse, body: unknown
         if (minerOwner === minerGen) {
             minerOwner = RUN_OWNER_NONE;
         }
+        stream.end();
     }
 }
 
@@ -2682,7 +2686,11 @@ function handleSp500TopMeanStatusRequest(runId?: string): TopMeanStatusResponse 
             return {
                 runId: manifest.runId,
                 status: manifest.status,
-                phase: manifest.status === "completed" ? "completed" : "failed",
+                phase: manifest.status === "completed"
+                    ? "completed"
+                    : manifest.status === "interrupted"
+                        ? "interrupted"
+                        : "failed",
                 fingerprint: manifest.fingerprint,
                 pairTotals: manifest.pairCount,
                 completedPairs: manifest.completedPairsCount,

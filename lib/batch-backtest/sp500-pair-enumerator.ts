@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
+import { parseSyntheticPairToken } from "../synthetic-pair-token";
 
 export interface CoverageCounts {
     sp500AssetsCount: number;
@@ -16,6 +17,7 @@ export interface EnumerationOptions {
     interval?: string;
     baseDir?: string;
     maxPairs?: number;
+    pairListText?: string;
 }
 
 export interface EnumerationResult {
@@ -67,8 +69,8 @@ interface IbkrCatalog {
 
 export function enumerateSp500Pairs(options: EnumerationOptions = {}): EnumerationResult {
     const interval = options.interval || "4h";
-    void interval;
     const baseDir = options.baseDir;
+    const pairListText = options.pairListText?.trim();
 
     const companyInfoPath = resolvePriceDataPath(
         baseDir,
@@ -97,7 +99,6 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
                     if (entry && entry.symbol) {
                         const clean = stripIbkrMarker(entry.symbol).toUpperCase();
                         catalogEntriesMap.set(clean, entry);
-                        // Also index dot/dash variations e.g. BRK.B vs BRK-B
                         catalogEntriesMap.set(clean.replace(/\./g, "-"), entry);
                         catalogEntriesMap.set(clean.replace(/-/g, "."), entry);
                     }
@@ -108,6 +109,85 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
         }
     }
 
+    const isTickerUsable = (cleanTicker: string): { usable: boolean; symbol?: string; reason?: string } => {
+        const catalogEntry = catalogEntriesMap.get(cleanTicker);
+        if (!catalogEntry) return { usable: false, reason: "not_in_catalog" };
+        const symbol = catalogEntry.symbol;
+        const csv30mPath = resolve(csv30mDir, `${symbol}.csv`);
+        const has30mSeed = existsSync(csv30mPath);
+        if (!has30mSeed) return { usable: false, symbol, reason: "missing_30m_seed" };
+
+        let hasTargetIntervalData = true;
+        if (interval !== "30m" && interval !== "4h" && interval !== "1h" && interval !== "2h") {
+            const targetDir = resolvePriceDataPath(baseDir, "ibkr", "csv", interval);
+            hasTargetIntervalData = existsSync(resolve(targetDir, `${symbol}.csv`));
+        }
+        if (!hasTargetIntervalData) return { usable: false, symbol, reason: "missing_target_interval" };
+
+        return { usable: true, symbol };
+    };
+
+    // Branch A: Custom pair list provided (e.g. 2000 pairs pasted in UI)
+    if (pairListText) {
+        const rawLines = pairListText.split(/[\r\n,]+/).map((l) => l.trim()).filter(Boolean);
+        const canonicalPairs: string[] = [];
+        const eligibleAssetsSet = new Set<string>();
+        const excludedAssetsSet = new Set<string>();
+        let invalidPairCount = 0;
+
+        for (const line of rawLines) {
+            const parsed = parseSyntheticPairToken(line);
+            if (!parsed) {
+                invalidPairCount++;
+                continue;
+            }
+            const baseClean = stripIbkrMarker(parsed.baseSymbol).toUpperCase();
+            const quoteClean = stripIbkrMarker(parsed.quoteSymbol).toUpperCase();
+
+            const baseCheck = isTickerUsable(baseClean);
+            const quoteCheck = isTickerUsable(quoteClean);
+
+            if (baseCheck.usable && quoteCheck.usable && baseCheck.symbol && quoteCheck.symbol) {
+                const markedBase = markIbkrSymbol(baseCheck.symbol);
+                const markedQuote = markIbkrSymbol(quoteCheck.symbol);
+                canonicalPairs.push(`${markedBase}+${markedQuote}`);
+                eligibleAssetsSet.add(baseCheck.symbol);
+                eligibleAssetsSet.add(quoteCheck.symbol);
+            } else {
+                invalidPairCount++;
+                if (!baseCheck.usable) excludedAssetsSet.add(baseCheck.symbol || baseClean);
+                if (!quoteCheck.usable) excludedAssetsSet.add(quoteCheck.symbol || quoteClean);
+            }
+        }
+
+        const sortedEligibleAssets = Array.from(eligibleAssetsSet).sort((a, b) =>
+            stripIbkrMarker(a).localeCompare(stripIbkrMarker(b)),
+        );
+
+        let finalPairs = canonicalPairs;
+        if (options.maxPairs && options.maxPairs > 0 && options.maxPairs < finalPairs.length) {
+            finalPairs = finalPairs.slice(0, options.maxPairs);
+        }
+
+        const counts: CoverageCounts = {
+            sp500AssetsCount: sortedEligibleAssets.length + excludedAssetsSet.size,
+            catalogAssetsCount: sortedEligibleAssets.length,
+            usable30mSeedCount: sortedEligibleAssets.length,
+            usableTargetIntervalCount: sortedEligibleAssets.length,
+            pairCount: finalPairs.length,
+            excludedAssetsCount: excludedAssetsSet.size,
+            excludedPairsCount: invalidPairCount,
+        };
+
+        return {
+            counts,
+            eligibleAssets: sortedEligibleAssets,
+            canonicalPairs: finalPairs,
+            excludedAssets: Array.from(excludedAssetsSet),
+        };
+    }
+
+    // Branch B: Default S&P 500 company info enumeration
     let catalogAssetsCount = 0;
     let usable30mSeedCount = 0;
     let usableTargetIntervalCount = 0;
@@ -117,47 +197,23 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
 
     for (const rawTicker of sp500Tickers) {
         const cleanTicker = stripIbkrMarker(rawTicker).toUpperCase();
-        const catalogEntry = catalogEntriesMap.get(cleanTicker);
+        const check = isTickerUsable(cleanTicker);
 
-        if (!catalogEntry) {
-            excludedAssetsList.push(cleanTicker);
+        if (!check.usable) {
+            excludedAssetsList.push(check.symbol || cleanTicker);
             continue;
         }
 
         catalogAssetsCount++;
-        const symbol = catalogEntry.symbol;
-
-        // Check 30m seed CSV file existence
-        const csv30mPath = resolve(csv30mDir, `${symbol}.csv`);
-        const has30mSeed = existsSync(csv30mPath);
-
-        if (has30mSeed) {
-            usable30mSeedCount++;
-        }
-
-        // Check target interval dataset availability. For 4h and 30m, 30m seeds are required.
-        let hasTargetIntervalData = has30mSeed;
-        if (interval !== "30m" && interval !== "4h") {
-            const targetDir = resolvePriceDataPath(baseDir, "ibkr", "csv", interval);
-            hasTargetIntervalData = existsSync(resolve(targetDir, `${symbol}.csv`)) || has30mSeed;
-        }
-
-        const isUsableForInterval = has30mSeed && hasTargetIntervalData;
-
-        if (isUsableForInterval) {
-            usableTargetIntervalCount++;
-            eligibleAssetsSet.add(symbol);
-        } else {
-            excludedAssetsList.push(symbol);
-        }
+        usable30mSeedCount++;
+        usableTargetIntervalCount++;
+        eligibleAssetsSet.add(check.symbol!);
     }
 
-    // Sort eligible assets lexicographically by stripped ticker
     const sortedEligibleAssets = Array.from(eligibleAssetsSet).sort((a, b) =>
         stripIbkrMarker(a).localeCompare(stripIbkrMarker(b)),
     );
 
-    // Build canonical pairs: base < quote
     const allCanonicalPairs: string[] = [];
     for (let i = 0; i < sortedEligibleAssets.length; i++) {
         for (let j = i + 1; j < sortedEligibleAssets.length; j++) {

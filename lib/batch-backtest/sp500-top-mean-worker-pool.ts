@@ -1,5 +1,6 @@
 import { availableParallelism } from "node:os";
-import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
@@ -7,6 +8,8 @@ import type { CapitalSettings } from "../types/backtest";
 import type { TopMeanRunManifest } from "./compact-pair-artifact";
 import { saveManifest, writeShardArtifacts } from "./sp500-top-mean-artifact-store";
 import type { TopMeanWorkerMessage, TopMeanWorkerTaskData } from "./sp500-top-mean-worker";
+
+export const TOP_MEAN_DEFAULT_SHARD_SIZE = 250;
 
 function moduleThisFileDir(): string {
     try {
@@ -16,30 +19,20 @@ function moduleThisFileDir(): string {
     }
 }
 
-let cachedWorkerBundlePath: Promise<string> | null = null;
-
 export async function resolveTopMeanWorkerPath(): Promise<string> {
-    if (cachedWorkerBundlePath) return cachedWorkerBundlePath;
-
-    cachedWorkerBundlePath = (async () => {
-        const sourcePath = join(moduleThisFileDir(), "sp500-top-mean-worker.ts");
-        const sibling = sourcePath.replace(/\.ts$/, ".js");
-        try {
-            const fs = await import("node:fs/promises");
-            if (sourcePath.endsWith(".js") || (await fs.access(sibling).then(() => true).catch(() => false))) {
-                return sourcePath.endsWith(".js") ? sourcePath : sibling;
-            }
-        } catch {
-            /* fall through */
-        }
-        try {
-            return await bundleWorkerWithEsbuild(sourcePath);
-        } catch {
-            return sourcePath;
-        }
-    })();
-
-    return cachedWorkerBundlePath;
+    const fs = await import("node:fs/promises");
+    const repositorySource = resolve(process.cwd(), "lib", "batch-backtest", "sp500-top-mean-worker.ts");
+    const moduleSource = join(moduleThisFileDir(), "sp500-top-mean-worker.ts");
+    const sourcePath = await fs.access(repositorySource).then(() => repositorySource).catch(() => moduleSource);
+    const sibling = sourcePath.replace(/\.ts$/, ".js");
+    if (sourcePath.endsWith(".js") || (await fs.access(sibling).then(() => true).catch(() => false))) {
+        return sourcePath.endsWith(".js") ? sourcePath : sibling;
+    }
+    try {
+        return await bundleWorkerWithEsbuild(sourcePath);
+    } catch {
+        return sourcePath;
+    }
 }
 
 async function bundleWorkerWithEsbuild(sourcePath: string): Promise<string> {
@@ -67,10 +60,15 @@ async function bundleWorkerWithEsbuild(sourcePath: string): Promise<string> {
         throw new Error("esbuild produced an empty top-mean worker bundle");
     }
 
-    const dir = join(root, "v1");
+    const bundleHash = createHash("sha256").update(contents).digest("hex").slice(0, 16);
+    const dir = join(root, bundleHash);
     const outfile = join(dir, "worker.cjs");
     await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(outfile, contents);
+    if (!(await fs.access(outfile).then(() => true).catch(() => false))) {
+        const temporary = join(dir, `worker.${process.pid}.${Date.now()}.tmp`);
+        await fs.writeFile(temporary, contents);
+        await fs.rename(temporary, outfile);
+    }
     return outfile;
 }
 
@@ -126,7 +124,7 @@ export class TopMeanWorkerPool {
 
     public async execute(options: WorkerPoolRunOptions): Promise<void> {
         const workerCount = resolveTopMeanWorkerCount(options.workerCount);
-        const shardSize = options.shardSize || 50;
+        const shardSize = options.shardSize || TOP_MEAN_DEFAULT_SHARD_SIZE;
         const totalPairs = options.canonicalPairs.length;
         options.manifest.shardSize = shardSize;
 
@@ -176,6 +174,18 @@ export class TopMeanWorkerPool {
                 const worker = new Worker(workerScriptPath, {
                     workerData: taskData,
                 });
+                let settled = false;
+
+                const resolveOnce = (): void => {
+                    if (settled) return;
+                    settled = true;
+                    resolvePromise();
+                };
+                const rejectOnce = (error: Error): void => {
+                    if (settled) return;
+                    settled = true;
+                    rejectPromise(error);
+                };
 
                 this.activeWorkers.add(worker);
 
@@ -200,7 +210,7 @@ export class TopMeanWorkerPool {
                         saveManifest(options.manifest, options.baseDir);
                         this.activeWorkers.delete(worker);
                         worker.terminate();
-                        resolvePromise();
+                        resolveOnce();
                     } else if (msg.type === "error") {
                         if (!options.manifest.failedShards.includes(msg.shardIndex)) {
                             options.manifest.failedShards.push(msg.shardIndex);
@@ -208,19 +218,20 @@ export class TopMeanWorkerPool {
                         saveManifest(options.manifest, options.baseDir);
                         this.activeWorkers.delete(worker);
                         worker.terminate();
-                        rejectPromise(new Error(msg.error));
+                        rejectOnce(new Error(msg.error));
                     }
                 });
 
                 worker.on("error", (err) => {
                     this.activeWorkers.delete(worker);
-                    rejectPromise(err);
+                    void worker.terminate();
+                    rejectOnce(err instanceof Error ? err : new Error(String(err)));
                 });
 
                 worker.on("exit", (code) => {
                     this.activeWorkers.delete(worker);
                     if (code !== 0 && !options.manifest.completedShards.includes(task.shardIndex)) {
-                        rejectPromise(new Error(`Worker stopped with exit code ${code}`));
+                        rejectOnce(new Error(`Worker stopped with exit code ${code}`));
                     }
                 });
             });
@@ -230,31 +241,37 @@ export class TopMeanWorkerPool {
         let queueIndex = 0;
         const activePromises: Set<Promise<void>> = new Set();
 
-        while (queueIndex < pendingShards.length || activePromises.size > 0) {
-            if (this.isCancelled) {
-                throw new Error("Operation cancelled");
-            }
+        try {
+            while (queueIndex < pendingShards.length || activePromises.size > 0) {
+                if (this.isCancelled) {
+                    throw new Error("Operation cancelled");
+                }
 
-            while (activePromises.size < workerCount && queueIndex < pendingShards.length) {
-                const task = pendingShards[queueIndex++];
-                const promise = runShardOnWorker(task)
-                    .catch((err) => {
-                        // Retry shard once on failure
-                        if (!this.isCancelled) {
-                            return runShardOnWorker(task);
-                        }
-                        throw err;
-                    })
-                    .finally(() => {
-                        activePromises.delete(promise);
-                    });
+                while (activePromises.size < workerCount && queueIndex < pendingShards.length) {
+                    const task = pendingShards[queueIndex++];
+                    const promise = runShardOnWorker(task)
+                        .catch((err) => {
+                            // Retry shard once on failure.
+                            if (!this.isCancelled) {
+                                return runShardOnWorker(task);
+                            }
+                            throw err;
+                        })
+                        .finally(() => {
+                            activePromises.delete(promise);
+                        });
 
-                activePromises.add(promise);
-            }
+                    activePromises.add(promise);
+                }
 
-            if (activePromises.size > 0) {
-                await Promise.race(activePromises);
+                if (activePromises.size > 0) {
+                    await Promise.race(activePromises);
+                }
             }
+        } catch (error) {
+            this.cancel();
+            await Promise.allSettled(activePromises);
+            throw error;
         }
     }
 }

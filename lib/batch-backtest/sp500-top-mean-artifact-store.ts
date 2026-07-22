@@ -47,7 +47,7 @@ export function atomicWriteJsonSync(targetPath: string, data: unknown): void {
         mkdirSync(dir, { recursive: true });
     }
     const tempPath = `${targetPath}.${Date.now()}.${Math.random().toString(36).substring(2, 8)}.tmp`;
-    writeFileSync(tempPath, JSON.stringify(data, null, 2), "utf8");
+    writeFileSync(tempPath, JSON.stringify(data), "utf8");
     renameSync(tempPath, targetPath);
 }
 

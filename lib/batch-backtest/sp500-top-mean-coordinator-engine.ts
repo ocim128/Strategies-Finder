@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
-import { enumerateSp500Pairs, type CoverageCounts } from "./sp500-pair-enumerator";
+import type { BatchSyntheticPairArtifact } from "./batch-synthetic-state-miner";
 import {
     atomicWriteJsonSync,
     cleanOldArtifacts,
@@ -12,6 +12,7 @@ import {
     reconcileInterruptedManifestsOnStartup,
     saveManifest,
 } from "./sp500-top-mean-artifact-store";
+import { enumerateSp500Pairs, type CoverageCounts } from "./sp500-pair-enumerator";
 import type { TopMeanRunManifest } from "./compact-pair-artifact";
 import { TopMeanWorkerPool, resolveTopMeanWorkerCount } from "./sp500-top-mean-worker-pool";
 import {
@@ -21,7 +22,7 @@ import {
     type ReplayComparison,
 } from "./batch-open-score-usd-replay-engine";
 import { loadServerBatchDataset } from "./server-batch-data-loader";
-import { markIbkrSymbol } from "../local-daily-datasets";
+import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 
 export interface TopMeanCoordinatorRunRequest {
     runId: string;
@@ -33,6 +34,7 @@ export interface TopMeanCoordinatorRunRequest {
     horizons: number[];
     workerCount?: number;
     maxPairs?: number;
+    pairListText?: string;
     resume?: boolean;
     useRustEnginePreference?: boolean;
 }
@@ -82,11 +84,18 @@ export class TopMeanCoordinatorEngine {
     private counts: CoverageCounts | null = null;
     private resultSummary: TopMeanResultSummary | null = null;
 
-    constructor(public readonly request: TopMeanCoordinatorRunRequest, private baseDir?: string) {}
+    constructor(
+        private readonly _request: TopMeanCoordinatorRunRequest,
+        private readonly baseDir?: string,
+    ) {}
+
+    public get request(): TopMeanCoordinatorRunRequest {
+        return this._request;
+    }
 
     public getStatus(): TopMeanStatusResponse {
         return {
-            runId: this.request.runId,
+            runId: this._request.runId,
             status: this.manifest?.status || (this.isStopped ? "interrupted" : "running"),
             phase: this.currentPhase,
             fingerprint: this.manifest?.fingerprint,
@@ -95,8 +104,8 @@ export class TopMeanCoordinatorEngine {
             completedPairs: this.manifest?.completedPairsCount || 0,
             failedPairs: this.manifest?.failedPairsCount || 0,
             progressText: this.progressText,
-            workerCount: resolveTopMeanWorkerCount(this.request.workerCount),
-            actualEngineMode: this.request.useRustEnginePreference ? "rust" : "typescript",
+            workerCount: resolveTopMeanWorkerCount(this._request.workerCount),
+            actualEngineMode: this._request.useRustEnginePreference ? "rust" : "typescript",
             error: this.manifest?.error,
             result: this.resultSummary || undefined,
         };
@@ -112,7 +121,7 @@ export class TopMeanCoordinatorEngine {
             this.manifest.updatedAt = Date.now();
             saveManifest(this.manifest, this.baseDir);
         }
-        this.currentPhase = "interrupted" as any;
+        this.currentPhase = "interrupted";
         this.progressText = "Stopped by user";
     }
 
@@ -126,8 +135,9 @@ export class TopMeanCoordinatorEngine {
             this.currentPhase = "preflight";
             this.progressText = "Enumerating S&P 500 assets and pairs...";
             const enumRes = enumerateSp500Pairs({
-                interval: this.request.interval,
-                maxPairs: this.request.maxPairs,
+                interval: this._request.interval,
+                maxPairs: this._request.maxPairs,
+                pairListText: this._request.pairListText,
                 baseDir: this.baseDir,
             });
 
@@ -139,18 +149,18 @@ export class TopMeanCoordinatorEngine {
             }
 
             const fingerprint = computeRunFingerprint({
-                strategyKey: this.request.strategyKey,
-                strategyParams: this.request.strategyParams,
-                backtestSettings: this.request.backtestSettings,
-                capitalSettings: this.request.capitalSettings,
-                interval: this.request.interval,
-                useRustEnginePreference: this.request.useRustEnginePreference,
+                strategyKey: this._request.strategyKey,
+                strategyParams: this._request.strategyParams,
+                backtestSettings: this._request.backtestSettings,
+                capitalSettings: this._request.capitalSettings,
+                interval: this._request.interval,
+                useRustEnginePreference: this._request.useRustEnginePreference,
                 canonicalAssets: enumRes.eligibleAssets,
             });
 
-            let manifest = loadManifest(this.request.runId, this.baseDir);
+            let manifest = loadManifest(this._request.runId, this.baseDir);
 
-            if (this.request.resume && manifest) {
+            if (this._request.resume && manifest) {
                 if (manifest.fingerprint !== fingerprint) {
                     throw new Error("Resume fingerprint mismatch: run settings or universe changed.");
                 }
@@ -158,11 +168,11 @@ export class TopMeanCoordinatorEngine {
             } else {
                 manifest = {
                     schema: "top_mean_run_manifest.v1",
-                    runId: this.request.runId,
+                    runId: this._request.runId,
                     status: "running",
                     fingerprint,
-                    strategyKey: this.request.strategyKey,
-                    interval: this.request.interval,
+                    strategyKey: this._request.strategyKey,
+                    interval: this._request.interval,
                     pairCount: enumRes.canonicalPairs.length,
                     shardSize: 50,
                     totalShards: Math.ceil(enumRes.canonicalPairs.length / 50),
@@ -174,27 +184,31 @@ export class TopMeanCoordinatorEngine {
                     updatedAt: Date.now(),
                 };
             }
-
             this.manifest = manifest;
             saveManifest(manifest, this.baseDir);
 
-            // 2. Backtesting Phase (Worker Pool)
+            if (this.isStopped) {
+                this.emitInterrupted(emitNdjson);
+                return;
+            }
+
+            // 2. Worker Execution Phase
             this.currentPhase = "backtesting";
-            if (this.isStopped) return;
+            this.progressText = `Running backtests across ${enumRes.canonicalPairs.length} pairs...`;
 
             this.pool = new TopMeanWorkerPool();
 
             await this.pool.execute({
-                runId: this.request.runId,
-                manifest: this.manifest,
+                runId: this._request.runId,
+                manifest,
                 canonicalPairs: enumRes.canonicalPairs,
-                strategyKey: this.request.strategyKey,
-                strategyParams: this.request.strategyParams,
-                backtestSettings: this.request.backtestSettings,
-                capitalSettings: this.request.capitalSettings,
-                interval: this.request.interval,
-                workerCount: this.request.workerCount,
-                useRustEnginePreference: this.request.useRustEnginePreference,
+                strategyKey: this._request.strategyKey,
+                strategyParams: this._request.strategyParams,
+                backtestSettings: this._request.backtestSettings,
+                capitalSettings: this._request.capitalSettings,
+                interval: this._request.interval,
+                workerCount: this._request.workerCount,
+                useRustEnginePreference: this._request.useRustEnginePreference,
                 baseDir: this.baseDir,
                 onProgress: (completed, total, text) => {
                     this.progressText = text;
@@ -203,65 +217,61 @@ export class TopMeanCoordinatorEngine {
                         phase: "backtesting",
                         completed,
                         total,
-                        text,
+                        text: this.progressText,
                     });
                 },
             });
 
-            if (this.isStopped) return;
+            if (this.isStopped) {
+                this.emitInterrupted(emitNdjson);
+                return;
+            }
 
-            // 3. Replay Phase
+            // 3. Replay & Asset Selector Study Phase
             this.currentPhase = "replay";
-            this.progressText = "Streaming target assets for OPEN_SCORE USD replay...";
-            emitNdjson({
-                type: "progress",
-                phase: "replay",
-                completed: 0,
-                total: 100,
-                text: this.progressText,
-            });
+            this.progressText = "Running OPEN_SCORE USD replay and asset selection analysis...";
+            emitNdjson({ type: "progress", phase: "replay", text: this.progressText });
 
-            const runId = this.request.runId;
-            const baseDir = this.baseDir;
             const eligibleAssets = enumRes.eligibleAssets;
-            const requestInterval = this.request.interval;
-            const checkStopped = () => this.isStopped;
+            const requestInterval = this._request.interval;
 
-            const artifactLoader = () => iterateRunCompactArtifacts(runId, baseDir) as any;
             const targetLoader = () => (async function* () {
                 for (let i = 0; i < eligibleAssets.length; i++) {
-                    if (checkStopped()) break;
-                    const marked = markIbkrSymbol(eligibleAssets[i]);
+                    const asset = stripIbkrMarker(eligibleAssets[i]);
+                    const marked = markIbkrSymbol(asset);
                     const candles = await loadServerBatchDataset(marked, requestInterval);
                     yield {
-                        asset: marked,
+                        asset,
                         symbol: marked,
                         data: candles,
                     };
                 }
             })();
 
-            const slippageBps = Number(this.request.backtestSettings?.slippageBps) || 0;
-            const commissionPct = Number(this.request.capitalSettings?.commission) || 0;
+            const slippageBps = Number(this._request.backtestSettings?.slippageBps) || 0;
+            const commissionPct = Number(this._request.capitalSettings?.commission) || 0;
             const slippageRate = slippageBps / 10000;
             const commissionRate = commissionPct / 100;
 
             const replayResult: OpenScoreUsdReplayResult = await runOpenScoreUsdReplay(
-                artifactLoader,
+                () => iterateRunCompactArtifacts(this._request.runId, this.baseDir) as unknown as AsyncIterable<BatchSyntheticPairArtifact>,
                 targetLoader,
                 {
-                    horizons: this.request.horizons && this.request.horizons.length > 0 ? this.request.horizons : [12, 24, 48],
-                    interval: this.request.interval,
+                    horizons: this._request.horizons && this._request.horizons.length > 0 ? this._request.horizons : [12, 24, 48],
+                    interval: this._request.interval,
                     slippageRate,
                     commissionRate,
                     shouldStop: () => this.isStopped,
                 },
             );
 
-            if (this.isStopped) return;
+            if (this.isStopped) {
+                this.emitInterrupted(emitNdjson);
+                return;
+            }
 
             // Save replay output json
-            const resultJsonPath = join(getRunDir(this.request.runId, this.baseDir), "result.json");
+            const resultJsonPath = join(getRunDir(this._request.runId, this.baseDir), "result.json");
             atomicWriteJsonSync(resultJsonPath, replayResult);
 
             // Build result summary
@@ -280,52 +290,63 @@ export class TopMeanCoordinatorEngine {
             });
 
             this.resultSummary = {
-                runId: this.request.runId,
-                completed: replayResult.complete,
+                runId: this._request.runId,
+                completed: true,
                 counts: this.counts,
                 horizons: horizonSummaries,
-                warnings: replayResult.warnings || [],
-                reportLines: replayResult.reportLines || [],
+                warnings: replayResult.warnings,
+                reportLines: replayResult.reportLines,
             };
 
-            this.manifest.status = "completed";
-            saveManifest(this.manifest, this.baseDir);
-
             this.currentPhase = "completed";
-            this.progressText = "TOP_MEAN run completed successfully.";
+            this.progressText = "S&P 500 TOP_MEAN analysis completed successfully.";
+            if (this.manifest) {
+                this.manifest.status = "completed";
+                this.manifest.updatedAt = Date.now();
+                saveManifest(this.manifest, this.baseDir);
+            }
 
             emitNdjson({
                 type: "done",
-                runId: this.request.runId,
                 result: this.resultSummary,
             });
         } catch (err) {
-            const errorText = err instanceof Error ? err.message : String(err);
-            if (this.isStopped || errorText.includes("cancelled") || errorText.includes("Operation cancelled")) {
-                this.currentPhase = "interrupted";
-                this.progressText = "Stopped by user";
-                if (this.manifest) {
-                    this.manifest.status = "interrupted";
-                    saveManifest(this.manifest, this.baseDir);
-                }
-            } else {
-                this.currentPhase = "failed";
-                this.progressText = `Fatal error: ${errorText}`;
-
-                if (this.manifest) {
-                    this.manifest.status = "failed";
-                    this.manifest.error = errorText;
-                    saveManifest(this.manifest, this.baseDir);
-                }
-
-                emitNdjson({
-                    type: "fatal",
-                    runId: this.request.runId,
-                    error: errorText,
-                });
+            const message = err instanceof Error ? err.message : String(err);
+            if (this.isStopped || message.toLowerCase().includes("cancelled") || message.toLowerCase().includes("interrupted")) {
+                this.emitInterrupted(emitNdjson);
+                return;
             }
+
+            this.currentPhase = "failed";
+            this.progressText = `Fatal error: ${message}`;
+            if (this.manifest) {
+                this.manifest.status = "failed";
+                this.manifest.error = message;
+                this.manifest.updatedAt = Date.now();
+                saveManifest(this.manifest, this.baseDir);
+            }
+            emitNdjson({
+                type: "fatal",
+                error: message,
+            });
         } finally {
-            activeEngineInstance = null;
+            if (activeEngineInstance === this) {
+                activeEngineInstance = null;
+            }
         }
+    }
+
+    private emitInterrupted(emitNdjson: (event: unknown) => void): void {
+        this.currentPhase = "interrupted";
+        this.progressText = "Run stopped by user.";
+        if (this.manifest) {
+            this.manifest.status = "interrupted";
+            this.manifest.updatedAt = Date.now();
+            saveManifest(this.manifest, this.baseDir);
+        }
+        emitNdjson({
+            type: "done",
+            interrupted: true,
+        });
     }
 }

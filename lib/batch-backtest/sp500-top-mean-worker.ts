@@ -59,6 +59,8 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
         let pairSymbol = pair.symbol;
         const parsed = parsePortfolioSyntheticPairSymbol(pairSymbol);
 
+        const baseAsset = parsed ? parsed.baseAsset : stripIbkrMarker(pairSymbol);
+        const quoteAsset = parsed ? parsed.quoteAsset : stripIbkrMarker(pairSymbol);
         const baseSymbol = parsed ? parsed.baseSymbol : pairSymbol;
         const quoteSymbol = parsed ? parsed.quoteSymbol : pairSymbol;
 
@@ -115,10 +117,10 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                 schema: "compact_pair_artifact.v1",
                 pairIndex: pair.pairIndex,
                 symbol: pairSymbol,
-                baseAsset: baseSymbol,
-                quoteAsset: quoteSymbol,
-                baseSymbol: stripIbkrMarker(baseSymbol),
-                quoteSymbol: stripIbkrMarker(quoteSymbol),
+                baseAsset,
+                quoteAsset,
+                baseSymbol,
+                quoteSymbol,
                 trades: compactTrades,
             };
 

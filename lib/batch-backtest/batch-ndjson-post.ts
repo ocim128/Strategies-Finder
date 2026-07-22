@@ -99,9 +99,11 @@ export async function postBatchNdjson<TEvent extends { type: string }>(
          * structurally; returning a string overrides the thrown message.
          */
         onNonOkResponse?: (status: number, payload: Record<string, unknown> | null) => Promise<void> | void;
+        /** Receives every decoded NDJSON event before its typed handler runs. */
+        onEvent?: (event: { type: string }) => void;
     },
 ): Promise<void> {
-    const { endpoint, body, handlers, signal, onResponse, onNonOkResponse } = opts;
+    const { endpoint, body, handlers, signal, onResponse, onNonOkResponse, onEvent } = opts;
     const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -114,5 +116,8 @@ export async function postBatchNdjson<TEvent extends { type: string }>(
         throw new Error(message);
     }
     if (onResponse) await onResponse(response);
-    await consumeNdjsonStream<TEvent>(response.body, handlers, { requireTerminal: true });
+    await consumeNdjsonStream<TEvent>(response.body, handlers, {
+        requireTerminal: true,
+        onEvent,
+    });
 }
