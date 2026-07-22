@@ -17,9 +17,9 @@ import { expect } from "chai";
 import {
     __acquireIbkrSyncOwnerForTests,
     __resetIbkrSyncStateForTests,
-    isAllowedIbkrCaller,
     processSyncBatch,
 } from "../lib/ibkr-data/ibkr-data-vite-plugin";
+import { isAllowedLocalRequest } from "../lib/local-route-authorization";
 
 // Signature the injected fetcher must satisfy (matches `syncOneSymbol`).
 type Fetcher = (
@@ -227,13 +227,27 @@ describe("ibkr processSyncBatch lifecycle", () => {
         expect(marked).to.deep.equal(["IBKR:AAPL", "IBKR:MSFT"]);
     });
 
-    // #5: Non-local mutation requests are rejected (gate helper).
+    // #5: IBKR mutation routes gate on the shared `isAllowedLocalRequest`
+    // leaf. A non-local caller is rejected without a token; a genuine loopback
+    // browser caller (loopback peer + loopback Host + loopback Origin) is
+    // trusted. A forgeable Origin ALONE is rejected — that was the bypass the
+    // per-plugin `isAllowedIbkrCaller` permitted on a `--host`ed dev server.
     it("loopback gate rejects non-local callers without a token", () => {
-        expect(isAllowedIbkrCaller({ headers: { origin: "https://attacker.example" } })).to.equal(false);
+        delete process.env.LOCAL_PROXY_TOKEN;
+        expect(isAllowedLocalRequest({ headers: { origin: "https://attacker.example" } })).to.equal(false);
     });
 
-    it("loopback gate accepts localhost callers", () => {
-        expect(isAllowedIbkrCaller({ headers: { origin: "http://localhost:5173" } })).to.equal(true);
+    it("loopback gate accepts genuine loopback browser callers", () => {
+        delete process.env.LOCAL_PROXY_TOKEN;
+        expect(isAllowedLocalRequest({
+            socket: { remoteAddress: "127.0.0.1" },
+            headers: { host: "127.0.0.1:5173", origin: "http://127.0.0.1:5173" },
+        })).to.equal(true);
+    });
+
+    it("loopback gate rejects a forgeable Origin alone", () => {
+        delete process.env.LOCAL_PROXY_TOKEN;
+        expect(isAllowedLocalRequest({ headers: { origin: "http://localhost:5173" } })).to.equal(false);
     });
 
     // #3 + #2 sanity: HistoricalFetchResult stopReason coverage. A fetcher that

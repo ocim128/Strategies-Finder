@@ -7,6 +7,7 @@ import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { OHLCVData } from "../types/strategies";
 import { beginNdjsonStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, sendJson, type ViteHttpResponse } from "../vite-http-utils";
+import { isAllowedLocalRequest } from "../local-route-authorization";
 import { createFetchTimeoutSignal, isAbortError } from "../dataProviders/fetch-helpers";
 import type { IbkrIntervalMeta, IbkrStreamEvent, IbkrSyncRunSnapshot } from "./ibkr-data-stream-types";
 
@@ -1773,32 +1774,6 @@ async function handleSyncRequest(res: ViteHttpResponse, body: Record<string, unk
     }
 }
 
-/**
- * Loopback gate for IBKR mutation/control routes. Allows same-origin callers
- * (Origin/Referer on localhost/127.0.0.1) without a token, and requires the
- * shared `LOCAL_PROXY_TOKEN` bearer for any non-local caller — the same
- * secret the Cloudflare Tunnel candle-proxy workflow already uses (see
- * run_playground.bat). Returns true when the caller is allowed; the caller
- * sends the 401 itself so it can match the rest of the route's response shape.
- *
- * Mirrors `isTrustedLocalRequest` from `local-sqlite-vite-plugin.ts`, the
- * established repo idiom for this gate.
- */
-export function isAllowedIbkrCaller(req: { headers?: Record<string, unknown> }): boolean {
-    const origin = String(req.headers?.origin ?? "");
-    const referer = String(req.headers?.referer ?? "");
-    const isLocal = origin.startsWith("http://localhost")
-        || origin.startsWith("http://127.0.0.1")
-        || referer.startsWith("http://localhost")
-        || referer.startsWith("http://127.0.0.1");
-    if (isLocal) return true;
-    // Non-local: require the documented shared secret.
-    const token = process.env.LOCAL_PROXY_TOKEN?.trim();
-    if (!token) return false;
-    const auth = String(req.headers?.authorization ?? "");
-    return auth === `Bearer ${token}`;
-}
-
 export function ibkrDataVitePlugin(): Plugin {
     const register = (middlewares: any) => {
         middlewares.use("/api/local-price-data/ibkr/catalog", async (req: any, res: any) => {
@@ -1878,7 +1853,7 @@ export function ibkrDataVitePlugin(): Plugin {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
                 return;
             }
-            if (!isAllowedIbkrCaller(req)) {
+            if (!isAllowedLocalRequest(req)) {
                 sendJson(res, 401, { ok: false, error: "Unauthorized: IBKR routes are local-only." });
                 return;
             }
@@ -1912,7 +1887,7 @@ export function ibkrDataVitePlugin(): Plugin {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
                 return;
             }
-            if (!isAllowedIbkrCaller(req)) {
+            if (!isAllowedLocalRequest(req)) {
                 sendJson(res, 401, { ok: false, error: "Unauthorized: IBKR routes are local-only." });
                 return;
             }
@@ -1949,7 +1924,7 @@ export function ibkrDataVitePlugin(): Plugin {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
                 return;
             }
-            if (!isAllowedIbkrCaller(req)) {
+            if (!isAllowedLocalRequest(req)) {
                 sendJson(res, 401, { ok: false, error: "Unauthorized: IBKR routes are local-only." });
                 return;
             }
@@ -1965,7 +1940,7 @@ export function ibkrDataVitePlugin(): Plugin {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
                 return;
             }
-            if (!isAllowedIbkrCaller(req)) {
+            if (!isAllowedLocalRequest(req)) {
                 sendJson(res, 401, { ok: false, error: "Unauthorized: IBKR routes are local-only." });
                 return;
             }

@@ -5,7 +5,6 @@ import {
     adjustIntradayCandlesToDailyScale,
     computeIncrementalStartTime,
     describeIbkrMarketDataReadiness,
-    isAllowedIbkrCaller,
     mergeCandlesByTime,
     normalizePeriod,
     normalizeSymbol,
@@ -22,6 +21,7 @@ import {
     type SyncRunState,
 } from "../lib/ibkr-data/ibkr-data-vite-plugin";
 import type { IbkrSyncRunSnapshot } from "../lib/ibkr-data/ibkr-data-stream-types";
+import { isAllowedLocalRequest } from "../lib/local-route-authorization";
 import { beginNdjsonStream, HttpStatusError } from "../lib/vite-http-utils";
 import type { OHLCVData } from "../lib/types/strategies";
 
@@ -684,25 +684,60 @@ describe("ibkr normalizePeriod", () => {
     });
 });
 
-describe("ibkr isAllowedIbkrCaller (loopback gate)", () => {
-    it("allows same-origin localhost callers without a token", () => {
-        assert.equal(isAllowedIbkrCaller({ headers: { origin: "http://localhost:5173" } }), true);
-        assert.equal(isAllowedIbkrCaller({ headers: { referer: "http://127.0.0.1:5173/x" } }), true);
+describe("ibkr routes use the shared isAllowedLocalRequest loopback gate", () => {
+    // IBKR mutation/control routes (`/api/ibkr/resolve|download|sync|stop`)
+    // gate on the shared `isAllowedLocalRequest` leaf, NOT a per-plugin copy.
+    // Intent locked here (AGENTS.md rule 8 — why this matters, not just what):
+    //   - A genuine same-origin browser caller is trusted WITHOUT a token:
+    //     loopback peer socket + loopback Host + loopback Origin.
+    //   - A forgeable Origin/Referer ALONE (no loopback peer, no loopback Host)
+    //     MUST be rejected. The pre-migration `isAllowedIbkrCaller` trusted
+    //     exactly that — a remotely reachable dev server (`--host` / tunnel /
+    //     reverse proxy) could be driven by any client that set
+    //     `Origin: http://localhost`. The shared gate closes that hole by also
+    //     requiring the un-spoofable `req.socket.remoteAddress`.
+    it("trusts a genuine loopback browser caller without a token", () => {
+        delete process.env.LOCAL_PROXY_TOKEN;
+        assert.equal(
+            isAllowedLocalRequest({
+                socket: { remoteAddress: "127.0.0.1" },
+                headers: { host: "127.0.0.1:5173", origin: "http://127.0.0.1:5173" },
+            }),
+            true,
+        );
     });
+
+    it("rejects a forgeable Origin alone (no loopback peer, no loopback Host)", () => {
+        delete process.env.LOCAL_PROXY_TOKEN;
+        assert.equal(
+            isAllowedLocalRequest({ headers: { origin: "http://localhost:5173" } }),
+            false,
+        );
+        assert.equal(
+            isAllowedLocalRequest({ headers: { referer: "http://127.0.0.1:5173/x" } }),
+            false,
+        );
+    });
+
     it("rejects non-local callers when no token is configured", () => {
-        assert.equal(isAllowedIbkrCaller({ headers: { origin: "https://example.com" } }), false);
-        assert.equal(isAllowedIbkrCaller({ headers: {} }), false);
+        delete process.env.LOCAL_PROXY_TOKEN;
+        assert.equal(
+            isAllowedLocalRequest({ headers: { origin: "https://example.com" } }),
+            false,
+        );
+        assert.equal(isAllowedLocalRequest({ headers: {} }), false);
     });
+
     it("requires the bearer token for non-local callers when configured", () => {
         const prev = process.env.LOCAL_PROXY_TOKEN;
         process.env.LOCAL_PROXY_TOKEN = "secret";
         try {
             assert.equal(
-                isAllowedIbkrCaller({ headers: { origin: "https://example.com", authorization: "Bearer secret" } }),
+                isAllowedLocalRequest({ headers: { origin: "https://example.com", authorization: "Bearer secret" } }),
                 true,
             );
             assert.equal(
-                isAllowedIbkrCaller({ headers: { origin: "https://example.com", authorization: "Bearer wrong" } }),
+                isAllowedLocalRequest({ headers: { origin: "https://example.com", authorization: "Bearer wrong" } }),
                 false,
             );
         } finally {

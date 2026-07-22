@@ -460,20 +460,18 @@ export function archiveAndDeleteBuiltInStrategy(
 
 /**
  * Loopback/same-origin gate for the destructive strategy-admin mutation
- * routes. Mirrors the established IBKR idiom (`isAllowedIbkrCaller` in
- * `ibkr-data-vite-plugin.ts`): a same-origin browser caller (Origin/Referer on
- * a loopback host) is trusted without a token; any other caller must present
- * the shared `LOCAL_PROXY_TOKEN` bearer (the same secret the Cloudflare Tunnel
+ * routes. A same-origin browser caller (Origin/Referer on a loopback host) is
+ * trusted without a token; any other caller must present the shared
+ * `LOCAL_PROXY_TOKEN` bearer (the same secret the Cloudflare Tunnel
  * candle-proxy workflow uses).
  *
  * Audit Finding 1: `/api/strategy-library/delete*` previously accepted ANY
  * request — a cross-origin `fetch(..., {mode:"no-cors"})` with a `text/plain`
  * body bypassed the CORS preflight and silently deleted repo source files.
  *
- * Loopback host parsing goes through `isLoopbackHost` (IPv6-aware, unlike the
- * IBKR gate which predates the `[::1]` fix in Finding 5). Returns true when the
- * caller is allowed; the route sends the 403 itself so the response shape
- * matches the rest of the handler.
+ * Loopback host parsing goes through `isLoopbackHost` (IPv6-aware). Returns
+ * true when the caller is allowed; the route sends the 403 itself so the
+ * response shape matches the rest of the handler.
  */
 export function isAllowedStrategyAdminCaller(req: { headers?: Record<string, unknown> }): boolean {
     const origin = String(req.headers?.origin ?? "");

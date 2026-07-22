@@ -6,13 +6,12 @@
  * `lightweight-charts` / `chart-manager` deps), so it is safe to import from
  * any Vite plugin that `vite.config.ts` bundles.
  *
- * Established repo idiom: the IBKR plugin (`isAllowedIbkrCaller`) and the
- * strategy-library admin plugin (`isAllowedStrategyAdminCaller`) each
- * implement the same policy inline. Audit Finding 2 factored it into a single
- * leaf so the Crypto and Batch control routes can reuse the exact same gate
- * without duplicating the loopback/bearer logic a fourth time. The IBKR and
- * admin gates are intentionally left in place — they predate this leaf, their
- * call sites are stable, and a follow-up can migrate them if the duplication
+ * Established repo idiom: the Batch, Crypto, Finder, Execution Lab, and IBKR
+ * plugins all gate their mutation routes through this leaf. Audit Finding 2
+ * factored the policy out of the per-plugin copies so every route gets the
+ * same loopback/bearer check without drift. The strategy-library admin plugin
+ * (`isAllowedStrategyAdminCaller`) still implements its own inline copy; its
+ * call sites are stable and a follow-up can migrate it if the duplication
  * becomes a maintenance burden.
  *
  * Policy:
