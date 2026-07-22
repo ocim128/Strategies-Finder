@@ -8,7 +8,7 @@ import { debugLogger } from "./debug-logger";
 
 /**
  * Browser-side transport for Mine Timing persistence. Mirrors the
- * asset-leadership transport 1:1 (same availability cache, same timeout
+ * the Mine Timing transport 1:1 (same availability cache, same timeout
  * bands, same `ok: boolean` envelope). The Assets tab consumes loaded runs
  * via `loadMineTimingRunsResult`.
  */

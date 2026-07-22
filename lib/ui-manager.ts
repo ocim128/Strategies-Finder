@@ -125,8 +125,6 @@ export class UIManager {
                 ? 'Endpoint '
             : source === 'walk_forward_oos'
                     ? 'WFO OOS '
-                    : source === 'ensemble_preview'
-                        ? 'Ensemble '
                         : '';
         badge.textContent = `${sourcePrefix}${isPositive ? '+' : ''}${result.netProfitPercent.toFixed(2)}% ROI`;
         badge.className = `stat-badge ${isPositive ? 'positive' : 'negative'}`;
@@ -136,8 +134,6 @@ export class UIManager {
                 ? 'Showing a local preview of the exact HTTP backtest endpoint contract.'
             : source === 'walk_forward_oos'
                     ? 'Showing walk-forward out-of-sample result snapshot.'
-                    : source === 'ensemble_preview'
-                        ? 'Showing strategy ensemble preview result.'
                         : 'Showing raw backtest result.';
         badge.classList.remove('is-hidden');
     }

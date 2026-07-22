@@ -21,7 +21,7 @@ import { ensureLazyStylesheet } from "../lazy-styles";
 import { debugLogger } from "../debug-logger";
 import { uiManager } from "../ui-manager";
 import { computePerformanceVerdict } from "../finder/finder-universe-metrics";
-import { parsePortfolioSyntheticPairSymbol } from "../portfolioLab/portfolio-lab-synthetic";
+import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { copyToClipboard } from "../browser-transfer";
 import { readPersistedJson, writePersistedJson } from "../persisted-json";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";

@@ -28,7 +28,7 @@ import type {
 import type { CapitalSettings } from "../types/backtest";
 import { timeKey } from "../strategies";
 import { parseTimeToUnixSeconds } from "../time-normalization";
-import { parsePortfolioSyntheticPairSymbol } from "../portfolioLab/portfolio-lab-synthetic";
+import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 export { parseBatchSymbols } from "./batch-run-contract";
 
 // ============================================================================

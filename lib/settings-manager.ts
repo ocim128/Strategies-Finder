@@ -26,13 +26,11 @@ import { setChartMode, setCurrentStrategyKey, setDarkTheme } from "./state-actio
 import {
     DEFAULT_APP_SETTINGS,
     DEFAULT_BACKTEST_SETTINGS,
-    normalizeStoredEnsembleSignalRecipe,
     normalizeStoredAppSettings,
     normalizeStoredBacktestSettings,
     normalizeStoredStrategyConfig,
     type AppSettings,
     type BacktestSettingsData,
-    type EnsembleSignalRecipe,
     type StrategyConfig,
 } from "./settings-model";
 import { createSettingsManagerDom, type SettingsManagerDom } from "./settings-manager-dom";
@@ -43,10 +41,8 @@ export {
     DEFAULT_BACKTEST_SETTINGS,
     normalizeStoredAppSettings,
     normalizeStoredBacktestSettings,
-    normalizeStoredEnsembleSignalRecipe,
     normalizeStoredStrategyConfig,
 };
-export type { AppSettings, BacktestSettingsData, EnsembleSignalRecipe, StrategyConfig } from "./settings-model";
 
 import type { CapitalSettings } from "./types/backtest";
 import { resolveCapitalSettingsFromRaw } from "./backtest-capital-settings";
@@ -68,22 +64,6 @@ export function sortStrategyConfigsNewestFirst(configs: readonly StrategyConfig[
     });
 }
 
-export function sortEnsembleSignalRecipesNewestFirst(recipes: readonly EnsembleSignalRecipe[]): EnsembleSignalRecipe[] {
-    return [...recipes].sort((left, right) => {
-        const leftCreatedAt = Date.parse(left.createdAt || "");
-        const rightCreatedAt = Date.parse(right.createdAt || "");
-
-        if (Number.isFinite(leftCreatedAt) && Number.isFinite(rightCreatedAt) && leftCreatedAt !== rightCreatedAt) {
-            return rightCreatedAt - leftCreatedAt;
-        }
-
-        if (left.createdAt !== right.createdAt) {
-            return String(right.createdAt || "").localeCompare(String(left.createdAt || ""));
-        }
-
-        return left.name.localeCompare(right.name);
-    });
-}
 
 // ============================================================================
 // Storage Keys
@@ -92,8 +72,8 @@ export function sortEnsembleSignalRecipesNewestFirst(recipes: readonly EnsembleS
 const STORAGE_KEYS = {
     APP_SETTINGS: 'playground_app_settings',
     STRATEGY_CONFIGS: 'playground_strategy_configs',
-    ENSEMBLE_SIGNAL_RECIPES: 'playground_ensemble_signal_recipes',
 };
+export type { AppSettings, BacktestSettingsData, StrategyConfig } from "./settings-model";
 
 const APP_SETTINGS_STORAGE = {
     key: STORAGE_KEYS.APP_SETTINGS,
@@ -107,11 +87,6 @@ const STRATEGY_CONFIGS_STORAGE = {
     version: 1,
 } as const;
 
-const ENSEMBLE_SIGNAL_RECIPES_STORAGE = {
-    key: STORAGE_KEYS.ENSEMBLE_SIGNAL_RECIPES,
-    schema: "settings.ensemble-signal-recipes",
-    version: 1,
-} as const;
 
 // ============================================================================
 // Settings Manager
@@ -489,87 +464,6 @@ class SettingsManager {
         return undefined;
     }
 
-    public upsertEnsembleSignalRecipe(recipe: EnsembleSignalRecipe): EnsembleSignalRecipe {
-        const recipes = this.loadAllEnsembleSignalRecipes();
-        const existingIndex = recipes.findIndex((entry) => entry.name === recipe.name);
-        const nowIso = new Date().toISOString();
-        const normalized: EnsembleSignalRecipe = {
-            ...recipe,
-            createdAt: recipe.createdAt || nowIso,
-            updatedAt: recipe.updatedAt || nowIso,
-        };
-
-        if (existingIndex >= 0) {
-            normalized.createdAt = recipes[existingIndex].createdAt || normalized.createdAt;
-            normalized.updatedAt = nowIso;
-            recipes[existingIndex] = normalized;
-        } else {
-            recipes.push(normalized);
-        }
-
-        writePersistedJson({
-            ...ENSEMBLE_SIGNAL_RECIPES_STORAGE,
-            data: recipes,
-            onError: (error) => {
-                debugLogger.error("settings.ensemble_recipe_save_failed", {
-                    error: error instanceof Error ? error.message : String(error),
-                    name: recipe.name,
-                });
-            },
-        });
-
-        return normalized;
-    }
-
-    public loadEnsembleSignalRecipe(name: string): EnsembleSignalRecipe | null {
-        return this.loadAllEnsembleSignalRecipes().find((recipe) => recipe.name === name) ?? null;
-    }
-
-    public loadAllEnsembleSignalRecipes(): EnsembleSignalRecipe[] {
-        return readPersistedJson<EnsembleSignalRecipe[]>({
-            ...ENSEMBLE_SIGNAL_RECIPES_STORAGE,
-            fallback: [],
-            migrate: ({ data }) => {
-                if (Array.isArray(data)) {
-                    return data
-                        .map((recipe) => normalizeStoredEnsembleSignalRecipe(recipe))
-                        .filter((recipe): recipe is EnsembleSignalRecipe => recipe !== null);
-                }
-                debugLogger.warn("settings.ensemble_recipe_invalid_format");
-                return [];
-            },
-            onError: (error) => {
-                debugLogger.error("settings.ensemble_recipe_load_failed", {
-                    error: error instanceof Error ? error.message : String(error),
-                });
-            },
-        });
-    }
-
-    public deleteEnsembleSignalRecipe(name: string): boolean {
-        const recipes = this.loadAllEnsembleSignalRecipes();
-        const index = recipes.findIndex((recipe) => recipe.name === name);
-
-        if (index >= 0) {
-            recipes.splice(index, 1);
-            const saved = writePersistedJson({
-                ...ENSEMBLE_SIGNAL_RECIPES_STORAGE,
-                data: recipes,
-                onError: (error) => {
-                    debugLogger.error("settings.ensemble_recipe_delete_failed", {
-                        error: error instanceof Error ? error.message : String(error),
-                        name,
-                    });
-                },
-            });
-            if (saved) {
-                debugLogger.event("settings.ensemble_recipe.deleted", { name });
-                return true;
-            }
-        }
-
-        return false;
-    }
 
     private writeBacktestDomValue(id: string, value: unknown): void {
         const element = document.getElementById(id);

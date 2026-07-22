@@ -179,46 +179,9 @@ export interface StrategyConfig {
     };
 }
 
-export type EnsembleSignalRecipeMode =
-    | "target_conflict_filter"
-    | "primary_veto"
-    | "secondary_override"
-    | "best_side_owner";
 
-export type EnsembleSignalRecipeDirectionSlice = "all" | "long_only" | "short_only";
 
-export interface EnsembleSignalRecipeMetrics {
-    keptTrades: number;
-    wins: number;
-    losses: number;
-    winRate: number;
-    retentionRate: number | null;
-    coverage: number | null;
-    overlapRate: number | null;
-    winRateLift: number | null;
-    wilsonLift: number | null;
-}
 
-export interface EnsembleSignalRecipe {
-    name: string;
-    createdAt: string;
-    updatedAt: string;
-    source: "ensemble_polymarket";
-    symbol: string;
-    interval: string;
-    mode: EnsembleSignalRecipeMode;
-    directionSlice: EnsembleSignalRecipeDirectionSlice;
-    anchorConfigName: string;
-    anchorConfig: StrategyConfig;
-    componentConfigs: StrategyConfig[];
-    primaryConfigName?: string;
-    secondaryConfigName?: string;
-    vetoConfigName?: string;
-    longOwnerConfigName?: string;
-    shortOwnerConfigName?: string;
-    notes: string;
-    metrics: EnsembleSignalRecipeMetrics;
-}
 
 export interface AppSettings {
     currentSymbol: string;
@@ -496,70 +459,6 @@ export function normalizeStoredStrategyConfig(raw: unknown): StrategyConfig | nu
     };
 }
 
-export function normalizeStoredEnsembleSignalRecipe(raw: unknown): EnsembleSignalRecipe | null {
-    const source = toRecord(raw);
-    if (!source) return null;
-
-    const name = readString(source.name, "");
-    if (!name) return null;
-
-    const anchorConfig = normalizeStoredStrategyConfig(source.anchorConfig);
-    if (!anchorConfig) return null;
-
-    const componentConfigs = Array.isArray(source.componentConfigs)
-        ? source.componentConfigs
-            .map((config) => normalizeStoredStrategyConfig(config))
-            .filter((config): config is StrategyConfig => config !== null)
-        : [];
-    if (componentConfigs.length === 0) {
-        return null;
-    }
-
-    const mode = source.mode === "primary_veto"
-        || source.mode === "secondary_override"
-        || source.mode === "best_side_owner"
-        || source.mode === "target_conflict_filter"
-        ? source.mode
-        : "target_conflict_filter";
-    const directionSlice = source.directionSlice === "long_only"
-        || source.directionSlice === "short_only"
-        || source.directionSlice === "all"
-        ? source.directionSlice
-        : "all";
-    const metricsSource = toRecord(source.metrics) ?? {};
-    const nowIso = new Date().toISOString();
-
-    return {
-        name,
-        createdAt: readString(source.createdAt, nowIso),
-        updatedAt: readString(source.updatedAt, readString(source.createdAt, nowIso)),
-        source: "ensemble_polymarket",
-        symbol: readString(source.symbol, DEFAULT_APP_SETTINGS.currentSymbol),
-        interval: readString(source.interval, DEFAULT_APP_SETTINGS.currentInterval),
-        mode,
-        directionSlice,
-        anchorConfigName: readString(source.anchorConfigName, anchorConfig.name),
-        anchorConfig,
-        componentConfigs,
-        primaryConfigName: readString(source.primaryConfigName, ""),
-        secondaryConfigName: readString(source.secondaryConfigName, ""),
-        vetoConfigName: readString(source.vetoConfigName, ""),
-        longOwnerConfigName: readString(source.longOwnerConfigName, ""),
-        shortOwnerConfigName: readString(source.shortOwnerConfigName, ""),
-        notes: readString(source.notes, ""),
-        metrics: {
-            keptTrades: Math.max(0, Math.floor(readNumber(metricsSource.keptTrades, 0))),
-            wins: Math.max(0, Math.floor(readNumber(metricsSource.wins, 0))),
-            losses: Math.max(0, Math.floor(readNumber(metricsSource.losses, 0))),
-            winRate: readNumber(metricsSource.winRate, 0),
-            retentionRate: metricsSource.retentionRate == null ? null : readNumber(metricsSource.retentionRate, 0),
-            coverage: metricsSource.coverage == null ? null : readNumber(metricsSource.coverage, 0),
-            overlapRate: metricsSource.overlapRate == null ? null : readNumber(metricsSource.overlapRate, 0),
-            winRateLift: metricsSource.winRateLift == null ? null : readNumber(metricsSource.winRateLift, 0),
-            wilsonLift: metricsSource.wilsonLift == null ? null : readNumber(metricsSource.wilsonLift, 0),
-        },
-    };
-}
 
 export function resolveTradeDirection(
     settings: Partial<BacktestSettingsData>,

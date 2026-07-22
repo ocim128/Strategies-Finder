@@ -52,7 +52,7 @@ import {
     type BatchSyntheticPairArtifact,
     type BatchSyntheticTargetArtifact,
 } from "./batch-synthetic-state-miner";
-import { parsePortfolioSyntheticPairSymbol } from "../portfolioLab/portfolio-lab-synthetic";
+import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { loadBuiltInStrategyByKey } from "../../strategyRegistry";
 import type { BacktestSettings, Strategy, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";

@@ -8,7 +8,6 @@ import { setVisible } from "./dom-utils";
 import { dataManager } from "./data-manager";
 import { settingsManager } from "./settings-manager";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
-import { MAJOR_SYMBOLS } from "./portfolioLab/portfolio-lab-types";
 import { getLocalDailyAssets, isMarkedLocalStockSymbol } from "./local-daily-datasets";
 import { cloneJsonCompatible } from "./json-utils";
 
@@ -82,6 +81,7 @@ import { isSmartTradeSizingMode, type CapitalSettings } from "./types/backtest";
 import type { BacktestSettings } from "./types/strategies";
 
 const QUOTE_SUFFIXES = ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD', 'BTC', 'ETH', 'BNB', 'EUR', 'TRY', 'BRL'];
+const MAJOR_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT"] as const;
 const FINDER_FOLLOW_STRATEGY_KEYS = [
 	"decay_momentum_alignment",
 	"volatility_regime_median_alignment",

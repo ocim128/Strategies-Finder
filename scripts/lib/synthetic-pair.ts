@@ -356,7 +356,7 @@ export interface SyntheticPairFromLegsResult {
  *   - `sourceBarsCap` (finder caps at DATA_CHART_TOTAL_LIMIT; others don't)
  *   - `tailSliceBars` (worker slices to targetLimit; others don't)
  *
- * Note: signal-committee-service intentionally builds once and aggregates
+ * Note: signal-entry-evaluator intentionally builds once and aggregates
  * per-member inside a loop; it does not use this helper.
  */
 export async function buildSyntheticPairFromLegs(args: {

@@ -3,7 +3,7 @@ import type { BacktestResult, OHLCVData, Signal, Trade } from "../types/strategi
 import {
     computeDirectionalAtrDistance,
     computeDirectionalPercentMove,
-} from "../portfolioLab/portfolio-lab-statistics";
+} from "../synthetic-statistics";
 import {
     buildPairsByAssetIndex,
     resolveLinkedPairIndexes,

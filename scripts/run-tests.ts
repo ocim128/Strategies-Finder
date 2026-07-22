@@ -140,7 +140,6 @@ function printUsage(): void {
         "  npm run test -- backtesting-engine",
         "  npm run test -- tests/feature-dom-contracts.spec.ts",
         "  npm run test -- persisted-json",
-        "  npm run test:verbose -- strategy-ensemble",
     ].join("\n"));
 }
 

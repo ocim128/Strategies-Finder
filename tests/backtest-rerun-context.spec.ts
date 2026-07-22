@@ -11,7 +11,6 @@ describe("Backtest rerun context", () => {
         let rerunCount = 0;
 
         setActiveBacktestRerunContext({
-            source: "ensemble_preview",
             label: "Conflict preview",
             rerun: async () => {
                 rerunCount += 1;
@@ -19,7 +18,6 @@ describe("Backtest rerun context", () => {
         });
 
         const active = getActiveBacktestRerunContext();
-        expect(active?.source).to.equal("ensemble_preview");
         expect(active?.label).to.equal("Conflict preview");
 
         await active?.rerun();

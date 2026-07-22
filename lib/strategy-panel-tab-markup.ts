@@ -3,7 +3,6 @@ import { bindFormAccessibility } from './form-accessibility';
 
 const LAZY_STRATEGY_PANEL_TAB_LOADERS = {
     finder: () => import('../html-partials/tab-finder.html?raw'),
-    assetleadership: () => import('../html-partials/tab-asset-leadership.html?raw'),
     alerts: () => import('../html-partials/tab-alerts.html?raw'),
     datamining: () => import('../html-partials/tab-datamining.html?raw'),
     ibkrdata: () => import('../html-partials/tab-ibkr-data.html?raw'),
@@ -14,9 +13,6 @@ const LAZY_STRATEGY_PANEL_TAB_LOADERS = {
     executionlab: () => import('../html-partials/tab-execution-lab.html?raw'),
     walkforward: () => import('../html-partials/tab-walkforward.html?raw'),
     montecarlo: () => import('../html-partials/tab-monte-carlo.html?raw'),
-    portfolio: () => import('../html-partials/tab-portfolio.html?raw'),
-    ensemble: () => import('../html-partials/tab-ensemble.html?raw'),
-    signalcommittee: () => import('../html-partials/tab-signal-committee.html?raw'),
     rankpairs: () => import('../html-partials/tab-rank-pairs.html?raw'),
 } as const;
 

@@ -17,9 +17,9 @@ import { isMarkedLocalStockSymbol } from "./local-daily-datasets";
 // Quote suffix list verbatim from `lib/finder-manager.ts` so this leaf produces
 // identical symbol resolution to the browser-side batch loader, which imports
 // `parseSyntheticPairToken` from finder-manager. Keep in sync if you change
-// either copy. (`lib/portfolioLab/portfolio-lab-synthetic.ts` has its own
+// either copy. (`lib/synthetic-pair-parser.ts` has its own
 // shorter list — that's a pre-existing duplication, intentionally untouched
-// here; do not "fix" it without auditing every portfolio-lab caller.)
+// here; do not "fix" it without auditing every synthetic-pair-parser caller.)
 const QUOTE_SUFFIXES = ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD', 'BTC', 'ETH', 'BNB', 'EUR', 'TRY', 'BRL'];
 
 /**

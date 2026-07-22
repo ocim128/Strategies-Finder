@@ -18,20 +18,16 @@ let tabLazyListener: EventListener | null = null;
 
 const TAB_TO_FEATURE: Record<string, string> = {
     finder: "finder",
-    assetleadership: "asset-leadership",
     alerts: "alerts",
     hunt: "hunt",
     batchbacktest: "batch-backtest",
     walkforward: "walk-forward",
     montecarlo: "monte-carlo",
-    portfolio: "portfolio-lab",
-    ensemble: "strategy-ensemble",
     polymarket: "polymarket-panel",
     executionlab: "execution-lab",
     datamining: "data-mining",
     ibkrdata: "ibkr-data",
     cryptodata: "crypto-data",
-    signalcommittee: "signal-committee",
     rankpairs: "rank-pairs",
 };
 

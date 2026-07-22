@@ -1,4 +1,4 @@
-import { parsePortfolioSyntheticPairSymbol, stripKnownQuoteSuffix } from "../portfolioLab/portfolio-lab-synthetic";
+import { parsePortfolioSyntheticPairSymbol, stripKnownQuoteSuffix } from "../synthetic-pair-parser";
 import type { OHLCVData } from "../types/strategies";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 

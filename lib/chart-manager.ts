@@ -1,4 +1,4 @@
-import {
+﻿import {
     createChart,
     CandlestickSeries,
     AreaSeries,
@@ -72,7 +72,6 @@ export class ChartManager {
     private executionLabYesSeries: ISeriesApi<"Line"> | null = null;
     private executionLabNoSeries: ISeriesApi<"Line"> | null = null;
     private executionLabMarkersPlugin: ISeriesMarkersPluginApi<Time> | null = null;
-    private committeeScoreMarkersPlugin: ISeriesMarkersPluginApi<Time> | null = null;
     private paperStreamFirstTimeSec: number | null = null;
     private paperStreamLastTimeSec: number | null = null;
     private paperStreamDataLength = 0;
@@ -1015,60 +1014,6 @@ export class ChartManager {
         return id;
     }
 
-    // ========================================================================
-    // Signal Committee overlay (score wick markers)
-    // ------------------------------------------------------------------------
-    // The committee score is projected onto the main candlestick series as a
-    // thin set of wick markers — one per bar where the verdict changes, plus
-    // the latest bar — so the numeric score (+3, -2, 0) reads directly on the
-    // chart instead of being buried in a side-panel badge. Positive scores sit
-    // above the bar in green with an up arrow; negative scores sit below in red
-    // with a down arrow. A dedicated markers plugin coexists with the trade and
-    // execution-lab marker plugins on the same candlestick series.
-    // ------------------------------------------------------------------------
-
-    /**
-     * Stamp the committee score as wick markers on the candlestick series.
-     * Each entry is a `{ time, value }` pair whose `value` is the net vote at
-     * that bar (caller picks which bars are worth annotating). Pass an empty
-     * array to clear.
-     */
-    public setCommitteeScoreOverlay(points: { time: Time; value: number }[]): void {
-        if (points.length === 0) {
-            this.removeCommitteeScoreOverlay();
-            return;
-        }
-        const markers: SeriesMarker<Time>[] = points.map((point) => {
-            const score = point.value;
-            const isLong = score > 0;
-            const isFlat = score === 0;
-            const color = isLong ? ENHANCED_CANDLE_COLORS.up
-                : score < 0 ? ENHANCED_CANDLE_COLORS.down
-                    : "#888888";
-            const sign = score > 0 ? `+${score}` : `${score}`;
-            return {
-                time: point.time,
-                position: isLong || isFlat ? 'aboveBar' : 'belowBar',
-                color,
-                shape: isLong || isFlat ? 'arrowUp' : 'arrowDown',
-                text: `Score ${sign}`,
-                size: 1,
-            };
-        });
-        this.clearCommitteeScoreMarkers();
-        this.committeeScoreMarkersPlugin = createSeriesMarkers(state.candlestickSeries, markers);
-    }
-
-    public removeCommitteeScoreOverlay(): void {
-        this.clearCommitteeScoreMarkers();
-    }
-
-    private clearCommitteeScoreMarkers(): void {
-        if (this.committeeScoreMarkersPlugin) {
-            this.committeeScoreMarkersPlugin.detach();
-            this.committeeScoreMarkersPlugin = null;
-        }
-    }
 
     private indexIndicatorTooltipData(id: string, data: IndicatorTooltipPoint[]): void {
         const valuesByTime = new Map<string, number>();

@@ -3,7 +3,7 @@
  *
  * Existence: `data-mining-manager` is registered as a lazy feature in
  * `lib/app-bootstrap.ts`, but several always-loaded modules
- * (`settings-manager`, `signal-committee-service`, `settings-handlers`) need
+ * (`settings-manager`, `settings-handlers`) need
  * to *read* the current synthetic-pair metadata. A static import of
  * `data-mining-manager` from those modules pulls the entire Data Mining UI
  * into the startup chunk and defeats the lazy split (Vite warns that the

@@ -11,7 +11,7 @@ type NonFunctionPropertyKeys<T> = {
 
 export type StateKey = NonFunctionPropertyKeys<State>;
 export type ChartMode = 'candlestick' | 'heikin-ashi';
-export type BacktestResultSource = 'backtest' | 'endpoint_preview' | 'ensemble_preview' | 'finder_selection' | 'walk_forward_oos';
+export type BacktestResultSource = 'backtest' | 'endpoint_preview' | 'finder_selection' | 'walk_forward_oos';
 
 export class State {
     public chart!: IChartApi;

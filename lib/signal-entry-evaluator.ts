@@ -88,8 +88,8 @@ export interface EntrySignalEvaluationResult {
     latestEntry: EvaluatedEntrySignal | null;
     latestTrade: EvaluatedLatestTradeContext | null;
     /**
-     * Compact per-trade direction windows, used by the Signal Committee chart
-     * overlay to forward-fill each member's vote across the visible chart
+     * Compact per-trade direction windows, used by chart
+     * overlay to forward-fill trade direction across the visible chart
      * timeframe. Each entry is [entrySec, exitSec, dirSign] where dirSign is
      * +1 for long, -1 for short, and exitSec is null while the trade is open.
      * Capped to the most recent N to bound payload size.
@@ -595,7 +595,7 @@ export function evaluateLatestEntrySignalFromPreparedSignals(
 
 /**
  * Convert a full backtest trade list into compact [entrySec, exitSec, dirSign]
- * tuples for committee chart forward-fill. Caps to the most recent
+ * tuples for chart forward-fill. Caps to the most recent
  * `TRADE_WINDOWS_CAP` trades to bound payload size. Open trades (exit reason
  * `end_of_data`) get `exitSec: null`, which the forward-filler treats as
  * "until the last visible bar".
@@ -605,8 +605,8 @@ export function evaluateLatestEntrySignalFromPreparedSignals(
  * visible range users load, instead of only the last ~2 months (the bug the
  * previous 200 cap caused). Payload is ~120 bytes/window (3 numbers as JSON
  * with separators), so 5000 windows ≈ 0.6 MB. That stays under the D1 1 MB row
- * limit for the documented UI committee target (<=25 members, each in its own
- * row). `computeCommitteeOverlayScores` is O(events log events + bars), so a
+ * row limit for the documented UI target (<=25 members, each in its own
+ * row). The computation is O(events log events + bars), so a
  * larger cap does not regress chart-overlay render time.
  */
 const TRADE_WINDOWS_CAP = 5000;

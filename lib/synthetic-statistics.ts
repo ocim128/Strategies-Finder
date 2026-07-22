@@ -1,4 +1,4 @@
-import { timeKey, type BacktestResult, type OHLCVData, type Trade } from "../strategies";
+import { timeKey, type BacktestResult, type OHLCVData, type Trade } from "./strategies";
 
 export function average(values: Array<number | null>): number | null {
     const finite = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));

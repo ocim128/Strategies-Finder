@@ -11,21 +11,17 @@ import { TRADES_RENDERER_REQUIRED_IDS } from "../lib/renderers/trades-renderer-d
 import { SETTINGS_MANAGER_REQUIRED_IDS } from "../lib/settings-manager-dom";
 import { POLYMARKET_PANEL_REQUIRED_IDS } from "../lib/polymarket-panel-dom";
 import { EXECUTION_LAB_REQUIRED_IDS } from "../lib/execution-lab/execution-lab-dom";
-import { PORTFOLIO_LAB_REQUIRED_IDS } from "../lib/portfolio-lab-dom";
 import { LIVE_POSITIONS_REQUIRED_IDS } from "../lib/live-positions-dom";
 import { FINDER_MANAGER_REQUIRED_IDS } from "../lib/finder/finder-manager-dom";
 import { HUNT_REQUIRED_IDS } from "../lib/hunt/hunt-dom";
 import { BATCH_BACKTEST_REQUIRED_IDS } from "../lib/batch-backtest/batch-backtest-dom";
 import { RANK_PAIRS_REQUIRED_IDS } from "../lib/rank-pairs/rank-pairs-dom";
 import { WALK_FORWARD_SERVICE_REQUIRED_IDS } from "../lib/walk-forward-dom";
-import { ENSEMBLE_LAB_REQUIRED_IDS } from "../lib/strategy-ensemble-dom";
 import { MONTE_CARLO_REQUIRED_IDS } from "../lib/monte-carlo-dom";
 import { STRATEGY_LIBRARY_ADMIN_REQUIRED_IDS } from "../lib/strategy-library-admin-dom";
 import { CROSS_SYMBOL_REQUIRED_IDS } from "../lib/cross-symbol-dom";
-import { SIGNAL_COMMITTEE_REQUIRED_IDS } from "../lib/signal-committee-dom";
 import { CHART_MANAGER_REQUIRED_IDS } from "../lib/chart-manager-dom";
 import { STRATEGY_PANEL_REQUIRED_IDS } from "../lib/strategy-panel-dom";
-import { ASSET_LEADERSHIP_REQUIRED_IDS } from "../lib/asset-leadership-dom";
 import { LAZY_STRATEGY_PANEL_TAB_IDS } from "../lib/strategy-panel-tab-markup";
 import { BACKTEST_DOM_SETTING_IDS } from "../lib/backtest-settings-dom-contract";
 
@@ -84,11 +80,9 @@ describe("Feature DOM contracts", () => {
         settingsManager: [...SETTINGS_MANAGER_REQUIRED_IDS],
         settingsWorkspace: [...SETTINGS_WORKSPACE_REQUIRED_IDS],
 
-        portfolioLab: [...PORTFOLIO_LAB_REQUIRED_IDS],
         livePositions: [...LIVE_POSITIONS_REQUIRED_IDS],
         polymarketPanel: [...POLYMARKET_PANEL_REQUIRED_IDS],
         executionLab: [...EXECUTION_LAB_REQUIRED_IDS],
-        ensembleLab: [...ENSEMBLE_LAB_REQUIRED_IDS],
         finderManager: [...FINDER_MANAGER_REQUIRED_IDS],
         hunt: [...HUNT_REQUIRED_IDS],
         batchBacktest: [...BATCH_BACKTEST_REQUIRED_IDS],
@@ -97,10 +91,8 @@ describe("Feature DOM contracts", () => {
         monteCarlo: [...MONTE_CARLO_REQUIRED_IDS],
         strategyLibraryAdmin: [...STRATEGY_LIBRARY_ADMIN_REQUIRED_IDS],
         crossSymbol: [...CROSS_SYMBOL_REQUIRED_IDS],
-        signalCommittee: [...SIGNAL_COMMITTEE_REQUIRED_IDS],
         chartManager: [...CHART_MANAGER_REQUIRED_IDS],
         strategyPanel: [...STRATEGY_PANEL_REQUIRED_IDS],
-        assetLeadership: [...ASSET_LEADERSHIP_REQUIRED_IDS],
     } as const;
 
     for (const [groupName, ids] of Object.entries(contractGroups)) {

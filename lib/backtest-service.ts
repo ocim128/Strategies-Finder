@@ -1,6 +1,6 @@
-import { state } from "./state";
+﻿import { state } from "./state";
 import { uiManager } from "./ui-manager";
-import { clearActiveBacktestRerunContext, getActiveBacktestRerunContext } from "./backtest-rerun-context";
+import { clearActiveBacktestRerunContext } from "./backtest-rerun-context";
 import { dataManager } from "./data-manager";
 
 import {
@@ -105,13 +105,6 @@ export class BacktestService {
 
     public async runCurrentBacktest(options: RunCurrentBacktestOptions = {}) {
         const runId = this.beginInteractiveRun();
-        const activePreviewRerun = !options.dataOverride && state.currentBacktestResultSource === 'ensemble_preview'
-            ? getActiveBacktestRerunContext()
-            : null;
-        if (activePreviewRerun?.source === 'ensemble_preview') {
-            await activePreviewRerun.rerun();
-            return;
-        }
 
         clearActiveBacktestRerunContext();
         const startedAt = Date.now();

@@ -8,16 +8,15 @@ import type { BacktestResult } from "../lib/strategies/index";
 // AGENTS.md calls out that `walk_forward_oos` snapshots intentionally route
 // through shared result state, and that the source marker
 // (`currentBacktestResultSource`) is what distinguishes a user-initiated
-// backtest from a finder selection / endpoint preview / ensemble preview /
+// backtest from a finder selection / endpoint preview /
 // walk-forward snapshot. `commitBacktestResult` is the single chokepoint that
 // sets both the result and the source; `clearBacktestResults` must reset the
-// source so a stale finder/endpoint/ensemble/walk-forward marker cannot leak
+// source so a stale finder/endpoint/walk-forward marker cannot leak
 // into the next manual backtest. These specs lock that routing contract.
 
 const ALL_SOURCES: readonly BacktestResultSource[] = [
     "backtest",
     "endpoint_preview",
-    "ensemble_preview",
     "finder_selection",
     "walk_forward_oos",
 ] as const;

@@ -10,7 +10,7 @@ import {
     type CanonicalLegIdentity,
 } from "../lib/synthetic-leg-identity";
 import { parseSyntheticPairToken } from "../lib/synthetic-pair-token";
-import { parsePortfolioSyntheticPairSymbol } from "../lib/portfolioLab/portfolio-lab-synthetic";
+import { parsePortfolioSyntheticPairSymbol } from "../lib/synthetic-pair-parser";
 
 describe("synthetic-leg-identity", () => {
     describe("canonicalizeLegIdentity — parity with existing parsers", () => {

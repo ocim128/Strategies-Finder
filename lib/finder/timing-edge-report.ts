@@ -4,7 +4,7 @@
  * Consumes persisted Mine Timing runs (`TimingEdgePersistedRun[]` from the
  * `mine_timing_*` SQLite tables) and produces the per-asset rows the Assets
  * tab renders. This is the Mine-Timing-fed counterpart to the universe-fed
- * `lib/finder/asset-leadership.ts` reducer.
+ * the asset-ranking report.
  *
  * Design notes:
  * - Source-aware: stability runs contribute scored rows; one-shot mine runs
@@ -197,7 +197,7 @@ function buildAssetRow(
     const scores = sorted.map((c) => verdictScore(c.verdict, c.run.source));
     const latestScore = scores[scores.length - 1] ?? 0;
 
-    // Recent-window vs previous-window trend (mirrors asset-leadership semantics).
+    // Recent-window vs previous-window trend (mirrors leadership report semantics).
     const recentWindow = sorted.slice(-RECENT_WINDOW_RUNS);
     const previousWindow = sorted.slice(0, Math.max(0, sorted.length - RECENT_WINDOW_RUNS));
     const recentAvg = avg(recentWindow.map((c) => verdictScore(c.verdict, c.run.source)));

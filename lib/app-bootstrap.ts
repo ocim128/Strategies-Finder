@@ -307,7 +307,6 @@ function registerLazyFeatures(): void {
     registerLazyFeature("debug-panel", async () => (await import("./debug-panel")).initDebugPanel());
     registerLazyFeature("quick-view", async () => (await import("./quick-view")).quickViewManager.init());
     registerLazyFeature("finder", async () => (await import("./finder-manager")).finderManager.init());
-    registerLazyFeature("asset-leadership", async () => (await import("./asset-leadership-service")).assetLeadershipService.init());
     registerLazyFeature("alerts", async () => (await import("./handlers/alert-handlers")).initAlertHandlers());
     registerLazyFeature("hunt", async () => (await import("./hunt/hunt-service")).huntService.init());
     registerLazyFeature("batch-backtest", async () => (await import("./batch-backtest/batch-backtest-service")).batchBacktestService.init());
@@ -316,13 +315,10 @@ function registerLazyFeatures(): void {
     registerLazyFeature("ibkr-data", async () => (await import("./ibkr-data/ibkr-data-service")).ibkrDataService.init());
     registerLazyFeature("crypto-data", async () => (await import("./crypto-data/crypto-data-service")).cryptoDataService.init());
     registerLazyFeature("walk-forward", async () => (await import("./walk-forward-service")).walkForwardService.initUI());
-    registerLazyFeature("portfolio-lab", async () => (await import("./portfolio-lab-service")).portfolioLabService.init());
-    registerLazyFeature("strategy-ensemble", async () => (await import("./strategy-ensemble-service")).strategyEnsembleService.init());
     registerLazyFeature("polymarket-panel", async () => (await import("./polymarket-panel-service")).polymarketPanelService.init());
     registerLazyFeature("execution-lab", async () => (await import("./execution-lab/execution-lab-service")).executionLabService.init());
     registerLazyFeature("monte-carlo", async () => (await import("./monte-carlo-service")).initMonteCarloService());
     registerLazyFeature("strategy-library-admin", async () => (await import("./strategy-library-admin-service")).strategyLibraryAdminService.init());
-    registerLazyFeature("signal-committee", async () => (await import("./handlers/signal-committee-handlers")).initSignalCommitteeHandlers());
 }
 
 function bindDirectLazyFeatureTriggers(): void {

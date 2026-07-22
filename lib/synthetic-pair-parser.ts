@@ -1,10 +1,15 @@
-import type { OHLCVData } from "../strategies";
-import { deriveSyntheticSymbol } from "../../scripts/lib/synthetic-pair";
+/**
+ * Shared synthetic-pair parsing utilities, previously in
+ * `lib/synthetic-pair-parser.ts`. Extracted here so
+ * batch-backtest, crypto-data, and other non-Portfolio-Lab consumers
+ * can import without pulling in the full synthetic-pair-parser module graph.
+ */
+
 import {
     isMarkedLocalStockSymbol,
     stripMarkedLocalStockSymbol,
-} from "../local-daily-datasets";
-import type { SyntheticPairConnection } from "./portfolio-lab-types";
+} from "./local-daily-datasets";
+import { deriveSyntheticSymbol } from "../scripts/lib/synthetic-pair";
 
 export const PORTFOLIO_QUOTE_SUFFIXES = ["USDT", "USDC", "USD", "BTC", "ETH", "BNB"] as const;
 
@@ -57,43 +62,5 @@ export function parsePortfolioSyntheticPairSymbol(symbol: string): ParsedSynthet
         baseSymbol,
         quoteSymbol,
         syntheticSymbol: deriveSyntheticSymbol(baseSymbol, quoteSymbol),
-    };
-}
-
-function closeMovePercent(data: OHLCVData[]): number | null {
-    const first = data.find((bar) => Number.isFinite(bar.close) && bar.close > 0);
-    let last: OHLCVData | undefined;
-    for (let index = data.length - 1; index >= 0; index -= 1) {
-        const bar = data[index];
-        if (Number.isFinite(bar.close) && bar.close > 0) {
-            last = bar;
-            break;
-        }
-    }
-    if (!first || !last || first === last) {
-        return null;
-    }
-    return ((last.close / first.close) - 1) * 100;
-}
-
-export function buildSyntheticPairConnection(args: {
-    parsed: ParsedSyntheticPairSymbol;
-    ratioData: OHLCVData[];
-    baseData: OHLCVData[];
-    quoteData: OHLCVData[];
-    alignedBars: number;
-    droppedBars: number;
-}): SyntheticPairConnection {
-    return {
-        baseAsset: args.parsed.baseAsset,
-        quoteAsset: args.parsed.quoteAsset,
-        baseSymbol: args.parsed.baseSymbol,
-        quoteSymbol: args.parsed.quoteSymbol,
-        syntheticSymbol: args.parsed.syntheticSymbol,
-        baseMovePercent: closeMovePercent(args.baseData),
-        quoteMovePercent: closeMovePercent(args.quoteData),
-        ratioMovePercent: closeMovePercent(args.ratioData),
-        alignedBars: args.alignedBars,
-        droppedBars: args.droppedBars,
     };
 }

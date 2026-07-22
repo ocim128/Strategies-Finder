@@ -22,7 +22,7 @@ import {
     resolveEffectiveIntervalForSynthetic,
 } from '../scripts/lib/synthetic-pair';
 import { parseSyntheticPairToken } from '../lib/synthetic-pair-token';
-import { parsePortfolioSyntheticPairSymbol } from '../lib/portfolioLab/portfolio-lab-synthetic';
+import { parsePortfolioSyntheticPairSymbol } from '../lib/synthetic-pair-parser';
 import type { OHLCVData } from '../lib/types/strategies';
 
 describe('stock-market diamond marker helpers', () => {
@@ -232,7 +232,7 @@ describe('synthetic pair token parsing preserves marked legs', () => {
 });
 
 describe('portfolio synthetic pair parser preserves marked legs', () => {
-    // Regression: portfolio-lab had its own resolveToBinanceSymbol that
+    // Regression: synthetic-pair-parser had its own resolveToBinanceSymbol that
     // stripped non-alphanumerics, deleting the marker entirely.
     it('keeps marked legs intact and exposes the bare ticker as baseAsset', () => {
         const parsed = parsePortfolioSyntheticPairSymbol('NVDA\u2666+AAPL\u2666');

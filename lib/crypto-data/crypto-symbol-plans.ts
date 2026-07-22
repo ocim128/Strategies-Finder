@@ -1,5 +1,5 @@
 import { DATA_CHART_TOTAL_LIMIT, SYNTHETIC_TARGET_BARS } from "../data/constants";
-import { parsePortfolioSyntheticPairSymbol, PORTFOLIO_QUOTE_SUFFIXES } from "../portfolioLab/portfolio-lab-synthetic";
+import { parsePortfolioSyntheticPairSymbol, PORTFOLIO_QUOTE_SUFFIXES } from "../synthetic-pair-parser";
 import { pickSourceInterval } from "../../scripts/lib/synthetic-pair";
 
 /** Keep symbol parsing independent of browser-bound Crypto service imports. */

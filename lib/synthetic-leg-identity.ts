@@ -9,7 +9,7 @@
  * The generator (balanced pair list) and the OPEN_SCORE artifact loader
  * already agree on leg symbols through `parseSyntheticPairToken`
  * (`lib/synthetic-pair-token.ts`) and `parsePortfolioSyntheticPairSymbol`
- * (`lib/portfolioLab/portfolio-lab-synthetic.ts`). Those parsers historically
+ * (`lib/synthetic-pair-parser.ts`). Those parsers historically
  * each carried their own quote-suffix list. This leaf exposes the canonical
  * identity primitives the generator needs to:
  *   - canonicalize `BTC` and `BTCUSDT` to one loader symbol and one scoring
@@ -41,7 +41,7 @@ import {
 /**
  * Quote suffixes used to identify quote assets on Binance-style market
  * symbols. Matches the union of the lists in `synthetic-pair-token.ts`
- * (batch loader) and `portfolio-lab-synthetic.ts` so any token recognized
+ * (batch loader) and `synthetic-pair-parser.ts` so any token recognized
  * as quote-suffixed by EITHER existing parser is recognized here.
  *
  * Order matters: longer suffixes first so `USDC` cannot shadow `USD` and
