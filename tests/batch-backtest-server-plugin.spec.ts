@@ -1,7 +1,9 @@
 import { expect } from "chai";
 import { describe, it, after, afterEach, before } from "node:test";
+import { sep } from "node:path";
 import { Readable } from "node:stream";
 import { strategyRegistry } from "../strategyRegistry";
+import { getRunDir, getArtifactsRootDir } from "../lib/batch-backtest/sp500-top-mean-artifact-store";
 import {
     processRunBatch,
     processOpenScoreUsdReplay,
@@ -1250,6 +1252,99 @@ describe("batch-backtest server plugin runId-scoped Stop (audit Finding 5)", () 
         expect(parseBatchRunId(undefined)).to.equal("");
         expect(() => parseBatchRunId(123)).to.throw("runId must be a string");
         expect(() => parseBatchRunId("x".repeat(200))).to.throw("runId must be at most 128 characters");
+        // Path-traversal rejection (security): a run id is an opaque token,
+        // never a path. Legitimate browser ids (`batch-<ts36>-<rand>`) match.
+        expect(parseBatchRunId("batch-lq0hf3j7-ab12cd")).to.equal("batch-lq0hf3j7-ab12cd");
+        expect(() => parseBatchRunId("../../package.json")).to.throw("invalid characters");
+        expect(() => parseBatchRunId("..")).to.throw("invalid characters");
+        expect(() => parseBatchRunId("a/b")).to.throw("invalid characters");
+        expect(() => parseBatchRunId("a\\b")).to.throw("invalid characters");
+        expect(() => parseBatchRunId("a b")).to.throw("invalid characters");
+    });
+});
+
+describe("SP500 TOP_MEAN runId path-traversal rejection (security)", () => {
+    // Intent being locked: a runId reaches the filesystem via
+    // getRunDir(runId) → join(artifactsRoot, runId). An unvalidated query
+    // param like `?runId=../../../../package.json` must NOT escape the
+    // artifacts root and disclose an arbitrary .json file in the response.
+    // Two independent guards: the HTTP boundary turns it into a 400/404, and
+    // the structural getRunDir guard refuses to build an escaping path even
+    // if a future caller forgets the boundary check.
+
+    it("getRunDir refuses a runId that escapes the artifacts root", () => {
+        const root = getArtifactsRootDir();
+        // A clearly-invalid traversal id must throw from the structural guard.
+        expect(() => getRunDir("../../../../package.json")).to.throw("escapes artifacts root");
+        expect(() => getRunDir("..")).to.throw("escapes artifacts root");
+        // A legitimate browser id resolves cleanly under the root.
+        const safe = getRunDir("sp500_top_mean_1234_abcd");
+        expect(safe.startsWith(root + sep)).to.equal(true);
+    });
+
+    it("GET /sp500-top-mean/result rejects a traversal runId with 400, not file contents", async () => {
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/sp500-top-mean/result");
+        expect(handler).to.not.equal(undefined);
+        const res = makeRouteResponse();
+        await handler!(
+            {
+                method: "GET",
+                url: "/api/batch-backtest/sp500-top-mean/result?runId=../../../../package.json",
+                socket: { remoteAddress: "127.0.0.1" },
+                headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" },
+            },
+            res,
+        );
+        expect(res.statusCode).to.equal(400);
+        const payload = JSON.parse(res.body) as { ok?: boolean; error?: string };
+        expect(payload.ok).to.equal(false);
+        // Must NOT echo file contents back.
+        expect(res.body).to.not.include("\"name\": \"strategies-finder\"");
+    });
+
+    it("GET /sp500-top-mean/status treats a traversal runId as not found, not file contents", async () => {
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/sp500-top-mean/status");
+        expect(handler).to.not.equal(undefined);
+        const res = makeRouteResponse();
+        await handler!(
+            {
+                method: "GET",
+                url: "/api/batch-backtest/sp500-top-mean/status?runId=../../../etc/passwd",
+                socket: { remoteAddress: "127.0.0.1" },
+                headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" },
+            },
+            res,
+        );
+        // Status returns 404 for unknown/malformed ids (no active engine).
+        expect(res.statusCode).to.equal(404);
+        const payload = JSON.parse(res.body) as { ok?: boolean; error?: string };
+        expect(payload.ok).to.equal(false);
+        expect(res.body).to.not.include("root:");
+    });
+
+    it("GET /sp500-top-mean/result accepts a legitimate browser-style runId shape", async () => {
+        // Confirms the allow-list regex does NOT reject valid callers.
+        const routes = captureBatchRoutes();
+        const handler = routes.get("/api/batch-backtest/sp500-top-mean/result");
+        expect(handler).to.not.equal(undefined);
+        const res = makeRouteResponse();
+        await handler!(
+            {
+                method: "GET",
+                // Legitimate shape: sp500_top_mean_<ts>_<rand>. No such run
+                // exists on disk, so the handler returns 404 — but must NOT
+                // return 400 (which would mean the regex over-rejected).
+                url: "/api/batch-backtest/sp500-top-mean/result?runId=sp500_top_mean_1234_abcd",
+                socket: { remoteAddress: "127.0.0.1" },
+                headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" },
+            },
+            res,
+        );
+        expect(res.statusCode).to.equal(404);
+        const payload = JSON.parse(res.body) as { ok?: boolean; error?: string };
+        expect(payload.error).to.include("not found");
     });
 });
 

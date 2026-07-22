@@ -1,10 +1,29 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
 import type { CompactPairArtifact, TopMeanRunManifest, BatchSyntheticPairArtifactAdapter } from "./compact-pair-artifact";
 import { toBatchSyntheticPairAdapter } from "./compact-pair-artifact";
 
 const DEFAULT_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Allow-list for run ids. Browser-generated ids are `batch-<ts36>-<rand>` and
+ * `sp500_top_mean_<ts>_<rand>` — both pure `[A-Za-z0-9_-]`. The regex rejects
+ * path separators, `..`, and any other character that could escape the
+ * artifacts root once `runId` is joined into a filesystem path. Shared with
+ * `batch-backtest-vite-plugin.ts` so the HTTP boundary and the structural
+ * `getRunDir` guard stay in lockstep.
+ */
+const SAFE_RUN_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Fast-fail validator for run ids that reach the filesystem. Throws a generic
+ * Error (not an HTTP error) so it stays usable from non-HTTP callers such as
+ * the coordinator engine. HTTP handlers wrap this in a 400 at the boundary.
+ */
+export function isValidRunId(runId: string): boolean {
+    return SAFE_RUN_ID_RE.test(runId);
+}
 
 export function getArtifactsRootDir(baseDir?: string): string {
     const root = baseDir || process.cwd();
@@ -12,7 +31,16 @@ export function getArtifactsRootDir(baseDir?: string): string {
 }
 
 export function getRunDir(runId: string, baseDir?: string): string {
-    return join(getArtifactsRootDir(baseDir), runId);
+    const root = getArtifactsRootDir(baseDir);
+    // Defense-in-depth: even if a caller forgets to validate at the HTTP
+    // boundary, refuse to build a path that escapes the artifacts root. This
+    // is the structural guard that covers EVERY fs consumer of runId,
+    // including the coordinator-engine write path.
+    const resolved = resolve(root, runId);
+    if (resolved !== root && !resolved.startsWith(root + sep)) {
+        throw new Error("runId escapes artifacts root");
+    }
+    return join(root, runId);
 }
 
 export function getManifestPath(runId: string, baseDir?: string): string {

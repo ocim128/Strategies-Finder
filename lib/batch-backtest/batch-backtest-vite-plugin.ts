@@ -58,7 +58,7 @@ import {
     type TopMeanCoordinatorRunRequest,
     type TopMeanStatusResponse,
 } from "./sp500-top-mean-coordinator-engine";
-import { getRunDir, loadManifest } from "./sp500-top-mean-artifact-store";
+import { getRunDir, isValidRunId, loadManifest } from "./sp500-top-mean-artifact-store";
 import { strategies } from "../strategies/library";
 import { existsSync, readFileSync } from "node:fs";
 
@@ -590,6 +590,13 @@ function parseBatchRunId(raw: unknown): string {
     if (!trimmed) throw new HttpStatusError(400, "runId must be a non-empty string.");
     if (trimmed.length > BATCH_MAX_RUN_ID_LENGTH) {
         throw new HttpStatusError(400, `runId must be at most ${BATCH_MAX_RUN_ID_LENGTH} characters.`);
+    }
+    // Character-class guard: a run id is an opaque ownership token, never a
+    // path. Reject separators / `..` / any other escape attempt early so the
+    // value can never be misused if a future route threads it into a path.
+    // Legitimate browser ids (`batch-<ts36>-<rand>`) already match.
+    if (!isValidRunId(trimmed)) {
+        throw new HttpStatusError(400, "runId contains invalid characters.");
     }
     return trimmed;
 }
@@ -2008,9 +2015,13 @@ function registerBatchRoutes(middlewares: any): void {
             const parsedUrl = new URL(req.url ?? "/api/batch-backtest/sp500-top-mean/status", "http://localhost");
             const runIdParam = parsedUrl.searchParams.get("runId");
             const runId = runIdParam && runIdParam.trim() ? runIdParam.trim() : undefined;
-            const status = handleSp500TopMeanStatusRequest(runId);
-            const statusCode = "ok" in status && !status.ok ? 404 : 200;
-            sendJson(res, statusCode, status);
+            try {
+                const status = handleSp500TopMeanStatusRequest(runId);
+                const statusCode = "ok" in status && !status.ok ? 404 : 200;
+                sendJson(res, statusCode, status);
+            } catch (error) {
+                sendCaughtErrorJson(res, error);
+            }
         });
 
         middlewares.use("/api/batch-backtest/sp500-top-mean/result", async (req: any, res: any) => {
@@ -2111,6 +2122,12 @@ function handleSp500TopMeanStatusRequest(runId?: string): TopMeanStatusResponse 
         return activeEngine.getStatus();
     }
     if (runId) {
+        // Reject path-traversal / escape attempts before they reach the
+        // filesystem. `getRunDir` defends this structurally too; this turns
+        // it into a clean 404 (run not found) for malformed ids.
+        if (!isValidRunId(runId)) {
+            return { ok: false, error: "Run not found" };
+        }
         const manifest = loadManifest(runId);
         if (manifest) {
             let result: any = undefined;
@@ -2148,6 +2165,11 @@ function handleSp500TopMeanStatusRequest(runId?: string): TopMeanStatusResponse 
 function handleSp500TopMeanResultRequest(runId: string): unknown {
     if (!runId || typeof runId !== "string") {
         throw new HttpStatusError(400, "Missing runId parameter.");
+    }
+    // Reject path-traversal / escape attempts before they reach the filesystem.
+    // `getRunDir` defends this structurally too; this turns it into a clean 400.
+    if (!isValidRunId(runId)) {
+        throw new HttpStatusError(400, "Invalid runId.");
     }
     const resultPath = join(getRunDir(runId), "result.json");
     if (!existsSync(resultPath)) {
