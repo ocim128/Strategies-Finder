@@ -149,6 +149,14 @@
                 <label class="batch-field-label" for="batchBacktestSp500TopMeanMaxPairs">Max Pairs (Smoke)</label>
                 <input class="batch-field-input" id="batchBacktestSp500TopMeanMaxPairs" type="number" min="1" step="10" placeholder="Full">
             </div>
+            <div class="batch-field batch-field--inline" title="Restrict phase-3 replay decision events to this date onward (YYYY-MM-DD). Leave blank for full history. Only affects the OPEN_SCORE USD replay phase; pair backtests still cover full history.">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanFrom">From</label>
+                <input class="batch-field-input batch-field-input--date" id="batchBacktestSp500TopMeanFrom" type="date">
+            </div>
+            <div class="batch-field batch-field--inline" title="Restrict phase-3 replay decision events up to this date (YYYY-MM-DD). Leave blank for full history.">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanTo">To</label>
+                <input class="batch-field-input batch-field-input--date" id="batchBacktestSp500TopMeanTo" type="date">
+            </div>
             <div class="batch-action-group">
                 <button class="btn btn-primary btn-compact" id="batchBacktestSp500TopMeanRunBtn" type="button">Run TOP_MEAN</button>
                 <button class="btn btn-danger btn-compact" id="batchBacktestSp500TopMeanStopBtn" type="button" style="display:none">Stop</button>

@@ -2108,6 +2108,12 @@ class BatchBacktestService {
         const pairListTextRaw = dom.batchBacktestSymbols ? dom.batchBacktestSymbols.value.trim() : "";
         const pairListText = pairListTextRaw.length > 0 ? pairListTextRaw : undefined;
 
+        // Optional decision-event date window for the phase-3 OPEN_SCORE USD
+        // replay (YYYY-MM-DD); blank = full history. Mirrors the OPEN_SCORE USD
+        // From/To controls. Pair backtests (phase 2) still cover full history.
+        const sampleFrom = dom.batchBacktestSp500TopMeanFrom.value.trim();
+        const sampleTo = dom.batchBacktestSp500TopMeanTo.value.trim();
+
         const payload = {
             runId,
             strategyKey,
@@ -2120,6 +2126,8 @@ class BatchBacktestService {
             maxPairs,
             pairListText,
             useRustEnginePreference: shouldUseRustEngine(),
+            ...(sampleFrom ? { sampleFrom } : {}),
+            ...(sampleTo ? { sampleTo } : {}),
         };
         const diagnosticPayload = {
             ...payload,

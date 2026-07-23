@@ -37,6 +37,14 @@ export interface TopMeanCoordinatorRunRequest {
     pairListText?: string;
     resume?: boolean;
     useRustEnginePreference?: boolean;
+    /**
+     * Optional decision-event date window (unix seconds, inclusive) applied
+     * ONLY to the phase-3 OPEN_SCORE USD replay. Pair backtests (phase 2)
+     * always cover full history. Mirrors the OPEN_SCORE USD sampleFromSec /
+     * sampleToSec semantics; undefined = full history.
+     */
+    sampleFromSec?: number;
+    sampleToSec?: number;
 }
 
 export interface TopMeanResultSummary {
@@ -262,6 +270,8 @@ export class TopMeanCoordinatorEngine {
                     slippageRate,
                     commissionRate,
                     shouldStop: () => this.isStopped,
+                    ...(this._request.sampleFromSec !== undefined ? { sampleFromSec: this._request.sampleFromSec } : {}),
+                    ...(this._request.sampleToSec !== undefined ? { sampleToSec: this._request.sampleToSec } : {}),
                 },
             );
 

@@ -2081,6 +2081,20 @@ async function handleSp500TopMeanRunRequest(res: ViteHttpResponse, body: unknown
         throw new HttpStatusError(409, "A batch, analysis, or TOP_MEAN operation is already running.");
     }
 
+    // Optional decision-event date window for the phase-3 OPEN_SCORE USD
+    // replay. Mirrors handleOpenScoreUsdRequest's parseBodyDateSec: YYYY-MM-DD
+    // parses as UTC midnight; sampleTo adds 24h-1s so the whole end day is
+    // inclusive. Malformed/blank -> null (no filter, full history).
+    const parseBodyDateSec = (key: "sampleFrom" | "sampleTo", endOfDay = false): number | undefined => {
+        const raw = (body as Record<string, unknown>)[key];
+        if (typeof raw !== "string" || raw.trim() === "") return undefined;
+        const ms = Date.parse(raw);
+        if (!Number.isFinite(ms)) return undefined;
+        return Math.floor(ms / 1000) + (endOfDay ? 24 * 3600 - 1 : 0);
+    };
+    const sampleFromSec = parseBodyDateSec("sampleFrom", false);
+    const sampleToSec = parseBodyDateSec("sampleTo", true);
+
     const ownerGen = ++runOwnerGen;
     const minerGen = ++minerOwnerGen;
     runOwner = ownerGen;
@@ -2090,7 +2104,11 @@ async function handleSp500TopMeanRunRequest(res: ViteHttpResponse, body: unknown
     const stream = createDisconnectSafeStream(res);
 
     try {
-        const engine = new TopMeanCoordinatorEngine(req as TopMeanCoordinatorRunRequest);
+        const engine = new TopMeanCoordinatorEngine({
+            ...(req as TopMeanCoordinatorRunRequest),
+            ...(sampleFromSec !== undefined ? { sampleFromSec } : {}),
+            ...(sampleToSec !== undefined ? { sampleToSec } : {}),
+        });
         await engine.run((event) => stream.write(event));
     } finally {
         if (runOwner === ownerGen) {
