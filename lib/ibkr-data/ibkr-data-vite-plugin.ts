@@ -467,7 +467,10 @@ function stopIbkrServerState(): void {
 async function initializeBrokerageSession(): Promise<void> {
     await fetchGatewayJson("/iserver/auth/ssodh/init", {
         method: "POST",
-        body: JSON.stringify({ publish: true, compete: true }),
+        // This tool only reads market data. Do not disconnect a concurrent
+        // TWS, Client Portal, or IBKR Mobile brokerage session to prioritize
+        // the Gateway connection.
+        body: JSON.stringify({ publish: true, compete: false }),
     });
 }
 
