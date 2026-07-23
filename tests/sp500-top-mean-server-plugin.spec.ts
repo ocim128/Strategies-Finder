@@ -344,6 +344,12 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
         assert.ok(existsSync(resultPath), "result.json must be persisted before replay");
         const onDisk = JSON.parse(readFileSync(resultPath, "utf8")) as { currentSnapshot?: unknown };
         assert.ok(onDisk.currentSnapshot, "persisted result.json must carry currentSnapshot");
+        const persistedManifest = JSON.parse(
+            readFileSync(join(getRunDir(runId, baseDir), "manifest.json"), "utf8"),
+        ) as TopMeanRunManifest;
+        assert.equal(persistedManifest.requestedEngineMode, "typescript");
+        assert.equal(persistedManifest.actualEngineMode, "typescript");
+        assert.deepEqual(persistedManifest.engineUsage, { rust: 0, typescript: 0 });
         const snap = (onDisk.currentSnapshot as { snapshot: { asOf: number; winners: Array<{ asset: string }> } }).snapshot;
         assert.equal(snap.asOf, endpoint);
         // AAPL, MSFT, NVDA each net +2 across 2 pairs (mean 1.0) -> 3-way tie.

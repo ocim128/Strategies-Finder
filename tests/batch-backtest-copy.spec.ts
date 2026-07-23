@@ -13,7 +13,7 @@ import {
     summarizeRegimeSplit,
     summarizeRobustness,
 } from "../lib/batch-backtest/batch-backtest-summary";
-import { toScalarRow } from "../lib/batch-backtest/batch-backtest-stream-types";
+import { containsNonEmptyNestedArrays, toScalarRow } from "../lib/batch-backtest/batch-backtest-stream-types";
 import type { BatchBacktestSymbolResult } from "../lib/batch-backtest/batch-backtest-runner";
 import type { OHLCVData, Time, Trade } from "../lib/types/strategies";
 
@@ -274,6 +274,39 @@ describe("buildBuyHoldRows", () => {
 });
 
 describe("server scalar batch rows", () => {
+    it("toScalarRow drops nested analytics arrays even when present on the engine result", () => {
+        const scalar = toScalarRow({
+            symbol: "AAA+BBB",
+            status: "profitable",
+            barCount: 10,
+            result: {
+                netProfit: 1,
+                netProfitPercent: 2,
+                winRate: 50,
+                expectancy: 0.1,
+                avgTrade: 0.1,
+                profitFactor: 1.2,
+                maxDrawdown: 1,
+                maxDrawdownPercent: 2,
+                totalTrades: 2,
+                winningTrades: 1,
+                losingTrades: 1,
+                avgWin: 1,
+                avgLoss: 1,
+                sharpeRatio: 0.5,
+                trades: [{ type: "long", entryTime: 1, exitTime: 2 } as any],
+                equityCurve: [{ time: 1 as any, value: 100 }],
+                postEntryPath: { long: { avgSignedMovePctByBar: [0.1] } } as any,
+                tradeTimingQuality: { entryScore: 1, exitScore: 1, entry: { horizons: [{ bars: 1 }] }, exit: { horizons: [] } } as any,
+            } as any,
+        } as any);
+        expect(scalar.result?.trades).to.deep.equal([]);
+        expect(scalar.result?.equityCurve).to.deep.equal([]);
+        expect((scalar.result as any).postEntryPath).to.equal(undefined);
+        expect((scalar.result as any).tradeTimingQuality).to.equal(undefined);
+        expect(containsNonEmptyNestedArrays(scalar.result)).to.equal(false);
+    });
+
     it("preserve Copy B&H and OPEN_SCORE sections without candle or trade arrays", () => {
         const scalar = toScalarRow({
             ...openTradeRow("WLD+BTC", "long", {
@@ -283,6 +316,10 @@ describe("server scalar batch rows", () => {
 
         expect(scalar.data).to.equal(undefined);
         expect(scalar.result?.trades).to.deep.equal([]);
+        expect(scalar.result?.equityCurve).to.deep.equal([]);
+        // Explicit allowlist projection: no non-empty nested analytics arrays
+        // (postEntryPath, tradeTimingQuality, trades, equityCurve, …) may leak.
+        expect(containsNonEmptyNestedArrays(scalar.result)).to.equal(false);
         expect(buildBuyHoldRows([scalar])[0]?.bh).to.be.closeTo(10, 1e-9);
 
         const scores = computeOpenTradeAssetScores([scalar]);

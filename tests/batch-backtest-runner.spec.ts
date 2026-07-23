@@ -492,4 +492,3 @@ describe("runBatchBacktest", () => {
         expect(output.results[2]!.status).to.equal("skipped");
     });
 });
-

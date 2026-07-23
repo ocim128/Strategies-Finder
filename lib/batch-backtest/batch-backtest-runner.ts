@@ -418,6 +418,18 @@ function buildTradeSummary(
     data: OHLCVData[],
     result: BacktestResult,
 ): BatchBacktestTradeSummary {
+    // No-trade rows are common during strategy exploration. Skip the O(candles)
+    // time-index map entirely — the empty-trade path always returns nulls.
+    if (result.trades.length === 0) {
+        return {
+            avgHoldBars: null,
+            maxHoldBars: null,
+            avgHoldDays: null,
+            maxHoldDays: null,
+            exposurePercent: null,
+        };
+    }
+
     const timeIndex = new Map<string, number>();
     data.forEach((bar, index) => {
         timeIndex.set(timeKey(bar.time), index);

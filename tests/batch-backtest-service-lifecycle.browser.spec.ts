@@ -3,108 +3,19 @@ import { expect } from "chai";
 import { describe, it, before, after } from "node:test";
 import { batchBacktestService } from "../lib/batch-backtest/batch-backtest-service";
 import type { BatchBacktestDom } from "../lib/batch-backtest/batch-backtest-dom";
+import { BATCH_BACKTEST_REQUIRED_IDS } from "../lib/batch-backtest/batch-backtest-dom";
+import {
+    createFakeBatchBacktestDom,
+    createFakeBatchElement,
+} from "./helpers/fake-batch-backtest-dom";
 
 function fakeEl(): any {
-    const listeners = new Map<string, Array<() => void>>();
-    const classes = new Set<string>();
-    const el: any = {
-        style: { display: "", width: "" },
-        disabled: false,
-        value: "",
-        checked: false,
-        textContent: "",
-        hidden: false,
-        classList: {
-            add(...cls: string[]) { for (const c of cls) classes.add(c); },
-            remove(...cls: string[]) { for (const c of cls) classes.delete(c); },
-            toggle(cls: string, force?: boolean) {
-                if (force === undefined) { if (classes.has(cls)) classes.delete(cls); else classes.add(cls); }
-                else if (force) classes.add(cls); else classes.delete(cls);
-            },
-            contains(cls: string) { return classes.has(cls); },
-        },
-        replaceChildren: () => { el.children = []; },
-        appendChild: (child: any) => { el.children = el.children ?? []; el.children.push(child); return child; },
-        addEventListener: (type: string, handler: () => void) => {
-            const arr = listeners.get(type) ?? [];
-            arr.push(handler);
-            listeners.set(type, arr);
-        },
-        removeEventListener: () => {},
-        // Dispatch an event type to all bound handlers (the apply path uses
-        // this to trigger the same input invalidation as a manual paste).
-        dispatchEvent: (ev: { type: string }): boolean => {
-            const arr = listeners.get(ev.type);
-            if (!arr || arr.length === 0) return false;
-            for (const handler of arr) handler();
-            return true;
-        },
-        // Drive the REAL handler bound by bindEvents. Returns true iff a
-        // handler was actually invoked, so tests can assert wiring.
-        click(): boolean {
-            const arr = listeners.get("click");
-            if (!arr || arr.length === 0) return false;
-            for (const handler of arr) handler();
-            return true;
-        },
-        children: [] as any[],
-        setAttribute: () => {},
-    };
-    return el;
+    return createFakeBatchElement();
 }
 
+/** Shared fake DOM derived from the live BatchBacktestDom contract. */
 function fakeDom(): BatchBacktestDom {
-    const el = () => fakeEl();
-    return {
-        batchbacktestTab: el(),
-        batchBacktestSymbols: el(),
-        batchBacktestSymbolTemplate: el(),
-        batchBacktestUseCurrent: el(),
-        batchBacktestClear: el(),
-        batchBacktestBalancedAssets: { value: "" },
-        batchBacktestBalancedMaxPairs: { value: "2000" },
-        batchBacktestBalancedSeed: { value: "1" },
-        batchBacktestBalancedGenerateBtn: el(),
-        batchBacktestBalancedCopyBtn: el(),
-        batchBacktestBalancedSummary: el(),
-        batchBacktestRunBtn: el(),
-        batchBacktestStopBtn: el(),
-        batchBacktestCopyBtn: el(),
-        batchBacktestCopyBenchmarkBtn: el(),
-        batchBacktestPortfolioFitBtn: el(),
-        batchBacktestCopyPortfolioFitBtn: el(),
-        batchBacktestPortfolioFitSummary: el(),
-        batchBacktestPortfolioFitResults: el(),
-        batchBacktestMinePredictionBtn: el(),
-        batchBacktestCopyMinePredictionBtn: el(),
-        batchBacktestMinePredictionSummary: el(),
-        batchBacktestMineAbBtn: el(),
-        batchBacktestCopyMineAbBtn: el(),
-        batchBacktestMineAbSummary: el(),
-        batchBacktestExposureBtn: el(),
-        batchBacktestCopyExposureBtn: el(),
-        batchBacktestExposureSummary: el(),
-        batchBacktestOpenScoreUsdBtn: el(),
-        batchBacktestCopyOpenScoreUsdBtn: el(),
-        batchBacktestOpenScoreUsdSummary: el(),
-        batchBacktestOpenScoreUsdFrom: { value: "" },
-        batchBacktestOpenScoreUsdTo: { value: "" },
-        batchBacktestOpenScoreUsdHorizons: { value: "12,24,48" },
-        batchBacktestMinePredictionFrom: { value: "" },
-        batchBacktestMinePredictionTo: { value: "" },
-        batchBacktestMinePredictionDirection: { value: "both" },
-        batchBacktestMinePredictionSampleBars: { value: "25" },
-        batchBacktestMinePredictionSampleStep: { value: "80" },
-        batchBacktestMinePredictionHorizons: { value: "12,24,48" },
-        batchBacktestProgress: el(),
-        batchBacktestProgressFill: el(),
-        batchBacktestProgressText: el(),
-        batchBacktestStatus: el(),
-        batchBacktestSummary: el(),
-        batchBacktestSummaryGrid: el(),
-        batchBacktestResults: el(),
-        batchBacktestEmpty: el(),
-    } as unknown as BatchBacktestDom;
+    return createFakeBatchBacktestDom();
 }
 
 /** Fetch mock responder type. */
@@ -167,6 +78,10 @@ function setupForAnalysis(fingerprint = "fp-test"): BatchBacktestDom {
     s.activePairListProvenance = null;
     s.lastBalancedPairListResult = null;
     s.runInFlight = false;
+    s.batchActionInFlight = false;
+    s.topMeanReattachInFlight = false;
+    s.activeTopMeanRunId = null;
+    s.serverRunActive = false;
     (globalThis as any).localStorage._store.clear();
     s.buildCurrentRunFingerprint = () => fingerprint;
     return dom;
@@ -196,6 +111,36 @@ async function withMockFetch(responder: FetchResponder, fn: () => Promise<void>)
 // ---------------------------------------------------------------------------
 
 describe("BatchBacktestService analysis lifecycle", () => {
+    it("initializes the service successfully against the current Batch DOM contract", () => {
+        // Intent: fakeDom must include every current BatchBacktestDom field so
+        // service.bindEvents no longer fails during suite setup when TOP_MEAN
+        // controls are added. A missing field is a fixture bug, not product.
+        const dom = createFakeBatchBacktestDom();
+        for (const id of BATCH_BACKTEST_REQUIRED_IDS) {
+            expect((dom as any)[id], `missing DOM field ${id}`).to.not.equal(undefined);
+        }
+        const s = svc();
+        s.dom = dom;
+        expect(() => s.bindEvents(dom)).to.not.throw();
+        expect(dom.batchBacktestSp500TopMeanRunBtn, "TOP_MEAN run button present").to.not.equal(undefined);
+        expect(dom.batchBacktestSp500TopMeanStabilityRunBtn, "stability run button present").to.not.equal(undefined);
+    });
+
+    it("rejects TOP_MEAN coordinator while another Batch action is in flight", async () => {
+        const dom = setupForAnalysis();
+        svc().batchActionInFlight = true;
+        let fetchCalled = false;
+        await withMockFetch(() => {
+            fetchCalled = true;
+            return { ok: true, status: 200, text: "{}" };
+        }, async () => {
+            await svc().runSp500TopMeanCoordinator();
+        });
+        expect(fetchCalled, "TOP_MEAN must short-circuit before fetch").to.equal(false);
+        expect(dom.batchBacktestSp500TopMeanProgressText.textContent).to.include("already in progress");
+        svc().batchActionInFlight = false;
+    });
+
     it("persists the active run id and restores it after a tab-style reset", () => {
         setupForAnalysis();
         svc().persistActiveServerRun("batch-owned");
@@ -464,7 +409,7 @@ describe("BatchBacktestService Balanced Generator lifecycle", () => {
         // input event so the bound handler runs clearActivePairListProvenanceIfStale.
         const original = (dom.batchBacktestSymbols as any).value as string;
         (dom.batchBacktestSymbols as any).value = original + "\nMANUAL+EDIT";
-        dom.batchBacktestSymbols.dispatchEvent({ type: "input" });
+        dom.batchBacktestSymbols.dispatchEvent({ type: "input" } as any);
 
         expect(svc().getActivePairListProvenance(), "provenance cleared after manual edit").to.equal(null);
     });

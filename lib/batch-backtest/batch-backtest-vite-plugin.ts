@@ -44,6 +44,7 @@ import type { BacktestSettings, Strategy, StrategyParams } from "../types/strate
 import type { CapitalSettings } from "../types/backtest";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import { toScalarRow, type BatchStreamEvent } from "./batch-backtest-stream-types";
+import { validateTopMeanRequestLimits } from "./sp500-top-mean-request-limits";
 import { rememberLoopbackOriginFromRequest } from "../local-api-transport";
 import { isAllowedLocalRequest } from "../local-route-authorization";
 import { buildBatchRunFingerprint, normalizeBatchSymbols, BATCH_MAX_SYMBOLS, verifyPairListProvenance, type BatchRunPairListProvenanceMeta, type BatchUniverseCounts } from "./batch-run-contract";
@@ -2065,16 +2066,27 @@ async function handleSp500TopMeanRunRequest(res: ViteHttpResponse, body: unknown
     if (req.interval !== "4h") {
         throw new HttpStatusError(400, "S&P 500 TOP_MEAN coordinator currently supports IBKR 4h synthetic pairs only.");
     }
-    if (!Array.isArray(req.horizons) || req.horizons.length === 0) {
-        throw new HttpStatusError(400, "Missing required non-empty array: horizons.");
+    // Semantic workload caps (shared leaf validator). Body-size alone is not a
+    // substitute for rejecting huge horizon arrays / zero-or-fractional values /
+    // pathological workerCount or maxPairs from direct callers or proxies.
+    const limitCheck = validateTopMeanRequestLimits({
+        horizons: req.horizons,
+        workerCount: req.workerCount,
+        maxPairs: req.maxPairs,
+        stabilityStartDates: req.stabilityStartDates,
+    });
+    if (!limitCheck.ok) {
+        throw new HttpStatusError(400, limitCheck.error);
     }
-    // Stability mode: optional array of unix-second start dates. Validate shape
-    // here so bad input is a clean 400 rather than a mid-run crash. The
-    // coordinator branches on a non-empty array.
-    if (req.stabilityStartDates !== undefined) {
-        if (!Array.isArray(req.stabilityStartDates) || req.stabilityStartDates.some((d) => typeof d !== "number" || !Number.isFinite(d))) {
-            throw new HttpStatusError(400, "stabilityStartDates must be an array of finite unix-second numbers.");
-        }
+    req.horizons = limitCheck.value.horizons;
+    if (limitCheck.value.workerCount !== undefined) {
+        req.workerCount = limitCheck.value.workerCount;
+    }
+    if (limitCheck.value.maxPairs !== undefined) {
+        req.maxPairs = limitCheck.value.maxPairs;
+    }
+    if (limitCheck.value.stabilityStartDates !== undefined) {
+        req.stabilityStartDates = limitCheck.value.stabilityStartDates;
     }
 
     const strategy = strategies[req.strategyKey];
@@ -2190,8 +2202,10 @@ function handleSp500TopMeanStatusRequest(runId?: string): TopMeanStatusResponse 
                 completedPairs: manifest.completedPairsCount,
                 failedPairs: manifest.failedPairsCount,
                 progressText: manifest.status === "completed" ? "Completed" : manifest.error || "Interrupted",
-                workerCount: 8,
-                actualEngineMode: "auto",
+                workerCount: manifest.workerCount ?? 8,
+                requestedEngineMode: manifest.requestedEngineMode ?? "auto",
+                actualEngineMode: manifest.actualEngineMode ?? "auto",
+                engineUsage: manifest.engineUsage ?? { rust: 0, typescript: 0 },
                 error: manifest.error,
                 result,
                 ...(stabilityResult !== undefined ? { stabilityResult } : {}),

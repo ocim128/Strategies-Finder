@@ -43,6 +43,11 @@ export interface TopMeanRunManifest {
     failedPairsCount: number;
     createdAt: number;
     updatedAt: number;
+    /** Engine preference and observed usage for status/reattach telemetry. */
+    requestedEngineMode?: string;
+    actualEngineMode?: string;
+    engineUsage?: { rust: number; typescript: number };
+    workerCount?: number;
     error?: string;
 }
 

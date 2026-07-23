@@ -1,5 +1,5 @@
-export function escapeHtml(value: string): string {
-    return value
+export function escapeHtml(value: unknown): string {
+    return String(value ?? "")
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")

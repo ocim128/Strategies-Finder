@@ -103,7 +103,15 @@ export interface TopMeanStatusResponse {
     failedPairs: number;
     progressText: string;
     workerCount: number;
+    /** Preference from the request (what the UI asked for). */
+    requestedEngineMode: string;
+    /**
+     * Best-effort label for the engine that actually ran completed pairs.
+     * "mixed" when both rust and typescript completed at least one pair.
+     * Falls back to requested mode when no completed pair has reported yet.
+     */
     actualEngineMode: string;
+    engineUsage: { rust: number; typescript: number };
     error?: string;
     result?: TopMeanResultSummary;
     /**
@@ -153,6 +161,8 @@ export class TopMeanCoordinatorEngine {
     private stabilityTotalWindows = 0;
     private stabilityCurrentWindow = 0;
     private stabilityResult: StabilityComparison | null = null;
+    /** Aggregated actual engine usage across completed pair backtests. */
+    private engineUsage: { rust: number; typescript: number } = { rust: 0, typescript: 0 };
 
     constructor(
         private readonly _request: TopMeanCoordinatorRunRequest,
@@ -175,7 +185,9 @@ export class TopMeanCoordinatorEngine {
             failedPairs: this.manifest?.failedPairsCount || 0,
             progressText: this.progressText,
             workerCount: resolveTopMeanWorkerCount(this._request.workerCount),
-            actualEngineMode: this._request.useRustEnginePreference ? "rust" : "typescript",
+            requestedEngineMode: this._request.useRustEnginePreference ? "rust" : "typescript",
+            actualEngineMode: this.resolveActualEngineMode(),
+            engineUsage: { ...this.engineUsage },
             error: this.manifest?.error,
             result: this.resultSummary || undefined,
             ...(this.stabilityTotalWindows > 0 && !this.stabilityResult
@@ -191,6 +203,31 @@ export class TopMeanCoordinatorEngine {
         };
     }
 
+    private resolveActualEngineMode(): string {
+        return this.resolveEngineMode(this.engineUsage);
+    }
+
+    private resolveEngineMode(usage: { rust: number; typescript: number }): string {
+        const { rust, typescript } = usage;
+        if (rust > 0 && typescript > 0) return "mixed";
+        if (rust > 0) return "rust";
+        if (typescript > 0) return "typescript";
+        return this._request.useRustEnginePreference ? "rust" : "typescript";
+    }
+
+    private absorbEngineUsage(usage: { rust: number; typescript: number } | undefined): void {
+        if (!usage) return;
+        this.engineUsage.rust += usage.rust;
+        this.engineUsage.typescript += usage.typescript;
+    }
+
+    private updateManifestEngineTelemetry(manifest: TopMeanRunManifest): void {
+        manifest.requestedEngineMode = this._request.useRustEnginePreference ? "rust" : "typescript";
+        manifest.actualEngineMode = this.resolveActualEngineMode();
+        manifest.engineUsage = { ...this.engineUsage };
+        manifest.workerCount = resolveTopMeanWorkerCount(this._request.workerCount);
+    }
+
     public stop(): void {
         this.isStopped = true;
         if (this.pool) {
@@ -198,6 +235,7 @@ export class TopMeanCoordinatorEngine {
         }
         if (this.manifest) {
             this.manifest.status = "interrupted";
+            this.updateManifestEngineTelemetry(this.manifest);
             this.manifest.updatedAt = Date.now();
             saveManifest(this.manifest, this.baseDir);
         }
@@ -265,6 +303,11 @@ export class TopMeanCoordinatorEngine {
                 };
             }
             this.manifest = manifest;
+            this.engineUsage = {
+                rust: manifest.engineUsage?.rust ?? 0,
+                typescript: manifest.engineUsage?.typescript ?? 0,
+            };
+            this.updateManifestEngineTelemetry(manifest);
             saveManifest(manifest, this.baseDir);
 
             if (this.isStopped) {
@@ -288,7 +331,7 @@ export class TopMeanCoordinatorEngine {
 
             this.pool = new TopMeanWorkerPool();
 
-            await this.pool.execute({
+            const usage = await this.pool.execute({
                 runId: this._request.runId,
                 manifest,
                 canonicalPairs: enumRes.canonicalPairs,
@@ -311,6 +354,9 @@ export class TopMeanCoordinatorEngine {
                     });
                 },
             });
+            this.absorbEngineUsage(usage);
+            this.updateManifestEngineTelemetry(manifest);
+            saveManifest(manifest, this.baseDir);
 
             if (this.isStopped) {
                 this.emitInterrupted(emitNdjson);
@@ -432,6 +478,7 @@ export class TopMeanCoordinatorEngine {
             this.progressText = "S&P 500 TOP_MEAN analysis completed successfully.";
             if (this.manifest) {
                 this.manifest.status = "completed";
+                this.updateManifestEngineTelemetry(this.manifest);
                 this.manifest.updatedAt = Date.now();
                 saveManifest(this.manifest, this.baseDir);
             }
@@ -452,6 +499,7 @@ export class TopMeanCoordinatorEngine {
             if (this.manifest) {
                 this.manifest.status = "failed";
                 this.manifest.error = message;
+                this.updateManifestEngineTelemetry(this.manifest);
                 this.manifest.updatedAt = Date.now();
                 saveManifest(this.manifest, this.baseDir);
             }
@@ -564,10 +612,16 @@ export class TopMeanCoordinatorEngine {
                     updatedAt: Date.now(),
                 };
             }
+            const priorWindowUsage = {
+                rust: windowManifest.engineUsage?.rust ?? 0,
+                typescript: windowManifest.engineUsage?.typescript ?? 0,
+            };
+            windowManifest.requestedEngineMode = this._request.useRustEnginePreference ? "rust" : "typescript";
+            windowManifest.workerCount = resolveTopMeanWorkerCount(this._request.workerCount);
             saveManifest(windowManifest, this.baseDir, w.windowKey);
 
             this.pool = new TopMeanWorkerPool();
-            await this.pool.execute({
+            const usage = await this.pool.execute({
                 runId: this._request.runId,
                 manifest: windowManifest,
                 canonicalPairs: enumRes.canonicalPairs,
@@ -595,6 +649,13 @@ export class TopMeanCoordinatorEngine {
                     });
                 },
             });
+            this.absorbEngineUsage(usage);
+            windowManifest.engineUsage = {
+                rust: priorWindowUsage.rust + usage.rust,
+                typescript: priorWindowUsage.typescript + usage.typescript,
+            };
+            windowManifest.actualEngineMode = this.resolveEngineMode(windowManifest.engineUsage);
+            saveManifest(windowManifest, this.baseDir, w.windowKey);
 
             if (this.isStopped) {
                 this.emitInterrupted(emitNdjson);
@@ -647,6 +708,7 @@ export class TopMeanCoordinatorEngine {
         this.progressText = `Stability check complete: gate ${comparison.parityAssumptionHolds ? "PASS" : "BLOCKED"} (agreement ${comparison.agreementPct.toFixed(1)}%)`;
         if (this.manifest) {
             this.manifest.status = "completed";
+            this.updateManifestEngineTelemetry(this.manifest);
             this.manifest.updatedAt = Date.now();
             saveManifest(this.manifest, this.baseDir);
         }
@@ -662,6 +724,7 @@ export class TopMeanCoordinatorEngine {
         this.progressText = "Run stopped by user.";
         if (this.manifest) {
             this.manifest.status = "interrupted";
+            this.updateManifestEngineTelemetry(this.manifest);
             this.manifest.updatedAt = Date.now();
             saveManifest(this.manifest, this.baseDir);
         }
