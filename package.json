@@ -1,5 +1,5 @@
 {
-  "name": "strategies-finder",
+  "name": "strategies-finder-wt-batch-findings",
   "scripts": {
     "test": "esno scripts/run-tests.ts",
     "test:verbose": "esno scripts/run-tests.ts --verbose",

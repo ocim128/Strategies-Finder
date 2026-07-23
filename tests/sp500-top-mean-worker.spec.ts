@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { processTopMeanShard, sliceTopMeanCandlesFromSec, type TopMeanWorkerTaskData } from "../lib/batch-backtest/sp500-top-mean-worker";
 import { prepareClosedCandleData } from "../lib/backtest-executor";
 import { selectClosedCandleWindow } from "../lib/alert-evaluation-window";
-import { parseTimeToUnixSeconds } from "../lib/time-normalization";
 import type { OHLCVData, Time } from "../lib/types/strategies";
 
 function testStabilitySliceIsAppliedBeforeExecutionWindow(): void {
@@ -31,8 +30,12 @@ async function runWorkerParityTest(): Promise<void> {
         useRustEnginePreference: false,
     };
 
-    const artifacts = await processTopMeanShard(task);
+    const shardResult = await processTopMeanShard(task);
+    const artifacts = shardResult.artifacts;
     assert.ok(Array.isArray(artifacts), "Artifacts must be an array");
+    assert.ok(shardResult.engineUsage, "engineUsage must be reported");
+    assert.equal(typeof shardResult.engineUsage.rust, "number");
+    assert.equal(typeof shardResult.engineUsage.typescript, "number");
     if (artifacts.length > 0) {
         assert.equal(artifacts[0].schema, "compact_pair_artifact.v1");
         assert.equal(artifacts[0].symbol, "AAPL•+MSFT•");
@@ -44,6 +47,9 @@ async function runWorkerParityTest(): Promise<void> {
             "dataEndTime must be a finite number when candles were loaded",
         );
         assert.ok(artifacts[0].dataEndTime! > 0, "dataEndTime must be a positive unix timestamp");
+        // Preference was false => completed pairs must count as typescript.
+        assert.equal(shardResult.engineUsage.typescript, artifacts.length);
+        assert.equal(shardResult.engineUsage.rust, 0);
     }
     console.log("PASS: sp500-top-mean-worker.spec.ts (dataEndTime present)");
 }

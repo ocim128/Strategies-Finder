@@ -24,6 +24,82 @@ import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import type { BatchRunPairListProvenanceMeta, BatchUniverseCounts } from "./batch-run-contract";
 import { computeBuyAndHoldPct, computeOpenTradeAssetScores } from "./batch-row-scalars";
+import type { BacktestResult } from "../types/strategies";
+
+/**
+ * Explicit scalar-only projection of {@link BacktestResult} for Batch transport.
+ *
+ * Only fields consumed by batch-backtest-summary, buildResultRowGrid, Copy
+ * Results, and status recovery. Nested analytics arrays (postEntryPath,
+ * tradeTimingQuality, equityCurve, trades, …) are intentionally omitted so a
+ * future engine option cannot silently reintroduce multi-MB payloads.
+ */
+export type BatchScalarBacktestResult = Pick<
+    BacktestResult,
+    | "netProfit"
+    | "netProfitPercent"
+    | "winRate"
+    | "expectancy"
+    | "avgTrade"
+    | "profitFactor"
+    | "maxDrawdown"
+    | "maxDrawdownPercent"
+    | "totalTrades"
+    | "winningTrades"
+    | "losingTrades"
+    | "avgWin"
+    | "avgLoss"
+    | "sharpeRatio"
+> & {
+    trades: [];
+    equityCurve: [];
+};
+
+/**
+ * Project a full engine result into the scalar transport shape.
+ * Returns undefined when the input row had no result.
+ */
+export function toScalarBacktestResult(
+    result: BacktestResult | undefined,
+): BatchScalarBacktestResult | undefined {
+    if (!result) return undefined;
+    return {
+        netProfit: result.netProfit,
+        netProfitPercent: result.netProfitPercent,
+        winRate: result.winRate,
+        expectancy: result.expectancy,
+        avgTrade: result.avgTrade,
+        profitFactor: result.profitFactor,
+        maxDrawdown: result.maxDrawdown,
+        maxDrawdownPercent: result.maxDrawdownPercent,
+        totalTrades: result.totalTrades,
+        winningTrades: result.winningTrades,
+        losingTrades: result.losingTrades,
+        avgWin: result.avgWin,
+        avgLoss: result.avgLoss,
+        sharpeRatio: result.sharpeRatio,
+        trades: [],
+        equityCurve: [],
+    };
+}
+
+/**
+ * Recursive scan used by tests: true when any non-empty nested array remains
+ * under a value. Intended for `toScalarRow(...).result` so empty
+ * trades/equityCurve placeholders pass and large analytics arrays fail.
+ */
+export function containsNonEmptyNestedArrays(value: unknown, depth = 0): boolean {
+    if (depth > 8 || value === null || value === undefined) return false;
+    if (Array.isArray(value)) {
+        return value.length > 0;
+    }
+    if (typeof value === "object") {
+        for (const child of Object.values(value as Record<string, unknown>)) {
+            if (containsNonEmptyNestedArrays(child, depth + 1)) return true;
+        }
+    }
+    return false;
+}
 
 export type BatchStreamEvent =
     | { type: "start"; total: number; interval: string; strategyKey: string; runId?: string }
@@ -83,6 +159,10 @@ export type BatchStreamEvent =
  * Strip the heavy array fields from a per-symbol result so it is safe to send
  * over the wire. The browser tab keeps only the rendered scalars; the heavy
  * arrays stay server-side for OPEN_SCORE USD Replay.
+ *
+ * Projection is an explicit allowlist (not a spread + override) so optional
+ * nested analytics on {@link BacktestResult} cannot leak into browser/status
+ * localStorage paths.
  */
 export function toScalarRow(row: BatchBacktestSymbolResult): BatchBacktestSymbolResult {
     return {
@@ -91,10 +171,7 @@ export function toScalarRow(row: BatchBacktestSymbolResult): BatchBacktestSymbol
         barCount: row.barCount,
         firstTime: row.firstTime,
         lastTime: row.lastTime,
-        // `result` carries a `trades` array internally; that array can be large
-        // for high-trade-count pairs, so drop the whole result trades slice.
-        // Keep the scalar metrics so the verdict / Copy summary still render.
-        result: row.result ? { ...row.result, trades: [], equityCurve: [] } : undefined,
+        result: toScalarBacktestResult(row.result) as BatchBacktestSymbolResult["result"],
         // Intentionally omit `data` and `signals`; keep only derived scalars
         // needed by Copy Results.
         tradeSummary: row.tradeSummary,

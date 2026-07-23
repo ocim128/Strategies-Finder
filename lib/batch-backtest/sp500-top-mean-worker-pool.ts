@@ -85,6 +85,8 @@ export function resolveTopMeanWorkerCount(explicit?: number): number {
     return Math.max(1, Math.min(24, cores - 4));
 }
 
+export type TopMeanEngineUsage = { rust: number; typescript: number };
+
 export interface WorkerPoolRunOptions {
     runId: string;
     manifest: TopMeanRunManifest;
@@ -136,11 +138,12 @@ export class TopMeanWorkerPool {
         this.activeWorkers.clear();
     }
 
-    public async execute(options: WorkerPoolRunOptions): Promise<void> {
+    public async execute(options: WorkerPoolRunOptions): Promise<TopMeanEngineUsage> {
         const workerCount = resolveTopMeanWorkerCount(options.workerCount);
         const shardSize = options.shardSize || TOP_MEAN_DEFAULT_SHARD_SIZE;
         const totalPairs = options.canonicalPairs.length;
         options.manifest.shardSize = shardSize;
+        const engineUsage: TopMeanEngineUsage = { rust: 0, typescript: 0 };
 
         // Partition pairs into shards
         const shardTasks: ShardTask[] = [];
@@ -209,6 +212,8 @@ export class TopMeanWorkerPool {
                         if (msg.status === "completed") {
                             completedPairsCount++;
                             options.manifest.completedPairsCount = completedPairsCount;
+                            if (msg.engineUsed === "rust") engineUsage.rust += 1;
+                            else if (msg.engineUsed === "typescript") engineUsage.typescript += 1;
                             options.onProgress?.(
                                 completedPairsCount,
                                 totalPairs,
@@ -288,5 +293,6 @@ export class TopMeanWorkerPool {
             await Promise.allSettled(activePromises);
             throw error;
         }
+        return engineUsage;
     }
 }

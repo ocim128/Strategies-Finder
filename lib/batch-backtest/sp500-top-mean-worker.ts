@@ -40,11 +40,14 @@ export type TopMeanWorkerMessage =
           symbol: string;
           status: "completed" | "failed";
           error?: string;
+          /** Engine that actually executed the pair backtest (not the preference). */
+          engineUsed?: "rust" | "typescript";
       }
     | {
           type: "shard_complete";
           shardIndex: number;
           artifacts: CompactPairArtifact[];
+          engineUsage?: { rust: number; typescript: number };
       }
     | {
           type: "error";
@@ -65,7 +68,7 @@ export function sliceTopMeanCandlesFromSec(candles: OHLCVData[], fromSec?: numbe
     });
 }
 
-export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<CompactPairArtifact[]> {
+export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<{ artifacts: CompactPairArtifact[]; engineUsage: { rust: number; typescript: number } }> {
     const strategy = strategies[data.strategyKey];
     if (!strategy) {
         throw new Error(`Built-in strategy "${data.strategyKey}" not found in manifest.`);
@@ -76,6 +79,8 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
     const nowSec = Math.floor(Date.now() / 1000);
 
     const artifacts: CompactPairArtifact[] = [];
+    let rustCount = 0;
+    let typescriptCount = 0;
 
     for (const pair of data.pairs) {
         let pairSymbol = pair.symbol;
@@ -195,6 +200,8 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
             };
 
             artifacts.push(artifact);
+            if (output.engineUsed === "rust") rustCount += 1;
+            else typescriptCount += 1;
 
             if (parentPort) {
                 parentPort.postMessage({
@@ -203,6 +210,7 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                     pairIndex: pair.pairIndex,
                     symbol: pairSymbol,
                     status: "completed",
+                    engineUsed: output.engineUsed,
                 } as TopMeanWorkerMessage);
             }
         } catch (err) {
@@ -220,17 +228,18 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
         }
     }
 
-    return artifacts;
+    return { artifacts, engineUsage: { rust: rustCount, typescript: typescriptCount } };
 }
 
 if (!isMainThread && parentPort) {
     if (workerData) {
         processTopMeanShard(workerData as TopMeanWorkerTaskData)
-            .then((artifacts) => {
+            .then((result) => {
                 parentPort?.postMessage({
                     type: "shard_complete",
                     shardIndex: (workerData as TopMeanWorkerTaskData).shardIndex,
-                    artifacts,
+                    artifacts: result.artifacts,
+                    engineUsage: result.engineUsage,
                 } as TopMeanWorkerMessage);
             })
             .catch((err) => {
@@ -244,11 +253,12 @@ if (!isMainThread && parentPort) {
 
     parentPort.on("message", (msg: TopMeanWorkerTaskData) => {
         processTopMeanShard(msg)
-            .then((artifacts) => {
+            .then((result) => {
                 parentPort?.postMessage({
                     type: "shard_complete",
                     shardIndex: msg.shardIndex,
-                    artifacts,
+                    artifacts: result.artifacts,
+                    engineUsage: result.engineUsage,
                 } as TopMeanWorkerMessage);
             })
             .catch((err) => {

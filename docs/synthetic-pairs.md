@@ -78,7 +78,8 @@ Once synthetic data is loaded as the active chart, these features work normally:
 | Manual backtest | Works | No special handling needed |
 | Finder (single/random/genetic) | Works | Operates on active chart data |
 | Batch Backtest | Works | Replays the current strategy/settings across pasted real or synthetic pairs |
-| Batch Synthetic State Miner | Works | Mines Batch synthetic-pair states against real `<ASSET>USDT` target outcomes |
+| OPEN_SCORE USD (Batch) | Works | Historical open-position score replay over Batch synthetic/real pair artifacts |
+| S&P 500 TOP_MEAN (Batch) | Works | IBKR 4h synthetic-pair coordinator + optional multi-window stability gate |
 | Walk Forward | Works | Operates on active chart data |
 | Monte Carlo | Works | Uses backtest results |
 | Data Mining export | Works | Export CSV/JSON from loaded synthetic data |
@@ -96,20 +97,6 @@ Synthetic pairs produce strategy signals from the synthetic chart, but Polymarke
 The backtest signals come from the synthetic pair chart data, but win/loss is scored against the real Polymarket events for the outcome symbol you specified.
 
 This works because the `isSecondMarketPolymarketSupported` gate checks the outcome symbol (when set) instead of the chart symbol. If you leave the outcome symbol empty, it falls back to the chart symbol, which won't match any Polymarket market for synthetic pairs.
-
-## Batch Synthetic State Miner
-
-After a Batch Backtest run with `BASE+QUOTE` synthetic pairs, click **Mine Timing** to produce asset-level verdicts from the latest Batch artifacts.
-
-The miner:
-
-- uses the current Batch strategy, params, backtest settings, capital settings, and interval
-- keeps synthetic-pair signals/trades as predictor state
-- loads real target candles as `<ASSET>USDT`
-- labels historical states by real target forward returns, MFE, and MAE
-- reports `LONG`, `SHORT`, `WATCH`, `SKIP`, or `INCONCLUSIVE` with pre-OOS sample count, newest-window OOS sample count, lift, MFE/MAE, and analog distance
-
-It does not place trades, persist event-level samples, or treat raw agreement or raw positive drift as enough for entry. `LONG` and `SHORT` require pre-OOS and newest-window OOS analogs to agree, show lift over the OOS baseline, clear a minimum edge gate, keep favorable MFE/MAE, and stay within the analog-distance gate. Window splits are computed over the aligned mined candidate span, not the full target-asset history, so shorter synthetic-pair overlap can still have discovery/selection/OOS evidence. If target candles are missing, analog distance is too high, or OOS evidence is weak, the verdict is `INCONCLUSIVE`, `WATCH`, or `SKIP`.
 
 ## Unsupported Surfaces
 

@@ -60,6 +60,7 @@ import type { OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-eng
 import type { OpenScoreUsdReplayStreamEvent } from "./batch-open-score-usd-replay-stream-types";
 import type { StrategyParams, BacktestSettings } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
+import { escapeHtml } from "../html-escape";
 
 const BATCH_RESULTS_STORAGE = {
     key: "playground_batch_backtest_latest_results",
@@ -130,6 +131,15 @@ class BatchBacktestService {
     // either can disable the button — both pass the local preflight and the
     // second one steals ownership from the first.
     private runInFlight = false;
+    /**
+     * Shared UI single-flight lock for TOP_MEAN / stability (and any other
+     * Batch action that awaits before claiming ownership). Complements
+     * `runInFlight` so rapid clicks cannot stack overlapping POSTs or replace
+     * the active run id while another action is mid-preflight.
+     */
+    private batchActionInFlight = false;
+    /** True while the TOP_MEAN reattach serial poll loop owns the UI. */
+    private topMeanReattachInFlight = false;
     // Browser-generated server run id (audit Finding 5). Sent on the /run body
     // and the /stop body so the server can scope Stop to THIS run: a stale tab
     // cannot cancel a newer run. Reattach also matches this against the
@@ -298,13 +308,32 @@ class BatchBacktestService {
         });
     }
 
+    /**
+     * Synchronous shared busy gate for Batch UI actions. Fires before the first
+     * await so rapid clicks cannot stack normal Batch, TOP_MEAN, stability,
+     * analysis, Stop transitions, or reattach polling.
+     */
+    private isBatchUiBusy(): boolean {
+        return (
+            this.batchActionInFlight
+            || this.runInFlight
+            || this.analysisInFlight
+            || this.serverRunActive
+            || this.pendingStopPromise !== null
+            || this.activeTopMeanRunId !== null
+            || this.topMeanReattachInFlight
+            || this.reattachTimer !== null
+        );
+    }
+
     private async runBatch(): Promise<void> {
         // Audit single-flight finding: this guard fires BEFORE any await and
         // before the Run button is disabled, so a rapid double-click on Run
         // cannot stack two invocations that both pass local preflight. The
         // button-disable further down stays as the visual signal; this is the
-        // correctness gate.
-        if (this.runInFlight) {
+        // correctness gate. Also blocks when TOP_MEAN / analysis / reattach
+        // owns the UI so Stop and completion handlers stay coherent.
+        if (this.isBatchUiBusy()) {
             const dom = this.getDom();
             dom.batchBacktestStatus.textContent = "Batch is already running — wait for it to finish.";
             return;
@@ -2059,6 +2088,22 @@ class BatchBacktestService {
 
     public async runSp500TopMeanCoordinator(): Promise<void> {
         const dom = this.getDom();
+        // Shared single-flight: must run before the first await so rapid clicks
+        // cannot stack multiple coordinator POSTs or replace activeTopMeanRunId.
+        if (this.isBatchUiBusy()) {
+            dom.batchBacktestSp500TopMeanProgressText.textContent =
+                "Batch action already in progress — wait for it to finish.";
+            return;
+        }
+        this.batchActionInFlight = true;
+        try {
+            await this.runSp500TopMeanCoordinatorInner(dom);
+        } finally {
+            this.batchActionInFlight = false;
+        }
+    }
+
+    private async runSp500TopMeanCoordinatorInner(dom: BatchBacktestDom): Promise<void> {
         const strategyKey = state.currentStrategyKey;
         await ensureBuiltInStrategyLoaded(strategyKey);
         const strategy = strategyRegistry.get(strategyKey);
@@ -2146,6 +2191,7 @@ class BatchBacktestService {
             userAgent: typeof navigator === "undefined" ? null : navigator.userAgent,
         });
 
+        let reattachAfterError = false;
         try {
             await postBatchNdjson({
                 endpoint: "/api/batch-backtest/sp500-top-mean/run",
@@ -2169,12 +2215,7 @@ class BatchBacktestService {
                 },
                 handlers: {
                     onPreflight: (event: any) => {
-                        const c = event.counts;
-                        dom.batchBacktestSp500TopMeanCoverageSummary.innerHTML =
-                            `<strong>Universe Coverage:</strong> <strong>${c.pairCount} pairs</strong> | ` +
-                            `${c.usableTargetIntervalCount} target-usable assets | ` +
-                            `${c.sp500AssetsCount} total assets cataloged | ` +
-                            `${c.excludedAssetsCount} excluded assets`;
+                        this.renderTopMeanCoverageSummary(dom, event.counts);
                     },
                     onProgress: (event: any) => {
                         dom.batchBacktestSp500TopMeanProgressText.textContent = `[${event.phase}] ${event.text}`;
@@ -2222,6 +2263,11 @@ class BatchBacktestService {
             });
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
+            // The server may have accepted the run before the stream failed.
+            // Keep the persisted run id and recover through the serialized
+            // status poll instead of leaving the UI permanently busy or
+            // orphaning a live coordinator.
+            reattachAfterError = this.activeTopMeanRunId === runId;
             this.recordTopMeanDiagnostic("run.error", {
                 name: err instanceof Error ? err.name : typeof err,
                 message,
@@ -2229,9 +2275,13 @@ class BatchBacktestService {
             });
             dom.batchBacktestSp500TopMeanProgressText.textContent = `Status: ${message}`;
         } finally {
-            setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
-            setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, true);
-            setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
+            if (reattachAfterError) {
+                void this.reattachToInProgressTopMeanRun();
+            } else {
+                setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
+                setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, true);
+                setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
+            }
             this.recordTopMeanDiagnostic("ui.finally", {
                 runButtonDisplay: dom.batchBacktestSp500TopMeanRunBtn.style.display,
                 stopButtonDisplay: dom.batchBacktestSp500TopMeanStopBtn.style.display,
@@ -2251,6 +2301,20 @@ class BatchBacktestService {
      */
     public async runSp500TopMeanStabilityCheck(): Promise<void> {
         const dom = this.getDom();
+        if (this.isBatchUiBusy()) {
+            dom.batchBacktestSp500TopMeanProgressText.textContent =
+                "Batch action already in progress — wait for it to finish.";
+            return;
+        }
+        this.batchActionInFlight = true;
+        try {
+            await this.runSp500TopMeanStabilityCheckInner(dom);
+        } finally {
+            this.batchActionInFlight = false;
+        }
+    }
+
+    private async runSp500TopMeanStabilityCheckInner(dom: BatchBacktestDom): Promise<void> {
         const strategyKey = state.currentStrategyKey;
         await ensureBuiltInStrategyLoaded(strategyKey);
         const strategy = strategyRegistry.get(strategyKey);
@@ -2343,6 +2407,7 @@ class BatchBacktestService {
             stabilityStartDates: parsed,
         };
 
+        let reattachAfterError = false;
         try {
             await postBatchNdjson({
                 endpoint: "/api/batch-backtest/sp500-top-mean/run",
@@ -2362,12 +2427,7 @@ class BatchBacktestService {
                 },
                 handlers: {
                     onPreflight: (event: any) => {
-                        const c = event.counts;
-                        dom.batchBacktestSp500TopMeanCoverageSummary.innerHTML =
-                            `<strong>Universe Coverage:</strong> <strong>${c.pairCount} pairs</strong> | ` +
-                            `${c.usableTargetIntervalCount} target-usable assets | ` +
-                            `${c.sp500AssetsCount} total assets cataloged | ` +
-                            `${c.excludedAssetsCount} excluded assets`;
+                        this.renderTopMeanCoverageSummary(dom, event.counts);
                     },
                     onProgress: (event: any) => {
                         dom.batchBacktestSp500TopMeanProgressText.textContent =
@@ -2432,6 +2492,10 @@ class BatchBacktestService {
             });
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
+            // A stream failure does not prove that the server-side stability
+            // job stopped. Reattach by run id so a failed browser connection
+            // cannot strand the coordinator or leave the controls wedged.
+            reattachAfterError = this.activeTopMeanRunId === runId;
             this.recordTopMeanDiagnostic("stability.run.error", {
                 name: err instanceof Error ? err.name : typeof err,
                 message,
@@ -2439,10 +2503,24 @@ class BatchBacktestService {
             });
             dom.batchBacktestSp500TopMeanProgressText.textContent = `Status: ${message}`;
         } finally {
-            setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
-            setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, true);
-            setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
+            if (reattachAfterError) {
+                void this.reattachToInProgressTopMeanRun();
+            } else {
+                setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
+                setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, true);
+                setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
+            }
         }
+    }
+
+    /** Safe coverage summary — all numeric counts, no untrusted strings. */
+    private renderTopMeanCoverageSummary(dom: BatchBacktestDom, counts: any): void {
+        const c = counts ?? {};
+        dom.batchBacktestSp500TopMeanCoverageSummary.innerHTML =
+            `<strong>Universe Coverage:</strong> <strong>${escapeHtml(c.pairCount)} pairs</strong> | ` +
+            `${escapeHtml(c.usableTargetIntervalCount)} target-usable assets | ` +
+            `${escapeHtml(c.sp500AssetsCount)} total assets cataloged | ` +
+            `${escapeHtml(c.excludedAssetsCount)} excluded assets`;
     }
 
     /** Render a single window's snapshot card as it arrives mid-stability-run. */
@@ -2451,11 +2529,11 @@ class BatchBacktestService {
         const snap = event.currentSnapshot?.snapshot ?? event.currentSnapshot;
         const winners: any[] = Array.isArray(snap?.winners) ? snap.winners : [];
         const winnersText = winners.length > 0
-            ? winners.map((w) => `${w.asset} (mean=${Number(w.mean ?? 0).toFixed(2)})`).join(", ")
-            : `no pick (${snap?.reason ?? "empty"})`;
+            ? winners.map((w) => `${escapeHtml(w.asset)} (mean=${Number(w.mean ?? 0).toFixed(2)})`).join(", ")
+            : `no pick (${escapeHtml(snap?.reason ?? "empty")})`;
         const card = document.createElement("div");
         card.style.cssText = "background: var(--surface-1, #131722); padding: 8px 12px; margin-bottom: 6px; border-radius: 4px; border-left: 3px solid var(--accent-color, #2962ff); font-size: 12px;";
-        card.innerHTML = `<strong>${label}</strong> | openPositions=${snap?.openPositions ?? 0} | winners=${winnersText}`;
+        card.innerHTML = `<strong>${escapeHtml(label)}</strong> | openPositions=${escapeHtml(snap?.openPositions ?? 0)} | winners=${winnersText}`;
         dom.batchBacktestSp500TopMeanResults.appendChild(card);
     }
 
@@ -2487,12 +2565,12 @@ class BatchBacktestService {
             const snap = w.snapshot;
             const winners = Array.isArray(snap?.winners) ? snap.winners : [];
             const winnersText = winners.length > 0
-                ? winners.map((x: any) => `<strong>${x.asset}</strong> (mean=${Number(x.mean ?? 0).toFixed(2)})`).join(", ")
-                : `<span style="color: var(--text-dim, #787b86);">(no pick — ${snap?.reason ?? "empty"})</span>`;
+                ? winners.map((x: any) => `<strong>${escapeHtml(x.asset)}</strong> (mean=${Number(x.mean ?? 0).toFixed(2)})`).join(", ")
+                : `<span style="color: var(--text-dim, #787b86);">(no pick — ${escapeHtml(snap?.reason ?? "empty")})</span>`;
             const asOfLabel = typeof snap?.asOf === "number"
                 ? new Date(snap.asOf * 1000).toISOString().slice(0, 10)
                 : "—";
-            html += `<tr><td>${w.label}</td><td>${asOfLabel}</td><td>${snap?.reason ?? ""}</td><td>${snap?.openPositions ?? 0}</td><td>${winnersText}</td></tr>`;
+            html += `<tr><td>${escapeHtml(w.label)}</td><td>${escapeHtml(asOfLabel)}</td><td>${escapeHtml(snap?.reason ?? "")}</td><td>${escapeHtml(snap?.openPositions ?? 0)}</td><td>${winnersText}</td></tr>`;
         }
         html += `</tbody></table>`;
         dom.batchBacktestSp500TopMeanResults.innerHTML = html;
@@ -2560,10 +2638,10 @@ class BatchBacktestService {
             if (top) {
                 const sharePct = (top.share * 100).toFixed(1) + "%";
                 html += `<div style="flex: 1; min-width: 180px; background: var(--surface-1, #131722); padding: 8px 12px; border-radius: 4px; border-left: 3px solid #26a69a;">`;
-                html += `<div style="font-size: 11px; color: var(--text-dim, #787b86); text-transform: uppercase;">Horizon ${h.horizon} Bars</div>`;
-                html += `<div style="font-size: 16px; font-weight: bold; margin: 2px 0;">${top.asset}</div>`;
-                html += `<div style="font-size: 12px; color: var(--text-color, #d1d4dc);">${top.events?.toLocaleString()} events (${sharePct} share)</div>`;
-                html += `<div style="font-size: 11px; color: ${(top.delta ?? 0) >= 0 ? '#26a69a' : '#ef5350'}; margin-top: 2px;">Delta: ${formatSignedPercent(top.delta)}</div>`;
+                html += `<div style="font-size: 11px; color: var(--text-dim, #787b86); text-transform: uppercase;">Horizon ${escapeHtml(h.horizon)} Bars</div>`;
+                html += `<div style="font-size: 16px; font-weight: bold; margin: 2px 0;">${escapeHtml(top.asset)}</div>`;
+                html += `<div style="font-size: 12px; color: var(--text-color, #d1d4dc);">${escapeHtml(top.events?.toLocaleString())} events (${escapeHtml(sharePct)} share)</div>`;
+                html += `<div style="font-size: 11px; color: ${(top.delta ?? 0) >= 0 ? '#26a69a' : '#ef5350'}; margin-top: 2px;">Delta: ${escapeHtml(formatSignedPercent(top.delta))}</div>`;
                 html += `</div>`;
             }
         }
@@ -2572,8 +2650,8 @@ class BatchBacktestService {
         // 2. Detailed horizon tables with rank #1 badge
         for (const h of summary.horizons) {
             html += `<div style="margin-top: 16px; font-weight: bold; font-size: 13px;">`;
-            html += `Horizon ${h.horizon} bars | ${h.events?.toLocaleString()} decision events | `;
-            html += `TOP_MEAN: top=${formatSignedPercent(h.topMean?.topMean)} random=${formatSignedPercent(h.topMean?.randomMean)} delta=${formatSignedPercent(h.topMean?.delta)}`;
+            html += `Horizon ${escapeHtml(h.horizon)} bars | ${escapeHtml(h.events?.toLocaleString())} decision events | `;
+            html += `TOP_MEAN: top=${escapeHtml(formatSignedPercent(h.topMean?.topMean))} random=${escapeHtml(formatSignedPercent(h.topMean?.randomMean))} delta=${escapeHtml(formatSignedPercent(h.topMean?.delta))}`;
             html += `</div>`;
 
             html += `<table class="finder-table" style="width:100%; margin-top:6px; font-size:12px;">`;
@@ -2585,12 +2663,12 @@ class BatchBacktestService {
                 const isTop = rank === 1;
                 html += `<tr style="${isTop ? 'background: rgba(38, 166, 154, 0.1); font-weight: 600;' : ''}">`;
                 html += `<td>${isTop ? '🥇 1' : rank}</td>`;
-                html += `<td><strong>${row.asset}</strong> ${isTop ? '<span style="font-size:10px; background:#26a69a; color:#fff; padding:1px 4px; border-radius:3px; margin-left:4px;">TOP</span>' : ''}</td>`;
-                html += `<td>${row.events?.toLocaleString()}</td>`;
-                html += `<td>${sharePct}</td>`;
-                html += `<td>${formatSignedPercent(row.topMean)}</td>`;
-                html += `<td>${formatSignedPercent(row.randomMean)}</td>`;
-                html += `<td>${formatSignedPercent(row.delta)}</td>`;
+                html += `<td><strong>${escapeHtml(row.asset)}</strong> ${isTop ? '<span style="font-size:10px; background:#26a69a; color:#fff; padding:1px 4px; border-radius:3px; margin-left:4px;">TOP</span>' : ''}</td>`;
+                html += `<td>${escapeHtml(row.events?.toLocaleString())}</td>`;
+                html += `<td>${escapeHtml(sharePct)}</td>`;
+                html += `<td>${escapeHtml(formatSignedPercent(row.topMean))}</td>`;
+                html += `<td>${escapeHtml(formatSignedPercent(row.randomMean))}</td>`;
+                html += `<td>${escapeHtml(formatSignedPercent(row.delta))}</td>`;
                 html += `</tr>`;
                 rank++;
             }
@@ -2638,8 +2716,8 @@ class BatchBacktestService {
             const meanSign = mean >= 0 ? "+" : "";
             html += `<div style="flex: 1; min-width: 180px; background: var(--surface-1, #131722); padding: 8px 12px; border-radius: 4px; border-left: 3px solid #26a69a;">`;
             html += `<div style="font-size: 11px; color: var(--text-dim, #787b86); text-transform: uppercase;">${winners.length > 1 ? "Tied Winner" : "Current Pick"}</div>`;
-            html += `<div style="font-size: 16px; font-weight: bold; margin: 2px 0;">${w.asset}</div>`;
-            html += `<div style="font-size: 12px; color: var(--text-color, #d1d4dc);">mean=${meanSign}${mean.toFixed(2)} | score=${w.score} | activePairs=${w.activePairs}</div>`;
+            html += `<div style="font-size: 16px; font-weight: bold; margin: 2px 0;">${escapeHtml(w.asset)}</div>`;
+            html += `<div style="font-size: 12px; color: var(--text-color, #d1d4dc);">mean=${meanSign}${mean.toFixed(2)} | score=${escapeHtml(w.score)} | activePairs=${escapeHtml(w.activePairs)}</div>`;
             html += `</div>`;
         }
         html += `</div>`;
@@ -2654,7 +2732,7 @@ class BatchBacktestService {
             const mean = Number(candidate.mean ?? 0);
             const meanSign = mean >= 0 ? "+" : "";
             const isTop = index === 0;
-            html += `<tr style="${isTop ? "background: rgba(38, 166, 154, 0.1); font-weight: 600;" : ""}"><td>${isTop ? "🥇 1" : index + 1}</td><td><strong>${candidate.asset}</strong></td><td>${meanSign}${mean.toFixed(2)}</td><td>${candidate.score}</td><td>${candidate.activePairs}</td></tr>`;
+            html += `<tr style="${isTop ? "background: rgba(38, 166, 154, 0.1); font-weight: 600;" : ""}"><td>${isTop ? "🥇 1" : index + 1}</td><td><strong>${escapeHtml(candidate.asset)}</strong></td><td>${meanSign}${mean.toFixed(2)}</td><td>${escapeHtml(candidate.score)}</td><td>${escapeHtml(candidate.activePairs)}</td></tr>`;
         });
         html += `</tbody></table>`;
         html += `</div>`;
@@ -2831,75 +2909,108 @@ class BatchBacktestService {
         if (!persisted?.runId) return;
 
         const dom = this.getDom();
-        this.activeTopMeanRunId = persisted.runId;
-        this.topMeanDiagnosticRunId = persisted.runId;
-        this.recordTopMeanDiagnostic("reattach.start", { runId: persisted.runId });
+        const runId = persisted.runId;
+        this.activeTopMeanRunId = runId;
+        this.topMeanDiagnosticRunId = runId;
+        this.topMeanReattachInFlight = true;
+        this.recordTopMeanDiagnostic("reattach.start", { runId });
         // A stability run reattach (runId prefix) hides BOTH run buttons so the
         // user cannot start a conflicting run while reattaching.
-        const isStabilityReattach = persisted.runId.startsWith("sp500_stability_");
+        const isStabilityReattach = runId.startsWith("sp500_stability_");
         setVisible(dom.batchBacktestSp500TopMeanRunBtn, false);
         if (isStabilityReattach) {
             setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, false);
         }
         setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
 
-        const runId = persisted.runId;
-        const pollInterval = setInterval(async () => {
-            try {
-                const res = await fetch(`/api/batch-backtest/sp500-top-mean/status?runId=${runId}`);
-                this.recordTopMeanDiagnostic("reattach.response", {
-                    runId,
-                    status: res.status,
-                    ok: res.ok,
-                });
-                if (!res.ok) {
-                    clearInterval(pollInterval);
-                    setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
-                    setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
-                    return;
-                }
-                const status = await res.json();
-                this.recordTopMeanDiagnostic("reattach.status", status);
-                dom.batchBacktestSp500TopMeanProgressText.textContent = `[${status.phase}] ${status.progressText}`;
+        const delay = (ms: number) => new Promise<void>((resolve) => {
+            setTimeout(resolve, ms);
+        });
 
-                if (status.status === "completed" || status.status === "failed" || status.status === "interrupted") {
-                    clearInterval(pollInterval);
-                    setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
-                    setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, true);
-                    setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
-                    if (status.stabilityResult) {
-                        // Stability run reattach: render the terminal comparison.
-                        this.latestTopMeanStabilityResult = status.stabilityResult;
-                        this.latestTopMeanResult = null;
-                        this.renderStabilityResults(dom, status.stabilityResult);
-                        dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
-                        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
-                    } else if (status.result) {
-                        this.latestTopMeanResult = status.result;
-                        this.renderTopMeanResults(dom, status.result);
-                        dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
-                        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
-                    }
-                    writePersistedJson({
-                        key: "sp500_top_mean_active_run_id",
-                        schema: "sp500_top_mean_active_run_id.v1",
-                        version: 1,
-                        data: null,
+        // Serialized polling (mirrors normal Batch reattach). Never use
+        // setInterval(async ...) — overlapping status callbacks can restore
+        // buttons or replace results from a stale terminal response.
+        try {
+            while (this.activeTopMeanRunId === runId) {
+                try {
+                    const res = await fetch(
+                        `/api/batch-backtest/sp500-top-mean/status?runId=${encodeURIComponent(runId)}`,
+                        { cache: "no-store" },
+                    );
+                    if (this.activeTopMeanRunId !== runId) return;
+                    this.recordTopMeanDiagnostic("reattach.response", {
+                        runId,
+                        status: res.status,
+                        ok: res.ok,
                     });
-                } else if (status.stabilityProgress) {
-                    // Mid-run stability reattach: show window progress. The
-                    // stability Run button stays hidden; Stop stays visible.
-                    setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, false);
-                    setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
+                    if (!res.ok) {
+                        setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
+                        setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, true);
+                        setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
+                        this.activeTopMeanRunId = null;
+                        writePersistedJson({
+                            key: "sp500_top_mean_active_run_id",
+                            schema: "sp500_top_mean_active_run_id.v1",
+                            version: 1,
+                            data: null,
+                        });
+                        return;
+                    }
+                    const status = await res.json();
+                    if (this.activeTopMeanRunId !== runId) return;
+                    this.recordTopMeanDiagnostic("reattach.status", status);
+                    dom.batchBacktestSp500TopMeanProgressText.textContent =
+                        `[${status.phase}] ${status.progressText}`;
+
+                    const terminal = status.status === "completed"
+                        || status.status === "failed"
+                        || status.status === "interrupted";
+                    if (terminal) {
+                        setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
+                        setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, true);
+                        setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
+                        if (status.stabilityResult) {
+                            this.latestTopMeanStabilityResult = status.stabilityResult;
+                            this.latestTopMeanResult = null;
+                            this.renderStabilityResults(dom, status.stabilityResult);
+                            dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
+                            dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
+                        } else if (status.result) {
+                            this.latestTopMeanResult = status.result;
+                            this.renderTopMeanResults(dom, status.result);
+                            dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
+                            dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
+                        }
+                        writePersistedJson({
+                            key: "sp500_top_mean_active_run_id",
+                            schema: "sp500_top_mean_active_run_id.v1",
+                            version: 1,
+                            data: null,
+                        });
+                        this.activeTopMeanRunId = null;
+                        return;
+                    }
+                    if (status.stabilityProgress) {
+                        setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, false);
+                        setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
+                    }
+                } catch (err) {
+                    if (this.activeTopMeanRunId !== runId) return;
+                    this.recordTopMeanDiagnostic("reattach.error", {
+                        runId,
+                        name: err instanceof Error ? err.name : typeof err,
+                        message: err instanceof Error ? err.message : String(err),
+                    });
                 }
-            } catch (err) {
-                this.recordTopMeanDiagnostic("reattach.error", {
-                    runId,
-                    name: err instanceof Error ? err.name : typeof err,
-                    message: err instanceof Error ? err.message : String(err),
-                });
+                await delay(2000);
             }
-        }, 2000);
+        } finally {
+            if (this.activeTopMeanRunId === runId) {
+                // Loop exited without a terminal status (e.g. Stop cleared id
+                // from another path). Leave button state to that path.
+            }
+            this.topMeanReattachInFlight = false;
+        }
     }
 }
 
