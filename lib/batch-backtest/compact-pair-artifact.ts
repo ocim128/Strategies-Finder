@@ -16,6 +16,15 @@ export interface CompactPairArtifact {
     baseSymbol: string;
     quoteSymbol: string;
     trades: CompactTrade[];
+    /**
+     * Unix-second timestamp of the last closed candle the worker fed to
+     * `executeBacktest(...)`. Used by the Phase-1 current-snapshot reducer to
+     * align artifacts to a common cross-sectional endpoint before voting.
+     * Optional for backward compatibility: v1 artifacts written before this
+     * field existed omit it and remain readable, but cannot prove a precise
+     * snapshot timestamp, so the reducer excludes them from the current vote.
+     */
+    dataEndTime?: number;
 }
 
 export interface TopMeanRunManifest {

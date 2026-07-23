@@ -43,17 +43,44 @@ export function getRunDir(runId: string, baseDir?: string): string {
     return join(root, runId);
 }
 
-export function getManifestPath(runId: string, baseDir?: string): string {
-    return join(getRunDir(runId, baseDir), "manifest.json");
+/**
+ * Optional window key for the stability mode's per-start-date artifact
+ * partitioning. When set, path helpers resolve to
+ * `<runDir>/windows/<windowKey>/...` so each stability window gets its own
+ * manifest + shards and does not overwrite siblings. `windowKey` must be a
+ * safe path segment (validated identically to runId: `[A-Za-z0-9_-]`).
+ */
+const SAFE_WINDOW_KEY_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+export function isValidWindowKey(windowKey: string): boolean {
+    return SAFE_WINDOW_KEY_RE.test(windowKey);
 }
 
-export function getShardsDir(runId: string, baseDir?: string): string {
-    return join(getRunDir(runId, baseDir), "shards");
+function resolveWindowSubdir(windowKey: string | undefined): string {
+    if (windowKey === undefined) return "";
+    if (!isValidWindowKey(windowKey)) {
+        throw new Error("windowKey must be a safe path segment ([A-Za-z0-9_-]{1,64})");
+    }
+    return join("windows", windowKey);
 }
 
-export function getShardPath(runId: string, shardIndex: number, baseDir?: string): string {
+export function getManifestPath(runId: string, baseDir?: string, windowKey?: string): string {
+    const sub = resolveWindowSubdir(windowKey);
+    return sub
+        ? join(getRunDir(runId, baseDir), sub, "manifest.json")
+        : join(getRunDir(runId, baseDir), "manifest.json");
+}
+
+export function getShardsDir(runId: string, baseDir?: string, windowKey?: string): string {
+    const sub = resolveWindowSubdir(windowKey);
+    return sub
+        ? join(getRunDir(runId, baseDir), sub, "shards")
+        : join(getRunDir(runId, baseDir), "shards");
+}
+
+export function getShardPath(runId: string, shardIndex: number, baseDir?: string, windowKey?: string): string {
     const shardFileName = `${String(shardIndex).padStart(6, "0")}.json`;
-    return join(getShardsDir(runId, baseDir), shardFileName);
+    return join(getShardsDir(runId, baseDir, windowKey), shardFileName);
 }
 
 export function computeRunFingerprint(payload: {
@@ -79,14 +106,14 @@ export function atomicWriteJsonSync(targetPath: string, data: unknown): void {
     renameSync(tempPath, targetPath);
 }
 
-export function saveManifest(manifest: TopMeanRunManifest, baseDir?: string): void {
+export function saveManifest(manifest: TopMeanRunManifest, baseDir?: string, windowKey?: string): void {
     manifest.updatedAt = Date.now();
-    const manifestPath = getManifestPath(manifest.runId, baseDir);
+    const manifestPath = getManifestPath(manifest.runId, baseDir, windowKey);
     atomicWriteJsonSync(manifestPath, manifest);
 }
 
-export function loadManifest(runId: string, baseDir?: string): TopMeanRunManifest | null {
-    const manifestPath = getManifestPath(runId, baseDir);
+export function loadManifest(runId: string, baseDir?: string, windowKey?: string): TopMeanRunManifest | null {
+    const manifestPath = getManifestPath(runId, baseDir, windowKey);
     if (!existsSync(manifestPath)) return null;
     try {
         const content = readFileSync(manifestPath, "utf8");
@@ -101,8 +128,9 @@ export function writeShardArtifacts(
     shardIndex: number,
     artifacts: CompactPairArtifact[],
     baseDir?: string,
+    windowKey?: string,
 ): void {
-    const shardPath = getShardPath(runId, shardIndex, baseDir);
+    const shardPath = getShardPath(runId, shardIndex, baseDir, windowKey);
     atomicWriteJsonSync(shardPath, artifacts);
 }
 
@@ -110,8 +138,9 @@ export function readShardArtifacts(
     runId: string,
     shardIndex: number,
     baseDir?: string,
+    windowKey?: string,
 ): CompactPairArtifact[] | null {
-    const shardPath = getShardPath(runId, shardIndex, baseDir);
+    const shardPath = getShardPath(runId, shardIndex, baseDir, windowKey);
     if (!existsSync(shardPath)) return null;
     try {
         const content = readFileSync(shardPath, "utf8");
@@ -124,15 +153,39 @@ export function readShardArtifacts(
 export async function* iterateRunCompactArtifacts(
     runId: string,
     baseDir?: string,
+    windowKey?: string,
 ): AsyncGenerator<BatchSyntheticPairArtifactAdapter> {
-    const manifest = loadManifest(runId, baseDir);
+    const manifest = loadManifest(runId, baseDir, windowKey);
     if (!manifest) return;
 
     for (const shardIndex of manifest.completedShards) {
-        const shardArtifacts = readShardArtifacts(runId, shardIndex, baseDir);
+        const shardArtifacts = readShardArtifacts(runId, shardIndex, baseDir, windowKey);
         if (!shardArtifacts) continue;
         for (const artifact of shardArtifacts) {
             yield toBatchSyntheticPairAdapter(artifact);
+        }
+    }
+}
+
+/**
+ * Raw compact-artifact iterator (no adapter). Used by the Phase-1 current
+ * snapshot reducer, which needs the optional `dataEndTime` field directly off
+ * the stored artifact. Reads the same completed shards as
+ * {@link iterateRunCompactArtifacts}; the only difference is the yield shape.
+ */
+export async function* iterateRunRawCompactArtifacts(
+    runId: string,
+    baseDir?: string,
+    windowKey?: string,
+): AsyncGenerator<CompactPairArtifact> {
+    const manifest = loadManifest(runId, baseDir, windowKey);
+    if (!manifest) return;
+
+    for (const shardIndex of manifest.completedShards) {
+        const shardArtifacts = readShardArtifacts(runId, shardIndex, baseDir, windowKey);
+        if (!shardArtifacts) continue;
+        for (const artifact of shardArtifacts) {
+            yield artifact;
         }
     }
 }

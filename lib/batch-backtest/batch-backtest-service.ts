@@ -175,6 +175,8 @@ class BatchBacktestService {
     private pendingServerRunCacheStats: BatchBenchmarkCacheStats | null = null;
 
     private latestTopMeanResult: any = null;
+    /** Terminal stability comparison from the last stability run. */
+    private latestTopMeanStabilityResult: any = null;
     private activeTopMeanRunId: string | null = null;
     private topMeanDiagnosticRunId: string | null = null;
     private topMeanDiagnosticEntries: Array<{ at: string; type: string; data?: unknown }> = [];
@@ -240,6 +242,9 @@ class BatchBacktestService {
         });
         dom.batchBacktestSp500TopMeanCopyDiagnosticBtn.addEventListener("click", () => {
             void this.copySp500TopMeanDiagnostic();
+        });
+        dom.batchBacktestSp500TopMeanStabilityRunBtn.addEventListener("click", () => {
+            void this.runSp500TopMeanStabilityCheck();
         });
         dom.batchBacktestSymbolTemplate.addEventListener("change", () => {
             const key = dom.batchBacktestSymbolTemplate.value as BatchSymbolTemplateKey;
@@ -2093,6 +2098,7 @@ class BatchBacktestService {
         });
 
         setVisible(dom.batchBacktestSp500TopMeanRunBtn, false);
+        setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, false);
         setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
         dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
@@ -2189,6 +2195,7 @@ class BatchBacktestService {
                             return;
                         }
                         this.latestTopMeanResult = event.result;
+                        this.latestTopMeanStabilityResult = null;
                         this.renderTopMeanResults(dom, event.result);
                         dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
                         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
@@ -2223,6 +2230,7 @@ class BatchBacktestService {
             dom.batchBacktestSp500TopMeanProgressText.textContent = `Status: ${message}`;
         } finally {
             setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
+            setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, true);
             setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
             this.recordTopMeanDiagnostic("ui.finally", {
                 runButtonDisplay: dom.batchBacktestSp500TopMeanRunBtn.style.display,
@@ -2231,6 +2239,274 @@ class BatchBacktestService {
                 progressText: dom.batchBacktestSp500TopMeanProgressText.textContent,
             });
         }
+    }
+
+    /**
+     * Phase-2 gate check: run the current TOP_MEAN snapshot across N user-chosen
+     * start dates (plus full history) and show a stability/diff view. If every
+     * window picks the same winner, continuation parity holds and incremental
+     * checkpoints (Phase 2) are viable for this config. POSTs to the SAME run
+     * endpoint with `stabilityStartDates`; the engine then emits a terminal
+     * `stability_done` event with the comparison. UI-only — no CLI.
+     */
+    public async runSp500TopMeanStabilityCheck(): Promise<void> {
+        const dom = this.getDom();
+        const strategyKey = state.currentStrategyKey;
+        await ensureBuiltInStrategyLoaded(strategyKey);
+        const strategy = strategyRegistry.get(strategyKey);
+        if (!strategyKey || !strategy) {
+            dom.batchBacktestSp500TopMeanProgressText.textContent =
+                "Error: Custom/browser strategies cannot be run in Node worker coordinator. Please select a built-in strategy.";
+            return;
+        }
+
+        if (!dom.batchBacktestSp500TopMeanStabilityEnabled.checked) {
+            dom.batchBacktestSp500TopMeanProgressText.textContent =
+                "Error: Enable the Stability check checkbox, or use Run TOP_MEAN for a normal run.";
+            return;
+        }
+
+        // Parse comma-separated UTC dates (YYYY-MM-DD -> UTC midnight seconds).
+        const datesText = dom.batchBacktestSp500TopMeanStabilityDates.value.trim();
+        const parsed: number[] = [];
+        for (const tok of datesText.split(",").map((s) => s.trim()).filter(Boolean)) {
+            const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(tok);
+            const year = parts ? Number(parts[1]) : NaN;
+            const month = parts ? Number(parts[2]) : NaN;
+            const day = parts ? Number(parts[3]) : NaN;
+            const date = Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)
+                ? new Date(Date.UTC(year, month - 1, day))
+                : null;
+            const valid = date !== null
+                && date.getUTCFullYear() === year
+                && date.getUTCMonth() === month - 1
+                && date.getUTCDate() === day;
+            if (!valid) {
+                dom.batchBacktestSp500TopMeanProgressText.textContent =
+                    `Error: Invalid start date "${tok}". Use YYYY-MM-DD, comma-separated.`;
+                return;
+            }
+            parsed.push(Math.floor(date.getTime() / 1000));
+        }
+        if (parsed.length === 0) {
+            dom.batchBacktestSp500TopMeanProgressText.textContent =
+                "Error: Provide at least one start date (YYYY-MM-DD, comma-separated).";
+            return;
+        }
+
+        const workerCountRaw = Number.parseInt(dom.batchBacktestSp500TopMeanWorkers.value, 10);
+        const workerCount = Number.isFinite(workerCountRaw) && workerCountRaw > 0 ? workerCountRaw : undefined;
+        const maxPairsRaw = Number.parseInt(dom.batchBacktestSp500TopMeanMaxPairs.value, 10);
+        const maxPairs = Number.isFinite(maxPairsRaw) && maxPairsRaw > 0 ? maxPairsRaw : undefined;
+
+        const runId = `sp500_stability_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        this.activeTopMeanRunId = runId;
+        this.topMeanDiagnosticRunId = runId;
+        this.topMeanDiagnosticEntries = [];
+        this.topMeanDiagnosticProgressSeen = 0;
+        writePersistedJson({
+            key: "sp500_top_mean_active_run_id",
+            schema: "sp500_top_mean_active_run_id.v1",
+            version: 1,
+            data: { runId },
+        });
+
+        setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, false);
+        setVisible(dom.batchBacktestSp500TopMeanRunBtn, false);
+        setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
+        dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
+        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
+        this.latestTopMeanResult = null;
+        this.latestTopMeanStabilityResult = null;
+
+        dom.batchBacktestSp500TopMeanCoverageSummary.innerHTML = "";
+        dom.batchBacktestSp500TopMeanProgressText.textContent =
+            `Starting stability check: ${parsed.length} start date${parsed.length === 1 ? "" : "s"} + full history...`;
+        dom.batchBacktestSp500TopMeanResults.innerHTML = "";
+        this.recordTopMeanDiagnostic("stability.ui.started", { runId, windowCount: parsed.length + 1 });
+
+        const pairListTextRaw = dom.batchBacktestSymbols ? dom.batchBacktestSymbols.value.trim() : "";
+        const pairListText = pairListTextRaw.length > 0 ? pairListTextRaw : undefined;
+
+        const payload = {
+            runId,
+            strategyKey,
+            strategyParams: paramManager.getValues(strategy),
+            backtestSettings: backtestService.getBacktestSettings(),
+            capitalSettings: backtestService.getCapitalSettings(),
+            interval: "4h",
+            horizons: [12],
+            workerCount,
+            maxPairs,
+            pairListText,
+            useRustEnginePreference: shouldUseRustEngine(),
+            stabilityStartDates: parsed,
+        };
+
+        try {
+            await postBatchNdjson({
+                endpoint: "/api/batch-backtest/sp500-top-mean/run",
+                body: payload,
+                terminalTypes: ["stability_done", "done", "fatal"],
+                onResponse: (response) => {
+                    this.recordTopMeanDiagnostic("stability.http.response", {
+                        status: response.status,
+                        ok: response.ok,
+                    });
+                },
+                onNonOkResponse: (status, errorPayload) => {
+                    this.recordTopMeanDiagnostic("stability.http.error_response", { status, payload: errorPayload });
+                },
+                onEvent: (event: any) => {
+                    this.recordTopMeanNdjsonEvent(event);
+                },
+                handlers: {
+                    onPreflight: (event: any) => {
+                        const c = event.counts;
+                        dom.batchBacktestSp500TopMeanCoverageSummary.innerHTML =
+                            `<strong>Universe Coverage:</strong> <strong>${c.pairCount} pairs</strong> | ` +
+                            `${c.usableTargetIntervalCount} target-usable assets | ` +
+                            `${c.sp500AssetsCount} total assets cataloged | ` +
+                            `${c.excludedAssetsCount} excluded assets`;
+                    },
+                    onProgress: (event: any) => {
+                        dom.batchBacktestSp500TopMeanProgressText.textContent =
+                            event.phase === "stability"
+                                ? `[stability ${event.currentWindow ?? "?"}/${event.totalWindows ?? "?"}] ${event.text}`
+                                : `[${event.phase}] ${event.text}`;
+                    },
+                    onCurrentSnapshot: (event: any) => {
+                        // Per-window snapshot arriving mid-run. Render each as a
+                        // card so the user sees windows completing live. The
+                        // terminal stability_done replaces this with the full
+                        // comparison table.
+                        if (event.currentSnapshot) {
+                            this.appendStabilityWindowCard(dom, event);
+                        }
+                    },
+                    onDone: (event: any) => {
+                        // Stability mode does not emit a normal `done` with a
+                        // result; it emits `stability_done`. The `done` here is
+                        // the interrupted path only.
+                        if (event.interrupted) {
+                            this.latestTopMeanStabilityResult = null;
+                            dom.batchBacktestSp500TopMeanProgressText.textContent = "Stability check stopped.";
+                            this.activeTopMeanRunId = null;
+                            writePersistedJson({
+                                key: "sp500_top_mean_active_run_id",
+                                schema: "sp500_top_mean_active_run_id.v1",
+                                version: 1,
+                                data: null,
+                            });
+                        }
+                    },
+                    onStabilityDone: (event: any) => {
+                        this.latestTopMeanStabilityResult = event.comparison;
+                        this.latestTopMeanResult = null;
+                        this.renderStabilityResults(dom, event.comparison);
+                        dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
+                        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
+                        const verdict = event.comparison?.parityAssumptionHolds ? "PASS" : "BLOCKED";
+                        const agreement = Number(event.comparison?.agreementPct ?? 0).toFixed(1);
+                        dom.batchBacktestSp500TopMeanProgressText.textContent =
+                            `Stability check complete: gate ${verdict} (agreement ${agreement}%).`;
+                        this.activeTopMeanRunId = null;
+                        writePersistedJson({
+                            key: "sp500_top_mean_active_run_id",
+                            schema: "sp500_top_mean_active_run_id.v1",
+                            version: 1,
+                            data: null,
+                        });
+                    },
+                    onFatal: (event: any) => {
+                        dom.batchBacktestSp500TopMeanProgressText.textContent = `Error: ${event.error}`;
+                        this.activeTopMeanRunId = null;
+                        writePersistedJson({
+                            key: "sp500_top_mean_active_run_id",
+                            schema: "sp500_top_mean_active_run_id.v1",
+                            version: 1,
+                            data: null,
+                        });
+                    },
+                },
+            });
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.recordTopMeanDiagnostic("stability.run.error", {
+                name: err instanceof Error ? err.name : typeof err,
+                message,
+                stack: err instanceof Error ? err.stack : undefined,
+            });
+            dom.batchBacktestSp500TopMeanProgressText.textContent = `Status: ${message}`;
+        } finally {
+            setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
+            setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, true);
+            setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
+        }
+    }
+
+    /** Render a single window's snapshot card as it arrives mid-stability-run. */
+    private appendStabilityWindowCard(dom: BatchBacktestDom, event: any): void {
+        const label = event.windowLabel ?? `Window ${(event.windowIndex ?? 0) + 1}`;
+        const snap = event.currentSnapshot?.snapshot ?? event.currentSnapshot;
+        const winners: any[] = Array.isArray(snap?.winners) ? snap.winners : [];
+        const winnersText = winners.length > 0
+            ? winners.map((w) => `${w.asset} (mean=${Number(w.mean ?? 0).toFixed(2)})`).join(", ")
+            : `no pick (${snap?.reason ?? "empty"})`;
+        const card = document.createElement("div");
+        card.style.cssText = "background: var(--surface-1, #131722); padding: 8px 12px; margin-bottom: 6px; border-radius: 4px; border-left: 3px solid var(--accent-color, #2962ff); font-size: 12px;";
+        card.innerHTML = `<strong>${label}</strong> | openPositions=${snap?.openPositions ?? 0} | winners=${winnersText}`;
+        dom.batchBacktestSp500TopMeanResults.appendChild(card);
+    }
+
+    /**
+     * Terminal stability comparison view. Mirrors the walk-forward IS/OOS
+     * side-by-side table precedent: one row per window, plus a verdict banner.
+     */
+    private renderStabilityResults(dom: BatchBacktestDom, comparison: any): void {
+        if (!comparison || !Array.isArray(comparison.windows)) return;
+        let html = "";
+
+        const verdict = comparison.parityAssumptionHolds;
+        const verdictColor = verdict ? "#26a69a" : "#ef5350";
+        const verdictText = verdict
+            ? "PASS — continuation parity holds; Phase 2 (incremental checkpoints) viable for this config"
+            : "BLOCKED — winners diverge across start dates; Phase 2 not safe until path-dependence is resolved";
+        html += `<div style="background: var(--surface-2, #1e222d); border: 1px solid var(--border-color, #2a2e39); border-left: 4px solid ${verdictColor}; border-radius: 6px; padding: 12px; margin-bottom: 12px;">`;
+        html += `<div style="font-weight: bold; font-size: 14px; color: ${verdictColor}; margin-bottom: 6px;">STABILITY GATE: ${verdict ? "PASS" : "BLOCKED"}</div>`;
+        html += `<div style="font-size: 12px; color: var(--text-color, #d1d4dc); margin-bottom: 4px;">${verdictText}</div>`;
+        const agreement = Number(comparison.agreementPct ?? 0).toFixed(1);
+        const drift = Number(comparison.maxMeanDrift ?? 0).toFixed(4);
+        const common = Array.isArray(comparison.commonWinners) ? comparison.commonWinners.join(", ") : "";
+        html += `<div style="font-size: 11px; color: var(--text-dim, #787b86);">agreement ${agreement}% | maxMeanDrift ${drift} | common winners: ${common || "(none)"}</div>`;
+        html += `</div>`;
+
+        html += `<table class="finder-table" style="width:100%; font-size:12px;">`;
+        html += `<thead><tr><th>Window</th><th>asOf</th><th>reason</th><th>openPositions</th><th>Winners</th></tr></thead><tbody>`;
+        for (const w of comparison.windows) {
+            const snap = w.snapshot;
+            const winners = Array.isArray(snap?.winners) ? snap.winners : [];
+            const winnersText = winners.length > 0
+                ? winners.map((x: any) => `<strong>${x.asset}</strong> (mean=${Number(x.mean ?? 0).toFixed(2)})`).join(", ")
+                : `<span style="color: var(--text-dim, #787b86);">(no pick — ${snap?.reason ?? "empty"})</span>`;
+            const asOfLabel = typeof snap?.asOf === "number"
+                ? new Date(snap.asOf * 1000).toISOString().slice(0, 10)
+                : "—";
+            html += `<tr><td>${w.label}</td><td>${asOfLabel}</td><td>${snap?.reason ?? ""}</td><td>${snap?.openPositions ?? 0}</td><td>${winnersText}</td></tr>`;
+        }
+        html += `</tbody></table>`;
+        dom.batchBacktestSp500TopMeanResults.innerHTML = html;
+    }
+
+    /** Copy the stability comparison as plain text (the opaque reportLines). */
+    public async copySp500TopMeanStabilityResults(): Promise<void> {
+        if (!this.latestTopMeanStabilityResult) return;
+        const lines: string[] = Array.isArray(this.latestTopMeanStabilityResult.reportLines)
+            ? this.latestTopMeanStabilityResult.reportLines
+            : [];
+        await copyToClipboard(lines.join("\n"));
+        const dom = this.getDom();
+        dom.batchBacktestSp500TopMeanProgressText.textContent = "Copied stability comparison to clipboard.";
     }
 
     public async stopSp500TopMeanCoordinator(): Promise<void> {
@@ -2265,6 +2541,14 @@ class BatchBacktestService {
         if (!summary || !Array.isArray(summary.horizons)) return;
 
         let html = "";
+
+        // 0. Current TOP_MEAN snapshot (Phase 1): positions open at the latest
+        // common closed candle. Surfaced separately from the historical
+        // OPEN_SCORE replay leaderboard below — the two answer different
+        // questions (cross-sectional "now" vs per-event historical edge).
+        if (summary.currentSnapshot) {
+            html += this.renderCurrentTopMeanBanner(summary.currentSnapshot);
+        }
 
         // 1. Leaderboard Banner: Executive summary of top asset per horizon
         html += `<div style="background: var(--surface-2, #1e222d); border: 1px solid var(--border-color, #2a2e39); border-radius: 6px; padding: 12px; margin-bottom: 16px;">`;
@@ -2315,7 +2599,104 @@ class BatchBacktestService {
         dom.batchBacktestSp500TopMeanResults.innerHTML = html;
     }
 
+    /**
+     * Phase-1 current snapshot banner. Renders the cross-sectional TOP_MEAN
+     * pick(s) at the latest common closed candle. Kept visually separate from
+     * the historical leaderboard — different question, different evidence.
+     * Reuses the existing results container; no new DOM id.
+     */
+    private renderCurrentTopMeanBanner(currentSnapshot: any): string {
+        const snap: any = currentSnapshot.snapshot ?? currentSnapshot;
+        const winners: any[] = Array.isArray(snap?.winners) ? snap.winners : [];
+        const asOfSec: number | null = snap?.asOf ?? null;
+        const asOfLabel = typeof asOfSec === "number"
+            ? new Date(asOfSec * 1000).toISOString().slice(0, 19).replace("T", " ") + " UTC"
+            : "no common endpoint";
+        const reason: string = snap?.reason ?? "empty";
+        const stats: any = currentSnapshot.stats ?? {};
+
+        let html = `<div style="background: var(--surface-2, #1e222d); border: 1px solid var(--border-color, #2a2e39); border-radius: 6px; padding: 12px; margin-bottom: 16px;">`;
+        html += `<div style="font-weight: bold; font-size: 14px; margin-bottom: 8px; color: var(--accent-color, #2962ff);">📍 CURRENT TOP_MEAN — positions open at last closed candle</div>`;
+        html += `<div style="font-size: 11px; color: var(--text-dim, #787b86); margin-bottom: 8px;">as-of: ${asOfLabel} | artifacts ${snap?.artifacts ?? 0} | open positions ${snap?.openPositions ?? 0} | candidates ${snap?.candidates?.length ?? 0} | stale ${stats.staleEndpoints ?? 0} | missing ${stats.missingEndpoints ?? 0}</div>`;
+
+        if (winners.length === 0) {
+            const noPickMsg = reason === "tied"
+                ? "Tie at the top — no unique pick."
+                : reason === "no_positive_candidates"
+                    ? "No positive-score asset with an open position."
+                    : reason === "no_open_positions"
+                        ? "No open positions at the common endpoint."
+                        : "No provable current snapshot (missing or mixed endpoints).";
+            html += `<div style="font-size: 13px; color: var(--text-color, #d1d4dc);">⚠️ ${noPickMsg}</div>`;
+            html += `</div>`;
+            return html;
+        }
+
+        html += `<div style="display: flex; gap: 12px; flex-wrap: wrap;">`;
+        for (const w of winners) {
+            const mean = Number(w.mean ?? 0);
+            const meanSign = mean >= 0 ? "+" : "";
+            html += `<div style="flex: 1; min-width: 180px; background: var(--surface-1, #131722); padding: 8px 12px; border-radius: 4px; border-left: 3px solid #26a69a;">`;
+            html += `<div style="font-size: 11px; color: var(--text-dim, #787b86); text-transform: uppercase;">${winners.length > 1 ? "Tied Winner" : "Current Pick"}</div>`;
+            html += `<div style="font-size: 16px; font-weight: bold; margin: 2px 0;">${w.asset}</div>`;
+            html += `<div style="font-size: 12px; color: var(--text-color, #d1d4dc);">mean=${meanSign}${mean.toFixed(2)} | score=${w.score} | activePairs=${w.activePairs}</div>`;
+            html += `</div>`;
+        }
+        html += `</div>`;
+        if (winners.length > 1) {
+            html += `<div style="font-size: 11px; color: var(--text-dim, #787b86); margin-top: 6px;">Tie shown as-is — no arbitrary asset-name tie-break. Treat as an unresolved decision.</div>`;
+        }
+        html += `</div>`;
+        return html;
+    }
+
+    /**
+     * Phase-1 current snapshot lines for the Copy Results output. Mirrors the
+     * banner content in plain text so the clipboard surface matches the UI.
+     */
+    private formatCurrentTopMeanLines(currentSnapshot: any): string[] {
+        const snap: any = currentSnapshot.snapshot ?? currentSnapshot;
+        const winners: any[] = Array.isArray(snap?.winners) ? snap.winners : [];
+        const asOfSec: number | null = snap?.asOf ?? null;
+        const asOfLabel = typeof asOfSec === "number"
+            ? new Date(asOfSec * 1000).toISOString().slice(0, 19).replace("T", " ") + " UTC"
+            : "no common endpoint";
+        const reason: string = snap?.reason ?? "empty";
+        const stats: any = currentSnapshot.stats ?? {};
+
+        const lines: string[] = [];
+        lines.push("----------------------------------------------------------------------");
+        lines.push("📍 CURRENT TOP_MEAN | positions open at last closed candle");
+        lines.push("----------------------------------------------------------------------");
+        lines.push(`as-of=${asOfLabel} | artifacts=${snap?.artifacts ?? 0} | openPositions=${snap?.openPositions ?? 0} | candidates=${snap?.candidates?.length ?? 0} | stale=${stats.staleEndpoints ?? 0} | missing=${stats.missingEndpoints ?? 0}`);
+        if (winners.length === 0) {
+            const noPickMsg = reason === "tied"
+                ? "tied at top — no unique pick"
+                : reason === "no_positive_candidates"
+                    ? "no positive-score asset with an open position"
+                    : reason === "no_open_positions"
+                        ? "no open positions at the common endpoint"
+                        : "no provable current snapshot (missing or mixed endpoints)";
+            lines.push(`CURRENT TOP_MEAN | NO PICK | ${noPickMsg}`);
+        } else {
+            for (const w of winners) {
+                const mean = Number(w.mean ?? 0);
+                const meanSign = mean >= 0 ? "+" : "";
+                lines.push(`CURRENT TOP_MEAN | asOf=${asOfLabel} | winners=${w.asset} | mean=${meanSign}${mean.toFixed(2)} | score=${w.score} | activePairs=${w.activePairs}`);
+            }
+            if (winners.length > 1) {
+                lines.push(`CURRENT TOP_MEAN | tie across ${winners.length} assets — unresolved decision`);
+            }
+        }
+        lines.push("");
+        return lines;
+    }
+
     public async copySp500TopMeanResults(): Promise<void> {
+        // If the latest run was a stability check, route to its copy path.
+        if (!this.latestTopMeanResult && this.latestTopMeanStabilityResult) {
+            return this.copySp500TopMeanStabilityResults();
+        }
         if (!this.latestTopMeanResult) return;
         const res = this.latestTopMeanResult;
 
@@ -2328,10 +2709,14 @@ class BatchBacktestService {
             "",
         ];
 
+        if (res.currentSnapshot) {
+            lines.push(...this.formatCurrentTopMeanLines(res.currentSnapshot));
+        }
+
         if (Array.isArray(res.horizons)) {
             for (const h of res.horizons) {
-                lines.push(`--- Horizon ${h.horizon} Bars (${h.events?.toLocaleString()} decision events) ---`);
-                lines.push(`TOP_MEAN Overall: top=${formatSignedPercent(h.topMean?.topMean)} rand=${formatSignedPercent(h.topMean?.randomMean)} delta=${formatSignedPercent(h.topMean?.delta)}`);
+                lines.push(`--- HISTORICAL TOP_MEAN | Horizon ${h.horizon} Bars (${h.events?.toLocaleString()} decision events) ---`);
+                lines.push(`HISTORICAL TOP_MEAN | horizon=${h.horizon} | top=${formatSignedPercent(h.topMean?.topMean)} rand=${formatSignedPercent(h.topMean?.randomMean)} delta=${formatSignedPercent(h.topMean?.delta)}`);
                 lines.push("");
                 lines.push("Top Asset Rankings:");
                 const topAssets = Array.isArray(h.topAssets) ? h.topAssets : [];
@@ -2431,7 +2816,13 @@ class BatchBacktestService {
         this.activeTopMeanRunId = persisted.runId;
         this.topMeanDiagnosticRunId = persisted.runId;
         this.recordTopMeanDiagnostic("reattach.start", { runId: persisted.runId });
+        // A stability run reattach (runId prefix) hides BOTH run buttons so the
+        // user cannot start a conflicting run while reattaching.
+        const isStabilityReattach = persisted.runId.startsWith("sp500_stability_");
         setVisible(dom.batchBacktestSp500TopMeanRunBtn, false);
+        if (isStabilityReattach) {
+            setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, false);
+        }
         setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
 
         const runId = persisted.runId;
@@ -2456,8 +2847,16 @@ class BatchBacktestService {
                 if (status.status === "completed" || status.status === "failed" || status.status === "interrupted") {
                     clearInterval(pollInterval);
                     setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
+                    setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, true);
                     setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
-                    if (status.result) {
+                    if (status.stabilityResult) {
+                        // Stability run reattach: render the terminal comparison.
+                        this.latestTopMeanStabilityResult = status.stabilityResult;
+                        this.latestTopMeanResult = null;
+                        this.renderStabilityResults(dom, status.stabilityResult);
+                        dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
+                        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
+                    } else if (status.result) {
                         this.latestTopMeanResult = status.result;
                         this.renderTopMeanResults(dom, status.result);
                         dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
@@ -2469,6 +2868,11 @@ class BatchBacktestService {
                         version: 1,
                         data: null,
                     });
+                } else if (status.stabilityProgress) {
+                    // Mid-run stability reattach: show window progress. The
+                    // stability Run button stays hidden; Stop stays visible.
+                    setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, false);
+                    setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
                 }
             } catch (err) {
                 this.recordTopMeanDiagnostic("reattach.error", {

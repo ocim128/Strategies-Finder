@@ -2068,6 +2068,14 @@ async function handleSp500TopMeanRunRequest(res: ViteHttpResponse, body: unknown
     if (!Array.isArray(req.horizons) || req.horizons.length === 0) {
         throw new HttpStatusError(400, "Missing required non-empty array: horizons.");
     }
+    // Stability mode: optional array of unix-second start dates. Validate shape
+    // here so bad input is a clean 400 rather than a mid-run crash. The
+    // coordinator branches on a non-empty array.
+    if (req.stabilityStartDates !== undefined) {
+        if (!Array.isArray(req.stabilityStartDates) || req.stabilityStartDates.some((d) => typeof d !== "number" || !Number.isFinite(d))) {
+            throw new HttpStatusError(400, "stabilityStartDates must be an array of finite unix-second numbers.");
+        }
+    }
 
     const strategy = strategies[req.strategyKey];
     if (!strategy) {
@@ -2157,6 +2165,18 @@ function handleSp500TopMeanStatusRequest(runId?: string): TopMeanStatusResponse 
                     // Ignore JSON parse error
                 }
             }
+            // Stability runs persist the comparison to stability_result.json
+            // (no top-level result.json). Surface it as stabilityResult so the
+            // browser reattach path renders the comparison table.
+            let stabilityResult: any = undefined;
+            const stabilityResultPath = join(getRunDir(runId), "stability_result.json");
+            if (existsSync(stabilityResultPath)) {
+                try {
+                    stabilityResult = JSON.parse(readFileSync(stabilityResultPath, "utf8"));
+                } catch {
+                    // Ignore JSON parse error
+                }
+            }
             return {
                 runId: manifest.runId,
                 status: manifest.status,
@@ -2174,6 +2194,7 @@ function handleSp500TopMeanStatusRequest(runId?: string): TopMeanStatusResponse 
                 actualEngineMode: "auto",
                 error: manifest.error,
                 result,
+                ...(stabilityResult !== undefined ? { stabilityResult } : {}),
             };
         }
     }

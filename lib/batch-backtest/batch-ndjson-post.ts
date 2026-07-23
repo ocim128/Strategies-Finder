@@ -78,6 +78,7 @@ export async function postBatchNdjson<TEvent extends { type: string }>(
         endpoint: string;
         body: unknown;
         handlers: Record<string, ((event: any) => void) | undefined>;
+        terminalTypes?: readonly string[];
         signal?: AbortSignal;
         /**
          * Runs after the response is validated (ok + body present), before
@@ -98,7 +99,7 @@ export async function postBatchNdjson<TEvent extends { type: string }>(
         onEvent?: (event: { type: string }) => void;
     },
 ): Promise<void> {
-    const { endpoint, body, handlers, signal, onResponse, onNonOkResponse, onEvent } = opts;
+    const { endpoint, body, handlers, signal, terminalTypes, onResponse, onNonOkResponse, onEvent } = opts;
     const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -113,6 +114,7 @@ export async function postBatchNdjson<TEvent extends { type: string }>(
     if (onResponse) await onResponse(response);
     await consumeNdjsonStream<TEvent>(response.body, handlers, {
         requireTerminal: true,
+        ...(terminalTypes ? { terminalTypes } : {}),
         onEvent,
     });
 }
