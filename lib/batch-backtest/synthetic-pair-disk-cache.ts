@@ -140,10 +140,18 @@ export async function computeSeedFingerprint(
     quoteSymbol: string,
     sourceInterval: string,
 ): Promise<string | null> {
-    const baseSegment = await legFingerprintSegment(baseSymbol, sourceInterval);
-    if (baseSegment === null) return null;
-    const quoteSegment = await legFingerprintSegment(quoteSymbol, sourceInterval);
-    if (quoteSegment === null) return null;
+    // The two legs are independent; fetch their fingerprint segments in
+    // parallel rather than serially. Each Binance-backed leg issues an HTTP
+    // GET to /api/sqlite/series-meta with a 2-second timeout, so the prior
+    // serial `await; await` doubled cold-cache fingerprint latency for the
+    // dominant crypto-pair case (up to ~4s wall on a loaded dev server).
+    // Promise.all halves that with zero behavior change — the early-null
+    // short-circuit semantics are preserved by checking both results after.
+    const [baseSegment, quoteSegment] = await Promise.all([
+        legFingerprintSegment(baseSymbol, sourceInterval),
+        legFingerprintSegment(quoteSymbol, sourceInterval),
+    ]);
+    if (baseSegment === null || quoteSegment === null) return null;
 
     return `v${SYNTHETIC_PAIR_CACHE_VERSION}|${baseSegment}|${quoteSegment}`;
 }
@@ -400,6 +408,15 @@ export async function storeSyntheticPair(args: SyntheticPairDiskCacheArgs, bars:
     if (fingerprint === null) return false;
 
     const filePath = cacheFilePath(args);
+    // The `.map(...)` here is a type-level coercion, not a redundant copy:
+    // `OHLCVData.time` is a lightweight-charts `Time` (a `number | BusinessDay
+    // | string` union), but the on-disk `CachedSyntheticPairFile.data` shape
+    // pins `time: number` and the load path casts `parsed.data as OHLCVData[]`
+    // assuming numeric times. `Number(bar.time)` is what makes that invariant
+    // hold for non-numeric `Time` variants. (An earlier audit pass read the
+    // v8-serializer docstring as "this copy is unnecessary" and proposed
+    // dropping it; that breaks the type contract for non-number `Time`, so it
+    // is preserved here.)
     const payload: CachedSyntheticPairFile = {
         version: SYNTHETIC_PAIR_CACHE_VERSION,
         fingerprint,

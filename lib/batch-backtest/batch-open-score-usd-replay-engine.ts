@@ -237,11 +237,6 @@ export interface RunOpenScoreUsdReplayOptions {
      * every artifact as submitted) so old callers keep working.
      */
     submittedDegreeByAsset?: Record<string, number>;
-    /**
-     * Phase 3 MAX_ACTIVE: truncated event time used by the shared tie-break
-     * digest. Defaults to the engine's existing event-time semantics.
-     */
-    tieVersion?: string;
     /** Phase transition + bounded-chunk progress. */
     onPhase?: (phase: "scan" | "events" | "targets" | "outcomes" | "aggregate", detail: string, completed: number, total: number) => void;
     /** Polled between bounded chunks; return true to stop early (cancellation). */
@@ -546,7 +541,6 @@ export async function runOpenScoreUsdReplay(
         maxActivePairs: number;
         /** Most-open negative-score candidate, or -1 when unavailable. */
         maxActiveReversion: number;
-        reversionTie: number;
         /** Per-selector tie counts at this event (Phase 3 MAX_ACTIVE). */
         ties: Record<SelectorName, number>;
     }
@@ -591,14 +585,13 @@ export async function runOpenScoreUsdReplay(
         // Need >= 2 positive candidates for a top-vs-random comparison.
         if (positives.length >= 2) {
             // Phase 0 freeze: tie-break by the versioned FNV-1a 64 digest of
-            // `tieVersion|tieSeed|truncatedEventTimeSec|scoringAsset`. Smallest
-            // digest wins. Asset name and input order are NEVER tie-breaks.
-            // On a digest collision (astronomically unlikely), asset-name order
-            // keeps execution deterministic; the report surfaces tie-digest
-            // collisions and the formal verdict becomes INSUFFICIENT_DATA.
+            // `MAX_ACTIVE_TIE_VERSION|tieSeed|truncatedEventTimeSec|scoringAsset`.
+            // Smallest digest wins. Asset name and input order are NEVER
+            // tie-breaks. On a digest collision (astronomically unlikely),
+            // asset-name order keeps execution deterministic.
             const eventTimeSec = ev.timeSec;
             const digestFor = (c: Candidate): string => tieBreakDigest(eventTimeSec, assetNames[c.assetIndex]!);
-            const pickMax = (candidates: readonly Candidate[], key: "raw" | "adjusted" | "mean" | "activePairs" | "staticPairs" | "submittedPairs"): { winner: Candidate; tiedCount: number; digestCollision: boolean } => {
+            const pickMax = (candidates: readonly Candidate[], key: "raw" | "adjusted" | "mean" | "activePairs" | "staticPairs" | "submittedPairs"): { winner: Candidate; tiedCount: number } => {
                 // First pass: find the max value.
                 let maxValue = candidates[0]![key]!;
                 for (let i = 1; i < candidates.length; i += 1) {
@@ -613,23 +606,29 @@ export async function runOpenScoreUsdReplay(
                     if (c[key] === maxValue) tiedAtTop.push(c);
                 }
                 let winner = tiedAtTop[0]!;
-                let collision = false;
                 if (tiedAtTop.length > 1) {
+                    // Precompute every tied candidate's digest ONCE and track the
+                    // current winner's digest alongside the winner itself. The
+                    // prior loop recomputed `digestFor(winner)` on every
+                    // iteration — O(k) TextEncoder.encode + FNV hashes per tie
+                    // event instead of O(1) lookup, and pickMax runs 6–7× per
+                    // event across every event (Phase 3 hot path).
                     const digests = tiedAtTop.map(digestFor);
+                    let dW = digests[0]!;
                     for (let i = 1; i < tiedAtTop.length; i += 1) {
                         const c = tiedAtTop[i]!;
                         const dC = digests[i]!;
-                        const dW = digestFor(winner);
-                        if (dC < dW) { winner = c; collision = false; }
+                        if (dC < dW) { winner = c; dW = dC; }
                         else if (dC === dW) {
-                            // Tie-digest collision. Use asset name as a final
-                            // deterministic fallback; flag for INSUFFICIENT_DATA.
-                            collision = true;
-                            if (assetNames[c.assetIndex]! < assetNames[winner.assetIndex]!) winner = c;
+                            // Tie-digest collision. Asset name is the final
+                            // deterministic fallback (collision is astronomically
+                            // unlikely; no longer surfaced as a verdict flag —
+                            // no consumer ever read it).
+                            if (assetNames[c.assetIndex]! < assetNames[winner.assetIndex]!) { winner = c; dW = dC; }
                         }
                     }
                 }
-                return { winner, tiedCount: tiedAtTop.length, digestCollision: collision };
+                return { winner, tiedCount: tiedAtTop.length };
             };
             const topRaw = pickMax(positives, "raw");
             const topAdjusted = pickMax(positives, "adjusted");
@@ -648,7 +647,6 @@ export async function runOpenScoreUsdReplay(
                 maxSubmitted: maxSubmitted.winner.assetIndex,
                 maxActivePairs,
                 maxActiveReversion: maxActiveReversion?.winner.assetIndex ?? -1,
-                reversionTie: maxActiveReversion && maxActiveReversion.tiedCount >= 2 ? 1 : 0,
                 ties: {
                     RAW: topRaw.tiedCount >= 2 ? 1 : 0,
                     ADJUSTED: topAdjusted.tiedCount >= 2 ? 1 : 0,
@@ -1090,6 +1088,12 @@ export async function runOpenScoreUsdReplay(
             nonReversionDominantIndexes.map((i) => maxActiveReversion.returns[i]!),
             nonReversionDominantIndexes.map((i) => maxActiveReversion.times[i]!),
         );
+        // `maxRetained` is a documented backwards-compat alias for `maxStatic`
+        // (identical selector on identical arrays). Compute the 10k-sample block
+        // bootstrap ONCE and reuse the result for both fields — the prior
+        // duplicate `buildComparison(maxStatic.deltas, ...)` burned 10k LCG
+        // iterations + one sort + one 10k-element allocation per horizon.
+        const maxStaticComparison = buildComparison(maxStatic.deltas, maxStatic.returns, maxStatic.times);
         horizonResults.push({
             bars: horizons[hIdx]!,
             topRaw: buildComparison(topRaw.deltas, topRaw.returns, topRaw.times),
@@ -1100,9 +1104,9 @@ export async function runOpenScoreUsdReplay(
             maxActiveReversionExDominant,
             maxActiveReversionDominantAsset,
             maxActive: buildComparison(maxActive.deltas, maxActive.returns, maxActive.times),
-            maxStatic: buildComparison(maxStatic.deltas, maxStatic.returns, maxStatic.times),
+            maxStatic: maxStaticComparison,
             maxSubmitted: buildComparison(maxSubmitted.deltas, maxSubmitted.returns, maxSubmitted.times),
-            maxRetained: buildComparison(maxStatic.deltas, maxStatic.returns, maxStatic.times),
+            maxRetained: maxStaticComparison,
             topRawExDominant,
             topMeanExDominant,
             topMeanDominantAsset,

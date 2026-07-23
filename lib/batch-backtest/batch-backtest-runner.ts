@@ -26,7 +26,7 @@ import type {
     Time,
 } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
-import { timeKey } from "../strategies";
+import { compareTime } from "../strategies";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 export { parseBatchSymbols } from "./batch-run-contract";
@@ -430,10 +430,29 @@ function buildTradeSummary(
         };
     }
 
-    const timeIndex = new Map<string, number>();
-    data.forEach((bar, index) => {
-        timeIndex.set(timeKey(bar.time), index);
-    });
+    // Binary-search the time-ordered `data` array instead of building an
+    // O(candles) `Map<timeKey, index>` per symbol. Trades only need 2 index
+    // lookups each and trade counts ≪ bar counts, so O(log N) per trade beats
+    // the prior O(N) map build plus its per-bar string allocation. For a
+    // 1,000-pair run on 65k-bar datasets this removes ~65M string allocations
+    // and ~65M Map.set calls — the dominant GC pressure source in the runner.
+    // `data` is monotonically time-ordered (backtest engine contract); on the
+    // rare duplicate-timestamp case, scan forward to the last matching index so
+    // behavior matches the prior Map's "last write wins" `set` semantics.
+    const findIndex = (t: Time): number => {
+        let lo = 0;
+        let hi = data.length - 1;
+        let found = -1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            const cmp = compareTime(data[mid]!.time, t);
+            if (cmp === 0) { found = mid; break; }
+            if (cmp < 0) lo = mid + 1; else hi = mid - 1;
+        }
+        if (found === -1) return -1;
+        while (found + 1 < data.length && compareTime(data[found + 1]!.time, t) === 0) found += 1;
+        return found;
+    };
 
     // Single pass over trades accumulating count / sum / max for both hold-bars
     // and hold-days. Avoids the prior per-trade `number[]` allocations and the
@@ -448,9 +467,9 @@ function buildTradeSummary(
     let totalHoldDays = 0;
     let maxHoldDays = Number.NEGATIVE_INFINITY;
     for (const trade of result.trades) {
-        const entryIndex = timeIndex.get(timeKey(trade.entryTime));
-        const exitIndex = timeIndex.get(timeKey(trade.exitTime));
-        if (entryIndex === undefined || exitIndex === undefined || exitIndex < entryIndex) {
+        const entryIndex = findIndex(trade.entryTime);
+        const exitIndex = findIndex(trade.exitTime);
+        if (entryIndex === -1 || exitIndex === -1 || exitIndex < entryIndex) {
             continue;
         }
         const bars = exitIndex - entryIndex;

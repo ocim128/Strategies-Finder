@@ -61,7 +61,6 @@ import {
 } from "./sp500-top-mean-coordinator-engine";
 import { getRunDir, isValidRunId, loadManifest } from "./sp500-top-mean-artifact-store";
 import { strategies } from "../strategies/library";
-import { existsSync, readFileSync } from "node:fs";
 
 /**
  * Phase 3 MAX_ACTIVE: compute canonical universe counts from the submitted
@@ -1966,7 +1965,18 @@ function registerBatchRoutes(middlewares: any): void {
             // from a probe, and an unmatched id returns runMismatch).
             const runIdParam = parsedUrl.searchParams.get("runId");
             const runId = runIdParam && runIdParam.trim() ? runIdParam.trim() : undefined;
-            sendJson(res, 200, handleStatusRequest(after, limit, runId));
+            // Audit: wrap in try/catch for symmetry with the /run, /stop, and
+            // /open-score-usd routes (all of which use sendCaughtErrorJson).
+            // Without this, a throwing toJSON / circular ref inside the
+            // `handleStatusRequest` payload propagates as an unhandled promise
+            // rejection against Connect's middleware stack and crashes the dev
+            // server with a 500 + stack trace — on a route polled every ~2s
+            // during reattach.
+            try {
+                sendJson(res, 200, handleStatusRequest(after, limit, runId));
+            } catch (error) {
+                sendCaughtErrorJson(res, error);
+            }
         });
 
         middlewares.use("/api/batch-backtest/sp500-top-mean/run", async (req: any, res: any) => {
@@ -2017,7 +2027,7 @@ function registerBatchRoutes(middlewares: any): void {
             const runIdParam = parsedUrl.searchParams.get("runId");
             const runId = runIdParam && runIdParam.trim() ? runIdParam.trim() : undefined;
             try {
-                const status = handleSp500TopMeanStatusRequest(runId);
+                const status = await handleSp500TopMeanStatusRequest(runId);
                 const statusCode = "ok" in status && !status.ok ? 404 : 200;
                 sendJson(res, statusCode, status);
             } catch (error) {
@@ -2041,7 +2051,7 @@ function registerBatchRoutes(middlewares: any): void {
                 return;
             }
             try {
-                const result = handleSp500TopMeanResultRequest(runIdParam.trim());
+                const result = await handleSp500TopMeanResultRequest(runIdParam.trim());
                 sendJson(res, 200, result);
             } catch (error) {
                 sendCaughtErrorJson(res, error);
@@ -2154,7 +2164,7 @@ async function handleSp500TopMeanStopRequest(runId?: unknown): Promise<{ ok: boo
     return { ok: true, stopped: true, runId: activeEngine.request.runId };
 }
 
-function handleSp500TopMeanStatusRequest(runId?: string): TopMeanStatusResponse | { ok: false; error: string } {
+async function handleSp500TopMeanStatusRequest(runId?: string): Promise<TopMeanStatusResponse | { ok: false; error: string }> {
     const activeEngine = getActiveTopMeanCoordinatorEngine();
     if (activeEngine && (!runId || activeEngine.request.runId === runId)) {
         return activeEngine.getStatus();
@@ -2168,26 +2178,31 @@ function handleSp500TopMeanStatusRequest(runId?: string): TopMeanStatusResponse 
         }
         const manifest = loadManifest(runId);
         if (manifest) {
+            // Audit: read multi-MB result files ASYNC. The prior
+            // `existsSync` + `readFileSync` blocked the Vite event loop on
+            // every reattach poll (this route is hit every ~2s during a
+            // TOP_MEAN stability run). A single multi-MB read stalled every
+            // concurrent request. Mirrors the plugin's own audit comments
+            // that moved artifact I/O to fs/promises for the same reason.
+            // Drop `existsSync` (TOCTOU); distinguish missing via ENOENT.
             let result: any = undefined;
             const resultPath = join(getRunDir(runId), "result.json");
-            if (existsSync(resultPath)) {
-                try {
-                    result = JSON.parse(readFileSync(resultPath, "utf8"));
-                } catch {
-                    // Ignore JSON parse error
-                }
+            try {
+                const txt = await readFile(resultPath, "utf8");
+                try { result = JSON.parse(txt); } catch { /* malformed JSON */ }
+            } catch (err: any) {
+                if (err?.code !== "ENOENT") { /* unexpected I/O — surface elsewhere */ }
             }
             // Stability runs persist the comparison to stability_result.json
             // (no top-level result.json). Surface it as stabilityResult so the
             // browser reattach path renders the comparison table.
             let stabilityResult: any = undefined;
             const stabilityResultPath = join(getRunDir(runId), "stability_result.json");
-            if (existsSync(stabilityResultPath)) {
-                try {
-                    stabilityResult = JSON.parse(readFileSync(stabilityResultPath, "utf8"));
-                } catch {
-                    // Ignore JSON parse error
-                }
+            try {
+                const txt = await readFile(stabilityResultPath, "utf8");
+                try { stabilityResult = JSON.parse(txt); } catch { /* malformed JSON */ }
+            } catch (err: any) {
+                if (err?.code !== "ENOENT") { /* unexpected I/O — surface elsewhere */ }
             }
             return {
                 runId: manifest.runId,
@@ -2215,7 +2230,7 @@ function handleSp500TopMeanStatusRequest(runId?: string): TopMeanStatusResponse 
     return { ok: false, error: "Run not found" };
 }
 
-function handleSp500TopMeanResultRequest(runId: string): unknown {
+async function handleSp500TopMeanResultRequest(runId: string): Promise<unknown> {
     if (!runId || typeof runId !== "string") {
         throw new HttpStatusError(400, "Missing runId parameter.");
     }
@@ -2225,11 +2240,18 @@ function handleSp500TopMeanResultRequest(runId: string): unknown {
         throw new HttpStatusError(400, "Invalid runId.");
     }
     const resultPath = join(getRunDir(runId), "result.json");
-    if (!existsSync(resultPath)) {
-        throw new HttpStatusError(404, `Result for runId "${runId}" not found.`);
+    let txt: string;
+    try {
+        txt = await readFile(resultPath, "utf8");
+    } catch (err: any) {
+        // TOCTOU-safe: distinguish "missing" (404) from "I/O error" (500).
+        if (err?.code === "ENOENT") {
+            throw new HttpStatusError(404, `Result for runId "${runId}" not found.`);
+        }
+        throw new HttpStatusError(500, "Failed to read result file.");
     }
     try {
-        return JSON.parse(readFileSync(resultPath, "utf8"));
+        return JSON.parse(txt);
     } catch {
         throw new HttpStatusError(500, "Failed to read result file.");
     }

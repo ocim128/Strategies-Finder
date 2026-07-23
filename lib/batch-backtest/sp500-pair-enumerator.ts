@@ -214,19 +214,26 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
         stripIbkrMarker(a).localeCompare(stripIbkrMarker(b)),
     );
 
+    // Pair materialization with an early-out cap. The prior loop built the full
+    // N*(N-1)/2 list unconditionally — for ~400 eligible assets with maxPairs
+    // capped at 2000, that was ~80k pair strings and ~160k `markIbkrSymbol`
+    // calls, of which ~78k were discarded by the slice below. Two wins in one
+    // rewrite: (a) hoist `markIbkrSymbol(sortedEligibleAssets[i])` out of the
+    // inner j-loop; (b) `break outer` as soon as the cap is reached. Order of
+    // the kept prefix is identical to the prior pre-slice ordering, so any
+    // caller that relied on deterministic pair ordering still gets the same
+    // prefix.
+    const cap = options.maxPairs && options.maxPairs > 0 ? options.maxPairs : Infinity;
     const allCanonicalPairs: string[] = [];
-    for (let i = 0; i < sortedEligibleAssets.length; i++) {
+    outer: for (let i = 0; i < sortedEligibleAssets.length; i++) {
+        const baseSymbol = markIbkrSymbol(sortedEligibleAssets[i]!);
         for (let j = i + 1; j < sortedEligibleAssets.length; j++) {
-            const baseSymbol = markIbkrSymbol(sortedEligibleAssets[i]);
-            const quoteSymbol = markIbkrSymbol(sortedEligibleAssets[j]);
-            allCanonicalPairs.push(`${baseSymbol}+${quoteSymbol}`);
+            if (allCanonicalPairs.length >= cap) break outer;
+            allCanonicalPairs.push(`${baseSymbol}+${markIbkrSymbol(sortedEligibleAssets[j]!)}`);
         }
     }
 
-    let canonicalPairs = allCanonicalPairs;
-    if (options.maxPairs && options.maxPairs > 0 && options.maxPairs < canonicalPairs.length) {
-        canonicalPairs = canonicalPairs.slice(0, options.maxPairs);
-    }
+    const canonicalPairs = allCanonicalPairs;
 
     const totalPossiblePairs = (sp500Tickers.length * (sp500Tickers.length - 1)) / 2;
     const actualPairCount = (usableTargetIntervalCount * (usableTargetIntervalCount - 1)) / 2;

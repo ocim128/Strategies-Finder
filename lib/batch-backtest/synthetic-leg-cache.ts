@@ -16,7 +16,12 @@
  */
 export class SyntheticLegCache<T> {
     private readonly store = new Map<string, Promise<T>>();
-    private readonly missCounts = new Map<string, number>();
+    // Single monotonic counter: every consumer of `missCount()` only reads the
+    // grand total, so a per-key Map was pure retention overhead — its entries
+    // were never trimmed by `evict()` or the rejection path, so `missCounts`
+    // grew without bound over a long session (one entry per key ever evicted)
+    // and `missCount()` iterated an ever-growing map on every diagnostic call.
+    private totalMisses = 0;
     private totalHits = 0;
 
     constructor(private readonly maxEntries: number) {}
@@ -44,7 +49,7 @@ export class SyntheticLegCache<T> {
      */
     set(key: string, promise: Promise<T>): void {
         this.store.set(key, promise);
-        this.missCounts.set(key, (this.missCounts.get(key) ?? 0) + 1);
+        this.totalMisses += 1;
         promise.catch(() => {
             if (this.store.get(key) === promise) {
                 this.store.delete(key);
@@ -55,9 +60,7 @@ export class SyntheticLegCache<T> {
 
     /** Number of times a producer was actually invoked (cache misses). */
     missCount(): number {
-        let total = 0;
-        for (const count of this.missCounts.values()) total += count;
-        return total;
+        return this.totalMisses;
     }
 
     /** Number of times `get` returned a cached value (cache hits). */
@@ -67,7 +70,7 @@ export class SyntheticLegCache<T> {
 
     clear(): void {
         this.store.clear();
-        this.missCounts.clear();
+        this.totalMisses = 0;
         this.totalHits = 0;
     }
 
