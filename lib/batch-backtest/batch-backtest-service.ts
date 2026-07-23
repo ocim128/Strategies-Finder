@@ -2646,6 +2646,17 @@ class BatchBacktestService {
         if (winners.length > 1) {
             html += `<div style="font-size: 11px; color: var(--text-dim, #787b86); margin-top: 6px;">Tie shown as-is — no arbitrary asset-name tie-break. Treat as an unresolved decision.</div>`;
         }
+
+        const leaderboard: any[] = Array.isArray(snap?.candidates) ? snap.candidates.slice(0, 10) : [];
+        html += `<div style="margin-top: 12px; font-weight: bold; font-size: 13px;">🏆 CURRENT TOP_MEAN Leaderboard — top ${leaderboard.length}</div>`;
+        html += `<table class="finder-table" style="width:100%; margin-top:6px; font-size:12px;"><thead><tr><th>Rank</th><th>Asset</th><th>Mean</th><th>Score</th><th>Active Pairs</th></tr></thead><tbody>`;
+        leaderboard.forEach((candidate, index) => {
+            const mean = Number(candidate.mean ?? 0);
+            const meanSign = mean >= 0 ? "+" : "";
+            const isTop = index === 0;
+            html += `<tr style="${isTop ? "background: rgba(38, 166, 154, 0.1); font-weight: 600;" : ""}"><td>${isTop ? "🥇 1" : index + 1}</td><td><strong>${candidate.asset}</strong></td><td>${meanSign}${mean.toFixed(2)}</td><td>${candidate.score}</td><td>${candidate.activePairs}</td></tr>`;
+        });
+        html += `</tbody></table>`;
         html += `</div>`;
         return html;
     }
@@ -2687,6 +2698,13 @@ class BatchBacktestService {
             if (winners.length > 1) {
                 lines.push(`CURRENT TOP_MEAN | tie across ${winners.length} assets — unresolved decision`);
             }
+            const leaderboard: any[] = Array.isArray(snap?.candidates) ? snap.candidates.slice(0, 10) : [];
+            lines.push(`CURRENT TOP_MEAN LEADERBOARD | top ${leaderboard.length}`);
+            leaderboard.forEach((candidate, index) => {
+                const mean = Number(candidate.mean ?? 0);
+                const meanSign = mean >= 0 ? "+" : "";
+                lines.push(`CURRENT TOP_MEAN | rank=${index + 1} | asset=${candidate.asset} | mean=${meanSign}${mean.toFixed(2)} | score=${candidate.score} | activePairs=${candidate.activePairs}`);
+            });
         }
         lines.push("");
         return lines;
