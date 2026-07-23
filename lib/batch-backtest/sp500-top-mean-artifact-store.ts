@@ -103,7 +103,37 @@ export function atomicWriteJsonSync(targetPath: string, data: unknown): void {
     }
     const tempPath = `${targetPath}.${Date.now()}.${Math.random().toString(36).substring(2, 8)}.tmp`;
     writeFileSync(tempPath, JSON.stringify(data), "utf8");
-    renameSync(tempPath, targetPath);
+
+    // Windows can briefly deny replacing an existing file while an antivirus
+    // scanner or the Vite watcher still has the destination open. The write
+    // is already staged in the same directory, so a short bounded retry keeps
+    // the operation atomic without falling back to delete-then-rename.
+    const attempts = process.platform === "win32" ? 10 : 1;
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+        try {
+            renameSync(tempPath, targetPath);
+            return;
+        } catch (error) {
+            lastError = error;
+            const code = (error as NodeJS.ErrnoException).code;
+            const retryable = process.platform === "win32"
+                && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
+            if (!retryable || attempt === attempts - 1) break;
+
+            // This is a synchronous API, so use a small bounded wait between
+            // attempts rather than allowing overlapping manifest writes.
+            const delayMs = Math.min(25 * (attempt + 1), 100);
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+        }
+    }
+
+    try {
+        rmSync(tempPath, { force: true });
+    } catch {
+        // Preserve the original rename failure; cleanup is best effort.
+    }
+    throw lastError;
 }
 
 export function saveManifest(manifest: TopMeanRunManifest, baseDir?: string, windowKey?: string): void {
