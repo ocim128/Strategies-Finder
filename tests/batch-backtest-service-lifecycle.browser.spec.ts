@@ -116,17 +116,6 @@ type FetchResponse = {
 };
 type FetchResponder = (url: string, init?: any) => FetchResponse | Promise<FetchResponse>;
 
-function ndjsonStream(lines: object[]): ReadableStream<Uint8Array> {
-    const encoder = new TextEncoder();
-    const content = lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
-    return new ReadableStream<Uint8Array>({
-        start(controller) {
-            controller.enqueue(encoder.encode(content));
-            controller.close();
-        },
-    });
-}
-
 // Saved globals to restore after the suite.
 let savedDocument: any;
 let savedLocalStorage: any;

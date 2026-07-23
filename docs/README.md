@@ -11,10 +11,10 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 
 - [strategy-authoring.md](strategy-authoring.md) - built-in strategy contract, examples, helper surface, prepared execution, cross-symbol and 1s Polymarket strategy rules.
 - [backtest-endpoint.md](backtest-endpoint.md) - local HTTP endpoint request/response contract.
-- [batch-backtest-server-side.md](batch-backtest-server-side.md) - Batch server runtime, Mine/Stability artifacts, miner acceleration, OPEN_SCORE USD Replay endpoint, and memory budget.
+- [batch-backtest-server-side.md](batch-backtest-server-side.md) - Batch server runtime, analysis artifacts, OPEN_SCORE USD Replay endpoint, and memory budget.
 - [finder-server-side.md](finder-server-side.md) - server-owned Finder Symbol Universe (one server job owns all strategies + OOS), heap budget, scalar-only wire contract, Stop scoped by run id, and tab-reload reattach via `/api/finder/status`.
 - [cross-symbol.md](cross-symbol.md) - secondary-symbol strategy runtime contract and support matrix.
-- [synthetic-pairs.md](synthetic-pairs.md) - synthetic pair generation, supported surfaces, and state miner notes.
+- [synthetic-pairs.md](synthetic-pairs.md) - synthetic pair generation and supported surfaces.
 - [rank-pairs.md](rank-pairs.md) - Rank Pairs regime classification: anchored sampling, metrics, labels, thresholds, and copy contract.
 - [path-dependent-exits.md](path-dependent-exits.md) - Risk Management path-exit modes and TypeScript/Rust compatibility.
 - [polymarket.md](polymarket.md) - Polymarket charting, scoring, diagnostics, bridge export, and Execution Lab boundaries.
