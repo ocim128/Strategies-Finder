@@ -98,6 +98,20 @@ export interface WorkerPoolRunOptions {
     shardSize?: number;
     useRustEnginePreference?: boolean;
     baseDir?: string;
+    /**
+     * Optional start-date slice (unix seconds) for the stability mode. When
+     * set, each worker trims its loaded candles to [backtestFromSec, inf)
+     * BEFORE executeBacktest, so the open position reflects a simulation that
+     * started at this date. Undefined = full history (existing behavior).
+     */
+    backtestFromSec?: number;
+    /**
+     * Optional window key for per-start-date artifact partitioning. When set,
+     * shards + manifest land in <runDir>/windows/<windowKey>/ so concurrent
+     * stability windows do not overwrite each other. Undefined = top-level
+     * <runDir>/shards (existing behavior).
+     */
+    windowKey?: string;
     onProgress?: (completedPairs: number, totalPairs: number, text: string) => void;
 }
 
@@ -144,7 +158,7 @@ export class TopMeanWorkerPool {
         }
 
         options.manifest.totalShards = shardTasks.length;
-        saveManifest(options.manifest, options.baseDir);
+        saveManifest(options.manifest, options.baseDir, options.windowKey);
 
         // Filter out already completed shards (for resume support)
         const completedSet = new Set(options.manifest.completedShards);
@@ -169,6 +183,7 @@ export class TopMeanWorkerPool {
                     capitalSettings: options.capitalSettings,
                     interval: options.interval,
                     useRustEnginePreference: options.useRustEnginePreference,
+                    ...(options.backtestFromSec !== undefined ? { backtestFromSec: options.backtestFromSec } : {}),
                 };
 
                 const worker = new Worker(workerScriptPath, {
@@ -203,11 +218,11 @@ export class TopMeanWorkerPool {
                             options.manifest.failedPairsCount = (options.manifest.failedPairsCount || 0) + 1;
                         }
                     } else if (msg.type === "shard_complete") {
-                        writeShardArtifacts(options.runId, msg.shardIndex, msg.artifacts, options.baseDir);
+                        writeShardArtifacts(options.runId, msg.shardIndex, msg.artifacts, options.baseDir, options.windowKey);
                         if (!options.manifest.completedShards.includes(msg.shardIndex)) {
                             options.manifest.completedShards.push(msg.shardIndex);
                         }
-                        saveManifest(options.manifest, options.baseDir);
+                        saveManifest(options.manifest, options.baseDir, options.windowKey);
                         this.activeWorkers.delete(worker);
                         worker.terminate();
                         resolveOnce();
@@ -215,7 +230,7 @@ export class TopMeanWorkerPool {
                         if (!options.manifest.failedShards.includes(msg.shardIndex)) {
                             options.manifest.failedShards.push(msg.shardIndex);
                         }
-                        saveManifest(options.manifest, options.baseDir);
+                        saveManifest(options.manifest, options.baseDir, options.windowKey);
                         this.activeWorkers.delete(worker);
                         worker.terminate();
                         rejectOnce(new Error(msg.error));

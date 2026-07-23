@@ -1,11 +1,13 @@
 import { parentPort, workerData, isMainThread } from "node:worker_threads";
-import { executeBacktest, resolveExecutorBacktestSettings } from "../backtest-executor";
+import { executeBacktest, prepareClosedCandleData, resolveExecutorBacktestSettings } from "../backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import { loadServerBatchDataset } from "./server-batch-data-loader";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { stripIbkrMarker } from "../local-daily-datasets";
+import { selectClosedCandleWindow } from "../alert-evaluation-window";
+import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { CompactPairArtifact, CompactTrade } from "./compact-pair-artifact";
-import type { BacktestSettings, StrategyParams } from "../types/strategies";
+import type { BacktestSettings, OHLCVData, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 import { strategies } from "../strategies/library";
 
@@ -21,6 +23,13 @@ export interface TopMeanWorkerTaskData {
     capitalSettings: CapitalSettings;
     interval: string;
     useRustEnginePreference?: boolean;
+    /**
+     * Optional start-date slice (unix seconds) for the stability mode. When
+     * set, the worker trims its loaded candles to [backtestFromSec, inf)
+     * BEFORE executeBacktest so the open position reflects a simulation that
+     * started at this date. Undefined = full history.
+     */
+    backtestFromSec?: number;
 }
 
 export type TopMeanWorkerMessage =
@@ -42,6 +51,19 @@ export type TopMeanWorkerMessage =
           shardIndex: number;
           error: string;
       };
+
+/**
+ * Trim a loaded pair dataset to the stability simulation window. Keeping this
+ * as a small pure seam makes the ordering explicit and testable: the slice
+ * happens before the worker's minimum-candle guard and before execution.
+ */
+export function sliceTopMeanCandlesFromSec(candles: OHLCVData[], fromSec?: number): OHLCVData[] {
+    if (fromSec === undefined) return candles;
+    return candles.filter((candle) => {
+        const timestamp = parseTimeToUnixSeconds(candle.time);
+        return timestamp !== null && timestamp >= fromSec;
+    });
+}
 
 export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<CompactPairArtifact[]> {
     const strategy = strategies[data.strategyKey];
@@ -65,7 +87,18 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
         const quoteSymbol = parsed ? parsed.quoteSymbol : pairSymbol;
 
         try {
-            const candles = await loadServerBatchDataset(pairSymbol, data.interval);
+            let candles = await loadServerBatchDataset(pairSymbol, data.interval);
+
+            // Stability mode: trim loaded candles to [backtestFromSec, inf) so
+            // the open position reflects a simulation that started at this
+            // date. The slice is applied BEFORE the < 200 guard, so a window
+            // that yields too few candles is skipped per-pair rather than
+            // crashing. dataEndTime then naturally reflects the trimmed
+            // window's last closed candle.
+            if (candles && candles.length > 0) {
+                candles = sliceTopMeanCandlesFromSec(candles, data.backtestFromSec);
+            }
+
             if (!candles || candles.length < 200) {
                 if (parentPort) {
                     parentPort.postMessage({
@@ -80,8 +113,32 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                 continue;
             }
 
+            // Precompute the exact closed-candle array the engine will consume
+            // and pass it through closedCandleDataOverride. This (a) skips the
+            // internal selectClosedCandleData call, (b) lets us record the
+            // authoritative LAST CLOSED candle timestamp as dataEndTime, and
+            // (c) stabilizes the array reference for WeakMap caches per
+            // prepareClosedCandleData's contract.
+            //
+            // dataEndTime is taken from selectClosedCandleWindow's
+            // closedCandleTimeSec — NOT from the last element of either the
+            // raw array or the prepared array. In next_open execution mode the
+            // prepared array is bridged with a synthetic candle at the next
+            // bar's OPEN time, so its last element's time is the OPEN bar,
+            // not the closed bar. The snapshot asks "as-of which closed
+            // candle?", and closedCandleTimeSec is the unambiguous answer
+            // regardless of execution model.
+            const closedCandleData = prepareClosedCandleData(
+                candles,
+                data.interval,
+                data.backtestSettings,
+                nowSec,
+            );
+            const closedWindow = selectClosedCandleWindow(candles, data.interval, nowSec, 1);
+
             const output = await executeBacktest({
                 ohlcvData: candles,
+                closedCandleDataOverride: closedCandleData,
                 interval: data.interval,
                 primarySymbol: pairSymbol,
                 strategyKey: data.strategyKey,
@@ -113,6 +170,16 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                 exitReason: t.exitReason,
             }));
 
+            // dataEndTime = the authoritative last-closed-candle timestamp
+            // (closedCandleTimeSec). Falls back to the prepared array's last
+            // element only when selectClosedCandleWindow could not resolve a
+            // window (e.g. interval parse failure) — in which case there is no
+            // reliable "open vs closed" distinction to make anyway.
+            const dataEndTime = closedWindow?.closedCandleTimeSec
+                ?? (closedCandleData.length > 0
+                    ? Number(closedCandleData[closedCandleData.length - 1]!.time)
+                    : null);
+
             const artifact: CompactPairArtifact = {
                 schema: "compact_pair_artifact.v1",
                 pairIndex: pair.pairIndex,
@@ -122,6 +189,9 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
                 baseSymbol,
                 quoteSymbol,
                 trades: compactTrades,
+                ...(dataEndTime !== null && Number.isFinite(dataEndTime)
+                    ? { dataEndTime }
+                    : {}),
             };
 
             artifacts.push(artifact);

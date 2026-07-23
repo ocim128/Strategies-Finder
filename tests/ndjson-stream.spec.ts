@@ -104,6 +104,22 @@ describe("consumeNdjsonStream", () => {
         // No throw => pass.
     });
 
+    it("accepts a domain-specific terminal event", async () => {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(encoder.encode('{"type":"stability_done"}\n'));
+                controller.close();
+            },
+        });
+
+        await consumeNdjsonStream<{ type: string }>(
+            stream,
+            { onStabilityDone: () => {} },
+            { requireTerminal: true, terminalTypes: ["stability_done", "fatal"] },
+        );
+    });
+
     it("throws MalformedNdjsonLineError on a malformed middle line", async () => {
         const encoder = new TextEncoder();
         const stream = new ReadableStream<Uint8Array>({

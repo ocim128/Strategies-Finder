@@ -5,7 +5,8 @@
  * line number; silently accepting a partial protocol is never safe.
  *
  * `requireTerminal` (default false): when true, a stream that reaches EOF
- *   without first processing a `done` or `fatal` event throws
+ *   without first processing a terminal event throws. The default terminal
+ *   events are `done` and `fatal`; callers can provide `terminalTypes`.
  *   `StreamEndedBeforeTerminalError`. Without this flag the consumer resolves
  *   normally at EOF. Callers whose correctness depends on a terminal event
  *   should opt in.
@@ -29,6 +30,7 @@ export class MalformedNdjsonLineError extends Error {
 
 export interface ConsumeNdjsonStreamOptions {
     requireTerminal?: boolean;
+    terminalTypes?: readonly string[];
     onEvent?: (event: { type: string }) => void;
 }
 
@@ -42,6 +44,7 @@ export async function consumeNdjsonStream<T extends { type: string }>(
     let buffer = "";
     let sawTerminal = false;
     let lineNumber = 0;
+    const terminalTypes = options?.terminalTypes ?? ["done", "fatal"];
 
     const toHandlerKey = (type: string): string => {
         const camel = type.replace(/_([a-z])/g, (_, g) => g.toUpperCase());
@@ -71,7 +74,7 @@ export async function consumeNdjsonStream<T extends { type: string }>(
                 if (handler) {
                     handler(event);
                 }
-                if (event.type === "done" || event.type === "fatal") {
+                if (terminalTypes.includes(event.type)) {
                     sawTerminal = true;
                     return;
                 }

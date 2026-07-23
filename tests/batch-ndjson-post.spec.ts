@@ -77,6 +77,24 @@ describe("postBatchNdjson (audit NDJSON-POST-helper finding)", () => {
         expect(observed).to.deep.equal(["start", "progress", "done"]);
     });
 
+    it("supports a domain-specific terminal event for stability runs", async () => {
+        const events: string[] = [];
+        mockFetch(() => ({
+            ok: true,
+            status: 200,
+            body: ndjsonStream([{ type: "stability_done", gate: "BLOCKED" }]),
+        }));
+        await postBatchNdjson<{ type: string }>({
+            endpoint: "/x",
+            body: {},
+            terminalTypes: ["stability_done", "done", "fatal"],
+            handlers: {
+                onStabilityDone: (event) => events.push(event.gate),
+            },
+        });
+        expect(events).to.deep.equal(["BLOCKED"]);
+    });
+
     it("throws a server-supplied message on a non-2xx response (extracted from JSON)", async () => {
         mockFetch(() => ({
             ok: false,
