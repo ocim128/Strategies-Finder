@@ -38,9 +38,9 @@
                 <textarea class="param-input batch-balanced-generator-assets" id="batchBacktestBalancedAssets" rows="4"
                     placeholder="BTC&#10;ETH&#10;XRP&#10;AAPL&#10;NVDA&#x2666;"></textarea>
                 <div class="batch-balanced-generator-options">
-                    <div class="batch-field batch-field--inline" title="Maximum pairs to emit (clamped to 1..2000). Default 2000.">
+                    <div class="batch-field batch-field--inline" title="Maximum pairs to emit (clamped to 1..1000000). Default 2000. Large lists are intended for the S&amp;P 500 TOP_MEAN coordinator.">
                         <label class="batch-field-label" for="batchBacktestBalancedMaxPairs">Max Pairs</label>
-                        <input class="batch-field-input batch-field-input--date" id="batchBacktestBalancedMaxPairs" type="number" min="1" max="2000" step="1" value="2000">
+                        <input class="batch-field-input batch-field-input--date" id="batchBacktestBalancedMaxPairs" type="number" min="1" max="1000000" step="1" value="2000">
                     </div>
                     <div class="batch-field batch-field--inline" title="Deterministic seed for asset permutation and orientation. Same seed + assets = same pair list. Default 1.">
                         <label class="batch-field-label" for="batchBacktestBalancedSeed">Seed</label>

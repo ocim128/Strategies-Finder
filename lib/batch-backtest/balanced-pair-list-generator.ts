@@ -1,6 +1,6 @@
 /**
  * Balanced pair-list generator for Batch Markets — deterministic,
- * degree-balanced, capped at {@link BATCH_MAX_SYMBOLS}.
+ * degree-balanced, capped at {@link BALANCED_PAIR_LIST_MAX_PAIRS}.
  *
  * Pure helper. No network, no storage, no settings persistence. The browser
  * service applies the emitted pair list to the existing Batch textarea.
@@ -8,7 +8,7 @@
  * Contract (see docs/max-active-validation-pair-list-generator-implementation-plan.md):
  *   - One asset token per input line (incl. marked stock/IBKR tokens).
  *   - Each non-self relationship is emitted once (no `A+B` and `B+A`).
- *   - Effective `maxPairs` is clamped to `1..BATCH_MAX_SYMBOLS`.
+ *   - Effective `maxPairs` is clamped to `1..BALANCED_PAIR_LIST_MAX_PAIRS`.
  *   - When the full relationship set exceeds the cap, a seeded degree-balanced
  *     round-robin subset keeps submitted asset degrees within one.
  *   - Pair orientation is a deterministic balanced graph orientation
@@ -21,7 +21,7 @@
  * N*(N-1)/2 relationship set when capped.
  */
 
-import { BATCH_MAX_SYMBOLS, normalizeBatchSymbols } from "./batch-run-contract";
+import { normalizeBatchSymbols } from "./batch-run-contract";
 import { createSeededRandom } from "../param-math-utils";
 import { fnv1a64Hex } from "./max-active-research-contract";
 import {
@@ -38,7 +38,7 @@ import {
 
 export interface BalancedPairListOptions {
     assets: readonly string[];
-    /** Effective integer clamped to 1..BATCH_MAX_SYMBOLS. */
+    /** Effective integer clamped to 1..BALANCED_PAIR_LIST_MAX_PAIRS. */
     maxPairs?: number;
     /** Effective uint32; non-finite/zero becomes 1. */
     seed?: number;
@@ -85,6 +85,9 @@ export interface PairListProvenanceV1 {
 
 /** Hard ceiling on nonempty input lines before alias collapse. */
 export const BALANCED_PAIR_LIST_MAX_INPUT_LINES = 500;
+
+/** Generator-only pair ceiling; normal Batch row intake remains capped separately. */
+export const BALANCED_PAIR_LIST_MAX_PAIRS = 1_000_000;
 
 // ---------------------------------------------------------------------------
 // Generator
@@ -163,7 +166,7 @@ export function generateBalancedPairList(options: BalancedPairListOptions): Bala
 
     // --- Relationship generation (capped, degree-balanced) ---------------
     const candidatePairCount = (shuffled.length * (shuffled.length - 1)) / 2;
-    const cap = Math.min(effectiveMaxPairs, BATCH_MAX_SYMBOLS, candidatePairCount);
+    const cap = Math.min(effectiveMaxPairs, BALANCED_PAIR_LIST_MAX_PAIRS, candidatePairCount);
     const relationships = generateRelationships(shuffled.length, cap);
     if (relationships.length === 0) {
         errors.push("Internal failure: relationship generation produced zero pairs.");
@@ -268,8 +271,8 @@ function normalizeSeed(seed: number | undefined): number {
 }
 
 function normalizeMaxPairs(maxPairs: number | undefined): number {
-    if (maxPairs === undefined || !Number.isFinite(maxPairs)) return BATCH_MAX_SYMBOLS;
-    return Math.max(1, Math.min(BATCH_MAX_SYMBOLS, Math.floor(maxPairs)));
+    if (maxPairs === undefined || !Number.isFinite(maxPairs)) return BALANCED_PAIR_LIST_MAX_PAIRS;
+    return Math.max(1, Math.min(BALANCED_PAIR_LIST_MAX_PAIRS, Math.floor(maxPairs)));
 }
 
 // ---------------------------------------------------------------------------

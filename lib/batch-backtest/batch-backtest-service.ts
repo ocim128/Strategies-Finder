@@ -30,7 +30,7 @@ import { consumeNdjsonStream } from "../ndjson-stream";
 import { extractBatchServerError, postBatchNdjson } from "./batch-ndjson-post";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import { buildBatchRunFingerprint, parseBatchSymbols, BATCH_MAX_SYMBOLS } from "./batch-run-contract";
-import { generateBalancedPairList, type BalancedPairListResult, type PairListProvenanceV1 } from "./balanced-pair-list-generator";
+import { BALANCED_PAIR_LIST_MAX_PAIRS, generateBalancedPairList, type BalancedPairListResult, type PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import { fnv1a64Hex } from "./max-active-research-contract";
 import { BATCH_SYMBOL_TEMPLATES, type BatchSymbolTemplateKey } from "./batch-symbol-templates";
 import {
@@ -1548,7 +1548,7 @@ class BatchBacktestService {
         }
         const rawAssets = dom.batchBacktestBalancedAssets.value;
         const assets = rawAssets.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
-        const maxPairs = this.readClampedInt(dom.batchBacktestBalancedMaxPairs.value, BATCH_MAX_SYMBOLS, 1, BATCH_MAX_SYMBOLS);
+        const maxPairs = this.readClampedInt(dom.batchBacktestBalancedMaxPairs.value, BALANCED_PAIR_LIST_MAX_PAIRS, 1, BALANCED_PAIR_LIST_MAX_PAIRS);
         const seedRaw = Number.parseInt(dom.batchBacktestBalancedSeed.value, 10);
         const seed = Number.isFinite(seedRaw) ? Math.max(1, Math.floor(seedRaw)) : 1;
         // The pure generator is synchronous; wrap in await so future async

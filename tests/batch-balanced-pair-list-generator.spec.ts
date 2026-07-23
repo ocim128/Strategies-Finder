@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
     generateBalancedPairList,
     BALANCED_PAIR_LIST_MAX_INPUT_LINES,
+    BALANCED_PAIR_LIST_MAX_PAIRS,
     type PairListProvenanceV1,
 } from "../lib/batch-backtest/balanced-pair-list-generator";
 import { BATCH_MAX_SYMBOLS } from "../lib/batch-backtest/batch-run-contract";
@@ -138,13 +139,13 @@ describe("balanced-pair-list-generator", () => {
     });
 
     describe("option normalization", () => {
-        it("normalizes a non-finite maxPairs to the BATCH ceiling", () => {
+        it("normalizes a non-finite maxPairs to the generator ceiling", () => {
             const r = generateBalancedPairList({ assets: ["BTC", "ETH"], maxPairs: Number.NaN });
             assert.equal(r.ok, true);
             if (r.ok) assert.equal(r.effectiveMaxPairs, 1); // 2 assets -> only 1 pair possible.
         });
 
-        it("clamps maxPairs to >= 1 and <= BATCH_MAX_SYMBOLS", () => {
+        it("clamps maxPairs to >= 1 and <= the generator ceiling", () => {
             const r1 = generateBalancedPairList({ assets: ["BTC", "ETH"], maxPairs: 0 });
             assert.equal(r1.ok, true);
             if (r1.ok) assert.equal(r1.effectiveMaxPairs, 1);
@@ -152,7 +153,8 @@ describe("balanced-pair-list-generator", () => {
             const manyAssets = Array.from({ length: 100 }, (_, i) => `A${i}`);
             const r2 = generateBalancedPairList({ assets: manyAssets, maxPairs: 999_999 });
             assert.equal(r2.ok, true);
-            if (r2.ok) assert.ok(r2.effectiveMaxPairs <= BATCH_MAX_SYMBOLS);
+            if (r2.ok) assert.ok(r2.effectiveMaxPairs <= BALANCED_PAIR_LIST_MAX_PAIRS);
+            assert.equal(BALANCED_PAIR_LIST_MAX_PAIRS, 1_000_000);
         });
 
         it("normalizes non-finite or zero seed to 1", () => {
@@ -207,7 +209,7 @@ describe("balanced-pair-list-generator", () => {
             }
         });
 
-        it("never exceeds the effective maximum or BATCH_MAX_SYMBOLS when capped", () => {
+        it("never exceeds the effective maximum when capped", () => {
             const assets = Array.from({ length: 100 }, (_, i) => `A${i}`);
             for (const cap of [1, 10, 50, 100, 500, 2000]) {
                 const r = generateBalancedPairList({ assets, maxPairs: cap });
