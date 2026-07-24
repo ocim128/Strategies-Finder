@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
     BATCH_RESULT_SNAPSHOT_LIMIT,
+    BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT,
     compactBatchBacktestResultsSnapshot,
     normalizeBatchBacktestResultsSnapshot,
 } from "../lib/batch-backtest/batch-backtest-snapshot";
@@ -152,6 +153,44 @@ describe("Batch backtest result snapshots", () => {
             results: [makeResult(1)],
         });
         expect(withEmpty?.strategyKey).to.equal(null);
+    });
+
+    it("preserves the truncation marker through compact -> normalize round-trip (audit Finding 5)", () => {
+        // A quota-constrained save stamps meta.truncated + totalRows so the
+        // restore path can label the table "N of M pairs". The marker must
+        // survive a reload (readPersistedJson -> normalize) so a truncated run
+        // is not mistaken for a full run.
+        const totalRows = BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT + 10;
+        const compacted = compactBatchBacktestResultsSnapshot({
+            savedAt: 123,
+            interval: "4h",
+            fingerprint: "abc",
+            strategyKey: "rolling_vwap_center",
+            serverHasArtifacts: true,
+            results: Array.from({ length: BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT }, (_, i) => makeResult(i)),
+            meta: { truncated: true, totalRows },
+        });
+        expect(compacted.results).to.have.length(BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT);
+        expect(compacted.meta).to.deep.equal({ truncated: true, totalRows });
+
+        const roundTripped = normalizeBatchBacktestResultsSnapshot(compacted);
+        expect(roundTripped?.meta).to.deep.equal({ truncated: true, totalRows });
+    });
+
+    it("drops a malformed truncation marker during normalize (audit Finding 5)", () => {
+        // A truncated flag without a numeric totalRows, or a non-boolean
+        // truncated flag, must not survive normalize — otherwise the restore
+        // path would render a broken "N of undefined pairs" label.
+        const malformed = normalizeBatchBacktestResultsSnapshot({
+            savedAt: 1,
+            interval: "4h",
+            fingerprint: "abc",
+            strategyKey: "rolling_vwap_center",
+            serverHasArtifacts: true,
+            results: [makeResult(1)],
+            meta: { truncated: "yes" as unknown as true, totalRows: "many" as unknown as number },
+        });
+        expect(malformed?.meta).to.equal(undefined);
     });
 
 });

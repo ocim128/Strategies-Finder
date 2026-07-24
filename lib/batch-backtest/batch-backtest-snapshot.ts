@@ -4,6 +4,23 @@ import { BATCH_MAX_SYMBOLS } from "./batch-run-contract";
 
 export const BATCH_RESULT_SNAPSHOT_LIMIT = BATCH_MAX_SYMBOLS;
 
+/**
+ * Truncated-snapshot row cap used as the tier-2 fallback when the full snapshot
+ * exceeds the localStorage quota (audit Finding 5). Keeps the most recent rows
+ * so a reload still restores a useful table instead of silently losing the run.
+ */
+export const BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT = 250;
+
+export interface BatchBacktestResultsSnapshotMeta {
+    /**
+     * Set when the snapshot was truncated to fit the localStorage quota (audit
+     * Finding 5). `totalRows` is the true row count before truncation so the
+     * restore path can label the table "restored N of M pairs".
+     */
+    truncated: true;
+    totalRows: number;
+}
+
 export interface BatchBacktestResultsSnapshot {
     savedAt: number;
     interval: string;
@@ -14,6 +31,12 @@ export interface BatchBacktestResultsSnapshot {
     strategyKey: string | null;
     serverHasArtifacts: boolean;
     results: BatchBacktestSymbolResult[];
+    /**
+     * Optional truncation marker (audit Finding 5). Absent on a full snapshot;
+     * present when the snapshot was truncated to fit the localStorage quota.
+     * Older snapshots normalize to `undefined`.
+     */
+    meta?: BatchBacktestResultsSnapshotMeta;
 }
 
 export function compactBatchBacktestResultsSnapshot(
@@ -35,6 +58,7 @@ export function compactBatchBacktestResultsSnapshot(
         results: snapshot.results
             .slice(0, BATCH_RESULT_SNAPSHOT_LIMIT)
             .map((row) => (row.data === undefined && (row.result?.trades?.length ?? 0) === 0 ? row : toScalarRow(row))),
+        ...(snapshot.meta ? { meta: snapshot.meta } : {}),
     };
 }
 
@@ -46,7 +70,7 @@ export function normalizeBatchBacktestResultsSnapshot(value: unknown): BatchBack
     if (!Array.isArray(candidate.results) || candidate.results.length === 0) {
         return null;
     }
-    return compactBatchBacktestResultsSnapshot({
+    const normalized = compactBatchBacktestResultsSnapshot({
         savedAt: typeof candidate.savedAt === "number" ? candidate.savedAt : 0,
         interval: typeof candidate.interval === "string" ? candidate.interval : "",
         fingerprint: typeof candidate.fingerprint === "string" ? candidate.fingerprint : null,
@@ -54,4 +78,10 @@ export function normalizeBatchBacktestResultsSnapshot(value: unknown): BatchBack
         serverHasArtifacts: candidate.serverHasArtifacts === true,
         results: candidate.results as BatchBacktestSymbolResult[],
     });
+    // Preserve the truncation marker across a normalize round-trip so a reload
+    // after a quota-constrained save still labels the table correctly.
+    if (candidate.meta?.truncated === true && typeof candidate.meta.totalRows === "number") {
+        normalized.meta = { truncated: true, totalRows: candidate.meta.totalRows };
+    }
+    return normalized;
 }

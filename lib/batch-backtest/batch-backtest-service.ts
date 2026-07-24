@@ -43,6 +43,7 @@ import {
 import {
     compactBatchBacktestResultsSnapshot,
     normalizeBatchBacktestResultsSnapshot,
+    BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT,
     type BatchBacktestResultsSnapshot,
 } from "./batch-backtest-snapshot";
 import {
@@ -1694,7 +1695,13 @@ class BatchBacktestService {
         // a tab that reloads into restored-but-not-current state keeps all
         // three disabled consistently until a server-side run re-enables them.
         this.updateArtifactActionButtons(dom);
-        dom.batchBacktestStatus.textContent = `Restored last Batch run (${this.lastResults.length} pairs)`;
+        // Audit Finding 5: if the snapshot was truncated to fit the localStorage
+        // quota, label the restored table "N of M pairs" so the user knows a
+        // reload did not recover the full run (server reattach still can).
+        const totalRows = snapshot.meta?.truncated ? snapshot.meta.totalRows : this.lastResults.length;
+        dom.batchBacktestStatus.textContent = snapshot.meta?.truncated
+            ? `Restored last Batch run (${this.lastResults.length} of ${totalRows} pairs — truncated to fit local cache)`
+            : `Restored last Batch run (${this.lastResults.length} pairs)`;
         this.setProgress(dom, 100, "Restored");
         this.renderSummaryGrid(dom);
         debugLogger.event("batch_backtest.latest_results_restored", {
@@ -1708,20 +1715,51 @@ class BatchBacktestService {
         if (this.lastResults.length === 0) {
             return;
         }
-        const snapshot = compactBatchBacktestResultsSnapshot({
+        const baseSnapshot = {
             savedAt: Date.now(),
             interval: this.lastRunInterval ?? state.currentInterval,
             fingerprint: this.lastRunFingerprint,
             strategyKey: this.lastRunStrategyKey,
             serverHasArtifacts: this.serverHasArtifacts,
+        };
+        // Tier 1: try the full compact snapshot.
+        const fullSnapshot = compactBatchBacktestResultsSnapshot({
+            ...baseSnapshot,
             results: this.lastResults,
         });
-        writePersistedJson({
+        const fullOk = writePersistedJson({
             ...BATCH_RESULTS_STORAGE,
-            data: snapshot,
+            data: fullSnapshot,
             onError: (error) => {
                 debugLogger.error("batch_backtest.latest_results_save_failed", {
                     error: error instanceof Error ? error.message : String(error),
+                });
+            },
+        });
+        if (fullOk) {
+            return;
+        }
+        // Tier 2 (audit Finding 5): the full snapshot exceeded the localStorage
+        // quota (typically 1000+ rows). Retry with the most recent rows capped
+        // at BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT so a reload still restores a
+        // useful table instead of silently losing the run. Previously a
+        // QuotaExceeded only hit a debug log and the next reload had nothing.
+        if (this.lastResults.length <= BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT) {
+            // Already under the truncated cap — truncation cannot help.
+            return;
+        }
+        const truncatedSnapshot = compactBatchBacktestResultsSnapshot({
+            ...baseSnapshot,
+            results: this.lastResults.slice(-BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT),
+            meta: { truncated: true, totalRows: this.lastResults.length },
+        });
+        writePersistedJson({
+            ...BATCH_RESULTS_STORAGE,
+            data: truncatedSnapshot,
+            onError: (error) => {
+                debugLogger.warn("batch_backtest.latest_results_truncated_save_failed", {
+                    error: error instanceof Error ? error.message : String(error),
+                    totalRows: this.lastResults.length,
                 });
             },
         });
