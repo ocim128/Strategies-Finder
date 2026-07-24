@@ -46,6 +46,7 @@ import {
     BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT,
     type BatchBacktestResultsSnapshot,
 } from "./batch-backtest-snapshot";
+import { ReattachBackoffController } from "./reattach-backoff";
 import {
     BATCH_BENCHMARK_SCHEMA,
     benchmarkRatio,
@@ -208,7 +209,8 @@ class BatchBacktestService {
      */
     private topMeanReattachTimer: ReturnType<typeof setTimeout> | null = null;
     private topMeanReattachTimerResolve: (() => void) | null = null;
-    private topMeanReattachConsecutiveFailures = 0;
+    // Audit Finding 1: shared transient-failure backoff state machine.
+    private readonly topMeanReattachBackoff = new ReattachBackoffController();
     // Browser-generated server run id (audit Finding 5). Sent on the /run body
     // and the /stop body so the server can scope Stop to THIS run: a stale tab
     // cannot cancel a newer run. Reattach also matches this against the
@@ -244,9 +246,12 @@ class BatchBacktestService {
     // Consecutive failed status polls during a reattach (audit Finding 4).
     // Reset to 0 on any successful response. A transient Vite restart or
     // network hiccup no longer strands the tab with stale buttons: the loop
-    // retries with capped backoff until either a response lands or the
-    // generous MAX_REATTACH_CONSECUTIVE_FAILURES threshold is reached.
-    private reattachConsecutiveFailures = 0;
+    // Audit Finding 1: the transient-failure backoff state machine
+    // (consecutive counter + backoff index + give-up threshold) is shared with
+    // the TOP_MEAN reattach loop via ReattachBackoffController. The cancellable
+    // timer fields below stay per-loop because the two loops express ownership
+    // and healthy-poll cadence differently.
+    private readonly reattachBackoff = new ReattachBackoffController();
     // Benchmark snapshot for the Copy Benchmark button. The run phase records
     // wall clock + cache stats on completion. `null` until the run phase has
     // completed in this session.
@@ -1133,10 +1138,10 @@ class BatchBacktestService {
      *
      * Transient failure recovery (audit Finding 4): a thrown fetch or JSON
      * parse no longer abandons the run. Each poll's fetch+parse is wrapped so a
-     * failure increments `reattachConsecutiveFailures`, surfaces a
-     * "connection interrupted" status alongside the last known snapshot, and
-     * retries with capped backoff (2s → 5s → 10s → 15s). A successful poll
-     * resets the counter. Only after `MAX_REATTACH_CONSECUTIVE_FAILURES`
+     * failure increments the shared `ReattachBackoffController` counter (audit
+     * Finding 1), surfaces a "connection interrupted" status alongside the last
+     * known snapshot, and retries with capped backoff (2s → 5s → 10s → 15s). A
+     * successful poll resets the counter. Only after the give-up threshold
      * (~5 min at the 15s ceiling) does the loop give up and restore the Run
      * button so the user can re-click to reattach — turning a single Vite
      * restart from a fatal UI failure into a recoverable delay.
@@ -1145,14 +1150,10 @@ class BatchBacktestService {
         const POLL_INTERVAL_MS = 2000;
         const LONG_POLL_INTERVAL_MS = 5000;
         const FAST_POLL_COUNT = 150; // 5 minutes at 2s before stepping down to 5s.
-        // Capped backoff for transient status-poll failures (audit Finding 4).
-        const FAILURE_BACKOFF_MS = [2_000, 5_000, 10_000, 15_000] as const;
-        // After this many consecutive failures, stop retrying and surface the
-        // "click Run to reattach" state. ~5 min at the 15s ceiling (20 × 15s)
-        // — comfortably longer than a Vite dev-server restart.
-        const MAX_REATTACH_CONSECUTIVE_FAILURES = 20;
+        // Audit Finding 1: the consecutive-failure backoff + give-up threshold
+        // live in the shared ReattachBackoffController (reattach-backoff.ts).
         this.reattachPollingStopped = false;
-        this.reattachConsecutiveFailures = 0;
+        this.reattachBackoff.reset();
         // Last snapshot rendered while the run was healthy, so the
         // "connection interrupted" branch can keep the last known progress
         // visible instead of blanking the status line.
@@ -1193,12 +1194,12 @@ class BatchBacktestService {
                     payload = await response.json() as typeof payload;
                 } catch (error) {
                     if (this.reattachPollingStopped) return;
-                    this.reattachConsecutiveFailures += 1;
+                    const outcome = this.reattachBackoff.recordFailure();
                     debugLogger.warn("batch.server.reattach_poll_failed", {
-                        consecutive: this.reattachConsecutiveFailures,
+                        consecutive: outcome.consecutive,
                         error: error instanceof Error ? error.message : String(error),
                     });
-                    if (this.reattachConsecutiveFailures > MAX_REATTACH_CONSECUTIVE_FAILURES) {
+                    if (outcome.gaveUp) {
                         // Give up retrying but do NOT strand the UI: restore the
                         // Run button so the tab isn't stuck on stale busy state.
                         // The server may still own the run or have finished it
@@ -1218,12 +1219,10 @@ class BatchBacktestService {
                     // (probably) still alive on the server.
                     const prior = lastRunLabel ? ` (${lastRunLabel})` : "";
                     this.getDom().batchBacktestStatus.textContent
-                        = `Server connection interrupted${prior} — retrying (${this.reattachConsecutiveFailures}/${MAX_REATTACH_CONSECUTIVE_FAILURES})`;
-                    const backoffIndex = Math.min(this.reattachConsecutiveFailures - 1, FAILURE_BACKOFF_MS.length - 1);
-                    const backoffDelay = FAILURE_BACKOFF_MS[backoffIndex]!;
+                        = `Server connection interrupted${prior} — retrying (${outcome.consecutive}/${outcome.max})`;
                     await new Promise<void>((resolve) => {
                         this.reattachTimerResolve = resolve;
-                        this.reattachTimer = setTimeout(resolve, backoffDelay);
+                        this.reattachTimer = setTimeout(resolve, outcome.backoffDelayMs);
                     });
                     this.reattachTimer = null;
                     this.reattachTimerResolve = null;
@@ -1233,7 +1232,7 @@ class BatchBacktestService {
                     continue;
                 }
                 // Successful poll: reset the transient-failure counter.
-                this.reattachConsecutiveFailures = 0;
+                this.reattachBackoff.recordSuccess();
                 // Audit runId-scoping finding: server confirmed the retained
                 // run is no longer ours. Stop polling without adopting another
                 // tab's snapshot. Keep the already-rendered rows in place.
@@ -2988,16 +2987,14 @@ class BatchBacktestService {
         // so even a transient dev-server hiccup lost the entire reattach. It
         // also used a bare setTimeout with no cancellation hook (Stop had to
         // wait the full 2s delay before the loop noticed). Both gaps are
-        // closed below by porting the consecutive-failure backoff (2s → 5s →
-        // 10s → 15s, give up after ~5 min at the 15s ceiling) and the
-        // cancellable delay from `reattachToInProgressServerRun`.
-        const FAILURE_BACKOFF_MS = [2_000, 5_000, 10_000, 15_000] as const;
-        const MAX_REATTACH_CONSECUTIVE_FAILURES = 20;
+        // closed below by sharing the consecutive-failure backoff state machine
+        // (2s -> 5s -> 10s -> 15s, give up after ~5 min at the 15s ceiling) with
+        // `reattachToInProgressServerRun` via ReattachBackoffController.
         const healthyDelay = (): Promise<void> => new Promise<void>((resolve) => {
             this.topMeanReattachTimerResolve = resolve;
             this.topMeanReattachTimer = setTimeout(resolve, 2_000);
         });
-        this.topMeanReattachConsecutiveFailures = 0;
+        this.topMeanReattachBackoff.reset();
         try {
             while (this.activeTopMeanRunId === runId) {
                 try {
@@ -3053,17 +3050,17 @@ class BatchBacktestService {
                         setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
                     }
                     // Successful poll resets the transient-failure counter.
-                    this.topMeanReattachConsecutiveFailures = 0;
+                    this.topMeanReattachBackoff.recordSuccess();
                 } catch (err) {
                     if (this.activeTopMeanRunId !== runId) return;
-                    this.topMeanReattachConsecutiveFailures += 1;
+                    const outcome = this.topMeanReattachBackoff.recordFailure();
                     this.recordTopMeanDiagnostic("reattach.error", {
                         runId,
-                        consecutive: this.topMeanReattachConsecutiveFailures,
+                        consecutive: outcome.consecutive,
                         name: err instanceof Error ? err.name : typeof err,
                         message: err instanceof Error ? err.message : String(err),
                     });
-                    if (this.topMeanReattachConsecutiveFailures > MAX_REATTACH_CONSECUTIVE_FAILURES) {
+                    if (outcome.gaveUp) {
                         // Give up retrying but do NOT strand the UI: restore
                         // the run buttons and clear the persisted marker so a
                         // reload can reattach if the server recovers. Mirrors
@@ -3078,15 +3075,10 @@ class BatchBacktestService {
                         return;
                     }
                     dom.batchBacktestSp500TopMeanProgressText.textContent =
-                        `Server connection interrupted — retrying (${this.topMeanReattachConsecutiveFailures}/${MAX_REATTACH_CONSECUTIVE_FAILURES})`;
-                    const backoffIndex = Math.min(
-                        this.topMeanReattachConsecutiveFailures - 1,
-                        FAILURE_BACKOFF_MS.length - 1,
-                    );
-                    const backoffDelay = FAILURE_BACKOFF_MS[backoffIndex]!;
+                        `Server connection interrupted — retrying (${outcome.consecutive}/${outcome.max})`;
                     await new Promise<void>((resolve) => {
                         this.topMeanReattachTimerResolve = resolve;
-                        this.topMeanReattachTimer = setTimeout(resolve, backoffDelay);
+                        this.topMeanReattachTimer = setTimeout(resolve, outcome.backoffDelayMs);
                     });
                     this.topMeanReattachTimer = null;
                     this.topMeanReattachTimerResolve = null;
