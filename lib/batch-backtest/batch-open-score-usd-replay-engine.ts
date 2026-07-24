@@ -8,10 +8,10 @@
  *
  * Scope boundary: this is an equal-notional, fixed-horizon USD trade study.
  * It answers whether the top-score choice has better conditional forward
- * return than another positive candidate at the same event. It does NOT
- * reproduce a live portfolio's overlapping positions, adaptive exits, or
- * capital compounding; those need the separate gated stateful phase and must
- * not be inferred from this report.
+ * return than another positive candidate at the same event. Its P&L section
+ * additionally shows an explicitly non-compounding overlapping event basket
+ * and a same-event long-top/short-rank-2 hedge. It does not reproduce a live
+ * portfolio's capital allocation, adaptive exits, or execution queue.
  *
  * Score semantics (must match computeOpenTradeAssetScores in batch-row-scalars):
  *   long pair  -> base +1, quote -1 at entry; inverse deltas at exit
@@ -73,6 +73,21 @@ export interface ReplayComparison {
     totalBlocks: number;
 }
 
+/**
+ * Equal-notional event-basket P&L summary.
+ *
+ * `totalReturn` is the sum of per-event net returns with one unit of notional
+ * per event. It is intentionally not an account return: events may overlap
+ * and the series is not compounded.
+ */
+export interface SelectorPnlSummary {
+    trades: number;
+    totalReturn: number | null;
+    sharpe: number | null;
+    winRate: number | null;
+    maxDrawdown: number | null;
+}
+
 export interface DegreeSummary {
     min: number;
     median: number;
@@ -112,6 +127,8 @@ export interface OpenScoreUsdReplayResult {
         topAdjusted: ReplayComparison;
         /** Highest rawScore / activePairCount (mean signed vote). */
         topMean: ReplayComparison;
+        /** TOP_MEAN rank 1 versus rank 2 among positive candidates. */
+        topMeanVsRank2: ReplayComparison;
         /** Reversion selector: most-open negative-score asset, shorted vs USD. */
         maxActiveReversion: ReplayComparison;
         /** Per-asset breakdown for the reversion selector. */
@@ -190,6 +207,13 @@ export interface OpenScoreUsdReplayResult {
         topMeanDominantAsset: string | null;
         /** Per-asset breakdown for the TOP_MEAN selector. */
         topMeanByAsset: AssetSelectionSummary[];
+        /** P&L summaries for the overlapping and hedged TOP_MEAN experiments. */
+        pnl: {
+            topMean: SelectorPnlSummary;
+            random: SelectorPnlSummary;
+            topMeanHedge: SelectorPnlSummary;
+            randomHedge: SelectorPnlSummary;
+        };
         /** Active pair count at decision events (coverage at the event). */
         candidateDegree: DegreeSummary;
         /** Static pair degree of the selected TOP_RAW asset across events. */
@@ -264,6 +288,59 @@ function meanOrNull(values: readonly number[]): number | null {
     let s = 0;
     for (const v of values) s += v;
     return finiteOrNull(s / values.length);
+}
+
+/**
+ * Summarize a fixed-notional selector event series as overlapping basket P&L.
+ * Non-finite returns are omitted rather than converted to zero. Drawdown is
+ * calculated on the chronological, non-compounded cumulative return curve.
+ */
+export function computeSelectorPnl(
+    returns: readonly number[],
+    times: readonly number[],
+): SelectorPnlSummary {
+    const points: Array<{ value: number; time: number; index: number }> = [];
+    for (let i = 0; i < returns.length; i += 1) {
+        const value = returns[i]!;
+        if (!Number.isFinite(value)) continue;
+        const rawTime = times[i];
+        points.push({ value, time: Number.isFinite(rawTime) ? rawTime! : i, index: i });
+    }
+    points.sort((a, b) => a.time - b.time || a.index - b.index);
+    if (points.length === 0) {
+        return { trades: 0, totalReturn: null, sharpe: null, winRate: null, maxDrawdown: null };
+    }
+
+    let totalReturn = 0;
+    let wins = 0;
+    let mean = 0;
+    for (const point of points) {
+        totalReturn += point.value;
+        if (point.value > 0) wins += 1;
+        mean += point.value;
+    }
+    mean /= points.length;
+    let variance = 0;
+    for (const point of points) variance += (point.value - mean) ** 2;
+    const stdDev = points.length > 1 ? Math.sqrt(variance / (points.length - 1)) : 0;
+
+    let curve = 0;
+    let peak = 0;
+    let maxDrawdown = 0;
+    for (const point of points) {
+        curve += point.value;
+        if (curve > peak) peak = curve;
+        const drawdown = peak - curve;
+        if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+    }
+
+    return {
+        trades: points.length,
+        totalReturn: finiteOrNull(totalReturn),
+        sharpe: finiteOrNull(stdDev > 1e-12 ? mean / stdDev : 0),
+        winRate: finiteOrNull(wins / points.length),
+        maxDrawdown: finiteOrNull(maxDrawdown),
+    };
 }
 
 /**
@@ -534,6 +611,7 @@ export async function runOpenScoreUsdReplay(
         topRaw: number;      // assetIndex
         topAdjusted: number; // assetIndex
         topMean: number;     // assetIndex
+        topMeanRank2: number; // assetIndex
         maxActive: number;   // assetIndex
         maxStatic: number;   // assetIndex (alias for maxRetained — legacy)
         maxSubmitted: number; // assetIndex (Phase 3: from server's submittedDegreeByAsset)
@@ -633,6 +711,12 @@ export async function runOpenScoreUsdReplay(
             const topRaw = pickMax(positives, "raw");
             const topAdjusted = pickMax(positives, "adjusted");
             const topMean = pickMax(positives, "mean");
+            const meanRanked = [...positives].sort((a, b) => {
+                if (a.mean !== b.mean) return b.mean - a.mean;
+                const aDigest = digestFor(a);
+                const bDigest = digestFor(b);
+                return aDigest < bDigest ? -1 : aDigest > bDigest ? 1 : assetNames[a.assetIndex]!.localeCompare(assetNames[b.assetIndex]!);
+            });
             const maxActive = pickMax(positives, "activePairs");
             const maxStatic = pickMax(positives, "staticPairs");
             const maxSubmitted = pickMax(positives, "submittedPairs");
@@ -642,6 +726,7 @@ export async function runOpenScoreUsdReplay(
                 topRaw: topRaw.winner.assetIndex,
                 topAdjusted: topAdjusted.winner.assetIndex,
                 topMean: topMean.winner.assetIndex,
+                topMeanRank2: meanRanked[1]!.assetIndex,
                 maxActive: maxActive.winner.assetIndex,
                 maxStatic: maxStatic.winner.assetIndex,
                 maxSubmitted: maxSubmitted.winner.assetIndex,
@@ -767,6 +852,9 @@ export async function runOpenScoreUsdReplay(
         const topRaw = createSeries();
         const topAdjusted = createSeries();
         const topMean = createSeries();
+        const topMeanVsRank2 = createSeries();
+        const topMeanHedge = createSeries();
+        const randomHedge = createSeries();
         const maxActiveReversion = createSeries();
         const maxActive = createSeries();
         const maxStatic = createSeries();
@@ -803,17 +891,25 @@ export async function runOpenScoreUsdReplay(
             if (!perAsset) { noDataEvents.add(v); continue; }
             // Collect returns for all positives this horizon.
             const retByAsset = new Map<number, number>();
+            const shortByAsset = new Map<number, number>();
             let allValid = true;
             for (const c of view.positives) {
                 const arr = perAsset.get(c.assetIndex);
                 const r = arr ? arr.long[hIdx] : undefined;
-                if (r === undefined || !Number.isFinite(r)) { allValid = false; break; }
+                const shortReturn = arr ? arr.short[hIdx] : undefined;
+                if (r === undefined || !Number.isFinite(r) || shortReturn === undefined || !Number.isFinite(shortReturn)) {
+                    allValid = false;
+                    break;
+                }
                 retByAsset.set(c.assetIndex, r);
+                shortByAsset.set(c.assetIndex, shortReturn);
             }
             if (!allValid) continue; // censored or missing -> omit from both arms
 
             let totalReturn = 0;
+            let totalShortReturn = 0;
             for (const r of retByAsset.values()) totalReturn += r;
+            for (const r of shortByAsset.values()) totalShortReturn += r;
             const randomMeanOf = (selectedIdx: number): number => {
                 const selectedReturn = retByAsset.get(selectedIdx);
                 return selectedReturn === undefined || retByAsset.size < 2
@@ -846,6 +942,7 @@ export async function runOpenScoreUsdReplay(
             appendSelection(topRaw, view.topRaw);
             appendSelection(topAdjusted, view.topAdjusted);
             appendSelection(topMean, view.topMean);
+            appendPairwise(topMeanVsRank2, view.topMean, view.topMeanRank2);
             appendSelection(maxActive, view.maxActive);
             appendSelection(maxStatic, view.maxStatic);
             appendSelection(maxSubmitted, view.maxSubmitted);
@@ -854,6 +951,16 @@ export async function runOpenScoreUsdReplay(
             appendPairwise(activeVsRetained, view.maxActive, view.maxStatic);
             appendPairwise(activeVsRaw, view.maxActive, view.topRaw);
             appendPairwise(activeVsMean, view.maxActive, view.topMean);
+            const topMeanReturn = retByAsset.get(view.topMean)!;
+            const rank2ShortReturn = shortByAsset.get(view.topMeanRank2)!;
+            const randomLongMean = totalReturn / retByAsset.size;
+            const randomShortMean = totalShortReturn / shortByAsset.size;
+            topMeanHedge.returns.push(topMeanReturn + rank2ShortReturn);
+            topMeanHedge.times.push(view.timeSec);
+            topMeanHedge.assets.push(assetNames[view.topMean]!);
+            randomHedge.returns.push(randomLongMean + randomShortMean);
+            randomHedge.times.push(view.timeSec);
+            randomHedge.assets.push("RANDOM_PAIR");
             // Accumulate tie counts.
             (Object.keys(view.ties) as Array<SelectorName>).forEach((k) => {
                 tieCounts[k] += view.ties[k];
@@ -1094,11 +1201,22 @@ export async function runOpenScoreUsdReplay(
         // duplicate `buildComparison(maxStatic.deltas, ...)` burned 10k LCG
         // iterations + one sort + one 10k-element allocation per horizon.
         const maxStaticComparison = buildComparison(maxStatic.deltas, maxStatic.returns, maxStatic.times);
+        const topMeanPnl = computeSelectorPnl(topMean.returns, topMean.times);
+        const randomPnlReturns: number[] = [];
+        for (let i = 0; i < topMean.returns.length; i += 1) {
+            const selected = topMean.returns[i]!;
+            const delta = topMean.deltas[i]!;
+            randomPnlReturns.push(selected - delta);
+        }
+        const randomPnl = computeSelectorPnl(randomPnlReturns, topMean.times);
+        const topMeanHedgePnl = computeSelectorPnl(topMeanHedge.returns, topMeanHedge.times);
+        const randomHedgePnl = computeSelectorPnl(randomHedge.returns, randomHedge.times);
         horizonResults.push({
             bars: horizons[hIdx]!,
             topRaw: buildComparison(topRaw.deltas, topRaw.returns, topRaw.times),
             topAdjusted: buildComparison(topAdjusted.deltas, topAdjusted.returns, topAdjusted.times),
             topMean: buildComparison(topMean.deltas, topMean.returns, topMean.times),
+            topMeanVsRank2: buildComparison(topMeanVsRank2.deltas, topMeanVsRank2.returns, topMeanVsRank2.times),
             maxActiveReversion: buildComparison(maxActiveReversion.deltas, maxActiveReversion.returns, maxActiveReversion.times),
             maxActiveReversionByAsset,
             maxActiveReversionExDominant,
@@ -1125,6 +1243,12 @@ export async function runOpenScoreUsdReplay(
             activeVsMean: buildComparison(activeVsMean.deltas, activeVsMean.returns, activeVsMean.times),
             topRawByAsset,
             topMeanByAsset,
+            pnl: {
+                topMean: topMeanPnl,
+                random: randomPnl,
+                topMeanHedge: topMeanHedgePnl,
+                randomHedge: randomHedgePnl,
+            },
             candidateDegree: degreeSummary(activeCountsAtEvents, totalSelected > 0 ? maxSelected / totalSelected : null),
             selectedDegree: degreeSummary(selectedDegree, totalSelected > 0 ? maxSelected / totalSelected : null),
             tieRates: {
@@ -1182,7 +1306,7 @@ export async function runOpenScoreUsdReplay(
         }
     }
     warnings.push("Stock/marked-leg datasets may carry split/corporate-action discontinuities; verify adjustment before treating this as a tradeable verdict.");
-    warnings.push("Event-level selector study: does not model overlapping positions, adaptive exits, or capital compounding.");
+    warnings.push("P&L experiments use equal 1-unit event notional; overlapping entries are summed without compounding and are not live account returns.");
 
     const complete = omittedPairs === 0 && omittedAssets === 0;
     const staticDegrees = assetNames.map((n) => staticDegree.get(n) ?? 0);
@@ -1356,10 +1480,18 @@ function buildReportLines(args: {
         `${label.padEnd(14)} n=${comparison.events} top=${fmtPct(comparison.topMean)} rand=${fmtPct(comparison.randomMean)} ` +
         `delta=${fmtPct(comparison.delta)} CI95=[${fmtPct(comparison.ciLower)},${fmtPct(comparison.ciUpper)}] ` +
         `+blocks=${comparison.positiveBlocks}/${comparison.totalBlocks}`;
+    const pnlLine = (label: string, summary: SelectorPnlSummary): string => {
+        const average = summary.trades > 0 && summary.totalReturn !== null
+            ? summary.totalReturn / summary.trades
+            : null;
+        return `${label.padEnd(20)} trades=${summary.trades} avg/trade=${fmtPct(average)} ` +
+            `sharpe=${fmtNum(summary.sharpe)} winRate=${summary.winRate === null ? "n/a" : (summary.winRate * 100).toFixed(1) + "%"}`;
+    };
     lines.push(`OPEN_SCORE USD | ${status} | pairs=${args.pairs} assets=${args.assets} events=${args.totalEvents} comparable=${args.candidateEvents} eligible=${args.eligibleEvents}`);
     lines.push(`config | interval=${args.interval ?? "n/a"} window=${args.sampleFromSec === null ? "start" : new Date(args.sampleFromSec * 1000).toISOString().slice(0, 10)}..${args.sampleToSec === null ? "end" : new Date(args.sampleToSec * 1000).toISOString().slice(0, 10)} horizons=[${args.horizonsList.join(",")}] slippageRate=${args.slippageRate} commissionRate=${args.commissionRate}`);
     lines.push(`retained pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
     lines.push("controls | TOP_MEAN=raw/activePairs MAX_ACTIVE=most open pairs MAX_ACTIVE_REVERSION=most open pairs among negative-score assets, shorted vs USD MAX_SUBMITTED=most submitted pairs MAX_RETAINED=most loaded artifacts");
+    lines.push("pnl model | OVERLAP=long TOP_MEAN vs random positive, every eligible event; HEDGE=long rank1 + short rank2; RANDOM_HEDGE=uniform distinct positive long/short expectation; no compounding");
     for (const h of args.horizons) {
         const coverageRate = args.candidateEvents > 0 ? h.topRaw.events / args.candidateEvents : 0;
         const coverageStatus = h.topRaw.events === 0
@@ -1371,6 +1503,11 @@ function buildReportLines(args: {
         lines.push(comparisonLine("TOP_RAW", h.topRaw));
         lines.push(comparisonLine("TOP_ADJUSTED", h.topAdjusted));
         lines.push(comparisonLine("TOP_MEAN", h.topMean));
+        lines.push(comparisonLine("TOP_MEAN_VS_RANK2", h.topMeanVsRank2));
+        lines.push(pnlLine("TOP_MEAN_PNL", h.pnl.topMean));
+        lines.push(pnlLine("RANDOM_PNL", h.pnl.random));
+        lines.push(pnlLine("TOP_MEAN_HEDGE_PNL", h.pnl.topMeanHedge));
+        lines.push(pnlLine("RANDOM_HEDGE_PNL", h.pnl.randomHedge));
         lines.push(comparisonLine("MAX_ACTIVE", h.maxActive));
         lines.push(comparisonLine("MAX_ACTIVE_REVERSION", h.maxActiveReversion));
         lines.push(comparisonLine(`REVERSION_EX_${h.maxActiveReversionDominantAsset ?? "NONE"}`, h.maxActiveReversionExDominant));

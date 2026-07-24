@@ -415,3 +415,86 @@ describe("alpaca processSyncBatch typo rejection (audit Finding 2)", () => {
         assert.equal(events[0]!.source, "ibkr");
     });
 });
+
+describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed", () => {
+    // Audit follow-up to the data-loss incident: Alpaca Download onto an
+    // existing IBKR-sourced interval must now MERGE (preserve the IBKR
+    // history) AND honestly label the catalog `source: "mixed"` so the file
+    // is never silently passed off as single-source. The "mixed" label makes
+    // the interval ineligible for future Alpaca sync (the source guard still
+    // requires "alpaca"), so the user consciously decides whether to keep
+    // mixing. Uses sentinel SYMBOLS at the real 30m interval (the only one
+    // Alpaca supports) and cleans them up in afterEach. The symbols are
+    // obviously-test names that will never collide with real tickers.
+    const originalFetch = globalThis.fetch;
+    const SEED_SYMBOL = "ZZXMIX";
+    const FRESH_SYMBOL = "ZZXFRSH";
+
+    beforeEach(() => {
+        // Stub fetch to return one Alpaca-shaped bar so the worker has data
+        // to merge. No real network, no real creds.
+        globalThis.fetch = (async () => ({
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            json: async () => ({ bars: [{ t: "2026-07-23T19:30:00Z", o: 207, h: 209, l: 206, c: 208, v: 1000 }] }),
+            text: async () => "",
+        }) as unknown as Response) as typeof fetch;
+    });
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+        // Clean up any sentinel-symbol files the worker wrote (CSV + .bak).
+        const { resolve } = require("node:path");
+        const { rmSync, existsSync } = require("node:fs");
+        const dir = resolve(process.cwd(), "price-data", "ibkr", "csv", "30m");
+        for (const sym of [SEED_SYMBOL, FRESH_SYMBOL]) {
+            for (const ext of [".csv", ".csv.bak", ".csv.tmp"]) {
+                const p = resolve(dir, `${sym}${ext}`);
+                if (existsSync(p)) rmSync(p, { force: true });
+            }
+        }
+    });
+
+    it("merges Alpaca bars onto an existing IBKR-sourced interval and labels it mixed", async () => {
+        const { existsSync, mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+        const { resolve } = require("node:path");
+        const { getCsvPath, syncOneAlpacaSymbol } = await import("../lib/ibkr-data/ibkr-data-vite-plugin");
+        // Seed an existing "IBKR" 30m CSV with one OLD bar the Alpaca fetch
+        // does NOT overlap. The fetch stub returns 2026-07-23; this seed is
+        // 2020-01-01 so the merge must keep both.
+        const seedPath = getCsvPath(SEED_SYMBOL, "30m");
+        mkdirSync(resolve(seedPath, ".."), { recursive: true });
+        writeFileSync(seedPath, "time,open,high,low,close,volume\n2020-01-01T00:00:00.000Z,100,100,100,100,500\n");
+
+        const catalog = {
+            entries: [{
+                symbol: SEED_SYMBOL,
+                intervals: { "30m": { source: "ibkr", lastTime: "2020-01-01T00:00:00Z", firstTime: "2020-01-01T00:00:00Z", bars: 1, lastSyncAt: "2020-01-01T00:00:00Z" } },
+            }],
+        };
+        const config = { apiKey: "PK", apiSecret: "sk", host: "https://data.alpaca.markets", feed: "iex", adjustment: "split" };
+        // Download (syncOnly=false) -> should merge, not replace.
+        const result = await syncOneAlpacaSymbol(catalog as never, SEED_SYMBOL, "30m", "1m", false, undefined, config as never);
+        // Catalog source is "mixed" because the existing source was "ibkr".
+        assert.equal(result.source, "mixed");
+        assert.equal(catalog.entries[0].intervals["30m"].source, "mixed");
+        // The merged CSV preserves BOTH the old IBKR bar AND the new Alpaca bar.
+        const merged = readFileSync(seedPath, "utf8").split(/\r?\n/).filter(Boolean);
+        assert.ok(merged.length >= 3, `expected >=3 lines (header + 2 bars), got ${merged.length}`);
+        assert.ok(merged.some((l: string) => l.startsWith("2020-01-01")), "old IBKR bar preserved (no data loss)");
+        assert.ok(merged.some((l: string) => l.startsWith("2026-07-23")), "new Alpaca bar merged");
+    });
+
+    it("records source:alpaca (NOT mixed) when the interval is fresh (no prior bars)", async () => {
+        const { getCsvPath, syncOneAlpacaSymbol } = await import("../lib/ibkr-data/ibkr-data-vite-plugin");
+        const { existsSync } = require("node:fs");
+        // No seed file — fresh interval. Catalog has no entry for the symbol.
+        const catalog = { entries: [] };
+        const config = { apiKey: "PK", apiSecret: "sk", host: "https://data.alpaca.markets", feed: "iex", adjustment: "split" };
+        const result = await syncOneAlpacaSymbol(catalog as never, FRESH_SYMBOL, "30m", "1m", false, undefined, config as never);
+        assert.equal(result.source, "alpaca");
+        assert.equal(catalog.entries[0].intervals["30m"].source, "alpaca");
+        // And the new file got written.
+        assert.ok(existsSync(getCsvPath(FRESH_SYMBOL, "30m")), "fresh CSV was written");
+    });
+});

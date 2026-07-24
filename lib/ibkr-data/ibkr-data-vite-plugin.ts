@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import type { Plugin } from "vite";
@@ -905,6 +905,16 @@ export function writeCsv(symbol: string, interval: string, candles: OHLCVData[])
     }
     const tempPath = `${filePath}.tmp`;
     writeFileSync(tempPath, `${rows.join("\n")}\n`);
+    // Defense-in-depth backup: before the atomic rename destroys the prior
+    // file, snapshot it to `<path>.bak`. This is the one-step undo that
+    // prevents a destructive Download / aggregate from being irreversible.
+    // A `.bak` only ever holds the LAST good state — each write replaces the
+    // prior `.bak`. Trade-off: ~2x disk per CSV; acceptable for a local
+    // research dataset, and `del /S *.bak` cleans them up when you don't
+    // need the safety net anymore.
+    if (existsSync(filePath)) {
+        copyFileSync(filePath, `${filePath}.bak`);
+    }
     renameSync(tempPath, filePath);
 }
 
@@ -1461,7 +1471,16 @@ async function syncOneSymbol(
     }
 
     const fetched = result.candles;
-    const existing = syncOnly ? readCsvCandles(symbol, interval) : [];
+    // ALWAYS merge onto existing rows — Download is NOT a replace. The old
+    // behavior (`syncOnly ? read : []`) discarded existing history on every
+    // Download, which made a fresh fetch of a short window silently destroy
+    // years of prior data. `mergeCandlesByTime` is last-write-wins by
+    // timestamp, sorted ascending: overlapping bars take the fresh fetch's
+    // values, non-overlapping old bars (the entire history) are preserved.
+    // `syncOnly` still controls the fetch window (incremental sync narrows
+    // it via `incrementalFromTime`); it just no longer controls whether we
+    // keep the old file.
+    const existing = readCsvCandles(symbol, interval);
     const merged = adjustIntradayCandlesFromDailyCsv(symbol, interval, mergeCandlesByTime([...existing, ...fetched]));
     writeCsv(symbol, interval, merged);
     const catalogEntry = upsertCatalogEntry(catalog, {
@@ -1736,11 +1755,25 @@ export async function syncOneAlpacaSymbol(
     }
 
     const fetched = result.candles;
-    // Download replaces; sync merges with existing rows (the source guard
-    // above guarantees existing is Alpaca when syncOnly is true).
-    const existing = syncOnly ? readCsvCandles(symbol, interval) : [];
+    // ALWAYS merge onto existing rows — Download is NOT a replace. The old
+    // behavior (`syncOnly ? read : []`) discarded existing history on every
+    // Download, which made an Alpaca fetch of a short window silently
+    // destroy years of IBKR-sourced data. `mergeCandlesByTime` is last-
+    // write-wins by timestamp, sorted ascending: overlapping bars take the
+    // fresh Alpaca values, non-overlapping old bars are preserved.
+    const existing = readCsvCandles(symbol, interval);
+    const existingHasBars = existing.length > 0;
     const merged = mergeCandlesByTime([...existing, ...fetched]);
     writeCsv(symbol, interval, merged);
+    // Catalog source: if the interval already existed with a DIFFERENT
+    // source, this is now a multi-provider file — label it `"mixed"` so the
+    // catalog stays honest. A fresh interval (no prior bars, or already
+    // Alpaca) records `"alpaca"`. `"mixed"` intervals stay ineligible for
+    // Alpaca sync (the source guard above still requires `"alpaca"`), so the
+    // user must consciously decide to keep merging.
+    const catalogSource: IbkrIntervalMeta["source"] = existingHasBars && existingSource !== "alpaca"
+        ? "mixed"
+        : "alpaca";
     // Map the fetcher's Alpaca-specific stopReason onto the catalog schema.
     // The fetcher uses `page_limit` for "hit the page ceiling"; the catalog's
     // documented equivalent is `chunk_limit` (same semantics: hit the ceiling
@@ -1752,7 +1785,7 @@ export async function syncOneAlpacaSymbol(
         interval,
         candles: merged,
         completeness: { complete: result.complete, stopReason: catalogStopReason },
-        source: "alpaca",
+        source: catalogSource,
     });
     debugLogger.info("alpaca.sync.symbol", {
         target: "alpaca",
@@ -1765,6 +1798,7 @@ export async function syncOneAlpacaSymbol(
         retries: result.retries,
         complete: result.complete,
         stopReason: result.stopReason,
+        catalogSource,
         durationMs: Date.now() - startedAt,
     });
     return {
@@ -1778,7 +1812,7 @@ export async function syncOneAlpacaSymbol(
         filePath: getCsvPath(symbol, interval),
         complete: result.complete,
         stopReason: catalogStopReason,
-        source: "alpaca" as const,
+        source: catalogSource,
         ...(result.complete ? {} : { warning: describeIncompleteStopReason(catalogStopReason) }),
     };
 }

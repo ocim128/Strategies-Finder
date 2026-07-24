@@ -47,9 +47,17 @@ export type IbkrIntervalMeta = {
      * compatibility, EXCEPT a same-source Alpaca sync requires `source ===
      * "alpaca"`; an absent source is treated as unknown and the Alpaca sync
      * handler rejects it (Alpaca Download must establish the source first).
-     * Never merge Alpaca rows into an IBKR/unknown interval.
+     *
+     * `"mixed"` is recorded when a Download merges bars from a different
+     * source into an interval that already has bars from another source
+     * (e.g. Alpaca Download onto an IBKR-sourced interval). It is an honest
+     * label that the file now contains bars from multiple providers — the
+     * user can decide whether to trust it. `"mixed"` intervals are NOT
+     * eligible for Alpaca sync (the source guard still requires `"alpaca"`
+     * for sync); re-running Alpaca Download on a `"mixed"` interval keeps it
+     * `"mixed"`.
      */
-    source?: "ibkr" | "alpaca";
+    source?: "ibkr" | "alpaca" | "mixed";
 };
 
 /**

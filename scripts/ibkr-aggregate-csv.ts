@@ -43,11 +43,21 @@ interface CliOptions {
     toInterval: string;
     symbol: string | null;
     dryRun: boolean;
+    force: boolean;
     help: boolean;
 }
 
 const APP_ROOT = process.cwd();
 const IBKR_CSV_DIR = resolve(APP_ROOT, "price-data", "ibkr", "csv");
+// Shrink-guard thresholds (audit: a truncated 30m source must NOT silently
+// overwrite a much larger existing 4h). A write is "refused" when the new
+// bar count is below SHRINK_GUARD_RATIO of the existing destination AND the
+// existing destination is above SHRINK_GUARD_MIN_EXISTING bars (so a fresh
+// write or a tiny destination isn't false-positive-blocked). Override with
+// `--force` only when you have confirmed the source genuinely shrank and you
+// want the smaller output.
+const SHRINK_GUARD_RATIO = 0.5;
+const SHRINK_GUARD_MIN_EXISTING = 100;
 
 function printUsage(): void {
     console.log([
@@ -59,6 +69,8 @@ function printUsage(): void {
         "  --interval <interval> Target interval to write (default: 4h)",
         "  --symbol <SYMBOL>    Aggregate only this symbol (optional)",
         "  --dry-run            List planned writes without writing",
+        "  --force              Overwrite even when the output would be much smaller",
+        "                       than the existing destination (refused by default)",
         "  -h, --help           Show this help",
         "",
         "Examples:",
@@ -74,6 +86,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
         toInterval: "4h",
         symbol: null,
         dryRun: false,
+        force: false,
         help: false,
     };
     for (let i = 0; i < argv.length; i += 1) {
@@ -94,6 +107,9 @@ function parseArgs(argv: readonly string[]): CliOptions {
                 break;
             case "--dry-run":
                 options.dryRun = true;
+                break;
+            case "--force":
+                options.force = true;
                 break;
             default:
                 if (arg.startsWith("--")) {
@@ -143,11 +159,29 @@ function shouldSkip(symbol: string, toInterval: string, expected: OHLCVData[]): 
 
 interface AggregateOutcome {
     symbol: string;
-    status: "written" | "skipped" | "empty" | "no-change";
+    status: "written" | "skipped" | "empty" | "no-change" | "refused";
     barsIn: number;
     barsOut: number;
     bytesWritten?: number;
     reason?: string;
+}
+
+/**
+ * Shrink-guard (audit: a truncated 30m source must NOT silently overwrite a
+ * much larger existing 4h). Returns true when the write should be REFUSED —
+ * the aggregated output is materially smaller than the existing destination.
+ * A fresh write (no existing destination) or a tiny destination is never
+ * refused; only a clear shrink is. `--force` overrides by skipping this
+ * check entirely at the call site.
+ *
+ * Exported for unit tests.
+ */
+export function shouldRefuseShrink(symbol: string, toInterval: string, aggregated: readonly OHLCVData[]): { refuse: boolean; existingCount: number } {
+    const existing = readCsv(symbol, toInterval);
+    if (existing.length === 0) return { refuse: false, existingCount: 0 };
+    if (existing.length < SHRINK_GUARD_MIN_EXISTING) return { refuse: false, existingCount: existing.length };
+    const ratio = aggregated.length / existing.length;
+    return { refuse: ratio < SHRINK_GUARD_RATIO, existingCount: existing.length };
 }
 
 function aggregateOne(symbol: string, options: CliOptions): AggregateOutcome {
@@ -161,6 +195,22 @@ function aggregateOne(symbol: string, options: CliOptions): AggregateOutcome {
     }
     if (shouldSkip(symbol, options.toInterval, aggregated)) {
         return { symbol, status: "skipped", barsIn: source.length, barsOut: aggregated.length, reason: "destination already matches" };
+    }
+    // Shrink-guard: refuse to overwrite a much larger destination unless the
+    // caller passed `--force`. This is the backstop that catches a truncated
+    // 30m source before it destroys the existing 4h history. `--dry-run`
+    // still reports the refusal (no write either way).
+    if (!options.force) {
+        const { refuse, existingCount } = shouldRefuseShrink(symbol, options.toInterval, aggregated);
+        if (refuse) {
+            return {
+                symbol,
+                status: "refused",
+                barsIn: source.length,
+                barsOut: aggregated.length,
+                reason: `REFUSED: aggregated ${aggregated.length} bars would overwrite ${existingCount} existing bars (<${Math.round(SHRINK_GUARD_RATIO * 100)}%). The ${options.fromInterval} source likely shrank. Restore ${options.fromInterval}/${symbol}.csv from its .bak, or re-run with --force to overwrite anyway.`,
+            };
+        }
     }
     if (options.dryRun) {
         return { symbol, status: "no-change", barsIn: source.length, barsOut: aggregated.length };
@@ -227,6 +277,9 @@ function main(): void {
             case "no-change":
                 console.log(`  ${symbol}: ${barsInStr} -> ${barsOutStr} bars (dry-run, no write)`);
                 break;
+            case "refused":
+                console.log(`  ${symbol}: ${barsInStr} -> ${barsOutStr} bars (REFUSED — ${outcome.reason})`);
+                break;
             case "empty":
                 console.log(`  ${symbol}: empty (${outcome.reason})`);
                 break;
@@ -237,9 +290,17 @@ function main(): void {
     const skipped = outcomes.filter((o) => o.status === "skipped").length;
     const empty = outcomes.filter((o) => o.status === "empty").length;
     const planned = outcomes.filter((o) => o.status === "no-change").length;
+    const refused = outcomes.filter((o) => o.status === "refused").length;
     console.log(
-        `\nDone: ${written} written, ${skipped} skipped, ${empty} empty, ${planned} planned (dry-run).`,
+        `\nDone: ${written} written, ${skipped} skipped, ${empty} empty, ${planned} planned (dry-run), ${refused} refused.`,
     );
 }
 
-main();
+// Run only when invoked directly as a CLI, not when imported for tests.
+// Compares the entrypoint path against this module's URL using fileURLToPath
+// so it works on Windows (where import.meta.url is a file:// URL and
+// process.argv[1] is a backslash path).
+import { fileURLToPath } from "node:url";
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+    main();
+}
