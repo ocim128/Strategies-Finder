@@ -10,6 +10,13 @@ import { beginNdjsonStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, 
 import { isAllowedLocalRequest } from "../local-route-authorization";
 import { createFetchTimeoutSignal, isAbortError } from "../dataProviders/fetch-helpers";
 import type { IbkrIntervalMeta, IbkrStreamEvent, IbkrSyncRunSnapshot } from "./ibkr-data-stream-types";
+import {
+    ALPACA_SUPPORTED_INTERVAL,
+    ALPACA_TIMEFRAME_BY_INTERVAL,
+    fetchAlpacaBars,
+    resolveAlpacaConfig,
+    type AlpacaConfig,
+} from "./alpaca-fetcher";
 
 // Re-export so existing imports of the wire types and snapshot type from the
 // plugin module keep resolving. The single source of truth now lives in the
@@ -664,7 +671,8 @@ function writeCatalog(catalog: IbkrCatalog): void {
 function summarizeCandles(
     candles: OHLCVData[],
     lastSyncAt: string,
-    completeness?: { complete: boolean; stopReason: IbkrIntervalMeta["stopReason"] }
+    completeness?: { complete: boolean; stopReason: IbkrIntervalMeta["stopReason"] },
+    source?: IbkrIntervalMeta["source"],
 ): IbkrCatalogEntry["intervals"][string] {
     const first = candles[0];
     const last = candles[candles.length - 1];
@@ -674,6 +682,7 @@ function summarizeCandles(
         bars: candles.length,
         lastSyncAt,
         ...(completeness ? { complete: completeness.complete, stopReason: completeness.stopReason } : {}),
+        ...(source ? { source } : {}),
     };
 }
 
@@ -722,6 +731,7 @@ function upsertCatalogEntry(catalog: IbkrCatalog, args: {
     candles: OHLCVData[];
     resolved?: IbkrResolvedContract;
     completeness?: { complete: boolean; stopReason: IbkrIntervalMeta["stopReason"] };
+    source?: IbkrIntervalMeta["source"];
 }): IbkrCatalogEntry {
     const nowIso = new Date().toISOString();
     const markedSymbol = markIbkrSymbol(args.symbol);
@@ -742,7 +752,7 @@ function upsertCatalogEntry(catalog: IbkrCatalog, args: {
         entry.currency = args.resolved.currency;
         if (!entry.symbol) entry.symbol = args.resolved.symbol;
     }
-    entry.intervals[args.interval] = summarizeCandles(args.candles, nowIso, args.completeness);
+    entry.intervals[args.interval] = summarizeCandles(args.candles, nowIso, args.completeness, args.source);
     catalog.entries.sort((a, b) => a.symbol.localeCompare(b.symbol));
     catalog.updatedAt = nowIso;
     return entry;
@@ -1460,6 +1470,7 @@ async function syncOneSymbol(
         candles: merged,
         resolved,
         completeness: { complete: result.complete, stopReason: result.stopReason },
+        source: "ibkr",
     });
     debugLogger.info("ibkr.sync.symbol", {
         target: "ibkr",
@@ -1539,11 +1550,271 @@ function readCatalogAssets(): Array<{ symbol: string; name: string; sector?: str
 type SyncStreamEvent = Record<string, unknown> & { type: string };
 type SyncStreamWriter = (event: SyncStreamEvent) => void;
 
+/** Supported data sources for the IBKR Data pipeline. */
+export type IbkrDataSource = "ibkr" | "alpaca";
+
+/**
+ * Normalizes the request-body `source`.
+ *
+ * Backward compatibility: a missing or blank `source` defaults to `"ibkr"`
+ * so existing IBKR requests (and old callers that never set `source`) route
+ * to the IBKR fetcher unchanged.
+ *
+ * Audit Finding 2: a non-empty value that is neither `"ibkr"` nor `"alpaca"`
+ * (e.g. a typo like `"alpacca"`) used to silently fall back to IBKR, which
+ * could route an intended-Alpaca request to the IBKR Gateway and recreate
+ * the rate-limit problem the source selector exists to avoid. Such a value
+ * is now an explicit HTTP 400 so the typo surfaces at the request boundary
+ * instead of producing silently-wrong-source data.
+ *
+ * Exported for unit tests.
+ */
+export function normalizeDataSource(value: unknown): IbkrDataSource {
+    const raw = value == null ? "" : String(value).trim().toLowerCase();
+    if (raw === "" || raw === "ibkr") return "ibkr";
+    if (raw === "alpaca") return "alpaca";
+    throw new HttpStatusError(
+        400,
+        `Unknown data source "${String(value)}". Supported sources: ibkr, alpaca.`,
+    );
+}
+
+/**
+ * Validates source-specific constraints that the request body alone cannot
+ * enforce. Throws `HttpStatusError` (surfaced in the existing UI failure
+ * path) for:
+ *  - Alpaca + `interval !== "30m"` (initial scope is 30m bars only)
+ *  - Alpaca + `period === "max"` (Alpaca `period=max` is rejected; bounded
+ *    periods only — existing IBKR `max` behavior is unchanged)
+ * Exported for unit tests.
+ */
+export function assertSourceConstraints(
+    source: IbkrDataSource,
+    interval: string,
+    period: string,
+): void {
+    if (source !== "alpaca") return;
+    if (interval !== ALPACA_SUPPORTED_INTERVAL) {
+        throw new HttpStatusError(
+            400,
+            `Alpaca source only supports the ${ALPACA_SUPPORTED_INTERVAL} interval in this release. Use IBKR for ${interval}.`,
+        );
+    }
+    if (isMaxHistoryPeriod(period)) {
+        throw new HttpStatusError(
+            400,
+            "Alpaca source rejects period=max. Provide a bounded period (e.g. 1m, 3m, 1y).",
+        );
+    }
+}
+
+/**
+ * Computes the `[start, end]` ISO-8601 window for an Alpaca bounded fetch.
+ * `end` is now; `start` is `end - periodMs`. For incremental Alpaca syncs,
+ * the caller passes `startOverride` (the catalog's last bar time) so the
+ * window overlaps the existing data — the merge step's last-write-wins dedup
+ * handles the overlap safely. Exported for unit tests.
+ */
+export function resolveAlpacaWindow(
+    period: string,
+    nowMs: number = Date.now(),
+    startOverrideMs?: number,
+): { start: string; end: string } {
+    const periodMs = parsePeriodToMs(period);
+    if (periodMs === null) {
+        throw new HttpStatusError(400, `Invalid Alpaca period "${period}". Expected e.g. 1d/2w/3m/1y.`);
+    }
+    const endMs = nowMs;
+    const startMs = startOverrideMs !== undefined && Number.isFinite(startOverrideMs)
+        ? Math.max(0, startOverrideMs)
+        : endMs - periodMs;
+    return {
+        start: new Date(startMs).toISOString(),
+        end: new Date(endMs).toISOString(),
+    };
+}
+
+/**
+ * Alpaca per-symbol worker — mirrors `syncOneSymbol`'s return shape so
+ * `processSyncBatch` can treat both sources uniformly. Source guard:
+ *  - Download replaces the target interval's dataset and records `source: "alpaca"`.
+ *  - Sync requires the catalog interval to already be `source === "alpaca"`;
+ *    otherwise the user must run Alpaca Download first. Never merge Alpaca
+ *    rows into an IBKR/unknown interval.
+ *
+ * Credentials are read inside `resolveAlpacaConfig` and never flow into the
+ * returned result, the catalog, the CSV, or stream events.
+ *
+ * `config` is injected so tests can avoid env coupling; production passes
+ * `resolveAlpacaConfig()` lazily so a missing-env error surfaces per-run
+ * rather than at module load.
+ */
+type AlpacaSymbolWorker = (
+    catalog: IbkrCatalog,
+    symbol: string,
+    interval: string,
+    period: string,
+    syncOnly: boolean,
+    signal?: AbortSignal,
+    config?: AlpacaConfig,
+) => Promise<Record<string, unknown>>;
+
+export async function syncOneAlpacaSymbol(
+    catalog: IbkrCatalog,
+    symbol: string,
+    interval: string,
+    period: string,
+    syncOnly: boolean,
+    signal?: AbortSignal,
+    config: AlpacaConfig = resolveAlpacaConfig(),
+): Promise<Record<string, unknown>> {
+    const startedAt = Date.now();
+    const existingEntry = findCatalogEntry(catalog, symbol);
+    const existingInterval = existingEntry?.intervals[interval];
+    const existingSource = existingInterval?.source;
+
+    // Source guard for sync: an unknown or IBKR interval must NOT be merged
+    // with Alpaca rows. Instruct the user to run Alpaca Download first.
+    if (syncOnly && existingSource !== "alpaca") {
+        const sourceLabel = existingSource ?? "unknown (pre-Alpaca catalog entry)";
+        throw new HttpStatusError(
+            409,
+            `Alpaca sync requires the ${interval} interval for ${symbol} to already be Alpaca-sourced (current: ${sourceLabel}). Run Alpaca Download first to establish the source, then sync.`,
+        );
+    }
+
+    const timeframe = ALPACA_TIMEFRAME_BY_INTERVAL[interval];
+    if (!timeframe) {
+        throw new HttpStatusError(400, `Alpaca source does not support interval "${interval}".`);
+    }
+
+    // Incremental sync: overlap the window with the last bar so late
+    // corrections to the previous bar are re-fetched.
+    const existingLastMs = existingInterval?.lastTime
+        ? Date.parse(existingInterval.lastTime)
+        : NaN;
+    const startOverrideMs = syncOnly && Number.isFinite(existingLastMs)
+        ? existingLastMs - ALPACA_SYNC_OVERLAP_MS
+        : undefined;
+    const window = resolveAlpacaWindow(period, Date.now(), startOverrideMs);
+
+    const result = await fetchAlpacaBars(
+        config,
+        { symbol, timeframe, start: window.start, end: window.end },
+        signal,
+    );
+    const isCancelled = (): boolean => result.stopReason === "cancelled" || signal?.aborted === true;
+
+    // Cancellation invariant: no CSV/catalog writes if aborted. Mirrors
+    // `syncOneSymbol`'s no-write-on-cancel path so ownership cannot race a
+    // newer run's writes.
+    if (isCancelled()) {
+        debugLogger.info("alpaca.sync.symbol.cancelled", {
+            target: "alpaca",
+            symbol,
+            interval,
+            bars: result.candles.length,
+            durationMs: Date.now() - startedAt,
+        });
+        return {
+            symbol,
+            markedSymbol: markIbkrSymbol(symbol),
+            interval,
+            bars: 0,
+            fetchedBars: 0,
+            firstTime: null,
+            lastTime: null,
+            filePath: getCsvPath(symbol, interval),
+            cancelled: true,
+            complete: false,
+            stopReason: "cancelled" as const,
+            source: "alpaca" as const,
+        };
+    }
+    if (result.candles.length === 0) {
+        throw new HttpStatusError(502, `Alpaca returned no ${interval} bars for ${symbol} in the requested window.`);
+    }
+
+    const fetched = result.candles;
+    // Download replaces; sync merges with existing rows (the source guard
+    // above guarantees existing is Alpaca when syncOnly is true).
+    const existing = syncOnly ? readCsvCandles(symbol, interval) : [];
+    const merged = mergeCandlesByTime([...existing, ...fetched]);
+    writeCsv(symbol, interval, merged);
+    // Map the fetcher's Alpaca-specific stopReason onto the catalog schema.
+    // The fetcher uses `page_limit` for "hit the page ceiling"; the catalog's
+    // documented equivalent is `chunk_limit` (same semantics: hit the ceiling
+    // before full coverage). Keeping the catalog schema stable avoids a
+    // migration and reuses the existing `describeIncompleteStopReason` case.
+    const catalogStopReason = mapAlpacaStopReason(result.stopReason);
+    const catalogEntry = upsertCatalogEntry(catalog, {
+        symbol,
+        interval,
+        candles: merged,
+        completeness: { complete: result.complete, stopReason: catalogStopReason },
+        source: "alpaca",
+    });
+    debugLogger.info("alpaca.sync.symbol", {
+        target: "alpaca",
+        symbol,
+        interval,
+        mode: syncOnly ? "sync" : "download",
+        bars: merged.length,
+        fetchedBars: fetched.length,
+        pages: result.pages,
+        retries: result.retries,
+        complete: result.complete,
+        stopReason: result.stopReason,
+        durationMs: Date.now() - startedAt,
+    });
+    return {
+        symbol,
+        markedSymbol: markIbkrSymbol(symbol),
+        interval,
+        bars: merged.length,
+        fetchedBars: fetched.length,
+        firstTime: catalogEntry.intervals[interval]?.firstTime ?? null,
+        lastTime: catalogEntry.intervals[interval]?.lastTime ?? null,
+        filePath: getCsvPath(symbol, interval),
+        complete: result.complete,
+        stopReason: catalogStopReason,
+        source: "alpaca" as const,
+        ...(result.complete ? {} : { warning: describeIncompleteStopReason(catalogStopReason) }),
+    };
+}
+
+/**
+ * Maps the Alpaca fetcher's stopReason onto the catalog's stopReason schema.
+ * `"page_limit"` (the fetcher hit `ALPACA_MAX_PAGES_PER_SYMBOL` before
+ * exhausting `next_page_token`) is documented in the catalog as
+ * `"chunk_limit"` — same semantics, different name. `"covered"` and
+ * `"cancelled"` pass through unchanged. Audit Finding 1: the page ceiling
+ * MUST surface as incomplete, and this mapping is what makes the existing
+ * `symbol_warning` + `describeIncompleteStopReason` paths fire for it.
+ *
+ * Exported for unit tests.
+ */
+export function mapAlpacaStopReason(stopReason: "covered" | "cancelled" | "page_limit"): IbkrIntervalMeta["stopReason"] {
+    if (stopReason === "page_limit") return "chunk_limit";
+    return stopReason;
+}
+
+// Back up by ~2 bars of overlap so late corrections to the previous bar are
+// re-fetched during an Alpaca incremental sync. 30m bars → 2 * 30min.
+const ALPACA_SYNC_OVERLAP_MS = 2 * 30 * 60 * 1000;
+
 type ProcessSyncBatchOptions = {
     /** Override the per-symbol worker (test seam — mirrors crypto's fetcher). */
     fetcher?: typeof syncOneSymbol;
+    /** Override the Alpaca per-symbol worker (test seam). */
+    alpacaFetcher?: AlpacaSymbolWorker;
     /** Abort signal from the run's AbortController; Stop aborts this. */
     signal?: AbortSignal;
+    /**
+     * Inject Alpaca config (test seam). Production resolves lazily inside the
+     * Alpaca worker so a missing-env error surfaces per-run.
+     */
+    alpacaConfig?: AlpacaConfig;
 };
 
 /**
@@ -1564,11 +1835,26 @@ export async function processSyncBatch(
     owner: number,
     options?: ProcessSyncBatchOptions
 ): Promise<void> {
-    const fetcher = options?.fetcher ?? syncOneSymbol;
     const signal = options?.signal;
+    const source = normalizeDataSource(body.source);
     const symbols = normalizeSymbols(body.symbols ?? body.symbol);
     const interval = normalizeInterval(body.interval);
     const period = normalizePeriod(String(body.period ?? DEFAULT_PERIOD_BY_INTERVAL[interval] ?? "1y").trim());
+    // Validate source-specific constraints BEFORE any work. Throws surface in
+    // the existing UI failure path. Existing IBKR requests (no `source`) skip
+    // this entirely — backward compatibility.
+    assertSourceConstraints(source, interval, period);
+    // Select the per-symbol worker by source. The Alpaca worker is wrapped so
+    // the dispatch shape stays `(catalog, symbol, interval, period, syncOnly,
+    // signal) => Promise<Record<string, unknown>>` and the batch loop below
+    // is identical for both sources.
+    const ibkrFetcher = options?.fetcher ?? syncOneSymbol;
+    const alpacaFetcher = options?.alpacaFetcher ?? syncOneAlpacaSymbol;
+    const alpacaConfig = options?.alpacaConfig;
+    const fetcher = source === "alpaca"
+        ? (async (catalog: IbkrCatalog, symbol: string, interval: string, period: string, syncOnly: boolean, signal?: AbortSignal) =>
+            alpacaFetcher(catalog, symbol, interval, period, syncOnly, signal, alpacaConfig))
+        : ibkrFetcher;
 
     // Populate the in-progress snapshot so a browser reload can reattach via
     // GET /api/ibkr/sync/status. Cleared in handleSyncRequest's finally when
@@ -1578,6 +1864,7 @@ export async function processSyncBatch(
         mode: syncOnly ? "sync" : "download",
         interval,
         period: period || null,
+        source,
         total: symbols.length,
         index: 0,
         completed: 0,
@@ -1598,7 +1885,7 @@ export async function processSyncBatch(
         if (syncRunState === runState) runState.updatedAt = new Date().toISOString();
     };
 
-    writer({ type: "start", total: symbols.length, interval, period: period || null, mode: syncOnly ? "sync" : "download" });
+    writer({ type: "start", total: symbols.length, interval, period: period || null, mode: syncOnly ? "sync" : "download", source });
 
     const results: unknown[] = [];
     const failed: unknown[] = [];
@@ -1707,6 +1994,7 @@ export async function processSyncBatch(
         ok: failed.length === 0 && !cancelled,
         cancelled,
         interval,
+        source,
         totals: {
             bars: results.reduce((sum: number, row) => sum + (Number((row as Record<string, unknown>).bars) || 0), 0),
             fetchedBars: results.reduce((sum: number, row) => sum + (Number((row as Record<string, unknown>).fetchedBars) || 0), 0),

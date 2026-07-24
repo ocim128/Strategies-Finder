@@ -41,6 +41,15 @@ export type IbkrIntervalMeta = {
      * - `cancelled`: aborted mid-fetch (Stop / newer sync)
      */
     stopReason?: "covered" | "no_more_data" | "retry_exhausted" | "chunk_limit" | "cancelled";
+    /**
+     * Which data source wrote this interval. Absent on catalog entries
+     * written before Alpaca support landed — treated as `"ibkr"` for backward
+     * compatibility, EXCEPT a same-source Alpaca sync requires `source ===
+     * "alpaca"`; an absent source is treated as unknown and the Alpaca sync
+     * handler rejects it (Alpaca Download must establish the source first).
+     * Never merge Alpaca rows into an IBKR/unknown interval.
+     */
+    source?: "ibkr" | "alpaca";
 };
 
 /**
@@ -54,6 +63,12 @@ export type IbkrSyncRunSnapshot = {
     mode: "sync" | "download";
     interval: string;
     period: string | null;
+    /**
+     * Data source for this run. Absent on snapshots written before Alpaca
+     * support landed — treated as `"ibkr"` for backward compatibility during
+     * reattach, so a pre-Alpaca in-flight run still renders as IBKR.
+     */
+    source?: "ibkr" | "alpaca";
     total: number;
     /** Index of the next symbol to process. */
     index: number;
@@ -79,9 +94,9 @@ export type IbkrSyncRunSnapshot = {
  * per item plus a terminal `done` or `fatal`.
  */
 export type IbkrStreamEvent =
-    | { type: "start"; total: number; interval?: string; mode?: string }
+    | { type: "start"; total: number; interval?: string; mode?: string; source?: "ibkr" | "alpaca"; period?: string | null }
     | { type: "symbol"; index: number; total: number; symbol: string; markedSymbol?: string; bars?: number; fetchedBars?: number }
     | { type: "symbol_failed"; index: number; total: number; symbol: string; error: string }
     | { type: "symbol_warning"; index: number; total: number; symbol: string; reason: string; complete: false }
-    | { type: "done"; ok: boolean; cancelled?: boolean; interval?: string; totals?: { bars: number; fetchedBars: number }; results?: unknown[]; failed?: unknown[] }
+    | { type: "done"; ok: boolean; cancelled?: boolean; interval?: string; source?: "ibkr" | "alpaca"; totals?: { bars: number; fetchedBars: number }; results?: unknown[]; failed?: unknown[] }
     | { type: "fatal"; error: string };

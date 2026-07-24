@@ -21,6 +21,14 @@
         </div>
         <div class="param-row">
             <div class="param-group">
+                <label class="param-label" for="ibkrDataSource">Source</label>
+                <select class="param-input" id="ibkrDataSource">
+                    <option value="ibkr" selected>IBKR Gateway</option>
+                    <option value="alpaca">Alpaca (30m, IEX)</option>
+                </select>
+                <div class="param-hint" id="ibkrDataSourceHint">Alpaca writes 30m CSVs only; run <code>npm run ibkr:aggregate -- --from 30m --interval 4h</code> afterwards to derive 4h. Alpaca credentials are read server-side.</div>
+            </div>
+            <div class="param-group">
                 <label class="param-label" for="ibkrDataInterval">Timeframe</label>
                 <select class="param-input" id="ibkrDataInterval">
                     <option value="1d" selected>1d</option>
@@ -35,7 +43,7 @@
             <div class="param-group">
                 <label class="param-label" for="ibkrDataPeriod">IBKR Period</label>
                 <input class="param-input" id="ibkrDataPeriod" type="text" placeholder="1d default: max">
-                <div class="param-hint">Examples: max, 1w, 1m, 6m, 1y, 5y.</div>
+                <div class="param-hint">Examples: max, 1w, 1m, 6m, 1y, 5y. Alpaca rejects <code>max</code> — use a bounded period.</div>
             </div>
         </div>
     </div>
