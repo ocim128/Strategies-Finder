@@ -59,6 +59,10 @@ import {
 } from "./batch-benchmark-snapshot";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import type { BatchStatusResponse, BatchStreamEvent } from "./batch-backtest-stream-types";
+import type { TopMeanCurrentSnapshot, TopMeanStreamEvent } from "./sp500-top-mean-stream-types";
+import type { CoverageCounts } from "./sp500-pair-enumerator";
+import type { TopMeanResultSummary, TopMeanStatusResponse } from "./sp500-top-mean-coordinator-engine";
+import type { StabilityComparison } from "./sp500-top-mean-stability-compare";
 import type { OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-engine";
 import type { OpenScoreUsdReplayStreamEvent } from "./batch-open-score-usd-replay-stream-types";
 import type { StrategyParams, BacktestSettings } from "../types/strategies";
@@ -198,9 +202,11 @@ class BatchBacktestService {
     private lastBenchmark: BatchBenchmarkSnapshot | null = null;
     private pendingServerRunCacheStats: BatchBenchmarkCacheStats | null = null;
 
-    private latestTopMeanResult: any = null;
+    // Audit Finding 2: typed (was `any`) so a shape drift between the
+    // coordinator engine emissions and the UI renderers is a compile failure.
+    private latestTopMeanResult: TopMeanResultSummary | null = null;
     /** Terminal stability comparison from the last stability run. */
-    private latestTopMeanStabilityResult: any = null;
+    private latestTopMeanStabilityResult: StabilityComparison | null = null;
     private activeTopMeanRunId: string | null = null;
     private topMeanDiagnosticRunId: string | null = null;
     private topMeanDiagnosticEntries: Array<{ at: string; type: string; data?: unknown }> = [];
@@ -2217,7 +2223,7 @@ class BatchBacktestService {
 
         let reattachAfterError = false;
         try {
-            await postBatchNdjson({
+            await postBatchNdjson<TopMeanStreamEvent>({
                 endpoint: "/api/batch-backtest/sp500-top-mean/run",
                 body: payload,
                 onResponse: (response) => {
@@ -2234,18 +2240,18 @@ class BatchBacktestService {
                         payload: errorPayload,
                     });
                 },
-                onEvent: (event: any) => {
+                onEvent: (event) => {
                     this.recordTopMeanNdjsonEvent(event);
                 },
                 handlers: {
-                    onPreflight: (event: any) => {
+                    onPreflight: (event: Extract<TopMeanStreamEvent, { type: "preflight" }>) => {
                         this.renderTopMeanCoverageSummary(dom, event.counts);
                     },
-                    onProgress: (event: any) => {
+                    onProgress: (event: Extract<TopMeanStreamEvent, { type: "progress" }>) => {
                         dom.batchBacktestSp500TopMeanProgressText.textContent = `[${event.phase}] ${event.text}`;
                     },
-                    onDone: (event: any) => {
-                        if (event.interrupted) {
+                    onDone: (event: Extract<TopMeanStreamEvent, { type: "done" }>) => {
+                        if ("interrupted" in event) {
                             this.latestTopMeanResult = null;
                             dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
                             dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
@@ -2273,7 +2279,7 @@ class BatchBacktestService {
                             data: null,
                         });
                     },
-                    onFatal: (event: any) => {
+                    onFatal: (event: Extract<TopMeanStreamEvent, { type: "fatal" }>) => {
                         dom.batchBacktestSp500TopMeanProgressText.textContent = `Error: ${event.error}`;
                         this.activeTopMeanRunId = null;
                         writePersistedJson({
@@ -2433,7 +2439,7 @@ class BatchBacktestService {
 
         let reattachAfterError = false;
         try {
-            await postBatchNdjson({
+            await postBatchNdjson<TopMeanStreamEvent>({
                 endpoint: "/api/batch-backtest/sp500-top-mean/run",
                 body: payload,
                 terminalTypes: ["stability_done", "done", "fatal"],
@@ -2446,33 +2452,31 @@ class BatchBacktestService {
                 onNonOkResponse: (status, errorPayload) => {
                     this.recordTopMeanDiagnostic("stability.http.error_response", { status, payload: errorPayload });
                 },
-                onEvent: (event: any) => {
+                onEvent: (event) => {
                     this.recordTopMeanNdjsonEvent(event);
                 },
                 handlers: {
-                    onPreflight: (event: any) => {
+                    onPreflight: (event: Extract<TopMeanStreamEvent, { type: "preflight" }>) => {
                         this.renderTopMeanCoverageSummary(dom, event.counts);
                     },
-                    onProgress: (event: any) => {
+                    onProgress: (event: Extract<TopMeanStreamEvent, { type: "progress" }>) => {
                         dom.batchBacktestSp500TopMeanProgressText.textContent =
                             event.phase === "stability"
                                 ? `[stability ${event.currentWindow ?? "?"}/${event.totalWindows ?? "?"}] ${event.text}`
                                 : `[${event.phase}] ${event.text}`;
                     },
-                    onCurrentSnapshot: (event: any) => {
+                    onCurrentSnapshot: (event: Extract<TopMeanStreamEvent, { type: "current_snapshot" }>) => {
                         // Per-window snapshot arriving mid-run. Render each as a
                         // card so the user sees windows completing live. The
                         // terminal stability_done replaces this with the full
                         // comparison table.
-                        if (event.currentSnapshot) {
-                            this.appendStabilityWindowCard(dom, event);
-                        }
+                        this.appendStabilityWindowCard(dom, event);
                     },
-                    onDone: (event: any) => {
+                    onDone: (event: Extract<TopMeanStreamEvent, { type: "done" }>) => {
                         // Stability mode does not emit a normal `done` with a
                         // result; it emits `stability_done`. The `done` here is
                         // the interrupted path only.
-                        if (event.interrupted) {
+                        if ("interrupted" in event) {
                             this.latestTopMeanStabilityResult = null;
                             dom.batchBacktestSp500TopMeanProgressText.textContent = "Stability check stopped.";
                             this.activeTopMeanRunId = null;
@@ -2484,7 +2488,7 @@ class BatchBacktestService {
                             });
                         }
                     },
-                    onStabilityDone: (event: any) => {
+                    onStabilityDone: (event: Extract<TopMeanStreamEvent, { type: "stability_done" }>) => {
                         this.latestTopMeanStabilityResult = event.comparison;
                         this.latestTopMeanResult = null;
                         this.renderStabilityResults(dom, event.comparison);
@@ -2502,7 +2506,7 @@ class BatchBacktestService {
                             data: null,
                         });
                     },
-                    onFatal: (event: any) => {
+                    onFatal: (event: Extract<TopMeanStreamEvent, { type: "fatal" }>) => {
                         dom.batchBacktestSp500TopMeanProgressText.textContent = `Error: ${event.error}`;
                         this.activeTopMeanRunId = null;
                         writePersistedJson({
@@ -2538,8 +2542,8 @@ class BatchBacktestService {
     }
 
     /** Safe coverage summary — all numeric counts, no untrusted strings. */
-    private renderTopMeanCoverageSummary(dom: BatchBacktestDom, counts: any): void {
-        const c = counts ?? {};
+    private renderTopMeanCoverageSummary(dom: BatchBacktestDom, counts: CoverageCounts): void {
+        const c = counts;
         dom.batchBacktestSp500TopMeanCoverageSummary.innerHTML =
             `<strong>Universe Coverage:</strong> <strong>${escapeHtml(c.pairCount)} pairs</strong> | ` +
             `${escapeHtml(c.usableTargetIntervalCount)} target-usable assets | ` +
@@ -2548,10 +2552,13 @@ class BatchBacktestService {
     }
 
     /** Render a single window's snapshot card as it arrives mid-stability-run. */
-    private appendStabilityWindowCard(dom: BatchBacktestDom, event: any): void {
+    private appendStabilityWindowCard(
+        dom: BatchBacktestDom,
+        event: Extract<TopMeanStreamEvent, { type: "current_snapshot" }>,
+    ): void {
         const label = event.windowLabel ?? `Window ${(event.windowIndex ?? 0) + 1}`;
-        const snap = event.currentSnapshot?.snapshot ?? event.currentSnapshot;
-        const winners: any[] = Array.isArray(snap?.winners) ? snap.winners : [];
+        const snap = event.currentSnapshot.snapshot;
+        const winners = Array.isArray(snap?.winners) ? snap.winners : [];
         const winnersText = winners.length > 0
             ? winners.map((w) => `${escapeHtml(w.asset)} (mean=${Number(w.mean ?? 0).toFixed(2)})`).join(", ")
             : `no pick (${escapeHtml(snap?.reason ?? "empty")})`;
@@ -2565,7 +2572,7 @@ class BatchBacktestService {
      * Terminal stability comparison view. Mirrors the walk-forward IS/OOS
      * side-by-side table precedent: one row per window, plus a verdict banner.
      */
-    private renderStabilityResults(dom: BatchBacktestDom, comparison: any): void {
+    private renderStabilityResults(dom: BatchBacktestDom, comparison: StabilityComparison): void {
         if (!comparison || !Array.isArray(comparison.windows)) return;
         let html = "";
 
@@ -2644,7 +2651,7 @@ class BatchBacktestService {
         }
     }
 
-    private renderTopMeanResults(dom: BatchBacktestDom, summary: any): void {
+    private renderTopMeanResults(dom: BatchBacktestDom, summary: TopMeanResultSummary): void {
         if (!summary || !Array.isArray(summary.horizons)) return;
 
         let html = "";
@@ -2712,15 +2719,15 @@ class BatchBacktestService {
      * the historical leaderboard — different question, different evidence.
      * Reuses the existing results container; no new DOM id.
      */
-    private renderCurrentTopMeanBanner(currentSnapshot: any): string {
-        const snap: any = currentSnapshot.snapshot ?? currentSnapshot;
-        const winners: any[] = Array.isArray(snap?.winners) ? snap.winners : [];
+    private renderCurrentTopMeanBanner(currentSnapshot: TopMeanCurrentSnapshot): string {
+        const snap = currentSnapshot.snapshot;
+        const winners = Array.isArray(snap?.winners) ? snap.winners : [];
         const asOfSec: number | null = snap?.asOf ?? null;
         const asOfLabel = typeof asOfSec === "number"
             ? new Date(asOfSec * 1000).toISOString().slice(0, 19).replace("T", " ") + " UTC"
             : "no common endpoint";
         const reason: string = snap?.reason ?? "empty";
-        const stats: any = currentSnapshot.stats ?? {};
+        const stats = currentSnapshot.stats;
 
         let html = `<div style="background: var(--surface-2, #1e222d); border: 1px solid var(--border-color, #2a2e39); border-radius: 6px; padding: 12px; margin-bottom: 16px;">`;
         html += `<div style="font-weight: bold; font-size: 14px; margin-bottom: 8px; color: var(--accent-color, #2962ff);">📍 CURRENT TOP_MEAN — positions open at last closed candle</div>`;
@@ -2992,7 +2999,7 @@ class BatchBacktestService {
                     if (!res.ok) {
                         throw new Error(`status ${res.status}`);
                     }
-                    const status = await res.json();
+                    const status = await res.json() as TopMeanStatusResponse;
                     if (this.activeTopMeanRunId !== runId) return;
                     this.recordTopMeanDiagnostic("reattach.status", status);
                     dom.batchBacktestSp500TopMeanProgressText.textContent =
