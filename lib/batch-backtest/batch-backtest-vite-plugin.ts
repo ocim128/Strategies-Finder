@@ -30,7 +30,7 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { debugLogger } from "../debug-logger";
-import { createDisconnectSafeStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, sendJson, type ViteHttpResponse } from "../vite-http-utils";
+import { createDisconnectSafeStream, HttpStatusError, registerLocalJsonRoute, sendJson, type ViteHttpResponse } from "../vite-http-utils";
 import { FINDER_BATCH_MAX_BODY_BYTES } from "../server-request-limits";
 import { runBatchBacktest, type BatchBacktestRunInput, type BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import { clearServerBatchDatasetCaches, getServerBatchDatasetCacheStats, loadServerBatchDataset } from "./server-batch-data-loader";
@@ -46,7 +46,6 @@ import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import { toScalarRow, type BatchStreamEvent } from "./batch-backtest-stream-types";
 import { validateTopMeanRequestLimits } from "./sp500-top-mean-request-limits";
 import { rememberLoopbackOriginFromRequest } from "../local-api-transport";
-import { isAllowedLocalRequest } from "../local-route-authorization";
 import { buildBatchRunFingerprint, normalizeBatchSymbols, BATCH_MAX_SYMBOLS, verifyPairListProvenance, type BatchRunPairListProvenanceMeta, type BatchUniverseCounts } from "./batch-run-contract";
 import { fnv1a64Hex, type MaxActiveResearchRegistrationV1 } from "./max-active-research-contract";
 import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
@@ -1884,180 +1883,118 @@ export function batchBacktestVitePlugin(): Plugin {
 
 /** Install all Batch routes; exposed through test internals for route tests. */
 function registerBatchRoutes(middlewares: any): void {
-        middlewares.use("/api/batch-backtest/run", async (req: any, res: any) => {
-            if (req.method !== "POST") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            // Audit Finding 2: gate mutations on the same loopback/bearer
-            // policy the IBKR and strategy-admin routes enforce, so a Vite
-            // server exposed via --host / tunnel / reverse proxy can't be
-            // driven into CPU-heavy 1000-pair backtests remotely.
-            if (!isAllowedLocalRequest(req)) {
-                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
-                return;
-            }
-            try {
-                rememberLocalApiOriginFromRequest(req);
-                await handleRunRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
+        // Audit Finding 2 (and the F1 Finder auth gate): every Batch route
+        // gates on the same loopback/bearer policy as IBKR and strategy-admin,
+        // so a Vite server exposed via --host / tunnel / reverse proxy can't
+        // be driven into CPU-heavy 1000-pair backtests remotely. The
+        // `registerLocalJsonRoute` helper (audit Finding 8) makes the auth gate
+        // structurally impossible to forget when new routes are added.
+        registerLocalJsonRoute(middlewares, "/api/batch-backtest/run", {
+            methods: ["POST"],
+            readBody: true,
+            maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
+            onAuthorizedRequest: (req) => rememberLocalApiOriginFromRequest(req),
+            unauthorizedMessage: "Unauthorized: batch routes are local-only.",
+            onAuthorized: async ({ res, body }) => {
+                await handleRunRequest(res, body);
+            },
         });
 
-        middlewares.use("/api/batch-backtest/stop", async (req: any, res: any) => {
-            if (req.method !== "POST") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            // Audit Finding 2: gate Stop too — an unauthenticated remote caller
-            // must not be able to cancel a long-running batch.
-            if (!isAllowedLocalRequest(req)) {
-                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
-                return;
-            }
-            try {
+        registerLocalJsonRoute(middlewares, "/api/batch-backtest/stop", {
+            methods: ["POST"],
+            readBody: true,
+            maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
+            unauthorizedMessage: "Unauthorized: batch routes are local-only.",
+            onAuthorized: async ({ res, body }) => {
                 // Audit Finding 5: read the optional runId so Stop can be
                 // scoped. Empty bodies remain valid for legacy server state;
                 // malformed JSON and invalid ids fail closed as client errors.
-                const body = await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES);
                 const result = await handleStopRequest((body as { runId?: unknown })?.runId);
                 sendJson(res, 200, result);
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
+            },
         });
 
-        middlewares.use("/api/batch-backtest/open-score-usd", async (req: any, res: any) => {
-            if (req.method !== "POST") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            if (!isAllowedLocalRequest(req)) {
-                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
-                return;
-            }
-            try {
-                rememberLocalApiOriginFromRequest(req);
-                await handleOpenScoreUsdRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
+        registerLocalJsonRoute(middlewares, "/api/batch-backtest/open-score-usd", {
+            methods: ["POST"],
+            readBody: true,
+            maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
+            onAuthorizedRequest: (req) => rememberLocalApiOriginFromRequest(req),
+            unauthorizedMessage: "Unauthorized: batch routes are local-only.",
+            onAuthorized: async ({ res, body }) => {
+                await handleOpenScoreUsdRequest(res, body);
+            },
         });
 
-        middlewares.use("/api/batch-backtest/status", async (req: any, res: any) => {
-            if (req.method !== "GET") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            // Status exposes run inputs, progress, results, and miner state.
-            if (!isAllowedLocalRequest(req)) {
-                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
-                return;
-            }
-            const parsedUrl = new URL(req.url ?? "/api/batch-backtest/status", "http://localhost");
-            const after = Number(parsedUrl.searchParams.get("after") ?? 0);
-            const limitParam = parsedUrl.searchParams.get("limit");
-            const limit = limitParam === null ? undefined : Number(limitParam);
-            // Audit runId-scoping finding: optional `?runId=` so a paginated
-            // drain is scoped to one generation. Empty/absent preserves legacy
-            // behavior (the server cannot distinguish an old browser bundle
-            // from a probe, and an unmatched id returns runMismatch).
-            const runIdParam = parsedUrl.searchParams.get("runId");
-            const runId = runIdParam && runIdParam.trim() ? runIdParam.trim() : undefined;
-            // Audit: wrap in try/catch for symmetry with the /run, /stop, and
-            // /open-score-usd routes (all of which use sendCaughtErrorJson).
-            // Without this, a throwing toJSON / circular ref inside the
-            // `handleStatusRequest` payload propagates as an unhandled promise
-            // rejection against Connect's middleware stack and crashes the dev
-            // server with a 500 + stack trace — on a route polled every ~2s
-            // during reattach.
-            try {
+        registerLocalJsonRoute(middlewares, "/api/batch-backtest/status", {
+            methods: ["GET"],
+            unauthorizedMessage: "Unauthorized: batch routes are local-only.",
+            onAuthorized: ({ res, url }) => {
+                // Status exposes run inputs, progress, results, and miner state.
+                const after = Number(url.searchParams.get("after") ?? 0);
+                const limitParam = url.searchParams.get("limit");
+                const limit = limitParam === null ? undefined : Number(limitParam);
+                // Audit runId-scoping finding: optional `?runId=` so a paginated
+                // drain is scoped to one generation. Empty/absent preserves
+                // legacy behavior (the server cannot distinguish an old browser
+                // bundle from a probe, and an unmatched id returns runMismatch).
+                const runIdParam = url.searchParams.get("runId");
+                const runId = runIdParam && runIdParam.trim() ? runIdParam.trim() : undefined;
+                // The try/catch around `handleStatusRequest` lives inside the
+                // helper now; a throwing toJSON / circular ref previously
+                // propagated as an unhandled rejection and crashed the dev
+                // server on a route polled every ~2s during reattach.
                 sendJson(res, 200, handleStatusRequest(after, limit, runId));
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
+            },
         });
 
-        middlewares.use("/api/batch-backtest/sp500-top-mean/run", async (req: any, res: any) => {
-            if (req.method !== "POST") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            if (!isAllowedLocalRequest(req)) {
-                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
-                return;
-            }
-            try {
-                rememberLocalApiOriginFromRequest(req);
-                await handleSp500TopMeanRunRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES));
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
+        registerLocalJsonRoute(middlewares, "/api/batch-backtest/sp500-top-mean/run", {
+            methods: ["POST"],
+            readBody: true,
+            maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
+            onAuthorizedRequest: (req) => rememberLocalApiOriginFromRequest(req),
+            unauthorizedMessage: "Unauthorized: batch routes are local-only.",
+            onAuthorized: async ({ res, body }) => {
+                await handleSp500TopMeanRunRequest(res, body);
+            },
         });
 
-        middlewares.use("/api/batch-backtest/sp500-top-mean/stop", async (req: any, res: any) => {
-            if (req.method !== "POST") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            if (!isAllowedLocalRequest(req)) {
-                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
-                return;
-            }
-            try {
-                const body = await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES);
+        registerLocalJsonRoute(middlewares, "/api/batch-backtest/sp500-top-mean/stop", {
+            methods: ["POST"],
+            readBody: true,
+            maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
+            unauthorizedMessage: "Unauthorized: batch routes are local-only.",
+            onAuthorized: async ({ res, body }) => {
                 const result = await handleSp500TopMeanStopRequest((body as { runId?: unknown })?.runId);
                 sendJson(res, 200, result);
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
+            },
         });
 
-        middlewares.use("/api/batch-backtest/sp500-top-mean/status", async (req: any, res: any) => {
-            if (req.method !== "GET") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            if (!isAllowedLocalRequest(req)) {
-                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
-                return;
-            }
-            const parsedUrl = new URL(req.url ?? "/api/batch-backtest/sp500-top-mean/status", "http://localhost");
-            const runIdParam = parsedUrl.searchParams.get("runId");
-            const runId = runIdParam && runIdParam.trim() ? runIdParam.trim() : undefined;
-            try {
+        registerLocalJsonRoute(middlewares, "/api/batch-backtest/sp500-top-mean/status", {
+            methods: ["GET"],
+            unauthorizedMessage: "Unauthorized: batch routes are local-only.",
+            onAuthorized: async ({ res, url }) => {
+                const runIdParam = url.searchParams.get("runId");
+                const runId = runIdParam && runIdParam.trim() ? runIdParam.trim() : undefined;
                 const status = await handleSp500TopMeanStatusRequest(runId);
                 const statusCode = "ok" in status && !status.ok ? 404 : 200;
                 sendJson(res, statusCode, status);
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
+            },
         });
 
-        middlewares.use("/api/batch-backtest/sp500-top-mean/result", async (req: any, res: any) => {
-            if (req.method !== "GET") {
-                sendJson(res, 405, { ok: false, error: "Method not allowed" });
-                return;
-            }
-            if (!isAllowedLocalRequest(req)) {
-                sendJson(res, 401, { ok: false, error: "Unauthorized: batch routes are local-only." });
-                return;
-            }
-            const parsedUrl = new URL(req.url ?? "/api/batch-backtest/sp500-top-mean/result", "http://localhost");
-            const runIdParam = parsedUrl.searchParams.get("runId");
-            if (!runIdParam || !runIdParam.trim()) {
-                sendJson(res, 400, { ok: false, error: "Missing required runId parameter" });
-                return;
-            }
-            try {
+        registerLocalJsonRoute(middlewares, "/api/batch-backtest/sp500-top-mean/result", {
+            methods: ["GET"],
+            unauthorizedMessage: "Unauthorized: batch routes are local-only.",
+            onAuthorized: async ({ res, url }) => {
+                const runIdParam = url.searchParams.get("runId");
+                if (!runIdParam || !runIdParam.trim()) {
+                    sendJson(res, 400, { ok: false, error: "Missing required runId parameter" });
+                    return;
+                }
                 const result = await handleSp500TopMeanResultRequest(runIdParam.trim());
                 sendJson(res, 200, result);
-            } catch (error) {
-                sendCaughtErrorJson(res, error);
-            }
+            },
         });
-}
+    }
 
 async function handleSp500TopMeanRunRequest(res: ViteHttpResponse, body: unknown): Promise<void> {
     if (!body || typeof body !== "object") {

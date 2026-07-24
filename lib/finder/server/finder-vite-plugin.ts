@@ -53,7 +53,7 @@ import {
     beginNdjsonStream,
     HttpStatusError,
     readJsonBody,
-    sendCaughtErrorJson,
+    registerLocalJsonRoute,
     sendJson,
     type ViteHttpResponse,
 } from "../../vite-http-utils";
@@ -84,7 +84,6 @@ import {
 } from "./finder-stream-types";
 import { resolveFinderUniverseHeapWarning } from "./finder-server-heap-guard";
 import { rememberLoopbackOriginFromRequest } from "../../local-api-transport";
-import { isAllowedLocalRequest } from "../../local-route-authorization";
 import {
     clampFinderOptions,
     FINDER_BATCH_MAX_BODY_BYTES,
@@ -1198,65 +1197,51 @@ export function finderVitePlugin(): Plugin {
  * (`registerFinderRoutesForTests`) for route-level authorization tests,
  * mirroring the Batch plugin's `registerBatchRoutes` seam.
  *
- * Audit Finding 1: every Finder route gates on {@link isAllowedLocalRequest},
- * the same loopback/bearer policy the Batch, IBKR, and strategy-admin routes
- * enforce — so a Vite dev server exposed via `--host`, tunnel, or reverse
- * proxy cannot be driven into CPU-heavy Finder runs or have results/diagnostics
- * disclosed to a remote caller.
+ * Audit Finding 1 (+ audit Finding 8 helper): every Finder route gates on the
+ * loopback/bearer policy enforced inside `registerLocalJsonRoute`, the same
+ * policy the Batch, IBKR, and strategy-admin routes enforce — so a Vite dev
+ * server exposed via `--host`, tunnel, or reverse proxy cannot be driven into
+ * CPU-heavy Finder runs or have results/diagnostics disclosed to a remote
+ * caller.
  */
 function registerFinderRoutes(middlewares: any): void {
-    middlewares.use("/api/finder/universe-run", async (req: any, res: any) => {
-        if (req.method !== "POST") {
-            sendJson(res, 405, { ok: false, error: "Method not allowed" });
-            return;
-        }
-        // Audit Finding 1: gate the CPU-heavy run on the same loopback/bearer
-        // policy the Batch routes enforce.
-        if (!isAllowedLocalRequest(req)) {
-            sendJson(res, 401, { ok: false, error: "Unauthorized: Finder routes are local-only." });
-            return;
-        }
-        try {
-            rememberLocalApiOriginFromRequest(req);
-            await handleRunRequest(res as ViteHttpResponse, await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES) as unknown as FinderUniverseRequestBody);
-        } catch (error) {
-            sendCaughtErrorJson(res, error);
-        }
+    // Audit Finding 1 (+ audit Finding 8 helper): every Finder route gates on
+    // the same loopback/bearer policy as the Batch, IBKR, and strategy-admin
+    // routes — a Vite dev server exposed via --host, tunnel, or reverse proxy
+    // cannot be driven into CPU-heavy Finder runs or have results/diagnostics
+    // disclosed to a remote caller. `registerLocalJsonRoute` makes the gate
+    // structurally impossible to forget when new routes are added.
+    registerLocalJsonRoute(middlewares, "/api/finder/universe-run", {
+        methods: ["POST"],
+        readBody: true,
+        maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
+        onAuthorizedRequest: (req) => rememberLocalApiOriginFromRequest(req),
+        unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
+        onAuthorized: async ({ res, body }) => {
+            await handleRunRequest(res, body as unknown as FinderUniverseRequestBody);
+        },
     });
 
-    middlewares.use("/api/finder/stop", async (req: any, res: any) => {
-        if (req.method !== "POST") {
-            sendJson(res, 405, { ok: false, error: "Method not allowed" });
-            return;
-        }
-        // Audit Finding 1: gate Stop too — an unauthenticated remote caller
-        // must not be able to cancel a long-running Finder job.
-        if (!isAllowedLocalRequest(req)) {
-            sendJson(res, 401, { ok: false, error: "Unauthorized: Finder routes are local-only." });
-            return;
-        }
-        try {
+    registerLocalJsonRoute(middlewares, "/api/finder/stop", {
+        methods: ["POST"],
+        unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
+        onAuthorized: async ({ res, req }) => {
+            // Lenient body read: an empty or malformed body is treated as "no
+            // runId" rather than a 400, so a legacy caller or a partial POST
+            // can still cancel the active run. Read inline (not via
+            // `readBody: true`) so this catch survives the helper's strict
+            // body-read path.
             const body = await readJsonBody(req, FINDER_BATCH_MAX_BODY_BYTES).catch(() => ({}));
             const result = await handleStopRequest((body as { runId?: unknown })?.runId);
             sendJson(res, 200, result);
-        } catch (error) {
-            sendCaughtErrorJson(res, error);
-        }
+        },
     });
 
-    middlewares.use("/api/finder/status", async (req: any, res: any) => {
-        if (req.method !== "GET") {
-            sendJson(res, 405, { ok: false, error: "Method not allowed" });
-            return;
-        }
-        // Audit Finding 1: status exposes run inputs, progress, candidates,
-        // and diagnostics — gate it on the loopback/bearer policy.
-        if (!isAllowedLocalRequest(req)) {
-            sendJson(res, 401, { ok: false, error: "Unauthorized: Finder routes are local-only." });
-            return;
-        }
-        try {
-            const url = new URL(req.url, "http://localhost");
+    registerLocalJsonRoute(middlewares, "/api/finder/status", {
+        methods: ["GET"],
+        unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
+        onAuthorized: ({ res, url }) => {
+            // status exposes run inputs, progress, candidates, and diagnostics.
             const runIdFilter = url.searchParams.has("runId")
                 ? url.searchParams.get("runId")
                 : null;
@@ -1266,25 +1251,18 @@ function registerFinderRoutes(middlewares: any): void {
                 return;
             }
             sendJson(res, 200, snapshot);
-        } catch (error) {
-            sendCaughtErrorJson(res, error);
-        }
+        },
     });
 
-    middlewares.use("/api/finder/invalidate-cache", async (req: any, res: any) => {
-        if (req.method !== "POST") {
-            sendJson(res, 405, { ok: false, error: "Method not allowed" });
-            return;
-        }
-        // Audit Finding 1: cache invalidation thrashes the server dataset
-        // cache — gate it on the loopback/bearer policy.
-        if (!isAllowedLocalRequest(req)) {
-            sendJson(res, 401, { ok: false, error: "Unauthorized: Finder routes are local-only." });
-            return;
-        }
-        clearServerFinderDatasetCaches();
-        debugLogger.event("finder.server.dataset_cache_invalidated");
-        sendJson(res, 200, { ok: true });
+    registerLocalJsonRoute(middlewares, "/api/finder/invalidate-cache", {
+        methods: ["POST"],
+        unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
+        onAuthorized: ({ res }) => {
+            // cache invalidation thrashes the server dataset cache.
+            clearServerFinderDatasetCaches();
+            debugLogger.event("finder.server.dataset_cache_invalidated");
+            sendJson(res, 200, { ok: true });
+        },
     });
 }
 

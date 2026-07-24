@@ -1,5 +1,6 @@
 import type { IncomingMessage } from "node:http";
 import { createFetchTimeoutSignal, isAbortError } from "./dataProviders/fetch-helpers";
+import { isAllowedLocalRequest } from "./local-route-authorization";
 
 export const DEFAULT_MAX_BODY_BYTES = 80 * 1024 * 1024;
 
@@ -294,3 +295,113 @@ export async function proxyUpstreamJson(
     }
 }
 
+/**
+ * The minimal Connect-style middleware stack shape this helper registers on.
+ * Vite's `server.middlewares` is a `Connect.Server`; tests inject a fake with
+ * just `use(path, handler)`.
+ */
+export interface LocalRouteMiddlewareStack {
+    use(
+        path: string,
+        handler: (req: IncomingMessage, res: ViteHttpResponse) => void | Promise<void>,
+    ): unknown;
+}
+
+/**
+ * Request shape passed to a {@link registerLocalJsonRoute} handler. `body` is
+ * the parsed JSON object for POST routes (or `{}` for empty/GET routes); `url`
+ * is the parsed `URL` for query-param access on GET routes.
+ */
+export interface LocalRouteRequestContext {
+    req: IncomingMessage;
+    res: ViteHttpResponse;
+    url: URL;
+    body: Record<string, unknown>;
+}
+
+/**
+ * Options for {@link registerLocalJsonRoute}.
+ *
+ * - `methods`: the allowed HTTP methods. Anything else gets a 405.
+ * - `onAuthorized`: runs inside a try/catch after the method + auth + optional
+ *   body-read succeed; thrown errors map to `sendCaughtErrorJson`.
+ * - `readBody`: when true (POST routes), the body is read via `readJsonBody`
+ *   before `onAuthorized` runs and passed in the context. GET routes leave
+ *   this false and parse query params off `url` instead.
+ * - `maxBodyBytes`: forwarded to `readJsonBody` when `readBody` is true.
+ * - `onAuthorizedRequest`: optional hook run AFTER the auth gate passes but
+ *   BEFORE the body is read — used by mutating run routes to call
+ *   `rememberLocalApiOriginFromRequest(req)` so the loopback origin is captured
+ *   for same-tab `fetch` URL resolution. Not run on stop/status/result routes,
+ *   matching the pre-helper behavior.
+ * - `unauthorizedMessage`: the 401 error string. Per-plugin so the message
+ *   identifies which surface rejected the caller ("batch routes are
+ *   local-only." vs "Finder routes are local-only.").
+ */
+export interface RegisterLocalJsonRouteOptions {
+    methods: readonly ("GET" | "POST")[];
+    onAuthorized: (ctx: LocalRouteRequestContext) => void | Promise<void>;
+    readBody?: boolean;
+    maxBodyBytes?: number;
+    onAuthorizedRequest?: (req: IncomingMessage) => void;
+    unauthorizedMessage?: string;
+}
+
+/**
+ * Register one local-only JSON route on a Connect-style middleware stack,
+ * enforcing the same method + loopback-auth + try/catch boilerplate every
+ * `/api/batch-backtest/*`, `/api/finder/*`, `/api/sp500-top-mean/*`, IBKR, and
+ * strategy-admin route previously inlined.
+ *
+ * Audit Finding 8 (and the F1 Finder auth gate): the 8 Batch + 4 Finder routes
+ * each repeated the identical 4-stage guard (method check → `isAllowedLocalRequest`
+ * → optional `readJsonBody` → `try/catch` → `sendCaughtErrorJson`). A helper
+ * makes the auth gate structurally impossible to forget when new routes are
+ * added (security regression class: unauthenticated CPU amplification on a
+ * `--host`ed dev server). The registered handler is returned so existing
+ * route-level authorization tests can still drive it directly.
+ *
+ * Behavior preserved exactly:
+ *   - 405 on method mismatch (`{ ok: false, error: "Method not allowed" }`)
+ *   - 401 on auth failure (`{ ok: false, error: unauthorizedMessage }`)
+ *   - `sendCaughtErrorJson` on any thrown error inside `onAuthorized` (and
+ *     inside `readJsonBody` when `readBody` is true)
+ *
+ * Leaf-safe: only imports from `vite-http-utils` itself + the leaf
+ * `local-route-authorization` gate, so this module is safe to import from any
+ * Vite config plugin (no transitive `lightweight-charts` reach).
+ */
+export function registerLocalJsonRoute(
+    middlewares: LocalRouteMiddlewareStack,
+    path: string,
+    options: RegisterLocalJsonRouteOptions,
+): (req: IncomingMessage, res: ViteHttpResponse) => Promise<void> {
+    const {
+        methods,
+        onAuthorized,
+        readBody = false,
+        maxBodyBytes,
+        onAuthorizedRequest,
+        unauthorizedMessage = "Unauthorized: this route is local-only.",
+    } = options;
+    const handler = async (req: IncomingMessage, res: ViteHttpResponse): Promise<void> => {
+        if (!methods.includes(req.method as "GET" | "POST")) {
+            sendJson(res, 405, { ok: false, error: "Method not allowed" });
+            return;
+        }
+        if (!isAllowedLocalRequest(req)) {
+            sendJson(res, 401, { ok: false, error: unauthorizedMessage });
+            return;
+        }
+        try {
+            if (onAuthorizedRequest) onAuthorizedRequest(req);
+            const url = new URL(req.url ?? path, "http://localhost");
+            const body = readBody ? await readJsonBody(req, maxBodyBytes) : {};
+            await onAuthorized({ req, res, url, body });
+        } catch (error) {
+            sendCaughtErrorJson(res, error);
+        }
+    };
+    middlewares.use(path, handler);
+    return handler;
+}
