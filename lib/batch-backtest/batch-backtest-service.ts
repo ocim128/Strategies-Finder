@@ -86,6 +86,57 @@ type BatchPersistedActiveServerRun = {
     startedAt: number;
 };
 
+// Audit Finding 6: the TOP_MEAN active-run marker was written via 11 inline
+// `writePersistedJson({ key, schema, version, data })` copies (start, done
+// interrupted, done success, fatal, reattach terminal, reattach give-up, ...).
+// A shared storage constant + helpers make it impossible to clear the marker
+// in 5/6 paths and miss the 6th (the documented footgun).
+const TOP_MEAN_ACTIVE_RUN_STORAGE = {
+    key: "sp500_top_mean_active_run_id",
+    schema: "sp500_top_mean_active_run_id.v1",
+    version: 1,
+} as const;
+
+type TopMeanPersistedActiveRun = { runId: string };
+
+/** Persist the active TOP_MEAN run id so a reload can reattach. */
+function persistTopMeanActiveRun(runId: string): void {
+    writePersistedJson({
+        ...TOP_MEAN_ACTIVE_RUN_STORAGE,
+        data: { runId },
+        onError: (error) => debugLogger.warn("sp500_top_mean.active_run_save_failed", {
+            error: error instanceof Error ? error.message : String(error),
+        }),
+    });
+}
+
+/** Clear the active TOP_MEAN run marker (terminal / give-up / interrupted). */
+function clearTopMeanActiveRun(): void {
+    writePersistedJson({
+        ...TOP_MEAN_ACTIVE_RUN_STORAGE,
+        data: null,
+        onError: (error) => debugLogger.warn("sp500_top_mean.active_run_clear_failed", {
+            error: error instanceof Error ? error.message : String(error),
+        }),
+    });
+}
+
+/** Read the active TOP_MEAN run marker; null when no run is tracked. */
+function readTopMeanActiveRun(): TopMeanPersistedActiveRun | null {
+    const persisted = readPersistedJson<TopMeanPersistedActiveRun | null>({
+        ...TOP_MEAN_ACTIVE_RUN_STORAGE,
+        fallback: null,
+        migrate: (ctx) => {
+            const data = ctx.data;
+            if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+            const source = data as Partial<TopMeanPersistedActiveRun>;
+            if (typeof source.runId !== "string" || !source.runId.trim()) return null;
+            return { runId: source.runId.trim() };
+        },
+    });
+    return persisted;
+}
+
 /**
  * Max rows buffered before a synchronous mid-stream flush (Finding 6). The
  * live stream queues DOM renders and flushes once per animation frame, but a
@@ -2133,15 +2184,40 @@ class BatchBacktestService {
         }
     }
 
-    private async runSp500TopMeanCoordinatorInner(dom: BatchBacktestDom): Promise<void> {
+    /**
+     * Audit Finding 6: the coordinator + stability preflight parsers share the
+     * strategy gate, the workerCount/maxPairs integer parse, and the runId
+     * generation. These three helpers keep that duplication from drifting (a
+     * typo in one path's error message was the documented footgun).
+     */
+
+    private async resolveTopMeanBuiltInStrategy(
+        dom: BatchBacktestDom,
+    ): Promise<{ strategyKey: string; strategy: NonNullable<ReturnType<typeof strategyRegistry.get>> } | undefined> {
         const strategyKey = state.currentStrategyKey;
         await ensureBuiltInStrategyLoaded(strategyKey);
         const strategy = strategyRegistry.get(strategyKey);
         if (!strategyKey || !strategy) {
             dom.batchBacktestSp500TopMeanProgressText.textContent =
                 "Error: Custom/browser strategies cannot be run in Node worker coordinator. Please select a built-in strategy.";
-            return;
+            return undefined;
         }
+        return { strategyKey, strategy };
+    }
+
+    private parseTopMeanOptionalPositiveInt(rawValue: string): number | undefined {
+        const parsed = Number.parseInt(rawValue, 10);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+    }
+
+    private generateTopMeanRunId(prefix: "sp500_top_mean_" | "sp500_stability_"): string {
+        return `${prefix}${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    }
+
+    private async runSp500TopMeanCoordinatorInner(dom: BatchBacktestDom): Promise<void> {
+        const resolved = await this.resolveTopMeanBuiltInStrategy(dom);
+        if (!resolved) return;
+        const { strategyKey, strategy } = resolved;
 
         const horizonsText = dom.batchBacktestSp500TopMeanHorizons.value.trim() || "12,24,48";
         const horizons = horizonsText
@@ -2154,23 +2230,15 @@ class BatchBacktestService {
             return;
         }
 
-        const workersRaw = Number.parseInt(dom.batchBacktestSp500TopMeanWorkers.value, 10);
-        const workerCount = Number.isFinite(workersRaw) && workersRaw > 0 ? workersRaw : undefined;
+        const workerCount = this.parseTopMeanOptionalPositiveInt(dom.batchBacktestSp500TopMeanWorkers.value);
+        const maxPairs = this.parseTopMeanOptionalPositiveInt(dom.batchBacktestSp500TopMeanMaxPairs.value);
 
-        const maxPairsRaw = Number.parseInt(dom.batchBacktestSp500TopMeanMaxPairs.value, 10);
-        const maxPairs = Number.isFinite(maxPairsRaw) && maxPairsRaw > 0 ? maxPairsRaw : undefined;
-
-        const runId = `sp500_top_mean_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const runId = this.generateTopMeanRunId("sp500_top_mean_");
         this.activeTopMeanRunId = runId;
         this.topMeanDiagnosticRunId = runId;
         this.topMeanDiagnosticEntries = [];
         this.topMeanDiagnosticProgressSeen = 0;
-        writePersistedJson({
-            key: "sp500_top_mean_active_run_id",
-            schema: "sp500_top_mean_active_run_id.v1",
-            version: 1,
-            data: { runId },
-        });
+        persistTopMeanActiveRun(runId);
 
         setVisible(dom.batchBacktestSp500TopMeanRunBtn, false);
         setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, false);
@@ -2257,12 +2325,7 @@ class BatchBacktestService {
                             dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
                             dom.batchBacktestSp500TopMeanProgressText.textContent = "TOP_MEAN run stopped.";
                             this.activeTopMeanRunId = null;
-                            writePersistedJson({
-                                key: "sp500_top_mean_active_run_id",
-                                schema: "sp500_top_mean_active_run_id.v1",
-                                version: 1,
-                                data: null,
-                            });
+                            clearTopMeanActiveRun();
                             return;
                         }
                         this.latestTopMeanResult = event.result;
@@ -2272,22 +2335,12 @@ class BatchBacktestService {
                         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
                         dom.batchBacktestSp500TopMeanProgressText.textContent = "TOP_MEAN run completed successfully.";
                         this.activeTopMeanRunId = null;
-                        writePersistedJson({
-                            key: "sp500_top_mean_active_run_id",
-                            schema: "sp500_top_mean_active_run_id.v1",
-                            version: 1,
-                            data: null,
-                        });
+                        clearTopMeanActiveRun();
                     },
                     onFatal: (event: Extract<TopMeanStreamEvent, { type: "fatal" }>) => {
                         dom.batchBacktestSp500TopMeanProgressText.textContent = `Error: ${event.error}`;
                         this.activeTopMeanRunId = null;
-                        writePersistedJson({
-                            key: "sp500_top_mean_active_run_id",
-                            schema: "sp500_top_mean_active_run_id.v1",
-                            version: 1,
-                            data: null,
-                        });
+                        clearTopMeanActiveRun();
                     },
                 },
             });
@@ -2345,14 +2398,9 @@ class BatchBacktestService {
     }
 
     private async runSp500TopMeanStabilityCheckInner(dom: BatchBacktestDom): Promise<void> {
-        const strategyKey = state.currentStrategyKey;
-        await ensureBuiltInStrategyLoaded(strategyKey);
-        const strategy = strategyRegistry.get(strategyKey);
-        if (!strategyKey || !strategy) {
-            dom.batchBacktestSp500TopMeanProgressText.textContent =
-                "Error: Custom/browser strategies cannot be run in Node worker coordinator. Please select a built-in strategy.";
-            return;
-        }
+        const resolved = await this.resolveTopMeanBuiltInStrategy(dom);
+        if (!resolved) return;
+        const { strategyKey, strategy } = resolved;
 
         if (!dom.batchBacktestSp500TopMeanStabilityEnabled.checked) {
             dom.batchBacktestSp500TopMeanProgressText.textContent =
@@ -2388,22 +2436,15 @@ class BatchBacktestService {
             return;
         }
 
-        const workerCountRaw = Number.parseInt(dom.batchBacktestSp500TopMeanWorkers.value, 10);
-        const workerCount = Number.isFinite(workerCountRaw) && workerCountRaw > 0 ? workerCountRaw : undefined;
-        const maxPairsRaw = Number.parseInt(dom.batchBacktestSp500TopMeanMaxPairs.value, 10);
-        const maxPairs = Number.isFinite(maxPairsRaw) && maxPairsRaw > 0 ? maxPairsRaw : undefined;
+        const workerCount = this.parseTopMeanOptionalPositiveInt(dom.batchBacktestSp500TopMeanWorkers.value);
+        const maxPairs = this.parseTopMeanOptionalPositiveInt(dom.batchBacktestSp500TopMeanMaxPairs.value);
 
-        const runId = `sp500_stability_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const runId = this.generateTopMeanRunId("sp500_stability_");
         this.activeTopMeanRunId = runId;
         this.topMeanDiagnosticRunId = runId;
         this.topMeanDiagnosticEntries = [];
         this.topMeanDiagnosticProgressSeen = 0;
-        writePersistedJson({
-            key: "sp500_top_mean_active_run_id",
-            schema: "sp500_top_mean_active_run_id.v1",
-            version: 1,
-            data: { runId },
-        });
+        persistTopMeanActiveRun(runId);
 
         setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, false);
         setVisible(dom.batchBacktestSp500TopMeanRunBtn, false);
@@ -2480,12 +2521,7 @@ class BatchBacktestService {
                             this.latestTopMeanStabilityResult = null;
                             dom.batchBacktestSp500TopMeanProgressText.textContent = "Stability check stopped.";
                             this.activeTopMeanRunId = null;
-                            writePersistedJson({
-                                key: "sp500_top_mean_active_run_id",
-                                schema: "sp500_top_mean_active_run_id.v1",
-                                version: 1,
-                                data: null,
-                            });
+                            clearTopMeanActiveRun();
                         }
                     },
                     onStabilityDone: (event: Extract<TopMeanStreamEvent, { type: "stability_done" }>) => {
@@ -2499,22 +2535,12 @@ class BatchBacktestService {
                         dom.batchBacktestSp500TopMeanProgressText.textContent =
                             `Stability check complete: gate ${verdict} (agreement ${agreement}%).`;
                         this.activeTopMeanRunId = null;
-                        writePersistedJson({
-                            key: "sp500_top_mean_active_run_id",
-                            schema: "sp500_top_mean_active_run_id.v1",
-                            version: 1,
-                            data: null,
-                        });
+                        clearTopMeanActiveRun();
                     },
                     onFatal: (event: Extract<TopMeanStreamEvent, { type: "fatal" }>) => {
                         dom.batchBacktestSp500TopMeanProgressText.textContent = `Error: ${event.error}`;
                         this.activeTopMeanRunId = null;
-                        writePersistedJson({
-                            key: "sp500_top_mean_active_run_id",
-                            schema: "sp500_top_mean_active_run_id.v1",
-                            version: 1,
-                            data: null,
-                        });
+                        clearTopMeanActiveRun();
                     },
                 },
             });
@@ -2935,13 +2961,7 @@ class BatchBacktestService {
     }
 
     private async reattachToInProgressTopMeanRun(): Promise<void> {
-        const persisted = readPersistedJson<{ runId: string }>({
-            key: "sp500_top_mean_active_run_id",
-            schema: "sp500_top_mean_active_run_id.v1",
-            version: 1,
-            fallback: { runId: "" },
-            migrate: (ctx) => (ctx.data && typeof ctx.data === "object" ? (ctx.data as { runId: string }) : null),
-        });
+        const persisted = readTopMeanActiveRun();
         if (!persisted?.runId) return;
 
         const dom = this.getDom();
@@ -3024,12 +3044,7 @@ class BatchBacktestService {
                             dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
                             dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
                         }
-                        writePersistedJson({
-                            key: "sp500_top_mean_active_run_id",
-                            schema: "sp500_top_mean_active_run_id.v1",
-                            version: 1,
-                            data: null,
-                        });
+                        clearTopMeanActiveRun();
                         this.activeTopMeanRunId = null;
                         return;
                     }
@@ -3057,12 +3072,7 @@ class BatchBacktestService {
                         setVisible(dom.batchBacktestSp500TopMeanStabilityRunBtn, true);
                         setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
                         this.activeTopMeanRunId = null;
-                        writePersistedJson({
-                            key: "sp500_top_mean_active_run_id",
-                            schema: "sp500_top_mean_active_run_id.v1",
-                            version: 1,
-                            data: null,
-                        });
+                        clearTopMeanActiveRun();
                         dom.batchBacktestSp500TopMeanProgressText.textContent =
                             `Server connection lost — reload to reattach, or click TOP_MEAN to start over.`;
                         return;
