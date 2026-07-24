@@ -178,6 +178,14 @@ class BatchBacktestService {
     // instead of rebuilding every row (the runner emits onSymbolComplete in
     // strict input order, so the incremental appends are already ordered).
     private appendedCount = 0;
+    // Audit Finding 5: set when `lastResults` was restored from a TRUNCATED
+    // persisted snapshot (the most-recent N rows, not a prefix starting at 0).
+    // `reconcileStatusRows` dedupes by absolute index assuming `lastResults`
+    // is a contiguous prefix, so a truncated suffix would poison the dedupe on
+    // the next reattach (rows 0..N-1 incorrectly skipped). The first
+    // `reconcileStatusRows` call after such a restore clears this flag AND
+    // `lastResults` so the reattach rebuilds cleanly.
+    private lastResultsIsTruncatedSuffix = false;
     // Monotonic run token. A stale run that resumes after a newer run started
     // (e.g. Stop -> Run while the old run is still awaiting executeBacktest)
     // sees its token as stale and stops writing DOM/state, preventing two
@@ -469,6 +477,8 @@ class BatchBacktestService {
         this.lastRunInterval = null;
         this.lastRunStrategyKey = null;
         this.appendedCount = 0;
+        // Audit Finding 5: a new run clears any truncated-suffix restore state.
+        this.lastResultsIsTruncatedSuffix = false;
         this.serverHasArtifacts = false;
         // Audit Finding 5: clear the active server run id at the start of each
         // new run; `runBatchServer` assigns a fresh one before POSTing.
@@ -905,6 +915,18 @@ class BatchBacktestService {
         _expectedRunId?: string,
     ): BatchBacktestSymbolResult[] {
         if (!rows || rows.length === 0) return [];
+        // Audit Finding 5: if `lastResults` was restored from a truncated
+        // persisted snapshot, it holds a SUFFIX (most-recent N rows), not a
+        // prefix starting at index 0. The absolute-index dedupe below assumes
+        // a prefix, so a truncated suffix would incorrectly skip rows 0..N-1.
+        // A real run (live stream or reattach) is now driving rows — clear the
+        // truncated state so the table rebuilds from the incoming page.
+        if (this.lastResultsIsTruncatedSuffix) {
+            this.lastResultsIsTruncatedSuffix = false;
+            this.lastResults = [];
+            this.appendedCount = 0;
+            dom.batchBacktestResults.replaceChildren();
+        }
         const rowOffset = Math.max(0, Math.floor(Number(rowOffsetRaw ?? 0)));
         const accepted: BatchBacktestSymbolResult[] = [];
         for (let i = 0; i < rows.length; i += 1) {
@@ -1737,6 +1759,12 @@ class BatchBacktestService {
         // to `null`.
         this.lastRunStrategyKey = snapshot.strategyKey ?? null;
         this.appendedCount = snapshot.results.length;
+        // Audit Finding 5: a truncated snapshot holds the most-recent N rows
+        // (a suffix), NOT a prefix starting at index 0. Flag it so the next
+        // reattach's `reconcileStatusRows` clears `lastResults` before
+        // rebuilding — otherwise its absolute-index dedupe would incorrectly
+        // skip rows 0..N-1 and produce a jumbled table.
+        this.lastResultsIsTruncatedSuffix = snapshot.meta?.truncated === true;
         // LocalStorage cannot prove server artifact TTL is still valid, and
         // browser-mode heavy arrays are intentionally not restored. Reattach
         // status may re-enable OPEN_SCORE USD if server artifacts still exist.
@@ -1978,6 +2006,8 @@ class BatchBacktestService {
         if (this.lastResults.length === 0) return;
         this.lastResults = [];
         this.appendedCount = 0;
+        // Audit Finding 5: a new run clears any truncated-suffix restore state.
+        this.lastResultsIsTruncatedSuffix = false;
         dom.batchBacktestResults.replaceChildren();
         setVisible(dom.batchBacktestEmpty, true);
         dom.batchBacktestCopyBtn.disabled = true;
