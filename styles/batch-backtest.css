@@ -310,10 +310,10 @@
     min-width: 8rem;
 }
 
-/* Mine Prediction config row: a labeled flex row grouping all Mine
- * Prediction controls (From/To/Dir/Samples/Step) in one place so the
- * analysis button row stays clean. */
-.batch-mine-prediction-config {
+/* OPEN_SCORE USD config row: a labeled flex row grouping all OPEN_SCORE USD
+ * controls (From/To/Horizons) in one place so the analysis button row stays
+ * clean. */
+.batch-open-score-usd-config {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -321,7 +321,7 @@
     padding: var(--space-1-5) 0;
 }
 
-.batch-mine-prediction-config-label {
+.batch-open-score-usd-config-label {
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
     color: var(--text-tertiary);
