@@ -1603,14 +1603,15 @@ export function normalizeDataSource(value: unknown): IbkrDataSource {
  * enforce. Throws `HttpStatusError` (surfaced in the existing UI failure
  * path) for:
  *  - Alpaca + `interval !== "30m"` (initial scope is 30m bars only)
- *  - Alpaca + `period === "max"` (Alpaca `period=max` is rejected; bounded
- *    periods only — existing IBKR `max` behavior is unchanged)
+ *  - Alpaca supports `max`/`all` by translating the app-level period into a
+ *    full-range `start`/`end` request; Alpaca itself has no `period` query
+ *    parameter
  * Exported for unit tests.
  */
 export function assertSourceConstraints(
     source: IbkrDataSource,
     interval: string,
-    period: string,
+    _period: string,
 ): void {
     if (source !== "alpaca") return;
     if (interval !== ALPACA_SUPPORTED_INTERVAL) {
@@ -1619,20 +1620,16 @@ export function assertSourceConstraints(
             `Alpaca source only supports the ${ALPACA_SUPPORTED_INTERVAL} interval in this release. Use IBKR for ${interval}.`,
         );
     }
-    if (isMaxHistoryPeriod(period)) {
-        throw new HttpStatusError(
-            400,
-            "Alpaca source rejects period=max. Provide a bounded period (e.g. 1m, 3m, 1y).",
-        );
-    }
 }
 
 /**
- * Computes the `[start, end]` ISO-8601 window for an Alpaca bounded fetch.
- * `end` is now; `start` is `end - periodMs`. For incremental Alpaca syncs,
- * the caller passes `startOverride` (the catalog's last bar time) so the
- * window overlaps the existing data — the merge step's last-write-wins dedup
- * handles the overlap safely. Exported for unit tests.
+ * Computes the `[start, end]` ISO-8601 window for an Alpaca fetch. Alpaca has
+ * no `period=max` parameter, so the app's max/all periods map to an epoch
+ * start and rely on the fetcher's pagination to return all available bars.
+ * For incremental Alpaca syncs, the caller passes `startOverride` (the
+ * catalog's last bar time) so the window overlaps existing data — the merge
+ * step's last-write-wins dedup handles the overlap safely. Exported for unit
+ * tests.
  */
 export function resolveAlpacaWindow(
     period: string,
@@ -1641,12 +1638,14 @@ export function resolveAlpacaWindow(
 ): { start: string; end: string } {
     const periodMs = parsePeriodToMs(period);
     if (periodMs === null) {
-        throw new HttpStatusError(400, `Invalid Alpaca period "${period}". Expected e.g. 1d/2w/3m/1y.`);
+        if (!isMaxHistoryPeriod(period)) {
+            throw new HttpStatusError(400, `Invalid Alpaca period "${period}". Expected max, all, or e.g. 1d/2w/3m/1y.`);
+        }
     }
     const endMs = nowMs;
     const startMs = startOverrideMs !== undefined && Number.isFinite(startOverrideMs)
         ? Math.max(0, startOverrideMs)
-        : endMs - periodMs;
+        : periodMs === null ? 0 : endMs - periodMs;
     return {
         start: new Date(startMs).toISOString(),
         end: new Date(endMs).toISOString(),

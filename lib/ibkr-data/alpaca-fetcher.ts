@@ -394,7 +394,8 @@ export type AlpacaFetchResult = {
 /**
  * Fetches all 30m bars for one symbol within `[start, end]`, paging through
  * `next_page_token` until exhausted or the page ceiling is hit. `start`/`end`
- * are ISO-8601 strings; the caller computes them from the bounded period.
+ * are ISO-8601 strings; the caller computes them from the requested period,
+ * including the app-level `max` period's full-range window.
  *
  * Cancellation: every page boundary and every retry wait observes `signal`.
  * An abort surfaces as `stopReason: "cancelled"` with whatever bars landed.

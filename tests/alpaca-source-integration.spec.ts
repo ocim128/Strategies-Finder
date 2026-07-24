@@ -5,7 +5,7 @@
  *  - Existing IBKR requests (no `source`) remain unchanged → ibkr fetcher.
  *  - `source: "alpaca"` selects the Alpaca worker.
  *  - Alpaca + interval != 30m is rejected (Phase 1 scope).
- *  - Alpaca + period=max is rejected.
+ *  - Alpaca + period=max maps to a full historical window.
  *  - Alpaca sync against an unknown/IBKR interval is rejected (source guard).
  *  - Alpaca download establishes `source: "alpaca"` in the catalog.
  *  - The terminal `done` event and the run snapshot carry `source`.
@@ -120,17 +120,9 @@ describe("alpaca assertSourceConstraints", () => {
         );
     });
 
-    it("rejects Alpaca + period=max", () => {
-        assert.throws(
-            () => assertSourceConstraints("alpaca", "30m", "max"),
-            (error: unknown) => error instanceof HttpStatusError
-                && error.status === 400
-                && /period=max/.test(error.message),
-        );
-        assert.throws(
-            () => assertSourceConstraints("alpaca", "30m", "all"),
-            (error: unknown) => error instanceof HttpStatusError && error.status === 400,
-        );
+    it("accepts Alpaca max/all history periods", () => {
+        assert.doesNotThrow(() => assertSourceConstraints("alpaca", "30m", "max"));
+        assert.doesNotThrow(() => assertSourceConstraints("alpaca", "30m", "all"));
     });
 
     it("accepts Alpaca + 30m + bounded period", () => {
@@ -157,6 +149,13 @@ describe("alpaca resolveAlpacaWindow", () => {
         assert.equal(window.end, "2026-01-31T00:00:00.000Z");
         // startOverride wins over end-period.
         assert.equal(window.start, "2026-01-30T00:00:00.000Z");
+    });
+
+    it("maps max to the earliest representable request start", () => {
+        const now = Date.UTC(2026, 0, 31, 0, 0, 0);
+        const window = resolveAlpacaWindow("max", now);
+        assert.equal(window.start, "1970-01-01T00:00:00.000Z");
+        assert.equal(window.end, "2026-01-31T00:00:00.000Z");
     });
 
     it("rejects an unparseable period", () => {
@@ -246,25 +245,23 @@ describe("alpaca processSyncBatch source routing", () => {
         assert.equal(workerCalls, 0, "no worker call should happen when constraints reject");
     });
 
-    it("rejects Alpaca + period=max before invoking any worker", async () => {
+    it("passes Alpaca + period=max to the worker", async () => {
         let workerCalls = 0;
-        const alpacaFetcher = (async () => {
+        let workerPeriod = "";
+        const alpacaFetcher = (async (_catalog, _symbol, _interval, period) => {
             workerCalls += 1;
+            workerPeriod = period;
             return alpacaResult("AAPL");
         }) as AlpacaFetcher;
-        await assert.rejects(
-            processSyncBatch(
-                { symbols: ["AAPL"], interval: "30m", period: "max", source: "alpaca" },
-                false,
-                () => {},
-                __acquireIbkrSyncOwnerForTests(),
-                { alpacaFetcher: alpacaFetcher as never },
-            ),
-            (error: unknown) => error instanceof HttpStatusError
-                && error.status === 400
-                && /period=max/.test(error.message),
+        await processSyncBatch(
+            { symbols: ["AAPL"], interval: "30m", period: "max", source: "alpaca" },
+            false,
+            () => {},
+            __acquireIbkrSyncOwnerForTests(),
+            { alpacaFetcher: alpacaFetcher as never },
         );
-        assert.equal(workerCalls, 0);
+        assert.equal(workerCalls, 1);
+        assert.equal(workerPeriod, "max");
     });
 
     it("existing IBKR requests with no source still route to the ibkr fetcher", async () => {
