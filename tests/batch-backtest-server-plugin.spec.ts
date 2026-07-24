@@ -12,7 +12,7 @@ import {
     type BatchRunSnapshot,
     __testInternals,
 } from "../lib/batch-backtest/batch-backtest-vite-plugin";
-import type { BatchStreamEvent } from "../lib/batch-backtest/batch-backtest-stream-types";
+import type { BatchStatusResponse, BatchStreamEvent } from "../lib/batch-backtest/batch-backtest-stream-types";
 import type { BatchBacktestSymbolResult } from "../lib/batch-backtest/batch-backtest-runner";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
@@ -1759,5 +1759,33 @@ describe("batch-backtest server plugin processOpenScoreUsdReplay", () => {
         } finally {
             await releaseLastResults("test_end");
         }
+    });
+});
+
+// Audit Finding 7: the `/api/batch-backtest/status` response is a shared contract
+// between the server producer (`handleStatusRequest`) and the browser reattach
+// consumer (`reattachToInProgressServerRun`). Field drift between the two was a
+// known historical bug class (terminal-row pagination, `strategyKey`,
+// `cacheStats` each dropped on one side in past regressions). This suite locks
+// the producer's output to `BatchStatusResponse` so the next field drop is a
+// compile failure rather than a silent empty-table symptom.
+describe("batch-backtest server plugin /status contract (audit Finding 7)", () => {
+    const { handleStatusRequest, releaseLastResults } = __testInternals;
+
+    afterEach(async () => {
+        await releaseLastResults("test_status_contract");
+    });
+
+    it("empty-state status satisfies BatchStatusResponse (run=null, lastRun=null)", () => {
+        const status = handleStatusRequest() as BatchStatusResponse;
+        // `ok: true` is the producer's invariant on every non-error branch; the
+        // `ok: false` shape lives on the SP500 TOP_MEAN status route, not here.
+        expect(status.ok).to.equal(true);
+        expect(status.running).to.equal(false);
+        expect(status.run).to.equal(null);
+        expect(status.lastRun).to.equal(null);
+        // `runMismatch` must be absent (or false) when no runId is requested —
+        // an unscoped request never signals mismatch.
+        expect(status.runMismatch ?? false).to.equal(false);
     });
 });

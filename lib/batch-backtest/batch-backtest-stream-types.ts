@@ -23,6 +23,7 @@ import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import type { BatchRunPairListProvenanceMeta, BatchUniverseCounts } from "./batch-run-contract";
+import type { MaxActiveResearchRegistrationV1 } from "./max-active-research-contract";
 import { computeBuyAndHoldPct, computeOpenTradeAssetScores } from "./batch-row-scalars";
 import type { BacktestResult } from "../types/strategies";
 
@@ -154,6 +155,101 @@ export type BatchStreamEvent =
         verifiedPairListProvenance?: PairListProvenanceV1 | null;
     }
     | { type: "fatal"; error: string; runId?: string };
+
+/**
+ * Terminal phase of a Batch run, mirrored from the server plugin's
+ * `BatchRunPhase`. Declared here (rather than imported from the plugin) so this
+ * leaf stream-contract module stays free of a circular dependency on the plugin
+ * that imports it. The plugin re-exports its own `BatchRunPhase`; the two must
+ * stay in lockstep (audit Finding 7).
+ */
+export type BatchStatusRunPhase = "running" | "done" | "cancelled" | "fatal";
+
+/**
+ * Shared `/api/batch-backtest/status` response contract (audit Finding 7).
+ *
+ * The browser's reattach poll (`reattachToInProgressServerRun` in
+ * batch-backtest-service.ts) previously re-declared this shape as an inline
+ * anonymous type, while the server producer (`handleStatusRequest` in
+ * batch-backtest-vite-plugin.ts) returned `unknown`. Drift between the two was a
+ * known historical bug class — terminal-row pagination fields (`rowOffset` /
+ * `nextOffset` / `rowCount`), `strategyKey`, and `cacheStats` were each dropped
+ * on one side in past regressions. One shared type + the contract test in
+ * batch-backtest-server-plugin.spec.ts makes the next field drop a compile
+ * failure instead of a silent empty-table symptom.
+ *
+ * The producer always sets `ok: true`; the `ok: false` error shape lives on the
+ * SP500 TOP_MEAN status route, not this one. `runMismatch` is the server's
+ * signal that the retained run is no longer the one this tab asked about.
+ */
+export type BatchStatusResponse = {
+    ok: true;
+    /** True when the retained run is no longer the one this tab asked about. */
+    runMismatch?: boolean;
+    running: boolean;
+    /** Present while a run owns the server (`running === true`). */
+    run: BatchLiveRunStatus | null;
+    /** Present when a run has finished and `runState` is still retained. */
+    lastRun: BatchTerminalRunStatus | null;
+};
+
+/**
+ * In-progress run branch of {@link BatchStatusResponse}. The `rows` slice is a
+ * page (bounded by the status route's limit); `rowCount` is the TOTAL server
+ * row count so the browser can reconcile absolute index across pages.
+ */
+export type BatchLiveRunStatus = {
+    startedAt: number;
+    total: number;
+    completed: number;
+    failed: number;
+    currentSymbol: string | null;
+    cancelled: boolean;
+    interval: string;
+    strategyKey: string;
+    rows: BatchBacktestSymbolResult[];
+    rowOffset: number;
+    rowCount: number;
+    nextOffset: number | null;
+    runId: string;
+    /** Terminal phase; `"running"` while the run owns the server. */
+    phase: BatchStatusRunPhase;
+    summary: string | null;
+};
+
+/**
+ * Terminal run branch of {@link BatchStatusResponse}. Carries the terminal
+ * summary / error plus the same row page + pagination contract as
+ * {@link BatchLiveRunStatus} so a reloaded tab can recover the result table.
+ */
+export type BatchTerminalRunStatus = {
+    interval: string;
+    strategyKey: string;
+    fingerprint: string | null;
+    rowCount: number;
+    hasArtifacts: boolean;
+    cacheStats: BatchDatasetCacheStats | null;
+    rows: BatchBacktestSymbolResult[];
+    rowOffset: number;
+    nextOffset: number | null;
+    /** Terminal phase (`"done" | "cancelled" | "fatal"`). */
+    phase: BatchStatusRunPhase;
+    finishedAt: number | null;
+    summary: string | null;
+    error: string | null;
+    startedAt: number;
+    total: number;
+    completed: number;
+    failed: number;
+    cancelled: boolean;
+    runId: string;
+    /** Producer-only diagnostic scalars; ignored by the reattach consumer. */
+    artifactStats: { eligible: number; stored: number; failed: number; bytesWritten: number } | null;
+    parsedCacheStats: { size: number; max: number; hits: number; misses: number; evictions: number; peak: number } | null;
+    pairListProvenanceMeta: BatchRunPairListProvenanceMeta | null;
+    universeCounts: BatchUniverseCounts | null;
+    researchRegistrationMeta: { registration: MaxActiveResearchRegistrationV1 | null; status: "verified" | "manual/unverified"; reason?: string } | null;
+};
 
 /**
  * Strip the heavy array fields from a per-symbol result so it is safe to send

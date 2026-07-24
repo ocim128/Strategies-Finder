@@ -57,7 +57,7 @@ import {
     type BatchBenchmarkSnapshot,
 } from "./batch-benchmark-snapshot";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
-import type { BatchStreamEvent } from "./batch-backtest-stream-types";
+import type { BatchStatusResponse, BatchStreamEvent } from "./batch-backtest-stream-types";
 import type { OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-engine";
 import type { OpenScoreUsdReplayStreamEvent } from "./batch-open-score-usd-replay-stream-types";
 import type { StrategyParams, BacktestSettings } from "../types/strategies";
@@ -1105,46 +1105,15 @@ class BatchBacktestService {
                     // stopReattachPoll() ran between iterations (Stop / dispose / new Run).
                     return;
                 }
-                let payload: {
-                    running?: boolean;
-                    // Audit runId-scoping finding: server signals the retained
-                    // run is no longer the one this tab asked about. Treated as
-                    // "no longer our run" — the loop drops ownership below.
-                    runMismatch?: boolean;
-                    run?: {
-                        total: number;
-                        completed: number;
-                        failed: number;
-                        currentSymbol: string | null;
-                        cancelled: boolean;
-                        interval: string;
-                        strategyKey: string;
-                        rows: BatchBacktestSymbolResult[];
-                        rowOffset?: number;
-                        rowCount?: number;
-                        nextOffset?: number | null;
-                        runId?: string;
-                    } | null;
-                    lastRun?: {
-                        rowCount: number;
-                        hasArtifacts: boolean;
-                        fingerprint: string | null;
-                        interval?: string | null;
-                        strategyKey?: string | null;
-                        cacheStats?: BatchDatasetCacheStats | null;
-                        runId?: string;
-                        phase?: "done" | "cancelled" | "fatal";
-                        summary?: string | null;
-                        error?: string | null;
-                        // Audit status-row-recovery finding: terminal reattach
-                        // now also drains `lastRun.rows` (previously ignored),
-                        // so a tab that reloads after the run finished still
-                        // recovers the result table.
-                        rows?: BatchBacktestSymbolResult[];
-                        rowOffset?: number;
-                        nextOffset?: number | null;
-                    } | null;
-                };
+                // Audit Finding 7: the `/api/batch-backtest/status` shape is
+                // now the shared `BatchStatusResponse` contract
+                // (lib/batch-backtest/batch-backtest-stream-types.ts), locked
+                // against the producer (`handleStatusRequest`) by a contract
+                // test. Previously this was an inline anonymous type that
+                // drifted from the producer — terminal-row pagination fields,
+                // `strategyKey`, and `cacheStats` were each dropped on one side
+                // in past regressions.
+                let payload: BatchStatusResponse;
                 try {
                     // Audit runId-scoping finding: scope each poll to the
                     // active run id so a tab polling a stale generation stops

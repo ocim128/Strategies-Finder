@@ -43,7 +43,7 @@ import { loadBuiltInStrategyByKey } from "../../strategyRegistry";
 import type { BacktestSettings, Strategy, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
-import { toScalarRow, type BatchStreamEvent } from "./batch-backtest-stream-types";
+import { toScalarRow, type BatchStatusResponse, type BatchStreamEvent } from "./batch-backtest-stream-types";
 import { rememberLoopbackOriginFromRequest } from "../local-api-transport";
 import { buildBatchRunFingerprint, normalizeBatchSymbols, BATCH_MAX_SYMBOLS, verifyPairListProvenance, type BatchRunPairListProvenanceMeta, type BatchUniverseCounts } from "./batch-run-contract";
 import { fnv1a64Hex, type MaxActiveResearchRegistrationV1 } from "./max-active-research-contract";
@@ -1721,7 +1721,7 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
 }
 
 
-function handleStatusRequest(afterRow = 0, limitRaw?: number, requestedRunId?: string): unknown {
+function handleStatusRequest(afterRow = 0, limitRaw?: number, requestedRunId?: string): BatchStatusResponse {
     // Audit runId-scoping finding: a paginated drain that started against run
     // generation A must NOT receive rows from generation B (started by another
     // tab while A was being drained). When the caller supplies a runId and it
@@ -1743,7 +1743,6 @@ function handleStatusRequest(afterRow = 0, limitRaw?: number, requestedRunId?: s
             running: false,
             run: null,
             lastRun: null,
-            miner: null,
         };
     }
     const rowOffset = Math.max(0, Math.floor(Number.isFinite(afterRow) ? afterRow : 0));
