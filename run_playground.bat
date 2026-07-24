@@ -87,16 +87,26 @@ start "Rust Trading Engine" cmd /k "cd /d "%~dp0..\..\..\trading-engine" && carg
 ::      Also set LOCAL_PROXY_TOKEN to the same secret in both .env and
 ::      `wrangler secret put LOCAL_CANDLE_PROXY_TOKEN`.
 ::
+:: This block ALSO exports ALPACA_API_KEY / ALPACA_API_SECRET from .env into
+:: the shell environment so the IBKR sync plugin's Alpaca fetcher can read
+:: them via process.env server-side. Vite's built-in .env loader only exposes
+:: VITE_-prefixed vars to import.meta.env (client); non-prefixed server
+:: secrets must be exported by the launcher, exactly like LOCAL_PROXY_TOKEN.
+::
 :: If either prerequisite is missing, this block is skipped silently and
 :: Vite still launches normally - the tunnel is opt-in.
 set "TUNNEL_NAME="
 set "LOCAL_PROXY_TOKEN="
+set "ALPACA_API_KEY="
+set "ALPACA_API_SECRET="
 if exist "%~dp0.env" (
     for /f "usebackq tokens=1,* delims==" %%a in ("%~dp0.env") do (
         set "_line=%%a"
         if not "!_line:~0,1!"=="#" (
             if /i "%%a"=="TUNNEL_NAME" set "TUNNEL_NAME=%%b"
             if /i "%%a"=="LOCAL_PROXY_TOKEN" set "LOCAL_PROXY_TOKEN=%%b"
+            if /i "%%a"=="ALPACA_API_KEY" set "ALPACA_API_KEY=%%b"
+            if /i "%%a"=="ALPACA_API_SECRET" set "ALPACA_API_SECRET=%%b"
         )
     )
 )
