@@ -44,7 +44,6 @@ import type { BacktestSettings, Strategy, StrategyParams } from "../types/strate
 import type { CapitalSettings } from "../types/backtest";
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import { toScalarRow, type BatchStreamEvent } from "./batch-backtest-stream-types";
-import { validateTopMeanRequestLimits } from "./sp500-top-mean-request-limits";
 import { rememberLoopbackOriginFromRequest } from "../local-api-transport";
 import { buildBatchRunFingerprint, normalizeBatchSymbols, BATCH_MAX_SYMBOLS, verifyPairListProvenance, type BatchRunPairListProvenanceMeta, type BatchUniverseCounts } from "./batch-run-contract";
 import { fnv1a64Hex, type MaxActiveResearchRegistrationV1 } from "./max-active-research-contract";
@@ -52,14 +51,8 @@ import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import { runOpenScoreUsdReplay, type OpenScoreUsdTarget } from "./batch-open-score-usd-replay-engine";
 import { createEmptyBacktestResult } from "../strategies/backtest/position-stats";
-import {
-    TopMeanCoordinatorEngine,
-    getActiveTopMeanCoordinatorEngine,
-    type TopMeanCoordinatorRunRequest,
-    type TopMeanStatusResponse,
-} from "./sp500-top-mean-coordinator-engine";
-import { getRunDir, isValidRunId, loadManifest } from "./sp500-top-mean-artifact-store";
-import { strategies } from "../strategies/library";
+import { registerSp500TopMeanRoutes, type BatchOwnerLocks } from "./sp500-top-mean-vite-routes";
+import { isValidRunId } from "./sp500-top-mean-artifact-store";
 
 /**
  * Phase 3 MAX_ACTIVE: compute canonical universe counts from the submitted
@@ -1947,252 +1940,37 @@ function registerBatchRoutes(middlewares: any): void {
             },
         });
 
-        registerLocalJsonRoute(middlewares, "/api/batch-backtest/sp500-top-mean/run", {
-            methods: ["POST"],
-            readBody: true,
-            maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
-            onAuthorizedRequest: (req) => rememberLocalApiOriginFromRequest(req),
-            unauthorizedMessage: "Unauthorized: batch routes are local-only.",
-            onAuthorized: async ({ res, body }) => {
-                await handleSp500TopMeanRunRequest(res, body);
+        // SP500 TOP_MEAN routes (run/stop/status/result) live in their own
+        // module now (audit Finding 9). The handlers share the Batch plugin's
+        // owner-lock counters so a TOP_MEAN run and a Batch run cannot execute
+        // simultaneously; that coupling is expressed through the BatchOwnerLocks
+        // adapter below instead of reaching across module scope.
+        const batchOwnerLocks: BatchOwnerLocks = {
+            isBusy: () => runOwner !== RUN_OWNER_NONE || minerOwner !== RUN_OWNER_NONE,
+            acquire: (runId) => {
+                const ownerGen = ++runOwnerGen;
+                const minerGen = ++minerOwnerGen;
+                runOwner = ownerGen;
+                runOwnerRunId = runId;
+                minerOwner = minerGen;
+                return { runOwner: ownerGen, minerOwner: minerGen };
             },
-        });
-
-        registerLocalJsonRoute(middlewares, "/api/batch-backtest/sp500-top-mean/stop", {
-            methods: ["POST"],
-            readBody: true,
-            maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
-            unauthorizedMessage: "Unauthorized: batch routes are local-only.",
-            onAuthorized: async ({ res, body }) => {
-                const result = await handleSp500TopMeanStopRequest((body as { runId?: unknown })?.runId);
-                sendJson(res, 200, result);
-            },
-        });
-
-        registerLocalJsonRoute(middlewares, "/api/batch-backtest/sp500-top-mean/status", {
-            methods: ["GET"],
-            unauthorizedMessage: "Unauthorized: batch routes are local-only.",
-            onAuthorized: async ({ res, url }) => {
-                const runIdParam = url.searchParams.get("runId");
-                const runId = runIdParam && runIdParam.trim() ? runIdParam.trim() : undefined;
-                const status = await handleSp500TopMeanStatusRequest(runId);
-                const statusCode = "ok" in status && !status.ok ? 404 : 200;
-                sendJson(res, statusCode, status);
-            },
-        });
-
-        registerLocalJsonRoute(middlewares, "/api/batch-backtest/sp500-top-mean/result", {
-            methods: ["GET"],
-            unauthorizedMessage: "Unauthorized: batch routes are local-only.",
-            onAuthorized: async ({ res, url }) => {
-                const runIdParam = url.searchParams.get("runId");
-                if (!runIdParam || !runIdParam.trim()) {
-                    sendJson(res, 400, { ok: false, error: "Missing required runId parameter" });
-                    return;
+            releaseIfStillOwner: (token) => {
+                if (runOwner === token.runOwner) {
+                    runOwner = RUN_OWNER_NONE;
+                    runOwnerRunId = null;
                 }
-                const result = await handleSp500TopMeanResultRequest(runIdParam.trim());
-                sendJson(res, 200, result);
+                if (minerOwner === token.minerOwner) {
+                    minerOwner = RUN_OWNER_NONE;
+                }
             },
+        };
+        registerSp500TopMeanRoutes(middlewares, {
+            maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
+            rememberLocalApiOriginFromRequest: (req) => rememberLocalApiOriginFromRequest(req),
+            ownerLocks: batchOwnerLocks,
         });
     }
-
-async function handleSp500TopMeanRunRequest(res: ViteHttpResponse, body: unknown): Promise<void> {
-    if (!body || typeof body !== "object") {
-        throw new HttpStatusError(400, "Request body must be a JSON object.");
-    }
-    const req = body as Partial<TopMeanCoordinatorRunRequest>;
-    if (!req.runId || typeof req.runId !== "string") {
-        throw new HttpStatusError(400, "Missing required string property: runId.");
-    }
-    if (!req.strategyKey || typeof req.strategyKey !== "string") {
-        throw new HttpStatusError(400, "Missing required string property: strategyKey.");
-    }
-    if (!req.interval || typeof req.interval !== "string") {
-        throw new HttpStatusError(400, "Missing required string property: interval.");
-    }
-    if (req.interval !== "4h") {
-        throw new HttpStatusError(400, "S&P 500 TOP_MEAN coordinator currently supports IBKR 4h synthetic pairs only.");
-    }
-    // Semantic workload caps (shared leaf validator). Body-size alone is not a
-    // substitute for rejecting huge horizon arrays / zero-or-fractional values /
-    // pathological workerCount or maxPairs from direct callers or proxies.
-    const limitCheck = validateTopMeanRequestLimits({
-        horizons: req.horizons,
-        workerCount: req.workerCount,
-        maxPairs: req.maxPairs,
-        stabilityStartDates: req.stabilityStartDates,
-    });
-    if (!limitCheck.ok) {
-        throw new HttpStatusError(400, limitCheck.error);
-    }
-    req.horizons = limitCheck.value.horizons;
-    if (limitCheck.value.workerCount !== undefined) {
-        req.workerCount = limitCheck.value.workerCount;
-    }
-    if (limitCheck.value.maxPairs !== undefined) {
-        req.maxPairs = limitCheck.value.maxPairs;
-    }
-    if (limitCheck.value.stabilityStartDates !== undefined) {
-        req.stabilityStartDates = limitCheck.value.stabilityStartDates;
-    }
-
-    const strategy = strategies[req.strategyKey];
-    if (!strategy) {
-        throw new HttpStatusError(
-            400,
-            `Strategy "${req.strategyKey}" is not a built-in strategy. Worker pool execution requires built-in strategies registered in the manifest.`,
-        );
-    }
-
-    if (runOwner !== RUN_OWNER_NONE || minerOwner !== RUN_OWNER_NONE || getActiveTopMeanCoordinatorEngine() !== null) {
-        throw new HttpStatusError(409, "A batch, analysis, or TOP_MEAN operation is already running.");
-    }
-
-    // Optional decision-event date window for the phase-3 OPEN_SCORE USD
-    // replay. Mirrors handleOpenScoreUsdRequest's parseBodyDateSec: YYYY-MM-DD
-    // parses as UTC midnight; sampleTo adds 24h-1s so the whole end day is
-    // inclusive. Malformed/blank -> null (no filter, full history).
-    const parseBodyDateSec = (key: "sampleFrom" | "sampleTo", endOfDay = false): number | undefined => {
-        const raw = (body as Record<string, unknown>)[key];
-        if (typeof raw !== "string" || raw.trim() === "") return undefined;
-        const ms = Date.parse(raw);
-        if (!Number.isFinite(ms)) return undefined;
-        return Math.floor(ms / 1000) + (endOfDay ? 24 * 3600 - 1 : 0);
-    };
-    const sampleFromSec = parseBodyDateSec("sampleFrom", false);
-    const sampleToSec = parseBodyDateSec("sampleTo", true);
-
-    const ownerGen = ++runOwnerGen;
-    const minerGen = ++minerOwnerGen;
-    runOwner = ownerGen;
-    runOwnerRunId = req.runId;
-    minerOwner = minerGen;
-
-    const stream = createDisconnectSafeStream(res);
-
-    try {
-        const engine = new TopMeanCoordinatorEngine({
-            ...(req as TopMeanCoordinatorRunRequest),
-            ...(sampleFromSec !== undefined ? { sampleFromSec } : {}),
-            ...(sampleToSec !== undefined ? { sampleToSec } : {}),
-        });
-        await engine.run((event) => stream.write(event));
-    } finally {
-        if (runOwner === ownerGen) {
-            runOwner = RUN_OWNER_NONE;
-            runOwnerRunId = null;
-        }
-        if (minerOwner === minerGen) {
-            minerOwner = RUN_OWNER_NONE;
-        }
-        stream.end();
-    }
-}
-
-async function handleSp500TopMeanStopRequest(runId?: unknown): Promise<{ ok: boolean; stopped: boolean; runId?: string }> {
-    const activeEngine = getActiveTopMeanCoordinatorEngine();
-    if (!activeEngine) {
-        return { ok: true, stopped: false };
-    }
-    if (typeof runId === "string" && runId.trim() && activeEngine.request.runId !== runId.trim()) {
-        return { ok: true, stopped: false };
-    }
-    activeEngine.stop();
-    return { ok: true, stopped: true, runId: activeEngine.request.runId };
-}
-
-async function handleSp500TopMeanStatusRequest(runId?: string): Promise<TopMeanStatusResponse | { ok: false; error: string }> {
-    const activeEngine = getActiveTopMeanCoordinatorEngine();
-    if (activeEngine && (!runId || activeEngine.request.runId === runId)) {
-        return activeEngine.getStatus();
-    }
-    if (runId) {
-        // Reject path-traversal / escape attempts before they reach the
-        // filesystem. `getRunDir` defends this structurally too; this turns
-        // it into a clean 404 (run not found) for malformed ids.
-        if (!isValidRunId(runId)) {
-            return { ok: false, error: "Run not found" };
-        }
-        const manifest = loadManifest(runId);
-        if (manifest) {
-            // Audit: read multi-MB result files ASYNC. The prior
-            // `existsSync` + `readFileSync` blocked the Vite event loop on
-            // every reattach poll (this route is hit every ~2s during a
-            // TOP_MEAN stability run). A single multi-MB read stalled every
-            // concurrent request. Mirrors the plugin's own audit comments
-            // that moved artifact I/O to fs/promises for the same reason.
-            // Drop `existsSync` (TOCTOU); distinguish missing via ENOENT.
-            let result: any = undefined;
-            const resultPath = join(getRunDir(runId), "result.json");
-            try {
-                const txt = await readFile(resultPath, "utf8");
-                try { result = JSON.parse(txt); } catch { /* malformed JSON */ }
-            } catch (err: any) {
-                if (err?.code !== "ENOENT") { /* unexpected I/O — surface elsewhere */ }
-            }
-            // Stability runs persist the comparison to stability_result.json
-            // (no top-level result.json). Surface it as stabilityResult so the
-            // browser reattach path renders the comparison table.
-            let stabilityResult: any = undefined;
-            const stabilityResultPath = join(getRunDir(runId), "stability_result.json");
-            try {
-                const txt = await readFile(stabilityResultPath, "utf8");
-                try { stabilityResult = JSON.parse(txt); } catch { /* malformed JSON */ }
-            } catch (err: any) {
-                if (err?.code !== "ENOENT") { /* unexpected I/O — surface elsewhere */ }
-            }
-            return {
-                runId: manifest.runId,
-                status: manifest.status,
-                phase: manifest.status === "completed"
-                    ? "completed"
-                    : manifest.status === "interrupted"
-                        ? "interrupted"
-                        : "failed",
-                fingerprint: manifest.fingerprint,
-                pairTotals: manifest.pairCount,
-                completedPairs: manifest.completedPairsCount,
-                failedPairs: manifest.failedPairsCount,
-                progressText: manifest.status === "completed" ? "Completed" : manifest.error || "Interrupted",
-                workerCount: manifest.workerCount ?? 8,
-                requestedEngineMode: manifest.requestedEngineMode ?? "auto",
-                actualEngineMode: manifest.actualEngineMode ?? "auto",
-                engineUsage: manifest.engineUsage ?? { rust: 0, typescript: 0 },
-                error: manifest.error,
-                result,
-                ...(stabilityResult !== undefined ? { stabilityResult } : {}),
-            };
-        }
-    }
-    return { ok: false, error: "Run not found" };
-}
-
-async function handleSp500TopMeanResultRequest(runId: string): Promise<unknown> {
-    if (!runId || typeof runId !== "string") {
-        throw new HttpStatusError(400, "Missing runId parameter.");
-    }
-    // Reject path-traversal / escape attempts before they reach the filesystem.
-    // `getRunDir` defends this structurally too; this turns it into a clean 400.
-    if (!isValidRunId(runId)) {
-        throw new HttpStatusError(400, "Invalid runId.");
-    }
-    const resultPath = join(getRunDir(runId), "result.json");
-    let txt: string;
-    try {
-        txt = await readFile(resultPath, "utf8");
-    } catch (err: any) {
-        // TOCTOU-safe: distinguish "missing" (404) from "I/O error" (500).
-        if (err?.code === "ENOENT") {
-            throw new HttpStatusError(404, `Result for runId "${runId}" not found.`);
-        }
-        throw new HttpStatusError(500, "Failed to read result file.");
-    }
-    try {
-        return JSON.parse(txt);
-    } catch {
-        throw new HttpStatusError(500, "Failed to read result file.");
-    }
-}
 
 // Exported for tests only. `processRunBatch` and `processOpenScoreUsdReplay`
 // consult module-scope `runOwner` / `minerOwner` for cancellation, mirroring
