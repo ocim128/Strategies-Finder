@@ -567,6 +567,20 @@ export class TopMeanCoordinatorEngine {
             currentWindow: 0,
         });
 
+        // F2: hoist the worker pool OUTSIDE the window loop so workers
+        // persist across windows. Each window's pairs are the SAME (only the
+        // backtestFromSec slice differs), so the workers' in-memory dataset
+        // LRU caches (legCache:24 + pairCache:16 inside
+        // batch-dataset-loader-core) survive from window N to window N+1.
+        // Without this, every window re-loads every pair from disk/SQLite even
+        // though the synthetic-pair disk cache already wrote the bars out on
+        // window 1 — the marginal cost was disk JSON re-parse per window ×
+        // per pair. keepWorkersAlive: true tells execute() not to terminate
+        // workers at end of each window; cancel() in the finally below
+        // releases them all at the end of the stability run.
+        this.pool = new TopMeanWorkerPool();
+
+        try {
         for (let i = 0; i < windowDefs.length; i++) {
             const w = windowDefs[i]!;
             this.stabilityCurrentWindow = i + 1;
@@ -622,7 +636,6 @@ export class TopMeanCoordinatorEngine {
             windowManifest.workerCount = resolveTopMeanWorkerCount(this._request.workerCount);
             saveManifest(windowManifest, this.baseDir, w.windowKey);
 
-            this.pool = new TopMeanWorkerPool();
             const usage = await this.pool.execute({
                 runId: this._request.runId,
                 manifest: windowManifest,
@@ -637,6 +650,10 @@ export class TopMeanCoordinatorEngine {
                 baseDir: this.baseDir,
                 ...(w.startDateSec !== null ? { backtestFromSec: w.startDateSec } : {}),
                 windowKey: w.windowKey,
+                // Workers persist across windows via keepWorkersAlive: their
+                // in-memory dataset LRU caches survive and the same pairs
+                // loaded in window N are cache hits in window N+1.
+                keepWorkersAlive: true,
                 onProgress: (completed, total, text) => {
                     this.progressText = `[${w.label}] ${text}`;
                     emitNdjson({
@@ -719,6 +736,16 @@ export class TopMeanCoordinatorEngine {
             type: "stability_done",
             comparison,
         });
+        } finally {
+            // F2: tear down the workers that were kept alive across windows.
+            // cancel() also handles a Stop mid-window (the Stop path's
+            // isCancelled flag will have already terminated them; this is
+            // idempotent). Without this, a process leak of N long-lived
+            // worker threads would persist after the stability run ends.
+            if (this.pool) {
+                this.pool.cancel();
+            }
+        }
     }
 
     private emitInterrupted(emitNdjson: (event: unknown) => void): void {
