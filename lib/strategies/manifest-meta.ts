@@ -2571,4 +2571,220 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "aroon_direction_confirmation",
+        name: "Aroon Direction Confirmation",
+        description: "Signals in the direction of the most recently renewed Aroon extreme.",
+        defaultParams: {
+        aroonPeriod: 25,
+    } as Record<string, number>,
+        paramLabels: {
+        aroonPeriod: "Aroon Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["aroonPeriod"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "bollinger_reentry",
+        name: "Bollinger Re-entry",
+        description: "Fades an extreme when price returns inside a fixed two-deviation Bollinger Band.",
+        defaultParams: {
+        bollingerPeriod: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        bollingerPeriod: "Bollinger Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["bollingerPeriod"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "cci_zero_line_confirmation",
+        name: "CCI Zero-Line Confirmation",
+        description: "Signals with Commodity Channel Index direction around its fixed zero line.",
+        defaultParams: {
+        cciPeriod: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        cciPeriod: "CCI Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["cciPeriod"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "dmi_direction_confirmation",
+        name: "DMI Direction Confirmation",
+        description: "Signals with the dominant directional movement line without an ADX threshold.",
+        defaultParams: {
+        dmiPeriod: 14,
+    } as Record<string, number>,
+        paramLabels: {
+        dmiPeriod: "DMI Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["dmiPeriod"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "mfi_midline_confirmation",
+        name: "MFI Midline Confirmation",
+        description: "Signals with Money Flow Index direction around its fixed 50 midpoint.",
+        defaultParams: {
+        mfiPeriod: 14,
+    } as Record<string, number>,
+        paramLabels: {
+        mfiPeriod: "MFI Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["mfiPeriod"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "obv_signal_line_confirmation",
+        name: "OBV Signal-Line Confirmation",
+        description: "Signals with On-Balance Volume position relative to its moving-average signal line.",
+        defaultParams: {
+        obvMaPeriod: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        obvMaPeriod: "OBV MA Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["obvMaPeriod"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "parabolic_sar_confirmation",
+        name: "Parabolic SAR Confirmation",
+        description: "Signals when Parabolic SAR flips direction, using a fixed maximum acceleration of 0.20.",
+        defaultParams: {
+        accelerationStep: 0.02,
+    } as Record<string, number>,
+        paramLabels: {
+        accelerationStep: "Acceleration Step",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["accelerationStep"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "rsi_midline_confirmation",
+        name: "RSI Midline Confirmation",
+        description: "Signals with RSI direction around its fixed 50 midpoint.",
+        defaultParams: {
+        rsiPeriod: 14,
+    } as Record<string, number>,
+        paramLabels: {
+        rsiPeriod: "RSI Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["rsiPeriod"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "stochastic_midline_confirmation",
+        name: "Stochastic Midline Confirmation",
+        description: "Signals with raw Stochastic %K direction around its fixed 50 midpoint.",
+        defaultParams: {
+        stochasticPeriod: 14,
+    } as Record<string, number>,
+        paramLabels: {
+        stochasticPeriod: "Stochastic Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["stochasticPeriod"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "supertrend_confirmation",
+        name: "Supertrend Confirmation",
+        description: "Signals on Supertrend direction flips using a fixed 10-bar ATR.",
+        defaultParams: {
+        atrMultiplier: 3,
+    } as Record<string, number>,
+        paramLabels: {
+        atrMultiplier: "ATR Multiplier",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["atrMultiplier"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "trix_zero_line_confirmation",
+        name: "TRIX Zero-Line Confirmation",
+        description: "Signals with triple-smoothed rate-of-change direction around its fixed zero line.",
+        defaultParams: {
+        trixPeriod: 15,
+    } as Record<string, number>,
+        paramLabels: {
+        trixPeriod: "TRIX Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["trixPeriod"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "williams_r_midline_confirmation",
+        name: "Williams %R Midline Confirmation",
+        description: "Signals with Williams %R direction around its fixed -50 midpoint.",
+        defaultParams: {
+        williamsPeriod: 14,
+    } as Record<string, number>,
+        paramLabels: {
+        williamsPeriod: "Williams %R Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["williamsPeriod"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];
