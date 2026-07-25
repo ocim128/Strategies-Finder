@@ -114,6 +114,20 @@ export interface WorkerPoolRunOptions {
      * <runDir>/shards (existing behavior).
      */
     windowKey?: string;
+    /**
+     * When true, `execute()` does NOT terminate its workers at the end of the
+     * run — they stay spawned and ready for the next `execute()` call on the
+     * SAME pool instance. Used by stability mode so the workers' in-memory
+     * pair/leg LRU caches survive across windows (the synthetic-pair disk
+     * cache already eliminates the 30m-aggregation cost across windows; this
+     * layer additionally eliminates the disk JSON re-parse per window).
+     *
+     * Contract: the caller MUST eventually call {@link cancel} on the pool
+     * (typically in a `finally`) to terminate the workers; otherwise they
+     * will outlive the run. The coordinator's existing `stop()` / `finally`
+     * paths already do this.
+     */
+    keepWorkersAlive?: boolean;
     onProgress?: (completedPairs: number, totalPairs: number, text: string) => void;
 }
 
@@ -125,6 +139,24 @@ export interface ShardTask {
 export class TopMeanWorkerPool {
     private activeWorkers = new Set<Worker>();
     private isCancelled = false;
+    /**
+     * Workers that survived the previous `execute()` call (because
+     * `keepWorkersAlive` was true) and are ready for reuse. Persisted at the
+     * instance level so a coordinator that creates ONE pool and calls
+     * `execute()` N times (e.g. stability mode's per-window calls) gets
+     * worker reuse + the workers' in-memory dataset caches for free.
+     * Cleared by {@link cancel}.
+     */
+    private reusableWorkers: Worker[] = [];
+    /**
+     * Per-worker disposers returned by {@link attachWorkerHandlers}. Each
+     * entry is a list of `() => void` functions that remove ONLY the handlers
+     * the pool attached (NOT Node's internal 'exit'/'error' wiring). The
+     * absorb path calls these before re-attaching, so a worker can move from
+     * one execute() call to the next without `Worker.removeAllListeners()`
+     * (which nukes the internal message pump and silently breaks reuse).
+     */
+    private workerAttachedListeners = new WeakMap<Worker, Array<() => void>>();
 
     public cancel(): void {
         this.isCancelled = true;
@@ -136,6 +168,14 @@ export class TopMeanWorkerPool {
             }
         }
         this.activeWorkers.clear();
+        for (const worker of this.reusableWorkers) {
+            try {
+                worker.terminate();
+            } catch {
+                // Ignore worker termination error
+            }
+        }
+        this.reusableWorkers = [];
     }
 
     public async execute(options: WorkerPoolRunOptions): Promise<TopMeanEngineUsage> {
@@ -144,6 +184,31 @@ export class TopMeanWorkerPool {
         const totalPairs = options.canonicalPairs.length;
         options.manifest.shardSize = shardSize;
         const engineUsage: TopMeanEngineUsage = { rust: 0, typescript: 0 };
+
+        // Debounced manifest persistence. The prior code called `saveManifest`
+        // (a synchronous multi-KB atomic write with a Windows EPERM retry loop)
+        // on EVERY shard_complete — with 12 concurrent workers across a 400-
+        // shard run that blocked the event loop on hundreds of redundant writes
+        // while the in-flight manifest only grew. Flush on count OR time
+        // thresholds; always force-flush on the terminal paths (error/end).
+        // Resume safety is preserved: `reconcileInterruptedManifestsOnStartup`
+        // re-marks any post-flush crash as interrupted on the next run.
+        const MANIFEST_FLUSH_EVERY_N_SHARDS = 8;
+        const MANIFEST_FLUSH_INTERVAL_MS = 5_000;
+        let shardsSinceFlush = 0;
+        let lastFlushAt = Date.now();
+        let manifestDirty = false;
+        const flushManifest = (force: boolean): void => {
+            if (!manifestDirty && !force) return;
+            const due = force
+                || shardsSinceFlush >= MANIFEST_FLUSH_EVERY_N_SHARDS
+                || Date.now() - lastFlushAt >= MANIFEST_FLUSH_INTERVAL_MS;
+            if (!due) return;
+            saveManifest(options.manifest, options.baseDir, options.windowKey);
+            manifestDirty = false;
+            shardsSinceFlush = 0;
+            lastFlushAt = Date.now();
+        };
 
         // Partition pairs into shards
         const shardTasks: ShardTask[] = [];
@@ -170,94 +235,291 @@ export class TopMeanWorkerPool {
         let completedPairsCount = options.manifest.completedPairsCount || 0;
         const workerScriptPath = await resolveTopMeanWorkerPath();
 
-        // Helper to run a single shard task on a dedicated Worker
+        // ---- Persistent worker pool (F3+F7) ---------------------------------
+        // The prior implementation spawned a fresh `new Worker(...)` per shard
+        // and terminated it after one shard_complete. Each worker cold-start
+        // eagerly evaluates the 188-strategy manifest + backtest-executor
+        // import graph (~1000+ lines transitive), so per-shard overhead was
+        // ~workerCount× the steady-state cost. The worker file ALREADY exposes
+        // a `parentPort.on("message", ...)` follow-up handler alongside the
+        // workerData one-shot — that handler was dead code (F7). Spawn workers
+        // ONCE without workerData (so the one-shot branch is skipped and the
+        // message listener handles every task), reuse them across shards via
+        // a free-list, and terminate them only on cancel / end / fatal.
+        const buildTaskData = (task: ShardTask): TopMeanWorkerTaskData => ({
+            shardIndex: task.shardIndex,
+            pairs: task.pairs,
+            strategyKey: options.strategyKey,
+            strategyParams: options.strategyParams,
+            backtestSettings: options.backtestSettings,
+            capitalSettings: options.capitalSettings,
+            interval: options.interval,
+            useRustEnginePreference: options.useRustEnginePreference,
+            ...(options.backtestFromSec !== undefined ? { backtestFromSec: options.backtestFromSec } : {}),
+        });
+
+        type InFlight = {
+            task: ShardTask;
+            resolve: () => void;
+            reject: (err: Error) => void;
+            settled: boolean;
+        };
+        const workerInFlight = new Map<Worker, InFlight>();
+        const freeWorkers: Worker[] = [];
+        const pendingTasks: Array<() => void> = [];
+        let dispatchHalted = false;
+
+        const attachWorkerHandlers = (worker: Worker): void => {
+            this.activeWorkers.add(worker);
+            // Track disposers so the absorb path on the NEXT execute() call
+            // can remove ONLY these handlers without nuking Node's internal
+            // Worker wiring (removeAllListeners breaks the message pump).
+            const disposers: Array<() => void> = [];
+
+            const failInFlight = (worker: Worker, error: Error): void => {
+                const inflight = workerInFlight.get(worker);
+                if (inflight && !inflight.settled) {
+                    inflight.settled = true;
+                    inflight.reject(error);
+                }
+            };
+
+            const onMessage = (msg: TopMeanWorkerMessage): void => {
+                if (msg.type === "progress") {
+                    if (msg.status === "completed") {
+                        completedPairsCount++;
+                        options.manifest.completedPairsCount = completedPairsCount;
+                        if (msg.engineUsed === "rust") engineUsage.rust += 1;
+                        else if (msg.engineUsed === "typescript") engineUsage.typescript += 1;
+                        options.onProgress?.(
+                            completedPairsCount,
+                            totalPairs,
+                            `Backtesting pair ${completedPairsCount}/${totalPairs}: ${msg.symbol}`,
+                        );
+                    } else if (msg.status === "failed") {
+                        options.manifest.failedPairsCount = (options.manifest.failedPairsCount || 0) + 1;
+                    }
+                    return;
+                }
+
+                const inflight = workerInFlight.get(worker);
+                if (!inflight || inflight.settled) return;
+
+                if (msg.type === "shard_complete") {
+                    writeShardArtifacts(options.runId, msg.shardIndex, msg.artifacts, options.baseDir, options.windowKey);
+                    if (!options.manifest.completedShards.includes(msg.shardIndex)) {
+                        options.manifest.completedShards.push(msg.shardIndex);
+                    }
+                    // Debounced flush: the shard ARTIFACTS are already on
+                    // disk (above); the manifest only matters for resume
+                    // reattach, which tolerates a small lag (startup
+                    // reconcile covers the gap).
+                    shardsSinceFlush += 1;
+                    manifestDirty = true;
+                    flushManifest(false);
+                    inflight.settled = true;
+                    inflight.resolve();
+                    // Return the worker to the free-list and pull the next
+                    // pending task. Done here (not in the promise .finally)
+                    // because the message handler is the only place that knows
+                    // WHICH worker handled this task.
+                    releaseWorker(worker);
+                } else if (msg.type === "error") {
+                    if (!options.manifest.failedShards.includes(msg.shardIndex)) {
+                        options.manifest.failedShards.push(msg.shardIndex);
+                    }
+                    // Force-flush on errors so the failedShards list is
+                    // durable before the rejection propagates.
+                    manifestDirty = true;
+                    flushManifest(true);
+                    inflight.settled = true;
+                    inflight.reject(new Error(msg.error));
+                    releaseWorker(worker);
+                }
+            };
+            worker.on("message", onMessage);
+            disposers.push(() => worker.off("message", onMessage));
+
+            const onError = (err: Error): void => {
+                failInFlight(worker, err instanceof Error ? err : new Error(String(err)));
+                // A worker that errored cannot be safely reused; drop it. The
+                // free-list may have already absorbed it — remove if present.
+                const freeIdx = freeWorkers.indexOf(worker);
+                if (freeIdx >= 0) freeWorkers.splice(freeIdx, 1);
+                this.activeWorkers.delete(worker);
+                // Also drop from the cross-execute reusable list — a worker
+                // can die between windows (e.g. OOM while idle) and the next
+                // absorb would otherwise re-attach handlers to a dead worker
+                // and silently hang on its first postMessage.
+                const reusableIdx = this.reusableWorkers.indexOf(worker);
+                if (reusableIdx >= 0) this.reusableWorkers.splice(reusableIdx, 1);
+                try { worker.terminate(); } catch { /* best-effort */ }
+            };
+            worker.on("error", onError);
+            disposers.push(() => worker.off("error", onError));
+
+            const onExit = (code: number): void => {
+                // Unexpected exit while a task is in flight: fail the task.
+                // Expected exits happen after we terminate() the worker at the
+                // end of the run, by which point workerInFlight is empty.
+                const inflight = workerInFlight.get(worker);
+                if (inflight && !inflight.settled && code !== 0) {
+                    inflight.settled = true;
+                    inflight.reject(new Error(`Worker stopped with exit code ${code}`));
+                }
+                const freeIdx = freeWorkers.indexOf(worker);
+                if (freeIdx >= 0) freeWorkers.splice(freeIdx, 1);
+                this.activeWorkers.delete(worker);
+                // Same cross-execute cleanup as onError — see comment there.
+                const reusableIdx = this.reusableWorkers.indexOf(worker);
+                if (reusableIdx >= 0) this.reusableWorkers.splice(reusableIdx, 1);
+            };
+            worker.on("exit", onExit);
+            disposers.push(() => worker.off("exit", onExit));
+
+            this.workerAttachedListeners.set(worker, disposers);
+        };
+
+        // Dispatch one task to a free worker, or queue it if all workers are
+        // busy. Returns a Promise that resolves when the shard completes (or
+        // rejects on error). The scheduler pulls queued tasks whenever a worker
+        // returns to the free-list.
         const runShardOnWorker = (task: ShardTask): Promise<void> => {
             return new Promise<void>((resolvePromise, rejectPromise) => {
-                if (this.isCancelled) {
+                if (this.isCancelled || dispatchHalted) {
                     return rejectPromise(new Error("Operation cancelled"));
                 }
 
-                const taskData: TopMeanWorkerTaskData = {
-                    shardIndex: task.shardIndex,
-                    pairs: task.pairs,
-                    strategyKey: options.strategyKey,
-                    strategyParams: options.strategyParams,
-                    backtestSettings: options.backtestSettings,
-                    capitalSettings: options.capitalSettings,
-                    interval: options.interval,
-                    useRustEnginePreference: options.useRustEnginePreference,
-                    ...(options.backtestFromSec !== undefined ? { backtestFromSec: options.backtestFromSec } : {}),
+                const inflight: InFlight = {
+                    task,
+                    resolve: resolvePromise,
+                    reject: rejectPromise,
+                    settled: false,
                 };
 
-                const worker = new Worker(workerScriptPath, {
-                    workerData: taskData,
-                });
-                let settled = false;
-
-                const resolveOnce = (): void => {
-                    if (settled) return;
-                    settled = true;
-                    resolvePromise();
-                };
-                const rejectOnce = (error: Error): void => {
-                    if (settled) return;
-                    settled = true;
-                    rejectPromise(error);
+                const dispatch = (worker: Worker): void => {
+                    workerInFlight.set(worker, inflight);
+                    worker.postMessage(buildTaskData(task));
                 };
 
-                this.activeWorkers.add(worker);
-
-                worker.on("message", (msg: TopMeanWorkerMessage) => {
-                    if (msg.type === "progress") {
-                        if (msg.status === "completed") {
-                            completedPairsCount++;
-                            options.manifest.completedPairsCount = completedPairsCount;
-                            if (msg.engineUsed === "rust") engineUsage.rust += 1;
-                            else if (msg.engineUsed === "typescript") engineUsage.typescript += 1;
-                            options.onProgress?.(
-                                completedPairsCount,
-                                totalPairs,
-                                `Backtesting pair ${completedPairsCount}/${totalPairs}: ${msg.symbol}`,
-                            );
-                        } else if (msg.status === "failed") {
-                            options.manifest.failedPairsCount = (options.manifest.failedPairsCount || 0) + 1;
+                // Try to grab a free worker immediately; otherwise queue.
+                // The dispatch loop caps activePromises at spawned.length, so
+                // in steady state this branch is rare (only the retry path
+                // can hit it, when its original worker just died). When
+                // queued, releaseWorker's push-then-drain will pop a free
+                // worker and call this callback.
+                const free = freeWorkers.pop();
+                if (free) {
+                    dispatch(free);
+                } else {
+                    pendingTasks.push(() => {
+                        // Re-check cancel between queueing and dispatch.
+                        if (this.isCancelled || dispatchHalted) {
+                            if (!inflight.settled) {
+                                inflight.settled = true;
+                                inflight.reject(new Error("Operation cancelled"));
+                            }
+                            return;
                         }
-                    } else if (msg.type === "shard_complete") {
-                        writeShardArtifacts(options.runId, msg.shardIndex, msg.artifacts, options.baseDir, options.windowKey);
-                        if (!options.manifest.completedShards.includes(msg.shardIndex)) {
-                            options.manifest.completedShards.push(msg.shardIndex);
+                        // releaseWorker pushes the freed worker BEFORE
+                        // shifting this callback, so the pop below must
+                        // succeed. If it ever doesn't (defensive), settle the
+                        // inflight as a cancel rather than silently dropping.
+                        const w = freeWorkers.pop();
+                        if (!w) {
+                            if (!inflight.settled) {
+                                inflight.settled = true;
+                                inflight.reject(new Error("No worker available for queued task"));
+                            }
+                            return;
                         }
-                        saveManifest(options.manifest, options.baseDir, options.windowKey);
-                        this.activeWorkers.delete(worker);
-                        worker.terminate();
-                        resolveOnce();
-                    } else if (msg.type === "error") {
-                        if (!options.manifest.failedShards.includes(msg.shardIndex)) {
-                            options.manifest.failedShards.push(msg.shardIndex);
-                        }
-                        saveManifest(options.manifest, options.baseDir, options.windowKey);
-                        this.activeWorkers.delete(worker);
-                        worker.terminate();
-                        rejectOnce(new Error(msg.error));
-                    }
-                });
-
-                worker.on("error", (err) => {
-                    this.activeWorkers.delete(worker);
-                    void worker.terminate();
-                    rejectOnce(err instanceof Error ? err : new Error(String(err)));
-                });
-
-                worker.on("exit", (code) => {
-                    this.activeWorkers.delete(worker);
-                    if (code !== 0 && !options.manifest.completedShards.includes(task.shardIndex)) {
-                        rejectOnce(new Error(`Worker stopped with exit code ${code}`));
-                    }
-                });
+                        dispatch(w);
+                    });
+                }
             });
         };
 
-        // Queue processing with max concurrency = workerCount
+        // Release a worker back to the free-list and pump the pending queue.
+        // Called from the message handler each time a shard settles.
+        //
+        // Push-then-drain order is the simpler and more robust form of the
+        // free-list return: push the worker FIRST, then drain any queued
+        // tasks so each can pop a free worker from inside its callback.
+        // The prior shift-then-dispatch order relied on a subtle timing
+        // invariant (reject-before-release in the message handler) to keep
+        // the retry path from requeueing itself into a stuck queue. While
+        // that ordering held today, push-then-drain removes the foot-gun
+        // and the dead "no worker available, requeue" branch in
+        // runShardOnWorker at once.
+        const releaseWorker = (worker: Worker): void => {
+            workerInFlight.delete(worker);
+            if (dispatchHalted || this.isCancelled) return;
+            freeWorkers.push(worker);
+            // Drain any queued tasks that now have a free worker to grab.
+            // Each callback pops its own worker via freeWorkers.pop(), so the
+            // while condition re-checks the (post-pop) length on each iter.
+            while (freeWorkers.length > 0 && pendingTasks.length > 0) {
+                const next = pendingTasks.shift()!;
+                next();
+            }
+        };
+
+        // Spawn or reuse the persistent worker pool. No workerData → the
+        // worker's one-shot branch is skipped and the message listener handles
+        // every task, which is what makes them reusable. When this same pool
+        // instance ran a previous `execute({ keepWorkersAlive: true })`, those
+        // workers survive in `this.reusableWorkers` and are reabsorbed here —
+        // their in-memory dataset LRU caches come with them, eliminating the
+        // disk JSON re-parse cost across windows in stability mode.
+        const spawned: Worker[] = [];
+        try {
+            // First absorb any reusable workers from a prior execute() call.
+            // The activeWorkers Set is preserved so cancel() / error handling
+            // still tracks them.
+            while (this.reusableWorkers.length > 0 && freeWorkers.length < workerCount) {
+                const w = this.reusableWorkers.pop()!;
+                // Detach the previous execute() call's listeners. We track
+                // them via the per-worker WeakMap so we remove ONLY our own
+                // handlers — Worker.removeAllListeners() would also nuke
+                // Node's internal 'exit'/'error' wiring and silently break
+                // the worker's message pump on the next postMessage.
+                const prev = this.workerAttachedListeners.get(w);
+                if (prev) {
+                    for (const fn of prev) fn();
+                    this.workerAttachedListeners.delete(w);
+                }
+                attachWorkerHandlers(w);
+                freeWorkers.push(w);
+                spawned.push(w);
+            }
+            // Spawn any additional workers needed to reach workerCount.
+            for (let i = freeWorkers.length; i < workerCount; i++) {
+                if (this.isCancelled) break;
+                const worker = new Worker(workerScriptPath, {});
+                attachWorkerHandlers(worker);
+                freeWorkers.push(worker);
+                spawned.push(worker);
+            }
+        } catch (err) {
+            // If spawn failed mid-loop, terminate what we got and rethrow.
+            for (const w of spawned) {
+                try { w.terminate(); } catch { /* best-effort */ }
+                this.activeWorkers.delete(w);
+            }
+            throw err;
+        }
+
+        // If the pool couldn't spawn any workers (e.g. script resolution
+        // issue), surface that explicitly rather than hanging.
+        if (spawned.length === 0 && !this.isCancelled) {
+            throw new Error("Failed to spawn any TOP_MEAN workers");
+        }
+
+        // Concurrency driver: dispatch up to `spawned.length` shards in
+        // parallel. Each completed/failed shard releases its worker via
+        // `releaseWorker` inside the message handler, which then pulls the
+        // next pending task and dispatches it on the freed worker. The
+        // `.finally` here only updates the active-set bookkeeping.
         let queueIndex = 0;
         const activePromises: Set<Promise<void>> = new Set();
 
@@ -267,7 +529,10 @@ export class TopMeanWorkerPool {
                     throw new Error("Operation cancelled");
                 }
 
-                while (activePromises.size < workerCount && queueIndex < pendingShards.length) {
+                while (
+                    activePromises.size < spawned.length
+                    && queueIndex < pendingShards.length
+                ) {
                     const task = pendingShards[queueIndex++];
                     const promise = runShardOnWorker(task)
                         .catch((err) => {
@@ -289,9 +554,37 @@ export class TopMeanWorkerPool {
                 }
             }
         } catch (error) {
+            // Force-flush whatever we have before propagating so the
+            // interrupted/cancel state on disk reflects progress through the
+            // last completed shard (resume reattach reads from this).
+            flushManifest(true);
+            dispatchHalted = true;
             this.cancel();
             await Promise.allSettled(activePromises);
             throw error;
+        }
+        // Final force-flush so the terminal manifest reflects every completed
+        // shard, not the most recent debounced snapshot.
+        flushManifest(true);
+        dispatchHalted = true;
+        if (options.keepWorkersAlive) {
+            // Preserve workers for the next execute() call on this same pool
+            // instance. Their in-memory dataset LRU caches survive with them.
+            // Listeners stay attached; they will be removeAllListeners()'d on
+            // the next absorb (or cleared by cancel()).
+            for (const w of spawned) {
+                // A worker may still be in activeWorkers if it crashed during
+                // the run; only retain live ones.
+                if (this.activeWorkers.has(w)) {
+                    this.reusableWorkers.push(w);
+                }
+            }
+            // Do NOT clear this.activeWorkers here — the next execute() will
+            // re-add the same workers via attachWorkerHandlers, and cancel()
+            // (the cleanup path) iterates both sets.
+        } else {
+            // Terminate the persistent workers now that the run is done.
+            this.cancel();
         }
         return engineUsage;
     }

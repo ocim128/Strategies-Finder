@@ -195,7 +195,15 @@ function emptyResult(
  *
  * Exposed for unit tests so the sign/active-pair conventions can be locked.
  */
-export function resolveOpenPairContribution(artifact: CompactPairArtifact): {
+export function resolveOpenPairContribution(
+    artifact: CompactPairArtifact,
+    /**
+     * Optional pre-parsed base/quote pair. The vote loop parses once per
+     * artifact and threads the result here AND into `addArtifactPositionsAtTime`
+     * to avoid re-parsing `symbol` twice per iteration on a 100k-pair stream.
+     */
+    preResolved?: { baseAsset: string; quoteAsset: string },
+): {
     sign: 1 | -1;
     baseAsset: string;
     quoteAsset: string;
@@ -209,6 +217,9 @@ export function resolveOpenPairContribution(artifact: CompactPairArtifact): {
     // Prefer the structural pair identity recorded on the artifact; fall back
     // to parsing the symbol so fixture parity with the Batch path holds for
     // both synthetic pairs and plain single-asset rows.
+    if (preResolved) {
+        return { sign, baseAsset: preResolved.baseAsset, quoteAsset: preResolved.quoteAsset };
+    }
     const parsed = parsePortfolioSyntheticPairSymbol(artifact.symbol);
     if (parsed) {
         return { sign, baseAsset: parsed.baseAsset, quoteAsset: parsed.quoteAsset };
@@ -319,6 +330,22 @@ function resolvePairAssets(artifact: CompactPairArtifact): {
     };
 }
 
+/**
+ * Parse the artifact's `symbol` once and return the structural pair. Hot-path
+ * helper so callers that need the pair for BOTH `addArtifactPositionsAtTime`
+ * and `resolveOpenPairContribution` pay the regex cost once, not twice.
+ * Falls back to the artifact's recorded `baseAsset`/`quoteAsset` fields when
+ * the symbol is not a synthetic-pair token (same precedence as
+ * {@link resolvePairAssets}).
+ */
+function resolveArtifactPairOnce(artifact: CompactPairArtifact): { baseAsset: string; quoteAsset: string } {
+    const parsed = parsePortfolioSyntheticPairSymbol(artifact.symbol);
+    return {
+        baseAsset: parsed?.baseAsset ?? artifact.baseAsset,
+        quoteAsset: parsed?.quoteAsset ?? artifact.quoteAsset,
+    };
+}
+
 function buildCandidates(
     scoreByAsset: Map<string, number>,
     activePairsByAsset: Map<string, number>,
@@ -356,8 +383,9 @@ function addArtifactPositionsAtTime(
     timeSec: number,
     scoreByAsset: Map<string, number>,
     activePairsByAsset: Map<string, number>,
+    preResolved?: { baseAsset: string; quoteAsset: string },
 ): void {
-    const { baseAsset, quoteAsset } = resolvePairAssets(artifact);
+    const { baseAsset, quoteAsset } = preResolved ?? resolvePairAssets(artifact);
     if (!baseAsset || !Array.isArray(artifact.trades)) return;
 
     for (const trade of artifact.trades) {
@@ -467,15 +495,20 @@ export async function reduceCurrentTopMeanSnapshot(
         }
         // Passed the endpoint filter → eligible to contribute to the vote.
         contributingArtifacts += 1;
+        // Parse the symbol ONCE per artifact; thread the same pair into the
+        // decision-time fold and the open-contribution resolver so a 100k-pair
+        // stream pays the regex cost once, not twice per iteration.
+        const artifactPair = resolveArtifactPairOnce(artifact);
         if (options.latestDecisionTime !== undefined && options.latestDecisionTime !== null) {
             addArtifactPositionsAtTime(
                 artifact,
                 options.latestDecisionTime,
                 decisionScoreByAsset,
                 decisionActivePairsByAsset,
+                artifactPair,
             );
         }
-        const contribution = resolveOpenPairContribution(artifact);
+        const contribution = resolveOpenPairContribution(artifact, artifactPair);
         if (!contribution) continue;
 
         openPositions += 1;
@@ -589,12 +622,75 @@ export async function reduceCurrentTopMeanSnapshot(
  * If the endpoint pass finds no usable common endpoint, returns a no-selection
  * result (winners empty, asOf null) rather than mixing states from different
  * dates. The endpoint-pass counters are still surfaced in `stats`.
+ *
+ * F1 (artifact re-read elimination): the prior implementation called
+ * `artifactIterableFactory()` three times — once each for the endpoint,
+ * latest-event, and vote passes — re-reading + re-parsing every completed
+ * shard from disk on each pass. On a 400-shard run that was ~1,200 multi-MB
+ * reads of identical, immutable-between-passes data. The factory is now
+ * consumed ONCE into an in-memory array (bounded by the run's total artifact
+ * size, ~1KB/artifact → fits the documented `--max-old-space-size` budget by
+ * orders of magnitude), and the three downstream passes share the same
+ * materialized array via a thin async-iterable wrapper. Memory profile per
+ * shard is unchanged (each shard is already fully loaded by
+ * `readShardArtifacts`); only the redundant re-reads are eliminated.
  */
 export async function computeCurrentTopMeanSnapshot(
     artifactIterableFactory: () => AsyncIterable<CompactPairArtifact>,
     options: { shouldStop?: () => boolean } = {},
 ): Promise<CurrentTopMeanResult> {
-    const endpointPass = await resolveCommonEndpoint(artifactIterableFactory(), options.shouldStop);
+    // Materialize once. The factory wraps `iterateRunRawCompactArtifacts`, which
+    // re-reads shards on each invocation — so a single materialization cuts the
+    // disk + JSON parse cost by ~3x for the snapshot phase.
+    const materialized: CompactPairArtifact[] = [];
+    let stoppedDuringLoad = false;
+    // Track missing/malformed during load so the stop-path short-circuit below
+    // preserves the same stats fidelity the prior endpoint-pass-as-load pass
+    // surfaced (the original resolveCommonEndpoint counted these even when
+    // shouldStop fired mid-pass and returned endpoint=null).
+    let missingDuringLoad = 0;
+    let malformedDuringLoad = 0;
+    for await (const artifact of artifactIterableFactory()) {
+        if (options.shouldStop?.()) {
+            stoppedDuringLoad = true;
+            break;
+        }
+        // Mirror resolveCommonEndpoint's classifier: a usable endpoint is a
+        // finite number. Undefined/null → missing; non-finite → malformed.
+        // We do NOT compute the mode here — that happens in the endpoint pass
+        // over the materialized array — we just keep the counters in lockstep
+        // so a Stop mid-load still reports the partial counts.
+        const ep = artifact?.dataEndTime;
+        if (ep === undefined || ep === null) {
+            missingDuringLoad += 1;
+        } else if (typeof ep !== "number" || !Number.isFinite(ep)) {
+            malformedDuringLoad += 1;
+        }
+        materialized.push(artifact);
+    }
+    // Preserve the prior contract: a Stop during the (formerly endpoint) load
+    // pass is treated as "stopped before any conclusion" → empty snapshot, asOf
+    // null. The original returned `noConsensus: false` from resolveCommonEndpoint
+    // in this case, which the caller mapped to "empty"; we short-circuit here
+    // and surface the same partial missing/malformed counts the prior code did.
+    if (stoppedDuringLoad) {
+        return emptyResult("empty", {
+            artifactsProcessed: materialized.length,
+            missingEndpoints: missingDuringLoad,
+            malformedArtifacts: malformedDuringLoad,
+            durationMs: 0,
+        });
+    }
+    const reusableFactory = (): AsyncIterable<CompactPairArtifact> => {
+        return (async function* () {
+            for (const artifact of materialized) {
+                if (options.shouldStop?.()) return;
+                yield artifact;
+            }
+        })();
+    };
+
+    const endpointPass = await resolveCommonEndpoint(reusableFactory(), options.shouldStop);
     const endpoint = endpointPass.endpoint;
 
     if (endpoint === null) {
@@ -615,11 +711,11 @@ export async function computeCurrentTopMeanSnapshot(
     }
 
     const latestDecision = await resolveLatestDecisionEvent(
-        artifactIterableFactory(),
+        reusableFactory(),
         endpoint,
         options.shouldStop,
     );
-    const votePass = await reduceCurrentTopMeanSnapshot(artifactIterableFactory(), {
+    const votePass = await reduceCurrentTopMeanSnapshot(reusableFactory(), {
         commonEndpoint: endpoint,
         latestDecisionTime: latestDecision.decisionTime,
         latestDecisionEntryPairs: latestDecision.entryPairs,
