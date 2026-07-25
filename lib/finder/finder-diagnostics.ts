@@ -123,6 +123,7 @@ export type FinderStrategyDiagnosticsStats = {
 
 export type FinderBacktestDiagnosticsStats = {
     runs: number;
+    sampledRuns: number;
     timingsMs: FinderBacktestDiagnostics["timingsMs"];
     totals: FinderBacktestDiagnostics["totals"];
     fastPathBlockers: Map<string, number>;
@@ -152,6 +153,7 @@ export function createEmptyFinderDiagnosticsTimings(): FinderDiagnosticsTimings 
 export function createEmptyFinderBacktestDiagnosticsStats(): FinderBacktestDiagnosticsStats {
     return {
         runs: 0,
+        sampledRuns: 0,
         totals: {
             inputBars: 0,
             evaluationBars: 0,
@@ -272,6 +274,7 @@ export function recordFinderBacktestDiagnostics(
 ): void {
     if (!diagnostics) return;
     target.runs++;
+    target.sampledRuns++;
     for (const key of Object.keys(target.totals) as Array<keyof FinderBacktestDiagnostics["totals"]>) {
         if (key === "maxOpenPositions") {
             target.totals.maxOpenPositions = Math.max(target.totals.maxOpenPositions, diagnostics.counts.maxOpenPositions);
@@ -287,6 +290,12 @@ export function recordFinderBacktestDiagnostics(
             target.fastPathBlockers.set(blocker, (target.fastPathBlockers.get(blocker) ?? 0) + 1);
         }
     }
+}
+
+export function recordFinderBacktestRunWithoutDiagnostics(
+    target: FinderBacktestDiagnosticsStats
+): void {
+    target.runs++;
 }
 
 function toFailureReasonDiagnostics(reasons: Map<string, number>): FinderFailureReasonDiagnostics[] | undefined {
@@ -324,25 +333,36 @@ export function toFinderFailureDiagnostics(
 export function toFinderBacktestDiagnostics(
     stats: FinderBacktestDiagnosticsStats
 ): FinderBacktestDiagnostics | undefined {
-    if (stats.runs === 0) return undefined;
+    if (stats.runs === 0 || stats.sampledRuns === 0) return undefined;
     const runs = Math.max(1, stats.runs);
+    const sampledRuns = Math.max(1, stats.sampledRuns);
+    const sampleScale = runs / sampledRuns;
     const timingsMs = { ...stats.timingsMs };
     for (const key of Object.keys(timingsMs) as Array<keyof FinderBacktestDiagnostics["timingsMs"]>) {
-        timingsMs[key] = roundFinderMs(timingsMs[key]);
+        timingsMs[key] = roundFinderMs(timingsMs[key] * sampleScale);
+    }
+    const totals = { ...stats.totals };
+    for (const key of Object.keys(totals) as Array<keyof FinderBacktestDiagnostics["totals"]>) {
+        if (key === "maxOpenPositions") continue;
+        totals[key] = Math.round(totals[key] * sampleScale);
+    }
+    const scaledFastPathBlockers = new Map<string, number>();
+    for (const [reason, count] of stats.fastPathBlockers) {
+        scaledFastPathBlockers.set(reason, Math.round(count * sampleScale));
     }
     return {
         runs: stats.runs,
-        avgInputSignals: roundFinderCount(stats.totals.inputSignals / runs),
-        avgPreparedSignals: roundFinderCount(stats.totals.preparedSignals / runs),
-        avgBarsScanned: roundFinderCount(stats.totals.barsScanned / runs),
-        avgBarsWithPosition: roundFinderCount(stats.totals.barsWithPosition / runs),
-        avgEntriesAttempted: roundFinderCount(stats.totals.entriesAttempted / runs),
-        avgTradesOpened: roundFinderCount(stats.totals.tradesOpened / runs),
-        avgTradesClosed: roundFinderCount(stats.totals.tradesClosed / runs),
-        fastPathRuns: stats.totals.fastPathRuns,
-        fastPathBlockers: toFailureReasonDiagnostics(stats.fastPathBlockers),
+        avgInputSignals: roundFinderCount(stats.totals.inputSignals / sampledRuns),
+        avgPreparedSignals: roundFinderCount(stats.totals.preparedSignals / sampledRuns),
+        avgBarsScanned: roundFinderCount(stats.totals.barsScanned / sampledRuns),
+        avgBarsWithPosition: roundFinderCount(stats.totals.barsWithPosition / sampledRuns),
+        avgEntriesAttempted: roundFinderCount(stats.totals.entriesAttempted / sampledRuns),
+        avgTradesOpened: roundFinderCount(stats.totals.tradesOpened / sampledRuns),
+        avgTradesClosed: roundFinderCount(stats.totals.tradesClosed / sampledRuns),
+        fastPathRuns: totals.fastPathRuns,
+        fastPathBlockers: toFailureReasonDiagnostics(scaledFastPathBlockers),
         maxOpenPositions: stats.totals.maxOpenPositions,
-        totals: { ...stats.totals },
+        totals,
         timingsMs,
     };
 }

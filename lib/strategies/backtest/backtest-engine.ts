@@ -2,7 +2,7 @@
 import { BacktestDiagnostics, BacktestResult, BacktestSettings, OHLCVData, Signal, Time, Trade } from '../../types/index';
 import { ensureCleanData } from '../strategy-helpers';
 import { IndicatorSeries, NormalizedSettings, PositionState, PrecomputedIndicators, TradeSizingConfig, TradeSizingMode } from '../../types/backtest';
-import { applySlippage, compareTime, directionFactorFor, exitSideForDirection, getTimeIndex, getTimeIndexValue, isLossStreakFlipTradeDirection, normalizeBacktestSettings, normalizeTradeDirection, signalToPositionDirection, timeKey } from './backtest-utils';
+import { applySlippage, compareTime, directionFactorFor, exitSideForDirection, getExecutionShift, getTimeIndex, getTimeIndexValue, isLossStreakFlipTradeDirection, normalizeBacktestSettings, normalizeTradeDirection, resolveExecutionPrice, signalToPositionDirection, timeKey } from './backtest-utils';
 import { calculateSharpeRatioFromEquitySamples } from '../performance-metrics';
 
 import { prepareSignals } from './signal-preparation';
@@ -364,6 +364,69 @@ function resolvePreparedSignalBarIndexes(data: OHLCVData[], preparedSignals: Sig
     return indexes;
 }
 
+type IndexedFinderSignals = {
+    sourceIndexes: Int32Array;
+    barIndexes: Int32Array;
+    count: number;
+};
+
+function hasActiveSignalRegimeFilters(config: NormalizedSettings): boolean {
+    return config.marketMode !== 'all'
+        || config.trendEmaPeriod > 0
+        || config.atrPercentMin > 0
+        || config.atrPercentMax > 0
+        || config.adxMin > 0
+        || config.adxMax > 0;
+}
+
+/**
+ * Finder strategies normally emit sorted signals with an explicit barIndex.
+ * Keep those source objects and prepare only two integer indexes so the dense
+ * state-signal path does not clone one object per bar. Unusual inputs fall
+ * back to the general object preparation path.
+ */
+function prepareIndexedFinderSignals(
+    data: OHLCVData[],
+    signals: Signal[],
+    config: NormalizedSettings,
+    tradeDirection: ReturnType<typeof normalizeTradeDirection>
+): IndexedFinderSignals | null {
+    if (hasActiveSignalRegimeFilters(config)) return null;
+
+    const sourceIndexes = new Int32Array(signals.length);
+    const barIndexes = new Int32Array(signals.length);
+    const executionShift = getExecutionShift(config);
+    const isBothLikeDirection = tradeDirection === "both";
+    const entryType: Signal["type"] = tradeDirection === "short" ? "sell" : "buy";
+    const exitType: Signal["type"] = tradeDirection === "short" ? "buy" : "sell";
+    let count = 0;
+    let lastBarIndex = -1;
+
+    for (let sourceIndex = 0; sourceIndex < signals.length; sourceIndex += 1) {
+        const signal = signals[sourceIndex];
+        if (!Number.isFinite(signal.barIndex as number)) return null;
+        const decisionIndex = Math.trunc(signal.barIndex as number);
+        if (decisionIndex < 0 || decisionIndex >= data.length) continue;
+
+        if (isBothLikeDirection) {
+            if (signal.type !== "buy" && signal.type !== "sell") continue;
+        } else if (signal.type !== entryType && signal.type !== exitType) {
+            continue;
+        }
+
+        const executionIndex = decisionIndex + executionShift;
+        if (executionIndex < 0 || executionIndex >= data.length) continue;
+        if (executionIndex < lastBarIndex) return null;
+
+        sourceIndexes[count] = sourceIndex;
+        barIndexes[count] = executionIndex;
+        lastBarIndex = executionIndex;
+        count += 1;
+    }
+
+    return { sourceIndexes, barIndexes, count };
+}
+
 function getSinglePositionFinderFastPathBlockers(
     config: NormalizedSettings,
     tradeDirection: ReturnType<typeof normalizeTradeDirection>,
@@ -372,7 +435,6 @@ function getSinglePositionFinderFastPathBlockers(
 ): string[] {
     const blockers: string[] = [];
     if (options?.omitEquityCurve !== true) blockers.push("equity_curve_required");
-    if (options?.includeSharpeRatio !== false) blockers.push("sharpe_required");
     if (config.maxOpenTrades !== 1) blockers.push("max_open_trades");
     if (tradeDirection !== "long" && tradeDirection !== "short" && tradeDirection !== "both") blockers.push(`trade_direction_${tradeDirection}`);
     if (sizingMode !== "percent" && sizingMode !== "fixed") blockers.push(`sizing_${sizingMode}`);
@@ -414,13 +476,16 @@ function canUseSignalOnlyFinderFastPath(
     config: NormalizedSettings,
     options: BacktestRunOptions | undefined
 ): boolean {
-    return options?.skipDrawdown === true && !hasBarBasedExitRules(config);
+    return options?.skipDrawdown === true
+        && options.includeSharpeRatio === false
+        && !hasBarBasedExitRules(config);
 }
 
 function runSinglePositionFinderFastPath(args: {
     data: OHLCVData[];
     preparedSignals: Signal[];
     preparedSignalBarIndexes: Int32Array;
+    indexedSignals?: IndexedFinderSignals;
     initialCapital: number;
     positionSizePercent: number;
     commissionPercent: number;
@@ -438,6 +503,7 @@ function runSinglePositionFinderFastPath(args: {
         data,
         preparedSignals,
         preparedSignalBarIndexes,
+        indexedSignals,
         initialCapital,
         positionSizePercent,
         commissionPercent,
@@ -470,6 +536,33 @@ function runSinglePositionFinderFastPath(args: {
     let signalExitReentryCooldownUntilBarIndex = -1;
     let currentBarIndex = 0;
     const skipDrawdown = options?.skipDrawdown === true;
+    const preparedSignalCount = indexedSignals?.count ?? preparedSignals.length;
+    const indexedSignalView: Signal = {
+        time: data[0]?.time ?? 0 as Time,
+        type: "buy",
+        price: 0,
+    };
+    const executionShift = getExecutionShift(config);
+
+    const getPreparedSignal = (index: number, barIndex: number): Signal => {
+        if (!indexedSignals) return preparedSignals[index];
+        const source = preparedSignals[indexedSignals.sourceIndexes[index]];
+        indexedSignalView.time = data[barIndex].time;
+        indexedSignalView.type = source.type;
+        indexedSignalView.price = resolveExecutionPrice(
+            data,
+            source,
+            barIndex - executionShift,
+            barIndex,
+            config
+        );
+        indexedSignalView.triggerPrice = source.price;
+        indexedSignalView.reason = source.reason;
+        indexedSignalView.barIndex = barIndex;
+        indexedSignalView.sizeFraction = source.sizeFraction;
+        indexedSignalView.exitOnly = source.exitOnly;
+        return indexedSignalView;
+    };
 
     const recordExit = (
         pos: PositionState,
@@ -649,7 +742,7 @@ function runSinglePositionFinderFastPath(args: {
 
     const tradeSimulationStartedAt = performance.now();
     if (canUseSignalOnlyFinderFastPath(config, options)) {
-        for (let i = 0; i < preparedSignals.length; i++) {
+        for (let i = 0; i < preparedSignalCount; i++) {
             const barIndex = preparedSignalBarIndexes[i];
             if (barIndex < 0 || barIndex >= data.length) continue;
             const candle = data[barIndex];
@@ -657,7 +750,7 @@ function runSinglePositionFinderFastPath(args: {
 
             syncSparseBarsInTrade(barIndex);
             diagnostics && diagnostics.counts.barsScanned++;
-            handleSignal(preparedSignals[i], barIndex, candle);
+            handleSignal(getPreparedSignal(i, barIndex), barIndex, candle);
             if (diagnostics && position) {
                 diagnostics.counts.barsWithPosition++;
                 diagnostics.counts.maxOpenPositions = 1;
@@ -705,9 +798,9 @@ function runSinglePositionFinderFastPath(args: {
         if (config.executionModel === "next_open") {
             processCurrentPositionExit(candle, i, OPEN_ONLY_POSITION_EXIT_OPTIONS);
 
-            while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
+            while (signalIdx < preparedSignalCount && preparedSignalBarIndexes[signalIdx] <= i) {
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
-                const signal = preparedSignals[signalIdx++];
+                const signal = getPreparedSignal(signalIdx++, signalBarIndex);
                 if (signalBarIndex !== i) continue;
                 openedThisBar = handleSignal(signal, i, candle) ?? openedThisBar;
             }
@@ -725,9 +818,9 @@ function runSinglePositionFinderFastPath(args: {
         }
 
         if (config.executionModel !== "next_open") {
-            while (signalIdx < preparedSignals.length && preparedSignalBarIndexes[signalIdx] <= i) {
+            while (signalIdx < preparedSignalCount && preparedSignalBarIndexes[signalIdx] <= i) {
                 const signalBarIndex = preparedSignalBarIndexes[signalIdx];
-                const signal = preparedSignals[signalIdx++];
+                const signal = getPreparedSignal(signalIdx++, signalBarIndex);
                 if (signalBarIndex !== i) continue;
                 openedThisBar = handleSignal(signal, i, candle) ?? openedThisBar;
             }
@@ -764,6 +857,9 @@ function runSinglePositionFinderFastPath(args: {
     addBacktestDiagnosticElapsed(diagnostics, "forcedClose", forcedCloseStartedAt);
 
     const metricsStartedAt = performance.now();
+    const statsOptions = options?.includeSharpeRatio === false
+        ? options
+        : { ...options, includeSharpeRatio: false };
     const result = calculateBacktestStats(
         trades,
         [],
@@ -771,8 +867,11 @@ function runSinglePositionFinderFastPath(args: {
         capital,
         skipDrawdown ? 0 : maxDrawdown,
         skipDrawdown ? 0 : maxDrawdownPercent,
-        options
+        statsOptions
     );
+    if (options?.includeSharpeRatio !== false && equityOut) {
+        result.sharpeRatio = calculateSharpeRatioFromEquitySamples(data, equityOut, data.length);
+    }
     addBacktestDiagnosticElapsed(diagnostics, "metrics", metricsStartedAt);
     return result;
 }
@@ -1378,7 +1477,7 @@ export function runBacktestCompact(
     };
     let currentBarIndex = 0;
     const skipDrawdown = options?.skipDrawdown === true;
-    const shouldTrackEquity = !skipDrawdown;
+    const shouldTrackEquity = !skipDrawdown || options?.includeSharpeRatio !== false;
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
     const advancedSizing = sizing?.advancedSizing;
@@ -1386,27 +1485,38 @@ export function runBacktestCompact(
     const indicatorSeries = resolveIndicatorsFromConfig(data, config, precomputed);
     addBacktestDiagnosticElapsed(diagnostics, "indicatorResolution", indicatorStartedAt);
 
+    const fastPathBlockers = getSinglePositionFinderFastPathBlockers(config, tradeDirection, sizingMode, options);
     const signalPreparationStartedAt = performance.now();
-    const preparedSignals = prepareSignals(data, signals, config, indicatorSeries, tradeDirection);
-    diagnostics && (diagnostics.counts.preparedSignals = preparedSignals.length);
+    const indexedSignals = fastPathBlockers.length === 0
+        ? prepareIndexedFinderSignals(data, signals, config, tradeDirection)
+        : null;
+    const preparedSignals = indexedSignals
+        ? signals
+        : prepareSignals(data, signals, config, indicatorSeries, tradeDirection);
+    diagnostics && (diagnostics.counts.preparedSignals = indexedSignals?.count ?? preparedSignals.length);
     addBacktestDiagnosticElapsed(diagnostics, "signalPreparation", signalPreparationStartedAt);
     const signalIndexingStartedAt = performance.now();
-    const preparedSignalBarIndexes = resolvePreparedSignalBarIndexes(data, preparedSignals);
+    const preparedSignalBarIndexes = indexedSignals?.barIndexes
+        ?? resolvePreparedSignalBarIndexes(data, preparedSignals);
     addBacktestDiagnosticElapsed(diagnostics, "signalIndexing", signalIndexingStartedAt);
 
-    const fastPathBlockers = getSinglePositionFinderFastPathBlockers(config, tradeDirection, sizingMode, options);
     if (diagnostics) {
         diagnostics.fastPath = {
             used: fastPathBlockers.length === 0,
             blockers: fastPathBlockers,
+            signalPreparation: indexedSignals ? "indexed" : "objects",
         };
     }
 
     if (fastPathBlockers.length === 0) {
+        const fastPathEquity = options?.includeSharpeRatio !== false
+            ? (equityOut ?? new Float64Array(data.length))
+            : equityOut;
         const result = runSinglePositionFinderFastPath({
             data,
             preparedSignals,
             preparedSignalBarIndexes,
+            indexedSignals: indexedSignals ?? undefined,
             initialCapital,
             positionSizePercent,
             commissionPercent,
@@ -1418,7 +1528,7 @@ export function runBacktestCompact(
             indicatorSeries,
             diagnostics,
             options,
-            equityOut,
+            equityOut: fastPathEquity,
         });
         result.trades = [];
         return finalizeBacktestDiagnostics(diagnostics, result, runStartedAt);
@@ -1952,19 +2062,26 @@ export function runBacktest(
     const indicatorSeries = resolveIndicatorsFromConfig(data, config, precomputed);
     addBacktestDiagnosticElapsed(diagnostics, "indicatorResolution", indicatorStartedAt);
 
+    const fastPathBlockers = getSinglePositionFinderFastPathBlockers(config, tradeDirection, sizingMode, options);
     const signalPreparationStartedAt = performance.now();
-    const preparedSignals = prepareSignals(data, signals, config, indicatorSeries, tradeDirection);
-    diagnostics && (diagnostics.counts.preparedSignals = preparedSignals.length);
+    const indexedSignals = fastPathBlockers.length === 0
+        ? prepareIndexedFinderSignals(data, signals, config, tradeDirection)
+        : null;
+    const preparedSignals = indexedSignals
+        ? signals
+        : prepareSignals(data, signals, config, indicatorSeries, tradeDirection);
+    diagnostics && (diagnostics.counts.preparedSignals = indexedSignals?.count ?? preparedSignals.length);
     addBacktestDiagnosticElapsed(diagnostics, "signalPreparation", signalPreparationStartedAt);
     const signalIndexingStartedAt = performance.now();
-    const preparedSignalBarIndexes = resolvePreparedSignalBarIndexes(data, preparedSignals);
+    const preparedSignalBarIndexes = indexedSignals?.barIndexes
+        ?? resolvePreparedSignalBarIndexes(data, preparedSignals);
     addBacktestDiagnosticElapsed(diagnostics, "signalIndexing", signalIndexingStartedAt);
 
-    const fastPathBlockers = getSinglePositionFinderFastPathBlockers(config, tradeDirection, sizingMode, options);
     if (diagnostics) {
         diagnostics.fastPath = {
             used: fastPathBlockers.length === 0,
             blockers: fastPathBlockers,
+            signalPreparation: indexedSignals ? "indexed" : "objects",
         };
     }
 
@@ -1973,6 +2090,7 @@ export function runBacktest(
             data,
             preparedSignals,
             preparedSignalBarIndexes,
+            indexedSignals: indexedSignals ?? undefined,
             initialCapital,
             positionSizePercent,
             commissionPercent,

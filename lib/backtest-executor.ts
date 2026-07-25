@@ -281,6 +281,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         primarySignals: signals.length,
         exitOverrideSignals: exitOverrideSignals.length,
         mergedSignals,
+        mergedExitOnlySignals: exitOverrideSignals.length,
         exitStrategyLoaded: exitOverrideResolution.strategyLoaded,
         skippedReason: exitOverrideResolution.skippedReason,
     });
@@ -461,7 +462,7 @@ function shouldSkipResultPostProcessing(req: BacktestExecutorRequest): boolean {
 function shouldUseCompactBacktest(req: BacktestExecutorRequest): boolean {
     return shouldSkipResultPostProcessing(req)
         && req.backtestRunOptions?.omitEquityCurve === true
-        && req.backtestRunOptions?.includeSharpeRatio === false;
+        && typeof req.backtestRunOptions.includeSharpeRatio === "boolean";
 }
 
 function isBrowser(): boolean {
@@ -590,6 +591,7 @@ function buildExitControlDiagnostics(args: {
     primarySignals: number;
     exitOverrideSignals: number;
     mergedSignals: Signal[];
+    mergedExitOnlySignals: number;
     exitStrategyLoaded: boolean;
     skippedReason?: string;
 }): BacktestExitControlDiagnostics {
@@ -604,7 +606,7 @@ function buildExitControlDiagnostics(args: {
         primarySignals: args.primarySignals,
         exitOverrideSignals: args.exitOverrideSignals,
         mergedSignals: args.mergedSignals.length,
-        mergedExitOnlySignals: args.mergedSignals.reduce((count, signal) => count + (signal.exitOnly === true ? 1 : 0), 0),
+        mergedExitOnlySignals: args.mergedExitOnlySignals,
         exitStrategyLoaded: args.exitStrategyLoaded,
         skippedReason: args.skippedReason,
     };

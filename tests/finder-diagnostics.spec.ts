@@ -1,8 +1,16 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { buildCompactFinderDiagnostics, buildFinderDiagnosticsBottlenecks } from "../lib/finder/finder-diagnostics";
+import {
+    buildCompactFinderDiagnostics,
+    buildFinderDiagnosticsBottlenecks,
+    createEmptyFinderBacktestDiagnosticsStats,
+    recordFinderBacktestDiagnostics,
+    recordFinderBacktestRunWithoutDiagnostics,
+    toFinderBacktestDiagnostics,
+} from "../lib/finder/finder-diagnostics";
 import { combineUniverseBacktestDiagnostics } from "../lib/finder/finder-universe-diagnostics-combine";
 import type { FinderBacktestDiagnostics, FinderDiagnostics, FinderStrategyDiagnostics } from "../lib/types/finder";
+import type { BacktestDiagnostics } from "../lib/types/strategies";
 
 function makeBacktestDiagnostics(runs: number): FinderBacktestDiagnostics {
     return {
@@ -202,6 +210,52 @@ function makeDiagnostics(): FinderDiagnostics {
 }
 
 describe("Finder compact diagnostics", () => {
+    it("projects sampled backtest diagnostics across unsampled Universe runs", () => {
+        const stats = createEmptyFinderBacktestDiagnosticsStats();
+        const sample: BacktestDiagnostics = {
+            counts: {
+                inputBars: 100,
+                evaluationBars: 100,
+                inputSignals: 20,
+                preparedSignals: 18,
+                barsScanned: 100,
+                barsWithPosition: 60,
+                entriesAttempted: 4,
+                tradesOpened: 2,
+                tradesClosed: 2,
+                signalExitOrders: 1,
+                forcedEndOfDataExits: 1,
+                fastPathRuns: 1,
+                maxOpenPositions: 1,
+            },
+            timingsMs: {
+                total: 10,
+                dataClean: 0,
+                indicatorResolution: 0,
+                signalPreparation: 2,
+                signalIndexing: 1,
+                entryEvaluation: 0,
+                tradeSimulation: 6,
+                forcedClose: 0,
+                drawdown: 0,
+                metrics: 1,
+            },
+            fastPath: { used: true, blockers: [] },
+        };
+
+        recordFinderBacktestDiagnostics(stats, sample);
+        for (let run = 1; run < 16; run += 1) {
+            recordFinderBacktestRunWithoutDiagnostics(stats);
+        }
+
+        const projected = toFinderBacktestDiagnostics(stats);
+        expect(projected?.runs).to.equal(16);
+        expect(projected?.avgInputSignals).to.equal(20);
+        expect(projected?.totals.inputSignals).to.equal(320);
+        expect(projected?.fastPathRuns).to.equal(16);
+        expect(projected?.timingsMs.total).to.equal(160);
+    });
+
     it("keeps copied diagnostics bounded while preserving improvement signals", () => {
         const full = makeDiagnostics();
         const compact = buildCompactFinderDiagnostics(full);

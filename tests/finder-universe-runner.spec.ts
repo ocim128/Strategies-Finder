@@ -202,6 +202,58 @@ describe("Finder universe runner", () => {
         expect(output.results[0]!.worstMaxDrawdownPercent).to.be.greaterThanOrEqual(0);
     });
 
+    it("keeps median Sharpe on the compact Finder fast path without retaining equity curves", async () => {
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 1,
+            rangePercent: 0,
+            maxRuns: 1,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols: ["UP"],
+                minActiveSymbols: 1,
+                minTotalTrades: 1,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["medianSharpe"],
+            },
+        };
+
+        const output = await runFinderUniverseExecution(
+            {
+                interval: "5m",
+                options,
+                settings,
+                capitalSettings,
+                selectedStrategy: {
+                    key: "universe_test",
+                    name: testStrategy.name,
+                    strategy: testStrategy,
+                },
+                loadDataset: async () => makeCandles([100, 105, 103, 110, 108, 115]),
+                generateParamSets: () => [{ threshold: 1 }],
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                yieldControl: async () => {},
+                isCancelled: () => false,
+            },
+        );
+
+        expect(output.results[0]!.medianSharpeAvailable).to.equal(true);
+        expect(output.results[0]!.symbols[0]!.result?.sharpeRatio).to.be.a("number");
+        expect((output.results[0]!.symbols[0]!.result as any)?.equityCurve).to.equal(undefined);
+        expect(output.diagnostics?.backtest?.runs).to.equal(1);
+        expect(output.diagnostics?.backtest?.fastPathRuns).to.equal(1);
+        expect(output.diagnostics?.backtest?.fastPathBlockers ?? []).to.deep.equal([]);
+    });
+
     it("counts backtest execution failures separately from symbol load failures", async () => {
         const datasets = new Map<string, OHLCVData[]>([
             ["OK", makeCandles([100, 105, 110, 115, 120])],

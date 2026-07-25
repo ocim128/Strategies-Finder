@@ -11,6 +11,7 @@ describe('Exit Strategy Merge', () => {
     it('returns entry signals unchanged when no exit signals are provided', () => {
         const entries = [sig(1, 'buy'), sig(3, 'sell')];
         const merged = mergeExitStrategySignals(entries, []);
+        expect(merged).to.equal(entries);
         expect(merged).to.have.lengthOf(2);
         expect(merged.every((s) => s.exitOnly !== true)).to.equal(true);
     });

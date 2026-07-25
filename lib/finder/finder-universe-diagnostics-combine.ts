@@ -85,6 +85,10 @@ export function combineUniverseBacktestDiagnostics(parts: readonly FinderDiagnos
     for (const backtest of parts.map((part) => part.backtest).filter(Boolean)) {
         if (!backtest) continue;
         stats.runs += backtest.runs;
+        // Per-strategy totals are already projected from any diagnostic
+        // sampling, so treat every combined run as measured to avoid scaling
+        // them a second time.
+        stats.sampledRuns += backtest.runs;
         for (const key of Object.keys(stats.totals) as Array<keyof typeof stats.totals>) {
             if (key === "maxOpenPositions") {
                 stats.totals.maxOpenPositions = Math.max(stats.totals.maxOpenPositions, backtest.totals.maxOpenPositions);

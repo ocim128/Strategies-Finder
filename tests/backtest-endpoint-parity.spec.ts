@@ -170,6 +170,79 @@ describe("backtest executor", () => {
         assert.deepStrictEqual(compact.result.trades, []);
     });
 
+    it("uses compact execution when a bulk caller needs scalar Sharpe but not the equity curve", async () => {
+        const candles: OHLCVData[] = Array.from({ length: 72 }, (_, index) => {
+            const open = 100 + Math.sin(index / 3) * 4;
+            const close = open + Math.cos(index / 2) * 1.5;
+            return {
+                time: (1700000000 + index * 4 * 60 * 60) as Time,
+                open,
+                high: Math.max(open, close) + 1,
+                low: Math.min(open, close) - 1,
+                close,
+                volume: 1000 + index * 10,
+            };
+        });
+        const signals: Signal[] = [];
+        for (let index = 0; index < candles.length; index += 6) {
+            signals.push({
+                time: candles[index].time,
+                type: (index / 6) % 2 === 0 ? "buy" : "sell",
+                price: candles[index].close,
+                barIndex: index,
+            });
+        }
+        const strategy: Strategy = {
+            name: "Bulk Scalar Sharpe Test",
+            description: "Produces deterministic alternating signals.",
+            defaultParams: {},
+            paramLabels: {},
+            execute: () => signals,
+        };
+        const request = {
+            ohlcvData: candles,
+            interval: "4h",
+            strategyKey: "bulk_scalar_sharpe_test",
+            strategy,
+            strategyParams: {},
+            backtestSettings: {
+                executionModel: "next_open" as const,
+                tradeDirection: "both" as const,
+                maxOpenTrades: 1,
+                slippageBps: 0,
+            },
+            capitalSettings: defaultCapital,
+            context: {
+                nowSec: 9999999999,
+                blockRange: null,
+                annotatePolymarket: false,
+                engineMode: "typescript" as const,
+            },
+            backtestRunOptions: {
+                includeAdvancedAnalytics: false,
+                includeSharpeRatio: true,
+                collectDiagnostics: true,
+            },
+        };
+
+        const full = await executeBacktest(request);
+        const compact = await executeBacktest({
+            ...request,
+            backtestRunOptions: {
+                ...request.backtestRunOptions,
+                omitEquityCurve: true,
+                skipDrawdown: true,
+                skipResultPostProcessing: true,
+            },
+        });
+
+        assert.ok(Math.abs(compact.result.netProfit - full.result.netProfit) < 1e-9);
+        assert.ok(Math.abs(compact.result.sharpeRatio - full.result.sharpeRatio) < 1e-9);
+        assert.deepStrictEqual(compact.result.equityCurve, []);
+        assert.deepStrictEqual(compact.result.trades, []);
+        assert.strictEqual(compact.result.diagnostics?.fastPath?.used, true);
+    });
+
     it("returns an empty bulk result without chart artifacts when a strategy emits no signals", async () => {
         const strategy: Strategy = {
             name: "No Signal Bulk Executor Test",

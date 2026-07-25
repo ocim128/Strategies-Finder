@@ -22,6 +22,13 @@ type PreparedEquitySeries = {
     startValue: number;
     endValue: number;
 };
+type EquitySharpeSamplePlan = {
+    indices: Int32Array;
+    periodsPerYear: number;
+    collapsedIntraday: boolean;
+};
+
+const equitySharpeSamplePlanCache = new WeakMap<object, Map<number, EquitySharpeSamplePlan>>();
 
 function clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
@@ -181,6 +188,104 @@ export function calculateSharpeRatioFromEquitySamples(
     equityValues: ArrayLike<number>,
     sampleCount = Math.min(samples.length, equityValues.length),
     riskFreeRateAnnual = 0
+): number {
+    const plan = getEquitySharpeSamplePlan(samples, sampleCount);
+    if (!plan || plan.indices.length < 2) return 0;
+
+    let returnCount = 0;
+    let returnSum = 0;
+    for (let offset = 1; offset < plan.indices.length; offset += 1) {
+        const previous = Number(equityValues[plan.indices[offset - 1]]);
+        const current = Number(equityValues[plan.indices[offset]]);
+        if (plan.collapsedIntraday && (!Number.isFinite(previous) || !Number.isFinite(current))) {
+            return calculateSharpeRatioFromEquitySamplesLegacy(
+                samples,
+                equityValues,
+                sampleCount,
+                riskFreeRateAnnual
+            );
+        }
+        if (!Number.isFinite(previous) || !Number.isFinite(current) || previous <= 0) continue;
+        returnSum += (current - previous) / previous;
+        returnCount += 1;
+    }
+    if (returnCount < SHARPE_MIN_SAMPLES) return 0;
+
+    const averageReturn = returnSum / returnCount;
+    let squaredDeviationSum = 0;
+    for (let offset = 1; offset < plan.indices.length; offset += 1) {
+        const previous = Number(equityValues[plan.indices[offset - 1]]);
+        const current = Number(equityValues[plan.indices[offset]]);
+        if (!Number.isFinite(previous) || !Number.isFinite(current) || previous <= 0) continue;
+        const value = (current - previous) / previous;
+        const deviation = value - averageReturn;
+        squaredDeviationSum += deviation * deviation;
+    }
+    const standardDeviation = Math.sqrt(Math.max(0, squaredDeviationSum / (returnCount - 1)));
+    const riskFreeRatePerPeriod = plan.periodsPerYear > 0
+        ? riskFreeRateAnnual / plan.periodsPerYear
+        : 0;
+    return calculateSharpeRatioFromMoments(
+        averageReturn,
+        standardDeviation,
+        returnCount,
+        plan.periodsPerYear,
+        riskFreeRatePerPeriod
+    );
+}
+
+function getEquitySharpeSamplePlan(
+    samples: ArrayLike<Time | TimedPoint>,
+    sampleCount: number
+): EquitySharpeSamplePlan | null {
+    if (sampleCount < 2 || typeof samples !== "object" || samples === null) return null;
+
+    let byCount = equitySharpeSamplePlanCache.get(samples);
+    if (!byCount) {
+        byCount = new Map();
+        equitySharpeSamplePlanCache.set(samples, byCount);
+    }
+    const cached = byCount.get(sampleCount);
+    if (cached) return cached;
+
+    const sourcePeriodsPerYear = estimatePeriodsPerYear(samples, sampleCount);
+    const typicalDeltaMs = sourcePeriodsPerYear > 0
+        ? MILLIS_PER_YEAR / sourcePeriodsPerYear
+        : Infinity;
+    const collapsedIntraday = Number.isFinite(typicalDeltaMs) && typicalDeltaMs < MILLIS_PER_DAY;
+    const selectedIndices: number[] = [];
+
+    if (!collapsedIntraday) {
+        for (let index = 0; index < sampleCount; index += 1) selectedIndices.push(index);
+    } else {
+        let currentDayId: number | null = null;
+        for (let index = 0; index < sampleCount; index += 1) {
+            const dayId = toUtcDayId(extractSampleTime(samples[index]));
+            if (dayId === null) continue;
+            if (dayId !== currentDayId) {
+                selectedIndices.push(index);
+                currentDayId = dayId;
+            } else {
+                selectedIndices[selectedIndices.length - 1] = index;
+            }
+        }
+    }
+
+    const selectedTimes = selectedIndices.map((index) => extractSampleTime(samples[index]));
+    const plan: EquitySharpeSamplePlan = {
+        indices: Int32Array.from(selectedIndices),
+        periodsPerYear: estimatePeriodsPerYear(selectedTimes, selectedTimes.length),
+        collapsedIntraday,
+    };
+    byCount.set(sampleCount, plan);
+    return plan;
+}
+
+function calculateSharpeRatioFromEquitySamplesLegacy(
+    samples: ArrayLike<Time | TimedPoint>,
+    equityValues: ArrayLike<number>,
+    sampleCount: number,
+    riskFreeRateAnnual: number
 ): number {
     if (sampleCount < 2) return 0;
 

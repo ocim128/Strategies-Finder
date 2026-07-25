@@ -13,11 +13,11 @@ import type { Signal } from "./types/strategies";
 import { compareTime } from "./strategies/backtest/backtest-utils";
 
 export function mergeExitStrategySignals(
-    entrySignals: readonly Signal[],
+    entrySignals: Signal[],
     exitSignals: readonly Signal[]
 ): Signal[] {
     if (exitSignals.length === 0) {
-        return entrySignals.slice();
+        return entrySignals;
     }
 
     const taggedExits = exitSignals.map((signal) => ({ ...signal, exitOnly: true }));

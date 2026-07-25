@@ -189,6 +189,51 @@ describe('Backtesting Engine - compact vs full parity', () => {
         expect(compact.winningTrades).to.equal(full.winningTrades);
     });
 
+    it('preserves scalar Sharpe while using the Finder fast path without returning an equity curve', () => {
+        const data = makeData(72);
+        for (let index = 0; index < data.length; index += 1) {
+            data[index].time = (1700000000 + index * 4 * 60 * 60) as Time;
+        }
+        const signals = alternatingSignals(data, 6);
+        for (let index = 0; index < signals.length; index += 1) {
+            signals[index].barIndex = index * 6;
+        }
+        const settings = {
+            executionModel: 'next_open' as const,
+            tradeDirection: 'both' as const,
+            maxOpenTrades: 1,
+        };
+
+        const full = runBacktest(data, signals, 10000, 100, 0.1, settings);
+        const compact = runBacktestCompact(
+            data,
+            signals,
+            10000,
+            100,
+            0.1,
+            settings,
+            undefined,
+            undefined,
+            {
+                includeAdvancedAnalytics: false,
+                includeSharpeRatio: true,
+                omitEquityCurve: true,
+                skipDrawdown: true,
+                collectDiagnostics: true,
+            }
+        );
+
+        expect(compact.totalTrades).to.equal(full.totalTrades);
+        expect(compact.netProfit).to.be.closeTo(full.netProfit, 1e-6);
+        expect(compact.sharpeRatio).to.be.closeTo(full.sharpeRatio, 1e-9);
+        expect(compact.equityCurve).to.deep.equal([]);
+        expect(compact.trades).to.deep.equal([]);
+        expect(compact.maxDrawdownPercent).to.equal(0);
+        expect(compact.diagnostics?.fastPath?.used).to.equal(true);
+        expect(compact.diagnostics?.fastPath?.signalPreparation).to.equal("indexed");
+        expect(compact.diagnostics?.counts.fastPathRuns).to.equal(1);
+    });
+
     it('matches with flip-loss direction (same-bar entry detection across re-entries)', () => {
         const data = makeData(40);
         const signals = alternatingSignals(data, 3);

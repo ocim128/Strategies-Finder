@@ -43,6 +43,7 @@ import {
     createFinderRunId,
     getFinderStrategyDiagnosticsStats,
     recordFinderBacktestDiagnostics,
+    recordFinderBacktestRunWithoutDiagnostics,
     recordFinderStrategyFailure,
     recordFinderStrategyNoSignals,
     recordFinderStrategySkipped,
@@ -60,6 +61,10 @@ const UNIVERSE_DATA_LOAD_YIELD_MIN_MS = 250;
 const UNIVERSE_EVALUATION_YIELD_EVERY_RUNS = 256;
 const UNIVERSE_EVALUATION_YIELD_MIN_MS = 1000;
 const UNIVERSE_UI_UPDATE_MIN_MS = 250;
+// Per-bar diagnostic counters are expensive on dense state-signal strategies.
+// One representative run per block keeps the report useful without profiling
+// every bar of every candidate.
+const UNIVERSE_BACKTEST_DIAGNOSTIC_SAMPLE_INTERVAL = 16;
 /**
  * Minimum interval between `onResultsUpdate` dispatches during the candidate
  * loop. The previous path fired onResultsUpdate (which re-sorted and re-rendered)
@@ -498,6 +503,7 @@ export async function runFinderUniverseExecution(
     let skippedRuns = 0;
     let rustCompletedRuns = 0;
     let typescriptCompletedRuns = 0;
+    let backtestRunsUntilDiagnosticSample = 0;
     const typescriptReasonCounts = new Map<string, number>();
     const measuredYield = async (): Promise<void> => {
         const startedAt = performance.now();
@@ -832,6 +838,7 @@ export async function runFinderUniverseExecution(
             let zeroSignals = false;
             const runStartedAt = performance.now();
             try {
+                const collectBacktestDiagnostics = backtestRunsUntilDiagnosticSample === 0;
                 signalTimingByRun.preparedDataMs = 0;
                 signalTimingByRun.signalMs = 0;
                 signalTimingByRun.totalMs = 0;
@@ -863,14 +870,26 @@ export async function runFinderUniverseExecution(
                     backtestRunOptions: {
                         includeAdvancedAnalytics: false,
                         includeSharpeRatio: requiresSharpeRatio,
-                        omitEquityCurve: !requiresSharpeRatio,
+                        // Universe ranking only consumes the scalar Sharpe value.
+                        // The compact engine can calculate it from an internal
+                        // typed buffer without returning an equity-curve artifact.
+                        omitEquityCurve: true,
                         skipDrawdown: !requiresDrawdown,
                         skipResultPostProcessing: true,
-                        collectDiagnostics: true,
+                        collectDiagnostics: collectBacktestDiagnostics,
                     },
                 });
-                recordFinderBacktestDiagnostics(strategyStats.backtest, output.result.diagnostics);
-                recordFinderBacktestDiagnostics(backtestStats, output.result.diagnostics);
+                if (output.result.diagnostics) {
+                    recordFinderBacktestDiagnostics(strategyStats.backtest, output.result.diagnostics);
+                    recordFinderBacktestDiagnostics(backtestStats, output.result.diagnostics);
+                    backtestRunsUntilDiagnosticSample = UNIVERSE_BACKTEST_DIAGNOSTIC_SAMPLE_INTERVAL - 1;
+                } else if (output.signals.length > 0) {
+                    recordFinderBacktestRunWithoutDiagnostics(strategyStats.backtest);
+                    recordFinderBacktestRunWithoutDiagnostics(backtestStats);
+                    if (backtestRunsUntilDiagnosticSample > 0) {
+                        backtestRunsUntilDiagnosticSample -= 1;
+                    }
+                }
                 if (output.engineUsed === "rust") {
                     rustCompletedRuns += 1;
                 } else {

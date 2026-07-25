@@ -85,6 +85,7 @@ export interface BacktestDiagnostics {
     fastPath?: {
         used: boolean;
         blockers: string[];
+        signalPreparation?: "indexed" | "objects";
     };
 }
 
