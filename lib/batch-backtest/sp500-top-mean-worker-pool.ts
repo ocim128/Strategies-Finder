@@ -145,6 +145,31 @@ export class TopMeanWorkerPool {
         options.manifest.shardSize = shardSize;
         const engineUsage: TopMeanEngineUsage = { rust: 0, typescript: 0 };
 
+        // Debounced manifest persistence. The prior code called `saveManifest`
+        // (a synchronous multi-KB atomic write with a Windows EPERM retry loop)
+        // on EVERY shard_complete — with 12 concurrent workers across a 400-
+        // shard run that blocked the event loop on hundreds of redundant writes
+        // while the in-flight manifest only grew. Flush on count OR time
+        // thresholds; always force-flush on the terminal paths (error/end).
+        // Resume safety is preserved: `reconcileInterruptedManifestsOnStartup`
+        // re-marks any post-flush crash as interrupted on the next run.
+        const MANIFEST_FLUSH_EVERY_N_SHARDS = 8;
+        const MANIFEST_FLUSH_INTERVAL_MS = 5_000;
+        let shardsSinceFlush = 0;
+        let lastFlushAt = Date.now();
+        let manifestDirty = false;
+        const flushManifest = (force: boolean): void => {
+            if (!manifestDirty && !force) return;
+            const due = force
+                || shardsSinceFlush >= MANIFEST_FLUSH_EVERY_N_SHARDS
+                || Date.now() - lastFlushAt >= MANIFEST_FLUSH_INTERVAL_MS;
+            if (!due) return;
+            saveManifest(options.manifest, options.baseDir, options.windowKey);
+            manifestDirty = false;
+            shardsSinceFlush = 0;
+            lastFlushAt = Date.now();
+        };
+
         // Partition pairs into shards
         const shardTasks: ShardTask[] = [];
         let shardIndex = 0;
@@ -227,7 +252,13 @@ export class TopMeanWorkerPool {
                         if (!options.manifest.completedShards.includes(msg.shardIndex)) {
                             options.manifest.completedShards.push(msg.shardIndex);
                         }
-                        saveManifest(options.manifest, options.baseDir, options.windowKey);
+                        // Debounced flush: the shard ARTIFACTS are already on
+                        // disk (above); the manifest only matters for resume
+                        // reattach, which tolerates a small lag (startup
+                        // reconcile covers the gap).
+                        shardsSinceFlush += 1;
+                        manifestDirty = true;
+                        flushManifest(false);
                         this.activeWorkers.delete(worker);
                         worker.terminate();
                         resolveOnce();
@@ -235,7 +266,10 @@ export class TopMeanWorkerPool {
                         if (!options.manifest.failedShards.includes(msg.shardIndex)) {
                             options.manifest.failedShards.push(msg.shardIndex);
                         }
-                        saveManifest(options.manifest, options.baseDir, options.windowKey);
+                        // Force-flush on errors so the failedShards list is
+                        // durable before the rejection propagates.
+                        manifestDirty = true;
+                        flushManifest(true);
                         this.activeWorkers.delete(worker);
                         worker.terminate();
                         rejectOnce(new Error(msg.error));
@@ -289,10 +323,17 @@ export class TopMeanWorkerPool {
                 }
             }
         } catch (error) {
+            // Force-flush whatever we have before propagating so the
+            // interrupted/cancel state on disk reflects progress through the
+            // last completed shard (resume reattach reads from this).
+            flushManifest(true);
             this.cancel();
             await Promise.allSettled(activePromises);
             throw error;
         }
+        // Final force-flush so the terminal manifest reflects every completed
+        // shard, not the most recent debounced snapshot.
+        flushManifest(true);
         return engineUsage;
     }
 }

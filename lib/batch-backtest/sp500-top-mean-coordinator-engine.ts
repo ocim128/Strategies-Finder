@@ -15,7 +15,7 @@ import {
 } from "./sp500-top-mean-artifact-store";
 import { enumerateSp500Pairs, type CoverageCounts } from "./sp500-pair-enumerator";
 import type { TopMeanRunManifest } from "./compact-pair-artifact";
-import { TopMeanWorkerPool, resolveTopMeanWorkerCount } from "./sp500-top-mean-worker-pool";
+import { TOP_MEAN_DEFAULT_SHARD_SIZE, TopMeanWorkerPool, resolveTopMeanWorkerCount } from "./sp500-top-mean-worker-pool";
 import {
     runOpenScoreUsdReplay,
     type OpenScoreUsdReplayResult,
@@ -289,8 +289,13 @@ export class TopMeanCoordinatorEngine {
                     strategyKey: this._request.strategyKey,
                     interval: this._request.interval,
                     pairCount: enumRes.canonicalPairs.length,
-                    shardSize: 50,
-                    totalShards: Math.ceil(enumRes.canonicalPairs.length / 50),
+                    // `shardSize`/`totalShards` are authoritative from the worker
+                    // pool (it owns partitioning); seed with the same default so
+                    // the on-disk manifest before the first pool.execute() is not
+                    // misleading (previously hardcoded 50, which the pool always
+                    // overwrote with 250).
+                    shardSize: TOP_MEAN_DEFAULT_SHARD_SIZE,
+                    totalShards: Math.ceil(enumRes.canonicalPairs.length / TOP_MEAN_DEFAULT_SHARD_SIZE),
                     completedShards: [],
                     failedShards: [],
                     completedPairsCount: 0,
@@ -598,8 +603,9 @@ export class TopMeanCoordinatorEngine {
                     strategyKey: this._request.strategyKey,
                     interval: this._request.interval,
                     pairCount: enumRes.canonicalPairs.length,
-                    shardSize: 50,
-                    totalShards: Math.ceil(enumRes.canonicalPairs.length / 50),
+                    // Seed with the pool's actual default (see normal-path twin).
+                    shardSize: TOP_MEAN_DEFAULT_SHARD_SIZE,
+                    totalShards: Math.ceil(enumRes.canonicalPairs.length / TOP_MEAN_DEFAULT_SHARD_SIZE),
                     completedShards: [],
                     failedShards: [],
                     completedPairsCount: 0,
