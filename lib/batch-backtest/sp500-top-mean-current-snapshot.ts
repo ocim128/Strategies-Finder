@@ -644,20 +644,40 @@ export async function computeCurrentTopMeanSnapshot(
     // disk + JSON parse cost by ~3x for the snapshot phase.
     const materialized: CompactPairArtifact[] = [];
     let stoppedDuringLoad = false;
+    // Track missing/malformed during load so the stop-path short-circuit below
+    // preserves the same stats fidelity the prior endpoint-pass-as-load pass
+    // surfaced (the original resolveCommonEndpoint counted these even when
+    // shouldStop fired mid-pass and returned endpoint=null).
+    let missingDuringLoad = 0;
+    let malformedDuringLoad = 0;
     for await (const artifact of artifactIterableFactory()) {
         if (options.shouldStop?.()) {
             stoppedDuringLoad = true;
             break;
+        }
+        // Mirror resolveCommonEndpoint's classifier: a usable endpoint is a
+        // finite number. Undefined/null → missing; non-finite → malformed.
+        // We do NOT compute the mode here — that happens in the endpoint pass
+        // over the materialized array — we just keep the counters in lockstep
+        // so a Stop mid-load still reports the partial counts.
+        const ep = artifact?.dataEndTime;
+        if (ep === undefined || ep === null) {
+            missingDuringLoad += 1;
+        } else if (typeof ep !== "number" || !Number.isFinite(ep)) {
+            malformedDuringLoad += 1;
         }
         materialized.push(artifact);
     }
     // Preserve the prior contract: a Stop during the (formerly endpoint) load
     // pass is treated as "stopped before any conclusion" → empty snapshot, asOf
     // null. The original returned `noConsensus: false` from resolveCommonEndpoint
-    // in this case, which the caller mapped to "empty"; we short-circuit here.
+    // in this case, which the caller mapped to "empty"; we short-circuit here
+    // and surface the same partial missing/malformed counts the prior code did.
     if (stoppedDuringLoad) {
         return emptyResult("empty", {
             artifactsProcessed: materialized.length,
+            missingEndpoints: missingDuringLoad,
+            malformedArtifacts: malformedDuringLoad,
             durationMs: 0,
         });
     }

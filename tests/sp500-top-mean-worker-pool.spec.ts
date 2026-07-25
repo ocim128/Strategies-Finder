@@ -200,12 +200,94 @@ async function testKeepWorkersAliveAcrossExecutes(): Promise<void> {
     }
 }
 
+/**
+ * Retry-path termination smoke test.
+ *
+ * Forces every shard to fail (unknown strategy key) so the pool's retry path
+ * runs under contention: 5 shards, 2 workers, every shard errors on both the
+ * initial attempt and the retry. The contract locked here is that execute()
+ * TERMINATES (success or failure) rather than hanging — a stuck free-list /
+ * pendingTasks interaction would surface as a test timeout. The current
+ * message-handler ordering (reject before releaseWorker) means the retry's
+ * runShardOnWorker call always finds the just-released worker in freeWorkers,
+ * so this test passes today regardless of the releaseWorker implementation.
+ * It remains valuable as a future-proofing smoke against any refactor that
+ * inverts that ordering.
+ */
+async function testRetryDrainsAcrossWorkerRelease(): Promise<void> {
+    // Use an unknown strategy to force every shard to post `error`. The
+    // worker's per-shard catch turns this into a `type: "error"` message
+    // (the worker itself stays alive for reuse).
+    const pairs = [
+        "FAKE_A•+FAKE_B•", "FAKE_C•+FAKE_D•", "FAKE_E•+FAKE_F•",
+        "FAKE_G•+FAKE_H•", "FAKE_I•+FAKE_J•",
+    ];
+    const manifest: TopMeanRunManifest = {
+        schema: "top_mean_run_manifest.v1",
+        runId: "smoke_test_retry_drain",
+        status: "running",
+        fingerprint: "smoke",
+        strategyKey: "__nonexistent_strategy_for_retry_test__",
+        interval: "4h",
+        pairCount: pairs.length,
+        shardSize: 1,   // force one pair per shard → 5 shards, each errors + retries
+        totalShards: pairs.length,
+        completedShards: [],
+        failedShards: [],
+        completedPairsCount: 0,
+        failedPairsCount: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+    };
+
+    const pool = new TopMeanWorkerPool();
+    let executeReturned = false;
+    let executeThrew = false;
+    try {
+        // If releaseWorker() ever fails to drain pendingTasks, execute() hangs
+        // and the test times out (the outer `timeout` wrapper kills it).
+        //
+        // Every shard errors on both the initial attempt AND the retry (same
+        // unknown strategy), so execute() ultimately throws. The assertion
+        // we care about is that it TERMINATES (settle either way) rather than
+        // hanging.
+        try {
+            await pool.execute({
+                runId: manifest.runId,
+                manifest,
+                canonicalPairs: pairs,
+                strategyKey: "__nonexistent_strategy_for_retry_test__",
+                strategyParams: {},
+                backtestSettings: { direction: "long", slippage: 0, commission: 0 } as any,
+                capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 } as any,
+                interval: "4h",
+                workerCount: 2,
+                shardSize: 1,
+                useRustEnginePreference: false,
+            });
+            executeReturned = true;
+        } catch (err) {
+            executeThrew = true;
+            assert.ok(err instanceof Error, "execute() rejection is an Error");
+            assert.match(
+                (err instanceof Error ? err.message : String(err)),
+                /not found in manifest|Operation cancelled/,
+                `unexpected error: ${err instanceof Error ? err.message : String(err)}`,
+            );
+        }
+    } finally {
+        pool.cancel();
+    }
+    assert.ok(executeReturned || executeThrew, "execute() terminated (success or failure) rather than hanging");
+}
+
 async function main(): Promise<void> {
     testWorkerCountResolution();
     testWorkerPoolCancel();
     await testWorkerPathResolution();
     await testPersistentWorkerPoolEndToEnd();
     await testKeepWorkersAliveAcrossExecutes();
+    await testRetryDrainsAcrossWorkerRelease();
     console.log("PASS: sp500-top-mean-worker-pool.spec.ts");
 }
 

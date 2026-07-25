@@ -347,6 +347,12 @@ export class TopMeanWorkerPool {
                 const freeIdx = freeWorkers.indexOf(worker);
                 if (freeIdx >= 0) freeWorkers.splice(freeIdx, 1);
                 this.activeWorkers.delete(worker);
+                // Also drop from the cross-execute reusable list — a worker
+                // can die between windows (e.g. OOM while idle) and the next
+                // absorb would otherwise re-attach handlers to a dead worker
+                // and silently hang on its first postMessage.
+                const reusableIdx = this.reusableWorkers.indexOf(worker);
+                if (reusableIdx >= 0) this.reusableWorkers.splice(reusableIdx, 1);
                 try { worker.terminate(); } catch { /* best-effort */ }
             };
             worker.on("error", onError);
@@ -364,6 +370,9 @@ export class TopMeanWorkerPool {
                 const freeIdx = freeWorkers.indexOf(worker);
                 if (freeIdx >= 0) freeWorkers.splice(freeIdx, 1);
                 this.activeWorkers.delete(worker);
+                // Same cross-execute cleanup as onError — see comment there.
+                const reusableIdx = this.reusableWorkers.indexOf(worker);
+                if (reusableIdx >= 0) this.reusableWorkers.splice(reusableIdx, 1);
             };
             worker.on("exit", onExit);
             disposers.push(() => worker.off("exit", onExit));
@@ -394,6 +403,11 @@ export class TopMeanWorkerPool {
                 };
 
                 // Try to grab a free worker immediately; otherwise queue.
+                // The dispatch loop caps activePromises at spawned.length, so
+                // in steady state this branch is rare (only the retry path
+                // can hit it, when its original worker just died). When
+                // queued, releaseWorker's push-then-drain will pop a free
+                // worker and call this callback.
                 const free = freeWorkers.pop();
                 if (free) {
                     dispatch(free);
@@ -407,12 +421,16 @@ export class TopMeanWorkerPool {
                             }
                             return;
                         }
-                        // The free-list should be non-empty when the scheduler
-                        // drains the queue; defensively re-check.
+                        // releaseWorker pushes the freed worker BEFORE
+                        // shifting this callback, so the pop below must
+                        // succeed. If it ever doesn't (defensive), settle the
+                        // inflight as a cancel rather than silently dropping.
                         const w = freeWorkers.pop();
                         if (!w) {
-                            // No worker available — requeue for the next free.
-                            pendingTasks.unshift(() => runShardOnWorker(task).then(resolvePromise, rejectPromise));
+                            if (!inflight.settled) {
+                                inflight.settled = true;
+                                inflight.reject(new Error("No worker available for queued task"));
+                            }
                             return;
                         }
                         dispatch(w);
@@ -422,22 +440,27 @@ export class TopMeanWorkerPool {
         };
 
         // Release a worker back to the free-list and pump the pending queue.
-        // Called from the await loop below each time a shard settles.
+        // Called from the message handler each time a shard settles.
+        //
+        // Push-then-drain order is the simpler and more robust form of the
+        // free-list return: push the worker FIRST, then drain any queued
+        // tasks so each can pop a free worker from inside its callback.
+        // The prior shift-then-dispatch order relied on a subtle timing
+        // invariant (reject-before-release in the message handler) to keep
+        // the retry path from requeueing itself into a stuck queue. While
+        // that ordering held today, push-then-drain removes the foot-gun
+        // and the dead "no worker available, requeue" branch in
+        // runShardOnWorker at once.
         const releaseWorker = (worker: Worker): void => {
             workerInFlight.delete(worker);
             if (dispatchHalted || this.isCancelled) return;
-            // If there's a pending task, hand the worker off directly.
-            const next = pendingTasks.shift();
-            if (next) {
+            freeWorkers.push(worker);
+            // Drain any queued tasks that now have a free worker to grab.
+            // Each callback pops its own worker via freeWorkers.pop(), so the
+            // while condition re-checks the (post-pop) length on each iter.
+            while (freeWorkers.length > 0 && pendingTasks.length > 0) {
+                const next = pendingTasks.shift()!;
                 next();
-                // The pending task will have popped a free worker OR requeued
-                // itself. If it dispatched, this worker is in flight again. If
-                // it requeued, push this worker back to the free-list.
-                if (!workerInFlight.has(worker)) {
-                    freeWorkers.push(worker);
-                }
-            } else {
-                freeWorkers.push(worker);
             }
         };
 
