@@ -2590,24 +2590,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         polymarket1sConfig: false,
     },
     {
-        key: "bollinger_reentry",
-        name: "Bollinger Re-entry",
-        description: "Fades an extreme when price returns inside a fixed two-deviation Bollinger Band.",
-        defaultParams: {
-        bollingerPeriod: 20,
-    } as Record<string, number>,
-        paramLabels: {
-        bollingerPeriod: "Bollinger Period",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["bollingerPeriod"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
         key: "cci_zero_line_confirmation",
         name: "CCI Zero-Line Confirmation",
         description: "Signals with Commodity Channel Index direction around its fixed zero line.",
@@ -2639,42 +2621,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         role: "entry",
         direction: "both",
         walkForwardParams: ["dmiPeriod"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "mfi_midline_confirmation",
-        name: "MFI Midline Confirmation",
-        description: "Signals with Money Flow Index direction around its fixed 50 midpoint.",
-        defaultParams: {
-        mfiPeriod: 14,
-    } as Record<string, number>,
-        paramLabels: {
-        mfiPeriod: "MFI Period",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["mfiPeriod"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "obv_signal_line_confirmation",
-        name: "OBV Signal-Line Confirmation",
-        description: "Signals with On-Balance Volume position relative to its moving-average signal line.",
-        defaultParams: {
-        obvMaPeriod: 20,
-    } as Record<string, number>,
-        paramLabels: {
-        obvMaPeriod: "OBV MA Period",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["obvMaPeriod"],
     },
         crossSymbolConfig: false,
         polymarket1sConfig: false,
@@ -2729,42 +2675,6 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         role: "entry",
         direction: "both",
         walkForwardParams: ["stochasticPeriod"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "supertrend_confirmation",
-        name: "Supertrend Confirmation",
-        description: "Signals on Supertrend direction flips using a fixed 10-bar ATR.",
-        defaultParams: {
-        atrMultiplier: 3,
-    } as Record<string, number>,
-        paramLabels: {
-        atrMultiplier: "ATR Multiplier",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["atrMultiplier"],
-    },
-        crossSymbolConfig: false,
-        polymarket1sConfig: false,
-    },
-    {
-        key: "trix_zero_line_confirmation",
-        name: "TRIX Zero-Line Confirmation",
-        description: "Signals with triple-smoothed rate-of-change direction around its fixed zero line.",
-        defaultParams: {
-        trixPeriod: 15,
-    } as Record<string, number>,
-        paramLabels: {
-        trixPeriod: "TRIX Period",
-    } as Record<string, string>,
-        metadata: {
-        role: "entry",
-        direction: "both",
-        walkForwardParams: ["trixPeriod"],
     },
         crossSymbolConfig: false,
         polymarket1sConfig: false,

@@ -131,16 +131,11 @@ import { quarter_kelly_dislocation_friction_reversion } from "./lib/quarter_kell
 import { quarter_kelly_volatility_adjusted_reversion } from "./lib/quarter_kelly_volatility_adjusted_reversion";
 import { kelly_streak_exhaustion_reversion } from "./lib/kelly_streak_exhaustion_reversion";
 import { aroon_direction_confirmation } from "./lib/aroon_direction_confirmation";
-import { bollinger_reentry } from "./lib/bollinger_reentry";
 import { cci_zero_line_confirmation } from "./lib/cci_zero_line_confirmation";
 import { dmi_direction_confirmation } from "./lib/dmi_direction_confirmation";
-import { mfi_midline_confirmation } from "./lib/mfi_midline_confirmation";
-import { obv_signal_line_confirmation } from "./lib/obv_signal_line_confirmation";
 import { parabolic_sar_confirmation } from "./lib/parabolic_sar_confirmation";
 import { rsi_midline_confirmation } from "./lib/rsi_midline_confirmation";
 import { stochastic_midline_confirmation } from "./lib/stochastic_midline_confirmation";
-import { supertrend_confirmation } from "./lib/supertrend_confirmation";
-import { trix_zero_line_confirmation } from "./lib/trix_zero_line_confirmation";
 import { williams_r_midline_confirmation } from "./lib/williams_r_midline_confirmation";
 
 export interface StrategyManifestEntry {
@@ -278,16 +273,11 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "quarter_kelly_volatility_adjusted_reversion", strategy: quarter_kelly_volatility_adjusted_reversion },
     { key: "kelly_streak_exhaustion_reversion", strategy: kelly_streak_exhaustion_reversion },
     { key: "aroon_direction_confirmation", strategy: aroon_direction_confirmation },
-    { key: "bollinger_reentry", strategy: bollinger_reentry },
     { key: "cci_zero_line_confirmation", strategy: cci_zero_line_confirmation },
     { key: "dmi_direction_confirmation", strategy: dmi_direction_confirmation },
-    { key: "mfi_midline_confirmation", strategy: mfi_midline_confirmation },
-    { key: "obv_signal_line_confirmation", strategy: obv_signal_line_confirmation },
     { key: "parabolic_sar_confirmation", strategy: parabolic_sar_confirmation },
     { key: "rsi_midline_confirmation", strategy: rsi_midline_confirmation },
     { key: "stochastic_midline_confirmation", strategy: stochastic_midline_confirmation },
-    { key: "supertrend_confirmation", strategy: supertrend_confirmation },
-    { key: "trix_zero_line_confirmation", strategy: trix_zero_line_confirmation },
     { key: "williams_r_midline_confirmation", strategy: williams_r_midline_confirmation },
 ];
 
