@@ -158,6 +158,8 @@ export interface OpenScoreUsdReplayResult {
         topAdjusted: ReplayComparison;
         /** Highest rawScore / activePairCount (mean signed vote). */
         topMean: ReplayComparison;
+        /** Same-event return difference: TOP_MEAN versus TOP_RAW. */
+        topMeanVsRaw: ReplayComparison;
         /** TOP_MEAN rank 1 versus rank 2 among positive candidates. */
         topMeanVsRank2: ReplayComparison;
         /** Reversion selector: most-open negative-score asset, shorted vs USD. */
@@ -1126,6 +1128,7 @@ export async function runOpenScoreUsdReplay(
         const topRaw = createSeries();
         const topAdjusted = createSeries();
         const topMean = createSeries();
+        const topMeanVsRaw = createSeries();
         const topMeanVsRank2 = createSeries();
         const topMeanHedge = createSeries();
         const topMeanPortfolioOpportunities: TopMeanPortfolioOpportunity[] = [];
@@ -1263,6 +1266,12 @@ export async function runOpenScoreUsdReplay(
             appendSelection(topRaw, view.topRaw);
             appendSelection(topAdjusted, view.topAdjusted);
             appendSelection(topMean, view.topMean);
+            const rawReturn = retByAsset.get(view.topRaw)!;
+            const meanReturn = retByAsset.get(view.topMean)!;
+            topMeanVsRaw.returns.push(meanReturn);
+            topMeanVsRaw.deltas.push(meanReturn - rawReturn);
+            topMeanVsRaw.times.push(view.timeSec);
+            topMeanVsRaw.assets.push(assetNames[view.topMean]!);
             appendPairwise(topMeanVsRank2, view.topMean, view.topMeanRank2);
             appendSelection(maxActive, view.maxActive);
             appendSelection(maxStatic, view.maxStatic);
@@ -1635,6 +1644,7 @@ export async function runOpenScoreUsdReplay(
             topRaw: buildComparison(topRaw.deltas, topRaw.returns, topRaw.times),
             topAdjusted: buildComparison(topAdjusted.deltas, topAdjusted.returns, topAdjusted.times),
             topMean: buildComparison(topMean.deltas, topMean.returns, topMean.times),
+            topMeanVsRaw: buildComparison(topMeanVsRaw.deltas, topMeanVsRaw.returns, topMeanVsRaw.times),
             topMeanVsRank2: buildComparison(topMeanVsRank2.deltas, topMeanVsRank2.returns, topMeanVsRank2.times),
             maxActiveReversion: buildComparison(maxActiveReversion.deltas, maxActiveReversion.returns, maxActiveReversion.times),
             maxActiveReversionByAsset,
@@ -1958,6 +1968,8 @@ function buildReportLines(args: {
         lines.push(comparisonLine("TOP_RAW", h.topRaw));
         lines.push(comparisonLine("TOP_ADJUSTED", h.topAdjusted));
         lines.push(comparisonLine("TOP_MEAN", h.topMean));
+        lines.push(comparisonLine("TOP_MEAN_VS_RAW", h.topMeanVsRaw));
+        lines.push(`TOP_MEAN_VS_RAW_WF deltaByBlock=[${h.topMeanVsRaw.blockMeans.map(fmtPct).join(",")}]`);
         lines.push(comparisonLine("TOP_MEAN_VS_RANK2", h.topMeanVsRank2));
         lines.push(pnlLine("TOP_MEAN_PNL", h.pnl.topMean));
         lines.push(pnlLine("RANDOM_PNL", h.pnl.random));

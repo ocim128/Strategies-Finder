@@ -348,6 +348,12 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(horizon.topAdjusted.topMean).to.be.closeTo(0.20, 1e-9);
         // TOP_MEAN tie (BBB=AAB=ZZZ=DDD=1.0) -> FNV-1a digest picks ZZZ.
         expect(horizon.topMean.topMean).to.be.closeTo(0.05, 1e-9);
+        expect(horizon.topMeanVsRaw.topMean).to.be.closeTo(0.05, 1e-9);
+        expect(horizon.topMeanVsRaw.randomMean).to.be.closeTo(0.10, 1e-9);
+        expect(horizon.topMeanVsRaw.delta).to.be.closeTo(-0.05, 1e-9);
+        expect(horizon.topMeanVsRaw.blockMeans[0]).to.be.closeTo(-0.05, 1e-9);
+        expect(horizon.topMeanVsRaw.positiveBlocks).to.equal(0);
+        expect(horizon.topMeanVsRaw.totalBlocks).to.equal(1);
         expect(horizon.maxActive.topMean).to.be.closeTo(0.10, 1e-9);
         expect(horizon.maxStatic.topMean).to.be.closeTo(0.40, 1e-9);
         expect(horizon.rawAdjustedAgreement).to.deep.equal({ events: 1, sameSelection: 0, rate: 0 });
@@ -360,6 +366,8 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(aaaSummary.randomMean).to.be.closeTo(0.2375, 1e-9);
         expect(aaaSummary.delta).to.be.closeTo(-0.1375, 1e-9);
         expect(result.reportLines.join("\n")).to.include("controls | TOP_MEAN=raw/activePairs");
+        expect(result.reportLines.join("\n")).to.include("TOP_MEAN_VS_RAW");
+        expect(result.reportLines.join("\n")).to.include("TOP_MEAN_VS_RAW_WF deltaByBlock=[-5.00%]");
     });
 
     it("controls legend documents the MAX_ACTIVE_REVERSION short-side arm", async () => {
