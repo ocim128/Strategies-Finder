@@ -3,6 +3,7 @@ import { executeBacktest, prepareClosedCandleData, resolveExecutorBacktestSettin
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import { loadServerBatchDataset } from "./server-batch-data-loader";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
+import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import { stripIbkrMarker } from "../local-daily-datasets";
 import { selectClosedCandleWindow } from "../alert-evaluation-window";
 import { parseTimeToUnixSeconds } from "../time-normalization";
@@ -85,11 +86,12 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
     for (const pair of data.pairs) {
         let pairSymbol = pair.symbol;
         const parsed = parsePortfolioSyntheticPairSymbol(pairSymbol);
+        const direct = parsed ? null : canonicalizeLegIdentity(pairSymbol);
 
-        const baseAsset = parsed ? parsed.baseAsset : stripIbkrMarker(pairSymbol);
-        const quoteAsset = parsed ? parsed.quoteAsset : stripIbkrMarker(pairSymbol);
-        const baseSymbol = parsed ? parsed.baseSymbol : pairSymbol;
-        const quoteSymbol = parsed ? parsed.quoteSymbol : pairSymbol;
+        const baseAsset = parsed ? parsed.baseAsset : (direct?.scoringAsset ?? stripIbkrMarker(pairSymbol));
+        const quoteAsset = parsed ? parsed.quoteAsset : "";
+        const baseSymbol = parsed ? parsed.baseSymbol : (direct?.loaderSymbol ?? pairSymbol);
+        const quoteSymbol = parsed ? parsed.quoteSymbol : "";
 
         try {
             let candles = await loadServerBatchDataset(pairSymbol, data.interval);

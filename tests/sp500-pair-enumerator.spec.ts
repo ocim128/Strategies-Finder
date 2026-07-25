@@ -42,10 +42,34 @@ function testCustomPairListText(): void {
     assert.ok(res.canonicalPairs.length > 0, "Should extract canonical pairs from custom list");
 }
 
+function testCustomCryptoMarkets(): void {
+    const res = enumerateSp500Pairs({
+        interval: "15m",
+        pairListText: "BTCUSDT\nZEC+APT\nBTCUSDT+ETHUSDT",
+    });
+    assert.deepEqual(
+        res.canonicalPairs,
+        ["BTCUSDT", "ZECUSDT+APTUSDT", "BTCUSDT+ETHUSDT"],
+        "Direct and synthetic crypto markets should remain loader-ready.",
+    );
+    assert.deepEqual(
+        res.eligibleTargets,
+        [
+            { asset: "APT", symbol: "APTUSDT" },
+            { asset: "BTC", symbol: "BTCUSDT" },
+            { asset: "ETH", symbol: "ETHUSDT" },
+            { asset: "ZEC", symbol: "ZECUSDT" },
+        ],
+        "Replay targets should map scoring assets to their real crypto markets.",
+    );
+    assert.equal(res.counts.excludedPairsCount, 0);
+}
+
 function main(): void {
     testParseCsv();
     testEnumerationOrderingAndExclusion();
     testCustomPairListText();
+    testCustomCryptoMarkets();
     console.log("PASS: sp500-pair-enumerator.spec.ts");
 }
 

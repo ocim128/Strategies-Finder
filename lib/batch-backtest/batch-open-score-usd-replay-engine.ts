@@ -673,12 +673,12 @@ export async function runOpenScoreUsdReplay(
         // that traded understated coverage and hid the pair-balance answer.
         if (base) staticDegree.set(base, (staticDegree.get(base) ?? 0) + 1);
         if (quote && quote !== base) staticDegree.set(quote, (staticDegree.get(quote) ?? 0) + 1);
-        if (!base || !quote || base === quote) {
+        if (!base || (quote && base === quote)) {
             omittedPairs += 1;
             continue;
         }
         const bi = assetIndex(base);
-        const qi = assetIndex(quote);
+        const qi = quote ? assetIndex(quote) : null;
         const trades = artifact.result?.trades ?? [];
         if (trades.length === 0) {
             omittedPairs += 1;
@@ -693,12 +693,16 @@ export async function runOpenScoreUsdReplay(
             if (sign === 0) continue;
             // Entry deltas (long: base+1/quote-1; short: base-1/quote+1).
             stream.push({ timeSec: entrySec, assetIndex: bi, delta: sign, isEntry: 1 });
-            stream.push({ timeSec: entrySec, assetIndex: qi, delta: -sign, isEntry: 1 });
+            if (qi !== null) {
+                stream.push({ timeSec: entrySec, assetIndex: qi, delta: -sign, isEntry: 1 });
+            }
             // Exit deltas are the exact inverse. end_of_data / missing exit time
             // means the position is still open at the artifact end -> no exit delta.
             if (exitSec !== null && trade.exitReason !== "end_of_data") {
                 stream.push({ timeSec: exitSec, assetIndex: bi, delta: -sign, isEntry: 0 });
-                stream.push({ timeSec: exitSec, assetIndex: qi, delta: sign, isEntry: 0 });
+                if (qi !== null) {
+                    stream.push({ timeSec: exitSec, assetIndex: qi, delta: sign, isEntry: 0 });
+                }
             }
         }
         // Sort this pair's deltas in-place (small N). One global Array.sort on

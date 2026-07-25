@@ -46,6 +46,17 @@ function makePair(base: string, quote: string, trades: Trade[]): BatchSyntheticP
     };
 }
 
+function makeDirectMarket(asset: string, trades: Trade[]): BatchSyntheticPairArtifact {
+    return {
+        symbol: `${asset}USDT`,
+        baseAsset: asset,
+        quoteAsset: "",
+        data: [],
+        signals: [],
+        result: { ...emptyResult(), totalTrades: trades.length, trades },
+    };
+}
+
 /** Target OHLCV: bars at T0, T0+1000, T0+2000, ... with constant price. */
 function makeTarget(asset: string, bars: number, priceAt: (i: number) => number): OpenScoreUsdTarget {
     const data: OHLCVData[] = Array.from({ length: bars }, (_, i) => {
@@ -96,6 +107,26 @@ describe("batch-open-score-usd-replay-engine", () => {
         // (AAA), so the event is ineligible for top-vs-random (< 2 positives).
         expect(result.totalEvents).to.equal(1);
         expect(result.eligibleEvents).to.equal(0);
+    });
+
+    it("replays direct crypto markets as one-asset signals", async () => {
+        const markets = [
+            makeDirectMarket("AAA", [makeTrade("long", T0 + 1000, null)]),
+            makeDirectMarket("BBB", [makeTrade("long", T0 + 1000, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 10, (i) => 100 + i),
+            makeTarget("BBB", 10, (i) => 100 - i),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(markets),
+            () => fromArray(targets),
+            { horizons: [2] },
+        );
+        expect(result.pairs).to.equal(2);
+        expect(result.assets).to.equal(2);
+        expect(result.totalEvents).to.equal(1);
+        expect(result.eligibleEvents).to.equal(1);
     });
 
     it("long entry maps base +1 / quote -1; short entry maps base -1 / quote +1", async () => {

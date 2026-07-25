@@ -23,7 +23,6 @@ import {
     type ReplayComparison,
 } from "./batch-open-score-usd-replay-engine";
 import { loadServerBatchDataset } from "./server-batch-data-loader";
-import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import {
     computeCurrentTopMeanSnapshot,
     type CurrentTopMeanResult,
@@ -247,7 +246,9 @@ export class TopMeanCoordinatorEngine {
         try {
             // 1. Enumeration & Preflight
             this.currentPhase = "preflight";
-            this.progressText = "Enumerating S&P 500 assets and pairs...";
+            this.progressText = this._request.pairListText?.trim()
+                ? "Preparing custom TOP_MEAN markets..."
+                : "Enumerating S&P 500 assets and pairs...";
             const enumRes = enumerateSp500Pairs({
                 interval: this._request.interval,
                 maxPairs: this._request.maxPairs,
@@ -398,17 +399,16 @@ export class TopMeanCoordinatorEngine {
             this.progressText = "Running OPEN_SCORE USD replay and asset selection analysis...";
             emitNdjson({ type: "progress", phase: "replay", text: this.progressText });
 
-            const eligibleAssets = enumRes.eligibleAssets;
+            const eligibleTargets = enumRes.eligibleTargets;
             const requestInterval = this._request.interval;
 
             const targetLoader = () => (async function* () {
-                for (let i = 0; i < eligibleAssets.length; i++) {
-                    const asset = stripIbkrMarker(eligibleAssets[i]);
-                    const marked = markIbkrSymbol(asset);
-                    const candles = await loadServerBatchDataset(marked, requestInterval);
+                for (let i = 0; i < eligibleTargets.length; i++) {
+                    const { asset, symbol } = eligibleTargets[i]!;
+                    const candles = await loadServerBatchDataset(symbol, requestInterval);
                     yield {
                         asset,
-                        symbol: marked,
+                        symbol,
                         data: candles,
                     };
                 }
@@ -471,7 +471,7 @@ export class TopMeanCoordinatorEngine {
             };
 
             this.currentPhase = "completed";
-            this.progressText = "S&P 500 TOP_MEAN analysis completed successfully.";
+            this.progressText = "TOP_MEAN analysis completed successfully.";
             if (this.manifest) {
                 this.manifest.status = "completed";
                 this.updateManifestEngineTelemetry(this.manifest);

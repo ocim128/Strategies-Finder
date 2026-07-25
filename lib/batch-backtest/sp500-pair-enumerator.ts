@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import { parseSyntheticPairToken } from "../synthetic-pair-token";
+import { canonicalizeLegIdentity, type CanonicalLegIdentity } from "../synthetic-leg-identity";
 
 export interface CoverageCounts {
     sp500AssetsCount: number;
@@ -23,6 +24,7 @@ export interface EnumerationOptions {
 export interface EnumerationResult {
     counts: CoverageCounts;
     eligibleAssets: string[];
+    eligibleTargets: Array<{ asset: string; symbol: string }>;
     canonicalPairs: string[];
     excludedAssets: string[];
 }
@@ -131,38 +133,64 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
     if (pairListText) {
         const rawLines = pairListText.split(/[\r\n,]+/).map((l) => l.trim()).filter(Boolean);
         const canonicalPairs: string[] = [];
-        const eligibleAssetsSet = new Set<string>();
+        const eligibleTargetsByAsset = new Map<string, string>();
         const excludedAssetsSet = new Set<string>();
         let invalidPairCount = 0;
+
+        const resolveCustomLeg = (identity: CanonicalLegIdentity): CanonicalLegIdentity | null => {
+            if (identity.provider !== "ibkr") return identity;
+            const check = isTickerUsable(identity.scoringAsset);
+            if (!check.usable || !check.symbol) {
+                excludedAssetsSet.add(check.symbol || identity.scoringAsset);
+                return null;
+            }
+            return {
+                ...identity,
+                emittedToken: markIbkrSymbol(check.symbol),
+                loaderSymbol: markIbkrSymbol(check.symbol),
+            };
+        };
+        const registerTarget = (identity: CanonicalLegIdentity): boolean => {
+            const existing = eligibleTargetsByAsset.get(identity.scoringAsset);
+            if (existing && existing !== identity.loaderSymbol) {
+                excludedAssetsSet.add(identity.scoringAsset);
+                return false;
+            }
+            eligibleTargetsByAsset.set(identity.scoringAsset, identity.loaderSymbol);
+            return true;
+        };
 
         for (const line of rawLines) {
             const parsed = parseSyntheticPairToken(line);
             if (!parsed) {
+                const direct = canonicalizeLegIdentity(line);
+                const resolvedDirect = direct ? resolveCustomLeg(direct) : null;
+                if (!resolvedDirect || !registerTarget(resolvedDirect)) {
+                    invalidPairCount++;
+                    continue;
+                }
+                canonicalPairs.push(resolvedDirect.loaderSymbol);
+                continue;
+            }
+
+            const baseIdentity = canonicalizeLegIdentity(parsed.baseSymbol);
+            const quoteIdentity = canonicalizeLegIdentity(parsed.quoteSymbol);
+            const base = baseIdentity ? resolveCustomLeg(baseIdentity) : null;
+            const quote = quoteIdentity ? resolveCustomLeg(quoteIdentity) : null;
+            if (!base || !quote || base.scoringAsset === quote.scoringAsset) {
                 invalidPairCount++;
                 continue;
             }
-            const baseClean = stripIbkrMarker(parsed.baseSymbol).toUpperCase();
-            const quoteClean = stripIbkrMarker(parsed.quoteSymbol).toUpperCase();
-
-            const baseCheck = isTickerUsable(baseClean);
-            const quoteCheck = isTickerUsable(quoteClean);
-
-            if (baseCheck.usable && quoteCheck.usable && baseCheck.symbol && quoteCheck.symbol) {
-                const markedBase = markIbkrSymbol(baseCheck.symbol);
-                const markedQuote = markIbkrSymbol(quoteCheck.symbol);
-                canonicalPairs.push(`${markedBase}+${markedQuote}`);
-                eligibleAssetsSet.add(baseCheck.symbol);
-                eligibleAssetsSet.add(quoteCheck.symbol);
-            } else {
+            if (!registerTarget(base) || !registerTarget(quote)) {
                 invalidPairCount++;
-                if (!baseCheck.usable) excludedAssetsSet.add(baseCheck.symbol || baseClean);
-                if (!quoteCheck.usable) excludedAssetsSet.add(quoteCheck.symbol || quoteClean);
+                continue;
             }
+            canonicalPairs.push(`${base.loaderSymbol}+${quote.loaderSymbol}`);
         }
 
-        const sortedEligibleAssets = Array.from(eligibleAssetsSet).sort((a, b) =>
-            stripIbkrMarker(a).localeCompare(stripIbkrMarker(b)),
-        );
+        const eligibleTargets = Array.from(eligibleTargetsByAsset, ([asset, symbol]) => ({ asset, symbol }))
+            .sort((a, b) => a.asset.localeCompare(b.asset));
+        const sortedEligibleAssets = eligibleTargets.map((target) => target.asset);
 
         let finalPairs = canonicalPairs;
         if (options.maxPairs && options.maxPairs > 0 && options.maxPairs < finalPairs.length) {
@@ -182,6 +210,7 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
         return {
             counts,
             eligibleAssets: sortedEligibleAssets,
+            eligibleTargets,
             canonicalPairs: finalPairs,
             excludedAssets: Array.from(excludedAssetsSet),
         };
@@ -251,6 +280,10 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
     return {
         counts,
         eligibleAssets: sortedEligibleAssets,
+        eligibleTargets: sortedEligibleAssets.map((asset) => ({
+            asset: stripIbkrMarker(asset),
+            symbol: markIbkrSymbol(asset),
+        })),
         canonicalPairs,
         excludedAssets: excludedAssetsList,
     };

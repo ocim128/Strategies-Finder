@@ -4,6 +4,8 @@ import { describe, it, before, after } from "node:test";
 import { batchBacktestService } from "../lib/batch-backtest/batch-backtest-service";
 import type { BatchBacktestDom } from "../lib/batch-backtest/batch-backtest-dom";
 import { BATCH_BACKTEST_REQUIRED_IDS } from "../lib/batch-backtest/batch-backtest-dom";
+import { state } from "../lib/state";
+import { backtestService } from "../lib/backtest-service";
 import {
     createFakeBatchBacktestDom,
     createFakeBatchElement,
@@ -139,6 +141,55 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(fetchCalled, "TOP_MEAN must short-circuit before fetch").to.equal(false);
         expect(dom.batchBacktestSp500TopMeanProgressText.textContent).to.include("already in progress");
         svc().batchActionInFlight = false;
+    });
+
+    it("runs custom crypto TOP_MEAN markets at the current chart interval", async () => {
+        const dom = setupForAnalysis();
+        const service = svc();
+        dom.batchBacktestSymbols.value = "BTCUSDT\nZEC+APT";
+        state.currentInterval = "15m";
+        let requestBody: any = null;
+        const originalResolver = service.resolveTopMeanBuiltInStrategy;
+        const originalBacktestSettings = backtestService.getBacktestSettings;
+        const originalCapitalSettings = backtestService.getCapitalSettings;
+        service.resolveTopMeanBuiltInStrategy = async () => ({
+            strategyKey: "test",
+            strategy: { defaultParams: {} },
+        });
+        backtestService.getBacktestSettings = () => ({});
+        backtestService.getCapitalSettings = () => ({
+            initialCapital: 10_000,
+            positionSize: 100,
+            commission: 0,
+            sizingMode: "fixed",
+            fixedTradeAmount: 1_000,
+        });
+
+        try {
+            await withMockFetch((url, init) => {
+                if (String(url).includes("/sp500-top-mean/run")) {
+                    requestBody = JSON.parse(String(init?.body ?? "{}"));
+                }
+                return {
+                    ok: true,
+                    status: 200,
+                    body: new ReadableStream<Uint8Array>({
+                        start(controller) {
+                            controller.close();
+                        },
+                    }),
+                };
+            }, async () => {
+                await service.runSp500TopMeanCoordinator();
+            });
+        } finally {
+            service.resolveTopMeanBuiltInStrategy = originalResolver;
+            backtestService.getBacktestSettings = originalBacktestSettings;
+            backtestService.getCapitalSettings = originalCapitalSettings;
+        }
+
+        expect(requestBody.interval).to.equal("15m");
+        expect(requestBody.pairListText).to.equal("BTCUSDT\nZEC+APT");
     });
 
     it("persists the active run id and restores it after a tab-style reset", () => {

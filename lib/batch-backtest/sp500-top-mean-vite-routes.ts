@@ -172,8 +172,8 @@ async function handleSp500TopMeanRunRequest(
     if (!req.interval || typeof req.interval !== "string") {
         throw new HttpStatusError(400, "Missing required string property: interval.");
     }
-    if (req.interval !== "4h") {
-        throw new HttpStatusError(400, "S&P 500 TOP_MEAN coordinator currently supports IBKR 4h synthetic pairs only.");
+    if (!req.pairListText?.trim() && req.interval !== "4h") {
+        throw new HttpStatusError(400, "The default S&P 500 TOP_MEAN universe requires the 4h interval.");
     }
     // Semantic workload caps (shared leaf validator). Body-size alone is not a
     // substitute for rejecting huge horizon arrays / zero-or-fractional values /

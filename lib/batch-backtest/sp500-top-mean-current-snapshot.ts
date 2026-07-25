@@ -341,12 +341,14 @@ function addPairPosition(
     quoteAsset: string,
     sign: 1 | -1,
 ): void {
-    if (!baseAsset || !quoteAsset) return;
-    for (const asset of [baseAsset, quoteAsset]) {
+    if (!baseAsset) return;
+    for (const asset of [baseAsset, quoteAsset].filter(Boolean)) {
         activePairsByAsset.set(asset, (activePairsByAsset.get(asset) ?? 0) + 1);
     }
     scoreByAsset.set(baseAsset, (scoreByAsset.get(baseAsset) ?? 0) + sign);
-    scoreByAsset.set(quoteAsset, (scoreByAsset.get(quoteAsset) ?? 0) - sign);
+    if (quoteAsset) {
+        scoreByAsset.set(quoteAsset, (scoreByAsset.get(quoteAsset) ?? 0) - sign);
+    }
 }
 
 function addArtifactPositionsAtTime(
@@ -356,7 +358,7 @@ function addArtifactPositionsAtTime(
     activePairsByAsset: Map<string, number>,
 ): void {
     const { baseAsset, quoteAsset } = resolvePairAssets(artifact);
-    if (!baseAsset || !quoteAsset || !Array.isArray(artifact.trades)) return;
+    if (!baseAsset || !Array.isArray(artifact.trades)) return;
 
     for (const trade of artifact.trades) {
         const entrySec = parseTimeToUnixSeconds(trade.entryTime);
@@ -480,15 +482,13 @@ export async function reduceCurrentTopMeanSnapshot(
         const { sign, baseAsset, quoteAsset } = contribution;
         // Long pair: base +1, quote -1. Short pair: base -1, quote +1.
         // Both legs of an open pair count toward activePairs for each asset.
-        for (const asset of [baseAsset, quoteAsset]) {
-            if (!asset) {
-                malformedArtifacts += 1;
-                continue;
-            }
+        for (const asset of [baseAsset, quoteAsset].filter(Boolean)) {
             activePairsByAsset.set(asset, (activePairsByAsset.get(asset) ?? 0) + 1);
         }
         scoreByAsset.set(baseAsset, (scoreByAsset.get(baseAsset) ?? 0) + sign);
-        scoreByAsset.set(quoteAsset, (scoreByAsset.get(quoteAsset) ?? 0) - sign);
+        if (quoteAsset) {
+            scoreByAsset.set(quoteAsset, (scoreByAsset.get(quoteAsset) ?? 0) - sign);
+        }
     }
 
     if (openPositions === 0) {

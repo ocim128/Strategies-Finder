@@ -2276,7 +2276,7 @@ class BatchBacktestService {
         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
 
         dom.batchBacktestSp500TopMeanCoverageSummary.innerHTML = "";
-        dom.batchBacktestSp500TopMeanProgressText.textContent = "Starting S&P 500 TOP_MEAN coordinator...";
+        dom.batchBacktestSp500TopMeanProgressText.textContent = "Starting TOP_MEAN coordinator...";
         dom.batchBacktestSp500TopMeanResults.innerHTML = "";
         this.recordTopMeanDiagnostic("ui.started", {
             runButtonDisplay: dom.batchBacktestSp500TopMeanRunBtn.style.display,
@@ -2298,7 +2298,7 @@ class BatchBacktestService {
             strategyParams: paramManager.getValues(strategy),
             backtestSettings: backtestService.getBacktestSettings(),
             capitalSettings: backtestService.getCapitalSettings(),
-            interval: "4h",
+            interval: pairListText ? state.currentInterval : "4h",
             horizons,
             workerCount,
             maxPairs,
@@ -2498,7 +2498,7 @@ class BatchBacktestService {
             strategyParams: paramManager.getValues(strategy),
             backtestSettings: backtestService.getBacktestSettings(),
             capitalSettings: backtestService.getCapitalSettings(),
-            interval: "4h",
+            interval: pairListText ? state.currentInterval : "4h",
             horizons: [12],
             workerCount,
             maxPairs,

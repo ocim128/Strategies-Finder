@@ -364,6 +364,14 @@ describe("reduceCurrentTopMeanSnapshot", () => {
         expect(r.stats.tieCount).to.equal(0);
     });
 
+    it("supports a direct market as a one-asset contribution", () => {
+        const c = resolveOpenPairContribution(openPair("BTCUSDT", "long", {
+            baseAsset: "BTC",
+            quoteAsset: "",
+        }));
+        expect(c).to.deep.equal({ sign: 1, baseAsset: "BTC", quoteAsset: "" });
+    });
+
     it("reconstructs the latest decision event separately from the closed-candle endpoint", async () => {
         const r = await reduceCurrentTopMeanSnapshot(
             asyncFrom(openPair("AAA+BBB", "long", {
