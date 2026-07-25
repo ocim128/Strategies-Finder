@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
     computeSelectorPnl,
     runOpenScoreUsdReplay,
+    simulateTopMeanPortfolio,
     type OpenScoreUsdTarget,
     type SelectorPnlSummary,
 } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
@@ -130,6 +131,44 @@ function testDeterminism(): void {
     console.log("PASS: identical inputs produce identical summaries");
 }
 
+function testTopMeanPortfolioSkipsTiesAndSameAssetOverlap(): void {
+    const summary = simulateTopMeanPortfolio([
+        { asset: "AAA", decisionTime: 1, entryTime: 10, exitTime: 30, netReturn: 0.10, tied: false },
+        { asset: "AAA", decisionTime: 2, entryTime: 20, exitTime: 40, netReturn: 0.20, tied: false },
+        { asset: "BBB", decisionTime: 3, entryTime: 20, exitTime: 30, netReturn: -0.05, tied: true },
+        { asset: "BBB", decisionTime: 4, entryTime: 25, exitTime: 35, netReturn: 0.20, tied: false },
+        // Prior AAA exits at this timestamp's close; this open still overlaps.
+        { asset: "AAA", decisionTime: 5, entryTime: 30, exitTime: 50, netReturn: 0.50, tied: false },
+        { asset: "AAA", decisionTime: 6, entryTime: 31, exitTime: 40, netReturn: -0.10, tied: false },
+    ]);
+
+    assert.equal(summary.notionalPerTrade, 1_000);
+    assert.equal(summary.eligibleSignals, 6);
+    assert.equal(summary.trades, 3);
+    assert.equal(summary.skippedTies, 1);
+    assert.equal(summary.skippedActiveAsset, 2);
+    assert.ok(Math.abs(summary.netPnl! - 200) < 1e-9);
+    assert.ok(Math.abs(summary.averagePnl! - (200 / 3)) < 1e-9);
+    assert.equal(summary.winRate, 2 / 3);
+    assert.ok(Math.abs(summary.maxRealizedDrawdown! - 100) < 1e-9);
+    assert.equal(summary.peakConcurrentPositions, 2);
+    assert.equal(summary.peakCapital, 2_000);
+    assert.ok(Math.abs(summary.returnOnPeakCapital! - 0.10) < 1e-9);
+    console.log("PASS: $1k portfolio skips ties and same-asset overlap");
+}
+
+function testTopMeanPortfolioSameTimestampUsesPeakCapital(): void {
+    const summary = simulateTopMeanPortfolio([
+        { asset: "AAA", decisionTime: 1, entryTime: 10, exitTime: 20, netReturn: 0.10, tied: false },
+        { asset: "BBB", decisionTime: 2, entryTime: 20, exitTime: 30, netReturn: 0.10, tied: false },
+    ]);
+
+    // BBB enters at the open of t=20 before AAA exits at that bar's close.
+    assert.equal(summary.peakConcurrentPositions, 2);
+    assert.equal(summary.peakCapital, 2_000);
+    console.log("PASS: same-timestamp open precedes close for peak capital");
+}
+
 // ---------------------------------------------------------------------------
 // Integration — runOpenScoreUsdReplay populates pnl + report lines
 // ---------------------------------------------------------------------------
@@ -230,6 +269,40 @@ async function testIntegrationPnlPopulatedAndMatchesHelper(): Promise<void> {
     console.log("PASS: integration pnl populated and consistent with selector mean*trades");
 }
 
+async function testIntegrationPortfolioUsesTargetTimesAndBlocksReentry(): Promise<void> {
+    const firstDecision = T0 + 1000;
+    const secondDecision = T0 + 2000;
+    const pairExit = T0 + 9000;
+    const pairs = [
+        makePair("AAA", "XXX", [makeTrade("long", firstDecision, pairExit)]),
+        makePair("AAA", "YYY", [makeTrade("long", firstDecision, pairExit)]),
+        makePair("BBB", "PPP", [makeTrade("long", firstDecision, pairExit)]),
+        makePair("BBB", "QQQ", [makeTrade("long", firstDecision, pairExit)]),
+        // Lower BBB's mean while neutralizing XXX's existing -1 quote score,
+        // leaving exactly AAA and BBB as positive candidates.
+        makePair("XXX", "BBB", [makeTrade("long", firstDecision, pairExit)]),
+        makePair("AAA", "ZZZ", [makeTrade("long", secondDecision, pairExit)]),
+    ];
+    const result = await runOpenScoreUsdReplay(
+        () => fromArray(pairs),
+        () => fromArray([
+            makeTarget("AAA", 12, (i) => 100 + i * 10),
+            makeTarget("BBB", 12, () => 100),
+        ]),
+        { horizons: [2] },
+    );
+
+    const summary = result.horizons[0]!.pnl.topMeanPortfolio;
+    assert.equal(summary.eligibleSignals, 2);
+    assert.equal(summary.trades, 1);
+    assert.equal(summary.skippedTies, 0);
+    assert.equal(summary.skippedActiveAsset, 1);
+    assert.equal(summary.peakConcurrentPositions, 1);
+    assert.equal(summary.peakCapital, 1_000);
+    assert.ok(Math.abs(summary.netPnl! - ((130 - 120) / 120) * 1_000) < 1e-9);
+    console.log("PASS: engine portfolio uses target entry/exit times and blocks same-bar re-entry");
+}
+
 async function testIntegrationReportContainsPnlLines(): Promise<void> {
     const pair1 = makePair("AAA", "XXX", [makeTrade("long", T0 + 1000, T0 + 3000)]);
     const pair2 = makePair("BBB", "YYY", [makeTrade("long", T0 + 1000, T0 + 3000)]);
@@ -243,6 +316,7 @@ async function testIntegrationReportContainsPnlLines(): Promise<void> {
     assert.match(report, /TOP_MEAN_PNL/);
     assert.match(report, /RANDOM_PNL/);
     assert.match(report, /TOP_MEAN_HEDGE_PNL/);
+    assert.match(report, /TOP_MEAN_1K_PORTFOLIO/);
     // RANDOM_HEDGE_PNL was removed from the report (control was ill-defined:
     // sharpe in the -27 to -55 range with 0% winRate was a numerical artifact,
     // not a usable baseline).
@@ -260,6 +334,13 @@ async function testIntegrationReportContainsPnlLines(): Promise<void> {
     // The misleading absolute fields must NOT appear in the rendered line.
     assert.doesNotMatch(topMeanPnlLine!, /\btotal=/);
     assert.doesNotMatch(topMeanPnlLine!, /\bmaxDD=/);
+    const portfolioLine = result.reportLines.find((l) => l.startsWith("TOP_MEAN_1K_PORTFOLIO"));
+    assert.ok(portfolioLine, "TOP_MEAN_1K_PORTFOLIO line present");
+    assert.match(portfolioLine!, /\bpnl=/);
+    assert.match(portfolioLine!, /\brealizedMaxDD=/);
+    assert.match(portfolioLine!, /\bpeakCapital=/);
+    assert.match(portfolioLine!, /\bskippedTie=/);
+    assert.match(portfolioLine!, /\bskippedActive=/);
     console.log("PASS: report carries TOP_MEAN_PNL + RANDOM_PNL with comparable fields (no total/maxDD)");
 }
 
@@ -296,7 +377,10 @@ async function main(): Promise<void> {
     testMaxDrawdownChronological();
     testMaxDrawdownNonNegative();
     testDeterminism();
+    testTopMeanPortfolioSkipsTiesAndSameAssetOverlap();
+    testTopMeanPortfolioSameTimestampUsesPeakCapital();
     await testIntegrationPnlPopulatedAndMatchesHelper();
+    await testIntegrationPortfolioUsesTargetTimesAndBlocksReentry();
     await testIntegrationReportContainsPnlLines();
     await testIntegrationNoEventsStillHasPnlField();
     console.log("PASS: batch-open-score-usd-selector-pnl.spec.ts");

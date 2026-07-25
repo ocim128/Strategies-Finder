@@ -88,6 +88,37 @@ export interface SelectorPnlSummary {
     maxDrawdown: number | null;
 }
 
+export interface TopMeanPortfolioOpportunity {
+    asset: string;
+    decisionTime: number;
+    entryTime: number;
+    exitTime: number;
+    netReturn: number;
+    tied: boolean;
+}
+
+/**
+ * Fixed-$1,000 TOP_MEAN portfolio simulation.
+ *
+ * Drawdown is calculated from realized P&L at exit timestamps. `peakCapital`
+ * is the maximum concurrent accepted positions multiplied by `notionalPerTrade`;
+ * no arbitrary starting bankroll or global position cap is assumed.
+ */
+export interface TopMeanPortfolioSummary {
+    notionalPerTrade: number;
+    eligibleSignals: number;
+    trades: number;
+    skippedTies: number;
+    skippedActiveAsset: number;
+    netPnl: number | null;
+    averagePnl: number | null;
+    winRate: number | null;
+    maxRealizedDrawdown: number | null;
+    peakConcurrentPositions: number;
+    peakCapital: number;
+    returnOnPeakCapital: number | null;
+}
+
 export interface DegreeSummary {
     min: number;
     median: number;
@@ -249,6 +280,8 @@ export interface OpenScoreUsdReplayResult {
             topMean: SelectorPnlSummary;
             random: SelectorPnlSummary;
             topMeanHedge: SelectorPnlSummary;
+            /** Fixed-$1,000 TOP_MEAN trades, skipping ties and same-asset overlap. */
+            topMeanPortfolio: TopMeanPortfolioSummary;
             /**
              * ACCELERATING overlapping-basket PNL: equal 1-unit notional on
              * every ACCELERATING-eligible event's selected asset. Non-compounding.
@@ -390,6 +423,94 @@ export function computeSelectorPnl(
         sharpe: finiteOrNull(stdDev > 1e-12 ? mean / stdDev : 0),
         winRate: finiteOrNull(wins / points.length),
         maxDrawdown: finiteOrNull(maxDrawdown),
+    };
+}
+
+export function simulateTopMeanPortfolio(
+    opportunities: readonly TopMeanPortfolioOpportunity[],
+): TopMeanPortfolioSummary {
+    const notional = 1_000;
+    const ordered = opportunities
+        .map((opportunity, index) => ({ opportunity, index }))
+        .filter(({ opportunity }) =>
+            Number.isFinite(opportunity.decisionTime)
+            && Number.isFinite(opportunity.entryTime)
+            && Number.isFinite(opportunity.exitTime)
+            && opportunity.exitTime >= opportunity.entryTime
+            && Number.isFinite(opportunity.netReturn))
+        .sort((a, b) =>
+            a.opportunity.decisionTime - b.opportunity.decisionTime
+            || a.index - b.index);
+
+    const activeUntilByAsset = new Map<string, number>();
+    const accepted: Array<TopMeanPortfolioOpportunity & { pnl: number; index: number }> = [];
+    let skippedTies = 0;
+    let skippedActiveAsset = 0;
+
+    for (const { opportunity, index } of ordered) {
+        if (opportunity.tied) {
+            skippedTies += 1;
+            continue;
+        }
+        const activeUntil = activeUntilByAsset.get(opportunity.asset);
+        // Exit occurs at the bar close. A new entry at that same bar's open
+        // still overlaps, so it is accepted only when the prior exit is earlier.
+        if (activeUntil !== undefined && activeUntil >= opportunity.entryTime) {
+            skippedActiveAsset += 1;
+            continue;
+        }
+        activeUntilByAsset.set(opportunity.asset, opportunity.exitTime);
+        accepted.push({ ...opportunity, pnl: opportunity.netReturn * notional, index });
+    }
+
+    const capitalEvents: Array<{ time: number; delta: number; index: number }> = [];
+    for (const trade of accepted) {
+        capitalEvents.push({ time: trade.entryTime, delta: 1, index: trade.index });
+        capitalEvents.push({ time: trade.exitTime, delta: -1, index: trade.index });
+    }
+    capitalEvents.sort((a, b) =>
+        a.time - b.time
+        // An exit is at the close while an entry is at the open, so entries at
+        // the same timestamp consume capital before close-time exits release it.
+        || b.delta - a.delta
+        || a.index - b.index);
+    let concurrent = 0;
+    let peakConcurrentPositions = 0;
+    for (const event of capitalEvents) {
+        concurrent += event.delta;
+        if (concurrent > peakConcurrentPositions) peakConcurrentPositions = concurrent;
+    }
+
+    const realized = [...accepted].sort((a, b) => a.exitTime - b.exitTime || a.index - b.index);
+    let netPnl = 0;
+    let wins = 0;
+    let curve = 0;
+    let peak = 0;
+    let maxRealizedDrawdown = 0;
+    for (const trade of realized) {
+        netPnl += trade.pnl;
+        if (trade.pnl > 0) wins += 1;
+        curve += trade.pnl;
+        if (curve > peak) peak = curve;
+        const drawdown = peak - curve;
+        if (drawdown > maxRealizedDrawdown) maxRealizedDrawdown = drawdown;
+    }
+
+    const trades = accepted.length;
+    const peakCapital = peakConcurrentPositions * notional;
+    return {
+        notionalPerTrade: notional,
+        eligibleSignals: ordered.length,
+        trades,
+        skippedTies,
+        skippedActiveAsset,
+        netPnl: trades > 0 ? finiteOrNull(netPnl) : null,
+        averagePnl: trades > 0 ? finiteOrNull(netPnl / trades) : null,
+        winRate: trades > 0 ? finiteOrNull(wins / trades) : null,
+        maxRealizedDrawdown: trades > 0 ? finiteOrNull(maxRealizedDrawdown) : null,
+        peakConcurrentPositions,
+        peakCapital,
+        returnOnPeakCapital: peakCapital > 0 ? finiteOrNull(netPnl / peakCapital) : null,
     };
 }
 
@@ -906,7 +1027,12 @@ export async function runOpenScoreUsdReplay(
     // --- Phase 4: evaluate USD outcomes per target (load -> consume -> free) -
     // Per event-view, per horizon: net return for each candidate assetIndex.
     // Stored sparsely: only eligible-candidate assets are queried.
-    const returnsByView: Array<Map<number, { long: number[]; short: number[] }> | null> = new Array(views.length).fill(null);
+    const returnsByView: Array<Map<number, {
+        long: number[];
+        short: number[];
+        entryTimes: number[];
+        exitTimes: number[];
+    }> | null> = new Array(views.length).fill(null);
     const missingAssets = new Set<number>();
     const censoredEvents = new Set<number>();
     const noDataEvents = new Set<number>();
@@ -933,16 +1059,28 @@ export async function runOpenScoreUsdReplay(
             if (!perAsset) { perAsset = new Map(); returnsByView[viewIdx] = perAsset; }
             const longReturns: number[] = [];
             const shortReturns: number[] = [];
+            const entryTimes: number[] = [];
+            const exitTimes: number[] = [];
             for (const h of horizons) {
                 const exitBar = entryBar + h - 1; // h bars forward, close of that bar
-                if (exitBar >= target.data.length) { longReturns.push(Number.NaN); shortReturns.push(Number.NaN); continue; }
+                if (exitBar >= target.data.length) {
+                    longReturns.push(Number.NaN);
+                    shortReturns.push(Number.NaN);
+                    entryTimes.push(Number.NaN);
+                    exitTimes.push(Number.NaN);
+                    continue;
+                }
                 const rawOpen = target.data[entryBar]!.open;
                 const exitClose = target.data[exitBar]!.close;
                 if (!Number.isFinite(rawOpen) || rawOpen <= 0 || !Number.isFinite(exitClose) || exitClose <= 0) {
                     longReturns.push(Number.NaN);
                     shortReturns.push(Number.NaN);
+                    entryTimes.push(Number.NaN);
+                    exitTimes.push(Number.NaN);
                     continue;
                 }
+                entryTimes.push(times[entryBar] ?? Number.NaN);
+                exitTimes.push(times[exitBar] ?? Number.NaN);
             // Long USD trade: buy at next bar open (slippage up), sell at
             // horizon close (slippage down), round-trip commission. Commission
             // is applied canonically (matches position-stats.ts): entryValue*rate
@@ -960,7 +1098,7 @@ export async function runOpenScoreUsdReplay(
                 const shortReturn = (shortEntryPrice - shortExitPrice - shortFees) / shortEntryPrice;
                 shortReturns.push(Number.isFinite(shortReturn) ? shortReturn : Number.NaN);
             }
-            perAsset.set(aIdx, { long: longReturns, short: shortReturns });
+            perAsset.set(aIdx, { long: longReturns, short: shortReturns, entryTimes, exitTimes });
             if (longReturns.some((r) => !Number.isFinite(r))) censoredEvents.add(viewIdx);
         }
         onPhase("outcomes", `evaluated ${target.asset} (${targetsSeen}/${totalTargets})`, targetsSeen, totalTargets);
@@ -990,6 +1128,7 @@ export async function runOpenScoreUsdReplay(
         const topMean = createSeries();
         const topMeanVsRank2 = createSeries();
         const topMeanHedge = createSeries();
+        const topMeanPortfolioOpportunities: TopMeanPortfolioOpportunity[] = [];
         const maxActiveReversion = createSeries();
         const bottomMean = createSeries();
         const maxActive = createSeries();
@@ -1138,6 +1277,15 @@ export async function runOpenScoreUsdReplay(
             topMeanHedge.returns.push(topMeanReturn + rank2ShortReturn);
             topMeanHedge.times.push(view.timeSec);
             topMeanHedge.assets.push(assetNames[view.topMean]!);
+            const topMeanOutcome = perAsset.get(view.topMean)!;
+            topMeanPortfolioOpportunities.push({
+                asset: assetNames[view.topMean]!,
+                decisionTime: view.timeSec,
+                entryTime: topMeanOutcome.entryTimes[hIdx]!,
+                exitTime: topMeanOutcome.exitTimes[hIdx]!,
+                netReturn: topMeanReturn,
+                tied: view.ties.MEAN === 1,
+            });
             // Accumulate tie counts.
             (Object.keys(view.ties) as Array<SelectorName>).forEach((k) => {
                 tieCounts[k] += view.ties[k];
@@ -1478,6 +1626,7 @@ export async function runOpenScoreUsdReplay(
         }
         const randomPnl = computeSelectorPnl(randomPnlReturns, topMean.times);
         const topMeanHedgePnl = computeSelectorPnl(topMeanHedge.returns, topMeanHedge.times);
+        const topMeanPortfolio = simulateTopMeanPortfolio(topMeanPortfolioOpportunities);
         const acceleratingComparison = buildComparison(accelerating.deltas, accelerating.returns, accelerating.times);
         const acceleratingPnl = computeSelectorPnl(accelerating.returns, accelerating.times);
         const acceleratingRandomPnl = computeSelectorPnl(acceleratingRandom.returns, acceleratingRandom.times);
@@ -1523,6 +1672,7 @@ export async function runOpenScoreUsdReplay(
                 topMean: topMeanPnl,
                 random: randomPnl,
                 topMeanHedge: topMeanHedgePnl,
+                topMeanPortfolio,
                 accelerating: acceleratingPnl,
                 acceleratingRandom: acceleratingRandomPnl,
             },
@@ -1601,6 +1751,7 @@ export async function runOpenScoreUsdReplay(
     }
     warnings.push("Stock/marked-leg datasets may carry split/corporate-action discontinuities; verify adjustment before treating this as a tradeable verdict.");
     warnings.push("P&L experiments use equal 1-unit event notional; overlapping entries are summed without compounding and are not live account returns.");
+    warnings.push("TOP_MEAN_1K_PORTFOLIO uses fixed $1,000 entries, skips TOP_MEAN ties and same-asset overlap, and reports realized-only drawdown; no global bankroll cap or mark-to-market equity is assumed.");
 
     const complete = omittedPairs === 0 && omittedAssets === 0;
     const staticDegrees = assetNames.map((n) => staticDegree.get(n) ?? 0);
@@ -1760,6 +1911,9 @@ function splitIntoBlocks(values: readonly number[], times: readonly number[], bl
 
 const fmtPct = (x: number | null): string => (x === null || !Number.isFinite(x) ? "n/a" : `${x >= 0 ? "+" : ""}${(x * 100).toFixed(2)}%`);
 const fmtNum = (x: number | null): string => (x === null || !Number.isFinite(x) ? "n/a" : x.toFixed(2));
+const fmtUsd = (x: number | null): string => (x === null || !Number.isFinite(x)
+    ? "n/a"
+    : `${x < 0 ? "-" : ""}$${Math.abs(x).toFixed(2)}`);
 
 function buildReportLines(args: {
     pairs: number; assets: number; complete: boolean; omittedPairs: number; omittedAssets: number;
@@ -1781,11 +1935,18 @@ function buildReportLines(args: {
         return `${label.padEnd(20)} trades=${summary.trades} avg/trade=${fmtPct(average)} ` +
             `sharpe=${fmtNum(summary.sharpe)} winRate=${summary.winRate === null ? "n/a" : (summary.winRate * 100).toFixed(1) + "%"}`;
     };
+    const portfolioLine = (summary: TopMeanPortfolioSummary): string =>
+        `TOP_MEAN_1K_PORTFOLIO trades=${summary.trades}/${summary.eligibleSignals} ` +
+        `pnl=${fmtUsd(summary.netPnl)} avg=${fmtUsd(summary.averagePnl)} ` +
+        `winRate=${summary.winRate === null ? "n/a" : (summary.winRate * 100).toFixed(1) + "%"} ` +
+        `realizedMaxDD=${fmtUsd(summary.maxRealizedDrawdown)} peakPos=${summary.peakConcurrentPositions} ` +
+        `peakCapital=${fmtUsd(summary.peakCapital)} return/peak=${fmtPct(summary.returnOnPeakCapital)} ` +
+        `skippedTie=${summary.skippedTies} skippedActive=${summary.skippedActiveAsset}`;
     lines.push(`OPEN_SCORE USD | ${status} | pairs=${args.pairs} assets=${args.assets} events=${args.totalEvents} comparable=${args.candidateEvents} eligible=${args.eligibleEvents}`);
     lines.push(`config | interval=${args.interval ?? "n/a"} window=${args.sampleFromSec === null ? "start" : new Date(args.sampleFromSec * 1000).toISOString().slice(0, 10)}..${args.sampleToSec === null ? "end" : new Date(args.sampleToSec * 1000).toISOString().slice(0, 10)} horizons=[${args.horizonsList.join(",")}] slippageRate=${args.slippageRate} commissionRate=${args.commissionRate}`);
     lines.push(`retained pair degree min/median/max = ${args.degree.min}/${fmtNum(args.degree.median)}/${args.degree.max}`);
     lines.push("controls | TOP_MEAN=raw/activePairs MAX_ACTIVE=most open pairs MAX_ACTIVE_REVERSION=most open pairs among negative-score assets, shorted vs USD MAX_SUBMITTED=most submitted pairs MAX_RETAINED=most loaded artifacts");
-    lines.push("pnl model | OVERLAP=long TOP_MEAN vs random positive, every eligible event; HEDGE=long rank1 + short rank2; ACCELERATING=positive entry flow per active pair, exit-only changes excluded; overlapping PNL is non-compounding");
+    lines.push("pnl model | OVERLAP=long TOP_MEAN vs random positive, every eligible event; HEDGE=long rank1 + short rank2; TOP_MEAN_1K=$1000/trade, ties skipped, one open trade per asset; ACCELERATING=positive entry flow per active pair, exit-only changes excluded");
     for (const h of args.horizons) {
         const coverageRate = args.candidateEvents > 0 ? h.topRaw.events / args.candidateEvents : 0;
         const coverageStatus = h.topRaw.events === 0
@@ -1801,6 +1962,7 @@ function buildReportLines(args: {
         lines.push(pnlLine("TOP_MEAN_PNL", h.pnl.topMean));
         lines.push(pnlLine("RANDOM_PNL", h.pnl.random));
         lines.push(pnlLine("TOP_MEAN_HEDGE_PNL", h.pnl.topMeanHedge));
+        lines.push(portfolioLine(h.pnl.topMeanPortfolio));
         // ACCELERATING arm: comparison + overlapping PNL + matching random
         // control. All three are unconditional so they ride both Copy paths.
         lines.push(comparisonLine("ACCELERATING", h.accelerating));
