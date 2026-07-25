@@ -77,78 +77,76 @@ export interface CurrentTopMeanStats {
     durationMs: number;
 }
 
-export type CurrentTopMeanActionCode =
-    | "ENTER_NEXT_OPEN"
-    | "WAIT_FOR_FRESH_DECISION"
+export type CurrentTopMeanDecisionStatus =
+    | "VERIFY_ENTRY_WINDOW"
     | "NO_TRADE";
 
-export type CurrentTopMeanActionReason =
+export type CurrentTopMeanDecisionReason =
     | CurrentTopMeanReason
-    | "fresh_unique_winner"
-    | "no_fresh_pair_entry";
+    | "latest_decision_event"
+    | "no_decision_event";
 
-export interface CurrentTopMeanAction {
-    action: CurrentTopMeanActionCode;
-    reason: CurrentTopMeanActionReason;
-    /** Unique current winner when one exists; null for ties/empty snapshots. */
+export interface CurrentTopMeanDecision {
+    /**
+     * This is deliberately not an order instruction. The historical replay
+     * provides a decision event, but the current snapshot does not know whether
+     * the target asset's next eligible bar has already opened.
+     */
+    status: CurrentTopMeanDecisionStatus;
+    reason: CurrentTopMeanDecisionReason;
+    /** Unique TOP_MEAN winner at the latest reconstructed entry event. */
     asset: string | null;
-    /** Latest common closed candle used for the decision. */
-    signalAsOf: number | null;
-    /** True only when at least one pair trade entered exactly at `signalAsOf`. */
-    freshDecision: boolean;
-    /** Number of endpoint-aligned pair artifacts containing a fresh entry. */
-    freshEntryPairs: number;
-    notionalUsd: 1000;
-    holdBars: 24;
-    entryRule: "next_bar_open";
-    exitRule: "24th_bar_close";
-    requiresNoActiveAssetPosition: true;
+    /** Latest pair-entry event used by the historical replay. */
+    decisionTime: number | null;
+    /** Candidates and winners at that event, after all same-time deltas. */
+    candidates: CurrentTopMeanCandidate[];
+    winners: CurrentTopMeanCandidate[];
+    /** Number of pair entries at the latest event timestamp. */
+    entryPairs: number;
+    entryRule: "first_target_bar_strictly_after_decision";
+    /** Research scenario metadata, not a live execution guarantee. */
+    researchNotionalUsd: 1000;
+    researchHoldBars: 24;
+    researchExitRule: "24th_bar_close";
+    verification: "manual_entry_window_check";
 }
 
 export interface CurrentTopMeanResult {
     snapshot: CurrentTopMeanSnapshot;
     stats: CurrentTopMeanStats;
-    /** Optional only for backward compatibility with persisted pre-action runs. */
-    action?: CurrentTopMeanAction;
+    /** Optional for backward compatibility with persisted pre-decision runs. */
+    decision?: CurrentTopMeanDecision;
 }
 
-export function buildCurrentTopMeanAction(
-    snapshot: CurrentTopMeanSnapshot,
-    freshEntryPairs: number,
-): CurrentTopMeanAction {
-    const uniqueWinner = snapshot.reason === "ok" && snapshot.winners.length === 1
-        ? snapshot.winners[0]!
-        : null;
-    const freshDecision = freshEntryPairs > 0 && snapshot.asOf !== null;
+function buildCurrentTopMeanDecision(
+    decisionTime: number | null,
+    candidates: CurrentTopMeanCandidate[],
+    entryPairs: number,
+): CurrentTopMeanDecision | undefined {
+    if (decisionTime === null) return undefined;
 
-    if (!uniqueWinner) {
-        return {
-            action: "NO_TRADE",
-            reason: snapshot.reason,
-            asset: null,
-            signalAsOf: snapshot.asOf,
-            freshDecision,
-            freshEntryPairs,
-            notionalUsd: 1000,
-            holdBars: 24,
-            entryRule: "next_bar_open",
-            exitRule: "24th_bar_close",
-            requiresNoActiveAssetPosition: true,
-        };
-    }
+    const winners = candidates.length > 0
+        ? candidates.filter((candidate) => candidate.mean === candidates[0]!.mean)
+        : [];
+    const reason: CurrentTopMeanDecisionReason = candidates.length === 0
+        ? "no_positive_candidates"
+        : winners.length > 1
+            ? "tied"
+            : "latest_decision_event";
 
     return {
-        action: freshDecision ? "ENTER_NEXT_OPEN" : "WAIT_FOR_FRESH_DECISION",
-        reason: freshDecision ? "fresh_unique_winner" : "no_fresh_pair_entry",
-        asset: uniqueWinner.asset,
-        signalAsOf: snapshot.asOf,
-        freshDecision,
-        freshEntryPairs,
-        notionalUsd: 1000,
-        holdBars: 24,
-        entryRule: "next_bar_open",
-        exitRule: "24th_bar_close",
-        requiresNoActiveAssetPosition: true,
+        status: winners.length === 1 ? "VERIFY_ENTRY_WINDOW" : "NO_TRADE",
+        reason,
+        asset: winners.length === 1 ? winners[0]!.asset : null,
+        decisionTime,
+        candidates,
+        winners,
+        entryPairs,
+        entryRule: "first_target_bar_strictly_after_decision",
+        researchNotionalUsd: 1000,
+        researchHoldBars: 24,
+        researchExitRule: "24th_bar_close",
+        verification: "manual_entry_window_check",
     };
 }
 
@@ -163,7 +161,7 @@ function emptyResult(
     stats: Partial<CurrentTopMeanStats> = {},
     asOf: number | null = null,
     snapshotArtifacts: number = 0,
-    freshEntryPairs: number = 0,
+    decision?: CurrentTopMeanDecision,
 ): CurrentTopMeanResult {
     const snapshot: CurrentTopMeanSnapshot = {
         asOf,
@@ -185,7 +183,7 @@ function emptyResult(
             tieCount: stats.tieCount ?? 0,
             durationMs: stats.durationMs ?? 0,
         },
-        action: buildCurrentTopMeanAction(snapshot, freshEntryPairs),
+        ...(decision ? { decision } : {}),
     };
 }
 
@@ -310,10 +308,102 @@ export async function resolveCommonEndpoint(
     };
 }
 
+function resolvePairAssets(artifact: CompactPairArtifact): {
+    baseAsset: string;
+    quoteAsset: string;
+} {
+    const parsed = parsePortfolioSyntheticPairSymbol(artifact.symbol);
+    return {
+        baseAsset: parsed?.baseAsset ?? artifact.baseAsset,
+        quoteAsset: parsed?.quoteAsset ?? artifact.quoteAsset,
+    };
+}
+
+function buildCandidates(
+    scoreByAsset: Map<string, number>,
+    activePairsByAsset: Map<string, number>,
+): CurrentTopMeanCandidate[] {
+    const candidates: CurrentTopMeanCandidate[] = [];
+    for (const [asset, score] of scoreByAsset) {
+        if (score <= 0) continue;
+        const activePairs = activePairsByAsset.get(asset) ?? 0;
+        if (activePairs <= 0) continue;
+        candidates.push({ asset, score, activePairs, mean: score / activePairs });
+    }
+    candidates.sort((a, b) => b.mean - a.mean || b.score - a.score || a.asset.localeCompare(b.asset));
+    return candidates;
+}
+
+function addPairPosition(
+    scoreByAsset: Map<string, number>,
+    activePairsByAsset: Map<string, number>,
+    baseAsset: string,
+    quoteAsset: string,
+    sign: 1 | -1,
+): void {
+    if (!baseAsset || !quoteAsset) return;
+    for (const asset of [baseAsset, quoteAsset]) {
+        activePairsByAsset.set(asset, (activePairsByAsset.get(asset) ?? 0) + 1);
+    }
+    scoreByAsset.set(baseAsset, (scoreByAsset.get(baseAsset) ?? 0) + sign);
+    scoreByAsset.set(quoteAsset, (scoreByAsset.get(quoteAsset) ?? 0) - sign);
+}
+
+function addArtifactPositionsAtTime(
+    artifact: CompactPairArtifact,
+    timeSec: number,
+    scoreByAsset: Map<string, number>,
+    activePairsByAsset: Map<string, number>,
+): void {
+    const { baseAsset, quoteAsset } = resolvePairAssets(artifact);
+    if (!baseAsset || !quoteAsset || !Array.isArray(artifact.trades)) return;
+
+    for (const trade of artifact.trades) {
+        const entrySec = parseTimeToUnixSeconds(trade.entryTime);
+        if (entrySec === null || entrySec > timeSec) continue;
+        const exitSec = parseTimeToUnixSeconds(trade.exitTime);
+        const isOpenAtTime = trade.exitReason === "end_of_data"
+            || exitSec === null
+            || exitSec > timeSec;
+        if (!isOpenAtTime) continue;
+        if (trade.type !== "long" && trade.type !== "short") continue;
+        const sign: 1 | -1 = trade.type === "long" ? 1 : -1;
+        addPairPosition(scoreByAsset, activePairsByAsset, baseAsset, quoteAsset, sign);
+    }
+}
+
+async function resolveLatestDecisionEvent(
+    artifacts: AsyncIterable<CompactPairArtifact>,
+    commonEndpoint: number,
+    shouldStop?: () => boolean,
+): Promise<{ decisionTime: number | null; entryPairs: number }> {
+    let decisionTime: number | null = null;
+    let entryPairs = 0;
+
+    for await (const artifact of artifacts) {
+        if (shouldStop?.()) return { decisionTime: null, entryPairs: 0 };
+        if (artifact?.dataEndTime !== commonEndpoint || !Array.isArray(artifact.trades)) continue;
+        for (const trade of artifact.trades) {
+            if (trade.type !== "long" && trade.type !== "short") continue;
+            const entrySec = parseTimeToUnixSeconds(trade.entryTime);
+            if (entrySec === null) continue;
+            if (decisionTime === null || entrySec > decisionTime) {
+                decisionTime = entrySec;
+                entryPairs = 1;
+            } else if (entrySec === decisionTime) {
+                entryPairs += 1;
+            }
+        }
+    }
+
+    return { decisionTime, entryPairs };
+}
+
 /**
  * Reduce a stream of compact artifacts into the current TOP_MEAN snapshot.
  *
- * The caller streams the SAME artifacts twice (or restarts the async iterable):
+ * The caller restarts the async iterable for the endpoint, latest-event, and
+ * vote passes:
  * once via `resolveCommonEndpoint` to pick the common endpoint, then again
  * here for the vote. This keeps peak memory bounded to maps/counters — the
  * 124,000-pair universe never needs to be held in memory.
@@ -327,6 +417,10 @@ export async function reduceCurrentTopMeanSnapshot(
          * endpoint (used when callers want a single-endpoint stream).
          */
         commonEndpoint?: number | null;
+        /** Latest pair-entry event timestamp from the replay-aligned pass. */
+        latestDecisionTime?: number | null;
+        /** Number of pair entries at `latestDecisionTime`. */
+        latestDecisionEntryPairs?: number;
         shouldStop?: () => boolean;
     } = {},
 ): Promise<CurrentTopMeanResult> {
@@ -342,7 +436,8 @@ export async function reduceCurrentTopMeanSnapshot(
     let staleEndpoints = 0;
     let missingEndpoints = 0;
     let malformedArtifacts = 0;
-    let freshEntryPairs = 0;
+    const decisionScoreByAsset = new Map<string, number>();
+    const decisionActivePairsByAsset = new Map<string, number>();
 
     for await (const artifact of artifacts) {
         if (options.shouldStop?.()) {
@@ -370,14 +465,14 @@ export async function reduceCurrentTopMeanSnapshot(
         }
         // Passed the endpoint filter → eligible to contribute to the vote.
         contributingArtifacts += 1;
-        if (
-            endpoint !== null
-            && Array.isArray(artifact.trades)
-            && artifact.trades.some((trade) => parseTimeToUnixSeconds(trade.entryTime) === endpoint)
-        ) {
-            freshEntryPairs += 1;
+        if (options.latestDecisionTime !== undefined && options.latestDecisionTime !== null) {
+            addArtifactPositionsAtTime(
+                artifact,
+                options.latestDecisionTime,
+                decisionScoreByAsset,
+                decisionActivePairsByAsset,
+            );
         }
-
         const contribution = resolveOpenPairContribution(artifact);
         if (!contribution) continue;
 
@@ -416,19 +511,16 @@ export async function reduceCurrentTopMeanSnapshot(
             },
             asOf,
             contributingArtifacts,
-            freshEntryPairs,
+            buildCurrentTopMeanDecision(
+                options.latestDecisionTime ?? null,
+                buildCandidates(decisionScoreByAsset, decisionActivePairsByAsset),
+                options.latestDecisionEntryPairs ?? 0,
+            ),
         );
     }
 
     // Candidate = rawScore > 0 AND activePairs > 0. mean = score / activePairs.
-    const candidates: CurrentTopMeanCandidate[] = [];
-    for (const [asset, score] of scoreByAsset) {
-        if (score <= 0) continue;
-        const activePairs = activePairsByAsset.get(asset) ?? 0;
-        if (activePairs <= 0) continue;
-        candidates.push({ asset, score, activePairs, mean: score / activePairs });
-    }
-    candidates.sort((a, b) => b.mean - a.mean || b.score - a.score || a.asset.localeCompare(b.asset));
+    const candidates = buildCandidates(scoreByAsset, activePairsByAsset);
 
     if (candidates.length === 0) {
         return emptyResult(
@@ -444,7 +536,11 @@ export async function reduceCurrentTopMeanSnapshot(
             },
             filterByEndpoint ? endpoint : null,
             contributingArtifacts,
-            freshEntryPairs,
+            buildCurrentTopMeanDecision(
+                options.latestDecisionTime ?? null,
+                buildCandidates(decisionScoreByAsset, decisionActivePairsByAsset),
+                options.latestDecisionEntryPairs ?? 0,
+            ),
         );
     }
 
@@ -477,13 +573,17 @@ export async function reduceCurrentTopMeanSnapshot(
             tieCount,
             durationMs: Date.now() - startedAt,
         },
-        action: buildCurrentTopMeanAction(snapshot, freshEntryPairs),
+        decision: buildCurrentTopMeanDecision(
+            options.latestDecisionTime ?? null,
+            buildCandidates(decisionScoreByAsset, decisionActivePairsByAsset),
+            options.latestDecisionEntryPairs ?? 0,
+        ),
     };
 }
 
 /**
- * One-shot convenience: stream artifacts once for the endpoint, then again
- * for the vote. Suitable for the coordinator path where the async iterable
+ * One-shot convenience: stream artifacts through bounded endpoint,
+ * latest-event, and vote passes. Suitable for the coordinator path where the async iterable
  * can be re-created cheaply from on-disk shards.
  *
  * If the endpoint pass finds no usable common endpoint, returns a no-selection
@@ -514,8 +614,15 @@ export async function computeCurrentTopMeanSnapshot(
         });
     }
 
+    const latestDecision = await resolveLatestDecisionEvent(
+        artifactIterableFactory(),
+        endpoint,
+        options.shouldStop,
+    );
     const votePass = await reduceCurrentTopMeanSnapshot(artifactIterableFactory(), {
         commonEndpoint: endpoint,
+        latestDecisionTime: latestDecision.decisionTime,
+        latestDecisionEntryPairs: latestDecision.entryPairs,
         shouldStop: options.shouldStop,
     });
     // Merge missing/malformed counters observed during the endpoint pass so
@@ -527,6 +634,6 @@ export async function computeCurrentTopMeanSnapshot(
             missingEndpoints: votePass.stats.missingEndpoints + endpointPass.missing,
             malformedArtifacts: votePass.stats.malformedArtifacts + endpointPass.malformed,
         },
-        action: votePass.action,
+        decision: votePass.decision,
     };
 }

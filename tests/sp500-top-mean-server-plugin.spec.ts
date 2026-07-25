@@ -94,7 +94,7 @@ async function testSnapshotDerivedFromArtifacts(): Promise<void> {
     saveManifest(manifest, baseDir);
 
     // Same path the coordinator uses in run(): iterate raw compact artifacts,
-    // drive the two-pass reducer.
+    // drive the bounded multi-pass reducer.
     const result = await computeCurrentTopMeanSnapshot(
         () => iterateRunRawCompactArtifacts(runId, baseDir),
     );
@@ -102,8 +102,8 @@ async function testSnapshotDerivedFromArtifacts(): Promise<void> {
     assert.equal(result.snapshot.asOf, endpoint);
     assert.equal(result.snapshot.openPositions, 3);
     assert.equal(result.snapshot.reason, "tied");
-    assert.equal(result.action?.action, "NO_TRADE");
-    assert.equal(result.action?.reason, "tied");
+    assert.equal(result.decision?.status, "NO_TRADE");
+    assert.equal(result.decision?.reason, "tied");
     assert.deepEqual(
         result.snapshot.winners.map((w) => w.asset).sort(),
         ["AAA", "BBB"],
@@ -355,7 +355,18 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
         assert.deepEqual(persistedManifest.engineUsage, { rust: 0, typescript: 0 });
         const persistedCurrent = onDisk.currentSnapshot as {
             snapshot: { asOf: number; winners: Array<{ asset: string }> };
-            action?: { action: string; reason: string };
+            decision?: {
+                status: string;
+                reason: string;
+                asset: string | null;
+                decisionTime: number | null;
+                entryPairs: number;
+                entryRule: string;
+                researchNotionalUsd: number;
+                researchHoldBars: number;
+                researchExitRule: string;
+                verification: string;
+            };
         };
         const snap = persistedCurrent.snapshot;
         assert.equal(snap.asOf, endpoint);
@@ -366,18 +377,27 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
             snap.winners.map((w: { asset: string }) => w.asset).sort(),
             ["AAPL", "MSFT", "NVDA"],
         );
-        assert.deepEqual(persistedCurrent.action, {
-            action: "NO_TRADE",
+        assert.deepEqual(persistedCurrent.decision, {
+            status: "NO_TRADE",
             reason: "tied",
             asset: null,
-            signalAsOf: endpoint,
-            freshDecision: false,
-            freshEntryPairs: 0,
-            notionalUsd: 1000,
-            holdBars: 24,
-            entryRule: "next_bar_open",
-            exitRule: "24th_bar_close",
-            requiresNoActiveAssetPosition: true,
+            decisionTime: 1,
+            candidates: [
+                { asset: "AAPL", score: 2, activePairs: 2, mean: 1 },
+                { asset: "MSFT", score: 2, activePairs: 2, mean: 1 },
+                { asset: "NVDA", score: 2, activePairs: 2, mean: 1 },
+            ],
+            winners: [
+                { asset: "AAPL", score: 2, activePairs: 2, mean: 1 },
+                { asset: "MSFT", score: 2, activePairs: 2, mean: 1 },
+                { asset: "NVDA", score: 2, activePairs: 2, mean: 1 },
+            ],
+            entryPairs: 6,
+            entryRule: "first_target_bar_strictly_after_decision",
+            researchNotionalUsd: 1000,
+            researchHoldBars: 24,
+            researchExitRule: "24th_bar_close",
+            verification: "manual_entry_window_check",
         });
 
         console.log("PASS: run() integrates reducer, emits snapshot, persists before replay (F1+F4)");

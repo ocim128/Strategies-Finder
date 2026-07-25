@@ -2783,23 +2783,22 @@ class BatchBacktestService {
             : "no common endpoint";
         const reason: string = snap?.reason ?? "empty";
         const stats = currentSnapshot.stats;
-        const action = currentSnapshot.action;
+        const decision = currentSnapshot.decision;
 
         let html = `<div style="background: var(--surface-2, #1e222d); border: 1px solid var(--border-color, #2a2e39); border-radius: 6px; padding: 12px; margin-bottom: 16px;">`;
         html += `<div style="font-weight: bold; font-size: 14px; margin-bottom: 8px; color: var(--accent-color, #2962ff);">📍 CURRENT TOP_MEAN — positions open at last closed candle</div>`;
         html += `<div style="font-size: 11px; color: var(--text-dim, #787b86); margin-bottom: 8px;">as-of: ${asOfLabel} | artifacts ${snap?.artifacts ?? 0} | open positions ${snap?.openPositions ?? 0} | candidates ${snap?.candidates?.length ?? 0} | stale ${stats.staleEndpoints ?? 0} | missing ${stats.missingEndpoints ?? 0}</div>`;
 
-        if (action?.action === "ENTER_NEXT_OPEN" && action.asset) {
-            html += `<div style="background: rgba(38, 166, 154, 0.12); border-left: 4px solid #26a69a; padding: 8px 10px; margin-bottom: 10px; font-size: 12px;">`;
-            html += `<strong>ENTER NEXT OPEN:</strong> ${escapeHtml(action.asset)} | $${escapeHtml(action.notionalUsd)} | hold ${escapeHtml(action.holdBars)} bars | exit at ${escapeHtml(action.exitRule.replaceAll("_", " "))} | fresh pair entries ${escapeHtml(action.freshEntryPairs)} | only if no active ${escapeHtml(action.asset)} position`;
-            html += `</div>`;
-        } else if (action?.action === "WAIT_FOR_FRESH_DECISION") {
+        if (decision?.status === "VERIFY_ENTRY_WINDOW" && decision.asset) {
+            const decisionLabel = typeof decision.decisionTime === "number"
+                ? new Date(decision.decisionTime * 1000).toISOString().slice(0, 19).replace("T", " ") + " UTC"
+                : "unknown";
             html += `<div style="background: rgba(255, 193, 7, 0.10); border-left: 4px solid #f0b90b; padding: 8px 10px; margin-bottom: 10px; font-size: 12px;">`;
-            html += `<strong>WAIT:</strong> current winner ${escapeHtml(action.asset ?? "--")} has no fresh pair entry at this endpoint. Do not start a shortened or new 24-bar trade from this snapshot.`;
+            html += `<strong>VERIFY ENTRY WINDOW:</strong> latest TOP_MEAN event selected ${escapeHtml(decision.asset)} at ${escapeHtml(decisionLabel)}. Historical replay enters on the first target-asset bar strictly after that event. Confirm that bar has not opened; if it has, skip the trade. Research case only: $${escapeHtml(decision.researchNotionalUsd)}, ${escapeHtml(decision.researchHoldBars)} bars, exit at ${escapeHtml(decision.researchExitRule.replaceAll("_", " "))}.`;
             html += `</div>`;
         } else {
             html += `<div style="background: rgba(239, 83, 80, 0.10); border-left: 4px solid #ef5350; padding: 8px 10px; margin-bottom: 10px; font-size: 12px;">`;
-            html += `<strong>NO TRADE:</strong> ${escapeHtml(action?.reason ?? "legacy snapshot has no freshness decision; rerun the coordinator")}.`;
+            html += `<strong>NO TRADE:</strong> latest decision event is unavailable, tied, or has no positive candidate.`;
             html += `</div>`;
         }
 
@@ -2858,19 +2857,17 @@ class BatchBacktestService {
             : "no common endpoint";
         const reason: string = snap?.reason ?? "empty";
         const stats: any = currentSnapshot.stats ?? {};
-        const action: any = currentSnapshot.action;
+        const decision: any = currentSnapshot.decision;
 
         const lines: string[] = [];
         lines.push("----------------------------------------------------------------------");
         lines.push("📍 CURRENT TOP_MEAN | positions open at last closed candle");
         lines.push("----------------------------------------------------------------------");
         lines.push(`as-of=${asOfLabel} | artifacts=${snap?.artifacts ?? 0} | openPositions=${snap?.openPositions ?? 0} | candidates=${snap?.candidates?.length ?? 0} | stale=${stats.staleEndpoints ?? 0} | missing=${stats.missingEndpoints ?? 0}`);
-        if (action?.action === "ENTER_NEXT_OPEN" && action.asset) {
-            lines.push(`CURRENT TOP_MEAN ACTION | ENTER_NEXT_OPEN | asset=${action.asset} | signalAsOf=${asOfLabel} | notionalUsd=${action.notionalUsd} | holdBars=${action.holdBars} | exit=${action.exitRule} | freshEntryPairs=${action.freshEntryPairs} | requireNoActiveAssetPosition=true`);
-        } else if (action?.action === "WAIT_FOR_FRESH_DECISION") {
-            lines.push(`CURRENT TOP_MEAN ACTION | WAIT_FOR_FRESH_DECISION | asset=${action.asset ?? "NONE"} | signalAsOf=${asOfLabel} | freshEntryPairs=${action.freshEntryPairs ?? 0} | doNotStartShortenedHold=true`);
+        if (decision?.status === "VERIFY_ENTRY_WINDOW" && decision.asset) {
+            lines.push(`CURRENT TOP_MEAN DECISION | VERIFY_ENTRY_WINDOW | asset=${decision.asset} | decisionTime=${decision.decisionTime ?? "NONE"} | entryRule=${decision.entryRule} | researchNotionalUsd=${decision.researchNotionalUsd} | researchHoldBars=${decision.researchHoldBars} | researchExit=${decision.researchExitRule} | entryPairs=${decision.entryPairs} | verifyTargetBarHasNotOpened=true`);
         } else {
-            lines.push(`CURRENT TOP_MEAN ACTION | NO_TRADE | reason=${action?.reason ?? "legacy_snapshot_without_freshness"} | signalAsOf=${asOfLabel} | freshEntryPairs=${action?.freshEntryPairs ?? 0}`);
+            lines.push(`CURRENT TOP_MEAN DECISION | NO_TRADE | reason=${decision?.reason ?? "legacy_snapshot_without_decision"} | decisionTime=${decision?.decisionTime ?? "NONE"} | verifyTargetBarHasNotOpened=false`);
         }
         if (winners.length === 0) {
             const noPickMsg = reason === "tied"

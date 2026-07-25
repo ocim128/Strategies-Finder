@@ -363,47 +363,40 @@ describe("reduceCurrentTopMeanSnapshot", () => {
         expect(r.stats.tieCount).to.equal(0);
     });
 
-    it("emits ENTER_NEXT_OPEN only for a unique winner with a fresh endpoint entry", async () => {
+    it("reconstructs the latest decision event separately from the closed-candle endpoint", async () => {
         const r = await reduceCurrentTopMeanSnapshot(
             asyncFrom(openPair("AAA+BBB", "long", {
                 dataEndTime: ENDPOINT,
-                entryTime: ENDPOINT,
+                entryTime: ENDPOINT + 14_400,
             })),
             { commonEndpoint: ENDPOINT },
         );
 
-        expect(r.action).to.deep.equal({
-            action: "ENTER_NEXT_OPEN",
-            reason: "fresh_unique_winner",
+        // A direct reducer call has no second pass to discover the latest
+        // decision event. The one-shot coordinator path supplies that pass.
+        expect(r.decision).to.equal(undefined);
+
+        const computed = await computeCurrentTopMeanSnapshot(
+            () => asyncFrom(openPair("AAA+BBB", "long", {
+                dataEndTime: ENDPOINT,
+                entryTime: ENDPOINT + 14_400,
+            })),
+        );
+        expect(computed.decision).to.deep.include({
+            status: "VERIFY_ENTRY_WINDOW",
+            reason: "latest_decision_event",
             asset: "AAA",
-            signalAsOf: ENDPOINT,
-            freshDecision: true,
-            freshEntryPairs: 1,
-            notionalUsd: 1000,
-            holdBars: 24,
-            entryRule: "next_bar_open",
-            exitRule: "24th_bar_close",
-            requiresNoActiveAssetPosition: true,
+            decisionTime: ENDPOINT + 14_400,
+            entryPairs: 1,
+            entryRule: "first_target_bar_strictly_after_decision",
+            researchNotionalUsd: 1000,
+            researchHoldBars: 24,
+            researchExitRule: "24th_bar_close",
+            verification: "manual_entry_window_check",
         });
     });
 
-    it("emits WAIT_FOR_FRESH_DECISION for an old unique-winner snapshot", async () => {
-        const r = await reduceCurrentTopMeanSnapshot(
-            asyncFrom(openPair("AAA+BBB", "long", {
-                dataEndTime: ENDPOINT,
-                entryTime: ENDPOINT - 10_000,
-            })),
-            { commonEndpoint: ENDPOINT },
-        );
-
-        expect(r.action?.action).to.equal("WAIT_FOR_FRESH_DECISION");
-        expect(r.action?.reason).to.equal("no_fresh_pair_entry");
-        expect(r.action?.asset).to.equal("AAA");
-        expect(r.action?.freshDecision).to.equal(false);
-        expect(r.action?.freshEntryPairs).to.equal(0);
-    });
-
-    it("emits NO_TRADE when a fresh decision leaves TOP_MEAN tied", async () => {
+    it("does not claim a live entry when the latest event is tied", async () => {
         const r = await reduceCurrentTopMeanSnapshot(
             asyncFrom(
                 openPair("AAA+P", "long", {
@@ -421,11 +414,48 @@ describe("reduceCurrentTopMeanSnapshot", () => {
         );
 
         expect(r.snapshot.reason).to.equal("tied");
-        expect(r.action?.action).to.equal("NO_TRADE");
-        expect(r.action?.reason).to.equal("tied");
-        expect(r.action?.freshDecision).to.equal(true);
-        expect(r.action?.freshEntryPairs).to.equal(2);
-        expect(r.action?.asset).to.equal(null);
+        expect(r.decision).to.equal(undefined);
+
+        const computed = await computeCurrentTopMeanSnapshot(
+            () => asyncFrom(
+                openPair("AAA+P", "long", {
+                    dataEndTime: ENDPOINT,
+                    entryTime: ENDPOINT + 14_400,
+                }),
+                openPair("BBB+Q", "long", {
+                    dataEndTime: ENDPOINT,
+                    entryTime: ENDPOINT + 14_400,
+                    pairIndex: 1,
+                }),
+            ),
+        );
+        expect(computed.decision?.status).to.equal("NO_TRADE");
+        expect(computed.decision?.reason).to.equal("tied");
+        expect(computed.decision?.asset).to.equal(null);
+    });
+
+    it("keeps the decision-event winner separate from a later exit-only snapshot change", async () => {
+        const first = openPair("AAA+P", "long", {
+            dataEndTime: ENDPOINT,
+            entryTime: 100,
+        });
+        first.trades[0]!.exitTime = 300;
+        first.trades[0]!.exitReason = "signal";
+        const second = openPair("BBB+Q", "long", {
+            dataEndTime: ENDPOINT,
+            entryTime: 200,
+            pairIndex: 1,
+        });
+
+        const computed = await computeCurrentTopMeanSnapshot(() => asyncFrom(first, second));
+
+        // At the latest entry event (200), AAA and BBB tie. After AAA exits at
+        // 300, the current open-position snapshot contains only BBB.
+        expect(computed.snapshot.winners.map((w) => w.asset)).to.deep.equal(["BBB"]);
+        expect(computed.decision?.decisionTime).to.equal(200);
+        expect(computed.decision?.status).to.equal("NO_TRADE");
+        expect(computed.decision?.reason).to.equal("tied");
+        expect(computed.decision?.asset).to.equal(null);
     });
 
     it("handles malformed artifacts without throwing (missing trades)", async () => {
@@ -450,7 +480,7 @@ describe("reduceCurrentTopMeanSnapshot", () => {
     });
 });
 
-describe("computeCurrentTopMeanSnapshot (two-pass)", () => {
+describe("computeCurrentTopMeanSnapshot (bounded multi-pass)", () => {
     it("F3: returns no_common_endpoint on a 50/50 endpoint split", async () => {
         const factory = () => asyncFrom(
             openPair("A+B", "long", { dataEndTime: 100 }),
