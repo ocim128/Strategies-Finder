@@ -11,6 +11,7 @@ describe("Backtest rerun context", () => {
         let rerunCount = 0;
 
         setActiveBacktestRerunContext({
+            source: "backtest",
             label: "Conflict preview",
             rerun: async () => {
                 rerunCount += 1;

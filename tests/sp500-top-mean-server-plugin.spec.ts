@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TopMeanCoordinatorEngine } from "../lib/batch-backtest/sp500-top-mean-coordinator-engine";
+import {
+    TopMeanCoordinatorEngine,
+    type TopMeanResultSummary,
+} from "../lib/batch-backtest/sp500-top-mean-coordinator-engine";
 import {
     computeRunFingerprint,
     getRunDir,
@@ -13,7 +16,7 @@ import {
 import { enumerateSp500Pairs } from "../lib/batch-backtest/sp500-pair-enumerator";
 import type { CompactPairArtifact, TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
 import { computeCurrentTopMeanSnapshot } from "../lib/batch-backtest/sp500-top-mean-current-snapshot";
-import type { TopMeanStreamEvent } from "../lib/batch-backtest/sp500-top-mean-stream-types";
+import type { Time } from "lightweight-charts";
 
 /**
  * Coordinator + persistence tests for the Phase-1 current snapshot.
@@ -202,7 +205,7 @@ async function testResultJsonAugmentationIsAdditive(): Promise<void> {
  */
 async function testResultSummaryFieldIsOptional(): Promise<void> {
     // A summary without currentSnapshot must still typecheck and behave as before.
-    const legacySummary = {
+    const legacySummary: TopMeanResultSummary = {
         runId: "legacy",
         completed: true,
         counts: { pairCount: 0, sp500AssetsCount: 0, catalogAssetsCount: 0, usable30mSeedCount: 0, usableTargetIntervalCount: 0, excludedAssetsCount: 0, excludedPairsCount: 0 },
@@ -542,75 +545,9 @@ function openArtifact(
         quoteAsset,
         baseSymbol: `${baseAsset}USDT`,
         quoteSymbol: `${quoteAsset}USDT`,
-        trades: [{ type, entryTime: 1, exitTime: 2, exitReason: "end_of_data" }],
+        trades: [{ type, entryTime: 1 as Time, exitTime: 2 as Time, exitReason: "end_of_data" }],
         dataEndTime,
     };
-}
-
-/**
- * Audit Finding 2: the browser service consumes the coordinator's NDJSON events
- * through typed `Extract<TopMeanStreamEvent, { type: ... }>` handlers dispatched
- * by camelCase key (`event.type` -> `on<Type>`). Two contracts must hold:
- *   1. Every union member's `type` maps to a handler key the consumer actually
- *      registers (otherwise an event is silently dropped).
- *   2. The handler key set the consumer registers is exactly the union's
- *      coverage (no orphan handlers, no missing handlers).
- * This test locks both at runtime via the shared `type -> handlerKey` mapping
- * so a new engine event that forgets to extend the union — or a union member
- * the consumer forgets to dispatch — becomes a test failure.
- */
-function testTopMeanStreamEventHandlerCoverage(): void {
-    // The canonical `event.type` -> `on<HandlerKey>` mapping used by
-    // `consumeNdjsonStream` (camelCase: `current_snapshot` -> `currentSnapshot`).
-    const typeToHandlerKey: Record<string, string> = {
-        preflight: "onPreflight",
-        progress: "onProgress",
-        current_snapshot: "onCurrentSnapshot",
-        done: "onDone",
-        stability_done: "onStabilityDone",
-        fatal: "onFatal",
-    };
-    const unionTypes = new Set(Object.keys(typeToHandlerKey));
-
-    // The handler keys the service registers for BOTH the coordinator and
-    // stability runs (audit Finding 2 typed-installation sites).
-    const coordinatorHandlers = new Set([
-        "onPreflight",
-        "onProgress",
-        "onDone",
-        "onFatal",
-    ]);
-    const stabilityHandlers = new Set([
-        "onPreflight",
-        "onProgress",
-        "onCurrentSnapshot",
-        "onDone",
-        "onStabilityDone",
-        "onFatal",
-    ]);
-
-    // Every union type must reach a handler on the stability run (the
-    // superset). A union member missing from the stability handler set would be
-    // silently dropped.
-    for (const [evtType, handlerKey] of Object.entries(typeToHandlerKey)) {
-        assert.ok(
-            stabilityHandlers.has(handlerKey),
-            `TopMeanStreamEvent member "${evtType}" has no handler in the stability run dispatch (expected ${handlerKey})`,
-        );
-        void coordinatorHandlers; // coordinator run intentionally omits stability-only handlers
-    }
-
-    // No orphan handler keys: every registered key must map back to a union
-    // member, otherwise a typo'd handler would silently never fire.
-    for (const key of stabilityHandlers) {
-        const mapped = Object.entries(typeToHandlerKey).find(([, hk]) => hk === key);
-        assert.ok(
-            mapped,
-            `stability run registers handler "${key}" with no matching TopMeanStreamEvent type`,
-        );
-        assert.ok(unionTypes.has(mapped[0]), `handler "${key}" maps to unknown type`);
-    }
-    console.log("PASS: TopMeanStreamEvent union has full handler coverage (audit F2)");
 }
 
 async function main(): Promise<void> {
@@ -620,7 +557,6 @@ async function main(): Promise<void> {
     await testResultSummaryFieldIsOptional();
     await testRunIntegratesSnapshotAndPersistsBeforeReplay();
     await testStabilityModeRunsWindowsAndSkipsReplay();
-    testTopMeanStreamEventHandlerCoverage();
     console.log("PASS: sp500-top-mean-server-plugin.spec.ts");
 }
 

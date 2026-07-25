@@ -1296,18 +1296,6 @@ function runCombinedBacktest(
         .map((trade, index) => ({ ...trade, id: index + 1 }));
 
     const finalCapital = initialCapital + longResult.netProfit + shortResult.netProfit;
-    if (sideOptions) {
-        return calculateBacktestStats(
-            mergedTrades,
-            [],
-            initialCapital,
-            finalCapital,
-            0,
-            0,
-            options
-        );
-    }
-
     const equityCurve = buildCombinedEquityCurve(
         data,
         longResult.equityCurve,
@@ -1316,6 +1304,18 @@ function runCombinedBacktest(
         shortInitialCapital
     );
     const { maxDrawdown, maxDrawdownPercent } = calculateMaxDrawdown(equityCurve, initialCapital);
+    if (sideOptions) {
+        return calculateBacktestStats(
+            mergedTrades,
+            [],
+            initialCapital,
+            finalCapital,
+            maxDrawdown,
+            maxDrawdownPercent,
+            options
+        );
+    }
+
     return calculateBacktestStats(
         mergedTrades,
         equityCurve,

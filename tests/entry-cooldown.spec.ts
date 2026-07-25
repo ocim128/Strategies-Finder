@@ -16,27 +16,6 @@ import { runBacktest } from '../lib/strategies/index';
  *  - turning it off (riskCooldownEnabled=false) must allow immediate re-entry.
  */
 
-function buildTrendingData(bars: number): OHLCVData[] {
-    // Monotonic uptrend so a long-only strategy can buy and sell at known bars.
-    const data: OHLCVData[] = [];
-    let price = 100;
-    for (let i = 0; i < bars; i++) {
-        // Step up each bar; small wick on both sides.
-        const open = price;
-        const close = price + 1;
-        data.push({
-            time: i as Time,
-            open,
-            high: close + 0.5,
-            low: open - 0.5,
-            close,
-            volume: 1000,
-        });
-        price = close;
-    }
-    return data;
-}
-
 describe('Entry cooldown (riskCooldownBars)', () => {
     it('blocks a new entry within the cooldown window after a stop-loss exit', () => {
         // WHY: after a protective stop fires, immediately re-entering on the next
@@ -60,7 +39,6 @@ describe('Entry cooldown (riskCooldownBars)', () => {
         ];
 
         const settings: BacktestSettings = {
-            riskSettingsToggle: true,
             riskMode: 'percentage',
             stopLossEnabled: true,
             stopLossPercent: 5,
@@ -96,7 +74,6 @@ describe('Entry cooldown (riskCooldownBars)', () => {
         ];
 
         const settings: BacktestSettings = {
-            riskSettingsToggle: true,
             riskMode: 'percentage',
             stopLossEnabled: true,
             stopLossPercent: 5,
@@ -128,7 +105,6 @@ describe('Entry cooldown (riskCooldownBars)', () => {
         ];
 
         const settings: BacktestSettings = {
-            riskSettingsToggle: true,
             riskMode: 'percentage',
             stopLossEnabled: true,
             stopLossPercent: 5,
@@ -164,7 +140,6 @@ describe('Entry cooldown (riskCooldownBars)', () => {
         ];
 
         const settings: BacktestSettings = {
-            riskSettingsToggle: true,
             riskMode: 'percentage',
             stopLossEnabled: false,
             takeProfitEnabled: false,

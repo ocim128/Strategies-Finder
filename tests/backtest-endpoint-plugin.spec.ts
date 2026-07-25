@@ -16,6 +16,10 @@ const randomizableStrategyEntry = strategyManifest.find((entry) =>
 assert.ok(randomizableStrategyEntry, "Expected at least one non-cross-symbol strategy with numeric defaults");
 const randomizableStrategyKey = randomizableStrategyEntry!.key;
 const randomizableStrategyParams = { ...randomizableStrategyEntry!.strategy.defaultParams };
+const crossSymbolStrategyEntry = strategyManifest.find((entry) => entry.strategy.crossSymbolConfig);
+assert.ok(crossSymbolStrategyEntry, "Expected at least one cross-symbol strategy in manifest");
+const crossSymbolStrategyKey = crossSymbolStrategyEntry!.key;
+const crossSymbolStrategyParams = { ...crossSymbolStrategyEntry!.strategy.defaultParams };
 
 type MockRequest = NodeJS.ReadableStream & {
     method?: string;
@@ -261,16 +265,13 @@ describe("backtest endpoint plugin", () => {
 
         const response = await invoke(
             handler,
-            "/relative_strength_mean_reversion",
+            `/${crossSymbolStrategyKey}`,
             "POST",
             {
                 symbol: "XRPUSDT",
                 interval: "5m",
                 dataset: { candles },
-                strategyParams: {
-                    lookback: 30,
-                    zThreshold: 0.5,
-                },
+                strategyParams: crossSymbolStrategyParams,
                 backtestSettings: {
                     executionModel: "next_open",
                     tradeDirection: "both",
@@ -292,7 +293,7 @@ describe("backtest endpoint plugin", () => {
 
         assert.strictEqual(response.statusCode, 200);
         assert.strictEqual(response.json.ok, true);
-        assert.strictEqual(response.json.strategyKey, "relative_strength_mean_reversion");
+        assert.strictEqual(response.json.strategyKey, crossSymbolStrategyKey);
         assert.ok(response.json.result.totalTrades >= 0);
     });
 
@@ -332,16 +333,13 @@ describe("backtest endpoint plugin", () => {
 
         const response = await invoke(
             handler,
-            "/relative_strength_mean_reversion",
+            `/${crossSymbolStrategyKey}`,
             "POST",
             {
                 symbol: "XRPUSDT",
                 interval: "5m",
                 dataset: { candles },
-                strategyParams: {
-                    lookback: 30,
-                    zThreshold: 0.5,
-                },
+                strategyParams: crossSymbolStrategyParams,
                 backtestSettings: {
                     executionModel: "next_open",
                     tradeDirection: "both",

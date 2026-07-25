@@ -58,12 +58,6 @@ function writeRawCsv(symbol: string, candles: OHLCVData[]): void {
     writeFileSync(path, `${rows.join("\n")}\n`);
 }
 
-function readCsv(symbol: string): OHLCVData[] {
-    const path = getCsvPath(symbol, TEST_INTERVAL);
-    if (!existsSync(path)) return [];
-    return parseCsvCandleLines(readFileSync(path, "utf8").split(/\r?\n/));
-}
-
 describe("writeCsv .bak defense (Layer 2)", () => {
     beforeEach(() => {
         rmSync(TEST_DIR, { recursive: true, force: true });

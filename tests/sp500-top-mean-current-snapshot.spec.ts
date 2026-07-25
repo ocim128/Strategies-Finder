@@ -7,6 +7,7 @@ import {
     resolveOpenPairContribution,
 } from "../lib/batch-backtest/sp500-top-mean-current-snapshot";
 import type { CompactPairArtifact } from "../lib/batch-backtest/compact-pair-artifact";
+import type { Time } from "lightweight-charts";
 
 /**
  * Phase-1 current-snapshot reducer tests. The conventions mirrored here are
@@ -46,7 +47,7 @@ function openPair(
         baseSymbol: `${parsedBase}USDT`,
         quoteSymbol: `${parsedQuote}USDT`,
         trades: [
-            { type, entryTime: opts.entryTime ?? 1, exitTime: 2, exitReason: "end_of_data" },
+            { type, entryTime: (opts.entryTime ?? 1) as Time, exitTime: 2 as Time, exitReason: "end_of_data" },
         ],
         ...(opts.dataEndTime !== undefined ? { dataEndTime: opts.dataEndTime } : {}),
     };
@@ -63,7 +64,7 @@ function closedPair(symbol: string, exitReason = "signal"): CompactPairArtifact 
         baseSymbol: `${baseAsset}USDT`,
         quoteSymbol: `${quoteAsset}USDT`,
         trades: [
-            { type: "long", entryTime: 1, exitTime: 2, exitReason },
+            { type: "long", entryTime: 1 as Time, exitTime: 2 as Time, exitReason },
         ],
         dataEndTime: ENDPOINT,
     };
@@ -439,7 +440,7 @@ describe("reduceCurrentTopMeanSnapshot", () => {
             dataEndTime: ENDPOINT,
             entryTime: 100,
         });
-        first.trades[0]!.exitTime = 300;
+        first.trades[0]!.exitTime = 300 as Time;
         first.trades[0]!.exitReason = "signal";
         const second = openPair("BBB+Q", "long", {
             dataEndTime: ENDPOINT,

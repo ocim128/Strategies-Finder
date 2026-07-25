@@ -453,7 +453,7 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
     });
 
     it("merges Alpaca bars onto an existing IBKR-sourced interval and labels it mixed", async () => {
-        const { existsSync, mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+        const { mkdirSync, readFileSync, writeFileSync } = require("node:fs");
         const { resolve } = require("node:path");
         const { getCsvPath, syncOneAlpacaSymbol } = await import("../lib/ibkr-data/ibkr-data-vite-plugin");
         // Seed an existing "IBKR" 30m CSV with one OLD bar the Alpaca fetch
@@ -486,7 +486,12 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
         const { getCsvPath, syncOneAlpacaSymbol } = await import("../lib/ibkr-data/ibkr-data-vite-plugin");
         const { existsSync } = require("node:fs");
         // No seed file — fresh interval. Catalog has no entry for the symbol.
-        const catalog = { entries: [] };
+        const catalog = {
+            entries: [] as Array<{
+                symbol: string;
+                intervals: Record<string, { source: string }>;
+            }>,
+        };
         const config = { apiKey: "PK", apiSecret: "sk", host: "https://data.alpaca.markets", feed: "iex", adjustment: "split" };
         const result = await syncOneAlpacaSymbol(catalog as never, FRESH_SYMBOL, "30m", "1m", false, undefined, config as never);
         assert.equal(result.source, "alpaca");

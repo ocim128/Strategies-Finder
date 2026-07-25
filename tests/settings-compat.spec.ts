@@ -15,6 +15,7 @@ import {
 } from '../lib/alert-subscription-utils';
 import { parseInputNumber } from '../lib/dom-input-readers';
 import {
+    DEFAULT_BACKTEST_SETTINGS,
     normalizeStoredAppSettings,
     normalizeStoredBacktestSettings,
     normalizeStoredStrategyConfig,
