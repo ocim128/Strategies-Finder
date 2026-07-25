@@ -27,7 +27,13 @@ const ENDPOINT = 1_700_000_000;
 function openPair(
     symbol: string,
     type: "long" | "short",
-    opts: { baseAsset?: string; quoteAsset?: string; dataEndTime?: number; pairIndex?: number } = {},
+    opts: {
+        baseAsset?: string;
+        quoteAsset?: string;
+        dataEndTime?: number;
+        pairIndex?: number;
+        entryTime?: number;
+    } = {},
 ): CompactPairArtifact {
     const parsedBase = opts.baseAsset ?? symbol.split("+")[0] ?? symbol;
     const parsedQuote = opts.quoteAsset ?? symbol.split("+")[1] ?? symbol;
@@ -40,7 +46,7 @@ function openPair(
         baseSymbol: `${parsedBase}USDT`,
         quoteSymbol: `${parsedQuote}USDT`,
         trades: [
-            { type, entryTime: 1, exitTime: 2, exitReason: "end_of_data" },
+            { type, entryTime: opts.entryTime ?? 1, exitTime: 2, exitReason: "end_of_data" },
         ],
         ...(opts.dataEndTime !== undefined ? { dataEndTime: opts.dataEndTime } : {}),
     };
@@ -355,6 +361,71 @@ describe("reduceCurrentTopMeanSnapshot", () => {
         expect(r.snapshot.winners[0]!.mean).to.be.closeTo(1, 1e-9);
         // F6: a unique winner is NOT a tie; tieCount is 0, not 1.
         expect(r.stats.tieCount).to.equal(0);
+    });
+
+    it("emits ENTER_NEXT_OPEN only for a unique winner with a fresh endpoint entry", async () => {
+        const r = await reduceCurrentTopMeanSnapshot(
+            asyncFrom(openPair("AAA+BBB", "long", {
+                dataEndTime: ENDPOINT,
+                entryTime: ENDPOINT,
+            })),
+            { commonEndpoint: ENDPOINT },
+        );
+
+        expect(r.action).to.deep.equal({
+            action: "ENTER_NEXT_OPEN",
+            reason: "fresh_unique_winner",
+            asset: "AAA",
+            signalAsOf: ENDPOINT,
+            freshDecision: true,
+            freshEntryPairs: 1,
+            notionalUsd: 1000,
+            holdBars: 24,
+            entryRule: "next_bar_open",
+            exitRule: "24th_bar_close",
+            requiresNoActiveAssetPosition: true,
+        });
+    });
+
+    it("emits WAIT_FOR_FRESH_DECISION for an old unique-winner snapshot", async () => {
+        const r = await reduceCurrentTopMeanSnapshot(
+            asyncFrom(openPair("AAA+BBB", "long", {
+                dataEndTime: ENDPOINT,
+                entryTime: ENDPOINT - 10_000,
+            })),
+            { commonEndpoint: ENDPOINT },
+        );
+
+        expect(r.action?.action).to.equal("WAIT_FOR_FRESH_DECISION");
+        expect(r.action?.reason).to.equal("no_fresh_pair_entry");
+        expect(r.action?.asset).to.equal("AAA");
+        expect(r.action?.freshDecision).to.equal(false);
+        expect(r.action?.freshEntryPairs).to.equal(0);
+    });
+
+    it("emits NO_TRADE when a fresh decision leaves TOP_MEAN tied", async () => {
+        const r = await reduceCurrentTopMeanSnapshot(
+            asyncFrom(
+                openPair("AAA+P", "long", {
+                    dataEndTime: ENDPOINT,
+                    entryTime: ENDPOINT,
+                    pairIndex: 0,
+                }),
+                openPair("BBB+Q", "long", {
+                    dataEndTime: ENDPOINT,
+                    entryTime: ENDPOINT,
+                    pairIndex: 1,
+                }),
+            ),
+            { commonEndpoint: ENDPOINT },
+        );
+
+        expect(r.snapshot.reason).to.equal("tied");
+        expect(r.action?.action).to.equal("NO_TRADE");
+        expect(r.action?.reason).to.equal("tied");
+        expect(r.action?.freshDecision).to.equal(true);
+        expect(r.action?.freshEntryPairs).to.equal(2);
+        expect(r.action?.asset).to.equal(null);
     });
 
     it("handles malformed artifacts without throwing (missing trades)", async () => {

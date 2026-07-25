@@ -102,6 +102,8 @@ async function testSnapshotDerivedFromArtifacts(): Promise<void> {
     assert.equal(result.snapshot.asOf, endpoint);
     assert.equal(result.snapshot.openPositions, 3);
     assert.equal(result.snapshot.reason, "tied");
+    assert.equal(result.action?.action, "NO_TRADE");
+    assert.equal(result.action?.reason, "tied");
     assert.deepEqual(
         result.snapshot.winners.map((w) => w.asset).sort(),
         ["AAA", "BBB"],
@@ -351,7 +353,11 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
         assert.equal(persistedManifest.requestedEngineMode, "typescript");
         assert.equal(persistedManifest.actualEngineMode, "typescript");
         assert.deepEqual(persistedManifest.engineUsage, { rust: 0, typescript: 0 });
-        const snap = (onDisk.currentSnapshot as { snapshot: { asOf: number; winners: Array<{ asset: string }> } }).snapshot;
+        const persistedCurrent = onDisk.currentSnapshot as {
+            snapshot: { asOf: number; winners: Array<{ asset: string }> };
+            action?: { action: string; reason: string };
+        };
+        const snap = persistedCurrent.snapshot;
         assert.equal(snap.asOf, endpoint);
         // AAPL, MSFT, NVDA each net +2 across 2 pairs (mean 1.0) -> 3-way tie.
         // The reducer surfaces all three (no silent tie-break), and run()
@@ -360,6 +366,19 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
             snap.winners.map((w: { asset: string }) => w.asset).sort(),
             ["AAPL", "MSFT", "NVDA"],
         );
+        assert.deepEqual(persistedCurrent.action, {
+            action: "NO_TRADE",
+            reason: "tied",
+            asset: null,
+            signalAsOf: endpoint,
+            freshDecision: false,
+            freshEntryPairs: 0,
+            notionalUsd: 1000,
+            holdBars: 24,
+            entryRule: "next_bar_open",
+            exitRule: "24th_bar_close",
+            requiresNoActiveAssetPosition: true,
+        });
 
         console.log("PASS: run() integrates reducer, emits snapshot, persists before replay (F1+F4)");
     } finally {

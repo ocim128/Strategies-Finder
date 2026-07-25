@@ -30,15 +30,12 @@
  *                   computed before the replay failure.
  */
 import type { CoverageCounts } from "./sp500-pair-enumerator";
-import type { CurrentTopMeanSnapshot, CurrentTopMeanStats } from "./sp500-top-mean-current-snapshot";
+import type { CurrentTopMeanResult } from "./sp500-top-mean-current-snapshot";
 import type { TopMeanResultSummary } from "./sp500-top-mean-coordinator-engine";
 import type { StabilityComparison } from "./sp500-top-mean-stability-compare";
 
 /** Shared shape of the phase-1 current snapshot carried on several events. */
-export type TopMeanCurrentSnapshot = {
-    snapshot: CurrentTopMeanSnapshot;
-    stats: CurrentTopMeanStats;
-};
+export type TopMeanCurrentSnapshot = CurrentTopMeanResult;
 
 export type TopMeanStreamEvent =
     | { type: "preflight"; counts: CoverageCounts }

@@ -1,4 +1,5 @@
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
+import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { CompactPairArtifact } from "./compact-pair-artifact";
 
 /**
@@ -76,9 +77,79 @@ export interface CurrentTopMeanStats {
     durationMs: number;
 }
 
+export type CurrentTopMeanActionCode =
+    | "ENTER_NEXT_OPEN"
+    | "WAIT_FOR_FRESH_DECISION"
+    | "NO_TRADE";
+
+export type CurrentTopMeanActionReason =
+    | CurrentTopMeanReason
+    | "fresh_unique_winner"
+    | "no_fresh_pair_entry";
+
+export interface CurrentTopMeanAction {
+    action: CurrentTopMeanActionCode;
+    reason: CurrentTopMeanActionReason;
+    /** Unique current winner when one exists; null for ties/empty snapshots. */
+    asset: string | null;
+    /** Latest common closed candle used for the decision. */
+    signalAsOf: number | null;
+    /** True only when at least one pair trade entered exactly at `signalAsOf`. */
+    freshDecision: boolean;
+    /** Number of endpoint-aligned pair artifacts containing a fresh entry. */
+    freshEntryPairs: number;
+    notionalUsd: 1000;
+    holdBars: 24;
+    entryRule: "next_bar_open";
+    exitRule: "24th_bar_close";
+    requiresNoActiveAssetPosition: true;
+}
+
 export interface CurrentTopMeanResult {
     snapshot: CurrentTopMeanSnapshot;
     stats: CurrentTopMeanStats;
+    /** Optional only for backward compatibility with persisted pre-action runs. */
+    action?: CurrentTopMeanAction;
+}
+
+export function buildCurrentTopMeanAction(
+    snapshot: CurrentTopMeanSnapshot,
+    freshEntryPairs: number,
+): CurrentTopMeanAction {
+    const uniqueWinner = snapshot.reason === "ok" && snapshot.winners.length === 1
+        ? snapshot.winners[0]!
+        : null;
+    const freshDecision = freshEntryPairs > 0 && snapshot.asOf !== null;
+
+    if (!uniqueWinner) {
+        return {
+            action: "NO_TRADE",
+            reason: snapshot.reason,
+            asset: null,
+            signalAsOf: snapshot.asOf,
+            freshDecision,
+            freshEntryPairs,
+            notionalUsd: 1000,
+            holdBars: 24,
+            entryRule: "next_bar_open",
+            exitRule: "24th_bar_close",
+            requiresNoActiveAssetPosition: true,
+        };
+    }
+
+    return {
+        action: freshDecision ? "ENTER_NEXT_OPEN" : "WAIT_FOR_FRESH_DECISION",
+        reason: freshDecision ? "fresh_unique_winner" : "no_fresh_pair_entry",
+        asset: uniqueWinner.asset,
+        signalAsOf: snapshot.asOf,
+        freshDecision,
+        freshEntryPairs,
+        notionalUsd: 1000,
+        holdBars: 24,
+        entryRule: "next_bar_open",
+        exitRule: "24th_bar_close",
+        requiresNoActiveAssetPosition: true,
+    };
 }
 
 /**
@@ -92,16 +163,18 @@ function emptyResult(
     stats: Partial<CurrentTopMeanStats> = {},
     asOf: number | null = null,
     snapshotArtifacts: number = 0,
+    freshEntryPairs: number = 0,
 ): CurrentTopMeanResult {
+    const snapshot: CurrentTopMeanSnapshot = {
+        asOf,
+        artifacts: snapshotArtifacts,
+        openPositions: stats.openPositions ?? 0,
+        candidates: [],
+        winners: [],
+        reason,
+    };
     return {
-        snapshot: {
-            asOf,
-            artifacts: snapshotArtifacts,
-            openPositions: stats.openPositions ?? 0,
-            candidates: [],
-            winners: [],
-            reason,
-        },
+        snapshot,
         stats: {
             artifactsProcessed: stats.artifactsProcessed ?? 0,
             openPositions: stats.openPositions ?? 0,
@@ -112,6 +185,7 @@ function emptyResult(
             tieCount: stats.tieCount ?? 0,
             durationMs: stats.durationMs ?? 0,
         },
+        action: buildCurrentTopMeanAction(snapshot, freshEntryPairs),
     };
 }
 
@@ -268,6 +342,7 @@ export async function reduceCurrentTopMeanSnapshot(
     let staleEndpoints = 0;
     let missingEndpoints = 0;
     let malformedArtifacts = 0;
+    let freshEntryPairs = 0;
 
     for await (const artifact of artifacts) {
         if (options.shouldStop?.()) {
@@ -295,6 +370,13 @@ export async function reduceCurrentTopMeanSnapshot(
         }
         // Passed the endpoint filter → eligible to contribute to the vote.
         contributingArtifacts += 1;
+        if (
+            endpoint !== null
+            && Array.isArray(artifact.trades)
+            && artifact.trades.some((trade) => parseTimeToUnixSeconds(trade.entryTime) === endpoint)
+        ) {
+            freshEntryPairs += 1;
+        }
 
         const contribution = resolveOpenPairContribution(artifact);
         if (!contribution) continue;
@@ -334,6 +416,7 @@ export async function reduceCurrentTopMeanSnapshot(
             },
             asOf,
             contributingArtifacts,
+            freshEntryPairs,
         );
     }
 
@@ -361,6 +444,7 @@ export async function reduceCurrentTopMeanSnapshot(
             },
             filterByEndpoint ? endpoint : null,
             contributingArtifacts,
+            freshEntryPairs,
         );
     }
 
@@ -373,15 +457,16 @@ export async function reduceCurrentTopMeanSnapshot(
     // when two or more assets share the top mean.
     const tieCount = winners.length > 1 ? winners.length : 0;
 
+    const snapshot: CurrentTopMeanSnapshot = {
+        asOf: endpoint,
+        artifacts: contributingArtifacts,
+        openPositions,
+        candidates,
+        winners,
+        reason,
+    };
     return {
-        snapshot: {
-            asOf: endpoint,
-            artifacts: contributingArtifacts,
-            openPositions,
-            candidates,
-            winners,
-            reason,
-        },
+        snapshot,
         stats: {
             artifactsProcessed,
             openPositions,
@@ -392,6 +477,7 @@ export async function reduceCurrentTopMeanSnapshot(
             tieCount,
             durationMs: Date.now() - startedAt,
         },
+        action: buildCurrentTopMeanAction(snapshot, freshEntryPairs),
     };
 }
 
@@ -441,5 +527,6 @@ export async function computeCurrentTopMeanSnapshot(
             missingEndpoints: votePass.stats.missingEndpoints + endpointPass.missing,
             malformedArtifacts: votePass.stats.malformedArtifacts + endpointPass.malformed,
         },
+        action: votePass.action,
     };
 }

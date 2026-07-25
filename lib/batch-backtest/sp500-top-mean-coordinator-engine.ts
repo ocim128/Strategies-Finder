@@ -26,8 +26,7 @@ import { loadServerBatchDataset } from "./server-batch-data-loader";
 import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import {
     computeCurrentTopMeanSnapshot,
-    type CurrentTopMeanSnapshot,
-    type CurrentTopMeanStats,
+    type CurrentTopMeanResult,
 } from "./sp500-top-mean-current-snapshot";
 import {
     compareStabilitySnapshots,
@@ -86,10 +85,7 @@ export interface TopMeanResultSummary {
      * from `horizons` (the historical OPEN_SCORE replay leaderboard).
      * Optional for backward compatibility with older payloads.
      */
-    currentSnapshot?: {
-        snapshot: CurrentTopMeanSnapshot;
-        stats: CurrentTopMeanStats;
-    };
+    currentSnapshot?: CurrentTopMeanResult;
 }
 
 export interface TopMeanStatusResponse {
@@ -151,7 +147,7 @@ export class TopMeanCoordinatorEngine {
      * instance level so the /status handler and the fatal path can surface
      * the snapshot even if the replay throws.
      */
-    private currentSnapshotResult: { snapshot: CurrentTopMeanSnapshot; stats: CurrentTopMeanStats } | null = null;
+    private currentSnapshotResult: CurrentTopMeanResult | null = null;
     /**
      * Stability-mode state: the per-window results accumulated so far, the
      * total window count, and the terminal comparison. Null/empty in the
