@@ -254,6 +254,63 @@ describe("Finder universe runner", () => {
         expect(output.diagnostics?.backtest?.fastPathBlockers ?? []).to.deep.equal([]);
     });
 
+    it("keeps non-zero median Sharpe for combined-direction compact runs when drawdown is skipped", async () => {
+        const data = makeCandles(Array.from({ length: 60 }, (_, index) =>
+            100 + index * 0.35 + Math.sin(index / 4) * 2
+        ));
+        for (let index = 0; index < data.length; index += 1) {
+            data[index]!.time = (1_700_000_000 + index * 4 * 60 * 60) as Time;
+        }
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 1,
+            rangePercent: 0,
+            maxRuns: 1,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols: ["UP"],
+                minActiveSymbols: 1,
+                minTotalTrades: 1,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["medianSharpe"],
+            },
+        };
+
+        const output = await runFinderUniverseExecution(
+            {
+                interval: "4h",
+                options,
+                settings: { ...settings, tradeDirection: "combined" },
+                capitalSettings,
+                selectedStrategy: {
+                    key: "universe_test",
+                    name: testStrategy.name,
+                    strategy: testStrategy,
+                },
+                loadDataset: async () => data,
+                generateParamSets: () => [{ threshold: 1 }],
+            },
+            {
+                setProgress: () => {},
+                setStatus: () => {},
+                yieldControl: async () => {},
+                isCancelled: () => false,
+            },
+        );
+
+        const result = output.results[0]!;
+        expect(result.medianSharpeAvailable).to.equal(true);
+        expect(result.medianSharpe).to.not.equal(0);
+        expect(result.symbols[0]!.result?.sharpeRatio).to.equal(result.medianSharpe);
+        expect(result.symbols[0]!.result?.drawdownAvailable).to.equal(false);
+    });
+
     it("counts backtest execution failures separately from symbol load failures", async () => {
         const datasets = new Map<string, OHLCVData[]>([
             ["OK", makeCandles([100, 105, 110, 115, 120])],

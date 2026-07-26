@@ -1177,19 +1177,24 @@ function combineCompactResults(
     let maxDrawdownPercent = 0;
     const skipDrawdown = options?.skipDrawdown === true;
     const len = longEquity && shortEquity ? Math.min(longEquity.length, shortEquity.length) : 0;
-    const combinedEquity = skipDrawdown || !longEquity || !shortEquity ? undefined : new Float64Array(len);
+    const needsCombinedEquity = !skipDrawdown || options?.includeSharpeRatio !== false;
+    const combinedEquity = needsCombinedEquity && longEquity && shortEquity
+        ? new Float64Array(len)
+        : undefined;
 
     if (combinedEquity && longEquity && shortEquity) {
         for (let i = 0; i < len; i++) {
             const combined = longEquity[i] + shortEquity[i];
             combinedEquity[i] = combined;
-            if (combined > peakEquity) {
-                peakEquity = combined;
-            } else {
-                const dd = peakEquity - combined;
-                if (dd > maxDrawdown) {
-                    maxDrawdown = dd;
-                    maxDrawdownPercent = peakEquity > 0 ? (dd / peakEquity) * 100 : 0;
+            if (!skipDrawdown) {
+                if (combined > peakEquity) {
+                    peakEquity = combined;
+                } else {
+                    const dd = peakEquity - combined;
+                    if (dd > maxDrawdown) {
+                        maxDrawdown = dd;
+                        maxDrawdownPercent = peakEquity > 0 ? (dd / peakEquity) * 100 : 0;
+                    }
                 }
             }
         }
@@ -1292,7 +1297,7 @@ function runCombinedBacktestCompact(
     };
 
     // Allocate per-bar equity buffers only when combined drawdown/Sharpe needs them.
-    const needsEquity = options?.skipDrawdown !== true;
+    const needsEquity = options?.skipDrawdown !== true || options?.includeSharpeRatio !== false;
     const longEquity = needsEquity ? new Float64Array(data.length) : undefined;
     const shortEquity = needsEquity ? new Float64Array(data.length) : undefined;
     const runSide = (
@@ -1403,7 +1408,7 @@ function runCombinedBacktest(
         shortInitialCapital
     );
     const { maxDrawdown, maxDrawdownPercent } = calculateMaxDrawdown(equityCurve, initialCapital);
-    if (sideOptions) {
+    if (canUseNoEquityCombinedSideFastPath(options)) {
         return calculateBacktestStats(
             mergedTrades,
             [],

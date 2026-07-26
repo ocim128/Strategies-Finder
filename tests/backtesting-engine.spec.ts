@@ -1817,12 +1817,13 @@ describe('Backtesting Engine', () => {
 
     it('should keep combined-mode sharpe consistent between full and compact backtests', () => {
         const data: OHLCVData[] = [];
+        const startTime = 1_700_000_000;
         for (let i = 0; i < 240; i++) {
             const trend = 100 + i * 0.08;
             const cycle = Math.sin(i / 7) * 1.8;
             const close = trend + cycle;
             data.push({
-                time: (i + 1) as unknown as Time,
+                time: (startTime + i * 86_400) as unknown as Time,
                 open: close - 0.4,
                 high: close + 0.9,
                 low: close - 0.9,
@@ -1835,12 +1836,12 @@ describe('Backtesting Engine', () => {
         for (let i = 20; i < 220; i += 20) {
             const openLong = i % 40 !== 0;
             signals.push({
-                time: (i + 1) as unknown as Time,
+                time: data[i].time,
                 type: openLong ? 'buy' : 'sell',
                 price: data[i + 1].close
             });
             signals.push({
-                time: (i + 8) as unknown as Time,
+                time: data[i + 7].time,
                 type: openLong ? 'sell' : 'buy',
                 price: data[i + 8].close
             });
@@ -1848,8 +1849,22 @@ describe('Backtesting Engine', () => {
 
         const settings = { tradeDirection: 'combined' as const, allowSameBarExit: true, slippageBps: 0 };
         const full = runBacktest(data, signals, 10000, 100, 0.1, settings);
+        const finderStyle = runBacktest(data, signals, 10000, 100, 0.1, settings, undefined, undefined, {
+            collectDiagnostics: true,
+        });
         const compact = runBacktestCompact(data, signals, 10000, 100, 0.1, settings);
+        const universeStyle = runBacktestCompact(data, signals, 10000, 100, 0.1, settings, undefined, undefined, {
+            includeAdvancedAnalytics: false,
+            includeSharpeRatio: true,
+            omitEquityCurve: true,
+            skipDrawdown: true,
+        });
 
+        expect(full.sharpeRatio).to.not.equal(0);
+        expect(finderStyle.sharpeRatio).to.be.closeTo(full.sharpeRatio, 1e-9);
+        expect(universeStyle.sharpeRatio).to.be.closeTo(full.sharpeRatio, 1e-9);
+        expect(universeStyle.equityCurve).to.deep.equal([]);
+        expect(universeStyle.maxDrawdownPercent).to.equal(0);
         expect(full.totalTrades).to.equal(compact.totalTrades);
         expect(full.sharpeRatio).to.be.closeTo(compact.sharpeRatio, 1e-9);
     });
