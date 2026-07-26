@@ -9,7 +9,7 @@
 
 .chart-tooltip {
     position: absolute;
-    z-index: 1000;
+    z-index: var(--z-dropdown);
     pointer-events: none;
     background: hsl(var(--hsl-surface-2) / 0.95);
     border: 1px solid var(--glass-border);
@@ -164,7 +164,7 @@
     position: absolute;
     top: var(--space-2);
     left: var(--space-3);
-    z-index: 10;
+    z-index: var(--z-raised);
     display: flex;
     gap: var(--space-3);
 }
@@ -244,7 +244,7 @@
     background: white;
     animation: screenshot-flash 0.4s ease-out forwards;
     pointer-events: none;
-    z-index: 1000;
+    z-index: var(--z-dropdown);
 }
 
 /* ============================================================================
@@ -266,7 +266,7 @@
     color: var(--text-tertiary);
     opacity: 0;
     transition: opacity 0.2s ease;
-    z-index: 20;
+    z-index: var(--z-popover);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
 }

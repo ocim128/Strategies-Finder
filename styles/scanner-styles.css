@@ -22,7 +22,7 @@
         var(--shadow-floating),
         0 0 0 1px hsl(0 0% 100% / 0.03) inset,
         var(--glow-subtle);
-    z-index: 1000;
+    z-index: var(--z-dropdown);
     display: flex;
     flex-direction: column;
     overflow: hidden;

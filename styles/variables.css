@@ -118,6 +118,20 @@
     --focus-ring: 0 0 0 2px hsl(var(--hsl-accent) / 0.5);
     --focus-ring-soft: 0 0 0 4px hsl(var(--hsl-accent) / 0.2);
 
+    /* Stacking order — used for floating UI above the base layout. Foundational
+       layers in base.css (body::before=0, #root=1) and local backdrops inside
+       positioned parents (z-index: -1) stay literal because they describe
+       parent-relative stacking, not the global ladder. */
+    --z-raised: 10;
+    --z-popover: 20;
+    --z-overlay: 40;
+    --z-floating: 50;
+    --z-sticky: 100;
+    --z-dropdown: 1000;
+    --z-modal: 2000;
+    --z-debug: 2200;
+    --z-toast: 9999;
+
     /* Gradient accents */
     --gradient-accent: linear-gradient(135deg, hsl(var(--hsl-accent)), hsl(var(--hsl-accent-strong)));
     --gradient-success: linear-gradient(135deg, hsl(var(--hsl-success)), hsl(var(--hsl-success-strong)));

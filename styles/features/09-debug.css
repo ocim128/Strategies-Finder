@@ -26,7 +26,7 @@
 
     overflow: hidden;
 
-    z-index: 2200;
+    z-index: var(--z-debug);
 
 }
 

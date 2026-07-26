@@ -63,7 +63,7 @@
     padding: var(--space-2) 0;
     min-width: 200px;
     box-shadow: var(--shadow-floating);
-    z-index: 1000;
+    z-index: var(--z-dropdown);
     display: none;
     max-height: 300px;
     overflow-y: auto;

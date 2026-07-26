@@ -682,7 +682,7 @@
     white-space: normal;
     width: max-content;
     max-width: 220px;
-    z-index: 100;
+    z-index: var(--z-sticky);
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.15s ease, transform 0.15s ease;

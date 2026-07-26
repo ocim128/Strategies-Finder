@@ -96,7 +96,7 @@
 
     font-size: var(--font-size-sm);
 
-    z-index: 10;
+    z-index: var(--z-raised);
 
     background: hsl(var(--hsl-surface-1) / 0.85);
 
