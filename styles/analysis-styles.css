@@ -1,40 +1,10 @@
 /* ============================================================================
-   Analysis Tab — Trade Pattern Mining
+   Analysis styles — shared by Portfolio Lab, Strategy Ensemble, Signal
+   Committee, and Polymarket diagnostics panels.
+   (Trade Pattern Mining entry-shapes, score bars, filter badges, and
+   apply-filter buttons were removed with that feature; only the live
+   surfaces remain.)
    ============================================================================ */
-
-.analysis-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-}
-
-.analysis-header-left {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.analysis-header-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-}
-
-.analysis-title {
-    margin: 0;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary);
-}
-
-.analysis-subtitle {
-    font-size: 11px;
-    color: var(--text-secondary);
-}
 
 .analysis-control {
     display: inline-flex;
@@ -59,67 +29,7 @@
     opacity: 0.45;
 }
 
-.analysis-control-toggle {
-    user-select: none;
-}
-
-.analysis-entry-shapes {
-    border-top: 1px solid var(--border);
-    padding: 10px 14px;
-}
-
-.analysis-entry-shapes-header {
-    display: flex;
-    gap: 10px;
-    justify-content: space-between;
-    align-items: flex-start;
-    flex-wrap: wrap;
-    margin-bottom: 10px;
-}
-
-.analysis-entry-shapes-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-}
-
-.analysis-entry-shape-card {
-    border: 1px solid var(--border-light, rgba(128, 128, 128, 0.15));
-    border-radius: 6px;
-    padding: 8px;
-    background: var(--surface, rgba(128, 128, 128, 0.04));
-}
-
-.analysis-entry-shape-card-header {
-    display: flex;
-    justify-content: space-between;
-    gap: 8px;
-    align-items: center;
-}
-
-.analysis-entry-shape-title {
-    font-size: 11px;
-    color: var(--text-primary);
-    font-weight: 600;
-}
-
-.analysis-entry-shape-meta {
-    margin-top: 4px;
-    margin-bottom: 8px;
-    font-size: 10px;
-    color: var(--text-secondary);
-}
-
-.analysis-entry-shape-canvas {
-    width: 100%;
-    height: auto;
-    border: 1px solid var(--border-light, rgba(128, 128, 128, 0.12));
-    border-radius: 4px;
-    image-rendering: crisp-edges;
-    display: block;
-}
-
-/* Finder */
+/* Finder-style section (used by Portfolio Lab, Ensemble, Signal Committee) */
 .analysis-finder-section {
     border-top: 1px solid var(--border);
     padding: 10px 14px;
@@ -155,20 +65,6 @@
     margin-top: 8px;
     font-size: 11px;
     color: var(--text-secondary);
-}
-
-.analysis-finder-results {
-    margin-top: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-.analysis-finder-action-card {
-    grid-column: 1 / -1;
-    display: flex;
-    justify-content: center;
-    align-items: center;
 }
 
 .analysis-finder-table-wrap {
@@ -243,57 +139,7 @@
     background: var(--surface-hover, rgba(128, 128, 128, 0.05));
 }
 
-.analysis-table tr.high-score {
-    background: rgba(0, 200, 83, 0.06);
-}
-
-.analysis-table tr.high-score:hover {
-    background: rgba(0, 200, 83, 0.1);
-}
-
-/* Score bar */
-.score-bar {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.score-bar-fill {
-    height: 6px;
-    border-radius: 3px;
-    min-width: 2px;
-    max-width: 50px;
-}
-
-.score-bar-fill.score-low {
-    background: var(--text-secondary);
-}
-
-.score-bar-fill.score-medium {
-    background: #f0b429;
-}
-
-.score-bar-fill.score-high {
-    background: #00c853;
-}
-
-/* Filter badge */
-.filter-badge {
-    display: inline-block;
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-size: 10px;
-    font-weight: 500;
-    background: rgba(100, 108, 255, 0.1);
-    color: var(--accent, #646cff);
-}
-
-.filter-badge.no-filter {
-    background: transparent;
-    color: var(--text-tertiary, #888);
-}
-
-/* Simulate button */
+/* Simulate button (Load buttons in Portfolio Lab tables) */
 .btn-simulate {
     padding: 2px 8px;
     border: 1px solid var(--border);
@@ -311,7 +157,7 @@
     background: rgba(100, 108, 255, 0.05);
 }
 
-/* Simulation panel */
+/* Simulation panel (Portfolio Lab descriptive diagnostics) */
 .analysis-simulation {
     padding: 12px 14px;
     border-top: 1px solid var(--border);
@@ -374,74 +220,4 @@
 
 .sim-card-delta.negative {
     color: #ff5252;
-}
-
-/* Approximation badge */
-.sim-approx-badge {
-    font-size: 9px;
-    font-weight: 500;
-    color: var(--text-tertiary, #888);
-    background: rgba(128, 128, 128, 0.12);
-    padding: 1px 5px;
-    border-radius: 3px;
-    margin-left: 4px;
-    vertical-align: middle;
-    letter-spacing: 0.3px;
-}
-
-/* Disclaimer text */
-.sim-disclaimer {
-    margin-top: 8px;
-    padding: 6px 8px;
-    font-size: 10px;
-    color: var(--text-tertiary, #888);
-    border-left: 2px solid rgba(128, 128, 128, 0.2);
-    line-height: 1.4;
-}
-
-/* Apply filter buttons (analysis table rows) */
-.btn-apply-filter {
-    padding: 2px 8px;
-    font-size: 10px;
-    background: rgba(0, 200, 83, 0.15);
-    color: #00c853;
-    border: 1px solid rgba(0, 200, 83, 0.3);
-    border-radius: 3px;
-    cursor: pointer;
-    transition: all 0.15s;
-    white-space: nowrap;
-}
-
-.btn-apply-filter:hover {
-    background: rgba(0, 200, 83, 0.25);
-    border-color: rgba(0, 200, 83, 0.5);
-}
-
-.btn-apply-filter.applied {
-    background: rgba(0, 200, 83, 0.35);
-    color: #fff;
-}
-
-/* Apply All combo button */
-.btn-apply-combo {
-    padding: 4px 16px;
-    font-size: 11px;
-    font-weight: 600;
-    background: rgba(0, 200, 83, 0.15);
-    color: #00c853;
-    border: 1px solid rgba(0, 200, 83, 0.3);
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.15s;
-}
-
-.btn-apply-combo:hover {
-    background: rgba(0, 200, 83, 0.25);
-    border-color: rgba(0, 200, 83, 0.5);
-}
-
-@media (max-width: 980px) {
-    .analysis-entry-shapes-grid {
-        grid-template-columns: 1fr;
-    }
 }
