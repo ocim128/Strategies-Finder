@@ -426,6 +426,7 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
     const originalFetch = globalThis.fetch;
     const SEED_SYMBOL = "ZZXMIX";
     const FRESH_SYMBOL = "ZZXFRSH";
+    const FALLBACK_SYMBOL = "ZZXFALL";
 
     beforeEach(() => {
         // Stub fetch to return one Alpaca-shaped bar so the worker has data
@@ -444,7 +445,7 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
         const { resolve } = require("node:path");
         const { rmSync, existsSync } = require("node:fs");
         const dir = resolve(process.cwd(), "price-data", "ibkr", "csv", "30m");
-        for (const sym of [SEED_SYMBOL, FRESH_SYMBOL]) {
+        for (const sym of [SEED_SYMBOL, FRESH_SYMBOL, FALLBACK_SYMBOL]) {
             for (const ext of [".csv", ".csv.bak", ".csv.tmp"]) {
                 const p = resolve(dir, `${sym}${ext}`);
                 if (existsSync(p)) rmSync(p, { force: true });
@@ -498,5 +499,38 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
         assert.equal(catalog.entries[0].intervals["30m"].source, "alpaca");
         // And the new file got written.
         assert.ok(existsSync(getCsvPath(FRESH_SYMBOL, "30m")), "fresh CSV was written");
+    });
+
+    it("extends a short empty download window across the prior market week", async () => {
+        const requestedUrls: string[] = [];
+        let calls = 0;
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+            requestedUrls.push(input.toString());
+            calls += 1;
+            return {
+                ok: true,
+                status: 200,
+                headers: { get: () => null },
+                json: async () => calls === 1
+                    ? { bars: [] }
+                    : { bars: [{ t: "2026-07-24T19:30:00Z", o: 207, h: 209, l: 206, c: 208, v: 1000 }] },
+                text: async () => "",
+            } as unknown as Response;
+        }) as typeof fetch;
+        const catalog = {
+            entries: [] as Array<{
+                symbol: string;
+                intervals: Record<string, { source: string }>;
+            }>,
+        };
+        const config = { apiKey: "PK", apiSecret: "sk", host: "https://data.alpaca.markets", feed: "iex", adjustment: "split" };
+
+        const result = await syncOneAlpacaSymbol(catalog as never, FALLBACK_SYMBOL, "30m", "1d", false, undefined, config as never);
+
+        assert.equal(calls, 2);
+        assert.equal(result.fetchedBars, 1);
+        const firstStart = Date.parse(new URL(requestedUrls[0]!).searchParams.get("start")!);
+        const fallbackStart = Date.parse(new URL(requestedUrls[1]!).searchParams.get("start")!);
+        assert.equal(firstStart - fallbackStart, 7 * 24 * 60 * 60 * 1000);
     });
 });

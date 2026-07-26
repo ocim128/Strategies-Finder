@@ -23,6 +23,7 @@
  *  - URLs in logs omit query-string secrets (Alpaca's auth is header-based,
  *    but we keep the discipline anyway).
  */
+import { createRequire } from "node:module";
 import { debugLogger } from "../debug-logger";
 import { createFetchTimeoutSignal, isAbortError } from "../dataProviders/fetch-helpers";
 import { HttpStatusError } from "../vite-http-utils";
@@ -54,6 +55,23 @@ const ALPACA_MAX_PAGES_PER_SYMBOL = 200;
 
 /** HTTP statuses that are NOT retried. Everything else is considered transient. */
 const ALPACA_NON_RETRYABLE_STATUSES = new Set([400, 401, 403, 404, 422]);
+type UndiciAgent = new (options: { connect: { family: 4 } }) => unknown;
+const requireFromAlpacaFetcher = createRequire(import.meta.url);
+let alpacaIpv4Dispatcher: unknown | undefined;
+let undiciUnavailable = false;
+
+function getAlpacaIpv4Dispatcher(url: string): unknown | undefined {
+    if (new URL(url).origin !== ALPACA_DATA_HOST || undiciUnavailable) return undefined;
+    if (alpacaIpv4Dispatcher) return alpacaIpv4Dispatcher;
+    try {
+        const { Agent } = requireFromAlpacaFetcher("undici") as { Agent: UndiciAgent };
+        alpacaIpv4Dispatcher = new Agent({ connect: { family: 4 } });
+        return alpacaIpv4Dispatcher;
+    } catch {
+        undiciUnavailable = true;
+        return undefined;
+    }
+}
 
 /** Configuration built once per process (env-sourced); never serialized. */
 export type AlpacaConfig = {
@@ -242,11 +260,14 @@ async function fetchAlpacaBarsPage(
         const timeout = createFetchTimeoutSignal(signal, ALPACA_REQUEST_TIMEOUT_MS);
         let response: Response;
         try {
-            response = await fetch(url, {
+            const dispatcher = getAlpacaIpv4Dispatcher(url);
+            const requestInit: RequestInit & { dispatcher?: unknown } = {
                 method: "GET",
                 headers,
                 signal: timeout.signal,
-            });
+                ...(dispatcher ? { dispatcher } : {}),
+            };
+            response = await fetch(url, requestInit);
         } catch (error) {
             // The fetch itself threw before headers arrived. Distinguish a
             // user-initiated abort (propagate, no retry) from a transient

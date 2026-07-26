@@ -267,6 +267,17 @@ describe("alpaca fetchAlpacaBars (stubbed fetch)", () => {
         assert.equal(headers["APCA-API-SECRET-KEY"], "testsecret");
     });
 
+    it("uses an IPv4-only dispatcher for the public Alpaca host", async () => {
+        // Some ISP DNS resolvers return an unreachable NAT64/block-page AAAA
+        // record for data.alpaca.markets alongside its working A record. Keep
+        // this request host-scoped so one bad IPv6 route cannot make downloads
+        // intermittently fail while unrelated server fetches stay untouched.
+        pushResponse({ bars: [{ t: "2026-01-01T00:00:00Z", o: 1, h: 2, l: 0.5, c: 1.5, v: 10 }] });
+        await fetchAlpacaBars(config, { symbol: "AAPL", timeframe: "30Min", start: "2026-01-01T00:00:00Z", end: "2026-02-01T00:00:00Z" });
+        const init = fetchCalls[0]!.init as RequestInit & { dispatcher?: unknown };
+        assert.ok(init.dispatcher, "public Alpaca requests should carry the IPv4-only dispatcher");
+    });
+
     it("follows next_page_token until exhausted and dedups overlapping timestamps", async () => {
         const t0 = 1767225600;
         pushResponse({ bars: [{ t: "2026-01-01T00:00:00Z", o: 1, h: 2, l: 0.5, c: 1.5, v: 10 }], next_page_token: "page2" });

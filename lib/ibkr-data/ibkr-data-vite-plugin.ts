@@ -1677,6 +1677,9 @@ type AlpacaSymbolWorker = (
     config?: AlpacaConfig,
 ) => Promise<Record<string, unknown>>;
 
+const ALPACA_SHORT_WINDOW_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+const ALPACA_EMPTY_WINDOW_FALLBACK_MS = 7 * 24 * 60 * 60 * 1000;
+
 export async function syncOneAlpacaSymbol(
     catalog: IbkrCatalog,
     symbol: string,
@@ -1716,11 +1719,43 @@ export async function syncOneAlpacaSymbol(
         : undefined;
     const window = resolveAlpacaWindow(period, Date.now(), startOverrideMs);
 
-    const result = await fetchAlpacaBars(
+    let result = await fetchAlpacaBars(
         config,
         { symbol, timeframe, start: window.start, end: window.end },
         signal,
     );
+    const periodMs = parsePeriodToMs(period);
+    if (
+        !syncOnly
+        && result.candles.length === 0
+        && result.stopReason === "covered"
+        && periodMs !== null
+        && periodMs <= ALPACA_SHORT_WINDOW_MAX_MS
+        && signal?.aborted !== true
+    ) {
+        const fallbackStart = new Date(
+            Math.max(0, Date.parse(window.start) - ALPACA_EMPTY_WINDOW_FALLBACK_MS),
+        ).toISOString();
+        const initialPages = result.pages;
+        const initialRetries = result.retries;
+        debugLogger.info("alpaca.fetch.empty_window_fallback", {
+            target: "alpaca",
+            symbol,
+            interval,
+            period,
+            fallbackDays: 7,
+        });
+        const fallbackResult = await fetchAlpacaBars(
+            config,
+            { symbol, timeframe, start: fallbackStart, end: window.end },
+            signal,
+        );
+        result = {
+            ...fallbackResult,
+            pages: initialPages + fallbackResult.pages,
+            retries: initialRetries + fallbackResult.retries,
+        };
+    }
     const isCancelled = (): boolean => result.stopReason === "cancelled" || signal?.aborted === true;
 
     // Cancellation invariant: no CSV/catalog writes if aborted. Mirrors
