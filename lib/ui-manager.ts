@@ -82,7 +82,7 @@ export class UIManager {
         changeValueEl.textContent = `${isPositive ? '+' : ''}${change.toFixed(2)}%`;
         changeEl.className = `ohlc-change ${isPositive ? 'positive' : 'negative'}`;
         if (arrowEl) {
-            arrowEl.textContent = isPositive ? '^' : 'v';
+            arrowEl.textContent = isPositive ? '▲' : '▼';
         }
     }
 
