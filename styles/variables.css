@@ -4,7 +4,6 @@
     --hsl-surface-2: 225 26% 12%;
     --hsl-surface-3: 225 22% 16%;
     --hsl-surface-4: 225 20% 20%;
-    --hsl-surface-5: 225 18% 24%;
     --hsl-ink-1: 0 0% 93%;
     --hsl-ink-2: 220 9% 62%;
     --hsl-ink-3: 220 8% 44%;
@@ -39,7 +38,6 @@
     --bg-secondary: hsl(var(--hsl-surface-2));
     --bg-tertiary: hsl(var(--hsl-surface-3));
     --bg-elevated: hsl(var(--hsl-surface-4));
-    --bg-highest: hsl(var(--hsl-surface-5));
     --text-primary: hsl(var(--hsl-ink-1));
     --text-secondary: hsl(var(--hsl-ink-2));
     --text-tertiary: hsl(var(--hsl-ink-3));
@@ -236,7 +234,6 @@
     --hsl-surface-2: 220 31% 94%;
     --hsl-surface-3: 220 26% 90%;
     --hsl-surface-4: 220 20% 85%;
-    --hsl-surface-5: 220 18% 80%;
     --hsl-ink-1: 223 37% 15%;
     --hsl-ink-2: 221 17% 34%;
     --hsl-ink-3: 220 12% 52%;
@@ -262,7 +259,6 @@
     --bg-secondary: hsl(var(--hsl-surface-2));
     --bg-tertiary: hsl(var(--hsl-surface-3));
     --bg-elevated: hsl(var(--hsl-surface-4));
-    --bg-highest: hsl(var(--hsl-surface-5));
     --text-primary: hsl(var(--hsl-ink-1));
     --text-secondary: hsl(var(--hsl-ink-2));
     --text-tertiary: hsl(var(--hsl-ink-3));
