@@ -4,7 +4,7 @@
 .quick-view-overlay {
     position: absolute;
     inset: 0;
-    z-index: 50;
+    z-index: var(--z-floating);
     display: none;
     flex-direction: column;
     background: linear-gradient(160deg,

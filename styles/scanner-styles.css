@@ -19,7 +19,7 @@
     border: 1px solid var(--glass-border-strong);
     border-radius: var(--radius-xl);
     box-shadow: var(--shadow-floating);
-    z-index: 1000;
+    z-index: var(--z-dropdown);
     display: flex;
     flex-direction: column;
     overflow: hidden;

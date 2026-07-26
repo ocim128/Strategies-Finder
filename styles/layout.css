@@ -34,7 +34,7 @@
     min-height: 58px;
     flex-shrink: 0;
     position: relative;
-    z-index: 20;
+    z-index: var(--z-popover);
     box-shadow: var(--shadow-sm);
     overflow: visible;
     color: var(--header-ink);
@@ -356,7 +356,7 @@
     bottom: 0;
     width: 16px;
     cursor: col-resize;
-    z-index: 100;
+    z-index: var(--z-sticky);
     border-radius: var(--radius-pill);
     transition: background 0.15s ease, opacity 0.15s ease;
     touch-action: none;

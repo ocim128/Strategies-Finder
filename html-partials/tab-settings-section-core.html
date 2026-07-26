@@ -1,6 +1,5 @@
-    <div class="settings-section" data-complexity="simple" data-section="direction">
         <div class="section-header collapsible" data-target="directionBody">
-            <div style="display:flex;align-items:center;">
+            <div class="section-heading-group">
                 <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
                         <path d="M7 10l5 5 5-5z" />
                     </svg></span>
@@ -25,14 +24,14 @@
             </div>
             <div class="param-row">
                 <div class="param-group">
-                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                        <label class="param-label" style="margin-bottom: 0;">Invert Strategy Signals</label>
+                    <div class="param-row-header">
+                        <label class="param-label">Invert Strategy Signals</label>
                         <label class="section-toggle section-toggle--sm" aria-label="Toggle signal inversion">
                             <input type="checkbox" id="invertSignalsToggle">
                             <span class="section-toggle-track"></span>
                         </label>
                     </div>
-                    <div class="param-hint">Swap BUY/SELL strategy outputs before backtest, finder, scanner, and
+                    <div class="param-hint">Swap BUY/SELL strategy outputs before backtest, finder, and
                         walk-forward execution.</div>
                 </div>
             </div>
@@ -59,7 +58,7 @@
 
     <div class="settings-section" data-complexity="standard" data-section="confirmation">
         <div class="section-header collapsible collapsed" data-target="confirmationSectionBody">
-            <div style="display:flex;align-items:center;">
+            <div class="section-heading-group">
                 <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
                         <path d="M7 10l5 5 5-5z" />
                     </svg></span>
@@ -93,8 +92,8 @@
                 </div>
                 <div class="param-row">
                     <div class="param-group">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label class="param-label" style="margin-bottom: 0;">Entropy Ratio Regime Alignment</label>
+                        <div class="param-row-header">
+                            <label class="param-label">Entropy Ratio Regime Alignment</label>
                             <label class="section-toggle section-toggle--sm" aria-label="Toggle entropy ratio regime alignment confirmation">
                                 <input type="checkbox" id="confirmationEntropyRatioRegimeAlignment">
                                 <span class="section-toggle-track"></span>
@@ -109,8 +108,8 @@
                 </div>
                 <div class="param-row">
                     <div class="param-group">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label class="param-label" style="margin-bottom: 0;">Close Location Median Alignment</label>
+                        <div class="param-row-header">
+                            <label class="param-label">Close Location Median Alignment</label>
                             <label class="section-toggle section-toggle--sm" aria-label="Toggle close location median alignment confirmation">
                                 <input type="checkbox" id="confirmationCloseLocationMedianAlignment">
                                 <span class="section-toggle-track"></span>
@@ -125,8 +124,8 @@
                 </div>
                 <div class="param-row">
                     <div class="param-group">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label class="param-label" style="margin-bottom: 0;">Probability Boundary Eigen-Shift</label>
+                        <div class="param-row-header">
+                            <label class="param-label">Probability Boundary Eigen-Shift</label>
                             <label class="section-toggle section-toggle--sm" aria-label="Toggle probability boundary eigen-shift confirmation">
                                 <input type="checkbox" id="confirmationProbabilityBoundaryEigenShift">
                                 <span class="section-toggle-track"></span>
@@ -141,8 +140,8 @@
                 </div>
                 <div class="param-row">
                     <div class="param-group">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label class="param-label" style="margin-bottom: 0;">Decay Momentum Alignment</label>
+                        <div class="param-row-header">
+                            <label class="param-label">Decay Momentum Alignment</label>
                             <label class="section-toggle section-toggle--sm" aria-label="Toggle decay momentum alignment confirmation">
                                 <input type="checkbox" id="confirmationDecayMomentumAlignment">
                                 <span class="section-toggle-track"></span>
@@ -161,8 +160,8 @@
                 </div>
                 <div class="param-row">
                     <div class="param-group">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label class="param-label" style="margin-bottom: 0;">Event Direction Follow</label>
+                        <div class="param-row-header">
+                            <label class="param-label">Event Direction Follow</label>
                             <label class="section-toggle section-toggle--sm" aria-label="Toggle event direction follow confirmation">
                                 <input type="checkbox" id="confirmationEventDirectionFollow">
                                 <span class="section-toggle-track"></span>
@@ -177,8 +176,8 @@
                 </div>
                 <div class="param-row">
                     <div class="param-group">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label class="param-label" style="margin-bottom: 0;">Width Expansion ZScore Router</label>
+                        <div class="param-row-header">
+                            <label class="param-label">Width Expansion ZScore Router</label>
                             <label class="section-toggle section-toggle--sm" aria-label="Toggle width expansion zscore router confirmation">
                                 <input type="checkbox" id="confirmationWidthExpansionZscoreRouter">
                                 <span class="section-toggle-track"></span>
@@ -201,8 +200,8 @@
                 </div>
                 <div class="param-row">
                     <div class="param-group">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label class="param-label" style="margin-bottom: 0;">EMA Trend</label>
+                        <div class="param-row-header">
+                            <label class="param-label">EMA Trend</label>
                             <label class="section-toggle section-toggle--sm" aria-label="Toggle EMA trend confirmation">
                                 <input type="checkbox" id="confirmationEmaTrend">
                                 <span class="section-toggle-track"></span>
@@ -221,7 +220,7 @@
 
     <div class="settings-section" data-complexity="simple" data-section="risk">
         <div class="section-header collapsible" data-target="riskSectionBody">
-            <div style="display:flex;align-items:center;">
+            <div class="section-heading-group">
                 <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
                         <path d="M7 10l5 5 5-5z" />
                     </svg></span>
@@ -247,8 +246,8 @@
                 </div>
                 <div class="param-row">
                     <div class="param-group">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label class="param-label" style="margin-bottom: 0;">Disable Exit Signal</label>
+                        <div class="param-row-header">
+                            <label class="param-label">Disable Exit Signal</label>
                             <label class="section-toggle section-toggle--sm"
                                 aria-label="Disable strategy exit signals">
                                 <input type="checkbox" id="disableSignalExits">
@@ -260,8 +259,8 @@
                 </div>
                 <div class="param-row" id="exitStrategyOverrideRow">
                     <div class="param-group">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label class="param-label" style="margin-bottom: 0;">Exit Strategy Override</label>
+                        <div class="param-row-header">
+                            <label class="param-label">Exit Strategy Override</label>
                             <label class="section-toggle section-toggle--sm"
                                 aria-label="Override exits with another strategy's signals">
                                 <input type="checkbox" id="exitStrategyOverrideEnabled">
@@ -307,8 +306,8 @@
                 </div>
                 <div class="param-row">
                     <div class="param-group">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label class="param-label" style="margin-bottom: 0;">Min Hold (bars)</label>
+                        <div class="param-row-header">
+                            <label class="param-label">Min Hold (bars)</label>
                             <label class="section-toggle section-toggle--sm"
                                 aria-label="Toggle minimum hold guard">
                                 <input type="checkbox" id="riskMinHoldToggle">
@@ -319,8 +318,8 @@
                         <div class="param-hint">Delay strategy, time-stop, and max-hold exits until N bars are held. Protective stops and profit targets still fire.</div>
                     </div>
                     <div class="param-group">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label class="param-label" style="margin-bottom: 0;">Max Hold (bars)</label>
+                        <div class="param-row-header">
+                            <label class="param-label">Max Hold (bars)</label>
                             <label class="section-toggle section-toggle--sm"
                                 aria-label="Toggle max hold cap">
                                 <input type="checkbox" id="riskMaxHoldToggle">
@@ -333,8 +332,8 @@
                 </div>
                 <div class="param-row">
                     <div class="param-group">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label class="param-label" style="margin-bottom: 0;">Entry Cooldown (bars)</label>
+                        <div class="param-row-header">
+                            <label class="param-label">Entry Cooldown (bars)</label>
                             <label class="section-toggle section-toggle--sm"
                                 aria-label="Toggle entry cooldown">
                                 <input type="checkbox" id="riskCooldownToggle" checked>
@@ -365,8 +364,8 @@
                     </div>
                     <div class="param-row">
                         <div class="param-group">
-                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                                <label class="param-label" style="margin-bottom: 0;">Stop Loss (%)</label>
+                            <div class="param-row-header">
+                                <label class="param-label">Stop Loss (%)</label>
                                 <label class="section-toggle section-toggle--sm" aria-label="Toggle stop loss">
                                     <input type="checkbox" id="stopLossToggle">
                                     <span class="section-toggle-track"></span>
@@ -377,8 +376,8 @@
                             <div class="param-hint">Allowed: 0 - 15%</div>
                         </div>
                         <div class="param-group">
-                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                                <label class="param-label" style="margin-bottom: 0;">Base Take Profit (%)</label>
+                            <div class="param-row-header">
+                                <label class="param-label">Base Take Profit (%)</label>
                                 <label class="section-toggle section-toggle--sm"
                                     aria-label="Toggle take profit">
                                     <input type="checkbox" id="takeProfitToggle">
@@ -520,8 +519,8 @@
                 <!-- Path-Dependent Exits -->
                 <div class="param-row">
                     <div class="param-group">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-                            <label class="param-label" style="margin-bottom: 0;">Path-Dependent Exits</label>
+                        <div class="param-row-header">
+                            <label class="param-label">Path-Dependent Exits</label>
                             <label class="section-toggle section-toggle--sm" aria-label="Toggle path-dependent exits">
                                 <input type="checkbox" id="pathExitEnabled">
                                 <span class="section-toggle-track"></span>
@@ -600,7 +599,7 @@
 
     <div class="settings-section" data-complexity="simple" data-section="sizing">
         <div class="section-header collapsible" data-target="tradeSizingBody">
-            <div style="display:flex;align-items:center;">
+            <div class="section-heading-group">
                 <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
                         <path d="M7 10l5 5 5-5z" />
                     </svg></span>

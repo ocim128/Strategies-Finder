@@ -4,7 +4,6 @@
     --hsl-surface-2: 225 26% 12%;
     --hsl-surface-3: 225 22% 16%;
     --hsl-surface-4: 225 20% 20%;
-    --hsl-surface-5: 225 18% 24%;
     --hsl-ink-1: 0 0% 93%;
     --hsl-ink-2: 220 9% 62%;
     --hsl-ink-3: 220 8% 44%;
@@ -35,7 +34,6 @@
     --bg-secondary: hsl(var(--hsl-surface-2));
     --bg-tertiary: hsl(var(--hsl-surface-3));
     --bg-elevated: hsl(var(--hsl-surface-4));
-    --bg-highest: hsl(var(--hsl-surface-5));
     --text-primary: hsl(var(--hsl-ink-1));
     --text-secondary: hsl(var(--hsl-ink-2));
     --text-tertiary: hsl(var(--hsl-ink-3));
@@ -110,6 +108,20 @@
 
     --focus-ring: 0 0 0 2px hsl(var(--hsl-accent) / 0.5);
     --focus-ring-soft: 0 0 0 4px hsl(var(--hsl-accent) / 0.2);
+
+    /* Stacking order — used for floating UI above the base layout. Foundational
+       layers in base.css (body::before=0, #root=1) and local backdrops inside
+       positioned parents (z-index: -1) stay literal because they describe
+       parent-relative stacking, not the global ladder. */
+    --z-raised: 10;
+    --z-popover: 20;
+    --z-overlay: 40;
+    --z-floating: 50;
+    --z-sticky: 100;
+    --z-dropdown: 1000;
+    --z-modal: 2000;
+    --z-debug: 2200;
+    --z-toast: 9999;
 
     /* Gradient accents */
     --gradient-warm: linear-gradient(135deg, hsl(var(--hsl-warning)), hsl(var(--hsl-danger)));
@@ -212,7 +224,6 @@
     --hsl-surface-2: 220 31% 94%;
     --hsl-surface-3: 220 26% 90%;
     --hsl-surface-4: 220 20% 85%;
-    --hsl-surface-5: 220 18% 80%;
     --hsl-ink-1: 223 37% 15%;
     --hsl-ink-2: 221 17% 34%;
     --hsl-ink-3: 220 12% 52%;
@@ -236,7 +247,6 @@
     --bg-secondary: hsl(var(--hsl-surface-2));
     --bg-tertiary: hsl(var(--hsl-surface-3));
     --bg-elevated: hsl(var(--hsl-surface-4));
-    --bg-highest: hsl(var(--hsl-surface-5));
     --text-primary: hsl(var(--hsl-ink-1));
     --text-secondary: hsl(var(--hsl-ink-2));
     --text-tertiary: hsl(var(--hsl-ink-3));

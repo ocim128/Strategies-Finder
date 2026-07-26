@@ -325,10 +325,6 @@
 
 /* Small phone */
 @media (max-width: 480px) {
-    :root {
-        --space-base: 3px;
-    }
-
     .app-container {
         padding: var(--space-1-5);
         gap: var(--space-1-5);

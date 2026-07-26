@@ -44,7 +44,7 @@ textarea:focus-visible {
     background: var(--accent-color);
     color: var(--text-on-accent);
     border-radius: var(--radius-m);
-    z-index: 9999;
+    z-index: var(--z-toast);
     font-weight: var(--font-weight-semibold);
     transition: top 0.2s ease;
 }
