@@ -167,6 +167,35 @@ export function createSignalLoop(
     return signals;
 }
 
+/**
+ * Generates signals from indicator values available on the current completed
+ * bar. Unlike createSignalLoop, this does not require a previous indicator
+ * value, so it does not add an unnecessary one-bar delay to state-based
+ * confirmation strategies.
+ */
+export function createCurrentBarSignalLoop(
+    data: OHLCVData[],
+    indicators: (number | null)[][],
+    checkSignal: (index: number) => Signal | undefined | null
+): Signal[] {
+    if (!isValidDataArray(data)) return [];
+
+    const signals: Signal[] = [];
+    for (let i = 0; i < data.length; i++) {
+        let missing = false;
+        for (const indicator of indicators) {
+            if (indicator[i] === null) {
+                missing = true;
+                break;
+            }
+        }
+        if (missing) continue;
+        const signal = checkSignal(i);
+        if (signal) signals.push(signal);
+    }
+    return signals;
+}
+
 // ============================================================================
 // Pivot Flags
 // ============================================================================

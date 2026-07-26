@@ -137,6 +137,18 @@ import { parabolic_sar_confirmation } from "./lib/parabolic_sar_confirmation";
 import { rsi_midline_confirmation } from "./lib/rsi_midline_confirmation";
 import { stochastic_midline_confirmation } from "./lib/stochastic_midline_confirmation";
 import { williams_r_midline_confirmation } from "./lib/williams_r_midline_confirmation";
+import { accumulation_distribution_slope_confirmation } from "./lib/accumulation_distribution_slope_confirmation";
+import { chande_forecast_oscillator_confirmation } from "./lib/chande_forecast_oscillator_confirmation";
+import { chande_momentum_midline_confirmation } from "./lib/chande_momentum_midline_confirmation";
+import { coppock_zero_line_confirmation } from "./lib/coppock_zero_line_confirmation";
+import { demarker_midline_confirmation } from "./lib/demarker_midline_confirmation";
+import { ease_of_movement_confirmation } from "./lib/ease_of_movement_confirmation";
+import { fisher_transform_zero_line_confirmation } from "./lib/fisher_transform_zero_line_confirmation";
+import { force_index_confirmation } from "./lib/force_index_confirmation";
+import { klinger_oscillator_confirmation } from "./lib/klinger_oscillator_confirmation";
+import { linear_regression_slope_confirmation } from "./lib/linear_regression_slope_confirmation";
+import { qstick_zero_line_confirmation } from "./lib/qstick_zero_line_confirmation";
+import { relative_vigor_cross_confirmation } from "./lib/relative_vigor_cross_confirmation";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -279,6 +291,18 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "rsi_midline_confirmation", strategy: rsi_midline_confirmation },
     { key: "stochastic_midline_confirmation", strategy: stochastic_midline_confirmation },
     { key: "williams_r_midline_confirmation", strategy: williams_r_midline_confirmation },
+    { key: "accumulation_distribution_slope_confirmation", strategy: accumulation_distribution_slope_confirmation },
+    { key: "chande_forecast_oscillator_confirmation", strategy: chande_forecast_oscillator_confirmation },
+    { key: "chande_momentum_midline_confirmation", strategy: chande_momentum_midline_confirmation },
+    { key: "coppock_zero_line_confirmation", strategy: coppock_zero_line_confirmation },
+    { key: "demarker_midline_confirmation", strategy: demarker_midline_confirmation },
+    { key: "ease_of_movement_confirmation", strategy: ease_of_movement_confirmation },
+    { key: "fisher_transform_zero_line_confirmation", strategy: fisher_transform_zero_line_confirmation },
+    { key: "force_index_confirmation", strategy: force_index_confirmation },
+    { key: "klinger_oscillator_confirmation", strategy: klinger_oscillator_confirmation },
+    { key: "linear_regression_slope_confirmation", strategy: linear_regression_slope_confirmation },
+    { key: "qstick_zero_line_confirmation", strategy: qstick_zero_line_confirmation },
+    { key: "relative_vigor_cross_confirmation", strategy: relative_vigor_cross_confirmation },
 ];
 
 export function createStrategiesRecordFromManifest(

@@ -2697,4 +2697,220 @@ export const builtInStrategyMeta: readonly BuiltInStrategyMeta[] = [
         crossSymbolConfig: false,
         polymarket1sConfig: false,
     },
+    {
+        key: "accumulation_distribution_slope_confirmation",
+        name: "Accumulation/Distribution Slope Confirmation",
+        description: "Signals from the current A/D line change over a trailing lookback without shifting the result.",
+        defaultParams: {
+        lookback: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        lookback: "A/D Lookback",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["lookback"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "chande_forecast_oscillator_confirmation",
+        name: "Chande Forecast Oscillator Confirmation",
+        description: "Signals from current close displacement versus the endpoint of a trailing regression.",
+        defaultParams: {
+        period: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        period: "CFO Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["period"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "chande_momentum_midline_confirmation",
+        name: "Chande Momentum Midline Confirmation",
+        description: "Signals with the current Chande Momentum Oscillator above or below its zero midpoint.",
+        defaultParams: {
+        period: 14,
+    } as Record<string, number>,
+        paramLabels: {
+        period: "CMO Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["period"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "coppock_zero_line_confirmation",
+        name: "Coppock Zero-Line Confirmation",
+        description: "Signals from the current fixed 11/14 ROC Coppock Curve around zero.",
+        defaultParams: {
+        smoothingPeriod: 10,
+    } as Record<string, number>,
+        paramLabels: {
+        smoothingPeriod: "Coppock Smoothing Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["smoothingPeriod"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "demarker_midline_confirmation",
+        name: "DeMarker Midline Confirmation",
+        description: "Signals with the current DeMarker value above or below its fixed 0.50 midpoint.",
+        defaultParams: {
+        period: 14,
+    } as Record<string, number>,
+        paramLabels: {
+        period: "DeMarker Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["period"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "ease_of_movement_confirmation",
+        name: "Ease of Movement Confirmation",
+        description: "Signals from current smoothed price displacement relative to range and volume.",
+        defaultParams: {
+        period: 14,
+    } as Record<string, number>,
+        paramLabels: {
+        period: "EOM Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["period"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "fisher_transform_zero_line_confirmation",
+        name: "Fisher Transform Zero-Line Confirmation",
+        description: "Signals from the causal Fisher Transform of the current trailing midpoint range.",
+        defaultParams: {
+        period: 10,
+    } as Record<string, number>,
+        paramLabels: {
+        period: "Fisher Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["period"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "force_index_confirmation",
+        name: "Force Index Confirmation",
+        description: "Signals from the current causal EMA of price change multiplied by volume.",
+        defaultParams: {
+        period: 13,
+    } as Record<string, number>,
+        paramLabels: {
+        period: "Force Index Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["period"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "klinger_oscillator_confirmation",
+        name: "Klinger Oscillator Confirmation",
+        description: "Signals from the current standard 34/55 Klinger oscillator relative to its causal signal EMA.",
+        defaultParams: {
+        signalPeriod: 13,
+    } as Record<string, number>,
+        paramLabels: {
+        signalPeriod: "Klinger Signal Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["signalPeriod"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "linear_regression_slope_confirmation",
+        name: "Linear Regression Slope Confirmation",
+        description: "Signals from the current trailing regression slope without projecting or shifting the result.",
+        defaultParams: {
+        period: 20,
+    } as Record<string, number>,
+        paramLabels: {
+        period: "Regression Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["period"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "qstick_zero_line_confirmation",
+        name: "Qstick Zero-Line Confirmation",
+        description: "Signals from the current trailing average of candle bodies around zero.",
+        defaultParams: {
+        period: 14,
+    } as Record<string, number>,
+        paramLabels: {
+        period: "Qstick Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["period"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
+    {
+        key: "relative_vigor_cross_confirmation",
+        name: "Relative Vigor Cross Confirmation",
+        description: "Signals from current RVI position relative to its fixed causal four-bar signal line.",
+        defaultParams: {
+        period: 10,
+    } as Record<string, number>,
+        paramLabels: {
+        period: "RVI Period",
+    } as Record<string, string>,
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["period"],
+    },
+        crossSymbolConfig: false,
+        polymarket1sConfig: false,
+    },
 ];
