@@ -1,5 +1,32 @@
 /* Settings Actions */
 
+/* Standard two-column row inside a settings section: label on the left,
+   control on the right, vertically centered. Replaces the inline-style
+   `display: flex; align-items: center; justify-content: space-between;
+   margin-bottom: 4px;` row that was duplicated 24+ times across the
+   Settings, Execution, Monte Carlo, and Walk Forward partials. */
+.param-row-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-bottom: var(--space-1);
+}
+
+.param-row-header .param-label {
+    margin-bottom: 0;
+}
+
+/* Group of chevron + title inside a `.section-header` (which itself is
+   flex with space-between). Grouping them lets the right side of the
+   header carry an optional toggle that sits at the far edge. */
+.section-heading-group {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
 .settings-actions {
 
     margin-top: var(--space-4);
