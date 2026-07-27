@@ -65,12 +65,14 @@ const CACHE_DIR_NAME = "synthetic-cache";
 const SERIES_META_TIMEOUT_MS = 2_000;
 
 /**
- * Bounded-cache caps. The cache grew to ~4.86 GB / 5,145 files before caps
- * existed. Eviction is oldest-mtime-first (LRU-by-mtime); a miss only rebuilds
+ * Bounded-cache caps. A complete 100-asset TOP_MEAN universe contains 4,950
+ * pairs and the measured v7 files average ~700 KiB, so the cache must retain
+ * that working set to avoid a cyclic miss/eviction loop on unchanged-data
+ * reruns. Eviction is oldest-mtime-first (LRU-by-mtime); a miss only rebuilds
  * the pair, so these caps cannot affect result correctness.
  */
-export const MAX_CACHE_BYTES = 2 * 1024 ** 3; // 2 GiB
-export const MAX_CACHE_FILES = 2_000;
+export const MAX_CACHE_BYTES = 4 * 1024 ** 3; // 4 GiB
+export const MAX_CACHE_FILES = 6_000;
 /** Post-write prune is throttled so a burst of writes doesn't stat the dir per file. */
 const PRUNE_THROTTLE_MS = 60_000;
 /**

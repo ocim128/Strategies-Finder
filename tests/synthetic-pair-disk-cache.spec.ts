@@ -43,6 +43,7 @@ const BULLET = "\u2022"; // IBKR marker
 const BASE_SYMBOL = `AAPL${BULLET}`;
 const QUOTE_SYMBOL = `MSFT${BULLET}`;
 const SOURCE_INTERVAL = "30m";
+const TOP_MEAN_100_ASSET_PAIR_COUNT = 4_950;
 // Per-spec tempdir root for file-backed seed CSVs. Previously this resolved
 // against `process.cwd()/price-data/ibkr/csv/30m/`, which wrote test fixtures
 // into the warmed production seed tree (audit Finding 3). The seed root is now
@@ -418,6 +419,17 @@ test("pruneSyntheticPairDiskCache evicts oldest-mtime files first by file-count 
     assert.equal(existsSync(paths[0]!), false, "oldest file evicted");
     assert.equal(existsSync(paths[1]!), false, "second-oldest file evicted");
     assert.equal(existsSync(paths[4]!), true, "newest file kept");
+});
+
+test("default caps retain one complete 100-asset TOP_MEAN pair working set", () => {
+    assert.ok(
+        MAX_CACHE_FILES >= TOP_MEAN_100_ASSET_PAIR_COUNT,
+        `file cap ${MAX_CACHE_FILES} must retain ${TOP_MEAN_100_ASSET_PAIR_COUNT} pairs`,
+    );
+    assert.ok(
+        MAX_CACHE_BYTES >= 4 * 1024 ** 3,
+        "byte cap must cover the measured ~3.3 GiB v7 working set",
+    );
 });
 
 test("pruneSyntheticPairDiskCache evicts by byte cap when bytes exceed the limit", () => {
