@@ -98,6 +98,12 @@ const TOP_MEAN_ACTIVE_RUN_STORAGE = {
     version: 1,
 } as const;
 
+const TOP_MEAN_LATEST_RESULT_STORAGE = {
+    key: "playground_sp500_top_mean_latest_result",
+    schema: "sp500_top_mean.latest_result",
+    version: 1,
+} as const;
+
 type TopMeanPersistedActiveRun = { runId: string };
 
 /** Persist the active TOP_MEAN run id so a reload can reattach. */
@@ -289,6 +295,7 @@ class BatchBacktestService {
         this.bindEvents(dom);
         this.resetProgress(dom);
         this.loadPersistedLatestResults(dom);
+        this.loadPersistedLatestTopMeanResult(dom);
         this.activeServerRunId = this.loadPersistedActiveServerRun()?.runId ?? null;
         this.serverRunActive = this.activeServerRunId !== null;
         this.updateSummary(dom);
@@ -2267,6 +2274,9 @@ class BatchBacktestService {
         this.topMeanDiagnosticRunId = runId;
         this.topMeanDiagnosticEntries = [];
         this.topMeanDiagnosticProgressSeen = 0;
+        this.latestTopMeanResult = null;
+        this.latestTopMeanStabilityResult = null;
+        this.clearPersistedLatestTopMeanResult();
         persistTopMeanActiveRun(runId);
 
         setVisible(dom.batchBacktestSp500TopMeanRunBtn, false);
@@ -2359,6 +2369,7 @@ class BatchBacktestService {
                         }
                         this.latestTopMeanResult = event.result;
                         this.latestTopMeanStabilityResult = null;
+                        this.persistLatestTopMeanResult(event.result);
                         this.renderTopMeanResults(dom, event.result);
                         dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
                         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
@@ -2768,6 +2779,58 @@ class BatchBacktestService {
         dom.batchBacktestSp500TopMeanResults.innerHTML = html;
     }
 
+    private persistLatestTopMeanResult(result: TopMeanResultSummary): void {
+        writePersistedJson({
+            ...TOP_MEAN_LATEST_RESULT_STORAGE,
+            data: result,
+            onError: (error) => debugLogger.warn("sp500_top_mean.latest_result_save_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            }),
+        });
+    }
+
+    private clearPersistedLatestTopMeanResult(): void {
+        writePersistedJson({
+            ...TOP_MEAN_LATEST_RESULT_STORAGE,
+            data: null,
+            onError: (error) => debugLogger.warn("sp500_top_mean.latest_result_clear_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            }),
+        });
+    }
+
+    private loadPersistedLatestTopMeanResult(dom: BatchBacktestDom): void {
+        const result = readPersistedJson<TopMeanResultSummary | null>({
+            ...TOP_MEAN_LATEST_RESULT_STORAGE,
+            fallback: null,
+            migrate: ({ data }) => {
+                if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+                const source = data as Partial<TopMeanResultSummary>;
+                if (typeof source.runId !== "string" || !source.runId.trim()) return null;
+                if (source.completed !== true || !Array.isArray(source.horizons)) return null;
+                if (!source.horizons.every((horizon) =>
+                    horizon
+                    && typeof horizon === "object"
+                    && Array.isArray(horizon.topAssets)
+                )) {
+                    return null;
+                }
+                return source as TopMeanResultSummary;
+            },
+            onError: (error) => debugLogger.warn("sp500_top_mean.latest_result_restore_failed", {
+                error: error instanceof Error ? error.message : String(error),
+            }),
+        });
+        if (!result) return;
+
+        this.latestTopMeanResult = result;
+        this.latestTopMeanStabilityResult = null;
+        this.renderTopMeanResults(dom, result);
+        dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
+        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
+        dom.batchBacktestSp500TopMeanProgressText.textContent = "Restored completed TOP_MEAN result.";
+    }
+
     /**
      * Phase-1 current snapshot banner. Renders the cross-sectional TOP_MEAN
      * pick(s) at the latest common closed candle. Kept visually separate from
@@ -3087,6 +3150,8 @@ class BatchBacktestService {
                             dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
                         } else if (status.result) {
                             this.latestTopMeanResult = status.result;
+                            this.latestTopMeanStabilityResult = null;
+                            this.persistLatestTopMeanResult(status.result);
                             this.renderTopMeanResults(dom, status.result);
                             dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
                             dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;

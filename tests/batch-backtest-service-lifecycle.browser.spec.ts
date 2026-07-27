@@ -62,6 +62,34 @@ after(() => {
 
 function svc(): any { return batchBacktestService as any; }
 
+function topMeanResultFixture(): any {
+    return {
+        runId: "sp500_top_mean_completed",
+        completed: true,
+        counts: {},
+        horizons: [{
+            horizon: 12,
+            events: 4,
+            topMean: {
+                events: 4,
+                topMean: 0.08,
+                randomMean: 0.03,
+                delta: 0.05,
+            },
+            topAssets: [{
+                asset: "AAA",
+                events: 4,
+                share: 1,
+                topMean: 0.08,
+                randomMean: 0.03,
+                delta: 0.05,
+            }],
+        }],
+        warnings: [],
+        reportLines: ["TOP_MEAN test result"],
+    };
+}
+
 function setupForAnalysis(fingerprint = "fp-test"): BatchBacktestDom {
     const dom = fakeDom();
     const s = svc();
@@ -198,6 +226,27 @@ describe("BatchBacktestService analysis lifecycle", () => {
         svc().activeServerRunId = null;
 
         expect(svc().loadPersistedActiveServerRun()?.runId).to.equal("batch-owned");
+    });
+
+    it("restores the completed TOP_MEAN Coordinator result after a tab-style reset", () => {
+        // Intent: a completed coordinator result is user-visible research
+        // output, not transient run state. Reloading the Batch tab must restore
+        // the rendered leaderboard and its Copy/Download actions.
+        const dom = setupForAnalysis();
+        const result = topMeanResultFixture();
+        svc().persistLatestTopMeanResult(result);
+
+        svc().latestTopMeanResult = null;
+        dom.batchBacktestSp500TopMeanResults.innerHTML = "";
+        dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
+        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
+
+        svc().loadPersistedLatestTopMeanResult(dom);
+
+        expect(svc().latestTopMeanResult).to.deep.equal(result);
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("AAA");
+        expect(dom.batchBacktestSp500TopMeanCopyBtn.disabled).to.equal(false);
+        expect(dom.batchBacktestSp500TopMeanDownloadBtn.disabled).to.equal(false);
     });
 
     it("keeps ownership after a rejected Stop and clears it after an accepted Stop", async () => {
